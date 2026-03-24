@@ -38,11 +38,20 @@ export interface TaskInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface ProjectRow {
+  id: string;
+  name: string;
+  repoPath: string | null;
+  description: string | null;
+  createdAt: string;
+}
+
 export interface TaskRow {
   id: string;
   seq: number;
   parentId: string | null;
   repoPath: string;
+  projectId: string | null;
   genieOsFolderId: string | null;
   wishFile: string | null;
   groupName: string | null;
@@ -73,6 +82,8 @@ export interface TaskRow {
 
 export interface TaskFilters {
   repoPath?: string;
+  projectName?: string;
+  allProjects?: boolean;
   stage?: string;
   status?: string;
   priority?: string;
@@ -212,6 +223,7 @@ function mapTask(row: Record<string, unknown>): TaskRow {
     seq: row.seq as number,
     parentId: str(row.parent_id),
     repoPath: row.repo_path as string,
+    projectId: str(row.project_id),
     genieOsFolderId: str(row.genie_os_folder_id),
     wishFile: str(row.wish_file),
     groupName: str(row.group_name),
@@ -352,6 +364,16 @@ function mapConversationMember(row: Record<string, unknown>): ConversationMember
   };
 }
 
+function mapProject(row: Record<string, unknown>): ProjectRow {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    repoPath: str(row.repo_path),
+    description: str(row.description),
+    createdAt: String(row.created_at),
+  };
+}
+
 // ============================================================================
 // Repo Path Resolution
 // ============================================================================
@@ -390,6 +412,71 @@ export async function resolveTaskId(idOrSeq: string, repoPath?: string): Promise
 }
 
 // ============================================================================
+// Projects CRUD
+// ============================================================================
+
+/** Create a new project. repoPath=null for virtual projects. */
+export async function createProject(input: {
+  name: string;
+  repoPath?: string | null;
+  description?: string | null;
+}): Promise<ProjectRow> {
+  const sql = await getConnection();
+  const rows = await sql`
+    INSERT INTO projects (name, repo_path, description)
+    VALUES (${input.name}, ${input.repoPath ?? null}, ${input.description ?? null})
+    RETURNING *
+  `;
+  return mapProject(rows[0]);
+}
+
+/** List all projects. */
+export async function listProjects(): Promise<ProjectRow[]> {
+  const sql = await getConnection();
+  const rows = await sql`SELECT * FROM projects ORDER BY name`;
+  return rows.map(mapProject);
+}
+
+/** Get a project by its unique name/slug. */
+export async function getProjectByName(name: string): Promise<ProjectRow | null> {
+  const sql = await getConnection();
+  const rows = await sql`SELECT * FROM projects WHERE name = ${name} LIMIT 1`;
+  return rows.length > 0 ? mapProject(rows[0]) : null;
+}
+
+/** Get a project by its repo_path. */
+export async function getProjectByRepoPath(repoPath: string): Promise<ProjectRow | null> {
+  const sql = await getConnection();
+  const rows = await sql`SELECT * FROM projects WHERE repo_path = ${repoPath} LIMIT 1`;
+  return rows.length > 0 ? mapProject(rows[0]) : null;
+}
+
+/**
+ * Ensure a project exists for a given repo path. Auto-creates from basename on first use.
+ * Returns the project ID.
+ */
+export async function ensureProject(repoPath: string): Promise<string> {
+  const sql = await getConnection();
+
+  // Check if project already exists for this repo_path
+  const existing = await sql`SELECT id FROM projects WHERE repo_path = ${repoPath} LIMIT 1`;
+  if (existing.length > 0) return existing[0].id as string;
+
+  // Auto-create: name = basename of repo path
+  const parts = repoPath.split('/');
+  const name = parts[parts.length - 1] || repoPath;
+
+  // Use ON CONFLICT to handle concurrent auto-creation race
+  const rows = await sql`
+    INSERT INTO projects (name, repo_path)
+    VALUES (${name}, ${repoPath})
+    ON CONFLICT (name) DO UPDATE SET repo_path = COALESCE(projects.repo_path, EXCLUDED.repo_path)
+    RETURNING id
+  `;
+  return rows[0].id as string;
+}
+
+// ============================================================================
 // Tasks CRUD
 // ============================================================================
 
@@ -397,9 +484,13 @@ function toDateOrNull(v?: string): Date | null {
   return v ? new Date(v) : null;
 }
 
-export async function createTask(input: TaskInput, repoPath?: string): Promise<TaskRow> {
+export async function createTask(input: TaskInput, repoPath?: string, projectId?: string): Promise<TaskRow> {
   const sql = await getConnection();
   const repo = repoPath ?? getRepoPath();
+
+  // Auto-ensure project for this repo path (or use explicit projectId)
+  const projId = projectId ?? (await ensureProject(repo));
+
   const vals = {
     desc: input.description ?? null,
     ac: input.acceptanceCriteria ?? null,
@@ -417,13 +508,14 @@ export async function createTask(input: TaskInput, repoPath?: string): Promise<T
 
   const rows = await sql`
     INSERT INTO tasks (
-      repo_path, title, description, acceptance_criteria,
+      repo_path, project_id, title, description, acceptance_criteria,
       type_id, stage, status, priority,
       parent_id, wish_file, group_name,
       start_date, due_date, estimated_effort,
       blocked_reason, release_id, metadata
     ) VALUES (
       ${repo},
+      ${projId},
       ${input.title},
       ${vals.desc},
       ${vals.ac},
@@ -457,30 +549,36 @@ export async function getTask(idOrSeq: string, repoPath?: string): Promise<TaskR
   return rows.length > 0 ? mapTask(rows[0]) : null;
 }
 
-export async function listTasks(filters: TaskFilters = {}): Promise<TaskRow[]> {
-  const sql = await getConnection();
-  const repo = filters.repoPath ?? getRepoPath();
+/** Build scope conditions for task listing (project/repo/all). */
+function buildScopeConditions(filters: TaskFilters, conditions: string[], values: unknown[], startIdx: number): number {
+  let paramIdx = startIdx;
+  if (filters.allProjects) {
+    // No repo scoping — show all projects
+  } else if (filters.projectName) {
+    conditions.push(`project_id = (SELECT id FROM projects WHERE name = $${paramIdx++})`);
+    values.push(filters.projectName);
+  } else {
+    conditions.push(`repo_path = $${paramIdx++}`);
+    values.push(filters.repoPath ?? getRepoPath());
+  }
+  return paramIdx;
+}
 
-  // Build query with dynamic conditions
-  const conditions: string[] = ['repo_path = $1'];
-  const values: unknown[] = [repo];
-  let paramIdx = 2;
-
-  if (filters.stage) {
-    conditions.push(`stage = $${paramIdx++}`);
-    values.push(filters.stage);
-  }
-  if (filters.status) {
-    conditions.push(`status = $${paramIdx++}`);
-    values.push(filters.status);
-  }
-  if (filters.priority) {
-    conditions.push(`priority = $${paramIdx++}`);
-    values.push(filters.priority);
-  }
-  if (filters.typeId) {
-    conditions.push(`type_id = $${paramIdx++}`);
-    values.push(filters.typeId);
+/** Build field-level filter conditions. */
+function buildFieldConditions(filters: TaskFilters, conditions: string[], values: unknown[], startIdx: number): number {
+  let paramIdx = startIdx;
+  const simple: [string, string | undefined][] = [
+    ['stage', filters.stage],
+    ['status', filters.status],
+    ['priority', filters.priority],
+    ['type_id', filters.typeId],
+    ['release_id', filters.releaseId],
+  ];
+  for (const [col, val] of simple) {
+    if (val) {
+      conditions.push(`${col} = $${paramIdx++}`);
+      values.push(val);
+    }
   }
   if (filters.parentId !== undefined) {
     if (filters.parentId === null) {
@@ -490,16 +588,22 @@ export async function listTasks(filters: TaskFilters = {}): Promise<TaskRow[]> {
       values.push(filters.parentId);
     }
   }
-  if (filters.releaseId) {
-    conditions.push(`release_id = $${paramIdx++}`);
-    values.push(filters.releaseId);
-  }
   if (filters.dueBefore) {
     conditions.push(`due_date <= $${paramIdx++}`);
     values.push(new Date(filters.dueBefore));
   }
+  return paramIdx;
+}
 
-  const where = conditions.join(' AND ');
+export async function listTasks(filters: TaskFilters = {}): Promise<TaskRow[]> {
+  const sql = await getConnection();
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+
+  let paramIdx = buildScopeConditions(filters, conditions, values, 1);
+  paramIdx = buildFieldConditions(filters, conditions, values, paramIdx);
+
+  const where = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
   const limit = filters.limit ?? 100;
   const offset = filters.offset ?? 0;
 
