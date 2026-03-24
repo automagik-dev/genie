@@ -436,6 +436,11 @@ function installGenieCli() {
 
 // Main execution
 try {
+  // Workers inherit parent's deps — skip all checks to reduce spawn latency (#712)
+  if (process.env.GENIE_WORKER === '1') {
+    process.exit(0);
+  }
+
   // Quick check: if everything is already installed, exit silently
   if (isBunInstalled() && isTmuxInstalled() && !needsInstall() && !genieCliNeedsInstall()) {
     process.exit(0);
