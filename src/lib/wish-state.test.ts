@@ -14,6 +14,7 @@ import {
   findAnyGroupByAssignee,
   findGroupByAssignee,
   getGroupState,
+  getOrCreateState,
   getState,
   resetGroup,
   startGroup,
@@ -269,6 +270,39 @@ describe('getGroupState', () => {
 
     expect(group).not.toBeNull();
     expect(group?.status).toBe('ready');
+  });
+});
+
+// ============================================================================
+// getOrCreateState
+// ============================================================================
+
+describe('getOrCreateState', () => {
+  test('creates state when none exists', async () => {
+    const state = await getOrCreateState('new-wish', sampleGroups, cwd);
+
+    expect(state.wish).toBe('new-wish');
+    expect(state.groups['1'].status).toBe('ready');
+    expect(state.groups['2'].status).toBe('blocked');
+  });
+
+  test('returns existing state without overwriting', async () => {
+    await createState('existing-wish', sampleGroups, cwd);
+    await startGroup('existing-wish', '1', 'agent-a', cwd);
+
+    // Call getOrCreateState — should return existing state, not reset it
+    const state = await getOrCreateState('existing-wish', sampleGroups, cwd);
+
+    expect(state.groups['1'].status).toBe('in_progress');
+    expect(state.groups['1'].assignee).toBe('agent-a');
+  });
+
+  test('is idempotent — multiple calls return same state', async () => {
+    const first = await getOrCreateState('idem-wish', sampleGroups, cwd);
+    const second = await getOrCreateState('idem-wish', sampleGroups, cwd);
+
+    expect(first.wish).toBe(second.wish);
+    expect(Object.keys(first.groups)).toEqual(Object.keys(second.groups));
   });
 });
 
