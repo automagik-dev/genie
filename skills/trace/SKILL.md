@@ -57,6 +57,34 @@ Include file paths and line numbers in every root cause comment so the task hist
 
 **Graceful degradation:** If no PG task exists for the investigated work, skip all `genie task` commands. Findings logging is an enhancement — the trace flow must never fail due to missing tasks.
 
+## Example
+
+An engineer reports that `genie work` dispatches engineers but they sit idle. The orchestrator runs `/trace`:
+
+```bash
+# 1. Spawn a tracer (read-only — no code changes)
+genie spawn tracer
+
+# 2. Send the symptoms
+genie send 'Trace: genie work dispatches engineers but they start idle at the prompt. No task received. genie status shows in_progress but nothing happens. Check dispatch.ts workDispatchCommand and protocol-router.ts sendMessage.' --to tracer
+
+# 3. Wait for findings
+sleep 60 && genie read tracer
+```
+
+The tracer investigates and reports back:
+
+```
+Root cause: workDispatchCommand (dispatch.ts:532) spawns without initialPrompt
+Evidence: protocolRouter.sendMessage fails silently under concurrent dispatch — 4/6 engineers got no message
+Causal chain: missing initialPrompt → agent starts with empty prompt → no task → idle forever
+Recommended correction: add initialPrompt to handleWorkerSpawn in dispatch.ts
+Affected scope: brainstormCommand, wishCommand, workDispatchCommand, reviewCommand
+Confidence: high
+```
+
+The orchestrator then hands the report to `/fix`.
+
 ## Rules
 - Never fix during trace — investigation only, always separate from correction.
 - Always reproduce before theorizing — if the failure can't be reproduced, the report must say so.
