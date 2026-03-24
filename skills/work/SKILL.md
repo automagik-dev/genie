@@ -102,6 +102,38 @@ When PG tasks exist for the wish, use `genie task` commands to track execution:
 
 **Graceful degradation:** If no PG task exists for the wish (e.g., PG unavailable or wish was created before v4), skip all `genie task` commands and fall back to current behavior. Task integration is optional — the core flow must never break due to missing tasks.
 
+## Example: Full Dispatch Cycle
+
+Wish `fix-dispatch-initial-prompt` has 1 execution group. The orchestrator runs `/work`:
+
+```bash
+# 1. Dispatch wave (spawns engineers automatically)
+genie work fix-dispatch-initial-prompt
+# Output: 🚀 Dispatching Wave 1 — 1 group(s)
+#         ✅ Group "1" set to in_progress
+#         🔧 Dispatching work to engineer for "fix-dispatch-initial-prompt#1"
+
+# 2. Monitor (ALWAYS sleep 60 between checks)
+sleep 60 && genie status fix-dispatch-initial-prompt
+# Output: Group 1: 🔄 in_progress
+
+# 3. Check again
+sleep 60 && genie status fix-dispatch-initial-prompt
+# Output: Group 1: ✅ done — Progress: 1/1 done
+
+# 4. All groups done → local review
+genie spawn reviewer
+genie send 'Review wish fix-dispatch-initial-prompt. Run bun test and check all 5 call sites.' --to reviewer
+# Reviewer returns: SHIP
+
+# 5. Create PR
+git add -A && git commit -m "fix: pass initialPrompt to handleWorkerSpawn in all dispatch commands"
+git push origin HEAD
+gh pr create --base dev --title "fix: pass initialPrompt to dispatch" --body "Fixes #745. Wish: fix-dispatch-initial-prompt"
+```
+
+For multi-wave wishes, call `genie work <slug>` again after each wave completes — it dispatches the next wave automatically.
+
 ## Rules
 - Never execute directly — always dispatch subagents.
 - Never expand scope during execution.
