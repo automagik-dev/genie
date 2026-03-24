@@ -967,7 +967,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     transport: insideTmux ? 'tmux' : 'inline',
     extraArgs: options.extraArgs,
     cwd: agent.repoPath,
-    spawnIntoCurrentWindow: !teamWasExplicit && insideTmux,
+    spawnIntoCurrentWindow: !teamWasExplicit && insideTmux && !options.session,
     sessionOverride: options.session,
     autoResume: options.autoResume,
   };
