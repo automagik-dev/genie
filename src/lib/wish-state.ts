@@ -12,6 +12,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { dirname } from 'node:path';
 import { z } from 'zod';
 import { getConnection } from './db.js';
 
@@ -51,14 +52,21 @@ export interface GroupDefinition {
 // Internal helpers
 // ============================================================================
 
-/** Resolve repo root via git, fallback to cwd. */
-function resolveRepoPath(cwd?: string): string {
+/** Resolve repo root via git, fallback to cwd.
+ * Uses git-common-dir to normalize across worktrees — returns the main repo path
+ * even when called from a linked worktree.
+ */
+export function resolveRepoPath(cwd?: string): string {
   if (cwd) return cwd;
   try {
-    return execSync('git rev-parse --show-toplevel', {
+    // git-common-dir returns the shared .git for worktrees, or .git for main repo
+    const commonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
+    // For main repos: commonDir = /path/to/repo/.git → parent = /path/to/repo
+    // For worktrees: commonDir = /path/to/main-repo/.git → same parent
+    return dirname(commonDir);
   } catch {
     return process.cwd();
   }

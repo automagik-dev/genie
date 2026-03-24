@@ -1176,6 +1176,58 @@ function buildResumeParams(agent: registry.Agent, template: registry.WorkerTempl
   };
 }
 
+/** Format a single group's status line for resume context. */
+function formatGroupStatus(
+  name: string,
+  group: { status: string; startedAt?: string; completedAt?: string; dependsOn: string[] },
+  allGroups: Record<string, { status: string }>,
+): string {
+  let detail = group.status;
+  if (group.completedAt) detail += ` (completed at ${group.completedAt})`;
+  else if (group.startedAt) detail += ` (started at ${group.startedAt})`;
+  if (group.status === 'blocked' && group.dependsOn.length > 0) {
+    const pending = group.dependsOn.filter((dep) => allGroups[dep]?.status !== 'done');
+    if (pending.length > 0) detail += ` (depends on ${pending.join(', ')})`;
+  }
+  return `Group ${name}: ${detail}`;
+}
+
+/**
+ * Build resume context for an agent being resumed.
+ * For team-leads with wish context: detailed group status summary.
+ * For other agents with team context: simple "you were resumed" message.
+ * Returns undefined if no wish context found.
+ */
+export async function buildResumeContext(agent: registry.Agent): Promise<string | undefined> {
+  if (agent.role === 'team-lead' && agent.wishSlug) {
+    try {
+      const wishState = await import('../lib/wish-state.js');
+      const state = await wishState.getState(agent.wishSlug, agent.repoPath);
+      if (state) {
+        const groupLines = Object.entries(state.groups).map(([name, group]) =>
+          formatGroupStatus(name, group, state.groups),
+        );
+        return [
+          "You were resumed after a crash. Here's where you left off:",
+          `Wish: ${state.wish}`,
+          '',
+          ...groupLines,
+          '',
+          `Continue from where you left off. Run \`genie status ${state.wish}\` to verify, then dispatch the next wave.`,
+        ].join('\n');
+      }
+    } catch {
+      // Fall through to simple message if wish state lookup fails
+    }
+  }
+
+  if (agent.team) {
+    return "You were resumed. Check your team's current state with `genie status`.";
+  }
+
+  return undefined;
+}
+
 /**
  * Resume a single agent by rebuilding spawn params with --resume <sessionId>.
  * Resets resumeAttempts to 0 (manual resume = fresh retry budget).
@@ -1186,6 +1238,12 @@ async function resumeAgent(agent: registry.Agent): Promise<void> {
   await registry.update(agent.id, { resumeAttempts: 0 });
 
   const params = buildResumeParams(agent, template);
+
+  // Inject resume context so the agent knows where it left off
+  const resumeContext = await buildResumeContext(agent);
+  if (resumeContext) {
+    params.initialPrompt = resumeContext;
+  }
 
   if (agent.nativeTeamEnabled) {
     const nativeResult = await resolveNativeTeam(params.team, agent.repoPath, {
