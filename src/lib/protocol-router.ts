@@ -192,10 +192,28 @@ async function deliverToWorker(
   body: string,
 ): Promise<DeliveryResult> {
   const message = await mailbox.send(repoPath, from, worker.id, body);
-  const delivered =
-    worker.nativeTeamEnabled && worker.team && worker.role
-      ? await writeToNativeInbox(worker, message)
-      : await injectToTmuxPane(worker, message);
+
+  let delivered = false;
+
+  // Primary delivery path
+  if (worker.nativeTeamEnabled && worker.team && worker.role) {
+    delivered = await writeToNativeInbox(worker, message);
+  } else {
+    delivered = await injectToTmuxPane(worker, message);
+  }
+
+  // Fallback: if primary delivery failed but worker has a team, try native inbox
+  if (!delivered && worker.team) {
+    const agentName = worker.role || worker.id.split('-').slice(-1)[0] || worker.id;
+    try {
+      const nativeMsg = mailbox.toNativeInboxMessage(message, worker.nativeColor ?? 'blue');
+      await nativeTeams.writeNativeInbox(worker.team, agentName, nativeMsg);
+      delivered = true;
+    } catch {
+      // Fallback failed too — non-fatal
+    }
+  }
+
   if (delivered) await mailbox.markDelivered(repoPath, worker.id, message.id);
   return { messageId: message.id, workerId: worker.id, delivered };
 }
@@ -210,13 +228,24 @@ async function deliverViaNativeInbox(
   const resolvedTeam = teamName ?? (await nativeTeams.discoverTeamName());
   if (!resolvedTeam) return null;
 
-  // Verify the recipient exists as a registered native team member
+  // Verify the recipient exists as a registered native team member.
+  // Match by: exact name, agentId, or role extracted from team-prefixed worker ID
+  // e.g., worker ID "sofia-50ju-engineer" should match member name "engineer"
   const config = await nativeTeams.loadConfig(resolvedTeam).catch(() => null);
   if (!config) return null;
-  const memberExists = config.members?.some(
-    (m: { name?: string; agentId?: string }) => m.name === to || m.agentId === `${to}@${resolvedTeam}`,
+  const sanitizedTo = nativeTeams.sanitizeTeamName(to);
+  const matchedMember = config.members?.find(
+    (m: { name?: string; agentId?: string }) =>
+      m.name === to ||
+      m.name === sanitizedTo ||
+      m.agentId === `${to}@${resolvedTeam}` ||
+      m.agentId === `${sanitizedTo}@${resolvedTeam}`,
   );
-  if (!memberExists) return null;
+  if (!matchedMember) return null;
+
+  // Use the member's registered name for inbox writing (not the raw worker ID),
+  // so we write to "engineer.json" instead of "sofia-50ju-engineer.json"
+  const inboxName = matchedMember.name ?? to;
 
   try {
     const message = await mailbox.send(repoPath, from, to, body);
@@ -228,7 +257,7 @@ async function deliverViaNativeInbox(
       color: 'blue',
       read: false,
     };
-    await nativeTeams.writeNativeInbox(resolvedTeam, to, nativeMsg);
+    await nativeTeams.writeNativeInbox(resolvedTeam, inboxName, nativeMsg);
     await mailbox.markDelivered(repoPath, to, message.id);
     return { messageId: message.id, workerId: to, delivered: true };
   } catch {
