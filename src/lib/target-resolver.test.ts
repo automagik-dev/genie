@@ -1429,6 +1429,291 @@ describe('answerQuestion uses resolveTarget (verified by import)', () => {
 });
 
 // ============================================================================
+// GENIE_TEAM env var inference
+// ============================================================================
+
+describe('GENIE_TEAM env var inference', () => {
+  test('role resolves when getCurrentTeam returns GENIE_TEAM value', async () => {
+    // Simulates the case where GENIE_TEAM provides team context
+    const result = await resolveTarget('engineer', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'eng-worker-abc123': {
+          id: 'eng-worker-abc123',
+          paneId: '%30',
+          session: 'my-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          role: 'engineer',
+          team: 'my-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%30');
+    expect(result.workerId).toBe('eng-worker-abc123');
+    expect(result.resolvedVia).toBe('worker');
+  });
+
+  test('role resolves via global fallback when no team context (GENIE_TEAM unset)', async () => {
+    const result = await resolveTarget('engineer', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'eng-worker-abc123': {
+          id: 'eng-worker-abc123',
+          paneId: '%30',
+          session: 'some-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          role: 'engineer',
+          team: 'some-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%30');
+    expect(result.workerId).toBe('eng-worker-abc123');
+  });
+});
+
+// ============================================================================
+// Partial role matching (prefix)
+// ============================================================================
+
+describe('Partial role matching', () => {
+  const baseWorker = {
+    worktree: null as string | null,
+    startedAt: new Date().toISOString(),
+    state: 'working' as const,
+    lastStateChange: new Date().toISOString(),
+    repoPath: '/tmp/test',
+  };
+
+  test('"eng" resolves to "engineer" when unambiguous', async () => {
+    const result = await resolveTarget('eng', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'eng-worker-1': {
+          ...baseWorker,
+          id: 'eng-worker-1',
+          paneId: '%30',
+          session: 'my-team',
+          role: 'engineer',
+          team: 'my-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%30');
+    expect(result.workerId).toBe('eng-worker-1');
+    expect(result.resolvedVia).toBe('worker');
+  });
+
+  test('"rev" resolves to "reviewer" globally when no team context', async () => {
+    const result = await resolveTarget('rev', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'rev-worker': {
+          ...baseWorker,
+          id: 'rev-worker',
+          paneId: '%40',
+          session: 'some-team',
+          role: 'reviewer',
+          team: 'some-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%40');
+    expect(result.workerId).toBe('rev-worker');
+  });
+
+  test('ambiguous partial role throws with candidate list', async () => {
+    await expect(
+      resolveTarget('eng', {
+        checkLiveness: false,
+        getCurrentTeam: async () => null,
+        workers: {
+          worker1: {
+            ...baseWorker,
+            id: 'worker1',
+            paneId: '%30',
+            session: 's1',
+            role: 'engineer',
+            team: 'team-a',
+          },
+          worker2: {
+            ...baseWorker,
+            id: 'worker2',
+            paneId: '%31',
+            session: 's2',
+            role: 'engineer',
+            team: 'team-b',
+          },
+        },
+      }),
+    ).rejects.toThrow(/ambiguous/i);
+  });
+
+  test('exact role match takes priority over partial role match', async () => {
+    const result = await resolveTarget('engineer', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'exact-role-worker': {
+          ...baseWorker,
+          id: 'exact-role-worker',
+          paneId: '%10',
+          session: 'my-team',
+          role: 'engineer',
+          team: 'my-team',
+        },
+        'engineer-lead-worker': {
+          ...baseWorker,
+          id: 'engineer-lead-worker',
+          paneId: '%20',
+          session: 'my-team',
+          role: 'engineer-lead',
+          team: 'my-team',
+        },
+      },
+    });
+
+    // Exact role match (resolveByRole) should win over partial (resolveByPartialRole)
+    expect(result.paneId).toBe('%10');
+    expect(result.workerId).toBe('exact-role-worker');
+  });
+
+  test('team-scoped partial role preferred over global partial role', async () => {
+    const result = await resolveTarget('eng', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'team-eng': {
+          ...baseWorker,
+          id: 'team-eng',
+          paneId: '%10',
+          session: 'my-team',
+          role: 'engineer',
+          team: 'my-team',
+        },
+        'other-eng': {
+          ...baseWorker,
+          id: 'other-eng',
+          paneId: '%20',
+          session: 'other-team',
+          role: 'engineer',
+          team: 'other-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%10');
+    expect(result.workerId).toBe('team-eng');
+  });
+});
+
+// ============================================================================
+// Partial customName matching (prefix)
+// ============================================================================
+
+describe('Partial customName matching', () => {
+  const baseWorker = {
+    worktree: null as string | null,
+    startedAt: new Date().toISOString(),
+    state: 'working' as const,
+    lastStateChange: new Date().toISOString(),
+    repoPath: '/tmp/test',
+  };
+
+  test('"eng" resolves to customName "engineer-4" when unambiguous', async () => {
+    const result = await resolveTarget('eng', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'some-long-id': {
+          ...baseWorker,
+          id: 'some-long-id',
+          paneId: '%50',
+          session: 'my-team',
+          customName: 'engineer-4',
+          team: 'my-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%50');
+    expect(result.workerId).toBe('some-long-id');
+  });
+
+  test('exact customName takes priority over partial customName', async () => {
+    const result = await resolveTarget('eng-4', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'exact-custom': {
+          ...baseWorker,
+          id: 'exact-custom',
+          paneId: '%10',
+          session: 'my-team',
+          customName: 'eng-4',
+          team: 'my-team',
+        },
+        'partial-custom': {
+          ...baseWorker,
+          id: 'partial-custom',
+          paneId: '%20',
+          session: 'my-team',
+          customName: 'eng-4-extended',
+          team: 'my-team',
+        },
+      },
+    });
+
+    // Exact customName (resolveByCustomName) should win
+    expect(result.paneId).toBe('%10');
+    expect(result.workerId).toBe('exact-custom');
+  });
+
+  test('ambiguous partial customName throws with candidate list', async () => {
+    await expect(
+      resolveTarget('eng', {
+        checkLiveness: false,
+        getCurrentTeam: async () => null,
+        workers: {
+          worker1: {
+            ...baseWorker,
+            id: 'worker1',
+            paneId: '%30',
+            session: 's1',
+            customName: 'engineer-1',
+            team: 'team-a',
+          },
+          worker2: {
+            ...baseWorker,
+            id: 'worker2',
+            paneId: '%31',
+            session: 's2',
+            customName: 'engineer-2',
+            team: 'team-b',
+          },
+        },
+      }),
+    ).rejects.toThrow(/ambiguous/i);
+  });
+});
+
+// ============================================================================
 // Cleanup
 // ============================================================================
 
