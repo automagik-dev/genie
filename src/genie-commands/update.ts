@@ -153,7 +153,7 @@ async function detectInstallationType(): Promise<InstallationType> {
   return hasBun ? 'bun' : 'npm';
 }
 
-async function updateViaBun(channel: string): Promise<void> {
+async function updateViaBun(channel: string): Promise<boolean> {
   // Delete global lockfile — it pins old versions even with --force --no-cache
   try {
     require('node:fs').unlinkSync(join(homedir(), '.bun', 'install', 'global', 'bun.lock'));
@@ -165,21 +165,42 @@ async function updateViaBun(channel: string): Promise<void> {
   const result = await runCommand('bun', ['add', '-g', '--force', '--no-cache', `@automagik/genie@${channel}`]);
   if (!result.success) {
     error('Failed to update via bun');
-    process.exit(1);
+    return false;
   }
   console.log();
-  success(`Genie CLI updated (${channel})!`);
+  success(`Genie CLI updated via bun (${channel})!`);
+  return true;
 }
 
-async function updateViaNpm(channel: string): Promise<void> {
+async function updateViaNpm(channel: string): Promise<boolean> {
   log(`Updating via npm (channel: ${channel})...`);
   const result = await runCommand('npm', ['install', '-g', `@automagik/genie@${channel}`]);
   if (!result.success) {
     error('Failed to update via npm');
-    process.exit(1);
+    return false;
   }
   console.log();
-  success(`Genie CLI updated (${channel})!`);
+  success(`Genie CLI updated via npm (${channel})!`);
+  return true;
+}
+
+/** Detect which package-manager global installs exist (npm, bun, or both). */
+export async function detectGlobalInstalls(): Promise<Set<'npm' | 'bun'>> {
+  const found = new Set<'npm' | 'bun'>();
+
+  const [npmResult, bunResult] = await Promise.all([
+    runCommandSilent('npm', ['list', '-g', '@automagik/genie']),
+    runCommandSilent('bun', ['pm', 'ls', '-g']),
+  ]);
+
+  if (npmResult.success && !npmResult.output.includes('(empty)')) {
+    found.add('npm');
+  }
+  if (bunResult.success && bunResult.output.includes('@automagik/genie')) {
+    found.add('bun');
+  }
+
+  return found;
 }
 
 async function updateSource(): Promise<void> {
@@ -538,17 +559,31 @@ export async function updateCommand(options: { next?: boolean; stable?: boolean 
     process.exit(1);
   }
 
-  switch (installType) {
-    case 'source':
-      await updateSource();
-      break;
-    case 'bun':
-      await updateViaBun(channel);
-      await syncPlugin(installType);
-      break;
-    case 'npm':
-      await updateViaNpm(channel);
-      await syncPlugin(installType);
-      break;
+  if (installType === 'source') {
+    await updateSource();
+    return;
   }
+
+  // Detect all global installs (npm + bun) to update both when they coexist
+  const globalInstalls = await detectGlobalInstalls();
+
+  // Primary update — exit on failure
+  const primaryMethod = installType as 'npm' | 'bun';
+  const primaryOk = primaryMethod === 'bun' ? await updateViaBun(channel) : await updateViaNpm(channel);
+  if (!primaryOk) {
+    process.exit(1);
+  }
+
+  // Secondary update — warn on failure, don't block
+  const secondaryMethod = primaryMethod === 'bun' ? 'npm' : 'bun';
+  if (globalInstalls.has(secondaryMethod)) {
+    console.log();
+    log(`Also updating ${secondaryMethod}-global install...`);
+    const secondaryOk = secondaryMethod === 'bun' ? await updateViaBun(channel) : await updateViaNpm(channel);
+    if (!secondaryOk) {
+      error(`Secondary update via ${secondaryMethod} failed (non-blocking)`);
+    }
+  }
+
+  await syncPlugin(installType);
 }

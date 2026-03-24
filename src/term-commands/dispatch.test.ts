@@ -559,6 +559,27 @@ describe('parseWishGroups()', () => {
     expect(groups[1].dependsOn).toEqual(['1']);
     expect(groups[2].dependsOn).toEqual(['1', '2']);
   });
+
+  it('should handle parenthetical descriptions containing commas (#752)', () => {
+    const content =
+      '### Group 1: Components\n**depends-on:** none\n\n### Group 2: Integration\n**depends-on:** Group 1 (GlassCard, StatusDot, ProgressBar)';
+    const groups = parseWishGroups(content);
+    expect(groups[0].dependsOn).toEqual([]);
+    expect(groups[1].dependsOn).toEqual(['1']);
+  });
+
+  it('should handle multiple groups with parenthetical descriptions containing commas (#752)', () => {
+    const content =
+      '### Group 1: A\n**depends-on:** none\n\n### Group 2: B\n**depends-on:** none\n\n### Group 3: C\n**depends-on:** Group 1, Group 2 (after review)';
+    const groups = parseWishGroups(content);
+    expect(groups[2].dependsOn).toEqual(['1', '2']);
+  });
+
+  it('should parse depends-on: none as empty array', () => {
+    const content = '### Group 1: Solo\n**depends-on:** none';
+    const groups = parseWishGroups(content);
+    expect(groups[0].dependsOn).toEqual([]);
+  });
 });
 
 // ============================================================================

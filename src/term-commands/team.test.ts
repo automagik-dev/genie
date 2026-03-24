@@ -4,6 +4,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { $ } from 'bun';
@@ -169,5 +170,49 @@ describe('genie team CLI', () => {
   test('ensure command does not exist', async () => {
     const { exitCode } = await genie('team', 'ensure', 'test');
     expect(exitCode).not.toBe(0);
+  });
+
+  test('team create --wish auto-copies wish from cwd to repo', async () => {
+    // Create a wish in a separate cwd directory (not the repo)
+    const cwdDir = join(TEST_DIR, 'wish-cwd');
+    const wishSlug = 'test-autocopy';
+    const wishDir = join(cwdDir, '.genie', 'wishes', wishSlug);
+    await mkdir(wishDir, { recursive: true });
+    await writeFile(join(wishDir, 'WISH.md'), '# Test wish for auto-copy\n\n## Summary\nTest.\n');
+
+    // Run team create from the cwd directory — wish is NOT in the repo yet
+    try {
+      await $`bun ${GENIE_BIN} team create feat/autocopy-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug}`
+        .quiet()
+        .cwd(cwdDir)
+        .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME });
+    } catch {
+      // Spawn may fail (no tmux) but auto-copy should have happened before spawn
+    }
+
+    // Verify wish was copied to repo
+    const repoWishPath = join(TEST_REPO, '.genie', 'wishes', wishSlug, 'WISH.md');
+    expect(existsSync(repoWishPath)).toBe(true);
+  });
+
+  test('team create --wish uses existing wish in repo without copying', async () => {
+    // Create a wish directly in the repo
+    const wishSlug = 'test-inrepo';
+    const wishDir = join(TEST_REPO, '.genie', 'wishes', wishSlug);
+    await mkdir(wishDir, { recursive: true });
+    await writeFile(join(wishDir, 'WISH.md'), '# Test wish already in repo\n\n## Summary\nTest.\n');
+
+    // Run team create — wish is already in repo, no copy needed
+    try {
+      await $`bun ${GENIE_BIN} team create feat/inrepo-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug}`
+        .quiet()
+        .cwd(TEST_REPO)
+        .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME });
+    } catch {
+      // Spawn may fail but wish validation should pass
+    }
+
+    // Wish should still be there
+    expect(existsSync(join(wishDir, 'WISH.md'))).toBe(true);
   });
 });

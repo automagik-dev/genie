@@ -165,13 +165,12 @@ export function parseWishGroups(content: string): GroupDefinition[] {
       const depsStr = depsMatch[1].trim();
       const depsNormalized = depsStr.replace(/\s*\([^)]*\)/g, '').trim();
       if (depsNormalized.toLowerCase() !== 'none') {
-        dependsOn = depsStr
+        dependsOn = depsNormalized
           .split(',')
           .map((d) =>
             d
               .trim()
               .replace(/^group\s*/i, '')
-              .replace(/\s*\(.*\)\s*$/, '')
               .trim(),
           )
           .filter(Boolean);
