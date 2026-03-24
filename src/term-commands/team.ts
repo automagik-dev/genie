@@ -255,19 +255,23 @@ async function spawnLeaderWithWish(
   }
   console.log(`  Team: hired ${standardTeam.join(', ')}`);
 
-  // Spawn leader — AGENTS.md comes from the built-in resolver, prompt delivered via mailbox
+  // Spawn leader — AGENTS.md comes from the built-in resolver, prompt delivered as initialPrompt
+  const members = standardTeam.filter((r) => r !== 'team-lead').join(', ');
+  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
   await handleWorkerSpawn('team-lead', {
     provider: 'claude',
     team: config.name,
     cwd: config.worktreePath,
     session: tmuxSession,
+    initialPrompt: kickoffPrompt,
   });
 
-  // Deliver kickoff prompt via mailbox (durable, queued to disk)
-  const members = standardTeam.filter((r) => r !== 'team-lead').join(', ');
-  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
+  // Deliver kickoff prompt via mailbox as backup (durable, queued to disk)
   const protocolRouter = await import('../lib/protocol-router.js');
-  await protocolRouter.sendMessage(config.worktreePath, 'cli', 'team-lead', kickoffPrompt);
+  const result = await protocolRouter.sendMessage(config.worktreePath, 'cli', 'team-lead', kickoffPrompt);
+  if (!result.delivered) {
+    console.warn(`⚠ Backup delivery to team-lead failed: ${result.reason ?? 'unknown'}`);
+  }
   console.log('  Leader: spawned and working');
 }
 
