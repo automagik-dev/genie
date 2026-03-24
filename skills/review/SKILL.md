@@ -1,6 +1,6 @@
 ---
 name: review
-description: "Validate plans, execution, or PRs against wish criteria — returns SHIP / FIX-FIRST / BLOCKED with severity-tagged gaps."
+description: "Validate plans, execution, or PRs against acceptance criteria — returns SHIP / FIX-FIRST / BLOCKED with severity-tagged gaps. Use when checking if work meets acceptance criteria, reviewing PRs for completeness, validating deliverables before merge, or verifying implementation against wish requirements."
 ---
 
 # /review — Universal Review Gate
@@ -118,3 +118,10 @@ genie spawn reviewer
 - Never implement fixes during review — hand off to `/fix`.
 - Every FAIL includes actionable fix (file, command, what to change).
 - Keep output concise, severity-ordered, and executable.
+
+## Related Skills
+- [`/brainstorm`](../brainstorm/SKILL.md) — generate and explore ideas before planning
+- [`/wish`](../wish/SKILL.md) — create executable plans with acceptance criteria
+- [`/work`](../work/SKILL.md) — execute wish plans and produce deliverables
+- [`/fix`](../fix/SKILL.md) — resolve severity-tagged gaps from FIX-FIRST verdicts
+- [`/trace`](../trace/SKILL.md) — diagnose unclear root causes before dispatching fixes

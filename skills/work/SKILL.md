@@ -1,6 +1,6 @@
 ---
 name: work
-description: "Execute an approved wish plan — orchestrate subagents per task group with fix loops, validation, and review handoff."
+description: "Run an approved plan by dispatching tasks to workers, validating each group, and handing off for review. Use when you need to start implementation, execute tasks from an approved plan, kick off work, begin building, or dispatch implementation work to agents."
 ---
 
 # /work — Execute Wish Plan
@@ -30,7 +30,8 @@ If context is injected, use it directly. Do not re-parse the wish for informatio
 
 ## When to Use
 - An approved wish exists and is ready for execution
-- Orchestrator needs to dispatch implementation tasks to subagents
+- You need to run your plan, execute tasks, or process approved workflows
+- Orchestrator needs to dispatch implementation tasks to workers
 - After `/review` returns SHIP on the plan
 
 ## Dispatch
@@ -71,6 +72,49 @@ When a subagent fails or fix loop limit (2) is exceeded:
 - Create follow-up task with concrete gaps.
 - Continue with next unblocked task.
 - Include blocked items in final handoff.
+
+## Example: Full Dispatch Cycle
+
+Below is a complete cycle for executing a wish with two task groups.
+
+```
+1. Load wish
+   → Read .genie/wishes/add-auth/WISH.md
+   → Confirm scope: 2 execution groups (Group 1: API routes, Group 2: UI login)
+
+2. Group 1 — API routes
+   a. Self-refine: dispatch /refine on Group 1 prompt
+      → genie spawn engineer
+      → Reads refined prompt from /tmp/prompts/add-auth.md
+   b. Dispatch worker:
+      → genie spawn engineer  (fresh session for implementation)
+      → Engineer implements API routes, signals back:
+        genie send 'Group 1 implementation complete' --to leader
+   c. Local review:
+      → genie spawn reviewer
+      → /review checks Group 1 against acceptance criteria
+      → Result: FIX-FIRST (missing input validation)
+   d. Fix loop (attempt 1 of 2):
+      → genie spawn fixer
+      → Fixer adds validation, signals done
+   e. Re-review:
+      → genie spawn reviewer
+      → Result: SHIP
+   f. Quality review:
+      → genie spawn reviewer  (security + perf pass)
+      → Result: SHIP
+   g. Validate:
+      → Run group validation command (e.g. bun test src/auth/)
+      → Record evidence: all tests pass
+   h. Signal completion:
+      → genie send 'Group 1 complete — all criteria met' --to leader
+
+3. Group 2 — UI login
+   → Same flow as Group 1 (steps a–h)
+
+4. Handoff
+   → All work tasks complete. Run /review.
+```
 
 ## Rules
 - Never execute directly — always dispatch subagents.

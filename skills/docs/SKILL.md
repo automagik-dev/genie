@@ -1,6 +1,6 @@
 ---
 name: docs
-description: "Dispatch docs subagent to audit, generate, and validate documentation against the codebase."
+description: "Dispatch docs subagent to audit, generate, and validate documentation against the codebase. Use when the user asks to write a README, generate docstrings, create API docs, update docs, check documentation coverage, audit stale documentation, add JSDoc or TSDoc comments, document architecture, or fix outdated references."
 ---
 
 # /docs — Documentation Generation
@@ -40,6 +40,53 @@ Audit and maintain these doc types:
 ```bash
 # Spawn a docs subagent
 genie spawn docs
+```
+
+## Validation Example
+
+After generating or updating documentation, validate each claim systematically:
+
+```
+Validation Report for src/lib/README.md:
+  [PASS] File path "src/lib/transcript.ts" exists
+  [PASS] Function "parseTranscript()" found in src/lib/transcript.ts:42
+  [PASS] API endpoint "POST /api/dispatch" matches route definition
+  [FAIL] Reference to "src/lib/legacy-parser.ts" — file not found (removed in commit abc123)
+  Action: Removed stale reference, updated to current parser path
+```
+
+Each report entry must include the claim being verified, the verification result (PASS/FAIL), and for failures, the corrective action taken.
+
+## Error Handling
+
+When documentation generation encounters issues, handle them explicitly:
+
+- **Missing source files:** If a documented module no longer exists, remove or flag the stale reference rather than silently skipping it. Log the discrepancy in the validation report.
+- **Ambiguous code paths:** When a function's behavior is unclear from the source, document what is verifiable and add a `<!-- TODO: clarify behavior -->` marker rather than guessing.
+- **Conflicting documentation:** If multiple doc surfaces contradict each other (e.g., README says one thing, CLAUDE.md says another), flag the conflict in the report and resolve by deferring to the actual code behavior.
+- **Permission or access errors:** If a file or directory cannot be read during audit, report it as a blocked item rather than treating it as "no docs needed."
+
+## Expected Output Format
+
+Return a structured report after each run:
+
+```
+## Documentation Report
+
+### Files Created
+- docs/api/dispatch.md — API reference for dispatch endpoints
+
+### Files Updated
+- README.md — Added setup instructions for new env vars
+- CLAUDE.md — Updated command list, removed deprecated `genie legacy` reference
+
+### Validation Summary
+- Total claims verified: 47
+- Passed: 45
+- Failed: 2 (corrected inline)
+
+### Remaining Gaps
+- src/hooks/ — No module-level docstrings (flagged for next pass)
 ```
 
 ## Rules

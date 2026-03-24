@@ -1,6 +1,6 @@
 ---
 name: learn
-description: "Diagnose and fix agent behavioral surfaces when the user corrects a mistake — connects to Claude native memory."
+description: "Diagnose and fix agent behavior when the user corrects a mistake, reports a recurring error, or asks the agent to remember a preference. Use when the user says 'Claude made a mistake', 'stop doing X', 'you should always...', 'remember this for next time', or when correcting Claude's behavior. Applies a minimal, targeted fix to the right behavioral surface and saves it to Claude native memory for cross-session persistence."
 ---
 
 # /learn — Behavioral Correction
@@ -67,6 +67,32 @@ When a learning is applied, also save it as a feedback memory:
 2. Update `.claude/memory/MEMORY.md` index with a pointer to the new file.
 
 This ensures the learning persists across conversations via Claude's native memory system.
+
+## Example
+
+**User says:** "Stop adding semicolons — this project uses no-semicolon style."
+
+1. **Analyze the mistake:** The agent added semicolons to JavaScript files during recent edits.
+2. **Determine root cause:** No project coding-style rule about semicolons exists in `CLAUDE.md`.
+3. **Diagnose the surface:** `CLAUDE.md` — this is a project convention (coding style).
+4. **Propose minimal fix (plan mode):**
+   > Add to `CLAUDE.md` under Code Style:
+   > ```
+   > - No semicolons — this project omits trailing semicolons in JS/TS files.
+   > ```
+5. **Apply with approval:** User approves. The line is added to `CLAUDE.md`.
+6. **Save to memory:** Write `.claude/memory/no-semicolons.md`:
+   ```markdown
+   ---
+   name: no-semicolons
+   description: This project omits trailing semicolons in JS/TS files.
+   type: feedback
+   ---
+
+   Do not add semicolons to JavaScript or TypeScript files in this project.
+   **Why:** User corrected the agent for adding semicolons — the project convention is no-semicolon style.
+   **How to apply:** When writing or editing JS/TS files, always omit trailing semicolons.
+   ```
 
 ## Rules
 - **Plan mode is mandatory** — never write without user approval via native plan mode.

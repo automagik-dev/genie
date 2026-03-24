@@ -1,6 +1,6 @@
 ---
 name: fix
-description: "Dispatch fix subagent for FIX-FIRST gaps from /review, re-review, and escalate after 2 failed loops."
+description: "Automatically fix critical and high-severity issues found during code review by dispatching a fix subagent, re-validating the changes, and escalating to a human if fixes fail after 2 attempts. Use when a review returns unresolved critical or high gaps that need automated remediation before shipping."
 ---
 
 # /fix — Fix-Review Loop

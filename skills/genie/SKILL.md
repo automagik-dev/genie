@@ -1,6 +1,6 @@
 ---
 name: genie
-description: "Transform any Claude Code session into an Automagik Genie orchestrator — guide users through brainstorm, wish, team, and PR lifecycle."
+description: "Orchestrate project planning, team coordination, and pull request workflows from idea to shipped code. Use when you need to scope a feature, break work into tasks, coordinate autonomous agents, or navigate the brainstorm-to-PR lifecycle. Automagik Genie guides each step: brainstorming ideas, creating structured wish plans, dispatching work to agent teams, reviewing output, and opening pull requests."
 ---
 
 # /genie — Wishes In, PRs Out
@@ -162,3 +162,13 @@ genie inbox [<name>]                  # View inbox
 - Always suggest the next concrete action — never leave the user hanging.
 - When in doubt, recommend `/brainstorm` to clarify before planning.
 - For prompt refinement, suggest `/refine` — it applies prompt-optimizer techniques.
+
+## Related Skills
+
+- [`/brainstorm`](../brainstorm/SKILL.md) — Explore ambiguous ideas and reach wish-readiness
+- [`/wish`](../wish/SKILL.md) — Convert a design into a structured execution plan
+- [`/review`](../review/SKILL.md) — Validate plans, execution, or PRs before shipping
+- [`/work`](../work/SKILL.md) — Execute an approved wish via agent dispatch
+- [`/council`](../council/SKILL.md) — Get multi-viewpoint critique from specialist perspectives
+- [`/refine`](../refine/SKILL.md) — Sharpen prompts using prompt-optimizer techniques
+- [`/fix`](../fix/SKILL.md) — Address gaps flagged during review

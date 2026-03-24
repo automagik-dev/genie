@@ -1,6 +1,6 @@
 ---
 name: dream
-description: "Batch-execute SHIP-ready wishes overnight — pick wishes, orchestrate workers, review PRs, wake up to results."
+description: "Queue multiple wishes for autonomous batch processing overnight — selects ready wishes, builds a dependency-ordered execution plan, dispatches parallel workers, reviews and merges PRs, runs QA, and produces a morning summary report. Use when you have several approved wishes to execute in bulk, want automated PR creation and review across multiple features, or need to run overnight tasks with minimal human intervention."
 ---
 
 # /dream — Overnight Batch Execution
@@ -38,22 +38,9 @@ Pick SHIP-ready wishes, build a dependency-ordered execution plan, spawn paralle
 ## DREAM.md Generation
 
 1. For each selected wish, read `depends_on` from its `WISH.md`.
-2. Compute topological sort across selected wishes. Assign `merge_order` as integer layers `1..N`:
-   - Layer 1: wishes with no selected dependencies.
-   - Increment layer when a wish depends on a lower layer.
-   - Same-layer wishes are parallel.
-3. Generate per-wish entry:
-
-| Field | Value |
-|-------|-------|
-| `slug` | wish identifier |
-| `branch` | `feat/<slug>` |
-| `wish_path` | `.genie/wishes/<slug>/WISH.md` |
-| `depends_on` | upstream slugs from WISH.md |
-| `merge_order` | integer from topological layering |
-
-4. Write to `.genie/DREAM.md` in the shared worktree.
-5. Present for human confirmation before execution.
+2. Compute topological sort across selected wishes. Assign `merge_order` as integer layers `1..N` (see @DREAM-TEMPLATE.md for full field schema and layering rules).
+3. Write to `.genie/DREAM.md` in the shared worktree.
+4. Present for human confirmation before execution.
 
 ## Team Lifecycle
 
@@ -123,27 +110,7 @@ Each worker executes independently:
 
 ## Phase 4: Report
 
-Write to `.genie/DREAM-REPORT.md` in the shared worktree:
-
-```markdown
-# Dream Report — <date>
-
-## Per-Wish Status
-
-| merge_order | slug | PR link | CI | Review | Merged | QA |
-|-------------|------|---------|----|--------|--------|----|
-| 1 | slug-1 | #123 | green | SHIP | yes | verified |
-| 2 | slug-2 | #124 | green | SHIP | yes | 2/3 criteria |
-
-## Blocked Wishes
-- `<slug>`: blocking reason.
-
-## QA Findings
-- `<slug>`: criteria X failed — traced to <root cause>, fix PR #125.
-
-## Follow-ups
-- Action items requiring human intervention.
-```
+Write to `.genie/DREAM-REPORT.md` in the shared worktree using the format defined in @DREAM-REPORT-TEMPLATE.md.
 
 After report is written:
 ```bash

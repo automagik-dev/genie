@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: "Explore ambiguous or early-stage ideas interactively — tracks wish-readiness and crystallizes into a design for /wish."
+description: "Explore ambiguous or early-stage ideas interactively — tracks wish-readiness and crystallizes into a design for /wish. Use when the user says 'brainstorm', 'not sure what I want', 'unclear requirements', 'help me think through', 'explore an idea', 'I have a vague idea', or needs interactive refinement before planning."
 ---
 
 # /brainstorm — Explore Before Planning

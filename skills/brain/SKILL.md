@@ -1,6 +1,6 @@
 ---
 name: brain
-description: "Obsidian-style knowledge vault — store, search, and retrieve agent knowledge across sessions via notesmd-cli."
+description: "Obsidian-style knowledge vault — store, search, and retrieve agent knowledge across sessions via notesmd-cli. Use when the user says 'remember this', 'save for later', 'look up', 'find note', 'what do we know about', 'recall', 'search notes', 'store this', 'brain search', 'check the vault', or needs to persist context, intel, or session history between conversations."
 ---
 
 # /brain — Agent Knowledge Vault
@@ -117,52 +117,11 @@ Then add the protocol snippets below to the agent's config files.
 
 ### CLAUDE.md Template Block
 
-```markdown
-## FIRST THING YOU DO (every session)
-
-1. Read the conversation opener to understand the topic
-2. Derive 2-3 search terms
-3. Run: `notesmd-cli search-content "<term>"` for each
-4. If results found: `notesmd-cli print "<note-name>"`
-5. Only THEN begin forming your response
-6. If brain is insufficient: use web search as fallback
-
-## WHEN TOPIC SHIFTS
-
-Re-run `notesmd-cli search-content "<new-topic>"` before answering.
-
-## AT SESSION END (mandatory)
-
-Run `notesmd-cli daily`. Log: discussion, decisions, intel, actions.
-
-## WRITE IMMEDIATELY WHEN
-
-- New intel discovered -> `notesmd-cli create "Intelligence/<name>"`
-- Playbook updated -> edit relevant `Playbooks/` note
-- Domain insight validated -> update relevant `Domains/` note
-```
+Copy the contents of [`claude-md-template.md`](./claude-md-template.md) into the agent's `CLAUDE.md`.
 
 ### AGENTS.md Protocol Snippet
 
-```markdown
-## Brain Protocol
-
-### Session Start
-- Derive 2-3 keywords from topic
-- `notesmd-cli search-content "<keyword>"` for each
-- `notesmd-cli print "<note-name>"` for relevant results
-- External research only when brain is insufficient
-
-### Mid-Conversation
-- Re-scan on topic shift: `notesmd-cli search-content "<new-topic>"`
-
-### Session End (mandatory)
-- `notesmd-cli daily` — log: discussion, decisions, intel, actions
-
-### Write Immediately When
-- New intel -> `notesmd-cli create "Intelligence/<name>"`
-- Playbook updated -> edit `Playbooks/` note now
-```
+Copy the contents of [`agents-md-template.md`](./agents-md-template.md) into the agent's `AGENTS.md`.
 
 ## Auto-Sync (optional)
 

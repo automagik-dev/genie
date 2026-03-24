@@ -1,6 +1,6 @@
 ---
 name: council
-description: "Brainstorm and critique with 10 specialist viewpoints. Use for architecture, plan reviews, or tradeoffs."
+description: "Convene 10 specialist perspectives (architecture, security, performance, DX, ops, observability, deployment, complexity, assumptions, debugging) to critique a decision from diverse viewpoints. Use when you need a design review, want to evaluate tradeoffs, weigh pros and cons, gather feedback on an approach, or get different perspectives before committing to a plan."
 ---
 
 # /council — Multi-Perspective Review
@@ -16,26 +16,25 @@ Convene a panel of 10 specialist perspectives to brainstorm, critique, and vote 
 
 ### Auto-Invocation Triggers
 
-The council can be triggered automatically by other skills:
-- **During `/review`**: when an architecture decision has significant tradeoffs, `/review` may invoke `/council` to get specialist input before rendering a verdict.
-- **During `/brainstorm`**: when the Decisions dimension stays unfilled (░) after 2+ exchanges, `/brainstorm` suggests running `/council` to break the deadlock.
+- **During `/review`**: when an architecture decision has significant tradeoffs, `/review` may invoke `/council` for specialist input before rendering a verdict.
+- **During `/brainstorm`**: when the Decisions dimension stays unfilled (░) after 2+ exchanges, `/brainstorm` suggests `/council` to break the deadlock.
 
 ## Mode Detection
 
 Before running the council flow, detect which mode to use:
 
-1. Run `genie team ls $GENIE_TEAM` (or the current team) and check if council members (names starting with `council-`) are present in the team.
-2. **If council members are present** → use **Full Spawn Mode**
-3. **If no council members** → use **Lightweight Mode** (default)
+1. Run `genie team ls $GENIE_TEAM` and check if council members (names starting with `council-`) are present.
+2. **Council members present** → **Full Spawn Mode**
+3. **No council members** → **Lightweight Mode** (default)
 
 ## Lightweight Mode (Default)
 
-When no council members are hired in the team, simulate all perspectives in a single session. One agent plays all roles — faster, lower cost, good for most decisions.
+One agent simulates all perspectives in a single session — faster, lower cost, good for most decisions.
 
 ### Flow
 
 1. Identify the topic from user context (architecture, performance, security, API design, operations, or general)
-2. Route to the relevant council members (see Smart Routing below). Default: core trio
+2. Route to relevant council members (see [COUNCIL_MEMBERS.md](COUNCIL_MEMBERS.md) for routing table). Default: core trio
 3. Generate each member's perspective — distinct, opinionated, non-overlapping
 4. Collect votes: APPROVE, REJECT, or MODIFY from each member
 5. Synthesize a collective recommendation with the vote tally
@@ -43,7 +42,7 @@ When no council members are hired in the team, simulate all perspectives in a si
 
 ## Full Spawn Mode
 
-When council members are hired in the team, real agents deliberate via `genie chat` and reach consensus. Higher-quality than lightweight mode since each member runs in its own context with its own reasoning.
+Real agents deliberate via `genie chat` and reach consensus. Higher-quality since each member runs in its own context.
 
 ### Setup
 
@@ -57,7 +56,7 @@ This adds specialist agents (e.g., `council-questioner`, `council-architect`) to
 
 ### Flow
 
-1. Identify the topic and select relevant members (Smart Routing)
+1. Identify the topic and select relevant members ([routing table](COUNCIL_MEMBERS.md#smart-routing))
 2. Post the topic to team chat:
    ```bash
    genie chat post --team <team> "COUNCIL TOPIC: <topic>\n\nContext: <relevant context>\n\nPlease review and vote: APPROVE, REJECT, or MODIFY with rationale."
@@ -66,50 +65,26 @@ This adds specialist agents (e.g., `council-questioner`, `council-architect`) to
    ```bash
    genie send 'New council topic posted to team chat. Read it, apply your lens, and post your perspective + vote.' --to council-<member>
    ```
-4. Wait for responses. Poll team chat for council member messages:
+4. Poll team chat for responses:
    ```bash
    genie chat read --team <team> --since <topic-post-timestamp>
    ```
-5. **Timeout:** if a council member hasn't responded within 2 minutes, proceed with "no response" in the tally. Do not block indefinitely.
-6. Once all consulted members have responded (or timeout reached), the leader synthesizes:
+5. **Timeout:** 2 minutes per member. Proceed with "no response" if exceeded.
+6. Once all consulted members have responded (or timeout reached), synthesize:
    - Collect all perspectives from team chat
    - Tally votes
    - Produce the synthesized recommendation
-7. Present the advisory to the user using the same output format
+7. Present the advisory to the user using the output format below
 
 ### Notes on Full Spawn Mode
 
-- Council members respond independently — each applies their own lens prompt
+- Council members respond independently with their own lens prompt
 - The leader (session running `/council`) acts as moderator and synthesizer
-- If a council member hasn't responded after timeout, note them as "no response" in the tally
-- Full spawn mode produces higher-quality reviews since each member runs in its own context
+- Unresponsive members are noted as "no response" in the tally
 
-## Council Members
+## Council Members and Routing
 
-| Member | Focus | Lens |
-|--------|-------|------|
-| **questioner** | Challenge assumptions | "Why? Is there a simpler way?" |
-| **benchmarker** | Performance evidence | "Show me the benchmarks." |
-| **simplifier** | Complexity reduction | "Delete code. Ship features." |
-| **sentinel** | Security oversight | "Where are the secrets? What's the blast radius?" |
-| **ergonomist** | Developer experience | "If you need to read the docs, the API failed." |
-| **architect** | Systems thinking | "Talk is cheap. Show me the code." |
-| **operator** | Operations reality | "No one wants to run your code." |
-| **deployer** | Zero-config deployment | "Zero-config with infinite scale." |
-| **measurer** | Observability | "Measure, don't guess." |
-| **tracer** | Production debugging | "You will debug this in production." |
-
-## Smart Routing
-
-| Topic | Members |
-|-------|---------|
-| Architecture | questioner, benchmarker, simplifier, architect |
-| Performance | benchmarker, questioner, architect, measurer |
-| Security | questioner, simplifier, sentinel |
-| API Design | questioner, simplifier, ergonomist, deployer |
-| Operations | operator, tracer, measurer |
-| Observability | tracer, measurer, benchmarker |
-| Full Review | all 10 |
+See [COUNCIL_MEMBERS.md](COUNCIL_MEMBERS.md) for the full member table (focus areas, lenses) and topic-based smart routing.
 
 **Default:** Core trio — questioner, benchmarker, simplifier.
 
