@@ -5,7 +5,7 @@
  *   1. Raw pane ID (starts with %) -> passthrough
  *   2. Worker[:index] (left side is registered worker) -> registry lookup + subpane index
  *   3. Session:window (contains :, left side is tmux session) -> tmux lookup
- *   4. Bare name -> exact ID → role (team) → customName → partial ID → substring → role (global)
+ *   4. Bare name -> exact ID → role (team) → customName → partial ID → substring → role (global) → partial role → partial customName
  *
  * Returns { paneId, session, workerId?, paneIndex?, resolvedVia }
  */
@@ -331,6 +331,51 @@ function resolveByRoleGlobal(target: string, workers: Record<string, Agent>): Re
   return pickUnique(target, candidates, `${candidates.length} workers with role "${target}"`);
 }
 
+/** Resolve by partial role prefix (e.g., "eng" matches "engineer"). Team-scoped first, then global. */
+function resolveByPartialRole(
+  target: string,
+  workers: Record<string, Agent>,
+  currentTeam: string | null,
+): ResolvedTarget | null {
+  const matches = ([, w]: [string, Agent]) => w.role !== undefined && w.role !== target && w.role.startsWith(target);
+
+  if (currentTeam) {
+    const teamCandidates = Object.entries(workers).filter((e) => matches(e) && e[1].team === currentTeam);
+    const teamHit = pickUnique(
+      target,
+      teamCandidates,
+      `${teamCandidates.length} workers with role starting with "${target}" in team "${currentTeam}"`,
+    );
+    if (teamHit) return teamHit;
+  }
+
+  const allCandidates = Object.entries(workers).filter(matches);
+  return pickUnique(target, allCandidates, `${allCandidates.length} workers with role starting with "${target}"`);
+}
+
+/** Resolve by partial customName prefix (e.g., "eng" matches "engineer-4"). Team-scoped first, then global. */
+function resolveByPartialCustomName(
+  target: string,
+  workers: Record<string, Agent>,
+  currentTeam: string | null,
+): ResolvedTarget | null {
+  const matches = ([, w]: [string, Agent]) =>
+    w.customName !== undefined && w.customName !== target && w.customName.startsWith(target);
+
+  if (currentTeam) {
+    const teamCandidates = Object.entries(workers).filter((e) => matches(e) && e[1].team === currentTeam);
+    const teamHit = pickUnique(
+      target,
+      teamCandidates,
+      `${teamCandidates.length} workers with customName starting with "${target}" in team "${currentTeam}"`,
+    );
+    if (teamHit) return teamHit;
+  }
+
+  const allCandidates = Object.entries(workers).filter(matches);
+  return pickUnique(target, allCandidates, `${allCandidates.length} workers with customName starting with "${target}"`);
+}
+
 // ============================================================================
 // Extracted sub-resolvers (keeps resolveTarget under complexity limit)
 // ============================================================================
@@ -381,7 +426,7 @@ async function resolveColonTarget(
   return { paneId: sessionWindowResult.paneId, session: sessionWindowResult.session, resolvedVia: 'session:window' };
 }
 
-/** Resolve a bare name: exact ID → role (team) → customName → partial ID → substring → role (global). */
+/** Resolve a bare name: exact ID → role (team) → customName → partial ID → substring → role (global) → partial role → partial customName. */
 async function resolveBareName(
   target: string,
   workers: Record<string, Agent>,
@@ -414,7 +459,9 @@ async function resolveBareName(
     resolveByCustomName(target, workers, currentTeam) ??
     resolveByPartialId(target, workers, currentTeam) ??
     resolveBySubstring(target, workers, currentTeam) ??
-    resolveByRoleGlobal(target, workers);
+    resolveByRoleGlobal(target, workers) ??
+    resolveByPartialRole(target, workers, currentTeam) ??
+    resolveByPartialCustomName(target, workers, currentTeam);
 
   if (fuzzyMatch) {
     const rid = fuzzyMatch.workerId ?? target;
@@ -459,7 +506,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
     return resolveColonTarget(target, workers, { checkLiveness, isPaneLive, cleanupDeadPane, tmuxLookup });
   }
 
-  // Level 3: Bare name — exact ID → role (team) → customName → partial ID → substring → role (global)
+  // Level 3: Bare name — exact ID → role (team) → customName → partial ID → substring → role (global) → partial role → partial customName
   return resolveBareName(target, workers, {
     checkLiveness,
     isPaneLive,
