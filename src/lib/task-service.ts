@@ -1489,11 +1489,21 @@ export async function deletePreference(actor: Actor, channel: string): Promise<b
 /** List tasks assigned to a specific actor. */
 export async function listTasksForActor(actor: Actor, filters: TaskFilters = {}): Promise<TaskRow[]> {
   const sql = await getConnection();
-  const repo = filters.repoPath ?? getRepoPath();
 
-  const conditions: string[] = ['t.repo_path = $1'];
-  const values: unknown[] = [repo];
-  let paramIdx = 2;
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  let paramIdx = 1;
+
+  // Scope conditions (project/repo/all) — mirrors buildScopeConditions with t. prefix
+  if (filters.allProjects) {
+    // No repo scoping — show all projects
+  } else if (filters.projectName) {
+    conditions.push(`t.project_id = (SELECT id FROM projects WHERE name = $${paramIdx++})`);
+    values.push(filters.projectName);
+  } else {
+    conditions.push(`t.repo_path = $${paramIdx++}`);
+    values.push(filters.repoPath ?? getRepoPath());
+  }
 
   conditions.push(`ta.actor_type = $${paramIdx++}`);
   values.push(actor.actorType);
