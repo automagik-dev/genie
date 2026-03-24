@@ -22,6 +22,7 @@ import {
   buildLaunchCommand,
   validateSpawnParams,
 } from '../lib/provider-adapters.js';
+import { waitForAgentReady } from '../lib/spawn-command.js';
 import * as teamManager from '../lib/team-manager.js';
 import * as tmux from '../lib/tmux.js';
 import { isPaneAlive } from '../lib/tmux.js';
@@ -700,6 +701,16 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
     console.log(`  Window:   ${teamWindow.windowName} (${teamWindow.windowId})`);
   }
   printSpawnInfo(ctx, paneId, workerEntry);
+
+  // Wait for agent readiness after spawn
+  if (paneId !== 'inline') {
+    const result = await waitForAgentReady(paneId);
+    if (result.ready) {
+      console.log(`  ✓ Agent ready (${(result.elapsedMs / 1000).toFixed(1)}s)`);
+    } else {
+      console.log(`  ⚠ Agent readiness timeout (${Math.round(result.elapsedMs / 1000)}s) — proceeding anyway`);
+    }
+  }
 }
 
 async function launchInlineSpawn(ctx: SpawnCtx): Promise<void> {

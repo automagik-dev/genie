@@ -2,7 +2,11 @@
  * Spawn Command Builder
  *
  * Builds command strings for spawning Claude workers based on WorkerProfile configuration.
+ * Also provides readiness detection for freshly-spawned agents via tmux pane inspection.
  */
+
+import { detectState } from './orchestrator/index.js';
+import { capturePaneContent } from './tmux.js';
 
 // ============================================================================
 // Types
@@ -86,4 +90,60 @@ export function buildSpawnCommand(profile: WorkerProfile | undefined, options: S
   }
 
   return parts.join(' ');
+}
+
+// ============================================================================
+// Readiness Detection
+// ============================================================================
+
+/** Default timeout for readiness detection (30s). */
+export const DEFAULT_SPAWN_TIMEOUT_MS = 30_000;
+
+/** Polling interval for readiness checks (2s). */
+export const READINESS_POLL_INTERVAL_MS = 2_000;
+
+/** Result of a readiness check. */
+export interface ReadinessResult {
+  ready: boolean;
+  elapsedMs: number;
+}
+
+/**
+ * Wait for a spawned agent to become ready by polling tmux pane output.
+ *
+ * Readiness is detected via the orchestrator's `detectState()` which looks
+ * for idle indicators (prompt characters, status bar idle state, etc.) and
+ * tool_use patterns in the pane output.
+ *
+ * @param paneId - tmux pane ID to monitor (e.g. "%5")
+ * @param opts.timeoutMs - Max wait time (default: GENIE_SPAWN_TIMEOUT_MS env or 30s)
+ * @param opts.pollIntervalMs - Polling interval (default: 2s)
+ * @returns ReadinessResult with ready flag and elapsed time
+ */
+export async function waitForAgentReady(
+  paneId: string,
+  opts?: { timeoutMs?: number; pollIntervalMs?: number },
+): Promise<ReadinessResult> {
+  const timeoutMs =
+    opts?.timeoutMs ??
+    (process.env.GENIE_SPAWN_TIMEOUT_MS ? Number(process.env.GENIE_SPAWN_TIMEOUT_MS) : DEFAULT_SPAWN_TIMEOUT_MS);
+  const pollIntervalMs = opts?.pollIntervalMs ?? READINESS_POLL_INTERVAL_MS;
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const content = await capturePaneContent(paneId, 50);
+      if (content) {
+        const state = detectState(content);
+        if (state.type === 'idle' || state.type === 'tool_use') {
+          return { ready: true, elapsedMs: Date.now() - start };
+        }
+      }
+    } catch {
+      /* pane not ready yet — keep polling */
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+
+  return { ready: false, elapsedMs: Date.now() - start };
 }
