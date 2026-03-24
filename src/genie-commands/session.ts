@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { confirm } from '@inquirer/prompts';
 import * as registry from '../lib/agent-registry.js';
 import {
   deleteNativeTeam,
@@ -24,6 +25,7 @@ import {
 } from '../lib/claude-native-teams.js';
 import { buildTeamLeadCommand, sessionExists, shellQuote } from '../lib/team-lead-command.js';
 import * as tmux from '../lib/tmux.js';
+import { scaffoldAgentFiles } from '../templates/index.js';
 
 /**
  * Generate a short 4-char hash of a path for disambiguation.
@@ -321,9 +323,21 @@ export async function sessionCommand(options: SessionOptions = {}): Promise<void
     if (options.reset) await handleReset(sessionName, windowName);
 
     const session = await tmux.findSessionByName(sessionName);
-    const systemPromptFile = getAgentsFilePath();
+    let systemPromptFile = getAgentsFilePath();
     if (!systemPromptFile) {
-      console.warn('Info: No AGENTS.md found in current directory. Team-lead will use orchestration rules only.');
+      const shouldScaffold = await confirm({
+        message: 'No agent found in this directory. Scaffold one?',
+        default: true,
+      });
+
+      if (shouldScaffold) {
+        scaffoldAgentFiles(workspaceDir);
+        systemPromptFile = join(workspaceDir, 'AGENTS.md');
+        console.log('Created SOUL.md, HEARTBEAT.md, and AGENTS.md');
+      } else {
+        console.error('AGENTS.md required. Run `genie` again to scaffold.');
+        process.exit(1);
+      }
     }
 
     if (!session) {
