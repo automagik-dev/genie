@@ -1020,4 +1020,82 @@ describe('Projects', () => {
       expect(t.projectId).toBe(proj!.id);
     }
   });
+
+  it('should round-trip: create virtual project → create task with explicit projectId → list by projectName', async () => {
+    const projName = `test-virtual-roundtrip-${Date.now()}`;
+    const taskRepo = `${REPO}-roundtrip`;
+
+    // 1. Create virtual project (no repoPath) — mimics handleTaskCreate --project flow
+    const project = await createProject({ name: projName });
+    expect(project.id).toMatch(/^proj-/);
+    expect(project.repoPath).toBeNull();
+
+    // 2. Create task with explicit projectId — mimics createTask(input, repoPath, projectId)
+    const task = await createTask({ title: 'Round-trip test task' }, taskRepo, project.id);
+    expect(task.projectId).toBe(project.id);
+    expect(task.repoPath).toBe(taskRepo);
+
+    // 3. List by projectName — mimics genie task list --project <name>
+    const tasks = await listTasks({ projectName: projName });
+    expect(tasks.length).toBeGreaterThanOrEqual(1);
+    const found = tasks.find((t) => t.id === task.id);
+    expect(found).not.toBeUndefined();
+    expect(found!.projectId).toBe(project.id);
+
+    // 4. Verify getProjectByName returns same project
+    const lookedUp = await getProjectByName(projName);
+    expect(lookedUp).not.toBeNull();
+    expect(lookedUp!.id).toBe(project.id);
+
+    // Cleanup
+    await sql`DELETE FROM tasks WHERE repo_path = ${taskRepo}`;
+    await sql`DELETE FROM projects WHERE name = ${projName}`;
+  });
+
+  it('should round-trip with listTasksForActor and --project filter', async () => {
+    const projName = `test-virtual-actor-${Date.now()}`;
+    const taskRepo = `${REPO}-actor-proj`;
+
+    // Create virtual project and task
+    const project = await createProject({ name: projName });
+    const task = await createTask({ title: 'Actor project task' }, taskRepo, project.id);
+    await assignTask(task.id, actor, 'assignee', {}, taskRepo);
+
+    // List via listTasksForActor with projectName filter
+    const tasks = await listTasksForActor(actor, { projectName: projName });
+    expect(tasks.length).toBeGreaterThanOrEqual(1);
+    const found = tasks.find((t) => t.id === task.id);
+    expect(found).not.toBeUndefined();
+    expect(found!.projectId).toBe(project.id);
+
+    // Cleanup
+    await sql`DELETE FROM task_actors WHERE task_id = ${task.id}`;
+    await sql`DELETE FROM tasks WHERE repo_path = ${taskRepo}`;
+    await sql`DELETE FROM projects WHERE name = ${projName}`;
+  });
+
+  it('should find auto-created projects by name in subsequent commands', async () => {
+    const autoRepo = `${REPO}-auto-find`;
+
+    // ensureProject auto-creates with basename
+    const projId = await ensureProject(autoRepo);
+
+    // The auto-created project should be findable by its name (basename of path)
+    const parts = autoRepo.split('/');
+    const expectedName = parts[parts.length - 1];
+    const found = await getProjectByName(expectedName);
+    expect(found).not.toBeNull();
+    expect(found!.id).toBe(projId);
+
+    // Create task and list by project name
+    const task = await createTask({ title: 'Auto-find task' }, autoRepo);
+    expect(task.projectId).toBe(projId);
+
+    const tasks = await listTasks({ projectName: expectedName });
+    expect(tasks.some((t) => t.id === task.id)).toBe(true);
+
+    // Cleanup
+    await sql`DELETE FROM tasks WHERE repo_path = ${autoRepo}`;
+    await sql`DELETE FROM projects WHERE repo_path = ${autoRepo}`;
+  });
 });
