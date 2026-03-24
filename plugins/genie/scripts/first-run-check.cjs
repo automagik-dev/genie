@@ -13,6 +13,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+// Workers don't need onboarding prompts — skip to reduce spawn latency (#712)
+if (process.env.GENIE_WORKER === '1') {
+  process.exit(0);
+}
+
 // Use CLAUDE_CWD if available (set by Claude Code), otherwise process.cwd()
 const cwd = process.env.CLAUDE_CWD || process.cwd();
 const agentsMd = path.join(cwd, "AGENTS.md");
