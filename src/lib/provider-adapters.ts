@@ -256,6 +256,10 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   const parts: string[] = ['claude', '--dangerously-skip-permissions'];
   const env: Record<string, string> = {};
 
+  // Mark as worker so SessionStart hooks (smart-install, first-run-check,
+  // session-context) fast-exit — workers inherit parent's deps and config.
+  env.GENIE_WORKER = '1';
+
   if (params.role) env.GENIE_AGENT_NAME = params.role;
   if (params.team) env.GENIE_TEAM = params.team;
 

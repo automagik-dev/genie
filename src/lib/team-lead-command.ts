@@ -45,6 +45,7 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
   const qTeam = shellQuote(sanitized);
   const folderName = basename(process.cwd());
   const parts = [
+    'GENIE_WORKER=1',
     'CLAUDECODE=1',
     'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
     `GENIE_TEAM=${qTeam}`,
