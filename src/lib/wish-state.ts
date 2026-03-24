@@ -476,6 +476,16 @@ export async function findAnyGroupByAssignee(
   return null;
 }
 
+/**
+ * Get existing state or create it from group definitions.
+ * Avoids the "no state file" gap that causes polling loops.
+ */
+export async function getOrCreateState(slug: string, groups: GroupDefinition[], cwd?: string): Promise<WishState> {
+  const existing = await getState(slug, cwd);
+  if (existing) return existing;
+  return createState(slug, groups, cwd);
+}
+
 /** Read current state. Returns null if no state exists for this wish. */
 export async function getState(slug: string, cwd?: string): Promise<WishState | null> {
   const sql = await getConnection();
