@@ -8,8 +8,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { AGENTS_TEMPLATE, HEARTBEAT_TEMPLATE, SOUL_TEMPLATE, scaffoldAgentFiles } from '../../templates/index.js';
 import { buildClaudeCommand, getAgentsFilePath, sanitizeWindowName } from '../session.js';
 
 // ============================================================================
@@ -192,5 +193,73 @@ describe('sanitizeWindowName', () => {
     // missed the existing "foo-bar" window, and returned a name that
     // sanitized back to "foo-bar" — attaching to the wrong project.
     expect(sanitizeWindowName('foo.bar')).toBe(sanitizeWindowName('foo-bar'));
+  });
+});
+
+// ============================================================================
+// scaffoldAgentFiles tests — first-run scaffold creates SOUL/HEARTBEAT/AGENTS
+// ============================================================================
+
+describe('scaffoldAgentFiles', () => {
+  const TEST_DIR = `${realpathSync('/tmp')}/session-test-scaffold`;
+
+  beforeEach(() => {
+    rmSync(TEST_DIR, { recursive: true, force: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
+  test('creates SOUL.md, HEARTBEAT.md, and AGENTS.md', () => {
+    scaffoldAgentFiles(TEST_DIR);
+    expect(existsSync(join(TEST_DIR, 'SOUL.md'))).toBe(true);
+    expect(existsSync(join(TEST_DIR, 'HEARTBEAT.md'))).toBe(true);
+    expect(existsSync(join(TEST_DIR, 'AGENTS.md'))).toBe(true);
+  });
+
+  test('created files contain valid markdown with placeholder content', () => {
+    scaffoldAgentFiles(TEST_DIR);
+
+    const soul = readFileSync(join(TEST_DIR, 'SOUL.md'), 'utf-8');
+    expect(soul).toContain('# Soul');
+    expect(soul.length).toBeGreaterThan(0);
+
+    const heartbeat = readFileSync(join(TEST_DIR, 'HEARTBEAT.md'), 'utf-8');
+    expect(heartbeat).toContain('# Heartbeat');
+    expect(heartbeat).toContain('## Checklist');
+
+    const agents = readFileSync(join(TEST_DIR, 'AGENTS.md'), 'utf-8');
+    expect(agents).toContain('name: my-agent');
+    expect(agents).toContain('@HEARTBEAT.md');
+    expect(agents).toContain('<mission>');
+  });
+
+  test('file contents match exported template constants', () => {
+    scaffoldAgentFiles(TEST_DIR);
+    expect(readFileSync(join(TEST_DIR, 'SOUL.md'), 'utf-8')).toBe(SOUL_TEMPLATE);
+    expect(readFileSync(join(TEST_DIR, 'HEARTBEAT.md'), 'utf-8')).toBe(HEARTBEAT_TEMPLATE);
+    expect(readFileSync(join(TEST_DIR, 'AGENTS.md'), 'utf-8')).toBe(AGENTS_TEMPLATE);
+  });
+
+  test('AGENTS.md has valid YAML frontmatter', () => {
+    scaffoldAgentFiles(TEST_DIR);
+    const agents = readFileSync(join(TEST_DIR, 'AGENTS.md'), 'utf-8');
+    // Verify frontmatter delimiters
+    expect(agents.startsWith('---\n')).toBe(true);
+    expect(agents.indexOf('---', 4)).toBeGreaterThan(4);
+  });
+
+  test('getAgentsFilePath finds scaffolded AGENTS.md', () => {
+    const originalCwd = process.cwd();
+    try {
+      scaffoldAgentFiles(TEST_DIR);
+      process.chdir(TEST_DIR);
+      const result = getAgentsFilePath();
+      expect(result).toBe(join(TEST_DIR, 'AGENTS.md'));
+    } finally {
+      process.chdir(originalCwd);
+    }
   });
 });
