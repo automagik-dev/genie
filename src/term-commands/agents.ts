@@ -15,6 +15,7 @@ import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
+import { injectResumeContext } from '../lib/protocol-router-spawn.js';
 import {
   type ClaudeTeamColor,
   type ProviderName,
@@ -1228,18 +1229,13 @@ export async function buildResumeContext(agent: registry.Agent): Promise<string 
   return undefined;
 }
 
-/**
- * Resume a single agent by rebuilding spawn params with --resume <sessionId>.
- * Resets resumeAttempts to 0 (manual resume = fresh retry budget).
- */
-async function resumeAgent(agent: registry.Agent): Promise<void> {
-  const template = (await registry.listTemplates()).find((t) => t.id === (agent.role ?? agent.id));
-
-  await registry.update(agent.id, { resumeAttempts: 0 });
-
+/** Build full spawn params for resume, including initial prompt and native team config. */
+async function buildFullResumeParams(
+  agent: registry.Agent,
+  template: registry.WorkerTemplate | undefined,
+): Promise<SpawnParams> {
   const params = buildResumeParams(agent, template);
 
-  // Inject resume context so the agent knows where it left off
   const resumeContext = await buildResumeContext(agent);
   if (resumeContext) {
     params.initialPrompt = resumeContext;
@@ -1253,6 +1249,20 @@ async function resumeAgent(agent: registry.Agent): Promise<void> {
     });
     if (nativeResult.nativeTeam) params.nativeTeam = nativeResult.nativeTeam;
   }
+
+  return params;
+}
+
+/**
+ * Resume a single agent by rebuilding spawn params with --resume <sessionId>.
+ * Resets resumeAttempts to 0 (manual resume = fresh retry budget).
+ */
+async function resumeAgent(agent: registry.Agent): Promise<void> {
+  const template = (await registry.listTemplates()).find((t) => t.id === (agent.role ?? agent.id));
+
+  await registry.update(agent.id, { resumeAttempts: 0 });
+
+  const params = await buildFullResumeParams(agent, template);
 
   const validated = validateSpawnParams(params);
   const launch = buildLaunchCommand(validated);
@@ -1307,6 +1317,9 @@ async function resumeAgent(agent: registry.Agent): Promise<void> {
   });
 
   await notifySpawnJoin(ctx, paneId);
+
+  // Inject resume context so the agent knows what wish/group it was working on
+  await injectResumeContext(ctx.cwd ?? agent.repoPath ?? process.cwd(), agent.id, agent.role ?? agent.id, params.team);
 
   if (ctx.spawnColor && paneId !== 'inline') {
     await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);

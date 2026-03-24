@@ -225,6 +225,19 @@ async function getRecentGitLog(repoPath: string, count = 3): Promise<string> {
 }
 
 /**
+ * Get uncommitted changes (staged + unstaged) as a short summary.
+ * Best-effort — returns empty string on failure.
+ */
+async function getGitStatus(repoPath: string): Promise<string> {
+  try {
+    const { stdout } = await execAsync(`git -C '${repoPath}' status --short 2>/dev/null`);
+    return stdout.trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Build and deliver resume context to a respawned agent.
  *
  * Queries PG for any in_progress group assigned to this worker's
@@ -234,7 +247,7 @@ async function getRecentGitLog(repoPath: string, count = 3): Promise<string> {
  * Delivered via mailbox as the FIRST message before any task prompt,
  * so the agent has immediate context even without conversation history.
  */
-async function injectResumeContext(
+export async function injectResumeContext(
   repoPath: string,
   workerId: string,
   agentName: string,
@@ -260,6 +273,7 @@ async function injectResumeContext(
     }
 
     const gitLog = await getRecentGitLog(repoPath);
+    const gitStatus = await getGitStatus(repoPath);
 
     const resumePrompt = [
       `RESUME CONTEXT: You were working on wish "${slug}", group "${groupName}".`,
@@ -269,6 +283,8 @@ async function injectResumeContext(
       groupSection ? `Group section:\n${groupSection}` : '',
       '',
       gitLog ? `Last git log:\n${gitLog}` : '',
+      '',
+      gitStatus ? `Uncommitted changes:\n${gitStatus}` : '',
       '',
       'Pick up where you left off. Read the wish file for full context.',
     ]
