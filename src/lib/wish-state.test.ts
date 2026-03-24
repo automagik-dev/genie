@@ -6,6 +6,10 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { execSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getConnection, shutdown } from './db.js';
 import {
   type GroupDefinition,
@@ -17,6 +21,7 @@ import {
   getOrCreateState,
   getState,
   resetGroup,
+  resolveRepoPath,
   startGroup,
 } from './wish-state.js';
 
@@ -558,5 +563,79 @@ describe('findAnyGroupByAssignee', () => {
 
     const result = await findAnyGroupByAssignee('nobody', cwd);
     expect(result).toBeNull();
+  });
+});
+
+// ============================================================================
+// resolveRepoPath — worktree normalization
+// ============================================================================
+
+describe('resolveRepoPath', () => {
+  let mainRepo: string;
+  let worktreePath: string;
+  let originalCwd: string;
+
+  beforeAll(() => {
+    originalCwd = process.cwd();
+
+    // Create a real git repo
+    mainRepo = mkdtempSync(join(tmpdir(), 'genie-resolve-test-'));
+    execSync('git init', { cwd: mainRepo, stdio: 'pipe' });
+    execSync('git config user.email "test@test.com"', { cwd: mainRepo, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: mainRepo, stdio: 'pipe' });
+    execSync('git commit --allow-empty -m "init"', { cwd: mainRepo, stdio: 'pipe' });
+
+    // Create a worktree
+    worktreePath = `${mainRepo}-worktree`;
+    execSync(`git worktree add ${worktreePath} -b test-branch`, { cwd: mainRepo, stdio: 'pipe' });
+  });
+
+  afterAll(() => {
+    process.chdir(originalCwd);
+    try {
+      execSync(`git worktree remove ${worktreePath} --force`, { cwd: mainRepo, stdio: 'pipe' });
+    } catch {
+      /* already cleaned up */
+    }
+    rmSync(mainRepo, { recursive: true, force: true });
+    rmSync(worktreePath, { recursive: true, force: true });
+  });
+
+  test('returns cwd when cwd is explicitly provided', () => {
+    const result = resolveRepoPath('/some/explicit/path');
+    expect(result).toBe('/some/explicit/path');
+  });
+
+  test('returns main repo path from main repo', () => {
+    process.chdir(mainRepo);
+    const result = resolveRepoPath();
+    expect(result).toBe(mainRepo);
+  });
+
+  test('returns main repo path from worktree (not worktree path)', () => {
+    process.chdir(worktreePath);
+    const result = resolveRepoPath();
+    // Key assertion: from worktree, resolveRepoPath returns the main repo
+    expect(result).toBe(mainRepo);
+  });
+
+  test('main repo and worktree resolve to the same path', () => {
+    process.chdir(mainRepo);
+    const fromMain = resolveRepoPath();
+
+    process.chdir(worktreePath);
+    const fromWorktree = resolveRepoPath();
+
+    expect(fromMain).toBe(fromWorktree);
+  });
+
+  test('falls back to cwd when not in a git repo', () => {
+    const nonGitDir = mkdtempSync(join(tmpdir(), 'genie-non-git-'));
+    process.chdir(nonGitDir);
+
+    const result = resolveRepoPath();
+    expect(result).toBe(nonGitDir);
+
+    rmSync(nonGitDir, { recursive: true, force: true });
   });
 });
