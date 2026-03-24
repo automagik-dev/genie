@@ -228,6 +228,48 @@ Priority mapping from severity:
 
 **Graceful degradation:** If PG is unavailable, skip `genie task` commands. The GitHub issue is the primary artifact — PG task tracking is an enhancement. The report must always be produced regardless of PG availability.
 
+## Example
+
+User reports: "genie work dispatches engineers but they sit idle."
+
+The report agent:
+
+```bash
+# 1. Collect symptoms (one question at a time)
+# Agent asks: "What command did you run?" → "genie team create rlmx --wish tauri-docs-agent"
+# Agent asks: "What did you see?" → "Engineers show welcome screen but empty prompt"
+
+# 2. Run /trace
+genie spawn tracer
+genie send 'Trace: genie work dispatches engineers but they start idle. Check dispatch.ts and protocol-router.ts.' --to tracer
+# Wait for diagnosis...
+
+# 3. Capture evidence
+# Screenshot of idle engineer pane showing empty ❯ prompt
+# Output of: genie status <slug> showing "in_progress" but no actual progress
+
+# 4. Create GitHub issue with all findings
+gh issue create --title "bug: genie work dispatch — engineers spawn idle without initial task prompt" --body "$(cat <<'EOF'
+## Summary
+Engineers dispatched by genie work start idle because initialPrompt is missing from handleWorkerSpawn.
+
+## Root Cause (from /trace)
+dispatch.ts:532 — handleWorkerSpawn called without initialPrompt.
+protocolRouter.sendMessage fails silently under concurrent dispatch (4/6 engineers got no message).
+
+## Evidence
+- [Screenshot: idle engineer pane]
+- genie status shows in_progress but engineers at empty prompt
+- Native inbox files: engineer-1 through engineer-4 have no dispatch message
+
+## Steps to Reproduce
+1. genie team create test --wish <any-wish-with-2+-groups>
+2. Team-lead runs genie work <slug>
+3. Check engineer panes — they show empty ❯ prompt
+EOF
+)"
+```
+
 ## Rules
 - Always run `/trace` first — it is the backbone of every report.
 - One question at a time when collecting symptoms — never batch questions.

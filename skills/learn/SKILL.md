@@ -68,6 +68,36 @@ When a learning is applied, also save it as a feedback memory:
 
 This ensures the learning persists across conversations via Claude's native memory system.
 
+## Example
+
+User corrects the agent: "Stop using `pip install` — this system only has `uv`."
+
+The agent runs `/learn`:
+
+1. **Analyze:** Agent used `pip install python-dotenv` which failed because pip isn't installed.
+2. **Root cause:** No rule in `~/.claude/rules/` about Python tooling.
+3. **Surface:** Global rules (`~/.claude/rules/python-tooling.md`) — applies to all projects.
+4. **Propose fix (plan mode):**
+   ```
+   Create ~/.claude/rules/python-tooling.md:
+   - NEVER use pip or pip3 — not installed
+   - Use uv tool install for persistent CLI tools
+   - Use uv pip install inside venvs
+   ```
+5. **User approves.** File written.
+6. **Save to memory:**
+   ```markdown
+   # ~/.claude/memory/feedback_python_tooling.md
+   ---
+   name: use-uv-not-pip
+   description: System uses uv for Python package management, pip is not installed
+   type: feedback
+   ---
+   Use uv instead of pip for all Python operations.
+   **Why:** pip is not installed on this system; uv is the only package manager.
+   **How to apply:** Any time a Python package needs installing, use uv tool install or uv pip install.
+   ```
+
 ## Rules
 - **Plan mode is mandatory** — never write without user approval via native plan mode.
 - **One learning at a time** — diagnose one surface, propose one fix.
