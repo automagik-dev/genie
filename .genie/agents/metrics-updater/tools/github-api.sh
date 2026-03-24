@@ -69,6 +69,7 @@ fetch_releases_24h() {
 fetch_closed_prs_7d() {
   local since
   since=$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-7d '+%Y-%m-%dT%H:%M:%SZ')
+  # Query params go in the URL, not as -f flags (which are POST body fields)
   github_api "repos/$OWNER/$REPO/pulls?state=closed&sort=updated&direction=desc&per_page=100" \
     "[.[] | select(.merged_at != null and .merged_at >= \"$since\")]"
 }

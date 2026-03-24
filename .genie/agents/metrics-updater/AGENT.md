@@ -55,9 +55,21 @@ Insert after the badges block, before "## What is Genie?":
 ## Tools Available
 
 Source tools from `tools/` directory before executing:
+- `tools/run-metrics.sh` — **Main orchestrator** (fetch → parse → update README → commit → log)
 - `tools/github-api.sh` — GitHub API wrapper with caching and retry
 - `tools/parse-metrics.py` — Metrics parser and calculator
+- `tools/update-readme.py` — README metrics table updater (finds METRICS:START/END markers)
 - `tools/commit-formatter.sh` — Clean commit message formatter
+
+### Quick Run
+
+```bash
+# Full run (fetch, update README, commit, log):
+bash tools/run-metrics.sh
+
+# Dry run (no commit):
+bash tools/run-metrics.sh --dry-run
+```
 
 ## Constraints
 

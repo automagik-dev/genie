@@ -1,0 +1,8 @@
+
+{"timestamp":"2026-03-24T22:44:08Z","duration_ms":4685,"api_calls":2,"tools_generated":0,"errors":[],"status":"success","fallback":false,"metrics":{
+  "releases_per_day": 0,
+  "avg_bugfix_time_hours": 2.0,
+  "ship_rate_pct": 100.0,
+  "parallel_agents": 3,
+  "updated": "2026-03-24"
+}}
