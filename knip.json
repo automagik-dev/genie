@@ -1,8 +1,9 @@
 {
   "$schema": "https://unpkg.com/knip@5.85.0/schema.json",
+  "entry": ["src/genie.ts", "src/hooks/dispatch-command.ts"],
   "project": ["src/**/*.ts"],
-  "ignoreBinaries": ["tmux", "which"],
-  "ignoreDependencies": ["nats"],
+  "ignoreBinaries": ["tmux", "which", "husky", "biome", "tsc"],
+  "ignoreDependencies": ["nats", "@biomejs/biome", "@commitlint/cli", "esbuild", "husky"],
   "ignore": ["src/lib/team-auto-spawn.ts"],
   "ignoreExportsUsedInFile": true
 }
