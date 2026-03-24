@@ -14,7 +14,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import * as wishState from '../lib/wish-state.js';
-import { parseExecutionStrategy } from './dispatch.js';
+import { parseExecutionStrategy, parseWishGroups } from './dispatch.js';
 
 // ============================================================================
 // Helpers
@@ -235,12 +235,24 @@ export async function doneCommand(ref: string): Promise<void> {
  */
 export async function statusCommand(slug: string): Promise<void> {
   try {
-    const state = await wishState.getState(slug);
+    let state = await wishState.getState(slug);
     if (!state) {
-      console.error(`❌ No state found for wish "${slug}"`);
-      console.error('   This means work has not been dispatched yet.');
-      console.error(`   Run: genie work ${slug}`);
-      process.exit(1);
+      // Auto-initialize state from WISH.md instead of failing
+      const base = process.cwd();
+      const wishPath = join(base, '.genie', 'wishes', slug, 'WISH.md');
+      if (!existsSync(wishPath)) {
+        console.error(`❌ No state found for wish "${slug}" and no WISH.md at ${wishPath}`);
+        console.error(`   Create it first: genie wish <agent> ${slug}`);
+        process.exit(1);
+      }
+      const content = await readFile(wishPath, 'utf-8');
+      const groups = parseWishGroups(content);
+      if (groups.length === 0) {
+        console.error(`❌ No execution groups found in ${wishPath}`);
+        process.exit(1);
+      }
+      state = await wishState.createState(slug, groups);
+      console.log(`📝 Auto-initialized state for wish "${slug}" (${groups.length} groups)`);
     }
 
     console.log(`\nWish: ${state.wish}`);

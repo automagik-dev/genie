@@ -345,12 +345,8 @@ export async function autoOrchestrateCommand(slug: string): Promise<void> {
     process.exit(1);
   }
 
-  // Auto-initialize wish state
-  let state = await wishState.getState(slug);
-  if (!state) {
-    state = await wishState.createState(slug, groups);
-    console.log(`📝 Initialized state for wish "${slug}" (${groups.length} groups)`);
-  }
+  // Auto-initialize wish state if missing (prevents polling loop when no state exists)
+  const state = await wishState.getOrCreateState(slug, groups);
 
   // Find the first wave with groups that are still `ready` (not started/done)
   const nextWave = waves.find((wave) =>
@@ -503,13 +499,9 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
     process.exit(1);
   }
 
-  // Auto-initialize state if no state file exists
-  let state = await wishState.getState(slug);
-  if (!state) {
-    const groups = parseWishGroups(content);
-    state = await wishState.createState(slug, groups);
-    console.log(`📝 Initialized state for wish "${slug}" (${groups.length} groups)`);
-  }
+  // Auto-initialize state if missing (prevents polling loop when no state exists)
+  const groups = parseWishGroups(content);
+  await wishState.getOrCreateState(slug, groups);
 
   // Start group in state machine (enforces dependencies)
   try {
