@@ -399,6 +399,32 @@ export function registerSendInboxCommands(program: Command): void {
         await ts.addMember(conv.id, recipientActor);
 
         const msg = await ts.sendMessage(conv.id, senderActor, body);
+
+        // Bridge to CC native inbox so Claude Code agents receive in real-time
+        try {
+          const nativeTeams = await import('../lib/claude-native-teams.js');
+          const teamName = await nativeTeams.discoverTeamName().catch(() => null);
+          if (teamName) {
+            const config = await nativeTeams.loadConfig(teamName).catch(() => null);
+            const memberExists = config?.members?.some(
+              (m: { name?: string; agentId?: string }) =>
+                m.name === options.to || m.agentId === `${options.to}@${teamName}`,
+            );
+            if (memberExists) {
+              await nativeTeams.writeNativeInbox(teamName, options.to, {
+                from,
+                text: body,
+                summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
+                timestamp: new Date().toISOString(),
+                color: 'blue',
+                read: false,
+              });
+            }
+          }
+        } catch {
+          // Native inbox delivery is best-effort — PG message already persisted
+        }
+
         console.log(`Message sent to "${options.to}".`);
         console.log(`  ID: ${msg.id}`);
         console.log(`  Conversation: ${conv.id}`);
