@@ -89,23 +89,31 @@ const RESET = '\x1b[0m';
 // Display Helpers
 // ============================================================================
 
-function printTaskList(tasks: taskServiceTypes.TaskRow[]): void {
+function getProjectName(repoPath: string): string {
+  const parts = repoPath.split('/');
+  return parts[parts.length - 1] || repoPath;
+}
+
+function printTaskList(tasks: taskServiceTypes.TaskRow[], showProject = false): void {
   if (tasks.length === 0) {
     console.log('No tasks found.');
     return;
   }
 
-  const header = `  ${padRight('#', 6)} ${padRight('TITLE', 40)} ${padRight('STAGE', 12)} ${padRight('STATUS', 12)} ${padRight('PRIORITY', 10)} ${padRight('DUE', 12)}`;
+  const projCol = showProject ? `${padRight('PROJECT', 16)} ` : '';
+  const header = `  ${padRight('#', 6)} ${projCol}${padRight('TITLE', 40)} ${padRight('STAGE', 12)} ${padRight('STATUS', 12)} ${padRight('PRIORITY', 10)} ${padRight('DUE', 12)}`;
+  const lineLen = showProject ? 108 : 92;
   console.log(header);
-  console.log(`  ${'─'.repeat(92)}`);
+  console.log(`  ${'─'.repeat(lineLen)}`);
 
   for (const t of tasks) {
-    const seq = `#${t.seq}`;
+    const seq = showProject ? `${getProjectName(t.repoPath)}#${t.seq}` : `#${t.seq}`;
     const title = truncate(t.title, 38);
     const color = PRIORITY_COLORS[t.priority] ?? '';
     const due = formatDate(t.dueDate);
+    const proj = showProject ? `${padRight(getProjectName(t.repoPath), 16)} ` : '';
     console.log(
-      `  ${padRight(seq, 6)} ${padRight(title, 40)} ${padRight(t.stage, 12)} ${padRight(t.status, 12)} ${color}${padRight(t.priority, 10)}${RESET} ${padRight(due, 12)}`,
+      `  ${padRight(seq, showProject ? 22 : 6)} ${proj}${padRight(title, 40)} ${padRight(t.stage, 12)} ${padRight(t.status, 12)} ${color}${padRight(t.priority, 10)}${RESET} ${padRight(due, 12)}`,
     );
   }
 
@@ -224,32 +232,48 @@ interface CreateOptions {
   description?: string;
   effort?: string;
   comment?: string;
+  project?: string;
 }
 
 async function handleTaskCreate(title: string, options: CreateOptions): Promise<void> {
   const ts = await getTaskService();
   const actor = currentActor();
 
+  // Resolve project → repoPath override
+  let repoPath: string | undefined;
+  if (options.project) {
+    const project = await ts.getProjectByName(options.project);
+    if (project) {
+      repoPath = project.repoPath ?? undefined;
+    } else {
+      // Auto-create virtual project if --project used with unknown name
+      await ts.createProject({ name: options.project });
+    }
+  }
+
   // Resolve parent
   let parentId: string | undefined;
   if (options.parent) {
-    parentId = (await ts.resolveTaskId(options.parent)) ?? undefined;
+    parentId = (await ts.resolveTaskId(options.parent, repoPath)) ?? undefined;
     if (!parentId) {
       console.error(`Error: Parent task not found: ${options.parent}`);
       process.exit(1);
     }
   }
 
-  const task = await ts.createTask({
-    title,
-    typeId: options.type,
-    priority: options.priority as 'urgent' | 'high' | 'normal' | 'low',
-    dueDate: options.due,
-    startDate: options.start,
-    parentId,
-    description: options.description,
-    estimatedEffort: options.effort,
-  });
+  const task = await ts.createTask(
+    {
+      title,
+      typeId: options.type,
+      priority: options.priority as 'urgent' | 'high' | 'normal' | 'low',
+      dueDate: options.due,
+      startDate: options.start,
+      parentId,
+      description: options.description,
+      estimatedEffort: options.effort,
+    },
+    repoPath,
+  );
 
   // Assign creator
   await ts.assignTask(task.id, actor, 'creator', {}, task.repoPath);
@@ -297,6 +321,7 @@ export function registerTaskCommands(program: Command): void {
     .option('--description <text>', 'Task description')
     .option('--effort <effort>', 'Estimated effort (e.g., "2h", "3 points")')
     .option('--comment <msg>', 'Initial comment on the task')
+    .option('--project <name>', 'Create task in a specific project (overrides CWD)')
     .action(async (title: string, options: CreateOptions) => {
       try {
         await handleTaskCreate(title, options);
@@ -317,6 +342,8 @@ export function registerTaskCommands(program: Command): void {
     .option('--release <release>', 'Filter by release')
     .option('--due-before <date>', 'Filter by due date')
     .option('--mine', 'Show only tasks assigned to me')
+    .option('--project <name>', 'Show tasks for a specific project')
+    .option('--all', 'Show tasks from ALL projects')
     .option('--json', 'Output as JSON')
     .action(
       async (options: {
@@ -327,6 +354,8 @@ export function registerTaskCommands(program: Command): void {
         release?: string;
         dueBefore?: string;
         mine?: boolean;
+        project?: string;
+        all?: boolean;
         json?: boolean;
       }) => {
         try {
@@ -338,6 +367,8 @@ export function registerTaskCommands(program: Command): void {
             priority: options.priority,
             releaseId: options.release,
             dueBefore: options.dueBefore,
+            projectName: options.project,
+            allProjects: options.all,
           };
 
           let tasks: taskServiceTypes.TaskRow[];
@@ -352,7 +383,7 @@ export function registerTaskCommands(program: Command): void {
             return;
           }
 
-          printTaskList(tasks);
+          printTaskList(tasks, options.all);
         } catch (error) {
           console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
           process.exit(1);

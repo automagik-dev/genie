@@ -46,6 +46,7 @@ import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerNotifyCommands } from './term-commands/notify.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
+import { registerProjectCommands } from './term-commands/project.js';
 import { type QaOptions, qaCommand, qaHistoryCommand, qaStatusCommand } from './term-commands/qa.js';
 import * as readCmd from './term-commands/read.js';
 import { registerReleaseCommands } from './term-commands/release.js';
@@ -152,6 +153,7 @@ registerTaskCommands(program);
 registerTypeCommands(program);
 registerTagCommands(program);
 registerReleaseCommands(program);
+registerProjectCommands(program);
 registerNotifyCommands(program);
 
 // ============================================================================

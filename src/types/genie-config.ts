@@ -101,6 +101,8 @@ export const GenieConfigSchema = z.object({
   promptMode: z.enum(['append', 'system']).default('append'),
   // Whether task leaders should auto-merge PRs to dev (default: false — leave PR open for human)
   autoMergeDev: z.boolean().default(false),
+  // Default project for task commands when outside any repo
+  defaultProject: z.string().optional(),
   // Omni integration (optional — multi-channel messaging)
   omni: OmniConfigSchema.optional(),
 });
