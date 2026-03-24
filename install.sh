@@ -792,17 +792,23 @@ output_agent_prompt() {
 
 Genie has been installed successfully.
 
-Next steps for the user:
+## Agent Instructions
 
-  genie              Launch genie
+Run `/wizard` now to complete onboarding. The wizard will:
 
-First time? Genie will suggest /onboarding to set up your workspace.
+1. **Check environment** — verify genie CLI, git repo, and project structure
+2. **Shape identity** — define agent roles via `/brainstorm`
+3. **Create first wish** — scope work via `/brainstorm` then `/wish`
+4. **Execute** — build it via `/work`
+5. **Celebrate** — review results and learn next steps
 
-Integrations installed automatically:
+To start: paste `/wizard` in your Claude Code session.
+
+Integrations installed:
 - Claude Code plugin (if claude was found in PATH)
-- Orchestration prompt written to ~/.claude/rules/genie-orchestration.md
-- Default config created at ~/.genie/config.json
-- tmux defaults configured in ~/.tmux.conf
+- Orchestration rules at ~/.claude/rules/genie-orchestration.md
+- Default config at ~/.genie/config.json
+- tmux defaults at ~/.tmux.conf
 AGENT_EOF
 }
 
@@ -854,6 +860,11 @@ run_install() {
     echo
 
     offer_codex_skills
+
+    # Agent mode: structured output for piped installs
+    if [[ "$INTERACTIVE" == "false" ]]; then
+        output_agent_prompt
+    fi
 
     print_success
 }
@@ -1065,7 +1076,7 @@ print_success() {
     echo -e "  Get started:"
     echo -e "    ${BOLD}genie${NC}              Launch genie"
     echo
-    echo -e "  First time? Genie will suggest ${DIM}/onboarding${NC} to set up your workspace."
+    echo -e "  First time? Run ${DIM}/wizard${NC} to set up your workspace."
     echo
 }
 
