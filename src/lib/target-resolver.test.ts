@@ -1025,6 +1025,162 @@ describe('Partial ID suffix resolution', () => {
 });
 
 // ============================================================================
+// Substring resolution (fixes #700: short display names from genie ls)
+// ============================================================================
+
+describe('Substring resolution', () => {
+  test('resolves "engineer-4" when ID is "sofia-t1re-engineer-4-ec331228"', async () => {
+    const result = await resolveTarget('engineer-4', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'sofia-t1re-engineer-4-ec331228': {
+          id: 'sofia-t1re-engineer-4-ec331228',
+          paneId: '%40',
+          session: 'my-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          role: 'engineer',
+          team: 'my-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%40');
+    expect(result.workerId).toBe('sofia-t1re-engineer-4-ec331228');
+    expect(result.resolvedVia).toBe('worker');
+  });
+
+  test('prefers same-team match on ambiguous substring', async () => {
+    const result = await resolveTarget('engineer-4', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'teamA-engineer-4-abc123': {
+          id: 'teamA-engineer-4-abc123',
+          paneId: '%40',
+          session: 'other-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          team: 'other-team',
+        },
+        'teamB-engineer-4-def456': {
+          id: 'teamB-engineer-4-def456',
+          paneId: '%41',
+          session: 'my-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          team: 'my-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%41');
+    expect(result.workerId).toBe('teamB-engineer-4-def456');
+  });
+
+  test('throws on ambiguous substring without team disambiguation', async () => {
+    await expect(
+      resolveTarget('engineer-4', {
+        checkLiveness: false,
+        getCurrentTeam: async () => null,
+        workers: {
+          'teamA-engineer-4-abc123': {
+            id: 'teamA-engineer-4-abc123',
+            paneId: '%40',
+            session: 's1',
+            worktree: null,
+            startedAt: new Date().toISOString(),
+            state: 'working',
+            lastStateChange: new Date().toISOString(),
+            repoPath: '/tmp/test',
+            team: 'team-a',
+          },
+          'teamB-engineer-4-def456': {
+            id: 'teamB-engineer-4-def456',
+            paneId: '%41',
+            session: 's2',
+            worktree: null,
+            startedAt: new Date().toISOString(),
+            state: 'working',
+            lastStateChange: new Date().toISOString(),
+            repoPath: '/tmp/test',
+            team: 'team-b',
+          },
+        },
+      }),
+    ).rejects.toThrow(/ambiguous/i);
+  });
+
+  test('suffix match (endsWith) takes priority over substring match', async () => {
+    const result = await resolveTarget('engineer-4', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'team-engineer-4': {
+          id: 'team-engineer-4',
+          paneId: '%10',
+          session: 'genie',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          team: 'my-team',
+        },
+        'sofia-t1re-engineer-4-ec331228': {
+          id: 'sofia-t1re-engineer-4-ec331228',
+          paneId: '%20',
+          session: 'genie',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          team: 'my-team',
+        },
+      },
+    });
+
+    // endsWith match wins (resolveByPartialId runs before resolveBySubstring)
+    expect(result.paneId).toBe('%10');
+    expect(result.workerId).toBe('team-engineer-4');
+  });
+
+  test('does not match when target is the exact ID', async () => {
+    // exact ID match should resolve first, substring should not interfere
+    const result = await resolveTarget('worker-1', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'worker-1': {
+          id: 'worker-1',
+          paneId: '%50',
+          session: 'genie',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%50');
+    expect(result.workerId).toBe('worker-1');
+  });
+});
+
+// ============================================================================
 // Global role resolution (fallback)
 // ============================================================================
 
@@ -1117,7 +1273,7 @@ describe('Global role resolution', () => {
 // Resolution priority with new steps
 // ============================================================================
 
-describe('Resolution priority: exact ID > role (team) > customName > partial ID > role (global)', () => {
+describe('Resolution priority: exact ID > role (team) > customName > partial ID > substring > role (global)', () => {
   const baseWorker = {
     worktree: null as string | null,
     startedAt: new Date().toISOString(),
@@ -1201,6 +1357,58 @@ describe('Resolution priority: exact ID > role (team) > customName > partial ID 
 
     expect(result.paneId).toBe('%10');
     expect(result.workerId).toBe('custom-name-worker');
+  });
+
+  test('partial ID suffix wins over substring match', async () => {
+    const result = await resolveTarget('engineer-4', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'team-engineer-4': {
+          ...baseWorker,
+          id: 'team-engineer-4',
+          paneId: '%10',
+          session: 'my-team',
+        },
+        'sofia-t1re-engineer-4-ec331228': {
+          ...baseWorker,
+          id: 'sofia-t1re-engineer-4-ec331228',
+          paneId: '%20',
+          session: 'my-team',
+        },
+      },
+    });
+
+    // endsWith match (resolveByPartialId) runs first
+    expect(result.paneId).toBe('%10');
+    expect(result.workerId).toBe('team-engineer-4');
+  });
+
+  test('substring wins over global role', async () => {
+    const result = await resolveTarget('engineer-4', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'sofia-t1re-engineer-4-ec331228': {
+          ...baseWorker,
+          id: 'sofia-t1re-engineer-4-ec331228',
+          paneId: '%10',
+          session: 'my-team',
+          role: 'other-role',
+        },
+        'global-role-worker': {
+          ...baseWorker,
+          id: 'global-role-worker',
+          paneId: '%20',
+          session: 'my-team',
+          role: 'engineer-4',
+        },
+      },
+    });
+
+    // substring match runs before global role
+    expect(result.paneId).toBe('%10');
+    expect(result.workerId).toBe('sofia-t1re-engineer-4-ec331228');
   });
 });
 
