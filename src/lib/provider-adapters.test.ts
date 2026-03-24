@@ -228,6 +228,18 @@ describe('buildClaudeCommand', () => {
     expect(content).toContain('User agent instructions');
     expect(content).toContain('Built-in prompt');
   });
+
+  it('sets GENIE_WORKER=1 in env for spawn latency optimization (#712)', () => {
+    const result = buildClaudeCommand({ provider: 'claude', team: 'work', role: 'implementor' });
+    expect(result.env).toBeDefined();
+    expect(result.env!.GENIE_WORKER).toBe('1');
+  });
+
+  it('sets GENIE_WORKER=1 even without role or nativeTeam', () => {
+    const result = buildClaudeCommand({ provider: 'claude', team: 'work' });
+    expect(result.env).toBeDefined();
+    expect(result.env!.GENIE_WORKER).toBe('1');
+  });
 });
 
 // ============================================================================

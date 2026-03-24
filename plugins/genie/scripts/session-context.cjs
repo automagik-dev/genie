@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-"use strict";var c=require("fs"),a=require("path"),p=require("util"),u={};try{u=(0,p.parseArgs)({args:process.argv.slice(2),options:{help:{type:"boolean",short:"h"}},strict:!1}).values}catch{let e=process.argv.slice(2);for(let t of e)(t==="--help"||t==="-h")&&(u.help=!0)}u.help&&(console.log(`
+"use strict";if(process.env.GENIE_WORKER==='1'){process.exit(0)}var c=require("fs"),a=require("path"),p=require("util"),u={};try{u=(0,p.parseArgs)({args:process.argv.slice(2),options:{help:{type:"boolean",short:"h"}},strict:!1}).values}catch{let e=process.argv.slice(2);for(let t of e)(t==="--help"||t==="-h")&&(u.help=!0)}u.help&&(console.log(`
 session-context - Load active wish context on session start
 
 Usage:
