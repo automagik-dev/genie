@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, cp, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import type { TeamConfig } from '../lib/team-manager.js';
@@ -176,13 +176,23 @@ async function handleTeamCreate(
   name: string,
   options: { repo: string; branch: string; wish?: string; session?: string },
 ): Promise<void> {
-  // Validate wish exists before creating team
+  // Validate wish exists before creating team — auto-copy from cwd if needed
   if (options.wish) {
     const resolvedRepo = resolve(options.repo);
     const wishPath = join(resolvedRepo, '.genie', 'wishes', options.wish, 'WISH.md');
     if (!existsSync(wishPath)) {
-      console.error(`Error: Wish not found at ${wishPath}`);
-      process.exit(1);
+      // Auto-copy: search cwd for the wish
+      const cwdWishDir = join(process.cwd(), '.genie', 'wishes', options.wish);
+      const cwdWishPath = join(cwdWishDir, 'WISH.md');
+      if (existsSync(cwdWishPath)) {
+        const destDir = join(resolvedRepo, '.genie', 'wishes', options.wish);
+        await mkdir(destDir, { recursive: true });
+        await cp(cwdWishDir, destDir, { recursive: true });
+        console.log(`Wish: copied ${options.wish}/WISH.md to repo`);
+      } else {
+        console.error(`Error: Wish not found at ${wishPath}`);
+        process.exit(1);
+      }
     }
   }
 

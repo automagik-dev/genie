@@ -11,7 +11,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
 import * as wishState from '../lib/wish-state.js';
 import { parseExecutionStrategy, parseWishGroups } from './dispatch.js';
@@ -19,6 +19,34 @@ import { parseExecutionStrategy, parseWishGroups } from './dispatch.js';
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/**
+ * Resolve the WISH.md path for a slug.
+ * Search order: base/.genie/wishes/ → repoRoot/.genie/wishes/ (via git-common-dir)
+ */
+export function resolveWishPath(slug: string, cwd?: string): string | null {
+  const base = cwd ?? process.cwd();
+  const cwdPath = join(base, '.genie', 'wishes', slug, 'WISH.md');
+  if (existsSync(cwdPath)) return cwdPath;
+
+  // Fallback: check repo root via git-common-dir
+  try {
+    const commonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
+      encoding: 'utf-8',
+      cwd: base,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    const repoRoot = dirname(commonDir);
+    if (repoRoot !== base) {
+      const repoPath = join(repoRoot, '.genie', 'wishes', slug, 'WISH.md');
+      if (existsSync(repoPath)) return repoPath;
+    }
+  } catch {
+    // Not in a git repo — no fallback available
+  }
+
+  return null;
+}
 
 /**
  * Parse a `slug#group` reference.
@@ -77,9 +105,8 @@ export async function detectWaveCompletion(
   groupName: string,
   cwd?: string,
 ): Promise<{ waveName: string; waveGroups: string[] } | null> {
-  const base = cwd ?? process.cwd();
-  const wishPath = join(base, '.genie', 'wishes', slug, 'WISH.md');
-  if (!existsSync(wishPath)) return null;
+  const wishPath = resolveWishPath(slug, cwd);
+  if (!wishPath) return null;
 
   const content = await readFile(wishPath, 'utf-8');
   const waves = parseExecutionStrategy(content);
@@ -238,10 +265,9 @@ export async function statusCommand(slug: string): Promise<void> {
     let state = await wishState.getState(slug);
     if (!state) {
       // Auto-initialize state from WISH.md instead of failing
-      const base = process.cwd();
-      const wishPath = join(base, '.genie', 'wishes', slug, 'WISH.md');
-      if (!existsSync(wishPath)) {
-        console.error(`❌ No state found for wish "${slug}" and no WISH.md at ${wishPath}`);
+      const wishPath = resolveWishPath(slug);
+      if (!wishPath) {
+        console.error(`❌ No state found for wish "${slug}" and no WISH.md found in cwd or repo root`);
         console.error(`   Create it first: genie wish <agent> ${slug}`);
         process.exit(1);
       }
