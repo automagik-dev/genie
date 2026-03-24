@@ -1,10 +1,16 @@
 /**
- * Tests for spawn-command.ts - buildSpawnCommand function
+ * Tests for spawn-command.ts - buildSpawnCommand + waitForAgentReady
  * Run with: bun test src/lib/spawn-command.test.ts
  */
 
-import { describe, expect, test } from 'bun:test';
-import { type WorkerProfile, buildSpawnCommand } from './spawn-command.js';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import {
+  DEFAULT_SPAWN_TIMEOUT_MS,
+  READINESS_POLL_INTERVAL_MS,
+  type WorkerProfile,
+  buildSpawnCommand,
+  waitForAgentReady,
+} from './spawn-command.js';
 
 // ============================================================================
 // Test Helpers
@@ -162,5 +168,167 @@ describe('shell injection prevention', () => {
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-jkl' });
     expect(command).toBe("claude '--prompt' 'hello\nworld' --session-id 'test-jkl'");
+  });
+});
+
+// ============================================================================
+// Readiness Detection — Constants
+// ============================================================================
+
+describe('readiness constants', () => {
+  test('DEFAULT_SPAWN_TIMEOUT_MS is 30s', () => {
+    expect(DEFAULT_SPAWN_TIMEOUT_MS).toBe(30_000);
+  });
+
+  test('READINESS_POLL_INTERVAL_MS is 2s', () => {
+    expect(READINESS_POLL_INTERVAL_MS).toBe(2_000);
+  });
+});
+
+// ============================================================================
+// Readiness Detection — waitForAgentReady
+// ============================================================================
+
+// We mock the two dependencies that waitForAgentReady calls internally.
+// Since bun:test mock.module hoists, we declare them before describe blocks.
+
+const mockCapturePaneContent = mock<(paneId: string, lines?: number) => Promise<string>>();
+const mockDetectState =
+  mock<(output: string) => { type: string; confidence: number; timestamp: number; rawOutput: string }>();
+
+mock.module('./tmux.js', () => ({
+  capturePaneContent: (paneId: string, lines?: number) => mockCapturePaneContent(paneId, lines),
+}));
+
+mock.module('./orchestrator/index.js', () => ({
+  detectState: (output: string) => mockDetectState(output),
+}));
+
+function makeState(type: string) {
+  return { type, confidence: 0.9, timestamp: Date.now(), rawOutput: '' };
+}
+
+describe('waitForAgentReady', () => {
+  const savedEnv = process.env.GENIE_SPAWN_TIMEOUT_MS;
+
+  beforeEach(() => {
+    mockCapturePaneContent.mockReset();
+    mockDetectState.mockReset();
+    process.env.GENIE_SPAWN_TIMEOUT_MS = undefined;
+  });
+
+  afterEach(() => {
+    if (savedEnv !== undefined) {
+      process.env.GENIE_SPAWN_TIMEOUT_MS = savedEnv;
+    } else {
+      process.env.GENIE_SPAWN_TIMEOUT_MS = undefined;
+    }
+  });
+
+  test('returns ready when pane shows idle state', async () => {
+    mockCapturePaneContent.mockResolvedValue('> What would you like to do?');
+    mockDetectState.mockReturnValue(makeState('idle'));
+
+    const result = await waitForAgentReady('%5', { timeoutMs: 500, pollIntervalMs: 50 });
+
+    expect(result.ready).toBe(true);
+    expect(result.elapsedMs).toBeLessThan(500);
+  });
+
+  test('returns ready when pane shows tool_use state', async () => {
+    mockCapturePaneContent.mockResolvedValue('tool_use: Read file.ts');
+    mockDetectState.mockReturnValue(makeState('tool_use'));
+
+    const result = await waitForAgentReady('%5', { timeoutMs: 500, pollIntervalMs: 50 });
+
+    expect(result.ready).toBe(true);
+    expect(result.elapsedMs).toBeLessThan(500);
+  });
+
+  test('times out when pane never becomes ready', async () => {
+    mockCapturePaneContent.mockResolvedValue('loading...');
+    mockDetectState.mockReturnValue(makeState('working'));
+
+    const result = await waitForAgentReady('%5', { timeoutMs: 200, pollIntervalMs: 50 });
+
+    expect(result.ready).toBe(false);
+    expect(result.elapsedMs).toBeGreaterThanOrEqual(200);
+  });
+
+  test('keeps polling when capturePaneContent throws', async () => {
+    let callCount = 0;
+    mockCapturePaneContent.mockImplementation(async () => {
+      callCount++;
+      if (callCount <= 2) throw new Error('pane not found');
+      return 'idle prompt >';
+    });
+    mockDetectState.mockReturnValue(makeState('idle'));
+
+    const result = await waitForAgentReady('%5', { timeoutMs: 2000, pollIntervalMs: 50 });
+
+    expect(result.ready).toBe(true);
+    expect(callCount).toBeGreaterThanOrEqual(3);
+  });
+
+  test('keeps polling when pane content is empty', async () => {
+    let callCount = 0;
+    mockCapturePaneContent.mockImplementation(async () => {
+      callCount++;
+      if (callCount <= 2) return '';
+      return 'idle prompt >';
+    });
+    mockDetectState.mockReturnValue(makeState('idle'));
+
+    const result = await waitForAgentReady('%5', { timeoutMs: 2000, pollIntervalMs: 50 });
+
+    expect(result.ready).toBe(true);
+    expect(callCount).toBeGreaterThanOrEqual(3);
+  });
+
+  test('transitions from working to idle', async () => {
+    let callCount = 0;
+    mockCapturePaneContent.mockResolvedValue('some output');
+    mockDetectState.mockImplementation(() => {
+      callCount++;
+      if (callCount <= 3) return makeState('working');
+      return makeState('idle');
+    });
+
+    const result = await waitForAgentReady('%5', { timeoutMs: 2000, pollIntervalMs: 50 });
+
+    expect(result.ready).toBe(true);
+    expect(callCount).toBeGreaterThanOrEqual(4);
+  });
+
+  test('respects GENIE_SPAWN_TIMEOUT_MS env var', async () => {
+    process.env.GENIE_SPAWN_TIMEOUT_MS = '150';
+    mockCapturePaneContent.mockResolvedValue('loading...');
+    mockDetectState.mockReturnValue(makeState('working'));
+
+    const result = await waitForAgentReady('%5', { pollIntervalMs: 50 });
+
+    expect(result.ready).toBe(false);
+    expect(result.elapsedMs).toBeGreaterThanOrEqual(150);
+    expect(result.elapsedMs).toBeLessThan(1000);
+  });
+
+  test('opts.timeoutMs overrides env var', async () => {
+    process.env.GENIE_SPAWN_TIMEOUT_MS = '5000';
+    mockCapturePaneContent.mockResolvedValue('loading...');
+    mockDetectState.mockReturnValue(makeState('working'));
+
+    const result = await waitForAgentReady('%5', { timeoutMs: 150, pollIntervalMs: 50 });
+
+    expect(result.ready).toBe(false);
+    expect(result.elapsedMs).toBeLessThan(1000);
+  });
+
+  test('passes correct pane ID and line count to capturePaneContent', async () => {
+    mockCapturePaneContent.mockResolvedValue('idle');
+    mockDetectState.mockReturnValue(makeState('idle'));
+
+    await waitForAgentReady('%42', { timeoutMs: 500, pollIntervalMs: 50 });
+
+    expect(mockCapturePaneContent).toHaveBeenCalledWith('%42', 50);
   });
 });
