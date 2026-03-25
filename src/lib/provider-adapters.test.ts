@@ -395,12 +395,16 @@ describe('buildLaunchCommand', () => {
 
 describe('OTel env injection in buildClaudeCommand', () => {
   const originalWhich = (Bun as Record<string, unknown>).which;
+  const savedOtelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   beforeAll(() => {
     (Bun as Record<string, unknown>).which = (name: string) =>
       name === 'claude' ? '/usr/local/bin/claude' : typeof originalWhich === 'function' ? originalWhich(name) : null;
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = undefined as unknown as string;
   });
   afterAll(() => {
     (Bun as Record<string, unknown>).which = originalWhich;
+    if (savedOtelEndpoint !== undefined) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = savedOtelEndpoint;
+    else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = undefined as unknown as string;
   });
 
   it('injects OTel env vars when otelPort is set', () => {
