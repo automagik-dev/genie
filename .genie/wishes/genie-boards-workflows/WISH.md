@@ -91,6 +91,10 @@ Replace `task_types` with project-scoped Boards. One project can have many board
 - [ ] `genie board list --project khal-os` shows both boards
 - [ ] `genie board columns Dev` shows pipeline: column names, gates, actions, colors
 - [ ] `genie board edit Dev --column review --gate human+agent` changes a column's config
+- [ ] `genie board export Dev --json` dumps full config
+- [ ] `genie board import --json board.json --project khal-os` recreates board from export
+- [ ] Every board/template edit produces an `audit_events` row (who, what, when, before/after)
+- [ ] `genie events list --entity board` shows full change history
 - [ ] `genie task create "Fix auth" --board Dev --project khal-os` assigns task to board
 - [ ] `genie task list --board Dev` shows only Dev board tasks
 - [ ] `genie board use Dev` sets context, subsequent `genie task create` uses Dev implicitly
@@ -126,7 +130,8 @@ Replace `task_types` with project-scoped Boards. One project can have many board
 
 **Deliverables:**
 1. Migration `008_boards.sql`:
-   - `boards` table: id, name, project_id FK, columns JSONB, description, created_at, updated_at
+   - `boards` table: id, name, project_id FK, columns JSONB, config JSONB DEFAULT '{}', description, created_at, updated_at
+   - `config` field = board-level settings (auto-archive, digest schedule, connector config, etc.) — extensible without migrations
    - `board_templates` table: id, name, description, icon, columns JSONB, is_builtin, created_at, updated_at
    - Column JSONB shape: `{id, name, label, gate, action, auto_advance, transitions, roles, color, parallel, on_fail, position}`
    - Each column gets a stable UUID `id` — tasks reference this, not column name
@@ -140,6 +145,11 @@ Replace `task_types` with project-scoped Boards. One project can have many board
 2. `board-service.ts` — CRUD: createBoard, getBoard, listBoards, updateBoard, deleteBoard, getBoardColumns, addColumn, removeColumn, reorderColumns, renameColumn
 3. `template-service.ts` — CRUD: createTemplate, getTemplate, listTemplates, updateTemplate, deleteTemplate, snapshotFromBoard
 4. Update `task-service.ts` — board_id + column_id on task creation, board-scoped list queries, move resolves column by name → column_id internally
+5. **Full audit trail** — every board/template mutation writes to `audit_events`:
+   - `entity_type: 'board'` or `entity_type: 'board_template'`
+   - Events: `column_added`, `column_removed`, `column_renamed`, `column_reordered`, `gate_changed`, `action_changed`, `board_created`, `board_deleted`, `template_edited`, etc.
+   - `details` JSONB captures before/after state: `{column: "review", field: "gate", from: "human", to: "agent"}`
+   - Queryable: `genie events list --entity board --since 7d` → full change history, who did what when
 
 **Acceptance Criteria:**
 - [ ] `boards` + `board_templates` tables exist with migrated data
@@ -220,7 +230,9 @@ genie db query "SELECT name FROM board_templates WHERE is_builtin = true"
 5. `genie board delete <name>` — with confirmation, refuses if board has active tasks
 6. `genie board columns <name>` — compact pipeline view showing flow with gates
 7. `genie board use <name>` — set active board in current session (writes to `.genie/config.json`)
-8. `genie board templates` — list available template files from `templates/`
+8. `genie board templates` — list available templates from PG
+9. `genie board export <name> [--json] [--output file.json]` — dump full board config as JSON (backup/share)
+10. `genie board import --json file.json --project <project>` — create board from JSON export (restore/clone)
 9. `genie type` commands → alias to `genie board` with deprecation warning
 
 **Acceptance Criteria:**
