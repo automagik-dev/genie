@@ -197,8 +197,11 @@ export function toNativeInboxMessage(msg: MailboxMessage, color = 'blue'): Nativ
  * Subscribe to mailbox delivery notifications via PG LISTEN/NOTIFY.
  * Calls the callback with (toWorker, messageId) on each new insert.
  * Returns an unsubscribe function.
+ *
+ * Internal for now — will be exported when inbox-watcher integration lands.
  */
-export async function subscribeDelivery(
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- future inbox-watcher integration
+async function _subscribeDelivery(
   callback: (toWorker: string, messageId: string) => void,
 ): Promise<() => Promise<void>> {
   const sql = await getConnection();
