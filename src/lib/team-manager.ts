@@ -52,6 +52,8 @@ export interface TeamConfig {
   nativeTeamsEnabled?: boolean;
   /** Tmux session name used by this team — single source of truth for all workers. */
   tmuxSessionName?: string;
+  /** Wish slug this team is working on (set via --wish). */
+  wishSlug?: string;
 }
 
 // ============================================================================
@@ -335,6 +337,19 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
       await killWorkersByName(member, teamName);
     } catch {
       // Best-effort — continue with other members
+    }
+  }
+
+  // Reset in-progress wish groups so re-dispatch works cleanly
+  if (config.wishSlug) {
+    try {
+      const wishState = await import('./wish-state.js');
+      const resetCount = await wishState.resetInProgressGroups(config.wishSlug, config.repo);
+      if (resetCount > 0) {
+        console.log(`   Reset ${resetCount} in-progress group(s) for wish "${config.wishSlug}"`);
+      }
+    } catch {
+      // Best-effort — DB may be unavailable
     }
   }
 
