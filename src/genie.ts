@@ -29,6 +29,7 @@ import { updateCommand } from './genie-commands/update.js';
 import { VERSION } from './lib/version.js';
 
 import { registerHookNamespace } from './hooks/dispatch-command.js';
+import { getActor, recordAuditEvent } from './lib/audit.js';
 import {
   type SpawnOptions,
   handleLsCommand,
@@ -37,6 +38,7 @@ import {
   handleWorkerSpawn,
   handleWorkerStop,
 } from './term-commands/agents.js';
+import { registerEventsCommands } from './term-commands/audit-events.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
 import { registerAgentNamespace, registerDirNamespace } from './term-commands/dir.js';
@@ -155,6 +157,33 @@ registerTagCommands(program);
 registerReleaseCommands(program);
 registerProjectCommands(program);
 registerNotifyCommands(program);
+registerEventsCommands(program);
+
+// ============================================================================
+// CLI audit hooks — record every command execution to audit_events
+// ============================================================================
+
+const auditTimers = new Map<string, number>();
+
+program.hook('preAction', (_thisCommand, actionCommand) => {
+  const name = actionCommand.name();
+  auditTimers.set(name, Date.now());
+  // Fire-and-forget — never block command on audit
+  recordAuditEvent('command', name, 'command_start', getActor(), {
+    args: actionCommand.args,
+  }).catch(() => {});
+});
+
+program.hook('postAction', (_thisCommand, actionCommand) => {
+  const name = actionCommand.name();
+  const startMs = auditTimers.get(name);
+  const durationMs = startMs ? Date.now() - startMs : undefined;
+  auditTimers.delete(name);
+  recordAuditEvent('command', name, 'command_success', getActor(), {
+    args: actionCommand.args,
+    duration_ms: durationMs,
+  }).catch(() => {});
+});
 
 // ============================================================================
 // Top-level agent commands (promoted from genie agent namespace)
