@@ -7,13 +7,14 @@
  * Run with: bun test src/lib/nats-integration.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Agent } from './agent-registry.js';
 import { send } from './mailbox.js';
 import { _resetForTesting, close, isAvailable, publish, subscribe } from './nats-client.js';
+import { setupTestSchema } from './test-db.js';
 import { type LogEvent, followAgentLog } from './unified-log.js';
 
 // ============================================================================
@@ -23,6 +24,20 @@ import { type LogEvent, followAgentLog } from './unified-log.js';
 const NATS_AVAILABLE = await isAvailable();
 await close();
 _resetForTesting();
+
+// ============================================================================
+// PG test schema (required for mailbox.send() which uses PG)
+// ============================================================================
+
+let cleanupSchema: () => Promise<void>;
+
+beforeAll(async () => {
+  cleanupSchema = await setupTestSchema();
+});
+
+afterAll(async () => {
+  await cleanupSchema();
+});
 
 // ============================================================================
 // Helpers
