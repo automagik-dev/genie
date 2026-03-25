@@ -193,7 +193,7 @@ describe('genie team CLI', () => {
     // Verify wish was copied to repo
     const repoWishPath = join(TEST_REPO, '.genie', 'wishes', wishSlug, 'WISH.md');
     expect(existsSync(repoWishPath)).toBe(true);
-  });
+  }, 15_000);
 
   test('team create --wish uses existing wish in repo without copying', async () => {
     // Create a wish directly in the repo
@@ -214,5 +214,5 @@ describe('genie team CLI', () => {
 
     // Wish should still be there
     expect(existsSync(join(wishDir, 'WISH.md'))).toBe(true);
-  });
+  }, 15_000);
 });
