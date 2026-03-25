@@ -5,7 +5,17 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { getActor, queryAuditEvents, queryErrorPatterns, recordAuditEvent } from './audit.js';
+import {
+  generateTraceId,
+  getActor,
+  queryAuditEvents,
+  queryCostBreakdown,
+  queryErrorPatterns,
+  querySummary,
+  queryTimeline,
+  queryToolUsage,
+  recordAuditEvent,
+} from './audit.js';
 import { getConnection } from './db.js';
 import { setupTestSchema } from './test-db.js';
 
@@ -119,5 +129,103 @@ describe('getActor', () => {
     process.env.GENIE_AGENT_NAME = undefined;
     expect(getActor()).toBe('cli');
     process.env.GENIE_AGENT_NAME = prev;
+  });
+});
+
+describe('queryCostBreakdown', () => {
+  test('returns cost aggregation by agent', async () => {
+    await recordAuditEvent('otel_api', 'req-1', 'api_request', 'agent-a', { cost_usd: '0.05', model: 'opus' });
+    await recordAuditEvent('otel_api', 'req-2', 'api_request', 'agent-a', { cost_usd: '0.10', model: 'opus' });
+    await recordAuditEvent('otel_api', 'req-3', 'api_request', 'agent-b', { cost_usd: '0.03', model: 'sonnet' });
+
+    const rows = await queryCostBreakdown('1h', 'agent');
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    const agentA = rows.find((r) => r.group_key === 'agent-a');
+    if (agentA) {
+      expect(agentA.request_count).toBeGreaterThanOrEqual(2);
+      expect(agentA.total_cost).toBeGreaterThan(0);
+    }
+  });
+
+  test('groups by model', async () => {
+    const rows = await queryCostBreakdown('1h', 'model');
+    expect(Array.isArray(rows)).toBe(true);
+  });
+
+  test('returns empty for no data', async () => {
+    const rows = await queryCostBreakdown('1s', 'wish');
+    expect(Array.isArray(rows)).toBe(true);
+  });
+});
+
+describe('queryToolUsage', () => {
+  test('returns tool aggregation', async () => {
+    await recordAuditEvent('otel_tool', 'Read', 'tool_result', 'agent-a', { tool_name: 'Read', duration_ms: '120' });
+    await recordAuditEvent('otel_tool', 'Write', 'tool_result', 'agent-a', { tool_name: 'Write', duration_ms: '50' });
+    await recordAuditEvent('otel_tool', 'Read', 'tool_error', 'agent-a', { tool_name: 'Read', error: 'not found' });
+
+    const rows = await queryToolUsage('1h', 'tool');
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    const readTool = rows.find((r) => r.group_key === 'Read');
+    if (readTool) {
+      expect(readTool.total_calls).toBeGreaterThanOrEqual(2);
+      expect(readTool.error_count).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  test('groups by agent', async () => {
+    const rows = await queryToolUsage('1h', 'agent');
+    expect(Array.isArray(rows)).toBe(true);
+  });
+});
+
+describe('queryTimeline', () => {
+  test('returns events for entity_id', async () => {
+    const uniqueId = `timeline-test-${Date.now()}`;
+    await recordAuditEvent('worker', uniqueId, 'spawn', 'cli');
+    await recordAuditEvent('worker', uniqueId, 'state_changed', 'cli', { state: 'working' });
+    await recordAuditEvent('worker', uniqueId, 'kill', 'cli');
+
+    const timeline = await queryTimeline(uniqueId);
+    expect(timeline.length).toBe(3);
+    // Should be ordered ASC by time
+    expect(timeline[0].event_type).toBe('spawn');
+    expect(timeline[2].event_type).toBe('kill');
+  });
+
+  test('matches traceId in details', async () => {
+    const traceId = `trace-${Date.now()}`;
+    await recordAuditEvent('omni', 'reg-1', 'registration_success', 'cli', { traceId });
+
+    const timeline = await queryTimeline(traceId);
+    expect(timeline.length).toBeGreaterThanOrEqual(1);
+    const details = typeof timeline[0].details === 'string' ? JSON.parse(timeline[0].details) : timeline[0].details;
+    expect(details.traceId).toBe(traceId);
+  });
+});
+
+describe('querySummary', () => {
+  test('returns summary stats', async () => {
+    const summary = await querySummary('1h');
+    expect(typeof summary.agents_spawned).toBe('number');
+    expect(typeof summary.tasks_moved).toBe('number');
+    expect(typeof summary.total_cost).toBe('number');
+    expect(typeof summary.error_count).toBe('number');
+    expect(typeof summary.total_events).toBe('number');
+    expect(typeof summary.tool_calls).toBe('number');
+    expect(typeof summary.api_requests).toBe('number');
+    expect(summary.total_events).toBeGreaterThan(0);
+  });
+});
+
+describe('generateTraceId', () => {
+  test('returns a valid UUID', () => {
+    const id = generateTraceId();
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  test('returns unique values', () => {
+    const ids = new Set(Array.from({ length: 10 }, () => generateTraceId()));
+    expect(ids.size).toBe(10);
   });
 });

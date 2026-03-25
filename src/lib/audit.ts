@@ -153,3 +153,157 @@ export async function queryErrorPatterns(since?: string): Promise<ErrorPattern[]
 export function getActor(): string {
   return process.env.GENIE_AGENT_NAME ?? 'cli';
 }
+
+// ============================================================================
+// Cost Breakdown — aggregate cost_usd from otel_api events
+// ============================================================================
+
+export interface CostBreakdownRow {
+  group_key: string;
+  total_cost: number;
+  request_count: number;
+  avg_cost: number;
+}
+
+export async function queryCostBreakdown(
+  since: string,
+  groupBy: 'agent' | 'wish' | 'model' = 'agent',
+): Promise<CostBreakdownRow[]> {
+  const sql = await getConnection();
+  const sinceTs = parseSince(since);
+
+  const groupExpr =
+    groupBy === 'agent'
+      ? "COALESCE(actor, 'unknown')"
+      : groupBy === 'wish'
+        ? "COALESCE(details->>'wish_slug', entity_id)"
+        : "COALESCE(details->>'model', 'unknown')";
+
+  const rows = await sql.unsafe(
+    `SELECT
+       ${groupExpr} AS group_key,
+       COALESCE(SUM((details->>'cost_usd')::numeric), 0)::float AS total_cost,
+       COUNT(*)::int AS request_count,
+       COALESCE(AVG((details->>'cost_usd')::numeric), 0)::float AS avg_cost
+     FROM audit_events
+     WHERE entity_type = 'otel_api'
+       AND created_at >= $1::timestamptz
+     GROUP BY ${groupExpr}
+     ORDER BY total_cost DESC
+     LIMIT 100`,
+    [sinceTs],
+  );
+
+  return rows as unknown as CostBreakdownRow[];
+}
+
+// ============================================================================
+// Tool Usage — aggregate tool results from otel_tool events
+// ============================================================================
+
+export interface ToolUsageRow {
+  group_key: string;
+  total_calls: number;
+  success_count: number;
+  error_count: number;
+  avg_duration_ms: number | null;
+}
+
+export async function queryToolUsage(since: string, groupBy: 'tool' | 'agent' = 'tool'): Promise<ToolUsageRow[]> {
+  const sql = await getConnection();
+  const sinceTs = parseSince(since);
+
+  const groupExpr = groupBy === 'tool' ? "COALESCE(details->>'tool_name', entity_id)" : "COALESCE(actor, 'unknown')";
+
+  const rows = await sql.unsafe(
+    `SELECT
+       ${groupExpr} AS group_key,
+       COUNT(*)::int AS total_calls,
+       COUNT(*) FILTER (WHERE event_type NOT LIKE '%error%' AND NOT (details ? 'error'))::int AS success_count,
+       COUNT(*) FILTER (WHERE event_type LIKE '%error%' OR (details ? 'error'))::int AS error_count,
+       AVG((details->>'duration_ms')::numeric)::float AS avg_duration_ms
+     FROM audit_events
+     WHERE entity_type = 'otel_tool'
+       AND created_at >= $1::timestamptz
+     GROUP BY ${groupExpr}
+     ORDER BY total_calls DESC
+     LIMIT 100`,
+    [sinceTs],
+  );
+
+  return rows as unknown as ToolUsageRow[];
+}
+
+// ============================================================================
+// Timeline — all events for an entity, ordered by time
+// ============================================================================
+
+export async function queryTimeline(entityId: string): Promise<AuditEventRow[]> {
+  const sql = await getConnection();
+
+  const rows = await sql.unsafe(
+    `SELECT id, entity_type, entity_id, event_type, actor, details, created_at
+     FROM audit_events
+     WHERE entity_id = $1
+        OR actor = $1
+        OR details->>'traceId' = $1
+        OR details->>'session_id' = $1
+     ORDER BY created_at ASC
+     LIMIT 500`,
+    [entityId],
+  );
+
+  return rows as unknown as AuditEventRow[];
+}
+
+// ============================================================================
+// Summary — high-level stats
+// ============================================================================
+
+export interface EventSummary {
+  agents_spawned: number;
+  tasks_moved: number;
+  total_cost: number;
+  error_count: number;
+  total_events: number;
+  tool_calls: number;
+  api_requests: number;
+}
+
+export async function querySummary(since: string): Promise<EventSummary> {
+  const sql = await getConnection();
+  const sinceTs = parseSince(since);
+
+  const rows = await sql.unsafe(
+    `SELECT
+       COUNT(*) FILTER (WHERE entity_type = 'worker' AND event_type = 'spawn')::int AS agents_spawned,
+       COUNT(*) FILTER (WHERE entity_type = 'task' AND event_type = 'stage_change')::int AS tasks_moved,
+       COALESCE(SUM((details->>'cost_usd')::numeric) FILTER (WHERE entity_type = 'otel_api'), 0)::float AS total_cost,
+       COUNT(*) FILTER (WHERE event_type LIKE '%error%' OR (details ? 'error'))::int AS error_count,
+       COUNT(*)::int AS total_events,
+       COUNT(*) FILTER (WHERE entity_type = 'otel_tool')::int AS tool_calls,
+       COUNT(*) FILTER (WHERE entity_type = 'otel_api')::int AS api_requests
+     FROM audit_events
+     WHERE created_at >= $1::timestamptz`,
+    [sinceTs],
+  );
+
+  const r = rows[0] ?? {};
+  return {
+    agents_spawned: r.agents_spawned ?? 0,
+    tasks_moved: r.tasks_moved ?? 0,
+    total_cost: r.total_cost ?? 0,
+    error_count: r.error_count ?? 0,
+    total_events: r.total_events ?? 0,
+    tool_calls: r.tool_calls ?? 0,
+    api_requests: r.api_requests ?? 0,
+  };
+}
+
+// ============================================================================
+// traceId generation for cross-repo correlation
+// ============================================================================
+
+export function generateTraceId(): string {
+  return crypto.randomUUID();
+}
