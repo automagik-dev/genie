@@ -8,6 +8,7 @@
  * does not block local registration.
  */
 
+import { generateTraceId, getActor, recordAuditEvent } from './audit.js';
 import { loadGenieConfig } from './genie-config.js';
 
 // ============================================================================
@@ -103,9 +104,12 @@ export async function registerAgentInOmni(
     },
   };
 
+  const traceId = generateTraceId();
+
   try {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      'X-Trace-Id': traceId,
     };
     if (apiKey) {
       headers.Authorization = `Bearer ${apiKey}`;
@@ -121,14 +125,27 @@ export async function registerAgentInOmni(
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       console.warn(`Warning: Omni registration failed (HTTP ${response.status}): ${text}`);
+      recordAuditEvent('omni', agentName, 'registration_error', getActor(), {
+        traceId,
+        status: response.status,
+        error: text.slice(0, 200),
+      }).catch(() => {});
       return null;
     }
 
     const result = (await response.json()) as { data: OmniAgentResponse };
+    recordAuditEvent('omni', agentName, 'registration_success', getActor(), {
+      traceId,
+      omniAgentId: result.data.id,
+    }).catch(() => {});
     return result.data.id;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`Warning: Omni registration failed: ${message}`);
+    recordAuditEvent('omni', agentName, 'registration_error', getActor(), {
+      traceId,
+      error: message.slice(0, 200),
+    }).catch(() => {});
     return null;
   }
 }
@@ -144,8 +161,12 @@ export async function findOmniAgent(agentName: string): Promise<string | null> {
 
   const apiKey = await resolveOmniApiKey();
 
+  const traceId = generateTraceId();
+
   try {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      'X-Trace-Id': traceId,
+    };
     if (apiKey) {
       headers.Authorization = `Bearer ${apiKey}`;
     }
