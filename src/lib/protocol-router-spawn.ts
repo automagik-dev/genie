@@ -98,7 +98,9 @@ async function spawnPaneInSession(
   }
 
   const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
-  const { stdout } = await execAsync(`tmux split-window -d ${splitTarget} -P -F '#{pane_id}' ${fullCommand}`);
+  // Wrap fullCommand in shell quotes so it survives the outer-shell → tmux → inner-shell pipeline.
+  const escapedCmd = fullCommand.replace(/'/g, "'\\''");
+  const { stdout } = await execAsync(`tmux split-window -d ${splitTarget} -P -F '#{pane_id}' '${escapedCmd}'`);
   const paneId = stdout.trim();
 
   let layoutTarget = `${session}:${teamWindow?.windowName ?? ''}`;
