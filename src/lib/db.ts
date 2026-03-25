@@ -21,7 +21,6 @@ const MAX_PORT_RETRIES = 3;
 const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
 const DATA_DIR = join(GENIE_HOME, 'data', 'pgserve');
 const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
-const MIGRATION_MARKER = join(GENIE_HOME, 'pgserve.migrated');
 const DB_NAME = 'genie';
 
 /** Sanitize connection URLs for logging — never expose credentials */
@@ -292,29 +291,8 @@ function registerExitHandler(): void {
   });
 }
 
-/**
- * Check if migrations have already been applied (marker file).
- * The marker stores the version so we re-run on upgrades.
- */
-function migrationsDone(): boolean {
-  try {
-    const marker = readFileSync(MIGRATION_MARKER, 'utf-8').trim();
-    // Re-run migrations if the genie version changed
-    const currentVersion = process.env.npm_package_version ?? '';
-    return marker === currentVersion || (currentVersion === '' && marker.length > 0);
-  } catch {
-    return false;
-  }
-}
-
-function markMigrationsDone(): void {
-  try {
-    const version = process.env.npm_package_version ?? Date.now().toString();
-    writeFileSync(MIGRATION_MARKER, version, 'utf-8');
-  } catch {
-    // Best effort
-  }
-}
+// Migration marker file is legacy — kept for backward compat but no longer used for skip logic.
+// The migration runner (db-migrations.ts) checks _genie_migrations table directly.
 
 /**
  * Get a postgres.js connection. Lazy singleton — calls ensurePgserve() on first use.
@@ -342,11 +320,8 @@ export async function getConnection() {
     ...(testSchema ? { connection: { search_path: `${testSchema}, public` } } : {}),
   });
 
-  // Only run migrations if not yet applied for this version
-  if (!migrationsDone()) {
-    await runMigrations(sqlClient);
-    markMigrationsDone();
-  }
+  // Always call runMigrations — it's idempotent (checks _genie_migrations table)
+  await runMigrations(sqlClient);
 
   // Run idempotent JSON → PG seed if source files exist
   if (!testSchema && needsSeed()) {

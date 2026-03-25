@@ -403,10 +403,25 @@ export function getRepoPath(): string {
 // ID Resolution
 // ============================================================================
 
-/** Resolve `#47` (seq) or `task-abc123` (PK) to internal ID. */
+/** Resolve `#47` (seq), `project#seq`, or `task-abc123` (PK) to internal ID. */
 export async function resolveTaskId(idOrSeq: string, repoPath?: string): Promise<string | null> {
   const sql = await getConnection();
   const repo = repoPath ?? getRepoPath();
+
+  // project#seq format — e.g. "genie#1", "wk-resilience#17"
+  const projectSeqMatch = idOrSeq.match(/^([^#]+)#(\d+)$/);
+  if (projectSeqMatch && !idOrSeq.startsWith('#')) {
+    const [, projectName, seqStr] = projectSeqMatch;
+    const seq = Number.parseInt(seqStr, 10);
+    if (Number.isNaN(seq)) return null;
+    const rows = await sql`
+      SELECT t.id FROM tasks t
+      JOIN projects p ON t.project_id = p.id
+      WHERE p.name = ${projectName} AND t.seq = ${seq}
+      LIMIT 1
+    `;
+    return rows.length > 0 ? (rows[0].id as string) : null;
+  }
 
   if (idOrSeq.startsWith('#')) {
     const seq = Number.parseInt(idOrSeq.slice(1), 10);
