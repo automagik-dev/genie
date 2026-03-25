@@ -633,7 +633,11 @@ function createTmuxPane(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): strin
 
   const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
   const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
-  const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${ctx.fullCommand}`;
+  // Wrap fullCommand in shell quotes so it survives the outer-shell → tmux → inner-shell pipeline.
+  // Without this, single quotes from escapeShellArg (e.g. around the initialPrompt) are consumed
+  // by the outer shell, and tmux's inner shell sees unquoted args — splitting multi-word prompts.
+  const escapedCmd = ctx.fullCommand.replace(/'/g, "'\\''");
+  const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' '${escapedCmd}'`;
   return execSync(splitCmd, { encoding: 'utf-8' }).trim();
 }
 
