@@ -284,5 +284,26 @@ describe('Team Manager', () => {
       const disbanded = await disbandTeam('nonexistent');
       expect(disbanded).toBe(false);
     });
+
+    test('cleans up Claude teams settings directory', async () => {
+      const CLAUDE_DIR = join(TEST_DIR, 'claude-config');
+      process.env.CLAUDE_CONFIG_DIR = CLAUDE_DIR;
+
+      await createTeam('feat/claude-cleanup', TEST_REPO, 'dev');
+
+      // Simulate hook injection: create ~/.claude/teams/<name>/settings.json
+      const claudeTeamDir = join(CLAUDE_DIR, 'teams', 'feat-claude-cleanup');
+      await mkdir(claudeTeamDir, { recursive: true });
+      await writeFile(join(claudeTeamDir, 'settings.json'), '{"hooks":{}}');
+      expect(existsSync(join(claudeTeamDir, 'settings.json'))).toBe(true);
+
+      await disbandTeam('feat/claude-cleanup');
+
+      // Claude team directory should be gone
+      expect(existsSync(claudeTeamDir)).toBe(false);
+
+      // Clean up
+      process.env.CLAUDE_CONFIG_DIR = undefined;
+    });
   });
 });
