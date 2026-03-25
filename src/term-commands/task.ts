@@ -479,6 +479,7 @@ export function registerTaskCommands(program: Command): void {
             projectName: options.project,
             boardName: options.board,
             allProjects: options.all,
+            ...(options.all ? { limit: 10000 } : {}),
           };
 
           let tasks: taskServiceTypes.TaskRow[];
