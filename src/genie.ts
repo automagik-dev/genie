@@ -53,6 +53,7 @@ import { type QaOptions, qaCommand, qaHistoryCommand, qaStatusCommand } from './
 import * as readCmd from './term-commands/read.js';
 import { registerReleaseCommands } from './term-commands/release.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
+import { registerSessionsCommands } from './term-commands/sessions.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { registerTagCommands } from './term-commands/tag.js';
 import { registerTaskCommands } from './term-commands/task.js';
@@ -158,6 +159,7 @@ registerReleaseCommands(program);
 registerProjectCommands(program);
 registerNotifyCommands(program);
 registerEventsCommands(program);
+registerSessionsCommands(program);
 
 // ============================================================================
 // CLI audit hooks — record every command execution to audit_events
