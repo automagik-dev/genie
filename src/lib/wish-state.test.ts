@@ -7,7 +7,7 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setupTestSchema } from './test-db.js';
@@ -723,7 +723,9 @@ describe('resolveRepoPath', () => {
   });
 
   test('falls back to cwd when not in a git repo', () => {
-    const nonGitDir = mkdtempSync(join(tmpdir(), 'genie-non-git-'));
+    // Use /var/tmp to avoid /tmp/.git which may exist on some machines
+    const base = existsSync('/var/tmp') ? '/var/tmp' : tmpdir();
+    const nonGitDir = mkdtempSync(join(base, 'genie-non-git-'));
     process.chdir(nonGitDir);
 
     const result = resolveRepoPath();
