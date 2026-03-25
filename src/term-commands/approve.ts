@@ -9,9 +9,9 @@
  *   genie agent approve --stop                    - Stop the auto-approve engine
  */
 
-import { queryAuditEvents } from '../lib/audit.js';
 import { type AutoApproveEngine, createAutoApproveEngine, sendApprovalViaTmux } from '../lib/auto-approve-engine.js';
 import { loadAutoApproveConfig } from '../lib/auto-approve.js';
+import { getConnection } from '../lib/db.js';
 import type { PermissionRequestQueue } from '../lib/event-listener.js';
 
 // ============================================================================
@@ -99,7 +99,12 @@ export async function getStatusEntries(options: GetStatusOptions): Promise<Statu
 
   // 1. Read completed entries from audit_events PG table
   try {
-    const auditRows = await queryAuditEvents({ entity: 'approval', limit: 100 });
+    const sql = await getConnection();
+    const auditRows = await sql`
+      SELECT id, entity_type, entity_id, event_type, actor, details, created_at
+      FROM audit_events WHERE entity_type = 'approval'
+      ORDER BY created_at DESC LIMIT 100
+    `;
     for (const row of auditRows) {
       entries.push({
         requestId: row.entity_id,
