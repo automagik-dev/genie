@@ -868,7 +868,7 @@ async function resolveAgentForSpawn(
 
   return {
     entry,
-    repoPath: options.cwd ?? (entry.dir || undefined) ?? process.cwd(),
+    repoPath: options.cwd ?? (entry.repo || undefined) ?? (entry.dir || undefined) ?? process.cwd(),
     identityPath,
     model: options.model ?? entry.model,
   };

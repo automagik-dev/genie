@@ -195,19 +195,25 @@ export async function getBoard(nameOrId: string, projectId?: string): Promise<Bo
   const byId = await sql`SELECT * FROM boards WHERE id = ${nameOrId} LIMIT 1`;
   if (byId.length > 0) return mapBoard(byId[0]);
 
-  // Try by name within project scope
+  // Try by name within project scope (ILIKE for case-insensitive match)
   if (projectId) {
     const byName = await sql`
-      SELECT * FROM boards WHERE name = ${nameOrId} AND project_id = ${projectId} LIMIT 1
+      SELECT * FROM boards WHERE name ILIKE ${nameOrId} AND project_id = ${projectId} LIMIT 1
     `;
     if (byName.length > 0) return mapBoard(byName[0]);
   }
 
   // Try by name with null project (global boards)
   const byName = await sql`
-    SELECT * FROM boards WHERE name = ${nameOrId} AND project_id IS NULL LIMIT 1
+    SELECT * FROM boards WHERE name ILIKE ${nameOrId} AND project_id IS NULL LIMIT 1
   `;
   if (byName.length > 0) return mapBoard(byName[0]);
+
+  // Try by name across all projects (ILIKE fallback)
+  const anyName = await sql`
+    SELECT * FROM boards WHERE name ILIKE ${nameOrId} LIMIT 1
+  `;
+  if (anyName.length > 0) return mapBoard(anyName[0]);
 
   return null;
 }

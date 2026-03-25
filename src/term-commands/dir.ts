@@ -254,26 +254,26 @@ function listEntriesJson(entries: directory.ScopedDirectoryEntry[], includeBuilt
 function printRegisteredTable(entries: directory.ScopedDirectoryEntry[]): void {
   const nameW = 22;
   const scopeW = 10;
-  const dirW = 30;
-  const modeW = 8;
+  const repoW = 30;
   const modelW = 8;
+  const rolesW = 20;
 
   console.log('');
   console.log('REGISTERED AGENTS');
-  console.log('-'.repeat(85));
+  console.log('-'.repeat(90));
   console.log(
-    `  ${'NAME'.padEnd(nameW)}${'SCOPE'.padEnd(scopeW)}${'DIR'.padEnd(dirW)}${'MODE'.padEnd(modeW)}${'MODEL'.padEnd(modelW)}ROLES`,
+    `  ${'NAME'.padEnd(nameW)}${'SCOPE'.padEnd(scopeW)}${'REPO'.padEnd(repoW)}${'MODEL'.padEnd(modelW)}ROLES`,
   );
   console.log(
-    `  ${'-'.repeat(nameW - 2)}  ${'-'.repeat(scopeW - 2)}  ${'-'.repeat(dirW - 2)}  ${'-'.repeat(modeW - 2)}  ${'-'.repeat(modelW - 2)}  ${'-'.repeat(15)}`,
+    `  ${'-'.repeat(nameW - 2)}  ${'-'.repeat(scopeW - 2)}  ${'-'.repeat(repoW - 2)}  ${'-'.repeat(modelW - 2)}  ${'-'.repeat(rolesW)}`,
   );
 
   for (const entry of entries) {
-    const dir = contractPath(entry.dir);
-    const truncDir = dir.length > dirW - 2 ? `${dir.slice(0, dirW - 5)}...` : dir;
+    const repo = entry.repo ? contractPath(entry.repo) : contractPath(entry.dir);
+    const truncRepo = repo.length > repoW - 2 ? `${repo.slice(0, repoW - 5)}...` : repo;
     const roles = entry.roles?.join(', ') || '-';
     console.log(
-      `  ${entry.name.padEnd(nameW)}${entry.scope.padEnd(scopeW)}${truncDir.padEnd(dirW)}${entry.promptMode.padEnd(modeW)}${(entry.model || '-').padEnd(modelW)}${roles}`,
+      `  ${entry.name.padEnd(nameW)}${entry.scope.padEnd(scopeW)}${truncRepo.padEnd(repoW)}${(entry.model || '-').padEnd(modelW)}${roles}`,
     );
   }
   console.log('');
