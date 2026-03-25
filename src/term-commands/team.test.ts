@@ -8,7 +8,6 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { $ } from 'bun';
-import { setupTestSchema } from '../lib/test-db.js';
 
 // ============================================================================
 // Test Setup
@@ -17,17 +16,12 @@ import { setupTestSchema } from '../lib/test-db.js';
 const TEST_DIR = '/tmp/team-cli-test';
 const TEST_REPO = join(TEST_DIR, 'test-repo');
 const TEST_GENIE_HOME = join(TEST_DIR, 'genie-home');
+const TEST_CLAUDE_CONFIG = join(TEST_DIR, '.claude');
 
 // Path to the genie CLI entrypoint
 const GENIE_BIN = join(import.meta.dir, '..', 'genie.ts');
 
-// PG schema cleanup — assigned in setupTestRepo, called in cleanupTestRepo
-const pgState: { cleanup: () => Promise<void> } = { cleanup: async () => {} };
-
 async function setupTestRepo(): Promise<void> {
-  // Set up PG test schema isolation — teams are stored in PG now
-  pgState.cleanup = await setupTestSchema();
-
   try {
     await rm(TEST_DIR, { recursive: true, force: true });
   } catch {
@@ -36,6 +30,7 @@ async function setupTestRepo(): Promise<void> {
 
   await mkdir(TEST_REPO, { recursive: true });
   await mkdir(TEST_GENIE_HOME, { recursive: true });
+  await mkdir(TEST_CLAUDE_CONFIG, { recursive: true });
   await $`git -C ${TEST_REPO} init`.quiet();
   await $`git -C ${TEST_REPO} config user.email "test@test.com"`.quiet();
   await $`git -C ${TEST_REPO} config user.name "Test"`.quiet();
@@ -72,6 +67,26 @@ async function cleanupTestRepo(): Promise<void> {
   } catch {
     // Ignore
   }
+
+  // Clean up any CC native team dirs leaked by tests (belt + suspenders — tests
+  // now use CLAUDE_CONFIG_DIR but clean real ~/.claude/teams/ too in case of regression)
+  const { homedir } = require('node:os');
+  const realClaudeTeams = join(homedir(), '.claude', 'teams');
+  for (const name of [
+    'feat-cli-test',
+    'feat-council-cli',
+    'feat-disband-cli',
+    'feat-done-test',
+    'feat-blocked-test',
+    'feat-autocopy-test',
+    'feat-inrepo-test',
+  ]) {
+    try {
+      await rm(join(realClaudeTeams, name), { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /** Run genie CLI command and return stdout. */
@@ -80,7 +95,7 @@ async function genie(...args: string[]): Promise<{ stdout: string; exitCode: num
     const result = await $`bun ${GENIE_BIN} ${args}`
       .quiet()
       .cwd(TEST_REPO)
-      .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME });
+      .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME, CLAUDE_CONFIG_DIR: TEST_CLAUDE_CONFIG });
     return { stdout: result.stdout.toString(), exitCode: 0 };
   } catch (err: unknown) {
     const shellErr = err as { stdout?: Buffer; exitCode?: number };
@@ -102,7 +117,6 @@ describe('genie team CLI', () => {
 
   afterAll(async () => {
     await cleanupTestRepo();
-    await pgState.cleanup();
   });
 
   test('team create creates a team', async () => {
@@ -188,15 +202,12 @@ describe('genie team CLI', () => {
     await mkdir(wishDir, { recursive: true });
     await writeFile(join(wishDir, 'WISH.md'), '# Test wish for auto-copy\n\n## Summary\nTest.\n');
 
-    // Run team create from the cwd directory — wish is NOT in the repo yet
-    try {
-      await $`bun ${GENIE_BIN} team create feat/autocopy-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug}`
-        .quiet()
-        .cwd(cwdDir)
-        .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME });
-    } catch {
-      // Spawn may fail (no tmux) but auto-copy should have happened before spawn
-    }
+    // --no-spawn: only test wish-copy logic, do NOT spawn a real Claude session
+    await $`bun ${GENIE_BIN} team create feat/autocopy-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug} --no-spawn`
+      .quiet()
+      .cwd(cwdDir)
+      .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME, CLAUDE_CONFIG_DIR: TEST_CLAUDE_CONFIG })
+      .catch(() => {});
 
     // Verify wish was copied to repo
     const repoWishPath = join(TEST_REPO, '.genie', 'wishes', wishSlug, 'WISH.md');
@@ -210,15 +221,12 @@ describe('genie team CLI', () => {
     await mkdir(wishDir, { recursive: true });
     await writeFile(join(wishDir, 'WISH.md'), '# Test wish already in repo\n\n## Summary\nTest.\n');
 
-    // Run team create — wish is already in repo, no copy needed
-    try {
-      await $`bun ${GENIE_BIN} team create feat/inrepo-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug}`
-        .quiet()
-        .cwd(TEST_REPO)
-        .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME });
-    } catch {
-      // Spawn may fail but wish validation should pass
-    }
+    // --no-spawn: only test wish presence, do NOT spawn a real Claude session
+    await $`bun ${GENIE_BIN} team create feat/inrepo-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug} --no-spawn`
+      .quiet()
+      .cwd(TEST_REPO)
+      .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME, CLAUDE_CONFIG_DIR: TEST_CLAUDE_CONFIG })
+      .catch(() => {});
 
     // Wish should still be there
     expect(existsSync(join(wishDir, 'WISH.md'))).toBe(true);
