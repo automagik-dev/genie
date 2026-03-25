@@ -44,7 +44,9 @@ import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
 import { registerAgentNamespace, registerDirNamespace } from './term-commands/dir.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
+import { registerExportCommands } from './term-commands/export.js';
 import * as historyCmd from './term-commands/history.js';
+import { registerImportCommands } from './term-commands/import.js';
 import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerMetricsCommands } from './term-commands/metrics.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
@@ -164,6 +166,8 @@ registerNotifyCommands(program);
 registerEventsCommands(program);
 registerSessionsCommands(program);
 registerMetricsCommands(program);
+registerExportCommands(program);
+registerImportCommands(program);
 
 // ============================================================================
 // CLI audit hooks — record every command execution to audit_events
