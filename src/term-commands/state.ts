@@ -173,6 +173,37 @@ export async function ensureWorkPushed(slug: string, group: string): Promise<voi
 }
 
 // ============================================================================
+// Team Auto-Cleanup
+// ============================================================================
+
+/**
+ * Auto-cleanup team when wish is fully complete.
+ * Looks up the active team (via GENIE_TEAM env) and marks it done + kills members.
+ * Best-effort — if team lookup fails, cleanup is skipped (manual `genie team done` still works).
+ */
+async function autoCleanupTeam(): Promise<void> {
+  const teamName = process.env.GENIE_TEAM;
+  if (!teamName) return;
+
+  try {
+    const teamManager = await import('../lib/team-manager.js');
+    const config = await teamManager.getTeam(teamName);
+    if (!config) return;
+
+    // Only clean up if the team is still active
+    if (config.status === 'done') return;
+
+    console.log(`   🧹 Auto-cleaning team "${teamName}"...`);
+    await teamManager.setTeamStatus(teamName, 'done');
+    await teamManager.killTeamMembers(teamName);
+    console.log(`   ✅ Team "${teamName}" marked done, members killed.`);
+  } catch {
+    // Best-effort — manual cleanup via `genie team done` still works
+    console.log(`   ⚠️ Auto-cleanup skipped — run \`genie team done ${teamName}\` manually.`);
+  }
+}
+
+// ============================================================================
 // Pane Auto-Kill
 // ============================================================================
 
@@ -193,6 +224,36 @@ export function autoKillPane(): void {
     }, 1000);
   } else {
     process.exit(0);
+  }
+}
+
+// ============================================================================
+// Wave + Wish Completion Notifications
+// ============================================================================
+
+/**
+ * Notify team-lead of wave or wish completion via protocol-router.
+ * Best-effort — failures are logged but do not block the done flow.
+ */
+async function notifyWaveCompletion(
+  waveResult: { waveName: string; waveGroups: string[] },
+  wishComplete: boolean,
+): Promise<void> {
+  console.log(`   🌊 ${waveResult.waveName} complete! All groups done: ${waveResult.waveGroups.join(', ')}`);
+  try {
+    const protocolRouter = await import('../lib/protocol-router.js');
+    const repoPath = process.cwd();
+    const message = wishComplete
+      ? `WISH COMPLETE — all groups done: [${waveResult.waveGroups.join(', ')}]. Run \`genie team done\` to clean up.`
+      : `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}]. Run /review or advance to next wave.`;
+    const result = await protocolRouter.sendMessage(repoPath, 'cli', 'team-lead', message);
+    if (result && typeof result === 'object' && 'delivered' in result && !result.delivered) {
+      console.warn('   ⚠️ Wave-complete notification may not have been delivered.');
+    } else {
+      console.log('   Notified team-lead of wave completion.');
+    }
+  } catch {
+    console.warn('   ⚠️ Could not notify team-lead (messaging unavailable).');
   }
 }
 
@@ -229,23 +290,19 @@ export async function doneCommand(ref: string): Promise<void> {
     // Push enforcement: commit dirty tree + push unpushed commits
     await ensureWorkPushed(slug, group);
 
+    // Wish-level completion check — are ALL groups done?
+    const wishComplete = await wishState.isWishComplete(slug);
+
     // Wave completion detection + team-lead notification
     const waveResult = await detectWaveCompletion(slug, group);
     if (waveResult) {
-      console.log(`   🌊 ${waveResult.waveName} complete! All groups done: ${waveResult.waveGroups.join(', ')}`);
-      try {
-        const protocolRouter = await import('../lib/protocol-router.js');
-        const repoPath = process.cwd();
-        const message = `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}]. Run /review or advance to next wave.`;
-        const result = await protocolRouter.sendMessage(repoPath, 'cli', 'team-lead', message);
-        if (result && typeof result === 'object' && 'delivered' in result && !result.delivered) {
-          console.warn('   ⚠️ Wave-complete notification may not have been delivered.');
-        } else {
-          console.log('   Notified team-lead of wave completion.');
-        }
-      } catch {
-        console.warn('   ⚠️ Could not notify team-lead (messaging unavailable).');
-      }
+      await notifyWaveCompletion(waveResult, wishComplete);
+    }
+
+    // If entire wish is complete, auto-trigger team cleanup
+    if (wishComplete) {
+      console.log('   🎉 Wish fully complete — all groups done.');
+      await autoCleanupTeam();
     }
 
     // Auto-kill the calling agent's tmux pane
