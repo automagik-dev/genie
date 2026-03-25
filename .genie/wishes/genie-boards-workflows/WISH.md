@@ -20,7 +20,8 @@ Replace `task_types` with project-scoped Boards. One project can have many board
 - **`genie board` CLI** — create, list, show, edit, delete, columns
 - **Task ↔ Board assignment** — `tasks.board_id` FK replaces `tasks.type_id`
 - **Board-scoped queries** — `genie task list --board Dev`
-- **Templates as JSON files** — `templates/software.json`, `templates/sales.json`, etc. No PG table.
+- **`board_templates` PG table** — reusable blueprints stored in PG alongside boards. Builtins seeded on first migration. User-created via CLI.
+- **Template CLI** — `genie board template list`, `genie board template show <name>`, `genie board template create <name> --from-board <board>`, `genie board template delete <name>`
 - **Column schema future-proofed** for workflow engine:
   ```typescript
   {
@@ -65,13 +66,15 @@ Replace `task_types` with project-scoped Boards. One project can have many board
 | **Boards replace task_types** | Clean migration, no dual system. task_types was a prototype. |
 | **Column schema includes `transitions`, `parallel`, `on_fail` fields NOW** | The workflow engine wish needs these. Adding them later means another migration. Schema is cheap, runtime is expensive — lay the schema now, build the runtime later. |
 | **`transitions: []` empty in v1** | Fields exist but are inert. No runtime reads them. The workflow engine populates and acts on them. |
-| **Templates as JSON files, not PG** | Simplest thing that works. `templates/software.json` is a file, `--from software` reads it. No CRUD overhead, no migration, easy to version in git. |
+| **Templates in PG, not JSON files** | Everything else is PG — boards, tasks, projects. Templates follow the same pattern. CLI-manageable. Builtins seeded by migration, custom templates created from existing boards. |
 | **`genie board use` sets context** | Avoids `--board` flag on every task command. If project has one board, it's auto-selected. If many, user sets context once. |
 | **Column `gate` field preserved as-is** | `human`, `agent`, `human+agent` — same semantics as original Mar 20 design. Workflow engine reads these. Boards just store them. |
 
 ## Success Criteria
 
-- [ ] `genie board create "Dev" --project khal-os --from software` creates board with 7 columns
+- [ ] `genie board template list` shows 5 builtin templates
+- [ ] `genie board template create "My Flow" --from-board "Dev"` snapshots a board as template
+- [ ] `genie board create "Dev" --project khal-os --from software` creates board with 8 columns
 - [ ] `genie board create "Sales" --project khal-os --columns "lead,qualified,proposal,closed"` creates board with human-gated columns
 - [ ] `genie board list --project khal-os` shows both boards
 - [ ] `genie board columns Dev` shows pipeline: column names, gates, actions, colors
@@ -140,29 +143,39 @@ bun test src/lib/board-service.test.ts
 
 ---
 
-### Group 2: Templates
-**Goal:** Provide JSON template files for common board types.
+### Group 2: Templates (PG + CLI)
+**Goal:** Seed builtin templates in PG, provide CLI for template management.
 
 **Deliverables:**
-1. `templates/software.json` — 8 stages: triage→draft→brainstorm→wish→build→review→qa→ship (from Mar 20 pipeline, with gates and actions per stage)
-2. `templates/sales.json` — lead→qualified→proposal→negotiation→closed-won→closed-lost (all human-gated)
-3. `templates/hiring.json` — sourcing→screening→interview→offer→hired
-4. `templates/ops.json` — identified→planning→in-progress→done
-5. `templates/bug.json` — triage(agent/trace)→draft(agent)→build(agent/work)→review(agent/review)→qa(agent/qa)→ship(human) — fast track, minimal human gates
-6. Each template includes full column config: gate, action, auto_advance, transitions (empty), roles, color
+1. `board_templates` PG table in migration `008_boards.sql`: id, name, description, icon, columns JSONB, is_builtin, created_at, updated_at
+2. Seed 5 builtin templates:
+   - `software` — 8 stages: triage→draft→brainstorm→wish→build→review→qa→ship (from Mar 20 pipeline, with gates and actions per stage)
+   - `sales` — lead→qualified→proposal→negotiation→closed-won→closed-lost (all human-gated)
+   - `hiring` — sourcing→screening→interview→offer→hired
+   - `ops` — identified→planning→in-progress→done
+   - `bug` — triage(agent/trace)→draft(agent)→build(agent/work)→review(agent/review)→qa(agent/qa)→ship(human)
+3. Template CLI:
+   - `genie board template list` — show all templates (builtin + custom)
+   - `genie board template show <name>` — detail view with columns pipeline
+   - `genie board template create <name> --from-board <board>` — snapshot existing board as reusable template
+   - `genie board template delete <name>` — delete custom templates (builtins are protected)
+4. Each template's columns include full config: gate, action, auto_advance, transitions (empty), roles, color
 
 **Acceptance Criteria:**
-- [ ] 5 template files exist and are valid JSON
-- [ ] `software.json` matches Mar 20 pipeline design (8 stages with correct gates per type)
+- [ ] `genie board template list` shows 5 builtin templates
+- [ ] `genie board template show software` shows 8-stage pipeline with correct gates
+- [ ] `genie board template create "My Custom" --from-board "Dev"` works
+- [ ] `genie board template delete software` is rejected (builtin protection)
 - [ ] Templates include `transitions: []` field on every column (placeholder for workflow engine)
 
 **Validation:**
 ```bash
-ls templates/*.json | wc -l  # should be 5
-cat templates/software.json | jq '.columns | length'  # should be 8
+genie board template list
+genie board template show software
+genie db query "SELECT name FROM board_templates WHERE is_builtin = true"
 ```
 
-**depends-on:** Group 1 (needs to know column JSONB shape)
+**depends-on:** Group 1 (template table is part of the same migration)
 
 ---
 
@@ -251,7 +264,7 @@ genie task list --board Dev --by-column
 |------|----------|------------|
 | Migration breaks existing tasks | High | Additive migration. `board_id` nullable. Old `type_id` preserved. Rollback = drop `board_id` column. |
 | `task_types` removal breaks plugins | Medium | Deprecation alias (`genie type` → `genie board`) for 2 releases. `task_types` table kept read-only. |
-| Template files not found at runtime | Low | Embed templates in the built bundle. Fallback: error with clear message. |
+| Builtin templates not seeded | Low | Migration seeds them. `genie db migrate` re-runs idempotently. |
 | Column JSONB schema changes before workflow engine ships | Low | JSONB is schemaless — add fields freely. `transitions: []` default means old rows work when new code reads them. |
 
 ## Files to Create/Modify
@@ -262,11 +275,8 @@ src/db/migrations/008_boards.sql       — boards table, migration from task_typ
 src/lib/board-service.ts               — board CRUD
 src/lib/board-service.test.ts          — tests
 src/term-commands/board.ts             — genie board CLI
-templates/software.json                — 8-stage dev pipeline
-templates/sales.json                   — 6-stage sales pipeline
-templates/hiring.json                  — 5-stage hiring pipeline
-templates/ops.json                     — 4-stage ops pipeline
-templates/bug.json                     — 6-stage fast-track bug pipeline
+src/lib/template-service.ts            — template CRUD + builtin seed logic
+src/lib/template-service.test.ts       — tests
 
 # Modify
 src/lib/task-service.ts                — board_id FK, board-scoped queries
