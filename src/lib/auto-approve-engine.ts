@@ -24,26 +24,6 @@ import { executeTmux } from './tmux.js';
 // ============================================================================
 
 /**
- * Audit log entry written to audit_events PG table
- */
-export interface AuditLogEntry {
-  /** ISO timestamp of the decision */
-  timestamp: string;
-  /** tmux pane ID (e.g., "%42") */
-  paneId: string | undefined;
-  /** Tool name that was evaluated */
-  toolName: string;
-  /** Decision action: approve, deny, or escalate */
-  action: 'approve' | 'deny' | 'escalate';
-  /** Human-readable reason for the decision */
-  reason: string;
-  /** Associated wish ID */
-  wishId: string | undefined;
-  /** The permission request ID */
-  requestId: string;
-}
-
-/**
  * Engine statistics
  */
 export interface EngineStats {
