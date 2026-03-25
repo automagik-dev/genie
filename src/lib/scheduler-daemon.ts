@@ -1292,13 +1292,20 @@ export function startDaemon(
       // Continue with poll-only mode
     }
 
-    // Start heartbeat collection (every 60s) — collects pane liveness + machine snapshot + NATS events
+    // Start heartbeat collection (every 60s) — collects pane liveness + machine snapshot + NATS events + session ingestion
     heartbeatTimer = setInterval(async () => {
       if (!running) return;
       try {
         await collectHeartbeats(deps);
         await collectMachineSnapshot(deps);
         await emitWorkerEvents(deps);
+        // Ingest session JSONL content (complementary to OTel structured events)
+        try {
+          const { ingestSessions } = await import('./session-ingester.js');
+          await ingestSessions();
+        } catch {
+          // Session ingestion is best-effort — never block the heartbeat cycle
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         deps.log({
