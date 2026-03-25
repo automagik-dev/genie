@@ -278,8 +278,8 @@ export async function getTeamLeadEntry(teamName: string, session?: string, repoP
   return sr.length > 0 ? rowToAgent(sr[0]) : null;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
 async function findTeamLeadBySession(
+  // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
   sql: any,
   teamName: string,
   session: string,
