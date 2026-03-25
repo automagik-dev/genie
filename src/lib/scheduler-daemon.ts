@@ -840,15 +840,30 @@ export async function collectHeartbeats(deps: SchedulerDeps): Promise<number> {
     SELECT id, worker_id, status, trigger_id FROM runs WHERE status = 'running'
   `;
 
+  // Build worker lookup for enriched heartbeat context
+  const workers = await deps.listWorkers();
+  const workerById = new Map(workers.map((w) => [w.id, w]));
+
   let collected = 0;
   for (const run of activeRuns) {
     const { alive, isPid } = await checkWorkerAlive(deps, run.worker_id);
     const heartbeatStatus = alive ? (isPid ? 'busy' : 'alive') : 'dead';
 
+    const worker = workerById.get(run.worker_id);
+    const context = {
+      alive,
+      pid_check: isPid,
+      worker_id: run.worker_id,
+      team: worker?.team ?? null,
+      wish_slug: worker?.wishSlug ?? null,
+      group_number: worker?.groupNumber ?? null,
+      state: worker?.state ?? null,
+    };
+
     const heartbeatId = deps.generateId();
     await sql`
       INSERT INTO heartbeats (id, worker_id, run_id, status, context, last_seen_at, created_at)
-      VALUES (${heartbeatId}, ${run.worker_id}, ${run.id}, ${heartbeatStatus}, ${JSON.stringify({ alive, pid_check: isPid })}, ${now}, ${now})
+      VALUES (${heartbeatId}, ${run.worker_id}, ${run.id}, ${heartbeatStatus}, ${JSON.stringify(context)}, ${now}, ${now})
     `;
     collected++;
   }
@@ -1292,19 +1307,29 @@ export function startDaemon(
       // Continue with poll-only mode
     }
 
-    // Start heartbeat collection (every 60s) — collects pane liveness + machine snapshot + NATS events + session ingestion
+    // Start heartbeat collection (every 60s) — collects liveness + snapshots + events + session ingestion + retention
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: flat sequential operations in heartbeat loop
     heartbeatTimer = setInterval(async () => {
       if (!running) return;
       try {
         await collectHeartbeats(deps);
         await collectMachineSnapshot(deps);
         await emitWorkerEvents(deps);
-        // Ingest session JSONL content (complementary to OTel structured events)
+        // Session JSONL ingestion (complementary to OTel)
         try {
           const { ingestSessions } = await import('./session-ingester.js');
           await ingestSessions();
         } catch {
-          // Session ingestion is best-effort — never block the heartbeat cycle
+          // Best-effort
+        }
+        // Retention cleanup
+        try {
+          const retSql = await deps.getConnection();
+          await retSql`DELETE FROM heartbeats WHERE created_at < now() - interval '7 days'`;
+          await retSql`DELETE FROM machine_snapshots WHERE created_at < now() - interval '30 days'`;
+          await retSql`DELETE FROM audit_events WHERE entity_type LIKE 'otel_%' AND created_at < now() - interval '30 days'`;
+        } catch {
+          // Best-effort
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
