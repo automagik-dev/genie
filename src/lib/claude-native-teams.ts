@@ -381,7 +381,7 @@ export async function deleteNativeTeam(teamName: string): Promise<boolean> {
  * count, and working directory (from config.json → members → team-lead → cwd).
  */
 export async function listTeamsWithUnreadInbox(): Promise<
-  Array<{ teamName: string; unreadCount: number; workingDir: string | null }>
+  Array<{ teamName: string; unreadCount: number; workingDir: string | null; firstUnreadText: string | null }>
 > {
   const base = teamsBaseDir();
   let teamDirs: string[];
@@ -391,7 +391,12 @@ export async function listTeamsWithUnreadInbox(): Promise<
     return []; // No teams directory
   }
 
-  const results: Array<{ teamName: string; unreadCount: number; workingDir: string | null }> = [];
+  const results: Array<{
+    teamName: string;
+    unreadCount: number;
+    workingDir: string | null;
+    firstUnreadText: string | null;
+  }> = [];
 
   for (const name of teamDirs) {
     // Read inbox messages
@@ -406,8 +411,8 @@ export async function listTeamsWithUnreadInbox(): Promise<
 
     if (!Array.isArray(messages)) continue;
 
-    const unreadCount = messages.filter((m) => m.read === false).length;
-    if (unreadCount === 0) continue;
+    const unread = messages.filter((m) => m.read === false);
+    if (unread.length === 0) continue;
 
     // Get workingDir from config.json → members → team-lead → cwd
     let workingDir: string | null = null;
@@ -422,7 +427,12 @@ export async function listTeamsWithUnreadInbox(): Promise<
       // Config missing or malformed — workingDir stays null
     }
 
-    results.push({ teamName: name, unreadCount, workingDir });
+    results.push({
+      teamName: name,
+      unreadCount: unread.length,
+      workingDir,
+      firstUnreadText: unread[0]?.text ?? null,
+    });
   }
 
   return results;

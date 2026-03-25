@@ -7,6 +7,7 @@
  */
 
 import { listTeamsWithUnreadInbox } from './claude-native-teams.js';
+import { parseRoutingHeader, resolveSessionKey } from './routing-header.js';
 import { ensureTeamLead, isTeamActive } from './team-auto-spawn.js';
 
 // ============================================================================
@@ -66,6 +67,17 @@ export function resetSpawnFailures(): void {
 }
 
 // ============================================================================
+// Session key resolution
+// ============================================================================
+
+/** Resolve a session key from the first unread message's routing header, or fall back to team name. */
+function resolveSessionKeyFromMessage(teamName: string, firstUnreadText: string | null): string {
+  if (!firstUnreadText) return teamName;
+  const header = parseRoutingHeader(firstUnreadText);
+  return header ? resolveSessionKey(teamName, header) : teamName;
+}
+
+// ============================================================================
 // Main polling function
 // ============================================================================
 
@@ -82,11 +94,13 @@ export async function checkInboxes(deps: InboxWatcherDeps = defaultDeps): Promis
   const teamsWithUnread = await deps.listTeamsWithUnreadInbox();
   const spawned: string[] = [];
 
-  for (const { teamName, workingDir } of teamsWithUnread) {
-    // Skip teams that have exceeded max spawn failures
-    const failures = spawnFailures.get(teamName) ?? 0;
+  for (const { teamName, workingDir, firstUnreadText } of teamsWithUnread) {
+    const sessionKey = resolveSessionKeyFromMessage(teamName, firstUnreadText);
+
+    // Skip sessions that have exceeded max spawn failures
+    const failures = spawnFailures.get(sessionKey) ?? 0;
     if (failures >= MAX_SPAWN_FAILURES) {
-      deps.warn(`[inbox-watcher] Skipping team "${teamName}" — ${failures} consecutive spawn failures`);
+      deps.warn(`[inbox-watcher] Skipping "${sessionKey}" — ${failures} consecutive spawn failures`);
       continue;
     }
 
@@ -103,11 +117,11 @@ export async function checkInboxes(deps: InboxWatcherDeps = defaultDeps): Promis
     // Attempt to spawn team-lead
     try {
       await deps.ensureTeamLead(teamName, workingDir);
-      spawnFailures.set(teamName, 0); // Reset on success
+      spawnFailures.set(sessionKey, 0); // Reset on success
       spawned.push(teamName);
     } catch (err) {
       const newCount = failures + 1;
-      spawnFailures.set(teamName, newCount);
+      spawnFailures.set(sessionKey, newCount);
       const message = err instanceof Error ? err.message : String(err);
       deps.warn(
         `[inbox-watcher] Failed to spawn team-lead for "${teamName}" (attempt ${newCount}/${MAX_SPAWN_FAILURES}): ${message}`,
