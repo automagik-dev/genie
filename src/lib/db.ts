@@ -349,7 +349,7 @@ export async function getConnection() {
   }
 
   // Run idempotent JSON → PG seed if source files exist
-  if (needsSeed()) {
+  if (!testSchema && needsSeed()) {
     await runSeed(sqlClient);
   }
 
