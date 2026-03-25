@@ -5,7 +5,7 @@
 -- ============================================================================
 -- Table: boards — Project-scoped pipeline boards
 -- ============================================================================
-CREATE TABLE boards (
+CREATE TABLE IF NOT EXISTS boards (
   id TEXT PRIMARY KEY DEFAULT 'board-' || substr(gen_random_uuid()::text, 1, 8),
   name TEXT NOT NULL,
   project_id TEXT REFERENCES projects(id),
@@ -17,12 +17,12 @@ CREATE TABLE boards (
   UNIQUE(project_id, name)
 );
 
-CREATE INDEX idx_boards_project ON boards(project_id);
+CREATE INDEX IF NOT EXISTS idx_boards_project ON boards(project_id);
 
 -- ============================================================================
 -- Table: board_templates — Reusable board blueprints
 -- ============================================================================
-CREATE TABLE board_templates (
+CREATE TABLE IF NOT EXISTS board_templates (
   id TEXT PRIMARY KEY DEFAULT 'tmpl-' || substr(gen_random_uuid()::text, 1, 8),
   name TEXT UNIQUE NOT NULL,
   description TEXT,
@@ -36,10 +36,10 @@ CREATE TABLE board_templates (
 -- ============================================================================
 -- Add board_id and column_id to tasks
 -- ============================================================================
-ALTER TABLE tasks ADD COLUMN board_id TEXT REFERENCES boards(id);
-ALTER TABLE tasks ADD COLUMN column_id TEXT;
-CREATE INDEX idx_tasks_board ON tasks(board_id) WHERE board_id IS NOT NULL;
-CREATE INDEX idx_tasks_column ON tasks(column_id) WHERE column_id IS NOT NULL;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS board_id TEXT REFERENCES boards(id);
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS column_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_tasks_board ON tasks(board_id) WHERE board_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_column ON tasks(column_id) WHERE column_id IS NOT NULL;
 
 -- ============================================================================
 -- Seed builtin board templates
@@ -57,7 +57,8 @@ INSERT INTO board_templates (name, description, icon, is_builtin, columns) VALUE
     '{"id":"' || gen_random_uuid()::text || '","name":"review","label":"Review","gate":"human","action":"/review","auto_advance":false,"transitions":[],"roles":["*"],"color":"#eab308","parallel":false,"on_fail":null,"position":5},' ||
     '{"id":"' || gen_random_uuid()::text || '","name":"qa","label":"QA","gate":"agent","action":"/qa","auto_advance":true,"transitions":[],"roles":["engineering"],"color":"#06b6d4","parallel":false,"on_fail":null,"position":6},' ||
     '{"id":"' || gen_random_uuid()::text || '","name":"ship","label":"Ship","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["admin"],"color":"#10b981","parallel":false,"on_fail":null,"position":7}'
-  || ']')::jsonb);
+  || ']')::jsonb)
+ON CONFLICT (name) DO NOTHING;
 
 -- 2. Sales (6-stage, all human-gated)
 INSERT INTO board_templates (name, description, icon, is_builtin, columns) VALUES
@@ -69,7 +70,8 @@ INSERT INTO board_templates (name, description, icon, is_builtin, columns) VALUE
     '{"id":"' || gen_random_uuid()::text || '","name":"negotiation","label":"Negotiation","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["*"],"color":"#f97316","parallel":false,"on_fail":null,"position":3},' ||
     '{"id":"' || gen_random_uuid()::text || '","name":"closed-won","label":"Closed Won","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["*"],"color":"#10b981","parallel":false,"on_fail":null,"position":4},' ||
     '{"id":"' || gen_random_uuid()::text || '","name":"closed-lost","label":"Closed Lost","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["*"],"color":"#ef4444","parallel":false,"on_fail":null,"position":5}'
-  || ']')::jsonb);
+  || ']')::jsonb)
+ON CONFLICT (name) DO NOTHING;
 
 -- 3. Hiring (5-stage, all human-gated)
 INSERT INTO board_templates (name, description, icon, is_builtin, columns) VALUES
@@ -80,7 +82,8 @@ INSERT INTO board_templates (name, description, icon, is_builtin, columns) VALUE
     '{"id":"' || gen_random_uuid()::text || '","name":"interview","label":"Interview","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["*"],"color":"#8b5cf6","parallel":false,"on_fail":null,"position":2},' ||
     '{"id":"' || gen_random_uuid()::text || '","name":"offer","label":"Offer","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["*"],"color":"#f97316","parallel":false,"on_fail":null,"position":3},' ||
     '{"id":"' || gen_random_uuid()::text || '","name":"hired","label":"Hired","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["*"],"color":"#10b981","parallel":false,"on_fail":null,"position":4}'
-  || ']')::jsonb);
+  || ']')::jsonb)
+ON CONFLICT (name) DO NOTHING;
 
 -- 4. Ops (4-stage, human-gated)
 INSERT INTO board_templates (name, description, icon, is_builtin, columns) VALUES
@@ -90,7 +93,8 @@ INSERT INTO board_templates (name, description, icon, is_builtin, columns) VALUE
     '{"id":"' || gen_random_uuid()::text || '","name":"planning","label":"Planning","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["*"],"color":"#3b82f6","parallel":false,"on_fail":null,"position":1},' ||
     '{"id":"' || gen_random_uuid()::text || '","name":"in-progress","label":"In Progress","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["*"],"color":"#f97316","parallel":false,"on_fail":null,"position":2},' ||
     '{"id":"' || gen_random_uuid()::text || '","name":"done","label":"Done","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["*"],"color":"#10b981","parallel":false,"on_fail":null,"position":3}'
-  || ']')::jsonb);
+  || ']')::jsonb)
+ON CONFLICT (name) DO NOTHING;
 
 -- 5. Bug (6-stage, mostly agent-gated)
 INSERT INTO board_templates (name, description, icon, is_builtin, columns) VALUES
@@ -102,7 +106,8 @@ INSERT INTO board_templates (name, description, icon, is_builtin, columns) VALUE
     '{"id":"' || gen_random_uuid()::text || '","name":"review","label":"Review","gate":"agent","action":"/review","auto_advance":false,"transitions":[],"roles":["*"],"color":"#eab308","parallel":false,"on_fail":null,"position":3},' ||
     '{"id":"' || gen_random_uuid()::text || '","name":"qa","label":"QA","gate":"agent","action":"/qa","auto_advance":true,"transitions":[],"roles":["*"],"color":"#06b6d4","parallel":false,"on_fail":null,"position":4},' ||
     '{"id":"' || gen_random_uuid()::text || '","name":"ship","label":"Ship","gate":"human","action":null,"auto_advance":false,"transitions":[],"roles":["admin"],"color":"#10b981","parallel":false,"on_fail":null,"position":5}'
-  || ']')::jsonb);
+  || ']')::jsonb)
+ON CONFLICT (name) DO NOTHING;
 
 -- ============================================================================
 -- Migration from task_types to boards
