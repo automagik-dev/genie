@@ -180,15 +180,12 @@ describe('genie team CLI', () => {
     await mkdir(wishDir, { recursive: true });
     await writeFile(join(wishDir, 'WISH.md'), '# Test wish for auto-copy\n\n## Summary\nTest.\n');
 
-    // Run team create from the cwd directory — wish is NOT in the repo yet
-    try {
-      await $`bun ${GENIE_BIN} team create feat/autocopy-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug}`
-        .quiet()
-        .cwd(cwdDir)
-        .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME });
-    } catch {
-      // Spawn may fail (no tmux) but auto-copy should have happened before spawn
-    }
+    // --no-spawn: only test wish-copy logic, do NOT spawn a real Claude session
+    await $`bun ${GENIE_BIN} team create feat/autocopy-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug} --no-spawn`
+      .quiet()
+      .cwd(cwdDir)
+      .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME })
+      .catch(() => {});
 
     // Verify wish was copied to repo
     const repoWishPath = join(TEST_REPO, '.genie', 'wishes', wishSlug, 'WISH.md');
@@ -202,15 +199,12 @@ describe('genie team CLI', () => {
     await mkdir(wishDir, { recursive: true });
     await writeFile(join(wishDir, 'WISH.md'), '# Test wish already in repo\n\n## Summary\nTest.\n');
 
-    // Run team create — wish is already in repo, no copy needed
-    try {
-      await $`bun ${GENIE_BIN} team create feat/inrepo-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug}`
-        .quiet()
-        .cwd(TEST_REPO)
-        .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME });
-    } catch {
-      // Spawn may fail but wish validation should pass
-    }
+    // --no-spawn: only test wish presence, do NOT spawn a real Claude session
+    await $`bun ${GENIE_BIN} team create feat/inrepo-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug} --no-spawn`
+      .quiet()
+      .cwd(TEST_REPO)
+      .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME })
+      .catch(() => {});
 
     // Wish should still be there
     expect(existsSync(join(wishDir, 'WISH.md'))).toBe(true);
