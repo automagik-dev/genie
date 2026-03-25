@@ -457,3 +457,69 @@ export async function importBoard(json: BoardExport, projectId: string): Promise
     columns: json.columns,
   });
 }
+
+// ============================================================================
+// Reconciliation
+// ============================================================================
+
+export interface ReconcileResult {
+  fixed: number;
+  orphaned: number;
+  details: { taskId: string; stage: string; oldColumnId: string | null; newColumnId: string | null }[];
+}
+
+/**
+ * Reconcile orphaned column_ids on a board.
+ * For each task whose column_id doesn't match any board column,
+ * resolve by matching task.stage → board column name.
+ */
+export async function reconcileBoard(nameOrId: string): Promise<ReconcileResult> {
+  const sql = await getConnection();
+  const board = await getBoard(nameOrId);
+  if (!board) throw new Error(`Board not found: ${nameOrId}`);
+
+  const columnByName = new Map(board.columns.map((c) => [c.name, c]));
+  const columnIds = new Set(board.columns.map((c) => c.id));
+
+  // Find tasks on this board with orphaned or missing column_ids
+  const tasks = await sql`
+    SELECT id, stage, column_id FROM tasks
+    WHERE board_id = ${board.id}
+  `;
+
+  const result: ReconcileResult = { fixed: 0, orphaned: 0, details: [] };
+
+  for (const task of tasks) {
+    const currentColId = task.column_id as string | null;
+    if (currentColId && columnIds.has(currentColId)) continue;
+
+    const matchedCol = columnByName.get(task.stage as string);
+    if (matchedCol) {
+      await sql`UPDATE tasks SET column_id = ${matchedCol.id} WHERE id = ${task.id}`;
+      result.fixed++;
+      result.details.push({
+        taskId: task.id as string,
+        stage: task.stage as string,
+        oldColumnId: currentColId,
+        newColumnId: matchedCol.id,
+      });
+    } else {
+      result.orphaned++;
+      result.details.push({
+        taskId: task.id as string,
+        stage: task.stage as string,
+        oldColumnId: currentColId,
+        newColumnId: null,
+      });
+    }
+  }
+
+  if (result.fixed > 0) {
+    recordAuditEvent('board', board.id, 'board_reconciled', getActor(), {
+      fixed: result.fixed,
+      orphaned: result.orphaned,
+    }).catch(() => {});
+  }
+
+  return result;
+}

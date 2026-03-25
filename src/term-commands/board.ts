@@ -387,6 +387,29 @@ async function handleBoardExport(name: string, options: { project?: string; outp
   }
 }
 
+async function handleBoardReconcile(name: string, options: { project?: string; json?: boolean }): Promise<void> {
+  const { reconcileBoard } = await import('../lib/board-service.js');
+  const board = await resolveBoard(name, options.project);
+  const result = await reconcileBoard(board.id);
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (result.fixed === 0 && result.orphaned === 0) {
+    console.log(`Board "${board.name}": all tasks have valid column_ids.`);
+    return;
+  }
+
+  console.log(`Board "${board.name}" reconciliation:`);
+  console.log(`  Fixed: ${result.fixed} task${result.fixed === 1 ? '' : 's'}`);
+  if (result.orphaned > 0) {
+    const count = result.orphaned;
+    console.log(`  Still orphaned: ${count} task${count === 1 ? '' : 's'} (stage doesn't match any column)`);
+  }
+}
+
 async function handleBoardImport(options: { json: string; project: string }): Promise<void> {
   const bs = await getBoardService();
 
@@ -681,9 +704,25 @@ export function registerBoardCommands(program: Command): void {
     .description('Export board as JSON')
     .option('--project <project>', 'Disambiguate by project')
     .option('--output <file>', 'Write to file instead of stdout')
-    .action(async (nameParts: string[], options: { project?: string; output?: string }) => {
+    .option('--json', 'Output as JSON (default, accepted for consistency)')
+    .action(async (nameParts: string[], options: { project?: string; output?: string; json?: boolean }) => {
       try {
         await handleBoardExport(nameParts.join(' '), options);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
+
+  // ── board reconcile ──
+  board
+    .command('reconcile <name...>')
+    .description('Fix orphaned column_ids by matching task stage to board columns')
+    .option('--project <project>', 'Disambiguate by project')
+    .option('--json', 'Output as JSON')
+    .action(async (nameParts: string[], options: { project?: string; json?: boolean }) => {
+      try {
+        await handleBoardReconcile(nameParts.join(' '), options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);

@@ -361,6 +361,104 @@ async function handleChatRead(
 }
 
 // ============================================================================
+// Native Inbox Bridge
+// ============================================================================
+
+/** Discover the current team name from env, native discovery, or worker registry. */
+async function discoverCurrentTeam(
+  nativeTeams: typeof import('../lib/claude-native-teams.js'),
+  from: string,
+): Promise<string | null> {
+  const discovered = await nativeTeams.discoverTeamName().catch(() => null);
+  if (discovered) return discovered;
+
+  const registryMod = await getRegistry();
+  const workers = await registryMod.list();
+  const senderWorker = workers.find((w) => w.role === from || w.id === from || w.customName === from);
+  return senderWorker?.team ?? null;
+}
+
+/** Try delivering a native inbox message to a specific team. */
+async function deliverToTeam(
+  nativeTeams: typeof import('../lib/claude-native-teams.js'),
+  team: string,
+  recipient: string,
+  msg: { from: string; text: string; summary: string; timestamp: string; color: 'blue'; read: false },
+): Promise<boolean> {
+  const nativeName = await nativeTeams.resolveNativeMemberName(team, recipient);
+  if (!nativeName) return false;
+  await nativeTeams.writeNativeInbox(team, nativeName, msg);
+  return true;
+}
+
+/** Bridge a message to the Claude Code native inbox for real-time delivery. */
+async function bridgeToNativeInbox(from: string, recipient: string, body: string): Promise<void> {
+  const nativeTeams = await import('../lib/claude-native-teams.js');
+  const nativeMsg = {
+    from,
+    text: body,
+    summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
+    timestamp: new Date().toISOString(),
+    color: 'blue' as const,
+    read: false as const,
+  };
+
+  const currentTeam = await discoverCurrentTeam(nativeTeams, from);
+
+  // Try current team first (fast path)
+  if (currentTeam && (await deliverToTeam(nativeTeams, currentTeam, recipient, nativeMsg))) return;
+
+  // Search all native teams
+  const allTeams = await nativeTeams.listTeams().catch(() => [] as string[]);
+  for (const team of allTeams) {
+    if (team === currentTeam) continue;
+    if (await deliverToTeam(nativeTeams, team, recipient, nativeMsg)) return;
+  }
+
+  console.warn(`[genie send] Native inbox bridge: could not find native team member for "${recipient}"`);
+}
+
+// ============================================================================
+// Send Handler
+// ============================================================================
+
+async function handleSend(body: string, options: { to: string; from?: string }): Promise<void> {
+  const ts = await getTaskService();
+  const repoPath = process.cwd();
+  const from = options.from ?? (await detectSenderIdentity());
+
+  const scopeError = await checkSendScope(repoPath, from, options.to);
+  if (scopeError) {
+    console.error(`Error: ${scopeError}`);
+    process.exit(1);
+  }
+
+  const senderActor = localActor(from);
+  const recipientActor = localActor(options.to);
+
+  const conv = await ts.findOrCreateConversation({
+    type: 'dm',
+    members: [senderActor, recipientActor],
+    createdBy: senderActor,
+  });
+
+  await ts.addMember(conv.id, senderActor);
+  await ts.addMember(conv.id, recipientActor);
+
+  const msg = await ts.sendMessage(conv.id, senderActor, body);
+
+  // Best-effort native inbox bridge
+  await bridgeToNativeInbox(from, options.to, body).catch((err) => {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`[genie send] Native inbox bridge failed: ${reason}`);
+  });
+
+  console.log(`Message sent to "${options.to}".`);
+  console.log(`  ID: ${msg.id}`);
+  console.log(`  Conversation: ${conv.id}`);
+}
+
+// ============================================================================
 // Command Registration
 // ============================================================================
 
@@ -373,95 +471,7 @@ export function registerSendInboxCommands(program: Command): void {
     .option('--from <sender>', 'Sender ID (auto-detected from context)')
     .action(async (body: string, options: { to: string; from?: string }) => {
       try {
-        const ts = await getTaskService();
-        const repoPath = process.cwd();
-        const from = options.from ?? (await detectSenderIdentity());
-
-        // Scope check
-        const scopeError = await checkSendScope(repoPath, from, options.to);
-        if (scopeError) {
-          console.error(`Error: ${scopeError}`);
-          process.exit(1);
-        }
-
-        const senderActor = localActor(from);
-        const recipientActor = localActor(options.to);
-
-        // Find or create DM conversation
-        const conv = await ts.findOrCreateConversation({
-          type: 'dm',
-          members: [senderActor, recipientActor],
-          createdBy: senderActor,
-        });
-
-        // Ensure both are members
-        await ts.addMember(conv.id, senderActor);
-        await ts.addMember(conv.id, recipientActor);
-
-        const msg = await ts.sendMessage(conv.id, senderActor, body);
-
-        // Bridge to CC native inbox so Claude Code agents receive in real-time
-        // Search ALL teams for the recipient, not just the current team
-        try {
-          const nativeTeams = await import('../lib/claude-native-teams.js');
-          const nativeMsg = {
-            from,
-            text: body,
-            summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
-            timestamp: new Date().toISOString(),
-            color: 'blue' as const,
-            read: false,
-          };
-
-          // Team discovery chain: GENIE_TEAM env → discoverTeamName() → worker registry
-          let currentTeam = await nativeTeams.discoverTeamName().catch(() => null);
-
-          if (!currentTeam) {
-            // Fallback: check worker registry for sender's team
-            const registryMod = await getRegistry();
-            const workers = await registryMod.list();
-            const senderWorker = workers.find((w) => w.role === from || w.id === from || w.customName === from);
-            if (senderWorker?.team) {
-              currentTeam = senderWorker.team;
-            }
-          }
-
-          let delivered = false;
-
-          // Try current team first (fast path) — resolve genie worker ID to native member name
-          if (currentTeam) {
-            const nativeName = await nativeTeams.resolveNativeMemberName(currentTeam, options.to);
-            if (nativeName) {
-              await nativeTeams.writeNativeInbox(currentTeam, nativeName, nativeMsg);
-              delivered = true;
-            }
-          }
-
-          // If not in current team, search all native teams
-          if (!delivered) {
-            const allTeams = await nativeTeams.listTeams().catch(() => [] as string[]);
-            for (const team of allTeams) {
-              if (team === currentTeam) continue; // already checked
-              const nativeName = await nativeTeams.resolveNativeMemberName(team, options.to);
-              if (nativeName) {
-                await nativeTeams.writeNativeInbox(team, nativeName, nativeMsg);
-                delivered = true;
-                break;
-              }
-            }
-          }
-
-          if (!delivered) {
-            console.warn(`[genie send] Native inbox bridge: could not find native team member for "${options.to}"`);
-          }
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          console.warn(`[genie send] Native inbox bridge failed: ${reason}`);
-        }
-
-        console.log(`Message sent to "${options.to}".`);
-        console.log(`  ID: ${msg.id}`);
-        console.log(`  Conversation: ${conv.id}`);
+        await handleSend(body, options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
