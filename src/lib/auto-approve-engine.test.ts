@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { NormalizedEvent } from '../term-commands/events.js';
 import type { AutoApproveConfig } from './auto-approve.js';
@@ -58,27 +58,15 @@ function makeConfig(overrides: Partial<AutoApproveConfig['defaults']> = {}): Aut
   };
 }
 
-function readAuditLog(auditPath: string): Array<Record<string, unknown>> {
-  if (!existsSync(auditPath)) return [];
-  const content = readFileSync(auditPath, 'utf-8').trim();
-  if (!content) return [];
-  return content.split('\n').map((line) => JSON.parse(line));
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
 
 describe('AutoApproveEngine', () => {
   let tmpDir: string;
-  let auditPath: string;
-  let _tmuxSendKeysCalls: Array<{ paneId: string }>;
-  let _originalModule: any;
 
   beforeEach(() => {
     tmpDir = makeTmpDir();
-    auditPath = join(tmpDir, '.genie', 'auto-approve-audit.jsonl');
-    _tmuxSendKeysCalls = [];
   });
 
   afterEach(() => {
@@ -190,21 +178,13 @@ describe('AutoApproveEngine', () => {
 
       instance.start();
 
-      const request = makePermissionRequest({
-        toolName: 'Read',
-        paneId: '%42',
-        wishId: 'wish-23',
-      });
-      await instance.processRequest(request);
+      const request = makePermissionRequest({ toolName: 'Read', paneId: '%42', wishId: 'wish-23' });
+      const decision = await instance.processRequest(request);
 
-      const entries = readAuditLog(auditPath);
-      expect(entries.length).toBe(1);
-      expect(entries[0].action).toBe('approve');
-      expect(entries[0].toolName).toBe('Read');
-      expect(entries[0].paneId).toBe('%42');
-      expect(entries[0].wishId).toBe('wish-23');
-      expect(typeof entries[0].timestamp).toBe('string');
-      expect(typeof entries[0].reason).toBe('string');
+      // Audit now goes to PG via recordAuditEvent (best-effort, fire-and-forget)
+      expect(decision.action).toBe('approve');
+      expect(decision.reason).toBeDefined();
+      expect(instance.getStats().approved).toBe(1);
 
       instance.stop();
     });
@@ -246,12 +226,10 @@ describe('AutoApproveEngine', () => {
       instance.start();
 
       const request = makePermissionRequest({ toolName: 'Write', paneId: '%42' });
-      await instance.processRequest(request);
+      const decision = await instance.processRequest(request);
 
-      const entries = readAuditLog(auditPath);
-      expect(entries.length).toBe(1);
-      expect(entries[0].action).toBe('deny');
-      expect(entries[0].toolName).toBe('Write');
+      expect(decision.action).toBe('deny');
+      expect(instance.getStats().denied).toBe(1);
 
       instance.stop();
     });
@@ -293,12 +271,10 @@ describe('AutoApproveEngine', () => {
       instance.start();
 
       const request = makePermissionRequest({ toolName: 'UnknownTool' });
-      await instance.processRequest(request);
+      const decision = await instance.processRequest(request);
 
-      const entries = readAuditLog(auditPath);
-      expect(entries.length).toBe(1);
-      expect(entries[0].action).toBe('escalate');
-      expect(entries[0].toolName).toBe('UnknownTool');
+      expect(decision.action).toBe('escalate');
+      expect(instance.getStats().escalated).toBe(1);
 
       instance.stop();
     });
@@ -352,10 +328,7 @@ describe('AutoApproveEngine', () => {
       await instance.processEvent(event);
 
       expect(approvalCalls).toEqual(['%42']);
-
-      const entries = readAuditLog(auditPath);
-      expect(entries.length).toBe(1);
-      expect(entries[0].action).toBe('approve');
+      expect(instance.getStats().approved).toBe(1);
 
       instance.stop();
     });
@@ -412,8 +385,8 @@ describe('AutoApproveEngine', () => {
     });
   });
 
-  describe('audit log format', () => {
-    test('audit log entries are valid JSONL with expected fields', async () => {
+  describe('audit decisions', () => {
+    test('tracks decisions correctly via stats', async () => {
       const engine = await import('./auto-approve-engine.js');
 
       const instance = engine.createAutoApproveEngine({
@@ -428,44 +401,30 @@ describe('AutoApproveEngine', () => {
 
       instance.start();
 
-      // Approved Read tool
-      await instance.processRequest(makePermissionRequest({ toolName: 'Read', paneId: '%10', wishId: 'wish-1' }));
-      // Denied Write tool
-      await instance.processRequest(makePermissionRequest({ toolName: 'Write', paneId: '%20', wishId: 'wish-2' }));
-      // Escalated unknown tool
-      await instance.processRequest(makePermissionRequest({ toolName: 'Deploy', paneId: '%30', wishId: 'wish-3' }));
+      const d1 = await instance.processRequest(
+        makePermissionRequest({ toolName: 'Read', paneId: '%10', wishId: 'wish-1' }),
+      );
+      const d2 = await instance.processRequest(
+        makePermissionRequest({ toolName: 'Write', paneId: '%20', wishId: 'wish-2' }),
+      );
+      const d3 = await instance.processRequest(
+        makePermissionRequest({ toolName: 'Deploy', paneId: '%30', wishId: 'wish-3' }),
+      );
 
       instance.stop();
 
-      const entries = readAuditLog(auditPath);
-      expect(entries.length).toBe(3);
+      expect(d1.action).toBe('approve');
+      expect(d2.action).toBe('deny');
+      expect(d3.action).toBe('escalate');
 
-      // Verify each entry has required fields
-      for (const entry of entries) {
-        expect(typeof entry.timestamp).toBe('string');
-        expect(typeof entry.paneId).toBe('string');
-        expect(typeof entry.toolName).toBe('string');
-        expect(typeof entry.action).toBe('string');
-        expect(typeof entry.reason).toBe('string');
-        expect(['approve', 'deny', 'escalate']).toContain(entry.action as string);
-      }
-
-      // Verify specific entries
-      expect(entries[0].action).toBe('approve');
-      expect(entries[0].toolName).toBe('Read');
-      expect(entries[0].paneId).toBe('%10');
-      expect(entries[0].wishId).toBe('wish-1');
-
-      expect(entries[1].action).toBe('deny');
-      expect(entries[1].toolName).toBe('Write');
-      expect(entries[1].paneId).toBe('%20');
-
-      expect(entries[2].action).toBe('escalate');
-      expect(entries[2].toolName).toBe('Deploy');
-      expect(entries[2].paneId).toBe('%30');
+      const stats = instance.getStats();
+      expect(stats.approved).toBe(1);
+      expect(stats.denied).toBe(1);
+      expect(stats.escalated).toBe(1);
+      expect(stats.total).toBe(3);
     });
 
-    test('audit log is created in .genie directory under auditDir', async () => {
+    test('audit events go to PG via recordAuditEvent (no JSONL file)', async () => {
       const engine = await import('./auto-approve-engine.js');
 
       const instance = engine.createAutoApproveEngine({
@@ -478,8 +437,9 @@ describe('AutoApproveEngine', () => {
       await instance.processRequest(makePermissionRequest({ toolName: 'Read' }));
       instance.stop();
 
-      const expectedPath = join(tmpDir, '.genie', 'auto-approve-audit.jsonl');
-      expect(existsSync(expectedPath)).toBe(true);
+      // JSONL file should NOT be created (audit goes to PG now)
+      const oldPath = join(tmpDir, '.genie', 'auto-approve-audit.jsonl');
+      expect(existsSync(oldPath)).toBe(false);
     });
   });
 
@@ -514,10 +474,8 @@ describe('AutoApproveEngine', () => {
       instance.stop();
 
       expect(approvalCalls).toEqual(['%1', '%2', '%3']);
-
-      const entries = readAuditLog(auditPath);
-      expect(entries.length).toBe(3);
-      expect(entries.every((e) => e.action === 'approve')).toBe(true);
+      expect(instance.getStats().approved).toBe(3);
+      expect(instance.getStats().total).toBe(3);
     });
   });
 
@@ -544,10 +502,8 @@ describe('AutoApproveEngine', () => {
       // But should not call sendApproval since there is no pane
       expect(approvalCalls).toEqual([]);
 
-      // Should still be logged
-      const entries = readAuditLog(auditPath);
-      expect(entries.length).toBe(1);
-      expect(entries[0].action).toBe('approve');
+      // Should still be tracked in stats
+      expect(instance.getStats().approved).toBe(1);
 
       instance.stop();
     });
@@ -678,32 +634,24 @@ describe('AutoApproveEngine', () => {
 
       instance.start();
 
-      const request = makePermissionRequest({
-        toolName: 'Read',
-        paneId: '%42$(whoami)',
-      });
-      await instance.processRequest(request);
+      const request = makePermissionRequest({ toolName: 'Read', paneId: '%42$(whoami)' });
+      const decision = await instance.processRequest(request);
 
-      const entries = readAuditLog(auditPath);
-      expect(entries.length).toBe(1);
-      expect(entries[0].action).toBe('escalate');
-      expect((entries[0].reason as string).toLowerCase()).toContain('invalid pane');
+      expect(decision.action).toBe('escalate');
+      expect(decision.reason.toLowerCase()).toContain('invalid pane');
+      expect(instance.getStats().escalated).toBe(1);
 
       instance.stop();
     });
   });
 
-  describe('audit log write failure handling', () => {
-    test('escalates when audit log write fails instead of crashing', async () => {
+  describe('audit is best-effort', () => {
+    test('approves even when PG audit is unavailable (best-effort)', async () => {
       const engine = await import('./auto-approve-engine.js');
       const approvalCalls: string[] = [];
 
-      // Use an invalid/impossible path to force write failure
-      const badAuditDir = '/proc/nonexistent/impossible/path';
-
       const instance = engine.createAutoApproveEngine({
         config: makeConfig({ allow: ['Read'] }),
-        auditDir: badAuditDir,
         sendApproval: async (paneId: string) => {
           approvalCalls.push(paneId);
         },
@@ -712,14 +660,11 @@ describe('AutoApproveEngine', () => {
       instance.start();
 
       const request = makePermissionRequest({ toolName: 'Read', paneId: '%42' });
-
-      // Should NOT throw - must handle the error gracefully
       const decision = await instance.processRequest(request);
 
-      // Should escalate since we cannot guarantee audit trail
-      expect(decision.action).toBe('escalate');
-      expect(decision.reason).toContain('audit');
-      expect(approvalCalls).toEqual([]); // Must NOT approve without audit trail
+      // PG audit is fire-and-forget — decision proceeds regardless
+      expect(decision.action).toBe('approve');
+      expect(approvalCalls).toEqual(['%42']);
 
       instance.stop();
     });
@@ -745,17 +690,9 @@ describe('AutoApproveEngine', () => {
       const decision = await instance.processRequest(request);
 
       // The decision was approve (rule matched), but delivery failed
+      // Delivery failure is logged to PG audit (best-effort)
       expect(decision.action).toBe('approve');
-
-      // Should have a delivery failure audit entry
-      const entries = readAuditLog(auditPath);
-      // Expect at least 2 entries: the approval + the delivery failure
-      const failureEntries = entries.filter(
-        (e) =>
-          (e.reason as string).toLowerCase().includes('delivery') ||
-          (e.reason as string).toLowerCase().includes('send'),
-      );
-      expect(failureEntries.length).toBeGreaterThanOrEqual(1);
+      expect(instance.getStats().approved).toBe(1);
 
       instance.stop();
     });

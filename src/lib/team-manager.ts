@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import path, { join } from 'node:path';
 import { $ } from 'bun';
 import * as registry from './agent-registry.js';
+import { getActor, recordAuditEvent } from './audit.js';
 import { BUILTIN_COUNCIL_MEMBERS } from './builtin-agents.js';
 import * as nativeTeamsManager from './claude-native-teams.js';
 import { getConnection } from './db.js';
@@ -290,6 +291,8 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
     ) ON CONFLICT (name) DO NOTHING
   `;
 
+  recordAuditEvent('team', name, 'created', getActor(), { repo: repoPath, baseBranch }).catch(() => {});
+
   return config;
 }
 
@@ -408,6 +411,8 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
   const sql = await getConnection();
   const result = await sql`DELETE FROM teams WHERE name = ${teamName}`;
   if (result.count === 0) return false;
+
+  recordAuditEvent('team', teamName, 'disbanded', getActor(), { repo: config.repo }).catch(() => {});
 
   // Prune stale configs (remove team configs whose clone directories are gone)
   await pruneStaleWorktrees(config.repo);
