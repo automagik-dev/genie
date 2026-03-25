@@ -166,21 +166,26 @@ export async function spawnWorkerFromTemplate(
   };
 
   await registry.register(workerEntry);
-  await nativeTeams.registerNativeMember(team, {
-    agentName,
-    agentType: template.role ?? 'general-purpose',
-    color: spawnColor ?? 'blue',
-    tmuxPaneId: paneId,
-    cwd: repoPath,
-  });
-  await nativeTeams.writeNativeInbox(team, 'team-lead', {
-    from: agentName,
-    text: `Worker ${agentName} (${template.provider}) auto-spawned${resumeSessionId ? ' with --resume' : ''}. Ready for tasks.`,
-    summary: `${agentName} auto-spawned`,
-    timestamp: now,
-    color: spawnColor ?? 'blue',
-    read: false,
-  });
+
+  // Only register native-team-enabled agents (Claude) as SendMessage recipients.
+  // Non-native agents (Codex) can't read the Claude Code inbox (#777).
+  if (isClaude) {
+    await nativeTeams.registerNativeMember(team, {
+      agentName,
+      agentType: template.role ?? 'general-purpose',
+      color: spawnColor ?? 'blue',
+      tmuxPaneId: paneId,
+      cwd: repoPath,
+    });
+    await nativeTeams.writeNativeInbox(team, 'team-lead', {
+      from: agentName,
+      text: `Worker ${agentName} (${template.provider}) auto-spawned${resumeSessionId ? ' with --resume' : ''}. Ready for tasks.`,
+      summary: `${agentName} auto-spawned`,
+      timestamp: now,
+      color: spawnColor ?? 'blue',
+      read: false,
+    });
+  }
 
   if (spawnColor) {
     await applyPaneColor(paneId, spawnColor, teamWindow?.windowId);

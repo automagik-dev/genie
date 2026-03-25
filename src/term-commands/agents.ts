@@ -481,20 +481,26 @@ async function registerSpawnWorker(
 
 async function notifySpawnJoin(ctx: SpawnCtx, paneId: string): Promise<void> {
   const nt = ctx.validated.nativeTeam;
+
+  // Only register native-team-enabled agents (Claude) as SendMessage recipients.
+  // Non-native agents (Codex) can't read the Claude Code inbox, so registering them
+  // causes SendMessage to silently succeed but never deliver (#777).
+  if (!nt?.enabled) return;
+
   await nativeTeams.registerNativeMember(ctx.validated.team, {
     agentName: ctx.agentName,
-    agentType: nt?.agentType ?? ctx.validated.role ?? 'general-purpose',
-    color: nt?.color ?? ctx.spawnColor ?? 'blue',
+    agentType: nt.agentType ?? ctx.validated.role ?? 'general-purpose',
+    color: nt.color ?? ctx.spawnColor ?? 'blue',
     tmuxPaneId: paneId,
     cwd: ctx.cwd,
-    planModeRequired: nt?.planModeRequired,
+    planModeRequired: nt.planModeRequired,
   });
   await nativeTeams.writeNativeInbox(ctx.validated.team, 'team-lead', {
     from: ctx.agentName,
     text: `Worker ${ctx.agentName} (${ctx.validated.provider}) joined team ${ctx.validated.team}. cwd: ${ctx.cwd}. Ready for tasks.`,
     summary: `${ctx.agentName} (${ctx.validated.provider}) joined`,
     timestamp: new Date().toISOString(),
-    color: nt?.color ?? ctx.spawnColor ?? 'blue',
+    color: nt.color ?? ctx.spawnColor ?? 'blue',
     read: false,
   });
 }
