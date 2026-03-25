@@ -27,15 +27,21 @@ export function registerTeamNamespace(program: Command): void {
     .option('--branch <branch>', 'Base branch to create from', 'dev')
     .option('--wish <slug>', 'Wish slug — auto-spawns a task leader with wish context')
     .option('--session <name>', 'Tmux session name (avoids session explosion on parallel creates)')
-    .action(async (name: string, options: { repo: string; branch: string; wish?: string; session?: string }) => {
-      try {
-        await handleTeamCreate(name, options);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
-        process.exit(1);
-      }
-    });
+    .option('--no-spawn', 'Create team and copy wish without spawning the leader (useful for testing)')
+    .action(
+      async (
+        name: string,
+        options: { repo: string; branch: string; wish?: string; session?: string; spawn?: boolean },
+      ) => {
+        try {
+          await handleTeamCreate(name, options);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`Error: ${message}`);
+          process.exit(1);
+        }
+      },
+    );
 
   // team hire
   team
@@ -174,7 +180,7 @@ export function registerTeamNamespace(program: Command): void {
 
 async function handleTeamCreate(
   name: string,
-  options: { repo: string; branch: string; wish?: string; session?: string },
+  options: { repo: string; branch: string; wish?: string; session?: string; spawn?: boolean },
 ): Promise<void> {
   // Validate wish exists before creating team — auto-copy from cwd if needed
   if (options.wish) {
@@ -222,7 +228,7 @@ async function handleTeamCreate(
     console.log('  Native teams: enabled');
   }
 
-  if (options.wish) {
+  if (options.wish && options.spawn !== false) {
     await spawnLeaderWithWish(config, options.wish, options.repo, options.session);
   }
 }
