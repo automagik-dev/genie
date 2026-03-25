@@ -25,6 +25,9 @@ Update README.md with live project metrics daily. After each run, analyze perfor
 | Releases/day | `gh api repos/{owner}/{repo}/releases` | Count releases created in last 24h |
 | Avg bug-fix time | `gh api repos/{owner}/{repo}/pulls?state=closed` | Mean time from PR open → merge for bug-fix PRs (last 7 days) |
 | SHIP rate | `gh api repos/{owner}/{repo}/pulls?state=closed` | % of PRs that shipped without FIX-FIRST (merged on first review cycle) |
+| Lines changed (24h) | `git log --since="24 hours ago" --stat` | Total insertions + deletions in the last 24 hours |
+| Commits (24h) | `git log --since="24 hours ago" --oneline` | Count of commits in the last 24 hours |
+| Pull requests (24h) | `gh api search/issues` | Count of PRs created in the last 24 hours |
 | Parallel agents | `genie status` or process count | Number of active genie workers at time of run |
 
 ## Execution Steps
@@ -79,20 +82,29 @@ After the metrics update completes:
 
 ## README Metrics Table Format
 
-Insert after the badges block, before "## What is Genie?":
+Insert after the badges block, before "## What is Genie?". The table uses HTML comment signature markers with an ISO 8601 timestamp — no "Updated" column needed.
 
 ```markdown
-<!-- METRICS:START -->
-
-| Metric | Value | Updated |
-|--------|-------|---------|
-| Releases/day | **X** | YYYY-MM-DD |
-| Avg bug-fix time | **Xh** | YYYY-MM-DD |
-| SHIP rate | **X%** | YYYY-MM-DD |
-| Parallel agents | **X** | YYYY-MM-DD |
-
-<!-- METRICS:END -->
+<!-- METRICS:START — Updated by Genie Metrics Agent at 2026-03-24T23:45:00Z -->
+| Metric | Value |
+|--------|-------|
+| Releases/day | 17 |
+| Avg bug-fix time | 1.7h |
+| SHIP rate | 100% |
+| Lines changed (24h) | 12,450 |
+| Commits (24h) | 34 |
+| Pull requests (24h) | 8 |
+| Parallel agents | 5 |
+<!-- METRICS:END — 🧞 automagik/genie -->
 ```
+
+### Quality Expectations
+
+- The table MUST have exactly 7 metric rows — no more, no less
+- Values MUST be real data from GitHub API and git log — never hardcoded placeholders
+- The ISO timestamp in the START marker MUST reflect the actual update time in UTC
+- The bottom marker includes the Genie signature (`🧞 automagik/genie`) for attribution
+- Numbers should be human-readable: use comma separators for LoC (e.g., `12,450`)
 
 ## Tools Available
 
@@ -173,7 +185,7 @@ The refined prompt replaces this file for the next run. Tools persist in `tools/
 
 If GitHub API is unavailable:
 1. Read `state.json` for `last_metrics`
-2. Use yesterday's values in README (do not update the "Updated" column)
+2. Use yesterday's values in README (do not update the timestamp in the START marker)
 3. Log the error to `runs.jsonl` with step timings
 4. Skip commit (no changes to README)
 5. Still call `/refine` to analyze the failure and improve error handling
