@@ -388,3 +388,89 @@ describe('buildLaunchCommand', () => {
     expect(result.command).toContain('Genie worker');
   });
 });
+
+// ============================================================================
+// OTel Env Injection Tests
+// ============================================================================
+
+describe('OTel env injection in buildClaudeCommand', () => {
+  const originalWhich = (Bun as Record<string, unknown>).which;
+  beforeAll(() => {
+    (Bun as Record<string, unknown>).which = (name: string) =>
+      name === 'claude' ? '/usr/local/bin/claude' : typeof originalWhich === 'function' ? originalWhich(name) : null;
+  });
+  afterAll(() => {
+    (Bun as Record<string, unknown>).which = originalWhich;
+  });
+
+  it('injects OTel env vars when otelPort is set', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      role: 'engineer',
+      otelPort: 19643,
+    });
+    expect(result.env).toBeDefined();
+    expect(result.env?.CLAUDE_CODE_ENABLE_TELEMETRY).toBe('1');
+    expect(result.env?.OTEL_LOGS_EXPORTER).toBe('otlp');
+    expect(result.env?.OTEL_METRICS_EXPORTER).toBe('otlp');
+    expect(result.env?.OTEL_EXPORTER_OTLP_PROTOCOL).toBe('http/json');
+    expect(result.env?.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://127.0.0.1:19643');
+    expect(result.env?.OTEL_LOG_TOOL_DETAILS).toBe('1');
+    expect(result.env?.OTEL_LOG_USER_PROMPTS).toBe('1');
+  });
+
+  it('includes OTEL_RESOURCE_ATTRIBUTES with agent context', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      role: 'engineer',
+      otelPort: 19643,
+      otelWishSlug: 'my-wish',
+    });
+    const attrs = result.env?.OTEL_RESOURCE_ATTRIBUTES ?? '';
+    expect(attrs).toContain('agent.name=engineer');
+    expect(attrs).toContain('team.name=test-team');
+    expect(attrs).toContain('wish.slug=my-wish');
+    expect(attrs).toContain('agent.role=engineer');
+  });
+
+  it('does not inject OTel env vars when otelPort is not set', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      role: 'engineer',
+    });
+    expect(result.env?.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
+    expect(result.env?.OTEL_LOGS_EXPORTER).toBeUndefined();
+  });
+
+  it('respects otelLogPrompts=false', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      role: 'engineer',
+      otelPort: 19643,
+      otelLogPrompts: false,
+    });
+    expect(result.env?.OTEL_LOG_USER_PROMPTS).toBeUndefined();
+  });
+
+  it('does not inject when OTEL_EXPORTER_OTLP_ENDPOINT already set', () => {
+    const orig = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://some-other-collector:4318';
+    try {
+      const result = buildClaudeCommand({
+        provider: 'claude',
+        team: 'test-team',
+        role: 'engineer',
+        otelPort: 19643,
+      });
+      // Should not override user's existing OTEL_EXPORTER_OTLP_ENDPOINT
+      expect(result.env?.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
+    } finally {
+      if (orig) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = orig;
+      else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = undefined;
+    }
+  });
+});
