@@ -1,8 +1,8 @@
 /**
  * Regression tests for genie.tmux.conf
  *
- * Ensures status-bar click handling relies on tmux 3.3+ native range=
- * dispatch and is not overridden by custom MouseDown1Status bindings.
+ * Ensures status-bar click handling works for both windows (single-click)
+ * and sessions (double-click on any status area).
  * See: https://github.com/automagik-dev/genie/issues/784
  */
 
@@ -22,17 +22,29 @@ function activeLines(pattern: RegExp): string[] {
 }
 
 describe('tmux config — status bar click handling', () => {
-  test('must NOT bind MouseDown1Status (breaks native range=session dispatch)', () => {
-    const hits = activeLines(/MouseDown1Status\b/);
-    expect(hits).toEqual([]);
+  test('MouseDown1Status binds select-window for window clicking', () => {
+    const hits = activeLines(/bind\s+-n\s+MouseDown1Status\s+select-window/);
+    expect(hits.length).toBe(1);
+  });
+
+  test('MouseDown1StatusDefault binds select-window for gap clicking', () => {
+    const hits = activeLines(/bind\s+-n\s+MouseDown1StatusDefault\s+select-window/);
+    expect(hits.length).toBe(1);
+  });
+
+  test('MouseDown1StatusRight opens session picker', () => {
+    const hits = activeLines(/bind\s+-n\s+MouseDown1StatusRight\s+choose-tree/);
+    expect(hits.length).toBe(1);
   });
 
   test('status-format[0] uses range=window for window tabs', () => {
-    expect(conf).toContain('range=window|');
+    const hits = activeLines(/range=window\|/);
+    expect(hits.length).toBeGreaterThanOrEqual(1);
   });
 
   test('status-format[1] uses range=session for agent sessions', () => {
-    expect(conf).toContain('range=session|');
+    const hits = activeLines(/range=session\|/);
+    expect(hits.length).toBeGreaterThanOrEqual(1);
   });
 
   test('mouse is enabled globally', () => {
@@ -40,13 +52,15 @@ describe('tmux config — status bar click handling', () => {
     expect(hits.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('DoubleClick1Pane binding still exists', () => {
+  test('DoubleClick1Pane binding exists', () => {
     const hits = activeLines(/DoubleClick1Pane/);
     expect(hits.length).toBe(1);
   });
 
-  test('DoubleClick1Status binding still exists', () => {
-    const hits = activeLines(/DoubleClick1Status/);
-    expect(hits.length).toBe(1);
+  test('double-click opens session picker on all status areas', () => {
+    expect(activeLines(/DoubleClick1Status\b/).length).toBe(1);
+    expect(activeLines(/DoubleClick1StatusDefault/).length).toBe(1);
+    expect(activeLines(/DoubleClick1StatusLeft/).length).toBe(1);
+    expect(activeLines(/DoubleClick1StatusRight/).length).toBe(1);
   });
 });
