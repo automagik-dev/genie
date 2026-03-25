@@ -6,14 +6,11 @@
  * Run with: bun test src/lib/unified-log.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { readFile, rm } from 'node:fs/promises';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Agent } from './agent-registry.js';
-import { send } from './mailbox.js';
+import { readOutbox, send } from './mailbox.js';
 import { postMessage } from './team-chat.js';
+import { setupTestSchema } from './test-db.js';
 import type { TranscriptEntry } from './transcript.js';
 import {
   type LogEvent,
@@ -31,17 +28,18 @@ import {
 // Helpers
 // ============================================================================
 
-let tempDir: string;
+let cleanup: () => Promise<void>;
+const BASE_REPO = '/tmp/unified-log-test';
 
-beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), 'unified-log-test-'));
+beforeAll(async () => {
+  cleanup = await setupTestSchema();
 });
 
-afterEach(async () => {
-  await rm(tempDir, { recursive: true, force: true });
+afterAll(async () => {
+  await cleanup();
 });
 
-function makeAgent(id: string, team?: string): Agent {
+function makeAgent(id: string, team?: string, repoPath?: string): Agent {
   return {
     id,
     paneId: '%0',
@@ -50,7 +48,7 @@ function makeAgent(id: string, team?: string): Agent {
     startedAt: new Date().toISOString(),
     state: 'working',
     lastStateChange: new Date().toISOString(),
-    repoPath: tempDir,
+    repoPath: repoPath ?? BASE_REPO,
     team,
   };
 }
@@ -291,14 +289,15 @@ describe('sortByTimestamp', () => {
 
 describe('readAgentLog', () => {
   test('aggregates inbox and outbox messages', async () => {
-    const agent = makeAgent('engineer', 'test-team');
+    const repo = '/tmp/ulog-agent-agg';
+    const agent = makeAgent('engineer', 'test-team', repo);
 
     // Send messages to create inbox + outbox data
-    await send(tempDir, 'reviewer', 'engineer', 'please fix tests');
+    await send(repo, 'reviewer', 'engineer', 'please fix tests');
     await new Promise((r) => setTimeout(r, 10));
-    await send(tempDir, 'engineer', 'reviewer', 'tests fixed');
+    await send(repo, 'engineer', 'reviewer', 'tests fixed');
 
-    const events = await readAgentLog(agent, tempDir);
+    const events = await readAgentLog(agent, repo);
 
     // Should have inbox (1 received) + outbox (1 sent) messages
     const messages = events.filter((e) => e.kind === 'message');
@@ -316,12 +315,13 @@ describe('readAgentLog', () => {
   });
 
   test('includes team chat messages', async () => {
-    const agent = makeAgent('engineer', 'dev-team');
+    const repo = '/tmp/ulog-agent-chat';
+    const agent = makeAgent('engineer', 'dev-team', repo);
 
-    await postMessage(tempDir, 'dev-team', 'alice', 'hello team');
-    await postMessage(tempDir, 'dev-team', 'bob', 'hi alice');
+    await postMessage(repo, 'dev-team', 'alice', 'hello team');
+    await postMessage(repo, 'dev-team', 'bob', 'hi alice');
 
-    const events = await readAgentLog(agent, tempDir);
+    const events = await readAgentLog(agent, repo);
     const chatEvents = events.filter((e) => e.source === 'chat');
     expect(chatEvents.length).toBe(2);
     expect(chatEvents[0].text).toBe('hello team');
@@ -329,15 +329,16 @@ describe('readAgentLog', () => {
   });
 
   test('returns sorted events across sources', async () => {
-    const agent = makeAgent('engineer', 'dev-team');
+    const repo = '/tmp/ulog-agent-sorted';
+    const agent = makeAgent('engineer', 'dev-team', repo);
 
-    await postMessage(tempDir, 'dev-team', 'alice', 'first');
+    await postMessage(repo, 'dev-team', 'alice', 'first');
     await new Promise((r) => setTimeout(r, 10));
-    await send(tempDir, 'reviewer', 'engineer', 'second');
+    await send(repo, 'reviewer', 'engineer', 'second');
     await new Promise((r) => setTimeout(r, 10));
-    await postMessage(tempDir, 'dev-team', 'bob', 'third');
+    await postMessage(repo, 'dev-team', 'bob', 'third');
 
-    const events = await readAgentLog(agent, tempDir);
+    const events = await readAgentLog(agent, repo);
     // Verify chronological order
     for (let i = 1; i < events.length; i++) {
       expect(new Date(events[i].timestamp).getTime()).toBeGreaterThanOrEqual(
@@ -347,36 +348,39 @@ describe('readAgentLog', () => {
   });
 
   test('applies filter to aggregated events', async () => {
-    const agent = makeAgent('engineer');
+    const repo = '/tmp/ulog-agent-filter';
+    const agent = makeAgent('engineer', undefined, repo);
 
-    await send(tempDir, 'reviewer', 'engineer', 'msg1');
+    await send(repo, 'reviewer', 'engineer', 'msg1');
     await new Promise((r) => setTimeout(r, 10));
-    await send(tempDir, 'qa', 'engineer', 'msg2');
+    await send(repo, 'qa', 'engineer', 'msg2');
 
-    const events = await readAgentLog(agent, tempDir, { last: 1 });
+    const events = await readAgentLog(agent, repo, { last: 1 });
     expect(events.length).toBe(1);
   });
 
   test('returns empty for agent with no activity', async () => {
-    const agent = makeAgent('ghost');
-    const events = await readAgentLog(agent, tempDir);
+    const repo = '/tmp/ulog-agent-empty';
+    const agent = makeAgent('ghost', undefined, repo);
+    const events = await readAgentLog(agent, repo);
     expect(events).toEqual([]);
   });
 });
 
 describe('readTeamLog', () => {
   test('interleaves events from multiple agents', async () => {
-    const engineer = makeAgent('engineer', 'my-team');
-    const reviewer = makeAgent('reviewer', 'my-team');
+    const repo = '/tmp/ulog-team-interleave';
+    const engineer = makeAgent('engineer', 'my-team', repo);
+    const reviewer = makeAgent('reviewer', 'my-team', repo);
 
     // Create cross-agent messages
-    await send(tempDir, 'engineer', 'reviewer', 'PR ready for review');
+    await send(repo, 'engineer', 'reviewer', 'PR ready for review');
     await new Promise((r) => setTimeout(r, 10));
-    await send(tempDir, 'reviewer', 'engineer', 'LGTM');
+    await send(repo, 'reviewer', 'engineer', 'LGTM');
     await new Promise((r) => setTimeout(r, 10));
-    await postMessage(tempDir, 'my-team', 'engineer', 'merging now');
+    await postMessage(repo, 'my-team', 'engineer', 'merging now');
 
-    const events = await readTeamLog([engineer, reviewer], tempDir, 'my-team');
+    const events = await readTeamLog([engineer, reviewer], repo, 'my-team');
 
     // Should have events from both agents + team chat
     expect(events.length).toBeGreaterThanOrEqual(3);
@@ -390,26 +394,28 @@ describe('readTeamLog', () => {
   });
 
   test('team chat appears once, not duplicated per agent', async () => {
-    const engineer = makeAgent('engineer', 'my-team');
-    const reviewer = makeAgent('reviewer', 'my-team');
+    const repo = '/tmp/ulog-team-dedup';
+    const engineer = makeAgent('engineer', 'my-team', repo);
+    const reviewer = makeAgent('reviewer', 'my-team', repo);
 
-    await postMessage(tempDir, 'my-team', 'engineer', 'team message');
+    await postMessage(repo, 'my-team', 'engineer', 'team message');
 
-    const events = await readTeamLog([engineer, reviewer], tempDir, 'my-team');
+    const events = await readTeamLog([engineer, reviewer], repo, 'my-team');
     const chatEvents = events.filter((e) => e.source === 'chat');
     // Team chat is read once (not per agent)
     expect(chatEvents.length).toBe(1);
   });
 
   test('applies filter across interleaved events', async () => {
-    const eng = makeAgent('engineer', 'team');
-    const rev = makeAgent('reviewer', 'team');
+    const repo = '/tmp/ulog-team-filter';
+    const eng = makeAgent('engineer', 'team', repo);
+    const rev = makeAgent('reviewer', 'team', repo);
 
-    await send(tempDir, 'engineer', 'reviewer', 'msg1');
+    await send(repo, 'engineer', 'reviewer', 'msg1');
     await new Promise((r) => setTimeout(r, 10));
-    await send(tempDir, 'reviewer', 'engineer', 'msg2');
+    await send(repo, 'reviewer', 'engineer', 'msg2');
 
-    const events = await readTeamLog([eng, rev], tempDir, 'team', { kinds: ['message'], last: 2 });
+    const events = await readTeamLog([eng, rev], repo, 'team', { kinds: ['message'], last: 2 });
     expect(events.length).toBeLessThanOrEqual(2);
     for (const e of events) {
       expect(e.kind).toBe('message');
@@ -417,8 +423,9 @@ describe('readTeamLog', () => {
   });
 
   test('returns empty for team with no activity', async () => {
-    const agent = makeAgent('lonely', 'empty-team');
-    const events = await readTeamLog([agent], tempDir, 'empty-team');
+    const repo = '/tmp/ulog-team-empty';
+    const agent = makeAgent('lonely', 'empty-team', repo);
+    const events = await readTeamLog([agent], repo, 'empty-team');
     expect(events).toEqual([]);
   });
 });
@@ -428,22 +435,17 @@ describe('readTeamLog', () => {
 // ============================================================================
 
 describe('mailbox outbox', () => {
-  test('send() creates outbox JSONL for sender', async () => {
-    await send(tempDir, 'engineer', 'reviewer', 'hello');
-    await send(tempDir, 'engineer', 'qa', 'world');
+  test('readOutbox returns sent messages from PG', async () => {
+    const repo = '/tmp/ulog-outbox';
+    await send(repo, 'engineer', 'reviewer', 'hello');
+    await send(repo, 'engineer', 'qa', 'world');
 
-    const outboxPath = join(tempDir, '.genie', 'mailbox', 'engineer-sent.jsonl');
-    const content = await readFile(outboxPath, 'utf-8');
-    const lines = content.trim().split('\n');
-    expect(lines.length).toBe(2);
-
-    const msg1 = JSON.parse(lines[0]);
-    expect(msg1.from).toBe('engineer');
-    expect(msg1.to).toBe('reviewer');
-    expect(msg1.body).toBe('hello');
-
-    const msg2 = JSON.parse(lines[1]);
-    expect(msg2.to).toBe('qa');
-    expect(msg2.body).toBe('world');
+    const outbox = await readOutbox(repo, 'engineer');
+    expect(outbox.length).toBe(2);
+    expect(outbox[0].from).toBe('engineer');
+    expect(outbox[0].to).toBe('reviewer');
+    expect(outbox[0].body).toBe('hello');
+    expect(outbox[1].to).toBe('qa');
+    expect(outbox[1].body).toBe('world');
   });
 });
