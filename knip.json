@@ -4,6 +4,6 @@
   "project": ["src/**/*.ts"],
   "ignoreBinaries": ["tmux", "which", "husky", "biome", "tsc"],
   "ignoreDependencies": ["nats", "@biomejs/biome", "@commitlint/cli", "esbuild", "husky"],
-  "ignore": ["src/lib/team-auto-spawn.ts"],
+  "ignore": ["src/lib/team-auto-spawn.ts", "src/lib/inbox-watcher.ts"],
   "ignoreExportsUsedInFile": true
 }
