@@ -562,3 +562,14 @@ export async function getGroupState(slug: string, groupName: string, cwd?: strin
   if (!state) return null;
   return state.groups[groupName] ?? null;
 }
+
+/**
+ * Check if all groups in a wish are done.
+ * Returns true only when every group has status === 'done'.
+ */
+export async function isWishComplete(slug: string, cwd?: string): Promise<boolean> {
+  const state = await getState(slug, cwd);
+  if (!state) return false;
+  const groups = Object.values(state.groups);
+  return groups.length > 0 && groups.every((g) => g.status === 'done');
+}
