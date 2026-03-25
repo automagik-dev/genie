@@ -1105,11 +1105,19 @@ export async function handleWorkerStop(name: string): Promise<void> {
   }
 }
 
-/** Check if an agent is eligible for resume (suspended/error, has session, pane dead). */
+/**
+ * Check if an agent is eligible for resume.
+ * Includes agents in working/idle/spawning states whose panes have died (crash recovery).
+ */
 async function isResumeEligible(w: registry.Agent): Promise<boolean> {
-  return (
-    (w.state === 'suspended' || w.state === 'error') && Boolean(w.claudeSessionId) && !(await isPaneAlive(w.paneId))
-  );
+  if (!w.claudeSessionId) return false;
+  if (w.state === 'done') return false;
+  const paneAlive = await isPaneAlive(w.paneId);
+  // Suspended/error agents with dead panes are always eligible
+  if ((w.state === 'suspended' || w.state === 'error') && !paneAlive) return true;
+  // Working/idle/spawning agents whose panes died (crash) are also eligible
+  if (!paneAlive && (w.state === 'working' || w.state === 'idle' || w.state === 'spawning')) return true;
+  return false;
 }
 
 /** Resume all eligible agents (--all mode). */
