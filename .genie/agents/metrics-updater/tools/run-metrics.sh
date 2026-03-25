@@ -149,6 +149,9 @@ if [[ "$FETCH_OK" == "true" ]]; then
       --releases-json "$RELEASES_JSON" \
       --prs-json "$PRS_JSON" \
       --parallel-agents "$PARALLEL_AGENTS" \
+      --repo-root "$REPO_ROOT" \
+      --owner "$OWNER" \
+      --repo "$REPO" \
       -o "$METRICS_JSON"; then
     log "Metrics calculated OK"
   else
