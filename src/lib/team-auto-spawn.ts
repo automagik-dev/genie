@@ -64,7 +64,7 @@ async function ensureSession(teamName: string): Promise<string> {
  * 1. Its native config.json exists, AND
  * 2. A tmux window with the team name exists in any session
  */
-async function isTeamActive(teamName: string): Promise<boolean> {
+export async function isTeamActive(teamName: string): Promise<boolean> {
   const config = await loadConfig(teamName);
   if (!config) return false;
 
