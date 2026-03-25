@@ -573,3 +573,41 @@ export async function isWishComplete(slug: string, cwd?: string): Promise<boolea
   const groups = Object.values(state.groups);
   return groups.length > 0 && groups.every((g) => g.status === 'done');
 }
+
+/**
+ * Reset all in_progress groups back to ready for a wish.
+ * Used during team disband to prevent stale state from blocking re-dispatch.
+ * Returns the number of groups that were reset.
+ */
+export async function resetInProgressGroups(slug: string, cwd?: string): Promise<number> {
+  const sql = await getConnection();
+  const repoPath = resolveRepoPath(cwd);
+
+  const parent = await findParent(sql, slug, repoPath);
+  if (!parent) return 0;
+
+  const now = new Date();
+
+  // Find all in_progress children
+  const inProgress = await sql`
+    SELECT id FROM tasks
+    WHERE parent_id = ${parent.id as string} AND status = 'in_progress'
+  `;
+
+  if (inProgress.length === 0) return 0;
+
+  const ids = inProgress.map((r: Record<string, unknown>) => r.id as string);
+
+  // Reset to ready, clear started_at
+  await sql`
+    UPDATE tasks SET status = 'ready', started_at = NULL, updated_at = ${now}
+    WHERE id = ANY(${ids})
+  `;
+
+  // Remove assignees
+  await sql`
+    DELETE FROM task_actors WHERE task_id = ANY(${ids}) AND role = 'assignee'
+  `;
+
+  return ids.length;
+}

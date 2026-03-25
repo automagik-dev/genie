@@ -22,6 +22,7 @@ import {
   getState,
   isWishComplete,
   resetGroup,
+  resetInProgressGroups,
   resolveRepoPath,
   startGroup,
 } from './wish-state.js';
@@ -607,6 +608,53 @@ describe('isWishComplete', () => {
     await startGroup('test-wish', '1', 'agent-a', cwd);
 
     expect(await isWishComplete('test-wish', cwd)).toBe(false);
+  });
+});
+
+// ============================================================================
+// resetInProgressGroups
+// ============================================================================
+
+describe('resetInProgressGroups', () => {
+  test('returns 0 for nonexistent wish', async () => {
+    expect(await resetInProgressGroups('nonexistent', cwd)).toBe(0);
+  });
+
+  test('resets all in_progress groups to ready', async () => {
+    const groups: GroupDefinition[] = [{ name: 'a' }, { name: 'b' }, { name: 'c' }];
+    await createState('reset-all', groups, cwd);
+    await startGroup('reset-all', 'a', 'agent-1', cwd);
+    await startGroup('reset-all', 'b', 'agent-2', cwd);
+
+    const count = await resetInProgressGroups('reset-all', cwd);
+    expect(count).toBe(2);
+
+    const state = await getState('reset-all', cwd);
+    expect(state?.groups.a.status).toBe('ready');
+    expect(state?.groups.a.assignee).toBeUndefined();
+    expect(state?.groups.b.status).toBe('ready');
+    expect(state?.groups.b.assignee).toBeUndefined();
+    expect(state?.groups.c.status).toBe('ready'); // was already ready
+  });
+
+  test('does not touch done groups', async () => {
+    await createState('reset-done', sampleGroups, cwd);
+    await startGroup('reset-done', '1', 'a', cwd);
+    await completeGroup('reset-done', '1', cwd);
+    await startGroup('reset-done', '2', 'b', cwd);
+
+    const count = await resetInProgressGroups('reset-done', cwd);
+    expect(count).toBe(1); // only group 2
+
+    const state = await getState('reset-done', cwd);
+    expect(state?.groups['1'].status).toBe('done');
+    expect(state?.groups['2'].status).toBe('ready');
+  });
+
+  test('returns 0 when no groups are in_progress', async () => {
+    await createState('reset-none', [{ name: '1' }], cwd);
+    const count = await resetInProgressGroups('reset-none', cwd);
+    expect(count).toBe(0);
   });
 });
 

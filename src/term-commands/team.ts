@@ -198,9 +198,17 @@ async function handleTeamCreate(
 
   const config = await teamManager.createTeam(name, options.repo, options.branch);
 
-  // Store tmux session name in team config (prevents session explosion on parallel creates)
+  // Store wish slug and tmux session in team config
+  let needsUpdate = false;
+  if (options.wish) {
+    config.wishSlug = options.wish;
+    needsUpdate = true;
+  }
   if (options.session) {
     config.tmuxSessionName = options.session;
+    needsUpdate = true;
+  }
+  if (needsUpdate) {
     await teamManager.updateTeamConfig(name, config);
   }
 
