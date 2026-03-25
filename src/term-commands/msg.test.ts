@@ -10,12 +10,41 @@
  * Run with: bun test src/term-commands/msg.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { rm } from 'node:fs/promises';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { getConnection } from '../lib/db.js';
+import { setupTestSchema } from '../lib/test-db.js';
 import { checkSendScope, detectSenderIdentity } from './msg.js';
+
+// ---------------------------------------------------------------------------
+// PG test schema (required since team-manager now reads from PG)
+// ---------------------------------------------------------------------------
+
+let cleanupSchema: () => Promise<void>;
+
+beforeAll(async () => {
+  cleanupSchema = await setupTestSchema();
+});
+
+afterAll(async () => {
+  await cleanupSchema();
+});
+
+// ---------------------------------------------------------------------------
+// Helper: insert team into PG
+// ---------------------------------------------------------------------------
+
+async function insertTeam(name: string, repo: string, members: string[]): Promise<void> {
+  const sql = await getConnection();
+  await sql`
+    INSERT INTO teams (name, repo, base_branch, worktree_path, members, status, created_at)
+    VALUES (${name}, ${repo}, 'dev', ${join(repo, '.worktrees', name)}, ${JSON.stringify(members)}, 'in_progress', now())
+    ON CONFLICT (name) DO UPDATE SET members = ${JSON.stringify(members)}
+  `;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers: save/restore env vars
@@ -122,13 +151,12 @@ describe('checkSendScope', () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'scope-test-'));
-    // Create .genie/teams directory
-    await mkdir(join(tempDir, '.genie', 'teams'), { recursive: true });
-    // Point GENIE_HOME to tempDir/.genie so listTeams() finds team files written here
-    process.env.GENIE_HOME = join(tempDir, '.genie');
   });
 
   afterEach(async () => {
+    // Clean up test teams from PG
+    const sql = await getConnection();
+    await sql`DELETE FROM teams WHERE name LIKE 'scope-test-%' OR name = 'leader-team' OR name = 'my-team'`;
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -143,31 +171,14 @@ describe('checkSendScope', () => {
   });
 
   test('allows sending within same team', async () => {
-    // Create team with both sender and recipient as members
-    const teamConfig = {
-      name: 'test-team',
-      repo: tempDir,
-      baseBranch: 'dev',
-      worktreePath: join(tempDir, '.worktrees', 'test-team'),
-      members: ['alice', 'bob'],
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(tempDir, '.genie', 'teams', 'test-team.json'), JSON.stringify(teamConfig));
+    await insertTeam('scope-test-team', tempDir, ['alice', 'bob']);
 
     const error = await checkSendScope(tempDir, 'alice', 'bob');
     expect(error).toBeNull();
   });
 
   test('rejects sending to non-team-member', async () => {
-    const teamConfig = {
-      name: 'test-team',
-      repo: tempDir,
-      baseBranch: 'dev',
-      worktreePath: join(tempDir, '.worktrees', 'test-team'),
-      members: ['alice'],
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(tempDir, '.genie', 'teams', 'test-team.json'), JSON.stringify(teamConfig));
+    await insertTeam('scope-test-reject', tempDir, ['alice']);
 
     const error = await checkSendScope(tempDir, 'alice', 'outsider');
     expect(error).not.toBeNull();
@@ -176,15 +187,7 @@ describe('checkSendScope', () => {
   });
 
   test('team-lead can always send to team-lead recipient', async () => {
-    const teamConfig = {
-      name: 'my-team',
-      repo: tempDir,
-      baseBranch: 'dev',
-      worktreePath: join(tempDir, '.worktrees', 'my-team'),
-      members: ['implementor'],
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(tempDir, '.genie', 'teams', 'my-team.json'), JSON.stringify(teamConfig));
+    await insertTeam('my-team', tempDir, ['implementor']);
 
     // implementor (member) can send to team-lead
     const error = await checkSendScope(tempDir, 'implementor', 'team-lead');
@@ -192,15 +195,7 @@ describe('checkSendScope', () => {
   });
 
   test('team-lead uses GENIE_TEAM for team lookup', async () => {
-    const teamConfig = {
-      name: 'leader-team',
-      repo: tempDir,
-      baseBranch: 'dev',
-      worktreePath: join(tempDir, '.worktrees', 'leader-team'),
-      members: ['worker-a', 'worker-b'],
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(tempDir, '.genie', 'teams', 'leader-team.json'), JSON.stringify(teamConfig));
+    await insertTeam('leader-team', tempDir, ['worker-a', 'worker-b']);
 
     process.env.GENIE_TEAM = 'leader-team';
 
@@ -210,15 +205,7 @@ describe('checkSendScope', () => {
   });
 
   test('team-lead blocked from sending to non-member', async () => {
-    const teamConfig = {
-      name: 'leader-team',
-      repo: tempDir,
-      baseBranch: 'dev',
-      worktreePath: join(tempDir, '.worktrees', 'leader-team'),
-      members: ['worker-a'],
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(tempDir, '.genie', 'teams', 'leader-team.json'), JSON.stringify(teamConfig));
+    await insertTeam('leader-team', tempDir, ['worker-a']);
 
     process.env.GENIE_TEAM = 'leader-team';
 
