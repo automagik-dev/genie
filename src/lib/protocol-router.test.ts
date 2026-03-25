@@ -7,12 +7,27 @@
  * Run with: bun test src/lib/protocol-router.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as mailbox from './mailbox.js';
+import { setupTestSchema } from './test-db.js';
+
+// ---------------------------------------------------------------------------
+// PG test schema (required since mailbox now uses PG)
+// ---------------------------------------------------------------------------
+
+let cleanupSchema: () => Promise<void>;
+
+beforeAll(async () => {
+  cleanupSchema = await setupTestSchema();
+});
+
+afterAll(async () => {
+  await cleanupSchema();
+});
 
 // ---------------------------------------------------------------------------
 // Environment isolation
@@ -71,11 +86,12 @@ describe('getInbox', () => {
   });
 
   test('returns messages with correct metadata', async () => {
+    const repo = '/tmp/proto-router-metadata';
     const { getInbox } = await import('./protocol-router.js');
 
-    await mailbox.send(tempDir, 'sender', 'receiver', 'test message');
+    await mailbox.send(repo, 'sender', 'receiver', 'test message');
 
-    const messages = await getInbox(tempDir, 'receiver');
+    const messages = await getInbox(repo, 'receiver');
     expect(messages.length).toBe(1);
 
     const msg = messages[0];

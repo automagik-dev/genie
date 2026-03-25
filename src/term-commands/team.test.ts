@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { $ } from 'bun';
+import { setupTestSchema } from '../lib/test-db.js';
 
 // ============================================================================
 // Test Setup
@@ -18,10 +19,16 @@ const TEST_REPO = join(TEST_DIR, 'test-repo');
 const TEST_GENIE_HOME = join(TEST_DIR, 'genie-home');
 const TEST_CLAUDE_CONFIG = join(TEST_DIR, '.claude');
 
+// PG schema cleanup
+const pgState: { cleanup: () => Promise<void> } = { cleanup: async () => {} };
+
 // Path to the genie CLI entrypoint
 const GENIE_BIN = join(import.meta.dir, '..', 'genie.ts');
 
 async function setupTestRepo(): Promise<void> {
+  // Set up PG test schema isolation — teams are stored in PG now
+  pgState.cleanup = await setupTestSchema();
+
   try {
     await rm(TEST_DIR, { recursive: true, force: true });
   } catch {
@@ -95,7 +102,12 @@ async function genie(...args: string[]): Promise<{ stdout: string; exitCode: num
     const result = await $`bun ${GENIE_BIN} ${args}`
       .quiet()
       .cwd(TEST_REPO)
-      .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME, CLAUDE_CONFIG_DIR: TEST_CLAUDE_CONFIG });
+      .env({
+        ...process.env,
+        GENIE_HOME: TEST_GENIE_HOME,
+        CLAUDE_CONFIG_DIR: TEST_CLAUDE_CONFIG,
+        GENIE_TEST_SCHEMA: process.env.GENIE_TEST_SCHEMA ?? '',
+      });
     return { stdout: result.stdout.toString(), exitCode: 0 };
   } catch (err: unknown) {
     const shellErr = err as { stdout?: Buffer; exitCode?: number };
@@ -117,6 +129,7 @@ describe('genie team CLI', () => {
 
   afterAll(async () => {
     await cleanupTestRepo();
+    await pgState.cleanup();
   });
 
   test('team create creates a team', async () => {

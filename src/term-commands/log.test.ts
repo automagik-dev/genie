@@ -7,13 +7,11 @@
  * Run with: bun test src/term-commands/log.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Agent } from '../lib/agent-registry.js';
 import { send } from '../lib/mailbox.js';
 import { postMessage } from '../lib/team-chat.js';
+import { setupTestSchema } from '../lib/test-db.js';
 import {
   type LogEvent,
   applyLogFilter,
@@ -27,17 +25,17 @@ import {
 // Helpers
 // ============================================================================
 
-let tempDir: string;
+let cleanup: () => Promise<void>;
 
-beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), 'log-cmd-test-'));
+beforeAll(async () => {
+  cleanup = await setupTestSchema();
 });
 
-afterEach(async () => {
-  await rm(tempDir, { recursive: true, force: true });
+afterAll(async () => {
+  await cleanup();
 });
 
-function makeAgent(id: string, team?: string): Agent {
+function makeAgent(id: string, team?: string, repoPath?: string): Agent {
   return {
     id,
     paneId: '%0',
@@ -46,7 +44,7 @@ function makeAgent(id: string, team?: string): Agent {
     startedAt: new Date().toISOString(),
     state: 'working',
     lastStateChange: new Date().toISOString(),
-    repoPath: tempDir,
+    repoPath: repoPath ?? '/tmp/log-cmd-test',
     team,
   };
 }
@@ -57,13 +55,14 @@ function makeAgent(id: string, team?: string): Agent {
 
 describe('log command: agent log via readAgentLog', () => {
   test('aggregates inbox + outbox into unified feed', async () => {
-    const agent = makeAgent('engineer', 'test-team');
+    const repo = '/tmp/log-agent-agg';
+    const agent = makeAgent('engineer', 'test-team', repo);
 
-    await send(tempDir, 'reviewer', 'engineer', 'review this');
+    await send(repo, 'reviewer', 'engineer', 'review this');
     await new Promise((r) => setTimeout(r, 10));
-    await send(tempDir, 'engineer', 'reviewer', 'done');
+    await send(repo, 'engineer', 'reviewer', 'done');
 
-    const events = await readAgentLog(agent, tempDir);
+    const events = await readAgentLog(agent, repo);
     const messages = events.filter((e) => e.kind === 'message');
 
     expect(messages.length).toBeGreaterThanOrEqual(2);
@@ -72,10 +71,11 @@ describe('log command: agent log via readAgentLog', () => {
   });
 
   test('includes team chat in agent feed', async () => {
-    const agent = makeAgent('engineer', 'dev-team');
-    await postMessage(tempDir, 'dev-team', 'alice', 'standup update');
+    const repo = '/tmp/log-agent-chat';
+    const agent = makeAgent('engineer', 'dev-team', repo);
+    await postMessage(repo, 'dev-team', 'alice', 'standup update');
 
-    const events = await readAgentLog(agent, tempDir);
+    const events = await readAgentLog(agent, repo);
     const chat = events.filter((e) => e.source === 'chat');
     expect(chat.length).toBe(1);
     expect(chat[0].text).toBe('standup update');
@@ -88,16 +88,17 @@ describe('log command: agent log via readAgentLog', () => {
 
 describe('log command: team log via readTeamLog', () => {
   test('interleaves events from multiple agents', async () => {
-    const eng = makeAgent('engineer', 'my-team');
-    const rev = makeAgent('reviewer', 'my-team');
+    const repo = '/tmp/log-team-interleave';
+    const eng = makeAgent('engineer', 'my-team', repo);
+    const rev = makeAgent('reviewer', 'my-team', repo);
 
-    await send(tempDir, 'engineer', 'reviewer', 'PR ready');
+    await send(repo, 'engineer', 'reviewer', 'PR ready');
     await new Promise((r) => setTimeout(r, 10));
-    await send(tempDir, 'reviewer', 'engineer', 'LGTM');
+    await send(repo, 'reviewer', 'engineer', 'LGTM');
     await new Promise((r) => setTimeout(r, 10));
-    await postMessage(tempDir, 'my-team', 'engineer', 'merged');
+    await postMessage(repo, 'my-team', 'engineer', 'merged');
 
-    const events = await readTeamLog([eng, rev], tempDir, 'my-team');
+    const events = await readTeamLog([eng, rev], repo, 'my-team');
     expect(events.length).toBeGreaterThanOrEqual(3);
 
     // Chronological order
@@ -159,13 +160,14 @@ describe('log command: filters', () => {
 
 describe('log command: NDJSON output', () => {
   test('each line is valid JSON', async () => {
-    const agent = makeAgent('engineer');
+    const repo = '/tmp/log-ndjson';
+    const agent = makeAgent('engineer', undefined, repo);
 
-    await send(tempDir, 'reviewer', 'engineer', 'msg1');
+    await send(repo, 'reviewer', 'engineer', 'msg1');
     await new Promise((r) => setTimeout(r, 10));
-    await send(tempDir, 'qa', 'engineer', 'msg2');
+    await send(repo, 'qa', 'engineer', 'msg2');
 
-    const events = await readAgentLog(agent, tempDir);
+    const events = await readAgentLog(agent, repo);
 
     // Simulate NDJSON output
     const output = events.map((e) => JSON.stringify(e)).join('\n');
@@ -182,10 +184,11 @@ describe('log command: NDJSON output', () => {
   });
 
   test('NDJSON output is pipeable (no extra formatting)', async () => {
-    const agent = makeAgent('engineer');
-    await send(tempDir, 'reviewer', 'engineer', 'test');
+    const repo = '/tmp/log-ndjson-pipe';
+    const agent = makeAgent('engineer', undefined, repo);
+    await send(repo, 'reviewer', 'engineer', 'test');
 
-    const events = await readAgentLog(agent, tempDir);
+    const events = await readAgentLog(agent, repo);
     const ndjson = events.map((e) => JSON.stringify(e)).join('\n');
 
     // No ANSI codes in NDJSON
@@ -198,10 +201,6 @@ describe('log command: NDJSON output', () => {
 });
 
 // ============================================================================
-// Human-readable output
-// ============================================================================
-
-// ============================================================================
 // Follow mode (NATS-only — requires NATS server for real-time streaming)
 // ============================================================================
 
@@ -212,7 +211,7 @@ describe('log command: follow mode (NATS)', () => {
     const available = await nats.isAvailable();
     if (!available) return; // skip silently when NATS unavailable
     const agent = makeAgent('engineer', 'test-team');
-    const handle = await followAgentLog(agent, tempDir, undefined, () => {});
+    const handle = await followAgentLog(agent, '/tmp/log-follow', undefined, () => {});
     expect(handle.mode).toBe('nats');
     await handle.stop();
   });
@@ -222,7 +221,7 @@ describe('log command: follow mode (NATS)', () => {
     const available = await nats.isAvailable();
     if (!available) return; // skip silently when NATS unavailable
     const agents = [makeAgent('eng', 'team'), makeAgent('rev', 'team')];
-    const handle = await followTeamLog(agents, tempDir, 'team', undefined, () => {});
+    const handle = await followTeamLog(agents, '/tmp/log-follow-team', 'team', undefined, () => {});
     expect(handle.mode).toBe('nats');
     await handle.stop();
   });
@@ -233,13 +232,14 @@ describe('log command: follow mode (NATS)', () => {
 // ============================================================================
 
 describe('log command: human-readable output', () => {
-  test('works without NATS (file-based only)', async () => {
-    const agent = makeAgent('engineer', 'test-team');
+  test('works without NATS (PG-based only)', async () => {
+    const repo = '/tmp/log-human-readable';
+    const agent = makeAgent('engineer', 'test-team', repo);
 
-    await send(tempDir, 'reviewer', 'engineer', 'fix the bug');
-    await postMessage(tempDir, 'test-team', 'engineer', 'working on it');
+    await send(repo, 'reviewer', 'engineer', 'fix the bug');
+    await postMessage(repo, 'test-team', 'engineer', 'working on it');
 
-    const events = await readAgentLog(agent, tempDir);
+    const events = await readAgentLog(agent, repo);
     expect(events.length).toBeGreaterThanOrEqual(2);
 
     // Verify event structure

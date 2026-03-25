@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { $ } from 'bun';
+import { getConnection } from './db.js';
 import {
   createTeam,
   disbandTeam,
@@ -19,6 +20,7 @@ import {
   setTeamStatus,
   validateBranchName,
 } from './team-manager.js';
+import { setupTestSchema } from './test-db.js';
 
 // ============================================================================
 // Test Setup
@@ -27,6 +29,8 @@ import {
 const TEST_DIR = '/tmp/team-manager-test';
 const TEST_REPO = join(TEST_DIR, 'test-repo');
 const TEST_GENIE_HOME = join(TEST_DIR, 'genie-home');
+
+let cleanupSchema: () => Promise<void>;
 
 async function setupTestRepo(): Promise<void> {
   try {
@@ -49,7 +53,7 @@ async function setupTestRepo(): Promise<void> {
   // Create dev branch (current branch acts as dev)
   await $`git -C ${TEST_REPO} branch dev`.quiet();
 
-  // Point GENIE_HOME to test directory for global team storage
+  // Point GENIE_HOME to test directory for worktree path resolution
   process.env.GENIE_HOME = TEST_GENIE_HOME;
 }
 
@@ -69,11 +73,13 @@ async function cleanupTestRepo(): Promise<void> {
 
 describe('Team Manager', () => {
   beforeAll(async () => {
+    cleanupSchema = await setupTestSchema();
     await setupTestRepo();
   });
 
   afterAll(async () => {
     await cleanupTestRepo();
+    await cleanupSchema();
   });
 
   describe('validateBranchName', () => {
@@ -129,10 +135,13 @@ describe('Team Manager', () => {
       expect(result.stdout.toString().trim()).toBe('feat/branched');
     });
 
-    test('stores config at global GENIE_HOME/teams/', async () => {
-      await createTeam('feat/global-check', TEST_REPO, 'dev');
-      const configPath = join(TEST_GENIE_HOME, 'teams', 'feat--global-check.json');
-      expect(existsSync(configPath)).toBe(true);
+    test('stores config in PG teams table', async () => {
+      await createTeam('feat/pg-check', TEST_REPO, 'dev');
+      const sql = await getConnection();
+      const rows = await sql`SELECT * FROM teams WHERE name = ${'feat/pg-check'}`;
+      expect(rows.length).toBe(1);
+      expect(rows[0].repo).toBe(TEST_REPO);
+      expect(rows[0].base_branch).toBe('dev');
     });
 
     test('rejects invalid branch names', async () => {
@@ -265,7 +274,7 @@ describe('Team Manager', () => {
   });
 
   describe('disbandTeam', () => {
-    test('removes clone directory and config', async () => {
+    test('removes clone directory and config from PG', async () => {
       const config = await createTeam('feat/disband-test', TEST_REPO, 'dev');
       const worktreePath = config.worktreePath;
 
@@ -275,7 +284,7 @@ describe('Team Manager', () => {
       // Worktree should be gone
       expect(existsSync(worktreePath)).toBe(false);
 
-      // Team config should be gone
+      // Team config should be gone from PG
       const team = await getTeam('feat/disband-test');
       expect(team).toBeNull();
     });

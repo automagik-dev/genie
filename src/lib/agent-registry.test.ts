@@ -1,30 +1,38 @@
-/**
- * Tests for agent-registry - Sub-pane expansion
- * Run with: bun test src/lib/agent-registry.test.ts
- */
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import {
+  type Agent,
+  addSubPane,
+  filterBySession,
+  findByPane,
+  findByTask,
+  findByWindow,
+  get,
+  getElapsedTime,
+  getPane,
+  getTeamLeadEntry,
+  list,
+  listTemplates,
+  register,
+  removeSubPane,
+  saveTemplate,
+  unregister,
+  update,
+} from './agent-registry.js';
+import { getConnection } from './db.js';
+import { setupTestSchema } from './test-db.js';
 
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-import { type Agent, addSubPane, findByWindow, getPane, removeSubPane } from './agent-registry.js';
-
-// ============================================================================
-// Test Setup
-// ============================================================================
-
-const TEST_DIR = '/tmp/worker-registry-test';
-const TEST_GENIE_DIR = join(TEST_DIR, '.genie');
-const TEST_REGISTRY_PATH = join(TEST_GENIE_DIR, 'workers.json');
-
-function cleanTestDir(): void {
-  try {
-    rmSync(TEST_DIR, { recursive: true, force: true });
-  } catch {
-    // Ignore
-  }
-  mkdirSync(TEST_GENIE_DIR, { recursive: true });
-}
+let cleanup: () => Promise<void>;
+beforeAll(async () => {
+  cleanup = await setupTestSchema();
+});
+afterAll(async () => {
+  await cleanup();
+});
+beforeEach(async () => {
+  const sql = await getConnection();
+  await sql`DELETE FROM agents`;
+  await sql`DELETE FROM agent_templates`;
+});
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {
@@ -41,437 +49,226 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
   };
 }
 
-// ============================================================================
-// Agent type: subPanes field
-// ============================================================================
-
-describe('Agent type: subPanes field', () => {
-  beforeEach(() => {
-    cleanTestDir();
-    // Point registry to test dir by setting cwd
-    process.env.GENIE_WORKER_REGISTRY = 'global';
+describe('register and get', () => {
+  test('register creates agent, get retrieves it', async () => {
+    await register(makeAgent());
+    const f = await get('bd-42');
+    expect(f).not.toBeNull();
+    expect(f!.id).toBe('bd-42');
+    expect(f!.paneId).toBe('%17');
+    expect(f!.state).toBe('working');
   });
-
-  test('Agent type includes optional subPanes field', () => {
-    const agent: Agent = makeAgent({ subPanes: ['%22', '%23'] });
-    expect(agent.subPanes).toEqual(['%22', '%23']);
+  test('get returns null for non-existent', async () => {
+    expect(await get('nope')).toBeNull();
   });
-
-  test('Agent without subPanes has undefined subPanes', () => {
-    const agent: Agent = makeAgent();
-    expect(agent.subPanes).toBeUndefined();
-  });
-
-  test('subPanes persists through register/get cycle', async () => {
-    // Use a separate test registry
-    const worker = makeAgent({ subPanes: ['%22'] });
-
-    // We need to write directly to test the persistence
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    // Read it back
-    const content = JSON.parse(readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
-    const loaded = content.workers['bd-42'];
-    expect(loaded.subPanes).toEqual(['%22']);
+  test('paneColor stored', async () => {
+    await register(makeAgent({ paneColor: '#ff0000' }));
+    expect((await get('bd-42'))!.paneColor).toBe('#ff0000');
   });
 });
 
-// ============================================================================
-// addSubPane
-// ============================================================================
+describe('list', () => {
+  test('list returns all', async () => {
+    await register(makeAgent({ id: 'a1', paneId: '%1' }));
+    await register(makeAgent({ id: 'a2', paneId: '%2' }));
+    const a = await list();
+    expect(a.length).toBe(2);
+    expect(a.map((x) => x.id).sort()).toEqual(['a1', 'a2']);
+  });
+  test('list returns empty', async () => {
+    expect(await list()).toEqual([]);
+  });
+});
+
+describe('unregister', () => {
+  test('removes agent', async () => {
+    await register(makeAgent());
+    await unregister('bd-42');
+    expect(await get('bd-42')).toBeNull();
+  });
+  test('no-op for ghost', async () => {
+    await unregister('ghost');
+  });
+});
+
+describe('update', () => {
+  test('changes fields', async () => {
+    await register(makeAgent());
+    await update('bd-42', { state: 'idle', role: 'reviewer' });
+    const f = await get('bd-42');
+    expect(f!.state).toBe('idle');
+    expect(f!.role).toBe('reviewer');
+  });
+  test('state sets lastStateChange', async () => {
+    await register(makeAgent());
+    const before = new Date().toISOString();
+    await update('bd-42', { state: 'done' });
+    const f = await get('bd-42');
+    expect(f!.state).toBe('done');
+    expect(f!.lastStateChange >= before).toBe(true);
+  });
+  test('empty is no-op', async () => {
+    await register(makeAgent());
+    await update('bd-42', {});
+    expect((await get('bd-42'))!.state).toBe('working');
+  });
+});
+
+describe('filterBySession', () => {
+  test('filters', async () => {
+    await register(makeAgent({ id: 'a1', paneId: '%1', session: 'sa' }));
+    await register(makeAgent({ id: 'a2', paneId: '%2', session: 'sb' }));
+    await register(makeAgent({ id: 'a3', paneId: '%3', session: 'sa' }));
+    expect((await filterBySession('sa')).length).toBe(2);
+  });
+});
+
+describe('find functions', () => {
+  test('findByPane', async () => {
+    await register(makeAgent({ paneId: '%42' }));
+    expect((await findByPane('%42'))!.paneId).toBe('%42');
+  });
+  test('findByPane normalizes', async () => {
+    await register(makeAgent({ paneId: '%42' }));
+    expect(await findByPane('42')).not.toBeNull();
+  });
+  test('findByPane null', async () => {
+    expect(await findByPane('%999')).toBeNull();
+  });
+  test('findByWindow', async () => {
+    await register(makeAgent({ windowId: '@4' }));
+    expect((await findByWindow('@4'))!.windowId).toBe('@4');
+  });
+  test('findByWindow null', async () => {
+    expect(await findByWindow('@999')).toBeNull();
+  });
+  test('findByTask', async () => {
+    await register(makeAgent({ taskId: 'task-77' }));
+    expect((await findByTask('task-77'))!.taskId).toBe('task-77');
+  });
+  test('findByTask null', async () => {
+    expect(await findByTask('task-unknown')).toBeNull();
+  });
+});
+
+describe('getElapsedTime', () => {
+  test('formats', () => {
+    const e = getElapsedTime(makeAgent({ startedAt: new Date(Date.now() - 3600000).toISOString() }));
+    expect(e.formatted).toBe('1h 0m');
+  });
+  test('<1m', () => {
+    expect(getElapsedTime(makeAgent()).formatted).toBe('<1m');
+  });
+});
 
 describe('addSubPane', () => {
-  beforeEach(cleanTestDir);
-
-  test('addSubPane("bd-42", "%22") appends to worker subPanes array', async () => {
-    // Write initial registry with a worker that has no subPanes
-    const worker = makeAgent();
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    await addSubPane('bd-42', '%22', TEST_REGISTRY_PATH);
-
-    const content = JSON.parse(readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
-    expect(content.workers['bd-42'].subPanes).toEqual(['%22']);
+  test('appends', async () => {
+    await register(makeAgent());
+    await addSubPane('bd-42', '%22');
+    expect((await get('bd-42'))!.subPanes).toEqual(['%22']);
   });
-
-  test('addSubPane appends to existing subPanes', async () => {
-    const worker = makeAgent({ subPanes: ['%22'] });
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    await addSubPane('bd-42', '%23', TEST_REGISTRY_PATH);
-
-    const content = JSON.parse(readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
-    expect(content.workers['bd-42'].subPanes).toEqual(['%22', '%23']);
+  test('appends to existing', async () => {
+    await register(makeAgent({ subPanes: ['%22'] }));
+    await addSubPane('bd-42', '%23');
+    expect((await get('bd-42'))!.subPanes).toEqual(['%22', '%23']);
   });
-
-  test('addSubPane does nothing for non-existent worker', async () => {
-    const registry = {
-      workers: {},
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    // Should not throw
-    await addSubPane('ghost', '%99', TEST_REGISTRY_PATH);
-
-    const content = JSON.parse(readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
-    expect(Object.keys(content.workers)).toHaveLength(0);
+  test('no-op ghost', async () => {
+    await addSubPane('ghost', '%99');
   });
 });
-
-// ============================================================================
-// getPane
-// ============================================================================
 
 describe('getPane', () => {
-  beforeEach(cleanTestDir);
-
-  test('getPane("bd-42", 0) returns primary paneId', async () => {
-    const worker = makeAgent();
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    const pane = await getPane('bd-42', 0, TEST_REGISTRY_PATH);
-    expect(pane).toBe('%17');
+  test('index 0', async () => {
+    await register(makeAgent());
+    expect(await getPane('bd-42', 0)).toBe('%17');
   });
-
-  test('getPane("bd-42", 1) returns subPanes[0]', async () => {
-    const worker = makeAgent({ subPanes: ['%22', '%23'] });
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    const pane = await getPane('bd-42', 1, TEST_REGISTRY_PATH);
-    expect(pane).toBe('%22');
+  test('index 1', async () => {
+    await register(makeAgent({ subPanes: ['%22', '%23'] }));
+    expect(await getPane('bd-42', 1)).toBe('%22');
   });
-
-  test('getPane("bd-42", 2) returns subPanes[1]', async () => {
-    const worker = makeAgent({ subPanes: ['%22', '%23'] });
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    const pane = await getPane('bd-42', 2, TEST_REGISTRY_PATH);
-    expect(pane).toBe('%23');
+  test('out-of-range', async () => {
+    await register(makeAgent({ subPanes: ['%22'] }));
+    expect(await getPane('bd-42', 5)).toBeNull();
   });
-
-  test('getPane returns null for out-of-range index', async () => {
-    const worker = makeAgent({ subPanes: ['%22'] });
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    const pane = await getPane('bd-42', 5, TEST_REGISTRY_PATH);
-    expect(pane).toBeNull();
-  });
-
-  test('getPane returns null for non-existent worker', async () => {
-    const registry = {
-      workers: {},
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    const pane = await getPane('ghost', 0, TEST_REGISTRY_PATH);
-    expect(pane).toBeNull();
-  });
-
-  test('getPane returns null for index > 0 when no subPanes', async () => {
-    const worker = makeAgent(); // no subPanes
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    const pane = await getPane('bd-42', 1, TEST_REGISTRY_PATH);
-    expect(pane).toBeNull();
+  test('ghost', async () => {
+    expect(await getPane('ghost', 0)).toBeNull();
   });
 });
-
-// ============================================================================
-// removeSubPane
-// ============================================================================
 
 describe('removeSubPane', () => {
-  beforeEach(cleanTestDir);
-
-  test('removeSubPane removes a pane from subPanes array', async () => {
-    const worker = makeAgent({ subPanes: ['%22', '%23', '%24'] });
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    await removeSubPane('bd-42', '%23', TEST_REGISTRY_PATH);
-
-    const content = JSON.parse(readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
-    expect(content.workers['bd-42'].subPanes).toEqual(['%22', '%24']);
+  test('removes', async () => {
+    await register(makeAgent({ subPanes: ['%22', '%23', '%24'] }));
+    await removeSubPane('bd-42', '%23');
+    expect((await get('bd-42'))!.subPanes).toEqual(['%22', '%24']);
   });
-
-  test('removeSubPane does nothing if pane not in subPanes', async () => {
-    const worker = makeAgent({ subPanes: ['%22'] });
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    await removeSubPane('bd-42', '%99', TEST_REGISTRY_PATH);
-
-    const content = JSON.parse(readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
-    expect(content.workers['bd-42'].subPanes).toEqual(['%22']);
-  });
-
-  test('removeSubPane does nothing for non-existent worker', async () => {
-    const registry = {
-      workers: {},
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    // Should not throw
-    await removeSubPane('ghost', '%99', TEST_REGISTRY_PATH);
-  });
-
-  test('removeSubPane handles worker with no subPanes', async () => {
-    const worker = makeAgent(); // no subPanes
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    // Should not throw
-    await removeSubPane('bd-42', '%22', TEST_REGISTRY_PATH);
+  test('ghost', async () => {
+    await removeSubPane('ghost', '%99');
   });
 });
 
-// ============================================================================
-// loadRegistry fresh-read guarantee
-// ============================================================================
-
-describe('loadRegistry fresh-read guarantee', () => {
-  beforeEach(cleanTestDir);
-
-  test('registry reads reflect disk changes between calls', async () => {
-    // Write initial state
-    const worker1 = makeAgent({ id: 'w1', paneId: '%10', taskId: 'w1' });
-    writeFileSync(
-      TEST_REGISTRY_PATH,
-      JSON.stringify(
-        {
-          workers: { w1: worker1 },
-          lastUpdated: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    );
-
-    const pane1 = await getPane('w1', 0, TEST_REGISTRY_PATH);
-    expect(pane1).toBe('%10');
-
-    // Externally modify the file (simulates another process writing)
-    const worker2 = makeAgent({ id: 'w1', paneId: '%99', taskId: 'w1' });
-    writeFileSync(
-      TEST_REGISTRY_PATH,
-      JSON.stringify(
-        {
-          workers: { w1: worker2 },
-          lastUpdated: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    );
-
-    // Next read should see the updated value
-    const pane2 = await getPane('w1', 0, TEST_REGISTRY_PATH);
-    expect(pane2).toBe('%99');
+describe('getTeamLeadEntry', () => {
+  test('legacy ID', async () => {
+    await register(makeAgent({ id: 'team-lead:my-team', role: 'team-lead', team: 'my-team' }));
+    const f = await getTeamLeadEntry('my-team');
+    expect(f).not.toBeNull();
+    expect(f!.id).toBe('team-lead:my-team');
+  });
+  test('role+team', async () => {
+    await register(makeAgent({ id: 'some-id', role: 'team-lead', team: 'alpha' }));
+    expect((await getTeamLeadEntry('alpha'))!.team).toBe('alpha');
+  });
+  test('by session', async () => {
+    await register(makeAgent({ id: 'tl-1', role: 'team-lead', team: 'beta', session: 'sess-1' }));
+    expect(await getTeamLeadEntry('beta', 'sess-1')).not.toBeNull();
+  });
+  test('null', async () => {
+    expect(await getTeamLeadEntry('no-such-team')).toBeNull();
   });
 });
 
-// ============================================================================
-// windowId field and findByWindow
-// ============================================================================
-
-describe('Agent type: windowId field', () => {
-  beforeEach(cleanTestDir);
-
-  test('Agent type includes optional windowId field', () => {
-    const agent: Agent = makeAgent({ windowId: '@4', windowName: 'bd-42' });
-    expect(agent.windowId).toBe('@4');
-    expect(agent.windowName).toBe('bd-42');
+describe('templates', () => {
+  test('save and list', async () => {
+    await saveTemplate({
+      id: 'tpl-1',
+      provider: 'claude',
+      team: 'alpha',
+      role: 'engineer',
+      cwd: '/tmp/repo',
+      lastSpawnedAt: new Date().toISOString(),
+    });
+    const t = await listTemplates();
+    expect(t.length).toBe(1);
+    expect(t[0].id).toBe('tpl-1');
   });
-
-  test('Agent without windowId has undefined windowId', () => {
-    const agent: Agent = makeAgent();
-    expect(agent.windowId).toBeUndefined();
-  });
-
-  test('windowId persists through register/read cycle', async () => {
-    const worker = makeAgent({ windowId: '@7', windowName: 'bd-42' });
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    const content = JSON.parse(readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
-    const loaded = content.workers['bd-42'];
-    expect(loaded.windowId).toBe('@7');
-    expect(loaded.windowName).toBe('bd-42');
-  });
-});
-
-describe('findByWindow', () => {
-  const GLOBAL_TEST_DIR = '/tmp/worker-registry-test-global';
-
-  beforeEach(() => {
-    // Clean both test dirs and any stale lock files
-    try {
-      rmSync(GLOBAL_TEST_DIR, { recursive: true, force: true });
-    } catch {
-      // Ignore
-    }
-    mkdirSync(GLOBAL_TEST_DIR, { recursive: true });
-    // Point GENIE_HOME to isolated temp dir so tests don't clobber real registry
-    process.env.GENIE_HOME = GLOBAL_TEST_DIR;
-  });
-
-  test('findByWindow returns worker with matching windowId', async () => {
-    const worker = makeAgent({ windowId: '@4', windowName: 'bd-42' });
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(join(GLOBAL_TEST_DIR, 'workers.json'), JSON.stringify(registry, null, 2));
-
-    // Verify via direct file read (immune to mock.module leakage from other test files)
-    const data = JSON.parse(readFileSync(join(GLOBAL_TEST_DIR, 'workers.json'), 'utf-8'));
-    const agents = Object.values(data.workers) as any[];
-    const found = agents.find((a: any) => a.windowId === '@4') ?? null;
-    expect(found).not.toBeNull();
-    expect(found!.id).toBe('bd-42');
-    expect(found!.windowId).toBe('@4');
-
-    // Also exercise the exported function (may be affected by mock leakage in full suite)
-    const fnResult = await findByWindow('@4');
-    // When not affected by mocks, fnResult should match; when mocked, it may return null
-    if (fnResult) {
-      expect(fnResult.windowId).toBe('@4');
-    }
-  });
-
-  test('findByWindow returns null for unknown window', async () => {
-    const worker = makeAgent({ windowId: '@4' });
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(join(GLOBAL_TEST_DIR, 'workers.json'), JSON.stringify(registry, null, 2));
-
-    const data = JSON.parse(readFileSync(join(GLOBAL_TEST_DIR, 'workers.json'), 'utf-8'));
-    const agents = Object.values(data.workers) as any[];
-    const found = agents.find((a: any) => a.windowId === '@999') ?? null;
-    expect(found).toBeNull();
+  test('upserts', async () => {
+    await saveTemplate({
+      id: 'tpl-1',
+      provider: 'claude',
+      team: 'alpha',
+      cwd: '/tmp/repo',
+      lastSpawnedAt: new Date().toISOString(),
+    });
+    await saveTemplate({
+      id: 'tpl-1',
+      provider: 'codex',
+      team: 'beta',
+      cwd: '/tmp/repo2',
+      lastSpawnedAt: new Date().toISOString(),
+    });
+    const t = await listTemplates();
+    expect(t.length).toBe(1);
+    expect(t[0].provider).toBe('codex');
   });
 });
 
-// ============================================================================
-// Crash Resilience — atomic writes and backup recovery (#774)
-// ============================================================================
-
-describe('crash resilience', () => {
-  beforeEach(cleanTestDir);
-
-  test('saveRegistry creates .bak file of previous state', async () => {
-    const worker = makeAgent();
-    const registry = {
-      workers: { [worker.id]: worker },
-      lastUpdated: new Date().toISOString(),
-    };
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
-
-    // Trigger a save (addSubPane modifies and saves)
-    await addSubPane('bd-42', '%22', TEST_REGISTRY_PATH);
-
-    // Backup should contain the previous state (without subPanes)
-    const backup = JSON.parse(readFileSync(`${TEST_REGISTRY_PATH}.bak`, 'utf-8'));
-    expect(backup.workers['bd-42'].subPanes).toBeUndefined();
-
-    // Primary should have the new state
-    const primary = JSON.parse(readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
-    expect(primary.workers['bd-42'].subPanes).toEqual(['%22']);
+describe('paneColor', () => {
+  test('persists', async () => {
+    await register(makeAgent({ paneColor: '#abcdef' }));
+    expect((await get('bd-42'))!.paneColor).toBe('#abcdef');
   });
-
-  test('loadRegistry falls back to .bak when primary is corrupt', async () => {
-    const worker = makeAgent({ subPanes: ['%22'] });
-    const goodState = {
-      workers: { [worker.id]: worker },
-      templates: {},
-      lastUpdated: new Date().toISOString(),
-    };
-
-    // Write corrupt primary, valid backup
-    writeFileSync(TEST_REGISTRY_PATH, '{ truncated JSON...');
-    writeFileSync(`${TEST_REGISTRY_PATH}.bak`, JSON.stringify(goodState, null, 2));
-
-    // loadRegistry should recover from backup
-    const pane = await getPane('bd-42', 0, TEST_REGISTRY_PATH);
-    expect(pane).toBe('%17');
+  test('updates', async () => {
+    await register(makeAgent());
+    await update('bd-42', { paneColor: '#123456' });
+    expect((await get('bd-42'))!.paneColor).toBe('#123456');
   });
-
-  test('loadRegistry returns empty registry when both primary and backup are corrupt', async () => {
-    writeFileSync(TEST_REGISTRY_PATH, '{ truncated...');
-    writeFileSync(`${TEST_REGISTRY_PATH}.bak`, 'also corrupt');
-
-    // Should not throw — returns empty registry
-    const pane = await getPane('bd-42', 0, TEST_REGISTRY_PATH);
-    expect(pane).toBeNull();
-  });
-
-  test('loadRegistry rejects files without workers object', async () => {
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify({ foo: 'bar' }));
-
-    const pane = await getPane('bd-42', 0, TEST_REGISTRY_PATH);
-    expect(pane).toBeNull();
-  });
-});
-
-// ============================================================================
-// Cleanup
-// ============================================================================
-
-afterAll(() => {
-  try {
-    rmSync(TEST_DIR, { recursive: true, force: true });
-    rmSync('/tmp/worker-registry-test-global', { recursive: true, force: true });
-  } catch {
-    // Ignore
-  }
-  process.env.GENIE_HOME = undefined;
 });

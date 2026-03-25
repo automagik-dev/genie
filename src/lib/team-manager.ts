@@ -1,7 +1,7 @@
 /**
  * Team Manager — CRUD for team lifecycle with git clone --shared isolation.
  *
- * Teams are stored as JSON files in `~/.genie/teams/<safe-name>.json` (global).
+ * Teams are stored in PostgreSQL `teams` table (via embedded pgserve).
  * Each team owns a shared clone at `<worktreeBase>/<team-name>`.
  * Team name IS the branch name (conventional prefixes: feat/, fix/, chore/, etc.).
  *
@@ -11,14 +11,14 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path, { join } from 'node:path';
 import { $ } from 'bun';
 import * as registry from './agent-registry.js';
 import { BUILTIN_COUNCIL_MEMBERS } from './builtin-agents.js';
 import * as nativeTeamsManager from './claude-native-teams.js';
-import { acquireLock } from './file-lock.js';
+import { getConnection } from './db.js';
 import { loadGenieConfigSync } from './genie-config.js';
 
 // ============================================================================
@@ -57,25 +57,50 @@ export interface TeamConfig {
 }
 
 // ============================================================================
-// Paths — global team storage at ~/.genie/teams/
+// PG Row Mapping
+// ============================================================================
+
+/** Parse JSONB members — handles both parsed arrays and string-encoded JSON. */
+// biome-ignore lint/suspicious/noExplicitAny: JSONB may be returned as string or parsed value
+function parseMembers(raw: any): string[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/** Map a PG row to a TeamConfig object. */
+// biome-ignore lint/suspicious/noExplicitAny: PG row is dynamically typed
+function rowToTeamConfig(row: any): TeamConfig {
+  const config: TeamConfig = {
+    name: row.name,
+    repo: row.repo,
+    baseBranch: row.base_branch,
+    worktreePath: row.worktree_path,
+    members: parseMembers(row.members),
+    status: row.status,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  };
+  if (row.leader) config.leader = row.leader;
+  if (row.native_team_parent_session_id) config.nativeTeamParentSessionId = row.native_team_parent_session_id;
+  if (row.native_teams_enabled) config.nativeTeamsEnabled = row.native_teams_enabled;
+  if (row.tmux_session_name) config.tmuxSessionName = row.tmux_session_name;
+  if (row.wish_slug) config.wishSlug = row.wish_slug;
+  return config;
+}
+
+// ============================================================================
+// Paths — worktree resolution (still needed for git operations)
 // ============================================================================
 
 function getGenieDir(): string {
   return process.env.GENIE_HOME ?? join(homedir(), '.genie');
-}
-
-function teamsDir(): string {
-  return join(getGenieDir(), 'teams');
-}
-
-/** Sanitize team name for use as a filename (slashes become dashes). */
-function safeFileName(name: string): string {
-  return name.replace(/\//g, '--');
-}
-
-function teamFilePath(name: string): string {
-  const safeName = safeFileName(path.basename(name) === name ? name : name);
-  return join(teamsDir(), `${safeName}.json`);
 }
 
 /** Resolve the worktree base directory from config. */
@@ -210,21 +235,16 @@ async function ensureWorktree(
  * Create a new team with a shared clone.
  *
  * Idempotent — if the team already exists, returns existing config.
- * Steps: validate name → git pull on baseBranch → git clone --shared → persist config.
+ * Steps: validate name → git pull on baseBranch → git clone --shared → persist to PG.
  */
 export async function createTeam(name: string, repo: string, baseBranch = 'dev'): Promise<TeamConfig> {
   validateBranchName(name);
 
   const repoPath = path.resolve(repo);
-  const dir = teamsDir();
-  await mkdir(dir, { recursive: true });
 
-  // Idempotent: return existing team if it already exists
-  const filePath = teamFilePath(name);
-  if (existsSync(filePath)) {
-    const content = await readFile(filePath, 'utf-8');
-    return JSON.parse(content);
-  }
+  // Idempotent: return existing team if it already exists in PG
+  const existing = await getTeam(name);
+  if (existing) return existing;
 
   const worktreeBase = getWorktreeBase(repoPath);
   const worktreePath = join(worktreeBase, name);
@@ -253,7 +273,23 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
     }
   }
 
-  await writeFile(filePath, JSON.stringify(config, null, 2));
+  const sql = await getConnection();
+  await sql`
+    INSERT INTO teams (
+      name, repo, base_branch, worktree_path, leader,
+      members, status, native_team_parent_session_id,
+      native_teams_enabled, tmux_session_name, wish_slug, created_at
+    ) VALUES (
+      ${config.name}, ${config.repo}, ${config.baseBranch},
+      ${config.worktreePath}, ${config.leader ?? null},
+      ${JSON.stringify(config.members)}, ${config.status},
+      ${config.nativeTeamParentSessionId ?? null},
+      ${config.nativeTeamsEnabled ?? false},
+      ${config.tmuxSessionName ?? null}, ${config.wishSlug ?? null},
+      ${config.createdAt}
+    ) ON CONFLICT (name) DO NOTHING
+  `;
+
   return config;
 }
 
@@ -283,8 +319,11 @@ export async function hireAgent(teamName: string, agentName: string): Promise<st
     added = [agentName];
   }
 
-  const filePath = teamFilePath(teamName);
-  await writeFile(filePath, JSON.stringify(config, null, 2));
+  const sql = await getConnection();
+  await sql`
+    UPDATE teams SET members = ${JSON.stringify(config.members)}
+    WHERE name = ${teamName}
+  `;
   return added;
 }
 
@@ -302,8 +341,11 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
   if (idx === -1) return false;
 
   config.members.splice(idx, 1);
-  const filePath = teamFilePath(teamName);
-  await writeFile(filePath, JSON.stringify(config, null, 2));
+  const sql = await getConnection();
+  await sql`
+    UPDATE teams SET members = ${JSON.stringify(config.members)}
+    WHERE name = ${teamName}
+  `;
 
   // Best-effort kill running agent
   try {
@@ -316,7 +358,7 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
 }
 
 /**
- * Disband a team: remove shared clone and delete team config.
+ * Disband a team: remove shared clone and delete team config from PG.
  * Returns true if the team was found and disbanded.
  */
 export async function disbandTeam(teamName: string): Promise<boolean> {
@@ -362,13 +404,10 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     }
   }
 
-  // Delete team config file
-  const filePath = teamFilePath(teamName);
-  try {
-    await unlink(filePath);
-  } catch {
-    return false;
-  }
+  // Delete team config from PG
+  const sql = await getConnection();
+  const result = await sql`DELETE FROM teams WHERE name = ${teamName}`;
+  if (result.count === 0) return false;
 
   // Prune stale configs (remove team configs whose clone directories are gone)
   await pruneStaleWorktrees(config.repo);
@@ -379,49 +418,52 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
 /**
  * Prune stale team configs.
  *
- * Scans all team configs — if a team's worktreePath (clone directory) no longer
- * exists on disk, deletes that team's config file and its ~/.claude/teams/ dir.
+ * Scans all team configs in PG — if a team's worktreePath (clone directory) no longer
+ * exists on disk, deletes that team's row and its ~/.claude/teams/ dir.
  */
 export async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
-  const dir = teamsDir();
-  let files: string[];
-  try {
-    files = await readdir(dir);
-  } catch {
-    return; // No teams dir — nothing to prune
-  }
+  const sql = await getConnection();
+  const rows = await sql`SELECT name, worktree_path FROM teams`;
 
-  for (const file of files) {
-    if (!file.endsWith('.json')) continue;
-    try {
-      const content = await readFile(join(dir, file), 'utf-8');
-      const config: TeamConfig = JSON.parse(content);
-      if (config.worktreePath && !existsSync(config.worktreePath)) {
-        // Clean up orphaned ~/.claude/teams/<name>/ (settings.json, hooks)
-        try {
-          await nativeTeamsManager.deleteNativeTeam(config.name);
-        } catch {
-          // Best-effort
-        }
-        await unlink(join(dir, file));
+  for (const row of rows) {
+    if (row.worktree_path && !existsSync(row.worktree_path)) {
+      // Clean up orphaned ~/.claude/teams/<name>/ (settings.json, hooks)
+      try {
+        await nativeTeamsManager.deleteNativeTeam(row.name);
+      } catch {
+        // Best-effort
       }
-    } catch {
-      // Skip corrupted files
+      await sql`DELETE FROM teams WHERE name = ${row.name}`;
     }
   }
 }
 
-/** Update team config on disk (full overwrite). */
+/** Update team config in PG (full overwrite). */
 export async function updateTeamConfig(name: string, config: TeamConfig): Promise<void> {
-  const filePath = teamFilePath(name);
-  await writeFile(filePath, JSON.stringify(config, null, 2));
+  const sql = await getConnection();
+  await sql`
+    UPDATE teams SET
+      repo = ${config.repo},
+      base_branch = ${config.baseBranch},
+      worktree_path = ${config.worktreePath},
+      leader = ${config.leader ?? null},
+      members = ${JSON.stringify(config.members)},
+      status = ${config.status},
+      native_team_parent_session_id = ${config.nativeTeamParentSessionId ?? null},
+      native_teams_enabled = ${config.nativeTeamsEnabled ?? false},
+      tmux_session_name = ${config.tmuxSessionName ?? null},
+      wish_slug = ${config.wishSlug ?? null}
+    WHERE name = ${name}
+  `;
 }
 
 /** Get a team by name. Returns null if not found. */
 export async function getTeam(name: string): Promise<TeamConfig | null> {
   try {
-    const content = await readFile(teamFilePath(name), 'utf-8');
-    return JSON.parse(content);
+    const sql = await getConnection();
+    const rows = await sql`SELECT * FROM teams WHERE name = ${name}`;
+    if (rows.length === 0) return null;
+    return rowToTeamConfig(rows[0]);
   } catch {
     return null;
   }
@@ -429,20 +471,10 @@ export async function getTeam(name: string): Promise<TeamConfig | null> {
 
 /** List all teams globally. */
 export async function listTeams(): Promise<TeamConfig[]> {
-  const dir = teamsDir();
   try {
-    const files = await readdir(dir);
-    const teams: TeamConfig[] = [];
-    for (const file of files) {
-      if (!file.endsWith('.json')) continue;
-      try {
-        const content = await readFile(join(dir, file), 'utf-8');
-        teams.push(JSON.parse(content));
-      } catch {
-        // skip corrupted files
-      }
-    }
-    return teams;
+    const sql = await getConnection();
+    const rows = await sql`SELECT * FROM teams ORDER BY created_at DESC`;
+    return rows.map(rowToTeamConfig);
   } catch {
     return [];
   }
@@ -471,16 +503,12 @@ export async function killTeamMembers(teamName: string): Promise<void> {
 
 /** Set team lifecycle status. */
 export async function setTeamStatus(teamName: string, status: TeamStatus): Promise<void> {
-  const filePath = teamFilePath(teamName);
-  const release = await acquireLock(filePath);
-  try {
-    const config = await getTeam(teamName);
-    if (!config) {
-      throw new Error(`Team "${teamName}" not found.`);
-    }
-    config.status = status;
-    await writeFile(filePath, JSON.stringify(config, null, 2));
-  } finally {
-    await release();
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE teams SET status = ${status}
+    WHERE name = ${teamName}
+  `;
+  if (result.count === 0) {
+    throw new Error(`Team "${teamName}" not found.`);
   }
 }

@@ -13,6 +13,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { MultiTenantRouter } from 'pgserve';
 import { runMigrations } from './db-migrations.js';
+import { needsSeed, runSeed } from './pg-seed.js';
 
 const DEFAULT_PORT = 19642;
 const DEFAULT_HOST = '127.0.0.1';
@@ -345,6 +346,11 @@ export async function getConnection() {
   if (!migrationsDone()) {
     await runMigrations(sqlClient);
     markMigrationsDone();
+  }
+
+  // Run idempotent JSON → PG seed if source files exist
+  if (!testSchema && needsSeed()) {
+    await runSeed(sqlClient);
   }
 
   return sqlClient;

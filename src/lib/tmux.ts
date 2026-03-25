@@ -360,13 +360,11 @@ const TMUX_COLOR_MAP: Record<string, string> = {
   cyan: '#20a0a0',
 };
 
-const PANE_COLORS_PATH = `${require('node:os').homedir()}/.genie/pane-colors.json`;
 const PANE_COLOR_SCRIPT = `${require('node:os').homedir()}/.genie/tmux-pane-color.sh`;
 
 /**
  * Ensure the pane-color router script exists.
- * This script is called by the tmux pane-focus-in hook and reads
- * ~/.genie/pane-colors.json to resolve pane_id → border color.
+ * Reads @genie_color tmux pane option instead of JSON files.
  */
 function ensurePaneColorScript(): void {
   const { existsSync, writeFileSync, mkdirSync, chmodSync } = require('node:fs');
@@ -378,11 +376,9 @@ function ensurePaneColorScript(): void {
   writeFileSync(
     PANE_COLOR_SCRIPT,
     `#!/bin/bash
-# Genie tmux pane color router — maps focused pane to agent border color
+# Genie tmux pane color router — reads @genie_color pane option
 PANE_ID="$1"
-MAP="$HOME/.genie/pane-colors.json"
-[ -f "$MAP" ] || exit 0
-COLOR=$(jq -r --arg p "$PANE_ID" '.[$p] // empty' "$MAP" 2>/dev/null)
+COLOR=$(tmux display-message -p -t "$PANE_ID" '#{@genie_color}' 2>/dev/null)
 [ -z "$COLOR" ] && COLOR="default"
 tmux set-option -w pane-active-border-style "fg=$COLOR"
 `,
@@ -392,33 +388,26 @@ tmux set-option -w pane-active-border-style "fg=$COLOR"
 
 /**
  * Register a pane→color mapping and install the window focus hook.
- * When any pane in the window gains focus, the active border color
- * changes to match that agent's assigned color.
+ * Stores color in tmux pane option (@genie_color) and PG agents.pane_color.
  */
 export async function applyPaneColor(paneId: string, color: string, windowId?: string): Promise<void> {
   const hex = TMUX_COLOR_MAP[color] ?? TMUX_COLOR_MAP.blue;
-  const { readFileSync, writeFileSync, existsSync, mkdirSync } = require('node:fs');
-  const { dirname } = require('node:path');
 
   try {
-    // 1. Ensure script exists
     ensurePaneColorScript();
 
-    // 2. Update pane-colors.json
-    let map: Record<string, string> = {};
-    if (existsSync(PANE_COLORS_PATH)) {
-      try {
-        map = JSON.parse(readFileSync(PANE_COLORS_PATH, 'utf-8'));
-      } catch {
-        map = {};
-      }
-    } else {
-      mkdirSync(dirname(PANE_COLORS_PATH), { recursive: true });
-    }
-    map[paneId] = hex;
-    writeFileSync(PANE_COLORS_PATH, JSON.stringify(map, null, 2));
+    // Store color in tmux pane option (runtime cache — no files)
+    await executeTmux(`set-option -p -t '${paneId}' @genie_color '${hex}'`);
 
-    // 3. Install window hook (idempotent — overwrites previous)
+    // Update PG agents table (authoritative source — survives restarts)
+    try {
+      const { getConnection } = await import('./db.js');
+      const sql = await getConnection();
+      await sql`UPDATE agents SET pane_color = ${hex} WHERE pane_id = ${paneId}`;
+    } catch {
+      /* PG update is best-effort */
+    }
+
     if (windowId) {
       await executeTmux(`set-hook -w -t '${windowId}' pane-focus-in "run-shell '${PANE_COLOR_SCRIPT} #{pane_id}'"`);
     }
@@ -429,13 +418,9 @@ export async function applyPaneColor(paneId: string, color: string, windowId?: s
 
 /**
  * Rehydrate the pane-focus-in color hook on a window.
- * Called when a team window is resolved (created or found) to survive tmux restarts.
- * Only installs the hook if pane-colors.json exists and has entries for panes in this window.
  */
 async function rehydratePaneColorHook(windowId: string): Promise<void> {
-  const { existsSync } = require('node:fs');
   try {
-    if (!existsSync(PANE_COLORS_PATH) || !existsSync(PANE_COLOR_SCRIPT)) return;
     ensurePaneColorScript();
     await executeTmux(`set-hook -w -t '${windowId}' pane-focus-in "run-shell '${PANE_COLOR_SCRIPT} #{pane_id}'"`);
   } catch {
