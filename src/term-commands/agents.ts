@@ -1367,6 +1367,11 @@ async function resumeAgent(agent: registry.Agent): Promise<void> {
     await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
   }
 
+  recordAuditEvent('worker', agent.id, 'resumed', getActor(), {
+    claudeSessionId: agent.claudeSessionId,
+    team: agent.team,
+  }).catch(() => {});
+
   console.log(`Agent "${agent.id}" resumed.`);
   console.log(`  Session:  ${agent.claudeSessionId}`);
   console.log(`  Pane:     ${paneId}`);
