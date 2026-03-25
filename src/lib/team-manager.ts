@@ -321,13 +321,12 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
   const config = await getTeam(teamName);
   if (!config) return false;
 
-  // Clean up native teams if enabled
-  if (config.nativeTeamsEnabled) {
-    try {
-      await nativeTeamsManager.deleteNativeTeam(teamName);
-    } catch {
-      // Best-effort
-    }
+  // Clean up ~/.claude/teams/<name>/ (config.json, settings.json, inboxes)
+  // Always attempt — hook injection writes settings.json regardless of nativeTeamsEnabled
+  try {
+    await nativeTeamsManager.deleteNativeTeam(teamName);
+  } catch {
+    // Best-effort
   }
 
   // Kill all running team members (scoped to this team only)
@@ -366,7 +365,7 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
  * Prune stale team configs.
  *
  * Scans all team configs — if a team's worktreePath (clone directory) no longer
- * exists on disk, deletes that team's config file.
+ * exists on disk, deletes that team's config file and its ~/.claude/teams/ dir.
  */
 export async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
   const dir = teamsDir();
@@ -383,6 +382,12 @@ export async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
       const content = await readFile(join(dir, file), 'utf-8');
       const config: TeamConfig = JSON.parse(content);
       if (config.worktreePath && !existsSync(config.worktreePath)) {
+        // Clean up orphaned ~/.claude/teams/<name>/ (settings.json, hooks)
+        try {
+          await nativeTeamsManager.deleteNativeTeam(config.name);
+        } catch {
+          // Best-effort
+        }
         await unlink(join(dir, file));
       }
     } catch {
