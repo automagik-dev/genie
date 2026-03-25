@@ -47,12 +47,16 @@ import { registerDispatchCommands } from './term-commands/dispatch.js';
 import { registerExportCommands } from './term-commands/export.js';
 import * as historyCmd from './term-commands/history.js';
 import { registerImportCommands } from './term-commands/import.js';
+import { registerInstallCommand } from './term-commands/install.js';
+import { registerItemUninstallCommand } from './term-commands/item-uninstall.js';
+import { registerItemUpdateCommand } from './term-commands/item-update.js';
 import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerMetricsCommands } from './term-commands/metrics.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerNotifyCommands } from './term-commands/notify.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import { registerProjectCommands } from './term-commands/project.js';
+import { registerPublishCommand } from './term-commands/publish.js';
 import { type QaOptions, qaCommand, qaHistoryCommand, qaStatusCommand } from './term-commands/qa.js';
 import * as readCmd from './term-commands/read.js';
 import { registerReleaseCommands } from './term-commands/release.js';
@@ -168,6 +172,13 @@ registerSessionsCommands(program);
 registerMetricsCommands(program);
 registerExportCommands(program);
 registerImportCommands(program);
+
+// Item registry commands — install, publish (top-level), item uninstall/update (namespaced)
+registerInstallCommand(program);
+registerPublishCommand(program);
+const itemCmd = program.command('item').description('Item registry management');
+registerItemUninstallCommand(itemCmd);
+registerItemUpdateCommand(itemCmd);
 
 // ============================================================================
 // CLI audit hooks — record every command execution to audit_events
