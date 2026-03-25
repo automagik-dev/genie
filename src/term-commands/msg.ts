@@ -507,8 +507,10 @@ export function registerSendInboxCommands(program: Command): void {
     });
 
   // ── genie inbox ──
-  program
-    .command('inbox [agent]')
+  const inbox = program.command('inbox').description('Inbox management — list messages or watch for new ones');
+
+  inbox
+    .command('list [agent]', { isDefault: true })
     .description('List conversations with recent messages (PG-backed)')
     .option('--json', 'Output as JSON')
     .action(async (agent: string | undefined, options: { json?: boolean }) => {
@@ -518,6 +520,58 @@ export function registerSendInboxCommands(program: Command): void {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
       }
+    });
+
+  inbox
+    .command('watch')
+    .description('Run inbox watcher in foreground (Ctrl+C to stop)')
+    .action(async () => {
+      const { checkInboxes, getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } = await import(
+        '../lib/inbox-watcher.js'
+      );
+
+      const pollMs = getInboxPollIntervalMs();
+      if (pollMs === 0) {
+        console.log('Inbox watcher is disabled (GENIE_INBOX_POLL_MS=0)');
+        process.exit(0);
+      }
+
+      console.log(`Inbox watcher starting (poll every ${pollMs / 1000}s)`);
+      console.log('Press Ctrl+C to stop.\n');
+
+      // Run an initial check immediately
+      const initial = await checkInboxes();
+      if (initial.length > 0) {
+        console.log(`[inbox-watcher] Spawned team-leads for: ${initial.join(', ')}`);
+      }
+
+      // Start the polling loop with visible logging
+      const handle = startInboxWatcher({
+        listTeamsWithUnreadInbox: (await import('../lib/claude-native-teams.js')).listTeamsWithUnreadInbox,
+        isTeamActive: async (teamName) => {
+          const { isTeamActive } = await import('../lib/team-auto-spawn.js');
+          return isTeamActive(teamName);
+        },
+        ensureTeamLead: async (teamName, workingDir) => {
+          const { ensureTeamLead } = await import('../lib/team-auto-spawn.js');
+          const result = await ensureTeamLead(teamName, workingDir);
+          console.log(`[inbox-watcher] Spawned team-lead for "${teamName}" in ${workingDir}`);
+          return result;
+        },
+        warn: (msg) => console.log(msg),
+      });
+
+      const shutdown = () => {
+        console.log('\nStopping inbox watcher...');
+        stopInboxWatcher(handle);
+        process.exit(0);
+      };
+
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+
+      // Keep process alive
+      await new Promise(() => {});
     });
 
   // ── genie chat ──

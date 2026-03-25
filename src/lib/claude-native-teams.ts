@@ -370,6 +370,75 @@ export async function deleteNativeTeam(teamName: string): Promise<boolean> {
 }
 
 // ============================================================================
+// Inbox Scanning
+// ============================================================================
+
+/**
+ * List all teams that have unread messages in their team-lead inbox.
+ *
+ * Scans `~/.claude/teams/` for teams where `inboxes/team-lead.json`
+ * contains messages with `read: false`. Returns the team name, unread
+ * count, and working directory (from config.json → members → team-lead → cwd).
+ */
+export async function listTeamsWithUnreadInbox(): Promise<
+  Array<{ teamName: string; unreadCount: number; workingDir: string | null; firstUnreadText: string | null }>
+> {
+  const base = teamsBaseDir();
+  let teamDirs: string[];
+  try {
+    teamDirs = await readdir(base);
+  } catch {
+    return []; // No teams directory
+  }
+
+  const results: Array<{
+    teamName: string;
+    unreadCount: number;
+    workingDir: string | null;
+    firstUnreadText: string | null;
+  }> = [];
+
+  for (const name of teamDirs) {
+    // Read inbox messages
+    const inboxFile = join(base, name, 'inboxes', 'team-lead.json');
+    let messages: NativeInboxMessage[];
+    try {
+      const content = await readFile(inboxFile, 'utf-8');
+      messages = JSON.parse(content);
+    } catch {
+      continue; // No inbox or invalid JSON
+    }
+
+    if (!Array.isArray(messages)) continue;
+
+    const unread = messages.filter((m) => m.read === false);
+    if (unread.length === 0) continue;
+
+    // Get workingDir from config.json → members → team-lead → cwd
+    let workingDir: string | null = null;
+    try {
+      const cfgContent = await readFile(join(base, name, 'config.json'), 'utf-8');
+      const config: NativeTeamConfig = JSON.parse(cfgContent);
+      const leadMember = config.members.find((m) => m.name === 'team-lead' || m.agentId.startsWith('team-lead@'));
+      if (leadMember?.cwd) {
+        workingDir = leadMember.cwd;
+      }
+    } catch {
+      // Config missing or malformed — workingDir stays null
+    }
+
+    results.push({
+      teamName: name,
+      unreadCount: unread.length,
+      workingDir,
+      firstUnreadText: unread[0]?.text ?? null,
+    });
+  }
+
+  return results;
+}
+
+// ============================================================================
 // Session Discovery
 // ============================================================================
 

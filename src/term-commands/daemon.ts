@@ -355,6 +355,19 @@ async function daemonStatusCommand(): Promise<void> {
     if (uptime) console.log(`  Uptime:   ${uptime}`);
   }
 
+  // Inbox watcher state
+  try {
+    const { getInboxPollIntervalMs } = await import('../lib/inbox-watcher.js');
+    const inboxPollMs = getInboxPollIntervalMs();
+    if (inboxPollMs === 0) {
+      console.log('  Inbox:    disabled (GENIE_INBOX_POLL_MS=0)');
+    } else {
+      console.log(`  Inbox:    ${running ? 'watching' : 'stopped'} (poll every ${inboxPollMs / 1000}s)`);
+    }
+  } catch {
+    console.log('  Inbox:    unavailable');
+  }
+
   await printDaemonStats();
 
   console.log(`  PID file: ${pidFilePath()}`);

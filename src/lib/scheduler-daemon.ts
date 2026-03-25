@@ -22,6 +22,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Agent } from './agent-registry.js';
 import { computeNextCronDue, parseDuration } from './cron.js';
+import { getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
 
 // ============================================================================
@@ -1119,6 +1120,26 @@ export function _resetWorkerStatesForTesting(): void {
 }
 
 // ============================================================================
+// Inbox watcher integration
+// ============================================================================
+
+/** Start inbox watcher if not disabled via env. Returns handle or null. */
+function startInboxWatcherIfEnabled(deps: SchedulerDeps): NodeJS.Timeout | null {
+  const pollMs = getInboxPollIntervalMs();
+  if (pollMs === 0) {
+    deps.log({ timestamp: deps.now().toISOString(), level: 'info', event: 'inbox_watcher_disabled' });
+    return null;
+  }
+  deps.log({
+    timestamp: deps.now().toISOString(),
+    level: 'info',
+    event: 'inbox_watcher_started',
+    poll_interval_ms: pollMs,
+  });
+  return startInboxWatcher();
+}
+
+// ============================================================================
 // Daemon loop
 // ============================================================================
 
@@ -1155,6 +1176,7 @@ export function startDaemon(
   let listenConnection: SqlClient | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let orphanTimer: ReturnType<typeof setInterval> | null = null;
+  let inboxWatcherHandle: NodeJS.Timeout | null = null;
 
   const stop = () => {
     running = false;
@@ -1174,6 +1196,10 @@ export function startDaemon(
     if (orphanTimer) {
       clearInterval(orphanTimer);
       orphanTimer = null;
+    }
+    if (inboxWatcherHandle) {
+      stopInboxWatcher(inboxWatcherHandle);
+      inboxWatcherHandle = null;
     }
     if (listenConnection) {
       listenConnection.end().catch(() => {});
@@ -1299,6 +1325,9 @@ export function startDaemon(
         });
       }
     }, config.orphanCheckIntervalMs);
+
+    // Start inbox watcher (polls native inboxes for unread messages)
+    inboxWatcherHandle = startInboxWatcherIfEnabled(deps);
 
     // Initial trigger check
     await processTriggers();
