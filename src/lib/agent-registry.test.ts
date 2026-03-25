@@ -402,6 +402,67 @@ describe('findByWindow', () => {
 });
 
 // ============================================================================
+// Crash Resilience — atomic writes and backup recovery (#774)
+// ============================================================================
+
+describe('crash resilience', () => {
+  beforeEach(cleanTestDir);
+
+  test('saveRegistry creates .bak file of previous state', async () => {
+    const worker = makeAgent();
+    const registry = {
+      workers: { [worker.id]: worker },
+      lastUpdated: new Date().toISOString(),
+    };
+    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
+
+    // Trigger a save (addSubPane modifies and saves)
+    await addSubPane('bd-42', '%22', TEST_REGISTRY_PATH);
+
+    // Backup should contain the previous state (without subPanes)
+    const backup = JSON.parse(readFileSync(`${TEST_REGISTRY_PATH}.bak`, 'utf-8'));
+    expect(backup.workers['bd-42'].subPanes).toBeUndefined();
+
+    // Primary should have the new state
+    const primary = JSON.parse(readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
+    expect(primary.workers['bd-42'].subPanes).toEqual(['%22']);
+  });
+
+  test('loadRegistry falls back to .bak when primary is corrupt', async () => {
+    const worker = makeAgent({ subPanes: ['%22'] });
+    const goodState = {
+      workers: { [worker.id]: worker },
+      templates: {},
+      lastUpdated: new Date().toISOString(),
+    };
+
+    // Write corrupt primary, valid backup
+    writeFileSync(TEST_REGISTRY_PATH, '{ truncated JSON...');
+    writeFileSync(`${TEST_REGISTRY_PATH}.bak`, JSON.stringify(goodState, null, 2));
+
+    // loadRegistry should recover from backup
+    const pane = await getPane('bd-42', 0, TEST_REGISTRY_PATH);
+    expect(pane).toBe('%17');
+  });
+
+  test('loadRegistry returns empty registry when both primary and backup are corrupt', async () => {
+    writeFileSync(TEST_REGISTRY_PATH, '{ truncated...');
+    writeFileSync(`${TEST_REGISTRY_PATH}.bak`, 'also corrupt');
+
+    // Should not throw — returns empty registry
+    const pane = await getPane('bd-42', 0, TEST_REGISTRY_PATH);
+    expect(pane).toBeNull();
+  });
+
+  test('loadRegistry rejects files without workers object', async () => {
+    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify({ foo: 'bar' }));
+
+    const pane = await getPane('bd-42', 0, TEST_REGISTRY_PATH);
+    expect(pane).toBeNull();
+  });
+});
+
+// ============================================================================
 // Cleanup
 // ============================================================================
 

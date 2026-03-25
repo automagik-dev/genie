@@ -7,7 +7,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { acquireLock } from './file-lock.js';
@@ -153,22 +154,71 @@ function getRegistryFilePath(): string {
 // ============================================================================
 
 async function loadRegistry(registryPath?: string): Promise<AgentRegistry> {
+  const filePath = registryPath ?? getRegistryFilePath();
+  const backupPath = `${filePath}.bak`;
+
+  // Try primary file first
+  const primary = await tryParseRegistryFile(filePath);
+  if (primary) return primary;
+
+  // Primary corrupt or missing — try backup
+  if (existsSync(backupPath)) {
+    const backup = await tryParseRegistryFile(backupPath);
+    if (backup) {
+      // Restore backup to primary (best-effort)
+      try {
+        await copyFile(backupPath, filePath);
+      } catch {
+        /* best-effort */
+      }
+      return backup;
+    }
+  }
+
+  return { workers: {}, templates: {}, lastUpdated: new Date().toISOString() };
+}
+
+/** Try to read and parse a registry JSON file. Returns null on any failure. */
+async function tryParseRegistryFile(filePath: string): Promise<AgentRegistry | null> {
   try {
-    const filePath = registryPath ?? getRegistryFilePath();
     const content = await readFile(filePath, 'utf-8');
     const data = JSON.parse(content);
+    if (!data.workers || typeof data.workers !== 'object') return null;
     if (!data.templates) data.templates = {};
     return data;
   } catch {
-    return { workers: {}, templates: {}, lastUpdated: new Date().toISOString() };
+    return null;
   }
 }
 
+/**
+ * Atomic save: write to temp file then rename.
+ * Also keeps a `.bak` of the previous good state.
+ */
 async function saveRegistry(registry: AgentRegistry, registryPath?: string): Promise<void> {
   const filePath = registryPath ?? getRegistryFilePath();
-  await mkdir(dirname(filePath), { recursive: true });
+  const dir = dirname(filePath);
+  await mkdir(dir, { recursive: true });
   registry.lastUpdated = new Date().toISOString();
-  await writeFile(filePath, JSON.stringify(registry, null, 2));
+
+  const tmpPath = `${filePath}.tmp.${process.pid}`;
+  const backupPath = `${filePath}.bak`;
+  const content = JSON.stringify(registry, null, 2);
+
+  // Write to temp file
+  await writeFile(tmpPath, content);
+
+  // Rotate current → backup (best-effort, don't fail if primary doesn't exist yet)
+  if (existsSync(filePath)) {
+    try {
+      await copyFile(filePath, backupPath);
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // Atomic rename temp → primary (POSIX rename is atomic on same filesystem)
+  await rename(tmpPath, filePath);
 }
 
 // ============================================================================
