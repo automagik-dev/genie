@@ -31,6 +31,12 @@ async function getTaskService(): Promise<typeof taskServiceTypes> {
   return _taskService;
 }
 
+let _boardService: typeof import('../lib/board-service.js') | undefined;
+async function getBoardService() {
+  if (!_boardService) _boardService = await import('../lib/board-service.js');
+  return _boardService;
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -84,6 +90,52 @@ const PRIORITY_COLORS: Record<string, string> = {
   low: '\x1b[90m',
 };
 const RESET = '\x1b[0m';
+
+async function resolveDefaultBoardId(): Promise<string | null> {
+  try {
+    const { execSync } = await import('node:child_process');
+    const repoRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
+    const { join } = await import('node:path');
+    const configPath = join(repoRoot, '.genie', 'config.json');
+    const { existsSync, readFileSync } = await import('node:fs');
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      if (config.activeBoard) return config.activeBoard as string;
+    }
+  } catch {}
+  return null;
+}
+
+async function handleInvalidStageError(taskId: string, message: string): Promise<void> {
+  try {
+    const ts = await getTaskService();
+    const task = await ts.getTask(taskId);
+    if (!task?.boardId) return;
+    const bs = await getBoardService();
+    const board = await bs.getBoard(task.boardId);
+    if (!board) return;
+    const validCols = board.columns
+      .sort((a, b) => a.position - b.position)
+      .map((c) => c.name)
+      .join(' → ');
+    console.error(`Error: ${message}\nValid columns for board "${board.name}": ${validCols}`);
+    process.exit(1);
+  } catch {}
+}
+
+async function resolveBoardOption(boardName?: string): Promise<string | undefined> {
+  if (boardName) {
+    const bs = await getBoardService();
+    const board = await bs.getBoard(boardName);
+    if (!board) {
+      console.error(`Error: Board not found: ${boardName}`);
+      process.exit(1);
+    }
+    return board.id;
+  }
+  const defaultId = await resolveDefaultBoardId();
+  return defaultId ?? undefined;
+}
 
 // ============================================================================
 // Display Helpers
@@ -217,6 +269,50 @@ async function printTaskDetail(task: taskServiceTypes.TaskRow): Promise<void> {
   console.log('');
 }
 
+function printColumnTasks(label: string, colTasks: taskServiceTypes.TaskRow[], useColor = true): void {
+  console.log(`\n── ${label} (${colTasks.length} task${colTasks.length === 1 ? '' : 's'}) ──`);
+  if (colTasks.length === 0) {
+    console.log('  (empty)');
+    return;
+  }
+  for (const t of colTasks) {
+    const pc = useColor ? (PRIORITY_COLORS[t.priority] ?? '') : '';
+    const reset = useColor ? RESET : '';
+    console.log(
+      `  ${pc}#${t.seq}${reset}  ${padRight(truncate(t.title, 35), 37)}  ${padRight(t.status, 14)}  ${t.priority}`,
+    );
+  }
+}
+
+async function printByColumn(tasks: taskServiceTypes.TaskRow[], boardName: string): Promise<void> {
+  const bs = await getBoardService();
+  const board = await bs.getBoard(boardName);
+  if (!board) {
+    console.error(`Error: Board not found: ${boardName}`);
+    process.exit(1);
+  }
+
+  console.log(`\nBoard: ${board.name} (${board.id})`);
+  console.log('═'.repeat(40));
+
+  const columns = [...board.columns].sort((a, b) => a.position - b.position);
+  for (const col of columns) {
+    printColumnTasks(
+      col.label,
+      tasks.filter((t) => t.columnId === col.id),
+    );
+  }
+
+  // Orphaned tasks (column_id doesn't match any column)
+  const columnIds = new Set(columns.map((c) => c.id));
+  const orphaned = tasks.filter((t) => t.columnId && !columnIds.has(t.columnId));
+  if (orphaned.length > 0) {
+    printColumnTasks('Orphaned', orphaned, false);
+  }
+
+  console.log('');
+}
+
 // ============================================================================
 // Command Handlers
 // ============================================================================
@@ -233,6 +329,7 @@ interface CreateOptions {
   effort?: string;
   comment?: string;
   project?: string;
+  board?: string;
 }
 
 async function handleTaskCreate(title: string, options: CreateOptions): Promise<void> {
@@ -262,6 +359,8 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
     }
   }
 
+  const boardId = await resolveBoardOption(options.board);
+
   const task = await ts.createTask(
     {
       title,
@@ -272,6 +371,7 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
       parentId,
       description: options.description,
       estimatedEffort: options.effort,
+      boardId,
     },
     repoPath,
     projectId,
@@ -324,6 +424,7 @@ export function registerTaskCommands(program: Command): void {
     .option('--effort <effort>', 'Estimated effort (e.g., "2h", "3 points")')
     .option('--comment <msg>', 'Initial comment on the task')
     .option('--project <name>', 'Create task in a specific project (overrides CWD)')
+    .option('--board <name>', 'Board name to assign task to')
     .action(async (title: string, options: CreateOptions) => {
       try {
         await handleTaskCreate(title, options);
@@ -345,6 +446,8 @@ export function registerTaskCommands(program: Command): void {
     .option('--due-before <date>', 'Filter by due date')
     .option('--mine', 'Show only tasks assigned to me')
     .option('--project <name>', 'Show tasks for a specific project')
+    .option('--board <name>', 'Filter by board name')
+    .option('--by-column', 'Group tasks by board column (kanban view)')
     .option('--all', 'Show tasks from ALL projects')
     .option('--json', 'Output as JSON')
     .action(
@@ -357,6 +460,8 @@ export function registerTaskCommands(program: Command): void {
         dueBefore?: string;
         mine?: boolean;
         project?: string;
+        board?: string;
+        byColumn?: boolean;
         all?: boolean;
         json?: boolean;
       }) => {
@@ -370,6 +475,7 @@ export function registerTaskCommands(program: Command): void {
             releaseId: options.release,
             dueBefore: options.dueBefore,
             projectName: options.project,
+            boardName: options.board,
             allProjects: options.all,
           };
 
@@ -378,6 +484,15 @@ export function registerTaskCommands(program: Command): void {
             tasks = await ts.listTasksForActor(currentActor(), filters);
           } else {
             tasks = await ts.listTasks(filters);
+          }
+
+          if (options.byColumn) {
+            if (!options.board) {
+              console.error('Error: --by-column requires --board');
+              process.exit(1);
+            }
+            await printByColumn(tasks, options.board);
+            return;
           }
 
           if (options.json) {
@@ -432,7 +547,11 @@ export function registerTaskCommands(program: Command): void {
         const t = await ts.moveTask(id, options.to, actor, options.comment);
         console.log(`Moved task #${t.seq} to stage "${t.stage}".`);
       } catch (error) {
-        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('Invalid stage')) {
+          await handleInvalidStageError(id, message);
+        }
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });
