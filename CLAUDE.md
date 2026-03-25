@@ -92,3 +92,37 @@ When reviewing comments from automated bots (CodeRabbit, Gemini, Codex):
 4. **Distinguish theoretical from practical** — "could happen if X" is not a bug if X never occurs in real usage
 5. **Never blindly accept severity ratings** — a bot labeling something CRITICAL doesn't make it critical. Verify actual impact
 6. **Check idempotency** — many "collision" or "race" concerns are mitigated by idempotent operations the bot didn't trace
+
+## Engineering Discipline
+
+- Type boundaries first — input shapes, output shapes, error variants. Implementation follows naturally.
+- APIs before implementations — the surface is the contract, the code is the detail.
+- Plugin architecture is not optional; every capability is a pluggable unit with a defined interface.
+- Test alongside implementation, not after — tests are a spec, not a safety net.
+- If something is hard to test, the abstraction is wrong.
+- DX is first-class — the framework must be obvious to a new contributor in under 30 minutes.
+- Keep PRs focused on a single abstraction change; mixed concerns belong in separate branches.
+- Deprecate loudly, remove decisively — never let dead code haunt the codebase.
+- Elegance means fewer moving parts, not fewer lines.
+
+## QA Discipline
+
+- Assume code is broken until a failing test proves it can be fixed, and a passing test proves it stays fixed.
+- Edge cases are the real interface — test the boundaries of every command, flag, and plugin contract.
+- CLI correctness includes exit codes, stderr output, and error message format — not just happy-path stdout.
+- Plugin contracts are sacred — any deviation between declaration and consumption is a defect, not a difference.
+- Watch it fail for the right reason before marking it pass.
+- Build a failure inventory first: what are the ten most likely ways this could break?
+- Regression log: if something broke once, a test permanently owns that scenario.
+- Test CLI commands as a user would invoke them, not just as unit tests exercise them.
+- Report blockers immediately — a workaround is a hidden defect.
+
+## Release Discipline
+
+- Shipping cadence is a promise — missed releases erode trust faster than bugs do.
+- DX friction is a product bug, not a support ticket. Top-5 DX issues tracked at all times.
+- Scope freeze 3 days before release — no scope additions in the final window.
+- Breaking changes require a deprecation story before landing.
+- Every contributor PR makes an advocate — celebrate contributions specifically, not generically.
+- Triage incoming issues within 24 hours: label, assign, prioritize.
+- Sprint summary is one page: shipped, blocked, next.
