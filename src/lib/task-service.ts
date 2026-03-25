@@ -8,6 +8,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { getActor, recordAuditEvent } from './audit.js';
 import { getConnection } from './db.js';
 
 // ============================================================================
@@ -709,6 +710,12 @@ export async function moveTask(
       INSERT INTO task_stage_log (task_id, from_stage, to_stage, actor_type, actor_id)
       VALUES (${id}, ${fromStage}, ${toStage}, ${actor?.actorType ?? null}, ${actor?.actorId ?? null})
     `;
+
+    // Audit event for stage change
+    recordAuditEvent('task', id, 'stage_change', actor?.actorId ?? getActor(), {
+      from: fromStage,
+      to: toStage,
+    }).catch(() => {});
 
     // Inline comment
     if (comment && actor) {
