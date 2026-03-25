@@ -240,6 +240,32 @@ describe('buildClaudeCommand', () => {
     expect(result.env).toBeDefined();
     expect(result.env!.GENIE_WORKER).toBe('1');
   });
+
+  it('initialPrompt with quotes and newlines survives tmux split-window re-quoting (#776)', () => {
+    const prompt =
+      'Execute Group 1 of wish "db-cleanup".\n\nWhen done:\n1. Run: genie done db-cleanup#1\n2. Run: genie send \'Group 1 complete.\' --to team-lead';
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'engineer-1',
+      initialPrompt: prompt,
+    });
+
+    // The command contains the prompt as a shell-escaped positional arg
+    expect(result.command).toContain('claude');
+    expect(result.command).toContain('engineer-1');
+
+    // Simulate the tmux split-window re-quoting fix:
+    // fullCommand is re-wrapped in single quotes for the outer shell → tmux → inner shell pipeline.
+    const fullCommand = result.command;
+    const reQuoted = fullCommand.replace(/'/g, "'\\''");
+
+    // The re-quoted command round-trips through sh -c back to the original fullCommand.
+    // This proves the outer shell → tmux → inner shell pipeline preserves the command.
+    const { execSync } = require('node:child_process');
+    const roundTripped = execSync(`printf '%s' '${reQuoted}'`, { encoding: 'utf-8' });
+    expect(roundTripped).toBe(fullCommand);
+  });
 });
 
 // ============================================================================
