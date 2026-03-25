@@ -583,13 +583,13 @@ export function registerBoardCommands(program: Command): void {
 
   // ── board show ──
   board
-    .command('show <name>')
+    .command('show <name...>')
     .description('Show board detail')
     .option('--project <project>', 'Disambiguate by project')
     .option('--json', 'Output as JSON')
-    .action(async (name: string, options: { project?: string; json?: boolean }) => {
+    .action(async (nameParts: string[], options: { project?: string; json?: boolean }) => {
       try {
-        await handleBoardShow(name, options);
+        await handleBoardShow(nameParts.join(' '), options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
@@ -598,7 +598,7 @@ export function registerBoardCommands(program: Command): void {
 
   // ── board edit ──
   board
-    .command('edit <name>')
+    .command('edit <name...>')
     .description('Edit board or column properties')
     .option('--project <project>', 'Disambiguate by project')
     .option('--column <col>', 'Column name to edit')
@@ -610,7 +610,7 @@ export function registerBoardCommands(program: Command): void {
     .option('--description <text>', 'Update description')
     .action(
       async (
-        editName: string,
+        nameParts: string[],
         options: {
           project?: string;
           column?: string;
@@ -623,7 +623,7 @@ export function registerBoardCommands(program: Command): void {
         },
       ) => {
         try {
-          await handleBoardEdit(editName, options);
+          await handleBoardEdit(nameParts.join(' '), options);
         } catch (error) {
           console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
           process.exit(1);
@@ -633,13 +633,13 @@ export function registerBoardCommands(program: Command): void {
 
   // ── board delete ──
   board
-    .command('delete <name>')
+    .command('delete <name...>')
     .description('Delete a board')
     .option('--project <project>', 'Disambiguate by project')
     .option('--force', 'Skip confirmation')
-    .action(async (name: string, options: { project?: string; force?: boolean }) => {
+    .action(async (nameParts: string[], options: { project?: string; force?: boolean }) => {
       try {
-        await handleBoardDelete(name, options);
+        await handleBoardDelete(nameParts.join(' '), options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
@@ -648,13 +648,13 @@ export function registerBoardCommands(program: Command): void {
 
   // ── board columns ──
   board
-    .command('columns <name>')
+    .command('columns <name...>')
     .description('Show board column pipeline')
     .option('--project <project>', 'Disambiguate by project')
     .option('--json', 'Output as JSON')
-    .action(async (name: string, options: { project?: string; json?: boolean }) => {
+    .action(async (nameParts: string[], options: { project?: string; json?: boolean }) => {
       try {
-        await handleBoardColumns(name, options);
+        await handleBoardColumns(nameParts.join(' '), options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
@@ -663,12 +663,12 @@ export function registerBoardCommands(program: Command): void {
 
   // ── board use ──
   board
-    .command('use <name>')
+    .command('use <name...>')
     .description('Set active board for current repo')
     .option('--project <project>', 'Disambiguate by project')
-    .action(async (name: string, options: { project?: string }) => {
+    .action(async (nameParts: string[], options: { project?: string }) => {
       try {
-        await handleBoardUse(name, options);
+        await handleBoardUse(nameParts.join(' '), options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
@@ -677,13 +677,13 @@ export function registerBoardCommands(program: Command): void {
 
   // ── board export ──
   board
-    .command('export <name>')
+    .command('export <name...>')
     .description('Export board as JSON')
     .option('--project <project>', 'Disambiguate by project')
     .option('--output <file>', 'Write to file instead of stdout')
-    .action(async (name: string, options: { project?: string; output?: string }) => {
+    .action(async (nameParts: string[], options: { project?: string; output?: string }) => {
       try {
-        await handleBoardExport(name, options);
+        await handleBoardExport(nameParts.join(' '), options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);

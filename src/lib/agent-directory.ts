@@ -175,15 +175,26 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
   const result: ScopedDirectoryEntry[] = [];
   const seen = new Set<string>();
 
-  // PG agents — distinct roles from running/registered agents
+  // PG agents — distinct roles with directory metadata
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
-    const rows = await sql`SELECT DISTINCT role, team FROM agents WHERE role IS NOT NULL ORDER BY role`;
+    const rows = await sql`
+      SELECT DISTINCT ON (role) role, team, repo_path, provider, worktree
+      FROM agents
+      WHERE role IS NOT NULL
+      ORDER BY role, started_at DESC
+    `;
     for (const row of rows) {
       const name = row.role as string;
       if (!seen.has(name)) {
-        result.push({ ...roleToEntry(name, row.team as string), scope: 'global' });
+        const entry = roleToEntry(name, row.team as string);
+        const repoPath = row.repo_path as string;
+        if (repoPath) {
+          entry.dir = repoPath;
+          entry.repo = repoPath;
+        }
+        result.push({ ...entry, scope: 'global' });
         seen.add(name);
       }
     }
