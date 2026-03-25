@@ -16,7 +16,6 @@ import {
   attemptAgentResume,
   recoverOnStartup,
 } from '../lib/scheduler-daemon.js';
-// biome-ignore lint/correctness/noUnusedImports: used in beforeAll/afterAll callbacks
 import { setupTestSchema } from '../lib/test-db.js';
 
 const TEST_DIR = '/tmp/genie-resume-test';
