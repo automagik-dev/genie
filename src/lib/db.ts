@@ -318,7 +318,10 @@ export async function getConnection() {
     idle_timeout: 1,
     connect_timeout: 5,
     onnotice: () => {},
-    ...(testSchema ? { connection: { search_path: `${testSchema}, public` } } : {}),
+    connection: {
+      client_min_messages: 'warning',
+      ...(testSchema ? { search_path: `${testSchema}, public` } : {}),
+    },
   });
 
   // Always call runMigrations — it's idempotent (checks _genie_migrations table)
