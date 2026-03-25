@@ -11,6 +11,7 @@
 
 import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
+import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
@@ -982,6 +983,13 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   } else {
     await launchInlineSpawn(ctx);
   }
+
+  // Audit event for worker spawn
+  recordAuditEvent('worker', workerId, 'spawn', getActor(), {
+    name,
+    team: validated.team,
+    provider: validated.provider,
+  }).catch(() => {});
 }
 
 // ============================================================================
@@ -1078,6 +1086,9 @@ export async function handleWorkerKill(name: string): Promise<void> {
 
   await registry.unregister(w.id);
   console.log(`Agent "${w.id}" killed and unregistered (template preserved).`);
+
+  // Audit event for worker kill
+  recordAuditEvent('worker', w.id, 'kill', getActor(), { name }).catch(() => {});
 }
 
 /**
@@ -1099,6 +1110,7 @@ export async function handleWorkerStop(name: string): Promise<void> {
       console.log(`  Session preserved: ${w.claudeSessionId}`);
     }
     console.log(`  Send a message to auto-resume: genie send '...' --to ${w.id}`);
+    recordAuditEvent('worker', w.id, 'stop', getActor(), { name }).catch(() => {});
   } else {
     console.error(`Failed to stop agent "${w.id}".`);
     process.exit(1);
