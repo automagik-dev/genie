@@ -59,10 +59,14 @@ export interface GroupDefinition {
 export function resolveRepoPath(cwd?: string): string {
   if (cwd) return cwd;
   try {
-    // git-common-dir returns the shared .git for worktrees, or .git for main repo
+    // git-common-dir returns the shared .git for worktrees, or .git for main repo.
+    // GIT_CEILING_DIRECTORIES prevents git from walking above cwd into unrelated
+    // repos (e.g. a stale /tmp/.git on shared servers).
+    const currentDir = process.cwd();
     const commonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, GIT_CEILING_DIRECTORIES: dirname(currentDir) },
     }).trim();
     // For main repos: commonDir = /path/to/repo/.git → parent = /path/to/repo
     // For worktrees: commonDir = /path/to/main-repo/.git → same parent
