@@ -10,7 +10,7 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getConnection, shutdown } from './db.js';
+import { setupTestSchema } from './test-db.js';
 import {
   type GroupDefinition,
   completeGroup,
@@ -28,13 +28,14 @@ import {
 } from './wish-state.js';
 
 let cwd: string;
+let cleanupSchema: () => Promise<void>;
 
 beforeAll(async () => {
-  await getConnection();
+  cleanupSchema = await setupTestSchema();
 });
 
 afterAll(async () => {
-  await shutdown();
+  await cleanupSchema();
 });
 
 beforeEach(() => {

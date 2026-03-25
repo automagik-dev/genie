@@ -318,6 +318,9 @@ function markMigrationsDone(): void {
 /**
  * Get a postgres.js connection. Lazy singleton — calls ensurePgserve() on first use.
  * Returns a postgres.js sql tagged template client.
+ *
+ * When GENIE_TEST_SCHEMA is set, all connections use that schema in their search_path.
+ * This isolates test data from production tables.
  */
 export async function getConnection() {
   if (sqlClient) return sqlClient;
@@ -325,6 +328,7 @@ export async function getConnection() {
   const port = await ensurePgserve();
   const postgres = (await import('postgres')).default;
 
+  const testSchema = process.env.GENIE_TEST_SCHEMA;
   sqlClient = postgres({
     host: DEFAULT_HOST,
     port,
@@ -334,6 +338,7 @@ export async function getConnection() {
     max: 10,
     idle_timeout: 1,
     connect_timeout: 5,
+    ...(testSchema ? { connection: { search_path: `${testSchema}, public` } } : {}),
   });
 
   // Only run migrations if not yet applied for this version
@@ -343,6 +348,17 @@ export async function getConnection() {
   }
 
   return sqlClient;
+}
+
+/**
+ * Reset the connection singleton. Next call to getConnection() creates a fresh client.
+ * Used by test helpers to switch schemas between test runs.
+ */
+export async function resetConnection(): Promise<void> {
+  if (sqlClient) {
+    await sqlClient.end({ timeout: 5 });
+    sqlClient = null;
+  }
 }
 
 /**
