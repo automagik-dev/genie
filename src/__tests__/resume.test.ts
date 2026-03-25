@@ -3,10 +3,11 @@
  * cooldown, concurrency cap, opt-out, and reboot recovery.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, rm } from 'node:fs/promises';
 import type { Agent, AgentState } from '../lib/agent-registry.js';
 import * as registry from '../lib/agent-registry.js';
+import { getConnection } from '../lib/db.js';
 import {
   type LogEntry,
   type SchedulerConfig,
@@ -15,6 +16,8 @@ import {
   attemptAgentResume,
   recoverOnStartup,
 } from '../lib/scheduler-daemon.js';
+// biome-ignore lint/correctness/noUnusedImports: used in beforeAll/afterAll callbacks
+import { setupTestSchema } from '../lib/test-db.js';
 
 const TEST_DIR = '/tmp/genie-resume-test';
 
@@ -76,10 +79,22 @@ function createMockDeps(overrides: Partial<SchedulerDeps> = {}) {
   return { deps, logs, agentUpdates };
 }
 
+let cleanupSchema: () => Promise<void>;
+
 describe('resume', () => {
+  beforeAll(async () => {
+    cleanupSchema = await setupTestSchema();
+  });
+
+  afterAll(async () => {
+    await cleanupSchema();
+  });
+
   beforeEach(async () => {
     await mkdir(TEST_DIR, { recursive: true });
     process.env.GENIE_HOME = TEST_DIR;
+    const sql = await getConnection();
+    await sql`DELETE FROM agents`;
   });
 
   afterEach(async () => {
