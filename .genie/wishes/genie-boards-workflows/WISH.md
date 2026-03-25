@@ -18,15 +18,22 @@ Replace `task_types` with project-scoped Boards. One project can have many board
 - **`boards` PG table** — project-scoped, replaces `task_types`. Columns as JSONB array with workflow-ready fields.
 - **Multiple boards per project** — `genie board create "Dev" --project khal-os --from software`
 - **`genie board` CLI** — create, list, show, edit, delete, columns
-- **Task ↔ Board assignment** — `tasks.board_id` FK replaces `tasks.type_id`
+- **Task ↔ Board + Column binding** — `tasks.board_id` FK replaces `tasks.type_id`. `tasks.column_id` (stable UUID) replaces `tasks.stage` (string). Tasks reference column IDs — immune to renames, reorders, config changes.
 - **Board-scoped queries** — `genie task list --board Dev`
-- **`board_templates` PG table** — reusable blueprints stored in PG alongside boards. Builtins seeded on first migration. User-created via CLI.
-- **Template CLI** — `genie board template list`, `genie board template show <name>`, `genie board template create <name> --from-board <board>`, `genie board template delete <name>`
+- **`board_templates` PG table** — fully editable blueprints stored in PG. Builtins seeded on first migration as starting points — users can rename, add/remove columns, change gates, customize everything. No "protected" templates.
+- **Template CLI** — full CRUD:
+  - `genie board template list` — show all templates
+  - `genie board template show <name>` — detail view with columns pipeline
+  - `genie board template create <name> [--from-board <board>] [--columns "a,b,c"]` — new template from scratch or snapshot from board
+  - `genie board template edit <name> --column <col> [--gate X] [--action X] [--rename Y]` — edit any field
+  - `genie board template rename <old> <new>` — rename template
+  - `genie board template delete <name>` — delete any template (including builtins — your system, your rules)
 - **Column schema future-proofed** for workflow engine:
   ```typescript
   {
-    name: string,
-    label: string,
+    id: string,                   // STABLE column ID (uuid or slug). Tasks reference THIS, not name.
+    name: string,                 // display name — freely renameable without breaking tasks
+    label: string,                // short label for compact views
     gate: "human" | "agent" | "human+agent",
     action: string | null,        // skill to dispatch: /work, /review, /qa
     auto_advance: boolean,        // linear forward advance (simple case)
@@ -34,17 +41,22 @@ Replace `task_types` with project-scoped Boards. One project can have many board
     roles: string[],              // who sees/acts: ["*"], ["engineering"], ["business"]
     color: string,
     parallel: boolean,            // FUTURE: can multiple agents work this column simultaneously
-    on_fail: string | null        // FUTURE: "loop:review", "escalate", "block"
+    on_fail: string | null,       // FUTURE: "loop:review", "escalate", "block"
+    position: number,             // column order — reorderable without breaking anything
   }
+
+  // Tasks store column_id (stable), NOT column name. Rename columns, reorder them,
+  // change gates — tasks don't care. They're attached to the column ID.
 
   // transitions field is JSONB, empty [] in v1, populated by workflow engine wish
   type Transition = {
     event: string,          // "complete", "fail", "pr_merge", "approval"
-    target: string,         // column name to route to
+    target: string,         // column ID to route to (stable reference)
     condition?: string,     // optional: "fix_count < 2", "qa_passed"
     action?: string,        // optional: skill to run on transition
   }
   ```
+- **Change-proof design:** Tasks store `column_id` (the stable column UUID), not the column name. Rename a column from "Build" to "Engineering"? Zero tasks break. Reorder columns? Zero tasks break. Change a gate from human to agent? Tasks stay put, only the automation behavior changes. Delete a column? Tasks in it move to a "no column" state (orphaned, visible in `genie task list --orphaned`).
 - **Migration from `task_types`** — convert existing types to boards, preserve all task data
 - **Default board** — if project has exactly one board, `--board` is implicit
 - **`genie board use "Dev"`** — set active board context (avoids `--board` on every command)
@@ -115,21 +127,30 @@ Replace `task_types` with project-scoped Boards. One project can have many board
 **Deliverables:**
 1. Migration `008_boards.sql`:
    - `boards` table: id, name, project_id FK, columns JSONB, description, created_at, updated_at
-   - Column JSONB shape: `{name, label, gate, action, auto_advance, transitions, roles, color, parallel, on_fail}`
+   - `board_templates` table: id, name, description, icon, columns JSONB, is_builtin, created_at, updated_at
+   - Column JSONB shape: `{id, name, label, gate, action, auto_advance, transitions, roles, color, parallel, on_fail, position}`
+   - Each column gets a stable UUID `id` — tasks reference this, not column name
    - `tasks.board_id` FK (nullable for migration safety)
+   - `tasks.column_id` TEXT — replaces `tasks.stage`. Stores the stable column UUID.
+   - Migrate: for each task, resolve `tasks.stage` → column UUID via its board's columns JSONB
    - Copy `task_types` rows → `boards` (assign to projects by convention)
-   - Update `tasks.board_id` from `tasks.type_id` mapping
-   - Update `validate_task_stage` trigger to read from `boards.columns`
-   - Index on `boards.project_id`
-2. `board-service.ts` — CRUD functions: createBoard, getBoard, listBoards, updateBoard, deleteBoard, getBoardColumns
-3. Update `task-service.ts` — board_id on task creation, board-scoped list queries
+   - Seed 5 builtin templates: software, sales, hiring, ops, bug
+   - Update stage validation trigger to check `column_id` exists in board's columns JSONB
+   - Index on `boards.project_id`, `tasks.column_id`, `tasks.board_id`
+2. `board-service.ts` — CRUD: createBoard, getBoard, listBoards, updateBoard, deleteBoard, getBoardColumns, addColumn, removeColumn, reorderColumns, renameColumn
+3. `template-service.ts` — CRUD: createTemplate, getTemplate, listTemplates, updateTemplate, deleteTemplate, snapshotFromBoard
+4. Update `task-service.ts` — board_id + column_id on task creation, board-scoped list queries, move resolves column by name → column_id internally
 
 **Acceptance Criteria:**
-- [ ] `boards` table exists with migrated data from `task_types`
-- [ ] `tasks.board_id` FK populated for all tasks that had `type_id`
-- [ ] Stage validation reads from `boards.columns`
-- [ ] Column JSONB includes `transitions: []` and `on_fail: null` defaults
-- [ ] Zero data loss — all existing tasks keep their stage
+- [ ] `boards` + `board_templates` tables exist with migrated data
+- [ ] `tasks.board_id` and `tasks.column_id` populated for all migrated tasks
+- [ ] Validation checks `column_id` exists in board's columns JSONB
+- [ ] Each column has a stable UUID `id` — tasks reference this, not name
+- [ ] Renaming a column does NOT orphan any tasks
+- [ ] Reordering columns does NOT orphan any tasks
+- [ ] Column JSONB includes `id`, `position`, `transitions: []`, `on_fail: null` defaults
+- [ ] 5 builtin templates seeded
+- [ ] Zero data loss — all existing tasks keep their position
 
 **Validation:**
 ```bash
@@ -158,15 +179,21 @@ bun test src/lib/board-service.test.ts
    - `genie board template list` — show all templates (builtin + custom)
    - `genie board template show <name>` — detail view with columns pipeline
    - `genie board template create <name> --from-board <board>` — snapshot existing board as reusable template
-   - `genie board template delete <name>` — delete custom templates (builtins are protected)
+   - `genie board template edit <name> --column <col> [--gate X] [--action X] [--rename Y]` — edit any template column
+   - `genie board template rename <old> <new>` — rename any template
+   - `genie board template delete <name>` — delete any template (your system, your rules — builtins are just defaults)
 4. Each template's columns include full config: gate, action, auto_advance, transitions (empty), roles, color
 
 **Acceptance Criteria:**
 - [ ] `genie board template list` shows 5 builtin templates
 - [ ] `genie board template show software` shows 8-stage pipeline with correct gates
 - [ ] `genie board template create "My Custom" --from-board "Dev"` works
-- [ ] `genie board template delete software` is rejected (builtin protection)
-- [ ] Templates include `transitions: []` field on every column (placeholder for workflow engine)
+- [ ] `genie board template edit software --column build --gate human+agent` customizes a builtin
+- [ ] `genie board template rename software "Our Dev Flow"` renames it
+- [ ] `genie board template delete "Our Dev Flow"` deletes it (no protection — user owns everything)
+- [ ] Templates include `transitions: []` and column UUIDs (placeholder for workflow engine)
+- [ ] All template columns are fully editable — name, gate, action, color, everything
+- [ ] Builtins are just defaults, not sacred — user can edit/rename/delete any of them
 
 **Validation:**
 ```bash
@@ -264,7 +291,8 @@ genie task list --board Dev --by-column
 |------|----------|------------|
 | Migration breaks existing tasks | High | Additive migration. `board_id` nullable. Old `type_id` preserved. Rollback = drop `board_id` column. |
 | `task_types` removal breaks plugins | Medium | Deprecation alias (`genie type` → `genie board`) for 2 releases. `task_types` table kept read-only. |
-| Builtin templates not seeded | Low | Migration seeds them. `genie db migrate` re-runs idempotently. |
+| User deletes all templates | Low | `genie db migrate` can re-seed builtins on demand. Or user creates new ones from boards. |
+| Column deleted with tasks in it | Medium | Tasks become orphaned (column_id points to nothing). `genie task list --orphaned` surfaces them. User moves them to another column. |
 | Column JSONB schema changes before workflow engine ships | Low | JSONB is schemaless — add fields freely. `transitions: []` default means old rows work when new code reads them. |
 
 ## Files to Create/Modify
