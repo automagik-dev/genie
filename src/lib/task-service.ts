@@ -36,6 +36,8 @@ export interface TaskInput {
   estimatedEffort?: string;
   blockedReason?: string;
   releaseId?: string;
+  boardId?: string;
+  columnId?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -76,6 +78,8 @@ export interface TaskRow {
   sessionId: string | null;
   paneId: string | null;
   traceId: string | null;
+  boardId: string | null;
+  columnId: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -91,6 +95,8 @@ export interface TaskFilters {
   typeId?: string;
   parentId?: string | null;
   releaseId?: string;
+  boardId?: string;
+  boardName?: string;
   dueBefore?: string;
   limit?: number;
   offset?: number;
@@ -248,6 +254,8 @@ function mapTask(row: Record<string, unknown>): TaskRow {
     sessionId: str(row.session_id),
     paneId: str(row.pane_id),
     traceId: str(row.trace_id),
+    boardId: str(row.board_id),
+    columnId: str(row.column_id),
     metadata: (row.metadata as Record<string, unknown>) ?? {},
     createdAt: strOrDefault(row.created_at, ''),
     updatedAt: strOrDefault(row.updated_at, ''),
@@ -485,14 +493,19 @@ function toDateOrNull(v?: string): Date | null {
   return v ? new Date(v) : null;
 }
 
-export async function createTask(input: TaskInput, repoPath?: string, projectId?: string): Promise<TaskRow> {
-  const sql = await getConnection();
-  const repo = repoPath ?? getRepoPath();
+/** Resolve a stage name to a column_id within a board's columns JSONB. */
+// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
+async function resolveColumnId(sql: any, boardId: string, stageName: string): Promise<string | null> {
+  const rows = await sql`SELECT columns FROM boards WHERE id = ${boardId} LIMIT 1`;
+  if (rows.length === 0) return null;
+  const columns = rows[0].columns as { id: string; name: string }[];
+  const match = columns.find((c: { name: string }) => c.name === stageName);
+  return match?.id ?? null;
+}
 
-  // Auto-ensure project for this repo path (or use explicit projectId)
-  const projId = projectId ?? (await ensureProject(repo));
-
-  const vals = {
+/** Extract and normalize task input fields with defaults. */
+function buildTaskVals(input: TaskInput) {
+  return {
     desc: input.description ?? null,
     ac: input.acceptanceCriteria ?? null,
     type: input.typeId ?? 'software',
@@ -505,7 +518,23 @@ export async function createTask(input: TaskInput, repoPath?: string, projectId?
     effort: input.estimatedEffort ?? null,
     blocked: input.blockedReason ?? null,
     release: input.releaseId ?? null,
+    boardId: input.boardId ?? null,
+    columnId: (input.columnId as string | null) ?? null,
   };
+}
+
+export async function createTask(input: TaskInput, repoPath?: string, projectId?: string): Promise<TaskRow> {
+  const sql = await getConnection();
+  const repo = repoPath ?? getRepoPath();
+
+  // Auto-ensure project for this repo path (or use explicit projectId)
+  const projId = projectId ?? (await ensureProject(repo));
+  const vals = buildTaskVals(input);
+
+  // If boardId provided and stage given, resolve stage name -> column_id
+  if (vals.boardId && !vals.columnId && vals.stage) {
+    vals.columnId = await resolveColumnId(sql, vals.boardId, vals.stage);
+  }
 
   const rows = await sql`
     INSERT INTO tasks (
@@ -513,7 +542,7 @@ export async function createTask(input: TaskInput, repoPath?: string, projectId?
       type_id, stage, status, priority,
       parent_id, wish_file, group_name,
       start_date, due_date, estimated_effort,
-      blocked_reason, release_id, metadata
+      blocked_reason, release_id, board_id, column_id, metadata
     ) VALUES (
       ${repo},
       ${projId},
@@ -532,6 +561,8 @@ export async function createTask(input: TaskInput, repoPath?: string, projectId?
       ${vals.effort},
       ${vals.blocked},
       ${vals.release},
+      ${vals.boardId},
+      ${vals.columnId},
       ${sql.json(input.metadata ?? {})}
     )
     RETURNING *
@@ -588,6 +619,14 @@ function buildFieldConditions(filters: TaskFilters, conditions: string[], values
       conditions.push(`parent_id = $${paramIdx++}`);
       values.push(filters.parentId);
     }
+  }
+  if (filters.boardId) {
+    conditions.push(`board_id = $${paramIdx++}`);
+    values.push(filters.boardId);
+  }
+  if (filters.boardName) {
+    conditions.push(`board_id IN (SELECT id FROM boards WHERE name = $${paramIdx++})`);
+    values.push(filters.boardName);
   }
   if (filters.dueBefore) {
     conditions.push(`due_date <= $${paramIdx++}`);
@@ -692,18 +731,28 @@ export async function moveTask(
   const id = await resolveTaskId(idOrSeq, repo);
   if (!id) throw new Error(`Task not found: ${idOrSeq}`);
 
-  // Get current stage
-  const current = await sql`SELECT id, stage, type_id FROM tasks WHERE id = ${id}`;
+  // Get current stage and board info
+  const current = await sql`SELECT id, stage, type_id, board_id FROM tasks WHERE id = ${id}`;
   if (current.length === 0) throw new Error(`Task not found: ${idOrSeq}`);
 
   const fromStage = current[0].stage as string;
+  const boardId = current[0].board_id as string | null;
+
+  // If task has board_id, resolve toStage by column name -> column_id
+  const columnId = boardId ? await resolveColumnId(sql, boardId, toStage) : null;
 
   try {
-    const rows = await sql`
-      UPDATE tasks SET stage = ${toStage}, updated_at = now()
-      WHERE id = ${id}
-      RETURNING *
-    `;
+    const rows = boardId
+      ? await sql`
+          UPDATE tasks SET stage = ${toStage}, column_id = ${columnId}, updated_at = now()
+          WHERE id = ${id}
+          RETURNING *
+        `
+      : await sql`
+          UPDATE tasks SET stage = ${toStage}, updated_at = now()
+          WHERE id = ${id}
+          RETURNING *
+        `;
 
     // Log the transition
     await sql`

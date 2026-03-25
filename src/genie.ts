@@ -39,6 +39,7 @@ import {
   handleWorkerStop,
 } from './term-commands/agents.js';
 import { registerEventsCommands } from './term-commands/audit-events.js';
+import { registerBoardCommands } from './term-commands/board.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
 import { registerAgentNamespace, registerDirNamespace } from './term-commands/dir.js';
@@ -155,6 +156,7 @@ registerScheduleCommands(program);
 registerDaemonCommands(program);
 registerTaskCommands(program);
 registerTypeCommands(program);
+registerBoardCommands(program);
 registerTagCommands(program);
 registerReleaseCommands(program);
 registerProjectCommands(program);
