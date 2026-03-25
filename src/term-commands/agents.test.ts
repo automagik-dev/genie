@@ -7,18 +7,19 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { Agent } from '../lib/agent-registry.js';
-import { getConnection, shutdown } from '../lib/db.js';
+import { setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import { buildResumeContext } from './agents.js';
 
 let cwd: string;
+let cleanupSchema: () => Promise<void>;
 
 beforeAll(async () => {
-  await getConnection();
+  cleanupSchema = await setupTestSchema();
 });
 
 afterAll(async () => {
-  await shutdown();
+  await cleanupSchema();
 });
 
 beforeEach(() => {

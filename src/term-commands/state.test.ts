@@ -2,12 +2,23 @@
  * Tests for state commands — wave detection, push enforcement, pane auto-kill.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { execSync } from 'node:child_process';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import { detectWaveCompletion, ensureWorkPushed, parseRef, resolveWishPath } from './state.js';
+
+let cleanupSchema: () => Promise<void>;
+
+beforeAll(async () => {
+  cleanupSchema = await setupTestSchema();
+});
+
+afterAll(async () => {
+  await cleanupSchema();
+});
 
 // ============================================================================
 // Sample WISH.md with Execution Strategy for wave detection tests

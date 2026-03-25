@@ -6,7 +6,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { getConnection, shutdown } from './db.js';
+import { getConnection } from './db.js';
 import {
   type Actor,
   addDependency,
@@ -63,6 +63,7 @@ import {
   updateMessage,
   updateTask,
 } from './task-service.js';
+import { setupTestSchema } from './test-db.js';
 
 // Unique repo path per test run to avoid collisions
 const REPO = `/tmp/test-repo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -70,18 +71,15 @@ const actor: Actor = { actorType: 'local', actorId: 'test-user' };
 const actor2: Actor = { actorType: 'local', actorId: 'test-user-2' };
 
 let sql: Awaited<ReturnType<typeof getConnection>>;
+let cleanupSchema: () => Promise<void>;
 
 beforeAll(async () => {
+  cleanupSchema = await setupTestSchema();
   sql = await getConnection();
 });
 
 afterAll(async () => {
-  // Clean up test data
-  if (sql) {
-    await sql`DELETE FROM tasks WHERE repo_path = ${REPO}`;
-    await sql`DELETE FROM tasks WHERE repo_path LIKE '/tmp/test-repo-%'`;
-  }
-  await shutdown();
+  await cleanupSchema();
 });
 
 // ============================================================================

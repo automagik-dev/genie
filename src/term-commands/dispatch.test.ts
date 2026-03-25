@@ -12,12 +12,11 @@
  * 8. reviewCommand() — review with diff context
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
-import { parseRef } from './state.js';
-
 import {
   buildContextPrompt,
   detectWorkMode,
@@ -27,6 +26,17 @@ import {
   parseWishGroups,
   writeContextFile,
 } from './dispatch.js';
+import { parseRef } from './state.js';
+
+let cleanupSchema: () => Promise<void>;
+
+beforeAll(async () => {
+  cleanupSchema = await setupTestSchema();
+});
+
+afterAll(async () => {
+  await cleanupSchema();
+});
 
 // ============================================================================
 // Sample WISH.md content for testing
