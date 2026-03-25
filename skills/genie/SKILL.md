@@ -29,6 +29,16 @@ Every piece of work follows this flow:
          (explore)    (plan)   (gate)   (build)  (verify)
 ```
 
+### Task Stages (parallel tracking in PG)
+
+Tasks in the PG-backed system flow through stages that mirror the wish lifecycle:
+
+```
+ draft → brainstorm → wish → build → review → qa → ship
+```
+
+Use `genie task move` to advance tasks through stages. Use `genie task list --stage <stage>` to see what's in each stage. For full PM workflow, load `/pm`.
+
 ### Decision Tree
 
 Use this to guide the user to the right step:
@@ -43,6 +53,7 @@ Use this to guide the user to the right step:
 | Review says FIX-FIRST | Run `/fix` to address gaps, then re-review |
 | Want specialist perspectives | Run `/council` for 10-viewpoint critique |
 | Prompt needs sharpening | Run `/refine` to optimize via prompt-optimizer |
+| Need to manage backlog or coordinate work | Run `/pm` for the full PM playbook |
 
 ### Lifecycle Details
 
@@ -159,6 +170,15 @@ genie task dep <id|#seq> [options]        # Manage dependencies
   --remove <id2>                          #   Remove dependency
 ```
 
+### Projects (v4)
+
+```bash
+genie project list                        # List all projects
+genie project create <name>               # Create a project
+  --type <type>                           #   Task type (default: software)
+genie project show <id>                   # Show project details + task counts
+```
+
 ### Types, Tags, Releases & Notifications (v4)
 
 ```bash
@@ -177,6 +197,25 @@ genie notify set --channel <ch>           # Set notification preference
   --default                               #   Set as default channel
 genie notify list                         # List notification preferences
 genie notify remove --channel <ch>        # Remove preference
+```
+
+### Observability (v4)
+
+```bash
+genie events list [--limit N]                # Recent events
+genie events summary [--today | --since <d>] # Activity summary
+genie events costs [--today]                 # Cost breakdown
+genie events tools [--today]                 # Tool usage patterns
+genie events timeline [--since <duration>]   # Visual timeline
+
+genie sessions list                          # Active sessions
+genie sessions replay <id>                   # Replay a session
+genie sessions search <query>               # Search transcripts
+genie sessions ingest <path>                # Import external transcript
+
+genie metrics now                            # Real-time metrics
+genie metrics history [--days N]             # Historical trends
+genie metrics agents                         # Per-agent metrics
 ```
 
 ### Teams
