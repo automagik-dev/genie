@@ -53,6 +53,7 @@ export async function setupTestSchema(): Promise<() => Promise<void>> {
     max: 1,
     idle_timeout: 1,
     connect_timeout: 5,
+    onnotice: () => {},
     connection: { client_min_messages: 'warning' },
   });
 
@@ -88,6 +89,7 @@ export async function setupTestSchema(): Promise<() => Promise<void>> {
       max: 2,
       idle_timeout: 1,
       connect_timeout: 5,
+      onnotice: () => {},
       connection: { client_min_messages: 'warning' },
     });
 

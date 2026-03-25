@@ -317,6 +317,7 @@ export async function getConnection() {
     max: 10,
     idle_timeout: 1,
     connect_timeout: 5,
+    onnotice: () => {},
     connection: {
       client_min_messages: 'warning',
       ...(testSchema ? { search_path: `${testSchema}, public` } : {}),
