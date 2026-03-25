@@ -1,103 +1,53 @@
 /**
  * Agent Registry — Tracks agent state with provider metadata.
  *
- * Stores provider, transport, session, window, paneId, role, and skill
- * metadata for every spawned agent. Registry is persisted to a single
- * global file at `~/.genie/workers.json`.
+ * All state is persisted in PostgreSQL (`agents` and `agent_templates` tables).
+ * PG transactions replace file locks — no acquireLock needed.
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { acquireLock } from './file-lock.js';
+import { getConnection } from './db.js';
 import type { ProviderName } from './provider-adapters.js';
 
-// ============================================================================
-// Types
-// ============================================================================
-
-export type AgentState =
-  | 'spawning' // Agent being created
-  | 'working' // Actively producing output
-  | 'idle' // At prompt, waiting for input
-  | 'permission' // Waiting for permission approval
-  | 'question' // Waiting for question answer
-  | 'done' // Task completed, ready for close
-  | 'error' // Encountered error
-  | 'suspended'; // Pane killed, session preserved for resume
-
+export type AgentState = 'spawning' | 'working' | 'idle' | 'permission' | 'question' | 'done' | 'error' | 'suspended';
 export type TransportType = 'tmux' | 'inline';
 
 export interface Agent {
-  /** Unique agent ID (usually matches taskId, e.g., "wish-42"). */
   id: string;
-  /** tmux pane ID (e.g., "%16"). */
   paneId: string;
-  /** tmux session name. */
   session: string;
-  /** Path to git worktree, null if using shared repo. */
   worktree: string | null;
-  /** Task ID this agent is bound to. */
   taskId?: string;
-  /** Task title. */
   taskTitle?: string;
-  /** Associated wish slug (if from decompose). */
   wishSlug?: string;
-  /** Execution group number within wish. */
   groupNumber?: number;
-  /** ISO timestamp when agent was started. */
   startedAt: string;
-  /** Current agent state. */
   state: AgentState;
-  /** Last state change timestamp. */
   lastStateChange: string;
-  /** Repository path where agent operates. */
   repoPath: string;
-  /** Claude session ID for resume capability. */
   claudeSessionId?: string;
-  /** tmux window name (matches taskId) — used for window cleanup. */
   windowName?: string;
-  /** tmux window ID (e.g., "@4") — used for session-qualified cleanup. */
   windowId?: string;
-  /** Agent role (e.g., "engineer", "reviewer", "qa", "fix"). */
   role?: string;
-  /** Custom agent name when multiple agents on same task. */
   customName?: string;
-  /** Ordered list of sub-pane IDs from splits. Index 0 in subPanes = wish-42:1, etc. */
   subPanes?: string[];
-  /** Provider used to launch this agent. */
   provider?: ProviderName;
-  /** Transport type (always "tmux" for now). */
   transport?: TransportType;
-  /** Skill loaded at spawn (codex agents). */
   skill?: string;
-  /** Team this agent belongs to. */
   team?: string;
-  /** tmux window name (alias for windowName, used by teams surface). */
   window?: string;
-  /** Claude Code native agent ID (e.g., "role@team"). */
   nativeAgentId?: string;
-  /** Claude Code native teammate color. */
   nativeColor?: string;
-  /** Whether this agent uses Claude Code native teams. */
   nativeTeamEnabled?: boolean;
-  /** Parent session UUID for native team IPC. */
   parentSessionId?: string;
-  /** ISO timestamp when agent was suspended (pane killed, session preserved). */
   suspendedAt?: string;
-  /** Whether this agent should be auto-resumed on pane death (default true). */
   autoResume?: boolean;
-  /** Number of auto-resume attempts since last manual resume or spawn. */
   resumeAttempts?: number;
-  /** ISO timestamp of the last auto-resume attempt. */
   lastResumeAttempt?: string;
-  /** Maximum auto-resume attempts before permanently failing (default 3). */
   maxResumeAttempts?: number;
+  paneColor?: string;
 }
 
-/** Saved spawn configuration for auto-respawn on message delivery. */
 export interface WorkerTemplate {
   id: string;
   provider: ProviderName;
@@ -107,346 +57,260 @@ export interface WorkerTemplate {
   cwd: string;
   extraArgs?: string[];
   nativeTeamEnabled?: boolean;
-  /** Timestamp of last spawn from this template. */
   lastSpawnedAt: string;
 }
 
-interface AgentRegistry {
-  workers: Record<string, Agent>;
-  templates: Record<string, WorkerTemplate>;
-  lastUpdated: string;
+// biome-ignore lint/suspicious/noExplicitAny: PG row uses dynamic column names
+type PgRow = Record<string, any>;
+
+function ts(v: Date | string | null): string {
+  if (!v) return new Date().toISOString();
+  return v instanceof Date ? v.toISOString() : v;
 }
 
-// ============================================================================
-// Team-Lead Entry ID Helpers
-// ============================================================================
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: flat field mapping
+function rowToAgent(r: PgRow): Agent {
+  const agent: Agent = {
+    id: r.id,
+    paneId: r.pane_id,
+    session: r.session,
+    worktree: r.worktree ?? null,
+    startedAt: ts(r.started_at),
+    state: r.state,
+    lastStateChange: ts(r.last_state_change),
+    repoPath: r.repo_path,
+  };
+  if (r.task_id != null) agent.taskId = r.task_id;
+  if (r.task_title != null) agent.taskTitle = r.task_title;
+  if (r.wish_slug != null) agent.wishSlug = r.wish_slug;
+  if (r.group_number != null) agent.groupNumber = r.group_number;
+  if (r.claude_session_id != null) agent.claudeSessionId = r.claude_session_id;
+  if (r.window_name != null) agent.windowName = r.window_name;
+  if (r.window_id != null) agent.windowId = r.window_id;
+  if (r.role != null) agent.role = r.role;
+  if (r.custom_name != null) agent.customName = r.custom_name;
+  if (r.sub_panes != null) {
+    const sp = typeof r.sub_panes === 'string' ? JSON.parse(r.sub_panes) : r.sub_panes;
+    if (Array.isArray(sp) && sp.length > 0) agent.subPanes = sp;
+  }
+  if (r.provider != null) agent.provider = r.provider;
+  if (r.transport != null) agent.transport = r.transport;
+  if (r.skill != null) agent.skill = r.skill;
+  if (r.team != null) agent.team = r.team;
+  if (r.tmux_window != null) agent.window = r.tmux_window;
+  if (r.native_agent_id != null) agent.nativeAgentId = r.native_agent_id;
+  if (r.native_color != null) agent.nativeColor = r.native_color;
+  if (r.native_team_enabled) agent.nativeTeamEnabled = r.native_team_enabled;
+  if (r.parent_session_id != null) agent.parentSessionId = r.parent_session_id;
+  if (r.suspended_at != null) agent.suspendedAt = ts(r.suspended_at);
+  if (r.auto_resume != null) agent.autoResume = r.auto_resume;
+  if (r.resume_attempts != null) agent.resumeAttempts = r.resume_attempts;
+  if (r.last_resume_attempt != null) agent.lastResumeAttempt = ts(r.last_resume_attempt);
+  if (r.max_resume_attempts != null) agent.maxResumeAttempts = r.max_resume_attempts;
+  if (r.pane_color != null) agent.paneColor = r.pane_color;
+  return agent;
+}
+
+function rowToTemplate(r: PgRow): WorkerTemplate {
+  const tpl: WorkerTemplate = {
+    id: r.id,
+    provider: r.provider,
+    team: r.team,
+    cwd: r.cwd,
+    lastSpawnedAt: ts(r.last_spawned_at),
+  };
+  if (r.role != null) tpl.role = r.role;
+  if (r.skill != null) tpl.skill = r.skill;
+  if (r.extra_args != null) {
+    const ea = typeof r.extra_args === 'string' ? JSON.parse(r.extra_args) : r.extra_args;
+    if (Array.isArray(ea) && ea.length > 0) tpl.extraArgs = ea;
+  }
+  if (r.native_team_enabled) tpl.nativeTeamEnabled = r.native_team_enabled;
+  return tpl;
+}
 
 function shortProjectHash(repoPath: string): string {
   return createHash('sha1').update(repoPath).digest('hex').slice(0, 8);
 }
-
 function buildProjectTeamLeadEntryId(teamName: string, session: string, repoPath: string): string {
   return `team-lead:${session}:${shortProjectHash(repoPath)}:${teamName}`;
 }
-
 function buildSessionTeamLeadEntryId(teamName: string, session: string): string {
   return `team-lead:${session}:${teamName}`;
 }
-
 function buildLegacyTeamLeadEntryId(teamName: string): string {
   return `team-lead:${teamName}`;
 }
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-function getGlobalDir(): string {
-  return process.env.GENIE_HOME ?? join(homedir(), '.genie');
-}
-
-function getRegistryFilePath(): string {
-  return join(getGlobalDir(), 'workers.json');
-}
-
-// ============================================================================
-// Internal
-// ============================================================================
-
-async function loadRegistry(registryPath?: string): Promise<AgentRegistry> {
-  const filePath = registryPath ?? getRegistryFilePath();
-  const backupPath = `${filePath}.bak`;
-
-  // Try primary file first
-  const primary = await tryParseRegistryFile(filePath);
-  if (primary) return primary;
-
-  // Primary corrupt or missing — try backup
-  if (existsSync(backupPath)) {
-    const backup = await tryParseRegistryFile(backupPath);
-    if (backup) {
-      // Restore backup to primary (best-effort)
-      try {
-        await copyFile(backupPath, filePath);
-      } catch {
-        /* best-effort */
-      }
-      return backup;
-    }
-  }
-
-  return { workers: {}, templates: {}, lastUpdated: new Date().toISOString() };
-}
-
-/** Try to read and parse a registry JSON file. Returns null on any failure. */
-async function tryParseRegistryFile(filePath: string): Promise<AgentRegistry | null> {
-  try {
-    const content = await readFile(filePath, 'utf-8');
-    const data = JSON.parse(content);
-    if (!data.workers || typeof data.workers !== 'object') return null;
-    if (!data.templates) data.templates = {};
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Atomic save: write to temp file then rename.
- * Also keeps a `.bak` of the previous good state.
- */
-async function saveRegistry(registry: AgentRegistry, registryPath?: string): Promise<void> {
-  const filePath = registryPath ?? getRegistryFilePath();
-  const dir = dirname(filePath);
-  await mkdir(dir, { recursive: true });
-  registry.lastUpdated = new Date().toISOString();
-
-  const tmpPath = `${filePath}.tmp.${process.pid}`;
-  const backupPath = `${filePath}.bak`;
-  const content = JSON.stringify(registry, null, 2);
-
-  // Write to temp file
-  await writeFile(tmpPath, content);
-
-  // Rotate current → backup (best-effort, don't fail if primary doesn't exist yet)
-  if (existsSync(filePath)) {
-    try {
-      await copyFile(filePath, backupPath);
-    } catch {
-      /* best-effort */
-    }
-  }
-
-  // Atomic rename temp → primary (POSIX rename is atomic on same filesystem)
-  await rename(tmpPath, filePath);
-}
-
-// ============================================================================
-// Locked read-modify-write
-// ============================================================================
-
-async function withRegistry<T>(fn: (reg: AgentRegistry) => T | Promise<T>, registryPath?: string): Promise<T> {
-  const filePath = registryPath ?? getRegistryFilePath();
-  const release = await acquireLock(filePath);
-  try {
-    const reg = await loadRegistry(registryPath);
-    const result = await fn(reg);
-    await saveRegistry(reg, registryPath);
-    return result;
-  } finally {
-    await release();
-  }
-}
-
-// ============================================================================
-// Public API
-// ============================================================================
-
-/** Register a new agent. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: flat field mapping
 export async function register(agent: Agent): Promise<void> {
-  await withRegistry((reg) => {
-    reg.workers[agent.id] = agent;
-  });
+  const sql = await getConnection();
+  const now = new Date().toISOString();
+  await sql`INSERT INTO agents (id, pane_id, session, worktree, task_id, task_title, wish_slug, group_number, started_at, state, last_state_change, repo_path, claude_session_id, window_name, window_id, role, custom_name, sub_panes, provider, transport, skill, team, tmux_window, native_agent_id, native_color, native_team_enabled, parent_session_id, suspended_at, auto_resume, resume_attempts, last_resume_attempt, max_resume_attempts, pane_color) VALUES (${agent.id}, ${agent.paneId}, ${agent.session}, ${agent.worktree ?? null}, ${agent.taskId ?? null}, ${agent.taskTitle ?? null}, ${agent.wishSlug ?? null}, ${agent.groupNumber ?? null}, ${agent.startedAt ?? now}, ${agent.state ?? 'spawning'}, ${agent.lastStateChange ?? now}, ${agent.repoPath}, ${agent.claudeSessionId ?? null}, ${agent.windowName ?? null}, ${agent.windowId ?? null}, ${agent.role ?? null}, ${agent.customName ?? null}, ${sql.json(agent.subPanes ?? [])}, ${agent.provider ?? null}, ${agent.transport ?? 'tmux'}, ${agent.skill ?? null}, ${agent.team ?? null}, ${agent.window ?? null}, ${agent.nativeAgentId ?? null}, ${agent.nativeColor ?? null}, ${agent.nativeTeamEnabled ?? false}, ${agent.parentSessionId ?? null}, ${agent.suspendedAt ?? null}, ${agent.autoResume ?? true}, ${agent.resumeAttempts ?? 0}, ${agent.lastResumeAttempt ?? null}, ${agent.maxResumeAttempts ?? 3}, ${agent.paneColor ?? null}) ON CONFLICT (id) DO UPDATE SET pane_id = EXCLUDED.pane_id, session = EXCLUDED.session, state = EXCLUDED.state, last_state_change = EXCLUDED.last_state_change, updated_at = now()`;
 }
 
-/** Unregister (remove) an agent. */
 export async function unregister(id: string): Promise<void> {
-  await withRegistry((reg) => {
-    delete reg.workers[id];
-  });
+  const sql = await getConnection();
+  await sql`DELETE FROM agents WHERE id = ${id}`;
 }
 
-/** Get an agent by ID. */
 export async function get(id: string): Promise<Agent | null> {
-  const registry = await loadRegistry();
-  return registry.workers[id] ?? null;
+  const sql = await getConnection();
+  const rows = await sql`SELECT * FROM agents WHERE id = ${id}`;
+  return rows.length > 0 ? rowToAgent(rows[0]) : null;
 }
 
-/** List all agents. */
 export async function list(): Promise<Agent[]> {
-  const registry = await loadRegistry();
-  return Object.values(registry.workers);
+  const sql = await getConnection();
+  const rows = await sql`SELECT * FROM agents`;
+  return rows.map(rowToAgent);
 }
 
-/** Filter agents by tmux session name. @public */
 export async function filterBySession(sessionName: string): Promise<Agent[]> {
-  const agents = await list();
-  return agents.filter((a) => a.session === sessionName);
+  const sql = await getConnection();
+  const rows = await sql`SELECT * FROM agents WHERE session = ${sessionName}`;
+  return rows.map(rowToAgent);
 }
 
-/** Update multiple agent fields. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: flat field mapping
 export async function update(id: string, updates: Partial<Agent>): Promise<void> {
-  await withRegistry((reg) => {
-    const agent = reg.workers[id];
-    if (agent) {
-      Object.assign(agent, updates);
-      if (updates.state) {
-        agent.lastStateChange = new Date().toISOString();
-      }
-    }
-  });
-}
-
-/** Find agent by tmux pane ID. @public - used via dynamic namespace import in msg.ts */
-export async function findByPane(paneId: string): Promise<Agent | null> {
-  const agents = await list();
-  const normalized = paneId.startsWith('%') ? paneId : `%${paneId}`;
-  return agents.find((a) => a.paneId === normalized) ?? null;
-}
-
-/** Find agent by tmux window ID (e.g., "@4"). */
-export async function findByWindow(windowId: string): Promise<Agent | null> {
-  const agents = await list();
-  const normalizedId = windowId.startsWith('@') ? windowId : `@${windowId}`;
-  return agents.find((a) => a.windowId === normalizedId) ?? null;
-}
-
-/** Find agent by task ID (returns first match). */
-export async function findByTask(taskId: string): Promise<Agent | null> {
-  const agents = await list();
-  return agents.find((a) => a.taskId === taskId) ?? null;
-}
-
-/** Calculate elapsed time for an agent. */
-export function getElapsedTime(agent: Agent): { ms: number; formatted: string } {
-  const startTime = new Date(agent.startedAt).getTime();
-  const ms = Date.now() - startTime;
-
-  const minutes = Math.floor(ms / 60000);
-  const hours = Math.floor(minutes / 60);
-
-  let formatted: string;
-  if (hours > 0) {
-    formatted = `${hours}h ${minutes % 60}m`;
-  } else if (minutes > 0) {
-    formatted = `${minutes}m`;
-  } else {
-    formatted = '<1m';
+  const sql = await getConnection();
+  const s: Record<string, unknown> = {};
+  if (updates.paneId !== undefined) s.pane_id = updates.paneId;
+  if (updates.session !== undefined) s.session = updates.session;
+  if (updates.worktree !== undefined) s.worktree = updates.worktree;
+  if (updates.taskId !== undefined) s.task_id = updates.taskId;
+  if (updates.taskTitle !== undefined) s.task_title = updates.taskTitle;
+  if (updates.wishSlug !== undefined) s.wish_slug = updates.wishSlug;
+  if (updates.groupNumber !== undefined) s.group_number = updates.groupNumber;
+  if (updates.startedAt !== undefined) s.started_at = updates.startedAt;
+  if (updates.state !== undefined) {
+    s.state = updates.state;
+    s.last_state_change = new Date().toISOString();
   }
+  if (updates.lastStateChange !== undefined) s.last_state_change = updates.lastStateChange;
+  if (updates.repoPath !== undefined) s.repo_path = updates.repoPath;
+  if (updates.claudeSessionId !== undefined) s.claude_session_id = updates.claudeSessionId;
+  if (updates.windowName !== undefined) s.window_name = updates.windowName;
+  if (updates.windowId !== undefined) s.window_id = updates.windowId;
+  if (updates.role !== undefined) s.role = updates.role;
+  if (updates.customName !== undefined) s.custom_name = updates.customName;
+  if (updates.subPanes !== undefined) s.sub_panes = sql.json(updates.subPanes);
+  if (updates.provider !== undefined) s.provider = updates.provider;
+  if (updates.transport !== undefined) s.transport = updates.transport;
+  if (updates.skill !== undefined) s.skill = updates.skill;
+  if (updates.team !== undefined) s.team = updates.team;
+  if (updates.window !== undefined) s.tmux_window = updates.window;
+  if (updates.nativeAgentId !== undefined) s.native_agent_id = updates.nativeAgentId;
+  if (updates.nativeColor !== undefined) s.native_color = updates.nativeColor;
+  if (updates.nativeTeamEnabled !== undefined) s.native_team_enabled = updates.nativeTeamEnabled;
+  if (updates.parentSessionId !== undefined) s.parent_session_id = updates.parentSessionId;
+  if (updates.suspendedAt !== undefined) s.suspended_at = updates.suspendedAt;
+  if (updates.autoResume !== undefined) s.auto_resume = updates.autoResume;
+  if (updates.resumeAttempts !== undefined) s.resume_attempts = updates.resumeAttempts;
+  if (updates.lastResumeAttempt !== undefined) s.last_resume_attempt = updates.lastResumeAttempt;
+  if (updates.maxResumeAttempts !== undefined) s.max_resume_attempts = updates.maxResumeAttempts;
+  if (updates.paneColor !== undefined) s.pane_color = updates.paneColor;
+  if (Object.keys(s).length === 0) return;
+  await sql`UPDATE agents SET ${sql(s)} WHERE id = ${id}`;
+}
 
+export async function findByPane(paneId: string): Promise<Agent | null> {
+  const sql = await getConnection();
+  const n = paneId.startsWith('%') ? paneId : `%${paneId}`;
+  const rows = await sql`SELECT * FROM agents WHERE pane_id = ${n}`;
+  return rows.length > 0 ? rowToAgent(rows[0]) : null;
+}
+export async function findByWindow(windowId: string): Promise<Agent | null> {
+  const sql = await getConnection();
+  const n = windowId.startsWith('@') ? windowId : `@${windowId}`;
+  const rows = await sql`SELECT * FROM agents WHERE window_id = ${n}`;
+  return rows.length > 0 ? rowToAgent(rows[0]) : null;
+}
+export async function findByTask(taskId: string): Promise<Agent | null> {
+  const sql = await getConnection();
+  const rows = await sql`SELECT * FROM agents WHERE task_id = ${taskId} LIMIT 1`;
+  return rows.length > 0 ? rowToAgent(rows[0]) : null;
+}
+
+export function getElapsedTime(agent: Agent): { ms: number; formatted: string } {
+  const ms = Date.now() - new Date(agent.startedAt).getTime();
+  const m = Math.floor(ms / 60000);
+  const h = Math.floor(m / 60);
+  let formatted: string;
+  if (h > 0) formatted = `${h}h ${m % 60}m`;
+  else if (m > 0) formatted = `${m}m`;
+  else formatted = '<1m';
   return { ms, formatted };
 }
 
-// ============================================================================
-// Sub-Pane Helpers
-// ============================================================================
-
-/**
- * Add a sub-pane to an agent's subPanes array.
- * If the agent doesn't exist, this is a no-op.
- */
-export async function addSubPane(workerId: string, paneId: string, registryPath?: string): Promise<void> {
-  await withRegistry((reg) => {
-    const agent = reg.workers[workerId];
-    if (!agent) return;
-    if (!agent.subPanes) agent.subPanes = [];
-    agent.subPanes.push(paneId);
-  }, registryPath);
+export async function addSubPane(workerId: string, paneId: string, _registryPath?: string): Promise<void> {
+  const agent = await get(workerId);
+  if (!agent) return;
+  const subPanes = [...(agent.subPanes ?? []), paneId];
+  const sql = await getConnection();
+  await sql`UPDATE agents SET sub_panes = ${sql.json(subPanes)} WHERE id = ${workerId}`;
 }
-
-/**
- * Get a pane ID by agent ID and index.
- * Index 0 = primary paneId, 1+ = subPanes[index - 1].
- * Returns null if agent not found or index out of range.
- */
-export async function getPane(workerId: string, index: number, registryPath?: string): Promise<string | null> {
-  const registry = await loadRegistry(registryPath);
-  const agent = registry.workers[workerId];
+export async function getPane(workerId: string, index: number, _registryPath?: string): Promise<string | null> {
+  const agent = await get(workerId);
   if (!agent) return null;
-
-  if (index === 0) {
-    return agent.paneId;
-  }
-
-  const subIndex = index - 1;
-  if (!agent.subPanes || subIndex >= agent.subPanes.length || subIndex < 0) {
-    return null;
-  }
-
-  return agent.subPanes[subIndex];
+  if (index === 0) return agent.paneId;
+  const si = index - 1;
+  if (!agent.subPanes || si >= agent.subPanes.length || si < 0) return null;
+  return agent.subPanes[si];
+}
+export async function removeSubPane(workerId: string, paneId: string, _registryPath?: string): Promise<void> {
+  const agent = await get(workerId);
+  if (!agent?.subPanes) return;
+  const filtered = agent.subPanes.filter((p) => p !== paneId);
+  const sql = await getConnection();
+  await sql`UPDATE agents SET sub_panes = ${sql.json(filtered)} WHERE id = ${workerId}`;
 }
 
-/**
- * Remove a sub-pane from an agent's subPanes array (for dead pane cleanup).
- * If the agent doesn't exist or has no subPanes, this is a no-op.
- */
-export async function removeSubPane(workerId: string, paneId: string, registryPath?: string): Promise<void> {
-  await withRegistry((reg) => {
-    const agent = reg.workers[workerId];
-    if (!agent || !agent.subPanes) return;
-    agent.subPanes = agent.subPanes.filter((p) => p !== paneId);
-  }, registryPath);
-}
-
-// ============================================================================
-// Team-Lead Registry
-// ============================================================================
-
-/**
- * Get the team-lead registry entry for a team.
- * Returns null if no team-lead is registered.
- * @public
- */
 export async function getTeamLeadEntry(teamName: string, session?: string, repoPath?: string): Promise<Agent | null> {
-  const registry = await loadRegistry();
-  const workers = Object.values(registry.workers);
-
-  if (session) {
-    return findTeamLeadBySession(registry, workers, teamName, session, repoPath);
-  }
-
-  return (
-    registry.workers[buildLegacyTeamLeadEntryId(teamName)] ??
-    workers
-      .filter((worker) => worker.role === 'team-lead' && worker.team === teamName)
-      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] ??
-    null
-  );
+  const sql = await getConnection();
+  if (session) return findTeamLeadBySession(sql, teamName, session, repoPath);
+  const legacyId = buildLegacyTeamLeadEntryId(teamName);
+  const lr = await sql`SELECT * FROM agents WHERE id = ${legacyId}`;
+  if (lr.length > 0) return rowToAgent(lr[0]);
+  const sr =
+    await sql`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} ORDER BY started_at DESC LIMIT 1`;
+  return sr.length > 0 ? rowToAgent(sr[0]) : null;
 }
 
-/** Look up a team-lead entry by session, trying keyed lookups before scanning. */
-function findTeamLeadBySession(
-  registry: AgentRegistry,
-  workers: Agent[],
+// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
+async function findTeamLeadBySession(
+  sql: any,
   teamName: string,
   session: string,
   repoPath?: string,
-): Agent | null {
+): Promise<Agent | null> {
   if (repoPath) {
-    const exactProject = registry.workers[buildProjectTeamLeadEntryId(teamName, session, repoPath)];
-    if (exactProject) return exactProject;
+    const rows = await sql`SELECT * FROM agents WHERE id = ${buildProjectTeamLeadEntryId(teamName, session, repoPath)}`;
+    if (rows.length > 0) return rowToAgent(rows[0]);
   }
-
-  const exactSession = registry.workers[buildSessionTeamLeadEntryId(teamName, session)];
-  if (exactSession && (!repoPath || exactSession.repoPath === repoPath)) return exactSession;
-
-  const legacy = registry.workers[buildLegacyTeamLeadEntryId(teamName)];
-  if (legacy?.session === session && (!repoPath || legacy.repoPath === repoPath)) return legacy;
-
-  return (
-    workers.find(
-      (worker) =>
-        worker.role === 'team-lead' &&
-        worker.team === teamName &&
-        worker.session === session &&
-        (!repoPath || worker.repoPath === repoPath),
-    ) ?? null
-  );
+  const sessRows = await sql`SELECT * FROM agents WHERE id = ${buildSessionTeamLeadEntryId(teamName, session)}`;
+  if (sessRows.length > 0) {
+    const a = rowToAgent(sessRows[0]);
+    if (!repoPath || a.repoPath === repoPath) return a;
+  }
+  const legRows = await sql`SELECT * FROM agents WHERE id = ${buildLegacyTeamLeadEntryId(teamName)}`;
+  if (legRows.length > 0) {
+    const a = rowToAgent(legRows[0]);
+    if (a.session === session && (!repoPath || a.repoPath === repoPath)) return a;
+  }
+  const scanRows =
+    await sql`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} AND session = ${session} ${repoPath ? sql`AND repo_path = ${repoPath}` : sql``} LIMIT 1`;
+  return scanRows.length > 0 ? rowToAgent(scanRows[0]) : null;
 }
 
-// ============================================================================
-// Worker Templates (for auto-respawn)
-// ============================================================================
-
-/** Save or update a worker template. */
 export async function saveTemplate(template: WorkerTemplate): Promise<void> {
-  await withRegistry((reg) => {
-    reg.templates[template.id] = template;
-  });
+  const sql = await getConnection();
+  await sql`INSERT INTO agent_templates (id, provider, team, role, skill, cwd, extra_args, native_team_enabled, last_spawned_at) VALUES (${template.id}, ${template.provider}, ${template.team}, ${template.role ?? null}, ${template.skill ?? null}, ${template.cwd}, ${sql.json(template.extraArgs ?? [])}, ${template.nativeTeamEnabled ?? false}, ${template.lastSpawnedAt}) ON CONFLICT (id) DO UPDATE SET provider = EXCLUDED.provider, team = EXCLUDED.team, role = EXCLUDED.role, skill = EXCLUDED.skill, cwd = EXCLUDED.cwd, extra_args = EXCLUDED.extra_args, native_team_enabled = EXCLUDED.native_team_enabled, last_spawned_at = EXCLUDED.last_spawned_at`;
 }
 
-/** List all templates. */
 export async function listTemplates(): Promise<WorkerTemplate[]> {
-  const reg = await loadRegistry();
-  return Object.values(reg.templates ?? {});
+  const sql = await getConnection();
+  const rows = await sql`SELECT * FROM agent_templates`;
+  return rows.map(rowToTemplate);
 }
