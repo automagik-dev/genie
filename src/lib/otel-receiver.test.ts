@@ -1,9 +1,19 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { getOtelPort, isOtelReceiverRunning, startOtelReceiver, stopOtelReceiver } from './otel-receiver.js';
 
 describe('otel-receiver', () => {
+  let origPort: string | undefined;
+
+  beforeEach(() => {
+    origPort = process.env.GENIE_OTEL_PORT;
+    // Use a random high port to avoid conflicts with running pgserve
+    process.env.GENIE_OTEL_PORT = String(49152 + Math.floor(Math.random() * 16383));
+  });
+
   afterEach(() => {
     stopOtelReceiver();
+    if (origPort !== undefined) process.env.GENIE_OTEL_PORT = origPort;
+    else process.env.GENIE_OTEL_PORT = undefined;
   });
 
   test('getOtelPort returns pgserve port + 1 by default', () => {
@@ -13,14 +23,8 @@ describe('otel-receiver', () => {
   });
 
   test('getOtelPort respects GENIE_OTEL_PORT env', () => {
-    const orig = process.env.GENIE_OTEL_PORT;
     process.env.GENIE_OTEL_PORT = '12345';
-    try {
-      expect(getOtelPort()).toBe(12345);
-    } finally {
-      if (orig) process.env.GENIE_OTEL_PORT = orig;
-      else process.env.GENIE_OTEL_PORT = undefined;
-    }
+    expect(getOtelPort()).toBe(12345);
   });
 
   test('startOtelReceiver starts and is idempotent', async () => {

@@ -448,6 +448,7 @@ export function registerTaskCommands(program: Command): void {
     .option('--project <name>', 'Show tasks for a specific project')
     .option('--board <name>', 'Filter by board name')
     .option('--by-column', 'Group tasks by board column (kanban view)')
+    .option('--include-done', 'Include done tasks in kanban view (hidden by default)')
     .option('--all', 'Show tasks from ALL projects')
     .option('--json', 'Output as JSON')
     .action(
@@ -462,6 +463,7 @@ export function registerTaskCommands(program: Command): void {
         project?: string;
         board?: string;
         byColumn?: boolean;
+        includeDone?: boolean;
         all?: boolean;
         json?: boolean;
       }) => {
@@ -490,6 +492,10 @@ export function registerTaskCommands(program: Command): void {
             if (!options.board) {
               console.error('Error: --by-column requires --board');
               process.exit(1);
+            }
+            // Hide done tasks by default in kanban view
+            if (!options.includeDone) {
+              tasks = tasks.filter((t) => t.status !== 'done');
             }
             await printByColumn(tasks, options.board);
             return;
