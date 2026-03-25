@@ -20,6 +20,7 @@ import {
   getGroupState,
   getOrCreateState,
   getState,
+  isWishComplete,
   resetGroup,
   resolveRepoPath,
   startGroup,
@@ -563,6 +564,49 @@ describe('findAnyGroupByAssignee', () => {
 
     const result = await findAnyGroupByAssignee('nobody', cwd);
     expect(result).toBeNull();
+  });
+});
+
+// ============================================================================
+// isWishComplete
+// ============================================================================
+
+describe('isWishComplete', () => {
+  test('returns false when no state exists', async () => {
+    expect(await isWishComplete('nonexistent', cwd)).toBe(false);
+  });
+
+  test('returns false when some groups are not done', async () => {
+    await createState('test-wish', sampleGroups, cwd);
+    await startGroup('test-wish', '1', 'agent-a', cwd);
+    await completeGroup('test-wish', '1', cwd);
+
+    expect(await isWishComplete('test-wish', cwd)).toBe(false);
+  });
+
+  test('returns true when all groups are done', async () => {
+    await createState('test-wish', sampleGroups, cwd);
+
+    await startGroup('test-wish', '1', 'a', cwd);
+    await completeGroup('test-wish', '1', cwd);
+
+    await startGroup('test-wish', '2', 'b', cwd);
+    await completeGroup('test-wish', '2', cwd);
+
+    await startGroup('test-wish', '3', 'c', cwd);
+    await completeGroup('test-wish', '3', cwd);
+
+    await startGroup('test-wish', '4', 'd', cwd);
+    await completeGroup('test-wish', '4', cwd);
+
+    expect(await isWishComplete('test-wish', cwd)).toBe(true);
+  });
+
+  test('returns false when groups are in_progress', async () => {
+    await createState('test-wish', [{ name: '1' }], cwd);
+    await startGroup('test-wish', '1', 'agent-a', cwd);
+
+    expect(await isWishComplete('test-wish', cwd)).toBe(false);
   });
 });
 
