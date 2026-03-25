@@ -45,6 +45,7 @@ import { registerAgentNamespace, registerDirNamespace } from './term-commands/di
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import * as historyCmd from './term-commands/history.js';
 import { type LogOptions, logCommand } from './term-commands/log.js';
+import { registerMetricsCommands } from './term-commands/metrics.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerNotifyCommands } from './term-commands/notify.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
@@ -53,6 +54,7 @@ import { type QaOptions, qaCommand, qaHistoryCommand, qaStatusCommand } from './
 import * as readCmd from './term-commands/read.js';
 import { registerReleaseCommands } from './term-commands/release.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
+import { registerSessionsCommands } from './term-commands/sessions.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { registerTagCommands } from './term-commands/tag.js';
 import { registerTaskCommands } from './term-commands/task.js';
@@ -158,6 +160,8 @@ registerReleaseCommands(program);
 registerProjectCommands(program);
 registerNotifyCommands(program);
 registerEventsCommands(program);
+registerSessionsCommands(program);
+registerMetricsCommands(program);
 
 // ============================================================================
 // CLI audit hooks — record every command execution to audit_events

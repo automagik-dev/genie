@@ -16,6 +16,7 @@ import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
+import { getOtelPort, startOtelReceiver } from '../lib/otel-receiver.js';
 import { injectResumeContext } from '../lib/protocol-router-spawn.js';
 import {
   type ClaudeTeamColor,
@@ -913,6 +914,17 @@ async function buildSpawnParams(
     params.sessionId = crypto.randomUUID();
   }
 
+  // OTel telemetry injection for Claude workers.
+  // Starts the OTel receiver lazily on first spawn, injects env vars via SpawnParams.
+  // Codex agents use their own OTel relay (port 14318), so skip them.
+  if (params.provider === 'claude') {
+    const otelStarted = await startOtelReceiver();
+    if (otelStarted) {
+      params.otelPort = getOtelPort();
+      params.otelLogPrompts = true;
+    }
+  }
+
   return { params, parentSessionId, spawnColor };
 }
 
@@ -1354,6 +1366,11 @@ async function resumeAgent(agent: registry.Agent): Promise<void> {
   if (ctx.spawnColor && paneId !== 'inline') {
     await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
   }
+
+  recordAuditEvent('worker', agent.id, 'resumed', getActor(), {
+    claudeSessionId: agent.claudeSessionId,
+    team: agent.team,
+  }).catch(() => {});
 
   console.log(`Agent "${agent.id}" resumed.`);
   console.log(`  Session:  ${agent.claudeSessionId}`);

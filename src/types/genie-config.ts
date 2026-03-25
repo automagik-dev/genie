@@ -55,6 +55,16 @@ export const WorkerProfileSchema = z
   })
   .passthrough();
 
+// OTel observability configuration
+export const OtelConfigSchema = z.object({
+  /** Whether OTel telemetry injection is enabled for spawned agents. Default: true. */
+  enabled: z.boolean().default(true),
+  /** Port for the OTLP HTTP/JSON receiver. Default: pgserve port + 1 (19643). */
+  port: z.number().optional(),
+  /** Whether to log user prompts via OTel. Default: true for internal agents. */
+  logPrompts: z.boolean().default(true),
+});
+
 // Omni integration configuration
 export const OmniConfigSchema = z.object({
   apiUrl: z.string(),
@@ -103,6 +113,8 @@ export const GenieConfigSchema = z.object({
   autoMergeDev: z.boolean().default(false),
   // Default project for task commands when outside any repo
   defaultProject: z.string().optional(),
+  // OTel observability (optional — telemetry injection for spawned agents)
+  otel: OtelConfigSchema.optional(),
   // Omni integration (optional — multi-channel messaging)
   omni: OmniConfigSchema.optional(),
 });

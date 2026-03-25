@@ -78,6 +78,12 @@ export interface SpawnParams {
   initialPrompt?: string;
   /** Display name for the CC session (emits --name). Used in /resume and terminal title. */
   name?: string;
+  /** OTel receiver port to inject as OTEL_EXPORTER_OTLP_ENDPOINT. Undefined = skip injection. */
+  otelPort?: number;
+  /** Whether to log user prompts via OTel (default: true). */
+  otelLogPrompts?: boolean;
+  /** Wish slug for OTEL_RESOURCE_ATTRIBUTES correlation. */
+  otelWishSlug?: string;
 }
 
 /** Result of a successful launch-command build. */
@@ -124,6 +130,9 @@ const spawnParamsSchema = z.object({
   model: z.string().optional(),
   initialPrompt: z.string().optional(),
   name: z.string().optional(),
+  otelPort: z.number().optional(),
+  otelLogPrompts: z.boolean().optional(),
+  otelWishSlug: z.string().optional(),
 });
 
 /**
@@ -250,6 +259,33 @@ function appendSystemPromptFlags(parts: string[], params: SpawnParams): void {
   }
 }
 
+/**
+ * Inject OTel env vars into the env map when otelPort is configured.
+ * Skips injection if OTEL_EXPORTER_OTLP_ENDPOINT is already set (user overrides win).
+ */
+function appendOtelEnv(env: Record<string, string>, params: SpawnParams): void {
+  if (!params.otelPort || process.env.OTEL_EXPORTER_OTLP_ENDPOINT) return;
+
+  env.CLAUDE_CODE_ENABLE_TELEMETRY = '1';
+  env.OTEL_LOGS_EXPORTER = 'otlp';
+  env.OTEL_METRICS_EXPORTER = 'otlp';
+  env.OTEL_EXPORTER_OTLP_PROTOCOL = 'http/json';
+  env.OTEL_EXPORTER_OTLP_ENDPOINT = `http://127.0.0.1:${params.otelPort}`;
+  env.OTEL_LOG_TOOL_DETAILS = '1';
+  if (params.otelLogPrompts !== false) {
+    env.OTEL_LOG_USER_PROMPTS = '1';
+  }
+
+  const resourceParts: string[] = [];
+  if (params.role) resourceParts.push(`agent.name=${params.role}`);
+  if (params.team) resourceParts.push(`team.name=${params.team}`);
+  if (params.otelWishSlug) resourceParts.push(`wish.slug=${params.otelWishSlug}`);
+  if (params.role) resourceParts.push(`agent.role=${params.role}`);
+  if (resourceParts.length > 0) {
+    env.OTEL_RESOURCE_ATTRIBUTES = resourceParts.join(',');
+  }
+}
+
 export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('claude');
 
@@ -262,6 +298,9 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 
   if (params.role) env.GENIE_AGENT_NAME = params.role;
   if (params.team) env.GENIE_TEAM = params.team;
+
+  // OTel telemetry injection — only if not already set (user overrides win)
+  appendOtelEnv(env, params);
 
   if (params.nativeTeam?.enabled) {
     appendNativeTeamFlags(parts, env, params.nativeTeam, params);

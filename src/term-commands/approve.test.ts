@@ -2,22 +2,20 @@
  * Tests for the approve CLI command module
  *
  * Tests:
- * - getStatusEntries: reads audit log + pending queue and returns structured data
+ * - getStatusEntries: reads pending queue (audit log entries now come from PG)
  * - manualApprove: approves a pending request by ID
  * - manualDeny: denies a pending request by ID
  * - startEngine / stopEngine: controls the auto-approve engine lifecycle
- * - --no-auto-approve flag presence on WorkOptions
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // Module under test
 import { getStatusEntries, isEngineRunning, manualApprove, manualDeny, startEngine, stopEngine } from './approve.js';
 
-import type { AuditLogEntry } from '../lib/auto-approve-engine.js';
 // Sibling types for queue manipulation
 import { type PermissionRequest, createPermissionRequestQueue } from '../lib/event-listener.js';
 
@@ -29,12 +27,6 @@ function makeTmpDir(): string {
   const dir = join(tmpdir(), `approve-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(join(dir, '.genie'), { recursive: true });
   return dir;
-}
-
-function writeAuditLog(baseDir: string, entries: AuditLogEntry[]): void {
-  const logPath = join(baseDir, '.genie', 'auto-approve-audit.jsonl');
-  const content = `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`;
-  writeFileSync(logPath, content, 'utf-8');
 }
 
 function makeRequest(overrides: Partial<PermissionRequest> = {}): PermissionRequest {
@@ -65,91 +57,17 @@ describe('getStatusEntries', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('returns empty list when no audit log and no pending requests', () => {
-    const queue = createPermissionRequestQueue();
-    const entries = getStatusEntries({ auditDir: tmpDir, queue });
-    expect(entries).toEqual([]);
-  });
-
-  it('returns pending requests from the queue', () => {
+  it('returns pending requests from the queue', async () => {
     const queue = createPermissionRequestQueue();
     const req = makeRequest({ id: 'req-abc' });
     queue.add(req);
 
-    const entries = getStatusEntries({ auditDir: tmpDir, queue });
-    expect(entries.length).toBe(1);
-    expect(entries[0].status).toBe('pending');
-    expect(entries[0].requestId).toBe('req-abc');
-    expect(entries[0].toolName).toBe('Bash');
-  });
-
-  it('returns approved/denied/escalated entries from audit log', () => {
-    const auditEntries: AuditLogEntry[] = [
-      {
-        timestamp: '2026-02-03T10:00:00Z',
-        paneId: '%42',
-        toolName: 'Read',
-        action: 'approve',
-        reason: 'allowed',
-        wishId: undefined,
-        requestId: 'req-001',
-      },
-      {
-        timestamp: '2026-02-03T10:01:00Z',
-        paneId: '%42',
-        toolName: 'Bash',
-        action: 'deny',
-        reason: 'denied',
-        wishId: undefined,
-        requestId: 'req-002',
-      },
-      {
-        timestamp: '2026-02-03T10:02:00Z',
-        paneId: '%42',
-        toolName: 'Write',
-        action: 'escalate',
-        reason: 'escalated',
-        wishId: undefined,
-        requestId: 'req-003',
-      },
-    ];
-
-    writeAuditLog(tmpDir, auditEntries);
-    const queue = createPermissionRequestQueue();
-    const entries = getStatusEntries({ auditDir: tmpDir, queue });
-
-    expect(entries.length).toBe(3);
-    expect(entries[0].status).toBe('approved');
-    expect(entries[0].requestId).toBe('req-001');
-    expect(entries[1].status).toBe('denied');
-    expect(entries[1].requestId).toBe('req-002');
-    expect(entries[2].status).toBe('escalated');
-    expect(entries[2].requestId).toBe('req-003');
-  });
-
-  it('combines pending requests and audit log entries', () => {
-    const auditEntries: AuditLogEntry[] = [
-      {
-        timestamp: '2026-02-03T10:00:00Z',
-        paneId: '%42',
-        toolName: 'Read',
-        action: 'approve',
-        reason: 'allowed',
-        wishId: undefined,
-        requestId: 'req-001',
-      },
-    ];
-    writeAuditLog(tmpDir, auditEntries);
-
-    const queue = createPermissionRequestQueue();
-    queue.add(makeRequest({ id: 'req-pending' }));
-
-    const entries = getStatusEntries({ auditDir: tmpDir, queue });
-    expect(entries.length).toBe(2);
-
-    const statuses = entries.map((e) => e.status);
-    expect(statuses).toContain('pending');
-    expect(statuses).toContain('approved');
+    const entries = await getStatusEntries({ queue });
+    // Pending entry should be included (PG audit entries may also be present)
+    const pending = entries.filter((e) => e.status === 'pending');
+    expect(pending.length).toBe(1);
+    expect(pending[0].requestId).toBe('req-abc');
+    expect(pending[0].toolName).toBe('Bash');
   });
 });
 
@@ -202,7 +120,6 @@ describe('engine lifecycle', () => {
 
   beforeEach(() => {
     tmpDir = makeTmpDir();
-    // Ensure engine is stopped before each test
     if (isEngineRunning()) {
       stopEngine();
     }
@@ -220,19 +137,19 @@ describe('engine lifecycle', () => {
   });
 
   it('startEngine sets running state to true', async () => {
-    await startEngine({ auditDir: tmpDir, repoPath: tmpDir });
+    await startEngine({ repoPath: tmpDir });
     expect(isEngineRunning()).toBe(true);
   });
 
   it('stopEngine sets running state to false', async () => {
-    await startEngine({ auditDir: tmpDir, repoPath: tmpDir });
+    await startEngine({ repoPath: tmpDir });
     stopEngine();
     expect(isEngineRunning()).toBe(false);
   });
 
   it('calling startEngine twice does not throw', async () => {
-    await startEngine({ auditDir: tmpDir, repoPath: tmpDir });
-    await startEngine({ auditDir: tmpDir, repoPath: tmpDir });
+    await startEngine({ repoPath: tmpDir });
+    await startEngine({ repoPath: tmpDir });
     expect(isEngineRunning()).toBe(true);
   });
 
