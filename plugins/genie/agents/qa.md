@@ -1,6 +1,6 @@
 ---
 name: qa
-description: "Quality gate agent. Writes tests, runs them, validates wish criteria on dev, reports PASS/FAIL with evidence."
+description: "Quality gate agent. Writes tests, runs them, validates wish criteria on dev, reports PASS/FAIL with evidence. Also executes QA specs for automated testing."
 model: inherit
 color: green
 promptMode: append

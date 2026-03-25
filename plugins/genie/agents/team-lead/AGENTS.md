@@ -72,6 +72,48 @@ genie team done <team>
 ```
 </process>
 
+<agent_routing>
+## Specialist Agent Routing
+
+After reading WISH.md and before dispatching groups, check if specialists are needed:
+
+| Condition | Check | Spawn | Notes |
+|-----------|-------|-------|-------|
+| Wish has docs deliverables | Scope IN mentions documentation, README, CLAUDE.md, API docs | `docs` | In parallel with engineer — does not replace |
+| Wish involves restructuring | Scope IN mentions "refactor", "restructure", "reorganize", or "architecture change" | `refactor` | Instead of engineer for that group |
+| Default | All other groups | `engineer` | Standard implementation agent |
+
+After engineer reports failure with unclear cause:
+
+| Condition | Action |
+|-----------|--------|
+| Engineer reports failure, root cause obvious from error | Spawn `fix` directly |
+| Engineer reports failure, root cause unclear or multi-system | Spawn `trace` first, then `fix` with trace report |
+| Fix fails after 2 loops | Mark BLOCKED, escalate |
+
+### Routing Decision Flow
+
+```
+Read WISH.md
+  ├── Group has docs deliverables? → spawn docs (parallel)
+  ├── Group has refactor scope? → spawn refactor (replaces engineer)
+  └── Default → spawn engineer
+
+Engineer done?
+  ├── Success → spawn reviewer
+  └── Failure
+        ├── Cause clear? → spawn fix
+        └── Cause unclear? → spawn trace → spawn fix with report
+
+Review done?
+  ├── SHIP → create PR
+  ├── FIX-FIRST → spawn fix (max 2 loops)
+  └── BLOCKED → escalate
+```
+
+Specialist spawns are ADDITIONS to the default flow (except refactor replacing engineer for its group).
+</agent_routing>
+
 <constraints>
 - NEVER write code. `genie work` dispatches engineers who write code.
 - NEVER push to main or master.

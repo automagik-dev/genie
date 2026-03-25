@@ -90,7 +90,7 @@ function publishQaEvent(qaType: string, payload: QaEventPayload): void {
   nats.publish(`genie.qa.${qaType}`, {
     timestamp: new Date().toISOString(),
     kind: 'qa',
-    agent: 'qa-runner',
+    agent: 'qa',
     team,
     text: `${qaType}: ${specKey}`,
     data: { qaType, specKey, domain, ...rest },
@@ -142,7 +142,7 @@ async function prepareTeams(entries: SpecEntry[], repoPath: string, ndjson: bool
     try {
       const spec = await parseQaSpec(entry.filePath);
       const config = await teamManager.createTeam(teamName, repoPath);
-      await teamManager.hireAgent(teamName, 'qa-runner');
+      await teamManager.hireAgent(teamName, 'qa');
 
       const prompt = buildTeamLeadPrompt(spec, teamName, repoPath);
       const promptFile = join(tmpdir(), `genie-qa-${teamName}.md`);
@@ -325,7 +325,7 @@ async function runPreparedSpec(
 
   try {
     const { handleWorkerSpawn } = await import('../term-commands/agents.js');
-    await handleWorkerSpawn('qa-runner', {
+    await handleWorkerSpawn('qa', {
       provider: 'claude',
       team: teamName,
       cwd: worktreePath,
@@ -333,7 +333,7 @@ async function runPreparedSpec(
       extraArgs: ['--append-system-prompt-file', promptFile],
       initialPrompt: `Execute the QA spec "${spec.name}". Your full instructions are in the system prompt. Start now.`,
     });
-    console.error(`  [qa] Spawned qa-runner for "${spec.name}" in ${teamName}`);
+    console.error(`  [qa] Spawned qa for "${spec.name}" in ${teamName}`);
 
     const report = await waitForResult(spec, teamName, timeoutMs, start);
     return report;
