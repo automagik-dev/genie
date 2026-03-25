@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { $ } from 'bun';
+import { setupTestSchema } from '../lib/test-db.js';
 
 // ============================================================================
 // Test Setup
@@ -20,7 +21,13 @@ const TEST_GENIE_HOME = join(TEST_DIR, 'genie-home');
 // Path to the genie CLI entrypoint
 const GENIE_BIN = join(import.meta.dir, '..', 'genie.ts');
 
+// PG schema cleanup — assigned in setupTestRepo, called in cleanupTestRepo
+const pgState: { cleanup: () => Promise<void> } = { cleanup: async () => {} };
+
 async function setupTestRepo(): Promise<void> {
+  // Set up PG test schema isolation — teams are stored in PG now
+  pgState.cleanup = await setupTestSchema();
+
   try {
     await rm(TEST_DIR, { recursive: true, force: true });
   } catch {
@@ -95,6 +102,7 @@ describe('genie team CLI', () => {
 
   afterAll(async () => {
     await cleanupTestRepo();
+    await pgState.cleanup();
   });
 
   test('team create creates a team', async () => {
