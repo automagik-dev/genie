@@ -9,14 +9,8 @@
  *   genie agent approve --stop                    - Stop the auto-approve engine
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import {
-  type AuditLogEntry,
-  type AutoApproveEngine,
-  createAutoApproveEngine,
-  sendApprovalViaTmux,
-} from '../lib/auto-approve-engine.js';
+import { queryAuditEvents } from '../lib/audit.js';
+import { type AutoApproveEngine, createAutoApproveEngine, sendApprovalViaTmux } from '../lib/auto-approve-engine.js';
 import { loadAutoApproveConfig } from '../lib/auto-approve.js';
 import type { PermissionRequestQueue } from '../lib/event-listener.js';
 
@@ -46,10 +40,10 @@ interface StatusEntry {
  * Options for getStatusEntries
  */
 interface GetStatusOptions {
-  /** Base directory where .genie/auto-approve-audit.jsonl lives */
-  auditDir: string;
   /** The permission request queue for pending items */
   queue: PermissionRequestQueue;
+  /** @deprecated No longer used — audit events are read from PG. Kept for backward compat. */
+  auditDir?: string;
 }
 
 /**
@@ -64,8 +58,6 @@ interface ManualActionOptions {
  * Options for starting the engine
  */
 interface StartEngineOptions {
-  /** Base directory for the audit log */
-  auditDir: string;
   /** Repository path for config loading */
   repoPath: string;
 }
@@ -80,73 +72,46 @@ let currentEngine: AutoApproveEngine | null = null;
 // Status
 // ============================================================================
 
-const AUDIT_LOG_FILENAME = 'auto-approve-audit.jsonl';
-
 /**
- * Read audit log entries from disk
+ * Map an audit event_type to a status string
  */
-function readAuditLog(auditDir: string): AuditLogEntry[] {
-  const logPath = join(auditDir, '.genie', AUDIT_LOG_FILENAME);
-  if (!existsSync(logPath)) {
-    return [];
-  }
-
-  try {
-    const content = readFileSync(logPath, 'utf-8');
-    const lines = content
-      .trim()
-      .split('\n')
-      .filter((line) => line.trim());
-    const entries: AuditLogEntry[] = [];
-
-    for (const line of lines) {
-      try {
-        entries.push(JSON.parse(line) as AuditLogEntry);
-      } catch {
-        // Skip malformed lines
-      }
-    }
-
-    return entries;
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Map an audit action to a status string
- */
-function actionToStatus(action: 'approve' | 'deny' | 'escalate'): StatusEntry['status'] {
-  switch (action) {
+function eventTypeToStatus(eventType: string): StatusEntry['status'] {
+  switch (eventType) {
     case 'approve':
       return 'approved';
     case 'deny':
       return 'denied';
     case 'escalate':
       return 'escalated';
+    default:
+      return 'escalated';
   }
 }
 
 /**
- * Get all status entries (pending from queue + completed from audit log).
+ * Get all status entries (pending from queue + completed from audit_events PG).
  *
- * @param options - Options containing auditDir and queue
+ * @param options - Options containing queue
  * @returns Array of StatusEntry, audit log entries first then pending
  */
-export function getStatusEntries(options: GetStatusOptions): StatusEntry[] {
+export async function getStatusEntries(options: GetStatusOptions): Promise<StatusEntry[]> {
   const entries: StatusEntry[] = [];
 
-  // 1. Read completed entries from audit log
-  const auditEntries = readAuditLog(options.auditDir);
-  for (const audit of auditEntries) {
-    entries.push({
-      requestId: audit.requestId,
-      toolName: audit.toolName,
-      paneId: audit.paneId,
-      status: actionToStatus(audit.action),
-      reason: audit.reason,
-      timestamp: audit.timestamp,
-    });
+  // 1. Read completed entries from audit_events PG table
+  try {
+    const auditRows = await queryAuditEvents({ entity: 'approval', limit: 100 });
+    for (const row of auditRows) {
+      entries.push({
+        requestId: row.entity_id,
+        toolName: (row.details?.toolName as string) ?? '',
+        paneId: (row.details?.paneId as string) ?? undefined,
+        status: eventTypeToStatus(row.event_type),
+        reason: (row.details?.reason as string) ?? '',
+        timestamp: row.created_at,
+      });
+    }
+  } catch {
+    // PG may be unavailable — continue with pending only
   }
 
   // 2. Add pending entries from queue
@@ -233,7 +198,6 @@ export async function startEngine(options: StartEngineOptions): Promise<void> {
 
   currentEngine = createAutoApproveEngine({
     config,
-    auditDir: options.auditDir,
     sendApproval: sendApprovalViaTmux,
   });
 

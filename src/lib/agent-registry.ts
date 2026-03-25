@@ -6,6 +6,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { recordAuditEvent } from './audit.js';
 import { getConnection } from './db.js';
 import type { ProviderName } from './provider-adapters.js';
 
@@ -187,6 +188,10 @@ export async function update(id: string, updates: Partial<Agent>): Promise<void>
   if (updates.state !== undefined) {
     s.state = updates.state;
     s.last_state_change = new Date().toISOString();
+    // Emit audit event for state transitions
+    recordAuditEvent('worker', id, 'state_changed', process.env.GENIE_AGENT_NAME ?? 'cli', {
+      state: updates.state,
+    }).catch(() => {});
   }
   if (updates.lastStateChange !== undefined) s.last_state_change = updates.lastStateChange;
   if (updates.repoPath !== undefined) s.repo_path = updates.repoPath;
