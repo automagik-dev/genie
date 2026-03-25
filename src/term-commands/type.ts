@@ -67,6 +67,7 @@ function printTypePipeline(t: taskServiceTypes.TaskTypeRow): void {
 }
 
 async function handleTypeList(options: { json?: boolean }): Promise<void> {
+  console.warn('Warning: `genie type` is deprecated. Use `genie board` instead.');
   const ts = await getTaskService();
   const types = await ts.listTypes();
 
@@ -79,6 +80,7 @@ async function handleTypeList(options: { json?: boolean }): Promise<void> {
 }
 
 async function handleTypeShow(id: string, options: { json?: boolean }): Promise<void> {
+  console.warn('Warning: `genie type` is deprecated. Use `genie board` instead.');
   const ts = await getTaskService();
   const t = await ts.getType(id);
   if (!t) {
@@ -98,6 +100,7 @@ async function handleTypeCreate(
   name: string,
   options: { stages: string; description?: string; icon?: string },
 ): Promise<void> {
+  console.warn('Warning: `genie type` is deprecated. Use `genie board` instead.');
   const ts = await getTaskService();
 
   let stages: unknown[];
