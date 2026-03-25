@@ -19,6 +19,11 @@ CREATE TABLE IF NOT EXISTS boards (
 
 CREATE INDEX IF NOT EXISTS idx_boards_project ON boards(project_id);
 
+-- Partial unique index for global boards (project_id IS NULL).
+-- The composite UNIQUE(project_id, name) doesn't prevent duplicates when project_id
+-- is NULL because PostgreSQL treats NULLs as distinct. This index fixes that.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_boards_global_name ON boards(name) WHERE project_id IS NULL;
+
 -- ============================================================================
 -- Table: board_templates — Reusable board blueprints
 -- ============================================================================
@@ -141,7 +146,7 @@ SELECT
     FROM jsonb_array_elements(tt.stages) WITH ORDINALITY AS pos(s, idx)
   )
 FROM task_types tt
-ON CONFLICT (project_id, name) DO NOTHING;
+ON CONFLICT (name) WHERE project_id IS NULL DO NOTHING;
 
 -- Link tasks to boards by resolving type_id -> board name
 UPDATE tasks t
