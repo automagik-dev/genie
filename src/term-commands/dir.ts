@@ -47,63 +47,15 @@ export function registerDirNamespace(program: Command): void {
     .option('--model <model>', 'Default model (sonnet, opus, codex)')
     .option('--roles <roles...>', 'Built-in roles this agent can orchestrate')
     .option('--global', 'Write to global directory instead of project')
-    .action(
-      async (
-        name: string,
-        options: {
-          dir: string;
-          repo?: string;
-          promptMode: string;
-          model?: string;
-          roles?: string[];
-          global?: boolean;
-        },
-      ) => {
-        try {
-          const promptMode = validatePromptMode(options.promptMode);
-          const resolvedDir = resolvePath(options.dir);
-          const entry = await directory.add(
-            {
-              name,
-              dir: resolvedDir,
-              repo: options.repo ? resolvePath(options.repo) : undefined,
-              promptMode,
-              model: options.model,
-              roles: options.roles,
-            },
-            { global: options.global },
-          );
-
-          // Also register in app_store (primary source of truth)
-          try {
-            await registerItemInStore({
-              name,
-              itemType: 'agent',
-              installPath: resolvedDir,
-              manifest: { promptMode, model: options.model, roles: options.roles, repo: options.repo },
-            });
-          } catch {
-            // Best-effort — legacy agents table is still the spawn path
-          }
-          await regenerateAgentCache();
-          recordAuditEvent('item', name, 'item_registered', getActor(), { type: 'agent', source: 'dir_add' }).catch(
-            () => {},
-          );
-
-          const scope = options.global ? 'global' : 'project';
-          console.log(`Agent "${entry.name}" registered (${scope}).`);
-          console.log(`  Dir: ${contractPath(entry.dir)}`);
-          if (entry.repo) console.log(`  Repo: ${contractPath(entry.repo)}`);
-          console.log(`  Prompt mode: ${entry.promptMode}`);
-          if (entry.model) console.log(`  Model: ${entry.model}`);
-          if (entry.roles?.length) console.log(`  Roles: ${entry.roles.join(', ')}`);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.error(`Error: ${message}`);
-          process.exit(1);
-        }
-      },
-    );
+    .action(async (name: string, options: DirAddOptions) => {
+      try {
+        await handleDirAdd(name, options);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
 
   // dir rm <name>
   dir
@@ -173,6 +125,49 @@ export function registerDirNamespace(program: Command): void {
         process.exit(1);
       }
     });
+}
+
+interface DirAddOptions {
+  dir: string;
+  repo?: string;
+  promptMode: string;
+  model?: string;
+  roles?: string[];
+  global?: boolean;
+}
+
+async function handleDirAdd(name: string, options: DirAddOptions): Promise<void> {
+  const promptMode = validatePromptMode(options.promptMode);
+  const resolvedDir = resolvePath(options.dir);
+  const entry = await directory.add(
+    {
+      name,
+      dir: resolvedDir,
+      repo: options.repo ? resolvePath(options.repo) : undefined,
+      promptMode,
+      model: options.model,
+      roles: options.roles,
+    },
+    { global: options.global },
+  );
+
+  // Also register in app_store (primary source of truth)
+  try {
+    await registerItemInStore({
+      name,
+      itemType: 'agent',
+      installPath: resolvedDir,
+      manifest: { promptMode, model: options.model, roles: options.roles, repo: options.repo },
+    });
+  } catch {
+    // Best-effort — legacy agents table is still the spawn path
+  }
+  await regenerateAgentCache();
+  recordAuditEvent('item', name, 'item_registered', getActor(), { type: 'agent', source: 'dir_add' }).catch(() => {});
+
+  const scope = options.global ? 'global' : 'project';
+  console.log(`Agent "${entry.name}" registered (${scope}).`);
+  printEntry(entry);
 }
 
 interface EditOptions {
