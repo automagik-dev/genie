@@ -197,7 +197,8 @@ async function handleExternalStackItem(
   item: import('../lib/manifest.js').StackItem,
   tx: Awaited<ReturnType<typeof getConnection>>,
 ): Promise<string> {
-  const parsed = parseInstallTarget(item.source!);
+  if (!item.source) throw new Error(`Stack item "${item.name}" is missing source`);
+  const parsed = parseInstallTarget(item.source);
   const itemDir = join(ITEMS_DIR, parsed.name);
   mkdirSync(ITEMS_DIR, { recursive: true });
   cloneRepo(parsed.url, itemDir, { version: parsed.version });
@@ -224,7 +225,8 @@ async function handleExternalStackItem(
 }
 
 async function installStack(manifest: GenieManifest, _installPath: string): Promise<void> {
-  if (!manifest.stack?.items) return;
+  const stackItems = manifest.stack?.items;
+  if (!stackItems) return;
   if (!(await isAvailable())) return;
 
   const sql = await getConnection();
@@ -232,7 +234,7 @@ async function installStack(manifest: GenieManifest, _installPath: string): Prom
 
   try {
     await sql.begin(async (tx: typeof sql) => {
-      for (const item of manifest.stack!.items) {
+      for (const item of stackItems) {
         if (item.inline) {
           await handleInlineStackItem(item, manifest.version, tx);
           installed.push(item.name);
