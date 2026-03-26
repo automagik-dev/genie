@@ -462,7 +462,7 @@ export async function importBoard(json: BoardExport, projectId: string): Promise
 // Reconciliation
 // ============================================================================
 
-export interface ReconcileResult {
+interface ReconcileResult {
   fixed: number;
   orphaned: number;
   details: { taskId: string; stage: string; oldColumnId: string | null; newColumnId: string | null }[];

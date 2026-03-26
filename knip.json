@@ -4,5 +4,5 @@
   "project": ["src/**/*.ts"],
   "ignoreBinaries": ["tmux", "which"],
   "ignoreDependencies": ["nats"],
-  "ignoreExportsUsedInFile": true
+  "ignoreExportsUsedInFile": false
 }

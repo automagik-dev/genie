@@ -25,7 +25,7 @@ export interface StoredResult {
   error?: string;
 }
 
-export interface QaResults {
+interface QaResults {
   [specKey: string]: StoredResult;
 }
 

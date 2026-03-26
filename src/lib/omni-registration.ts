@@ -15,7 +15,7 @@ import { loadGenieConfig } from './genie-config.js';
 // Types
 // ============================================================================
 
-export interface OmniAgentRegistration {
+interface OmniAgentRegistration {
   name: string;
   provider: 'claude' | 'agno' | 'openai' | 'gemini' | 'custom' | 'omni-internal';
   model?: string;
@@ -24,7 +24,7 @@ export interface OmniAgentRegistration {
   metadata?: Record<string, unknown>;
 }
 
-export interface OmniAgentResponse {
+interface OmniAgentResponse {
   id: string;
   name: string;
   provider: string;

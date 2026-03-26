@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 // Types
 // ============================================================================
 
-export interface RoutingHeader {
+interface RoutingHeader {
   channel: string; // telegram, whatsapp-baileys, discord, slack
   instance: string; // source instance ID
   chat: string; // chat/conversation ID

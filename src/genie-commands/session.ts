@@ -46,7 +46,7 @@ export function getAgentsFilePath(): string | null {
   return null;
 }
 
-export interface SessionOptions {
+interface SessionOptions {
   reset?: boolean;
   name?: string;
   dir?: string;
