@@ -32,17 +32,15 @@ Genie is an AI orchestration CLI that turns vague ideas into shipped PRs. You de
 
 **Prerequisites:** curl, bash, git (pre-installed on macOS/Linux/WSL)
 
-Run these commands in sequence to install Genie and initialize your workspace:
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
 genie
 /wizard
 ```
 
-That's it. The wizard handles everything: project scaffold, identity, first wish, execution, and review. In ~5 minutes, you'll have your workspace scaffolded and ready to execute your first wish.
+The wizard handles everything: project scaffold, identity, first wish, execution, and review.
 
-## What Happens Next
+## How It Works
 
 ```
  You describe an idea
@@ -52,14 +50,51 @@ That's it. The wizard handles everything: project scaffold, identity, first wish
               └─ /review ── Automated severity-gated review. You approve the PR.
 ```
 
-## Why Genie?
+## Features
 
-- **No re-explaining** — Genie captures context once. Every agent inherits it.
-- **Parallel execution** — Multiple agents work simultaneously in isolated worktrees.
+### Orchestration
+- **Wish pipeline** — Brainstorm, plan, execute, review, ship. One continuous flow.
+- **Parallel agents** — Multiple agents work simultaneously in isolated worktrees.
 - **Automated review** — Severity-tagged gaps. Nothing ships with CRITICAL issues.
+- **10-critic council** — 10 specialist perspectives critique your design before you commit.
 - **Overnight mode** — Queue wishes before bed. Wake up to reviewed PRs.
-- **10-critic council** — 10 specialists critique your design before you commit.
+
+### Task Management
+- **Boards** — Kanban-style pipelines with columns, gates, and WIP limits. Create from templates or build your own.
+- **Tasks** — Full lifecycle: create, assign, move through stages (`draft` → `brainstorm` → `wish` → `build` → `review` → `qa` → `ship`), block/unblock, add dependencies.
+- **Projects** — Named task boards that scope work to a specific initiative.
+- **Tags, types, releases** — Organize tasks with custom tags, define task types with stage pipelines, group work into releases.
+
+### Observability
+- **Events** — Audit log with error aggregation, cost breakdown, tool analytics, and per-entity timelines.
+- **Metrics** — Machine snapshots, heartbeat history, per-agent resource usage.
+- **Sessions** — List, replay, and full-text search across Claude Code session transcripts.
+- **Unified log** — `genie log --follow` streams transcript, messages, tool calls, and state changes in one feed.
+
+### Infrastructure
+- **Postgres-backed** — All state in PostgreSQL (pgserve). Tasks, messages, events, metrics — queryable with `genie db query`.
+- **Scheduling** — Cron-based triggers with a systemd daemon. Heartbeat collection and orphan reconciliation built in.
+- **Export/Import** — Full backup and restore across boards, tasks, tags, projects, schedules, agents, and conversations.
+- **PG messaging** — Direct messages, broadcasts, threaded conversations, and inbox — all persisted and searchable.
+
+### Developer Experience
+- **14 built-in skills** — `/brainstorm`, `/wish`, `/work`, `/review`, `/council`, `/dream`, `/trace`, `/fix`, `/report`, `/refine`, `/learn`, `/docs`, `/genie`, `/wizard`.
+- **BYOA** — Bring your own agent. Works with Claude, Codex, or any OpenAI-compatible provider.
 - **Portable context** — Identity, skills, memory — markdown files you own, git-versioned.
+- **QA system** — Self-testing specs with `genie qa run`. Validates CLI correctness continuously.
+
+### CLI at a Glance
+
+46 commands across agent lifecycle, task management, boards, observability, messaging, and infrastructure. [Full CLI reference →](https://docs.automagik.dev/genie/cli/session)
+
+```bash
+genie spawn engineer --model sonnet     # Spawn an agent
+genie task create "Add dark mode"       # Create a task
+genie board show                        # View your Kanban board
+genie events costs --last 24h           # Check API spend
+genie log --follow --team my-team       # Stream team activity
+genie export all -o backup.json         # Full backup
+```
 
 ---
 
