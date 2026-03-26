@@ -103,7 +103,7 @@ export const DEFAULT_SPAWN_TIMEOUT_MS = 30_000;
 export const READINESS_POLL_INTERVAL_MS = 2_000;
 
 /** Result of a readiness check. */
-export interface ReadinessResult {
+interface ReadinessResult {
   ready: boolean;
   elapsedMs: number;
 }

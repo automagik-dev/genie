@@ -20,12 +20,12 @@ type Sql = postgres.Sql;
 // Types
 // ---------------------------------------------------------------------------
 
-export interface MigrationRecord {
+interface MigrationRecord {
   name: string;
   applied_at: string | null; // ISO timestamp if applied, null if pending
 }
 
-export interface MigrationStatus {
+interface MigrationStatus {
   applied: MigrationRecord[];
   pending: MigrationRecord[];
 }

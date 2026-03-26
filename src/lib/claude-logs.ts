@@ -316,7 +316,7 @@ export function parseLogEntry(line: string): ClaudeLogEntry | null {
  * @param logPath - Path to the .jsonl log file
  * @returns Array of parsed log entries
  */
-export async function readLogFile(logPath: string): Promise<ClaudeLogEntry[]> {
+async function readLogFile(logPath: string): Promise<ClaudeLogEntry[]> {
   const entries: ClaudeLogEntry[] = [];
 
   try {
@@ -385,7 +385,7 @@ async function findLogsForWorkspace(
  * @param claudeDir - Optional custom Claude directory
  * @returns Log file path and session info, or null if not found
  */
-export async function getLogsForPane(
+async function getLogsForPane(
   paneWorkdir: string,
   claudeDir?: string,
 ): Promise<{ logPath: string; session: ClaudeSession; projectDir: string } | null> {

@@ -273,10 +273,10 @@ export async function readTeamLog(
 // ============================================================================
 
 /** Callback for new events in follow mode. */
-export type LogEventCallback = (event: LogEvent) => void;
+type LogEventCallback = (event: LogEvent) => void;
 
 /** Handle returned by follow functions to stop streaming. */
-export interface FollowHandle {
+interface FollowHandle {
   stop: () => Promise<void>;
   /** 'nats' if streaming via NATS, 'poll' if file polling fallback */
   mode: 'nats' | 'poll';

@@ -74,7 +74,7 @@ export async function getCurrentSessionName(hint?: string): Promise<string | nul
 /**
  * List all tmux sessions
  */
-export async function listSessions(): Promise<TmuxSession[]> {
+async function listSessions(): Promise<TmuxSession[]> {
   try {
     const format = '#{session_id}:#{session_name}:#{?session_attached,1,0}:#{session_windows}';
     const output = await executeTmux(`list-sessions -F '${format}'`);
@@ -234,7 +234,7 @@ export async function createSession(name: string): Promise<TmuxSession | null> {
 /**
  * Create a new window in a session
  */
-export async function createWindow(sessionId: string, name: string, workingDir?: string): Promise<TmuxWindow | null> {
+async function createWindow(sessionId: string, name: string, workingDir?: string): Promise<TmuxWindow | null> {
   const cdFlag = workingDir ? ` -c '${workingDir.replace(/'/g, "'\\''")}'` : '';
   // Use -d (don't switch focus) and -P -F to capture the window ID and index directly.
   // Avoids relying on findWindowByName which can fail if automatic-rename fires.
@@ -273,7 +273,7 @@ export async function findWindowByName(sessionId: string, name: string): Promise
  * @param session - The tmux session name
  * @param masterName - The expected name of the master/team-lead window
  */
-export async function ensureMasterWindow(session: string, masterName: string): Promise<void> {
+async function ensureMasterWindow(session: string, masterName: string): Promise<void> {
   try {
     const windows = await listWindows(session);
     if (windows.length < 2) return; // Nothing to swap with a single window

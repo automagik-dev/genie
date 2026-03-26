@@ -12,7 +12,7 @@ type Sql = postgres.Sql;
 /**
  * Get all user tables in the current schema (excludes system tables and migration tracker).
  */
-export async function getAvailableTables(sql: Sql): Promise<string[]> {
+async function getAvailableTables(sql: Sql): Promise<string[]> {
   const rows = await sql<{ table_name: string }[]>`
     SELECT table_name
     FROM information_schema.tables

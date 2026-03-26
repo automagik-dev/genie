@@ -426,7 +426,7 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
  * Scans all team configs in PG — if a team's worktreePath (clone directory) no longer
  * exists on disk, deletes that team's row and its ~/.claude/teams/ dir.
  */
-export async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
+async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
   const sql = await getConnection();
   const rows = await sql`SELECT name, worktree_path FROM teams`;
 
