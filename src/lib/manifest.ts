@@ -18,7 +18,7 @@ import * as yaml from 'js-yaml';
 
 export type ItemType = 'agent' | 'skill' | 'app' | 'board' | 'workflow' | 'stack' | 'template' | 'hook';
 
-export const ITEM_TYPES: ItemType[] = ['agent', 'skill', 'app', 'board', 'workflow', 'stack', 'template', 'hook'];
+const ITEM_TYPES: ItemType[] = ['agent', 'skill', 'app', 'board', 'workflow', 'stack', 'template', 'hook'];
 
 export interface StageConfig {
   name: string;
@@ -56,7 +56,7 @@ export interface GenieManifest {
   license?: string;
 }
 
-export interface ValidationResult {
+interface ValidationResult {
   valid: boolean;
   errors: string[];
   warnings: string[];
@@ -72,7 +72,7 @@ export interface ValidationResult {
  * Validates that required fields (name, type, version) are present and that
  * the type value is a recognized ItemType. Throws on invalid input.
  */
-export function parseManifest(yamlContent: string): GenieManifest {
+function parseManifest(yamlContent: string): GenieManifest {
   const raw = yaml.load(yamlContent);
   if (!raw || typeof raw !== 'object') {
     throw new Error('Manifest YAML is empty or not an object');

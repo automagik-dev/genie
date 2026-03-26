@@ -35,7 +35,7 @@ const defaultDeps: InboxWatcherDeps = {
 // ============================================================================
 
 /** Default inbox poll interval in milliseconds (30 seconds). */
-export const INBOX_POLL_INTERVAL_MS = 30_000;
+const INBOX_POLL_INTERVAL_MS = 30_000;
 
 /** Maximum consecutive spawn failures before skipping a team. */
 const MAX_SPAWN_FAILURES = 3;

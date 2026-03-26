@@ -20,24 +20,24 @@ import { getConnection } from './db.js';
 // Schemas
 // ============================================================================
 
-export const GroupStatusSchema = z.enum(['blocked', 'ready', 'in_progress', 'done']);
+const GroupStatusSchema = z.enum(['blocked', 'ready', 'in_progress', 'done']);
 
-export const GroupStateSchema = z.object({
+const GroupStateSchema = z.object({
   status: GroupStatusSchema,
   assignee: z.string().optional(),
   dependsOn: z.array(z.string()).default([]),
   startedAt: z.string().optional(),
   completedAt: z.string().optional(),
 });
-export type GroupState = z.infer<typeof GroupStateSchema>;
+type GroupState = z.infer<typeof GroupStateSchema>;
 
-export const WishStateSchema = z.object({
+const WishStateSchema = z.object({
   wish: z.string(),
   groups: z.record(z.string(), GroupStateSchema),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
-export type WishState = z.infer<typeof WishStateSchema>;
+type WishState = z.infer<typeof WishStateSchema>;
 
 // ============================================================================
 // Group definition (input to createState)

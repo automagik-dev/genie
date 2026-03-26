@@ -82,7 +82,7 @@ function parseCronField(field: string, min: number, max: number): number[] {
  *   - If both DOM and DOW are restricted (not *), the day matches if EITHER matches (union).
  *   - Otherwise, both must match (intersection — wildcards always match).
  */
-export interface CronOptions {
+interface CronOptions {
   /** Compute next occurrence after this time. Defaults to now. */
   after?: Date;
   /** IANA timezone (e.g. 'America/New_York'). When set, cron fields are matched against wall-clock time in this timezone. */

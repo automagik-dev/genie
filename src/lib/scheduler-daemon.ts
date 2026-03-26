@@ -673,7 +673,7 @@ const DEFAULT_MAX_RESUME_ATTEMPTS = 3;
  *   - 'exhausted' — retry budget depleted, agent marked permanently failed
  *   - 'skipped' — ineligible (autoResume off, cooldown, cap, no session, etc.)
  */
-export type ResumeResult = 'resumed' | 'exhausted' | 'skipped';
+type ResumeResult = 'resumed' | 'exhausted' | 'skipped';
 
 /**
  * Attempt to auto-resume a dead agent.
@@ -1158,7 +1158,7 @@ function startInboxWatcherIfEnabled(deps: SchedulerDeps): NodeJS.Timeout | null 
 // Daemon loop
 // ============================================================================
 
-export interface DaemonHandle {
+interface DaemonHandle {
   /** Stop the daemon gracefully. */
   stop: () => void;
   /** Promise that resolves when the daemon exits. */

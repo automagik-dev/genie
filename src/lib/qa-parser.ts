@@ -20,7 +20,7 @@ import { readFile } from 'node:fs/promises';
 // Types
 // ============================================================================
 
-export type SetupStepKind = 'spawn' | 'follow';
+type SetupStepKind = 'spawn' | 'follow';
 
 export interface SetupStep {
   kind: SetupStepKind;
@@ -30,7 +30,7 @@ export interface SetupStep {
   options: Record<string, string>;
 }
 
-export type ActionStepKind = 'send' | 'wait' | 'run';
+type ActionStepKind = 'send' | 'wait' | 'run';
 
 export interface ActionStep {
   kind: ActionStepKind;
@@ -94,7 +94,7 @@ function detectSection(line: string): Section | null {
 }
 
 /** Parse QA spec content directly (for testing). */
-export function parseQaSpecContent(content: string, filePath = '<inline>'): QaSpec {
+function parseQaSpecContent(content: string, filePath = '<inline>'): QaSpec {
   const lines = content.split('\n');
 
   let name = '';

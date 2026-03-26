@@ -210,7 +210,7 @@ async function autoCleanupTeam(): Promise<void> {
 /**
  * Kill the calling agent's tmux pane. If not in tmux, exit the process.
  */
-export function autoKillPane(): void {
+function autoKillPane(): void {
   const paneId = process.env.TMUX_PANE;
   if (paneId) {
     // Small delay to ensure all output is flushed before killing the pane
@@ -265,7 +265,7 @@ async function notifyWaveCompletion(
  * `genie done <slug>#<group>` — complete a group, push work, notify team-lead
  * on wave completion, and auto-kill the calling agent's tmux pane.
  */
-export async function doneCommand(ref: string): Promise<void> {
+async function doneCommand(ref: string): Promise<void> {
   try {
     const { slug, group } = parseRef(ref);
     const result = await wishState.completeGroup(slug, group);
@@ -317,7 +317,7 @@ export async function doneCommand(ref: string): Promise<void> {
 /**
  * `genie status <slug>` — pretty-print all groups with state/assignee/timestamps.
  */
-export async function statusCommand(slug: string): Promise<void> {
+async function statusCommand(slug: string): Promise<void> {
   try {
     let state = await wishState.getState(slug);
     if (!state) {

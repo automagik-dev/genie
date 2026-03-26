@@ -28,7 +28,7 @@ const CACHE_BACKUP = 'agent-directory.json.bak';
 // ============================================================================
 
 /** Denormalised cache entry written to agent-directory.json. */
-export interface CacheEntry {
+interface CacheEntry {
   name: string;
   dir: string;
   repo?: string;
@@ -60,7 +60,7 @@ export interface StoreRow {
 }
 
 /** Insert payload for registerItemInStore. */
-export interface StoreInsert {
+interface StoreInsert {
   name: string;
   itemType: string;
   version?: string;
