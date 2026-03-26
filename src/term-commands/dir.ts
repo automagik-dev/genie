@@ -47,63 +47,15 @@ export function registerDirNamespace(program: Command): void {
     .option('--model <model>', 'Default model (sonnet, opus, codex)')
     .option('--roles <roles...>', 'Built-in roles this agent can orchestrate')
     .option('--global', 'Write to global directory instead of project')
-    .action(
-      async (
-        name: string,
-        options: {
-          dir: string;
-          repo?: string;
-          promptMode: string;
-          model?: string;
-          roles?: string[];
-          global?: boolean;
-        },
-      ) => {
-        try {
-          const promptMode = validatePromptMode(options.promptMode);
-          const resolvedDir = resolvePath(options.dir);
-          const entry = await directory.add(
-            {
-              name,
-              dir: resolvedDir,
-              repo: options.repo ? resolvePath(options.repo) : undefined,
-              promptMode,
-              model: options.model,
-              roles: options.roles,
-            },
-            { global: options.global },
-          );
-
-          // Also register in app_store (primary source of truth)
-          try {
-            await registerItemInStore({
-              name,
-              itemType: 'agent',
-              installPath: resolvedDir,
-              manifest: { promptMode, model: options.model, roles: options.roles, repo: options.repo },
-            });
-          } catch {
-            // Best-effort — legacy agents table is still the spawn path
-          }
-          await regenerateAgentCache();
-          recordAuditEvent('item', name, 'item_registered', getActor(), { type: 'agent', source: 'dir_add' }).catch(
-            () => {},
-          );
-
-          const scope = options.global ? 'global' : 'project';
-          console.log(`Agent "${entry.name}" registered (${scope}).`);
-          console.log(`  Dir: ${contractPath(entry.dir)}`);
-          if (entry.repo) console.log(`  Repo: ${contractPath(entry.repo)}`);
-          console.log(`  Prompt mode: ${entry.promptMode}`);
-          if (entry.model) console.log(`  Model: ${entry.model}`);
-          if (entry.roles?.length) console.log(`  Roles: ${entry.roles.join(', ')}`);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.error(`Error: ${message}`);
-          process.exit(1);
-        }
-      },
-    );
+    .action(async (name: string, options: DirAddOptions) => {
+      try {
+        await handleDirAdd(name, options);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
 
   // dir rm <name>
   dir
@@ -175,6 +127,49 @@ export function registerDirNamespace(program: Command): void {
     });
 }
 
+interface DirAddOptions {
+  dir: string;
+  repo?: string;
+  promptMode: string;
+  model?: string;
+  roles?: string[];
+  global?: boolean;
+}
+
+async function handleDirAdd(name: string, options: DirAddOptions): Promise<void> {
+  const promptMode = validatePromptMode(options.promptMode);
+  const resolvedDir = resolvePath(options.dir);
+  const entry = await directory.add(
+    {
+      name,
+      dir: resolvedDir,
+      repo: options.repo ? resolvePath(options.repo) : undefined,
+      promptMode,
+      model: options.model,
+      roles: normalizeRoles(options.roles),
+    },
+    { global: options.global },
+  );
+
+  // Also register in app_store (primary source of truth)
+  try {
+    await registerItemInStore({
+      name,
+      itemType: 'agent',
+      installPath: resolvedDir,
+      manifest: { promptMode, model: options.model, roles: normalizeRoles(options.roles), repo: options.repo },
+    });
+  } catch {
+    // Best-effort — legacy agents table is still the spawn path
+  }
+  await regenerateAgentCache();
+  recordAuditEvent('item', name, 'item_registered', getActor(), { type: 'agent', source: 'dir_add' }).catch(() => {});
+
+  const scope = options.global ? 'global' : 'project';
+  console.log(`Agent "${entry.name}" registered (${scope}).`);
+  printEntry(entry);
+}
+
 interface EditOptions {
   dir?: string;
   repo?: string;
@@ -190,7 +185,7 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
   if (options.repo) updates.repo = resolvePath(options.repo);
   if (options.promptMode) updates.promptMode = validatePromptMode(options.promptMode);
   if (options.model) updates.model = options.model;
-  if (options.roles) updates.roles = options.roles;
+  if (options.roles) updates.roles = normalizeRoles(options.roles);
 
   if (Object.keys(updates).length === 0) {
     console.error('No fields to update. Provide at least one of: --dir, --repo, --prompt-mode, --model, --roles');
@@ -324,29 +319,52 @@ function listEntriesJson(entries: directory.ScopedDirectoryEntry[], includeBuilt
   console.log(JSON.stringify(result, null, 2));
 }
 
+/** Normalize roles: split comma-separated values into individual array items. */
+function normalizeRoles(roles?: string[]): string[] | undefined {
+  if (!roles) return undefined;
+  return roles
+    .flatMap((r) => r.split(','))
+    .map((r) => r.trim())
+    .filter(Boolean);
+}
+
 function printRegisteredTable(entries: directory.ScopedDirectoryEntry[]): void {
   const nameW = 22;
   const scopeW = 10;
-  const repoW = 30;
   const modelW = 8;
-  const rolesW = 20;
+
+  // Compute repo paths and roles upfront for dynamic sizing
+  const repoValues: string[] = [];
+  const roleValues: string[] = [];
+  for (const entry of entries) {
+    repoValues.push(entry.repo ? contractPath(entry.repo) : contractPath(entry.dir));
+    roleValues.push(normalizeRoles(entry.roles)?.join(', ') || '-');
+  }
+
+  // Size REPO column to fit longest value, capped to leave room for ROLES
+  const termW = process.stdout.columns || 120;
+  const fixedW = 2 + nameW + scopeW + modelW; // leading indent + fixed columns
+  const maxRepoLen = Math.max('REPO'.length, ...repoValues.map((v) => v.length));
+  const repoW = Math.min(maxRepoLen + 2, Math.max(30, termW - fixedW - 20));
+
+  const totalW = fixedW + repoW + 20;
 
   console.log('');
   console.log('REGISTERED AGENTS');
-  console.log('-'.repeat(90));
+  console.log('-'.repeat(Math.max(90, totalW)));
   console.log(
     `  ${'NAME'.padEnd(nameW)}${'SCOPE'.padEnd(scopeW)}${'REPO'.padEnd(repoW)}${'MODEL'.padEnd(modelW)}ROLES`,
   );
   console.log(
-    `  ${'-'.repeat(nameW - 2)}  ${'-'.repeat(scopeW - 2)}  ${'-'.repeat(repoW - 2)}  ${'-'.repeat(modelW - 2)}  ${'-'.repeat(rolesW)}`,
+    `  ${'-'.repeat(nameW - 2)}  ${'-'.repeat(scopeW - 2)}  ${'-'.repeat(repoW - 2)}  ${'-'.repeat(modelW - 2)}  ${'-'.repeat(20)}`,
   );
 
-  for (const entry of entries) {
-    const repo = entry.repo ? contractPath(entry.repo) : contractPath(entry.dir);
-    const truncRepo = repo.length > repoW - 2 ? `${repo.slice(0, repoW - 5)}...` : repo;
-    const roles = entry.roles?.join(', ') || '-';
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const repo = repoValues[i];
+    const roles = roleValues[i];
     console.log(
-      `  ${entry.name.padEnd(nameW)}${entry.scope.padEnd(scopeW)}${truncRepo.padEnd(repoW)}${(entry.model || '-').padEnd(modelW)}${roles}`,
+      `  ${entry.name.padEnd(nameW)}${entry.scope.padEnd(scopeW)}${repo.padEnd(repoW)}${(entry.model || '-').padEnd(modelW)}${roles}`,
     );
   }
   console.log('');
@@ -415,6 +433,7 @@ async function handleOmniRegistration(
 async function handleAgentRegister(name: string, options: RegisterOptions): Promise<void> {
   const promptMode = validatePromptMode(options.promptMode);
 
+  const roles = normalizeRoles(options.roles);
   const entry = await directory.add(
     {
       name,
@@ -422,7 +441,7 @@ async function handleAgentRegister(name: string, options: RegisterOptions): Prom
       repo: options.repo ? resolvePath(options.repo) : undefined,
       promptMode,
       model: options.model,
-      roles: options.roles,
+      roles,
     },
     { global: options.global },
   );
@@ -432,7 +451,7 @@ async function handleAgentRegister(name: string, options: RegisterOptions): Prom
   printEntry(entry);
 
   if (!options.skipOmni) {
-    await handleOmniRegistration(name, options);
+    await handleOmniRegistration(name, { ...options, roles });
   }
 }
 
