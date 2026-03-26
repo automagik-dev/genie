@@ -269,7 +269,7 @@ async function listEntries(json?: boolean, includeBuiltins?: boolean): Promise<v
         repo: (manifest.repo as string) ?? '',
         promptMode: ((manifest.promptMode as string) ?? 'append') as directory.PromptMode,
         model: manifest.model as string | undefined,
-        roles: manifest.roles as string[] | undefined,
+        roles: normalizeRoles(manifest.roles as string[] | undefined),
         registeredAt: item.installed_at as string,
         scope: 'global' as directory.DirectoryScope,
       };
@@ -338,7 +338,7 @@ function printRegisteredTable(entries: directory.ScopedDirectoryEntry[]): void {
   const roleValues: string[] = [];
   for (const entry of entries) {
     repoValues.push(entry.repo ? contractPath(entry.repo) : contractPath(entry.dir));
-    roleValues.push(normalizeRoles(entry.roles)?.join(', ') || '-');
+    roleValues.push(entry.roles?.join(', ') || '-');
   }
 
   // Size REPO column to fit longest value, capped to leave room for ROLES
