@@ -9,7 +9,7 @@
  */
 
 /** Tables at each FK dependency level (0 = no FK deps, higher = more deps) */
-export const IMPORT_LEVELS: string[][] = [
+const IMPORT_LEVELS: string[][] = [
   // Level 0: No FK dependencies
   [
     'schedules',
@@ -54,7 +54,7 @@ export const SELF_REFERENTIAL_COLUMNS: Record<string, string> = {
 /**
  * Get the import level for a table. Returns -1 if not in the graph.
  */
-export function getTableLevel(table: string): number {
+function getTableLevel(table: string): number {
   for (let i = 0; i < IMPORT_LEVELS.length; i++) {
     if (IMPORT_LEVELS[i].includes(table)) return i;
   }

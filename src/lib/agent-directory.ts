@@ -41,12 +41,12 @@ export interface ScopedDirectoryEntry extends DirectoryEntry {
   scope: DirectoryScope;
 }
 
-export interface ScopeOptions {
+interface ScopeOptions {
   global?: boolean;
 }
 
 /** Resolved agent — either a user directory entry or a built-in. */
-export interface ResolvedAgent {
+interface ResolvedAgent {
   /** The agent entry (user or synthetic built-in). */
   entry: DirectoryEntry;
   /** Whether this came from the built-in registry. */

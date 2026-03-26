@@ -305,4 +305,4 @@ export const codexTranscriptProvider: TranscriptProvider = {
 };
 
 // Exported for testing
-export { parseCodexLine, discoverViaSqlite, discoverViaScan, extractCodexContent };
+export { parseCodexLine, extractCodexContent };

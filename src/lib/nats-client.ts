@@ -12,9 +12,9 @@
 // Types
 // ============================================================================
 
-export type NatsMessageCallback = (subject: string, data: unknown) => void;
+type NatsMessageCallback = (subject: string, data: unknown) => void;
 
-export interface NatsSubscription {
+interface NatsSubscription {
   unsubscribe: () => void;
 }
 

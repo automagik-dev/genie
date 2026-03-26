@@ -188,12 +188,12 @@ export function parseWishGroups(content: string): GroupDefinition[] {
 // Execution Strategy Parser
 // ============================================================================
 
-export interface WaveGroup {
+interface WaveGroup {
   group: string;
   agent: string;
 }
 
-export interface Wave {
+interface Wave {
   name: string;
   groups: WaveGroup[];
 }
@@ -326,7 +326,7 @@ export function detectWorkMode(
  * the terminal immediately. Wave advancement is handled by `genie done`
  * notifying the team-lead.
  */
-export async function autoOrchestrateCommand(slug: string): Promise<void> {
+async function autoOrchestrateCommand(slug: string): Promise<void> {
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
   if (!existsSync(wishPath)) {
@@ -384,7 +384,7 @@ export async function autoOrchestrateCommand(slug: string): Promise<void> {
 /**
  * `genie brainstorm <agent> <slug>` — Read DRAFT.md, spawn agent with content.
  */
-export async function brainstormCommand(agentName: string, slug: string): Promise<void> {
+async function brainstormCommand(agentName: string, slug: string): Promise<void> {
   const draftPath = join(process.cwd(), '.genie', 'brainstorms', slug, 'DRAFT.md');
 
   if (!existsSync(draftPath)) {
@@ -426,7 +426,7 @@ export async function brainstormCommand(agentName: string, slug: string): Promis
 /**
  * `genie wish <agent> <slug>` — Read DESIGN.md, spawn agent with content.
  */
-export async function wishCommand(agentName: string, slug: string): Promise<void> {
+async function wishCommand(agentName: string, slug: string): Promise<void> {
   const designPath = join(process.cwd(), '.genie', 'brainstorms', slug, 'DESIGN.md');
 
   if (!existsSync(designPath)) {
@@ -474,7 +474,7 @@ export async function wishCommand(agentName: string, slug: string): Promise<void
  * 5. Build context with wish-level info + group section
  * 6. Spawn agent
  */
-export async function workDispatchCommand(agentName: string, ref: string): Promise<void> {
+async function workDispatchCommand(agentName: string, ref: string): Promise<void> {
   const { slug, group } = parseRef(ref);
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
@@ -548,7 +548,7 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
 /**
  * `genie review <agent> <slug>#<group>` — Spawn with group + git diff context.
  */
-export async function reviewCommand(agentName: string, ref: string): Promise<void> {
+async function reviewCommand(agentName: string, ref: string): Promise<void> {
   const { slug, group } = parseRef(ref);
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 

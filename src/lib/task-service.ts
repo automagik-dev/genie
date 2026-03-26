@@ -20,7 +20,7 @@ export interface Actor {
   actorId: string;
 }
 
-export interface TaskInput {
+interface TaskInput {
   title: string;
   description?: string;
   acceptanceCriteria?: string;
@@ -102,7 +102,7 @@ export interface TaskFilters {
   offset?: number;
 }
 
-export interface TaskActorRow {
+interface TaskActorRow {
   taskId: string;
   actorType: string;
   actorId: string;
@@ -111,7 +111,7 @@ export interface TaskActorRow {
   createdAt: string;
 }
 
-export interface DependencyRow {
+interface DependencyRow {
   taskId: string;
   dependsOnId: string;
   depType: string;
@@ -132,7 +132,7 @@ export interface ConversationRow {
   updatedAt: string;
 }
 
-export interface ConversationMemberRow {
+interface ConversationMemberRow {
   conversationId: string;
   actorType: string;
   actorId: string;
@@ -140,7 +140,7 @@ export interface ConversationMemberRow {
   joinedAt: string;
 }
 
-export interface MessageRow {
+interface MessageRow {
   id: number;
   conversationId: string;
   replyToId: number | null;
@@ -152,7 +152,7 @@ export interface MessageRow {
   updatedAt: string;
 }
 
-export interface TagRow {
+interface TagRow {
   id: string;
   name: string;
   color: string;
@@ -183,7 +183,7 @@ export interface NotificationPrefRow {
   updatedAt: string;
 }
 
-export interface StageLogRow {
+interface StageLogRow {
   id: number;
   taskId: string;
   fromStage: string | null;
@@ -195,7 +195,7 @@ export interface StageLogRow {
   createdAt: string;
 }
 
-export interface FindOrCreateConversationOpts {
+interface FindOrCreateConversationOpts {
   type?: 'dm' | 'group';
   name?: string;
   linkedEntity?: string;
@@ -205,7 +205,7 @@ export interface FindOrCreateConversationOpts {
   createdBy?: Actor;
 }
 
-export interface MessageListOpts {
+interface MessageListOpts {
   limit?: number;
   offset?: number;
   since?: string;
@@ -388,7 +388,7 @@ function mapProject(row: Record<string, unknown>): ProjectRow {
 // ============================================================================
 
 /** Resolve repo root via `git rev-parse --show-toplevel`, fallback to cwd. */
-export function getRepoPath(): string {
+function getRepoPath(): string {
   try {
     return execSync('git rev-parse --show-toplevel', {
       encoding: 'utf-8',

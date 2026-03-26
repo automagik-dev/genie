@@ -12,7 +12,7 @@
 import type { Command } from 'commander';
 import { computeNextCronDue, parseDuration } from '../lib/cron.js';
 import { getConnection, shutdown } from '../lib/db.js';
-export { computeNextCronDue, parseDuration };
+export { parseDuration };
 
 // ============================================================================
 // Types

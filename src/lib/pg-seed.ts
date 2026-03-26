@@ -432,7 +432,7 @@ export async function runSeed(sql: Sql, repoPath?: string): Promise<SeedResult> 
   return result;
 }
 
-export interface SeedResult {
+interface SeedResult {
   agents: number;
   templates: number;
   teams: number;
