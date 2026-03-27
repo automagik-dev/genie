@@ -98,6 +98,8 @@ export function buildContextPrompt(opts: {
   wishContext?: string;
   command: string;
   skill?: string;
+  /** Pre-computed enrichment from brain vault (via enrichContext). */
+  enrichedContext?: string;
 }): string {
   const parts = [
     `# Dispatch Context (${opts.command})`,
@@ -112,6 +114,10 @@ export function buildContextPrompt(opts: {
   }
 
   parts.push('## Assigned Section', '', opts.sectionContent, '');
+
+  if (opts.enrichedContext) {
+    parts.push(opts.enrichedContext);
+  }
 
   if (opts.skill) {
     parts.push('## Initial Command', '', `Run \`/${opts.skill}\` to begin.`, '');
