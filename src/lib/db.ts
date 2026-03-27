@@ -80,23 +80,45 @@ function getPort(): number {
   return DEFAULT_PORT;
 }
 
-/** Health check: actually connect to postgres and run SELECT 1 */
+/** Health check: actually connect to postgres and run SELECT 1.
+ *  Uses Promise.race with a hard 4s timeout so a proxy that accepts TCP
+ *  but never forwards the postgres protocol cannot hang forever.
+ *  The timeout timer is unref'd so it does not hold the event loop open
+ *  when the health check resolves first.
+ */
 async function isPostgresHealthy(port: number): Promise<boolean> {
   try {
-    const pg = (await import('postgres')).default;
-    const probe = pg({
-      host: DEFAULT_HOST,
-      port,
-      database: DB_NAME,
-      username: 'postgres',
-      password: 'postgres',
-      max: 1,
-      connect_timeout: 3,
-      idle_timeout: 1,
-    });
-    await probe`SELECT 1`;
-    await probe.end({ timeout: 2 });
-    return true;
+    return await Promise.race([
+      (async () => {
+        const pg = (await import('postgres')).default;
+        const probe = pg({
+          host: DEFAULT_HOST,
+          port,
+          database: DB_NAME,
+          username: 'postgres',
+          password: 'postgres',
+          max: 1,
+          connect_timeout: 3,
+          idle_timeout: 1,
+        });
+        try {
+          await probe`SELECT 1`;
+          await probe.end({ timeout: 2 });
+          return true;
+        } catch {
+          try {
+            await probe.end({ timeout: 1 });
+          } catch {
+            /* ignore */
+          }
+          return false;
+        }
+      })(),
+      new Promise<false>((resolve) => {
+        const t = setTimeout(() => resolve(false), 4000);
+        t.unref();
+      }),
+    ]);
   } catch {
     return false;
   }
