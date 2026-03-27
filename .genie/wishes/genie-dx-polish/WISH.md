@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `genie-dx-polish` |
 | **Date** | 2026-03-25 |
 | **Source** | [#800](https://github.com/automagik-dev/genie/issues/800) — 10 findings from daily-sync power session |

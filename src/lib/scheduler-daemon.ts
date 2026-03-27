@@ -1315,13 +1315,7 @@ export function startDaemon(
         await collectHeartbeats(deps);
         await collectMachineSnapshot(deps);
         await emitWorkerEvents(deps);
-        // Session JSONL ingestion (complementary to OTel)
-        try {
-          const { ingestSessions } = await import('./session-ingester.js');
-          await ingestSessions();
-        } catch {
-          // Best-effort
-        }
+        // Session JSONL ingestion moved to filewatch (event-driven, off-heartbeat)
         // Retention cleanup
         try {
           const retSql = await deps.getConnection();
@@ -1360,6 +1354,27 @@ export function startDaemon(
 
     // Start inbox watcher (polls native inboxes for unread messages)
     inboxWatcherHandle = startInboxWatcherIfEnabled(deps);
+
+    // Session capture v2: filewatch (event-driven) + backfill (lazy, one-time)
+    try {
+      const captureSql = await deps.getConnection();
+      const { startFilewatch } = await import('./session-filewatch.js');
+      const { startBackfill } = await import('./session-backfill.js');
+      await startFilewatch(captureSql);
+      // Backfill runs in background — non-blocking, auto-skips if already complete
+      startBackfill(captureSql).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        deps.log({ timestamp: deps.now().toISOString(), level: 'error', event: 'backfill_error', error: message });
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'warn',
+        event: 'session_capture_init_failed',
+        error: message,
+      });
+    }
 
     // Initial trigger check
     await processTriggers();

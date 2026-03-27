@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `docs-readme-review` |
 | **Date** | 2026-03-25 |
 | **Repos** | `automagik-dev/genie` (README), `automagik-dev/docs` (Mintlify) |
