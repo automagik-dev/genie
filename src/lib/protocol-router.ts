@@ -280,6 +280,14 @@ export async function sendMessage(
   body: string,
   teamName?: string,
 ): Promise<DeliveryResult> {
+  // Self-delivery guard: suppress messages where sender === recipient.
+  // Without this, the message lands in the sender's own native inbox and
+  // Claude Code surfaces it as an incoming teammate message, wasting turns
+  // and risking infinite echo loops. (See #818)
+  if (from === to) {
+    return { messageId: '', workerId: to, delivered: true, reason: 'Self-delivery suppressed' };
+  }
+
   // 1. Find live workers using strict tiered matching (ID > role > team:role)
   const liveMatches = await resolveRecipient(to);
 
