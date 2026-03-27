@@ -1228,6 +1228,16 @@ export function startDaemon(
     // Stop session capture layers
     import('./session-filewatch.js').then((m) => m.stopFilewatch()).catch(() => {});
     import('./session-backfill.js').then((m) => m.stopBackfill()).catch(() => {});
+    // Remove port file — daemon no longer owns PG
+    import('./db.js')
+      .then(({ getLockfilePath }) => {
+        try {
+          require('node:fs').unlinkSync(getLockfilePath());
+        } catch {
+          /* already gone */
+        }
+      })
+      .catch(() => {});
   };
 
   const processTriggers = async () => {
