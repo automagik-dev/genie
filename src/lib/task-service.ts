@@ -9,7 +9,7 @@
 
 import { execSync } from 'node:child_process';
 import { getActor, recordAuditEvent } from './audit.js';
-import { getConnection } from './db.js';
+import { type Sql, getConnection } from './db.js';
 
 // ============================================================================
 // Types
@@ -509,8 +509,7 @@ function toDateOrNull(v?: string): Date | null {
 }
 
 /** Resolve a stage name to a column_id within a board's columns JSONB. */
-// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
-async function resolveColumnId(sql: any, boardId: string, stageName: string): Promise<string | null> {
+async function resolveColumnId(sql: Sql, boardId: string, stageName: string): Promise<string | null> {
   const rows = await sql`SELECT columns FROM boards WHERE id = ${boardId} LIMIT 1`;
   if (rows.length === 0) return null;
   const columns = rows[0].columns as { id: string; name: string }[];
@@ -1071,11 +1070,7 @@ export async function getDependents(idOrSeq: string, repoPath?: string): Promise
 // Conversations
 // ============================================================================
 
-async function findExistingConversation(
-  opts: FindOrCreateConversationOpts,
-  // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
-  sql: any,
-): Promise<ConversationRow | null> {
+async function findExistingConversation(opts: FindOrCreateConversationOpts, sql: Sql): Promise<ConversationRow | null> {
   if (opts.linkedEntity && opts.linkedEntityId) {
     const rows = await sql`
       SELECT * FROM conversations

@@ -62,8 +62,7 @@ export interface TeamConfig {
 // ============================================================================
 
 /** Parse JSONB members — handles both parsed arrays and string-encoded JSON. */
-// biome-ignore lint/suspicious/noExplicitAny: JSONB may be returned as string or parsed value
-function parseMembers(raw: any): string[] {
+function parseMembers(raw: unknown): string[] {
   if (Array.isArray(raw)) return raw;
   if (typeof raw === 'string') {
     try {
@@ -76,9 +75,23 @@ function parseMembers(raw: any): string[] {
   return [];
 }
 
+interface TeamConfigRow {
+  name: string;
+  repo: string;
+  base_branch: string;
+  worktree_path: string;
+  members: unknown;
+  status: TeamStatus;
+  created_at: Date | string;
+  leader?: string;
+  native_team_parent_session_id?: string;
+  native_teams_enabled?: boolean;
+  tmux_session_name?: string;
+  wish_slug?: string;
+}
+
 /** Map a PG row to a TeamConfig object. */
-// biome-ignore lint/suspicious/noExplicitAny: PG row is dynamically typed
-function rowToTeamConfig(row: any): TeamConfig {
+function rowToTeamConfig(row: TeamConfigRow): TeamConfig {
   const config: TeamConfig = {
     name: row.name,
     repo: row.repo,
@@ -86,7 +99,7 @@ function rowToTeamConfig(row: any): TeamConfig {
     worktreePath: row.worktree_path,
     members: parseMembers(row.members),
     status: row.status,
-    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
   };
   if (row.leader) config.leader = row.leader;
   if (row.native_team_parent_session_id) config.nativeTeamParentSessionId = row.native_team_parent_session_id;

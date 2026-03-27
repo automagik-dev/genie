@@ -19,7 +19,7 @@
  */
 
 import { runMigrations } from './db-migrations.js';
-import { ensurePgserve, resetConnection } from './db.js';
+import { type Sql, ensurePgserve, resetConnection } from './db.js';
 
 /** Max age (ms) before a test schema is considered stale and eligible for cleanup. */
 const STALE_SCHEMA_AGE_MS = 10 * 60 * 1000; // 10 minutes
@@ -109,8 +109,7 @@ export async function setupTestSchema(): Promise<() => Promise<void>> {
  * Schema names encode a timestamp: test_<pid>_<timestamp>.
  * Best-effort — failures are silently ignored so tests aren't blocked.
  */
-// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
-async function cleanupStaleSchemas(sql: any): Promise<void> {
+async function cleanupStaleSchemas(sql: Sql): Promise<void> {
   try {
     const schemas = await sql`
       SELECT schema_name FROM information_schema.schemata
