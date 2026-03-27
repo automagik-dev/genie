@@ -117,4 +117,27 @@ describe('sendMessage (no tmux)', () => {
     expect(result.delivered).toBe(false);
     expect(result.reason).toContain('not found');
   });
+
+  test('suppresses self-delivery when from === to (#818)', async () => {
+    const { sendMessage } = await import('./protocol-router.js');
+
+    const result = await sendMessage(tempDir, 'team-lead', 'team-lead', 'hello self');
+    expect(result.delivered).toBe(true);
+    expect(result.reason).toBe('Self-delivery suppressed');
+    expect(result.messageId).toBe('');
+
+    // Verify no message was persisted in mailbox
+    const { getInbox } = await import('./protocol-router.js');
+    const inbox = await getInbox(tempDir, 'team-lead');
+    expect(inbox).toEqual([]);
+  });
+
+  test('allows delivery when from !== to', async () => {
+    const { sendMessage } = await import('./protocol-router.js');
+
+    // Without tmux, this will fall through to "not found", but it should NOT
+    // be suppressed as a self-delivery
+    const result = await sendMessage(tempDir, 'alice', 'bob', 'hello bob');
+    expect(result.reason).not.toBe('Self-delivery suppressed');
+  });
 });

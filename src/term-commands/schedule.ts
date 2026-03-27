@@ -200,7 +200,7 @@ async function scheduleCreateCommand(name: string, options: CreateOptions): Prom
       timezone: options.timezone ?? 'UTC',
     };
 
-    // biome-ignore lint/suspicious/noExplicitAny: postgres.js transaction type
+    // biome-ignore lint/suspicious/noExplicitAny: postgres.js TransactionSql loses call signatures via Omit
     await sql.begin(async (tx: any) => {
       // Insert schedule
       await tx`
@@ -332,7 +332,7 @@ async function scheduleCancelCommand(nameOrId: string, _options: CancelOptions):
 
     const schedule = schedules[0];
 
-    // biome-ignore lint/suspicious/noExplicitAny: postgres.js transaction type
+    // biome-ignore lint/suspicious/noExplicitAny: postgres.js TransactionSql loses call signatures via Omit
     await sql.begin(async (tx: any) => {
       // Pause the schedule
       await tx`UPDATE schedules SET status = 'paused', updated_at = now() WHERE id = ${schedule.id}`;
@@ -380,7 +380,7 @@ async function scheduleRetryCommand(nameOrId: string): Promise<void> {
 
     const { trigger_id, name } = results[0];
 
-    // biome-ignore lint/suspicious/noExplicitAny: postgres.js transaction type
+    // biome-ignore lint/suspicious/noExplicitAny: postgres.js TransactionSql loses call signatures via Omit
     await sql.begin(async (tx: any) => {
       // Reset trigger to pending with new due_at
       await tx`
