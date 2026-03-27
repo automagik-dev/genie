@@ -31,7 +31,7 @@ export function setLiveWorkPending(v: boolean): void {
 // Types
 // ============================================================================
 
-export interface DiscoveredFile {
+interface DiscoveredFile {
   sessionId: string;
   jsonlPath: string;
   projectPath: string;
