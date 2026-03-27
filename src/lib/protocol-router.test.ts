@@ -13,131 +13,133 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as mailbox from './mailbox.js';
-import { setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
 // ---------------------------------------------------------------------------
 // PG test schema (required since mailbox now uses PG)
 // ---------------------------------------------------------------------------
 
-let cleanupSchema: () => Promise<void>;
+describe.skipIf(!DB_AVAILABLE)('pg', () => {
+  let cleanupSchema: () => Promise<void>;
 
-beforeAll(async () => {
-  cleanupSchema = await setupTestSchema();
-});
+  beforeAll(async () => {
+    cleanupSchema = await setupTestSchema();
+  });
 
-afterAll(async () => {
-  await cleanupSchema();
-});
+  afterAll(async () => {
+    await cleanupSchema();
+  });
 
-// ---------------------------------------------------------------------------
-// Environment isolation
-// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Environment isolation
+  // ---------------------------------------------------------------------------
 
-const ENV_KEYS = ['GENIE_HOME', 'TMUX', 'TMUX_PANE'] as const;
-let savedEnv: Record<string, string | undefined>;
-let tempDir: string;
+  const ENV_KEYS = ['GENIE_HOME', 'TMUX', 'TMUX_PANE'] as const;
+  let savedEnv: Record<string, string | undefined>;
+  let tempDir: string;
 
-beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), 'proto-router-test-'));
-  savedEnv = {};
-  for (const k of ENV_KEYS) {
-    savedEnv[k] = process.env[k];
-  }
-  process.env.GENIE_HOME = join(tempDir, '.genie-home');
-  // Disable tmux to prevent auto-spawn attempts
-  process.env.TMUX = undefined as unknown as string;
-  process.env.TMUX_PANE = undefined as unknown as string;
-});
-
-afterEach(async () => {
-  for (const [k, v] of Object.entries(savedEnv)) {
-    if (v === undefined) {
-      delete process.env[k];
-    } else {
-      process.env[k] = v;
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'proto-router-test-'));
+    savedEnv = {};
+    for (const k of ENV_KEYS) {
+      savedEnv[k] = process.env[k];
     }
-  }
-  await rm(tempDir, { recursive: true, force: true });
-});
-
-// ---------------------------------------------------------------------------
-// getInbox tests (uses mailbox directly, no tmux dependency)
-// ---------------------------------------------------------------------------
-
-describe('getInbox', () => {
-  test('returns empty inbox for unknown worker', async () => {
-    const { getInbox } = await import('./protocol-router.js');
-    const messages = await getInbox(tempDir, 'unknown-worker');
-    expect(messages).toEqual([]);
+    process.env.GENIE_HOME = join(tempDir, '.genie-home');
+    // Disable tmux to prevent auto-spawn attempts
+    process.env.TMUX = undefined as unknown as string;
+    process.env.TMUX_PANE = undefined as unknown as string;
   });
 
-  test('returns messages after mailbox.send', async () => {
-    const { getInbox } = await import('./protocol-router.js');
-
-    // Directly write to mailbox (bypasses delivery which needs tmux)
-    await mailbox.send(tempDir, 'alice', 'bob', 'hello bob');
-    await mailbox.send(tempDir, 'alice', 'bob', 'follow up');
-
-    const messages = await getInbox(tempDir, 'bob');
-    expect(messages.length).toBe(2);
-    expect(messages[0].from).toBe('alice');
-    expect(messages[0].body).toBe('hello bob');
-    expect(messages[1].body).toBe('follow up');
+  afterEach(async () => {
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) {
+        delete process.env[k];
+      } else {
+        process.env[k] = v;
+      }
+    }
+    await rm(tempDir, { recursive: true, force: true });
   });
 
-  test('returns messages with correct metadata', async () => {
-    const repo = '/tmp/proto-router-metadata';
-    const { getInbox } = await import('./protocol-router.js');
+  // ---------------------------------------------------------------------------
+  // getInbox tests (uses mailbox directly, no tmux dependency)
+  // ---------------------------------------------------------------------------
 
-    await mailbox.send(repo, 'sender', 'receiver', 'test message');
+  describe('getInbox', () => {
+    test('returns empty inbox for unknown worker', async () => {
+      const { getInbox } = await import('./protocol-router.js');
+      const messages = await getInbox(tempDir, 'unknown-worker');
+      expect(messages).toEqual([]);
+    });
 
-    const messages = await getInbox(repo, 'receiver');
-    expect(messages.length).toBe(1);
+    test('returns messages after mailbox.send', async () => {
+      const { getInbox } = await import('./protocol-router.js');
 
-    const msg = messages[0];
-    expect(msg.id).toMatch(/^msg-/);
-    expect(msg.from).toBe('sender');
-    expect(msg.to).toBe('receiver');
-    expect(msg.body).toBe('test message');
-    expect(msg.read).toBe(false);
-    expect(msg.deliveredAt).toBeNull();
-    expect(msg.createdAt).toBeTruthy();
-  });
-});
+      // Directly write to mailbox (bypasses delivery which needs tmux)
+      await mailbox.send(tempDir, 'alice', 'bob', 'hello bob');
+      await mailbox.send(tempDir, 'alice', 'bob', 'follow up');
 
-// ---------------------------------------------------------------------------
-// sendMessage — no-tmux fallback behavior
-// ---------------------------------------------------------------------------
+      const messages = await getInbox(tempDir, 'bob');
+      expect(messages.length).toBe(2);
+      expect(messages[0].from).toBe('alice');
+      expect(messages[0].body).toBe('hello bob');
+      expect(messages[1].body).toBe('follow up');
+    });
 
-describe('sendMessage (no tmux)', () => {
-  test('returns not-found when worker does not exist and no tmux', async () => {
-    const { sendMessage } = await import('./protocol-router.js');
+    test('returns messages with correct metadata', async () => {
+      const repo = '/tmp/proto-router-metadata';
+      const { getInbox } = await import('./protocol-router.js');
 
-    const result = await sendMessage(tempDir, 'alice', 'nonexistent', 'hello');
-    expect(result.delivered).toBe(false);
-    expect(result.reason).toContain('not found');
-  });
+      await mailbox.send(repo, 'sender', 'receiver', 'test message');
 
-  test('suppresses self-delivery when from === to (#818)', async () => {
-    const { sendMessage } = await import('./protocol-router.js');
+      const messages = await getInbox(repo, 'receiver');
+      expect(messages.length).toBe(1);
 
-    const result = await sendMessage(tempDir, 'team-lead', 'team-lead', 'hello self');
-    expect(result.delivered).toBe(true);
-    expect(result.reason).toBe('Self-delivery suppressed');
-    expect(result.messageId).toBe('');
-
-    // Verify no message was persisted in mailbox
-    const { getInbox } = await import('./protocol-router.js');
-    const inbox = await getInbox(tempDir, 'team-lead');
-    expect(inbox).toEqual([]);
+      const msg = messages[0];
+      expect(msg.id).toMatch(/^msg-/);
+      expect(msg.from).toBe('sender');
+      expect(msg.to).toBe('receiver');
+      expect(msg.body).toBe('test message');
+      expect(msg.read).toBe(false);
+      expect(msg.deliveredAt).toBeNull();
+      expect(msg.createdAt).toBeTruthy();
+    });
   });
 
-  test('allows delivery when from !== to', async () => {
-    const { sendMessage } = await import('./protocol-router.js');
+  // ---------------------------------------------------------------------------
+  // sendMessage — no-tmux fallback behavior
+  // ---------------------------------------------------------------------------
 
-    // Without tmux, this will fall through to "not found", but it should NOT
-    // be suppressed as a self-delivery
-    const result = await sendMessage(tempDir, 'alice', 'bob', 'hello bob');
-    expect(result.reason).not.toBe('Self-delivery suppressed');
+  describe('sendMessage (no tmux)', () => {
+    test('returns not-found when worker does not exist and no tmux', async () => {
+      const { sendMessage } = await import('./protocol-router.js');
+
+      const result = await sendMessage(tempDir, 'alice', 'nonexistent', 'hello');
+      expect(result.delivered).toBe(false);
+      expect(result.reason).toContain('not found');
+    });
+
+    test('suppresses self-delivery when from === to (#818)', async () => {
+      const { sendMessage } = await import('./protocol-router.js');
+
+      const result = await sendMessage(tempDir, 'team-lead', 'team-lead', 'hello self');
+      expect(result.delivered).toBe(true);
+      expect(result.reason).toBe('Self-delivery suppressed');
+      expect(result.messageId).toBe('');
+
+      // Verify no message was persisted in mailbox
+      const { getInbox } = await import('./protocol-router.js');
+      const inbox = await getInbox(tempDir, 'team-lead');
+      expect(inbox).toEqual([]);
+    });
+
+    test('allows delivery when from !== to', async () => {
+      const { sendMessage } = await import('./protocol-router.js');
+
+      // Without tmux, this will fall through to "not found", but it should NOT
+      // be suppressed as a self-delivery
+      const result = await sendMessage(tempDir, 'alice', 'bob', 'hello bob');
+      expect(result.reason).not.toBe('Self-delivery suppressed');
+    });
   });
 });

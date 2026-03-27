@@ -16,7 +16,7 @@ import {
   attemptAgentResume,
   recoverOnStartup,
 } from '../lib/scheduler-daemon.js';
-import { setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 
 const TEST_DIR = '/tmp/genie-resume-test';
 
@@ -79,8 +79,6 @@ function createMockDeps(overrides: Partial<SchedulerDeps> = {}) {
 }
 
 let cleanupSchema: () => Promise<void>;
-
-const DB_AVAILABLE = process.env.GENIE_PG_AVAILABLE === 'true' || !process.env.CI;
 
 describe.skipIf(!DB_AVAILABLE)('resume', () => {
   beforeAll(async () => {
