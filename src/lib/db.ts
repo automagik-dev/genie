@@ -188,28 +188,29 @@ async function _ensurePgserve(): Promise<number> {
     return port;
   }
 
-  // 3. No healthy PG found — is daemon running?
-  const daemonRunning = isDaemonRunning();
+  // 3. No healthy PG found — try daemon-based recovery (skip in CI/test environments)
+  const isCI = process.env.CI === 'true' || !!process.env.GENIE_TEST_SCHEMA;
 
-  if (daemonRunning) {
-    // Daemon is running but PG is unhealthy — self-heal: clean up and wait for daemon to recover
-    selfHealPostgres(DATA_DIR);
-    // Wait for daemon to restart PG and write port file
-    const recovered = await waitForPortFile(DAEMON_BOOT_TIMEOUT_MS);
-    if (recovered !== null) return recovered;
-    // Daemon is stuck — fall through to start pgserve ourselves
-  }
+  if (!isCI) {
+    const daemonRunning = isDaemonRunning();
 
-  // 4. No daemon running — auto-start daemon in background
-  if (!daemonRunning) {
-    try {
-      execSync('genie daemon start', { stdio: 'ignore', timeout: 5000 });
-    } catch {
-      // Daemon start may detach and return non-zero; that's OK
+    if (daemonRunning) {
+      // Daemon is running but PG is unhealthy — self-heal and wait for recovery
+      selfHealPostgres(DATA_DIR);
+      const recovered = await waitForPortFile(DAEMON_BOOT_TIMEOUT_MS);
+      if (recovered !== null) return recovered;
     }
-    // Wait for port file to appear
-    const booted = await waitForPortFile(DAEMON_BOOT_TIMEOUT_MS);
-    if (booted !== null) return booted;
+
+    // 4. No daemon running — auto-start daemon in background
+    if (!daemonRunning) {
+      try {
+        execSync('genie daemon start', { stdio: 'ignore', timeout: 5000 });
+      } catch {
+        // Daemon start may detach and return non-zero; that's OK
+      }
+      const booted = await waitForPortFile(DAEMON_BOOT_TIMEOUT_MS);
+      if (booted !== null) return booted;
+    }
   }
 
   // 5. Last resort: start pgserve directly in this process (backwards compat)
