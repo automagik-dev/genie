@@ -10,14 +10,7 @@
 import type { Command } from 'commander';
 import { getMigrationStatus, runMigrations } from '../lib/db-migrations.js';
 import { getActivePort, getConnection, getDataDir, isAvailable, shutdown } from '../lib/db.js';
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + ' '.repeat(len - str.length);
-}
+import { padRight } from '../lib/term-format.js';
 
 /**
  * Print query results as an aligned table.

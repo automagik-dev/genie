@@ -12,6 +12,7 @@
  */
 
 import * as agentRegistry from '../lib/agent-registry.js';
+import { formatTime as _fmtTime } from '../lib/term-format.js';
 import {
   type LogEvent,
   type LogEventKind,
@@ -41,19 +42,6 @@ export interface LogOptions {
   json?: boolean;
   /** Follow mode — real-time streaming (placeholder for Group 5) */
   follow?: boolean;
-}
-
-// ============================================================================
-// Display Formatting
-// ============================================================================
-
-function formatTime(timestamp: string): string {
-  try {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-  } catch {
-    return '??:??:??';
-  }
 }
 
 function kindIcon(kind: LogEventKind): string {
@@ -141,7 +129,7 @@ function summarizeToolCall(event: LogEvent): string {
 }
 
 function formatEventBlock(event: LogEvent): string {
-  const time = formatTime(event.timestamp);
+  const time = _fmtTime(event.timestamp, { seconds: true, fallback: '??:??:??' });
   const icon = kindIcon(event.kind);
   const color = kindColor(event.kind);
 
