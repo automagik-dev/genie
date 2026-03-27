@@ -50,7 +50,6 @@ function getMigrationsDir(): string {
 function getPackageRootMigrationsDir(): string {
   // In a bundled build, import.meta.dir points to dist/.
   // The package root is one level up from dist/, and migrations are at src/db/migrations/.
-  // Also handles: import.meta.dir = src/lib/ → ../../src/db/migrations (redundant but harmless).
   return join(dirname(import.meta.dir), 'src', 'db', 'migrations');
 }
 
