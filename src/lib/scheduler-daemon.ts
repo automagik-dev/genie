@@ -1362,7 +1362,29 @@ export function startDaemon(
       const captureSql = await deps.getConnection();
       const { startFilewatch } = await import('./session-filewatch.js');
       const { startBackfill } = await import('./session-backfill.js');
-      await startFilewatch(captureSql);
+      const filewatchOk = await startFilewatch(captureSql);
+      if (!filewatchOk) {
+        // Filewatch failed (path missing, recursive unsupported, too many watchers)
+        // Fall back to polling ingest every 60s as degraded mode
+        const { ingestFileFull, discoverAllJsonlFiles, buildWorkerMap } = await import('./session-capture.js');
+        deps.log({ timestamp: deps.now().toISOString(), level: 'warn', event: 'filewatch_failed_fallback_polling' });
+        setInterval(async () => {
+          if (!running) return;
+          try {
+            const files = await discoverAllJsonlFiles();
+            const workerMap = await buildWorkerMap(captureSql);
+            for (const f of files) {
+              await ingestFileFull(captureSql, f.sessionId, f.jsonlPath, f.projectPath, 0, {
+                parentSessionId: f.parentSessionId,
+                isSubagent: f.isSubagent,
+                workerMap,
+              });
+            }
+          } catch {
+            /* best-effort fallback */
+          }
+        }, config.heartbeatIntervalMs);
+      }
       // Backfill runs in background — non-blocking, auto-skips if already complete
       startBackfill(captureSql).catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
