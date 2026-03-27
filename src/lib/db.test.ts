@@ -262,12 +262,14 @@ describe('getLockfilePath', () => {
   });
 });
 
-describe('MAX_PORT_RETRIES reduction', () => {
-  test('fallback retries are reduced from 10 to 3', async () => {
-    // Read the source to verify the constant was changed
+describe('daemon-owned pgserve', () => {
+  test('db.ts uses health check instead of port retry loop', async () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    const match = source.match(/const MAX_PORT_RETRIES\s*=\s*(\d+)/);
-    expect(match).not.toBeNull();
-    expect(Number.parseInt(match![1], 10)).toBe(3);
+    // No more MAX_PORT_RETRIES — daemon owns PG, no fallback ports
+    expect(source.includes('MAX_PORT_RETRIES')).toBe(false);
+    // Uses real postgres health check, not TCP-only
+    expect(source.includes('isPostgresHealthy')).toBe(true);
+    // Self-heal function exists
+    expect(source.includes('selfHealPostgres')).toBe(true);
   });
 });
