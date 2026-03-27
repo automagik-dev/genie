@@ -10,7 +10,7 @@
 
 import type { Command } from 'commander';
 import { getConnection, isAvailable } from '../lib/db.js';
-import { ingestSessions } from '../lib/session-ingester.js';
+import { getBackfillStatus } from '../lib/session-backfill.js';
 import { formatRelativeTimestamp as formatTimestamp, padRight } from '../lib/term-format.js';
 
 // ============================================================================
@@ -211,20 +211,24 @@ async function sessionsSearchCommand(query: string, options: { json?: boolean; l
   console.log(`\n(${rows.length} result${rows.length === 1 ? '' : 's'})`);
 }
 
-async function sessionsIngestCommand(options: { backfill?: boolean }): Promise<void> {
-  if (options.backfill) {
-    console.log('Backfilling all session JSONL files...');
-  } else {
-    console.log('Running incremental session ingestion...');
-  }
-
-  try {
-    const result = await ingestSessions();
-    console.log(`Ingested ${result.ingested} content rows, ${result.orphaned} orphaned sessions.`);
-  } catch (err) {
-    console.error(`Ingestion failed: ${err instanceof Error ? err.message : err}`);
+async function sessionsSyncStatusCommand(): Promise<void> {
+  if (!(await isAvailable())) {
+    console.error('Database not available.');
     process.exit(1);
   }
+  const sql = await getConnection();
+  const status = await getBackfillStatus(sql);
+  if (!status) {
+    console.log('No backfill has been started. It runs automatically on first daemon start.');
+    return;
+  }
+  const pct = status.totalFiles > 0 ? ((status.processedFiles / status.totalFiles) * 100).toFixed(1) : '0.0';
+  const mbRead = (status.processedBytes / 1024 / 1024).toFixed(1);
+  const mbTotal = (status.totalBytes / 1024 / 1024).toFixed(1);
+  console.log(`Session backfill: ${status.processedFiles} / ${status.totalFiles} files (${pct}%)`);
+  console.log(`Bytes read:   ${mbRead} MB / ${mbTotal} MB`);
+  console.log(`Errors: ${status.errors}`);
+  console.log(`Status: ${status.status}`);
 }
 
 // ============================================================================
@@ -263,10 +267,9 @@ export function registerSessionsCommands(program: Command): void {
     });
 
   sessions
-    .command('ingest')
-    .description('Manual batch import of JSONL files')
-    .option('--backfill', 'Backfill all existing JSONL files')
-    .action(async (options: { backfill?: boolean }) => {
-      await sessionsIngestCommand(options);
+    .command('sync')
+    .description('Check session backfill progress')
+    .action(async () => {
+      await sessionsSyncStatusCommand();
     });
 }
