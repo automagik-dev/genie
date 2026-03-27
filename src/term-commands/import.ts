@@ -251,7 +251,7 @@ async function runImport(filePath: string, mode: ConflictMode, groupFilter?: str
   let totalInserted = 0;
   const tableStats: Record<string, number> = {};
 
-  // biome-ignore lint/suspicious/noExplicitAny: postgres.js transaction type
+  // biome-ignore lint/suspicious/noExplicitAny: postgres.js TransactionSql loses call signatures via Omit
   await sql.begin(async (tx: any) => {
     for (const table of tablesToImport) {
       const rows = doc.data[table] as Record<string, unknown>[];

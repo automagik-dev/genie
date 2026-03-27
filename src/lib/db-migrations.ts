@@ -11,7 +11,7 @@
  */
 
 import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type postgres from 'postgres';
 
 type Sql = postgres.Sql;
@@ -46,12 +46,23 @@ function getMigrationsDir(): string {
   return join(import.meta.dir, '..', 'db', 'migrations');
 }
 
+/** Resolve migrations dir relative to the package root (for bundled/global installs). */
+function getPackageRootMigrationsDir(): string {
+  // In a bundled build, import.meta.dir points to dist/.
+  // The package root is one level up from dist/, and migrations are at src/db/migrations/.
+  return join(dirname(import.meta.dir), 'src', 'db', 'migrations');
+}
+
 /**
  * Load all .sql migration files sorted by name.
- * Falls back to the project root if the relative path doesn't work (bundled builds).
+ * Searches multiple candidate directories to handle dev, bundled, and global-install layouts.
  */
 async function loadMigrationFiles(): Promise<MigrationFile[]> {
-  const candidates = [getMigrationsDir(), join(process.cwd(), 'src', 'db', 'migrations')];
+  const candidates = [
+    getMigrationsDir(), // dev: src/lib/../db/migrations
+    getPackageRootMigrationsDir(), // bundled: dist/../src/db/migrations
+    join(process.cwd(), 'src', 'db', 'migrations'), // legacy fallback
+  ];
 
   for (const dir of candidates) {
     try {
