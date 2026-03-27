@@ -25,14 +25,17 @@ import {
 // Helpers
 // ============================================================================
 
+const DB_AVAILABLE = process.env.GENIE_PG_AVAILABLE === 'true' || !process.env.CI;
+
 let cleanup: () => Promise<void>;
 
 beforeAll(async () => {
+  if (!DB_AVAILABLE) return;
   cleanup = await setupTestSchema();
 });
 
 afterAll(async () => {
-  await cleanup();
+  if (cleanup) await cleanup();
 });
 
 function makeAgent(id: string, team?: string, repoPath?: string): Agent {

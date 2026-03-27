@@ -80,7 +80,9 @@ function createMockDeps(overrides: Partial<SchedulerDeps> = {}) {
 
 let cleanupSchema: () => Promise<void>;
 
-describe('resume', () => {
+const DB_AVAILABLE = process.env.GENIE_PG_AVAILABLE === 'true' || !process.env.CI;
+
+describe.skipIf(!DB_AVAILABLE)('resume', () => {
   beforeAll(async () => {
     cleanupSchema = await setupTestSchema();
   });
