@@ -39,13 +39,22 @@ export interface MailboxMessage {
 // Internal helpers
 // ============================================================================
 
+interface MailboxRow {
+  id: string;
+  from_worker: string;
+  to_worker: string;
+  body: string;
+  created_at: Date | string;
+  read: boolean;
+  delivered_at: Date | string | null;
+}
+
 function generateMessageId(): string {
   return `msg-${uuidv4()}`;
 }
 
 /** Map a PG row to the MailboxMessage interface. */
-// biome-ignore lint/suspicious/noExplicitAny: PG row uses dynamic column names
-function rowToMessage(row: any): MailboxMessage {
+function rowToMessage(row: MailboxRow): MailboxMessage {
   return {
     id: row.id,
     from: row.from_worker,

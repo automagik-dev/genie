@@ -27,9 +27,15 @@ export interface ChatMessage {
 // Internal helpers
 // ============================================================================
 
+interface ChatRow {
+  id: string;
+  sender: string;
+  body: string;
+  created_at: Date | string;
+}
+
 /** Map a PG row to the ChatMessage interface. */
-// biome-ignore lint/suspicious/noExplicitAny: PG row uses dynamic column names
-function rowToMessage(row: any): ChatMessage {
+function rowToMessage(row: ChatRow): ChatMessage {
   return {
     id: row.id,
     sender: row.sender,
