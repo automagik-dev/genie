@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `genie-boards` |
 | **Date** | 2026-03-25 |
 | **Design** | [DRAFT.md](/home/genie/agents/sofia/.genie/brainstorms/genie-task-boards/DRAFT.md) |

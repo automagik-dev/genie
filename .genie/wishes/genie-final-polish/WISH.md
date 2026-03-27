@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `genie-final-polish` |
 | **Date** | 2026-03-25 |
 | **Source** | Full-day power session QA findings, #800, #799, board system QA |
