@@ -36,7 +36,8 @@ describe('hook injection', () => {
 
     for (const event of DISPATCHED_EVENTS) {
       expect(settings.hooks[event]).toBeDefined();
-      expect(settings.hooks[event][0].hooks[0].command).toBe('genie hook dispatch');
+      expect(settings.hooks[event][0].hooks[0].command).toContain('hook dispatch');
+      expect(settings.hooks[event][0].hooks[0].command).toContain('src/genie.ts');
     }
   });
 
@@ -65,6 +66,34 @@ describe('hook injection', () => {
     expect(settings.permissions.allow).toEqual(['Bash(*)']);
     expect(settings.customField).toBe('preserved');
     expect(settings.hooks).toBeDefined();
+  });
+
+  test('injectTeamHooks upgrades legacy bare genie dispatch commands', async () => {
+    const teamDir = join(testDir, 'teams', 'test-team');
+    await mkdir(teamDir, { recursive: true });
+
+    const settingsPath = join(teamDir, 'settings.json');
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        hooks: Object.fromEntries(
+          DISPATCHED_EVENTS.map((event) => [
+            event,
+            [{ hooks: [{ type: 'command', command: 'genie hook dispatch', timeout: 15 }] }],
+          ]),
+        ),
+      }),
+    );
+
+    const result = await injectTeamHooks('test-team');
+    expect(result).toBe(true);
+
+    const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+    for (const event of DISPATCHED_EVENTS) {
+      const command = settings.hooks[event][0].hooks[0].command;
+      expect(command).toContain('hook dispatch');
+      expect(command).toContain('src/genie.ts');
+    }
   });
 
   test('isTeamHooked returns false for missing team', async () => {

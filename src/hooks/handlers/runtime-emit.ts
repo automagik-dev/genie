@@ -1,5 +1,5 @@
 /**
- * NATS Emit Handlers — Publish ALL agent activity to NATS for real-time observability.
+ * Runtime Event Emit Handlers — Publish agent activity to the PG event log.
  *
  * Hooks:
  *   PreToolUse (all tools)    → genie.tool.{agent}.call
@@ -18,15 +18,15 @@ const getTeam = () => process.env.GENIE_TEAM;
 
 async function emit(subject: string, event: Record<string, unknown>): Promise<void> {
   try {
-    const { publish } = await import('../../lib/nats-client.js');
-    await publish(subject, event);
+    const { publishSubjectEvent } = await import('../../lib/runtime-events.js');
+    await publishSubjectEvent(process.cwd(), subject, event as Parameters<typeof publishSubjectEvent>[2]);
   } catch {
-    // NATS unavailable — silent degradation
+    // Event log unavailable — never block the hook pipeline
   }
 }
 
 /** Emit tool call events on PreToolUse (all tools). */
-export async function natsEmitToolCall(payload: HookPayload): Promise<HandlerResult> {
+export async function emitToolCallEvent(payload: HookPayload): Promise<HandlerResult> {
   const toolName = payload.tool_name;
   const input = payload.tool_input;
   if (!toolName || !input) return;
@@ -45,7 +45,7 @@ export async function natsEmitToolCall(payload: HookPayload): Promise<HandlerRes
 }
 
 /** Emit message events on PostToolUse:SendMessage. */
-export async function natsEmit(payload: HookPayload): Promise<HandlerResult> {
+export async function emitMessageEvent(payload: HookPayload): Promise<HandlerResult> {
   const input = payload.tool_input;
   if (!input) return;
 
@@ -64,6 +64,7 @@ export async function natsEmit(payload: HookPayload): Promise<HandlerResult> {
     timestamp: new Date().toISOString(),
     kind: 'message',
     agent: getAgent(),
+    team: getTeam(),
     peer: to,
     direction: 'out',
     text: content,
@@ -74,7 +75,7 @@ export async function natsEmit(payload: HookPayload): Promise<HandlerResult> {
 }
 
 /** Emit user prompt on UserPromptSubmit. */
-export async function natsEmitUserPrompt(payload: HookPayload): Promise<HandlerResult> {
+export async function emitUserPromptEvent(payload: HookPayload): Promise<HandlerResult> {
   const prompt = payload.prompt as string | undefined;
   if (!prompt) return;
 
@@ -91,7 +92,7 @@ export async function natsEmitUserPrompt(payload: HookPayload): Promise<HandlerR
 }
 
 /** Emit assistant response on Stop. */
-export async function natsEmitAssistantResponse(payload: HookPayload): Promise<HandlerResult> {
+export async function emitAssistantResponseEvent(payload: HookPayload): Promise<HandlerResult> {
   const lastMessage = payload.last_assistant_message as string | undefined;
   if (!lastMessage) return;
 

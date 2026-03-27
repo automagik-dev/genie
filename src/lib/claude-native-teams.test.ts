@@ -10,12 +10,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type NativeInboxMessage,
+  discoverClaudeParentSessionId,
   loadConfig,
   resolveNativeMemberName,
   sanitizeTeamName,
@@ -28,11 +29,14 @@ import {
 
 let tempDir: string;
 let savedClaudeConfigDir: string | undefined;
+let savedClaudeSessionId: string | undefined;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'native-teams-test-'));
   savedClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  savedClaudeSessionId = process.env.CLAUDE_CODE_SESSION_ID;
   process.env.CLAUDE_CONFIG_DIR = tempDir;
+  process.env.CLAUDE_CODE_SESSION_ID = undefined;
 });
 
 afterEach(async () => {
@@ -41,6 +45,11 @@ afterEach(async () => {
   } else {
     process.env.CLAUDE_CONFIG_DIR = savedClaudeConfigDir;
   }
+  if (savedClaudeSessionId === undefined) {
+    process.env.CLAUDE_CODE_SESSION_ID = undefined;
+  } else {
+    process.env.CLAUDE_CODE_SESSION_ID = savedClaudeSessionId;
+  }
   await rm(tempDir, { recursive: true, force: true });
 });
 
@@ -48,6 +57,7 @@ afterEach(async () => {
 async function createTestTeamConfig(
   teamName: string,
   members: { agentId: string; name: string; isActive?: boolean }[],
+  options?: { leadSessionId?: string },
 ): Promise<void> {
   const sanitized = sanitizeTeamName(teamName);
   const teamDir = join(tempDir, 'teams', sanitized);
@@ -59,7 +69,7 @@ async function createTestTeamConfig(
     description: `Test team: ${teamName}`,
     createdAt: Date.now(),
     leadAgentId: `team-lead@${sanitized}`,
-    leadSessionId: 'test-session-id',
+    leadSessionId: options?.leadSessionId ?? 'test-session-id',
     members: members.map((m) => ({
       agentId: m.agentId,
       name: m.name,
@@ -73,6 +83,15 @@ async function createTestTeamConfig(
   };
 
   await writeFile(join(teamDir, 'config.json'), JSON.stringify(config, null, 2));
+}
+
+async function createSessionJsonl(cwd: string, sessionId: string, lines: unknown[], mtimeMs: number): Promise<void> {
+  const projectDir = join(tempDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+  await mkdir(projectDir, { recursive: true });
+  const filePath = join(projectDir, `${sessionId}.jsonl`);
+  await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
+  const date = new Date(mtimeMs);
+  await utimes(filePath, date, date);
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +168,128 @@ describe('resolveNativeMemberName', () => {
     // Input with special chars gets sanitized to match
     const result = await resolveNativeMemberName('my-team', 'my agent');
     expect(result).toBe('my-agent');
+  });
+});
+
+describe('discoverClaudeParentSessionId', () => {
+  test('returns env session when CLAUDE_CODE_SESSION_ID is set', async () => {
+    process.env.CLAUDE_CODE_SESSION_ID = 'env-session-id';
+    const result = await discoverClaudeParentSessionId('/repo');
+    expect(result).toBe('env-session-id');
+  });
+
+  test('prefers newest root session over newer worker session', async () => {
+    const cwd = '/repo';
+
+    await createSessionJsonl(
+      cwd,
+      'root-session',
+      [
+        {
+          type: 'user',
+          entrypoint: 'sdk-cli',
+          cwd,
+          sessionId: 'root-session',
+        },
+      ],
+      1_000,
+    );
+
+    await createSessionJsonl(
+      cwd,
+      'worker-session',
+      [
+        {
+          type: 'user',
+          teamName: 'qa-probe',
+          agentName: 'probe',
+          cwd,
+          sessionId: 'worker-session',
+        },
+      ],
+      2_000,
+    );
+
+    const result = await discoverClaudeParentSessionId(cwd);
+    expect(result).toBe('root-session');
+  });
+
+  test('falls back to newest team-lead session when no root session exists', async () => {
+    const cwd = '/repo';
+
+    await createSessionJsonl(
+      cwd,
+      'engineer-session',
+      [
+        {
+          type: 'user',
+          teamName: 'alpha',
+          agentName: 'engineer',
+          cwd,
+          sessionId: 'engineer-session',
+        },
+      ],
+      1_000,
+    );
+
+    await createSessionJsonl(
+      cwd,
+      'lead-session',
+      [
+        {
+          type: 'user',
+          teamName: 'alpha',
+          agentName: 'team-lead',
+          cwd,
+          sessionId: 'lead-session',
+        },
+      ],
+      2_000,
+    );
+
+    const result = await discoverClaudeParentSessionId(cwd);
+    expect(result).toBe('lead-session');
+  });
+
+  test('prefers a historically reused lead session over a newer root candidate', async () => {
+    const cwd = '/repo';
+
+    await createTestTeamConfig('alpha', [{ agentId: 'team-lead@alpha', name: 'team-lead' }], {
+      leadSessionId: 'historical-lead',
+    });
+
+    await createTestTeamConfig('beta', [{ agentId: 'team-lead@beta', name: 'team-lead' }], {
+      leadSessionId: 'historical-lead',
+    });
+
+    await createSessionJsonl(
+      cwd,
+      'historical-lead',
+      [
+        {
+          type: 'user',
+          cwd,
+          sessionId: 'historical-lead',
+        },
+      ],
+      1_000,
+    );
+
+    await createSessionJsonl(
+      cwd,
+      'new-root',
+      [
+        {
+          type: 'user',
+          cwd,
+          sessionId: 'new-root',
+        },
+      ],
+      2_000,
+    );
+
+    const result = await discoverClaudeParentSessionId(cwd);
+    expect(result).toBe('historical-lead');
   });
 });
 

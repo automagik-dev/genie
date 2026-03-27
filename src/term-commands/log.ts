@@ -358,14 +358,12 @@ async function followCommand(
 
   if (options.team) {
     const agents = await findTeamAgents(options.team);
-    if (agents.length === 0) {
-      console.error(`No agents found for team "${options.team}".`);
-      process.exit(1);
-    }
-    label = `team:${options.team} (${agents.length} agents)`;
+    label = `team:${options.team}${agents.length > 0 ? ` (${agents.length} agents)` : ''}`;
 
     const handle = await followTeamLog(agents, repoPath, options.team, filter, outputEvent);
-    console.error(`Following ${label} via ${handle.mode === 'nats' ? 'NATS' : 'file polling'} (Ctrl+C to stop)...`);
+    console.error(
+      `Following ${label} via ${handle.mode === 'pg' ? 'Postgres event log' : handle.mode} (Ctrl+C to stop)...`,
+    );
     setupShutdown(handle.stop);
   } else if (agentName) {
     const agent = await findAgent(agentName, options.team);
@@ -376,7 +374,9 @@ async function followCommand(
     label = agent.id;
 
     const handle = await followAgentLog(agent, repoPath, filter, outputEvent);
-    console.error(`Following ${label} via ${handle.mode === 'nats' ? 'NATS' : 'file polling'} (Ctrl+C to stop)...`);
+    console.error(
+      `Following ${label} via ${handle.mode === 'pg' ? 'Postgres event log' : handle.mode} (Ctrl+C to stop)...`,
+    );
     setupShutdown(handle.stop);
   } else {
     const allAgents = await agentRegistry.list();
@@ -387,7 +387,9 @@ async function followCommand(
     label = `all agents (${allAgents.length})`;
 
     const handle = await followTeamLog(allAgents, repoPath, 'all', filter, outputEvent);
-    console.error(`Following ${label} via ${handle.mode === 'nats' ? 'NATS' : 'file polling'} (Ctrl+C to stop)...`);
+    console.error(
+      `Following ${label} via ${handle.mode === 'pg' ? 'Postgres event log' : handle.mode} (Ctrl+C to stop)...`,
+    );
     setupShutdown(handle.stop);
   }
 

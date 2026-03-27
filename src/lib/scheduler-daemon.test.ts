@@ -916,7 +916,7 @@ describe('scheduler-daemon', () => {
   });
 
   // ==========================================================================
-  // Group 4: NATS Event Emission
+  // Group 4: Runtime Event Emission
   // ==========================================================================
 
   describe('emitWorkerEvents', () => {
@@ -929,7 +929,9 @@ describe('scheduler-daemon', () => {
     });
 
     test('emits spawned event for new workers', async () => {
-      const workers: WorkerInfo[] = [{ id: 'engineer', paneId: '%1', state: 'working', team: 'alpha' }];
+      const workers: WorkerInfo[] = [
+        { id: 'engineer', paneId: '%1', repoPath: '/tmp/alpha', state: 'working', team: 'alpha' },
+      ];
       const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
 
       await emitWorkerEvents(deps);
@@ -943,7 +945,9 @@ describe('scheduler-daemon', () => {
     });
 
     test('emits state change event when state changes', async () => {
-      const workers: WorkerInfo[] = [{ id: 'engineer', paneId: '%1', state: 'working', team: 'alpha' }];
+      const workers: WorkerInfo[] = [
+        { id: 'engineer', paneId: '%1', repoPath: '/tmp/alpha', state: 'working', team: 'alpha' },
+      ];
       const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
 
       // First call — spawned
@@ -962,7 +966,9 @@ describe('scheduler-daemon', () => {
     });
 
     test('emits killed event when worker disappears', async () => {
-      const workers: WorkerInfo[] = [{ id: 'engineer', paneId: '%1', state: 'working', team: 'alpha' }];
+      const workers: WorkerInfo[] = [
+        { id: 'engineer', paneId: '%1', repoPath: '/tmp/alpha', state: 'working', team: 'alpha' },
+      ];
       const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
 
       // First call — spawned
@@ -982,7 +988,15 @@ describe('scheduler-daemon', () => {
 
     test('emits wish group done event when agent with wish completes', async () => {
       const workers: WorkerInfo[] = [
-        { id: 'eng-1', paneId: '%1', state: 'working', team: 'alpha', wishSlug: 'genie-log', groupNumber: 4 },
+        {
+          id: 'eng-1',
+          paneId: '%1',
+          repoPath: '/tmp/alpha',
+          state: 'working',
+          team: 'alpha',
+          wishSlug: 'genie-log',
+          groupNumber: 4,
+        },
       ];
       const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
 
@@ -1005,7 +1019,9 @@ describe('scheduler-daemon', () => {
     });
 
     test('does not emit when state unchanged', async () => {
-      const workers: WorkerInfo[] = [{ id: 'engineer', paneId: '%1', state: 'working', team: 'alpha' }];
+      const workers: WorkerInfo[] = [
+        { id: 'engineer', paneId: '%1', repoPath: '/tmp/alpha', state: 'working', team: 'alpha' },
+      ];
       const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
 
       // First call — spawned
@@ -1020,8 +1036,8 @@ describe('scheduler-daemon', () => {
 
     test('handles multiple workers with mixed changes', async () => {
       const workers: WorkerInfo[] = [
-        { id: 'eng-1', paneId: '%1', state: 'working', team: 'alpha' },
-        { id: 'eng-2', paneId: '%2', state: 'idle', team: 'alpha' },
+        { id: 'eng-1', paneId: '%1', repoPath: '/tmp/alpha', state: 'working', team: 'alpha' },
+        { id: 'eng-2', paneId: '%2', repoPath: '/tmp/alpha', state: 'idle', team: 'alpha' },
       ];
       const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
 
@@ -1031,7 +1047,7 @@ describe('scheduler-daemon', () => {
       // eng-1 changes state, eng-2 removed, eng-3 added
       workers[0].state = 'idle';
       workers.splice(1, 1); // remove eng-2
-      workers.push({ id: 'eng-3', paneId: '%3', state: 'spawning', team: 'alpha' });
+      workers.push({ id: 'eng-3', paneId: '%3', repoPath: '/tmp/alpha', state: 'spawning', team: 'alpha' });
 
       await emitWorkerEvents(deps);
 
@@ -1042,19 +1058,21 @@ describe('scheduler-daemon', () => {
     });
 
     test('gracefully handles publishEvent failure', async () => {
-      const workers: WorkerInfo[] = [{ id: 'engineer', paneId: '%1', state: 'working', team: 'alpha' }];
+      const workers: WorkerInfo[] = [
+        { id: 'engineer', paneId: '%1', repoPath: '/tmp/alpha', state: 'working', team: 'alpha' },
+      ];
       const { deps } = createMockDeps(
         {},
         {
           listWorkers: async () => workers,
           publishEvent: async () => {
-            throw new Error('NATS down');
+            throw new Error('event log down');
           },
         },
       );
 
       // Should not throw
-      await expect(emitWorkerEvents(deps)).rejects.toThrow('NATS down');
+      await expect(emitWorkerEvents(deps)).rejects.toThrow('event log down');
     });
   });
 

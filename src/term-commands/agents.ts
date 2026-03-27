@@ -547,6 +547,45 @@ function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Age
 
 type TeamWindowInfo = { windowId: string; windowName: string; paneId: string; created: boolean };
 
+function shellQuote(arg: string): string {
+  return `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Write a temporary launch script for complex tmux spawns.
+ *
+ * Native Claude team launches carry many quoted flags and prompt-file args. In
+ * some shells that last outer-shell → tmux → inner-shell hop can mangle argv.
+ * Executing a script path removes one parsing layer and keeps the worker launch
+ * stable.
+ */
+function writeTmuxLaunchScript(workerId: string, fullCommand: string): string {
+  const { chmodSync, mkdirSync, writeFileSync } = require('node:fs');
+  const { join } = require('node:path');
+  const { homedir } = require('node:os');
+
+  const dir = join(homedir(), '.genie', 'spawn-scripts');
+  mkdirSync(dir, { recursive: true });
+  const safeId = workerId.replace(/[^a-zA-Z0-9._-]/g, '-');
+  const scriptPath = join(dir, `${safeId}-${Date.now().toString(36)}.sh`);
+  writeFileSync(scriptPath, `#!/bin/sh\nexec ${fullCommand}\n`, { mode: 0o700 });
+  chmodSync(scriptPath, 0o700);
+  return scriptPath;
+}
+
+/**
+ * Build the split-window command for the first agent in a newly created team window.
+ *
+ * Reusing the blank pane via send-keys corrupts long Claude commands with multiple
+ * quoted args (notably QA prompts + prompt files). Spawning a real pane with the
+ * exact same split-window path used elsewhere is more reliable; the blank pane is
+ * removed afterwards.
+ */
+export function buildInitialSplitWindowCommand(windowId: string, cwd: string | undefined, fullCommand: string): string {
+  const cwdFlag = cwd ? ` -c ${shellQuote(cwd)}` : '';
+  return `tmux split-window -d -t ${shellQuote(windowId)}${cwdFlag} -P -F '#{pane_id}' ${shellQuote(fullCommand)}`;
+}
+
 /**
  * Resolve team window for spawn. Returns null if team is unset or resolution fails.
  *
@@ -625,22 +664,33 @@ async function autoConfirmTrustPrompt(paneId: string): Promise<void> {
  */
 function createTmuxPane(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): string {
   const { execSync } = require('node:child_process');
+  const useLaunchScript = ctx.validated.provider === 'claude' && Boolean(ctx.validated.nativeTeam?.enabled);
+  const tmuxCommand = useLaunchScript
+    ? shellQuote(writeTmuxLaunchScript(ctx.workerId, ctx.fullCommand))
+    : shellQuote(ctx.fullCommand);
 
   if (teamWindow?.created) {
-    const paneId = execSync(`tmux list-panes -t '${teamWindow.windowId}' -F '#{pane_id}'`, { encoding: 'utf-8' })
-      .trim()
-      .split('\n')[0];
-    if (ctx.cwd) {
-      execSync(`tmux send-keys -t '${paneId}' 'cd ${ctx.cwd.replace(/'/g, "'\\''")}' Enter`, { encoding: 'utf-8' });
+    const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
+    const paneId = execSync(
+      `tmux split-window -d -t ${shellQuote(teamWindow.windowId)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`,
+      {
+        encoding: 'utf-8',
+      },
+    ).trim();
+    try {
+      execSync(`tmux kill-pane -t '${teamWindow.paneId}'`, { stdio: 'ignore' });
+    } catch {
+      /* best-effort */
     }
-    execSync(`tmux send-keys -t '${paneId}' '${ctx.fullCommand.replace(/'/g, "'\\''")}' Enter`, {
-      encoding: 'utf-8',
-    });
     return paneId;
   }
 
   const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
   const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
+  if (useLaunchScript) {
+    const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
+    return execSync(splitCmd, { encoding: 'utf-8' }).trim();
+  }
   // Wrap fullCommand in shell quotes so it survives the outer-shell → tmux → inner-shell pipeline.
   // Without this, single quotes from escapeShellArg (e.g. around the initialPrompt) are consumed
   // by the outer shell, and tmux's inner shell sees unquoted args — splitting multi-word prompts.
@@ -798,7 +848,7 @@ async function resolveNativeTeam(
   const teamConfig = await teamManager.getTeam(team);
   let parentSessionId = teamConfig?.nativeTeamParentSessionId;
   if (!parentSessionId) {
-    parentSessionId = (await nativeTeams.discoverClaudeSessionId()) ?? `genie-${team}`;
+    parentSessionId = (await nativeTeams.discoverClaudeParentSessionId()) ?? `genie-${team}`;
   }
   await nativeTeams.ensureNativeTeam(team, `Genie team: ${team}`, parentSessionId);
   const spawnColor = (options.color as ClaudeTeamColor) ?? (await nativeTeams.assignColor(team));
@@ -964,7 +1014,9 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   const layoutMode = resolveLayoutMode(options.layout);
   const workerId = await generateWorkerId(validated.team, effectiveRole);
 
-  const insideTmux = Boolean(process.env.TMUX);
+  // An explicit session target means "spawn in tmux" even when the caller is outside tmux.
+  // This matters for orchestrators like QA, which need detached workers instead of a blocking inline session.
+  const insideTmux = Boolean(process.env.TMUX || options.session);
   const nt = validated.nativeTeam;
   const now = new Date().toISOString();
   const agentName = nt?.agentName ?? effectiveRole;

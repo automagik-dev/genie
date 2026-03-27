@@ -70,6 +70,11 @@ function rowToMessage(row: MailboxRow): MailboxMessage {
   };
 }
 
+function normalizeWorkerIds(worker: string | string[]): string[] {
+  const values = Array.isArray(worker) ? worker : [worker];
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -99,11 +104,10 @@ export async function send(repoPath: string, from: string, to: string, body: str
     deliveredAt: null,
   };
 
-  // Publish to NATS for real-time streaming (fire-and-forget, auto-closes)
+  // Mirror mailbox writes into the PG runtime event log for follow/QA flows.
   try {
-    const { publish } = await import('./nats-client.js');
-    await publish(`genie.msg.${to}`, {
-      timestamp: message.createdAt,
+    const { publishSubjectEvent } = await import('./runtime-events.js');
+    await publishSubjectEvent(repoPath, `genie.msg.${to}`, {
       kind: 'message',
       agent: from,
       direction: 'out',
@@ -111,9 +115,10 @@ export async function send(repoPath: string, from: string, to: string, body: str
       text: body,
       data: { messageId: message.id, from, to },
       source: 'mailbox',
+      timestamp: message.createdAt,
     });
   } catch {
-    // NATS unavailable — no-op
+    // Event log unavailable — mailbox durability already succeeded
   }
 
   return message;
@@ -122,11 +127,13 @@ export async function send(repoPath: string, from: string, to: string, body: str
 /**
  * Get all messages for a worker (inbox view).
  */
-export async function inbox(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
+export async function inbox(repoPath: string, workerId: string | string[]): Promise<MailboxMessage[]> {
   const sql = await getConnection();
+  const workerIds = normalizeWorkerIds(workerId);
+  if (workerIds.length === 0) return [];
   const rows = await sql`
     SELECT * FROM mailbox
-    WHERE to_worker = ${workerId} AND repo_path = ${repoPath}
+    WHERE to_worker = ANY(${workerIds}) AND repo_path = ${repoPath}
     ORDER BY created_at ASC
   `;
   return rows.map(rowToMessage);
@@ -136,11 +143,13 @@ export async function inbox(repoPath: string, workerId: string): Promise<Mailbox
  * Read sent messages from a worker's outbox.
  * Queries the same mailbox table filtered by from_worker.
  */
-export async function readOutbox(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
+export async function readOutbox(repoPath: string, workerId: string | string[]): Promise<MailboxMessage[]> {
   const sql = await getConnection();
+  const workerIds = normalizeWorkerIds(workerId);
+  if (workerIds.length === 0) return [];
   const rows = await sql`
     SELECT * FROM mailbox
-    WHERE from_worker = ${workerId} AND repo_path = ${repoPath}
+    WHERE from_worker = ANY(${workerIds}) AND repo_path = ${repoPath}
     ORDER BY created_at ASC
   `;
   return rows.map(rowToMessage);
@@ -162,11 +171,13 @@ export async function markDelivered(repoPath: string, workerId: string, messageI
 /**
  * Get unread messages for a worker.
  */
-export async function getUnread(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
+export async function getUnread(repoPath: string, workerId: string | string[]): Promise<MailboxMessage[]> {
   const sql = await getConnection();
+  const workerIds = normalizeWorkerIds(workerId);
+  if (workerIds.length === 0) return [];
   const rows = await sql`
     SELECT * FROM mailbox
-    WHERE to_worker = ${workerId} AND repo_path = ${repoPath} AND read = false
+    WHERE to_worker = ANY(${workerIds}) AND repo_path = ${repoPath} AND read = false
     ORDER BY created_at ASC
   `;
   return rows.map(rowToMessage);

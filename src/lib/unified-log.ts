@@ -12,6 +12,12 @@
 
 import type { Agent } from './agent-registry.js';
 import { type MailboxMessage, inbox, readOutbox } from './mailbox.js';
+import {
+  type RuntimeEvent,
+  type RuntimeEventKind,
+  type RuntimeEventSource,
+  followRuntimeEvents,
+} from './runtime-events.js';
 import { type ChatMessage, readMessages } from './team-chat.js';
 import type { TranscriptEntry } from './transcript.js';
 
@@ -19,8 +25,8 @@ import type { TranscriptEntry } from './transcript.js';
 // Types
 // ============================================================================
 
-export type LogEventKind = 'user' | 'assistant' | 'message' | 'state' | 'tool_call' | 'tool_result' | 'system' | 'qa';
-export type LogEventSource = 'provider' | 'mailbox' | 'chat' | 'registry' | 'hook' | 'send';
+export type LogEventKind = RuntimeEventKind;
+export type LogEventSource = RuntimeEventSource;
 
 export interface LogEvent {
   /** ISO timestamp */
@@ -55,6 +61,13 @@ export interface LogFilter {
 // ============================================================================
 // Converters
 // ============================================================================
+
+function mailboxActorKeys(agent: Agent): string[] {
+  const keys = [agent.id];
+  if (agent.role && agent.role !== agent.id) keys.push(agent.role);
+  if (agent.customName && !keys.includes(agent.customName)) keys.push(agent.customName);
+  return keys;
+}
 
 /** Check if text looks like injected system/skill content rather than real conversation. */
 function isSystemNoise(text: string): boolean {
@@ -176,44 +189,6 @@ export function sortByTimestamp(events: LogEvent[]): LogEvent[] {
 }
 
 // ============================================================================
-// PG Message Source
-// ============================================================================
-
-/** Read messages from PG TaskService for a given agent. Returns [] if PG unavailable. */
-async function readPgMessages(agentName: string): Promise<LogEvent[]> {
-  try {
-    const ts = await import('./task-service.js');
-    const actor = { actorType: 'local' as const, actorId: agentName };
-    const conversations = await ts.listConversations(actor);
-
-    const events: LogEvent[] = [];
-    for (const conv of conversations) {
-      const messages = await ts.getMessages(conv.id, { limit: 100 });
-      const members = await ts.getMembers(conv.id);
-      const peerMember = members.find((m) => m.actorId !== agentName);
-
-      for (const msg of messages) {
-        const isOutgoing = msg.senderId === agentName;
-        const peer = isOutgoing ? peerMember?.actorId : msg.senderId;
-        events.push({
-          timestamp: msg.createdAt,
-          kind: 'message',
-          agent: agentName,
-          direction: isOutgoing ? 'out' : 'in',
-          peer,
-          text: msg.body,
-          data: { messageId: msg.id, conversationId: msg.conversationId, senderId: msg.senderId },
-          source: 'send',
-        });
-      }
-    }
-    return events;
-  } catch {
-    return [];
-  }
-}
-
-// ============================================================================
 // Aggregators
 // ============================================================================
 
@@ -224,18 +199,18 @@ async function readPgMessages(agentName: string): Promise<LogEvent[]> {
 export async function readAgentLog(agent: Agent, repoPath: string, filter?: LogFilter): Promise<LogEvent[]> {
   const agentName = agent.id;
   const team = agent.team;
+  const mailboxKeys = mailboxActorKeys(agent);
 
   // Read all sources in parallel
-  const [transcriptEntries, inboxMessages, outboxMessages, chatMessages, pgMessages] = await Promise.all([
+  const [transcriptEntries, inboxMessages, outboxMessages, chatMessages] = await Promise.all([
     readTranscriptSafe(agent),
-    inbox(repoPath, agentName),
-    readOutbox(repoPath, agentName),
+    inbox(repoPath, mailboxKeys),
+    readOutbox(repoPath, mailboxKeys),
     team ? readMessages(repoPath, team) : Promise.resolve([]),
-    readPgMessages(agentName),
   ]);
 
   // Convert to LogEvents
-  const events: LogEvent[] = [...pgMessages];
+  const events: LogEvent[] = [];
 
   for (const entry of transcriptEntries) {
     const event = transcriptToLogEvent(entry, agentName, team);
@@ -279,15 +254,15 @@ export async function readTeamLog(
   const perAgentEvents = await Promise.all(
     agents.map(async (agent) => {
       const agentName = agent.id;
+      const mailboxKeys = mailboxActorKeys(agent);
 
-      const [transcriptEntries, inboxMessages, outboxMessages, pgMessages] = await Promise.all([
+      const [transcriptEntries, inboxMessages, outboxMessages] = await Promise.all([
         readTranscriptSafe(agent),
-        inbox(repoPath, agentName),
-        readOutbox(repoPath, agentName),
-        readPgMessages(agentName),
+        inbox(repoPath, mailboxKeys),
+        readOutbox(repoPath, mailboxKeys),
       ]);
 
-      const events: LogEvent[] = [...pgMessages];
+      const events: LogEvent[] = [];
       for (const entry of transcriptEntries) {
         const event = transcriptToLogEvent(entry, agentName, teamName);
         if (event) events.push(event);
@@ -318,29 +293,21 @@ type LogEventCallback = (event: LogEvent) => void;
 /** Handle returned by follow functions to stop streaming. */
 interface FollowHandle {
   stop: () => Promise<void>;
-  /** 'nats' if streaming via NATS, 'poll' if file polling fallback */
-  mode: 'nats' | 'poll';
+  /** 'pg' when streaming from the PG event log */
+  mode: 'pg';
 }
 
-/**
- * Follow a single agent's log in real-time.
- * Primary: subscribe to NATS subjects for the agent.
- * Fallback: poll files every 1s if NATS unavailable.
- */
+/** Follow a single agent via the PG runtime event log. */
 export async function followAgentLog(
   agent: Agent,
   repoPath: string,
   filter: LogFilter | undefined,
   onEvent: LogEventCallback,
 ): Promise<FollowHandle> {
-  return startNatsFollow([agent], repoPath, agent.team, filter, onEvent);
+  return startPgFollow([agent], repoPath, agent.team, filter, onEvent);
 }
 
-/**
- * Follow all agents in a team in real-time.
- * Primary: subscribe to NATS subjects for the team.
- * Fallback: poll files every 1s if NATS unavailable.
- */
+/** Follow a team via the PG runtime event log. */
 export async function followTeamLog(
   agents: Agent[],
   repoPath: string,
@@ -348,37 +315,36 @@ export async function followTeamLog(
   filter: LogFilter | undefined,
   onEvent: LogEventCallback,
 ): Promise<FollowHandle> {
-  return startNatsFollow(agents, repoPath, teamName, filter, onEvent);
+  return startPgFollow(agents, repoPath, teamName, filter, onEvent);
 }
 
 /**
- * NATS-only follow: subscribe to all genie.* subjects for real-time streaming.
- * All events (tool calls, messages, state changes) are published to NATS by hooks.
- * No file polling — NATS is the single source for --follow.
+ * PG-first follow: wake up on LISTEN/NOTIFY, replay by event id cursor, and
+ * filter by agent/team before emitting to the caller.
  */
-async function startNatsFollow(
-  _agents: Agent[],
+async function startPgFollow(
+  agents: Agent[],
   _repoPath: string,
-  _team: string | undefined,
+  team: string | undefined,
   filter: LogFilter | undefined,
   onEvent: LogEventCallback,
 ): Promise<FollowHandle> {
-  const nats = await import('./nats-client.js');
-  const available = await nats.isAvailable();
-  if (!available) {
-    throw new Error('NATS is not available. Install nats package and ensure NATS server is running.');
-  }
-
   const kindsFilter = filter?.kinds ? new Set(filter.kinds) : null;
-  const subs: Array<{ unsubscribe: () => void }> = [];
+  const agentIds = new Set(agents.map((agent) => agent.id));
   const seenKeys = new Set<string>();
 
   const eventKey = (e: LogEvent): string => `${e.timestamp}|${e.kind}|${e.agent}|${e.text.slice(0, 80)}`;
 
-  const handleNatsEvent = (_subject: string, data: unknown) => {
-    const event = data as LogEvent;
-    if (!event?.timestamp || !event?.kind) return;
+  const matchesScope = (event: RuntimeEvent) => {
+    if (team === 'all') return agentIds.has(event.agent);
+    if (team && event.team === team) return true;
+    return agentIds.has(event.agent);
+  };
+
+  const handleRuntimeEvent = (event: RuntimeEvent) => {
+    if (!event.timestamp || !event.kind) return;
     if (kindsFilter && !kindsFilter.has(event.kind)) return;
+    if (!matchesScope(event)) return;
     // Dedup (same event can arrive on multiple matching subjects)
     const key = eventKey(event);
     if (seenKeys.has(key)) return;
@@ -386,15 +352,13 @@ async function startNatsFollow(
     onEvent(event);
   };
 
-  // Subscribe to all genie events (messages, tool calls, state changes)
-  const allSub = await nats.subscribe('genie.>', handleNatsEvent);
-  subs.push(allSub);
+  const handle = await followRuntimeEvents({ kinds: filter?.kinds, scopeMode: 'any' }, handleRuntimeEvent, {
+    pollIntervalMs: 500,
+  });
 
   return {
-    mode: 'nats',
-    stop: async () => {
-      for (const sub of subs) sub.unsubscribe();
-    },
+    mode: 'pg',
+    stop: () => handle.stop(),
   };
 }
 

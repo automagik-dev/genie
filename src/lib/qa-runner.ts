@@ -5,23 +5,24 @@
  *   1. Parse the spec .md into a QaSpec
  *   2. Create a team `qa-{random}` via teamManager.createTeam()
  *   3. Hire and spawn a team-lead with the spec as context prompt
- *   4. Poll team chat for the team-lead's PASS/FAIL report
+ *   4. Wait for the team-lead's PASS/FAIL report in the PG event log
  *   5. Parse the result, disband the team, return SpecReport
  *
  * The team-lead is a real Claude Code agent that:
  *   - Spawns agents listed in the spec's Setup section
- *   - Subscribes to NATS events via `genie log --follow`
+ *   - Subscribes to PG runtime events via `genie log --follow`
  *   - Executes Actions (send messages, wait, run commands)
  *   - Validates Expectations against collected events
- *   - Reports PASS/FAIL as a structured JSON in team chat
+ *   - Reports PASS/FAIL as structured JSON via `genie qa-report`
  */
 
-import { writeFile } from 'node:fs/promises';
+import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import * as nats from './nats-client.js';
+import { dirname, join, resolve } from 'node:path';
+import { $ } from 'bun';
 import { type QaSpec, parseQaSpec } from './qa-parser.js';
 import { type SpecEntry, listAllSpecs, saveResult, specKeyFromPath } from './qa-state.js';
+import { followRuntimeEvents, publishSubjectEvent, waitForRuntimeEvent } from './runtime-events.js';
 import * as teamManager from './team-manager.js';
 
 // ============================================================================
@@ -68,7 +69,7 @@ export interface QaRunnerOptions {
 }
 
 // ============================================================================
-// QA Event Emitter (NDJSON + NATS)
+// QA Event Emitter (NDJSON + PG Event Log)
 // ============================================================================
 
 interface QaEventPayload {
@@ -84,11 +85,10 @@ function emitNdjson(event: QaEventPayload): void {
   process.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
-/** Publish a QA event to NATS as a LogEvent-compatible payload. */
-function publishQaEvent(qaType: string, payload: QaEventPayload): void {
+/** Publish a QA event to the PG event log as a LogEvent-compatible payload. */
+async function publishQaEvent(repoPath: string, qaType: string, payload: QaEventPayload): Promise<void> {
   const { specKey, domain, team, ...rest } = payload;
-  nats.publish(`genie.qa.${qaType}`, {
-    timestamp: new Date().toISOString(),
+  await publishSubjectEvent(repoPath, `genie.qa.${qaType}`, {
     kind: 'qa',
     agent: 'qa',
     team,
@@ -98,10 +98,86 @@ function publishQaEvent(qaType: string, payload: QaEventPayload): void {
   });
 }
 
-/** Emit a QA event to both NDJSON stdout and NATS. */
-function emitQaEvent(qaType: string, payload: QaEventPayload, ndjson: boolean): void {
-  publishQaEvent(qaType, payload);
+/** Emit a QA event to both NDJSON stdout and the PG event log. */
+async function emitQaEvent(repoPath: string, qaType: string, payload: QaEventPayload, ndjson: boolean): Promise<void> {
+  await publishQaEvent(repoPath, qaType, payload);
   if (ndjson) emitNdjson(payload);
+}
+
+// ============================================================================
+// Dirty Working Tree Overlay
+// ============================================================================
+
+type DirtyOverlayOp =
+  | { kind: 'copy'; path: string }
+  | { kind: 'delete'; path: string }
+  | { kind: 'rename'; from: string; to: string };
+
+function parseNameStatusZ(output: string): DirtyOverlayOp[] {
+  if (!output) return [];
+
+  const parts = output.split('\0').filter(Boolean);
+  const ops: DirtyOverlayOp[] = [];
+
+  for (let i = 0; i < parts.length; ) {
+    const status = parts[i++] ?? '';
+    if (!status) break;
+
+    if (status.startsWith('R')) {
+      const from = parts[i++] ?? '';
+      const to = parts[i++] ?? '';
+      if (from && to) ops.push({ kind: 'rename', from, to });
+      continue;
+    }
+
+    const path = parts[i++] ?? '';
+    if (!path) continue;
+
+    if (status.startsWith('D')) ops.push({ kind: 'delete', path });
+    else ops.push({ kind: 'copy', path });
+  }
+
+  return ops;
+}
+
+/**
+ * QA teams are created via `git clone --shared`, so by default they only see the
+ * last committed tree. Overlay local dirty/untracked paths so QA validates the
+ * code that is actually running in the current workspace.
+ */
+export async function overlayDirtyWorkingTree(repoPath: string, worktreePath: string): Promise<void> {
+  const tracked = (
+    await $`git -C ${repoPath} diff --name-status --find-renames -z HEAD --`.quiet().nothrow().text()
+  ).trim();
+  const untracked = (
+    await $`git -C ${repoPath} ls-files --others --exclude-standard -z`.quiet().nothrow().text()
+  ).trim();
+
+  const ops = parseNameStatusZ(tracked);
+  for (const path of untracked.split('\0').filter(Boolean)) {
+    ops.push({ kind: 'copy', path });
+  }
+
+  for (const op of ops) {
+    if (op.kind === 'delete') {
+      await rm(join(worktreePath, op.path), { recursive: true, force: true });
+      continue;
+    }
+
+    if (op.kind === 'rename') {
+      await rm(join(worktreePath, op.from), { recursive: true, force: true });
+      const src = join(repoPath, op.to);
+      const dest = join(worktreePath, op.to);
+      await mkdir(dirname(dest), { recursive: true });
+      await cp(src, dest, { recursive: true, force: true });
+      continue;
+    }
+
+    const src = join(repoPath, op.path);
+    const dest = join(worktreePath, op.path);
+    await mkdir(dirname(dest), { recursive: true });
+    await cp(src, dest, { recursive: true, force: true });
+  }
 }
 
 // ============================================================================
@@ -126,7 +202,7 @@ export async function runDomainSpecs(
 }
 
 /**
- * Run spec entries with semaphore-based concurrency + real-time NATS timeline.
+ * Run spec entries with semaphore-based concurrency + real-time PG timeline.
  * Phase 1: Pre-create all teams serially (git worktree can't run in parallel)
  * Phase 2: Run specs through semaphore queue (next spec starts as soon as one finishes)
  * Phase 3: Disband all teams
@@ -142,6 +218,7 @@ async function prepareTeams(entries: SpecEntry[], repoPath: string, ndjson: bool
     try {
       const spec = await parseQaSpec(entry.filePath);
       const config = await teamManager.createTeam(teamName, repoPath);
+      await overlayDirtyWorkingTree(repoPath, config.worktreePath);
       await teamManager.hireAgent(teamName, 'qa');
 
       const prompt = buildTeamLeadPrompt(spec, teamName, repoPath);
@@ -150,7 +227,8 @@ async function prepareTeams(entries: SpecEntry[], repoPath: string, ndjson: bool
 
       prepared.push({ entry, spec, teamName, worktreePath: config.worktreePath, promptFile });
       console.error(`    ✓ ${entry.name}`);
-      emitQaEvent(
+      await emitQaEvent(
+        repoPath,
         'team-created',
         { type: 'qa:team-created', specKey: entry.key, domain: entry.domain, team: teamName },
         ndjson,
@@ -163,9 +241,17 @@ async function prepareTeams(entries: SpecEntry[], repoPath: string, ndjson: bool
   return prepared;
 }
 
-/** Emit a spec-done event to NATS + optionally NDJSON. */
-function emitSpecDone(specKey: string, domain: string, team: string, report: SpecReport, ndjson: boolean): void {
-  emitQaEvent(
+/** Emit a spec-done event to PG + optionally NDJSON. */
+async function emitSpecDone(
+  repoPath: string,
+  specKey: string,
+  domain: string,
+  team: string,
+  report: SpecReport,
+  ndjson: boolean,
+): Promise<void> {
+  await emitQaEvent(
+    repoPath,
     'spec-done',
     {
       type: 'qa:spec-done',
@@ -194,28 +280,32 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
   const prepared = await prepareTeams(entries, repoPath, ndjson);
   if (prepared.length === 0) return [];
 
-  // Subscribe to all NATS events for real-time timeline
-  const timelineSub = await nats.subscribe('genie.>', (_subj, data) => {
-    const event = data as { timestamp?: string; kind?: string; agent?: string; text?: string; team?: string };
-    if (!event?.timestamp || !event?.kind) return;
-    const team = event.team ?? '';
-    if (!team.startsWith('qa-')) return;
-    const match = prepared.find((p) => p.teamName === team);
-    const specKey = match?.entry.key ?? team;
-    const specName = match?.entry.name ?? team;
-    const domain = match?.entry.domain ?? '';
-    const time = new Date(event.timestamp).toLocaleTimeString('en-US', { hour12: false });
-    const text = (event.text ?? '').slice(0, 100);
-    console.error(`  ${DIM}${time}${RESET} ${DIM}[${event.kind}]${RESET} ${specName} ${DIM}${text}${RESET}`);
-    if (ndjson)
-      emitNdjson({
-        type: 'qa:event',
-        specKey,
-        domain,
-        team,
-        event: { timestamp: event.timestamp, kind: event.kind, agent: event.agent ?? '', text: event.text ?? '' },
-      });
-  });
+  // Subscribe to the PG runtime event log for real-time timeline
+  const timelineSub = await followRuntimeEvents(
+    { teamPrefix: 'qa-' },
+    (event) => {
+      if (!event?.timestamp || !event?.kind) return;
+      const team = event.team ?? '';
+      if (!team.startsWith('qa-')) return;
+      const match = prepared.find((p) => p.teamName === team);
+      const specKey = match?.entry.key ?? team;
+      const specName = match?.entry.name ?? team;
+      const domain = match?.entry.domain ?? '';
+      const time = new Date(event.timestamp).toLocaleTimeString('en-US', { hour12: false });
+      const text = (event.text ?? '').slice(0, 100);
+      console.error(`  ${DIM}${time}${RESET} ${DIM}[${event.kind}]${RESET} ${specName} ${DIM}${text}${RESET}`);
+      if (ndjson) {
+        emitNdjson({
+          type: 'qa:event',
+          specKey,
+          domain,
+          team,
+          event: { timestamp: event.timestamp, kind: event.kind, agent: event.agent ?? '', text: event.text ?? '' },
+        });
+      }
+    },
+    { pollIntervalMs: 250 },
+  );
 
   // Phase 2: Semaphore-based concurrency
   console.error(`\n  [qa] Running ${prepared.length} specs (max ${maxConcurrency} parallel)\n`);
@@ -229,27 +319,28 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
       while (running < maxConcurrency && nextIdx < prepared.length) {
         const p = prepared[nextIdx++];
         running++;
-        emitQaEvent(
+        void emitQaEvent(
+          repoPath,
           'spec-started',
           { type: 'qa:spec-started', specKey: p.entry.key, domain: p.entry.domain, team: p.teamName },
           ndjson,
         );
 
-        runPreparedSpec(p.spec, p.teamName, p.worktreePath, p.promptFile, timeoutMs)
+        runPreparedSpec(repoPath, p.spec, p.teamName, p.worktreePath, p.promptFile, timeoutMs)
           .then(async (report) => {
             const key = specKeyFromPath(specDir, p.entry.filePath);
             await saveResult(repoPath, key, report);
             const icon = report.result === 'pass' ? `${GREEN}✓${RESET}` : `${RED}✗${RESET}`;
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
             console.error(`  ${icon} ${p.entry.name} (${(report.durationMs / 1000).toFixed(0)}s) [${elapsed}s total]`);
-            emitSpecDone(p.entry.key, p.entry.domain, p.teamName, report, ndjson);
+            await emitSpecDone(repoPath, p.entry.key, p.entry.domain, p.teamName, report, ndjson);
             reports.push(report);
           })
           .catch((err) => {
             const errorReport = makeErrorReport(p.spec, Date.now(), String(err));
             reports.push(errorReport);
             console.error(`  ${RED}✗${RESET} ${p.entry.name}: ${err}`);
-            emitSpecDone(p.entry.key, p.entry.domain, p.teamName, errorReport, ndjson);
+            void emitSpecDone(repoPath, p.entry.key, p.entry.domain, p.teamName, errorReport, ndjson);
           })
           .finally(() => {
             running--;
@@ -261,7 +352,7 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
     tryStartNext();
   });
 
-  timelineSub.unsubscribe();
+  await timelineSub.stop();
 
   // Phase 3: Disband all teams
   console.error(`\n  [qa] Cleaning up ${prepared.length} teams...`);
@@ -288,16 +379,17 @@ export async function runSpec(spec: QaSpec, options?: QaRunnerOptions): Promise<
 
   try {
     const config = await teamManager.createTeam(teamName, repoPath);
-    await teamManager.hireAgent(teamName, 'qa-runner');
-    emitQaEvent('team-created', { type: 'qa:team-created', specKey, domain, team: teamName }, ndjson);
+    await overlayDirtyWorkingTree(repoPath, config.worktreePath);
+    await teamManager.hireAgent(teamName, 'qa');
+    await emitQaEvent(repoPath, 'team-created', { type: 'qa:team-created', specKey, domain, team: teamName }, ndjson);
 
     const prompt = buildTeamLeadPrompt(spec, teamName, repoPath);
     const promptFile = join(tmpdir(), `genie-qa-${teamName}.md`);
     await writeFile(promptFile, prompt);
 
-    emitQaEvent('spec-started', { type: 'qa:spec-started', specKey, domain, team: teamName }, ndjson);
-    const report = await runPreparedSpec(spec, teamName, config.worktreePath, promptFile, timeoutMs);
-    emitSpecDone(specKey, domain, teamName, report, ndjson);
+    await emitQaEvent(repoPath, 'spec-started', { type: 'qa:spec-started', specKey, domain, team: teamName }, ndjson);
+    const report = await runPreparedSpec(repoPath, spec, teamName, config.worktreePath, promptFile, timeoutMs);
+    await emitSpecDone(repoPath, specKey, domain, teamName, report, ndjson);
 
     await teamManager.disbandTeam(teamName);
     return report;
@@ -308,13 +400,14 @@ export async function runSpec(spec: QaSpec, options?: QaRunnerOptions): Promise<
       // Best effort
     }
     const errorReport = makeErrorReport(spec, start, String(err));
-    emitSpecDone(specKey, domain, teamName, errorReport, ndjson);
+    await emitSpecDone(repoPath, specKey, domain, teamName, errorReport, ndjson);
     return errorReport;
   }
 }
 
 /** Run a single spec with a pre-created team (no git operations — safe for parallel). */
 async function runPreparedSpec(
+  _repoPath: string,
   spec: QaSpec,
   teamName: string,
   worktreePath: string,
@@ -322,20 +415,22 @@ async function runPreparedSpec(
   timeoutMs: number,
 ): Promise<SpecReport> {
   const start = Date.now();
+  const effectiveTimeoutMs = computeEffectiveTimeoutMs(spec, timeoutMs);
 
   try {
     const { handleWorkerSpawn } = await import('../term-commands/agents.js');
     const paneId = await handleWorkerSpawn('qa', {
       provider: 'claude',
       team: teamName,
+      session: teamName,
       cwd: worktreePath,
       role: 'team-lead',
       extraArgs: ['--append-system-prompt-file', promptFile],
-      initialPrompt: `Execute the QA spec "${spec.name}". Your full instructions are in the system prompt. Start now.`,
+      initialPrompt: `Execute the QA spec "${spec.name}" end-to-end right now. Do not stop after partial progress or a wait step. Continue until you validate the expectations, publish qa-report, and run team done. Your full instructions are in the system prompt.`,
     });
     console.error(`  [qa] Spawned qa for "${spec.name}" in ${teamName}`);
 
-    const report = await waitForResult(spec, teamName, timeoutMs, start, paneId);
+    const report = await waitForResult(spec, teamName, effectiveTimeoutMs, start);
     return report;
   } catch (err) {
     return makeErrorReport(spec, start, String(err));
@@ -351,10 +446,36 @@ async function runPreparedSpec(
  * This tells the agent exactly what to do: spawn agents, execute actions,
  * validate expectations, and report the result.
  */
-function buildTeamLeadPrompt(spec: QaSpec, teamName: string, repoPath: string): string {
+function buildQaPromptArtifacts(teamName: string): {
+  followFile: string;
+  followPidFile: string;
+  followSinceFile: string;
+  snapshotFile: string;
+} {
+  const base = `genie-qa-${teamName}`;
+  return {
+    followFile: join(tmpdir(), `${base}-follow.ndjson`),
+    followPidFile: join(tmpdir(), `${base}-follow.pid`),
+    followSinceFile: join(tmpdir(), `${base}-follow.since`),
+    snapshotFile: join(tmpdir(), `${base}-snapshot.ndjson`),
+  };
+}
+
+export function buildTeamLeadPrompt(spec: QaSpec, teamName: string, repoPath: string): string {
+  const genieEntry = join(repoPath, 'src/genie.ts');
+  const genieCmd = `bun run "${genieEntry}"`;
+  const { followFile, followPidFile, followSinceFile, snapshotFile } = buildQaPromptArtifacts(teamName);
+  const qaCheckCmd = buildQaCheckCommand(genieCmd, spec.file, teamName, followSinceFile);
   const specSummary = formatSpecForPrompt(spec);
-  const setupInstructions = formatSetupInstructions(spec, teamName);
-  const actionInstructions = formatActionInstructions(spec);
+  const setupInstructions = formatSetupInstructions(
+    spec,
+    teamName,
+    genieCmd,
+    followFile,
+    followPidFile,
+    followSinceFile,
+  );
+  const actionInstructions = formatActionInstructions(spec, teamName, genieCmd, qaCheckCmd);
   const expectInstructions = spec.expect
     .map((e) => `- ${e.description} (source: ${e.source}, matchers: ${JSON.stringify(e.matchers)})`)
     .join('\n');
@@ -370,64 +491,116 @@ ${specSummary}
 
 Execute the spec step by step:
 
+## Working Files
+- Detached follow output: \`${followFile}\`
+- Detached follow PID: \`${followPidFile}\`
+- Follow start timestamp: \`${followSinceFile}\`
+- Fallback snapshot file: \`${snapshotFile}\`
+
 ### 1. Setup
 ${setupInstructions}
 
 ### 2. Actions
 ${actionInstructions}
 
+After the final action finishes, immediately continue to validation and reporting.
+A wait step is never the end of the task.
+
 ### 3. Validate Expectations
 After executing all actions and collecting events, validate each expectation:
 ${expectInstructions}
 
+Preferred path: let Genie evaluate and publish the report for you with this exact command:
+\`\`\`bash
+${qaCheckCmd}
+\`\`\`
+
+This command reads the current team log/transcript snapshot, evaluates the spec, and publishes \`qa-report\` automatically.
+Only fall back to manual \`qa-report\` if \`qa check\` itself errors.
+
 ### 4. Report Result
-When done, publish the result via NATS using \`genie qa-report\`:
+When done, publish the result via \`${genieCmd} qa-report\`:
 
 \`\`\`bash
-genie qa-report '{"result": "pass", "expectations": [{"description": "...", "result": "pass", "evidence": "matched event..."}], "collectedEvents": [{"timestamp": "...", "kind": "...", "agent": "...", "text": "..."}]}'
+${genieCmd} qa-report '{"result": "pass", "expectations": [{"description": "...", "result": "pass", "evidence": "matched event..."}], "collectedEvents": [{"timestamp": "...", "kind": "...", "agent": "...", "text": "..."}]}'
 \`\`\`
 
 - Set "result" to "pass" only if ALL expectations pass, otherwise "fail"
 - For each expectation, include evidence (if pass) or reason (if fail)
 - Include collected events in the collectedEvents array
-- IMPORTANT: This publishes instantly via NATS — the QA runner receives it immediately
+- IMPORTANT: This publishes instantly to the PG event log — the QA runner receives it immediately
 
 ### 5. Cleanup
 After reporting, run:
-\`\`\`
-genie team done ${teamName}
+\`\`\`bash
+if [ -f "${followPidFile}" ]; then
+  kill "$(cat "${followPidFile}")" 2>/dev/null || true
+fi
+${genieCmd} team done ${teamName}
 \`\`\`
 
 ## Repo context
-Working directory: ${repoPath}
+Genie repo root: ${repoPath}
+Genie entrypoint: ${genieEntry}
 Team: ${teamName}
+
+## Command discipline
+- Always run Genie via \`${genieCmd}\`
+- Never run bare \`genie ...\` from PATH
+- Never run a worktree-local \`src/genie.ts\`
+- Never use Claude Bash \`run_in_background\` for long-lived commands in this spec
+- Preserve the spec's target cwd. Example: \`cd /tmp/qa-test-repo && ${genieCmd} qa status\`
 `;
 }
 
-function formatSetupInstructions(spec: QaSpec, teamName: string): string {
+function formatSetupInstructions(
+  spec: QaSpec,
+  teamName: string,
+  genieCmd: string,
+  followFile: string,
+  followPidFile: string,
+  followSinceFile: string,
+): string {
   return spec.setup
     .map((s) => {
       if (s.kind === 'spawn') {
         const provider = s.options.provider || 'claude';
-        return `- Spawn agent: \`genie spawn ${s.target} --provider ${provider} --team ${teamName}\``;
+        return `- Spawn agent: \`${genieCmd} spawn ${s.target} --provider ${provider} --team ${teamName}\``;
       }
       if (s.kind === 'follow') {
-        return `- Start collecting NATS events: run \`genie log --follow --team ${teamName} --ndjson\` in background`;
+        return `- Start detached runtime follow with this exact command (do not use Claude background tasks): \`date -u +"%Y-%m-%dT%H:%M:%SZ" > "${followSinceFile}" && nohup ${genieCmd} log --follow --team ${teamName} --ndjson > "${followFile}" 2>&1 < /dev/null & echo $! > "${followPidFile}" && sleep 2\``;
       }
       return `- Unknown setup step: ${s.kind}`;
     })
     .join('\n');
 }
 
-function formatActionInstructions(spec: QaSpec): string {
+function buildQaCheckCommand(genieCmd: string, specFile: string, teamName: string, followSinceFile: string): string {
+  return `${genieCmd} qa check "${specFile}" --team ${teamName} --since-file "${followSinceFile}"`;
+}
+
+function formatActionInstructions(spec: QaSpec, teamName: string, genieCmd: string, qaCheckCmd: string): string {
   return spec.actions
     .map((a, i) => {
-      if (a.kind === 'send') return `${i + 1}. Send message: \`genie send '${a.message}' --to ${a.to}\``;
-      if (a.kind === 'wait') return `${i + 1}. Wait ${a.seconds ?? 1} seconds`;
-      if (a.kind === 'run') return `${i + 1}. Run command: \`${a.command}\``;
+      const isFinalAction = i === spec.actions.length - 1;
+      if (a.kind === 'send') {
+        return `${i + 1}. Send message: \`${genieCmd} send '${a.message}' --to ${a.to} --team ${teamName}\``;
+      }
+      if (a.kind === 'wait') {
+        if (isFinalAction) {
+          return `${i + 1}. Finalize in one command: \`sleep ${a.seconds ?? 1} && ${qaCheckCmd}\``;
+        }
+        return `${i + 1}. Wait ${a.seconds ?? 1} seconds`;
+      }
+      if (a.kind === 'run') return `${i + 1}. Run command: \`${rewriteRunCommand(a.command ?? '', genieCmd)}\``;
       return `${i + 1}. Unknown action: ${a.kind}`;
     })
     .join('\n');
+}
+
+function rewriteRunCommand(command: string, genieCmd: string): string {
+  if (!command) return command;
+  return command.replace(/(^|[;&|()\s])genie(?=\s|$)/g, `$1${genieCmd}`);
 }
 
 /** Format the parsed spec back into a readable summary. */
@@ -460,77 +633,27 @@ function formatActionStep(a: QaSpec['actions'][number]): string {
 }
 
 // ============================================================================
-// NATS Result Listener
+// QA Result Listener
 // ============================================================================
 
-/** Subscribe to `genie.qa.{team}.result` and wait for the team-lead's report. */
-async function waitForResult(
+/** Wait for `genie.qa.{team}.result` on the PG event log. */
+export async function waitForResult(
   spec: QaSpec,
   teamName: string,
   timeoutMs: number,
   start: number,
-  paneId?: string,
 ): Promise<SpecReport> {
   const subject = `genie.qa.${teamName}.result`;
-  let resolved = false;
-  let resolveFn: (report: SpecReport) => void;
-  const promise = new Promise<SpecReport>((r) => {
-    resolveFn = r;
-  });
-
-  const sub = await nats.subscribe(subject, (_subj, data) => {
-    if (resolved) return;
-    resolved = true;
-    const report = parseTeamLeadReport(spec, data as Record<string, unknown>, start);
-    sub.unsubscribe();
-    resolveFn(report);
-  });
-
-  // Timeout fallback (safety net — 1h default)
-  const timer = setTimeout(
-    () => {
-      if (resolved) return;
-      resolved = true;
-      sub.unsubscribe();
-      resolveFn(makeErrorReport(spec, start, `Timeout after ${timeoutMs}ms waiting for team-lead report via NATS`));
-    },
-    timeoutMs - (Date.now() - start),
-  );
-
-  // Pane liveness polling — fail fast if agent exits without reporting
-  let panePoller: ReturnType<typeof setInterval> | undefined;
-  if (paneId && paneId !== 'inline') {
-    const pollerId = setInterval(() => {
-      if (resolved) {
-        clearInterval(pollerId);
-        return;
-      }
-      try {
-        const { execSync } = require('node:child_process');
-        execSync(`tmux display-message -t '${paneId}' -p '#{pane_id}'`, { stdio: 'ignore', timeout: 3000 });
-      } catch {
-        // Pane is gone — agent exited without reporting
-        if (resolved) return;
-        resolved = true;
-        sub.unsubscribe();
-        clearInterval(pollerId);
-        resolveFn(makeErrorReport(spec, start, `Agent pane ${paneId} exited without reporting result via NATS`));
-      }
-    }, 5000);
-    panePoller = pollerId;
+  const remainingMs = Math.max(timeoutMs - (Date.now() - start), 1);
+  const event = await waitForRuntimeEvent({ subject, team: teamName }, remainingMs);
+  if (!event) {
+    return makeErrorReport(spec, start, `Timeout after ${timeoutMs}ms waiting for team-lead report in PG event log`);
   }
-
-  // Cleanup timer and poller when resolved
-  promise.then(() => {
-    clearTimeout(timer);
-    if (panePoller) clearInterval(panePoller);
-  });
-
-  return promise;
+  return parseTeamLeadReport(spec, event.data ?? {}, start);
 }
 
-/** Parse the team-lead's QA result from NATS payload. */
-function parseTeamLeadReport(spec: QaSpec, payload: Record<string, unknown>, start: number): SpecReport {
+/** Parse the team-lead's QA result payload. */
+export function parseTeamLeadReport(spec: QaSpec, payload: Record<string, unknown>, start: number): SpecReport {
   try {
     const data = payload as {
       result?: string;
@@ -565,6 +688,19 @@ function makeErrorReport(spec: QaSpec, start: number, error: string): SpecReport
     durationMs: Date.now() - start,
     error,
   };
+}
+
+export function computeEffectiveTimeoutMs(spec: QaSpec, requestedTimeoutMs: number): number {
+  const totalWaitMs = spec.actions.reduce(
+    (sum, action) => sum + (action.kind === 'wait' ? (action.seconds ?? 0) * 1000 : 0),
+    0,
+  );
+  const setupSpawnCount = spec.setup.filter((step) => step.kind === 'spawn').length;
+  const orchestrationSlackMs = Math.max(
+    30000,
+    Math.min(90000, 15000 + Math.floor(totalWaitMs / 2) + setupSpawnCount * 15000),
+  );
+  return requestedTimeoutMs + orchestrationSlackMs;
 }
 
 /** Resolve the QA specs directory for the current repo. */

@@ -12,7 +12,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ClaudeTeamColor } from './provider-adapters.js';
@@ -156,6 +156,20 @@ export async function loadConfig(teamName: string): Promise<NativeTeamConfig | n
 
 async function saveConfig(teamName: string, config: NativeTeamConfig): Promise<void> {
   await writeFile(configPath(teamName), JSON.stringify(config, null, 2));
+}
+
+async function countLeadSessionRefs(): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const teams = await listTeams();
+
+  for (const team of teams) {
+    const config = await loadConfig(team);
+    const leadSessionId = config?.leadSessionId;
+    if (!leadSessionId) continue;
+    counts.set(leadSessionId, (counts.get(leadSessionId) ?? 0) + 1);
+  }
+
+  return counts;
 }
 
 // ============================================================================
@@ -458,7 +472,7 @@ function sanitizePath(p: string): string {
  *   2. Find the most recently modified .jsonl in ~/.claude/projects/<sanitized-cwd>/
  *      The UUID filename IS the session ID.
  */
-export async function discoverClaudeSessionId(cwd?: string): Promise<string | null> {
+async function discoverClaudeSessionId(cwd?: string): Promise<string | null> {
   // 1. Env var (when running as a teammate, CC sets this)
   const envSessionId = process.env.CLAUDE_CODE_SESSION_ID;
   if (envSessionId) return envSessionId;
@@ -485,6 +499,97 @@ export async function discoverClaudeSessionId(cwd?: string): Promise<string | nu
 
     // Filename is <uuid>.jsonl — extract the UUID
     return newest.name.replace('.jsonl', '');
+  } catch {
+    return null;
+  }
+}
+
+interface SessionMetadata {
+  teamName?: string;
+  agentName?: string;
+}
+
+async function readSessionMetadata(filePath: string): Promise<SessionMetadata> {
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(filePath, 'r');
+    const buffer = Buffer.alloc(8192);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const head = buffer.toString('utf-8', 0, bytesRead);
+
+    for (const line of head.split('\n').slice(0, 20)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const entry = JSON.parse(trimmed) as { teamName?: unknown; agentName?: unknown };
+        const teamName = typeof entry.teamName === 'string' ? entry.teamName : undefined;
+        const agentName = typeof entry.agentName === 'string' ? entry.agentName : undefined;
+        if (teamName || agentName) return { teamName, agentName };
+      } catch {
+        // Ignore malformed lines and keep scanning the JSONL head.
+      }
+    }
+  } catch {
+    return {};
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+
+  return {};
+}
+
+/**
+ * Discover an eligible parent session ID for spawning native teammates.
+ *
+ * Outside Claude Code we want a root/leader session, not the most recent worker
+ * session in the repo. Prefer:
+ *   1. Current env session (when already inside Claude Code)
+ *   2. Newest root session in the repo (no teamName/agentName)
+ *   3. Newest team-lead session in the repo
+ *   4. Newest session as a last resort
+ */
+export async function discoverClaudeParentSessionId(cwd?: string): Promise<string | null> {
+  const envSessionId = process.env.CLAUDE_CODE_SESSION_ID;
+  if (envSessionId) return envSessionId;
+
+  const projectDir = join(claudeConfigDir(), 'projects', sanitizePath(cwd ?? process.cwd()));
+
+  try {
+    const entries = await readdir(projectDir);
+    const jsonls = entries.filter((e) => e.endsWith('.jsonl'));
+    if (jsonls.length === 0) return null;
+
+    const ranked = await Promise.all(
+      jsonls.map(async (name) => {
+        const filePath = join(projectDir, name);
+        const s = await stat(filePath);
+        const metadata = await readSessionMetadata(filePath);
+        return {
+          name,
+          mtime: s.mtimeMs,
+          metadata,
+        };
+      }),
+    );
+    const leadRefs = await countLeadSessionRefs();
+
+    ranked.sort((a, b) => {
+      const aId = a.name.replace('.jsonl', '');
+      const bId = b.name.replace('.jsonl', '');
+      const aLeadRefs = leadRefs.get(aId) ?? 0;
+      const bLeadRefs = leadRefs.get(bId) ?? 0;
+      if (aLeadRefs !== bLeadRefs) return bLeadRefs - aLeadRefs;
+
+      const aRootScore =
+        !a.metadata.teamName && !a.metadata.agentName ? 2 : a.metadata.agentName === 'team-lead' ? 1 : 0;
+      const bRootScore =
+        !b.metadata.teamName && !b.metadata.agentName ? 2 : b.metadata.agentName === 'team-lead' ? 1 : 0;
+      if (aRootScore !== bRootScore) return bRootScore - aRootScore;
+
+      return b.mtime - a.mtime;
+    });
+
+    return ranked[0]?.name.replace('.jsonl', '') ?? null;
   } catch {
     return null;
   }

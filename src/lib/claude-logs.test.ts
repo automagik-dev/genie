@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  claudeTranscriptProvider,
   findActiveSession,
   findClaudeProjectDir,
   listSessions,
@@ -219,6 +220,76 @@ describe('findActiveSession', () => {
 
     expect(session).not.toBeNull();
     expect(session?.sessionId).toBe('test-session-123');
+  });
+});
+
+describe('claudeTranscriptProvider.discoverLogPath', () => {
+  const multiProjectPath = '/home/genie/workspace/multi-agent';
+  const multiProjectDir = join(PROJECTS_DIR, projectPathToHash(multiProjectPath));
+  const savedHome = process.env.HOME;
+  const workerPath = join(multiProjectDir, 'worker-session.jsonl');
+  const teamLeadPath = join(multiProjectDir, 'team-lead-session.jsonl');
+
+  beforeAll(async () => {
+    await setupTestStructure();
+    await mkdir(multiProjectDir, { recursive: true });
+
+    await writeFile(workerPath, `${JSON.stringify(sampleLogEntries[0])}\n`);
+    await writeFile(teamLeadPath, `${JSON.stringify(sampleLogEntries[1])}\n`);
+
+    const sessionsIndex = {
+      version: 1,
+      entries: [
+        {
+          sessionId: 'worker-session',
+          fullPath: workerPath,
+          fileMtime: Date.now() - 1000,
+          messageCount: 1,
+          created: '2026-02-03T12:00:00.000Z',
+          modified: '2026-02-03T12:00:01.000Z',
+          projectPath: multiProjectPath,
+          isSidechain: false,
+        },
+        {
+          sessionId: 'team-lead-session',
+          fullPath: teamLeadPath,
+          fileMtime: Date.now(),
+          messageCount: 1,
+          created: '2026-02-03T12:00:00.000Z',
+          modified: '2026-02-03T12:00:02.000Z',
+          projectPath: multiProjectPath,
+          isSidechain: false,
+        },
+      ],
+      originalPath: multiProjectPath,
+    };
+
+    await writeFile(join(multiProjectDir, 'sessions-index.json'), JSON.stringify(sessionsIndex, null, 2));
+    process.env.HOME = TEST_DIR;
+  });
+
+  afterAll(async () => {
+    if (savedHome === undefined) process.env.HOME = undefined;
+    else process.env.HOME = savedHome;
+    await cleanupTestStructure();
+  });
+
+  test('uses worker claudeSessionId instead of most-recent project session', async () => {
+    const logPath = await claudeTranscriptProvider.discoverLogPath({
+      id: 'qa-team-engineer',
+      paneId: '%1',
+      session: 'team',
+      worktree: multiProjectPath,
+      startedAt: new Date().toISOString(),
+      state: 'working',
+      lastStateChange: new Date().toISOString(),
+      repoPath: multiProjectPath,
+      claudeSessionId: 'worker-session',
+      role: 'engineer',
+      team: 'qa-team',
+    });
+
+    expect(logPath).toBe(workerPath);
   });
 });
 
