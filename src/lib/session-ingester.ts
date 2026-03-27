@@ -106,14 +106,21 @@ function discoverJsonlFiles(): Array<{ sessionId: string; jsonlPath: string; pro
  * Extract text content from a Claude message content field.
  * Content can be a string, array of blocks, or other shapes.
  */
-// biome-ignore lint/suspicious/noExplicitAny: JSONL content is dynamically typed
-function extractTextContent(content: any): string | null {
+function extractTextContent(content: unknown): string | null {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     const texts: string[] = [];
     for (const block of content) {
       if (typeof block === 'string') texts.push(block);
-      else if (block?.type === 'text' && typeof block.text === 'string') texts.push(block.text);
+      else if (
+        block != null &&
+        typeof block === 'object' &&
+        'type' in block &&
+        block.type === 'text' &&
+        'text' in block &&
+        typeof block.text === 'string'
+      )
+        texts.push(block.text);
     }
     return texts.length > 0 ? texts.join('\n') : null;
   }

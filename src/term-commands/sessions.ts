@@ -34,6 +34,33 @@ function formatTimestamp(ts: string): string {
 // Command Handlers
 // ============================================================================
 
+interface SessionRow {
+  id: string;
+  agent_id: string | null;
+  team: string | null;
+  role: string | null;
+  status: string;
+  total_turns: number | null;
+  started_at: string | null;
+  created_at: string;
+}
+
+interface ContentRow {
+  turn_index: number;
+  role: string;
+  content: string;
+  tool_name: string | null;
+  timestamp: string;
+}
+
+interface EventRow {
+  entity_type: string;
+  event_type: string;
+  actor: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
 interface ListOptions {
   active?: boolean;
   orphaned?: boolean;
@@ -49,8 +76,7 @@ async function sessionsListCommand(options: ListOptions): Promise<void> {
 
   const sql = await getConnection();
 
-  // biome-ignore lint/suspicious/noExplicitAny: PG row is dynamically typed
-  let rows: any[];
+  let rows: SessionRow[];
   if (options.active) {
     rows = await sql`SELECT * FROM sessions WHERE status = 'active' ORDER BY started_at DESC LIMIT 50`;
   } else if (options.orphaned) {
@@ -73,9 +99,8 @@ async function sessionsListCommand(options: ListOptions): Promise<void> {
   }
 
   const headers = ['ID', 'Agent', 'Team', 'Status', 'Turns', 'Started'];
-  // biome-ignore lint/suspicious/noExplicitAny: PG row is dynamically typed
-  const data = rows.map((r: any) => [
-    (r.id as string).slice(0, 12),
+  const data = rows.map((r: SessionRow) => [
+    r.id.slice(0, 12),
     r.agent_id ?? '(orphaned)',
     r.team ?? '-',
     r.status,
@@ -97,13 +122,12 @@ async function sessionsListCommand(options: ListOptions): Promise<void> {
 }
 
 /** Build a timeline by interleaving session content and audit events. */
-// biome-ignore lint/suspicious/noExplicitAny: PG rows are dynamically typed
-function buildTimeline(content: any[], events: any[]): Array<{ ts: string; type: string; text: string }> {
+function buildTimeline(content: ContentRow[], events: EventRow[]): Array<{ ts: string; type: string; text: string }> {
   const timeline: Array<{ ts: string; type: string; text: string }> = [];
   for (const c of content) {
     const prefix = c.role === 'assistant' ? '[assistant]' : c.role === 'tool_input' ? '[tool_in]' : '[tool_out]';
     const toolLabel = c.tool_name ? ` [${c.tool_name}]` : '';
-    timeline.push({ ts: c.timestamp, type: `${prefix}${toolLabel}`, text: (c.content as string).slice(0, 200) });
+    timeline.push({ ts: c.timestamp, type: `${prefix}${toolLabel}`, text: c.content.slice(0, 200) });
   }
   for (const e of events) {
     timeline.push({ ts: e.created_at, type: `[event] ${e.event_type}`, text: JSON.stringify(e.details).slice(0, 100) });
@@ -197,8 +221,7 @@ async function sessionsSearchCommand(query: string, options: { json?: boolean; l
     return;
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: PG row is dynamically typed
-  for (const r of rows as any[]) {
+  for (const r of rows) {
     console.log(`[${formatTimestamp(r.timestamp)}] ${r.agent_id ?? 'orphaned'} / ${r.session_id.slice(0, 12)}`);
     console.log(`  ${r.role}${r.tool_name ? ` [${r.tool_name}]` : ''}: ${r.headline}`);
   }
