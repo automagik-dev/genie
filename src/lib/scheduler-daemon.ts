@@ -1220,6 +1220,9 @@ export function startDaemon(
       listenConnection.end().catch(() => {});
       listenConnection = null;
     }
+    // Stop session capture layers
+    import('./session-filewatch.js').then((m) => m.stopFilewatch()).catch(() => {});
+    import('./session-backfill.js').then((m) => m.stopBackfill()).catch(() => {});
   };
 
   const processTriggers = async () => {
@@ -1307,8 +1310,7 @@ export function startDaemon(
       // Continue with poll-only mode
     }
 
-    // Start heartbeat collection (every 60s) — collects liveness + snapshots + events + session ingestion + retention
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: flat sequential operations in heartbeat loop
+    // Start heartbeat collection (every 60s) — collects liveness + snapshots + events + retention
     heartbeatTimer = setInterval(async () => {
       if (!running) return;
       try {
