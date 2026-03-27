@@ -26,6 +26,7 @@ import type { Command } from 'commander';
 import type * as boardServiceTypes from '../lib/board-service.js';
 import type * as taskServiceTypes from '../lib/task-service.js';
 import type * as templateServiceTypes from '../lib/template-service.js';
+import { formatDate, padRight, truncate } from '../lib/term-format.js';
 
 // ============================================================================
 // Lazy Loaders
@@ -47,24 +48,6 @@ let _templateService: typeof templateServiceTypes | undefined;
 async function getTemplateService(): Promise<typeof templateServiceTypes> {
   if (!_templateService) _templateService = await import('../lib/template-service.js');
   return _templateService;
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + ' '.repeat(len - str.length);
-}
-
-function truncate(str: string, len: number): string {
-  return str.length <= len ? str : `${str.slice(0, len - 1)}…`;
-}
-
-function formatDate(iso: string | null): string {
-  if (!iso) return '-';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 async function resolveProjectId(name: string): Promise<string> {

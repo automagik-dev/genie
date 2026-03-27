@@ -9,15 +9,12 @@
 
 import type { Command } from 'commander';
 import type * as taskServiceTypes from '../lib/task-service.js';
+import { padRight } from '../lib/term-format.js';
 
 let _taskService: typeof taskServiceTypes | undefined;
 async function getTaskService(): Promise<typeof taskServiceTypes> {
   if (!_taskService) _taskService = await import('../lib/task-service.js');
   return _taskService;
-}
-
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + ' '.repeat(len - str.length);
 }
 
 function currentActor(): taskServiceTypes.Actor {

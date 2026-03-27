@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
+import { formatTimestamp, padRight } from '../lib/term-format.js';
 import * as wishState from '../lib/wish-state.js';
 import { parseExecutionStrategy, parseWishGroups } from './dispatch.js';
 
@@ -75,22 +76,6 @@ const STATUS_ICONS: Record<string, string> = {
   in_progress: '🔄',
   done: '✅',
 };
-
-function formatTimestamp(iso?: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-}
-
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + ' '.repeat(len - str.length);
-}
 
 // ============================================================================
 // Wave Detection

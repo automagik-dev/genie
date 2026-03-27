@@ -21,25 +21,7 @@ import {
   queryTimeline,
   queryToolUsage,
 } from '../lib/audit.js';
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + ' '.repeat(len - str.length);
-}
-
-function formatTimestamp(ts: string): string {
-  const d = new Date(ts);
-  const now = Date.now();
-  const diffMs = now - d.getTime();
-
-  if (diffMs < 60_000) return `${Math.floor(diffMs / 1000)}s ago`;
-  if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m ago`;
-  if (diffMs < 86_400_000) return `${Math.floor(diffMs / 3_600_000)}h ago`;
-  return d.toISOString().replace('T', ' ').slice(0, 19);
-}
+import { formatRelativeTimestamp as formatTimestamp, padRight } from '../lib/term-format.js';
 
 function printEventsTable(rows: AuditEventRow[]): void {
   if (rows.length === 0) {
