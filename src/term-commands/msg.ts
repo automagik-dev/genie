@@ -20,6 +20,7 @@ import type { Command } from 'commander';
 import type * as registryTypes from '../lib/agent-registry.js';
 import type * as taskServiceTypes from '../lib/task-service.js';
 import type * as teamManagerTypes from '../lib/team-manager.js';
+import { formatTime, padRight, truncate } from '../lib/term-format.js';
 
 // ============================================================================
 // Lazy Loaders
@@ -168,22 +169,6 @@ async function findAgentTeam(_repoPath: string, agentName: string): Promise<team
 
 function localActor(name: string): taskServiceTypes.Actor {
   return { actorType: 'local', actorId: name };
-}
-
-// ============================================================================
-// Display Helpers
-// ============================================================================
-
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + ' '.repeat(len - str.length);
-}
-
-function truncate(str: string, len: number): string {
-  return str.length <= len ? str : `${str.slice(0, len - 1)}…`;
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 /** Resolve team name from explicit option, agent lookup, or env var. Exits on failure. */

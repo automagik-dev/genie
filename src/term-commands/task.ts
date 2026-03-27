@@ -20,6 +20,7 @@
 
 import type { Command } from 'commander';
 import type * as taskServiceTypes from '../lib/task-service.js';
+import { formatDate, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 
 // ============================================================================
 // Lazy Loaders
@@ -35,36 +36,6 @@ let _boardService: typeof import('../lib/board-service.js') | undefined;
 async function getBoardService() {
   if (!_boardService) _boardService = await import('../lib/board-service.js');
   return _boardService;
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + ' '.repeat(len - str.length);
-}
-
-function truncate(str: string, len: number): string {
-  return str.length <= len ? str : `${str.slice(0, len - 1)}…`;
-}
-
-function formatDate(iso: string | null): string {
-  if (!iso) return '-';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
-function formatTimestamp(iso: string | null): string {
-  if (!iso) return '-';
-  const d = new Date(iso);
-  return d.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
 }
 
 /** Build an Actor from a local name string. */
