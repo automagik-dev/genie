@@ -21,6 +21,17 @@
 import { runMigrations } from './db-migrations.js';
 import { type Sql, ensurePgserve, resetConnection } from './db.js';
 
+/**
+ * Whether a PG database is expected to be reachable for tests.
+ * True when GENIE_PG_AVAILABLE has been set by ensurePgserve, or when
+ * we are NOT running in CI (local dev boxes auto-start pgserve).
+ *
+ * Test files that call setupTestSchema() should guard their describe blocks:
+ *   import { DB_AVAILABLE } from './test-db.js';
+ *   describe.skipIf(!DB_AVAILABLE)('my suite', () => { ... });
+ */
+export const DB_AVAILABLE = process.env.GENIE_PG_AVAILABLE === 'true' || !process.env.CI;
+
 /** Max age (ms) before a test schema is considered stale and eligible for cleanup. */
 const STALE_SCHEMA_AGE_MS = 10 * 60 * 1000; // 10 minutes
 
