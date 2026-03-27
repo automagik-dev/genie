@@ -520,12 +520,23 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
 
   // Build context with wish-level info + group section
   const wishContext = extractWishContext(content);
+
+  // Enrich with brain vault context (best-effort, non-blocking)
+  let enrichedContext: string | undefined;
+  try {
+    const { enrichContext } = await import('../lib/context-enrichment.js');
+    enrichedContext = enrichContext({ query: `${slug} ${group}: ${groupSection.slice(0, 500)}` }) || undefined;
+  } catch {
+    // enrichment unavailable — proceed without
+  }
+
   const context = buildContextPrompt({
     filePath: wishPath,
     sectionContent: groupSection,
     wishContext,
     command: `work ${ref}`,
     skill: 'work',
+    enrichedContext,
   });
 
   const contextFile = await writeContextFile(context);
@@ -584,12 +595,23 @@ async function reviewCommand(agentName: string, ref: string): Promise<void> {
     diff ? `\`\`\`diff\n${diff}\n\`\`\`` : '(no uncommitted changes found — review committed changes)',
   ].join('\n');
 
+  // Enrich with brain vault context (best-effort, non-blocking)
+  let enrichedReviewContext: string | undefined;
+  try {
+    const { enrichContext } = await import('../lib/context-enrichment.js');
+    enrichedReviewContext =
+      enrichContext({ query: `review ${slug} ${group}: ${groupSection.slice(0, 500)}` }) || undefined;
+  } catch {
+    // enrichment unavailable — proceed without
+  }
+
   const context = buildContextPrompt({
     filePath: wishPath,
     sectionContent: reviewContent,
     wishContext,
     command: `review ${ref}`,
     skill: 'review',
+    enrichedContext: enrichedReviewContext,
   });
 
   const contextFile = await writeContextFile(context);
