@@ -38,6 +38,26 @@ function parseSince(since: string): string {
 }
 
 // ============================================================================
+// Row types
+// ============================================================================
+
+interface SnapshotRow {
+  active_workers: number;
+  active_teams: number;
+  tmux_sessions: number;
+  cpu_percent: number | null;
+  memory_mb: number | null;
+  created_at: string;
+}
+
+interface HeartbeatRow {
+  worker_id: string;
+  status: string;
+  context: string | Record<string, unknown>;
+  last_seen_at: string;
+}
+
+// ============================================================================
 // Command Handlers
 // ============================================================================
 
@@ -108,8 +128,7 @@ async function metricsHistoryCommand(options: { since?: string; json?: boolean }
   }
 
   const headers = ['Time', 'Workers', 'Teams', 'Tmux', 'CPU%', 'Mem MB'];
-  // biome-ignore lint/suspicious/noExplicitAny: PG row is dynamically typed
-  const data = rows.map((r: any) => [
+  const data = rows.map((r: SnapshotRow) => [
     formatTimestamp(r.created_at),
     String(r.active_workers ?? 0),
     String(r.active_teams ?? 0),
@@ -158,8 +177,7 @@ async function metricsAgentsCommand(options: { json?: boolean }): Promise<void> 
   }
 
   const headers = ['Worker', 'Status', 'Last Seen', 'Team', 'Wish'];
-  // biome-ignore lint/suspicious/noExplicitAny: PG row is dynamically typed
-  const data = rows.map((r: any) => {
+  const data = rows.map((r: HeartbeatRow) => {
     const ctx = typeof r.context === 'string' ? JSON.parse(r.context) : (r.context ?? {});
     return [
       String(r.worker_id ?? '-').slice(0, 20),

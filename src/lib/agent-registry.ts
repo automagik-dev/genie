@@ -7,7 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import { recordAuditEvent } from './audit.js';
-import { getConnection } from './db.js';
+import { type Sql, getConnection } from './db.js';
 import type { ProviderName } from './provider-adapters.js';
 
 export type AgentState = 'spawning' | 'working' | 'idle' | 'permission' | 'question' | 'done' | 'error' | 'suspended';
@@ -61,8 +61,53 @@ export interface WorkerTemplate {
   lastSpawnedAt: string;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: PG row uses dynamic column names
-type PgRow = Record<string, any>;
+interface AgentRow {
+  id: string;
+  pane_id: string;
+  session: string;
+  worktree: string | null;
+  task_id: string | null;
+  task_title: string | null;
+  wish_slug: string | null;
+  group_number: number | null;
+  started_at: Date | string;
+  state: AgentState;
+  last_state_change: Date | string;
+  repo_path: string;
+  claude_session_id: string | null;
+  window_name: string | null;
+  window_id: string | null;
+  role: string | null;
+  custom_name: string | null;
+  sub_panes: string | string[] | null;
+  provider: ProviderName | null;
+  transport: TransportType | null;
+  skill: string | null;
+  team: string | null;
+  tmux_window: string | null;
+  native_agent_id: string | null;
+  native_color: string | null;
+  native_team_enabled: boolean;
+  parent_session_id: string | null;
+  suspended_at: Date | string | null;
+  auto_resume: boolean | null;
+  resume_attempts: number | null;
+  last_resume_attempt: Date | string | null;
+  max_resume_attempts: number | null;
+  pane_color: string | null;
+}
+
+interface TemplateRow {
+  id: string;
+  provider: ProviderName;
+  team: string;
+  role: string | null;
+  skill: string | null;
+  cwd: string;
+  extra_args: string | string[] | null;
+  native_team_enabled: boolean;
+  last_spawned_at: Date | string;
+}
 
 function ts(v: Date | string | null): string {
   if (!v) return new Date().toISOString();
@@ -70,7 +115,7 @@ function ts(v: Date | string | null): string {
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: flat field mapping
-function rowToAgent(r: PgRow): Agent {
+function rowToAgent(r: AgentRow): Agent {
   const agent: Agent = {
     id: r.id,
     paneId: r.pane_id,
@@ -112,7 +157,7 @@ function rowToAgent(r: PgRow): Agent {
   return agent;
 }
 
-function rowToTemplate(r: PgRow): WorkerTemplate {
+function rowToTemplate(r: TemplateRow): WorkerTemplate {
   const tpl: WorkerTemplate = {
     id: r.id,
     provider: r.provider,
@@ -284,28 +329,32 @@ export async function getTeamLeadEntry(teamName: string, session?: string, repoP
 }
 
 async function findTeamLeadBySession(
-  // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
-  sql: any,
+  sql: Sql,
   teamName: string,
   session: string,
   repoPath?: string,
 ): Promise<Agent | null> {
   if (repoPath) {
-    const rows = await sql`SELECT * FROM agents WHERE id = ${buildProjectTeamLeadEntryId(teamName, session, repoPath)}`;
+    const rows = await sql<
+      AgentRow[]
+    >`SELECT * FROM agents WHERE id = ${buildProjectTeamLeadEntryId(teamName, session, repoPath)}`;
     if (rows.length > 0) return rowToAgent(rows[0]);
   }
-  const sessRows = await sql`SELECT * FROM agents WHERE id = ${buildSessionTeamLeadEntryId(teamName, session)}`;
+  const sessRows = await sql<
+    AgentRow[]
+  >`SELECT * FROM agents WHERE id = ${buildSessionTeamLeadEntryId(teamName, session)}`;
   if (sessRows.length > 0) {
     const a = rowToAgent(sessRows[0]);
     if (!repoPath || a.repoPath === repoPath) return a;
   }
-  const legRows = await sql`SELECT * FROM agents WHERE id = ${buildLegacyTeamLeadEntryId(teamName)}`;
+  const legRows = await sql<AgentRow[]>`SELECT * FROM agents WHERE id = ${buildLegacyTeamLeadEntryId(teamName)}`;
   if (legRows.length > 0) {
     const a = rowToAgent(legRows[0]);
     if (a.session === session && (!repoPath || a.repoPath === repoPath)) return a;
   }
-  const scanRows =
-    await sql`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} AND session = ${session} ${repoPath ? sql`AND repo_path = ${repoPath}` : sql``} LIMIT 1`;
+  const scanRows = await sql<
+    AgentRow[]
+  >`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} AND session = ${session} ${repoPath ? sql`AND repo_path = ${repoPath}` : sql``} LIMIT 1`;
   return scanRows.length > 0 ? rowToAgent(scanRows[0]) : null;
 }
 

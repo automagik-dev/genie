@@ -12,8 +12,16 @@ import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { MultiTenantRouter } from 'pgserve';
+import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, runSeed } from './pg-seed.js';
+
+/**
+ * Re-export Sql type for callers that need to annotate sql connection parameters.
+ * getConnection() returns `any` internally due to postgres.js generic complexity,
+ * but callers can use this type for function signatures.
+ */
+export type Sql = postgres.Sql;
 
 const DEFAULT_PORT = 19642;
 const DEFAULT_HOST = '127.0.0.1';
