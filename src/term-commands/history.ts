@@ -16,6 +16,7 @@
  */
 
 import * as workerRegistry from '../lib/agent-registry.js';
+import { formatTime } from '../lib/term-format.js';
 import type { TranscriptEntry, TranscriptFilter, TranscriptRole } from '../lib/transcript.js';
 
 // ============================================================================
@@ -70,15 +71,6 @@ interface SessionStats {
 // ============================================================================
 // Event Extraction (from TranscriptEntry)
 // ============================================================================
-
-function formatTime(timestamp: string): string {
-  try {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  } catch {
-    return '??:??';
-  }
-}
 
 function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;

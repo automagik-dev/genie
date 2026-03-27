@@ -12,7 +12,12 @@
 import type { Command } from 'commander';
 import { computeNextCronDue, parseDuration } from '../lib/cron.js';
 import { getConnection, shutdown } from '../lib/db.js';
+import { formatTimestamp as _fmtTs, padRight } from '../lib/term-format.js';
 export { parseDuration };
+
+function formatTimestamp(iso: string | null | Date): string {
+  return _fmtTs(iso, { seconds: true });
+}
 
 // ============================================================================
 // Types
@@ -126,23 +131,6 @@ function computeFirstDueAt(options: CreateOptions): { dueAt: Date; cronExpr: str
 
 function generateId(): string {
   return crypto.randomUUID();
-}
-
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + ' '.repeat(len - str.length);
-}
-
-function formatTimestamp(iso: string | null | Date): string {
-  if (!iso) return '-';
-  const d = iso instanceof Date ? iso : new Date(iso);
-  return d.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
 }
 
 function formatDuration(ms: number | null): string {

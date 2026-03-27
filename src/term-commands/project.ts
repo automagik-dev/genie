@@ -10,25 +10,12 @@
 
 import type { Command } from 'commander';
 import type * as taskServiceTypes from '../lib/task-service.js';
+import { formatDate, padRight, truncate } from '../lib/term-format.js';
 
 let _taskService: typeof taskServiceTypes | undefined;
 async function getTaskService(): Promise<typeof taskServiceTypes> {
   if (!_taskService) _taskService = await import('../lib/task-service.js');
   return _taskService;
-}
-
-function padRight(str: string, len: number): string {
-  return str.length >= len ? str : str + ' '.repeat(len - str.length);
-}
-
-function truncate(str: string, len: number): string {
-  return str.length <= len ? str : `${str.slice(0, len - 1)}…`;
-}
-
-function formatDate(iso: string | null): string {
-  if (!iso) return '-';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 async function printProjectList(ts: typeof taskServiceTypes, projects: taskServiceTypes.ProjectRow[]): Promise<void> {
