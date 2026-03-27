@@ -10,14 +10,17 @@ import { setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import { detectWaveCompletion, ensureWorkPushed, parseRef, resolveWishPath } from './state.js';
 
+const DB_AVAILABLE = process.env.GENIE_PG_AVAILABLE === 'true' || !process.env.CI;
+
 let cleanupSchema: () => Promise<void>;
 
 beforeAll(async () => {
+  if (!DB_AVAILABLE) return;
   cleanupSchema = await setupTestSchema();
 });
 
 afterAll(async () => {
-  await cleanupSchema();
+  if (cleanupSchema) await cleanupSchema();
 });
 
 // ============================================================================
