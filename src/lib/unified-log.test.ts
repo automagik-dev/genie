@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Agent } from './agent-registry.js';
 import { readOutbox, send } from './mailbox.js';
 import { postMessage } from './team-chat.js';
-import { setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 import type { TranscriptEntry } from './transcript.js';
 import {
   type LogEvent,
@@ -28,424 +28,426 @@ import {
 // Helpers
 // ============================================================================
 
-let cleanup: () => Promise<void>;
-const BASE_REPO = '/tmp/unified-log-test';
+describe.skipIf(!DB_AVAILABLE)('pg', () => {
+  let cleanup: () => Promise<void>;
+  const BASE_REPO = '/tmp/unified-log-test';
 
-beforeAll(async () => {
-  cleanup = await setupTestSchema();
-});
+  beforeAll(async () => {
+    cleanup = await setupTestSchema();
+  });
 
-afterAll(async () => {
-  await cleanup();
-});
+  afterAll(async () => {
+    await cleanup();
+  });
 
-function makeAgent(id: string, team?: string, repoPath?: string): Agent {
-  return {
-    id,
-    paneId: '%0',
-    session: 'test',
-    worktree: null,
-    startedAt: new Date().toISOString(),
-    state: 'working',
-    lastStateChange: new Date().toISOString(),
-    repoPath: repoPath ?? BASE_REPO,
-    team,
-  };
-}
-
-// ============================================================================
-// Converter tests
-// ============================================================================
-
-describe('transcriptToLogEvent', () => {
-  test('maps assistant entry to assistant kind', () => {
-    const entry: TranscriptEntry = {
-      role: 'assistant',
-      timestamp: '2026-03-20T10:00:00.000Z',
-      text: 'Hello, I can help with that.',
-      provider: 'claude',
-      model: 'claude-sonnet-4-20250514',
-      raw: {},
+  function makeAgent(id: string, team?: string, repoPath?: string): Agent {
+    return {
+      id,
+      paneId: '%0',
+      session: 'test',
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: 'working',
+      lastStateChange: new Date().toISOString(),
+      repoPath: repoPath ?? BASE_REPO,
+      team,
     };
+  }
 
-    const event = transcriptToLogEvent(entry, 'engineer', 'my-team');
+  // ============================================================================
+  // Converter tests
+  // ============================================================================
 
-    expect(event!.kind).toBe('assistant');
-    expect(event!.agent).toBe('engineer');
-    expect(event!.team).toBe('my-team');
-    expect(event!.text).toBe('Hello, I can help with that.');
-    expect(event!.source).toBe('provider');
-    expect(event!.data?.role).toBe('assistant');
-    expect(event!.data?.model).toBe('claude-sonnet-4-20250514');
-  });
-
-  test('maps tool_call entry to tool_call kind', () => {
-    const entry: TranscriptEntry = {
-      role: 'tool_call',
-      timestamp: '2026-03-20T10:01:00.000Z',
-      text: 'Read file.ts',
-      toolCall: { id: 'tc-1', name: 'Read', input: { file_path: '/test.ts' } },
-      provider: 'claude',
-      raw: {},
-    };
-
-    const event = transcriptToLogEvent(entry, 'engineer');
-
-    expect(event!.kind).toBe('tool_call');
-    expect(event!.data?.toolCall).toEqual({ id: 'tc-1', name: 'Read', input: { file_path: '/test.ts' } });
-  });
-
-  test('maps tool_result entry to tool_result kind', () => {
-    const entry: TranscriptEntry = {
-      role: 'tool_result',
-      timestamp: '2026-03-20T10:02:00.000Z',
-      text: 'file contents...',
-      provider: 'codex',
-      raw: {},
-    };
-
-    const event = transcriptToLogEvent(entry, 'coder');
-    expect(event!.kind).toBe('tool_result');
-    expect(event!.source).toBe('provider');
-  });
-
-  test('maps system entry to system kind', () => {
-    const entry: TranscriptEntry = {
-      role: 'system',
-      timestamp: '2026-03-20T10:00:00.000Z',
-      text: 'Session started',
-      provider: 'claude',
-      raw: {},
-    };
-
-    const event = transcriptToLogEvent(entry, 'engineer');
-    expect(event!.kind).toBe('system');
-  });
-});
-
-describe('inboxMessageToLogEvent', () => {
-  test('converts inbox message with direction=in', () => {
-    const event = inboxMessageToLogEvent(
-      {
-        id: 'msg-1',
-        from: 'reviewer',
-        to: 'engineer',
-        body: 'Please fix the tests',
-        createdAt: '2026-03-20T10:00:00.000Z',
-        read: false,
-        deliveredAt: null,
-      },
-      'engineer',
-      'my-team',
-    );
-
-    expect(event!.kind).toBe('message');
-    expect(event!.direction).toBe('in');
-    expect(event!.peer).toBe('reviewer');
-    expect(event!.agent).toBe('engineer');
-    expect(event!.text).toBe('Please fix the tests');
-    expect(event!.source).toBe('mailbox');
-  });
-});
-
-describe('outboxMessageToLogEvent', () => {
-  test('converts outbox message with direction=out', () => {
-    const event = outboxMessageToLogEvent(
-      {
-        id: 'msg-2',
-        from: 'engineer',
-        to: 'reviewer',
-        body: 'Tests are fixed',
-        createdAt: '2026-03-20T11:00:00.000Z',
-        read: false,
-        deliveredAt: null,
-      },
-      'engineer',
-    );
-
-    expect(event!.kind).toBe('message');
-    expect(event!.direction).toBe('out');
-    expect(event!.peer).toBe('reviewer');
-    expect(event!.agent).toBe('engineer');
-    expect(event!.text).toBe('Tests are fixed');
-  });
-});
-
-describe('chatMessageToLogEvent', () => {
-  test('converts team chat message', () => {
-    const event = chatMessageToLogEvent(
-      {
-        id: 'chat-1',
-        sender: 'alice',
-        body: 'Starting implementation',
+  describe('transcriptToLogEvent', () => {
+    test('maps assistant entry to assistant kind', () => {
+      const entry: TranscriptEntry = {
+        role: 'assistant',
         timestamp: '2026-03-20T10:00:00.000Z',
-      },
-      'dev-team',
-    );
+        text: 'Hello, I can help with that.',
+        provider: 'claude',
+        model: 'claude-sonnet-4-20250514',
+        raw: {},
+      };
 
-    expect(event!.kind).toBe('message');
-    expect(event!.agent).toBe('alice');
-    expect(event!.team).toBe('dev-team');
-    expect(event!.source).toBe('chat');
-    expect(event!.text).toBe('Starting implementation');
-  });
-});
+      const event = transcriptToLogEvent(entry, 'engineer', 'my-team');
 
-// ============================================================================
-// Filter tests
-// ============================================================================
-
-describe('applyLogFilter', () => {
-  const events: LogEvent[] = [
-    {
-      timestamp: '2026-03-20T10:00:00.000Z',
-      kind: 'assistant',
-      agent: 'eng',
-      text: 'first',
-      source: 'provider',
-    },
-    {
-      timestamp: '2026-03-20T11:00:00.000Z',
-      kind: 'message',
-      agent: 'eng',
-      text: 'second',
-      source: 'mailbox',
-    },
-    {
-      timestamp: '2026-03-20T12:00:00.000Z',
-      kind: 'tool_call',
-      agent: 'eng',
-      text: 'third',
-      source: 'provider',
-    },
-    {
-      timestamp: '2026-03-20T13:00:00.000Z',
-      kind: 'assistant',
-      agent: 'eng',
-      text: 'fourth',
-      source: 'provider',
-    },
-  ];
-
-  test('returns all events with no filter', () => {
-    expect(applyLogFilter(events)).toEqual(events);
-    expect(applyLogFilter(events, {})).toEqual(events);
-  });
-
-  test('filters by since', () => {
-    const result = applyLogFilter(events, { since: '2026-03-20T11:30:00.000Z' });
-    expect(result.length).toBe(2);
-    expect(result[0].text).toBe('third');
-    expect(result[1].text).toBe('fourth');
-  });
-
-  test('filters by kinds', () => {
-    const result = applyLogFilter(events, { kinds: ['message'] });
-    expect(result.length).toBe(1);
-    expect(result[0].text).toBe('second');
-  });
-
-  test('filters by multiple kinds', () => {
-    const result = applyLogFilter(events, { kinds: ['assistant', 'tool_call'] });
-    expect(result.length).toBe(3);
-  });
-
-  test('limits by last', () => {
-    const result = applyLogFilter(events, { last: 2 });
-    expect(result.length).toBe(2);
-    expect(result[0].text).toBe('third');
-    expect(result[1].text).toBe('fourth');
-  });
-
-  test('applies filters in order: since → kinds → last', () => {
-    const result = applyLogFilter(events, {
-      since: '2026-03-20T10:30:00.000Z',
-      kinds: ['assistant', 'tool_call'],
-      last: 1,
+      expect(event!.kind).toBe('assistant');
+      expect(event!.agent).toBe('engineer');
+      expect(event!.team).toBe('my-team');
+      expect(event!.text).toBe('Hello, I can help with that.');
+      expect(event!.source).toBe('provider');
+      expect(event!.data?.role).toBe('assistant');
+      expect(event!.data?.model).toBe('claude-sonnet-4-20250514');
     });
-    expect(result.length).toBe(1);
-    expect(result[0].text).toBe('fourth');
-  });
-});
 
-describe('sortByTimestamp', () => {
-  test('sorts events chronologically', () => {
+    test('maps tool_call entry to tool_call kind', () => {
+      const entry: TranscriptEntry = {
+        role: 'tool_call',
+        timestamp: '2026-03-20T10:01:00.000Z',
+        text: 'Read file.ts',
+        toolCall: { id: 'tc-1', name: 'Read', input: { file_path: '/test.ts' } },
+        provider: 'claude',
+        raw: {},
+      };
+
+      const event = transcriptToLogEvent(entry, 'engineer');
+
+      expect(event!.kind).toBe('tool_call');
+      expect(event!.data?.toolCall).toEqual({ id: 'tc-1', name: 'Read', input: { file_path: '/test.ts' } });
+    });
+
+    test('maps tool_result entry to tool_result kind', () => {
+      const entry: TranscriptEntry = {
+        role: 'tool_result',
+        timestamp: '2026-03-20T10:02:00.000Z',
+        text: 'file contents...',
+        provider: 'codex',
+        raw: {},
+      };
+
+      const event = transcriptToLogEvent(entry, 'coder');
+      expect(event!.kind).toBe('tool_result');
+      expect(event!.source).toBe('provider');
+    });
+
+    test('maps system entry to system kind', () => {
+      const entry: TranscriptEntry = {
+        role: 'system',
+        timestamp: '2026-03-20T10:00:00.000Z',
+        text: 'Session started',
+        provider: 'claude',
+        raw: {},
+      };
+
+      const event = transcriptToLogEvent(entry, 'engineer');
+      expect(event!.kind).toBe('system');
+    });
+  });
+
+  describe('inboxMessageToLogEvent', () => {
+    test('converts inbox message with direction=in', () => {
+      const event = inboxMessageToLogEvent(
+        {
+          id: 'msg-1',
+          from: 'reviewer',
+          to: 'engineer',
+          body: 'Please fix the tests',
+          createdAt: '2026-03-20T10:00:00.000Z',
+          read: false,
+          deliveredAt: null,
+        },
+        'engineer',
+        'my-team',
+      );
+
+      expect(event!.kind).toBe('message');
+      expect(event!.direction).toBe('in');
+      expect(event!.peer).toBe('reviewer');
+      expect(event!.agent).toBe('engineer');
+      expect(event!.text).toBe('Please fix the tests');
+      expect(event!.source).toBe('mailbox');
+    });
+  });
+
+  describe('outboxMessageToLogEvent', () => {
+    test('converts outbox message with direction=out', () => {
+      const event = outboxMessageToLogEvent(
+        {
+          id: 'msg-2',
+          from: 'engineer',
+          to: 'reviewer',
+          body: 'Tests are fixed',
+          createdAt: '2026-03-20T11:00:00.000Z',
+          read: false,
+          deliveredAt: null,
+        },
+        'engineer',
+      );
+
+      expect(event!.kind).toBe('message');
+      expect(event!.direction).toBe('out');
+      expect(event!.peer).toBe('reviewer');
+      expect(event!.agent).toBe('engineer');
+      expect(event!.text).toBe('Tests are fixed');
+    });
+  });
+
+  describe('chatMessageToLogEvent', () => {
+    test('converts team chat message', () => {
+      const event = chatMessageToLogEvent(
+        {
+          id: 'chat-1',
+          sender: 'alice',
+          body: 'Starting implementation',
+          timestamp: '2026-03-20T10:00:00.000Z',
+        },
+        'dev-team',
+      );
+
+      expect(event!.kind).toBe('message');
+      expect(event!.agent).toBe('alice');
+      expect(event!.team).toBe('dev-team');
+      expect(event!.source).toBe('chat');
+      expect(event!.text).toBe('Starting implementation');
+    });
+  });
+
+  // ============================================================================
+  // Filter tests
+  // ============================================================================
+
+  describe('applyLogFilter', () => {
     const events: LogEvent[] = [
-      { timestamp: '2026-03-20T12:00:00.000Z', kind: 'assistant', agent: 'a', text: 'c', source: 'provider' },
-      { timestamp: '2026-03-20T10:00:00.000Z', kind: 'assistant', agent: 'a', text: 'a', source: 'provider' },
-      { timestamp: '2026-03-20T11:00:00.000Z', kind: 'message', agent: 'a', text: 'b', source: 'mailbox' },
+      {
+        timestamp: '2026-03-20T10:00:00.000Z',
+        kind: 'assistant',
+        agent: 'eng',
+        text: 'first',
+        source: 'provider',
+      },
+      {
+        timestamp: '2026-03-20T11:00:00.000Z',
+        kind: 'message',
+        agent: 'eng',
+        text: 'second',
+        source: 'mailbox',
+      },
+      {
+        timestamp: '2026-03-20T12:00:00.000Z',
+        kind: 'tool_call',
+        agent: 'eng',
+        text: 'third',
+        source: 'provider',
+      },
+      {
+        timestamp: '2026-03-20T13:00:00.000Z',
+        kind: 'assistant',
+        agent: 'eng',
+        text: 'fourth',
+        source: 'provider',
+      },
     ];
 
-    const sorted = sortByTimestamp(events);
-    expect(sorted[0].text).toBe('a');
-    expect(sorted[1].text).toBe('b');
-    expect(sorted[2].text).toBe('c');
-  });
-});
+    test('returns all events with no filter', () => {
+      expect(applyLogFilter(events)).toEqual(events);
+      expect(applyLogFilter(events, {})).toEqual(events);
+    });
 
-// ============================================================================
-// Aggregator integration tests
-// ============================================================================
+    test('filters by since', () => {
+      const result = applyLogFilter(events, { since: '2026-03-20T11:30:00.000Z' });
+      expect(result.length).toBe(2);
+      expect(result[0].text).toBe('third');
+      expect(result[1].text).toBe('fourth');
+    });
 
-describe('readAgentLog', () => {
-  test('aggregates inbox and outbox messages', async () => {
-    const repo = '/tmp/ulog-agent-agg';
-    const agent = makeAgent('engineer', 'test-team', repo);
+    test('filters by kinds', () => {
+      const result = applyLogFilter(events, { kinds: ['message'] });
+      expect(result.length).toBe(1);
+      expect(result[0].text).toBe('second');
+    });
 
-    // Send messages to create inbox + outbox data
-    await send(repo, 'reviewer', 'engineer', 'please fix tests');
-    await new Promise((r) => setTimeout(r, 10));
-    await send(repo, 'engineer', 'reviewer', 'tests fixed');
+    test('filters by multiple kinds', () => {
+      const result = applyLogFilter(events, { kinds: ['assistant', 'tool_call'] });
+      expect(result.length).toBe(3);
+    });
 
-    const events = await readAgentLog(agent, repo);
+    test('limits by last', () => {
+      const result = applyLogFilter(events, { last: 2 });
+      expect(result.length).toBe(2);
+      expect(result[0].text).toBe('third');
+      expect(result[1].text).toBe('fourth');
+    });
 
-    // Should have inbox (1 received) + outbox (1 sent) messages
-    const messages = events.filter((e) => e.kind === 'message');
-    expect(messages.length).toBeGreaterThanOrEqual(2);
-
-    const inbound = messages.find((e) => e.direction === 'in');
-    expect(inbound).toBeTruthy();
-    expect(inbound!.peer).toBe('reviewer');
-    expect(inbound!.text).toBe('please fix tests');
-
-    const outbound = messages.find((e) => e.direction === 'out');
-    expect(outbound).toBeTruthy();
-    expect(outbound!.peer).toBe('reviewer');
-    expect(outbound!.text).toBe('tests fixed');
-  });
-
-  test('includes team chat messages', async () => {
-    const repo = '/tmp/ulog-agent-chat';
-    const agent = makeAgent('engineer', 'dev-team', repo);
-
-    await postMessage(repo, 'dev-team', 'alice', 'hello team');
-    await postMessage(repo, 'dev-team', 'bob', 'hi alice');
-
-    const events = await readAgentLog(agent, repo);
-    const chatEvents = events.filter((e) => e.source === 'chat');
-    expect(chatEvents.length).toBe(2);
-    expect(chatEvents[0].text).toBe('hello team');
-    expect(chatEvents[1].text).toBe('hi alice');
+    test('applies filters in order: since → kinds → last', () => {
+      const result = applyLogFilter(events, {
+        since: '2026-03-20T10:30:00.000Z',
+        kinds: ['assistant', 'tool_call'],
+        last: 1,
+      });
+      expect(result.length).toBe(1);
+      expect(result[0].text).toBe('fourth');
+    });
   });
 
-  test('returns sorted events across sources', async () => {
-    const repo = '/tmp/ulog-agent-sorted';
-    const agent = makeAgent('engineer', 'dev-team', repo);
+  describe('sortByTimestamp', () => {
+    test('sorts events chronologically', () => {
+      const events: LogEvent[] = [
+        { timestamp: '2026-03-20T12:00:00.000Z', kind: 'assistant', agent: 'a', text: 'c', source: 'provider' },
+        { timestamp: '2026-03-20T10:00:00.000Z', kind: 'assistant', agent: 'a', text: 'a', source: 'provider' },
+        { timestamp: '2026-03-20T11:00:00.000Z', kind: 'message', agent: 'a', text: 'b', source: 'mailbox' },
+      ];
 
-    await postMessage(repo, 'dev-team', 'alice', 'first');
-    await new Promise((r) => setTimeout(r, 10));
-    await send(repo, 'reviewer', 'engineer', 'second');
-    await new Promise((r) => setTimeout(r, 10));
-    await postMessage(repo, 'dev-team', 'bob', 'third');
-
-    const events = await readAgentLog(agent, repo);
-    // Verify chronological order
-    for (let i = 1; i < events.length; i++) {
-      expect(new Date(events[i].timestamp).getTime()).toBeGreaterThanOrEqual(
-        new Date(events[i - 1].timestamp).getTime(),
-      );
-    }
+      const sorted = sortByTimestamp(events);
+      expect(sorted[0].text).toBe('a');
+      expect(sorted[1].text).toBe('b');
+      expect(sorted[2].text).toBe('c');
+    });
   });
 
-  test('applies filter to aggregated events', async () => {
-    const repo = '/tmp/ulog-agent-filter';
-    const agent = makeAgent('engineer', undefined, repo);
+  // ============================================================================
+  // Aggregator integration tests
+  // ============================================================================
 
-    await send(repo, 'reviewer', 'engineer', 'msg1');
-    await new Promise((r) => setTimeout(r, 10));
-    await send(repo, 'qa', 'engineer', 'msg2');
+  describe('readAgentLog', () => {
+    test('aggregates inbox and outbox messages', async () => {
+      const repo = '/tmp/ulog-agent-agg';
+      const agent = makeAgent('engineer', 'test-team', repo);
 
-    const events = await readAgentLog(agent, repo, { last: 1 });
-    expect(events.length).toBe(1);
+      // Send messages to create inbox + outbox data
+      await send(repo, 'reviewer', 'engineer', 'please fix tests');
+      await new Promise((r) => setTimeout(r, 10));
+      await send(repo, 'engineer', 'reviewer', 'tests fixed');
+
+      const events = await readAgentLog(agent, repo);
+
+      // Should have inbox (1 received) + outbox (1 sent) messages
+      const messages = events.filter((e) => e.kind === 'message');
+      expect(messages.length).toBeGreaterThanOrEqual(2);
+
+      const inbound = messages.find((e) => e.direction === 'in');
+      expect(inbound).toBeTruthy();
+      expect(inbound!.peer).toBe('reviewer');
+      expect(inbound!.text).toBe('please fix tests');
+
+      const outbound = messages.find((e) => e.direction === 'out');
+      expect(outbound).toBeTruthy();
+      expect(outbound!.peer).toBe('reviewer');
+      expect(outbound!.text).toBe('tests fixed');
+    });
+
+    test('includes team chat messages', async () => {
+      const repo = '/tmp/ulog-agent-chat';
+      const agent = makeAgent('engineer', 'dev-team', repo);
+
+      await postMessage(repo, 'dev-team', 'alice', 'hello team');
+      await postMessage(repo, 'dev-team', 'bob', 'hi alice');
+
+      const events = await readAgentLog(agent, repo);
+      const chatEvents = events.filter((e) => e.source === 'chat');
+      expect(chatEvents.length).toBe(2);
+      expect(chatEvents[0].text).toBe('hello team');
+      expect(chatEvents[1].text).toBe('hi alice');
+    });
+
+    test('returns sorted events across sources', async () => {
+      const repo = '/tmp/ulog-agent-sorted';
+      const agent = makeAgent('engineer', 'dev-team', repo);
+
+      await postMessage(repo, 'dev-team', 'alice', 'first');
+      await new Promise((r) => setTimeout(r, 10));
+      await send(repo, 'reviewer', 'engineer', 'second');
+      await new Promise((r) => setTimeout(r, 10));
+      await postMessage(repo, 'dev-team', 'bob', 'third');
+
+      const events = await readAgentLog(agent, repo);
+      // Verify chronological order
+      for (let i = 1; i < events.length; i++) {
+        expect(new Date(events[i].timestamp).getTime()).toBeGreaterThanOrEqual(
+          new Date(events[i - 1].timestamp).getTime(),
+        );
+      }
+    });
+
+    test('applies filter to aggregated events', async () => {
+      const repo = '/tmp/ulog-agent-filter';
+      const agent = makeAgent('engineer', undefined, repo);
+
+      await send(repo, 'reviewer', 'engineer', 'msg1');
+      await new Promise((r) => setTimeout(r, 10));
+      await send(repo, 'qa', 'engineer', 'msg2');
+
+      const events = await readAgentLog(agent, repo, { last: 1 });
+      expect(events.length).toBe(1);
+    });
+
+    test('returns empty for agent with no activity', async () => {
+      const repo = '/tmp/ulog-agent-empty';
+      const agent = makeAgent('ghost', undefined, repo);
+      const events = await readAgentLog(agent, repo);
+      expect(events).toEqual([]);
+    });
   });
 
-  test('returns empty for agent with no activity', async () => {
-    const repo = '/tmp/ulog-agent-empty';
-    const agent = makeAgent('ghost', undefined, repo);
-    const events = await readAgentLog(agent, repo);
-    expect(events).toEqual([]);
+  describe('readTeamLog', () => {
+    test('interleaves events from multiple agents', async () => {
+      const repo = '/tmp/ulog-team-interleave';
+      const engineer = makeAgent('engineer', 'my-team', repo);
+      const reviewer = makeAgent('reviewer', 'my-team', repo);
+
+      // Create cross-agent messages
+      await send(repo, 'engineer', 'reviewer', 'PR ready for review');
+      await new Promise((r) => setTimeout(r, 10));
+      await send(repo, 'reviewer', 'engineer', 'LGTM');
+      await new Promise((r) => setTimeout(r, 10));
+      await postMessage(repo, 'my-team', 'engineer', 'merging now');
+
+      const events = await readTeamLog([engineer, reviewer], repo, 'my-team');
+
+      // Should have events from both agents + team chat
+      expect(events.length).toBeGreaterThanOrEqual(3);
+
+      // Verify sorted
+      for (let i = 1; i < events.length; i++) {
+        expect(new Date(events[i].timestamp).getTime()).toBeGreaterThanOrEqual(
+          new Date(events[i - 1].timestamp).getTime(),
+        );
+      }
+    });
+
+    test('team chat appears once, not duplicated per agent', async () => {
+      const repo = '/tmp/ulog-team-dedup';
+      const engineer = makeAgent('engineer', 'my-team', repo);
+      const reviewer = makeAgent('reviewer', 'my-team', repo);
+
+      await postMessage(repo, 'my-team', 'engineer', 'team message');
+
+      const events = await readTeamLog([engineer, reviewer], repo, 'my-team');
+      const chatEvents = events.filter((e) => e.source === 'chat');
+      // Team chat is read once (not per agent)
+      expect(chatEvents.length).toBe(1);
+    });
+
+    test('applies filter across interleaved events', async () => {
+      const repo = '/tmp/ulog-team-filter';
+      const eng = makeAgent('engineer', 'team', repo);
+      const rev = makeAgent('reviewer', 'team', repo);
+
+      await send(repo, 'engineer', 'reviewer', 'msg1');
+      await new Promise((r) => setTimeout(r, 10));
+      await send(repo, 'reviewer', 'engineer', 'msg2');
+
+      const events = await readTeamLog([eng, rev], repo, 'team', { kinds: ['message'], last: 2 });
+      expect(events.length).toBeLessThanOrEqual(2);
+      for (const e of events) {
+        expect(e.kind).toBe('message');
+      }
+    });
+
+    test('returns empty for team with no activity', async () => {
+      const repo = '/tmp/ulog-team-empty';
+      const agent = makeAgent('lonely', 'empty-team', repo);
+      const events = await readTeamLog([agent], repo, 'empty-team');
+      expect(events).toEqual([]);
+    });
   });
-});
 
-describe('readTeamLog', () => {
-  test('interleaves events from multiple agents', async () => {
-    const repo = '/tmp/ulog-team-interleave';
-    const engineer = makeAgent('engineer', 'my-team', repo);
-    const reviewer = makeAgent('reviewer', 'my-team', repo);
+  // ============================================================================
+  // Mailbox outbox integration
+  // ============================================================================
 
-    // Create cross-agent messages
-    await send(repo, 'engineer', 'reviewer', 'PR ready for review');
-    await new Promise((r) => setTimeout(r, 10));
-    await send(repo, 'reviewer', 'engineer', 'LGTM');
-    await new Promise((r) => setTimeout(r, 10));
-    await postMessage(repo, 'my-team', 'engineer', 'merging now');
+  describe('mailbox outbox', () => {
+    test('readOutbox returns sent messages from PG', async () => {
+      const repo = '/tmp/ulog-outbox';
+      await send(repo, 'engineer', 'reviewer', 'hello');
+      await send(repo, 'engineer', 'qa', 'world');
 
-    const events = await readTeamLog([engineer, reviewer], repo, 'my-team');
-
-    // Should have events from both agents + team chat
-    expect(events.length).toBeGreaterThanOrEqual(3);
-
-    // Verify sorted
-    for (let i = 1; i < events.length; i++) {
-      expect(new Date(events[i].timestamp).getTime()).toBeGreaterThanOrEqual(
-        new Date(events[i - 1].timestamp).getTime(),
-      );
-    }
-  });
-
-  test('team chat appears once, not duplicated per agent', async () => {
-    const repo = '/tmp/ulog-team-dedup';
-    const engineer = makeAgent('engineer', 'my-team', repo);
-    const reviewer = makeAgent('reviewer', 'my-team', repo);
-
-    await postMessage(repo, 'my-team', 'engineer', 'team message');
-
-    const events = await readTeamLog([engineer, reviewer], repo, 'my-team');
-    const chatEvents = events.filter((e) => e.source === 'chat');
-    // Team chat is read once (not per agent)
-    expect(chatEvents.length).toBe(1);
-  });
-
-  test('applies filter across interleaved events', async () => {
-    const repo = '/tmp/ulog-team-filter';
-    const eng = makeAgent('engineer', 'team', repo);
-    const rev = makeAgent('reviewer', 'team', repo);
-
-    await send(repo, 'engineer', 'reviewer', 'msg1');
-    await new Promise((r) => setTimeout(r, 10));
-    await send(repo, 'reviewer', 'engineer', 'msg2');
-
-    const events = await readTeamLog([eng, rev], repo, 'team', { kinds: ['message'], last: 2 });
-    expect(events.length).toBeLessThanOrEqual(2);
-    for (const e of events) {
-      expect(e.kind).toBe('message');
-    }
-  });
-
-  test('returns empty for team with no activity', async () => {
-    const repo = '/tmp/ulog-team-empty';
-    const agent = makeAgent('lonely', 'empty-team', repo);
-    const events = await readTeamLog([agent], repo, 'empty-team');
-    expect(events).toEqual([]);
-  });
-});
-
-// ============================================================================
-// Mailbox outbox integration
-// ============================================================================
-
-describe('mailbox outbox', () => {
-  test('readOutbox returns sent messages from PG', async () => {
-    const repo = '/tmp/ulog-outbox';
-    await send(repo, 'engineer', 'reviewer', 'hello');
-    await send(repo, 'engineer', 'qa', 'world');
-
-    const outbox = await readOutbox(repo, 'engineer');
-    expect(outbox.length).toBe(2);
-    expect(outbox[0].from).toBe('engineer');
-    expect(outbox[0].to).toBe('reviewer');
-    expect(outbox[0].body).toBe('hello');
-    expect(outbox[1].to).toBe('qa');
-    expect(outbox[1].body).toBe('world');
+      const outbox = await readOutbox(repo, 'engineer');
+      expect(outbox.length).toBe(2);
+      expect(outbox[0].from).toBe('engineer');
+      expect(outbox[0].to).toBe('reviewer');
+      expect(outbox[0].body).toBe('hello');
+      expect(outbox[1].to).toBe('qa');
+      expect(outbox[1].body).toBe('world');
+    });
   });
 });

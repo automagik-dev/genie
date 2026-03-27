@@ -6,11 +6,10 @@
  * Self-healing: health checks on every connection, automatic recovery.
  */
 
-import { execSync } from 'node:child_process';
+import { type ChildProcess, execSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { MultiTenantRouter } from 'pgserve';
 import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, runSeed } from './pg-seed.js';
@@ -80,23 +79,45 @@ function getPort(): number {
   return DEFAULT_PORT;
 }
 
-/** Health check: actually connect to postgres and run SELECT 1 */
+/** Health check: actually connect to postgres and run SELECT 1.
+ *  Uses Promise.race with a hard 4s timeout so a proxy that accepts TCP
+ *  but never forwards the postgres protocol cannot hang forever.
+ *  The timeout timer is unref'd so it does not hold the event loop open
+ *  when the health check resolves first.
+ */
 async function isPostgresHealthy(port: number): Promise<boolean> {
   try {
-    const pg = (await import('postgres')).default;
-    const probe = pg({
-      host: DEFAULT_HOST,
-      port,
-      database: DB_NAME,
-      username: 'postgres',
-      password: 'postgres',
-      max: 1,
-      connect_timeout: 3,
-      idle_timeout: 1,
-    });
-    await probe`SELECT 1`;
-    await probe.end({ timeout: 2 });
-    return true;
+    return await Promise.race([
+      (async () => {
+        const pg = (await import('postgres')).default;
+        const probe = pg({
+          host: DEFAULT_HOST,
+          port,
+          database: DB_NAME,
+          username: 'postgres',
+          password: 'postgres',
+          max: 1,
+          connect_timeout: 3,
+          idle_timeout: 1,
+        });
+        try {
+          await probe`SELECT 1`;
+          await probe.end({ timeout: 2 });
+          return true;
+        } catch {
+          try {
+            await probe.end({ timeout: 1 });
+          } catch {
+            /* ignore */
+          }
+          return false;
+        }
+      })(),
+      new Promise<false>((resolve) => {
+        const t = setTimeout(() => resolve(false), 4000);
+        t.unref();
+      }),
+    ]);
   } catch {
     return false;
   }
@@ -136,7 +157,7 @@ function removeLockfile(): void {
 }
 
 // Module-level singleton state
-let pgserveServer: MultiTenantRouter | null = null;
+let pgserveChild: ChildProcess | null = null;
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
 let sqlClient: any = null;
 let activePort: number | null = null;
@@ -163,16 +184,13 @@ export async function ensurePgserve(): Promise<number> {
   }
 }
 
-const DAEMON_PID_PATH = join(GENIE_HOME, 'scheduler.pid');
-const DAEMON_BOOT_TIMEOUT_MS = 15000;
-
 async function _ensurePgserve(): Promise<number> {
   // Already connected in this process
   if (activePort !== null) return activePort;
 
   const port = getPort();
 
-  // 1. Read port file — daemon may have written it
+  // 1. Read port file — daemon or another genie process may have written it
   const portFromFile = readLockfile();
   if (portFromFile !== null && (await isPostgresHealthy(portFromFile))) {
     activePort = portFromFile;
@@ -188,32 +206,9 @@ async function _ensurePgserve(): Promise<number> {
     return port;
   }
 
-  // 3. No healthy PG found — try daemon-based recovery (skip in CI/test environments)
-  const isCI = process.env.CI === 'true' || !!process.env.GENIE_TEST_SCHEMA;
-
-  if (!isCI) {
-    const daemonRunning = isDaemonRunning();
-
-    if (daemonRunning) {
-      // Daemon is running but PG is unhealthy — self-heal and wait for recovery
-      selfHealPostgres(DATA_DIR);
-      const recovered = await waitForPortFile(DAEMON_BOOT_TIMEOUT_MS);
-      if (recovered !== null) return recovered;
-    }
-
-    // 4. No daemon running — auto-start daemon in background
-    if (!daemonRunning) {
-      try {
-        execSync('genie daemon start', { stdio: 'ignore', timeout: 5000 });
-      } catch {
-        // Daemon start may detach and return non-zero; that's OK
-      }
-      const booted = await waitForPortFile(DAEMON_BOOT_TIMEOUT_MS);
-      if (booted !== null) return booted;
-    }
-  }
-
-  // 5. Last resort: start pgserve directly in this process (backwards compat)
+  // 3. No healthy PG found — spawn pgserve as a child process.
+  //    This replaces the old approach of embedding the MultiTenantRouter proxy
+  //    in-process, which caused self-referencing deadlocks under load.
   mkdirSync(DATA_DIR, { recursive: true });
   selfHealPostgres(DATA_DIR);
   try {
@@ -227,49 +222,53 @@ async function _ensurePgserve(): Promise<number> {
   }
 }
 
-/** Check if the genie daemon is running via PID file. */
-function isDaemonRunning(): boolean {
+/** Resolve the pgserve CLI binary path. */
+function findPgserveBin(): string {
+  const globalBin = join(homedir(), '.bun', 'bin', 'pgserve');
+  if (existsSync(globalBin)) return globalBin;
   try {
-    const pid = Number.parseInt(readFileSync(DAEMON_PID_PATH, 'utf-8').trim(), 10);
-    if (Number.isNaN(pid) || pid <= 0) return false;
-    process.kill(pid, 0); // Throws if process doesn't exist
-    return true;
+    return execSync('which pgserve', { encoding: 'utf-8', timeout: 3000 }).trim();
   } catch {
-    return false;
+    return 'pgserve';
   }
 }
 
-/** Wait for port file to appear with a healthy PG behind it. */
-async function waitForPortFile(timeoutMs: number): Promise<number | null> {
-  const deadline = Date.now() + timeoutMs;
+/**
+ * Start pgserve as a separate child process (like omni does).
+ * Avoids the self-referencing proxy deadlock that occurs when the
+ * MultiTenantRouter Bun TCP proxy runs in the same event loop as
+ * the daemon that also connects to it.
+ */
+async function startPgserveOnPort(port: number): Promise<number> {
+  mkdirSync(DATA_DIR, { recursive: true });
+
+  const child = spawn(
+    findPgserveBin(),
+    ['--port', String(port), '--host', DEFAULT_HOST, '--data', DATA_DIR, '--log', 'warn', '--no-stats', '--no-cluster'],
+    { detached: true, stdio: 'ignore' },
+  );
+
+  child.unref();
+  pgserveChild = child;
+
+  const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    const port = readLockfile();
-    if (port !== null && (await isPostgresHealthy(port))) {
+    if (await isPostgresHealthy(port)) {
       activePort = port;
+      ownsLockfile = true;
       process.env.GENIE_PG_AVAILABLE = 'true';
+      writeLockfile(port);
       return port;
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  return null;
-}
 
-/** Start pgserve on a specific port, update singleton state and lockfile. */
-async function startPgserveOnPort(port: number): Promise<number> {
-  const { startMultiTenantServer } = await import('pgserve');
-  const server = await startMultiTenantServer({
-    port,
-    host: DEFAULT_HOST,
-    baseDir: DATA_DIR,
-    logLevel: 'warn',
-    autoProvision: true,
-  });
-  pgserveServer = server;
-  activePort = port;
-  ownsLockfile = true;
-  process.env.GENIE_PG_AVAILABLE = 'true';
-  writeLockfile(port);
-  return port;
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    /* dead */
+  }
+  throw new Error(`pgserve failed to start on port ${port} (timeout after 15s)`);
 }
 
 /** Register process exit handler to clean up lockfile (once). */
@@ -278,6 +277,14 @@ function registerExitHandler(): void {
   exitHandlerRegistered = true;
 
   const cleanup = () => {
+    if (pgserveChild) {
+      try {
+        pgserveChild.kill('SIGTERM');
+      } catch {
+        /* dead */
+      }
+      pgserveChild = null;
+    }
     if (ownsLockfile) {
       removeLockfile();
       ownsLockfile = false;

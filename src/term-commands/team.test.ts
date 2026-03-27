@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { $ } from 'bun';
-import { setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 
 // ============================================================================
 // Test Setup
@@ -123,125 +123,135 @@ async function genie(...args: string[]): Promise<{ stdout: string; exitCode: num
 // ============================================================================
 
 describe('genie team CLI', () => {
-  beforeAll(async () => {
-    await setupTestRepo();
+  describe.skipIf(!DB_AVAILABLE)('pg', () => {
+    beforeAll(async () => {
+      await setupTestRepo();
+    });
+
+    afterAll(async () => {
+      await cleanupTestRepo();
+      await pgState.cleanup();
+    });
+
+    test('team create creates a team', async () => {
+      const { stdout, exitCode } = await genie(
+        'team',
+        'create',
+        'feat/cli-test',
+        '--repo',
+        TEST_REPO,
+        '--branch',
+        'dev',
+      );
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('Team "feat/cli-test" created');
+      expect(stdout).toContain('Worktree:');
+    });
+
+    test('team create is idempotent', async () => {
+      const { exitCode } = await genie('team', 'create', 'feat/cli-test', '--repo', TEST_REPO, '--branch', 'dev');
+      expect(exitCode).toBe(0);
+    });
+
+    test('team ls lists teams', async () => {
+      const { stdout, exitCode } = await genie('team', 'ls');
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('feat/cli-test');
+    });
+
+    test('team hire adds agent', async () => {
+      const { stdout, exitCode } = await genie('team', 'hire', 'implementor', '--team', 'feat/cli-test');
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('Hired "implementor"');
+    });
+
+    test('team hire council adds 10 members', async () => {
+      await genie('team', 'create', 'feat/council-cli', '--repo', TEST_REPO, '--branch', 'dev');
+      const { stdout, exitCode } = await genie('team', 'hire', 'council', '--team', 'feat/council-cli');
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('council members');
+    });
+
+    test('team ls <name> lists members', async () => {
+      const { stdout, exitCode } = await genie('team', 'ls', 'feat/cli-test');
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('implementor');
+    });
+
+    test('team fire removes agent', async () => {
+      const { stdout, exitCode } = await genie('team', 'fire', 'implementor', '--team', 'feat/cli-test');
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('Fired "implementor"');
+    });
+
+    test('team disband removes team', async () => {
+      await genie('team', 'create', 'feat/disband-cli', '--repo', TEST_REPO, '--branch', 'dev');
+      const { stdout, exitCode } = await genie('team', 'disband', 'feat/disband-cli');
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('disbanded');
+    });
+
+    test('team ls shows status', async () => {
+      const { stdout, exitCode } = await genie('team', 'ls');
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('[in_progress]');
+    });
+
+    test('team done marks team as done', async () => {
+      await genie('team', 'create', 'feat/done-test', '--repo', TEST_REPO, '--branch', 'dev');
+      const { stdout, exitCode } = await genie('team', 'done', 'feat/done-test');
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('marked as done');
+    });
+
+    test('team blocked marks team as blocked', async () => {
+      await genie('team', 'create', 'feat/blocked-test', '--repo', TEST_REPO, '--branch', 'dev');
+      const { stdout, exitCode } = await genie('team', 'blocked', 'feat/blocked-test');
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('marked as blocked');
+    });
+
+    test('ensure command does not exist', async () => {
+      const { exitCode } = await genie('team', 'ensure', 'test');
+      expect(exitCode).not.toBe(0);
+    });
+
+    test('team create --wish auto-copies wish from cwd to repo', async () => {
+      // Create a wish in a separate cwd directory (not the repo)
+      const cwdDir = join(TEST_DIR, 'wish-cwd');
+      const wishSlug = 'test-autocopy';
+      const wishDir = join(cwdDir, '.genie', 'wishes', wishSlug);
+      await mkdir(wishDir, { recursive: true });
+      await writeFile(join(wishDir, 'WISH.md'), '# Test wish for auto-copy\n\n## Summary\nTest.\n');
+
+      // --no-spawn: only test wish-copy logic, do NOT spawn a real Claude session
+      await $`bun ${GENIE_BIN} team create feat/autocopy-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug} --no-spawn`
+        .quiet()
+        .cwd(cwdDir)
+        .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME, CLAUDE_CONFIG_DIR: TEST_CLAUDE_CONFIG })
+        .catch(() => {});
+
+      // Verify wish was copied to repo
+      const repoWishPath = join(TEST_REPO, '.genie', 'wishes', wishSlug, 'WISH.md');
+      expect(existsSync(repoWishPath)).toBe(true);
+    }, 15_000);
+
+    test('team create --wish uses existing wish in repo without copying', async () => {
+      // Create a wish directly in the repo
+      const wishSlug = 'test-inrepo';
+      const wishDir = join(TEST_REPO, '.genie', 'wishes', wishSlug);
+      await mkdir(wishDir, { recursive: true });
+      await writeFile(join(wishDir, 'WISH.md'), '# Test wish already in repo\n\n## Summary\nTest.\n');
+
+      // --no-spawn: only test wish presence, do NOT spawn a real Claude session
+      await $`bun ${GENIE_BIN} team create feat/inrepo-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug} --no-spawn`
+        .quiet()
+        .cwd(TEST_REPO)
+        .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME, CLAUDE_CONFIG_DIR: TEST_CLAUDE_CONFIG })
+        .catch(() => {});
+
+      // Wish should still be there
+      expect(existsSync(join(wishDir, 'WISH.md'))).toBe(true);
+    }, 15_000);
   });
-
-  afterAll(async () => {
-    await cleanupTestRepo();
-    await pgState.cleanup();
-  });
-
-  test('team create creates a team', async () => {
-    const { stdout, exitCode } = await genie('team', 'create', 'feat/cli-test', '--repo', TEST_REPO, '--branch', 'dev');
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('Team "feat/cli-test" created');
-    expect(stdout).toContain('Worktree:');
-  });
-
-  test('team create is idempotent', async () => {
-    const { exitCode } = await genie('team', 'create', 'feat/cli-test', '--repo', TEST_REPO, '--branch', 'dev');
-    expect(exitCode).toBe(0);
-  });
-
-  test('team ls lists teams', async () => {
-    const { stdout, exitCode } = await genie('team', 'ls');
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('feat/cli-test');
-  });
-
-  test('team hire adds agent', async () => {
-    const { stdout, exitCode } = await genie('team', 'hire', 'implementor', '--team', 'feat/cli-test');
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('Hired "implementor"');
-  });
-
-  test('team hire council adds 10 members', async () => {
-    await genie('team', 'create', 'feat/council-cli', '--repo', TEST_REPO, '--branch', 'dev');
-    const { stdout, exitCode } = await genie('team', 'hire', 'council', '--team', 'feat/council-cli');
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('council members');
-  });
-
-  test('team ls <name> lists members', async () => {
-    const { stdout, exitCode } = await genie('team', 'ls', 'feat/cli-test');
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('implementor');
-  });
-
-  test('team fire removes agent', async () => {
-    const { stdout, exitCode } = await genie('team', 'fire', 'implementor', '--team', 'feat/cli-test');
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('Fired "implementor"');
-  });
-
-  test('team disband removes team', async () => {
-    await genie('team', 'create', 'feat/disband-cli', '--repo', TEST_REPO, '--branch', 'dev');
-    const { stdout, exitCode } = await genie('team', 'disband', 'feat/disband-cli');
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('disbanded');
-  });
-
-  test('team ls shows status', async () => {
-    const { stdout, exitCode } = await genie('team', 'ls');
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('[in_progress]');
-  });
-
-  test('team done marks team as done', async () => {
-    await genie('team', 'create', 'feat/done-test', '--repo', TEST_REPO, '--branch', 'dev');
-    const { stdout, exitCode } = await genie('team', 'done', 'feat/done-test');
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('marked as done');
-  });
-
-  test('team blocked marks team as blocked', async () => {
-    await genie('team', 'create', 'feat/blocked-test', '--repo', TEST_REPO, '--branch', 'dev');
-    const { stdout, exitCode } = await genie('team', 'blocked', 'feat/blocked-test');
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain('marked as blocked');
-  });
-
-  test('ensure command does not exist', async () => {
-    const { exitCode } = await genie('team', 'ensure', 'test');
-    expect(exitCode).not.toBe(0);
-  });
-
-  test('team create --wish auto-copies wish from cwd to repo', async () => {
-    // Create a wish in a separate cwd directory (not the repo)
-    const cwdDir = join(TEST_DIR, 'wish-cwd');
-    const wishSlug = 'test-autocopy';
-    const wishDir = join(cwdDir, '.genie', 'wishes', wishSlug);
-    await mkdir(wishDir, { recursive: true });
-    await writeFile(join(wishDir, 'WISH.md'), '# Test wish for auto-copy\n\n## Summary\nTest.\n');
-
-    // --no-spawn: only test wish-copy logic, do NOT spawn a real Claude session
-    await $`bun ${GENIE_BIN} team create feat/autocopy-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug} --no-spawn`
-      .quiet()
-      .cwd(cwdDir)
-      .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME, CLAUDE_CONFIG_DIR: TEST_CLAUDE_CONFIG })
-      .catch(() => {});
-
-    // Verify wish was copied to repo
-    const repoWishPath = join(TEST_REPO, '.genie', 'wishes', wishSlug, 'WISH.md');
-    expect(existsSync(repoWishPath)).toBe(true);
-  }, 15_000);
-
-  test('team create --wish uses existing wish in repo without copying', async () => {
-    // Create a wish directly in the repo
-    const wishSlug = 'test-inrepo';
-    const wishDir = join(TEST_REPO, '.genie', 'wishes', wishSlug);
-    await mkdir(wishDir, { recursive: true });
-    await writeFile(join(wishDir, 'WISH.md'), '# Test wish already in repo\n\n## Summary\nTest.\n');
-
-    // --no-spawn: only test wish presence, do NOT spawn a real Claude session
-    await $`bun ${GENIE_BIN} team create feat/inrepo-test --repo ${TEST_REPO} --branch dev --wish ${wishSlug} --no-spawn`
-      .quiet()
-      .cwd(TEST_REPO)
-      .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME, CLAUDE_CONFIG_DIR: TEST_CLAUDE_CONFIG })
-      .catch(() => {});
-
-    // Wish should still be there
-    expect(existsSync(join(wishDir, 'WISH.md'))).toBe(true);
-  }, 15_000);
 });
