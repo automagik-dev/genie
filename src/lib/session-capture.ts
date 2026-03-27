@@ -593,8 +593,19 @@ export async function ingestFile(
       // Chunk may end mid-line — scan backward for last \n
       const lastNewline = raw.lastIndexOf('\n');
       if (lastNewline === -1) {
-        // Entire chunk is one partial line — can't parse, advance to try with more data next time
-        return { newOffset: effectiveOffset, contentRowsInserted: 0, toolEventsInserted: 0 };
+        // Entire chunk is one partial line (>64KB single JSONL line)
+        // Skip this line by scanning forward to find the next newline
+        const skipBuf = Buffer.alloc(Math.min(bytesAvailable, chunkSize * 4));
+        const { bytesRead: skipRead } = await fh.read(skipBuf, 0, skipBuf.length, effectiveOffset);
+        const skipStr = skipBuf.subarray(0, skipRead).toString('utf-8');
+        const nlPos = skipStr.indexOf('\n');
+        if (nlPos === -1) {
+          // Entire remaining file is one line — skip to EOF
+          return { newOffset: fileSize, contentRowsInserted: 0, toolEventsInserted: 0 };
+        }
+        // Skip past the oversized line, return so next call starts after it
+        const skipOffset = effectiveOffset + Buffer.byteLength(skipStr.slice(0, nlPos + 1), 'utf-8');
+        return { newOffset: skipOffset, contentRowsInserted: 0, toolEventsInserted: 0 };
       }
       safeEnd = lastNewline + 1;
     }
