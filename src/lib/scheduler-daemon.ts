@@ -1192,6 +1192,7 @@ export function startDaemon(
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let orphanTimer: ReturnType<typeof setInterval> | null = null;
   let inboxWatcherHandle: NodeJS.Timeout | null = null;
+  let captureFallbackTimer: ReturnType<typeof setInterval> | null = null;
 
   const stop = () => {
     running = false;
@@ -1219,6 +1220,10 @@ export function startDaemon(
     if (listenConnection) {
       listenConnection.end().catch(() => {});
       listenConnection = null;
+    }
+    if (captureFallbackTimer) {
+      clearInterval(captureFallbackTimer);
+      captureFallbackTimer = null;
     }
     // Stop session capture layers
     import('./session-filewatch.js').then((m) => m.stopFilewatch()).catch(() => {});
@@ -1368,7 +1373,7 @@ export function startDaemon(
         // Fall back to polling ingest every 60s as degraded mode
         const { ingestFileFull, discoverAllJsonlFiles, buildWorkerMap } = await import('./session-capture.js');
         deps.log({ timestamp: deps.now().toISOString(), level: 'warn', event: 'filewatch_failed_fallback_polling' });
-        setInterval(async () => {
+        captureFallbackTimer = setInterval(async () => {
           if (!running) return;
           try {
             const files = await discoverAllJsonlFiles();
