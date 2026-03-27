@@ -15,7 +15,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
   buildContextPrompt,
@@ -31,11 +31,12 @@ import { parseRef } from './state.js';
 let cleanupSchema: () => Promise<void>;
 
 beforeAll(async () => {
+  if (!DB_AVAILABLE) return;
   cleanupSchema = await setupTestSchema();
 });
 
 afterAll(async () => {
-  await cleanupSchema();
+  if (cleanupSchema) await cleanupSchema();
 });
 
 // ============================================================================
@@ -437,7 +438,7 @@ describe('dispatch commands - file reading', () => {
 // State Machine Integration
 // ============================================================================
 
-describe('dispatch commands - state machine integration', () => {
+describe.skipIf(!DB_AVAILABLE)('dispatch commands - state machine integration', () => {
   let tempDir: string;
 
   beforeEach(async () => {

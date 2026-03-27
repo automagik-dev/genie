@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import type { Agent } from './agent-registry.js';
 import { send } from './mailbox.js';
 import { _resetForTesting, close, isAvailable, publish, subscribe } from './nats-client.js';
-import { setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 import { type LogEvent, followAgentLog } from './unified-log.js';
 
 // ============================================================================
@@ -32,11 +32,12 @@ _resetForTesting();
 let cleanupSchema: () => Promise<void>;
 
 beforeAll(async () => {
+  if (!NATS_AVAILABLE || !DB_AVAILABLE) return;
   cleanupSchema = await setupTestSchema();
 });
 
 afterAll(async () => {
-  await cleanupSchema();
+  if (cleanupSchema) await cleanupSchema();
 });
 
 // ============================================================================

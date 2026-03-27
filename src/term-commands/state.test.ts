@@ -6,22 +6,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { execSync } from 'node:child_process';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import { detectWaveCompletion, ensureWorkPushed, parseRef, resolveWishPath } from './state.js';
-
-const DB_AVAILABLE = process.env.GENIE_PG_AVAILABLE === 'true' || !process.env.CI;
-
-let cleanupSchema: () => Promise<void>;
-
-beforeAll(async () => {
-  if (!DB_AVAILABLE) return;
-  cleanupSchema = await setupTestSchema();
-});
-
-afterAll(async () => {
-  if (cleanupSchema) await cleanupSchema();
-});
 
 // ============================================================================
 // Sample WISH.md with Execution Strategy for wave detection tests
@@ -101,8 +88,17 @@ describe('parseRef()', () => {
 // detectWaveCompletion
 // ============================================================================
 
-describe('detectWaveCompletion()', () => {
+describe.skipIf(!DB_AVAILABLE)('detectWaveCompletion()', () => {
+  let cleanupSchema: () => Promise<void>;
   let cwd: string;
+
+  beforeAll(async () => {
+    cleanupSchema = await setupTestSchema();
+  });
+
+  afterAll(async () => {
+    await cleanupSchema();
+  });
 
   beforeEach(async () => {
     cwd = join('/tmp', `wave-detect-${Date.now()}-${Math.random().toString(36).slice(2)}`);
