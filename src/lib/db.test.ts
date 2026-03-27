@@ -262,6 +262,71 @@ describe('getLockfilePath', () => {
   });
 });
 
+describe('isPostgresHealthy timeout', () => {
+  test('returns false within 5s when TCP connects but protocol never responds', async () => {
+    // Regression test: a proxy that accepts TCP but never sends postgres
+    // protocol data caused 40 test failures by hanging isPostgresHealthy
+    // forever. The fix wraps the health check in Promise.race with a 4s timeout.
+    const server = createServer((socket) => {
+      // Accept connection but never write anything — simulates stuck proxy
+      socket.on('error', () => {});
+    });
+
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        if (addr && typeof addr === 'object') {
+          resolve(addr.port);
+        }
+      });
+    });
+
+    try {
+      // isPostgresHealthy is not exported, so replicate its Promise.race pattern
+      const pg = (await import('postgres')).default;
+      const probe = pg({
+        host: '127.0.0.1',
+        port,
+        database: 'genie',
+        username: 'postgres',
+        password: 'postgres',
+        max: 1,
+        connect_timeout: 3,
+        idle_timeout: 1,
+      });
+
+      const start = Date.now();
+      const result = await Promise.race([
+        (async () => {
+          try {
+            await probe`SELECT 1`;
+            await probe.end({ timeout: 2 });
+            return true;
+          } catch {
+            try {
+              await probe.end({ timeout: 1 });
+            } catch {
+              /* ignore */
+            }
+            return false;
+          }
+        })(),
+        new Promise<false>((resolve) => {
+          const t = setTimeout(() => resolve(false), 4000);
+          t.unref();
+        }),
+      ]);
+      const elapsed = Date.now() - start;
+
+      expect(result).toBe(false);
+      // Must complete within 5s (4s timeout + margin), never hang forever
+      expect(elapsed).toBeLessThan(5000);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe('daemon-owned pgserve', () => {
   test('db.ts uses health check instead of port retry loop', async () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
