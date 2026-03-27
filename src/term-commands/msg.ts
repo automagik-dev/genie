@@ -378,6 +378,9 @@ async function deliverToTeam(
 
 /** Bridge a message to the Claude Code native inbox for real-time delivery. */
 async function bridgeToNativeInbox(from: string, recipient: string, body: string): Promise<void> {
+  // Skip native inbox bridge for self-sends to prevent echo loops (#818)
+  if (from === recipient) return;
+
   const nativeTeams = await import('../lib/claude-native-teams.js');
   const nativeMsg = {
     from,
