@@ -160,11 +160,18 @@ export async function startBackfill(sql: SqlClient): Promise<void> {
       await sleep(SLEEP_BETWEEN_FILES_MS);
     }
 
-    progress.status = 'complete';
+    if (running) {
+      progress.status = 'complete';
+      console.log(
+        `[backfill] complete: ${progress.processedFiles}/${progress.totalFiles} files, ${progress.errors} errors`,
+      );
+    } else {
+      progress.status = 'paused';
+      console.log(
+        `[backfill] paused: ${progress.processedFiles}/${progress.totalFiles} files (will resume on next daemon start)`,
+      );
+    }
     await updateSyncState(sql, progress);
-    console.log(
-      `[backfill] complete: ${progress.processedFiles}/${progress.totalFiles} files, ${progress.errors} errors`,
-    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[backfill] fatal error: ${message}`);
