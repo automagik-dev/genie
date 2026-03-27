@@ -1,14 +1,13 @@
 /**
  * Database connection management for Genie.
  *
- * Embeds pgserve (PostgreSQL) as a persistent brain. One instance per machine
- * on port 19642, auto-started on demand. Connection is a lazy singleton —
- * pgserve only starts when something actually needs the database.
+ * The daemon owns pgserve. CLI commands read the port file and connect.
+ * If no daemon is running, the CLI auto-starts it.
+ * Self-healing: health checks on every connection, automatic recovery.
  */
 
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { MultiTenantRouter } from 'pgserve';
@@ -25,7 +24,6 @@ export type Sql = postgres.Sql;
 
 const DEFAULT_PORT = 19642;
 const DEFAULT_HOST = '127.0.0.1';
-const MAX_PORT_RETRIES = 3;
 const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
 const DATA_DIR = join(GENIE_HOME, 'data', 'pgserve');
 const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
@@ -37,56 +35,38 @@ function maskCredentials(url: string): string {
 }
 
 /**
- * Kill orphaned postgres processes from a previous crash.
- * Reads postmaster.pid from data dir, verifies PID is actually postgres,
- * sends SIGTERM → waits 5s → SIGKILL if still alive.
+ * Self-heal: kill stale postgres processes, clean shared memory, remove stale PID files.
+ * Handles zombies (which can't be killed) by cleaning their artifacts instead.
  */
-function killOrphanedPostgres(dataDir: string): void {
-  const pidFile = join(dataDir, 'postmaster.pid');
-  if (!existsSync(pidFile)) return;
-
+function selfHealPostgres(dataDir: string): void {
   try {
-    const content = readFileSync(pidFile, 'utf-8');
-    const pid = Number.parseInt(content.split('\n')[0], 10);
-    if (Number.isNaN(pid) || pid <= 0) return;
-
-    // Verify PID is actually a postgres process
-    let cmdline: string;
-    try {
-      cmdline = execSync(`ps -o command= -p ${pid} 2>/dev/null`, { encoding: 'utf-8' }).trim();
-    } catch {
-      // Process doesn't exist — stale pid file, safe to ignore
-      return;
-    }
-
-    if (!cmdline.includes('postgres')) return;
-
-    // SIGTERM first (graceful)
-    try {
-      process.kill(pid, 'SIGTERM');
-    } catch {
-      return; // Already dead
-    }
-
-    // Wait up to 5s for graceful shutdown
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline) {
-      try {
-        process.kill(pid, 0); // Check if alive
-        execSync('sleep 0.2', { stdio: 'ignore' });
-      } catch {
-        return; // Process exited
-      }
-    }
-
-    // SIGKILL if still alive
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // Already dead
-    }
+    // Kill any stale postgres processes associated with pgserve data dir
+    execSync(`pkill -9 -f "postgres.*${dataDir.replace(/\//g, '\\/')}" 2>/dev/null || true`, {
+      stdio: 'ignore',
+      timeout: 5000,
+    });
   } catch {
-    // Best effort — don't block startup on cleanup failures
+    // Best effort
+  }
+
+  // Remove stale postmaster.pid
+  const pidFile = join(dataDir, 'postmaster.pid');
+  if (existsSync(pidFile)) {
+    try {
+      unlinkSync(pidFile);
+    } catch {
+      // May still be locked
+    }
+  }
+
+  // Clean stale shared memory segments owned by this user
+  try {
+    execSync("ipcs -m 2>/dev/null | awk '$6 == 0 {print $2}' | xargs -I{} ipcrm -m {} 2>/dev/null || true", {
+      stdio: 'ignore',
+      timeout: 5000,
+    });
+  } catch {
+    // Best effort
   }
 }
 
@@ -100,22 +80,26 @@ function getPort(): number {
   return DEFAULT_PORT;
 }
 
-/** Check if a TCP port is already listening */
-function isPortListening(port: number, host: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = createConnection({ port, host }, () => {
-      socket.destroy();
-      resolve(true);
+/** Health check: actually connect to postgres and run SELECT 1 */
+async function isPostgresHealthy(port: number): Promise<boolean> {
+  try {
+    const pg = (await import('postgres')).default;
+    const probe = pg({
+      host: DEFAULT_HOST,
+      port,
+      database: DB_NAME,
+      username: 'postgres',
+      password: 'postgres',
+      max: 1,
+      connect_timeout: 3,
+      idle_timeout: 1,
     });
-    socket.on('error', () => {
-      socket.destroy();
-      resolve(false);
-    });
-    socket.setTimeout(1000, () => {
-      socket.destroy();
-      resolve(false);
-    });
-  });
+    await probe`SELECT 1`;
+    await probe.end({ timeout: 2 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Read port from lockfile. Returns null if lockfile missing or invalid. */
@@ -179,83 +163,94 @@ export async function ensurePgserve(): Promise<number> {
   }
 }
 
+const DAEMON_PID_PATH = join(GENIE_HOME, 'scheduler.pid');
+const DAEMON_BOOT_TIMEOUT_MS = 15000;
+
 async function _ensurePgserve(): Promise<number> {
-  // Already started by us in this process
-  if (activePort !== null && pgserveServer) {
-    return activePort;
-  }
-  // Already connected (reuse from previous call in same process)
-  if (activePort !== null) {
-    return activePort;
-  }
+  // Already connected in this process
+  if (activePort !== null) return activePort;
 
   const port = getPort();
 
-  // 1. Check lockfile — another genie process may have started pgserve (fast path, no imports)
-  const reusedPort = await tryReuseLockfile();
-  if (reusedPort !== null) return reusedPort;
-
-  // 2. Check default port (may be started externally without lockfile)
-  if (await isPortListening(port, DEFAULT_HOST)) {
-    return markPortActive(port, true);
+  // 1. Read port file — daemon may have written it
+  const portFromFile = readLockfile();
+  if (portFromFile !== null && (await isPostgresHealthy(portFromFile))) {
+    activePort = portFromFile;
+    process.env.GENIE_PG_AVAILABLE = 'true';
+    return portFromFile;
   }
 
-  // 3. Start pgserve ourselves (slow path — only when no existing instance)
-  mkdirSync(DATA_DIR, { recursive: true });
-  killOrphanedPostgres(DATA_DIR);
+  // 2. Check default port (daemon may be running without port file, or external PG)
+  if (await isPostgresHealthy(port)) {
+    activePort = port;
+    process.env.GENIE_PG_AVAILABLE = 'true';
+    writeLockfile(port);
+    return port;
+  }
 
+  // 3. No healthy PG found — is daemon running?
+  const daemonRunning = isDaemonRunning();
+
+  if (daemonRunning) {
+    // Daemon is running but PG is unhealthy — self-heal: clean up and wait for daemon to recover
+    selfHealPostgres(DATA_DIR);
+    // Wait for daemon to restart PG and write port file
+    const recovered = await waitForPortFile(DAEMON_BOOT_TIMEOUT_MS);
+    if (recovered !== null) return recovered;
+    // Daemon is stuck — fall through to start pgserve ourselves
+  }
+
+  // 4. No daemon running — auto-start daemon in background
+  if (!daemonRunning) {
+    try {
+      execSync('genie daemon start', { stdio: 'ignore', timeout: 5000 });
+    } catch {
+      // Daemon start may detach and return non-zero; that's OK
+    }
+    // Wait for port file to appear
+    const booted = await waitForPortFile(DAEMON_BOOT_TIMEOUT_MS);
+    if (booted !== null) return booted;
+  }
+
+  // 5. Last resort: start pgserve directly in this process (backwards compat)
+  mkdirSync(DATA_DIR, { recursive: true });
+  selfHealPostgres(DATA_DIR);
   try {
     const startedPort = await startPgserveOnPort(port);
     registerExitHandler();
     return startedPort;
   } catch (err) {
-    return tryFallbackPorts(port, err);
+    process.env.GENIE_PG_AVAILABLE = 'false';
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`pgserve failed to start: ${maskCredentials(message)}`);
   }
 }
 
-/** Try to reuse a port from an existing lockfile. Returns port or null. */
-async function tryReuseLockfile(): Promise<number | null> {
-  const lockfilePort = readLockfile();
-  if (lockfilePort === null) return null;
-
-  if (await isPortListening(lockfilePort, DEFAULT_HOST)) {
-    return markPortActive(lockfilePort, false);
+/** Check if the genie daemon is running via PID file. */
+function isDaemonRunning(): boolean {
+  try {
+    const pid = Number.parseInt(readFileSync(DAEMON_PID_PATH, 'utf-8').trim(), 10);
+    if (Number.isNaN(pid) || pid <= 0) return false;
+    process.kill(pid, 0); // Throws if process doesn't exist
+    return true;
+  } catch {
+    return false;
   }
-  // Stale lockfile — port not listening
-  removeLockfile();
+}
+
+/** Wait for port file to appear with a healthy PG behind it. */
+async function waitForPortFile(timeoutMs: number): Promise<number | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const port = readLockfile();
+    if (port !== null && (await isPostgresHealthy(port))) {
+      activePort = port;
+      process.env.GENIE_PG_AVAILABLE = 'true';
+      return port;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
   return null;
-}
-
-/** Mark a port as active and optionally write lockfile. */
-function markPortActive(port: number, writeLock: boolean): number {
-  activePort = port;
-  process.env.GENIE_PG_AVAILABLE = 'true';
-  if (writeLock) writeLockfile(port);
-  return port;
-}
-
-/** Try fallback ports when primary fails. */
-async function tryFallbackPorts(basePort: number, originalErr: unknown): Promise<number> {
-  for (let offset = 1; offset <= MAX_PORT_RETRIES; offset++) {
-    const fallbackPort = basePort + offset;
-    if (await isPortListening(fallbackPort, DEFAULT_HOST)) {
-      return markPortActive(fallbackPort, true);
-    }
-    try {
-      const startedPort = await startPgserveOnPort(fallbackPort);
-      registerExitHandler();
-      return startedPort;
-    } catch {
-      // Try next port
-    }
-  }
-
-  process.env.GENIE_PG_AVAILABLE = 'false';
-  const message = originalErr instanceof Error ? originalErr.message : String(originalErr);
-  console.warn(`Warning: pgserve failed to start: ${maskCredentials(message)}`);
-  throw new Error(
-    `pgserve failed to start on port ${basePort} (and fallbacks ${basePort + 1}-${basePort + MAX_PORT_RETRIES}): ${maskCredentials(message)}`,
-  );
 }
 
 /** Start pgserve on a specific port, update singleton state and lockfile. */
@@ -310,7 +305,22 @@ function registerExitHandler(): void {
  * This isolates test data from production tables.
  */
 export async function getConnection() {
-  if (sqlClient) return sqlClient;
+  // If we have a cached client, health-check it before returning
+  if (sqlClient) {
+    try {
+      await sqlClient`SELECT 1`;
+      return sqlClient;
+    } catch {
+      // Connection is broken — reset and retry once
+      try {
+        await sqlClient.end({ timeout: 2 });
+      } catch {
+        /* ignore */
+      }
+      sqlClient = null;
+      activePort = null;
+    }
+  }
 
   const port = await ensurePgserve();
   const postgres = (await import('postgres')).default;
@@ -332,15 +342,33 @@ export async function getConnection() {
     },
   });
 
-  // Always call runMigrations — it's idempotent (checks _genie_migrations table)
-  await runMigrations(sqlClient);
+  try {
+    // Always call runMigrations — it's idempotent (checks _genie_migrations table)
+    await runMigrations(sqlClient);
 
-  // Run idempotent JSON → PG seed if source files exist
-  if (!testSchema && needsSeed()) {
-    await runSeed(sqlClient);
+    // Run idempotent JSON → PG seed if source files exist
+    if (!testSchema && needsSeed()) {
+      await runSeed(sqlClient);
+    }
+  } catch (err) {
+    // Migration/seed failure — reset client so next call retries
+    try {
+      await sqlClient.end({ timeout: 2 });
+    } catch {
+      /* ignore */
+    }
+    sqlClient = null;
+    throw err;
   }
 
   return sqlClient;
+}
+
+/**
+ * Check if DB is already connected (for guard checks without triggering startup).
+ */
+export function isConnected(): boolean {
+  return sqlClient !== null;
 }
 
 /**

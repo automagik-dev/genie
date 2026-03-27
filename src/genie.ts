@@ -189,10 +189,15 @@ const auditTimers = new Map<string, number>();
 program.hook('preAction', (_thisCommand, actionCommand) => {
   const name = actionCommand.name();
   auditTimers.set(name, Date.now());
-  // Fire-and-forget — never block command on audit
-  recordAuditEvent('command', name, 'command_start', getActor(), {
-    args: actionCommand.args,
-  }).catch(() => {});
+  // Only record audit if DB is already connected — never trigger independent startup
+  import('./lib/db.js')
+    .then(({ isConnected }) => {
+      if (!isConnected()) return;
+      recordAuditEvent('command', name, 'command_start', getActor(), {
+        args: actionCommand.args,
+      }).catch(() => {});
+    })
+    .catch(() => {});
 });
 
 program.hook('postAction', (_thisCommand, actionCommand) => {
@@ -200,10 +205,15 @@ program.hook('postAction', (_thisCommand, actionCommand) => {
   const startMs = auditTimers.get(name);
   const durationMs = startMs ? Date.now() - startMs : undefined;
   auditTimers.delete(name);
-  recordAuditEvent('command', name, 'command_success', getActor(), {
-    args: actionCommand.args,
-    duration_ms: durationMs,
-  }).catch(() => {});
+  import('./lib/db.js')
+    .then(({ isConnected }) => {
+      if (!isConnected()) return;
+      recordAuditEvent('command', name, 'command_success', getActor(), {
+        args: actionCommand.args,
+        duration_ms: durationMs,
+      }).catch(() => {});
+    })
+    .catch(() => {});
 });
 
 // ============================================================================
