@@ -17,21 +17,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { getConnection } from '../lib/db.js';
-import { setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 import { checkSendScope, detectSenderIdentity, registerSendInboxCommands } from './msg.js';
 
 // ---------------------------------------------------------------------------
 // PG test schema (required since team-manager now reads from PG)
 // ---------------------------------------------------------------------------
 
-let cleanupSchema: () => Promise<void>;
+let cleanupSchema: (() => Promise<void>) | undefined;
 
 beforeAll(async () => {
+  if (!DB_AVAILABLE) return;
   cleanupSchema = await setupTestSchema();
 });
 
 afterAll(async () => {
-  await cleanupSchema();
+  if (cleanupSchema) await cleanupSchema();
 });
 
 // ---------------------------------------------------------------------------
@@ -77,7 +78,7 @@ afterEach(() => {
 // detectSenderIdentity tests
 // ---------------------------------------------------------------------------
 
-describe('detectSenderIdentity', () => {
+describe.skipIf(!DB_AVAILABLE)('detectSenderIdentity', () => {
   // Scenario 1: Team-lead via Bash tool — GENIE_AGENT_NAME='team-lead'
   test('returns "team-lead" when GENIE_AGENT_NAME is set (team-lead via Bash tool)', async () => {
     process.env.GENIE_AGENT_NAME = 'team-lead';
@@ -147,7 +148,7 @@ describe('detectSenderIdentity', () => {
 // checkSendScope tests
 // ---------------------------------------------------------------------------
 
-describe('checkSendScope', () => {
+describe.skipIf(!DB_AVAILABLE)('checkSendScope', () => {
   let tempDir: string;
 
   beforeEach(async () => {
@@ -216,7 +217,7 @@ describe('checkSendScope', () => {
   });
 });
 
-describe('send command registration', () => {
+describe.skipIf(!DB_AVAILABLE)('send command registration', () => {
   test('send command accepts explicit --team context', () => {
     const program = new Command();
     registerSendInboxCommands(program);
@@ -231,7 +232,7 @@ describe('send command registration', () => {
 // Shared buildTeamLeadCommand — single source of truth
 // ---------------------------------------------------------------------------
 
-describe('buildTeamLeadCommand (shared module)', () => {
+describe.skipIf(!DB_AVAILABLE)('buildTeamLeadCommand (shared module)', () => {
   test('sets GENIE_AGENT_NAME to folder name', async () => {
     const { basename } = await import('node:path');
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
@@ -284,7 +285,7 @@ describe('buildTeamLeadCommand (shared module)', () => {
 // Verify session.ts delegates to shared module
 // ---------------------------------------------------------------------------
 
-describe('session.ts: delegates to shared buildTeamLeadCommand', () => {
+describe.skipIf(!DB_AVAILABLE)('session.ts: delegates to shared buildTeamLeadCommand', () => {
   test('session buildClaudeCommand sets GENIE_AGENT_NAME to folder name', async () => {
     const { basename } = await import('node:path');
     const { buildClaudeCommand } = await import('../genie-commands/session.js');
@@ -298,7 +299,7 @@ describe('session.ts: delegates to shared buildTeamLeadCommand', () => {
 // Verify provider-adapters sets GENIE_AGENT_NAME for spawned workers
 // ---------------------------------------------------------------------------
 
-describe('provider-adapters: GENIE_AGENT_NAME for workers', () => {
+describe.skipIf(!DB_AVAILABLE)('provider-adapters: GENIE_AGENT_NAME for workers', () => {
   // Mock Bun.which to pretend claude is installed (hasBinary check)
   const originalWhich = (Bun as Record<string, unknown>).which;
   beforeEach(() => {
