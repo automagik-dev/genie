@@ -36,15 +36,15 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
     // Initial collection
     try {
       setDiagnostics(collectDiagnostics());
-    } catch {
-      // Silently handle — diagnostics are best-effort
+    } catch (err) {
+      console.error('TUI: initial diagnostics failed:', err);
     }
 
     diagTimer.current = setInterval(() => {
       try {
         setDiagnostics(collectDiagnostics());
-      } catch {
-        // Best-effort refresh
+      } catch (err) {
+        console.error('TUI: diagnostics refresh failed:', err);
       }
     }, 2000);
 

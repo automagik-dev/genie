@@ -18,7 +18,7 @@ export function App({ rightPane }: { rightPane?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [currentProject, setCurrentProject] = useState<string | null>(null);
   const dataRef = useRef<TuiData | null>(null);
-  const activityTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const subRef = useRef<{ stop: () => Promise<void> } | null>(null);
 
   // Exit handler
   useKeyboard((key) => {
@@ -31,64 +31,51 @@ export function App({ rightPane }: { rightPane?: string }) {
   useEffect(() => {
     let cancelled = false;
 
-    async function boot() {
+    const onEvent = async () => {
       try {
-        const data = await loadAll();
+        const freshData = await loadAll();
         if (cancelled) return;
-        dataRef.current = data;
-        setTree(buildTree(data));
-        setLoading(false);
-
-        // Subscribe to runtime events for live updates
-        const sub = await subscribe(async () => {
-          try {
-            const freshData = await loadAll();
-            if (!cancelled) {
-              dataRef.current = freshData;
-              setTree((prev) => {
-                // Preserve expanded state
-                const fresh = buildTree(freshData);
-                return mergeExpandedState(prev, fresh);
-              });
-            }
-          } catch {
-            // Silently handle refresh errors — stale data is better than crash
-          }
-        });
-
-        // Cleanup subscription on unmount
-        return () => {
-          cancelled = true;
-          sub.stop();
-        };
+        dataRef.current = freshData;
+        setTree((prev) => mergeExpandedState(prev, buildTree(freshData)));
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-          setLoading(false);
-        }
+        console.error('TUI: data refresh failed:', err);
       }
+    };
+
+    async function boot() {
+      const data = await loadAll();
+      if (cancelled) return;
+      dataRef.current = data;
+      setTree(buildTree(data));
+      setLoading(false);
+
+      const sub = await subscribe(onEvent);
+      if (cancelled) return void sub.stop();
+      subRef.current = sub;
     }
 
-    boot();
+    boot().catch((err) => {
+      if (cancelled) return;
+      setError(err instanceof Error ? err.message : String(err));
+      setLoading(false);
+    });
 
     return () => {
       cancelled = true;
+      subRef.current?.stop();
+      subRef.current = null;
     };
   }, []);
 
   // Activity detection tick (1s)
   useEffect(() => {
-    activityTimer.current = setInterval(() => {
+    const timer = setInterval(() => {
       if (!dataRef.current) return;
       const activity = scanActivity(dataRef.current);
-      if (activity.size > 0) {
-        setTree((prev) => applyActivity(prev, activity));
-      }
+      setTree((prev) => applyActivity(prev, activity));
     }, 1000);
 
-    return () => {
-      if (activityTimer.current) clearInterval(activityTimer.current);
-    };
+    return () => clearInterval(timer);
   }, []);
 
   const handleTreeChange = useCallback((newTree: TreeNode[]) => {
@@ -163,8 +150,8 @@ function scanActivity(
         allActivity.set(taskId, act);
       }
     }
-  } catch {
-    // Silently handle activity detection errors
+  } catch (err) {
+    console.error('TUI: activity scan failed:', err);
   }
   return allActivity;
 }
