@@ -261,7 +261,7 @@ async function _ensurePgserve(): Promise<number> {
 
   // 4b. CLI command — auto-start daemon, wait for port file.
   await autoStartDaemon();
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + 16000;
   while (Date.now() < deadline) {
     const p = readLockfile();
     if (p !== null && (await isPostgresHealthy(p))) {
@@ -272,7 +272,7 @@ async function _ensurePgserve(): Promise<number> {
     await new Promise((r) => setTimeout(r, 500));
   }
   process.env.GENIE_PG_AVAILABLE = 'false';
-  throw new Error('Timed out waiting for daemon to start pgserve (10s). Run: genie daemon start');
+  throw new Error('Timed out waiting for daemon to start pgserve (16s). Run: genie daemon start');
 }
 
 /** Resolve the pgserve CLI binary path — checks local dep, global, then PATH. */
