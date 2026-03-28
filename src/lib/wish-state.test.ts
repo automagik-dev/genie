@@ -10,6 +10,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { getConnection } from './db.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 import {
   type GroupDefinition,
@@ -658,6 +659,124 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await createState('reset-none', [{ name: '1' }], cwd);
       const count = await resetInProgressGroups('reset-none', cwd);
       expect(count).toBe(0);
+    });
+  });
+
+  // ============================================================================
+  // Task stage auto-advance on group completion
+  // ============================================================================
+
+  describe('task stage auto-advance', () => {
+    test('advances task stage from build to review on group completion', async () => {
+      const groups: GroupDefinition[] = [{ name: '1' }];
+      await createState('advance-build', groups, cwd);
+
+      const sql = await getConnection();
+
+      // Move the group task to 'build' stage (simulating /work dispatch)
+      const parent = (
+        await sql`
+        SELECT id FROM tasks WHERE wish_file = ${'.genie/wishes/advance-build/WISH.md'} AND repo_path = ${cwd} AND parent_id IS NULL
+      `
+      )[0];
+      const child = (await sql`SELECT id FROM tasks WHERE parent_id = ${parent.id} AND group_name = '1'`)[0];
+      await sql`UPDATE tasks SET stage = 'build' WHERE id = ${child.id}`;
+
+      await startGroup('advance-build', '1', 'agent-a', cwd);
+      await completeGroup('advance-build', '1', cwd);
+
+      // Stage should have advanced to 'review'
+      const task = (await sql`SELECT stage FROM tasks WHERE id = ${child.id}`)[0];
+      expect(task.stage).toBe('review');
+
+      // Stage log should record the transition
+      const log = await sql`
+        SELECT from_stage, to_stage FROM task_stage_log
+        WHERE task_id = ${child.id} ORDER BY created_at DESC LIMIT 1
+      `;
+      expect(log.length).toBe(1);
+      expect(log[0].from_stage).toBe('build');
+      expect(log[0].to_stage).toBe('review');
+    });
+
+    test('advances task stage from review to qa', async () => {
+      const groups: GroupDefinition[] = [{ name: '1' }];
+      await createState('advance-review', groups, cwd);
+
+      const sql = await getConnection();
+      const parent = (
+        await sql`
+        SELECT id FROM tasks WHERE wish_file = ${'.genie/wishes/advance-review/WISH.md'} AND repo_path = ${cwd} AND parent_id IS NULL
+      `
+      )[0];
+      const child = (await sql`SELECT id FROM tasks WHERE parent_id = ${parent.id} AND group_name = '1'`)[0];
+      await sql`UPDATE tasks SET stage = 'review' WHERE id = ${child.id}`;
+
+      await startGroup('advance-review', '1', 'reviewer', cwd);
+      await completeGroup('advance-review', '1', cwd);
+
+      const task = (await sql`SELECT stage FROM tasks WHERE id = ${child.id}`)[0];
+      expect(task.stage).toBe('qa');
+    });
+
+    test('advances task stage from qa to ship', async () => {
+      const groups: GroupDefinition[] = [{ name: '1' }];
+      await createState('advance-qa', groups, cwd);
+
+      const sql = await getConnection();
+      const parent = (
+        await sql`
+        SELECT id FROM tasks WHERE wish_file = ${'.genie/wishes/advance-qa/WISH.md'} AND repo_path = ${cwd} AND parent_id IS NULL
+      `
+      )[0];
+      const child = (await sql`SELECT id FROM tasks WHERE parent_id = ${parent.id} AND group_name = '1'`)[0];
+      await sql`UPDATE tasks SET stage = 'qa' WHERE id = ${child.id}`;
+
+      await startGroup('advance-qa', '1', 'qa-agent', cwd);
+      await completeGroup('advance-qa', '1', cwd);
+
+      const task = (await sql`SELECT stage FROM tasks WHERE id = ${child.id}`)[0];
+      expect(task.stage).toBe('ship');
+    });
+
+    test('does not advance task stage if already at ship', async () => {
+      const groups: GroupDefinition[] = [{ name: '1' }];
+      await createState('advance-ship', groups, cwd);
+
+      const sql = await getConnection();
+      const parent = (
+        await sql`
+        SELECT id FROM tasks WHERE wish_file = ${'.genie/wishes/advance-ship/WISH.md'} AND repo_path = ${cwd} AND parent_id IS NULL
+      `
+      )[0];
+      const child = (await sql`SELECT id FROM tasks WHERE parent_id = ${parent.id} AND group_name = '1'`)[0];
+      await sql`UPDATE tasks SET stage = 'ship' WHERE id = ${child.id}`;
+
+      await startGroup('advance-ship', '1', 'agent', cwd);
+      await completeGroup('advance-ship', '1', cwd);
+
+      const task = (await sql`SELECT stage FROM tasks WHERE id = ${child.id}`)[0];
+      expect(task.stage).toBe('ship'); // unchanged
+    });
+
+    test('does not advance task stage from draft', async () => {
+      const groups: GroupDefinition[] = [{ name: '1' }];
+      await createState('advance-draft', groups, cwd);
+
+      const sql = await getConnection();
+      const parent = (
+        await sql`
+        SELECT id FROM tasks WHERE wish_file = ${'.genie/wishes/advance-draft/WISH.md'} AND repo_path = ${cwd} AND parent_id IS NULL
+      `
+      )[0];
+      const child = (await sql`SELECT id FROM tasks WHERE parent_id = ${parent.id} AND group_name = '1'`)[0];
+
+      // Stage starts at 'draft' — should NOT advance
+      await startGroup('advance-draft', '1', 'agent', cwd);
+      await completeGroup('advance-draft', '1', cwd);
+
+      const task = (await sql`SELECT stage FROM tasks WHERE id = ${child.id}`)[0];
+      expect(task.stage).toBe('draft'); // unchanged
     });
   });
 
