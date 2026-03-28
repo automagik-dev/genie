@@ -172,4 +172,17 @@ export function registerDbCommands(program: Command): void {
   db.command('migrate').description('Run pending database migrations').action(dbMigrateCommand);
 
   db.command('query <sql>').description('Execute arbitrary SQL and print results').action(dbQueryCommand);
+
+  db.command('url')
+    .description('Print postgres connection URL for direct access')
+    .option('--quiet', 'Print URL only, no trailing newline (for scripts)')
+    .action((options: { quiet?: boolean }) => {
+      const port = getActivePort();
+      const url = `postgres://postgres:postgres@127.0.0.1:${port}/genie`;
+      if (options.quiet) {
+        process.stdout.write(url);
+      } else {
+        console.log(url);
+      }
+    });
 }
