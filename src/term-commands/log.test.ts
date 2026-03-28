@@ -57,7 +57,7 @@ function makeAgent(id: string, team?: string, repoPath?: string): Agent {
 // readAgentLog integration (used by log command)
 // ============================================================================
 
-describe('log command: agent log via readAgentLog', () => {
+describe.skipIf(!DB_AVAILABLE)('log command: agent log via readAgentLog', () => {
   test('aggregates inbox + outbox into unified feed', async () => {
     const repo = '/tmp/log-agent-agg';
     const agent = makeAgent('engineer', 'test-team', repo);
@@ -90,7 +90,7 @@ describe('log command: agent log via readAgentLog', () => {
 // readTeamLog integration (used by --team flag)
 // ============================================================================
 
-describe('log command: team log via readTeamLog', () => {
+describe.skipIf(!DB_AVAILABLE)('log command: team log via readTeamLog', () => {
   test('interleaves events from multiple agents', async () => {
     const repo = '/tmp/log-team-interleave';
     const eng = makeAgent('engineer', 'my-team', repo);
@@ -118,7 +118,7 @@ describe('log command: team log via readTeamLog', () => {
 // Filter tests (--type, --since, --last)
 // ============================================================================
 
-describe('log command: filters', () => {
+describe.skipIf(!DB_AVAILABLE)('log command: filters', () => {
   const baseEvents: LogEvent[] = [
     { timestamp: '2026-03-20T10:00:00.000Z', kind: 'assistant', agent: 'eng', text: 'first', source: 'provider' },
     { timestamp: '2026-03-20T11:00:00.000Z', kind: 'message', agent: 'eng', text: 'second', source: 'mailbox' },
@@ -162,7 +162,7 @@ describe('log command: filters', () => {
 // NDJSON output
 // ============================================================================
 
-describe('log command: NDJSON output', () => {
+describe.skipIf(!DB_AVAILABLE)('log command: NDJSON output', () => {
   test('each line is valid JSON', async () => {
     const repo = '/tmp/log-ndjson';
     const agent = makeAgent('engineer', undefined, repo);
@@ -208,7 +208,7 @@ describe('log command: NDJSON output', () => {
 // Follow mode (PG event log)
 // ============================================================================
 
-describe('log command: follow mode (PG)', () => {
+describe.skipIf(!DB_AVAILABLE)('log command: follow mode (PG)', () => {
   test('followAgentLog returns pg mode and streams events', async () => {
     const agent = makeAgent('engineer', 'test-team');
     const received: LogEvent[] = [];
@@ -300,7 +300,7 @@ describe('log command: follow mode (PG)', () => {
 // Human-readable output
 // ============================================================================
 
-describe('log command: human-readable output', () => {
+describe.skipIf(!DB_AVAILABLE)('log command: human-readable output', () => {
   test('works with PG-only follow infrastructure', async () => {
     const repo = '/tmp/log-human-readable';
     const agent = makeAgent('engineer', 'test-team', repo);
