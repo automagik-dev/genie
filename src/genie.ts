@@ -188,6 +188,19 @@ registerExportCommands(program);
 registerImportCommands(program);
 registerTemplateCommands(program);
 
+// ============================================================================
+// TUI — interactive terminal interface
+// ============================================================================
+
+program
+  .command('tui')
+  .description('Launch interactive terminal interface (Ink nav + tmux agent panes)')
+  .option('--dev', 'Dev mode: run with bun --watch for auto-reload on file changes')
+  .action(async (options: { dev?: boolean }) => {
+    const { launchTui } = await import('./tui/index.js');
+    await launchTui(options);
+  });
+
 // Item registry commands — install, publish (top-level), item uninstall/update (namespaced)
 registerInstallCommand(program);
 registerPublishCommand(program);
