@@ -117,61 +117,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_custom_name_team
   ON agents(custom_name, team)
   WHERE custom_name IS NOT NULL AND team IS NOT NULL;
 
--- Drop triggers + function on agents.state BEFORE dropping the column
--- (both triggers depend on the state column, blocking DROP COLUMN)
-DROP TRIGGER IF EXISTS trg_notify_agent_state ON agents;
-DROP TRIGGER IF EXISTS trg_agent_state_change ON agents;
-DROP FUNCTION IF EXISTS notify_agent_state_change() CASCADE;
+-- Relax NOT NULL constraints on runtime columns that now live in executors.
+-- The register() function only inserts identity columns; runtime data goes to executors.
+-- Adding DEFAULTs lets old and new code coexist during transition.
+ALTER TABLE agents ALTER COLUMN pane_id SET DEFAULT '';
+ALTER TABLE agents ALTER COLUMN session SET DEFAULT '';
+ALTER TABLE agents ALTER COLUMN repo_path SET DEFAULT '';
+ALTER TABLE agents ALTER COLUMN state SET DEFAULT 'spawning';
+ALTER TABLE agents ALTER COLUMN last_state_change SET DEFAULT now();
 
--- Drop indexes on columns about to be removed
-DROP INDEX IF EXISTS idx_agents_state;
-DROP INDEX IF EXISTS idx_agents_session;
-DROP INDEX IF EXISTS idx_agents_pane_id;
-DROP INDEX IF EXISTS idx_agents_wish_slug;
-DROP INDEX IF EXISTS idx_agents_task_id;
+-- Make runtime columns nullable so identity-only INSERTs work
+ALTER TABLE agents ALTER COLUMN pane_id DROP NOT NULL;
+ALTER TABLE agents ALTER COLUMN session DROP NOT NULL;
+ALTER TABLE agents ALTER COLUMN repo_path DROP NOT NULL;
+ALTER TABLE agents ALTER COLUMN state DROP NOT NULL;
+ALTER TABLE agents ALTER COLUMN last_state_change DROP NOT NULL;
 
--- Drop runtime columns that moved to executors
-ALTER TABLE agents DROP COLUMN IF EXISTS pane_id;
-ALTER TABLE agents DROP COLUMN IF EXISTS session;
-ALTER TABLE agents DROP COLUMN IF EXISTS worktree;
-ALTER TABLE agents DROP COLUMN IF EXISTS state;
-ALTER TABLE agents DROP COLUMN IF EXISTS last_state_change;
-ALTER TABLE agents DROP COLUMN IF EXISTS claude_session_id;
-ALTER TABLE agents DROP COLUMN IF EXISTS window_name;
-ALTER TABLE agents DROP COLUMN IF EXISTS window_id;
-ALTER TABLE agents DROP COLUMN IF EXISTS sub_panes;
-ALTER TABLE agents DROP COLUMN IF EXISTS provider;
-ALTER TABLE agents DROP COLUMN IF EXISTS transport;
-ALTER TABLE agents DROP COLUMN IF EXISTS tmux_window;
-ALTER TABLE agents DROP COLUMN IF EXISTS suspended_at;
-ALTER TABLE agents DROP COLUMN IF EXISTS auto_resume;
-ALTER TABLE agents DROP COLUMN IF EXISTS resume_attempts;
-ALTER TABLE agents DROP COLUMN IF EXISTS last_resume_attempt;
-ALTER TABLE agents DROP COLUMN IF EXISTS max_resume_attempts;
-ALTER TABLE agents DROP COLUMN IF EXISTS pane_color;
-ALTER TABLE agents DROP COLUMN IF EXISTS task_id;
-ALTER TABLE agents DROP COLUMN IF EXISTS task_title;
-ALTER TABLE agents DROP COLUMN IF EXISTS wish_slug;
-ALTER TABLE agents DROP COLUMN IF EXISTS group_number;
-ALTER TABLE agents DROP COLUMN IF EXISTS skill;
-ALTER TABLE agents DROP COLUMN IF EXISTS repo_path;
-ALTER TABLE agents DROP COLUMN IF EXISTS window_ref;
+-- NOTE: Column drops and session re-key are deferred to Group 3 (agent-registry refactor)
+-- and Group 7 (consumer query updates). This migration is additive-only so that existing
+-- code continues to work during the parallel wave transition. The old columns remain in
+-- agents until the code that references them is updated.
+--
+-- Deferred operations (to be added as 013_executor_cleanup.sql):
+-- - DROP old runtime columns from agents (pane_id, session, state, etc.)
+-- - DROP old indexes and triggers on agents
+-- - Re-key sessions.agent_id → sessions.executor_id
+-- - DROP sessions.agent_id
 
--- ============================================================================
--- Re-key sessions: agent_id → executor_id
--- ============================================================================
-
--- Add executor_id column
+-- Add executor_id to sessions (additive — keeps agent_id for now)
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS executor_id TEXT REFERENCES executors(id) ON DELETE SET NULL;
 
 -- Populate executor_id from existing agent_id
-UPDATE sessions SET executor_id = 'exec-' || agent_id WHERE agent_id IS NOT NULL;
+UPDATE sessions SET executor_id = 'exec-' || agent_id WHERE agent_id IS NOT NULL AND executor_id IS NULL;
 
--- Drop old agent_id column and index
-DROP INDEX IF EXISTS idx_sessions_agent;
-ALTER TABLE sessions DROP COLUMN IF EXISTS agent_id;
-
--- Create index on new FK
+-- Index on the new column
 CREATE INDEX IF NOT EXISTS idx_sessions_executor ON sessions(executor_id);
 
 -- ============================================================================
