@@ -435,6 +435,23 @@ async function handleSend(body: string, options: { to: string; from?: string }):
 
   const msg = await ts.sendMessage(conv.id, senderActor, body);
 
+  // Emit NATS event for real-time observability (fire-and-forget)
+  try {
+    const { publish } = await import('../lib/nats-client.js');
+    await publish(`genie.msg.${options.to}`, {
+      timestamp: new Date().toISOString(),
+      kind: 'message',
+      agent: from,
+      direction: 'out',
+      peer: options.to,
+      text: body,
+      data: { messageId: msg.id, conversationId: conv.id, from, to: options.to },
+      source: 'send',
+    });
+  } catch {
+    // NATS unavailable — silent degradation
+  }
+
   // Best-effort native inbox bridge
   await bridgeToNativeInbox(from, options.to, body).catch((err) => {
     const reason = err instanceof Error ? err.message : String(err);
@@ -495,6 +512,24 @@ export function registerSendInboxCommands(program: Command): void {
         await ts.addMember(conv.id, senderActor);
 
         const msg = await ts.sendMessage(conv.id, senderActor, body);
+
+        // Emit NATS event for real-time observability (fire-and-forget)
+        try {
+          const { publish } = await import('../lib/nats-client.js');
+          await publish('genie.msg.broadcast', {
+            timestamp: new Date().toISOString(),
+            kind: 'message',
+            agent: from,
+            direction: 'out',
+            peer: teamName,
+            text: body,
+            data: { messageId: msg.id, conversationId: conv.id, from, team: teamName },
+            source: 'send',
+          });
+        } catch {
+          // NATS unavailable — silent degradation
+        }
+
         console.log(`Broadcast sent to team "${teamName}".`);
         console.log(`  Message ID: ${msg.id}`);
         console.log(`  Conversation: ${conv.id}`);
