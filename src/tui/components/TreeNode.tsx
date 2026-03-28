@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/react */
 /** Individual tree node: <box onMouseDown> + <text><span fg="..."> */
 
+import { memo } from 'react';
 import { icons, palette } from '../theme.js';
 import type { TreeNode as TreeNodeType } from '../types.js';
 
@@ -11,7 +12,7 @@ interface TreeNodeProps {
   onToggle: (id: string) => void;
 }
 
-export function TreeNodeRow({ node, selected, onSelect, onToggle }: TreeNodeProps) {
+export const TreeNodeRow = memo(function TreeNodeRow({ node, selected, onSelect, onToggle }: TreeNodeProps) {
   const indent = '  '.repeat(node.depth);
   const hasChildren = node.children.length > 0;
   const expandIcon = hasChildren ? (node.expanded ? icons.expanded : icons.collapsed) : ' ';
@@ -41,7 +42,7 @@ export function TreeNodeRow({ node, selected, onSelect, onToggle }: TreeNodeProp
       </text>
     </box>
   );
-}
+});
 
 function getNodeIcon(node: TreeNodeType): string {
   switch (node.type) {

@@ -4,6 +4,7 @@ import { execSync, spawnSync } from 'node:child_process';
 import { tmuxStyle } from './theme.js';
 
 const SESSION_NAME = 'genie-tui';
+const KEY_TABLE = 'genie-tui';
 const NAV_WIDTH = 30;
 
 /** Check if tmux is available */
@@ -65,18 +66,36 @@ export function switchRightPane(rightPane: string, targetSession: string): void 
   }, 100);
 }
 
-/** Set up TUI keybindings */
+/**
+ * Set up TUI keybindings in a dedicated key table (not global root).
+ * Uses a custom key table "genie-tui" so bindings only apply inside the TUI session.
+ * The session hooks switch-client into this table on focus.
+ */
 function setupKeybindings(session: string): void {
   try {
-    execSync(`tmux bind-key -n Tab select-pane -t ${session}:0.+`, { stdio: 'ignore' });
+    // Define bindings in the genie-tui key table (session-scoped, not global)
+    execSync(`tmux bind-key -T ${KEY_TABLE} Tab select-pane -t ${session}:0.+ \\; switch-client -T ${KEY_TABLE}`, {
+      stdio: 'ignore',
+    });
 
     execSync(
-      `tmux bind-key -n C-b if-shell "[ $(tmux display-message -p '#{pane_width}' -t ${session}:0.0) -gt 5 ]" "resize-pane -t ${session}:0.0 -x 0" "resize-pane -t ${session}:0.0 -x ${NAV_WIDTH}"`,
+      `tmux bind-key -T ${KEY_TABLE} C-b if-shell "[ $(tmux display-message -p '#{pane_width}' -t ${session}:0.0) -gt 5 ]" "resize-pane -t ${session}:0.0 -x 0" "resize-pane -t ${session}:0.0 -x ${NAV_WIDTH}" \\; switch-client -T ${KEY_TABLE}`,
       { stdio: 'ignore' },
     );
 
-    execSync(`tmux bind-key -n C-t send-keys -t ${session}:0.1 C-b c`, { stdio: 'ignore' });
-    execSync(`tmux bind-key -n 'C-\\' run-shell "tmux kill-session -t ${session}"`, { stdio: 'ignore' });
+    execSync(`tmux bind-key -T ${KEY_TABLE} C-t send-keys -t ${session}:0.1 C-b c \\; switch-client -T ${KEY_TABLE}`, {
+      stdio: 'ignore',
+    });
+
+    execSync(`tmux bind-key -T ${KEY_TABLE} 'C-\\' run-shell "tmux kill-session -t ${session}"`, {
+      stdio: 'ignore',
+    });
+
+    // Auto-enter the key table when the session gets focus
+    execSync(`tmux set-hook -t ${session} client-session-changed "switch-client -T ${KEY_TABLE}"`, { stdio: 'ignore' });
+
+    // Also enter the key table immediately for the current client
+    execSync(`tmux switch-client -T ${KEY_TABLE}`, { stdio: 'ignore' });
   } catch {
     // best-effort keybindings
   }
@@ -99,13 +118,16 @@ function applyTmuxStyle(session: string): void {
   }
 }
 
-/** Clean up: unbind keys, kill session */
+/** Clean up: remove key table bindings and hooks, kill session */
 export function cleanup(session: string = SESSION_NAME): void {
   try {
-    execSync('tmux unbind-key -n Tab 2>/dev/null', { stdio: 'ignore' });
-    execSync('tmux unbind-key -n C-b 2>/dev/null', { stdio: 'ignore' });
-    execSync('tmux unbind-key -n C-t 2>/dev/null', { stdio: 'ignore' });
-    execSync("tmux unbind-key -n 'C-\\' 2>/dev/null", { stdio: 'ignore' });
+    // Unbind from the custom key table only (not global root)
+    execSync(`tmux unbind-key -T ${KEY_TABLE} Tab 2>/dev/null`, { stdio: 'ignore' });
+    execSync(`tmux unbind-key -T ${KEY_TABLE} C-b 2>/dev/null`, { stdio: 'ignore' });
+    execSync(`tmux unbind-key -T ${KEY_TABLE} C-t 2>/dev/null`, { stdio: 'ignore' });
+    execSync(`tmux unbind-key -T ${KEY_TABLE} 'C-\\' 2>/dev/null`, { stdio: 'ignore' });
+    // Remove session hook
+    execSync(`tmux set-hook -u -t ${session} client-session-changed 2>/dev/null`, { stdio: 'ignore' });
     execSync(`tmux kill-session -t ${session} 2>/dev/null`, { stdio: 'ignore' });
   } catch {
     // best-effort
