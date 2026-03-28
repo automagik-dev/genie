@@ -109,6 +109,43 @@ describe('runtime-events', () => {
     }
   });
 
+  test('follow respects repoPath scoping', async () => {
+    const received: string[] = [];
+    const handle = await followRuntimeEvents(
+      {
+        repoPath: '/tmp/runtime-follow-scope-a',
+        team: 'qa-team',
+      },
+      (event) => received.push(event.text),
+      { pollIntervalMs: 50 },
+    );
+
+    try {
+      await publishRuntimeEvent({
+        repoPath: '/tmp/runtime-follow-scope-b',
+        kind: 'qa',
+        agent: 'qa',
+        team: 'qa-team',
+        text: 'wrong-repo',
+        source: 'hook',
+      });
+      await publishRuntimeEvent({
+        repoPath: '/tmp/runtime-follow-scope-a',
+        kind: 'qa',
+        agent: 'qa',
+        team: 'qa-team',
+        text: 'right-repo',
+        source: 'hook',
+      });
+
+      await waitUntil(() => received.includes('right-repo'));
+      expect(received).toContain('right-repo');
+      expect(received).not.toContain('wrong-repo');
+    } finally {
+      await handle.stop();
+    }
+  });
+
   test('waits for the next matching event', async () => {
     const waitPromise = waitForRuntimeEvent(
       {
@@ -130,6 +167,42 @@ describe('runtime-events', () => {
 
     const event = await waitPromise;
     expect(event?.subject).toBe('genie.qa.qa-team.result');
+    expect(event?.data?.result).toBe('pass');
+  });
+
+  test('waitForRuntimeEvent respects repoPath scoping', async () => {
+    const waitPromise = waitForRuntimeEvent(
+      {
+        repoPath: '/tmp/runtime-wait-scope-a',
+        subject: 'genie.qa.qa-scope.result',
+        team: 'qa-scope',
+      },
+      1000,
+    );
+
+    await publishRuntimeEvent({
+      repoPath: '/tmp/runtime-wait-scope-b',
+      subject: 'genie.qa.qa-scope.result',
+      kind: 'qa',
+      agent: 'qa',
+      team: 'qa-scope',
+      text: 'wrong-repo',
+      source: 'hook',
+      data: { result: 'fail' },
+    });
+    await publishRuntimeEvent({
+      repoPath: '/tmp/runtime-wait-scope-a',
+      subject: 'genie.qa.qa-scope.result',
+      kind: 'qa',
+      agent: 'qa',
+      team: 'qa-scope',
+      text: 'right-repo',
+      source: 'hook',
+      data: { result: 'pass' },
+    });
+
+    const event = await waitPromise;
+    expect(event?.text).toBe('right-repo');
     expect(event?.data?.result).toBe('pass');
   });
 

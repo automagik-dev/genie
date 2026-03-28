@@ -110,7 +110,7 @@ describe('qa-runner', () => {
   describe('waitForResult', () => {
     test('receives QA result from PG event log', async () => {
       const spec = { name: 'mailbox', file: '/tmp/spec.md', setup: [], actions: [], expect: [] };
-      const waitPromise = waitForResult(spec, 'qa-team', 1000, Date.now());
+      const waitPromise = waitForResult(spec, '/tmp/qa-repo', 'qa-team', 1000, Date.now());
 
       await publishRuntimeEvent({
         repoPath: '/tmp/qa-repo',
@@ -124,6 +124,40 @@ describe('qa-runner', () => {
           result: 'pass',
           expectations: [{ description: 'ok', result: 'pass', evidence: 'matched' }],
           collectedEvents: [{ timestamp: '2026-03-27T12:00:00.000Z', kind: 'qa', agent: 'qa', text: 'done' }],
+        },
+      });
+
+      const report = await waitPromise;
+      expect(report.result).toBe('pass');
+      expect(report.expectations).toHaveLength(1);
+    });
+
+    test('ignores QA results from other repos', async () => {
+      const spec = { name: 'mailbox', file: '/tmp/spec.md', setup: [], actions: [], expect: [] };
+      const waitPromise = waitForResult(spec, '/tmp/qa-repo-a', 'qa-team', 1000, Date.now());
+
+      await publishRuntimeEvent({
+        repoPath: '/tmp/qa-repo-b',
+        subject: 'genie.qa.qa-team.result',
+        kind: 'qa',
+        agent: 'qa',
+        team: 'qa-team',
+        text: 'wrong-repo',
+        source: 'hook',
+        data: { result: 'fail', expectations: [], collectedEvents: [] },
+      });
+      await publishRuntimeEvent({
+        repoPath: '/tmp/qa-repo-a',
+        subject: 'genie.qa.qa-team.result',
+        kind: 'qa',
+        agent: 'qa',
+        team: 'qa-team',
+        text: 'right-repo',
+        source: 'hook',
+        data: {
+          result: 'pass',
+          expectations: [{ description: 'ok', result: 'pass', evidence: 'matched' }],
+          collectedEvents: [],
         },
       });
 

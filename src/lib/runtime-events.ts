@@ -27,7 +27,7 @@ export interface RuntimeEvent {
   subject?: string;
 }
 
-interface RuntimeEventInput {
+export interface RuntimeEventInput {
   repoPath: string;
   kind: RuntimeEventKind;
   agent: string;
@@ -57,6 +57,12 @@ interface RuntimeEventQuery {
 interface FollowRuntimeEventsHandle {
   mode: 'pg';
   stop: () => Promise<void>;
+}
+
+function logFollowDrainError(context: 'notify' | 'poll', error: unknown, active: boolean): void {
+  if (!active) return;
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[runtime-events] ${context} drain failed: ${message}`);
 }
 
 interface RuntimeEventRow {
@@ -222,15 +228,21 @@ export async function followRuntimeEvents(
     }
   };
 
+  const queueDrain = (context: 'notify' | 'poll') => {
+    drainChain = drainChain.then(drain).catch((error) => {
+      logFollowDrainError(context, error, active);
+    });
+  };
+
   const listener = await sql.listen('genie_runtime_event', () => {
-    drainChain = drainChain.then(drain).catch(() => {});
+    queueDrain('notify');
   });
 
   await drain();
 
   const pollIntervalMs = options?.pollIntervalMs ?? 1000;
   const pollTimer = setInterval(() => {
-    drainChain = drainChain.then(drain).catch(() => {});
+    queueDrain('poll');
   }, pollIntervalMs);
 
   return {

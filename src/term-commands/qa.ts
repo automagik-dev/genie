@@ -107,7 +107,7 @@ export async function qaCheckCommand(specFile: string, options: QaCheckOptions):
   const spec = await parseQaSpec(specFile);
   const since = options.since ?? (options.sinceFile ? await readSinceValue(options.sinceFile) : undefined);
   const teamAgents = (await agentRegistry.list()).filter((agent) => agent.team === team);
-  const events = await readTeamLog(teamAgents, repoPath, team, since ? { since, last: 200 } : { last: 200 });
+  const events = await readTeamLog(teamAgents, repoPath, team, buildQaCheckLogFilter(since));
   const expectations = evaluateExpectations(spec.expect, events);
   const collectedEvents = toCollectedEvents(events);
   const result: SpecReport['result'] = expectations.every((exp) => exp.result === 'pass') ? 'pass' : 'fail';
@@ -244,12 +244,14 @@ async function readSinceValue(path: string): Promise<string | undefined> {
   }
 }
 
-function evaluateExpectations(
+export function evaluateExpectations(
   expectations: Awaited<ReturnType<typeof parseQaSpec>>['expect'],
   events: LogEvent[],
 ): ExpectReport[] {
   return expectations.map((expectation) => {
-    const matched = events.find((event) => eventMatchesExpectation(event, expectation.matchers));
+    const matched = events
+      .filter((event) => eventMatchesExpectationSource(event, expectation.source))
+      .find((event) => eventMatchesExpectation(event, expectation.matchers));
     if (matched) {
       return {
         description: expectation.description,
@@ -270,6 +272,22 @@ function eventMatchesExpectation(event: LogEvent, matchers: Record<string, strin
   return Object.entries(matchers).every(([field, expected]) =>
     matcherMatches(readEventField(event, field), expected, field),
   );
+}
+
+export function buildQaCheckLogFilter(since: string | undefined): Parameters<typeof readTeamLog>[3] {
+  if (since) return { since };
+  return { last: 200 };
+}
+
+function eventMatchesExpectationSource(event: LogEvent, source: string): boolean {
+  switch (source) {
+    case 'inbox':
+      return event.source === 'mailbox' && event.direction === 'in';
+    case 'output':
+      return event.source === 'provider';
+    default:
+      return true;
+  }
 }
 
 function readEventField(event: LogEvent, field: string): unknown {

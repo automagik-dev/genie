@@ -11,15 +11,18 @@
  * Fire-and-forget — does not block execution.
  */
 
+import type { RuntimeEventInput } from '../../lib/runtime-events.js';
 import type { HandlerResult, HookPayload } from '../types.js';
 
 const getAgent = () => process.env.GENIE_AGENT_NAME ?? 'unknown';
 const getTeam = () => process.env.GENIE_TEAM;
 
-async function emit(subject: string, event: Record<string, unknown>): Promise<void> {
+type SubjectEventInput = Omit<RuntimeEventInput, 'repoPath' | 'subject'>;
+
+async function emit(subject: string, event: SubjectEventInput): Promise<void> {
   try {
     const { publishSubjectEvent } = await import('../../lib/runtime-events.js');
-    await publishSubjectEvent(process.cwd(), subject, event as Parameters<typeof publishSubjectEvent>[2]);
+    await publishSubjectEvent(process.cwd(), subject, event);
   } catch {
     // Event log unavailable — never block the hook pipeline
   }

@@ -324,7 +324,7 @@ export async function followTeamLog(
  */
 async function startPgFollow(
   agents: Agent[],
-  _repoPath: string,
+  repoPath: string,
   team: string | undefined,
   filter: LogFilter | undefined,
   onEvent: LogEventCallback,
@@ -352,9 +352,19 @@ async function startPgFollow(
     onEvent(event);
   };
 
-  const handle = await followRuntimeEvents({ kinds: filter?.kinds, scopeMode: 'any' }, handleRuntimeEvent, {
-    pollIntervalMs: 500,
-  });
+  const handle = await followRuntimeEvents(
+    {
+      repoPath,
+      agentIds: [...agentIds],
+      team: team && team !== 'all' ? team : undefined,
+      kinds: filter?.kinds,
+      scopeMode: team && team !== 'all' ? 'any' : 'all',
+    },
+    handleRuntimeEvent,
+    {
+      pollIntervalMs: 500,
+    },
+  );
 
   return {
     mode: 'pg',

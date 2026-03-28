@@ -282,7 +282,7 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
 
   // Subscribe to the PG runtime event log for real-time timeline
   const timelineSub = await followRuntimeEvents(
-    { teamPrefix: 'qa-' },
+    { repoPath, teamPrefix: 'qa-' },
     (event) => {
       if (!event?.timestamp || !event?.kind) return;
       const team = event.team ?? '';
@@ -407,7 +407,7 @@ export async function runSpec(spec: QaSpec, options?: QaRunnerOptions): Promise<
 
 /** Run a single spec with a pre-created team (no git operations — safe for parallel). */
 async function runPreparedSpec(
-  _repoPath: string,
+  repoPath: string,
   spec: QaSpec,
   teamName: string,
   worktreePath: string,
@@ -430,7 +430,7 @@ async function runPreparedSpec(
     });
     console.error(`  [qa] Spawned qa for "${spec.name}" in ${teamName}`);
 
-    const report = await waitForResult(spec, teamName, effectiveTimeoutMs, start);
+    const report = await waitForResult(spec, repoPath, teamName, effectiveTimeoutMs, start);
     return report;
   } catch (err) {
     return makeErrorReport(spec, start, String(err));
@@ -639,13 +639,14 @@ function formatActionStep(a: QaSpec['actions'][number]): string {
 /** Wait for `genie.qa.{team}.result` on the PG event log. */
 export async function waitForResult(
   spec: QaSpec,
+  repoPath: string,
   teamName: string,
   timeoutMs: number,
   start: number,
 ): Promise<SpecReport> {
   const subject = `genie.qa.${teamName}.result`;
   const remainingMs = Math.max(timeoutMs - (Date.now() - start), 1);
-  const event = await waitForRuntimeEvent({ subject, team: teamName }, remainingMs);
+  const event = await waitForRuntimeEvent({ repoPath, subject, team: teamName }, remainingMs);
   if (!event) {
     return makeErrorReport(spec, start, `Timeout after ${timeoutMs}ms waiting for team-lead report in PG event log`);
   }

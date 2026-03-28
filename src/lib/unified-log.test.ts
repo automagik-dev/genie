@@ -532,6 +532,43 @@ describe('follow mode', () => {
       await handle.stop();
     }
   });
+
+  test('followTeamLog ignores matching events from other repos', async () => {
+    const repoA = '/tmp/unified-log-follow-repo-a';
+    const repoB = '/tmp/unified-log-follow-repo-b';
+    const agents = [makeAgent('eng-shared', 'scope-team', repoA), makeAgent('rev-shared', 'scope-team', repoA)];
+    const received: LogEvent[] = [];
+    const handle = await followTeamLog(agents, repoA, 'scope-team', undefined, (event) => received.push(event));
+
+    try {
+      await publishRuntimeEvent({
+        repoPath: repoB,
+        kind: 'state',
+        agent: 'eng-shared',
+        team: 'scope-team',
+        text: 'wrong-repo',
+        source: 'registry',
+      });
+      await publishRuntimeEvent({
+        repoPath: repoA,
+        kind: 'state',
+        agent: 'eng-shared',
+        team: 'scope-team',
+        text: 'right-repo',
+        source: 'registry',
+      });
+
+      const started = Date.now();
+      while (!received.some((event) => event.text === 'right-repo') && Date.now() - started < 1500) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      expect(received.some((event) => event.text === 'right-repo')).toBe(true);
+      expect(received.some((event) => event.text === 'wrong-repo')).toBe(false);
+    } finally {
+      await handle.stop();
+    }
+  });
 });
 
 // ============================================================================
