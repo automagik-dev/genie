@@ -14,14 +14,17 @@ export async function identityInject(payload: HookPayload): Promise<HandlerResul
   if (!input) return;
 
   // Only inject on outgoing messages (not shutdown_response, etc.)
+  // Native CC SendMessage has no type field — treat as message by default.
   const msgType = input.type as string | undefined;
-  if (msgType !== 'message' && msgType !== 'broadcast') return;
+  if (msgType && msgType !== 'message' && msgType !== 'broadcast') return;
 
   // Resolve agent name from env (set by genie spawn via GENIE_AGENT_NAME)
   const agentName = process.env.GENIE_AGENT_NAME;
   if (!agentName) return;
 
-  const content = input.content as string | undefined;
+  // Support both genie-internal (content) and native CC (message) field names
+  const contentField = input.content !== undefined ? 'content' : 'message';
+  const content = input[contentField] as string | undefined;
   if (!content) return;
 
   // Don't double-inject if already tagged
@@ -30,7 +33,7 @@ export async function identityInject(payload: HookPayload): Promise<HandlerResul
   return {
     updatedInput: {
       ...input,
-      content: `[from:${agentName}] ${content}`,
+      [contentField]: `[from:${agentName}] ${content}`,
     },
   };
 }
