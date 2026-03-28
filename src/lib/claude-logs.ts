@@ -236,6 +236,11 @@ export async function findActiveSession(projectDir: string): Promise<ClaudeSessi
   return sessions[0];
 }
 
+async function findSessionById(projectDir: string, sessionId: string): Promise<ClaudeSession | null> {
+  const sessions = await listSessions(projectDir);
+  return sessions.find((session) => session.sessionId === sessionId) ?? null;
+}
+
 // ============================================================================
 // Log Entry Parsing
 // ============================================================================
@@ -480,6 +485,20 @@ export function claudeEntryToTranscript(entry: ClaudeLogEntry): TranscriptEntry[
 export const claudeTranscriptProvider: TranscriptProvider = {
   async discoverLogPath(worker: Agent): Promise<string | null> {
     const workspacePath = worker.worktree || worker.repoPath;
+    const projectDir = await findClaudeProjectDir(workspacePath);
+    if (!projectDir) return null;
+
+    if (worker.claudeSessionId) {
+      const directPath = join(projectDir, `${worker.claudeSessionId}.jsonl`);
+      try {
+        await access(directPath);
+        return directPath;
+      } catch {
+        const session = await findSessionById(projectDir, worker.claudeSessionId);
+        if (session?.fullPath) return session.fullPath;
+      }
+    }
+
     const result = await getLogsForPane(workspacePath);
     return result?.logPath ?? null;
   },

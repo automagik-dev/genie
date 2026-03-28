@@ -89,7 +89,7 @@ export type WorkerInfo = Pick<
   | 'maxResumeAttempts'
   | 'lastResumeAttempt'
   | 'claudeSessionId'
->;
+> & { repoPath?: string };
 
 /** Dependency injection interface for testing. */
 export interface SchedulerDeps {
@@ -106,8 +106,8 @@ export interface SchedulerDeps {
   listWorkers: () => Promise<WorkerInfo[]>;
   /** Count active tmux sessions. */
   countTmuxSessions: () => Promise<number>;
-  /** Publish an event to NATS. Fire-and-forget, no-ops if NATS unavailable. */
-  publishEvent: (subject: string, data: unknown) => Promise<void>;
+  /** Publish an event to the PG runtime event log. */
+  publishEvent: (subject: string, data: unknown, repoPath: string) => Promise<void>;
   /** Resume a single agent by name via `genie resume <name>`. Returns true on success. */
   resumeAgent: (agentId: string) => Promise<boolean>;
   /** Update fields on an agent in the registry. */
@@ -164,6 +164,7 @@ async function defaultListWorkers(): Promise<WorkerInfo[]> {
   return agents.map((a) => ({
     id: a.id,
     paneId: a.paneId,
+    repoPath: a.repoPath,
     state: a.state,
     team: a.team,
     wishSlug: a.wishSlug,
@@ -176,13 +177,31 @@ async function defaultListWorkers(): Promise<WorkerInfo[]> {
   }));
 }
 
-async function defaultPublishEvent(subject: string, data: unknown): Promise<void> {
-  try {
-    const { publish } = await import('./nats-client.js');
-    await publish(subject, data);
-  } catch {
-    // NATS unavailable — silent degradation
-  }
+async function defaultPublishEvent(subject: string, data: unknown, repoPath: string): Promise<void> {
+  const payload = data as {
+    timestamp?: string;
+    kind?: 'user' | 'assistant' | 'message' | 'state' | 'tool_call' | 'tool_result' | 'system' | 'qa';
+    agent?: string;
+    team?: string;
+    direction?: 'in' | 'out';
+    peer?: string;
+    text?: string;
+    data?: Record<string, unknown>;
+    source?: 'provider' | 'mailbox' | 'chat' | 'registry' | 'hook';
+  };
+
+  const { publishSubjectEvent } = await import('./runtime-events.js');
+  await publishSubjectEvent(repoPath, subject, {
+    timestamp: payload.timestamp,
+    kind: payload.kind ?? 'system',
+    agent: payload.agent ?? 'scheduler',
+    team: payload.team,
+    direction: payload.direction,
+    peer: payload.peer,
+    text: payload.text ?? subject,
+    data: payload.data,
+    source: payload.source ?? 'registry',
+  });
 }
 
 async function defaultCountTmuxSessions(): Promise<number> {
@@ -1046,14 +1065,14 @@ export async function collectMachineSnapshot(deps: SchedulerDeps): Promise<void>
 }
 
 // ============================================================================
-// NATS Event Emission
+// Runtime Event Emission
 // ============================================================================
 
 /** Previous worker snapshot for detecting state changes between heartbeats. */
 const previousWorkerStates = new Map<string, WorkerInfo>();
 
 /**
- * Detect and emit NATS events for worker state changes.
+ * Detect and emit runtime events for worker state changes.
  * Compares current workers against the previous snapshot to detect:
  *   - State changes → genie.agent.{id}.state
  *   - New agents (spawned) → genie.agent.{id}.spawned
@@ -1068,41 +1087,54 @@ export async function emitWorkerEvents(deps: SchedulerDeps): Promise<void> {
   for (const worker of workers) {
     currentIds.add(worker.id);
     const prev = previousWorkerStates.get(worker.id);
+    const repoPath = worker.repoPath ?? process.cwd();
 
     if (!prev) {
       // New worker — spawned
-      await deps.publishEvent(`genie.agent.${worker.id}.spawned`, {
-        timestamp: now,
-        kind: 'state',
-        agent: worker.id,
-        team: worker.team,
-        text: `Agent ${worker.id} spawned`,
-        data: { state: worker.state },
-        source: 'registry',
-      });
+      await deps.publishEvent(
+        `genie.agent.${worker.id}.spawned`,
+        {
+          timestamp: now,
+          kind: 'state',
+          agent: worker.id,
+          team: worker.team,
+          text: `Agent ${worker.id} spawned`,
+          data: { state: worker.state },
+          source: 'registry',
+        },
+        repoPath,
+      );
     } else if (prev.state !== worker.state) {
       // State changed
-      await deps.publishEvent(`genie.agent.${worker.id}.state`, {
-        timestamp: now,
-        kind: 'state',
-        agent: worker.id,
-        team: worker.team,
-        text: `Agent ${worker.id} state: ${prev.state} → ${worker.state}`,
-        data: { previousState: prev.state, state: worker.state },
-        source: 'registry',
-      });
+      await deps.publishEvent(
+        `genie.agent.${worker.id}.state`,
+        {
+          timestamp: now,
+          kind: 'state',
+          agent: worker.id,
+          team: worker.team,
+          text: `Agent ${worker.id} state: ${prev.state} → ${worker.state}`,
+          data: { previousState: prev.state, state: worker.state },
+          source: 'registry',
+        },
+        repoPath,
+      );
 
       // Detect group completion: agent transitioned to 'done' and has a wish assignment
       if (worker.state === 'done' && worker.wishSlug && worker.groupNumber != null) {
-        await deps.publishEvent(`genie.wish.${worker.wishSlug}.group.${worker.groupNumber}.done`, {
-          timestamp: now,
-          kind: 'system',
-          agent: worker.id,
-          team: worker.team,
-          text: `Wish ${worker.wishSlug} group ${worker.groupNumber} completed by ${worker.id}`,
-          data: { wishSlug: worker.wishSlug, groupNumber: worker.groupNumber },
-          source: 'registry',
-        });
+        await deps.publishEvent(
+          `genie.wish.${worker.wishSlug}.group.${worker.groupNumber}.done`,
+          {
+            timestamp: now,
+            kind: 'system',
+            agent: worker.id,
+            team: worker.team,
+            text: `Wish ${worker.wishSlug} group ${worker.groupNumber} completed by ${worker.id}`,
+            data: { wishSlug: worker.wishSlug, groupNumber: worker.groupNumber },
+            source: 'registry',
+          },
+          repoPath,
+        );
       }
     }
 
@@ -1113,15 +1145,19 @@ export async function emitWorkerEvents(deps: SchedulerDeps): Promise<void> {
   // Detect killed workers (in previous snapshot but not in current)
   for (const [id, prev] of previousWorkerStates) {
     if (!currentIds.has(id)) {
-      await deps.publishEvent(`genie.agent.${id}.killed`, {
-        timestamp: now,
-        kind: 'state',
-        agent: id,
-        team: prev.team,
-        text: `Agent ${id} killed`,
-        data: { lastState: prev.state },
-        source: 'registry',
-      });
+      await deps.publishEvent(
+        `genie.agent.${id}.killed`,
+        {
+          timestamp: now,
+          kind: 'state',
+          agent: id,
+          team: prev.team,
+          text: `Agent ${id} killed`,
+          data: { lastState: prev.state },
+          source: 'registry',
+        },
+        prev.repoPath ?? process.cwd(),
+      );
       previousWorkerStates.delete(id);
     }
   }

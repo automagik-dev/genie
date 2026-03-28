@@ -25,6 +25,13 @@ import { parseExecutionStrategy, parseWishGroups } from './dispatch.js';
  * Resolve the WISH.md path for a slug.
  * Search order: base/.genie/wishes/ → repoRoot/.genie/wishes/ (via git-common-dir)
  */
+function normalizeGitPath(path: string): string {
+  if (process.platform !== 'darwin') return path;
+  if (!path.startsWith('/private/')) return path;
+  const logicalPath = path.slice('/private'.length);
+  return existsSync(logicalPath) ? logicalPath : path;
+}
+
 export function resolveWishPath(slug: string, cwd?: string): string | null {
   const base = cwd ?? process.cwd();
   const cwdPath = join(base, '.genie', 'wishes', slug, 'WISH.md');
@@ -37,7 +44,7 @@ export function resolveWishPath(slug: string, cwd?: string): string | null {
       cwd: base,
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
-    const repoRoot = dirname(commonDir);
+    const repoRoot = normalizeGitPath(dirname(commonDir));
     if (repoRoot !== base) {
       const repoPath = join(repoRoot, '.genie', 'wishes', slug, 'WISH.md');
       if (existsSync(repoPath)) return repoPath;

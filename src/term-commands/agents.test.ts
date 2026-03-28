@@ -9,7 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import type { Agent } from '../lib/agent-registry.js';
 import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
-import { buildResumeContext } from './agents.js';
+import { buildInitialSplitWindowCommand, buildResumeContext } from './agents.js';
 
 let cwd: string;
 
@@ -131,5 +131,25 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       // No wish state found, but has team — falls through to simple message
       expect(context).toBe("You were resumed. Check your team's current state with `genie status`.");
     });
+  });
+});
+
+describe('buildInitialSplitWindowCommand', () => {
+  test('uses split-window with shell-quoted cwd and full command', () => {
+    const command = buildInitialSplitWindowCommand(
+      '@42',
+      "/tmp/genie qa/test's",
+      "claude --append-system-prompt-file '/tmp/prompt file.md' 'Execute the QA spec'",
+    );
+
+    expect(command).toContain('tmux split-window -d');
+    expect(command).toContain("-t '@42'");
+    expect(command).toContain("-c '/tmp/genie qa/test'\\''s'");
+    expect(command).toContain("-P -F '#{pane_id}'");
+    expect(command).toContain(
+      "'claude --append-system-prompt-file '\\''/tmp/prompt file.md'\\'' '\\''Execute the QA spec'\\'''",
+    );
+    expect(command).not.toContain('send-keys');
+    expect(command).not.toContain('respawn-pane');
   });
 });

@@ -12,6 +12,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import { getConnection } from './db.js';
@@ -56,6 +57,13 @@ export interface GroupDefinition {
  * Uses git-common-dir to normalize across worktrees — returns the main repo path
  * even when called from a linked worktree.
  */
+function normalizeGitPath(path: string): string {
+  if (process.platform !== 'darwin') return path;
+  if (!path.startsWith('/private/')) return path;
+  const logicalPath = path.slice('/private'.length);
+  return existsSync(logicalPath) ? logicalPath : path;
+}
+
 export function resolveRepoPath(cwd?: string): string {
   if (cwd) return cwd;
   try {
@@ -70,9 +78,9 @@ export function resolveRepoPath(cwd?: string): string {
     }).trim();
     // For main repos: commonDir = /path/to/repo/.git → parent = /path/to/repo
     // For worktrees: commonDir = /path/to/main-repo/.git → same parent
-    return dirname(commonDir);
+    return normalizeGitPath(dirname(commonDir));
   } catch {
-    return process.cwd();
+    return normalizeGitPath(process.cwd());
   }
 }
 

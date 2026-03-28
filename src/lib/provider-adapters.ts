@@ -175,6 +175,20 @@ function hasBinary(name: string): boolean {
   }
 }
 
+function resolveShellBinary(name: string): string | null {
+  try {
+    const { execFileSync } = require('node:child_process');
+    const shell = process.env.SHELL || '/bin/sh';
+    const resolved = execFileSync(shell, ['-lc', `command -v ${name}`], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return resolved || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Run preflight checks for a provider.
  * Throws with an actionable error if the binary is not found.
@@ -289,7 +303,8 @@ function appendOtelEnv(env: Record<string, string>, params: SpawnParams): void {
 export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('claude');
 
-  const parts: string[] = ['claude', '--dangerously-skip-permissions'];
+  const claudeBinary = resolveShellBinary('claude') ?? 'claude';
+  const parts: string[] = [claudeBinary, '--dangerously-skip-permissions'];
   const env: Record<string, string> = {};
 
   // Mark as worker so SessionStart hooks (smart-install, first-run-check,

@@ -21,6 +21,7 @@ import { BUILTIN_COUNCIL_MEMBERS } from './builtin-agents.js';
 import * as nativeTeamsManager from './claude-native-teams.js';
 import { getConnection } from './db.js';
 import { loadGenieConfigSync } from './genie-config.js';
+import * as tmux from './tmux.js';
 
 // ============================================================================
 // Types
@@ -415,6 +416,30 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
   if (config.worktreePath && existsSync(config.worktreePath)) {
     try {
       await rm(config.worktreePath, { recursive: true, force: true });
+    } catch {
+      // Best-effort
+    }
+  }
+
+  // Clean up tmux container for the team.
+  // Dedicated team sessions (common in QA) should be fully killed.
+  // Shared sessions should only lose the team's window.
+  const tmuxSessionName = config.tmuxSessionName ?? teamName;
+  if (tmuxSessionName) {
+    try {
+      const session = await tmux.findSessionByName(tmuxSessionName);
+      if (session) {
+        const windows = await tmux.listWindows(tmuxSessionName);
+        const teamWindow = await tmux.findWindowByName(tmuxSessionName, teamName);
+        const dedicatedSession =
+          tmuxSessionName === teamName || (windows.length === 1 && windows[0]?.name === teamName);
+
+        if (dedicatedSession) {
+          await tmux.killSession(tmuxSessionName);
+        } else if (teamWindow) {
+          await tmux.executeTmux(`kill-window -t '${teamWindow.id}'`);
+        }
+      }
     } catch {
       // Best-effort
     }

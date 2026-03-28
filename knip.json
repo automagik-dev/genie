@@ -3,6 +3,5 @@
   "entry": ["src/hooks/dispatch-command.ts"],
   "project": ["src/**/*.ts"],
   "ignoreBinaries": ["tmux", "which"],
-  "ignoreDependencies": ["nats"],
   "ignoreExportsUsedInFile": false
 }
