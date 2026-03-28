@@ -47,6 +47,8 @@ export interface Agent {
   lastResumeAttempt?: string;
   maxResumeAttempts?: number;
   paneColor?: string;
+  /** FK to current active executor. Added by executor model (Group 2). */
+  currentExecutorId?: string | null;
 }
 
 export interface WorkerTemplate {
@@ -95,6 +97,7 @@ interface AgentRow {
   last_resume_attempt: Date | string | null;
   max_resume_attempts: number | null;
   pane_color: string | null;
+  current_executor_id: string | null;
 }
 
 interface TemplateRow {
@@ -154,6 +157,7 @@ function rowToAgent(r: AgentRow): Agent {
   if (r.last_resume_attempt != null) agent.lastResumeAttempt = ts(r.last_resume_attempt);
   if (r.max_resume_attempts != null) agent.maxResumeAttempts = r.max_resume_attempts;
   if (r.pane_color != null) agent.paneColor = r.pane_color;
+  agent.currentExecutorId = r.current_executor_id ?? null;
   return agent;
 }
 

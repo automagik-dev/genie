@@ -13,6 +13,20 @@
 
 import { z } from 'zod';
 
+// Re-export executor model types for downstream consumers
+export type {
+  ExecutorProvider,
+  ExecutorState,
+  TransportType as ExecutorTransportType,
+  Executor,
+  Assignment,
+  AssignmentOutcome,
+  SpawnContext,
+  ResumeContext,
+  LaunchCommand,
+  AgentIdentity,
+} from './executor-types.js';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -58,6 +72,10 @@ export interface SpawnParams {
   team: string;
   role?: string;
   skill?: string;
+  /** Agent ID this executor belongs to. Used by executor model (Groups 3+). */
+  agentId?: string;
+  /** Pre-generated executor ID. Used by executor model (Groups 3+). */
+  executorId?: string;
   /** Extra CLI flags forwarded verbatim to the provider binary. */
   extraArgs?: string[];
   /** Claude Code native teammate integration. */
