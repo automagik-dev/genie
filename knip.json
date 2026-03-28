@@ -4,5 +4,5 @@
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["tmux", "which"],
   "ignoreExportsUsedInFile": false,
-  "ignore": ["src/tui/tmux.ts", "src/lib/mcp-server.ts"]
+  "ignore": ["src/tui/tmux.ts", "src/tui/db.ts", "src/lib/mcp-server.ts"]
 }
