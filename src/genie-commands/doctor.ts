@@ -368,7 +368,7 @@ async function doctorFix(): Promise<void> {
     execSync('pkill -9 -f "postgres.*pgserve" 2>/dev/null || true', { stdio: 'ignore', timeout: 5000 });
     console.log('  \x1b[32m\u2713\x1b[0m Stale postgres processes killed');
   } catch {
-    console.log('  \x1b[32m\u2713\x1b[0m No stale postgres processes found');
+    console.log('  \x1b[33m!\x1b[0m Could not kill stale postgres processes');
   }
 
   // 2. Clean shared memory segments
@@ -384,10 +384,27 @@ async function doctorFix(): Promise<void> {
     console.log('  \x1b[32m\u2713\x1b[0m No stale shared memory');
   }
 
-  // 3. Remove stale port/PID files
+  // 3. Stop existing daemon before cleanup (prevents dual-instance)
   const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
-  const portFile = join(genieHome, 'pgserve.port');
   const pidFile = join(genieHome, 'scheduler.pid');
+  try {
+    const { readFileSync } = await import('node:fs');
+    const pid = Number.parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
+    if (!Number.isNaN(pid) && pid > 0) {
+      try {
+        process.kill(pid, 'SIGTERM');
+        console.log(`  \x1b[32m\u2713\x1b[0m Stopped existing daemon (PID ${pid})`);
+        await new Promise((r) => setTimeout(r, 1000));
+      } catch {
+        // Already dead
+      }
+    }
+  } catch {
+    // No PID file or unreadable — no daemon to stop
+  }
+
+  // 4. Remove stale port/PID files
+  const portFile = join(genieHome, 'pgserve.port');
   const postmasterPid = join(genieHome, 'data', 'pgserve', 'postmaster.pid');
 
   for (const file of [portFile, pidFile, postmasterPid]) {
@@ -401,7 +418,7 @@ async function doctorFix(): Promise<void> {
     }
   }
 
-  // 4. Restart daemon
+  // 5. Restart daemon
   console.log('  Restarting daemon...');
   try {
     const { spawn } = await import('node:child_process');
