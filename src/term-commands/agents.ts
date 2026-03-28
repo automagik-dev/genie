@@ -675,7 +675,7 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
     paneId = createTmuxPane(ctx, teamWindow);
   } catch (err) {
     console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
-    process.exit(1);
+    return process.exit(1) as never;
   }
 
   await applySpawnLayout(ctx, teamWindow);
@@ -756,7 +756,7 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
     await nativeTeams.unregisterNativeMember(ctx.validated.team, ctx.agentName).catch(() => {});
   }
   console.log(`\nAgent "${ctx.workerId}" session ended.`);
-  process.exit(result.status ?? 0);
+  return process.exit(result.status ?? 0) as never;
 }
 
 function prependEnvVars(command: string, env?: Record<string, string>): string {
@@ -942,7 +942,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   const team = options.team || (await nativeTeams.discoverTeamName());
   if (!team) {
     console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
-    process.exit(1);
+    return process.exit(1) as never;
   }
   await rejectDuplicateRole(team, effectiveRole);
 
