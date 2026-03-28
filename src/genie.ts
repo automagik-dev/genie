@@ -30,6 +30,8 @@ import { VERSION } from './lib/version.js';
 
 import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { getActor, recordAuditEvent } from './lib/audit.js';
+import { shutdown as shutdownDb } from './lib/db.js';
+import { stopOtelReceiver } from './lib/otel-receiver.js';
 import {
   type SpawnOptions,
   handleLsCommand,
@@ -57,7 +59,14 @@ import { registerNotifyCommands } from './term-commands/notify.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import { registerProjectCommands } from './term-commands/project.js';
 import { registerPublishCommand } from './term-commands/publish.js';
-import { type QaOptions, qaCommand, qaHistoryCommand, qaStatusCommand } from './term-commands/qa.js';
+import {
+  type QaCheckOptions,
+  type QaOptions,
+  qaCheckCommand,
+  qaCommand,
+  qaHistoryCommand,
+  qaStatusCommand,
+} from './term-commands/qa.js';
 import * as readCmd from './term-commands/read.js';
 import { registerReleaseCommands } from './term-commands/release.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
@@ -358,10 +367,20 @@ qaCmd
     await qaHistoryCommand();
   });
 
-// genie qa report <json> — team-lead calls this to publish QA result via NATS
+qaCmd
+  .command('check <specFile>')
+  .description('Evaluate a QA spec against current team logs and publish qa-report')
+  .option('--team <name>', 'Team name (defaults to GENIE_TEAM)')
+  .option('--since <timestamp>', 'Only consider events after this ISO timestamp')
+  .option('--since-file <path>', 'Read the lower-bound timestamp from a file')
+  .action(async (specFile: string, options: QaCheckOptions) => {
+    await qaCheckCommand(specFile, options);
+  });
+
+// genie qa report <json> — team-lead calls this to publish QA result to PG event log
 program
   .command('qa-report <json>')
-  .description('Publish QA result via NATS (called by QA team-lead)')
+  .description('Publish QA result to the PG event log (called by QA team-lead)')
   .action(async (json: string) => {
     const team = process.env.GENIE_TEAM;
     if (!team) {
@@ -369,11 +388,17 @@ program
       process.exit(1);
     }
     try {
-      const { publish, close } = await import('./lib/nats-client.js');
       const data = JSON.parse(json);
-      await publish(`genie.qa.${team}.result`, data);
-      await close();
-      console.log(`QA result published to genie.qa.${team}.result`);
+      const { publishSubjectEvent } = await import('./lib/runtime-events.js');
+      await publishSubjectEvent(process.cwd(), `genie.qa.${team}.result`, {
+        kind: 'qa',
+        agent: 'qa',
+        team,
+        text: `QA result: ${String(data.result ?? 'unknown')}`,
+        data,
+        source: 'hook',
+      });
+      console.log(`QA result published to PG event log as genie.qa.${team}.result`);
     } catch (err) {
       console.error(`Failed to publish QA result: ${err}`);
       process.exit(1);
@@ -449,8 +474,18 @@ if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
       process.exit(1);
     }
   } else {
-    program.parse();
+    try {
+      await program.parseAsync(process.argv);
+    } finally {
+      stopOtelReceiver();
+      await shutdownDb().catch(() => {});
+    }
   }
 } else {
-  program.parse();
+  try {
+    await program.parseAsync(process.argv);
+  } finally {
+    stopOtelReceiver();
+    await shutdownDb().catch(() => {});
+  }
 }

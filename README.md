@@ -69,7 +69,7 @@ The wizard handles everything: project scaffold, identity, first wish, execution
 - **Events** — Audit log with error aggregation, cost breakdown, tool analytics, and per-entity timelines.
 - **Metrics** — Machine snapshots, heartbeat history, per-agent resource usage.
 - **Sessions** — List, replay, and full-text search across Claude Code session transcripts.
-- **Unified log** — `genie log --follow` streams transcript, messages, tool calls, and state changes in one feed.
+- **Unified log** — `genie log --follow` streams transcript, messages, tool calls, and state changes from the PG event log in one feed.
 
 ### Infrastructure
 - **Postgres-backed** — All state in PostgreSQL (pgserve). Tasks, messages, events, metrics — queryable with `genie db query`.

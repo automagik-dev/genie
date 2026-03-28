@@ -47,7 +47,7 @@ export interface ActionStep {
 export interface Expectation {
   /** Human-readable description from the markdown */
   description: string;
-  /** Where to look: 'nats', 'inbox', 'log', 'output' */
+  /** Where to look: 'log', 'inbox', 'output' */
   source: string;
   /** Field matchers (e.g., { kind: 'tool_call', text: '~echo hello' }) */
   matchers: Record<string, string>;
@@ -196,7 +196,7 @@ function detectSource(text: string): string {
   if (/\binbox\b/i.test(text)) return 'inbox';
   if (/\blog\b/i.test(text)) return 'log';
   if (/\boutput\b/i.test(text)) return 'output';
-  return 'nats';
+  return 'log';
 }
 
 /** Extract key=value and key~=value matchers from text. */

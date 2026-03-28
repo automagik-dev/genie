@@ -32,7 +32,7 @@ const execAsync = promisify(exec);
 async function resolveParentSession(_repoPath: string, team: string): Promise<string> {
   const teamConfig = await teamManager.getTeam(team);
   if (teamConfig?.nativeTeamParentSessionId) return teamConfig.nativeTeamParentSessionId;
-  return (await nativeTeams.discoverClaudeSessionId()) ?? `genie-${team}`;
+  return (await nativeTeams.discoverClaudeParentSessionId()) ?? `genie-${team}`;
 }
 
 function buildSpawnParams(

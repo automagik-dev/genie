@@ -12,10 +12,13 @@
  *   genie qa --ndjson               # Machine-readable output
  */
 
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import * as agentRegistry from '../lib/agent-registry.js';
 import { parseQaSpec } from '../lib/qa-parser.js';
 import {
+  type CollectedEvent,
+  type ExpectReport,
   type QaRunnerOptions,
   type SpecReport,
   defaultSpecDir,
@@ -33,6 +36,8 @@ import {
   saveResult,
   specKeyFromPath,
 } from '../lib/qa-state.js';
+import { publishSubjectEvent } from '../lib/runtime-events.js';
+import { type LogEvent, readTeamLog } from '../lib/unified-log.js';
 
 // ============================================================================
 // Types
@@ -43,6 +48,12 @@ export interface QaOptions {
   parallel?: number;
   verbose?: boolean;
   ndjson?: boolean;
+}
+
+export interface QaCheckOptions {
+  team?: string;
+  since?: string;
+  sinceFile?: string;
 }
 
 // ============================================================================
@@ -82,6 +93,39 @@ export async function qaCommand(target: string | undefined, options: QaOptions):
 
   const allPassed = reports.every((r) => r.result === 'pass');
   if (!allPassed) process.exitCode = 1;
+}
+
+export async function qaCheckCommand(specFile: string, options: QaCheckOptions): Promise<void> {
+  const team = options.team ?? process.env.GENIE_TEAM;
+  if (!team) {
+    console.error('Error: QA team not set. Use --team <name> or run inside a QA worker.');
+    process.exitCode = 1;
+    return;
+  }
+
+  const repoPath = process.cwd();
+  const spec = await parseQaSpec(specFile);
+  const since = options.since ?? (options.sinceFile ? await readSinceValue(options.sinceFile) : undefined);
+  const teamAgents = (await agentRegistry.list()).filter((agent) => agent.team === team);
+  const events = await readTeamLog(teamAgents, repoPath, team, buildQaCheckLogFilter(since));
+  const expectations = evaluateExpectations(spec.expect, events);
+  const collectedEvents = toCollectedEvents(events);
+  const result: SpecReport['result'] = expectations.every((exp) => exp.result === 'pass') ? 'pass' : 'fail';
+
+  await publishSubjectEvent(repoPath, `genie.qa.${team}.result`, {
+    kind: 'qa',
+    agent: 'qa',
+    team,
+    text: `QA result: ${result}`,
+    data: {
+      result,
+      expectations,
+      collectedEvents,
+    },
+    source: 'hook',
+  });
+
+  console.log(`QA result published to PG event log as genie.qa.${team}.result`);
 }
 
 /** `genie qa status` — Dashboard showing all specs with last result. */
@@ -189,6 +233,106 @@ function printStatusSummary(total: number, counts: { pass: number; fail: number;
   ].filter(Boolean);
   console.log(`  ${parts.join(' | ')}`);
   console.log();
+}
+
+async function readSinceValue(path: string): Promise<string | undefined> {
+  try {
+    const value = (await readFile(path, 'utf-8')).trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function evaluateExpectations(
+  expectations: Awaited<ReturnType<typeof parseQaSpec>>['expect'],
+  events: LogEvent[],
+): ExpectReport[] {
+  return expectations.map((expectation) => {
+    const matched = events
+      .filter((event) => eventMatchesExpectationSource(event, expectation.source))
+      .find((event) => eventMatchesExpectation(event, expectation.matchers));
+    if (matched) {
+      return {
+        description: expectation.description,
+        result: 'pass',
+        evidence: `${matched.kind} ${matched.agent}: ${matched.text.slice(0, 120)}`,
+      };
+    }
+
+    return {
+      description: expectation.description,
+      result: 'fail',
+      reason: 'No matching event found in team log/transcript snapshot',
+    };
+  });
+}
+
+function eventMatchesExpectation(event: LogEvent, matchers: Record<string, string>): boolean {
+  return Object.entries(matchers).every(([field, expected]) =>
+    matcherMatches(readEventField(event, field), expected, field),
+  );
+}
+
+export function buildQaCheckLogFilter(since: string | undefined): Parameters<typeof readTeamLog>[3] {
+  if (since) return { since };
+  return { last: 200 };
+}
+
+function eventMatchesExpectationSource(event: LogEvent, source: string): boolean {
+  switch (source) {
+    case 'inbox':
+      return event.source === 'mailbox' && event.direction === 'in';
+    case 'output':
+      return event.source === 'provider';
+    default:
+      return true;
+  }
+}
+
+function readEventField(event: LogEvent, field: string): unknown {
+  switch (field) {
+    case 'timestamp':
+      return event.timestamp;
+    case 'kind':
+      return event.kind;
+    case 'agent':
+      return event.agent;
+    case 'team':
+      return event.team;
+    case 'direction':
+      return event.direction;
+    case 'peer':
+      return event.peer;
+    case 'text':
+      return event.text;
+    case 'source':
+      return event.source;
+    default:
+      break;
+  }
+  return event.data?.[field];
+}
+
+function matcherMatches(actual: unknown, expected: string, field: string): boolean {
+  if (actual == null) return false;
+
+  if (field === 'kind' && expected === 'message') {
+    return ['message', 'assistant', 'user'].includes(String(actual));
+  }
+
+  const actualText = String(actual);
+  if (expected.startsWith('~')) return actualText.includes(expected.slice(1));
+  return actualText === expected;
+}
+
+function toCollectedEvents(events: LogEvent[]): CollectedEvent[] {
+  return events.slice(-50).map((event) => ({
+    timestamp: event.timestamp,
+    kind: event.kind,
+    agent: event.agent,
+    text: event.text,
+  }));
 }
 
 /** `genie qa history` — Show recent runs. */

@@ -44,6 +44,12 @@ async function getTeamManager(): Promise<typeof teamManagerTypes> {
   return _teamManager;
 }
 
+let _mailbox: typeof import('../lib/mailbox.js') | undefined;
+async function getMailbox(): Promise<typeof import('../lib/mailbox.js')> {
+  if (!_mailbox) _mailbox = await import('../lib/mailbox.js');
+  return _mailbox;
+}
+
 // ============================================================================
 // Sender Identity Detection
 // ============================================================================
@@ -353,7 +359,9 @@ async function handleChatRead(
 async function discoverCurrentTeam(
   nativeTeams: typeof import('../lib/claude-native-teams.js'),
   from: string,
+  explicitTeam?: string,
 ): Promise<string | null> {
+  if (explicitTeam) return explicitTeam;
   const discovered = await nativeTeams.discoverTeamName().catch(() => null);
   if (discovered) return discovered;
 
@@ -377,9 +385,14 @@ async function deliverToTeam(
 }
 
 /** Bridge a message to the Claude Code native inbox for real-time delivery. */
-async function bridgeToNativeInbox(from: string, recipient: string, body: string): Promise<void> {
+async function bridgeToNativeInbox(
+  from: string,
+  recipient: string,
+  body: string,
+  explicitTeam?: string,
+): Promise<boolean> {
   // Skip native inbox bridge for self-sends to prevent echo loops (#818)
-  if (from === recipient) return;
+  if (from === recipient) return false;
 
   const nativeTeams = await import('../lib/claude-native-teams.js');
   const nativeMsg = {
@@ -391,29 +404,31 @@ async function bridgeToNativeInbox(from: string, recipient: string, body: string
     read: false as const,
   };
 
-  const currentTeam = await discoverCurrentTeam(nativeTeams, from);
+  const currentTeam = await discoverCurrentTeam(nativeTeams, from, explicitTeam);
 
   // Try current team first (fast path)
-  if (currentTeam && (await deliverToTeam(nativeTeams, currentTeam, recipient, nativeMsg))) return;
+  if (currentTeam && (await deliverToTeam(nativeTeams, currentTeam, recipient, nativeMsg))) return true;
 
   // Search all native teams
   const allTeams = await nativeTeams.listTeams().catch(() => [] as string[]);
   for (const team of allTeams) {
     if (team === currentTeam) continue;
-    if (await deliverToTeam(nativeTeams, team, recipient, nativeMsg)) return;
+    if (await deliverToTeam(nativeTeams, team, recipient, nativeMsg)) return true;
   }
 
   console.warn(`[genie send] Native inbox bridge: could not find native team member for "${recipient}"`);
+  return false;
 }
 
 // ============================================================================
 // Send Handler
 // ============================================================================
 
-async function handleSend(body: string, options: { to: string; from?: string }): Promise<void> {
+async function handleSend(body: string, options: { to: string; from?: string; team?: string }): Promise<void> {
   const ts = await getTaskService();
+  const mailbox = await getMailbox();
   const repoPath = process.cwd();
-  const from = options.from ?? (await detectSenderIdentity());
+  const from = options.from ?? (await detectSenderIdentity(options.team));
 
   const scopeError = await checkSendScope(repoPath, from, options.to);
   if (scopeError) {
@@ -433,30 +448,34 @@ async function handleSend(body: string, options: { to: string; from?: string }):
   await ts.addMember(conv.id, senderActor);
   await ts.addMember(conv.id, recipientActor);
 
+  const mailboxMessage = await mailbox.send(repoPath, from, options.to, body);
   const msg = await ts.sendMessage(conv.id, senderActor, body);
 
-  // Emit NATS event for real-time observability (fire-and-forget)
+  // Emit runtime event for real-time observability (fire-and-forget)
   try {
-    const { publish } = await import('../lib/nats-client.js');
-    await publish(`genie.msg.${options.to}`, {
-      timestamp: new Date().toISOString(),
+    const { publishSubjectEvent } = await import('../lib/runtime-events.js');
+    await publishSubjectEvent(repoPath, `genie.msg.${options.to}`, {
       kind: 'message',
       agent: from,
       direction: 'out',
       peer: options.to,
       text: body,
       data: { messageId: msg.id, conversationId: conv.id, from, to: options.to },
-      source: 'send',
+      source: 'mailbox',
     });
   } catch {
-    // NATS unavailable — silent degradation
+    // Event log unavailable — silent degradation
   }
 
   // Best-effort native inbox bridge
-  await bridgeToNativeInbox(from, options.to, body).catch((err) => {
+  const bridged = await bridgeToNativeInbox(from, options.to, body, options.team).catch((err) => {
     const reason = err instanceof Error ? err.message : String(err);
     console.warn(`[genie send] Native inbox bridge failed: ${reason}`);
+    return false;
   });
+  if (bridged) {
+    await mailbox.markDelivered(repoPath, options.to, mailboxMessage.id).catch(() => {});
+  }
 
   console.log(`Message sent to "${options.to}".`);
   console.log(`  ID: ${msg.id}`);
@@ -474,7 +493,8 @@ export function registerSendInboxCommands(program: Command): void {
     .description('Send a direct message to an agent (PG-backed)')
     .option('--to <agent>', 'Recipient agent name (default: team-lead)', 'team-lead')
     .option('--from <sender>', 'Sender ID (auto-detected from context)')
-    .action(async (body: string, options: { to: string; from?: string }) => {
+    .option('--team <name>', 'Explicit team context for sender/recipient resolution')
+    .action(async (body: string, options: { to: string; from?: string; team?: string }) => {
       try {
         await handleSend(body, options);
       } catch (error) {
@@ -513,21 +533,20 @@ export function registerSendInboxCommands(program: Command): void {
 
         const msg = await ts.sendMessage(conv.id, senderActor, body);
 
-        // Emit NATS event for real-time observability (fire-and-forget)
+        // Emit runtime event for real-time observability (fire-and-forget)
         try {
-          const { publish } = await import('../lib/nats-client.js');
-          await publish('genie.msg.broadcast', {
-            timestamp: new Date().toISOString(),
+          const { publishSubjectEvent } = await import('../lib/runtime-events.js');
+          await publishSubjectEvent(repoPath, 'genie.msg.broadcast', {
             kind: 'message',
             agent: from,
             direction: 'out',
             peer: teamName,
             text: body,
             data: { messageId: msg.id, conversationId: conv.id, from, team: teamName },
-            source: 'send',
+            source: 'mailbox',
           });
         } catch {
-          // NATS unavailable — silent degradation
+          // Event log unavailable — silent degradation
         }
 
         console.log(`Broadcast sent to team "${teamName}".`);

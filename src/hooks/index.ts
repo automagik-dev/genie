@@ -18,7 +18,12 @@
 import { autoSpawn } from './handlers/auto-spawn.js';
 import { branchGuard } from './handlers/branch-guard.js';
 import { identityInject } from './handlers/identity-inject.js';
-import { natsEmit, natsEmitAssistantResponse, natsEmitToolCall, natsEmitUserPrompt } from './handlers/nats-emit.js';
+import {
+  emitAssistantResponseEvent,
+  emitMessageEvent,
+  emitToolCallEvent,
+  emitUserPromptEvent,
+} from './handlers/runtime-emit.js';
 import type { Handler, HandlerResult, HookDecision, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
@@ -49,30 +54,30 @@ const handlers: Handler[] = [
     fn: autoSpawn,
   },
   {
-    name: 'nats-emit-tool',
+    name: 'runtime-emit-tool',
     event: 'PreToolUse',
     matcher: /.*/,
     priority: 30,
-    fn: natsEmitToolCall,
+    fn: emitToolCallEvent,
   },
   {
-    name: 'nats-emit-msg',
+    name: 'runtime-emit-msg',
     event: 'PostToolUse',
     matcher: /^SendMessage$/,
     priority: 30,
-    fn: natsEmit,
+    fn: emitMessageEvent,
   },
   {
-    name: 'nats-emit-user-prompt',
+    name: 'runtime-emit-user-prompt',
     event: 'UserPromptSubmit',
     priority: 30,
-    fn: natsEmitUserPrompt,
+    fn: emitUserPromptEvent,
   },
   {
-    name: 'nats-emit-assistant-response',
+    name: 'runtime-emit-assistant-response',
     event: 'Stop',
     priority: 30,
-    fn: natsEmitAssistantResponse,
+    fn: emitAssistantResponseEvent,
   },
 ];
 
