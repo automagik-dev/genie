@@ -1,9 +1,9 @@
 /**
- * Unified Log — Canonical event format and file-based aggregator.
+ * Unified Log — Canonical event format and aggregator.
  *
- * Aggregates 5 event sources (transcript, mailbox inbox, mailbox outbox,
- * team chat, registry state changes) into a single `LogEvent` stream
- * sorted by timestamp.
+ * Aggregates 6 event sources (transcript, mailbox inbox, mailbox outbox,
+ * team chat, PG messages, registry state changes) into a single `LogEvent`
+ * stream sorted by timestamp.
  *
  * Usage:
  *   const events = await readAgentLog('engineer', repoPath, { last: 50 });
@@ -20,7 +20,7 @@ import type { TranscriptEntry } from './transcript.js';
 // ============================================================================
 
 export type LogEventKind = 'user' | 'assistant' | 'message' | 'state' | 'tool_call' | 'tool_result' | 'system' | 'qa';
-export type LogEventSource = 'provider' | 'mailbox' | 'chat' | 'registry' | 'hook';
+export type LogEventSource = 'provider' | 'mailbox' | 'chat' | 'registry' | 'hook' | 'send';
 
 export interface LogEvent {
   /** ISO timestamp */
@@ -176,6 +176,44 @@ export function sortByTimestamp(events: LogEvent[]): LogEvent[] {
 }
 
 // ============================================================================
+// PG Message Source
+// ============================================================================
+
+/** Read messages from PG TaskService for a given agent. Returns [] if PG unavailable. */
+async function readPgMessages(agentName: string): Promise<LogEvent[]> {
+  try {
+    const ts = await import('./task-service.js');
+    const actor = { actorType: 'local' as const, actorId: agentName };
+    const conversations = await ts.listConversations(actor);
+
+    const events: LogEvent[] = [];
+    for (const conv of conversations) {
+      const messages = await ts.getMessages(conv.id, { limit: 100 });
+      const members = await ts.getMembers(conv.id);
+      const peerMember = members.find((m) => m.actorId !== agentName);
+
+      for (const msg of messages) {
+        const isOutgoing = msg.senderId === agentName;
+        const peer = isOutgoing ? peerMember?.actorId : msg.senderId;
+        events.push({
+          timestamp: msg.createdAt,
+          kind: 'message',
+          agent: agentName,
+          direction: isOutgoing ? 'out' : 'in',
+          peer,
+          text: msg.body,
+          data: { messageId: msg.id, conversationId: msg.conversationId, senderId: msg.senderId },
+          source: 'send',
+        });
+      }
+    }
+    return events;
+  } catch {
+    return [];
+  }
+}
+
+// ============================================================================
 // Aggregators
 // ============================================================================
 
@@ -188,15 +226,16 @@ export async function readAgentLog(agent: Agent, repoPath: string, filter?: LogF
   const team = agent.team;
 
   // Read all sources in parallel
-  const [transcriptEntries, inboxMessages, outboxMessages, chatMessages] = await Promise.all([
+  const [transcriptEntries, inboxMessages, outboxMessages, chatMessages, pgMessages] = await Promise.all([
     readTranscriptSafe(agent),
     inbox(repoPath, agentName),
     readOutbox(repoPath, agentName),
     team ? readMessages(repoPath, team) : Promise.resolve([]),
+    readPgMessages(agentName),
   ]);
 
   // Convert to LogEvents
-  const events: LogEvent[] = [];
+  const events: LogEvent[] = [...pgMessages];
 
   for (const entry of transcriptEntries) {
     const event = transcriptToLogEvent(entry, agentName, team);
@@ -241,13 +280,14 @@ export async function readTeamLog(
     agents.map(async (agent) => {
       const agentName = agent.id;
 
-      const [transcriptEntries, inboxMessages, outboxMessages] = await Promise.all([
+      const [transcriptEntries, inboxMessages, outboxMessages, pgMessages] = await Promise.all([
         readTranscriptSafe(agent),
         inbox(repoPath, agentName),
         readOutbox(repoPath, agentName),
+        readPgMessages(agentName),
       ]);
 
-      const events: LogEvent[] = [];
+      const events: LogEvent[] = [...pgMessages];
       for (const entry of transcriptEntries) {
         const event = transcriptToLogEvent(entry, agentName, teamName);
         if (event) events.push(event);
