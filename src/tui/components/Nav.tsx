@@ -30,25 +30,27 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
 
   const flatNodes = useMemo(() => flattenTree(tree), [tree]);
 
-  // Refresh diagnostics every 2s
+  // Refresh diagnostics every 2s (now async — queries DB for executors)
   const diagTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
-    // Initial collection
-    try {
-      setDiagnostics(collectDiagnostics());
-    } catch (err) {
-      console.error('TUI: initial diagnostics failed:', err);
+    let active = true;
+
+    async function refresh() {
+      try {
+        const snap = await collectDiagnostics();
+        if (active) setDiagnostics(snap);
+      } catch (err) {
+        console.error('TUI: diagnostics failed:', err);
+      }
     }
 
-    diagTimer.current = setInterval(() => {
-      try {
-        setDiagnostics(collectDiagnostics());
-      } catch (err) {
-        console.error('TUI: diagnostics refresh failed:', err);
-      }
-    }, 2000);
+    // Initial collection
+    refresh();
+
+    diagTimer.current = setInterval(refresh, 2000);
 
     return () => {
+      active = false;
       if (diagTimer.current) clearInterval(diagTimer.current);
     };
   }, []);
@@ -61,7 +63,7 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
       case 'tmux':
         return diagnostics ? getTmuxRowCount(diagnostics.sessions) : 0;
       case 'claude':
-        return diagnostics ? getClaudeRowCount(diagnostics.processes, diagnostics.gaps) : 0;
+        return diagnostics ? getClaudeRowCount(diagnostics.executors, diagnostics.assignments, diagnostics.gaps) : 0;
     }
   }, [activeTab, flatNodes, diagnostics]);
 
@@ -191,7 +193,7 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
 
   const gapCounts = diagnostics
     ? {
-        orphanProcesses: diagnostics.gaps.orphanProcesses.length,
+        orphanProcesses: diagnostics.gaps.deadPidExecutors.length,
         orphanPanes: diagnostics.gaps.orphanPanes.length,
       }
     : undefined;
@@ -236,7 +238,8 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
 
       {activeTab === 'claude' && diagnostics && (
         <ClaudeView
-          processes={diagnostics.processes}
+          executors={diagnostics.executors}
+          assignments={diagnostics.assignments}
           gaps={diagnostics.gaps}
           selectedIndex={tabBarFocused ? -1 : claudeIndex}
         />

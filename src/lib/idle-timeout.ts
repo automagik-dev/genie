@@ -1,13 +1,13 @@
 /**
  * Idle Timeout — Suspend workers that have been idle too long.
  *
- * The watchdog polls all registered workers and suspends any that
- * have been idle longer than the configured timeout. Suspended
- * workers preserve their Claude session ID for resume-on-message.
+ * The watchdog polls all active executors and terminates any that
+ * have been idle longer than the configured timeout. Executor state
+ * is the source of truth (from executors table).
  */
 
-import type { Agent } from './agent-registry.js';
-import * as registry from './agent-registry.js';
+import * as executorRegistry from './executor-registry.js';
+import type { Executor } from './executor-types.js';
 import { executeTmux, isPaneAlive } from './tmux.js';
 
 // ============================================================================
@@ -16,18 +16,18 @@ import { executeTmux, isPaneAlive } from './tmux.js';
 
 /** Dependencies used by idle-timeout functions. */
 export interface IdleDeps {
-  registryGet: (id: string) => Promise<Agent | null>;
-  registryList: () => Promise<Agent[]>;
-  registryUpdate: (id: string, updates: Partial<Agent>) => Promise<void>;
+  listExecutors: () => Promise<Executor[]>;
+  terminateExecutor: (id: string) => Promise<void>;
+  updateExecutorState: (id: string, state: Executor['state']) => Promise<void>;
   executeTmux: (cmd: string) => Promise<string>;
   isPaneAlive: (paneId: string) => Promise<boolean>;
 }
 
 /** Default production dependencies. */
 const defaultDeps: IdleDeps = {
-  registryGet: registry.get,
-  registryList: registry.list,
-  registryUpdate: registry.update,
+  listExecutors: () => executorRegistry.listExecutors(),
+  terminateExecutor: executorRegistry.terminateExecutor,
+  updateExecutorState: executorRegistry.updateExecutorState,
   executeTmux,
   isPaneAlive,
 };
@@ -61,30 +61,27 @@ export function getIdleTimeoutMs(): number {
 // ============================================================================
 
 /**
- * Suspend a single worker — kill its tmux pane but preserve registry
- * entry with `suspended` state and `suspendedAt` timestamp.
+ * Suspend a single executor — kill its tmux pane and mark it terminated.
  *
- * Returns true if the worker was successfully suspended.
+ * Returns true if the executor was successfully suspended.
  */
-export async function suspendWorker(workerId: string, deps: IdleDeps = defaultDeps): Promise<boolean> {
-  const worker = await deps.registryGet(workerId);
-  if (!worker) return false;
-  if (worker.state === 'suspended') return true;
+export async function suspendWorker(executorId: string, deps: IdleDeps = defaultDeps): Promise<boolean> {
+  const executors = await deps.listExecutors();
+  const executor = executors.find((e) => e.id === executorId);
+  if (!executor) return false;
+  if (executor.state === 'terminated') return true;
 
   // Kill tmux pane (best-effort)
-  if (worker.paneId && worker.paneId !== 'inline') {
+  if (executor.tmuxPaneId) {
     try {
-      await deps.executeTmux(`kill-pane -t '${worker.paneId}'`);
+      await deps.executeTmux(`kill-pane -t '${executor.tmuxPaneId}'`);
     } catch {
       // Pane may already be dead
     }
   }
 
-  // Update registry to suspended state
-  await deps.registryUpdate(workerId, {
-    state: 'suspended',
-    suspendedAt: new Date().toISOString(),
-  });
+  // Mark executor as terminated
+  await deps.terminateExecutor(executorId);
 
   return true;
 }
@@ -94,37 +91,37 @@ export async function suspendWorker(workerId: string, deps: IdleDeps = defaultDe
 // ============================================================================
 
 /**
- * Check all workers and suspend any that have been idle too long.
- * Returns the list of worker IDs that were suspended.
+ * Check all active executors and suspend any that have been idle too long.
+ * Returns the list of executor IDs that were suspended.
  */
 export async function checkIdleWorkers(deps: IdleDeps = defaultDeps): Promise<string[]> {
   const timeoutMs = getIdleTimeoutMs();
   if (timeoutMs === 0) return []; // Disabled
 
-  const workers = await deps.registryList();
+  const executors = await deps.listExecutors();
   const suspended: string[] = [];
 
-  for (const w of workers) {
-    // Only suspend idle workers with live panes
-    if (w.state !== 'idle') continue;
+  for (const e of executors) {
+    // Only suspend idle executors with live panes
+    if (e.state !== 'idle') continue;
 
-    const idleMs = Date.now() - new Date(w.lastStateChange).getTime();
+    // Use updatedAt as a proxy for last state change time
+    const idleMs = Date.now() - new Date(e.updatedAt).getTime();
     if (idleMs < timeoutMs) continue;
 
     // Verify pane is still alive before suspending
-    const alive = await deps.isPaneAlive(w.paneId);
-    if (!alive) {
-      // Pane already dead — mark suspended directly
-      await deps.registryUpdate(w.id, {
-        state: 'suspended',
-        suspendedAt: new Date().toISOString(),
-      });
-      suspended.push(w.id);
-      continue;
+    if (e.tmuxPaneId) {
+      const alive = await deps.isPaneAlive(e.tmuxPaneId);
+      if (!alive) {
+        // Pane already dead — mark terminated directly
+        await deps.terminateExecutor(e.id);
+        suspended.push(e.id);
+        continue;
+      }
     }
 
-    const ok = await suspendWorker(w.id, deps);
-    if (ok) suspended.push(w.id);
+    const ok = await suspendWorker(e.id, deps);
+    if (ok) suspended.push(e.id);
   }
 
   return suspended;

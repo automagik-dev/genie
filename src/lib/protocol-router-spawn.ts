@@ -15,6 +15,7 @@ import { promisify } from 'node:util';
 import * as registry from './agent-registry.js';
 import type { WorkerTemplate } from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
+import * as executorRegistry from './executor-registry.js';
 import * as mailbox from './mailbox.js';
 import { buildLayoutCommand, resolveLayoutMode } from './mosaic-layout.js';
 import {
@@ -23,6 +24,7 @@ import {
   buildLaunchCommand,
   validateSpawnParams,
 } from './provider-adapters.js';
+import { getProvider } from './providers/registry.js';
 import * as teamManager from './team-manager.js';
 import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows } from './tmux.js';
 import * as wishState from './wish-state.js';
@@ -81,6 +83,61 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
   const base = role ? `${team}-${role}` : team;
   const existing = await registry.list();
   return existing.some((w) => w.id === base) ? `${base}-${crypto.randomUUID().slice(0, 8)}` : base;
+}
+
+/**
+ * Create executor record for an auto-spawned worker.
+ * Best-effort: don't block auto-spawn if executor tracking fails.
+ */
+async function createExecutorForAutoSpawn(
+  template: WorkerTemplate,
+  paneId: string,
+  session: string,
+  repoPath: string,
+  effectiveSessionId: string | undefined,
+  spawnColor: ClaudeTeamColor | undefined,
+  teamWindow: { windowId: string; windowName: string } | null,
+): Promise<void> {
+  const agentName = template.role ?? 'worker';
+  const agentIdentity = await registry.findOrCreateAgent(agentName, template.team, template.role);
+
+  // Concurrent guard: terminate active executor before creating new one
+  const currentExec = await executorRegistry.getCurrentExecutor(agentIdentity.id);
+  if (currentExec && currentExec.state !== 'terminated' && currentExec.state !== 'done') {
+    const providerImpl = getProvider(currentExec.provider);
+    if (providerImpl) {
+      try {
+        await providerImpl.terminate(currentExec);
+      } catch {
+        /* best-effort */
+      }
+    }
+    await executorRegistry.terminateActiveExecutor(agentIdentity.id);
+  }
+
+  // Capture PID from tmux pane
+  let pid: number | null = null;
+  try {
+    const { stdout: pidOut } = await execAsync(`tmux display -t '${paneId}' -p '#{pane_pid}'`);
+    const parsed = Number.parseInt(pidOut.trim(), 10);
+    if (parsed > 0) pid = parsed;
+  } catch {
+    /* best-effort */
+  }
+
+  const executorTransport = template.provider === 'codex' ? ('api' as const) : ('tmux' as const);
+  const executor = await executorRegistry.createExecutor(agentIdentity.id, template.provider, executorTransport, {
+    pid,
+    tmuxSession: session,
+    tmuxPaneId: paneId,
+    tmuxWindow: teamWindow?.windowName ?? null,
+    tmuxWindowId: teamWindow?.windowId ?? null,
+    claudeSessionId: effectiveSessionId ?? null,
+    state: 'spawning',
+    repoPath,
+    paneColor: spawnColor ?? null,
+  });
+  await registry.setCurrentExecutor(agentIdentity.id, executor.id);
 }
 
 /** Resolve target window and spawn a pane, returning pane ID and window info. */
@@ -166,6 +223,13 @@ export async function spawnWorkerFromTemplate(
   };
 
   await registry.register(workerEntry);
+
+  // Executor model: create agent identity + executor record for auto-spawned workers
+  try {
+    await createExecutorForAutoSpawn(template, paneId, session, repoPath, effectiveSessionId, spawnColor, teamWindow);
+  } catch {
+    /* best-effort: executor tracking is additive, don't block auto-spawn */
+  }
 
   // Only register native-team-enabled agents (Claude) as SendMessage recipients.
   // Non-native agents (Codex) can't read the Claude Code inbox (#777).

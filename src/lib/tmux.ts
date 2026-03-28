@@ -399,11 +399,11 @@ export async function applyPaneColor(paneId: string, color: string, windowId?: s
     // Store color in tmux pane option (runtime cache — no files)
     await executeTmux(`set-option -p -t '${paneId}' @genie_color '${hex}'`);
 
-    // Update PG agents table (authoritative source — survives restarts)
+    // Update PG executors table (authoritative source — survives restarts)
     try {
       const { getConnection } = await import('./db.js');
       const sql = await getConnection();
-      await sql`UPDATE agents SET pane_color = ${hex} WHERE pane_id = ${paneId}`;
+      await sql`UPDATE executors SET pane_color = ${hex} WHERE tmux_pane_id = ${paneId}`;
     } catch {
       /* PG update is best-effort */
     }

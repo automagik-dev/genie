@@ -1,13 +1,24 @@
 /**
- * Agent Registry — Tracks agent state with provider metadata.
+ * Agent Registry — Agent identity CRUD + legacy runtime functions.
  *
  * All state is persisted in PostgreSQL (`agents` and `agent_templates` tables).
  * PG transactions replace file locks — no acquireLock needed.
+ *
+ * ## Executor Model (v4)
+ *
+ * New identity-focused API:
+ *   findOrCreateAgent(), getAgent(), getAgentByName(), setCurrentExecutor(),
+ *   getAgentEffectiveState(), listAgents()
+ *
+ * Legacy functions (register, update, findByPane, etc.) are preserved for
+ * backward compatibility during the transition. They will be migrated to
+ * use executor-registry in Groups 6-7.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { recordAuditEvent } from './audit.js';
 import { type Sql, getConnection } from './db.js';
+import type { AgentIdentity, ExecutorState } from './executor-types.js';
 import type { ProviderName } from './provider-adapters.js';
 
 export type AgentState = 'spawning' | 'working' | 'idle' | 'permission' | 'question' | 'done' | 'error' | 'suspended';
@@ -47,6 +58,12 @@ export interface Agent {
   lastResumeAttempt?: string;
   maxResumeAttempts?: number;
   paneColor?: string;
+  /** FK to current active executor. Added by executor model (Group 2). */
+  currentExecutorId?: string | null;
+  /** Self-ref for org tree hierarchy (NULL = root). */
+  reportsTo?: string | null;
+  /** Agent title in org context (CPO, CTO, Research Lead). */
+  title?: string | null;
 }
 
 export interface WorkerTemplate {
@@ -95,6 +112,9 @@ interface AgentRow {
   last_resume_attempt: Date | string | null;
   max_resume_attempts: number | null;
   pane_color: string | null;
+  current_executor_id: string | null;
+  reports_to: string | null;
+  title: string | null;
 }
 
 interface TemplateRow {
@@ -154,6 +174,9 @@ function rowToAgent(r: AgentRow): Agent {
   if (r.last_resume_attempt != null) agent.lastResumeAttempt = ts(r.last_resume_attempt);
   if (r.max_resume_attempts != null) agent.maxResumeAttempts = r.max_resume_attempts;
   if (r.pane_color != null) agent.paneColor = r.pane_color;
+  agent.currentExecutorId = r.current_executor_id ?? null;
+  agent.reportsTo = r.reports_to ?? null;
+  agent.title = r.title ?? null;
   return agent;
 }
 
@@ -367,4 +390,161 @@ export async function listTemplates(): Promise<WorkerTemplate[]> {
   const sql = await getConnection();
   const rows = await sql`SELECT * FROM agent_templates`;
   return rows.map(rowToTemplate);
+}
+
+// ============================================================================
+// Identity-Focused API (Executor Model v4)
+// ============================================================================
+
+/** Row shape for identity-only agent queries. */
+interface AgentIdentityRow {
+  id: string;
+  started_at: Date | string;
+  role: string | null;
+  custom_name: string | null;
+  team: string | null;
+  native_agent_id: string | null;
+  native_color: string | null;
+  native_team_enabled: boolean;
+  parent_session_id: string | null;
+  current_executor_id: string | null;
+  reports_to: string | null;
+  title: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+function rowToAgentIdentity(r: AgentIdentityRow): AgentIdentity {
+  return {
+    id: r.id,
+    startedAt: ts(r.started_at),
+    role: r.role ?? undefined,
+    customName: r.custom_name ?? undefined,
+    team: r.team ?? undefined,
+    nativeAgentId: r.native_agent_id ?? undefined,
+    nativeColor: r.native_color ?? undefined,
+    nativeTeamEnabled: r.native_team_enabled || undefined,
+    parentSessionId: r.parent_session_id ?? undefined,
+    currentExecutorId: r.current_executor_id ?? null,
+    reportsTo: r.reports_to ?? null,
+    title: r.title ?? null,
+    createdAt: ts(r.created_at),
+    updatedAt: ts(r.updated_at),
+  };
+}
+
+/**
+ * Find or create an agent by (custom_name, team) composite key.
+ * If an agent with matching name+team exists, returns it.
+ * Otherwise creates a new agent with a generated UUID.
+ */
+export async function findOrCreateAgent(name: string, team: string, role?: string): Promise<AgentIdentity> {
+  const sql = await getConnection();
+
+  // Try to find existing agent by composite unique (custom_name, team)
+  const existing = await sql<AgentIdentityRow[]>`
+    SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+    FROM agents
+    WHERE custom_name = ${name} AND team = ${team}
+    LIMIT 1
+  `;
+  if (existing.length > 0) return rowToAgentIdentity(existing[0]);
+
+  // Create new agent with identity columns only
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  const rows = await sql<AgentIdentityRow[]>`
+    INSERT INTO agents (id, custom_name, team, role, started_at, created_at, updated_at)
+    VALUES (${id}, ${name}, ${team}, ${role ?? null}, ${now}, ${now}, ${now})
+    ON CONFLICT (custom_name, team) WHERE custom_name IS NOT NULL AND team IS NOT NULL
+    DO UPDATE SET updated_at = now()
+    RETURNING id, started_at, role, custom_name, team, native_agent_id, native_color,
+              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+  `;
+
+  return rowToAgentIdentity(rows[0]);
+}
+
+/** Get an agent identity by ID. */
+export async function getAgent(id: string): Promise<AgentIdentity | null> {
+  const sql = await getConnection();
+  const rows = await sql<AgentIdentityRow[]>`
+    SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+    FROM agents WHERE id = ${id}
+  `;
+  return rows.length > 0 ? rowToAgentIdentity(rows[0]) : null;
+}
+
+/** Get an agent identity by (custom_name, team) composite key. */
+export async function getAgentByName(name: string, team: string): Promise<AgentIdentity | null> {
+  const sql = await getConnection();
+  const rows = await sql<AgentIdentityRow[]>`
+    SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+    FROM agents WHERE custom_name = ${name} AND team = ${team}
+    LIMIT 1
+  `;
+  return rows.length > 0 ? rowToAgentIdentity(rows[0]) : null;
+}
+
+/** Set the current executor FK on an agent. Pass null to clear. */
+export async function setCurrentExecutor(agentId: string, executorId: string | null): Promise<void> {
+  const sql = await getConnection();
+  await sql`UPDATE agents SET current_executor_id = ${executorId} WHERE id = ${agentId}`;
+}
+
+/**
+ * Get the effective state of an agent: the state of its current executor,
+ * or 'offline' if no executor is assigned.
+ */
+export async function getAgentEffectiveState(agentId: string): Promise<ExecutorState | 'offline'> {
+  const sql = await getConnection();
+  const rows = await sql<{ state: ExecutorState }[]>`
+    SELECT e.state FROM executors e
+    JOIN agents a ON a.current_executor_id = e.id
+    WHERE a.id = ${agentId}
+  `;
+  return rows.length > 0 ? rows[0].state : 'offline';
+}
+
+/** Filter options for listing agents. */
+interface ListAgentsFilter {
+  team?: string;
+  role?: string;
+}
+
+/** List agent identities with optional filters. */
+export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdentity[]> {
+  const sql = await getConnection();
+  let rows: AgentIdentityRow[];
+
+  if (filters?.team && filters?.role) {
+    rows = await sql<AgentIdentityRow[]>`
+      SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+      FROM agents WHERE team = ${filters.team} AND role = ${filters.role}
+    `;
+  } else if (filters?.team) {
+    rows = await sql<AgentIdentityRow[]>`
+      SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+      FROM agents WHERE team = ${filters.team}
+    `;
+  } else if (filters?.role) {
+    rows = await sql<AgentIdentityRow[]>`
+      SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+      FROM agents WHERE role = ${filters.role}
+    `;
+  } else {
+    rows = await sql<AgentIdentityRow[]>`
+      SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+      FROM agents
+    `;
+  }
+
+  return rows.map(rowToAgentIdentity);
 }

@@ -17,6 +17,16 @@ import { formatTimestamp, padRight } from '../lib/term-format.js';
 import * as wishState from '../lib/wish-state.js';
 import { parseExecutionStrategy, parseWishGroups } from './dispatch.js';
 
+// Lazy imports to avoid circular dependencies
+async function loadExecutorInfo() {
+  const [registryMod, executorMod, assignmentMod] = await Promise.all([
+    import('../lib/agent-registry.js'),
+    import('../lib/executor-registry.js'),
+    import('../lib/assignment-registry.js'),
+  ]);
+  return { registry: registryMod, executorRegistry: executorMod, assignmentRegistry: assignmentMod };
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -358,6 +368,38 @@ async function statusCommand(slug: string): Promise<void> {
 
     console.log('');
     console.log(`  Progress: ${done}/${total} done | ${inProgress} in progress | ${ready} ready | ${blocked} blocked`);
+
+    // Show active executors for this wish
+    try {
+      const { registry, executorRegistry, assignmentRegistry } = await loadExecutorInfo();
+      const agents = await registry.listAgents({ team: process.env.GENIE_TEAM });
+      const executorInfoLines: string[] = [];
+
+      for (const agent of agents) {
+        if (!agent.currentExecutorId) continue;
+        const executor = await executorRegistry.getExecutor(agent.currentExecutorId);
+        if (!executor || executor.state === 'terminated' || executor.state === 'done') continue;
+
+        const assignment = await assignmentRegistry.getActiveAssignment(executor.id);
+        const taskLabel =
+          assignment?.wishSlug === slug ? `Group ${assignment.groupNumber ?? '?'}` : (assignment?.wishSlug ?? '-');
+        const name = agent.customName ?? agent.role ?? agent.id.slice(0, 12);
+        executorInfoLines.push(
+          `  Agent: ${padRight(name, 16)} | Executor: ${executor.id.slice(0, 12)} (${executor.provider}) | State: ${padRight(executor.state, 10)} | Task: ${taskLabel}`,
+        );
+      }
+
+      if (executorInfoLines.length > 0) {
+        console.log('\nActive Executors:');
+        console.log('─'.repeat(60));
+        for (const line of executorInfoLines) {
+          console.log(line);
+        }
+      }
+    } catch {
+      // Executor info is best-effort — DB may be unavailable
+    }
+
     console.log('');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

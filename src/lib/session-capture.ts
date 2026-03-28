@@ -70,6 +70,7 @@ interface ToolEventRow {
 
 interface WorkerMatch {
   agentId: string;
+  executorId: string | null;
   team: string | null;
   wishSlug: string | null;
   taskId: string | null;
@@ -249,18 +250,39 @@ export async function buildWorkerMap(sql: SqlClient): Promise<Map<string, Worker
   }
   const map = new Map<string, WorkerMatch>();
   try {
+    // Query executors table (source of truth for claude_session_id) with agent join
     const rows = await sql`
-      SELECT id, claude_session_id, team, wish_slug, task_id, role
-      FROM agents WHERE claude_session_id IS NOT NULL
+      SELECT e.id as executor_id, e.agent_id, e.claude_session_id, a.team, a.wish_slug, a.task_id, a.role
+      FROM executors e
+      JOIN agents a ON e.agent_id = a.id
+      WHERE e.claude_session_id IS NOT NULL
     `;
     for (const row of rows) {
       map.set(row.claude_session_id, {
-        agentId: row.id,
+        agentId: row.agent_id,
+        executorId: row.executor_id,
         team: row.team,
         wishSlug: row.wish_slug,
         taskId: row.task_id,
         role: row.role,
       });
+    }
+    // Fallback: also check legacy agents table for sessions not yet migrated
+    const legacyRows = await sql`
+      SELECT id, claude_session_id, team, wish_slug, task_id, role
+      FROM agents WHERE claude_session_id IS NOT NULL
+    `;
+    for (const row of legacyRows) {
+      if (!map.has(row.claude_session_id)) {
+        map.set(row.claude_session_id, {
+          agentId: row.id,
+          executorId: null,
+          team: row.team,
+          wishSlug: row.wish_slug,
+          taskId: row.task_id,
+          role: row.role,
+        });
+      }
     }
   } catch {
     // best-effort
@@ -304,8 +326,8 @@ async function ensureSession(
   const worker = workerMap.get(sessionId);
   const status = worker ? 'active' : 'orphaned';
   await sql`
-    INSERT INTO sessions (id, agent_id, team, wish_slug, task_id, role, project_path, jsonl_path, status, last_ingested_offset, total_turns, parent_session_id, is_subagent, file_size, file_mtime)
-    VALUES (${sessionId}, ${worker?.agentId ?? null}, ${worker?.team ?? null}, ${worker?.wishSlug ?? null}, ${worker?.taskId ?? null}, ${worker?.role ?? null}, ${projectPath}, ${jsonlPath}, ${status}, 0, 0, ${opts?.parentSessionId ?? null}, ${opts?.isSubagent ?? false}, ${opts?.fileSize ?? 0}, ${opts?.mtime ?? 0})
+    INSERT INTO sessions (id, agent_id, executor_id, team, wish_slug, task_id, role, project_path, jsonl_path, status, last_ingested_offset, total_turns, parent_session_id, is_subagent, file_size, file_mtime)
+    VALUES (${sessionId}, ${worker?.agentId ?? null}, ${worker?.executorId ?? null}, ${worker?.team ?? null}, ${worker?.wishSlug ?? null}, ${worker?.taskId ?? null}, ${worker?.role ?? null}, ${projectPath}, ${jsonlPath}, ${status}, 0, 0, ${opts?.parentSessionId ?? null}, ${opts?.isSubagent ?? false}, ${opts?.fileSize ?? 0}, ${opts?.mtime ?? 0})
     ON CONFLICT (id) DO NOTHING
   `;
   return {

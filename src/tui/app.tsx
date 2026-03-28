@@ -3,13 +3,13 @@
 
 import { useKeyboard, useRenderer } from '@opentui/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getActiveWork, matchWorkToTasks } from './activity.js';
+import { getActiveWork, getExecutorActivity, matchWorkToTasks } from './activity.js';
 import { Nav } from './components/Nav.js';
-import { loadAll, subscribe } from './db.js';
+import { loadAll, loadAssignments, loadExecutors, subscribe } from './db.js';
 import { palette } from './theme.js';
 import { attachProject, switchRightPane } from './tmux.js';
 import { applyActivity, buildTree } from './tree.js';
-import type { TreeNode, TuiData } from './types.js';
+import type { TreeNode, TuiAssignment, TuiData, TuiExecutor } from './types.js';
 
 export function App({ rightPane }: { rightPane?: string }) {
   const renderer = useRenderer();
@@ -67,15 +67,25 @@ export function App({ rightPane }: { rightPane?: string }) {
     };
   }, []);
 
-  // Activity detection tick (1s)
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (!dataRef.current) return;
-      const activity = scanActivity(dataRef.current);
-      setTree((prev) => applyActivity(prev, activity));
-    }, 1000);
+  // Executor + assignment state refs (for activity scan)
+  const executorsRef = useRef<TuiExecutor[]>([]);
+  const assignmentsRef = useRef<TuiAssignment[]>([]);
 
-    return () => clearInterval(timer);
+  // Activity detection tick (1s) — DB executor state + tmux fallback
+  useEffect(() => {
+    let active = true;
+
+    async function refreshActivity() {
+      if (!dataRef.current) return;
+      const activity = await fetchMergedActivity(dataRef.current, executorsRef, assignmentsRef);
+      if (active) setTree((prev) => applyActivity(prev, activity));
+    }
+
+    const timer = setInterval(refreshActivity, 1000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
   }, []);
 
   const handleTreeChange = useCallback((newTree: TreeNode[]) => {
@@ -136,22 +146,41 @@ function mergeExpandedState(oldTree: TreeNode[], newTree: TreeNode[]): TreeNode[
   return apply(newTree);
 }
 
-/** Scan all project tmux sessions for active work */
-function scanActivity(
-  data: TuiData,
-): Map<string, { panes: number; state?: 'idle' | 'working' | 'permission' | 'error' }> {
-  const allActivity = new Map<string, { panes: number; state?: 'idle' | 'working' | 'permission' | 'error' }>();
-  try {
-    for (const proj of data.projects) {
-      if (!proj.tmuxSession) continue;
-      const windows = getActiveWork(proj.tmuxSession);
-      const matched = matchWorkToTasks(windows, data.tasks);
-      for (const [taskId, act] of matched) {
-        allActivity.set(taskId, act);
-      }
+type ActivityMap = Map<string, { panes: number; state?: 'idle' | 'working' | 'permission' | 'error' }>;
+
+/** Scan all project tmux sessions for active work (fallback). */
+function scanTmuxActivity(data: TuiData): ActivityMap {
+  const result: ActivityMap = new Map();
+  for (const proj of data.projects) {
+    if (!proj.tmuxSession) continue;
+    const windows = getActiveWork(proj.tmuxSession);
+    for (const [taskId, act] of matchWorkToTasks(windows, data.tasks)) {
+      result.set(taskId, act);
     }
-  } catch (err) {
-    console.error('TUI: activity scan failed:', err);
   }
-  return allActivity;
+  return result;
+}
+
+/** Fetch DB executor activity, merge with tmux fallback. */
+async function fetchMergedActivity(
+  data: TuiData,
+  executorsRef: { current: TuiExecutor[] },
+  assignmentsRef: { current: TuiAssignment[] },
+): Promise<ActivityMap> {
+  try {
+    const execs = await loadExecutors();
+    const execIds = execs.map((e) => e.id);
+    const assigns = execIds.length > 0 ? await loadAssignments(execIds) : [];
+    executorsRef.current = execs;
+    assignmentsRef.current = assigns;
+
+    const activity = getExecutorActivity(execs, assigns);
+    // Merge tmux fallback for tasks without DB assignments
+    for (const [taskId, act] of scanTmuxActivity(data)) {
+      if (!activity.has(taskId)) activity.set(taskId, act);
+    }
+    return activity;
+  } catch {
+    return scanTmuxActivity(data);
+  }
 }
