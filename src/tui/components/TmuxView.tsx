@@ -24,10 +24,8 @@ interface FlatTmuxRow {
 }
 
 function flattenSessions(sessions: TmuxSession[]): FlatTmuxRow[] {
-  const rows: FlatTmuxRow[] = [];
-
-  for (const session of sessions) {
-    rows.push({
+  return sessions.flatMap((session) => {
+    const sessionRow: FlatTmuxRow = {
       id: `s:${session.name}`,
       depth: 0,
       label: session.name,
@@ -37,10 +35,9 @@ function flattenSessions(sessions: TmuxSession[]): FlatTmuxRow[] {
       type: 'session',
       sessionName: session.name,
       isClaude: false,
-    });
-
-    for (const window of session.windows) {
-      rows.push({
+    };
+    const windowRows = session.windows.flatMap((window) => {
+      const winRow: FlatTmuxRow = {
         id: `w:${session.name}:${window.index}`,
         depth: 1,
         label: `${window.index}:${window.name}`,
@@ -50,26 +47,25 @@ function flattenSessions(sessions: TmuxSession[]): FlatTmuxRow[] {
         type: 'window',
         sessionName: session.name,
         isClaude: false,
-      });
-
-      for (const pane of window.panes) {
+      };
+      const paneRows: FlatTmuxRow[] = window.panes.map((pane) => {
         const isClaude = pane.command === 'claude' || pane.title.includes('claude');
-        rows.push({
+        return {
           id: `p:${pane.paneId}`,
           depth: 2,
           label: `${pane.paneId} [${pane.command}]`,
           color: isClaude ? palette.cyan : palette.textDim,
           detail: `pid:${pane.pid} ${pane.size}`,
           detailColor: palette.textMuted,
-          type: 'pane',
+          type: 'pane' as const,
           sessionName: session.name,
           isClaude,
-        });
-      }
-    }
-  }
-
-  return rows;
+        };
+      });
+      return [winRow, ...paneRows];
+    });
+    return [sessionRow, ...windowRows];
+  });
 }
 
 export function TmuxView({ sessions, selectedIndex }: TmuxViewProps) {

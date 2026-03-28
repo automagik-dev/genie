@@ -102,7 +102,7 @@ export function App({ rightPane }: { rightPane?: string }) {
       if (currentProject) {
         switchRightPane(rightPane, tmuxSession);
       } else {
-        attachProject('genie-tui', rightPane, tmuxSession);
+        attachProject(rightPane, tmuxSession);
       }
       setCurrentProject(projectId);
     },

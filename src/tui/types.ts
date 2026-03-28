@@ -82,5 +82,3 @@ export interface TuiData {
   tasks: Task[];
   agentProjects: AgentProject[];
 }
-
-export type ClaudeState = 'idle' | 'working' | 'permission' | 'error' | 'unknown';

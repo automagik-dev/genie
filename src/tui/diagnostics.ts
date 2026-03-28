@@ -35,7 +35,7 @@ export interface TmuxSession {
   windows: TmuxWindow[];
 }
 
-export interface ClaudeProcess {
+interface ClaudeProcess {
   pid: number;
   ppid: number;
   agentId: string | null;
@@ -82,68 +82,46 @@ function execQuiet(cmd: string): string {
   }
 }
 
-/** Collect all tmux sessions, windows, and panes into a typed tree. */
-export function getTmuxInventory(): TmuxSession[] {
-  // Get all panes with full context in one call (most efficient)
-  const paneOutput = execQuiet(
-    "tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{window_active}|#{window_panes}|#{pane_index}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}|#{session_attached}|#{session_windows}|#{session_created}'",
-  );
-
-  if (!paneOutput) return [];
-
-  const sessionMap = new Map<string, TmuxSession>();
-  const windowMap = new Map<string, TmuxWindow>(); // key: "session:windowIndex"
-
-  for (const line of paneOutput.split('\n')) {
-    if (!line) continue;
-    const parts = line.split('|');
-    if (parts.length < 14) continue;
-
-    const [
+function parsePaneLine(parts: string[]): {
+  sessionName: string;
+  winIdxStr: string;
+  session: Omit<TmuxSession, 'windows'>;
+  window: Omit<TmuxWindow, 'panes'>;
+  pane: TmuxPane;
+} {
+  const [
+    sessionName,
+    winIdxStr,
+    winName,
+    winActive,
+    winPanes,
+    paneIdxStr,
+    paneId,
+    panePidStr,
+    paneCmd,
+    paneTitle,
+    paneSize,
+    sessAttached,
+    sessWindows,
+    sessCreated,
+  ] = parts;
+  return {
+    sessionName,
+    winIdxStr,
+    session: {
+      name: sessionName,
+      attached: sessAttached === '1',
+      windowCount: Number.parseInt(sessWindows, 10) || 0,
+      created: Number.parseInt(sessCreated, 10) || 0,
+    },
+    window: {
       sessionName,
-      winIdxStr,
-      winName,
-      winActive,
-      winPanes,
-      paneIdxStr,
-      paneId,
-      panePidStr,
-      paneCmd,
-      paneTitle,
-      paneSize,
-      sessAttached,
-      sessWindows,
-      sessCreated,
-    ] = parts;
-
-    // Ensure session exists
-    if (!sessionMap.has(sessionName)) {
-      sessionMap.set(sessionName, {
-        name: sessionName,
-        attached: sessAttached === '1',
-        windowCount: Number.parseInt(sessWindows, 10) || 0,
-        created: Number.parseInt(sessCreated, 10) || 0,
-        windows: [],
-      });
-    }
-
-    // Ensure window exists
-    const winKey = `${sessionName}:${winIdxStr}`;
-    if (!windowMap.has(winKey)) {
-      const win: TmuxWindow = {
-        sessionName,
-        index: Number.parseInt(winIdxStr, 10) || 0,
-        name: winName,
-        active: winActive === '1',
-        paneCount: Number.parseInt(winPanes, 10) || 0,
-        panes: [],
-      };
-      windowMap.set(winKey, win);
-      sessionMap.get(sessionName)!.windows.push(win);
-    }
-
-    // Add pane
-    const pane: TmuxPane = {
+      index: Number.parseInt(winIdxStr, 10) || 0,
+      name: winName,
+      active: winActive === '1',
+      paneCount: Number.parseInt(winPanes, 10) || 0,
+    },
+    pane: {
       sessionName,
       windowIndex: Number.parseInt(winIdxStr, 10) || 0,
       paneIndex: Number.parseInt(paneIdxStr, 10) || 0,
@@ -152,8 +130,40 @@ export function getTmuxInventory(): TmuxSession[] {
       command: paneCmd,
       title: paneTitle,
       size: paneSize,
-    };
-    windowMap.get(winKey)!.panes.push(pane);
+    },
+  };
+}
+
+/** Collect all tmux sessions, windows, and panes into a typed tree. */
+function getTmuxInventory(): TmuxSession[] {
+  const paneOutput = execQuiet(
+    "tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{window_active}|#{window_panes}|#{pane_index}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}|#{session_attached}|#{session_windows}|#{session_created}'",
+  );
+
+  if (!paneOutput) return [];
+
+  const sessionMap = new Map<string, TmuxSession>();
+  const windowMap = new Map<string, TmuxWindow>();
+
+  for (const line of paneOutput.split('\n')) {
+    if (!line) continue;
+    const parts = line.split('|');
+    if (parts.length < 14) continue;
+
+    const parsed = parsePaneLine(parts);
+
+    if (!sessionMap.has(parsed.sessionName)) {
+      sessionMap.set(parsed.sessionName, { ...parsed.session, windows: [] });
+    }
+
+    const winKey = `${parsed.sessionName}:${parsed.winIdxStr}`;
+    if (!windowMap.has(winKey)) {
+      const win: TmuxWindow = { ...parsed.window, panes: [] };
+      windowMap.set(winKey, win);
+      sessionMap.get(parsed.sessionName)?.windows.push(win);
+    }
+
+    windowMap.get(winKey)?.panes.push(parsed.pane);
   }
 
   return Array.from(sessionMap.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -174,7 +184,7 @@ function parseFlag(args: string, flag: string): string | null {
 }
 
 /** Collect all running Claude Code processes with parsed metadata. */
-export function getClaudeProcesses(): ClaudeProcess[] {
+function getClaudeProcesses(): ClaudeProcess[] {
   const psOutput = execQuiet('ps -eo pid,ppid,args --no-headers');
   if (!psOutput) return [];
 
@@ -219,7 +229,7 @@ export function getClaudeProcesses(): ClaudeProcess[] {
  * tmux pane PID = shell PID. Claude is a child (or grandchild via /bin/sh wrapper).
  * We check: claude.ppid == pane.pid OR claude.ppid's ppid == pane.pid (for sh -c wrappers).
  */
-export function linkProcessesToPanes(processes: ClaudeProcess[], sessions: TmuxSession[]): LinkedProcess[] {
+function linkProcessesToPanes(processes: ClaudeProcess[], sessions: TmuxSession[]): LinkedProcess[] {
   // Build a flat lookup of all pane PIDs
   const paneByPid = new Map<number, TmuxPane>();
   for (const session of sessions) {
@@ -265,34 +275,32 @@ export function linkProcessesToPanes(processes: ClaudeProcess[], sessions: TmuxS
 
 // ─── Gap Detection ────────────────────────────────────────────────────────────
 
+/** Get all claude panes from all sessions flattened. */
+function allClaudePanes(sessions: TmuxSession[]): TmuxPane[] {
+  return sessions
+    .flatMap((s) => s.windows.flatMap((w) => w.panes))
+    .filter((p) => p.command === 'claude' || p.title.includes('claude'));
+}
+
 /** Detect gaps: orphan processes (no tmux), orphan panes (claude running but no agent mapping). */
-export function detectGaps(linked: LinkedProcess[], sessions: TmuxSession[]): DiagnosticGaps {
+function detectGaps(linked: LinkedProcess[], sessions: TmuxSession[]): DiagnosticGaps {
   const orphanProcesses = linked.filter((p) => !p.tmuxPane);
 
-  // Find panes running claude that aren't linked to any known agent
-  const linkedPaneIds = new Set(linked.filter((p) => p.tmuxPane).map((p) => p.tmuxPane!.paneId));
-  const orphanPanes: TmuxPane[] = [];
-  let totalClaudePanes = 0;
+  const linkedPaneIds = new Set(
+    linked
+      .filter((p): p is typeof p & { tmuxPane: NonNullable<typeof p.tmuxPane> } => p.tmuxPane != null)
+      .map((p) => p.tmuxPane.paneId),
+  );
 
-  for (const session of sessions) {
-    for (const window of session.windows) {
-      for (const pane of window.panes) {
-        if (pane.command === 'claude' || pane.title.includes('claude')) {
-          totalClaudePanes++;
-          if (!linkedPaneIds.has(pane.paneId)) {
-            orphanPanes.push(pane);
-          }
-        }
-      }
-    }
-  }
+  const claudePanes = allClaudePanes(sessions);
+  const orphanPanes = claudePanes.filter((p) => !linkedPaneIds.has(p.paneId));
 
   return {
     orphanProcesses,
     orphanPanes,
     linkedCount: linked.length - orphanProcesses.length,
     totalProcesses: linked.length,
-    totalClaudePanes,
+    totalClaudePanes: claudePanes.length,
   };
 }
 
