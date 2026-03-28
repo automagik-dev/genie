@@ -12,19 +12,20 @@ import {
   waitForResult,
 } from './qa-runner.js';
 import { publishRuntimeEvent } from './runtime-events.js';
-import { setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
-let cleanup: () => Promise<void>;
+let cleanup: (() => Promise<void>) | undefined;
 
 beforeAll(async () => {
+  if (!DB_AVAILABLE) return;
   cleanup = await setupTestSchema();
 });
 
 afterAll(async () => {
-  await cleanup();
+  if (cleanup) await cleanup();
 });
 
-describe('qa-runner', () => {
+describe.skipIf(!DB_AVAILABLE)('qa-runner', () => {
   describe('defaultSpecDir', () => {
     test('returns {cwd}/.genie/qa/ when no argument given', () => {
       const result = defaultSpecDir();

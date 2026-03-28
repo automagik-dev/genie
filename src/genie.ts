@@ -164,6 +164,19 @@ shortcuts.command('uninstall').description('Remove shortcuts from config files')
 // Orchestration namespaces
 // ============================================================================
 
+// ============================================================================
+// TUI — interactive terminal interface
+// ============================================================================
+
+program
+  .command('tui')
+  .description('Launch interactive terminal UI (OpenTUI nav + tmux Claude Code)')
+  .option('--dev', 'Development mode with auto-reload on file changes')
+  .action(async (options: { dev?: boolean }) => {
+    const { launchTui } = await import('./tui/index.js');
+    await launchTui({ dev: options.dev });
+  });
+
 registerTeamNamespace(program);
 registerDirNamespace(program);
 registerAgentNamespace(program);

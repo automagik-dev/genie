@@ -6,16 +6,17 @@ import {
   publishRuntimeEvent,
   waitForRuntimeEvent,
 } from './runtime-events.js';
-import { setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
-let cleanup: () => Promise<void>;
+let cleanup: (() => Promise<void>) | undefined;
 
 beforeAll(async () => {
+  if (!DB_AVAILABLE) return;
   cleanup = await setupTestSchema();
 });
 
 afterAll(async () => {
-  await cleanup();
+  if (cleanup) await cleanup();
 });
 
 async function waitUntil(fn: () => boolean, timeoutMs = 1500): Promise<void> {
@@ -27,7 +28,7 @@ async function waitUntil(fn: () => boolean, timeoutMs = 1500): Promise<void> {
   throw new Error('Timed out waiting for condition');
 }
 
-describe('runtime-events', () => {
+describe.skipIf(!DB_AVAILABLE)('runtime-events', () => {
   test('persists events and replays by cursor', async () => {
     const first = await publishRuntimeEvent({
       repoPath: '/tmp/runtime-events',
