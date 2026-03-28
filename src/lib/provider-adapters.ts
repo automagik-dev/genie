@@ -13,20 +13,6 @@
 
 import { z } from 'zod';
 
-// Re-export executor model types for downstream consumers
-export type {
-  ExecutorProvider,
-  ExecutorState,
-  TransportType as ExecutorTransportType,
-  Executor,
-  Assignment,
-  AssignmentOutcome,
-  SpawnContext,
-  ResumeContext,
-  LaunchCommand,
-  AgentIdentity,
-} from './executor-types.js';
-
 // ============================================================================
 // Types
 // ============================================================================

@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@5.85.0/schema.json",
-  "entry": ["src/hooks/dispatch-command.ts", "src/tui/render.tsx"],
+  "entry": ["src/hooks/dispatch-command.ts", "src/tui/render.tsx", "src/lib/executor-types.ts"],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["tmux", "which"],
   "ignoreExportsUsedInFile": false
