@@ -1,13 +1,12 @@
 /**
  * TreeNode — renders a single node in the navigation tree.
- * Handles all node kinds: org, project, board, column, task.
- * 2050 palette: purple accent, cyan live, emerald success.
+ * Split into per-kind renderers to keep cognitive complexity low.
  */
 
 import { Box, Text } from 'ink';
+import type React from 'react';
 import type { TreeNode as TN } from '../tree.js';
 
-/** 2050 color palette */
 const C = {
   accent: '#a855f7',
   accentBg: '#7c3aed',
@@ -19,6 +18,33 @@ const C = {
   warn: '#fbbf24',
   danger: '#f87171',
 } as const;
+
+interface Props {
+  node: TN;
+  isSelected: boolean;
+}
+
+interface NodeStyle {
+  bg: string | undefined;
+  fg: string | undefined;
+  cur: string;
+  ind: string;
+  arrow: string;
+}
+
+function getNodeStyle(node: TN, isSelected: boolean): NodeStyle {
+  return {
+    bg: isSelected ? C.accentBg : undefined,
+    fg: isSelected ? C.textBright : undefined,
+    cur: isSelected ? '▸' : ' ',
+    ind: '  '.repeat(node.depth),
+    arrow: node.children.length > 0 ? (node.expanded ? '▾' : '▸') : ' ',
+  };
+}
+
+function getData<T>(node: TN, key: string): T {
+  return (node.data as Record<string, unknown>)[key] as T;
+}
 
 function statusIcon(status: string): string {
   switch (status) {
@@ -50,105 +76,106 @@ function statusColor(status: string): string {
   }
 }
 
-interface Props {
-  node: TN;
-  isSelected: boolean;
+function OrgNode({ node, style }: { node: TN; style: NodeStyle }) {
+  return (
+    <Box>
+      <Text backgroundColor={style.bg} color={style.fg || C.accent} bold>
+        {style.cur} {style.arrow} ◆ {node.label}
+      </Text>
+    </Box>
+  );
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: render function with many node kinds — intentional branching
+function ProjectNode({ node, style }: { node: TN; style: NodeStyle }) {
+  const isLive = getData<boolean>(node, 'isLive');
+  const taskCount = getData<number>(node, 'taskCount') || 0;
+  const liveColor = isLive ? C.success : C.dim;
+
+  return (
+    <Box>
+      <Text backgroundColor={style.bg} color={style.fg || C.text} bold={!!style.bg}>
+        {style.cur} {style.ind}
+        {style.arrow}{' '}
+      </Text>
+      <Text backgroundColor={style.bg} color={style.bg ? C.textBright : liveColor}>
+        {isLive ? '●' : '○'}{' '}
+      </Text>
+      <Text backgroundColor={style.bg} color={style.fg || C.text} bold={!!style.bg}>
+        {node.label}
+      </Text>
+      {taskCount > 0 && (
+        <Text backgroundColor={style.bg} color={style.fg || C.dim}>
+          {' '}
+          ({taskCount})
+        </Text>
+      )}
+    </Box>
+  );
+}
+
+function BoardNode({ node, style }: { node: TN; style: NodeStyle }) {
+  const taskCount = getData<number>(node, 'taskCount') || 0;
+  return (
+    <Box>
+      <Text backgroundColor={style.bg} color={style.fg || C.text} bold={!!style.bg}>
+        {style.cur} {style.ind}
+        {style.arrow} ⊞ {node.label}
+      </Text>
+      {taskCount > 0 && (
+        <Text backgroundColor={style.bg} color={style.fg || C.dim}>
+          {' '}
+          ({taskCount})
+        </Text>
+      )}
+    </Box>
+  );
+}
+
+function ColumnNode({ node, style }: { node: TN; style: NodeStyle }) {
+  const count = getData<number>(node, 'taskCount') || 0;
+  return (
+    <Box>
+      <Text backgroundColor={style.bg} color={style.fg || (count > 0 ? C.text : C.dim)} bold={!!style.bg}>
+        {style.cur} {style.ind}
+        {style.arrow} ┃ {node.label}
+      </Text>
+      {count > 0 && (
+        <Text backgroundColor={style.bg} color={style.fg || C.warn}>
+          {' '}
+          ({count})
+        </Text>
+      )}
+    </Box>
+  );
+}
+
+function TaskNode({ node, style }: { node: TN; style: NodeStyle }) {
+  const status = getData<string>(node, 'status') || '';
+  const active = getData<boolean>(node, 'active');
+  const icon = active ? '▶' : statusIcon(status);
+  const color = active ? C.live : statusColor(status);
+
+  return (
+    <Box>
+      <Text backgroundColor={style.bg} color={style.fg || color} bold={!!style.bg || active}>
+        {style.cur} {style.ind}
+        {icon} {node.label}
+      </Text>
+    </Box>
+  );
+}
+
+const renderers: Record<string, (props: { node: TN; style: NodeStyle }) => React.JSX.Element> = {
+  org: OrgNode,
+  project: ProjectNode,
+  board: BoardNode,
+  column: ColumnNode,
+  task: TaskNode,
+};
+
 export default function TreeNodeView({ node, isSelected }: Props) {
-  const n = node;
-  const ind = '  '.repeat(n.depth);
-  const arrow = n.children.length > 0 ? (n.expanded ? '▾' : '▸') : ' ';
-  const cur = isSelected ? '▸' : ' ';
-  const bg = isSelected ? C.accentBg : undefined;
-  const fg = isSelected ? C.textBright : undefined;
-
-  if (n.kind === 'org') {
-    return (
-      <Box>
-        <Text backgroundColor={bg} color={fg || C.accent} bold>
-          {cur} {arrow} ◆ {n.label}
-        </Text>
-      </Box>
-    );
-  }
-
-  if (n.kind === 'project') {
-    const isLive = !!(n.data as Record<string, unknown>).isLive;
-    const taskCount = ((n.data as Record<string, unknown>).taskCount as number) || 0;
-    return (
-      <Box>
-        <Text backgroundColor={bg} color={fg || C.text} bold={isSelected}>
-          {cur} {ind}
-          {arrow}{' '}
-        </Text>
-        <Text backgroundColor={bg} color={isSelected ? C.textBright : isLive ? C.success : C.dim}>
-          {isLive ? '●' : '○'}{' '}
-        </Text>
-        <Text backgroundColor={bg} color={fg || C.text} bold={isSelected}>
-          {n.label}
-        </Text>
-        {taskCount > 0 && (
-          <Text backgroundColor={bg} color={fg || C.dim}>
-            {' '}
-            ({taskCount})
-          </Text>
-        )}
-      </Box>
-    );
-  }
-
-  if (n.kind === 'board') {
-    const taskCount = ((n.data as Record<string, unknown>).taskCount as number) || 0;
-    return (
-      <Box>
-        <Text backgroundColor={bg} color={fg || C.text} bold={isSelected}>
-          {cur} {ind}
-          {arrow} ⊞ {n.label}
-        </Text>
-        {taskCount > 0 && (
-          <Text backgroundColor={bg} color={fg || C.dim}>
-            {' '}
-            ({taskCount})
-          </Text>
-        )}
-      </Box>
-    );
-  }
-
-  if (n.kind === 'column') {
-    const count = ((n.data as Record<string, unknown>).taskCount as number) || 0;
-    return (
-      <Box>
-        <Text backgroundColor={bg} color={fg || (count > 0 ? C.text : C.dim)} bold={isSelected}>
-          {cur} {ind}
-          {arrow} ┃ {n.label}
-        </Text>
-        {count > 0 && (
-          <Text backgroundColor={bg} color={fg || C.warn}>
-            {' '}
-            ({count})
-          </Text>
-        )}
-      </Box>
-    );
-  }
-
-  if (n.kind === 'task') {
-    const status = ((n.data as Record<string, unknown>).status as string) || '';
-    const active = !!(n.data as Record<string, unknown>).active;
-    const icon = active ? '▶' : statusIcon(status);
-    const color = active ? C.live : statusColor(status);
-    return (
-      <Box>
-        <Text backgroundColor={bg} color={fg || color} bold={isSelected || active}>
-          {cur} {ind}
-          {icon} {n.label}
-        </Text>
-      </Box>
-    );
-  }
-
-  return <Text color={C.dim}>{n.label}</Text>;
+  const style = getNodeStyle(node, isSelected);
+  const Renderer = renderers[node.kind];
+  if (Renderer) return <Renderer node={node} style={style} />;
+  return <Text color={C.dim}>{node.label}</Text>;
 }

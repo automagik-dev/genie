@@ -63,38 +63,42 @@ export default function Nav({ tree, onProjectSelect, onExit }: Props) {
     setVersion((v) => v + 1);
   }, []);
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: keyboard handler with many shortcuts
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sel derived from cursor+nodes, re-evaluated each render
+  const handleNavigation = useCallback(
+    (key: { upArrow: boolean; downArrow: boolean }) => {
+      if (key.upArrow) setCursor((c) => (c <= 0 ? nodes.length - 1 : c - 1));
+      if (key.downArrow) setCursor((c) => (c >= nodes.length - 1 ? 0 : c + 1));
+    },
+    [nodes.length],
+  );
+
+  const handleTreeAction = useCallback(
+    (key: { rightArrow: boolean; leftArrow: boolean; return: boolean }) => {
+      if (!sel) return;
+      if (key.rightArrow && sel.children.length > 0 && !sel.expanded) toggleExpand(sel);
+      if (key.leftArrow && sel.expanded) toggleExpand(sel);
+      if (key.return && sel.children.length > 0) toggleExpand(sel);
+    },
+    [sel, toggleExpand],
+  );
+
+  const switchToTerminal = useCallback(() => {
+    try {
+      const { execSync } = require('node:child_process');
+      execSync('tmux select-pane -t genie-tui:main.1');
+    } catch {}
+  }, []);
+
   useInput((input, key) => {
     if (input === 'q') {
       onExit();
       return;
     }
-
-    // Circular navigation
-    if (key.upArrow) setCursor((c) => (c <= 0 ? nodes.length - 1 : c - 1));
-    if (key.downArrow) setCursor((c) => (c >= nodes.length - 1 ? 0 : c + 1));
-
-    // Expand/collapse
-    if (key.rightArrow && sel?.children.length && !sel.expanded) {
-      toggleExpand(sel);
-    }
-    if (key.leftArrow && sel?.expanded) {
-      toggleExpand(sel);
-    }
-
-    // Enter: expand/collapse nodes with children
-    if (key.return && sel?.children.length) {
-      toggleExpand(sel);
-    }
-
-    // Tab: switch to right pane
     if (key.tab) {
-      try {
-        const { execSync } = require('node:child_process');
-        execSync('tmux select-pane -t genie-tui:main.1');
-      } catch {}
+      switchToTerminal();
+      return;
     }
+    handleNavigation(key);
+    handleTreeAction(key);
   });
 
   const liveCount = nodes.filter((n) => n.kind === 'project' && !!(n.data as Record<string, unknown>).isLive).length;
