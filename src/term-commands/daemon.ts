@@ -193,6 +193,7 @@ async function daemonStartCommand(options: StartOptions): Promise<void> {
 async function runForeground(): Promise<void> {
   const { startDaemon } = await import('../lib/scheduler-daemon.js');
 
+  process.env.GENIE_IS_DAEMON = '1';
   writePid(process.pid);
   console.log(`Scheduler daemon starting (PID ${process.pid}, foreground)`);
 
@@ -220,7 +221,7 @@ async function runBackground(): Promise<void> {
   const child = spawn(bunPath, [genieBin, 'daemon', 'start', '--foreground'], {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env },
+    env: { ...process.env, GENIE_IS_DAEMON: '1' },
   });
 
   child.unref();
