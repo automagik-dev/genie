@@ -66,6 +66,7 @@ import { registerStateCommands } from './term-commands/state.js';
 import { registerTagCommands } from './term-commands/tag.js';
 import { registerTaskCommands } from './term-commands/task.js';
 import { registerTeamNamespace } from './term-commands/team.js';
+import { registerTemplateCommands } from './term-commands/template.js';
 import { registerTypeCommands } from './term-commands/type.js';
 
 // Safety net: ensure git repo is never in bare mode.
@@ -176,6 +177,7 @@ registerSessionsCommands(program);
 registerMetricsCommands(program);
 registerExportCommands(program);
 registerImportCommands(program);
+registerTemplateCommands(program);
 
 // Item registry commands — install, publish (top-level), item uninstall/update (namespaced)
 registerInstallCommand(program);
