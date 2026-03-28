@@ -295,6 +295,28 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         expect(disbanded).toBe(false);
       });
 
+      test('deletes associated agent_templates on disband', async () => {
+        await createTeam('feat/tpl-cleanup', TEST_REPO, 'dev');
+        const sql = await getConnection();
+
+        // Insert agent_templates rows for this team
+        await sql`
+          INSERT INTO agent_templates (id, provider, team, cwd, last_spawned_at)
+          VALUES ('tpl-cleanup-1', 'claude', 'feat/tpl-cleanup', ${TEST_REPO}, now()),
+                 ('tpl-cleanup-2', 'claude', 'feat/tpl-cleanup', ${TEST_REPO}, now())
+        `;
+
+        // Verify templates exist
+        const before = await sql`SELECT count(*)::int AS cnt FROM agent_templates WHERE team = 'feat/tpl-cleanup'`;
+        expect(before[0].cnt).toBe(2);
+
+        await disbandTeam('feat/tpl-cleanup');
+
+        // Templates should be gone
+        const after = await sql`SELECT count(*)::int AS cnt FROM agent_templates WHERE team = 'feat/tpl-cleanup'`;
+        expect(after[0].cnt).toBe(0);
+      });
+
       test('cleans up Claude teams settings directory', async () => {
         const CLAUDE_DIR = join(TEST_DIR, 'claude-config');
         process.env.CLAUDE_CONFIG_DIR = CLAUDE_DIR;

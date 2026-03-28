@@ -341,6 +341,18 @@ export async function completeGroup(slug: string, groupName: string, cwd?: strin
     WHERE id = ${child.id as string}
   `;
 
+  // Auto-advance task stage: build→review, review→qa, qa→ship
+  const STAGE_ADVANCE: Record<string, string> = { build: 'review', review: 'qa', qa: 'ship' };
+  const currentStage = child.stage as string;
+  const nextStage = STAGE_ADVANCE[currentStage];
+  if (nextStage) {
+    await sql`UPDATE tasks SET stage = ${nextStage}, updated_at = ${now} WHERE id = ${child.id as string}`;
+    await sql`
+      INSERT INTO task_stage_log (task_id, from_stage, to_stage, actor_type, actor_id)
+      VALUES (${child.id as string}, ${currentStage}, ${nextStage}, 'system', 'wish-state')
+    `;
+  }
+
   // Recalculate dependents: blocked siblings → ready when ALL deps done
   await sql`
     UPDATE tasks SET status = 'ready', updated_at = ${now}

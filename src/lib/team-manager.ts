@@ -420,8 +420,11 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     }
   }
 
-  // Delete team config from PG
+  // Delete associated agent templates (prevents template leak on disband)
   const sql = await getConnection();
+  await sql`DELETE FROM agent_templates WHERE team = ${teamName}`;
+
+  // Delete team config from PG
   const result = await sql`DELETE FROM teams WHERE name = ${teamName}`;
   if (result.count === 0) return false;
 

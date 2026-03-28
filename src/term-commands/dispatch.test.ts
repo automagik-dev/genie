@@ -15,6 +15,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { buildClaudeCommand } from '../lib/provider-adapters.js';
 import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
@@ -764,5 +765,46 @@ describe('detectWorkMode()', () => {
   it('should handle complex slug with # in old style', () => {
     const result = detectWorkMode('reviewer', 'auto-orchestrate#5');
     expect(result).toEqual({ mode: 'manual', ref: 'auto-orchestrate#5', agent: 'reviewer' });
+  });
+});
+
+// ============================================================================
+// --prompt flag passthrough
+// ============================================================================
+
+describe('spawn --prompt flag', () => {
+  it('should pass initialPrompt as positional arg in spawned command', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      role: 'engineer',
+      initialPrompt: 'implement the login page',
+    });
+
+    // The prompt should appear as a shell-escaped positional arg
+    expect(result.command).toContain("'implement the login page'");
+  });
+
+  it('should not include prompt arg when initialPrompt is undefined', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      role: 'engineer',
+    });
+
+    // Command should end with the agent flag, no trailing prompt
+    expect(result.command).toContain("--agent 'engineer'");
+    expect(result.command).not.toContain('implement');
+  });
+
+  it('should handle prompts with special characters', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      initialPrompt: "fix the bug in user's auth flow",
+    });
+
+    // Single quotes in prompt should be properly escaped
+    expect(result.command).toContain('auth flow');
   });
 });

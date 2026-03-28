@@ -240,8 +240,10 @@ program
   .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
   .option('--session <session>', 'Tmux session name to spawn into')
   .option('--no-auto-resume', 'Disable auto-resume on pane death')
-  .action(async (name: string, options: SpawnOptions) => {
+  .option('--prompt <text>', 'Initial prompt for the agent')
+  .action(async (name: string, options: SpawnOptions & { prompt?: string }) => {
     try {
+      if (options.prompt) options.initialPrompt = options.prompt;
       await handleWorkerSpawn(name, options);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
