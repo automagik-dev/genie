@@ -270,7 +270,22 @@ async function runExport(
 // ============================================================================
 
 export function registerExportCommands(program: Command): void {
-  const exp = program.command('export').description('Export genie data as JSON');
+  const exp = program
+    .command('export')
+    .description('Export genie data as JSON')
+    .option('--output <file>', 'Write to file instead of stdout')
+    .option('-o <file>', 'Alias for --output')
+    .option('--pretty', 'Pretty-print JSON')
+    .action(async (options: ExportOptions) => {
+      // Default action: `genie export` or `genie export -o file` → run export all
+      try {
+        if (!options.output) options.output = autoOutputName();
+        await runExport([...ALL_GROUPS], 'full', (sql) => exportAll(sql), options);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
 
   const sharedOpts = (cmd: ReturnType<Command['command']>) =>
     cmd.option('--output <file>', 'Write to file instead of stdout').option('--pretty', 'Pretty-print JSON');
