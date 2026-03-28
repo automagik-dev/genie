@@ -1,18 +1,88 @@
-/** Active work detection + Claude Code state from tmux panes — framework-agnostic */
+/** Active work detection — executor state from DB, tmux window matching as fallback */
 
+import type { ExecutorState } from '../lib/executor-types.js';
 import { listSessionWindows } from './tmux.js';
-import type { Task } from './types.js';
+import type { Task, TuiAssignment, TuiExecutor } from './types.js';
 
-/** Get active work: map tmux windows to tasks */
+type AgentState = 'idle' | 'working' | 'permission' | 'error';
+
+/** Map executor state to a TUI-visible agent state. */
+function toAgentState(state: ExecutorState): AgentState | undefined {
+  switch (state) {
+    case 'idle':
+    case 'running':
+      return 'idle';
+    case 'working':
+    case 'spawning':
+      return 'working';
+    case 'permission':
+    case 'question':
+      return 'permission';
+    case 'error':
+      return 'error';
+    default:
+      return undefined;
+  }
+}
+
+function statePriority(state: AgentState): number {
+  switch (state) {
+    case 'working':
+      return 3;
+    case 'permission':
+      return 2;
+    case 'error':
+      return 1;
+    case 'idle':
+      return 0;
+  }
+}
+
+/**
+ * Build activity map from executors + assignments (DB-driven).
+ * Maps task IDs to their executor count and aggregate state.
+ */
+export function getExecutorActivity(
+  executors: TuiExecutor[],
+  assignments: TuiAssignment[],
+): Map<string, { panes: number; state?: AgentState }> {
+  const result = new Map<string, { panes: number; state?: AgentState }>();
+
+  // Group assignments by task ID
+  const taskExecutors = new Map<string, TuiExecutor[]>();
+  for (const assignment of assignments) {
+    if (!assignment.taskId) continue;
+    const executor = executors.find((e) => e.id === assignment.executorId);
+    if (!executor) continue;
+    const existing = taskExecutors.get(assignment.taskId) || [];
+    existing.push(executor);
+    taskExecutors.set(assignment.taskId, existing);
+  }
+
+  // Convert to activity entries — pick the most "active" state
+  for (const [taskId, execs] of taskExecutors) {
+    let bestState: AgentState | undefined;
+    for (const exec of execs) {
+      const state = toAgentState(exec.state);
+      if (!state) continue;
+      if (!bestState || statePriority(state) > statePriority(bestState)) {
+        bestState = state;
+      }
+    }
+    result.set(taskId, { panes: execs.length, state: bestState });
+  }
+
+  return result;
+}
+
+/** Get active work from tmux windows (fallback for tasks without DB assignments). */
 export function getActiveWork(session: string): Array<{ windowName: string; index: number; active: boolean }> {
   return listSessionWindows(session)
     .filter((w) => w.name !== 'bash' && w.name !== 'zsh')
     .map((w) => ({ windowName: w.name, index: w.index, active: w.active }));
 }
 
-/** Match tmux window names to tasks by slug-based matching */
-type AgentState = 'idle' | 'working' | 'permission' | 'error';
-
+/** Match tmux window names to tasks by slug-based matching (fallback). */
 export function matchWorkToTasks(
   windows: Array<{ windowName: string; index: number }>,
   tasks: Task[],

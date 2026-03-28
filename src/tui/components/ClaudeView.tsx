@@ -1,12 +1,14 @@
 /** @jsxImportSource @opentui/react */
-/** Claude Code process list with PID linking and gap detection */
+/** Executor list — renders executor metadata from DB with gap detection */
 
 import { useMemo } from 'react';
-import type { DiagnosticGaps, LinkedProcess } from '../diagnostics.js';
+import type { DiagnosticGaps } from '../diagnostics.js';
 import { palette } from '../theme.js';
+import type { TuiAssignment, TuiExecutor } from '../types.js';
 
 interface ClaudeViewProps {
-  processes: LinkedProcess[];
+  executors: TuiExecutor[];
+  assignments: TuiAssignment[];
   gaps: DiagnosticGaps;
   selectedIndex: number;
 }
@@ -21,48 +23,75 @@ interface FlatClaudeRow {
   isOrphan: boolean;
 }
 
-function processToRows(proc: LinkedProcess, isOrphan: boolean): FlatClaudeRow[] {
-  const displayName = proc.agentName
-    ? `${proc.agentName}${proc.teamName ? `@${proc.teamName}` : ''}`
-    : `pid:${proc.pid}`;
-  const typeLabel = proc.agentType ? ` (${proc.agentType})` : '';
+const STATE_COLORS: Record<string, string> = {
+  working: palette.emerald,
+  idle: palette.textDim,
+  running: palette.cyan,
+  spawning: palette.warning,
+  permission: palette.warning,
+  question: palette.warning,
+  error: palette.error,
+};
 
-  const main: FlatClaudeRow = {
-    id: `proc:${proc.pid}`,
-    depth: 0,
-    label: `${displayName}${typeLabel}`,
-    color: isOrphan ? palette.error : palette.cyan,
-    detail: `pid:${proc.pid}`,
-    detailColor: palette.textMuted,
-    isOrphan,
-  };
-
-  const tmux: FlatClaudeRow = proc.tmuxLocation
-    ? {
-        id: `tmux:${proc.pid}`,
-        depth: 1,
-        label: `tmux: ${proc.tmuxLocation}`,
-        color: palette.emerald,
-        detail: proc.tmuxPane ? `[${proc.tmuxPane.title}]` : '',
-        detailColor: palette.textDim,
-        isOrphan: false,
-      }
-    : {
-        id: `tmux:${proc.pid}`,
-        depth: 1,
-        label: 'tmux: not linked',
-        color: palette.error,
-        detail: `ppid:${proc.ppid}`,
-        detailColor: palette.textMuted,
-        isOrphan: true,
-      };
-
-  return [main, tmux];
+function stateColor(state: string): string {
+  return STATE_COLORS[state] ?? palette.textMuted;
 }
 
-function flattenProcesses(processes: LinkedProcess[], gaps: DiagnosticGaps): FlatClaudeRow[] {
-  const orphanPids = new Set(gaps.orphanProcesses.map((p) => p.pid));
-  const rows: FlatClaudeRow[] = processes.flatMap((proc) => processToRows(proc, orphanPids.has(proc.pid)));
+function executorToRows(exec: TuiExecutor, assignments: TuiAssignment[], isDead: boolean): FlatClaudeRow[] {
+  const displayName = exec.agentName ? `${exec.agentName}${exec.team ? `@${exec.team}` : ''}` : exec.agentId;
+  const roleLabel = exec.role ? ` (${exec.role})` : '';
+
+  const rows: FlatClaudeRow[] = [
+    {
+      id: `exec:${exec.id}`,
+      depth: 0,
+      label: `${displayName}${roleLabel}`,
+      color: isDead ? palette.error : stateColor(exec.state),
+      detail: isDead ? `DEAD pid:${exec.pid}` : `${exec.state} ${exec.provider}`,
+      detailColor: isDead ? palette.error : palette.textMuted,
+      isOrphan: isDead,
+    },
+    {
+      id: `meta:${exec.id}`,
+      depth: 1,
+      label: exec.tmuxPaneId
+        ? `${exec.tmuxSession ?? '?'}:${exec.tmuxPaneId}`
+        : exec.transport === 'api'
+          ? 'api (no tmux)'
+          : 'tmux: not linked',
+      color: exec.tmuxPaneId ? palette.emerald : exec.transport === 'api' ? palette.textDim : palette.error,
+      detail: exec.pid != null ? `pid:${exec.pid}` : '',
+      detailColor: palette.textMuted,
+      isOrphan: !exec.tmuxPaneId && exec.transport !== 'api',
+    },
+  ];
+
+  // Show active assignment if any
+  const activeAssignment = assignments.find((a) => a.executorId === exec.id);
+  if (activeAssignment) {
+    const taskLabel = activeAssignment.taskTitle ?? activeAssignment.taskId ?? 'unknown';
+    const wishLabel = activeAssignment.wishSlug ? ` [${activeAssignment.wishSlug}]` : '';
+    rows.push({
+      id: `assign:${exec.id}`,
+      depth: 1,
+      label: `\u2192 ${taskLabel}${wishLabel}`,
+      color: palette.purple,
+      detail: activeAssignment.groupNumber != null ? `grp:${activeAssignment.groupNumber}` : '',
+      detailColor: palette.textMuted,
+      isOrphan: false,
+    });
+  }
+
+  return rows;
+}
+
+function flattenExecutors(
+  executors: TuiExecutor[],
+  assignments: TuiAssignment[],
+  gaps: DiagnosticGaps,
+): FlatClaudeRow[] {
+  const deadIds = new Set(gaps.deadPidExecutors.map((e) => e.id));
+  const rows: FlatClaudeRow[] = executors.flatMap((exec) => executorToRows(exec, assignments, deadIds.has(exec.id)));
 
   if (gaps.orphanPanes.length > 0) {
     rows.push({
@@ -90,8 +119,8 @@ function flattenProcesses(processes: LinkedProcess[], gaps: DiagnosticGaps): Fla
   return rows;
 }
 
-export function ClaudeView({ processes, gaps, selectedIndex }: ClaudeViewProps) {
-  const rows = useMemo(() => flattenProcesses(processes, gaps), [processes, gaps]);
+export function ClaudeView({ executors, assignments, gaps, selectedIndex }: ClaudeViewProps) {
+  const rows = useMemo(() => flattenExecutors(executors, assignments, gaps), [executors, assignments, gaps]);
 
   return (
     <box flexDirection="column" width="100%" height="100%">
@@ -99,14 +128,14 @@ export function ClaudeView({ processes, gaps, selectedIndex }: ClaudeViewProps) 
       <box height={1} paddingX={1} backgroundColor={palette.bgLighter}>
         <text>
           <span fg={palette.emerald}>{gaps.linkedCount} linked</span>
-          {gaps.orphanProcesses.length > 0 ? (
-            <span fg={palette.error}> {gaps.orphanProcesses.length} orphan</span>
+          {gaps.deadPidExecutors.length > 0 ? (
+            <span fg={palette.error}> {gaps.deadPidExecutors.length} dead</span>
           ) : null}
           {gaps.orphanPanes.length > 0 ? <span fg={palette.warning}> {gaps.orphanPanes.length} unmapped</span> : null}
         </text>
       </box>
 
-      {/* Process list */}
+      {/* Executor list */}
       <scrollbox
         focused
         height="100%"
@@ -143,10 +172,18 @@ export function ClaudeView({ processes, gaps, selectedIndex }: ClaudeViewProps) 
 }
 
 /** Get the total number of flat rows for keyboard navigation. */
-export function getClaudeRowCount(processes: LinkedProcess[], gaps: DiagnosticGaps): number {
-  let count = processes.length * 2; // each process + its tmux link line
+export function getClaudeRowCount(
+  executors: TuiExecutor[],
+  assignments: TuiAssignment[],
+  gaps: DiagnosticGaps,
+): number {
+  let count = 0;
+  for (const exec of executors) {
+    count += 2; // executor + meta line
+    if (assignments.some((a) => a.executorId === exec.id)) count++; // assignment line
+  }
   if (gaps.orphanPanes.length > 0) {
-    count += 1 + gaps.orphanPanes.length; // header + orphan panes
+    count += 1 + gaps.orphanPanes.length;
   }
   return count;
 }

@@ -3,13 +3,13 @@
 
 import { useKeyboard, useRenderer } from '@opentui/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getActiveWork, matchWorkToTasks } from './activity.js';
+import { getActiveWork, getExecutorActivity, matchWorkToTasks } from './activity.js';
 import { Nav } from './components/Nav.js';
-import { loadAll, subscribe } from './db.js';
+import { loadAll, loadAssignments, loadExecutors, subscribe } from './db.js';
 import { palette } from './theme.js';
 import { attachProject, switchRightPane } from './tmux.js';
 import { applyActivity, buildTree } from './tree.js';
-import type { TreeNode, TuiData } from './types.js';
+import type { TreeNode, TuiAssignment, TuiData, TuiExecutor } from './types.js';
 
 export function App({ rightPane }: { rightPane?: string }) {
   const renderer = useRenderer();
@@ -67,15 +67,46 @@ export function App({ rightPane }: { rightPane?: string }) {
     };
   }, []);
 
-  // Activity detection tick (1s)
+  // Executor + assignment state refs (for activity scan)
+  const executorsRef = useRef<TuiExecutor[]>([]);
+  const assignmentsRef = useRef<TuiAssignment[]>([]);
+
+  // Activity detection tick (1s) — DB executor state + tmux fallback
   useEffect(() => {
-    const timer = setInterval(() => {
+    let active = true;
+    const timer = setInterval(async () => {
       if (!dataRef.current) return;
-      const activity = scanActivity(dataRef.current);
-      setTree((prev) => applyActivity(prev, activity));
+      try {
+        // Refresh executor state from DB
+        const execs = await loadExecutors();
+        const execIds = execs.map((e) => e.id);
+        const assigns = execIds.length > 0 ? await loadAssignments(execIds) : [];
+        if (!active) return;
+        executorsRef.current = execs;
+        assignmentsRef.current = assigns;
+
+        // DB-driven activity (primary)
+        const dbActivity = getExecutorActivity(execs, assigns);
+
+        // tmux fallback for tasks without DB assignments
+        const tmuxActivity = scanTmuxActivity(dataRef.current);
+        for (const [taskId, act] of tmuxActivity) {
+          if (!dbActivity.has(taskId)) dbActivity.set(taskId, act);
+        }
+
+        setTree((prev) => applyActivity(prev, dbActivity));
+      } catch {
+        // Fallback to tmux-only on DB error
+        if (!dataRef.current) return;
+        const activity = scanTmuxActivity(dataRef.current);
+        setTree((prev) => applyActivity(prev, activity));
+      }
     }, 1000);
 
-    return () => clearInterval(timer);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
   }, []);
 
   const handleTreeChange = useCallback((newTree: TreeNode[]) => {
@@ -136,8 +167,8 @@ function mergeExpandedState(oldTree: TreeNode[], newTree: TreeNode[]): TreeNode[
   return apply(newTree);
 }
 
-/** Scan all project tmux sessions for active work */
-function scanActivity(
+/** Scan all project tmux sessions for active work (fallback when DB data unavailable). */
+function scanTmuxActivity(
   data: TuiData,
 ): Map<string, { panes: number; state?: 'idle' | 'working' | 'permission' | 'error' }> {
   const allActivity = new Map<string, { panes: number; state?: 'idle' | 'working' | 'permission' | 'error' }>();
