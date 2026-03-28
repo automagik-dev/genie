@@ -23,6 +23,7 @@ import {
   registerNativeMember,
   sanitizeTeamName,
 } from '../lib/claude-native-teams.js';
+import * as executorRegistry from '../lib/executor-registry.js';
 import { buildTeamLeadCommand, sessionExists, shellQuote } from '../lib/team-lead-command.js';
 import * as tmux from '../lib/tmux.js';
 import { scaffoldAgentFiles } from '../templates/index.js';
@@ -108,6 +109,29 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
       nativeTeamEnabled: true,
       nativeAgentId: `team-lead@${sanitized}`,
     });
+
+    // Executor model: create agent identity + executor for team-lead session
+    const agentIdentity = await registry.findOrCreateAgent('team-lead', sanitized, 'team-lead');
+    await executorRegistry.terminateActiveExecutor(agentIdentity.id);
+
+    let pid: number | null = null;
+    try {
+      const pidStr = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_pid}'`)).trim();
+      const parsed = Number.parseInt(pidStr, 10);
+      if (parsed > 0) pid = parsed;
+    } catch {
+      /* best-effort */
+    }
+
+    const executor = await executorRegistry.createExecutor(agentIdentity.id, 'claude', 'tmux', {
+      pid,
+      tmuxSession: sessionName,
+      tmuxPaneId: paneId,
+      tmuxWindow: windowName,
+      state: 'spawning',
+      repoPath: workspaceDir,
+    });
+    await registry.setCurrentExecutor(agentIdentity.id, executor.id);
   } catch {
     // Best-effort — don't block session startup if registration fails
   }
