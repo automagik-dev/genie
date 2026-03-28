@@ -196,7 +196,7 @@ function formatHumanOutput(events: LogEvent[], label: string): string {
 // Agent Resolution
 // ============================================================================
 
-async function findAgent(identifier: string): Promise<agentRegistry.Agent | null> {
+async function findAgent(identifier: string, teamName?: string): Promise<agentRegistry.Agent | null> {
   let agent = await agentRegistry.get(identifier);
   if (agent) return agent;
 
@@ -204,6 +204,17 @@ async function findAgent(identifier: string): Promise<agentRegistry.Agent | null
   if (agent) return agent;
 
   const all = await agentRegistry.list();
+
+  // Scope fuzzy match to team first, then fall back to global
+  const pool = teamName ? all.filter((a) => a.team === teamName) : [];
+  const teamMatch = pool.find(
+    (w) =>
+      w.id.includes(identifier) ||
+      w.taskId?.includes(identifier) ||
+      w.taskTitle?.toLowerCase().includes(identifier.toLowerCase()),
+  );
+  if (teamMatch) return teamMatch;
+
   return (
     all.find(
       (w) =>
@@ -286,8 +297,8 @@ export async function logCommand(agentName: string | undefined, options: LogOpti
     events = await readTeamLog(agents, repoPath, options.team, filter);
     label = `team:${options.team} (${agents.length} agents)`;
   } else if (agentName) {
-    // Single agent mode
-    const agent = await findAgent(agentName);
+    // Single agent mode — scope to team if specified
+    const agent = await findAgent(agentName, options.team);
     if (!agent) {
       console.error(`Agent "${agentName}" not found. Run \`genie ls\` to see agents.`);
       process.exit(1);
@@ -357,7 +368,7 @@ async function followCommand(
     console.error(`Following ${label} via ${handle.mode === 'nats' ? 'NATS' : 'file polling'} (Ctrl+C to stop)...`);
     setupShutdown(handle.stop);
   } else if (agentName) {
-    const agent = await findAgent(agentName);
+    const agent = await findAgent(agentName, options.team);
     if (!agent) {
       console.error(`Agent "${agentName}" not found. Run \`genie ls\` to see agents.`);
       process.exit(1);
