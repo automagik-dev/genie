@@ -70,8 +70,15 @@ export function detectClaudeState(paneId: string): ClaudeState {
   }
 }
 
-/** Get aggregate state for a tmux session (any working = working). */
+/** 1s cache for session state — prevents N subprocess spawns per cursor move */
+const stateCache = new Map<string, { state: ClaudeState; ts: number }>();
+const CACHE_TTL = 1000;
+
+/** Get aggregate state for a tmux session (any working = working). Cached 1s. */
 export function getSessionState(session: string): ClaudeState {
+  const cached = stateCache.get(session);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.state;
+
   try {
     const out = execSync(`tmux list-panes -s -t ${session} -F '#{pane_id}|#{pane_current_command}'`, {
       encoding: 'utf8',
@@ -84,7 +91,10 @@ export function getSessionState(session: string): ClaudeState {
       .filter((l) => l.split('|')[1] === 'claude')
       .map((l) => l.split('|')[0] ?? '');
 
-    if (claudePanes.length === 0) return 'offline';
+    if (claudePanes.length === 0) {
+      stateCache.set(session, { state: 'offline', ts: Date.now() });
+      return 'offline';
+    }
 
     let hasWorking = false;
     let hasPermission = false;
@@ -95,9 +105,9 @@ export function getSessionState(session: string): ClaudeState {
       if (state === 'permission') hasPermission = true;
     }
 
-    if (hasPermission) return 'permission';
-    if (hasWorking) return 'working';
-    return 'idle';
+    const result: ClaudeState = hasPermission ? 'permission' : hasWorking ? 'working' : 'idle';
+    stateCache.set(session, { state: result, ts: Date.now() });
+    return result;
   } catch {
     return 'offline';
   }

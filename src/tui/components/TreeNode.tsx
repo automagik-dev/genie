@@ -1,11 +1,11 @@
 /**
  * TreeNode — renders a single node in the navigation tree.
- * Split into per-kind renderers to keep cognitive complexity low.
+ * Uses typed TreeNodeData — zero Record<string, unknown> casts.
  */
 
 import { Box, Text } from 'ink';
-import type React from 'react';
 import type { TreeNode as TN } from '../tree.js';
+import type { TreeNodeData } from '../types.js';
 
 const C = {
   accent: '#a855f7',
@@ -32,7 +32,7 @@ interface NodeStyle {
   arrow: string;
 }
 
-function getNodeStyle(node: TN, isSelected: boolean): NodeStyle {
+function getStyle(node: TN, isSelected: boolean): NodeStyle {
   return {
     bg: isSelected ? C.accentBg : undefined,
     fg: isSelected ? C.textBright : undefined,
@@ -40,10 +40,6 @@ function getNodeStyle(node: TN, isSelected: boolean): NodeStyle {
     ind: '  '.repeat(node.depth),
     arrow: node.children.length > 0 ? (node.expanded ? '▾' : '▸') : ' ',
   };
-}
-
-function getData<T>(node: TN, key: string): T {
-  return (node.data as Record<string, unknown>)[key] as T;
 }
 
 function statusIcon(status: string): string {
@@ -76,106 +72,99 @@ function statusColor(status: string): string {
   }
 }
 
-function OrgNode({ node, style }: { node: TN; style: NodeStyle }) {
+function OrgNode({ s }: { s: NodeStyle; d: TreeNodeData & { kind: 'org' } }) {
   return (
-    <Box>
-      <Text backgroundColor={style.bg} color={style.fg || C.accent} bold>
-        {style.cur} {style.arrow} ◆ {node.label}
-      </Text>
-    </Box>
+    <Text backgroundColor={s.bg} color={s.fg || C.accent} bold>
+      {s.cur} {s.arrow} ◆ {s.ind}
+    </Text>
   );
 }
 
-function ProjectNode({ node, style }: { node: TN; style: NodeStyle }) {
-  const isLive = getData<boolean>(node, 'isLive');
-  const taskCount = getData<number>(node, 'taskCount') || 0;
-  const liveColor = isLive ? C.success : C.dim;
-
+function ProjectNode({ node, s, d }: { node: TN; s: NodeStyle; d: TreeNodeData & { kind: 'project' } }) {
+  const liveColor = d.isLive ? C.success : C.dim;
   return (
     <Box>
-      <Text backgroundColor={style.bg} color={style.fg || C.text} bold={!!style.bg}>
-        {style.cur} {style.ind}
-        {style.arrow}{' '}
+      <Text backgroundColor={s.bg} color={s.fg || C.text} bold={!!s.bg}>
+        {s.cur} {s.ind}
+        {s.arrow}{' '}
       </Text>
-      <Text backgroundColor={style.bg} color={style.bg ? C.textBright : liveColor}>
-        {isLive ? '●' : '○'}{' '}
+      <Text backgroundColor={s.bg} color={s.bg ? C.textBright : liveColor}>
+        {d.isLive ? '●' : '○'}{' '}
       </Text>
-      <Text backgroundColor={style.bg} color={style.fg || C.text} bold={!!style.bg}>
+      <Text backgroundColor={s.bg} color={s.fg || C.text} bold={!!s.bg}>
         {node.label}
       </Text>
-      {taskCount > 0 && (
-        <Text backgroundColor={style.bg} color={style.fg || C.dim}>
+      {d.taskCount > 0 && (
+        <Text backgroundColor={s.bg} color={s.fg || C.dim}>
           {' '}
-          ({taskCount})
+          ({d.taskCount})
         </Text>
       )}
     </Box>
   );
 }
 
-function BoardNode({ node, style }: { node: TN; style: NodeStyle }) {
-  const taskCount = getData<number>(node, 'taskCount') || 0;
+function BoardNode({ node, s, d }: { node: TN; s: NodeStyle; d: TreeNodeData & { kind: 'board' } }) {
   return (
     <Box>
-      <Text backgroundColor={style.bg} color={style.fg || C.text} bold={!!style.bg}>
-        {style.cur} {style.ind}
-        {style.arrow} ⊞ {node.label}
+      <Text backgroundColor={s.bg} color={s.fg || C.text} bold={!!s.bg}>
+        {s.cur} {s.ind}
+        {s.arrow} ⊞ {node.label}
       </Text>
-      {taskCount > 0 && (
-        <Text backgroundColor={style.bg} color={style.fg || C.dim}>
+      {d.taskCount > 0 && (
+        <Text backgroundColor={s.bg} color={s.fg || C.dim}>
           {' '}
-          ({taskCount})
+          ({d.taskCount})
         </Text>
       )}
     </Box>
   );
 }
 
-function ColumnNode({ node, style }: { node: TN; style: NodeStyle }) {
-  const count = getData<number>(node, 'taskCount') || 0;
+function ColumnNode({ node, s, d }: { node: TN; s: NodeStyle; d: TreeNodeData & { kind: 'column' } }) {
   return (
     <Box>
-      <Text backgroundColor={style.bg} color={style.fg || (count > 0 ? C.text : C.dim)} bold={!!style.bg}>
-        {style.cur} {style.ind}
-        {style.arrow} ┃ {node.label}
+      <Text backgroundColor={s.bg} color={s.fg || (d.taskCount > 0 ? C.text : C.dim)} bold={!!s.bg}>
+        {s.cur} {s.ind}
+        {s.arrow} ┃ {node.label}
       </Text>
-      {count > 0 && (
-        <Text backgroundColor={style.bg} color={style.fg || C.warn}>
+      {d.taskCount > 0 && (
+        <Text backgroundColor={s.bg} color={s.fg || C.warn}>
           {' '}
-          ({count})
+          ({d.taskCount})
         </Text>
       )}
     </Box>
   );
 }
 
-function TaskNode({ node, style }: { node: TN; style: NodeStyle }) {
-  const status = getData<string>(node, 'status') || '';
-  const active = getData<boolean>(node, 'active');
-  const icon = active ? '▶' : statusIcon(status);
-  const color = active ? C.live : statusColor(status);
-
+function TaskNode({ node, s, d }: { node: TN; s: NodeStyle; d: TreeNodeData & { kind: 'task' } }) {
+  const icon = d.active ? '▶' : statusIcon(d.status);
+  const color = d.active ? C.live : statusColor(d.status);
   return (
-    <Box>
-      <Text backgroundColor={style.bg} color={style.fg || color} bold={!!style.bg || active}>
-        {style.cur} {style.ind}
-        {icon} {node.label}
-      </Text>
-    </Box>
+    <Text backgroundColor={s.bg} color={s.fg || color} bold={!!s.bg || !!d.active}>
+      {s.cur} {s.ind}
+      {icon} {node.label}
+    </Text>
   );
 }
-
-const renderers: Record<string, (props: { node: TN; style: NodeStyle }) => React.JSX.Element> = {
-  org: OrgNode,
-  project: ProjectNode,
-  board: BoardNode,
-  column: ColumnNode,
-  task: TaskNode,
-};
 
 export default function TreeNodeView({ node, isSelected }: Props) {
-  const style = getNodeStyle(node, isSelected);
-  const Renderer = renderers[node.kind];
-  if (Renderer) return <Renderer node={node} style={style} />;
-  return <Text color={C.dim}>{node.label}</Text>;
+  const s = getStyle(node, isSelected);
+  const d = node.data;
+
+  switch (d.kind) {
+    case 'org':
+      return <OrgNode s={s} d={d} />;
+    case 'project':
+      return <ProjectNode node={node} s={s} d={d} />;
+    case 'board':
+      return <BoardNode node={node} s={s} d={d} />;
+    case 'column':
+      return <ColumnNode node={node} s={s} d={d} />;
+    case 'task':
+      return <TaskNode node={node} s={s} d={d} />;
+    default:
+      return <Text color={C.dim}>{node.label}</Text>;
+  }
 }

@@ -57,7 +57,13 @@ export interface TuiData {
   teams: TuiTeam[];
 }
 
-// TreeNode, AgentState types added by Group 4/6 when navigation tree is implemented.
+/** Discriminated union for TreeNode data — no Record<string, unknown> casts needed */
+export type TreeNodeData =
+  | ({ kind: 'org' } & TuiOrg)
+  | ({ kind: 'project' } & TuiProject & { isLive: boolean; taskCount: number })
+  | ({ kind: 'board' } & TuiBoard & { taskCount: number })
+  | ({ kind: 'column' } & TuiColumn & { taskCount: number })
+  | ({ kind: 'task' } & TuiTask & { active?: boolean; panes?: number });
 
 export interface TuiOptions {
   dev?: boolean;

@@ -44,7 +44,7 @@ export default function App() {
     // First load: expand org root + first live project
     if (expandedRef.current.size === 0 && newTree[0]) {
       newTree[0].expanded = true;
-      const liveProject = newTree[0].children.find((n) => !!(n.data as Record<string, unknown>).isLive);
+      const liveProject = newTree[0].children.find((n) => n.data.kind === 'project' && n.data.isLive);
       if (liveProject) liveProject.expanded = true;
     }
     setTree(newTree);

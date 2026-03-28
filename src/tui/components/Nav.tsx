@@ -49,7 +49,7 @@ export default function Nav({ tree, onProjectSelect, onExit }: Props) {
     for (let i = cursor; i >= 0; i--) {
       const n = nodes[i];
       if (n && (n.kind === 'org' || n.kind === 'project')) {
-        const session = (n.data as Record<string, unknown>).tmuxSession as string | null;
+        const session = n.data.kind === 'project' ? n.data.tmuxSession : null;
         if (session) {
           onProjectSelect(session);
           break;
@@ -101,7 +101,7 @@ export default function Nav({ tree, onProjectSelect, onExit }: Props) {
     handleTreeAction(key);
   });
 
-  const liveCount = nodes.filter((n) => n.kind === 'project' && !!(n.data as Record<string, unknown>).isLive).length;
+  const liveCount = nodes.filter((n) => n.data.kind === 'project' && n.data.isLive).length;
 
   return (
     <Box flexDirection="column" width={cols} height={rows}>

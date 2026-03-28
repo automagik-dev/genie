@@ -1,10 +1,10 @@
 /**
  * Tree data structure for TUI navigation.
  * Builds a hierarchical tree: Org → Project → Board → Column → Task
- * from flat TuiData arrays.
+ * Uses indexed lookups (Map) instead of repeated filter() for O(1) access.
  */
 
-import type { TuiBoard, TuiColumn, TuiData, TuiTask } from './types.js';
+import type { TreeNodeData, TuiBoard, TuiColumn, TuiData, TuiTask } from './types.js';
 
 export type NodeKind = 'org' | 'project' | 'board' | 'column' | 'task';
 
@@ -14,27 +14,55 @@ export interface TreeNode {
   label: string;
   depth: number;
   expanded: boolean;
-  data: Record<string, unknown>;
+  data: TreeNodeData;
   children: TreeNode[];
 }
 
-interface TreeState {
-  cursor: number;
-  expanded: Set<string>;
+/** Pre-indexed data for O(1) lookups during tree construction. */
+interface DataIndex {
+  boardsByProject: Map<string, TuiBoard[]>;
+  columnsByBoard: Map<string, TuiColumn[]>;
+  tasksByBoard: Map<string, TuiTask[]>;
+}
+
+function buildIndex(data: TuiData): DataIndex {
+  const boardsByProject = new Map<string, TuiBoard[]>();
+  const columnsByBoard = new Map<string, TuiColumn[]>();
+  const tasksByBoard = new Map<string, TuiTask[]>();
+
+  for (const b of data.boards) {
+    const arr = boardsByProject.get(b.projectId) ?? [];
+    arr.push(b);
+    boardsByProject.set(b.projectId, arr);
+  }
+  for (const c of data.columns) {
+    const arr = columnsByBoard.get(c.boardId) ?? [];
+    arr.push(c);
+    columnsByBoard.set(c.boardId, arr);
+  }
+  for (const t of data.tasks) {
+    const arr = tasksByBoard.get(t.boardId) ?? [];
+    arr.push(t);
+    tasksByBoard.set(t.boardId, arr);
+  }
+
+  return { boardsByProject, columnsByBoard, tasksByBoard };
 }
 
 /**
  * Build navigation tree from flat data.
- * Sessions = set of live tmux session names (for project live indicators).
+ * Uses pre-indexed Maps for O(1) child lookups instead of O(n) filter.
  */
 export function buildTree(data: TuiData, liveSessions: Set<string>): TreeNode[] {
   const org = data.orgs[0];
   if (!org) return [];
 
+  const idx = buildIndex(data);
+
   const projectNodes: TreeNode[] = data.projects.map((p) => {
     const isLive = p.tmuxSession ? liveSessions.has(p.tmuxSession) : false;
-    const pBoards = data.boards.filter((b) => b.projectId === p.id);
-    const pTasks = data.tasks.filter((t) => pBoards.some((b) => b.id === t.boardId));
+    const pBoards = idx.boardsByProject.get(p.id) ?? [];
+    const taskCount = pBoards.reduce((s, b) => s + (idx.tasksByBoard.get(b.id)?.length ?? 0), 0);
 
     return {
       kind: 'project' as NodeKind,
@@ -42,8 +70,8 @@ export function buildTree(data: TuiData, liveSessions: Set<string>): TreeNode[] 
       label: p.name,
       depth: 1,
       expanded: false,
-      data: { ...p, isLive, taskCount: pTasks.length },
-      children: pBoards.map((b) => buildBoardNode(b, data, 2)),
+      data: { kind: 'project', ...p, isLive, taskCount },
+      children: pBoards.map((b) => buildBoardNode(b, idx, 2)),
     };
   });
 
@@ -54,15 +82,15 @@ export function buildTree(data: TuiData, liveSessions: Set<string>): TreeNode[] 
       label: org.name,
       depth: 0,
       expanded: true,
-      data: { ...org },
+      data: { kind: 'org', ...org },
       children: projectNodes,
     },
   ];
 }
 
-function buildBoardNode(board: TuiBoard, data: TuiData, depth: number): TreeNode {
-  const boardCols = data.columns.filter((c) => c.boardId === board.id);
-  const boardTasks = data.tasks.filter((t) => t.boardId === board.id);
+function buildBoardNode(board: TuiBoard, idx: DataIndex, depth: number): TreeNode {
+  const boardCols = idx.columnsByBoard.get(board.id) ?? [];
+  const boardTasks = idx.tasksByBoard.get(board.id) ?? [];
 
   return {
     kind: 'board',
@@ -70,13 +98,13 @@ function buildBoardNode(board: TuiBoard, data: TuiData, depth: number): TreeNode
     label: board.name,
     depth,
     expanded: false,
-    data: { ...board, taskCount: boardTasks.length },
-    children: boardCols.map((c) => buildColumnNode(c, data, depth + 1)),
+    data: { kind: 'board', ...board, taskCount: boardTasks.length },
+    children: boardCols.map((c) => buildColumnNode(c, boardTasks, depth + 1)),
   };
 }
 
-function buildColumnNode(col: TuiColumn, data: TuiData, depth: number): TreeNode {
-  const colTasks = data.tasks.filter(
+function buildColumnNode(col: TuiColumn, boardTasks: TuiTask[], depth: number): TreeNode {
+  const colTasks = boardTasks.filter(
     (t) => t.columnId === col.id || t.status?.toLowerCase() === col.name?.toLowerCase(),
   );
 
@@ -86,20 +114,16 @@ function buildColumnNode(col: TuiColumn, data: TuiData, depth: number): TreeNode
     label: col.name,
     depth,
     expanded: false,
-    data: { ...col, taskCount: colTasks.length },
-    children: colTasks.slice(0, 30).map((t) => buildTaskNode(t, depth + 1)),
-  };
-}
-
-function buildTaskNode(task: TuiTask, depth: number): TreeNode {
-  return {
-    kind: 'task',
-    id: task.id,
-    label: `#${task.seq} ${task.title}`,
-    depth,
-    expanded: false,
-    data: { ...task },
-    children: [],
+    data: { kind: 'column', ...col, taskCount: colTasks.length },
+    children: colTasks.slice(0, 30).map((t) => ({
+      kind: 'task' as NodeKind,
+      id: t.id,
+      label: `#${t.seq} ${t.title}`,
+      depth: depth + 1,
+      expanded: false,
+      data: { kind: 'task' as const, ...t },
+      children: [],
+    })),
   };
 }
 

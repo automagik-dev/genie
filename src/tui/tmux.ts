@@ -24,7 +24,6 @@ const NAV_WIDTH = 30;
 /** Pane IDs captured after session creation. */
 let leftPaneId = '';
 let rightPaneId = '';
-let navCollapsed = false;
 let currentProjectSession: string | null = null;
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -346,53 +345,13 @@ export async function cleanup(): Promise<void> {
   // Reset module state
   leftPaneId = '';
   rightPaneId = '';
-  navCollapsed = false;
   currentProjectSession = null;
 }
 
 // ─── Queries ───────────────────────────────────────────────────────────────
 
-/**
- * Get the TUI session name constant.
- */
-export function getTuiSessionName(): string {
-  return TUI_SESSION;
-}
-
-/**
- * Get the nav width constant.
- */
-export function getNavWidth(): number {
-  return NAV_WIDTH;
-}
-
-/**
- * Get the current right pane ID.
- */
-export function getRightPaneId(): string {
-  return rightPaneId;
-}
-
-/**
- * Get the current left pane ID.
- */
-export function getLeftPaneId(): string {
-  return leftPaneId;
-}
-
-/**
- * Check if nav is currently collapsed.
- */
-export function isNavCollapsed(): boolean {
-  return navCollapsed;
-}
-
-/**
- * Get the name of the currently attached project session.
- */
-export function getCurrentProjectSession(): string | null {
-  return currentProjectSession;
-}
+// Trivial getters removed per council review — callers should import constants or use
+// the functions that return state as part of their normal flow (e.g., createTuiSession).
 
 /**
  * List windows in the currently attached project session (for tab bar info).
