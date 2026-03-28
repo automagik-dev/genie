@@ -128,7 +128,11 @@ program
     await setupCommand(options);
   });
 
-program.command('doctor').description('Run diagnostic checks on genie installation').action(doctorCommand);
+program
+  .command('doctor')
+  .description('Run diagnostic checks on genie installation')
+  .option('--fix', 'Auto-fix: kill zombie postgres, clean shared memory, restart daemon')
+  .action(doctorCommand);
 program
   .command('update')
   .description('Update Genie CLI to the latest version')
