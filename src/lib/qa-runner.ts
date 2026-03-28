@@ -184,7 +184,7 @@ function emitSpecDone(specKey: string, domain: string, team: string, report: Spe
 async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: QaRunnerOptions): Promise<SpecReport[]> {
   const repoPath = resolve(options?.repoPath ?? process.cwd());
   const maxConcurrency = options?.parallel ?? 5;
-  const timeoutMs = (options?.timeout ?? 60) * 1000;
+  const timeoutMs = (options?.timeout ?? 3600) * 1000;
   const ndjson = options?.ndjson ?? false;
   const GREEN = '\x1b[32m';
   const RED = '\x1b[31m';
@@ -279,7 +279,7 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
 /** Run a single QA spec (creates team, runs, disbands). For individual spec execution. */
 export async function runSpec(spec: QaSpec, options?: QaRunnerOptions): Promise<SpecReport> {
   const repoPath = resolve(options?.repoPath ?? process.cwd());
-  const timeoutMs = (options?.timeout ?? 60) * 1000;
+  const timeoutMs = (options?.timeout ?? 3600) * 1000;
   const ndjson = options?.ndjson ?? false;
   const specKey = options?.specKey ?? spec.name;
   const domain = specKey.includes('/') ? specKey.split('/').slice(0, -1).join('/') : '(root)';
@@ -325,7 +325,7 @@ async function runPreparedSpec(
 
   try {
     const { handleWorkerSpawn } = await import('../term-commands/agents.js');
-    await handleWorkerSpawn('qa', {
+    const paneId = await handleWorkerSpawn('qa', {
       provider: 'claude',
       team: teamName,
       cwd: worktreePath,
@@ -335,7 +335,7 @@ async function runPreparedSpec(
     });
     console.error(`  [qa] Spawned qa for "${spec.name}" in ${teamName}`);
 
-    const report = await waitForResult(spec, teamName, timeoutMs, start);
+    const report = await waitForResult(spec, teamName, timeoutMs, start, paneId);
     return report;
   } catch (err) {
     return makeErrorReport(spec, start, String(err));
@@ -464,7 +464,13 @@ function formatActionStep(a: QaSpec['actions'][number]): string {
 // ============================================================================
 
 /** Subscribe to `genie.qa.{team}.result` and wait for the team-lead's report. */
-async function waitForResult(spec: QaSpec, teamName: string, timeoutMs: number, start: number): Promise<SpecReport> {
+async function waitForResult(
+  spec: QaSpec,
+  teamName: string,
+  timeoutMs: number,
+  start: number,
+  paneId?: string,
+): Promise<SpecReport> {
   const subject = `genie.qa.${teamName}.result`;
   let resolved = false;
   let resolveFn: (report: SpecReport) => void;
@@ -480,7 +486,7 @@ async function waitForResult(spec: QaSpec, teamName: string, timeoutMs: number, 
     resolveFn(report);
   });
 
-  // Timeout fallback
+  // Timeout fallback (safety net — 1h default)
   const timer = setTimeout(
     () => {
       if (resolved) return;
@@ -491,8 +497,34 @@ async function waitForResult(spec: QaSpec, teamName: string, timeoutMs: number, 
     timeoutMs - (Date.now() - start),
   );
 
-  // Cleanup timer when resolved
-  promise.then(() => clearTimeout(timer));
+  // Pane liveness polling — fail fast if agent exits without reporting
+  let panePoller: ReturnType<typeof setInterval> | undefined;
+  if (paneId && paneId !== 'inline') {
+    const pollerId = setInterval(() => {
+      if (resolved) {
+        clearInterval(pollerId);
+        return;
+      }
+      try {
+        const { execSync } = require('node:child_process');
+        execSync(`tmux display-message -t '${paneId}' -p '#{pane_id}'`, { stdio: 'ignore', timeout: 3000 });
+      } catch {
+        // Pane is gone — agent exited without reporting
+        if (resolved) return;
+        resolved = true;
+        sub.unsubscribe();
+        clearInterval(pollerId);
+        resolveFn(makeErrorReport(spec, start, `Agent pane ${paneId} exited without reporting result via NATS`));
+      }
+    }, 5000);
+    panePoller = pollerId;
+  }
+
+  // Cleanup timer and poller when resolved
+  promise.then(() => {
+    clearTimeout(timer);
+    if (panePoller) clearInterval(panePoller);
+  });
 
   return promise;
 }

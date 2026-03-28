@@ -665,7 +665,7 @@ async function applySpawnLayout(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null
   }
 }
 
-async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
+async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   const teamWindow = ctx.spawnIntoCurrentWindow
     ? null
     : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.sessionOverride);
@@ -675,7 +675,7 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
     paneId = createTmuxPane(ctx, teamWindow);
   } catch (err) {
     console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
-    process.exit(1);
+    return process.exit(1) as never;
   }
 
   await applySpawnLayout(ctx, teamWindow);
@@ -724,9 +724,11 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
       console.log(`  ⚠ Agent readiness timeout (${Math.round(result.elapsedMs / 1000)}s) — proceeding anyway`);
     }
   }
+
+  return paneId;
 }
 
-async function launchInlineSpawn(ctx: SpawnCtx): Promise<void> {
+async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
   const nt = ctx.validated.nativeTeam;
   const paneId = 'inline';
   const workerEntry = await registerSpawnWorker(ctx, paneId);
@@ -754,7 +756,7 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<void> {
     await nativeTeams.unregisterNativeMember(ctx.validated.team, ctx.agentName).catch(() => {});
   }
   console.log(`\nAgent "${ctx.workerId}" session ended.`);
-  process.exit(result.status ?? 0);
+  return process.exit(result.status ?? 0) as never;
 }
 
 function prependEnvVars(command: string, env?: Record<string, string>): string {
@@ -928,7 +930,7 @@ async function buildSpawnParams(
   return { params, parentSessionId, spawnColor };
 }
 
-export async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<void> {
+export async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<string> {
   // Effective role: suffixed name for registration/duplicate-check, original name for directory lookup
   const effectiveRole = options.role ?? name;
 
@@ -940,7 +942,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   const team = options.team || (await nativeTeams.discoverTeamName());
   if (!team) {
     console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
-    process.exit(1);
+    return process.exit(1) as never;
   }
   await rejectDuplicateRole(team, effectiveRole);
 
@@ -996,18 +998,17 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     autoResume: options.autoResume,
   };
 
-  if (insideTmux) {
-    await launchTmuxSpawn(ctx);
-  } else {
-    await launchInlineSpawn(ctx);
-  }
-
-  // Audit event for worker spawn
+  // Audit event for worker spawn (fire-and-forget before launch returns)
   recordAuditEvent('worker', workerId, 'spawn', getActor(), {
     name,
     team: validated.team,
     provider: validated.provider,
   }).catch(() => {});
+
+  if (insideTmux) {
+    return await launchTmuxSpawn(ctx);
+  }
+  return await launchInlineSpawn(ctx);
 }
 
 // ============================================================================

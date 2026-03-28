@@ -91,14 +91,23 @@ async function runCommandSilent(
   command: string,
   args: string[],
   cwd?: string,
+  timeoutMs = 4000,
 ): Promise<{ success: boolean; output: string }> {
   return new Promise((resolve) => {
     const output: string[] = [];
+    let settled = false;
 
     const child = spawn(command, args, {
       cwd,
       stdio: ['inherit', 'pipe', 'pipe'],
     });
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGTERM');
+      resolve({ success: false, output: `Timed out after ${timeoutMs}ms` });
+    }, timeoutMs);
 
     child.stdout?.on('data', (data) => {
       output.push(data.toString());
@@ -109,10 +118,16 @@ async function runCommandSilent(
     });
 
     child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve({ success: code === 0, output: output.join('') });
     });
 
     child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve({ success: false, output: err.message });
     });
   });
