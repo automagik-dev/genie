@@ -37,6 +37,8 @@ export async function launchTui(options: TuiOptions): Promise<void> {
   if (process.env.GENIE_TUI_PANE === 'left') {
     const { waitUntilExit } = render(React.createElement(App));
     await waitUntilExit();
+    // Ink app exited (user pressed 'q') — kill the session to trigger cleanup in parent
+    await cleanup();
     return;
   }
 
@@ -51,11 +53,23 @@ export async function launchTui(options: TuiOptions): Promise<void> {
       stdio: 'pipe',
     });
 
-    // Attach to the session (this blocks until the session ends)
-    try {
-      execSync(`tmux attach-session -t '${session}'`, { stdio: 'inherit' });
-    } catch {
-      // Normal exit when session is killed
+    // Attach or switch to the session (blocks until it ends)
+    if (process.env.TMUX) {
+      // Already inside tmux — switch client to genie-tui session
+      execSync(`tmux switch-client -t '${session}'`, { stdio: 'pipe' });
+      // Block until the session is killed (Ctrl+\ or cleanup triggers wait-for unlock)
+      try {
+        execSync('tmux wait-for genie-tui-done', { stdio: 'pipe', timeout: 86400000 });
+      } catch {
+        // Session ended or timeout
+      }
+    } else {
+      // Outside tmux — attach directly (blocks until session ends)
+      try {
+        execSync(`tmux attach-session -t '${session}'`, { stdio: 'inherit' });
+      } catch {
+        // Normal exit when session is killed
+      }
     }
   } finally {
     // Always clean up

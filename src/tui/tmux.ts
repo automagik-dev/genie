@@ -13,6 +13,9 @@
  */
 
 import { execSync } from 'node:child_process';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { executeTmux } from '../lib/tmux.js';
 
 const TUI_SESSION = 'genie-tui';
@@ -65,6 +68,27 @@ function getTermSize(): { cols: number; rows: number } {
     cols: process.stdout.columns || 120,
     rows: process.stdout.rows || 40,
   };
+}
+
+// ─── Keybinding Scripts ───────────────────────────────────────────────────
+
+const SCRIPT_DIR = join(tmpdir(), 'genie-tui');
+
+/** Write a keybinding helper script to tmp dir and return its path. */
+function writeScript(name: string, content: string): string {
+  mkdirSync(SCRIPT_DIR, { recursive: true });
+  const p = join(SCRIPT_DIR, `${name}.sh`);
+  writeFileSync(p, `#!/bin/sh\n${content}`, { mode: 0o755 });
+  return p;
+}
+
+/** Remove keybinding scripts from tmp dir. */
+function cleanupScripts(): void {
+  try {
+    rmSync(SCRIPT_DIR, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
 }
 
 // ─── Session Lifecycle ─────────────────────────────────────────────────────
@@ -162,51 +186,40 @@ function styleOuterSession(): void {
 /**
  * Install keybindings on the genie-tui session.
  *
- * These are session-scoped (won't affect other tmux sessions).
- * We use the root key table so they work from any pane.
+ * Keybindings are bound in the root key table (work from any pane).
+ * Each binding delegates to a shell script file to avoid bash expansion
+ * issues with $variables in tmux run-shell arguments.
+ * Session guards ensure bindings are no-ops outside genie-tui.
  */
 function installKeybindings(): void {
   const s = TUI_SESSION;
 
-  // Tab — switch focus between left/right panes
-  tmuxSync(
-    `bind-key -T root -t '${s}' Tab select-pane -t '${s}:0.+' 2>/dev/null || tmux bind-key -T root Tab select-pane -t '${s}:0.+'`,
+  // Tab — cycle focus between left/right panes (session-guarded)
+  const tabPath = writeScript(
+    'tab',
+    `session=$(tmux display-message -p "#{session_name}")\n[ "$session" = "${s}" ] && tmux select-pane -t ${s}:0.+\n`,
   );
+  tmuxSync(`bind-key -T root Tab run-shell '${tabPath}'`);
 
   // Ctrl+B — toggle nav panel width (0 ↔ 30 cols)
-  // We use a run-shell to toggle — stores state in a tmux env var
-  tmuxSync(`set-environment -t '${s}' GENIE_NAV_COLLAPSED 0`);
-  const toggleScript = `
-    state=$(tmux show-environment -t '${s}' GENIE_NAV_COLLAPSED 2>/dev/null | cut -d= -f2);
-    if [ "$state" = "1" ]; then
-      tmux resize-pane -t '${leftPaneId}' -x ${NAV_WIDTH};
-      tmux set-environment -t '${s}' GENIE_NAV_COLLAPSED 0;
-    else
-      tmux resize-pane -t '${leftPaneId}' -x 0;
-      tmux set-environment -t '${s}' GENIE_NAV_COLLAPSED 1;
-    fi
-  `
-    .replace(/\n/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  tmuxSync(`bind-key -T root C-b run-shell "${toggleScript}"`);
+  tmuxSync(`set-environment -t ${s} GENIE_NAV_COLLAPSED 0`);
+  const togglePath = writeScript(
+    'toggle-nav',
+    `session=$(tmux display-message -p "#{session_name}")\n[ "$session" != "${s}" ] && exit 0\nstate=$(tmux show-environment -t ${s} GENIE_NAV_COLLAPSED 2>/dev/null | cut -d= -f2)\nif [ "$state" = "1" ]; then\n  tmux resize-pane -t ${leftPaneId} -x ${NAV_WIDTH}\n  tmux set-environment -t ${s} GENIE_NAV_COLLAPSED 0\nelse\n  tmux resize-pane -t ${leftPaneId} -x 0\n  tmux set-environment -t ${s} GENIE_NAV_COLLAPSED 1\nfi\n`,
+  );
+  tmuxSync(`bind-key -T root C-b run-shell '${togglePath}'`);
 
   // Ctrl+T — new window tab in the inner (right pane) session
-  // This sends the key sequence to the right pane, which hosts a nested tmux
-  const newTabScript = `
-    proj=$(tmux show-environment -t '${s}' GENIE_ACTIVE_PROJECT 2>/dev/null | cut -d= -f2);
-    if [ -n "$proj" ]; then
-      tmux send-keys -t '${rightPaneId}' C-b c;
-    fi
-  `
-    .replace(/\n/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  tmuxSync(`bind-key -T root C-t run-shell "${newTabScript}"`);
+  // Sends prefix+c to the nested tmux in the right pane
+  const newTabPath = writeScript(
+    'new-tab',
+    `session=$(tmux display-message -p "#{session_name}")\n[ "$session" != "${s}" ] && exit 0\nproj=$(tmux show-environment -t ${s} GENIE_ACTIVE_PROJECT 2>/dev/null | cut -d= -f2)\n[ -n "$proj" ] && tmux send-keys -t ${rightPaneId} C-b c\n`,
+  );
+  tmuxSync(`bind-key -T root C-t run-shell '${newTabPath}'`);
 
-  // Ctrl+\ — quit cleanly
-  const quitScript = `tmux kill-session -t '${s}'`;
-  tmuxSync(`bind-key -T root 'C-\\\\' run-shell "${quitScript}"`);
+  // Ctrl+\ — quit: unlock wait-for signal, then kill session
+  const quitPath = writeScript('quit', `tmux wait-for -U genie-tui-done 2>/dev/null\ntmux kill-session -t ${s}\n`);
+  tmuxSync(`bind-key -T root 'C-\\\\' run-shell '${quitPath}'`);
 }
 
 /**
@@ -314,11 +327,15 @@ export async function switchRightPane(sessionName: string): Promise<void> {
 // ─── Cleanup ───────────────────────────────────────────────────────────────
 
 /**
- * Clean up: unbind all keybindings, kill the genie-tui session.
- * Called on exit (Ctrl+\ or normal exit).
+ * Clean up: unbind all keybindings, remove scripts, kill the genie-tui session.
+ * Called on exit (Ctrl+\, Ink app quit, or normal exit).
  */
 export async function cleanup(): Promise<void> {
   unbindKeybindings();
+  cleanupScripts();
+
+  // Unlock any wait-for blockers (for inside-tmux attach mode)
+  tmuxSync('wait-for -U genie-tui-done');
 
   try {
     await executeTmux(`kill-session -t '${TUI_SESSION}'`);
