@@ -124,7 +124,7 @@ function parsePaneLine(parts: string[]): {
 }
 
 /** Collect all tmux sessions, windows, and panes into a typed tree. */
-export function getTmuxInventory(): TmuxSession[] {
+function getTmuxInventory(): TmuxSession[] {
   const paneOutput = execQuiet(
     "tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{window_active}|#{window_panes}|#{pane_index}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}|#{session_attached}|#{session_windows}|#{session_created}'",
   );
