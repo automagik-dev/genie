@@ -53,7 +53,7 @@ export interface QaOptions {
 export async function qaCommand(target: string | undefined, options: QaOptions): Promise<void> {
   const specDir = defaultSpecDir();
   const runnerOpts: QaRunnerOptions = {
-    timeout: options.timeout ?? 60,
+    timeout: options.timeout ?? 3600,
     parallel: options.parallel ?? 5,
     verbose: options.verbose ?? false,
     repoPath: process.cwd(),
