@@ -31,15 +31,18 @@ import {
 // Helpers
 // ============================================================================
 
-let cleanup: () => Promise<void>;
+const DB_AVAILABLE = process.env.GENIE_PG_AVAILABLE === 'true' || !process.env.CI;
+
+let cleanup: (() => Promise<void>) | undefined;
 const BASE_REPO = '/tmp/unified-log-test';
 
 beforeAll(async () => {
+  if (!DB_AVAILABLE) return;
   cleanup = await setupTestSchema();
 });
 
 afterAll(async () => {
-  await cleanup();
+  if (cleanup) await cleanup();
 });
 
 function makeAgent(id: string, team?: string, repoPath?: string): Agent {
@@ -290,7 +293,7 @@ describe('sortByTimestamp', () => {
 // Aggregator integration tests
 // ============================================================================
 
-describe('readAgentLog', () => {
+describe.skipIf(!DB_AVAILABLE)('readAgentLog', () => {
   test('aggregates inbox and outbox messages', async () => {
     const repo = '/tmp/ulog-agent-agg';
     const agent = makeAgent('engineer', 'test-team', repo);
@@ -384,7 +387,7 @@ describe('readAgentLog', () => {
   });
 });
 
-describe('readTeamLog', () => {
+describe.skipIf(!DB_AVAILABLE)('readTeamLog', () => {
   test('interleaves events from multiple agents', async () => {
     const repo = '/tmp/ulog-team-interleave';
     const engineer = makeAgent('engineer', 'my-team', repo);
@@ -469,7 +472,7 @@ describe('readTeamLog', () => {
   });
 });
 
-describe('follow mode', () => {
+describe.skipIf(!DB_AVAILABLE)('follow mode', () => {
   test('followAgentLog streams PG runtime events for one agent', async () => {
     const agent = makeAgent('agent-follow', 'team-follow');
     const received: LogEvent[] = [];
@@ -575,7 +578,7 @@ describe('follow mode', () => {
 // Mailbox outbox integration
 // ============================================================================
 
-describe('mailbox outbox', () => {
+describe.skipIf(!DB_AVAILABLE)('mailbox outbox', () => {
   test('readOutbox returns sent messages from PG', async () => {
     const repo = '/tmp/ulog-outbox';
     await send(repo, 'engineer', 'reviewer', 'hello');

@@ -6,6 +6,8 @@
     "moduleResolution": "bundler",
     "declaration": true,
     "outDir": "dist",
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
