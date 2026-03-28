@@ -498,7 +498,7 @@ export async function getAgentEffectiveState(agentId: string): Promise<ExecutorS
 }
 
 /** Filter options for listing agents. */
-export interface ListAgentsFilter {
+interface ListAgentsFilter {
   team?: string;
   role?: string;
 }
