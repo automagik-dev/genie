@@ -38,6 +38,31 @@ function statePriority(state: AgentState): number {
   }
 }
 
+/** Group assignments by task ID, resolving each to its executor. */
+function groupByTask(executors: TuiExecutor[], assignments: TuiAssignment[]): Map<string, TuiExecutor[]> {
+  const executorById = new Map(executors.map((e) => [e.id, e]));
+  const result = new Map<string, TuiExecutor[]>();
+  for (const a of assignments) {
+    if (!a.taskId) continue;
+    const exec = executorById.get(a.executorId);
+    if (!exec) continue;
+    const list = result.get(a.taskId) || [];
+    list.push(exec);
+    result.set(a.taskId, list);
+  }
+  return result;
+}
+
+/** Pick the highest-priority agent state from a list of executors. */
+function bestExecutorState(execs: TuiExecutor[]): AgentState | undefined {
+  let best: AgentState | undefined;
+  for (const exec of execs) {
+    const state = toAgentState(exec.state);
+    if (state && (!best || statePriority(state) > statePriority(best))) best = state;
+  }
+  return best;
+}
+
 /**
  * Build activity map from executors + assignments (DB-driven).
  * Maps task IDs to their executor count and aggregate state.
@@ -47,31 +72,9 @@ export function getExecutorActivity(
   assignments: TuiAssignment[],
 ): Map<string, { panes: number; state?: AgentState }> {
   const result = new Map<string, { panes: number; state?: AgentState }>();
-
-  // Group assignments by task ID
-  const taskExecutors = new Map<string, TuiExecutor[]>();
-  for (const assignment of assignments) {
-    if (!assignment.taskId) continue;
-    const executor = executors.find((e) => e.id === assignment.executorId);
-    if (!executor) continue;
-    const existing = taskExecutors.get(assignment.taskId) || [];
-    existing.push(executor);
-    taskExecutors.set(assignment.taskId, existing);
+  for (const [taskId, execs] of groupByTask(executors, assignments)) {
+    result.set(taskId, { panes: execs.length, state: bestExecutorState(execs) });
   }
-
-  // Convert to activity entries — pick the most "active" state
-  for (const [taskId, execs] of taskExecutors) {
-    let bestState: AgentState | undefined;
-    for (const exec of execs) {
-      const state = toAgentState(exec.state);
-      if (!state) continue;
-      if (!bestState || statePriority(state) > statePriority(bestState)) {
-        bestState = state;
-      }
-    }
-    result.set(taskId, { panes: execs.length, state: bestState });
-  }
-
   return result;
 }
 

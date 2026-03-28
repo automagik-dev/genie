@@ -37,50 +37,55 @@ function stateColor(state: string): string {
   return STATE_COLORS[state] ?? palette.textMuted;
 }
 
-function executorToRows(exec: TuiExecutor, assignments: TuiAssignment[], isDead: boolean): FlatClaudeRow[] {
-  const displayName = exec.agentName ? `${exec.agentName}${exec.team ? `@${exec.team}` : ''}` : exec.agentId;
-  const roleLabel = exec.role ? ` (${exec.role})` : '';
+function executorDisplayName(exec: TuiExecutor): string {
+  const name = exec.agentName ? `${exec.agentName}${exec.team ? `@${exec.team}` : ''}` : exec.agentId;
+  return exec.role ? `${name} (${exec.role})` : name;
+}
 
+function metaRow(exec: TuiExecutor): FlatClaudeRow {
+  const hasTmux = !!exec.tmuxPaneId;
+  const isApi = exec.transport === 'api';
+  return {
+    id: `meta:${exec.id}`,
+    depth: 1,
+    label: hasTmux ? `${exec.tmuxSession ?? '?'}:${exec.tmuxPaneId}` : isApi ? 'api (no tmux)' : 'tmux: not linked',
+    color: hasTmux ? palette.emerald : isApi ? palette.textDim : palette.error,
+    detail: exec.pid != null ? `pid:${exec.pid}` : '',
+    detailColor: palette.textMuted,
+    isOrphan: !hasTmux && !isApi,
+  };
+}
+
+function assignmentRow(exec: TuiExecutor, a: TuiAssignment): FlatClaudeRow {
+  const taskLabel = a.taskTitle ?? a.taskId ?? 'unknown';
+  const wishLabel = a.wishSlug ? ` [${a.wishSlug}]` : '';
+  return {
+    id: `assign:${exec.id}`,
+    depth: 1,
+    label: `\u2192 ${taskLabel}${wishLabel}`,
+    color: palette.purple,
+    detail: a.groupNumber != null ? `grp:${a.groupNumber}` : '',
+    detailColor: palette.textMuted,
+    isOrphan: false,
+  };
+}
+
+function executorToRows(exec: TuiExecutor, assignments: TuiAssignment[], isDead: boolean): FlatClaudeRow[] {
   const rows: FlatClaudeRow[] = [
     {
       id: `exec:${exec.id}`,
       depth: 0,
-      label: `${displayName}${roleLabel}`,
+      label: executorDisplayName(exec),
       color: isDead ? palette.error : stateColor(exec.state),
       detail: isDead ? `DEAD pid:${exec.pid}` : `${exec.state} ${exec.provider}`,
       detailColor: isDead ? palette.error : palette.textMuted,
       isOrphan: isDead,
     },
-    {
-      id: `meta:${exec.id}`,
-      depth: 1,
-      label: exec.tmuxPaneId
-        ? `${exec.tmuxSession ?? '?'}:${exec.tmuxPaneId}`
-        : exec.transport === 'api'
-          ? 'api (no tmux)'
-          : 'tmux: not linked',
-      color: exec.tmuxPaneId ? palette.emerald : exec.transport === 'api' ? palette.textDim : palette.error,
-      detail: exec.pid != null ? `pid:${exec.pid}` : '',
-      detailColor: palette.textMuted,
-      isOrphan: !exec.tmuxPaneId && exec.transport !== 'api',
-    },
+    metaRow(exec),
   ];
 
-  // Show active assignment if any
-  const activeAssignment = assignments.find((a) => a.executorId === exec.id);
-  if (activeAssignment) {
-    const taskLabel = activeAssignment.taskTitle ?? activeAssignment.taskId ?? 'unknown';
-    const wishLabel = activeAssignment.wishSlug ? ` [${activeAssignment.wishSlug}]` : '';
-    rows.push({
-      id: `assign:${exec.id}`,
-      depth: 1,
-      label: `\u2192 ${taskLabel}${wishLabel}`,
-      color: palette.purple,
-      detail: activeAssignment.groupNumber != null ? `grp:${activeAssignment.groupNumber}` : '',
-      detailColor: palette.textMuted,
-      isOrphan: false,
-    });
-  }
+  const active = assignments.find((a) => a.executorId === exec.id);
+  if (active) rows.push(assignmentRow(exec, active));
 
   return rows;
 }

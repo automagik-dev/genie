@@ -74,35 +74,14 @@ export function App({ rightPane }: { rightPane?: string }) {
   // Activity detection tick (1s) — DB executor state + tmux fallback
   useEffect(() => {
     let active = true;
-    const timer = setInterval(async () => {
+
+    async function refreshActivity() {
       if (!dataRef.current) return;
-      try {
-        // Refresh executor state from DB
-        const execs = await loadExecutors();
-        const execIds = execs.map((e) => e.id);
-        const assigns = execIds.length > 0 ? await loadAssignments(execIds) : [];
-        if (!active) return;
-        executorsRef.current = execs;
-        assignmentsRef.current = assigns;
+      const activity = await fetchMergedActivity(dataRef.current, executorsRef, assignmentsRef);
+      if (active) setTree((prev) => applyActivity(prev, activity));
+    }
 
-        // DB-driven activity (primary)
-        const dbActivity = getExecutorActivity(execs, assigns);
-
-        // tmux fallback for tasks without DB assignments
-        const tmuxActivity = scanTmuxActivity(dataRef.current);
-        for (const [taskId, act] of tmuxActivity) {
-          if (!dbActivity.has(taskId)) dbActivity.set(taskId, act);
-        }
-
-        setTree((prev) => applyActivity(prev, dbActivity));
-      } catch {
-        // Fallback to tmux-only on DB error
-        if (!dataRef.current) return;
-        const activity = scanTmuxActivity(dataRef.current);
-        setTree((prev) => applyActivity(prev, activity));
-      }
-    }, 1000);
-
+    const timer = setInterval(refreshActivity, 1000);
     return () => {
       active = false;
       clearInterval(timer);
@@ -167,22 +146,41 @@ function mergeExpandedState(oldTree: TreeNode[], newTree: TreeNode[]): TreeNode[
   return apply(newTree);
 }
 
-/** Scan all project tmux sessions for active work (fallback when DB data unavailable). */
-function scanTmuxActivity(
-  data: TuiData,
-): Map<string, { panes: number; state?: 'idle' | 'working' | 'permission' | 'error' }> {
-  const allActivity = new Map<string, { panes: number; state?: 'idle' | 'working' | 'permission' | 'error' }>();
-  try {
-    for (const proj of data.projects) {
-      if (!proj.tmuxSession) continue;
-      const windows = getActiveWork(proj.tmuxSession);
-      const matched = matchWorkToTasks(windows, data.tasks);
-      for (const [taskId, act] of matched) {
-        allActivity.set(taskId, act);
-      }
+type ActivityMap = Map<string, { panes: number; state?: 'idle' | 'working' | 'permission' | 'error' }>;
+
+/** Scan all project tmux sessions for active work (fallback). */
+function scanTmuxActivity(data: TuiData): ActivityMap {
+  const result: ActivityMap = new Map();
+  for (const proj of data.projects) {
+    if (!proj.tmuxSession) continue;
+    const windows = getActiveWork(proj.tmuxSession);
+    for (const [taskId, act] of matchWorkToTasks(windows, data.tasks)) {
+      result.set(taskId, act);
     }
-  } catch (err) {
-    console.error('TUI: activity scan failed:', err);
   }
-  return allActivity;
+  return result;
+}
+
+/** Fetch DB executor activity, merge with tmux fallback. */
+async function fetchMergedActivity(
+  data: TuiData,
+  executorsRef: { current: TuiExecutor[] },
+  assignmentsRef: { current: TuiAssignment[] },
+): Promise<ActivityMap> {
+  try {
+    const execs = await loadExecutors();
+    const execIds = execs.map((e) => e.id);
+    const assigns = execIds.length > 0 ? await loadAssignments(execIds) : [];
+    executorsRef.current = execs;
+    assignmentsRef.current = assigns;
+
+    const activity = getExecutorActivity(execs, assigns);
+    // Merge tmux fallback for tasks without DB assignments
+    for (const [taskId, act] of scanTmuxActivity(data)) {
+      if (!activity.has(taskId)) activity.set(taskId, act);
+    }
+    return activity;
+  } catch {
+    return scanTmuxActivity(data);
+  }
 }
