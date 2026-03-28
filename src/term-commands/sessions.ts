@@ -48,6 +48,7 @@ interface ListOptions {
   active?: boolean;
   orphaned?: boolean;
   agent?: string;
+  limit?: string;
   json?: boolean;
 }
 
@@ -58,17 +59,18 @@ async function sessionsListCommand(options: ListOptions): Promise<void> {
   }
 
   const sql = await getConnection();
+  const limit = Number(options.limit) || 50;
 
   let rows: SessionRow[];
   if (options.active) {
-    rows = await sql`SELECT * FROM sessions WHERE status = 'active' ORDER BY started_at DESC LIMIT 50`;
+    rows = await sql`SELECT * FROM sessions WHERE status = 'active' ORDER BY started_at DESC LIMIT ${limit}`;
   } else if (options.orphaned) {
-    rows = await sql`SELECT * FROM sessions WHERE status = 'orphaned' ORDER BY started_at DESC LIMIT 50`;
+    rows = await sql`SELECT * FROM sessions WHERE status = 'orphaned' ORDER BY started_at DESC LIMIT ${limit}`;
   } else if (options.agent) {
     rows =
-      await sql`SELECT * FROM sessions WHERE agent_id = ${options.agent} OR agent_id LIKE ${`%${options.agent}%`} ORDER BY started_at DESC LIMIT 50`;
+      await sql`SELECT * FROM sessions WHERE agent_id = ${options.agent} OR agent_id LIKE ${`%${options.agent}%`} ORDER BY started_at DESC LIMIT ${limit}`;
   } else {
-    rows = await sql`SELECT * FROM sessions ORDER BY started_at DESC LIMIT 50`;
+    rows = await sql`SELECT * FROM sessions ORDER BY started_at DESC LIMIT ${limit}`;
   }
 
   if (options.json) {
@@ -244,6 +246,7 @@ export function registerSessionsCommands(program: Command): void {
     .option('--active', 'Show only active sessions')
     .option('--orphaned', 'Show only orphaned sessions')
     .option('--agent <name>', 'Filter by agent')
+    .option('--limit <n>', 'Max number of sessions to return (default: 50)')
     .option('--json', 'Output as JSON')
     .action(async (options: ListOptions) => {
       await sessionsListCommand(options);

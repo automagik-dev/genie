@@ -421,6 +421,8 @@ export function registerTaskCommands(program: Command): void {
     .option('--by-column', 'Group tasks by board column (kanban view)')
     .option('--include-done', 'Include done tasks in kanban view (hidden by default)')
     .option('--all', 'Show tasks from ALL projects')
+    .option('--limit <n>', 'Max number of tasks to return', '100')
+    .option('--offset <n>', 'Skip first N tasks (for pagination)', '0')
     .option('--json', 'Output as JSON')
     .action(
       async (options: {
@@ -436,6 +438,8 @@ export function registerTaskCommands(program: Command): void {
         byColumn?: boolean;
         includeDone?: boolean;
         all?: boolean;
+        limit?: string;
+        offset?: string;
         json?: boolean;
       }) => {
         try {
@@ -450,6 +454,8 @@ export function registerTaskCommands(program: Command): void {
             projectName: options.project,
             boardName: options.board,
             allProjects: options.all,
+            limit: Number(options.limit) || 100,
+            offset: Number(options.offset) || 0,
             ...(options.all ? { limit: 10000 } : {}),
           };
 
