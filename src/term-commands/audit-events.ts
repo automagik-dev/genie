@@ -236,6 +236,8 @@ async function eventsCostsCommand(options: CostsOptions): Promise<void> {
       console.log(JSON.stringify(rows, null, 2));
     } else {
       printCostsTable(rows, groupBy);
+      // Warn about tracking gap — OTel only captures genie-spawned sessions
+      console.log('\n⚠  OTel costs only include genie-spawned sessions. For full server costs: npx ccusage monthly');
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -367,6 +369,39 @@ async function eventsSummaryCommand(options: SummaryOptions): Promise<void> {
 }
 
 // ============================================================================
+// Scan Command (delegates to ccusage)
+// ============================================================================
+
+async function eventsScanCommand(options: { since?: string; json?: boolean; breakdown?: boolean }): Promise<void> {
+  const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
+
+  const args = ['ccusage', 'monthly'];
+  if (options.since) args.push('--since', options.since);
+  if (options.json) args.push('--json');
+  if (options.breakdown) args.push('--breakdown');
+
+  const result = spawnSync('npx', args, {
+    stdio: options.json ? 'pipe' : 'inherit',
+    timeout: 30_000,
+    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+  });
+
+  if (result.error) {
+    console.error('ccusage not available. Install with: npm install -g ccusage');
+    console.error('Or run directly: npx ccusage monthly');
+    process.exit(1);
+  }
+
+  if (options.json && result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+
+// ============================================================================
 // Registration
 // ============================================================================
 
@@ -435,5 +470,15 @@ export function registerEventsCommands(program: Command): void {
     .option('--json', 'Output as JSON')
     .action(async (options: SummaryOptions) => {
       await eventsSummaryCommand(options);
+    });
+
+  events
+    .command('scan')
+    .description('Full server cost scan via ccusage (all CC sessions, not just genie-spawned)')
+    .option('--since <date>', 'Start date in YYYYMMDD format')
+    .option('--json', 'Output as JSON')
+    .option('--breakdown', 'Show per-model breakdown')
+    .action(async (options: { since?: string; json?: boolean; breakdown?: boolean }) => {
+      await eventsScanCommand(options);
     });
 }
