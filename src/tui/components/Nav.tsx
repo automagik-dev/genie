@@ -122,74 +122,71 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
     }
   }, [activeTab, flatNodes, projectIndex, onProjectSelect, handleToggle]);
 
-  useKeyboard((key) => {
-    const rowCount = getRowCount();
-    const selectedIdx = getSelectedIndex();
-
-    // Tab bar navigation: left/right switch tabs
-    if (tabBarFocused) {
-      if (key.name === 'left' || key.name === 'h') {
-        const currentIdx = TAB_ORDER.indexOf(activeTab);
-        const newIdx = (currentIdx - 1 + TAB_ORDER.length) % TAB_ORDER.length;
-        setActiveTab(TAB_ORDER[newIdx]);
-        return;
+  const handleTabBarKey = useCallback(
+    (keyName: string): boolean => {
+      if (keyName === 'left' || keyName === 'h') {
+        const idx = (TAB_ORDER.indexOf(activeTab) - 1 + TAB_ORDER.length) % TAB_ORDER.length;
+        setActiveTab(TAB_ORDER[idx]);
+        return true;
       }
-      if (key.name === 'right' || key.name === 'l') {
-        const currentIdx = TAB_ORDER.indexOf(activeTab);
-        const newIdx = (currentIdx + 1) % TAB_ORDER.length;
-        setActiveTab(TAB_ORDER[newIdx]);
-        return;
+      if (keyName === 'right' || keyName === 'l') {
+        const idx = (TAB_ORDER.indexOf(activeTab) + 1) % TAB_ORDER.length;
+        setActiveTab(TAB_ORDER[idx]);
+        return true;
       }
-      if (key.name === 'down' || key.name === 'j') {
+      if (keyName === 'down' || keyName === 'j') {
         setTabBarFocused(false);
-        return;
+        return true;
       }
+      return false;
+    },
+    [activeTab],
+  );
+
+  const handleVerticalNav = useCallback(
+    (keyName: string, selectedIdx: number, rowCount: number) => {
+      if (keyName === 'up' || keyName === 'k') {
+        selectedIdx === 0 ? setTabBarFocused(true) : setSelectedIndex(selectedIdx - 1);
+      } else if (keyName === 'down' || keyName === 'j') {
+        selectedIdx < rowCount - 1 ? setSelectedIndex(selectedIdx + 1) : setTabBarFocused(true);
+      }
+    },
+    [setSelectedIndex],
+  );
+
+  const handleTreeExpand = useCallback(
+    (keyName: string, selectedIdx: number) => {
+      if (activeTab !== 'projects') return;
+      const node = flatNodes[selectedIdx]?.node;
+      if (!node) return;
+      if ((keyName === 'right' || keyName === 'l') && node.children.length > 0 && !node.expanded) {
+        handleToggle(node.id);
+      } else if ((keyName === 'left' || keyName === 'h') && node.expanded) {
+        handleToggle(node.id);
+      }
+    },
+    [activeTab, flatNodes, handleToggle],
+  );
+
+  const handleListKey = useCallback(
+    (keyName: string, selectedIdx: number, rowCount: number) => {
+      if (keyName === 'enter' || keyName === 'return') {
+        handleEnter();
+      } else if (keyName === 'up' || keyName === 'k' || keyName === 'down' || keyName === 'j') {
+        handleVerticalNav(keyName, selectedIdx, rowCount);
+      } else {
+        handleTreeExpand(keyName, selectedIdx);
+      }
+    },
+    [handleEnter, handleVerticalNav, handleTreeExpand],
+  );
+
+  useKeyboard((key) => {
+    if (tabBarFocused) {
+      handleTabBarKey(key.name);
       return;
     }
-
-    // Tree navigation
-    switch (key.name) {
-      case 'up':
-      case 'k':
-        if (selectedIdx === 0) {
-          // At top of list — move focus to tab bar
-          setTabBarFocused(true);
-        } else {
-          setSelectedIndex(selectedIdx - 1);
-        }
-        break;
-      case 'down':
-      case 'j':
-        if (selectedIdx < rowCount - 1) {
-          setSelectedIndex(selectedIdx + 1);
-        } else {
-          // Wrap to top (tab bar)
-          setTabBarFocused(true);
-        }
-        break;
-      case 'right':
-      case 'l':
-        if (activeTab === 'projects') {
-          const node = flatNodes[selectedIdx]?.node;
-          if (node && node.children.length > 0 && !node.expanded) {
-            handleToggle(node.id);
-          }
-        }
-        break;
-      case 'left':
-      case 'h':
-        if (activeTab === 'projects') {
-          const node = flatNodes[selectedIdx]?.node;
-          if (node?.expanded) {
-            handleToggle(node.id);
-          }
-        }
-        break;
-      case 'enter':
-      case 'return':
-        handleEnter();
-        break;
-    }
+    handleListKey(key.name, getSelectedIndex(), getRowCount());
   });
 
   const gapCounts = diagnostics

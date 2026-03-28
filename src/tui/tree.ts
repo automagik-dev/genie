@@ -99,16 +99,6 @@ export function flattenTree(nodes: TreeNode[]): FlatNode[] {
   return result;
 }
 
-/** Find a node by ID in the tree */
-export function findNode(nodes: TreeNode[], id: string): TreeNode | null {
-  for (const node of nodes) {
-    if (node.id === id) return node;
-    const found = findNode(node.children, id);
-    if (found) return found;
-  }
-  return null;
-}
-
 /** Toggle expand/collapse for a node */
 export function toggleNode(nodes: TreeNode[], id: string): TreeNode[] {
   return nodes.map((node) => {
@@ -117,11 +107,6 @@ export function toggleNode(nodes: TreeNode[], id: string): TreeNode[] {
     }
     return { ...node, children: toggleNode(node.children, id) };
   });
-}
-
-/** Count total visible items in the flattened tree */
-export function countVisible(nodes: TreeNode[]): number {
-  return flattenTree(nodes).length;
 }
 
 /** Update active pane counts on tree from activity data */
@@ -137,7 +122,6 @@ export function applyActivity(
       agentState: act?.state,
       children: applyActivity(node.children, activity),
     };
-    // Bubble up: if any child has active panes, propagate count to parent
     if (updated.children.some((c) => c.activePanes > 0) && updated.activePanes === 0) {
       updated.activePanes = updated.children.reduce((sum, c) => sum + c.activePanes, 0);
     }

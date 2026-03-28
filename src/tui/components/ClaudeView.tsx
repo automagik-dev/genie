@@ -21,31 +21,24 @@ interface FlatClaudeRow {
   isOrphan: boolean;
 }
 
-function flattenProcesses(processes: LinkedProcess[], gaps: DiagnosticGaps): FlatClaudeRow[] {
-  const rows: FlatClaudeRow[] = [];
-  const orphanPids = new Set(gaps.orphanProcesses.map((p) => p.pid));
+function processToRows(proc: LinkedProcess, isOrphan: boolean): FlatClaudeRow[] {
+  const displayName = proc.agentName
+    ? `${proc.agentName}${proc.teamName ? `@${proc.teamName}` : ''}`
+    : `pid:${proc.pid}`;
+  const typeLabel = proc.agentType ? ` (${proc.agentType})` : '';
 
-  for (const proc of processes) {
-    const isOrphan = orphanPids.has(proc.pid);
-    const displayName = proc.agentName
-      ? `${proc.agentName}${proc.teamName ? `@${proc.teamName}` : ''}`
-      : `pid:${proc.pid}`;
+  const main: FlatClaudeRow = {
+    id: `proc:${proc.pid}`,
+    depth: 0,
+    label: `${displayName}${typeLabel}`,
+    color: isOrphan ? palette.error : palette.cyan,
+    detail: `pid:${proc.pid}`,
+    detailColor: palette.textMuted,
+    isOrphan,
+  };
 
-    const typeLabel = proc.agentType ? ` (${proc.agentType})` : '';
-
-    rows.push({
-      id: `proc:${proc.pid}`,
-      depth: 0,
-      label: `${displayName}${typeLabel}`,
-      color: isOrphan ? palette.error : palette.cyan,
-      detail: `pid:${proc.pid}`,
-      detailColor: palette.textMuted,
-      isOrphan,
-    });
-
-    // tmux link line
-    if (proc.tmuxLocation) {
-      rows.push({
+  const tmux: FlatClaudeRow = proc.tmuxLocation
+    ? {
         id: `tmux:${proc.pid}`,
         depth: 1,
         label: `tmux: ${proc.tmuxLocation}`,
@@ -53,9 +46,8 @@ function flattenProcesses(processes: LinkedProcess[], gaps: DiagnosticGaps): Fla
         detail: proc.tmuxPane ? `[${proc.tmuxPane.title}]` : '',
         detailColor: palette.textDim,
         isOrphan: false,
-      });
-    } else {
-      rows.push({
+      }
+    : {
         id: `tmux:${proc.pid}`,
         depth: 1,
         label: 'tmux: not linked',
@@ -63,11 +55,15 @@ function flattenProcesses(processes: LinkedProcess[], gaps: DiagnosticGaps): Fla
         detail: `ppid:${proc.ppid}`,
         detailColor: palette.textMuted,
         isOrphan: true,
-      });
-    }
-  }
+      };
 
-  // Orphan panes section (panes running claude without a known agent)
+  return [main, tmux];
+}
+
+function flattenProcesses(processes: LinkedProcess[], gaps: DiagnosticGaps): FlatClaudeRow[] {
+  const orphanPids = new Set(gaps.orphanProcesses.map((p) => p.pid));
+  const rows: FlatClaudeRow[] = processes.flatMap((proc) => processToRows(proc, orphanPids.has(proc.pid)));
+
   if (gaps.orphanPanes.length > 0) {
     rows.push({
       id: 'orphan-header',
@@ -78,7 +74,6 @@ function flattenProcesses(processes: LinkedProcess[], gaps: DiagnosticGaps): Fla
       detailColor: palette.textMuted,
       isOrphan: false,
     });
-
     for (const pane of gaps.orphanPanes) {
       rows.push({
         id: `orphan:${pane.paneId}`,
