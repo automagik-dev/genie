@@ -57,22 +57,7 @@ export interface TuiData {
   teams: TuiTeam[];
 }
 
-export type TreeNodeType = 'org' | 'project' | 'board' | 'column' | 'task';
-
-export interface TreeNode {
-  id: string;
-  type: TreeNodeType;
-  label: string;
-  depth: number;
-  expanded: boolean;
-  children: TreeNode[];
-  data: TuiOrg | TuiProject | TuiBoard | TuiColumn | TuiTask;
-}
-
-export interface AgentState {
-  status: 'idle' | 'working' | 'permission' | 'error' | 'unknown';
-  paneCount: number;
-}
+// TreeNode, AgentState types added by Group 4/6 when navigation tree is implemented.
 
 export interface TuiOptions {
   dev?: boolean;

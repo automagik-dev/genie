@@ -24,7 +24,6 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",
-    "ansi-escapes": "^7.0.0",
     "commander": "^12.1.0",
     "ink": "^5.1.0",
     "js-yaml": "^4.1.1",

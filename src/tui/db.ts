@@ -23,18 +23,4 @@ export async function loadAll(): Promise<TuiData> {
   };
 }
 
-export interface TuiSubscription {
-  stop: () => Promise<void>;
-}
-
-/**
- * Subscribe to PG runtime events via followRuntimeEvents().
- * Calls onUpdate whenever relevant data changes.
- */
-export async function subscribe(onUpdate: (data: TuiData) => void): Promise<TuiSubscription> {
-  // Stub — Group 3 will wire up followRuntimeEvents()
-  void onUpdate;
-  return {
-    stop: async () => {},
-  };
-}
+// subscribe() for LISTEN/NOTIFY events added by Group 3.
