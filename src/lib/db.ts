@@ -184,6 +184,37 @@ export async function ensurePgserve(): Promise<number> {
   }
 }
 
+/** Auto-start the scheduler daemon if not already running. */
+async function autoStartDaemon(): Promise<void> {
+  // Check if daemon is already running via PID file
+  const pidPath = join(GENIE_HOME, 'scheduler.pid');
+  try {
+    const pidStr = readFileSync(pidPath, 'utf-8').trim();
+    const pid = Number.parseInt(pidStr, 10);
+    if (!Number.isNaN(pid) && pid > 0) {
+      try {
+        process.kill(pid, 0); // Check if alive
+        return; // Daemon already running, just wait for port file
+      } catch {
+        // Stale PID — proceed to start
+      }
+    }
+  } catch {
+    // No PID file — proceed to start
+  }
+
+  // Start daemon in background
+  const bunPath = process.execPath ?? 'bun';
+  const genieBin = process.argv[1] ?? 'genie';
+
+  const child = spawn(bunPath, [genieBin, 'daemon', 'start'], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env },
+  });
+  child.unref();
+}
+
 async function _ensurePgserve(): Promise<number> {
   // Already connected in this process
   if (activePort !== null) return activePort;
@@ -213,20 +244,35 @@ async function _ensurePgserve(): Promise<number> {
     throw new Error('pgserve not available in CI');
   }
 
-  // 4. No healthy PG found — spawn pgserve as a child process.
-  //    This replaces the old approach of embedding the MultiTenantRouter proxy
-  //    in-process, which caused self-referencing deadlocks under load.
-  mkdirSync(DATA_DIR, { recursive: true });
-  selfHealPostgres(DATA_DIR);
-  try {
-    const startedPort = await startPgserveOnPort(port);
-    registerExitHandler();
-    return startedPort;
-  } catch (err) {
-    process.env.GENIE_PG_AVAILABLE = 'false';
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`pgserve failed to start: ${maskCredentials(message)}`);
+  // 4a. If we ARE the daemon — spawn pgserve directly (daemon owns PG).
+  if (process.env.GENIE_IS_DAEMON === '1') {
+    mkdirSync(DATA_DIR, { recursive: true });
+    selfHealPostgres(DATA_DIR);
+    try {
+      const startedPort = await startPgserveOnPort(port);
+      registerExitHandler();
+      return startedPort;
+    } catch (err) {
+      process.env.GENIE_PG_AVAILABLE = 'false';
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`pgserve failed to start: ${maskCredentials(message)}`);
+    }
   }
+
+  // 4b. CLI command — auto-start daemon, wait for port file.
+  await autoStartDaemon();
+  const deadline = Date.now() + 16000;
+  while (Date.now() < deadline) {
+    const p = readLockfile();
+    if (p !== null && (await isPostgresHealthy(p))) {
+      activePort = p;
+      process.env.GENIE_PG_AVAILABLE = 'true';
+      return p;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  process.env.GENIE_PG_AVAILABLE = 'false';
+  throw new Error('Timed out waiting for daemon to start pgserve (16s). Run: genie daemon start');
 }
 
 /** Resolve the pgserve CLI binary path — checks local dep, global, then PATH. */
