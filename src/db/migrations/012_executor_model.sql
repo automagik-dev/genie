@@ -184,3 +184,22 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_notify_executor_state
   AFTER UPDATE OF state ON executors
   FOR EACH ROW EXECUTE FUNCTION notify_executor_state_change();
+
+-- ============================================================================
+-- TUI kanban link columns — additive schema for cross-table relationships
+-- ============================================================================
+
+-- Direct task → team link (set by genie team create)
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS team_name TEXT;
+
+-- Team progress: total groups from wish for "5/9 done" display
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS total_groups INTEGER;
+
+-- Reverse team → board task link
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS task_id TEXT;
+
+-- Org tree: agent hierarchy (self-ref, NULL = root)
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS reports_to TEXT;
+
+-- Agent title in org context (CPO, CTO, Research Lead, etc.)
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS title TEXT;

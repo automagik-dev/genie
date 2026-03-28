@@ -51,6 +51,8 @@ export interface AgentIdentity {
   nativeTeamEnabled?: boolean;
   parentSessionId?: string;
   currentExecutorId: string | null;
+  reportsTo?: string | null;
+  title?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }

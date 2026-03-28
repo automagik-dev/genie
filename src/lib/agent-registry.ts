@@ -60,6 +60,10 @@ export interface Agent {
   paneColor?: string;
   /** FK to current active executor. Added by executor model (Group 2). */
   currentExecutorId?: string | null;
+  /** Self-ref for org tree hierarchy (NULL = root). */
+  reportsTo?: string | null;
+  /** Agent title in org context (CPO, CTO, Research Lead). */
+  title?: string | null;
 }
 
 export interface WorkerTemplate {
@@ -109,6 +113,8 @@ interface AgentRow {
   max_resume_attempts: number | null;
   pane_color: string | null;
   current_executor_id: string | null;
+  reports_to: string | null;
+  title: string | null;
 }
 
 interface TemplateRow {
@@ -169,6 +175,8 @@ function rowToAgent(r: AgentRow): Agent {
   if (r.max_resume_attempts != null) agent.maxResumeAttempts = r.max_resume_attempts;
   if (r.pane_color != null) agent.paneColor = r.pane_color;
   agent.currentExecutorId = r.current_executor_id ?? null;
+  agent.reportsTo = r.reports_to ?? null;
+  agent.title = r.title ?? null;
   return agent;
 }
 
@@ -400,6 +408,8 @@ interface AgentIdentityRow {
   native_team_enabled: boolean;
   parent_session_id: string | null;
   current_executor_id: string | null;
+  reports_to: string | null;
+  title: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -416,6 +426,8 @@ function rowToAgentIdentity(r: AgentIdentityRow): AgentIdentity {
     nativeTeamEnabled: r.native_team_enabled || undefined,
     parentSessionId: r.parent_session_id ?? undefined,
     currentExecutorId: r.current_executor_id ?? null,
+    reportsTo: r.reports_to ?? null,
+    title: r.title ?? null,
     createdAt: ts(r.created_at),
     updatedAt: ts(r.updated_at),
   };
@@ -432,7 +444,7 @@ export async function findOrCreateAgent(name: string, team: string, role?: strin
   // Try to find existing agent by composite unique (custom_name, team)
   const existing = await sql<AgentIdentityRow[]>`
     SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-           native_team_enabled, parent_session_id, current_executor_id, created_at, updated_at
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
     FROM agents
     WHERE custom_name = ${name} AND team = ${team}
     LIMIT 1
@@ -448,7 +460,7 @@ export async function findOrCreateAgent(name: string, team: string, role?: strin
     ON CONFLICT (custom_name, team) WHERE custom_name IS NOT NULL AND team IS NOT NULL
     DO UPDATE SET updated_at = now()
     RETURNING id, started_at, role, custom_name, team, native_agent_id, native_color,
-              native_team_enabled, parent_session_id, current_executor_id, created_at, updated_at
+              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
   `;
 
   return rowToAgentIdentity(rows[0]);
@@ -459,7 +471,7 @@ export async function getAgent(id: string): Promise<AgentIdentity | null> {
   const sql = await getConnection();
   const rows = await sql<AgentIdentityRow[]>`
     SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-           native_team_enabled, parent_session_id, current_executor_id, created_at, updated_at
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
     FROM agents WHERE id = ${id}
   `;
   return rows.length > 0 ? rowToAgentIdentity(rows[0]) : null;
@@ -470,7 +482,7 @@ export async function getAgentByName(name: string, team: string): Promise<AgentI
   const sql = await getConnection();
   const rows = await sql<AgentIdentityRow[]>`
     SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-           native_team_enabled, parent_session_id, current_executor_id, created_at, updated_at
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
     FROM agents WHERE custom_name = ${name} AND team = ${team}
     LIMIT 1
   `;
@@ -511,25 +523,25 @@ export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdent
   if (filters?.team && filters?.role) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
       FROM agents WHERE team = ${filters.team} AND role = ${filters.role}
     `;
   } else if (filters?.team) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
       FROM agents WHERE team = ${filters.team}
     `;
   } else if (filters?.role) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
       FROM agents WHERE role = ${filters.role}
     `;
   } else {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
       FROM agents
     `;
   }
