@@ -15,6 +15,8 @@ import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
+import * as executorRegistry from '../lib/executor-registry.js';
+import type { TransportType as ExecutorTransport } from '../lib/executor-types.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
 import { getOtelPort, startOtelReceiver } from '../lib/otel-receiver.js';
 import { injectResumeContext } from '../lib/protocol-router-spawn.js';
@@ -25,6 +27,7 @@ import {
   buildLaunchCommand,
   validateSpawnParams,
 } from '../lib/provider-adapters.js';
+import { getProvider } from '../lib/providers/registry.js';
 import { waitForAgentReady } from '../lib/spawn-command.js';
 import * as teamManager from '../lib/team-manager.js';
 import * as tmux from '../lib/tmux.js';
@@ -404,6 +407,71 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
 }
 
 // ============================================================================
+// Executor Model Helpers
+// ============================================================================
+
+/** Capture the PID of the process running in a tmux pane via #{pane_pid}. */
+async function capturePanePid(paneId: string): Promise<number | null> {
+  if (paneId === 'inline') return null;
+  try {
+    const { execSync } = require('node:child_process');
+    const output = execSync(`tmux display -t '${paneId}' -p '#{pane_pid}'`, { encoding: 'utf-8' }).trim();
+    const pid = Number.parseInt(output, 10);
+    return pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve the executor transport type from provider and spawn transport. */
+function resolveExecutorTransport(provider: ProviderName, spawnTransport: 'tmux' | 'inline'): ExecutorTransport {
+  if (provider === 'codex') return 'api';
+  return spawnTransport === 'inline' ? 'process' : 'tmux';
+}
+
+/**
+ * Concurrent executor guard: terminate active executor before spawning new one.
+ * Uses the provider's terminate() for process cleanup, then updates DB state.
+ */
+async function terminateActiveExecutorWithCleanup(agentIdentityId: string): Promise<void> {
+  try {
+    const currentExec = await executorRegistry.getCurrentExecutor(agentIdentityId);
+    if (!currentExec || currentExec.state === 'terminated' || currentExec.state === 'done') return;
+
+    const provider = getProvider(currentExec.provider);
+    if (provider) {
+      try {
+        await provider.terminate(currentExec);
+      } catch {
+        /* best-effort process cleanup */
+      }
+    }
+    await executorRegistry.terminateActiveExecutor(agentIdentityId);
+  } catch {
+    /* best-effort — don't block spawn if executor cleanup fails */
+  }
+}
+
+/**
+ * Create an executor record and link it as the agent's current executor.
+ * Best-effort: executor tracking is additive, failure doesn't block spawn.
+ */
+async function createAndLinkExecutor(
+  agentIdentityId: string,
+  provider: ProviderName,
+  transport: ExecutorTransport,
+  opts: executorRegistry.CreateExecutorOpts,
+): Promise<string | null> {
+  try {
+    const executor = await executorRegistry.createExecutor(agentIdentityId, provider, transport, opts);
+    await registry.setCurrentExecutor(agentIdentityId, executor.id);
+    return executor.id;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================================
 // Spawn helpers (extracted for cognitive complexity)
 // ============================================================================
 
@@ -430,6 +498,10 @@ interface SpawnCtx {
   sessionOverride?: string;
   /** Auto-resume on pane death (default true, false disables). */
   autoResume?: boolean;
+  /** Durable agent identity ID (from findOrCreateAgent). */
+  agentIdentityId?: string;
+  /** Pre-generated executor ID for the executor record. */
+  executorId?: string;
 }
 
 async function registerSpawnWorker(
@@ -728,6 +800,28 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
     return process.exit(1) as never;
   }
 
+  // Executor model: capture PID and create executor record
+  const pid = await capturePanePid(paneId);
+  if (ctx.agentIdentityId && ctx.executorId) {
+    await createAndLinkExecutor(
+      ctx.agentIdentityId,
+      ctx.validated.provider,
+      resolveExecutorTransport(ctx.validated.provider, 'tmux'),
+      {
+        id: ctx.executorId,
+        pid,
+        tmuxSession: ctx.validated.team,
+        tmuxPaneId: paneId,
+        tmuxWindow: teamWindow?.windowName ?? null,
+        tmuxWindowId: teamWindow?.windowId ?? null,
+        claudeSessionId: ctx.claudeSessionId ?? null,
+        state: 'spawning',
+        repoPath: ctx.cwd,
+        paneColor: ctx.spawnColor,
+      },
+    );
+  }
+
   await applySpawnLayout(ctx, teamWindow);
 
   // Watch for Claude Code workspace trust prompt and auto-confirm
@@ -781,6 +875,22 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
 async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
   const nt = ctx.validated.nativeTeam;
   const paneId = 'inline';
+
+  // Executor model: create executor before blocking spawn
+  if (ctx.agentIdentityId && ctx.executorId) {
+    await createAndLinkExecutor(
+      ctx.agentIdentityId,
+      ctx.validated.provider,
+      resolveExecutorTransport(ctx.validated.provider, 'inline'),
+      {
+        id: ctx.executorId,
+        claudeSessionId: ctx.claudeSessionId ?? null,
+        state: 'spawning',
+        repoPath: ctx.cwd,
+      },
+    );
+  }
+
   const workerEntry = await registerSpawnWorker(ctx, paneId);
   await notifySpawnJoin(ctx, paneId);
 
@@ -799,7 +909,10 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
     stdio: 'inherit',
   });
 
-  // Session ended — clean up
+  // Session ended — clean up executor + legacy registry
+  if (ctx.agentIdentityId && ctx.executorId) {
+    await executorRegistry.updateExecutorState(ctx.executorId, 'done').catch(() => {});
+  }
   await registry.unregister(ctx.workerId);
   if (nt?.enabled && ctx.agentName) {
     await nativeTeams.clearNativeInbox(ctx.validated.team, ctx.agentName).catch(() => {});
@@ -1021,6 +1134,11 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   const now = new Date().toISOString();
   const agentName = nt?.agentName ?? effectiveRole;
 
+  // Executor model: find/create durable agent identity + concurrent guard
+  const agentIdentity = await registry.findOrCreateAgent(agentName, team, effectiveRole);
+  await terminateActiveExecutorWithCleanup(agentIdentity.id);
+  const executorId = crypto.randomUUID();
+
   // OTel relay for non-native workers (Codex)
   let otelRelayActive = false;
   if (!nt?.enabled && validated.provider === 'codex' && insideTmux) {
@@ -1048,6 +1166,8 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     spawnIntoCurrentWindow: !teamWasExplicit && insideTmux && !options.session,
     sessionOverride: options.session,
     autoResume: options.autoResume,
+    agentIdentityId: agentIdentity.id,
+    executorId,
   };
 
   // Audit event for worker spawn (fire-and-forget before launch returns)
@@ -1348,6 +1468,34 @@ async function buildFullResumeParams(
   return params;
 }
 
+/** Resolve executor identity and create executor record for a resume pane. */
+async function createResumeExecutor(
+  agent: registry.Agent,
+  params: SpawnParams,
+  paneId: string,
+  teamWindow: { windowName: string; windowId: string } | null,
+  cwd: string,
+  spawnColor: string,
+): Promise<void> {
+  const resumeAgentName = agent.role ?? agent.id;
+  const resumeTeam = agent.team ?? params.team;
+  const agentIdentity = await registry.findOrCreateAgent(resumeAgentName, resumeTeam, agent.role);
+  await terminateActiveExecutorWithCleanup(agentIdentity.id);
+
+  const pid = await capturePanePid(paneId);
+  await createAndLinkExecutor(agentIdentity.id, params.provider, resolveExecutorTransport(params.provider, 'tmux'), {
+    pid,
+    tmuxSession: params.team,
+    tmuxPaneId: paneId,
+    tmuxWindow: teamWindow?.windowName ?? null,
+    tmuxWindowId: teamWindow?.windowId ?? null,
+    claudeSessionId: agent.claudeSessionId ?? null,
+    state: 'spawning',
+    repoPath: cwd,
+    paneColor: spawnColor,
+  });
+}
+
 /**
  * Resume a single agent by rebuilding spawn params with --resume <sessionId>.
  * Resets resumeAttempts to 0 (manual resume = fresh retry budget).
@@ -1397,6 +1545,9 @@ async function resumeAgent(agent: registry.Agent): Promise<void> {
     console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
     process.exit(1);
   }
+
+  // Executor model: create new executor for resumed session
+  await createResumeExecutor(agent, validated, paneId, teamWindow, ctx.cwd, ctx.spawnColor);
 
   await applySpawnLayout(ctx, teamWindow);
 

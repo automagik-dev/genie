@@ -19,6 +19,7 @@ import { formatRelativeTimestamp as formatTimestamp, padRight } from '../lib/ter
 
 interface SessionRow {
   id: string;
+  executor_id: string | null;
   agent_id: string | null;
   team: string | null;
   role: string | null;
@@ -26,6 +27,7 @@ interface SessionRow {
   total_turns: number | null;
   started_at: string | null;
   created_at: string;
+  agent_name?: string | null;
 }
 
 interface ContentRow {
@@ -52,6 +54,14 @@ interface ListOptions {
   json?: boolean;
 }
 
+/** Resolve display name for a session's agent — prefers executor→agent join, falls back to agent_id. */
+function resolveAgentLabel(r: SessionRow): string {
+  if (r.agent_name) return r.agent_name;
+  if (r.executor_id) return r.executor_id.slice(0, 12);
+  if (r.agent_id) return r.agent_id;
+  return '(orphaned)';
+}
+
 async function sessionsListCommand(options: ListOptions): Promise<void> {
   if (!(await isAvailable())) {
     console.error('Database not available.');
@@ -63,14 +73,40 @@ async function sessionsListCommand(options: ListOptions): Promise<void> {
 
   let rows: SessionRow[];
   if (options.active) {
-    rows = await sql`SELECT * FROM sessions WHERE status = 'active' ORDER BY started_at DESC LIMIT ${limit}`;
+    rows = await sql`
+      SELECT s.*, a.custom_name as agent_name
+      FROM sessions s
+      LEFT JOIN executors e ON s.executor_id = e.id
+      LEFT JOIN agents a ON e.agent_id = a.id
+      WHERE s.status = 'active'
+      ORDER BY s.started_at DESC LIMIT ${limit}`;
   } else if (options.orphaned) {
-    rows = await sql`SELECT * FROM sessions WHERE status = 'orphaned' ORDER BY started_at DESC LIMIT ${limit}`;
+    rows = await sql`
+      SELECT s.*, a.custom_name as agent_name
+      FROM sessions s
+      LEFT JOIN executors e ON s.executor_id = e.id
+      LEFT JOIN agents a ON e.agent_id = a.id
+      WHERE s.status = 'orphaned'
+      ORDER BY s.started_at DESC LIMIT ${limit}`;
   } else if (options.agent) {
-    rows =
-      await sql`SELECT * FROM sessions WHERE agent_id = ${options.agent} OR agent_id LIKE ${`%${options.agent}%`} ORDER BY started_at DESC LIMIT ${limit}`;
+    // Search by agent name/id via executor join, fall back to legacy agent_id
+    rows = await sql`
+      SELECT s.*, a.custom_name as agent_name
+      FROM sessions s
+      LEFT JOIN executors e ON s.executor_id = e.id
+      LEFT JOIN agents a ON e.agent_id = a.id
+      WHERE a.custom_name = ${options.agent}
+        OR a.role = ${options.agent}
+        OR s.agent_id = ${options.agent}
+        OR s.agent_id LIKE ${`%${options.agent}%`}
+      ORDER BY s.started_at DESC LIMIT ${limit}`;
   } else {
-    rows = await sql`SELECT * FROM sessions ORDER BY started_at DESC LIMIT ${limit}`;
+    rows = await sql`
+      SELECT s.*, a.custom_name as agent_name
+      FROM sessions s
+      LEFT JOIN executors e ON s.executor_id = e.id
+      LEFT JOIN agents a ON e.agent_id = a.id
+      ORDER BY s.started_at DESC LIMIT ${limit}`;
   }
 
   if (options.json) {
@@ -86,7 +122,7 @@ async function sessionsListCommand(options: ListOptions): Promise<void> {
   const headers = ['ID', 'Agent', 'Team', 'Status', 'Turns', 'Started'];
   const data = rows.map((r: SessionRow) => [
     r.id.slice(0, 12),
-    r.agent_id ?? '(orphaned)',
+    resolveAgentLabel(r),
     r.team ?? '-',
     r.status,
     String(r.total_turns ?? 0),
@@ -129,8 +165,13 @@ async function sessionsReplayCommand(sessionId: string, options: { json?: boolea
 
   const sql = await getConnection();
 
-  // Get session metadata
-  const sessions = await sql`SELECT * FROM sessions WHERE id = ${sessionId}`;
+  // Get session metadata with executor/agent join
+  const sessions = await sql`
+    SELECT s.*, a.custom_name as agent_name, e.provider, e.state as executor_state
+    FROM sessions s
+    LEFT JOIN executors e ON s.executor_id = e.id
+    LEFT JOIN agents a ON e.agent_id = a.id
+    WHERE s.id = ${sessionId}`;
   if (sessions.length === 0) {
     console.error(`Session "${sessionId}" not found.`);
     process.exit(1);
@@ -158,8 +199,11 @@ async function sessionsReplayCommand(sessionId: string, options: { json?: boolea
   }
 
   const session = sessions[0];
+  const agentLabel = session.agent_name ?? session.agent_id ?? '(orphaned)';
   console.log(`Session: ${session.id}`);
-  console.log(`Agent: ${session.agent_id ?? '(orphaned)'}`);
+  console.log(`Agent: ${agentLabel}`);
+  if (session.executor_id)
+    console.log(`Executor: ${session.executor_id.slice(0, 12)} (${session.provider ?? 'unknown'})`);
   console.log(`Team: ${session.team ?? '-'} | Role: ${session.role ?? '-'}`);
   console.log(`Status: ${session.status} | Turns: ${session.total_turns ?? 0}`);
   console.log('---');
@@ -188,9 +232,11 @@ async function sessionsSearchCommand(query: string, options: { json?: boolean; l
     SELECT sc.session_id, sc.turn_index, sc.role, sc.tool_name, sc.timestamp,
            ts_headline('english', sc.content, plainto_tsquery('english', ${query}),
              'StartSel=>>>, StopSel=<<<, MaxWords=30, MinWords=10') as headline,
-           s.agent_id, s.team
+           COALESCE(a.custom_name, s.agent_id) as agent_label, s.team
     FROM session_content sc
     JOIN sessions s ON s.id = sc.session_id
+    LEFT JOIN executors e ON s.executor_id = e.id
+    LEFT JOIN agents a ON e.agent_id = a.id
     WHERE to_tsvector('english', sc.content) @@ plainto_tsquery('english', ${query})
     ORDER BY sc.timestamp DESC
     LIMIT ${limit}
@@ -207,7 +253,7 @@ async function sessionsSearchCommand(query: string, options: { json?: boolean; l
   }
 
   for (const r of rows) {
-    console.log(`[${formatTimestamp(r.timestamp)}] ${r.agent_id ?? 'orphaned'} / ${r.session_id.slice(0, 12)}`);
+    console.log(`[${formatTimestamp(r.timestamp)}] ${r.agent_label ?? 'orphaned'} / ${r.session_id.slice(0, 12)}`);
     console.log(`  ${r.role}${r.tool_name ? ` [${r.tool_name}]` : ''}: ${r.headline}`);
   }
   console.log(`\n(${rows.length} result${rows.length === 1 ? '' : 's'})`);

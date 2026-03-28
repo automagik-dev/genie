@@ -20,6 +20,7 @@ import { getActor, recordAuditEvent } from './audit.js';
 import { BUILTIN_COUNCIL_MEMBERS } from './builtin-agents.js';
 import * as nativeTeamsManager from './claude-native-teams.js';
 import { getConnection } from './db.js';
+import * as executorRegistry from './executor-registry.js';
 import { loadGenieConfigSync } from './genie-config.js';
 import * as tmux from './tmux.js';
 
@@ -176,6 +177,16 @@ async function killWorkersByName(agentName: string, teamName?: string): Promise<
     (w) => (w.role === agentName || w.id === agentName) && (!teamName || w.team === teamName),
   );
   for (const w of matches) {
+    // Terminate executor first (if linked)
+    if (w.currentExecutorId) {
+      try {
+        await executorRegistry.terminateExecutor(w.currentExecutorId);
+        await registry.setCurrentExecutor(w.id, null);
+      } catch {
+        // Best-effort
+      }
+    }
+    // Kill tmux pane via executor pane ID or legacy agent pane ID
     try {
       if (w.paneId && w.paneId !== 'inline') {
         const { execSync } = require('node:child_process');

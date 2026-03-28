@@ -6,19 +6,44 @@ import {
   findByPane,
   findByTask,
   findByWindow,
+  findOrCreateAgent,
   get,
+  getAgent,
+  getAgentByName,
+  getAgentEffectiveState,
   getElapsedTime,
   getPane,
   getTeamLeadEntry,
   list,
+  listAgents,
   listTemplates,
   register,
   removeSubPane,
   saveTemplate,
+  setCurrentExecutor,
   unregister,
   update,
 } from './agent-registry.js';
+import {
+  completeAssignment,
+  createAssignment,
+  getActiveAssignment,
+  getAssignment,
+  getExecutorAssignments,
+  getTaskHistory,
+} from './assignment-registry.js';
 import { getConnection } from './db.js';
+import {
+  createExecutor,
+  findExecutorByPane,
+  findExecutorBySession,
+  getCurrentExecutor,
+  getExecutor,
+  listExecutors,
+  terminateActiveExecutor,
+  terminateExecutor,
+  updateExecutorState,
+} from './executor-registry.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
@@ -31,6 +56,8 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   });
   beforeEach(async () => {
     const sql = await getConnection();
+    await sql`DELETE FROM assignments`;
+    await sql`DELETE FROM executors`;
     await sql`DELETE FROM agents`;
     await sql`DELETE FROM agent_templates`;
   });
@@ -271,6 +298,298 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await register(makeAgent());
       await update('bd-42', { paneColor: '#123456' });
       expect((await get('bd-42'))!.paneColor).toBe('#123456');
+    });
+  });
+
+  // ==========================================================================
+  // Identity-Focused API (Executor Model v4)
+  // ==========================================================================
+
+  describe('findOrCreateAgent', () => {
+    test('creates new agent', async () => {
+      const agent = await findOrCreateAgent('engineer', 'alpha', 'engineer');
+      expect(agent.customName).toBe('engineer');
+      expect(agent.team).toBe('alpha');
+      expect(agent.role).toBe('engineer');
+      expect(agent.id).toBeTruthy();
+      expect(agent.currentExecutorId).toBeNull();
+    });
+    test('returns existing agent on duplicate name+team', async () => {
+      const a1 = await findOrCreateAgent('engineer', 'alpha', 'engineer');
+      const a2 = await findOrCreateAgent('engineer', 'alpha', 'engineer');
+      expect(a1.id).toBe(a2.id);
+    });
+    test('different teams create different agents', async () => {
+      const a1 = await findOrCreateAgent('engineer', 'alpha');
+      const a2 = await findOrCreateAgent('engineer', 'beta');
+      expect(a1.id).not.toBe(a2.id);
+    });
+  });
+
+  describe('getAgent / getAgentByName', () => {
+    test('getAgent by ID', async () => {
+      const created = await findOrCreateAgent('reviewer', 'alpha');
+      const fetched = await getAgent(created.id);
+      expect(fetched).not.toBeNull();
+      expect(fetched!.customName).toBe('reviewer');
+    });
+    test('getAgent returns null for missing', async () => {
+      expect(await getAgent('nonexistent')).toBeNull();
+    });
+    test('getAgentByName', async () => {
+      await findOrCreateAgent('qa', 'beta', 'qa');
+      const fetched = await getAgentByName('qa', 'beta');
+      expect(fetched).not.toBeNull();
+      expect(fetched!.role).toBe('qa');
+    });
+    test('getAgentByName returns null for missing', async () => {
+      expect(await getAgentByName('ghost', 'nowhere')).toBeNull();
+    });
+  });
+
+  describe('setCurrentExecutor', () => {
+    test('sets and clears FK', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux', { repoPath: '/tmp' });
+
+      await setCurrentExecutor(agent.id, exec.id);
+      expect((await getAgent(agent.id))!.currentExecutorId).toBe(exec.id);
+
+      await setCurrentExecutor(agent.id, null);
+      expect((await getAgent(agent.id))!.currentExecutorId).toBeNull();
+    });
+  });
+
+  describe('getAgentEffectiveState', () => {
+    test('returns executor state', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux', { state: 'working' });
+      await setCurrentExecutor(agent.id, exec.id);
+
+      expect(await getAgentEffectiveState(agent.id)).toBe('working');
+    });
+    test('returns offline when no executor', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      expect(await getAgentEffectiveState(agent.id)).toBe('offline');
+    });
+  });
+
+  describe('listAgents', () => {
+    test('lists all', async () => {
+      await findOrCreateAgent('a', 'team1', 'engineer');
+      await findOrCreateAgent('b', 'team1', 'reviewer');
+      await findOrCreateAgent('c', 'team2', 'engineer');
+      expect((await listAgents()).length).toBe(3);
+    });
+    test('filters by team', async () => {
+      await findOrCreateAgent('a', 'team1', 'engineer');
+      await findOrCreateAgent('b', 'team2', 'engineer');
+      expect((await listAgents({ team: 'team1' })).length).toBe(1);
+    });
+    test('filters by role', async () => {
+      await findOrCreateAgent('a', 'team1', 'engineer');
+      await findOrCreateAgent('b', 'team1', 'reviewer');
+      expect((await listAgents({ role: 'reviewer' })).length).toBe(1);
+    });
+    test('filters by team+role', async () => {
+      await findOrCreateAgent('a', 'team1', 'engineer');
+      await findOrCreateAgent('b', 'team1', 'reviewer');
+      await findOrCreateAgent('c', 'team2', 'engineer');
+      expect((await listAgents({ team: 'team1', role: 'engineer' })).length).toBe(1);
+    });
+  });
+
+  // ==========================================================================
+  // Executor Registry
+  // ==========================================================================
+
+  describe('executor-registry', () => {
+    test('createExecutor and getExecutor', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux', {
+        pid: 12345,
+        tmuxSession: 'genie',
+        tmuxPaneId: '%10',
+        repoPath: '/tmp/repo',
+        metadata: { model: 'opus' },
+      });
+
+      expect(exec.agentId).toBe(agent.id);
+      expect(exec.provider).toBe('claude');
+      expect(exec.transport).toBe('tmux');
+      expect(exec.pid).toBe(12345);
+      expect(exec.tmuxPaneId).toBe('%10');
+      expect(exec.state).toBe('spawning');
+      expect(exec.metadata).toEqual({ model: 'opus' });
+
+      const fetched = await getExecutor(exec.id);
+      expect(fetched).not.toBeNull();
+      expect(fetched!.id).toBe(exec.id);
+    });
+
+    test('getExecutor returns null for missing', async () => {
+      expect(await getExecutor('nonexistent')).toBeNull();
+    });
+
+    test('getCurrentExecutor', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux');
+      await setCurrentExecutor(agent.id, exec.id);
+
+      const current = await getCurrentExecutor(agent.id);
+      expect(current).not.toBeNull();
+      expect(current!.id).toBe(exec.id);
+    });
+
+    test('getCurrentExecutor returns null when no current', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      expect(await getCurrentExecutor(agent.id)).toBeNull();
+    });
+
+    test('updateExecutorState', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux');
+
+      await updateExecutorState(exec.id, 'working');
+      expect((await getExecutor(exec.id))!.state).toBe('working');
+
+      await updateExecutorState(exec.id, 'done');
+      const done = (await getExecutor(exec.id))!;
+      expect(done.state).toBe('done');
+      expect(done.endedAt).not.toBeNull();
+    });
+
+    test('terminateExecutor', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux', { state: 'working' });
+
+      await terminateExecutor(exec.id);
+      const terminated = (await getExecutor(exec.id))!;
+      expect(terminated.state).toBe('terminated');
+      expect(terminated.endedAt).not.toBeNull();
+    });
+
+    test('terminateExecutor is idempotent', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux', { state: 'terminated' });
+      await terminateExecutor(exec.id); // should not throw
+    });
+
+    test('terminateActiveExecutor', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux', { state: 'working' });
+      await setCurrentExecutor(agent.id, exec.id);
+
+      await terminateActiveExecutor(agent.id);
+
+      expect((await getExecutor(exec.id))!.state).toBe('terminated');
+      expect((await getAgent(agent.id))!.currentExecutorId).toBeNull();
+    });
+
+    test('terminateActiveExecutor no-op when no current', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      await terminateActiveExecutor(agent.id); // should not throw
+    });
+
+    test('listExecutors', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      await createExecutor(agent.id, 'claude', 'tmux');
+      await createExecutor(agent.id, 'claude', 'tmux');
+
+      const all = await listExecutors();
+      expect(all.length).toBe(2);
+
+      const byAgent = await listExecutors(agent.id);
+      expect(byAgent.length).toBe(2);
+    });
+
+    test('findExecutorByPane', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      await createExecutor(agent.id, 'claude', 'tmux', { tmuxPaneId: '%42' });
+
+      expect((await findExecutorByPane('%42'))!.tmuxPaneId).toBe('%42');
+      expect((await findExecutorByPane('42'))!.tmuxPaneId).toBe('%42');
+      expect(await findExecutorByPane('%999')).toBeNull();
+    });
+
+    test('findExecutorBySession', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      await createExecutor(agent.id, 'claude', 'tmux', { claudeSessionId: 'sess-abc' });
+
+      expect((await findExecutorBySession('sess-abc'))!.claudeSessionId).toBe('sess-abc');
+      expect(await findExecutorBySession('sess-nonexistent')).toBeNull();
+    });
+  });
+
+  // ==========================================================================
+  // Assignment Registry
+  // ==========================================================================
+
+  describe('assignment-registry', () => {
+    test('createAssignment and getAssignment', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux');
+      const assignment = await createAssignment(exec.id, 'task-1', 'my-wish', 3);
+
+      expect(assignment.executorId).toBe(exec.id);
+      expect(assignment.taskId).toBe('task-1');
+      expect(assignment.wishSlug).toBe('my-wish');
+      expect(assignment.groupNumber).toBe(3);
+      expect(assignment.endedAt).toBeNull();
+      expect(assignment.outcome).toBeNull();
+
+      const fetched = await getAssignment(assignment.id);
+      expect(fetched).not.toBeNull();
+      expect(fetched!.id).toBe(assignment.id);
+    });
+
+    test('completeAssignment', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux');
+      const assignment = await createAssignment(exec.id, 'task-1');
+
+      await completeAssignment(assignment.id, 'completed');
+      const completed = (await getAssignment(assignment.id))!;
+      expect(completed.outcome).toBe('completed');
+      expect(completed.endedAt).not.toBeNull();
+    });
+
+    test('getActiveAssignment', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux');
+
+      // No assignment yet
+      expect(await getActiveAssignment(exec.id)).toBeNull();
+
+      const a1 = await createAssignment(exec.id, 'task-1');
+      expect((await getActiveAssignment(exec.id))!.id).toBe(a1.id);
+
+      // Complete it — no active anymore
+      await completeAssignment(a1.id, 'completed');
+      expect(await getActiveAssignment(exec.id)).toBeNull();
+    });
+
+    test('getTaskHistory', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec1 = await createExecutor(agent.id, 'claude', 'tmux');
+      const exec2 = await createExecutor(agent.id, 'claude', 'tmux');
+
+      await createAssignment(exec1.id, 'task-1');
+      await createAssignment(exec2.id, 'task-1');
+
+      const history = await getTaskHistory('task-1');
+      expect(history.length).toBe(2);
+    });
+
+    test('getExecutorAssignments', async () => {
+      const agent = await findOrCreateAgent('eng', 'team1');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux');
+
+      await createAssignment(exec.id, 'task-1');
+      await createAssignment(exec.id, 'task-2');
+
+      const assignments = await getExecutorAssignments(exec.id);
+      expect(assignments.length).toBe(2);
     });
   });
 });

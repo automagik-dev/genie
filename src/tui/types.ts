@@ -1,5 +1,8 @@
 /** Shared types for the Genie TUI */
 
+import type { ExecutorState, TransportType } from '../lib/executor-types.js';
+import type { ProviderName } from '../lib/provider-adapters.js';
+
 export interface Org {
   id: string;
   name: string;
@@ -73,6 +76,34 @@ export interface FlatNode {
   node: TreeNode;
   depth: number;
   visible: boolean;
+}
+
+/** Executor runtime as seen by the TUI — joined with agent identity. */
+export interface TuiExecutor {
+  id: string;
+  agentId: string;
+  agentName: string | null;
+  provider: ProviderName;
+  transport: TransportType;
+  pid: number | null;
+  tmuxSession: string | null;
+  tmuxPaneId: string | null;
+  state: ExecutorState;
+  metadata: Record<string, unknown>;
+  startedAt: string;
+  role: string | null;
+  team: string | null;
+}
+
+/** Active assignment linking an executor to a task. */
+export interface TuiAssignment {
+  id: string;
+  executorId: string;
+  taskId: string | null;
+  taskTitle: string | null;
+  wishSlug: string | null;
+  groupNumber: number | null;
+  startedAt: string;
 }
 
 export interface TuiData {
