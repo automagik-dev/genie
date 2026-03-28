@@ -49,11 +49,14 @@ export async function natsEmit(payload: HookPayload): Promise<HandlerResult> {
   const input = payload.tool_input;
   if (!input) return;
 
+  // Filter out non-message SendMessage types (e.g., shutdown_response).
+  // Native CC SendMessage has no type field — treat as message by default.
   const msgType = input.type as string | undefined;
-  if (msgType !== 'message' && msgType !== 'broadcast') return;
+  if (msgType && msgType !== 'message' && msgType !== 'broadcast') return;
 
   const to = input.to as string | undefined;
-  const content = input.content as string | undefined;
+  // Support both genie-internal (content) and native CC (message) field names
+  const content = (input.content ?? input.message) as string | undefined;
   if (!to || !content) return;
 
   const subject = msgType === 'broadcast' ? 'genie.msg.broadcast' : `genie.msg.${to}`;

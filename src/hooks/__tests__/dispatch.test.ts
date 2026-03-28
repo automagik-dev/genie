@@ -80,6 +80,25 @@ describe('genie hook dispatch', () => {
     expect(result).toBe('');
   });
 
+  test('identity-inject works with native CC SendMessage (no type, message field)', async () => {
+    const payload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'SendMessage',
+      tool_input: {
+        to: 'team-lead',
+        message: 'hello from native CC',
+      },
+    };
+
+    const result = await dispatch(JSON.stringify(payload));
+    const parsed = JSON.parse(result);
+
+    expect(parsed.updatedInput).toBeDefined();
+    expect(parsed.updatedInput.message).toBe('[from:test-worker] hello from native CC');
+    // Should not create a content field
+    expect(parsed.updatedInput.content).toBeUndefined();
+  });
+
   test('identity-inject skips non-message types', async () => {
     const payload = {
       hook_event_name: 'PreToolUse',
