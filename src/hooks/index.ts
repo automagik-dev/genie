@@ -16,6 +16,7 @@
  */
 
 import { autoSpawn } from './handlers/auto-spawn.js';
+import { branchGuard } from './handlers/branch-guard.js';
 import { identityInject } from './handlers/identity-inject.js';
 import { natsEmit, natsEmitAssistantResponse, natsEmitToolCall, natsEmitUserPrompt } from './handlers/nats-emit.js';
 import type { Handler, HandlerResult, HookDecision, HookPayload } from './types.js';
@@ -26,6 +27,13 @@ import { isBlockingEvent } from './types.js';
 // ============================================================================
 
 const handlers: Handler[] = [
+  {
+    name: 'branch-guard',
+    event: 'PreToolUse',
+    matcher: /^Bash$/,
+    priority: 1,
+    fn: branchGuard,
+  },
   {
     name: 'identity-inject',
     event: 'PreToolUse',
