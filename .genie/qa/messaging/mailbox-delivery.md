@@ -9,4 +9,4 @@
 
 ## Expect
 - [ ] follow stream contains event kind=message peer=reviewer
-- [ ] follow stream contains event source=mailbox text~=review PR
+- [ ] follow stream contains event source=send text~=review PR
