@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "test \"$CI\" = true || husky",
     "version": "bun run scripts/version.ts",
-    "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun && chmod +x dist/*.js",
+    "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun --external pgserve && chmod +x dist/*.js",
     "build:plugin": "node scripts/build.js",
     "sync": "node scripts/sync.js",
     "build-and-sync": "npm run build:plugin && npm run sync",
@@ -27,6 +27,7 @@
     "commander": "^12.1.0",
     "js-yaml": "^4.1.1",
     "nats": "^2.29.3",
+    "pgserve": "^1.1.6",
     "postgres": "^3.4.8",
     "uuid": "^11.1.0",
     "zod": "^3.25.0"

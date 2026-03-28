@@ -206,7 +206,14 @@ async function _ensurePgserve(): Promise<number> {
     return port;
   }
 
-  // 3. No healthy PG found — spawn pgserve as a child process.
+  // 3. In CI/test — don't attempt to spawn pgserve (not installed).
+  //    Tests use describe.skipIf(!DB_AVAILABLE) to handle this gracefully.
+  if (process.env.CI === 'true') {
+    process.env.GENIE_PG_AVAILABLE = 'false';
+    throw new Error('pgserve not available in CI');
+  }
+
+  // 4. No healthy PG found — spawn pgserve as a child process.
   //    This replaces the old approach of embedding the MultiTenantRouter proxy
   //    in-process, which caused self-referencing deadlocks under load.
   mkdirSync(DATA_DIR, { recursive: true });
@@ -222,10 +229,19 @@ async function _ensurePgserve(): Promise<number> {
   }
 }
 
-/** Resolve the pgserve CLI binary path. */
+/** Resolve the pgserve CLI binary path — checks local dep, global, then PATH. */
 function findPgserveBin(): string {
+  // 1. Local node_modules (pgserve is a dependency)
+  try {
+    const resolved = require.resolve('pgserve/bin/pgserve-wrapper.cjs');
+    if (existsSync(resolved)) return resolved;
+  } catch {
+    /* not found locally */
+  }
+  // 2. Global bun install
   const globalBin = join(homedir(), '.bun', 'bin', 'pgserve');
   if (existsSync(globalBin)) return globalBin;
+  // 3. PATH
   try {
     return execSync('which pgserve', { encoding: 'utf-8', timeout: 3000 }).trim();
   } catch {
