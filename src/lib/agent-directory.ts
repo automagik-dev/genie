@@ -113,12 +113,12 @@ export async function add(
     throw new Error(`Agent "${entry.name}" already exists. Use "genie dir edit" to update or "genie dir rm" first.`);
   }
 
-  // Store as a directory agent in PG
+  // Store as a directory agent in PG (identity columns only)
   const { getConnection } = await import('./db.js');
   const sql = await getConnection();
   await sql`
-    INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change)
-    VALUES (${`dir:${entry.name}`}, '', '', ${entry.repo ?? ''}, 'done', ${entry.name}, now(), now())
+    INSERT INTO agents (id, role, custom_name, started_at)
+    VALUES (${`dir:${entry.name}`}, ${entry.name}, ${entry.name}, now())
     ON CONFLICT (id) DO NOTHING
   `;
 
@@ -180,10 +180,11 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
     const rows = await sql`
-      SELECT DISTINCT ON (role) role, team, repo_path, provider, worktree
-      FROM agents
-      WHERE role IS NOT NULL
-      ORDER BY role, started_at DESC
+      SELECT DISTINCT ON (a.role) a.role, a.team, e.repo_path, e.provider
+      FROM agents a
+      LEFT JOIN executors e ON a.current_executor_id = e.id
+      WHERE a.role IS NOT NULL
+      ORDER BY a.role, a.started_at DESC
     `;
     for (const row of rows) {
       const name = row.role as string;

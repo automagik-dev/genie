@@ -54,9 +54,9 @@ async function metricsNowCommand(options: { json?: boolean }): Promise<void> {
 
   // Latest machine snapshot
   const snapshots = await sql`SELECT * FROM machine_snapshots ORDER BY created_at DESC LIMIT 1`;
-  // Active agent count
+  // Active agent count (via executors table — source of truth for runtime state)
   const agentCount =
-    await sql`SELECT count(*)::int as cnt FROM agents WHERE state NOT IN ('done', 'error', 'suspended')`;
+    await sql`SELECT count(DISTINCT agent_id)::int as cnt FROM executors WHERE state NOT IN ('done', 'error', 'terminated')`;
   // Active team count
   const teamCount = await sql`SELECT count(*)::int as cnt FROM teams WHERE status = 'in_progress'`;
 

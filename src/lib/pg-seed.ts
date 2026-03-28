@@ -179,6 +179,31 @@ async function upsertTemplate(sql: Sql, t: JsonRecord): Promise<void> {
   `;
 }
 
+/** Create an executor record from a legacy JSON agent and link it to the agent. */
+async function upsertExecutorFromAgent(sql: Sql, a: JsonRecord): Promise<void> {
+  const executorId = `exec-${a.id}`;
+  const transport = a.transport === 'inline' ? 'process' : (a.transport ?? 'tmux');
+  const state = a.state === 'suspended' ? 'terminated' : (a.state ?? 'spawning');
+  await sql`
+    INSERT INTO executors (
+      id, agent_id, provider, transport, pid,
+      tmux_session, tmux_pane_id, tmux_window, tmux_window_id,
+      claude_session_id, state, metadata, worktree, repo_path, pane_color,
+      started_at
+    ) VALUES (
+      ${executorId}, ${a.id}, ${a.provider ?? 'claude'}, ${transport}, ${null},
+      ${a.session ?? null}, ${a.paneId ?? null},
+      ${a.window ?? null}, ${a.windowId ?? null},
+      ${a.claudeSessionId ?? null}, ${state},
+      ${sql.json({})}, ${a.worktree ?? null},
+      ${a.repoPath ?? null}, ${null},
+      ${a.startedAt ?? new Date().toISOString()}
+    ) ON CONFLICT (id) DO NOTHING
+  `;
+  // Link agent to executor
+  await sql`UPDATE agents SET current_executor_id = ${executorId} WHERE id = ${a.id} AND current_executor_id IS NULL`;
+}
+
 async function seedWorkers(sql: Sql): Promise<{ agents: number; templates: number }> {
   const filePath = workersJsonPath();
   if (!needsMigration(filePath)) return { agents: 0, templates: 0 };
@@ -192,6 +217,8 @@ async function seedWorkers(sql: Sql): Promise<{ agents: number; templates: numbe
   for (const agent of Object.values(data.workers ?? {})) {
     if (!agent.id) continue;
     await upsertAgent(sql, agent);
+    // Also create an executor record for the migrated agent
+    await upsertExecutorFromAgent(sql, agent);
     agentCount++;
   }
 

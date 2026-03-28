@@ -54,10 +54,19 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
   return false;
 }
 
+/** Check if a worker is in a dead state (suspended/terminated/offline). */
+async function isWorkerDead(w: registry.Agent): Promise<boolean> {
+  if (w.currentExecutorId) {
+    const state = await registry.getAgentEffectiveState(w.id);
+    return state === 'terminated' || state === 'offline';
+  }
+  return w.state === 'suspended';
+}
+
 /**
  * Resolve a recipient to live workers using strict tiered matching.
  * Priority: exact ID > role > team:role.
- * Only returns workers with alive panes (non-suspended).
+ * Only returns workers with alive panes (non-suspended/terminated).
  */
 async function resolveRecipient(recipientId: string): Promise<registry.Agent[]> {
   const allWorkers = await registry.list();
@@ -67,7 +76,7 @@ async function resolveRecipient(recipientId: string): Promise<registry.Agent[]> 
   const byTeamRole: registry.Agent[] = [];
 
   for (const w of allWorkers) {
-    if (w.state === 'suspended') continue;
+    if (await isWorkerDead(w)) continue;
     if (!(await isPaneAlive(w.paneId))) continue;
 
     if (w.id === recipientId) byId.push(w);
