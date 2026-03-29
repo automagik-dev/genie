@@ -1,193 +1,103 @@
 /** @jsxImportSource @opentui/react */
-/** Navigation panel with 3 tabs: Projects | tmux | Claude — arrow keys navigate, left/right switch tabs */
+/** Sessions panel — single tree view of tmux sessions > windows > panes */
 
 import { useKeyboard } from '@opentui/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { loadTeams } from '../db.js';
 import { type DiagnosticSnapshot, collectDiagnostics } from '../diagnostics.js';
+import { buildSessionTree, getSessionTarget } from '../session-tree.js';
 import { palette } from '../theme.js';
 import { flattenTree, toggleNode } from '../tree.js';
-import type { Task, TreeNode } from '../types.js';
-import { ClaudeView, getClaudeRowCount } from './ClaudeView.js';
-import { type DashboardTeam, DashboardView, getDashboardRowCount } from './DashboardView.js';
-import { TAB_ORDER, TabBar, type TabId } from './TabBar.js';
-import { TmuxView, getTmuxRowCount } from './TmuxView.js';
+import type { TreeNode } from '../types.js';
 import { TreeNodeRow } from './TreeNode.js';
 
 interface NavProps {
-  tree: TreeNode[];
-  tasks: Task[];
-  onTreeChange: (tree: TreeNode[]) => void;
-  onProjectSelect: (projectId: string, tmuxSession: string | null) => void;
+  onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void;
 }
 
-export function Nav({ tree, tasks, onTreeChange, onProjectSelect }: NavProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('dashboard');
-  const [tabBarFocused, setTabBarFocused] = useState(false);
+export function Nav({ onTmuxSessionSelect }: NavProps) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticSnapshot | null>(null);
-  const [teams, setTeams] = useState<DashboardTeam[]>([]);
+  const [sessionTree, setSessionTree] = useState<TreeNode[]>([]);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const lastTarget = useRef<string | null>(null);
 
-  // Per-tab selected index (preserved when switching)
-  const [dashboardIndex, setDashboardIndex] = useState(0);
-  const [projectIndex, setProjectIndex] = useState(0);
-  const [tmuxIndex, setTmuxIndex] = useState(0);
-  const [claudeIndex, setClaudeIndex] = useState(0);
-
-  const flatNodes = useMemo(() => flattenTree(tree), [tree]);
-
-  // Refresh diagnostics + teams every 2s
-  const diagTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Refresh diagnostics every 2s
   useEffect(() => {
     let active = true;
 
     async function refresh() {
       try {
-        const [snap, teamRows] = await Promise.all([collectDiagnostics(), loadTeams()]);
-        if (active) {
-          setDiagnostics(snap);
-          setTeams(teamRows);
-        }
+        const snap = await collectDiagnostics();
+        if (active) setDiagnostics(snap);
       } catch (err) {
         console.error('TUI: diagnostics failed:', err);
       }
     }
 
-    // Initial collection
     refresh();
-
-    diagTimer.current = setInterval(refresh, 2000);
+    const timer = setInterval(refresh, 2000);
 
     return () => {
       active = false;
-      if (diagTimer.current) clearInterval(diagTimer.current);
+      clearInterval(timer);
     };
   }, []);
 
-  // Get the active tab's item count
-  const getRowCount = useCallback((): number => {
-    switch (activeTab) {
-      case 'dashboard':
-        return diagnostics ? getDashboardRowCount(diagnostics.executors, diagnostics.gaps, tasks, teams) : 0;
-      case 'projects':
-        return flatNodes.length;
-      case 'tmux':
-        return diagnostics ? getTmuxRowCount(diagnostics.sessions) : 0;
-      case 'claude':
-        return diagnostics ? getClaudeRowCount(diagnostics.executors, diagnostics.assignments, diagnostics.gaps) : 0;
-    }
-  }, [activeTab, flatNodes, diagnostics, tasks, teams]);
-
-  // Get/set the active tab's selected index
-  const getSelectedIndex = useCallback((): number => {
-    switch (activeTab) {
-      case 'dashboard':
-        return dashboardIndex;
-      case 'projects':
-        return projectIndex;
-      case 'tmux':
-        return tmuxIndex;
-      case 'claude':
-        return claudeIndex;
-    }
-  }, [activeTab, dashboardIndex, projectIndex, tmuxIndex, claudeIndex]);
-
-  const setSelectedIndex = useCallback(
-    (idx: number) => {
-      switch (activeTab) {
-        case 'dashboard':
-          setDashboardIndex(idx);
-          break;
-        case 'projects':
-          setProjectIndex(idx);
-          break;
-        case 'tmux':
-          setTmuxIndex(idx);
-          break;
-        case 'claude':
-          setClaudeIndex(idx);
-          break;
-      }
-    },
-    [activeTab],
-  );
-
-  // Auto-switch right pane when cursor lands on a project node
+  // Build session tree from diagnostics, preserving expanded state
   useEffect(() => {
-    if (activeTab !== 'projects' || tabBarFocused) return;
-    const current = flatNodes[projectIndex]?.node;
-    if (!current || current.type !== 'project') return;
-    const proj = current.data as { id: string; tmuxSession: string | null };
-    if (proj.tmuxSession) {
-      onProjectSelect(proj.id, proj.tmuxSession);
-    }
-  }, [activeTab, tabBarFocused, projectIndex, flatNodes, onProjectSelect]);
+    if (!diagnostics) return;
+    const newTree = buildSessionTree(diagnostics);
+    setSessionTree((prev) => mergeExpandedState(prev, newTree));
+  }, [diagnostics]);
 
-  const handleProjectSelect = useCallback(
+  const flatNodes = useMemo(() => flattenTree(sessionTree), [sessionTree]);
+
+  // Clamp selectedIndex when tree shrinks
+  useEffect(() => {
+    if (flatNodes.length > 0 && selectedIndex >= flatNodes.length) {
+      setSelectedIndex(flatNodes.length - 1);
+    }
+  }, [flatNodes.length, selectedIndex]);
+
+  // Auto-switch right pane when cursor moves to a new target
+  useEffect(() => {
+    const current = flatNodes[selectedIndex]?.node;
+    if (!current) return;
+    const target = getSessionTarget(current);
+    if (!target) return;
+    const key = `${target.sessionName}:${target.windowIndex ?? ''}`;
+    if (key === lastTarget.current) return;
+    lastTarget.current = key;
+    onTmuxSessionSelect(target.sessionName, target.windowIndex);
+  }, [selectedIndex, flatNodes, onTmuxSessionSelect]);
+
+  const handleSelect = useCallback(
     (id: string) => {
       const idx = flatNodes.findIndex((n) => n.node.id === id);
-      if (idx >= 0) setProjectIndex(idx);
+      if (idx >= 0) setSelectedIndex(idx);
     },
     [flatNodes],
   );
 
-  const handleToggle = useCallback(
-    (id: string) => {
-      onTreeChange(toggleNode(tree, id));
-    },
-    [tree, onTreeChange],
-  );
-
-  const handleEnter = useCallback(() => {
-    if (activeTab !== 'projects') return;
-    const current = flatNodes[projectIndex]?.node;
-    if (!current) return;
-
-    if (current.type === 'project') {
-      const proj = current.data as { id: string; tmuxSession: string | null };
-      onProjectSelect(proj.id, proj.tmuxSession);
-    } else if (current.children.length > 0) {
-      handleToggle(current.id);
-    }
-  }, [activeTab, flatNodes, projectIndex, onProjectSelect, handleToggle]);
-
-  const handleTabBarKey = useCallback(
-    (keyName: string): boolean => {
-      if (keyName === 'left' || keyName === 'h') {
-        const idx = (TAB_ORDER.indexOf(activeTab) - 1 + TAB_ORDER.length) % TAB_ORDER.length;
-        setActiveTab(TAB_ORDER[idx]);
-        return true;
-      }
-      if (keyName === 'right' || keyName === 'l') {
-        const idx = (TAB_ORDER.indexOf(activeTab) + 1) % TAB_ORDER.length;
-        setActiveTab(TAB_ORDER[idx]);
-        return true;
-      }
-      if (keyName === 'down' || keyName === 'j') {
-        setTabBarFocused(false);
-        setSelectedIndex(0);
-        return true;
-      }
-      return false;
-    },
-    [activeTab, setSelectedIndex],
-  );
+  const handleToggle = useCallback((id: string) => {
+    setSessionTree((prev) => toggleNode(prev, id));
+  }, []);
 
   const handleVerticalNav = useCallback(
-    (keyName: string, selectedIdx: number, rowCount: number) => {
+    (keyName: string) => {
+      const rowCount = flatNodes.length;
       if (rowCount === 0) return;
       if (keyName === 'up' || keyName === 'k') {
-        setSelectedIndex(selectedIdx === 0 ? rowCount - 1 : selectedIdx - 1);
+        setSelectedIndex((prev) => (prev === 0 ? rowCount - 1 : prev - 1));
       } else if (keyName === 'down' || keyName === 'j') {
-        setSelectedIndex(selectedIdx >= rowCount - 1 ? 0 : selectedIdx + 1);
+        setSelectedIndex((prev) => (prev >= rowCount - 1 ? 0 : prev + 1));
       }
     },
-    [setSelectedIndex],
+    [flatNodes.length],
   );
 
-  const handleTreeExpand = useCallback(
-    (keyName: string, selectedIdx: number) => {
-      if (activeTab !== 'projects') return;
-      const node = flatNodes[selectedIdx]?.node;
+  const handleExpandCollapse = useCallback(
+    (keyName: string) => {
+      const node = flatNodes[selectedIndex]?.node;
       if (!node) return;
       if ((keyName === 'right' || keyName === 'l') && node.children.length > 0 && !node.expanded) {
         handleToggle(node.id);
@@ -195,103 +105,77 @@ export function Nav({ tree, tasks, onTreeChange, onProjectSelect }: NavProps) {
         handleToggle(node.id);
       }
     },
-    [activeTab, flatNodes, handleToggle],
+    [flatNodes, selectedIndex, handleToggle],
   );
 
-  const handleListKey = useCallback(
-    (keyName: string, selectedIdx: number, rowCount: number) => {
-      if (keyName === 'enter' || keyName === 'return') {
-        handleEnter();
-      } else if (keyName === 'up' || keyName === 'k' || keyName === 'down' || keyName === 'j') {
-        handleVerticalNav(keyName, selectedIdx, rowCount);
-      } else {
-        handleTreeExpand(keyName, selectedIdx);
-      }
-    },
-    [handleEnter, handleVerticalNav, handleTreeExpand],
-  );
+  const handleEnter = useCallback(() => {
+    const node = flatNodes[selectedIndex]?.node;
+    if (!node) return;
+    if (node.children.length > 0) handleToggle(node.id);
+    const target = getSessionTarget(node);
+    if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
+  }, [flatNodes, selectedIndex, handleToggle, onTmuxSessionSelect]);
 
   useKeyboard((key) => {
-    if (tabBarFocused) {
-      handleTabBarKey(key.name);
-      return;
+    if (key.name === 'up' || key.name === 'k' || key.name === 'down' || key.name === 'j') {
+      handleVerticalNav(key.name);
+    } else if (key.name === 'right' || key.name === 'l' || key.name === 'left' || key.name === 'h') {
+      handleExpandCollapse(key.name);
+    } else if (key.name === 'enter' || key.name === 'return') {
+      handleEnter();
     }
-    handleListKey(key.name, getSelectedIndex(), getRowCount());
   });
 
-  const gapCounts = diagnostics
-    ? {
-        orphanProcesses: diagnostics.gaps.deadPidExecutors.length,
-        orphanPanes: diagnostics.gaps.orphanPanes.length,
-      }
-    : undefined;
+  // Summary counts
+  const sessionCount = diagnostics?.sessions.length ?? 0;
+  const totalPanes =
+    diagnostics?.sessions.reduce((sum, s) => sum + s.windows.reduce((ws, w) => ws + w.panes.length, 0), 0) ?? 0;
+  const deadPanes = diagnostics?.gaps.deadPaneCount ?? 0;
 
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor={palette.bg}>
-      {/* Tab Bar */}
-      <TabBar activeTab={activeTab} focused={tabBarFocused} gaps={gapCounts} />
+      {/* Header */}
+      <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
+        <text>
+          <span fg={palette.purple}>Sessions</span>
+          {diagnostics ? (
+            <span fg={palette.textDim}>
+              {' '}
+              {sessionCount}s {totalPanes}p
+            </span>
+          ) : null}
+          {deadPanes > 0 ? <span fg={palette.error}> {deadPanes}\u2620</span> : null}
+        </text>
+      </box>
 
-      {/* Active View */}
-      {activeTab === 'dashboard' && diagnostics && (
-        <DashboardView
-          executors={diagnostics.executors}
-          gaps={diagnostics.gaps}
-          tasks={tasks}
-          teams={teams}
-          selectedIndex={tabBarFocused ? -1 : dashboardIndex}
-        />
-      )}
-
-      {activeTab === 'dashboard' && !diagnostics && (
-        <box flexGrow={1} justifyContent="center" alignItems="center">
-          <text fg={palette.textDim}>Loading...</text>
-        </box>
-      )}
-
-      {activeTab === 'projects' && (
-        <box flexDirection="column" flexGrow={1}>
-          <scrollbox
-            focused
-            height="100%"
-            style={{
-              scrollbarOptions: {
-                showArrows: false,
-                trackOptions: {
-                  foregroundColor: palette.scrollThumb,
-                  backgroundColor: palette.scrollTrack,
-                },
+      {/* Session Tree */}
+      {diagnostics ? (
+        <scrollbox
+          focused
+          height="100%"
+          style={{
+            scrollbarOptions: {
+              showArrows: false,
+              trackOptions: {
+                foregroundColor: palette.scrollThumb,
+                backgroundColor: palette.scrollTrack,
               },
-            }}
-          >
-            {flatNodes.map((flat, i) => (
-              <TreeNodeRow
-                key={flat.node.id}
-                node={flat.node}
-                selected={!tabBarFocused && i === projectIndex}
-                onSelect={handleProjectSelect}
-                onToggle={handleToggle}
-              />
-            ))}
-          </scrollbox>
-        </box>
-      )}
-
-      {activeTab === 'tmux' && diagnostics && (
-        <TmuxView sessions={diagnostics.sessions} selectedIndex={tabBarFocused ? -1 : tmuxIndex} />
-      )}
-
-      {activeTab === 'claude' && diagnostics && (
-        <ClaudeView
-          executors={diagnostics.executors}
-          assignments={diagnostics.assignments}
-          gaps={diagnostics.gaps}
-          selectedIndex={tabBarFocused ? -1 : claudeIndex}
-        />
-      )}
-
-      {(activeTab === 'tmux' || activeTab === 'claude') && !diagnostics && (
+            },
+          }}
+        >
+          {flatNodes.map((flat, i) => (
+            <TreeNodeRow
+              key={flat.node.id}
+              node={flat.node}
+              selected={i === selectedIndex}
+              onSelect={handleSelect}
+              onToggle={handleToggle}
+            />
+          ))}
+        </scrollbox>
+      ) : (
         <box flexGrow={1} justifyContent="center" alignItems="center">
-          <text fg={palette.textDim}>Loading...</text>
+          <text fg={palette.textDim}>Collecting...</text>
         </box>
       )}
 
@@ -299,10 +183,33 @@ export function Nav({ tree, tasks, onTreeChange, onProjectSelect }: NavProps) {
       <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
         <text>
           <span fg={palette.textMuted}>
-            {tabBarFocused ? '\u2190\u2192:tab \u2193:tree' : '\u2191\u2193:nav Enter:select'}
+            {'\u2191\u2193'}:nav {'\u2190\u2192'}:expand Enter:attach
           </span>
         </text>
       </box>
     </box>
   );
+}
+
+/** Merge expanded state from old tree into new tree (preserves user navigation) */
+function mergeExpandedState(oldTree: TreeNode[], newTree: TreeNode[]): TreeNode[] {
+  if (oldTree.length === 0) return newTree;
+
+  const oldState = new Map<string, boolean>();
+  function collect(nodes: TreeNode[]) {
+    for (const n of nodes) {
+      oldState.set(n.id, n.expanded);
+      collect(n.children);
+    }
+  }
+  collect(oldTree);
+
+  function apply(nodes: TreeNode[]): TreeNode[] {
+    return nodes.map((n) => ({
+      ...n,
+      expanded: oldState.has(n.id) ? (oldState.get(n.id) as boolean) : n.expanded,
+      children: apply(n.children),
+    }));
+  }
+  return apply(newTree);
 }
