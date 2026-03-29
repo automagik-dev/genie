@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-/** Horizontal tab bar: Projects | tmux | Claude — left/right to switch */
+/** Horizontal tab bar: Projects | tmux | Executors — left/right to switch */
 
 import { palette } from '../theme.js';
 
@@ -10,7 +10,7 @@ export const TAB_ORDER: TabId[] = ['projects', 'tmux', 'claude'];
 const TAB_LABELS: Record<TabId, string> = {
   projects: 'Projects',
   tmux: 'tmux',
-  claude: 'Claude',
+  claude: 'Executors',
 };
 
 interface TabBarProps {

@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-/** Executor list — renders executor metadata from DB with gap detection */
+/** Executor list — renders executor metadata from DB grouped by provider, with gap detection */
 
 import { useMemo } from 'react';
 import type { DiagnosticGaps } from '../diagnostics.js';
@@ -96,7 +96,34 @@ function flattenExecutors(
   gaps: DiagnosticGaps,
 ): FlatClaudeRow[] {
   const deadIds = new Set(gaps.deadPidExecutors.map((e) => e.id));
-  const rows: FlatClaudeRow[] = executors.flatMap((exec) => executorToRows(exec, assignments, deadIds.has(exec.id)));
+
+  // Group executors by provider
+  const byProvider = new Map<string, TuiExecutor[]>();
+  for (const exec of executors) {
+    const key = exec.provider;
+    if (!byProvider.has(key)) byProvider.set(key, []);
+    byProvider.get(key)?.push(exec);
+  }
+
+  const rows: FlatClaudeRow[] = [];
+
+  for (const [provider, group] of byProvider) {
+    // Provider header
+    rows.push({
+      id: `provider:${provider}`,
+      depth: 0,
+      label: `\u2500\u2500 ${provider} (${group.length}) \u2500\u2500`,
+      color: palette.cyan,
+      detail: '',
+      detailColor: palette.textMuted,
+      isOrphan: false,
+    });
+    for (const exec of group) {
+      for (const row of executorToRows(exec, assignments, deadIds.has(exec.id))) {
+        rows.push({ ...row, depth: row.depth + 1 });
+      }
+    }
+  }
 
   if (gaps.orphanPanes.length > 0) {
     rows.push({
@@ -182,7 +209,9 @@ export function getClaudeRowCount(
   assignments: TuiAssignment[],
   gaps: DiagnosticGaps,
 ): number {
-  let count = 0;
+  // Count provider group headers
+  const providers = new Set(executors.map((e) => e.provider));
+  let count = providers.size;
   for (const exec of executors) {
     count += 2; // executor + meta line
     if (assignments.some((a) => a.executorId === exec.id)) count++; // assignment line
