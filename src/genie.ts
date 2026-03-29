@@ -42,7 +42,6 @@ import { extendTaskCommands } from './term-commands/task/index.js';
 import { registerEventsCommands } from './term-commands/audit-events.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
-import { registerDirNamespace } from './term-commands/dir.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import { registerExportCommands } from './term-commands/export.js';
 import { registerImportCommands } from './term-commands/import.js';
@@ -182,7 +181,6 @@ program
 // Existing namespaces (kept until full migration — Group 8 cleanup)
 // ============================================================================
 
-registerDirNamespace(program);
 registerDispatchCommands(program);
 registerHookNamespace(program);
 registerDbCommands(program);
@@ -367,6 +365,14 @@ program
   .command('brief [args...]')
   .description('(moved) → genie agent brief')
   .action(errorRedirect('brief', 'agent brief'));
+program
+  .command('dir [args...]')
+  .description('(moved) → genie agent directory / genie agent register')
+  .action(errorRedirect('dir', 'agent directory'));
+program
+  .command('show [args...]')
+  .description('(moved) → genie task show / genie agent show')
+  .action(errorRedirect('show', 'agent show'));
 
 // ============================================================================
 // genie --session <name> — named leader session (pre-parse check)
