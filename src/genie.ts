@@ -170,16 +170,7 @@ shortcuts.command('uninstall').description('Remove shortcuts from config files')
 // TUI — interactive terminal interface
 // ============================================================================
 
-program
-  .command('tui')
-  .description('[deprecated] Use `genie app --tui` instead')
-  .option('--dev', 'Development mode')
-  .action(async (options: { dev?: boolean }) => {
-    console.log('\x1b[33m[deprecated]\x1b[0m genie tui is deprecated. Use `genie app` instead.');
-    console.log('\x1b[2mFalling back to `genie app --tui`...\x1b[0m\n');
-    const { launchTui } = await import('./tui/index.js');
-    await launchTui({ dev: options.dev });
-  });
+// genie tui removed — `genie` (no args) IS the TUI now
 
 registerAppCommand(program);
 
@@ -472,10 +463,22 @@ program
 
 const args = process.argv.slice(2);
 
-// Default command: genie (no args) or genie --reset
-if (args.length === 0 || args.every((a) => a === '--reset')) {
+// If GENIE_TUI_PANE=left, we're the TUI renderer inside the left tmux pane — render directly
+if (process.env.GENIE_TUI_PANE === 'left') {
+  const { launchTui } = await import('./tui/index.js');
+  await launchTui();
+  process.exit(0);
+}
+
+// Default command: genie (no args) → launch TUI. genie --reset → reset session.
+if (args.length === 0) {
+  const { launchTui } = await import('./tui/index.js');
+  await launchTui();
+  process.exit(0);
+}
+if (args.every((a) => a === '--reset')) {
   const { sessionCommand } = await import('./genie-commands/session.js');
-  await sessionCommand({ reset: args.includes('--reset') });
+  await sessionCommand({ reset: true });
   process.exit(0);
 }
 

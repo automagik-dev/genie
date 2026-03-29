@@ -29,16 +29,21 @@ export async function launchTui(options: { dev?: boolean } = {}): Promise<void> 
   const genieBin = process.argv[1] || 'genie';
 
   // Run the TUI nav renderer in the left pane
-  // Dev mode: bun --watch auto-restarts on source file changes
+  // Uses GENIE_TUI_PANE=left to trigger renderer mode (not a subcommand)
   const { execSync } = await import('node:child_process');
+  const { genieTmuxCmd } = await import('../lib/tmux-wrapper.js');
   if (options.dev) {
     execSync(
-      `tmux send-keys -t '${leftPane}' "GENIE_TUI_PANE=left GENIE_TUI_RIGHT=${rightPane} bun --watch ${genieBin} tui" Enter`,
+      genieTmuxCmd(
+        `send-keys -t '${leftPane}' "GENIE_TUI_PANE=left GENIE_TUI_RIGHT=${rightPane} bun --watch ${genieBin}" Enter`,
+      ),
       { stdio: 'ignore' },
     );
   } else {
     execSync(
-      `tmux send-keys -t '${leftPane}' "GENIE_TUI_PANE=left GENIE_TUI_RIGHT=${rightPane} ${bunPath} ${genieBin} tui" Enter`,
+      genieTmuxCmd(
+        `send-keys -t '${leftPane}' "GENIE_TUI_PANE=left GENIE_TUI_RIGHT=${rightPane} ${bunPath} ${genieBin}" Enter`,
+      ),
       { stdio: 'ignore' },
     );
   }
