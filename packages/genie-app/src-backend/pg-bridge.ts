@@ -198,6 +198,40 @@ export async function kanbanBoard(boardId: string): Promise<{
   return { columns, tasks };
 }
 
+interface BoardRow {
+  id: string;
+  name: string;
+  project_id: string | null;
+  description: string | null;
+  columns: BoardColumnRow[];
+  created_at: string;
+}
+
+export async function listBoards(): Promise<BoardRow[]> {
+  const sql = await getConnection();
+  return sql<BoardRow[]>`
+    SELECT id, name, project_id, description, columns, created_at
+    FROM boards
+    ORDER BY created_at DESC
+  `;
+}
+
+export async function moveTask(taskId: string, columnName: string): Promise<boolean> {
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE tasks
+    SET stage = ${columnName},
+        column_id = (
+          SELECT col->>'id'
+          FROM boards b, jsonb_array_elements(b.columns) AS col
+          WHERE b.id = tasks.board_id AND col->>'name' = ${columnName}
+        ),
+        updated_at = now()
+    WHERE id = ${taskId}
+  `;
+  return result.count > 0;
+}
+
 export async function listTeams(): Promise<TeamRow[]> {
   const sql = await getConnection();
   return sql<TeamRow[]>`
