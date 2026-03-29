@@ -1,5 +1,6 @@
-/** PG data layer — framework-agnostic, no UI imports */
+/** PG data layer + tmux tree loader — framework-agnostic, no UI imports */
 
+import { execSync } from 'node:child_process';
 import type { ExecutorState, TransportType } from '../lib/executor-types.js';
 import type { ProviderName } from '../lib/provider-adapters.js';
 import type {
@@ -193,4 +194,63 @@ function mapAssignment(row: Record<string, unknown>): TuiAssignment {
     groupNumber: row.group_number != null ? Number(row.group_number) : null,
     startedAt: row.started_at instanceof Date ? row.started_at.toISOString() : String(row.started_at),
   };
+}
+
+// ── Tmux Tree ────────────────────────────────────────────────────────────────
+
+interface TmuxTreeWindow {
+  sessionName: string;
+  index: number;
+  name: string;
+  active: boolean;
+  paneCount: number;
+}
+
+/** @public */
+export interface TmuxTreeSession {
+  name: string;
+  attached: boolean;
+  windowCount: number;
+  windows: TmuxTreeWindow[];
+}
+
+/** Load tmux session/window tree from shell (lightweight, no pane-level detail). @public */
+export function loadTmuxTree(): TmuxTreeSession[] {
+  let output: string;
+  try {
+    output = execSync(
+      "tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}|#{window_active}|#{window_panes}|#{session_attached}|#{session_windows}'",
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+    ).trim();
+  } catch {
+    return [];
+  }
+
+  if (!output) return [];
+
+  const sessionMap = new Map<string, TmuxTreeSession>();
+
+  for (const line of output.split('\n')) {
+    if (!line) continue;
+    const [sessName, winIdx, winName, winActive, winPanes, sessAttached, sessWindows] = line.split('|');
+
+    if (!sessionMap.has(sessName)) {
+      sessionMap.set(sessName, {
+        name: sessName,
+        attached: sessAttached === '1',
+        windowCount: Number.parseInt(sessWindows, 10) || 0,
+        windows: [],
+      });
+    }
+
+    sessionMap.get(sessName)?.windows.push({
+      sessionName: sessName,
+      index: Number.parseInt(winIdx, 10) || 0,
+      name: winName,
+      active: winActive === '1',
+      paneCount: Number.parseInt(winPanes, 10) || 0,
+    });
+  }
+
+  return Array.from(sessionMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 }

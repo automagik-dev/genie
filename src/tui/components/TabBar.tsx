@@ -16,21 +16,28 @@ const TAB_LABELS: Record<TabId, string> = {
 interface TabBarProps {
   activeTab: TabId;
   focused: boolean;
-  gaps?: { orphanProcesses: number; orphanPanes: number };
+  gaps?: { orphanProcesses: number; orphanPanes: number; deadPanes: number };
+}
+
+function tabBadge(tab: TabId, gaps: TabBarProps['gaps']) {
+  if (tab === 'claude') {
+    const total = (gaps?.orphanProcesses ?? 0) + (gaps?.orphanPanes ?? 0);
+    return total > 0 ? <span fg={palette.error}> {total}</span> : null;
+  }
+  if (tab === 'tmux') {
+    const dead = gaps?.deadPanes ?? 0;
+    return dead > 0 ? <span fg={palette.error}> {dead}\u2620</span> : null;
+  }
+  return null;
 }
 
 export function TabBar({ activeTab, focused, gaps }: TabBarProps) {
-  const totalGaps = (gaps?.orphanProcesses ?? 0) + (gaps?.orphanPanes ?? 0);
-
   return (
     <box height={1} flexDirection="row" width="100%" backgroundColor={palette.bgLight}>
       {TAB_ORDER.map((tab) => {
         const isActive = tab === activeTab;
         const bg = isActive ? palette.violet : palette.bgLight;
         const fg = isActive ? '#ffffff' : focused ? palette.textDim : palette.textMuted;
-
-        // Show gap count badge on Claude tab
-        const badge = tab === 'claude' && totalGaps > 0 ? <span fg={palette.error}> {totalGaps}</span> : null;
 
         return (
           <box key={tab} backgroundColor={bg} paddingX={1}>
@@ -39,7 +46,7 @@ export function TabBar({ activeTab, focused, gaps }: TabBarProps) {
                 {isActive && focused ? '>' : ' '}
                 {TAB_LABELS[tab]}
               </span>
-              {badge}
+              {tabBadge(tab, gaps)}
             </text>
           </box>
         );
