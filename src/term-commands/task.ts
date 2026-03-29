@@ -15,6 +15,7 @@
  *   genie task checkout <id|#seq>           — Claim task for execution
  *   genie task release <id|#seq>            — Release task claim
  *   genie task unlock <id|#seq>             — Force-release stale checkout
+ *   genie task link <id|#seq> [options]     — Link task to external tracker
  *   genie task dep <id|#seq> [options]      — Manage dependencies
  */
 
@@ -117,27 +118,32 @@ function getProjectName(repoPath: string): string {
   return parts[parts.length - 1] || repoPath;
 }
 
+function formatTaskRow(t: taskServiceTypes.TaskRow, showProject: boolean, hasExternal: boolean): string {
+  const seq = showProject ? `${getProjectName(t.repoPath)}#${t.seq}` : `#${t.seq}`;
+  const title = truncate(t.title, 38);
+  const color = PRIORITY_COLORS[t.priority] ?? '';
+  const due = formatDate(t.dueDate);
+  const proj = showProject ? `${padRight(getProjectName(t.repoPath), 16)} ` : '';
+  const ext = hasExternal ? `${padRight(truncate(t.externalId ?? '', 25), 27)} ` : '';
+  return `  ${padRight(seq, showProject ? 22 : 6)} ${proj}${padRight(title, 40)} ${ext}${padRight(t.stage, 12)} ${padRight(t.status, 12)} ${color}${padRight(t.priority, 10)}${RESET} ${padRight(due, 12)}`;
+}
+
 function printTaskList(tasks: taskServiceTypes.TaskRow[], showProject = false): void {
   if (tasks.length === 0) {
     console.log('No tasks found.');
     return;
   }
 
+  const hasExternal = tasks.some((t) => t.externalId);
+  const extCol = hasExternal ? `${padRight('EXTERNAL', 27)} ` : '';
   const projCol = showProject ? `${padRight('PROJECT', 16)} ` : '';
-  const header = `  ${padRight('#', 6)} ${projCol}${padRight('TITLE', 40)} ${padRight('STAGE', 12)} ${padRight('STATUS', 12)} ${padRight('PRIORITY', 10)} ${padRight('DUE', 12)}`;
-  const lineLen = showProject ? 108 : 92;
+  const header = `  ${padRight('#', 6)} ${projCol}${padRight('TITLE', 40)} ${extCol}${padRight('STAGE', 12)} ${padRight('STATUS', 12)} ${padRight('PRIORITY', 10)} ${padRight('DUE', 12)}`;
+  const lineLen = (showProject ? 108 : 92) + (hasExternal ? 28 : 0);
   console.log(header);
   console.log(`  ${'─'.repeat(lineLen)}`);
 
   for (const t of tasks) {
-    const seq = showProject ? `${getProjectName(t.repoPath)}#${t.seq}` : `#${t.seq}`;
-    const title = truncate(t.title, 38);
-    const color = PRIORITY_COLORS[t.priority] ?? '';
-    const due = formatDate(t.dueDate);
-    const proj = showProject ? `${padRight(getProjectName(t.repoPath), 16)} ` : '';
-    console.log(
-      `  ${padRight(seq, showProject ? 22 : 6)} ${proj}${padRight(title, 40)} ${padRight(t.stage, 12)} ${padRight(t.status, 12)} ${color}${padRight(t.priority, 10)}${RESET} ${padRight(due, 12)}`,
-    );
+    console.log(formatTaskRow(t, showProject, hasExternal));
   }
 
   console.log(`\n  ${tasks.length} task${tasks.length === 1 ? '' : 's'}`);
@@ -163,6 +169,8 @@ function printTaskFields(task: taskServiceTypes.TaskRow): void {
     ['Parent', task.parentId],
     ['Release', task.releaseId],
     ['Wish', task.wishFile],
+    ['External', task.externalId],
+    ['Ext URL', task.externalUrl],
   ];
   for (const [label, value] of optionalFields) {
     if (value) console.log(`  ${padRight(`${label}:`, 12)} ${value}`);
@@ -301,6 +309,23 @@ interface CreateOptions {
   comment?: string;
   project?: string;
   board?: string;
+  gh?: string;
+  externalId?: string;
+  externalUrl?: string;
+}
+
+/** Parse --gh owner/repo#N into { externalId, externalUrl }. */
+function parseGhRef(gh: string): { externalId: string; externalUrl: string } {
+  const match = gh.match(/^([^#]+)#(\d+)$/);
+  if (!match) {
+    console.error(`Error: Invalid --gh format. Expected owner/repo#N, got: ${gh}`);
+    process.exit(1);
+  }
+  const [, ownerRepo, num] = match;
+  return {
+    externalId: `${ownerRepo}#${num}`,
+    externalUrl: `https://github.com/${ownerRepo}/issues/${num}`,
+  };
 }
 
 async function handleTaskCreate(title: string, options: CreateOptions): Promise<void> {
@@ -332,6 +357,15 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
 
   const boardId = await resolveBoardOption(options.board);
 
+  // Resolve external linking: --gh takes priority over --external-id/--external-url
+  let externalId: string | undefined = options.externalId;
+  let externalUrl: string | undefined = options.externalUrl;
+  if (options.gh) {
+    const parsed = parseGhRef(options.gh);
+    externalId = parsed.externalId;
+    externalUrl = parsed.externalUrl;
+  }
+
   const task = await ts.createTask(
     {
       title,
@@ -343,6 +377,8 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
       description: options.description,
       estimatedEffort: options.effort,
       boardId,
+      externalId,
+      externalUrl,
     },
     repoPath,
     projectId,
@@ -396,6 +432,9 @@ export function registerTaskCommands(program: Command): void {
     .option('--comment <msg>', 'Initial comment on the task')
     .option('--project <name>', 'Create task in a specific project (overrides CWD)')
     .option('--board <name>', 'Board name to assign task to')
+    .option('--gh <owner/repo#N>', 'Link to GitHub issue (sets external_id + external_url)')
+    .option('--external-id <id>', 'External tracker ID (e.g., JIRA-123)')
+    .option('--external-url <url>', 'External tracker URL')
     .action(async (title: string, options: CreateOptions) => {
       try {
         await handleTaskCreate(title, options);
@@ -418,6 +457,7 @@ export function registerTaskCommands(program: Command): void {
     .option('--mine', 'Show only tasks assigned to me')
     .option('--project <name>', 'Show tasks for a specific project')
     .option('--board <name>', 'Filter by board name')
+    .option('--gh <owner/repo#N>', 'Filter by GitHub issue link')
     .option('--by-column', 'Group tasks by board column (kanban view)')
     .option('--include-done', 'Include done tasks in kanban view (hidden by default)')
     .option('--all', 'Show tasks from ALL projects')
@@ -435,6 +475,7 @@ export function registerTaskCommands(program: Command): void {
         mine?: boolean;
         project?: string;
         board?: string;
+        gh?: string;
         byColumn?: boolean;
         includeDone?: boolean;
         all?: boolean;
@@ -453,6 +494,7 @@ export function registerTaskCommands(program: Command): void {
             dueBefore: options.dueBefore,
             projectName: options.project,
             boardName: options.board,
+            externalId: options.gh ? parseGhRef(options.gh).externalId : undefined,
             allProjects: options.all,
             limit: Number(options.limit) || 100,
             offset: Number(options.offset) || 0,
@@ -512,6 +554,44 @@ export function registerTaskCommands(program: Command): void {
         }
 
         await printTaskDetail(t);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
+
+  // ── task link ──
+  task
+    .command('link <id>')
+    .description('Link task to an external tracker (GitHub, Jira, etc.)')
+    .option('--gh <owner/repo#N>', 'Link to GitHub issue')
+    .option('--external-id <id>', 'External tracker ID')
+    .option('--external-url <url>', 'External tracker URL')
+    .action(async (id: string, options: { gh?: string; externalId?: string; externalUrl?: string }) => {
+      try {
+        const ts = await getTaskService();
+        let externalId: string;
+        let externalUrl: string;
+
+        if (options.gh) {
+          const parsed = parseGhRef(options.gh);
+          externalId = parsed.externalId;
+          externalUrl = parsed.externalUrl;
+        } else if (options.externalId && options.externalUrl) {
+          externalId = options.externalId;
+          externalUrl = options.externalUrl;
+        } else {
+          console.error('Error: Provide --gh or both --external-id and --external-url.');
+          process.exit(1);
+        }
+
+        const t = await ts.linkTask(id, externalId, externalUrl);
+        if (!t) {
+          console.error(`Error: Task not found: ${id}`);
+          process.exit(1);
+        }
+        console.log(`Linked task #${t.seq} to ${externalId}`);
+        if (t.externalUrl) console.log(`  URL: ${t.externalUrl}`);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
