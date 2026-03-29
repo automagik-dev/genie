@@ -18,6 +18,7 @@
 import { autoSpawn } from './handlers/auto-spawn.js';
 import { branchGuard } from './handlers/branch-guard.js';
 import { identityInject } from './handlers/identity-inject.js';
+import { orchestrationGuard } from './handlers/orchestration-guard.js';
 import {
   emitAssistantResponseEvent,
   emitMessageEvent,
@@ -38,6 +39,13 @@ const handlers: Handler[] = [
     matcher: /^Bash$/,
     priority: 1,
     fn: branchGuard,
+  },
+  {
+    name: 'orchestration-guard',
+    event: 'PreToolUse',
+    matcher: /^Bash$/,
+    priority: 2,
+    fn: orchestrationGuard,
   },
   {
     name: 'identity-inject',
