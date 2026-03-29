@@ -1,7 +1,6 @@
 /** TUI-specific tmux management — session, splits, tabs, keybindings */
 
 import { execSync, spawnSync } from 'node:child_process';
-import { tmuxStyle } from './theme.js';
 
 const SESSION_NAME = 'genie-tui';
 const KEY_TABLE = 'genie-tui';
@@ -11,19 +10,56 @@ const TMUX_SOCKET = 'genie-tui';
 /** Genie's agent tmux socket — where all agents/teams/sessions live. */
 const GENIE_AGENT_SOCKET = 'genie';
 /**
- * Genie's shipped tmux config — scripts/tmux/genie.tmux.conf installed to ~/.genie/tmux.conf
- * on genie setup/update. Falls back to /dev/null if not found (still works with applyTmuxStyle).
+ * TUI writes its own minimal tmux config — terminal QOL only, no status bars, no shell probes.
+ * The full genie.tmux.conf (with CPU/RAM/git status bars) is for the AGENT server, not the TUI.
  */
-const GENIE_TMUX_CONF = (() => {
-  const { existsSync } = require('node:fs') as typeof import('node:fs');
-  const candidates = [
-    `${process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`}/tmux.conf`,
-    `${process.env.HOME}/.tmux.conf`,
-  ];
-  return candidates.find((p) => existsSync(p)) ?? '/dev/null';
+const TUI_TMUX_CONF = (() => {
+  const { writeFileSync, mkdirSync, existsSync } = require('node:fs') as typeof import('node:fs');
+  const { join } = require('node:path') as typeof import('node:path');
+  const dir = process.env.GENIE_HOME ?? join(process.env.HOME ?? '/tmp', '.genie');
+  const path = join(dir, 'tui-tmux.conf');
+  // Write once per process (idempotent)
+  if (!existsSync(path)) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      path,
+      [
+        '# Genie TUI — QOL config without shell probes or status bars',
+        '# Terminal correctness',
+        'set -g default-terminal "tmux-256color"',
+        'set -ga terminal-overrides ",*256col*:Tc"',
+        'set -g escape-time 0',
+        'set -g focus-events on',
+        'set -g history-limit 50000',
+        '# Clipboard',
+        'set -g set-clipboard on',
+        'set -g allow-passthrough on',
+        'set -ga terminal-overrides ",*:Ms=\\\\E]52;c;%p2%s\\\\7"',
+        '# Mouse (apps handle their own via passthrough)',
+        'set -g mouse on',
+        'setw -g mode-keys vi',
+        '# Disable tmux drag selection (let terminal handle select+copy)',
+        'unbind -n MouseDrag1Pane',
+        'unbind -T copy-mode MouseDrag1Pane',
+        'unbind -T copy-mode-vi MouseDrag1Pane',
+        'unbind -T copy-mode-vi MouseDragEnd1Pane',
+        'unbind -T copy-mode MouseDragEnd1Pane',
+        '# Vi copy mode',
+        'bind -T copy-mode-vi v send-keys -X begin-selection',
+        'bind -T copy-mode-vi y send-keys -X copy-selection-and-cancel',
+        '# NO status bars, NO pane-border shell probes',
+        'set -g status off',
+        'set -g pane-border-status off',
+        '# Pane borders (visual only, no #() shell commands)',
+        'set -g pane-border-style "fg=#0f3460"',
+        'set -g pane-active-border-style "fg=#7b2ff7"',
+        '',
+      ].join('\n'),
+    );
+  }
+  return path;
 })();
-/** Prefix for all tmux commands — dedicated socket + genie config (ignores user's global tmux) */
-const TMUX = `tmux -L ${TMUX_SOCKET} -f ${GENIE_TMUX_CONF}`;
+const TMUX = `tmux -L ${TMUX_SOCKET} -f ${TUI_TMUX_CONF}`;
 
 /** Build a TUI-scoped tmux command (targets genie-tui server, NOT agent server) */
 export function tuiTmuxCmd(subcommand: string): string {
@@ -179,15 +215,8 @@ function setupKeybindings(session: string): void {
 /** Apply visual theme to TUI session (config file handles terminal settings) */
 function applyTmuxStyle(session: string): void {
   try {
-    const cmds = [
-      // Visual theme
-      `set-option -t ${session} pane-border-style 'fg=${tmuxStyle.inactiveBorder}'`,
-      `set-option -t ${session} pane-active-border-style 'fg=${tmuxStyle.activeBorder}'`,
-      // TUI overrides — the config has mouse on + status bars, but TUI handles these itself
-      `set-option -t ${session} mouse off`,
-      `set-option -t ${session} status off`,
-      `set-option -t ${session} pane-border-status off`,
-    ];
+    // Config file handles everything — just apply message styling here
+    const cmds = [`set-option -t ${session} message-style 'bg=#16213e,fg=#00d2ff'`];
     for (const cmd of cmds) {
       execSync(`${TMUX} ${cmd}`, { stdio: 'ignore' });
     }
@@ -214,7 +243,7 @@ export function cleanup(session: string = SESSION_NAME): void {
 
 /** Attach to the TUI session (blocking call) */
 export function attachTuiSession(): void {
-  spawnSync('tmux', ['-L', TMUX_SOCKET, '-f', GENIE_TMUX_CONF, 'attach-session', '-t', SESSION_NAME], {
+  spawnSync('tmux', ['-L', TMUX_SOCKET, '-f', TUI_TMUX_CONF, 'attach-session', '-t', SESSION_NAME], {
     stdio: 'inherit',
   });
 }

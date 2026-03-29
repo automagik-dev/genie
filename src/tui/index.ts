@@ -52,7 +52,7 @@ export async function launchTui(options: TuiLaunchOptions = {}): Promise<void> {
   const runCmd = options.dev ? `bun --watch ${genieBin}` : `${bunPath} ${genieBin}`;
   writeFileSync(scriptPath, `#!/bin/sh\nexport ${envVars.join('\nexport ')}\nexec ${runCmd}\n`, { mode: 0o755 });
 
-  execSync(tuiTmuxCmd(`send-keys -t '${leftPane}' '${scriptPath}' Enter`), {
+  execSync(tuiTmuxCmd(`send-keys -t '${leftPane}' 'sh ${scriptPath}' Enter`), {
     stdio: 'ignore',
   });
 
