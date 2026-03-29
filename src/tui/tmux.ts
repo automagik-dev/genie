@@ -142,7 +142,8 @@ function applyTmuxStyle(session: string): void {
       `set-option -t ${session} pane-border-style 'fg=${tmuxStyle.inactiveBorder}'`,
       `set-option -t ${session} pane-active-border-style 'fg=${tmuxStyle.activeBorder}'`,
       `set-option -t ${session} status off`,
-      `set-option -t ${session} mouse on`,
+      `set-option -t ${session} mouse off`,
+      `set-option -t ${session} allow-passthrough on`,
     ];
     for (const cmd of cmds) {
       execSync(`tmux ${cmd}`, { stdio: 'ignore' });
