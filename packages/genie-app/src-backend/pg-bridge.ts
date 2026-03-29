@@ -251,6 +251,55 @@ export async function streamEvents(filter: EventFilter = {}): Promise<RuntimeEve
 }
 
 // ============================================================================
+// Dashboard Stats
+// ============================================================================
+
+export interface DashboardStats {
+  agents: { online: number; total: number };
+  tasks: { active: number; backlog: number; done: number; total: number };
+  teams: { active: number; total: number };
+}
+
+export async function dashboardStats(): Promise<DashboardStats> {
+  const sql = await getConnection();
+
+  const [agentRows, taskRows, teamRows] = await Promise.all([
+    sql<{ online: string; total: string }[]>`
+      SELECT
+        COUNT(*) FILTER (WHERE e.state IN ('running', 'idle', 'working', 'permission', 'question')) AS online,
+        COUNT(DISTINCT a.id) AS total
+      FROM agents a
+      LEFT JOIN executors e ON e.id = a.current_executor_id
+    `,
+    sql<{ active: string; backlog: string; done: string; total: string }[]>`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'in_progress') AS active,
+        COUNT(*) FILTER (WHERE status IN ('ready', 'blocked')) AS backlog,
+        COUNT(*) FILTER (WHERE status = 'done') AS done,
+        COUNT(*) AS total
+      FROM tasks
+    `,
+    sql<{ active: string; total: string }[]>`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'in_progress') AS active,
+        COUNT(*) AS total
+      FROM teams
+    `,
+  ]);
+
+  return {
+    agents: { online: Number(agentRows[0].online), total: Number(agentRows[0].total) },
+    tasks: {
+      active: Number(taskRows[0].active),
+      backlog: Number(taskRows[0].backlog),
+      done: Number(taskRows[0].done),
+      total: Number(taskRows[0].total),
+    },
+    teams: { active: Number(teamRows[0].active), total: Number(teamRows[0].total) },
+  };
+}
+
+// ============================================================================
 // PG LISTEN/NOTIFY
 // ============================================================================
 

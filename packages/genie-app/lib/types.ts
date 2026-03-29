@@ -155,6 +155,16 @@ export interface TaskFilters {
 }
 
 // ============================================================================
+// Dashboard Types (from src-backend/pg-bridge.ts)
+// ============================================================================
+
+export interface DashboardStats {
+  agents: { online: number; total: number };
+  tasks: { active: number; backlog: number; done: number; total: number };
+  teams: { active: number; total: number };
+}
+
+// ============================================================================
 // View Props
 // ============================================================================
 

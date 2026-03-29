@@ -42,6 +42,14 @@ export async function list_teams() {
 }
 
 // ============================================================================
+// Dashboard Commands
+// ============================================================================
+
+export async function dashboard_stats() {
+  return pgBridge.dashboardStats();
+}
+
+// ============================================================================
 // Event Commands
 // ============================================================================
 
@@ -120,6 +128,7 @@ export const commands: Record<string, (params: never) => unknown> = {
   list_tasks,
   kanban_board,
   list_teams,
+  dashboard_stats,
   stream_events,
   spawn_terminal,
   write_terminal,
