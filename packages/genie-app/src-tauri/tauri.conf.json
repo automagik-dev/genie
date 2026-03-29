@@ -1,0 +1,41 @@
+{
+  "build": {
+    "devPath": "http://localhost:1420",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "Genie",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "windows": [
+      {
+        "title": "Genie",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "bundle": {
+      "identifier": "dev.automagik.genie",
+      "active": true,
+      "targets": "all",
+      "externalBin": ["genie-sidecar"]
+    },
+    "security": {
+      "csp": null
+    },
+    "allowlist": {
+      "shell": {
+        "sidecar": true,
+        "open": true
+      },
+      "process": {
+        "exit": true
+      }
+    }
+  }
+}
