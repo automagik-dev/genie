@@ -25,6 +25,11 @@ const GENIE_TMUX_CONF = (() => {
 /** Prefix for all tmux commands — dedicated socket + genie config (ignores user's global tmux) */
 const TMUX = `tmux -L ${TMUX_SOCKET} -f ${GENIE_TMUX_CONF}`;
 
+/** Build a TUI-scoped tmux command (targets genie-tui server, NOT agent server) */
+export function tuiTmuxCmd(subcommand: string): string {
+  return `${TMUX} ${subcommand}`;
+}
+
 /** Check if tmux is available */
 export function hasTmux(): boolean {
   try {
