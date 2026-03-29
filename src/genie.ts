@@ -32,33 +32,24 @@ import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { getActor, recordAuditEvent } from './lib/audit.js';
 import { shutdown as shutdownDb } from './lib/db.js';
 import { stopOtelReceiver } from './lib/otel-receiver.js';
-import {
-  type SpawnOptions,
-  handleLsCommand,
-  handleWorkerKill,
-  handleWorkerResume,
-  handleWorkerSpawn,
-  handleWorkerStop,
-} from './term-commands/agents.js';
+
+// ── New 4-object namespace registrations ──
+import { registerAgentCommands } from './term-commands/agent/index.js';
+import { registerExecCommands } from './term-commands/exec/index.js';
+import { extendTaskCommands } from './term-commands/task/index.js';
+
+// ── Existing registrations (kept until Group 8 cleanup) ──
 import { registerEventsCommands } from './term-commands/audit-events.js';
-import { registerBoardCommands } from './term-commands/board.js';
-import { registerBriefCommands } from './term-commands/brief.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
-import { registerAgentNamespace, registerDirNamespace } from './term-commands/dir.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import { registerExportCommands } from './term-commands/export.js';
-import * as historyCmd from './term-commands/history.js';
 import { registerImportCommands } from './term-commands/import.js';
 import { registerInstallCommand } from './term-commands/install.js';
 import { registerItemUninstallCommand } from './term-commands/item-uninstall.js';
 import { registerItemUpdateCommand } from './term-commands/item-update.js';
-import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerMetricsCommands } from './term-commands/metrics.js';
-import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerNotifyCommands } from './term-commands/notify.js';
-import * as orchestrateCmd from './term-commands/orchestrate.js';
-import { registerProjectCommands } from './term-commands/project.js';
 import { registerPublishCommand } from './term-commands/publish.js';
 import {
   type QaCheckOptions,
@@ -68,16 +59,11 @@ import {
   qaHistoryCommand,
   qaStatusCommand,
 } from './term-commands/qa.js';
-import * as readCmd from './term-commands/read.js';
-import { registerReleaseCommands } from './term-commands/release.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
 import { registerSessionsCommands } from './term-commands/sessions.js';
-import { registerStateCommands } from './term-commands/state.js';
-import { registerTagCommands } from './term-commands/tag.js';
 import { registerTaskCommands } from './term-commands/task.js';
-import { registerTeamNamespace } from './term-commands/team.js';
+import { registerTeamCommands } from './term-commands/team/index.js';
 import { registerTemplateCommands } from './term-commands/template.js';
-import { registerTypeCommands } from './term-commands/type.js';
 
 // Safety net: ensure git repo is never in bare mode.
 // This should no longer trigger now that we use `git clone --shared` instead of
@@ -162,8 +148,21 @@ shortcuts
 shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
 
 // ============================================================================
-// Orchestration namespaces
+// 4-Object Namespace Registration — agent, task, team, exec
 // ============================================================================
+
+// agent namespace (Group 1) — absorbs spawn/kill/stop/resume/ls/show/answer/register/directory/inbox/brief + stubs
+registerAgentCommands(program);
+
+// task namespace — existing task commands + absorbed state.ts verbs + planning delegations
+registerTaskCommands(program);
+extendTaskCommands(program);
+
+// team namespace (Group 3) — existing team handlers
+registerTeamCommands(program);
+
+// exec namespace (Group 3) — new debug commands for executor management
+registerExecCommands(program);
 
 // ============================================================================
 // TUI — interactive terminal interface
@@ -178,22 +177,15 @@ program
     await launchTui({ dev: options.dev });
   });
 
-registerTeamNamespace(program);
-registerDirNamespace(program);
-registerAgentNamespace(program);
-registerSendInboxCommands(program);
-registerStateCommands(program);
+// ============================================================================
+// Existing namespaces (kept until full migration — Group 8 cleanup)
+// ============================================================================
+
 registerDispatchCommands(program);
 registerHookNamespace(program);
 registerDbCommands(program);
 registerScheduleCommands(program);
 registerDaemonCommands(program);
-registerTaskCommands(program);
-registerTypeCommands(program);
-registerBoardCommands(program);
-registerTagCommands(program);
-registerReleaseCommands(program);
-registerProjectCommands(program);
 registerNotifyCommands(program);
 registerEventsCommands(program);
 registerSessionsCommands(program);
@@ -201,7 +193,6 @@ registerMetricsCommands(program);
 registerExportCommands(program);
 registerImportCommands(program);
 registerTemplateCommands(program);
-registerBriefCommands(program);
 
 // Item registry commands — install, publish (top-level), item uninstall/update (namespaced)
 registerInstallCommand(program);
@@ -247,113 +238,9 @@ program.hook('postAction', (_thisCommand, actionCommand) => {
 });
 
 // ============================================================================
-// Top-level agent commands (promoted from genie agent namespace)
+// QA commands (staying top-level — not part of 4-object restructure)
 // ============================================================================
 
-// genie spawn <name>
-program
-  .command('spawn <name>')
-  .description('Spawn a new agent by name (resolves from directory or built-ins)')
-  .option('--provider <provider>', 'Provider: claude or codex', 'claude')
-  .option('--team <team>', 'Team name', process.env.GENIE_TEAM ?? 'genie')
-  .option('--model <model>', 'Model override (e.g., sonnet, opus)')
-  .option('--skill <skill>', 'Skill to load (optional)')
-  .option('--layout <layout>', 'Layout mode: mosaic (default) or vertical')
-  .option('--color <color>', 'Teammate pane border color')
-  .option('--plan-mode', 'Start teammate in plan mode')
-  .option('--permission-mode <mode>', 'Permission mode (e.g., acceptEdits)')
-  .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
-  .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
-  .option('--session <session>', 'Tmux session name to spawn into')
-  .option('--no-auto-resume', 'Disable auto-resume on pane death')
-  .action(async (name: string, options: SpawnOptions) => {
-    try {
-      await handleWorkerSpawn(name, options);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Error: ${message}`);
-      process.exit(1);
-    }
-  });
-
-// genie kill <name>
-program
-  .command('kill <name>')
-  .description('Force kill an agent by name')
-  .action(async (name: string) => {
-    try {
-      await handleWorkerKill(name);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Error: ${message}`);
-      process.exit(1);
-    }
-  });
-
-// genie stop <name>
-program
-  .command('stop <name>')
-  .description('Stop an agent (preserves session for resume)')
-  .action(async (name: string) => {
-    try {
-      await handleWorkerStop(name);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Error: ${message}`);
-      process.exit(1);
-    }
-  });
-
-// genie resume [name]
-program
-  .command('resume [name]')
-  .description('Resume a suspended/failed agent with its Claude session')
-  .option('--all', 'Resume all eligible agents')
-  .action(async (name: string | undefined, options: { all?: boolean }) => {
-    try {
-      await handleWorkerResume(name, options);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Error: ${message}`);
-      process.exit(1);
-    }
-  });
-
-// genie history <name>
-program
-  .command('history <name>')
-  .description('Show compressed session history for an agent')
-  .option('--full', 'Show full conversation without compression')
-  .option('--since <n>', 'Show last N user/assistant exchanges', Number.parseInt)
-  .option('--last <n>', 'Show last N transcript entries', Number.parseInt)
-  .option('--type <role>', 'Filter by role (user, assistant, tool_call)')
-  .option('--after <timestamp>', 'Only entries after ISO timestamp')
-  .option('--json', 'Output as JSON')
-  .option('--ndjson', 'Output as newline-delimited JSON (pipeable to jq)')
-  .option('--raw', 'Output raw JSONL entries')
-  .option('--log-file <path>', 'Direct path to log file (for testing)')
-  .action(async (name: string, options: historyCmd.HistoryOptions) => {
-    await historyCmd.historyCommand(name, options);
-  });
-
-// genie log [agent]
-program
-  .command('log [agent]')
-  .description('Unified observability feed — aggregates transcript, DMs, team chat')
-  .option('--team <name>', 'Show interleaved feed for all agents in a team')
-  .option('--type <kind>', 'Filter by event kind (transcript, message, tool_call, state, system)')
-  .option('--since <timestamp>', 'Only events after ISO timestamp')
-  .option('--last <n>', 'Show last N events', Number.parseInt)
-  .option('--ndjson', 'Output as newline-delimited JSON (pipeable to jq)')
-  .option('--json', 'Output as pretty JSON')
-  .option('-f, --follow', 'Follow mode — real-time streaming')
-  .action(async (agent: string | undefined, options: LogOptions) => {
-    await logCommand(agent, options);
-  });
-
-// genie qa [target] — run specs by name, domain, or all
-// genie qa status — dashboard
-// genie qa history — recent runs
 const qaCmd = program.command('qa').description('QA — self-testing system for genie CLI');
 
 qaCmd
@@ -392,7 +279,6 @@ qaCmd
     await qaCheckCommand(specFile, options);
   });
 
-// genie qa report <json> — team-lead calls this to publish QA result to PG event log
 program
   .command('qa-report <json>')
   .description('Publish QA result to the PG event log (called by QA team-lead)')
@@ -420,46 +306,73 @@ program
     }
   });
 
-// genie read <name>
-program
-  .command('read <name>')
-  .description('Read terminal output from an agent pane')
-  .option('-n, --lines <number>', 'Number of lines to read')
-  .option('--from <line>', 'Start line')
-  .option('--to <line>', 'End line')
-  .option('--range <range>', 'Line range (e.g., "10-20")')
-  .option('--search <text>', 'Search for text')
-  .option('--grep <pattern>', 'Grep for pattern')
-  .option('-f, --follow', 'Follow mode (like tail -f)')
-  .option('--all', 'Show all output')
-  .option('-r, --reverse', 'Reverse order')
-  .option('--json', 'Output as JSON')
-  .action(async (name: string, options: readCmd.ReadOptions) => {
-    await readCmd.readSessionLogs(name, options);
-  });
+// ============================================================================
+// Error redirects — old top-level commands → helpful suggestions
+// ============================================================================
 
-// genie answer <name> <choice>
-program
-  .command('answer <name> <choice>')
-  .description('Answer a question for an agent (use "text:..." for text input)')
-  .action(async (name: string, choice: string) => {
-    await orchestrateCmd.answerQuestion(name, choice);
-  });
+function errorRedirect(oldCmd: string, newCmd: string): () => void {
+  return () => {
+    const args = process.argv.slice(3).join(' ');
+    const suggestion = args ? `${newCmd} ${args}` : newCmd;
+    console.error(`Command "${oldCmd}" has moved. Did you mean: genie ${suggestion}?`);
+    process.exit(1);
+  };
+}
 
-// genie ls — smart agent view
 program
-  .command('ls')
-  .description('List registered agents with runtime status')
-  .option('--json', 'Output as JSON')
-  .action(async (options: { json?: boolean }) => {
-    try {
-      await handleLsCommand(options);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Error: ${message}`);
-      process.exit(1);
-    }
-  });
+  .command('spawn [args...]')
+  .description('(moved) → genie agent spawn')
+  .action(errorRedirect('spawn', 'agent spawn'));
+program.command('kill [args...]').description('(moved) → genie agent kill').action(errorRedirect('kill', 'agent kill'));
+program.command('stop [args...]').description('(moved) → genie agent stop').action(errorRedirect('stop', 'agent stop'));
+program
+  .command('resume [args...]')
+  .description('(moved) → genie agent resume')
+  .action(errorRedirect('resume', 'agent resume'));
+program.command('ls').description('(moved) → genie agent list').action(errorRedirect('ls', 'agent list'));
+program
+  .command('read [args...]')
+  .description('(moved) → genie agent log --raw')
+  .action(errorRedirect('read', 'agent log --raw'));
+program
+  .command('history [args...]')
+  .description('(moved) → genie agent log --transcript')
+  .action(errorRedirect('history', 'agent log --transcript'));
+program.command('log [args...]').description('(moved) → genie agent log').action(errorRedirect('log', 'agent log'));
+program
+  .command('status [args...]')
+  .description('(moved) → genie task status')
+  .action(errorRedirect('status', 'task status'));
+program.command('done [args...]').description('(moved) → genie task done').action(errorRedirect('done', 'task done'));
+program.command('send [args...]').description('(moved) → genie agent send').action(errorRedirect('send', 'agent send'));
+program
+  .command('broadcast [args...]')
+  .description('(moved) → genie agent send --broadcast')
+  .action(errorRedirect('broadcast', 'agent send --broadcast'));
+program
+  .command('answer [args...]')
+  .description('(moved) → genie agent answer')
+  .action(errorRedirect('answer', 'agent answer'));
+program
+  .command('inbox [args...]')
+  .description('(moved) → genie agent inbox')
+  .action(errorRedirect('inbox', 'agent inbox'));
+program
+  .command('chat [args...]')
+  .description('(moved) → genie agent log --conversations')
+  .action(errorRedirect('chat', 'agent log --conversations'));
+program
+  .command('brief [args...]')
+  .description('(moved) → genie agent brief')
+  .action(errorRedirect('brief', 'agent brief'));
+program
+  .command('dir [args...]')
+  .description('(moved) → genie agent directory / genie agent register')
+  .action(errorRedirect('dir', 'agent directory'));
+program
+  .command('show [args...]')
+  .description('(moved) → genie task show / genie agent show')
+  .action(errorRedirect('show', 'agent show'));
 
 // ============================================================================
 // genie --session <name> — named leader session (pre-parse check)

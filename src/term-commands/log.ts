@@ -300,7 +300,7 @@ export async function logCommand(agentName: string | undefined, options: LogOpti
     // Single agent mode — scope to team if specified
     const agent = await findAgent(agentName, options.team);
     if (!agent) {
-      console.error(`Agent "${agentName}" not found. Run \`genie ls\` to see agents.`);
+      console.error(`Agent "${agentName}" not found. Run \`genie agent list\` to see agents.`);
       process.exit(1);
     }
     events = await readAgentLog(agent, repoPath, filter);
@@ -368,7 +368,7 @@ async function followCommand(
   } else if (agentName) {
     const agent = await findAgent(agentName, options.team);
     if (!agent) {
-      console.error(`Agent "${agentName}" not found. Run \`genie ls\` to see agents.`);
+      console.error(`Agent "${agentName}" not found. Run \`genie agent list\` to see agents.`);
       process.exit(1);
     }
     label = agent.id;

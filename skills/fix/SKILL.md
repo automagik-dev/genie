@@ -41,10 +41,10 @@ Fix and re-review must be **separate dispatches** — never combine them in one 
 
 ```bash
 # Spawn a fixer subagent
-genie spawn fixer
+genie agent spawn fixer
 
 # Spawn a reviewer subagent (separate from fixer)
-genie spawn reviewer
+genie agent spawn reviewer
 ```
 
 ## Task Lifecycle Integration (v4)
@@ -74,18 +74,18 @@ The orchestrator runs `/fix`:
 
 ```bash
 # Loop 1: dispatch fixer with gaps
-genie spawn fixer
-genie send 'Fix these gaps from /review on wish fix-dispatch-initial-prompt:
+genie agent spawn fixer
+genie agent send 'Fix these gaps from /review on wish fix-dispatch-initial-prompt:
 - [CRITICAL] dispatch.ts:532 — add initialPrompt to handleWorkerSpawn
 - [HIGH] dispatch.ts:541 — check protocolRouter.sendMessage result, log warning on failure
 Reference: qa-runner.ts:334 shows correct pattern.' --to fixer
 
 # Wait for fixer to complete
-sleep 60 && genie read fixer
+sleep 60 && genie agent log fixer --raw
 
 # Re-review (separate subagent — never the same as fixer)
-genie spawn reviewer
-genie send 'Review wish fix-dispatch-initial-prompt. Check the fixer changes against acceptance criteria. Run bun test.' --to reviewer
+genie agent spawn reviewer
+genie agent send 'Review wish fix-dispatch-initial-prompt. Check the fixer changes against acceptance criteria. Run bun test.' --to reviewer
 
 # Reviewer returns SHIP → done
 # If FIX-FIRST again → loop 2 (max 2 loops, then escalate)

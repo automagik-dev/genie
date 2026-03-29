@@ -36,7 +36,7 @@ If context is injected, use it directly. Do not re-parse the wish for informatio
     ```bash
     genie task move #<seq> --to review --comment "Group N complete"
     ```
-11. **Signal completion:** notify the leader via `genie send 'Group N complete — all criteria met' --to <leader>`.
+11. **Signal completion:** notify the leader via `genie agent send 'Group N complete — all criteria met' --to <leader>`.
 12. **Repeat** steps 2-11 until all groups done.
 13. **Wish done (v4):** mark the parent task done:
     ```bash
@@ -51,33 +51,33 @@ If context is injected, use it directly. Do not re-parse the wish for informatio
 
 ## Dispatch
 
-All dispatch uses the `genie spawn` command. The orchestrator spawns subagents for each role — never executes work directly.
+All dispatch uses the `genie agent spawn` command. The orchestrator spawns subagents for each role — never executes work directly.
 
 ```bash
 # Spawn an engineer for the task
-genie spawn engineer
+genie agent spawn engineer
 
 # Spawn a reviewer (always separate from engineer)
-genie spawn reviewer
+genie agent spawn reviewer
 
 # Spawn a fixer for FIX-FIRST gaps
-genie spawn fixer
+genie agent spawn fixer
 ```
 
 | Need | Method |
 |------|--------|
-| Implementation task | `genie spawn engineer` |
-| Review task | `genie spawn reviewer` (never same agent as engineer) |
-| Fix task | `genie spawn fixer` (separate from reviewer) |
+| Implementation task | `genie agent spawn engineer` |
+| Review task | `genie agent spawn reviewer` (never same agent as engineer) |
+| Fix task | `genie agent spawn fixer` (separate from reviewer) |
 | Quick validation | `Bash` tool directly — no subagent needed |
 
-Coordinate via `genie send '<message>' --to <agent>`. Use `genie broadcast '<message>'` for team-wide updates.
+Coordinate via `genie agent send '<message>' --to <agent>`. Use `genie agent send '<message>' --broadcast` for team-wide updates.
 
 ## State Management
 
-- **Workers signal** completion via `genie send` to the leader when a group is done.
-- **Leader tracks** state via `genie status <slug>` and marks groups complete via `genie done <ref>`.
-- Workers do NOT call `genie done` — that is the leader's responsibility after verifying the work.
+- **Workers signal** completion via `genie agent send` to the leader when a group is done.
+- **Leader tracks** state via `genie task status <slug>` and marks groups complete via `genie task done <ref>`.
+- Workers do NOT call `genie task done` — that is the leader's responsibility after verifying the work.
 - If a group gets stuck, the leader can use `genie reset <ref>` to retry.
 
 ## Escalation
@@ -114,16 +114,16 @@ genie work fix-dispatch-initial-prompt
 #         🔧 Dispatching work to engineer for "fix-dispatch-initial-prompt#1"
 
 # 2. Monitor (ALWAYS sleep 60 between checks)
-sleep 60 && genie status fix-dispatch-initial-prompt
+sleep 60 && genie task status fix-dispatch-initial-prompt
 # Output: Group 1: 🔄 in_progress
 
 # 3. Check again
-sleep 60 && genie status fix-dispatch-initial-prompt
+sleep 60 && genie task status fix-dispatch-initial-prompt
 # Output: Group 1: ✅ done — Progress: 1/1 done
 
 # 4. All groups done → local review
-genie spawn reviewer
-genie send 'Review wish fix-dispatch-initial-prompt. Run bun test and check all 5 call sites.' --to reviewer
+genie agent spawn reviewer
+genie agent send 'Review wish fix-dispatch-initial-prompt. Run bun test and check all 5 call sites.' --to reviewer
 # Reviewer returns: SHIP
 
 # 5. Create PR

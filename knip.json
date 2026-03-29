@@ -11,7 +11,16 @@
     "src/lib/event-router.ts",
     "src/lib/brief.ts",
     "src/lib/task-service.ts",
-    "src/lib/team-manager.ts"
+    "src/lib/team-manager.ts",
+    "src/term-commands/dir.ts",
+    "src/term-commands/state.ts",
+    "src/term-commands/history.ts",
+    "src/term-commands/msg.ts",
+    "src/term-commands/brief.ts",
+    "src/term-commands/read.ts",
+    "src/term-commands/tag.ts",
+    "src/lib/log-reader.ts",
+    "src/term-commands/release.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["tmux", "which"],

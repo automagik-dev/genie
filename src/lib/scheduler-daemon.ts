@@ -218,7 +218,7 @@ async function defaultCountTmuxSessions(): Promise<number> {
 async function defaultResumeAgent(agentId: string): Promise<boolean> {
   try {
     const { execSync } = await import('node:child_process');
-    execSync(`genie resume ${agentId}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    execSync(`genie agent resume ${agentId}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
     return true;
   } catch {
     return false;

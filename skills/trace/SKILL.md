@@ -18,7 +18,7 @@ Investigate unknown failures. Dispatch a trace subagent to reproduce, trace, and
 1. **Collect symptoms:** gather error messages, stack traces, logs, and expected vs actual behavior from the wish or reporter.
 2. **Dispatch tracer:** the spawned agent IS the tracer — it performs a read-only inline investigation. Send symptoms + relevant context (files, recent changes, environment).
 3. **Investigate:** the tracer autonomously reproduces, hypothesizes, traces, and isolates root cause.
-4. **Signal findings:** tracer reports findings back to the leader via `genie send '<diagnosis summary>' --to <leader>`.
+4. **Signal findings:** tracer reports findings back to the leader via `genie agent send '<diagnosis summary>' --to <leader>`.
 5. **Receive report:** structured diagnosis with root cause, evidence, recommended correction, and affected scope.
 6. **Hand off:** pass the report to `/fix` or escalate to the orchestrator.
 
@@ -39,7 +39,7 @@ Trace must run in **isolation** — the subagent must not modify any source file
 
 ```bash
 # Spawn a tracer subagent (read-only investigation)
-genie spawn tracer
+genie agent spawn tracer
 ```
 
 ## Task Lifecycle Integration (v4)
@@ -63,13 +63,13 @@ An engineer reports that `genie work` dispatches engineers but they sit idle. Th
 
 ```bash
 # 1. Spawn a tracer (read-only — no code changes)
-genie spawn tracer
+genie agent spawn tracer
 
 # 2. Send the symptoms
-genie send 'Trace: genie work dispatches engineers but they start idle at the prompt. No task received. genie status shows in_progress but nothing happens. Check dispatch.ts workDispatchCommand and protocol-router.ts sendMessage.' --to tracer
+genie agent send 'Trace: genie work dispatches engineers but they start idle at the prompt. No task received. genie task status shows in_progress but nothing happens. Check dispatch.ts workDispatchCommand and protocol-router.ts sendMessage.' --to tracer
 
 # 3. Wait for findings
-sleep 60 && genie read tracer
+sleep 60 && genie agent log tracer --raw
 ```
 
 The tracer investigates and reports back:

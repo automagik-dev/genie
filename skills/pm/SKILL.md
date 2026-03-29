@@ -38,7 +38,7 @@ The PM spawns a decision-maker agent that emulates human judgment. Use for fully
 
 ```bash
 # Spawn a decision-maker persona
-genie spawn decision-maker
+genie agent spawn decision-maker
 ```
 
 The decision-maker receives a persona prompt that defines its judgment style (see Decision-Maker Persona below). The PM orchestrates, the persona approves.
@@ -268,7 +268,7 @@ Users can define their own persona by providing a prompt when spawning:
 
 ```bash
 # Spawn with custom persona prompt
-genie spawn decision-maker --prompt "You are a cautious security-first reviewer..."
+genie agent spawn decision-maker --prompt "You are a cautious security-first reviewer..."
 ```
 
 Or create an agent definition file for reuse:
@@ -340,10 +340,10 @@ genie team disband <name>
 ### Agent Dispatch
 
 ```bash
-genie spawn <role>
+genie agent spawn <role>
 genie work <slug>
-genie status <slug>
-genie done <slug>#<group>
+genie task status <slug>
+genie task done <slug>#<group>
 genie reset <slug>#<group>
 ```
 
@@ -368,7 +368,7 @@ genie task move #42 --to build
 genie team create rate-limiting --repo . --wish rate-limiting
 
 # 5. Monitor: track progress
-genie status rate-limiting
+genie task status rate-limiting
 genie events summary --today
 
 # 6. Review: validate work
