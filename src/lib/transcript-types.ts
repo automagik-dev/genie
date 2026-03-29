@@ -79,7 +79,7 @@ export interface ActivityBlock {
   status: 'running' | 'completed';
 }
 
-export interface CommandGroupItem {
+interface CommandGroupItem {
   ts: string;
   endTs?: string;
   input: unknown;
@@ -95,7 +95,7 @@ export interface CommandGroupBlock {
   items: CommandGroupItem[];
 }
 
-export interface ToolGroupItem {
+interface ToolGroupItem {
   ts: string;
   endTs?: string;
   name: string;
