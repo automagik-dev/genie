@@ -1,0 +1,54 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicholasxjy/tauri-schema/main/1.2.3/schema.json",
+  "build": {
+    "distDir": "../../dist/app",
+    "devPath": "http://localhost:5173",
+    "beforeBuildCommand": "bun run build:app",
+    "beforeDevCommand": ""
+  },
+  "package": {
+    "productName": "Genie",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "bundle": {
+      "active": true,
+      "identifier": "ai.automagik.genie",
+      "icon": [],
+      "targets": "all",
+      "externalBin": ["genie-sidecar"]
+    },
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "title": "Genie — AI Agent Cockpit",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "all": false,
+        "sidecar": true,
+        "execute": false,
+        "open": true
+      },
+      "process": {
+        "all": false,
+        "exit": true,
+        "relaunch": false
+      }
+    },
+    "cli": {
+      "description": "Genie Desktop App",
+      "args": []
+    }
+  }
+}
