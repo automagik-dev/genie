@@ -1,7 +1,10 @@
-.PHONY: build lint lint-fix format typecheck test check clean
+.PHONY: build build-app lint lint-fix format typecheck test check clean
 
 build:
 	bun run build
+
+build-app:
+	bun run build:app
 
 lint:
 	bunx biome check .
