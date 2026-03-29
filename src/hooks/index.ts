@@ -25,6 +25,8 @@ import {
   emitToolCallEvent,
   emitUserPromptEvent,
 } from './handlers/runtime-emit.js';
+import { validateCompletion } from './handlers/validate-completion.js';
+import { validateWish } from './handlers/validate-wish.js';
 import type { Handler, HandlerResult, HookDecision, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
@@ -62,6 +64,13 @@ const handlers: Handler[] = [
     fn: autoSpawn,
   },
   {
+    name: 'validate-wish',
+    event: 'PreToolUse',
+    matcher: /^Write$/,
+    priority: 5,
+    fn: validateWish,
+  },
+  {
     name: 'runtime-emit-tool',
     event: 'PreToolUse',
     matcher: /.*/,
@@ -86,6 +95,12 @@ const handlers: Handler[] = [
     event: 'Stop',
     priority: 30,
     fn: emitAssistantResponseEvent,
+  },
+  {
+    name: 'validate-completion',
+    event: 'Stop',
+    priority: 31,
+    fn: validateCompletion,
   },
 ];
 
