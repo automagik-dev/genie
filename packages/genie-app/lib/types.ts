@@ -182,3 +182,5 @@ export interface TerminalViewProps extends AppComponentProps {}
 export interface DashboardViewProps extends AppComponentProps {}
 
 export interface ActivityViewProps extends AppComponentProps {}
+
+export interface WizardViewProps extends AppComponentProps {}

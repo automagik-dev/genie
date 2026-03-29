@@ -109,13 +109,15 @@ export async function list_workspaces() {
 }
 
 export async function open_workspace(params: { path: string }) {
-  await workspace.openWorkspace(params.path);
-  return { ok: true };
+  return workspace.openWorkspace(params.path);
 }
 
-export async function init_workspace(params: { path: string }) {
-  await workspace.initWorkspace(params.path);
-  return { ok: true };
+export async function init_workspace(params: { path: string; name?: string; pgUrl?: string }) {
+  return workspace.initWorkspace(params.path, params.name, params.pgUrl);
+}
+
+export async function remove_workspace(params: { path: string }) {
+  return { ok: await workspace.removeWorkspace(params.path) };
 }
 
 // ============================================================================
@@ -137,4 +139,5 @@ export const commands: Record<string, (params: never) => unknown> = {
   list_workspaces,
   open_workspace,
   init_workspace,
+  remove_workspace,
 };

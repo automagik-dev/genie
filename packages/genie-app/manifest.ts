@@ -59,6 +59,20 @@ export default {
       },
     },
     {
+      id: 'wizard',
+      label: 'Setup',
+      permission: 'dashboard',
+      minRole: 'viewer' as const,
+      natsPrefix: 'wizard',
+      defaultSize: { width: 600, height: 500 },
+      component: './views/wizard/ui/WizardView',
+      desktop: {
+        icon: '/icons/dusk/wand.svg',
+        categories: ['System'],
+        comment: 'First-launch workspace wizard',
+      },
+    },
+    {
       id: 'activity',
       label: 'Activity',
       permission: 'activity',
