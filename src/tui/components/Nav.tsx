@@ -96,6 +96,17 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
     [activeTab],
   );
 
+  // Auto-switch right pane when cursor lands on a project node
+  useEffect(() => {
+    if (activeTab !== 'projects' || tabBarFocused) return;
+    const current = flatNodes[projectIndex]?.node;
+    if (!current || current.type !== 'project') return;
+    const proj = current.data as { id: string; tmuxSession: string | null };
+    if (proj.tmuxSession) {
+      onProjectSelect(proj.id, proj.tmuxSession);
+    }
+  }, [activeTab, tabBarFocused, projectIndex, flatNodes, onProjectSelect]);
+
   const handleProjectSelect = useCallback(
     (id: string) => {
       const idx = flatNodes.findIndex((n) => n.node.id === id);
