@@ -40,14 +40,19 @@ export async function launchTui(options: TuiLaunchOptions = {}): Promise<void> {
   const envVars = ['GENIE_TUI_PANE=left', `GENIE_TUI_RIGHT=${rightPane}`];
   if (options.workspaceRoot) envVars.push(`GENIE_TUI_WORKSPACE=${options.workspaceRoot}`);
   if (options.initialAgent) envVars.push(`GENIE_TUI_AGENT=${options.initialAgent}`);
-  const envPrefix = envVars.join(' ');
-
-  // Run the TUI nav renderer in the left pane
-  // Uses GENIE_TUI_PANE=left to trigger renderer mode (not a subcommand)
+  // Write a launch script to avoid send-keys quoting hell with long env var strings
   const { execSync } = await import('node:child_process');
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  const { join } = await import('node:path');
   const { tuiTmuxCmd } = await import('./tmux.js');
+
+  const genieHome = process.env.GENIE_HOME ?? join(process.env.HOME ?? '/tmp', '.genie');
+  mkdirSync(genieHome, { recursive: true });
+  const scriptPath = join(genieHome, 'tui-launch.sh');
   const runCmd = options.dev ? `bun --watch ${genieBin}` : `${bunPath} ${genieBin}`;
-  execSync(tuiTmuxCmd(`send-keys -t '${leftPane}' "${envPrefix} ${runCmd}" Enter`), {
+  writeFileSync(scriptPath, `#!/bin/sh\nexport ${envVars.join('\nexport ')}\nexec ${runCmd}\n`, { mode: 0o755 });
+
+  execSync(tuiTmuxCmd(`send-keys -t '${leftPane}' '${scriptPath}' Enter`), {
     stdio: 'ignore',
   });
 
