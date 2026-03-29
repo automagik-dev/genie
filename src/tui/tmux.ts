@@ -84,6 +84,8 @@ function ensureSession(sessionName: string): void {
 
 /** Switch right pane to a specific session window */
 export function attachProjectWindow(rightPane: string, targetSession: string, windowIndex?: number): void {
+  // Guard: never attach the TUI session to itself (causes infinite loop)
+  if (targetSession === SESSION_NAME) return;
   const pane = resolveRightPane(rightPane);
   ensureSession(targetSession);
   if (windowIndex !== undefined) {
