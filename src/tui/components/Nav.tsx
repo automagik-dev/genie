@@ -138,19 +138,21 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
       }
       if (keyName === 'down' || keyName === 'j') {
         setTabBarFocused(false);
+        setSelectedIndex(0);
         return true;
       }
       return false;
     },
-    [activeTab],
+    [activeTab, setSelectedIndex],
   );
 
   const handleVerticalNav = useCallback(
     (keyName: string, selectedIdx: number, rowCount: number) => {
+      if (rowCount === 0) return;
       if (keyName === 'up' || keyName === 'k') {
-        selectedIdx === 0 ? setTabBarFocused(true) : setSelectedIndex(selectedIdx - 1);
+        setSelectedIndex(selectedIdx === 0 ? rowCount - 1 : selectedIdx - 1);
       } else if (keyName === 'down' || keyName === 'j') {
-        selectedIdx < rowCount - 1 ? setSelectedIndex(selectedIdx + 1) : setTabBarFocused(true);
+        setSelectedIndex(selectedIdx >= rowCount - 1 ? 0 : selectedIdx + 1);
       }
     },
     [setSelectedIndex],
