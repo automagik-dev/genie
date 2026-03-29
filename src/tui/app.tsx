@@ -7,7 +7,7 @@ import { getActiveWork, getExecutorActivity, matchWorkToTasks } from './activity
 import { Nav } from './components/Nav.js';
 import { loadAll, loadAssignments, loadExecutors, subscribe } from './db.js';
 import { palette } from './theme.js';
-import { attachProject, switchRightPane } from './tmux.js';
+import { attachProject, cleanup, switchRightPane } from './tmux.js';
 import { applyActivity, buildTree } from './tree.js';
 import type { TreeNode, TuiAssignment, TuiData, TuiExecutor } from './types.js';
 
@@ -20,10 +20,12 @@ export function App({ rightPane }: { rightPane?: string }) {
   const dataRef = useRef<TuiData | null>(null);
   const subRef = useRef<{ stop: () => Promise<void> } | null>(null);
 
-  // Exit handler
+  // Exit handler — kill entire TUI session, not just the renderer
   useKeyboard((key) => {
     if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
       renderer.destroy();
+      // Kill the genie-tui tmux session so both panes die together
+      cleanup();
     }
   });
 
@@ -108,7 +110,7 @@ export function App({ rightPane }: { rightPane?: string }) {
 
   if (loading) {
     return (
-      <box width={30} height="100%" backgroundColor={palette.bg} justifyContent="center" alignItems="center">
+      <box width="100%" height="100%" backgroundColor={palette.bg} justifyContent="center" alignItems="center">
         <text fg={palette.purple}>Loading...</text>
       </box>
     );
@@ -116,7 +118,7 @@ export function App({ rightPane }: { rightPane?: string }) {
 
   if (error) {
     return (
-      <box width={30} height="100%" backgroundColor={palette.bg} justifyContent="center" alignItems="center">
+      <box width="100%" height="100%" backgroundColor={palette.bg} justifyContent="center" alignItems="center">
         <text fg={palette.error}>{error}</text>
       </box>
     );
