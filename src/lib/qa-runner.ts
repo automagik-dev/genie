@@ -419,7 +419,7 @@ async function runPreparedSpec(
 
   try {
     const { handleWorkerSpawn } = await import('../term-commands/agents.js');
-    const paneId = await handleWorkerSpawn('qa', {
+    const _paneId = await handleWorkerSpawn('qa', {
       provider: 'claude',
       team: teamName,
       session: teamName,
