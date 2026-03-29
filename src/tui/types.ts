@@ -3,7 +3,9 @@
 import type { ExecutorState, TransportType } from '../lib/executor-types.js';
 import type { ProviderName } from '../lib/provider-adapters.js';
 
-export type TreeNodeType = 'session' | 'window' | 'pane';
+export type TreeNodeType = 'session' | 'window' | 'pane' | 'agent';
+
+export type AgentState = 'running' | 'stopped' | 'error' | 'spawning';
 
 export interface TreeNode {
   id: string;
@@ -17,6 +19,8 @@ export interface TreeNode {
   activePanes: number;
   /** Agent state if applicable */
   agentState?: 'idle' | 'working' | 'permission' | 'error';
+  /** Workspace agent lifecycle state */
+  wsAgentState?: AgentState;
 }
 
 export interface FlatNode {

@@ -51,6 +51,7 @@ import { registerDispatchCommands } from './term-commands/dispatch.js';
 import { registerExportCommands } from './term-commands/export.js';
 import * as historyCmd from './term-commands/history.js';
 import { registerImportCommands } from './term-commands/import.js';
+import { registerInitCommands } from './term-commands/init.js';
 import { registerInstallCommand } from './term-commands/install.js';
 import { registerItemUninstallCommand } from './term-commands/item-uninstall.js';
 import { registerItemUpdateCommand } from './term-commands/item-update.js';
@@ -162,6 +163,15 @@ shortcuts
   .action(shortcutsInstallCommand);
 shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
 
+// genie serve — alias for `genie daemon start --foreground`
+program
+  .command('serve')
+  .description('Start genie daemon (foreground)')
+  .action(async () => {
+    // Re-invoke as `genie daemon start --foreground`
+    await program.parseAsync(['node', 'genie', 'daemon', 'start', '--foreground']);
+  });
+
 // ============================================================================
 // Orchestration namespaces
 // ============================================================================
@@ -174,6 +184,7 @@ shortcuts.command('uninstall').description('Remove shortcuts from config files')
 
 registerAppCommand(program);
 
+registerInitCommands(program);
 registerTeamNamespace(program);
 registerDirNamespace(program);
 registerAgentNamespace(program);
@@ -470,10 +481,18 @@ if (process.env.GENIE_TUI_PANE === 'left') {
   process.exit(0);
 }
 
-// Default command: genie (no args) → launch TUI. genie --reset → reset session.
+// Default command: genie (no args) → launch TUI with workspace detection.
 if (args.length === 0) {
+  const { findWorkspace } = await import('./lib/workspace.js');
+  const ws = findWorkspace();
+
+  if (!ws) {
+    console.error('Not in a genie workspace. Run `genie init` to create one.');
+    process.exit(1);
+  }
+
   const { launchTui } = await import('./tui/index.js');
-  await launchTui();
+  await launchTui({ workspaceRoot: ws.root, initialAgent: ws.agent });
   process.exit(0);
 }
 if (args.every((a) => a === '--reset')) {

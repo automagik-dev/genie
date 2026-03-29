@@ -19,7 +19,7 @@ export const TreeNodeRow = memo(function TreeNodeRow({ node, selected, onSelect,
 
   const icon = getNodeIcon(node);
   const color = getNodeColor(node);
-  const activeIndicator = node.activePanes > 0 ? ` ${icons.agent}${node.activePanes}` : '';
+  const suffix = getNodeSuffix(node);
 
   return (
     <box
@@ -38,7 +38,7 @@ export const TreeNodeRow = memo(function TreeNodeRow({ node, selected, onSelect,
         </span>
         <span fg={color}>{icon} </span>
         <span fg={selected ? '#ffffff' : palette.text}>{node.label}</span>
-        {activeIndicator ? <span fg={palette.cyan}>{activeIndicator}</span> : null}
+        {suffix ? <span fg={palette.textDim}>{suffix}</span> : null}
         {node.agentState ? <span fg={getStateColor(node.agentState)}> {node.agentState}</span> : null}
       </text>
     </box>
@@ -46,6 +46,11 @@ export const TreeNodeRow = memo(function TreeNodeRow({ node, selected, onSelect,
 });
 
 function getNodeIcon(node: TreeNodeType): string {
+  // Workspace agent nodes
+  if (node.type === 'agent') {
+    return getAgentIcon(node);
+  }
+
   switch (node.type) {
     case 'session':
       return node.data.attached ? '\u25b6' : '\u25b8'; // ▶ attached, ▸ detached
@@ -58,17 +63,36 @@ function getNodeIcon(node: TreeNodeType): string {
   }
 }
 
+function getAgentIcon(node: TreeNodeType): string {
+  switch (node.wsAgentState) {
+    case 'running':
+      return '\u25cf'; // ●
+    case 'stopped':
+      return '\u25cb'; // ○
+    case 'error':
+      return '\u2298'; // ⊘
+    case 'spawning':
+      return '\u231b'; // ⏳
+    default:
+      return '\u25cb'; // ○
+  }
+}
+
 function getPaneIcon(node: TreeNodeType): string {
   if (node.data.isDead) return '\u2718'; // ✘
   if (node.agentState === 'working') return '\u25cf'; // ●
   if (node.agentState === 'idle') return '\u25cb'; // ○
   if (node.agentState === 'permission') return '\u26a0'; // ⚠
   if (node.agentState === 'error') return '\u2718'; // ✘
-  if (node.data.command === 'claude') return '\u25c6'; // ◆
+  if (node.data.command === 'claude') return '\u25c6'; // ���
   return '\u25cb'; // ○
 }
 
 function getNodeColor(node: TreeNodeType): string {
+  if (node.type === 'agent') {
+    return getAgentColor(node);
+  }
+
   switch (node.type) {
     case 'session':
       return node.data.attached ? palette.emerald : palette.textDim;
@@ -81,6 +105,21 @@ function getNodeColor(node: TreeNodeType): string {
   }
 }
 
+function getAgentColor(node: TreeNodeType): string {
+  switch (node.wsAgentState) {
+    case 'running':
+      return palette.emerald;
+    case 'stopped':
+      return palette.textDim;
+    case 'error':
+      return palette.error;
+    case 'spawning':
+      return palette.warning;
+    default:
+      return palette.textDim;
+  }
+}
+
 function getPaneColor(node: TreeNodeType): string {
   if (node.data.isDead) return palette.error;
   if (node.agentState === 'working') return palette.cyan;
@@ -89,6 +128,20 @@ function getPaneColor(node: TreeNodeType): string {
   if (node.agentState === 'idle') return palette.textDim;
   if (node.data.command === 'claude') return palette.cyan;
   return palette.textDim;
+}
+
+function getNodeSuffix(node: TreeNodeType): string {
+  if (node.type === 'agent') {
+    const wc = node.data.windowCount as number;
+    if (wc > 1) return ` (${wc} windows)`;
+    if (wc === 1) return ' (1 window)';
+    return '';
+  }
+  if (node.type === 'session' || node.type === 'pane') {
+    const count = node.activePanes;
+    if (count > 0) return ` ${icons.agent}${count}`;
+  }
+  return '';
 }
 
 function getStateColor(state: string): string {
