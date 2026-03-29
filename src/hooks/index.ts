@@ -127,13 +127,10 @@ async function runHandler(
   }
 }
 
-async function executeBlockingChain(
-  matched: Handler[],
-  payload: HookPayload,
-): Promise<Record<string, unknown>> {
+async function executeBlockingChain(matched: Handler[], payload: HookPayload): Promise<Record<string, unknown>> {
   let currentInput = payload.tool_input ? { ...payload.tool_input } : undefined;
   const contextMessages: string[] = [];
-  let hookEventName = payload.hook_event_name;
+  const hookEventName = payload.hook_event_name;
 
   for (const handler of matched) {
     const result = await runHandler(handler, payload, currentInput);

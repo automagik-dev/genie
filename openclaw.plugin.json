@@ -8,7 +8,5 @@
     "additionalProperties": false,
     "properties": {}
   },
-  "skills": [
-    "./plugins/genie/skills"
-  ]
+  "skills": ["./plugins/genie/skills"]
 }

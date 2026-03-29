@@ -524,15 +524,11 @@ async function resolveColumnId(sql: Sql, boardId: string, stageName: string): Pr
   return match?.id ?? null;
 }
 
-/** Extract and normalize task input fields with defaults. */
-function buildTaskVals(input: TaskInput) {
+/** Nullable fields with null default. */
+function taskNullables(input: TaskInput) {
   return {
     desc: input.description ?? null,
     ac: input.acceptanceCriteria ?? null,
-    type: input.typeId ?? 'software',
-    stage: input.stage ?? 'draft',
-    status: input.status ?? 'ready',
-    priority: input.priority ?? 'normal',
     parent: input.parentId ?? null,
     wish: input.wishFile ?? null,
     group: input.groupName ?? null,
@@ -543,6 +539,17 @@ function buildTaskVals(input: TaskInput) {
     columnId: (input.columnId as string | null) ?? null,
     externalId: input.externalId ?? null,
     externalUrl: input.externalUrl ?? null,
+  };
+}
+
+/** Extract and normalize task input fields with defaults. */
+function buildTaskVals(input: TaskInput) {
+  return {
+    ...taskNullables(input),
+    type: input.typeId ?? 'software',
+    stage: input.stage ?? 'draft',
+    status: input.status ?? 'ready',
+    priority: input.priority ?? 'normal',
   };
 }
 
