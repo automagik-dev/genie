@@ -9,16 +9,17 @@ import { flattenTree, toggleNode } from '../tree.js';
 import type { TreeNode } from '../types.js';
 import { ClaudeView, getClaudeRowCount } from './ClaudeView.js';
 import { TAB_ORDER, TabBar, type TabId } from './TabBar.js';
-import { TmuxView, getTmuxRowCount } from './TmuxView.js';
+import { TmuxView, getTmuxRowCount, getTmuxRowTarget } from './TmuxView.js';
 import { TreeNodeRow } from './TreeNode.js';
 
 interface NavProps {
   tree: TreeNode[];
   onTreeChange: (tree: TreeNode[]) => void;
   onProjectSelect: (projectId: string, tmuxSession: string | null) => void;
+  onTmuxSessionSelect?: (sessionName: string, windowIndex?: number) => void;
 }
 
-export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
+export function Nav({ tree, onTreeChange, onProjectSelect, onTmuxSessionSelect }: NavProps) {
   const [activeTab, setActiveTab] = useState<TabId>('projects');
   const [tabBarFocused, setTabBarFocused] = useState(false);
   const [diagnostics, setDiagnostics] = useState<DiagnosticSnapshot | null>(null);
@@ -123,17 +124,23 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
   );
 
   const handleEnter = useCallback(() => {
-    if (activeTab !== 'projects') return;
-    const current = flatNodes[projectIndex]?.node;
-    if (!current) return;
+    if (activeTab === 'projects') {
+      const current = flatNodes[projectIndex]?.node;
+      if (!current) return;
 
-    if (current.type === 'project') {
-      const proj = current.data as { id: string; tmuxSession: string | null };
-      onProjectSelect(proj.id, proj.tmuxSession);
-    } else if (current.children.length > 0) {
-      handleToggle(current.id);
+      if (current.type === 'project') {
+        const proj = current.data as { id: string; tmuxSession: string | null };
+        onProjectSelect(proj.id, proj.tmuxSession);
+      } else if (current.children.length > 0) {
+        handleToggle(current.id);
+      }
+    } else if (activeTab === 'tmux' && diagnostics && onTmuxSessionSelect) {
+      const target = getTmuxRowTarget(diagnostics.sessions, tmuxIndex);
+      if (target) {
+        onTmuxSessionSelect(target.sessionName, target.windowIndex);
+      }
     }
-  }, [activeTab, flatNodes, projectIndex, onProjectSelect, handleToggle]);
+  }, [activeTab, flatNodes, projectIndex, onProjectSelect, handleToggle, diagnostics, tmuxIndex, onTmuxSessionSelect]);
 
   const handleTabBarKey = useCallback(
     (keyName: string): boolean => {
@@ -208,6 +215,7 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
     ? {
         orphanProcesses: diagnostics.gaps.deadPidExecutors.length,
         orphanPanes: diagnostics.gaps.orphanPanes.length,
+        deadPanes: diagnostics.gaps.deadPaneCount,
       }
     : undefined;
 

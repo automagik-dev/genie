@@ -21,6 +21,7 @@ export interface TmuxPane {
   command: string;
   title: string;
   size: string;
+  isDead: boolean;
 }
 
 export interface TmuxWindow {
@@ -51,6 +52,8 @@ export interface DiagnosticGaps {
   totalExecutors: number;
   /** Total panes running claude */
   totalClaudePanes: number;
+  /** Total dead panes (exited) across all sessions */
+  deadPaneCount: number;
 }
 
 export interface DiagnosticSnapshot {
@@ -93,6 +96,7 @@ function parsePaneLine(parts: string[]): {
     sessAttached,
     sessWindows,
     sessCreated,
+    paneDead,
   ] = parts;
   return {
     sessionName,
@@ -119,6 +123,7 @@ function parsePaneLine(parts: string[]): {
       command: paneCmd,
       title: paneTitle,
       size: paneSize,
+      isDead: paneDead === '1',
     },
   };
 }
@@ -126,7 +131,7 @@ function parsePaneLine(parts: string[]): {
 /** Collect all tmux sessions, windows, and panes into a typed tree. */
 function getTmuxInventory(): TmuxSession[] {
   const paneOutput = execQuiet(
-    "tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{window_active}|#{window_panes}|#{pane_index}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}|#{session_attached}|#{session_windows}|#{session_created}'",
+    "tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{window_active}|#{window_panes}|#{pane_index}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}|#{session_attached}|#{session_windows}|#{session_created}|#{pane_dead}'",
   );
 
   if (!paneOutput) return [];
@@ -137,7 +142,7 @@ function getTmuxInventory(): TmuxSession[] {
   for (const line of paneOutput.split('\n')) {
     if (!line) continue;
     const parts = line.split('|');
-    if (parts.length < 14) continue;
+    if (parts.length < 15) continue;
 
     const parsed = parsePaneLine(parts);
 
@@ -194,12 +199,16 @@ function detectGaps(executors: TuiExecutor[], sessions: TmuxSession[]): Diagnost
 
   const linkedCount = executors.filter((e) => e.tmuxPaneId && !deadPidExecutors.some((d) => d.id === e.id)).length;
 
+  const allPanes = sessions.flatMap((s) => s.windows.flatMap((w) => w.panes));
+  const deadPaneCount = allPanes.filter((p) => p.isDead).length;
+
   return {
     deadPidExecutors,
     orphanPanes,
     linkedCount,
     totalExecutors: executors.length,
     totalClaudePanes: claudePanes.length,
+    deadPaneCount,
   };
 }
 

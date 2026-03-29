@@ -7,7 +7,7 @@ import { getActiveWork, getExecutorActivity, matchWorkToTasks } from './activity
 import { Nav } from './components/Nav.js';
 import { loadAll, loadAssignments, loadExecutors, subscribe } from './db.js';
 import { palette } from './theme.js';
-import { attachProject, cleanup, switchRightPane } from './tmux.js';
+import { attachProject, attachProjectWindow, cleanup, switchRightPane } from './tmux.js';
 import { applyActivity, buildTree } from './tree.js';
 import type { TreeNode, TuiAssignment, TuiData, TuiExecutor } from './types.js';
 
@@ -108,6 +108,14 @@ export function App({ rightPane }: { rightPane?: string }) {
     [rightPane, currentProject],
   );
 
+  const handleTmuxSessionSelect = useCallback(
+    (sessionName: string, windowIndex?: number) => {
+      if (!rightPane) return;
+      attachProjectWindow(rightPane, sessionName, windowIndex);
+    },
+    [rightPane],
+  );
+
   if (loading) {
     return (
       <box width="100%" height="100%" backgroundColor={palette.bg} justifyContent="center" alignItems="center">
@@ -124,7 +132,14 @@ export function App({ rightPane }: { rightPane?: string }) {
     );
   }
 
-  return <Nav tree={tree} onTreeChange={handleTreeChange} onProjectSelect={handleProjectSelect} />;
+  return (
+    <Nav
+      tree={tree}
+      onTreeChange={handleTreeChange}
+      onProjectSelect={handleProjectSelect}
+      onTmuxSessionSelect={handleTmuxSessionSelect}
+    />
+  );
 }
 
 /** Merge expanded state from old tree into new tree (preserves user navigation) */
