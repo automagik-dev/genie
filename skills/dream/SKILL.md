@@ -87,12 +87,12 @@ genie team hire qa             # for QA loop on dev
    - Same-layer wishes dispatch in parallel.
    - Dispatch workers via `genie work <agent> <slug>#<group>` — gets state tracking for free.
    - Parallel groups within a wish dispatched simultaneously.
-3. Monitor via `genie status <slug>`. Mark groups done via `genie done <ref>`.
+3. Monitor via `genie task status <slug>`. Mark groups done via `genie task done <ref>`.
 4. **Track progress (v4):** as each wish starts execution, move its child task:
    ```bash
    genie task move #<wish-seq> --to build --comment "Execution started"
    ```
-5. Workers signal completion via `genie send`.
+5. Workers signal completion via `genie agent send`.
 6. If a group gets stuck, use `genie reset <ref>` to retry.
 
 ### Worker Contract
@@ -107,7 +107,7 @@ Each worker executes independently:
 6. CI check: run CI. If fail → fix and retry (max 3 retries). Poll CI status — do not sleep.
    - After 3 failures: mark BLOCKED.
 7. Only after CI green: `gh pr create --base dev`.
-8. Report to lead via `genie send`:
+8. Report to lead via `genie agent send`:
    - Success: `DONE: PR at <url>. CI: green. Groups: N/N.`
    - Failure: `BLOCKED: <reason>. Groups: N/N.`
 
@@ -128,7 +128,7 @@ Each worker executes independently:
 **Trigger:** all PRs reviewed and marked SHIP.
 
 1. Merge PRs to dev in `merge_order`.
-2. Spawn qa on dev branch: `genie spawn qa`.
+2. Spawn qa on dev branch: `genie agent spawn qa`.
 3. QA loop: test against wish acceptance criteria → failures get `/report` → `/trace` → `/fix` → retest.
 4. Each fix creates a new PR to dev, goes through review, merge, retest.
 5. Continue until all wish criteria are proven or blocked.
@@ -192,4 +192,4 @@ When PG is available, the dream run is fully tracked in the task system:
 - Do not expand scope beyond what WISH.md defines.
 - Always write DREAM-REPORT.md, even if all wishes BLOCKED.
 - Poll CI status instead of sleeping — never use `sleep` in CI retry loops.
-- Use `genie done`, `genie status`, and `genie reset` for state tracking.
+- Use `genie task done`, `genie task status`, and `genie reset` for state tracking.

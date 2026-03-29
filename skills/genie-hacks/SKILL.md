@@ -40,10 +40,10 @@ The canonical hacks live in the docs at `genie/hacks.mdx`. Below is the embedded
 - **Code:**
   ```bash
   # Fast scaffolding with Codex
-  genie spawn engineer --provider codex
+  genie agent spawn engineer --provider codex
 
   # Careful review with Claude
-  genie spawn reviewer --provider claude
+  genie agent spawn reviewer --provider claude
 
   # Team-level: set default per role
   genie team create my-feature --repo . --wish my-slug
@@ -69,11 +69,11 @@ The canonical hacks live in the docs at `genie/hacks.mdx`. Below is the embedded
   genie team create api-v2 --repo . --wish api-v2
 
   # Monitor both
-  genie status auth-refactor
-  genie status api-v2
+  genie task status auth-refactor
+  genie task status api-v2
 
   # Cross-team messaging
-  genie send 'auth-refactor is done, you can proceed' --to api-v2-team-lead
+  genie agent send 'auth-refactor is done, you can proceed' --to api-v2-team-lead
   ```
 - **Benefit:** Parallel execution of independent wishes. Overnight batch runs that produce PRs by morning.
 - **When to use:** Projects with 3+ wishes queued. Sprint planning where multiple features can be parallelized.
@@ -177,7 +177,7 @@ The canonical hacks live in the docs at `genie/hacks.mdx`. Below is the embedded
   /refine
 
   # 4. Monitor token usage
-  genie history engineer --ndjson | jq '.tokens' | paste -sd+ | bc
+  genie agent log engineer --transcript --ndjson | jq '.tokens' | paste -sd+ | bc
   ```
 - **Benefit:** 30-50% cost reduction by matching provider to task complexity. Tighter scoping means fewer fix loops.
 - **When to use:** Budget-conscious teams. High agent concurrency. Before scaling to `/dream` batch runs.
@@ -210,24 +210,24 @@ The canonical hacks live in the docs at `genie/hacks.mdx`. Below is the embedded
 - **Title:** Debugging Agent Issues Like a Pro
 - **Category:** debugging
 - **Problem:** An agent is stuck, producing wrong output, or a team isn't making progress.
-- **Solution:** Use `genie read` for live output, `genie history` for transcripts, `/trace` for root cause analysis, and `genie reset` for recovery.
+- **Solution:** Use `genie agent log --raw` for live output, `genie agent log --transcript` for transcripts, `/trace` for root cause analysis, and `genie reset` for recovery.
 - **Code:**
   ```bash
   # Live agent output
-  genie read engineer
+  genie agent log engineer --raw
 
   # Compressed timeline
-  genie history engineer
+  genie agent log engineer --transcript
 
   # Filter to tool calls
-  genie history engineer --ndjson | jq 'select(.type == "tool_use") | .name'
+  genie agent log engineer --transcript --ndjson | jq 'select(.type == "tool_use") | .name'
 
   # Systematic investigation
   /trace
 
   # Check team status
   genie team ls my-team
-  genie status my-wish-slug
+  genie task status my-wish-slug
 
   # Unstick a blocked group
   genie reset my-wish-slug#2
@@ -337,7 +337,7 @@ Best matches:
 
 1. [provider-switching] Provider Switching — Right Model for the Job
    Why: Matches your need for speed/cost optimization across providers
-   Quick tip: Use `genie spawn engineer --provider codex` for fast scaffolding
+   Quick tip: Use `genie agent spawn engineer --provider codex` for fast scaffolding
 
 2. [cost-optimization] Cost Optimization Strategies
    Why: Directly addresses cost reduction techniques

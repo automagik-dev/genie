@@ -109,7 +109,7 @@ When a failure is found but the root cause is unclear:
 
 ```bash
 # Spawn a reviewer subagent
-genie spawn reviewer
+genie agent spawn reviewer
 ```
 
 ## Task Lifecycle Integration (v4)
@@ -129,8 +129,8 @@ When a PG task exists for the reviewed work, log the verdict as a task comment:
 After `/work` completes wish `fix-dispatch-initial-prompt`, the orchestrator dispatches `/review`:
 
 ```bash
-genie spawn reviewer
-genie send 'Review wish fix-dispatch-initial-prompt execution. Criteria:
+genie agent spawn reviewer
+genie agent send 'Review wish fix-dispatch-initial-prompt execution. Criteria:
 1. initialPrompt added to all 5 dispatch call sites
 2. protocolRouter.sendMessage kept as backup with warning logging
 3. bun test passes

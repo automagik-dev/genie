@@ -62,9 +62,9 @@ This adds specialist agents (e.g., `council-questioner`, `council-architect`) to
    ```bash
    genie chat post --team <team> "COUNCIL TOPIC: <topic>\n\nContext: <relevant context>\n\nPlease review and vote: APPROVE, REJECT, or MODIFY with rationale."
    ```
-3. Notify each relevant council member via `genie send`:
+3. Notify each relevant council member via `genie agent send`:
    ```bash
-   genie send 'New council topic posted to team chat. Read it, apply your lens, and post your perspective + vote.' --to council-<member>
+   genie agent send 'New council topic posted to team chat. Read it, apply your lens, and post your perspective + vote.' --to council-<member>
    ```
 4. Wait for responses. Poll team chat for council member messages:
    ```bash
