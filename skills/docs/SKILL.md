@@ -39,7 +39,7 @@ Audit and maintain these doc types:
 
 ```bash
 # Spawn a docs subagent
-genie spawn docs
+genie agent spawn docs
 ```
 
 ## Example
@@ -48,10 +48,10 @@ After shipping a new `genie work` dispatch fix, the orchestrator runs `/docs` to
 
 ```bash
 # 1. Spawn a docs subagent
-genie spawn docs
+genie agent spawn docs
 
 # 2. Send the task
-genie send 'Audit and update docs after PR #746 (initialPrompt added to dispatch). Check: README.md, CLAUDE.md, CO-ORCHESTRATION-GUIDE.md, skills/work/SKILL.md — verify dispatch examples match current code. Fix any stale references.' --to docs
+genie agent send 'Audit and update docs after PR #746 (initialPrompt added to dispatch). Check: README.md, CLAUDE.md, CO-ORCHESTRATION-GUIDE.md, skills/work/SKILL.md — verify dispatch examples match current code. Fix any stale references.' --to docs
 ```
 
 The docs agent:

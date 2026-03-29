@@ -85,12 +85,12 @@ This does everything automatically:
 ```bash
 genie team ls                    # List all teams
 genie team ls my-feature         # Show team members and status
-genie status my-feature-slug     # Show wish group progress
-genie read team-lead             # Tail team-lead output
-genie history team-lead                    # Compressed session timeline
-genie history team-lead --last 20          # Last 20 transcript entries
-genie history team-lead --type assistant   # Only assistant messages
-genie history team-lead --ndjson | jq '.text'  # Pipe to jq
+genie task status my-feature-slug     # Show wish group progress
+genie agent log team-lead --raw       # Tail team-lead output
+genie agent log team-lead --transcript              # Compressed session timeline
+genie agent log team-lead --transcript --last 20    # Last 20 transcript entries
+genie agent log team-lead --transcript --type assistant   # Only assistant messages
+genie agent log team-lead --transcript --ndjson | jq '.text'  # Pipe to jq
 ```
 
 ### Team Lifecycle
@@ -230,36 +230,36 @@ genie team done | blocked | disband <name>
 ```bash
 genie work <agent> <slug>#<group>     # Dispatch work on a group
 genie review <agent> <slug>#<group>   # Dispatch review
-genie done <slug>#<group>             # Mark group done
+genie task done <slug>#<group>        # Mark group done
 genie reset <slug>#<group>            # Reset stuck group
-genie status <slug>                   # Show group states
+genie task status <slug>              # Show group states
 ```
 
 ### Agents
 ```bash
-genie spawn <name>                    # Spawn agent
-genie kill <name> | stop <name>       # Kill or stop
-genie ls                              # List agents and teams
-genie read <name>                     # Tail output
-genie answer <name> <choice>          # Answer prompt
+genie agent spawn <name>              # Spawn agent
+genie agent kill <name> | stop <name> # Kill or stop
+genie agent list                      # List agents and teams
+genie agent log <name> --raw          # Tail output
+genie agent answer <name> <choice>    # Answer prompt
 ```
 
 ### Messaging
 ```bash
-genie send '<msg>' --to <name>        # Direct message
-genie broadcast '<msg>'               # Message all team members
+genie agent send '<msg>' --to <name>  # Direct message
+genie agent send '<msg>' --broadcast  # Message all team members
 genie chat '<msg>'                    # Post to team channel
-genie inbox [<name>]                  # View inbox
+genie agent inbox [<name>]            # View inbox
 ```
 
 ## Communication Rules
 
-- **Same-session teammates** (spawned via `genie spawn`): Use `SendMessage` (Claude Code native IPC)
-- **Cross-session agents** (different tmux windows/teams): Use `genie send`
+- **Same-session teammates** (spawned via `genie agent spawn`): Use `SendMessage` (Claude Code native IPC)
+- **Cross-session agents** (different tmux windows/teams): Use `genie agent send`
 
 ## Tool Restrictions
 
-- NEVER use the `Agent` tool to spawn agents — use `genie spawn` instead
+- NEVER use the `Agent` tool to spawn agents — use `genie agent spawn` instead
 - NEVER use `TeamCreate` or `TeamDelete` — use `genie team create` / `genie team disband`
 
 ## Rules

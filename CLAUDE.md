@@ -15,16 +15,48 @@ bun test src/lib/wish-state.test.ts  # Single file
 ## Architecture
 
 ```
-src/genie.ts              CLI entry point (commander)
-src/lib/                  Core modules (state, registry, locking, messaging, providers)
-src/lib/transcript.ts     Provider-agnostic transcript abstraction (Claude + Codex)
-src/lib/codex-logs.ts     Codex JSONL parsing + SQLite discovery
-src/lib/claude-logs.ts    Claude log parsing + transcript adapter
-src/term-commands/        CLI command handlers (agents, team, dispatch, msg, state, dir)
-src/hooks/                Git hook system (branch-guard, auto-spawn, identity-inject)
-src/genie-commands/       Setup/utility commands (setup, doctor, update, session)
-src/types/                Shared types (genie-config Zod schema)
-skills/                   Skill prompt files (brainstorm, wish, work, review, etc.)
+src/genie.ts                    CLI entry point (commander)
+src/lib/                        Core modules (state, registry, locking, messaging, providers)
+src/lib/transcript.ts           Provider-agnostic transcript abstraction (Claude + Codex)
+src/lib/codex-logs.ts           Codex JSONL parsing + SQLite discovery
+src/lib/claude-logs.ts          Claude log parsing + transcript adapter
+src/term-commands/              CLI command handlers
+  agent/                        genie agent — spawn, stop, resume, kill, list, show, log, send, answer, register, directory, inbox, brief
+  task/                         genie task — extends core CRUD with status, reset, board, project, releases, type
+  team/                         genie team — create, hire, fire, list, disband
+  exec/                         genie exec — list, show, terminate (debug)
+src/hooks/                      Git hook system (branch-guard, auto-spawn, identity-inject)
+src/genie-commands/             Setup/utility commands (setup, doctor, update, session)
+src/types/                      Shared types (genie-config Zod schema)
+skills/                         Skill prompt files (brainstorm, wish, work, review, etc.)
+```
+
+## CLI Namespaces
+
+```bash
+genie agent spawn <name>              # Spawn agent
+genie agent list                      # List agents
+genie agent log <name>                # Unified log (default)
+genie agent log <name> --raw          # Pane capture (was: genie read)
+genie agent log <name> --transcript   # Compressed transcript (was: genie history)
+genie agent log --search "query"      # Session search (was: genie sessions search)
+genie agent send '<msg>' --to <name>  # Direct message (hierarchy-enforced)
+genie agent send '<msg>' --broadcast  # Team broadcast
+genie agent inbox                     # View inbox
+genie agent brief --team <name>       # Cold-start summary
+genie agent answer <name> <choice>    # Answer prompt
+genie agent show <name>               # Agent + executor detail
+genie agent stop/kill/resume <name>   # Lifecycle management
+
+genie task create --title 'x'         # Create task
+genie task list                       # List tasks
+genie task status <slug>              # Wish group status
+genie task done <ref>                 # Mark group done
+genie task board/project/releases/type  # Planning hierarchy
+
+genie team create/hire/fire/list/disband  # Team lifecycle
+genie exec list/show/terminate           # Executor debug
+genie run <spec>                         # Wish/spec runner (top-level)
 ```
 
 ## State File Locations (CRITICAL — fragmented across 4 scopes)

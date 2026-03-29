@@ -201,7 +201,7 @@ Report orchestrates multiple tools but must **never modify source code** — inv
 
 ```bash
 # Spawn a tracer subagent for investigation
-genie spawn tracer
+genie agent spawn tracer
 ```
 
 Browser dispatch uses direct `agent-browser` commands alongside the trace subagent.
@@ -240,13 +240,13 @@ The report agent:
 # Agent asks: "What did you see?" → "Engineers show welcome screen but empty prompt"
 
 # 2. Run /trace
-genie spawn tracer
-genie send 'Trace: genie work dispatches engineers but they start idle. Check dispatch.ts and protocol-router.ts.' --to tracer
+genie agent spawn tracer
+genie agent send 'Trace: genie work dispatches engineers but they start idle. Check dispatch.ts and protocol-router.ts.' --to tracer
 # Wait for diagnosis...
 
 # 3. Capture evidence
 # Screenshot of idle engineer pane showing empty ❯ prompt
-# Output of: genie status <slug> showing "in_progress" but no actual progress
+# Output of: genie task status <slug> showing "in_progress" but no actual progress
 
 # 4. Create GitHub issue with all findings
 gh issue create --title "bug: genie work dispatch — engineers spawn idle without initial task prompt" --body "$(cat <<'EOF'
@@ -259,7 +259,7 @@ protocolRouter.sendMessage fails silently under concurrent dispatch (4/6 enginee
 
 ## Evidence
 - [Screenshot: idle engineer pane]
-- genie status shows in_progress but engineers at empty prompt
+- genie task status shows in_progress but engineers at empty prompt
 - Native inbox files: engineer-1 through engineer-4 have no dispatch message
 
 ## Steps to Reproduce

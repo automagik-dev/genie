@@ -189,13 +189,13 @@ async function resolveWindowId(
 ): Promise<ResolvedTarget> {
   const matchingWorker = Object.values(workers).find((w) => w.windowId === target);
   if (!matchingWorker) {
-    throw new Error(`Window "${target}" not found in worker registry.\nRun 'genie ls' to list agents.`);
+    throw new Error(`Window "${target}" not found in worker registry.\nRun 'genie agent list' to list agents.`);
   }
   if (opts.checkLiveness) {
     await assertLive(
       matchingWorker.paneId,
       opts.isPaneLive,
-      `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. Run 'genie kill ${matchingWorker.id}' to clean up.`,
+      `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. Run 'genie agent kill${matchingWorker.id}' to clean up.`,
     );
   }
   return {
@@ -403,7 +403,7 @@ async function resolveColonTarget(
       await assertLive(
         paneId,
         opts.isPaneLive,
-        `Worker ${leftSide}: pane ${paneId} is dead. Run 'genie kill ${leftSide}' to clean up.`,
+        `Worker ${leftSide}: pane ${paneId} is dead. Run 'genie agent kill${leftSide}' to clean up.`,
         () => opts.cleanupDeadPane(leftSide, paneId),
       );
     }
@@ -413,7 +413,7 @@ async function resolveColonTarget(
   const sessionWindowResult = await opts.tmuxLookup(leftSide, rightSide);
   if (!sessionWindowResult) {
     throw new Error(
-      `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'genie ls' to list agents.`,
+      `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'genie agent list' to list agents.`,
     );
   }
   if (opts.checkLiveness) {
@@ -443,7 +443,7 @@ async function resolveBareName(
       await assertLive(
         worker.paneId,
         opts.isPaneLive,
-        `Worker ${target}: pane ${worker.paneId} is dead. Run 'genie kill ${target}' to clean up.`,
+        `Worker ${target}: pane ${worker.paneId} is dead. Run 'genie agent kill${target}' to clean up.`,
         () => opts.cleanupDeadPane(target, worker.paneId),
       );
     }
@@ -473,7 +473,7 @@ async function resolveBareName(
     return fuzzyMatch;
   }
 
-  throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'genie ls' to list agents.`);
+  throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'genie agent list' to list agents.`);
 }
 
 export async function resolveTarget(target: string, options: ResolveOptions = {}): Promise<ResolvedTarget> {
