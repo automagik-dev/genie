@@ -47,10 +47,9 @@ export async function orchestrationGuard(payload: HookPayload): Promise<HandlerR
 
   for (const { test, message } of NUDGE_PATTERNS) {
     if (test.test(command)) {
-      // Informational only — log to stderr so the agent sees the suggestion,
-      // but return undefined to allow the command to proceed.
-      console.error(`[orchestration-guard] ${message}`);
-      return undefined;
+      // Informational nudge — systemMessage is shown to the agent
+      // but does not block the command from executing.
+      return { systemMessage: `[orchestration-guard] ${message}` };
     }
   }
 

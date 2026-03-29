@@ -46,6 +46,8 @@ export interface HookDecision {
   decision?: 'allow' | 'deny' | 'ask';
   reason?: string;
   updatedInput?: Record<string, unknown>;
+  /** Informational message shown to the agent without blocking. */
+  systemMessage?: string;
 }
 
 /** Result from a handler — either a decision or void (implicit allow). */
