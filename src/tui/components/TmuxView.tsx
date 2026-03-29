@@ -28,13 +28,15 @@ interface FlatTmuxRow {
 
 function toPaneRow(pane: TmuxPane, sessionName: string, windowIndex: number): FlatTmuxRow {
   const isClaude = pane.command === 'claude' || pane.title.includes('claude');
-  const color = pane.isDead ? palette.textMuted : isClaude ? palette.cyan : palette.textDim;
+  const color = pane.isDead ? palette.error : isClaude ? palette.cyan : palette.text;
+  const stateIcon = pane.isDead ? '\u2718' : isClaude ? '\u25c6' : '\u25cb'; // ✘ ◆ ○
+  const cmdLabel = pane.command === 'claude' ? 'claude' : pane.command === 'bun' ? 'bun' : pane.command;
   return {
     id: `p:${pane.paneId}`,
     depth: 2,
-    label: pane.isDead ? `${pane.paneId} [DEAD]` : `${pane.paneId} [${pane.command}]`,
+    label: pane.isDead ? `${stateIcon} dead` : `${stateIcon} ${cmdLabel}`,
     color,
-    detail: `pid:${pane.pid} ${pane.size}`,
+    detail: isClaude ? `pid:${pane.pid}` : `pid:${pane.pid} ${pane.size}`,
     detailColor: palette.textMuted,
     type: 'pane',
     sessionName,
@@ -46,12 +48,13 @@ function toPaneRow(pane: TmuxPane, sessionName: string, windowIndex: number): Fl
 
 function flattenSessions(sessions: TmuxSession[]): FlatTmuxRow[] {
   return sessions.flatMap((session) => {
+    const sessionIcon = session.attached ? '\u25b6' : '\u25b8'; // ▶ ▸
     const sessionRow: FlatTmuxRow = {
       id: `s:${session.name}`,
       depth: 0,
-      label: session.name,
-      color: session.attached ? palette.emerald : palette.textDim,
-      detail: `${session.windowCount}w ${session.attached ? '(attached)' : ''}`,
+      label: `${sessionIcon} ${session.name}`,
+      color: session.attached ? palette.emerald : palette.text,
+      detail: session.attached ? 'attached' : `${session.windowCount}w`,
       detailColor: session.attached ? palette.emerald : palette.textMuted,
       type: 'session',
       sessionName: session.name,
@@ -60,12 +63,13 @@ function flattenSessions(sessions: TmuxSession[]): FlatTmuxRow[] {
     };
     const windowRows = session.windows.flatMap((window) => {
       const deadInWindow = window.panes.filter((p) => p.isDead).length;
+      const winIcon = window.active ? '\u25a0' : '\u25a1'; // ■ □
       const winRow: FlatTmuxRow = {
         id: `w:${session.name}:${window.index}`,
         depth: 1,
-        label: `${window.index}:${window.name}`,
+        label: `${winIcon} ${window.name}`,
         color: window.active ? palette.cyan : palette.text,
-        detail: `${window.paneCount}p${deadInWindow > 0 ? ` ${deadInWindow}\u2620` : ''}${window.active ? ' *' : ''}`,
+        detail: `${window.paneCount}p${deadInWindow > 0 ? ` ${deadInWindow}\u2620` : ''}`,
         detailColor: window.active ? palette.cyan : palette.textMuted,
         type: 'window',
         sessionName: session.name,
@@ -116,18 +120,14 @@ export function TmuxView({ sessions, selectedIndex }: TmuxViewProps) {
         }}
       >
         {rows.map((row, i) => {
-          const indent = '  '.repeat(row.depth);
-          const icon =
-            row.type === 'session' ? '\u25c8' : row.type === 'window' ? '\u25a1' : row.isDead ? '\u2718' : '\u2500'; // ◈ □ ✘ ─
+          const indent = row.depth === 1 ? '  ' : row.depth === 2 ? '    ' : '';
           const selected = i === selectedIndex;
 
           return (
             <box key={row.id} height={1} width="100%" backgroundColor={selected ? palette.violet : undefined}>
               <text>
                 <span fg={palette.textMuted}>{indent}</span>
-                <span fg={row.color}>
-                  {icon} {row.label}
-                </span>
+                <span fg={row.color}>{row.label}</span>
                 <span fg={row.detailColor}> {row.detail}</span>
               </text>
             </box>

@@ -108,6 +108,15 @@ export function Nav({ tree, onTreeChange, onProjectSelect, onTmuxSessionSelect }
     }
   }, [activeTab, tabBarFocused, projectIndex, flatNodes, onProjectSelect]);
 
+  // Auto-switch right pane when cursor moves in Sessions tab
+  useEffect(() => {
+    if (activeTab !== 'tmux' || tabBarFocused || !diagnostics || !onTmuxSessionSelect) return;
+    const target = getTmuxRowTarget(diagnostics.sessions, tmuxIndex);
+    if (target) {
+      onTmuxSessionSelect(target.sessionName, target.windowIndex);
+    }
+  }, [activeTab, tabBarFocused, tmuxIndex, diagnostics, onTmuxSessionSelect]);
+
   const handleProjectSelect = useCallback(
     (id: string) => {
       const idx = flatNodes.findIndex((n) => n.node.id === id);
