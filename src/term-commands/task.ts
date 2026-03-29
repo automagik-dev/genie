@@ -3,6 +3,7 @@
  *
  * Commands:
  *   genie task create <title> [options]     — Create a new task
+ *   genie task close-merged [options]       — Auto-close tasks from merged PRs
  *   genie task list [options]               — List tasks with filters
  *   genie task show <id|#seq>               — Show task detail
  *   genie task move <id|#seq> --to <stage>  — Move task to stage
@@ -36,6 +37,12 @@ let _boardService: typeof import('../lib/board-service.js') | undefined;
 async function getBoardService() {
   if (!_boardService) _boardService = await import('../lib/board-service.js');
   return _boardService;
+}
+
+let _closeMergedService: typeof import('../lib/task-close-merged.js') | undefined;
+async function getCloseMergedService() {
+  if (!_closeMergedService) _closeMergedService = await import('../lib/task-close-merged.js');
+  return _closeMergedService;
 }
 
 /** Build an Actor from a local name string. */
@@ -373,6 +380,27 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
   if (options.due) console.log(`  Due: ${options.due}`);
 }
 
+async function handleCloseMerged(options: { since?: string; dryRun?: boolean; repo?: string }): Promise<void> {
+  const svc = await getCloseMergedService();
+  const result = await svc.closeMergedTasks({
+    since: options.since,
+    dryRun: options.dryRun,
+    repo: options.repo,
+  });
+
+  if (options.dryRun) console.log('[dry-run] Would close:');
+
+  for (const d of result.details) {
+    const prefix = options.dryRun ? '  [dry-run]' : '  \u2713';
+    console.log(`${prefix} #${d.taskSeq} "${d.taskTitle}" \u2190 PR #${d.prNumber} (${d.slug})`);
+  }
+
+  const mode = options.dryRun ? '[dry-run] ' : '';
+  console.log(
+    `\n${mode}Closed ${result.closed} task${result.closed === 1 ? '' : 's'} from ${result.prsScanned} merged PR${result.prsScanned === 1 ? '' : 's'} (${result.alreadyShipped} already shipped)`,
+  );
+}
+
 // ============================================================================
 // Registration
 // ============================================================================
@@ -687,6 +715,22 @@ export function registerTaskCommands(program: Command): void {
         const ts = await getTaskService();
         const t = await ts.forceUnlockTask(id);
         console.log(`Force-unlocked task #${t.seq}.`);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
+
+  // ── task close-merged ──
+  task
+    .command('close-merged')
+    .description('Auto-close tasks whose wish slugs match recently merged PRs')
+    .option('--since <duration>', 'Time window for merged PRs (e.g., "24h", "7d")', '24h')
+    .option('--dry-run', 'Show what would be closed without acting')
+    .option('--repo <owner/repo>', 'Override GitHub remote detection')
+    .action(async (options: { since?: string; dryRun?: boolean; repo?: string }) => {
+      try {
+        await handleCloseMerged(options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
