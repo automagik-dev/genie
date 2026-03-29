@@ -10,9 +10,11 @@ export function App({ rightPane }: { rightPane?: string }) {
   const renderer = useRenderer();
 
   useKeyboard((key) => {
-    if (key.name === 'q' || (key.ctrl && key.name === 'c')) {
-      renderer.destroy();
+    // Ctrl+Q or Ctrl+C: kill the entire TUI (both panes)
+    if ((key.ctrl && key.name === 'q') || (key.ctrl && key.name === 'c')) {
+      // Kill tmux session FIRST (kills both panes), then destroy renderer
       cleanup();
+      renderer.destroy();
     }
   });
 
