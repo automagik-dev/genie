@@ -100,6 +100,26 @@ export function switchRightPane(rightPane: string, targetSession: string): void 
   attachProject(rightPane, targetSession);
 }
 
+/** Switch right pane to a specific session window */
+export function attachProjectWindow(rightPane: string, targetSession: string, windowIndex?: number): void {
+  const pane = resolveRightPane(rightPane);
+  ensureSession(targetSession);
+  if (windowIndex !== undefined) {
+    try {
+      execSync(`tmux select-window -t '${targetSession}:${windowIndex}'`, { stdio: 'ignore' });
+    } catch {
+      // window may not exist
+    }
+  }
+  try {
+    execSync(`tmux respawn-pane -k -t ${pane} "TMUX='' tmux attach-session -t '${targetSession}'"`, {
+      stdio: 'ignore',
+    });
+  } catch {
+    // pane doesn't exist
+  }
+}
+
 /**
  * Set up TUI keybindings in a dedicated key table (not global root).
  * Uses a custom key table "genie-tui" so bindings only apply inside the TUI session.
@@ -108,7 +128,7 @@ export function switchRightPane(rightPane: string, targetSession: string): void 
 function setupKeybindings(session: string): void {
   try {
     // Define bindings in the genie-tui key table (session-scoped, not global)
-    execSync(`tmux bind-key -T ${KEY_TABLE} Tab select-pane -t ${session}:0.+ \\; switch-client -T ${KEY_TABLE}`, {
+    execSync(`tmux bind-key -T ${KEY_TABLE} Tab select-pane -t :.+ \\; switch-client -T ${KEY_TABLE}`, {
       stdio: 'ignore',
     });
 
