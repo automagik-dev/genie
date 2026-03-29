@@ -43,11 +43,18 @@ export interface HookPayload {
 
 /** Decision a PreToolUse handler can return. */
 export interface HookDecision {
+  /** @deprecated Use hookSpecificOutput.permissionDecision instead for PreToolUse */
   decision?: 'allow' | 'deny' | 'ask';
   reason?: string;
   updatedInput?: Record<string, unknown>;
-  /** Informational message shown to the agent without blocking. */
-  systemMessage?: string;
+  /** CC hookSpecificOutput — the correct format for PreToolUse decisions. */
+  hookSpecificOutput?: {
+    hookEventName: string;
+    permissionDecision?: 'allow' | 'deny' | 'ask';
+    permissionDecisionReason?: string;
+    additionalContext?: string;
+    updatedInput?: Record<string, unknown>;
+  };
 }
 
 /** Result from a handler — either a decision or void (implicit allow). */

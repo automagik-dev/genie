@@ -5,6 +5,9 @@
  * loops to monitor workers. Suggests structured genie primitives but
  * does NOT block — people may legitimately use tmux directly.
  *
+ * Uses hookSpecificOutput.additionalContext to inject the nudge into
+ * Claude's context before the tool executes, with permissionDecision: "allow".
+ *
  * Priority: 2 (runs after branch-guard, before identity-inject)
  */
 
@@ -47,9 +50,13 @@ export async function orchestrationGuard(payload: HookPayload): Promise<HandlerR
 
   for (const { test, message } of NUDGE_PATTERNS) {
     if (test.test(command)) {
-      // Informational nudge — systemMessage is shown to the agent
-      // but does not block the command from executing.
-      return { systemMessage: `[orchestration-guard] ${message}` };
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          additionalContext: `[orchestration-guard] ${message}`,
+        },
+      };
     }
   }
 
