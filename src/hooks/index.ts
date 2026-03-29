@@ -123,6 +123,7 @@ async function runHandler(
 
 async function executeBlockingChain(matched: Handler[], payload: HookPayload): Promise<HookDecision> {
   let currentInput = payload.tool_input ? { ...payload.tool_input } : undefined;
+  const messages: string[] = [];
 
   for (const handler of matched) {
     const result = await runHandler(handler, payload, currentInput);
@@ -131,16 +132,23 @@ async function executeBlockingChain(matched: Handler[], payload: HookPayload): P
     if (result.decision === 'deny') {
       return { decision: 'deny', reason: result.reason ?? `Denied by handler: ${handler.name}` };
     }
+    if (result.systemMessage) {
+      messages.push(result.systemMessage);
+    }
     if (result.updatedInput) {
       currentInput = { ...currentInput, ...result.updatedInput };
     }
   }
 
+  const response: HookDecision = {};
   if (currentInput && payload.tool_input && JSON.stringify(currentInput) !== JSON.stringify(payload.tool_input)) {
-    return { updatedInput: currentInput };
+    response.updatedInput = currentInput;
+  }
+  if (messages.length > 0) {
+    response.systemMessage = messages.join('\n');
   }
 
-  return {};
+  return response;
 }
 
 async function executeNonBlockingHandlers(matched: Handler[], payload: HookPayload): Promise<void> {
@@ -184,8 +192,8 @@ export async function dispatch(stdin: string): Promise<string> {
 
   if (isBlockingEvent(event)) {
     const result = await executeBlockingChain(matched, payload);
-    // Only output JSON if there's an actual decision/update to communicate
-    if (result.decision || result.updatedInput) {
+    // Output JSON if there's a decision, update, or informational message
+    if (result.decision || result.updatedInput || result.systemMessage) {
       return JSON.stringify(result);
     }
     return '';
