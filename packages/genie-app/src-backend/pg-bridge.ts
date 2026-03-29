@@ -20,7 +20,7 @@ export interface BridgeEvent {
 
 export type BridgeEventHandler = (event: BridgeEvent) => void;
 
-interface AgentRow {
+export interface AgentRow {
   id: string;
   custom_name: string | null;
   role: string | null;
@@ -32,7 +32,7 @@ interface AgentRow {
   started_at: string;
 }
 
-interface ExecutorRow {
+export interface ExecutorRow {
   id: string;
   agent_id: string;
   provider: string;
@@ -45,7 +45,7 @@ interface ExecutorRow {
   ended_at: string | null;
 }
 
-interface TaskRow {
+export interface TaskRow {
   id: string;
   seq: number;
   title: string;
@@ -62,7 +62,7 @@ interface TaskRow {
   updated_at: string;
 }
 
-interface TeamRow {
+export interface TeamRow {
   name: string;
   repo: string;
   base_branch: string;
@@ -74,7 +74,7 @@ interface TeamRow {
   wish_slug: string | null;
 }
 
-interface RuntimeEventRow {
+export interface RuntimeEventRow {
   id: number;
   repo_path: string;
   kind: string;
@@ -89,7 +89,7 @@ interface RuntimeEventRow {
   created_at: string;
 }
 
-interface BoardColumnRow {
+export interface BoardColumnRow {
   id: string;
   name: string;
   label: string;
@@ -198,7 +198,7 @@ export async function kanbanBoard(boardId: string): Promise<{
   return { columns, tasks };
 }
 
-interface BoardRow {
+export interface BoardRow {
   id: string;
   name: string;
   project_id: string | null;

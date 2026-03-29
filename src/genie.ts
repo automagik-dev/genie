@@ -3,14 +3,14 @@
 /**
  * genie — Single entrypoint CLI.
  *
- * Namespaces:
- *   agent  — spawn, kill, stop, resume, list, show, log, send, answer, register, directory, inbox, brief
- *   task   — create, list, status, done, reset, board, project, releases, type
- *   team   — create, hire, fire, list, disband
- *   exec   — list, show, terminate (debug)
+ * Top-level commands:
+ *   spawn, kill, stop, ls, history, read, answer, work
  *
- * Top-level:
- *   setup, doctor, update, uninstall, shortcuts, qa, tui, run
+ * Namespaces:
+ *   team, dir, send/inbox, state, hook
+ *
+ * Utilities:
+ *   setup, doctor, update, uninstall, shortcuts
  *
  * Session:
  *   genie --session <name>  — Start or resume a named leader session
@@ -32,24 +32,33 @@ import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { getActor, recordAuditEvent } from './lib/audit.js';
 import { shutdown as shutdownDb } from './lib/db.js';
 import { stopOtelReceiver } from './lib/otel-receiver.js';
-
-// ── New 4-object namespace registrations ──
-import { registerAgentCommands } from './term-commands/agent/index.js';
-import { registerExecCommands } from './term-commands/exec/index.js';
-import { extendTaskCommands } from './term-commands/task/index.js';
-
-// ── Existing registrations (kept until Group 8 cleanup) ──
+import {
+  type SpawnOptions,
+  handleLsCommand,
+  handleWorkerKill,
+  handleWorkerResume,
+  handleWorkerSpawn,
+  handleWorkerStop,
+} from './term-commands/agents.js';
 import { registerEventsCommands } from './term-commands/audit-events.js';
+import { registerBoardCommands } from './term-commands/board.js';
+import { registerBriefCommands } from './term-commands/brief.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
+import { registerAgentNamespace, registerDirNamespace } from './term-commands/dir.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import { registerExportCommands } from './term-commands/export.js';
+import * as historyCmd from './term-commands/history.js';
 import { registerImportCommands } from './term-commands/import.js';
 import { registerInstallCommand } from './term-commands/install.js';
 import { registerItemUninstallCommand } from './term-commands/item-uninstall.js';
 import { registerItemUpdateCommand } from './term-commands/item-update.js';
+import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerMetricsCommands } from './term-commands/metrics.js';
+import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerNotifyCommands } from './term-commands/notify.js';
+import * as orchestrateCmd from './term-commands/orchestrate.js';
+import { registerProjectCommands } from './term-commands/project.js';
 import { registerPublishCommand } from './term-commands/publish.js';
 import {
   type QaCheckOptions,
@@ -59,11 +68,16 @@ import {
   qaHistoryCommand,
   qaStatusCommand,
 } from './term-commands/qa.js';
+import * as readCmd from './term-commands/read.js';
+import { registerReleaseCommands } from './term-commands/release.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
 import { registerSessionsCommands } from './term-commands/sessions.js';
+import { registerStateCommands } from './term-commands/state.js';
+import { registerTagCommands } from './term-commands/tag.js';
 import { registerTaskCommands } from './term-commands/task.js';
-import { registerTeamCommands } from './term-commands/team/index.js';
+import { registerTeamNamespace } from './term-commands/team.js';
 import { registerTemplateCommands } from './term-commands/template.js';
+import { registerTypeCommands } from './term-commands/type.js';
 
 // Safety net: ensure git repo is never in bare mode.
 // This should no longer trigger now that we use `git clone --shared` instead of
@@ -148,21 +162,8 @@ shortcuts
 shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
 
 // ============================================================================
-// 4-Object Namespace Registration — agent, task, team, exec
+// Orchestration namespaces
 // ============================================================================
-
-// agent namespace (Group 1) — absorbs spawn/kill/stop/resume/ls/show/answer/register/directory/inbox/brief + stubs
-registerAgentCommands(program);
-
-// task namespace — existing task commands + absorbed state.ts verbs + planning delegations
-registerTaskCommands(program);
-extendTaskCommands(program);
-
-// team namespace (Group 3) — existing team handlers
-registerTeamCommands(program);
-
-// exec namespace (Group 3) — new debug commands for executor management
-registerExecCommands(program);
 
 // ============================================================================
 // TUI — interactive terminal interface
@@ -173,19 +174,80 @@ program
   .description('Launch interactive terminal UI (OpenTUI nav + tmux Claude Code)')
   .option('--dev', 'Development mode with auto-reload on file changes')
   .action(async (options: { dev?: boolean }) => {
+    console.log('\x1b[33m[deprecated]\x1b[0m `genie tui` will be replaced by `genie app` in a future release.');
     const { launchTui } = await import('./tui/index.js');
     await launchTui({ dev: options.dev });
   });
 
-// ============================================================================
-// Existing namespaces (kept until full migration — Group 8 cleanup)
-// ============================================================================
+program
+  .command('app')
+  .description('Launch Genie desktop app (backend sidecar + views)')
+  .option('--backend-only', 'Start only the backend sidecar (IPC on stdin/stdout)')
+  .option('--tui', 'Fall back to terminal UI mode')
+  .option('--dev', 'Development mode')
+  .action(async (options: { backendOnly?: boolean; tui?: boolean; dev?: boolean }) => {
+    if (options.tui) {
+      const { launchTui } = await import('./tui/index.js');
+      await launchTui({ dev: options.dev });
+      return;
+    }
 
+    if (options.backendOnly) {
+      // Start the backend sidecar directly (Tauri/khal-os bridges to this)
+      await import('../packages/genie-app/src-backend/index.js');
+      return;
+    }
+
+    // Default: try Tauri binary, fallback to TUI
+    const { existsSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { execFileSync } = await import('node:child_process');
+
+    // Search for the Tauri binary in common locations
+    const appName = 'genie-desktop';
+    const searchPaths = [
+      join(__dirname, '..', 'packages', 'genie-app', 'src-tauri', 'target', 'release', appName),
+      join(__dirname, '..', 'packages', 'genie-app', 'src-tauri', 'target', 'debug', appName),
+      join(__dirname, '..', 'dist', 'app', appName),
+      `/usr/local/bin/${appName}`,
+    ];
+
+    const tauriBin = searchPaths.find((p) => existsSync(p));
+
+    if (tauriBin) {
+      console.log('\x1b[35m\u25c6 Genie App\x1b[0m Launching desktop...');
+      try {
+        execFileSync(tauriBin, [], { stdio: 'inherit' });
+      } catch {
+        // Tauri exited or was closed — normal
+      }
+      return;
+    }
+
+    // Fallback: start backend sidecar (for khal-os or piped frontend)
+    console.log('\x1b[35m\u25c6 Genie App\x1b[0m Starting backend sidecar...');
+    console.log('\x1b[2mDesktop binary not found \u2014 running in sidecar mode.\x1b[0m');
+    console.log('\x1b[2mPG bridge + PTY manager + IPC on stdin/stdout\x1b[0m');
+    console.log('\x1b[2mUse --tui for terminal UI, or pipe to a frontend shell.\x1b[0m\n');
+    await import('../packages/genie-app/src-backend/index.js');
+  });
+
+registerTeamNamespace(program);
+registerDirNamespace(program);
+registerAgentNamespace(program);
+registerSendInboxCommands(program);
+registerStateCommands(program);
 registerDispatchCommands(program);
 registerHookNamespace(program);
 registerDbCommands(program);
 registerScheduleCommands(program);
 registerDaemonCommands(program);
+registerTaskCommands(program);
+registerTypeCommands(program);
+registerBoardCommands(program);
+registerTagCommands(program);
+registerReleaseCommands(program);
+registerProjectCommands(program);
 registerNotifyCommands(program);
 registerEventsCommands(program);
 registerSessionsCommands(program);
@@ -193,6 +255,7 @@ registerMetricsCommands(program);
 registerExportCommands(program);
 registerImportCommands(program);
 registerTemplateCommands(program);
+registerBriefCommands(program);
 
 // Item registry commands — install, publish (top-level), item uninstall/update (namespaced)
 registerInstallCommand(program);
@@ -238,9 +301,113 @@ program.hook('postAction', (_thisCommand, actionCommand) => {
 });
 
 // ============================================================================
-// QA commands (staying top-level — not part of 4-object restructure)
+// Top-level agent commands (promoted from genie agent namespace)
 // ============================================================================
 
+// genie spawn <name>
+program
+  .command('spawn <name>')
+  .description('Spawn a new agent by name (resolves from directory or built-ins)')
+  .option('--provider <provider>', 'Provider: claude or codex', 'claude')
+  .option('--team <team>', 'Team name', process.env.GENIE_TEAM ?? 'genie')
+  .option('--model <model>', 'Model override (e.g., sonnet, opus)')
+  .option('--skill <skill>', 'Skill to load (optional)')
+  .option('--layout <layout>', 'Layout mode: mosaic (default) or vertical')
+  .option('--color <color>', 'Teammate pane border color')
+  .option('--plan-mode', 'Start teammate in plan mode')
+  .option('--permission-mode <mode>', 'Permission mode (e.g., acceptEdits)')
+  .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
+  .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
+  .option('--session <session>', 'Tmux session name to spawn into')
+  .option('--no-auto-resume', 'Disable auto-resume on pane death')
+  .action(async (name: string, options: SpawnOptions) => {
+    try {
+      await handleWorkerSpawn(name, options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
+  });
+
+// genie kill <name>
+program
+  .command('kill <name>')
+  .description('Force kill an agent by name')
+  .action(async (name: string) => {
+    try {
+      await handleWorkerKill(name);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
+  });
+
+// genie stop <name>
+program
+  .command('stop <name>')
+  .description('Stop an agent (preserves session for resume)')
+  .action(async (name: string) => {
+    try {
+      await handleWorkerStop(name);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
+  });
+
+// genie resume [name]
+program
+  .command('resume [name]')
+  .description('Resume a suspended/failed agent with its Claude session')
+  .option('--all', 'Resume all eligible agents')
+  .action(async (name: string | undefined, options: { all?: boolean }) => {
+    try {
+      await handleWorkerResume(name, options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
+  });
+
+// genie history <name>
+program
+  .command('history <name>')
+  .description('Show compressed session history for an agent')
+  .option('--full', 'Show full conversation without compression')
+  .option('--since <n>', 'Show last N user/assistant exchanges', Number.parseInt)
+  .option('--last <n>', 'Show last N transcript entries', Number.parseInt)
+  .option('--type <role>', 'Filter by role (user, assistant, tool_call)')
+  .option('--after <timestamp>', 'Only entries after ISO timestamp')
+  .option('--json', 'Output as JSON')
+  .option('--ndjson', 'Output as newline-delimited JSON (pipeable to jq)')
+  .option('--raw', 'Output raw JSONL entries')
+  .option('--log-file <path>', 'Direct path to log file (for testing)')
+  .action(async (name: string, options: historyCmd.HistoryOptions) => {
+    await historyCmd.historyCommand(name, options);
+  });
+
+// genie log [agent]
+program
+  .command('log [agent]')
+  .description('Unified observability feed — aggregates transcript, DMs, team chat')
+  .option('--team <name>', 'Show interleaved feed for all agents in a team')
+  .option('--type <kind>', 'Filter by event kind (transcript, message, tool_call, state, system)')
+  .option('--since <timestamp>', 'Only events after ISO timestamp')
+  .option('--last <n>', 'Show last N events', Number.parseInt)
+  .option('--ndjson', 'Output as newline-delimited JSON (pipeable to jq)')
+  .option('--json', 'Output as pretty JSON')
+  .option('-f, --follow', 'Follow mode — real-time streaming')
+  .action(async (agent: string | undefined, options: LogOptions) => {
+    await logCommand(agent, options);
+  });
+
+// genie qa [target] — run specs by name, domain, or all
+// genie qa status — dashboard
+// genie qa history — recent runs
 const qaCmd = program.command('qa').description('QA — self-testing system for genie CLI');
 
 qaCmd
@@ -279,6 +446,7 @@ qaCmd
     await qaCheckCommand(specFile, options);
   });
 
+// genie qa report <json> — team-lead calls this to publish QA result to PG event log
 program
   .command('qa-report <json>')
   .description('Publish QA result to the PG event log (called by QA team-lead)')
@@ -306,49 +474,46 @@ program
     }
   });
 
-// ============================================================================
-// Error redirects — old top-level commands → helpful suggestions
-// ============================================================================
-
-function errorRedirect(oldCmd: string, newCmd: string): () => void {
-  return () => {
-    // Reconstruct all args after the old command name (positional + flags)
-    const cmdIdx = process.argv.indexOf(oldCmd);
-    const args = cmdIdx >= 0 ? process.argv.slice(cmdIdx + 1).join(' ') : process.argv.slice(3).join(' ');
-    const suggestion = args ? `${newCmd} ${args}` : newCmd;
-    console.error(`Command "${oldCmd}" has moved. Run:\n\n  genie ${suggestion}\n`);
-    process.exit(1);
-  };
-}
-
-/** Helper: create a redirect stub that swallows unknown options so Commander doesn't choke on --flags. */
-function redirect(cmd: string, desc: string, newCmd: string) {
-  return program.command(`${cmd} [args...]`).description(desc).allowUnknownOption().action(errorRedirect(cmd, newCmd));
-}
-
-redirect('spawn', '(moved) → genie agent spawn', 'agent spawn');
-redirect('kill', '(moved) → genie agent kill', 'agent kill');
-redirect('stop', '(moved) → genie agent stop', 'agent stop');
-redirect('resume', '(moved) → genie agent resume', 'agent resume');
-redirect('ls', '(moved) → genie agent list', 'agent list');
-redirect('read', '(moved) → genie agent log --raw', 'agent log --raw');
-redirect('history', '(moved) → genie agent log --transcript', 'agent log --transcript');
-redirect('log', '(moved) → genie agent log', 'agent log');
-redirect('status', '(moved) → genie task status', 'task status');
-redirect('done', '(moved) → genie task done', 'task done');
-redirect('reset', '(moved) → genie task reset', 'task reset');
-redirect('send', '(moved) → genie agent send', 'agent send');
-redirect('broadcast', '(moved) → genie agent send --broadcast', 'agent send --broadcast');
-redirect('answer', '(moved) → genie agent answer', 'agent answer');
-redirect('inbox', '(moved) → genie agent inbox', 'agent inbox');
-redirect('chat', '(moved) → genie agent log --conversations', 'agent log --conversations');
-redirect('brief', '(moved) → genie agent brief', 'agent brief');
-redirect('dir', '(moved) → genie agent directory', 'agent directory');
+// genie read <name>
 program
-  .command('show [args...]')
-  .description('(moved) → genie task show / genie agent show')
-  .allowUnknownOption()
-  .action(errorRedirect('show', 'agent show'));
+  .command('read <name>')
+  .description('Read terminal output from an agent pane')
+  .option('-n, --lines <number>', 'Number of lines to read')
+  .option('--from <line>', 'Start line')
+  .option('--to <line>', 'End line')
+  .option('--range <range>', 'Line range (e.g., "10-20")')
+  .option('--search <text>', 'Search for text')
+  .option('--grep <pattern>', 'Grep for pattern')
+  .option('-f, --follow', 'Follow mode (like tail -f)')
+  .option('--all', 'Show all output')
+  .option('-r, --reverse', 'Reverse order')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string, options: readCmd.ReadOptions) => {
+    await readCmd.readSessionLogs(name, options);
+  });
+
+// genie answer <name> <choice>
+program
+  .command('answer <name> <choice>')
+  .description('Answer a question for an agent (use "text:..." for text input)')
+  .action(async (name: string, choice: string) => {
+    await orchestrateCmd.answerQuestion(name, choice);
+  });
+
+// genie ls — smart agent view
+program
+  .command('ls')
+  .description('List registered agents with runtime status')
+  .option('--json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    try {
+      await handleLsCommand(options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
+  });
 
 // ============================================================================
 // genie --session <name> — named leader session (pre-parse check)
