@@ -41,7 +41,7 @@ export interface EventSubscriptionConfig {
 }
 
 /** Event types included in each preset. */
-export const EVENT_PRESETS: Record<EventSubscriptionPreset, string[]> = {
+const EVENT_PRESETS: Record<EventSubscriptionPreset, string[]> = {
   actionable: [
     'task.comment',
     'task.blocked',
