@@ -7,6 +7,8 @@ import { App } from './app.js';
 
 export async function renderNav(): Promise<void> {
   const rightPane = process.env.GENIE_TUI_RIGHT || undefined;
+  const workspaceRoot = process.env.GENIE_TUI_WORKSPACE || undefined;
+  const initialAgent = process.env.GENIE_TUI_AGENT || undefined;
 
   // OpenTUI handles SIGTERM/SIGHUP/SIGINT cleanup automatically
   const renderer = await createCliRenderer({
@@ -14,5 +16,5 @@ export async function renderNav(): Promise<void> {
     useMouse: true,
   });
 
-  createRoot(renderer).render(<App rightPane={rightPane} />);
+  createRoot(renderer).render(<App rightPane={rightPane} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />);
 }

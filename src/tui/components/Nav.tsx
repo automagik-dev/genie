@@ -3,8 +3,9 @@
 
 import { useKeyboard } from '@opentui/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { scanAgents } from '../../lib/workspace.js';
 import { type DiagnosticSnapshot, collectDiagnostics } from '../diagnostics.js';
-import { buildSessionTree, getSessionTarget } from '../session-tree.js';
+import { buildSessionTree, buildWorkspaceTree, getSessionTarget } from '../session-tree.js';
 import { palette } from '../theme.js';
 import { flattenTree, toggleNode } from '../tree.js';
 import type { TreeNode } from '../types.js';
@@ -12,13 +13,18 @@ import { TreeNodeRow } from './TreeNode.js';
 
 interface NavProps {
   onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void;
+  /** Workspace root path — enables workspace mode (merged agent tree) */
+  workspaceRoot?: string;
+  /** Pre-select this agent on initial render */
+  initialAgent?: string;
 }
 
-export function Nav({ onTmuxSessionSelect }: NavProps) {
+export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavProps) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticSnapshot | null>(null);
   const [sessionTree, setSessionTree] = useState<TreeNode[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const lastTarget = useRef<string | null>(null);
+  const initialSelectDone = useRef(false);
 
   // Refresh diagnostics every 2s
   useEffect(() => {
@@ -45,9 +51,21 @@ export function Nav({ onTmuxSessionSelect }: NavProps) {
   // Build session tree from diagnostics, preserving expanded state
   useEffect(() => {
     if (!diagnostics) return;
-    const newTree = buildSessionTree(diagnostics);
+
+    let newTree: TreeNode[];
+    if (workspaceRoot) {
+      const agentNames = scanAgents(workspaceRoot);
+      newTree = buildWorkspaceTree({
+        agentNames,
+        sessions: diagnostics.sessions,
+        executors: diagnostics.executors,
+      });
+    } else {
+      newTree = buildSessionTree(diagnostics);
+    }
+
     setSessionTree((prev) => mergeExpandedState(prev, newTree));
-  }, [diagnostics]);
+  }, [diagnostics, workspaceRoot]);
 
   const flatNodes = useMemo(() => flattenTree(sessionTree), [sessionTree]);
 
@@ -58,6 +76,16 @@ export function Nav({ onTmuxSessionSelect }: NavProps) {
     }
   }, [flatNodes.length, selectedIndex]);
 
+  // Initial agent pre-selection (once)
+  useEffect(() => {
+    if (!initialAgent || initialSelectDone.current || flatNodes.length === 0) return;
+    const idx = flatNodes.findIndex((n) => n.node.id === `agent:${initialAgent}`);
+    if (idx >= 0) {
+      setSelectedIndex(idx);
+      initialSelectDone.current = true;
+    }
+  }, [initialAgent, flatNodes]);
+
   // Auto-switch right pane when cursor moves to a new target
   useEffect(() => {
     const current = flatNodes[selectedIndex]?.node;
@@ -67,6 +95,9 @@ export function Nav({ onTmuxSessionSelect }: NavProps) {
     const key = `${target.sessionName}:${target.windowIndex ?? ''}`;
     if (key === lastTarget.current) return;
     lastTarget.current = key;
+
+    // Only auto-attach for running agents (or session/window/pane nodes)
+    if (current.type === 'agent' && current.wsAgentState !== 'running') return;
     onTmuxSessionSelect(target.sessionName, target.windowIndex);
   }, [selectedIndex, flatNodes, onTmuxSessionSelect]);
 
@@ -111,6 +142,13 @@ export function Nav({ onTmuxSessionSelect }: NavProps) {
   const handleEnter = useCallback(() => {
     const node = flatNodes[selectedIndex]?.node;
     if (!node) return;
+
+    // Stopped agent: spawn it
+    if (node.type === 'agent' && node.wsAgentState === 'stopped') {
+      spawnAgent(node.label);
+      return;
+    }
+
     if (node.children.length > 0) handleToggle(node.id);
     const target = getSessionTarget(node);
     if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
@@ -127,24 +165,27 @@ export function Nav({ onTmuxSessionSelect }: NavProps) {
   });
 
   // Summary counts
-  const sessionCount = diagnostics?.sessions.length ?? 0;
-  const totalPanes =
-    diagnostics?.sessions.reduce((sum, s) => sum + s.windows.reduce((ws, w) => ws + w.panes.length, 0), 0) ?? 0;
-  const deadPanes = diagnostics?.gaps.deadPaneCount ?? 0;
+  const agentCount = workspaceRoot
+    ? sessionTree.filter((n) => n.type === 'agent').length
+    : (diagnostics?.sessions.length ?? 0);
+  const runningCount = workspaceRoot
+    ? sessionTree.filter((n) => n.wsAgentState === 'running').length
+    : (diagnostics?.sessions.reduce((sum, s) => sum + s.windows.reduce((ws, w) => ws + w.panes.length, 0), 0) ?? 0);
+
+  const headerLabel = workspaceRoot ? 'Agents' : 'Sessions';
 
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor={palette.bg}>
       {/* Header */}
       <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
         <text>
-          <span fg={palette.purple}>Sessions</span>
+          <span fg={palette.purple}>{headerLabel}</span>
           {diagnostics ? (
             <span fg={palette.textDim}>
               {' '}
-              {sessionCount}s {totalPanes}p
+              {workspaceRoot ? `${runningCount}/${agentCount}` : `${agentCount}s ${runningCount}p`}
             </span>
           ) : null}
-          {deadPanes > 0 ? <span fg={palette.error}> {deadPanes}\u2620</span> : null}
         </text>
       </box>
 
@@ -183,12 +224,25 @@ export function Nav({ onTmuxSessionSelect }: NavProps) {
       <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
         <text>
           <span fg={palette.textMuted}>
-            {'\u2191\u2193'}:nav {'\u2190\u2192'}:expand Enter:attach
+            {'\u2191\u2193'}:nav {'\u2190\u2192'}:expand Enter:{workspaceRoot ? 'spawn/attach' : 'attach'}
           </span>
         </text>
       </box>
     </box>
   );
+}
+
+/** Spawn a stopped agent by launching `genie spawn <name>` in background */
+function spawnAgent(name: string): void {
+  try {
+    const { spawn } = require('node:child_process') as typeof import('node:child_process');
+    spawn('genie', ['spawn', name], {
+      detached: true,
+      stdio: 'ignore',
+    }).unref();
+  } catch {
+    // best-effort spawn
+  }
 }
 
 /** Merge expanded state from old tree into new tree (preserves user navigation) */

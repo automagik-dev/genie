@@ -5,7 +5,15 @@ import { useCallback } from 'react';
 import { Nav } from './components/Nav.js';
 import { attachProjectWindow } from './tmux.js';
 
-export function App({ rightPane }: { rightPane?: string }) {
+interface AppProps {
+  rightPane?: string;
+  /** Workspace root path — enables workspace mode */
+  workspaceRoot?: string;
+  /** Pre-select this agent on initial render */
+  initialAgent?: string;
+}
+
+export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
   // Quit is handled by tmux key table (Ctrl+Q → kill-session), not by OpenTUI.
   // This ensures BOTH panes die together regardless of which pane has focus.
 
@@ -17,5 +25,7 @@ export function App({ rightPane }: { rightPane?: string }) {
     [rightPane],
   );
 
-  return <Nav onTmuxSessionSelect={handleTmuxSessionSelect} />;
+  return (
+    <Nav onTmuxSessionSelect={handleTmuxSessionSelect} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />
+  );
 }
