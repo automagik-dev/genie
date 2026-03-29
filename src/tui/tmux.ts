@@ -49,21 +49,55 @@ export function createTuiSession(): { session: string; leftPane: string; rightPa
   return { session: SESSION_NAME, leftPane, rightPane };
 }
 
+/**
+ * Resolve the right pane ID — self-healing if the pane was killed/recreated.
+ * Falls back to re-discovering from the session layout.
+ */
+function resolveRightPane(rightPane: string): string {
+  try {
+    execSync(`tmux display-message -t ${rightPane} -p ''`, { stdio: 'ignore' });
+    return rightPane;
+  } catch {
+    try {
+      const panes = execSync(`tmux list-panes -t ${SESSION_NAME}:0 -F '#{pane_id}'`, { encoding: 'utf-8' })
+        .trim()
+        .split('\n');
+      return panes[1] || panes[0];
+    } catch {
+      return rightPane;
+    }
+  }
+}
+
+/** Ensure a tmux session exists, creating it if needed */
+function ensureSession(sessionName: string): void {
+  try {
+    execSync(`tmux has-session -t '${sessionName}' 2>/dev/null`, { stdio: 'ignore' });
+  } catch {
+    try {
+      execSync(`tmux new-session -d -s '${sessionName}'`, { stdio: 'ignore' });
+    } catch {
+      // race: another process created it
+    }
+  }
+}
+
 /** Attach a project's tmux session in the right pane (nested) */
 export function attachProject(rightPane: string, targetSession: string): void {
-  execSync(
-    `tmux send-keys -t ${rightPane} "TMUX='' tmux attach-session -t ${targetSession} 2>/dev/null || echo 'No session: ${targetSession}'" Enter`,
-    { stdio: 'ignore' },
-  );
+  const pane = resolveRightPane(rightPane);
+  ensureSession(targetSession);
+  try {
+    execSync(`tmux respawn-pane -k -t ${pane} "TMUX='' tmux attach-session -t '${targetSession}'"`, {
+      stdio: 'ignore',
+    });
+  } catch {
+    // pane doesn't exist
+  }
 }
 
 /** Switch right pane to a different project session */
 export function switchRightPane(rightPane: string, targetSession: string): void {
-  execSync(`tmux send-keys -t ${rightPane} C-c`, { stdio: 'ignore' });
-  execSync(`tmux send-keys -t ${rightPane} "" Enter`, { stdio: 'ignore' });
-  setTimeout(() => {
-    attachProject(rightPane, targetSession);
-  }, 100);
+  attachProject(rightPane, targetSession);
 }
 
 /**
