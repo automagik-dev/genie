@@ -20,7 +20,7 @@ export interface BridgeEvent {
 
 export type BridgeEventHandler = (event: BridgeEvent) => void;
 
-export interface AgentRow {
+interface AgentRow {
   id: string;
   custom_name: string | null;
   role: string | null;
@@ -32,7 +32,7 @@ export interface AgentRow {
   started_at: string;
 }
 
-export interface ExecutorRow {
+interface ExecutorRow {
   id: string;
   agent_id: string;
   provider: string;
@@ -45,7 +45,7 @@ export interface ExecutorRow {
   ended_at: string | null;
 }
 
-export interface TaskRow {
+interface TaskRow {
   id: string;
   seq: number;
   title: string;
@@ -62,7 +62,7 @@ export interface TaskRow {
   updated_at: string;
 }
 
-export interface TeamRow {
+interface TeamRow {
   name: string;
   repo: string;
   base_branch: string;
@@ -74,7 +74,7 @@ export interface TeamRow {
   wish_slug: string | null;
 }
 
-export interface RuntimeEventRow {
+interface RuntimeEventRow {
   id: number;
   repo_path: string;
   kind: string;
@@ -89,7 +89,7 @@ export interface RuntimeEventRow {
   created_at: string;
 }
 
-export interface BoardColumnRow {
+interface BoardColumnRow {
   id: string;
   name: string;
   label: string;
@@ -198,40 +198,6 @@ export async function kanbanBoard(boardId: string): Promise<{
   return { columns, tasks };
 }
 
-export interface BoardRow {
-  id: string;
-  name: string;
-  project_id: string | null;
-  description: string | null;
-  columns: BoardColumnRow[];
-  created_at: string;
-}
-
-export async function listBoards(): Promise<BoardRow[]> {
-  const sql = await getConnection();
-  return sql<BoardRow[]>`
-    SELECT id, name, project_id, description, columns, created_at
-    FROM boards
-    ORDER BY created_at DESC
-  `;
-}
-
-export async function moveTask(taskId: string, columnName: string): Promise<boolean> {
-  const sql = await getConnection();
-  const result = await sql`
-    UPDATE tasks
-    SET stage = ${columnName},
-        column_id = (
-          SELECT col->>'id'
-          FROM boards b, jsonb_array_elements(b.columns) AS col
-          WHERE b.id = tasks.board_id AND col->>'name' = ${columnName}
-        ),
-        updated_at = now()
-    WHERE id = ${taskId}
-  `;
-  return result.count > 0;
-}
-
 export async function listTeams(): Promise<TeamRow[]> {
   const sql = await getConnection();
   return sql<TeamRow[]>`
@@ -282,55 +248,6 @@ export async function streamEvents(filter: EventFilter = {}): Promise<RuntimeEve
     FROM genie_runtime_events
     ORDER BY id DESC LIMIT ${limit}
   `;
-}
-
-// ============================================================================
-// Dashboard Stats
-// ============================================================================
-
-export interface DashboardStats {
-  agents: { online: number; total: number };
-  tasks: { active: number; backlog: number; done: number; total: number };
-  teams: { active: number; total: number };
-}
-
-export async function dashboardStats(): Promise<DashboardStats> {
-  const sql = await getConnection();
-
-  const [agentRows, taskRows, teamRows] = await Promise.all([
-    sql<{ online: string; total: string }[]>`
-      SELECT
-        COUNT(*) FILTER (WHERE e.state IN ('running', 'idle', 'working', 'permission', 'question')) AS online,
-        COUNT(DISTINCT a.id) AS total
-      FROM agents a
-      LEFT JOIN executors e ON e.id = a.current_executor_id
-    `,
-    sql<{ active: string; backlog: string; done: string; total: string }[]>`
-      SELECT
-        COUNT(*) FILTER (WHERE status = 'in_progress') AS active,
-        COUNT(*) FILTER (WHERE status IN ('ready', 'blocked')) AS backlog,
-        COUNT(*) FILTER (WHERE status = 'done') AS done,
-        COUNT(*) AS total
-      FROM tasks
-    `,
-    sql<{ active: string; total: string }[]>`
-      SELECT
-        COUNT(*) FILTER (WHERE status = 'in_progress') AS active,
-        COUNT(*) AS total
-      FROM teams
-    `,
-  ]);
-
-  return {
-    agents: { online: Number(agentRows[0].online), total: Number(agentRows[0].total) },
-    tasks: {
-      active: Number(taskRows[0].active),
-      backlog: Number(taskRows[0].backlog),
-      done: Number(taskRows[0].done),
-      total: Number(taskRows[0].total),
-    },
-    teams: { active: Number(teamRows[0].active), total: Number(teamRows[0].total) },
-  };
 }
 
 // ============================================================================

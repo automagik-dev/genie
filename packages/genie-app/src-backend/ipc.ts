@@ -33,28 +33,12 @@ export async function kanban_board(params: { boardId: string }) {
   return pgBridge.kanbanBoard(params.boardId);
 }
 
-export async function list_boards() {
-  return pgBridge.listBoards();
-}
-
-export async function move_task(params: { taskId: string; columnName: string }) {
-  return { ok: await pgBridge.moveTask(params.taskId, params.columnName) };
-}
-
 // ============================================================================
 // Team Commands
 // ============================================================================
 
 export async function list_teams() {
   return pgBridge.listTeams();
-}
-
-// ============================================================================
-// Dashboard Commands
-// ============================================================================
-
-export async function dashboard_stats() {
-  return pgBridge.dashboardStats();
 }
 
 // ============================================================================
@@ -117,15 +101,13 @@ export async function list_workspaces() {
 }
 
 export async function open_workspace(params: { path: string }) {
-  return workspace.openWorkspace(params.path);
+  await workspace.openWorkspace(params.path);
+  return { ok: true };
 }
 
-export async function init_workspace(params: { path: string; name?: string; pgUrl?: string }) {
-  return workspace.initWorkspace(params.path, params.name, params.pgUrl);
-}
-
-export async function remove_workspace(params: { path: string }) {
-  return { ok: await workspace.removeWorkspace(params.path) };
+export async function init_workspace(params: { path: string }) {
+  await workspace.initWorkspace(params.path);
+  return { ok: true };
 }
 
 // ============================================================================
@@ -137,10 +119,7 @@ export const commands: Record<string, (params: never) => unknown> = {
   show_agent,
   list_tasks,
   kanban_board,
-  list_boards,
-  move_task,
   list_teams,
-  dashboard_stats,
   stream_events,
   spawn_terminal,
   write_terminal,
@@ -149,5 +128,4 @@ export const commands: Record<string, (params: never) => unknown> = {
   list_workspaces,
   open_workspace,
   init_workspace,
-  remove_workspace,
 };
