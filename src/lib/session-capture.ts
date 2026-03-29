@@ -171,38 +171,34 @@ export async function discoverAllJsonlFiles(): Promise<DiscoveredFile[]> {
   for (const project of projects) {
     const projectPath = join(claudeDir, project);
 
-    // Main sessions: <project>/sessions/<id>.jsonl
-    const sessionsDir = join(projectPath, 'sessions');
-    try {
-      const files = await readdir(sessionsDir);
-      for (const file of files) {
-        if (!file.endsWith('.jsonl')) continue;
-        const sessionId = basename(file, '.jsonl');
-        const filePath = join(sessionsDir, file);
-        try {
-          const st = await stat(filePath);
-          results.push({
-            sessionId,
-            jsonlPath: filePath,
-            projectPath,
-            parentSessionId: null,
-            isSubagent: false,
-            mtime: Math.floor(st.mtimeMs),
-            fileSize: st.size,
-          });
-        } catch {
-          // File may have been deleted between readdir and stat
-        }
-      }
-    } catch {
-      // sessions dir may not exist
-    }
-
+    // Claude Code stores JSONL files directly in project dirs: <project>/<session-id>.jsonl
     // Subagent sessions: <project>/<session-id>/subagents/<sub-id>.jsonl
     try {
       const entries = await readdir(projectPath, { withFileTypes: true });
       for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name === 'sessions') continue;
+        // Main sessions: direct .jsonl files in project dir
+        if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+          const sessionId = basename(entry.name, '.jsonl');
+          const filePath = join(projectPath, entry.name);
+          try {
+            const st = await stat(filePath);
+            results.push({
+              sessionId,
+              jsonlPath: filePath,
+              projectPath,
+              parentSessionId: null,
+              isSubagent: false,
+              mtime: Math.floor(st.mtimeMs),
+              fileSize: st.size,
+            });
+          } catch {
+            // File may have been deleted between readdir and stat
+          }
+          continue;
+        }
+
+        // Subagent sessions: <session-id>/subagents/<sub-id>.jsonl
+        if (!entry.isDirectory()) continue;
         const subagentsDir = join(projectPath, entry.name, 'subagents');
         try {
           const subFiles = await readdir(subagentsDir);
