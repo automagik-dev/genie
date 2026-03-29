@@ -40,6 +40,7 @@ import {
   handleWorkerSpawn,
   handleWorkerStop,
 } from './term-commands/agents.js';
+import { registerAppCommand } from './term-commands/app.js';
 import { registerEventsCommands } from './term-commands/audit-events.js';
 import { registerBoardCommands } from './term-commands/board.js';
 import { registerBriefCommands } from './term-commands/brief.js';
@@ -171,66 +172,16 @@ shortcuts.command('uninstall').description('Remove shortcuts from config files')
 
 program
   .command('tui')
-  .description('Launch interactive terminal UI (OpenTUI nav + tmux Claude Code)')
-  .option('--dev', 'Development mode with auto-reload on file changes')
+  .description('[deprecated] Use `genie app --tui` instead')
+  .option('--dev', 'Development mode')
   .action(async (options: { dev?: boolean }) => {
-    console.log('\x1b[33m[deprecated]\x1b[0m `genie tui` will be replaced by `genie app` in a future release.');
+    console.log('\x1b[33m[deprecated]\x1b[0m genie tui is deprecated. Use `genie app` instead.');
+    console.log('\x1b[2mFalling back to `genie app --tui`...\x1b[0m\n');
     const { launchTui } = await import('./tui/index.js');
     await launchTui({ dev: options.dev });
   });
 
-program
-  .command('app')
-  .description('Launch Genie desktop app (backend sidecar + views)')
-  .option('--backend-only', 'Start only the backend sidecar (IPC on stdin/stdout)')
-  .option('--tui', 'Fall back to terminal UI mode')
-  .option('--dev', 'Development mode')
-  .action(async (options: { backendOnly?: boolean; tui?: boolean; dev?: boolean }) => {
-    if (options.tui) {
-      const { launchTui } = await import('./tui/index.js');
-      await launchTui({ dev: options.dev });
-      return;
-    }
-
-    if (options.backendOnly) {
-      // Start the backend sidecar directly (Tauri/khal-os bridges to this)
-      await import('../packages/genie-app/src-backend/index.js');
-      return;
-    }
-
-    // Default: try Tauri binary, fallback to TUI
-    const { existsSync } = await import('node:fs');
-    const { join } = await import('node:path');
-    const { execFileSync } = await import('node:child_process');
-
-    // Search for the Tauri binary in common locations
-    const appName = 'genie-desktop';
-    const searchPaths = [
-      join(__dirname, '..', 'packages', 'genie-app', 'src-tauri', 'target', 'release', appName),
-      join(__dirname, '..', 'packages', 'genie-app', 'src-tauri', 'target', 'debug', appName),
-      join(__dirname, '..', 'dist', 'app', appName),
-      `/usr/local/bin/${appName}`,
-    ];
-
-    const tauriBin = searchPaths.find((p) => existsSync(p));
-
-    if (tauriBin) {
-      console.log('\x1b[35m\u25c6 Genie App\x1b[0m Launching desktop...');
-      try {
-        execFileSync(tauriBin, [], { stdio: 'inherit' });
-      } catch {
-        // Tauri exited or was closed — normal
-      }
-      return;
-    }
-
-    // Fallback: start backend sidecar (for khal-os or piped frontend)
-    console.log('\x1b[35m\u25c6 Genie App\x1b[0m Starting backend sidecar...');
-    console.log('\x1b[2mDesktop binary not found \u2014 running in sidecar mode.\x1b[0m');
-    console.log('\x1b[2mPG bridge + PTY manager + IPC on stdin/stdout\x1b[0m');
-    console.log('\x1b[2mUse --tui for terminal UI, or pipe to a frontend shell.\x1b[0m\n');
-    await import('../packages/genie-app/src-backend/index.js');
-  });
+registerAppCommand(program);
 
 registerTeamNamespace(program);
 registerDirNamespace(program);
