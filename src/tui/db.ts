@@ -76,7 +76,7 @@ function mapAssignment(row: Record<string, unknown>): TuiAssignment {
 }
 
 /** Dashboard team summary — name, status, wish, member count. */
-export interface DashboardTeamRow {
+interface DashboardTeamRow {
   name: string;
   status: string;
   wishSlug: string | null;
