@@ -31,6 +31,50 @@ import * as tmux from './tmux.js';
 /** Team lifecycle status. */
 export type TeamStatus = 'in_progress' | 'done' | 'blocked';
 
+/** Event subscription preset — controls which events get routed to team members. */
+export type EventSubscriptionPreset = 'actionable' | 'verbose' | 'silent';
+
+/** Per-team event subscription configuration. */
+export interface EventSubscriptionConfig {
+  preset: EventSubscriptionPreset;
+  overrides?: Record<string, boolean>;
+}
+
+/** Event types included in each preset. */
+export const EVENT_PRESETS: Record<EventSubscriptionPreset, string[]> = {
+  actionable: [
+    'task.comment',
+    'task.blocked',
+    'task.stage_change',
+    'executor.error',
+    'executor.permission',
+    'request.created',
+  ],
+  verbose: [
+    'task.comment',
+    'task.blocked',
+    'task.stage_change',
+    'executor.error',
+    'executor.permission',
+    'request.created',
+    'executor.state_change',
+    'assignment.started',
+    'assignment.completed',
+    'task.assigned',
+  ],
+  silent: [],
+};
+
+/** Check if an event type should be routed for a given subscription config. */
+export function shouldRouteEvent(config: EventSubscriptionConfig, eventType: string): boolean {
+  // Overrides take priority
+  if (config.overrides?.[eventType] !== undefined) {
+    return config.overrides[eventType];
+  }
+  // Fall back to preset
+  return EVENT_PRESETS[config.preset].includes(eventType);
+}
+
 /** Persisted team configuration. */
 export interface TeamConfig {
   /** Team name — also the git branch name (e.g., "feat/auth-bug"). */
@@ -57,11 +101,32 @@ export interface TeamConfig {
   tmuxSessionName?: string;
   /** Wish slug this team is working on (set via --wish). */
   wishSlug?: string;
+  /** Event subscription config — controls which events get routed to team members. */
+  eventSubscriptions?: EventSubscriptionConfig;
 }
 
 // ============================================================================
 // PG Row Mapping
 // ============================================================================
+
+/** Parse JSONB event_subscriptions — handles parsed objects and string-encoded JSON. */
+function parseEventSubscriptions(raw: unknown): EventSubscriptionConfig {
+  const defaultConfig: EventSubscriptionConfig = { preset: 'actionable' };
+  if (!raw) return defaultConfig;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === 'object' && parsed?.preset) return parsed as EventSubscriptionConfig;
+      return defaultConfig;
+    } catch {
+      return defaultConfig;
+    }
+  }
+  if (typeof raw === 'object' && (raw as Record<string, unknown>)?.preset) {
+    return raw as EventSubscriptionConfig;
+  }
+  return defaultConfig;
+}
 
 /** Parse JSONB members — handles both parsed arrays and string-encoded JSON. */
 function parseMembers(raw: unknown): string[] {
@@ -90,6 +155,7 @@ interface TeamConfigRow {
   native_teams_enabled?: boolean;
   tmux_session_name?: string;
   wish_slug?: string;
+  event_subscriptions?: unknown;
 }
 
 /** Map a PG row to a TeamConfig object. */
@@ -108,6 +174,9 @@ function rowToTeamConfig(row: TeamConfigRow): TeamConfig {
   if (row.native_teams_enabled) config.nativeTeamsEnabled = row.native_teams_enabled;
   if (row.tmux_session_name) config.tmuxSessionName = row.tmux_session_name;
   if (row.wish_slug) config.wishSlug = row.wish_slug;
+  if (row.event_subscriptions) {
+    config.eventSubscriptions = parseEventSubscriptions(row.event_subscriptions);
+  }
   return config;
 }
 
@@ -532,6 +601,23 @@ export async function listTeams(): Promise<TeamConfig[]> {
   } catch {
     return [];
   }
+}
+
+/** Get the event subscription config for a team. Falls back to 'actionable' preset. */
+export async function getEventSubscriptions(teamName: string): Promise<EventSubscriptionConfig> {
+  const team = await getTeam(teamName);
+  return team?.eventSubscriptions ?? { preset: 'actionable' };
+}
+
+/** Update the event subscription config for a team. */
+export async function updateEventSubscriptions(teamName: string, config: EventSubscriptionConfig): Promise<void> {
+  const sql = await getConnection();
+  await sql`
+    UPDATE teams
+    SET event_subscriptions = ${sql.json(config)},
+        updated_at = now()
+    WHERE name = ${teamName}
+  `;
 }
 
 /** List members of a team. Returns null if team not found. */

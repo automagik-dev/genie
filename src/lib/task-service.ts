@@ -877,12 +877,51 @@ export async function unblockTask(
 // Execution Locking (Checkout)
 // ============================================================================
 
-/** Atomically claim a task for execution. Fails if already claimed by a different run. */
+/** Information about a dependency that blocks checkout. */
+export interface BlockingDep {
+  taskId: string;
+  seq: number;
+  title: string;
+  status: string;
+}
+
+/** Get unsatisfied dependencies that block a task from being checked out. */
+export async function getBlockingDependencies(idOrSeq: string, repoPath?: string): Promise<BlockingDep[]> {
+  const sql = await getConnection();
+  const repo = repoPath ?? getRepoPath();
+  const id = await resolveTaskId(idOrSeq, repo);
+  if (!id) return [];
+
+  const rows = await sql`
+    SELECT t.id, t.seq, t.title, t.status
+    FROM task_dependencies td
+    JOIN tasks t ON td.depends_on_id = t.id
+    WHERE td.task_id = ${id}
+      AND td.dep_type = 'depends_on'
+      AND t.status NOT IN ('done', 'cancelled')
+  `;
+
+  return rows.map((r: Record<string, unknown>) => ({
+    taskId: r.id as string,
+    seq: r.seq as number,
+    title: r.title as string,
+    status: r.status as string,
+  }));
+}
+
+/** Atomically claim a task for execution. Fails if already claimed by a different run or if dependencies are unsatisfied. */
 export async function checkoutTask(idOrSeq: string, runId: string, repoPath?: string): Promise<TaskRow> {
   const sql = await getConnection();
   const repo = repoPath ?? getRepoPath();
   const id = await resolveTaskId(idOrSeq, repo);
   if (!id) throw new Error(`Task not found: ${idOrSeq}`);
+
+  // Dependency gate: reject checkout if unsatisfied dependencies exist
+  const blockers = await getBlockingDependencies(idOrSeq, repo);
+  if (blockers.length > 0) {
+    const details = blockers.map((b) => `#${b.seq} (${b.status}) ${b.title}`).join(', ');
+    throw new Error(`Task ${idOrSeq} blocked by: ${details}`);
+  }
 
   const rows = await sql`
     UPDATE tasks

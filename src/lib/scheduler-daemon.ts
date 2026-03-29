@@ -22,6 +22,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Agent } from './agent-registry.js';
 import { computeNextCronDue, parseDuration } from './cron.js';
+import { type EventRouterHandle, startEventRouter } from './event-router.js';
 import { getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
 
@@ -1229,6 +1230,7 @@ export function startDaemon(
   let orphanTimer: ReturnType<typeof setInterval> | null = null;
   let inboxWatcherHandle: NodeJS.Timeout | null = null;
   let captureFallbackTimer: ReturnType<typeof setInterval> | null = null;
+  let eventRouterHandle: EventRouterHandle | null = null;
 
   const stop = () => {
     running = false;
@@ -1261,6 +1263,8 @@ export function startDaemon(
       clearInterval(captureFallbackTimer);
       captureFallbackTimer = null;
     }
+    eventRouterHandle?.stop().catch(() => {});
+    eventRouterHandle = null;
     // Stop session capture layers
     import('./session-filewatch.js').then((m) => m.stopFilewatch()).catch(() => {});
     import('./session-backfill.js').then((m) => m.stopBackfill()).catch(() => {});
@@ -1407,6 +1411,20 @@ export function startDaemon(
 
     // Start inbox watcher (polls native inboxes for unread messages)
     inboxWatcherHandle = startInboxWatcherIfEnabled(deps);
+
+    // Start event router (subscription-based NOTIFY routing to teams)
+    try {
+      eventRouterHandle = await startEventRouter();
+      deps.log({ timestamp: deps.now().toISOString(), level: 'info', event: 'event_router_started' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'warn',
+        event: 'event_router_start_failed',
+        error: message,
+      });
+    }
 
     // Session capture v2: filewatch (event-driven) + backfill (lazy, one-time)
     try {
