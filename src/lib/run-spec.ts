@@ -90,7 +90,7 @@ export interface RunSpec {
   /** Model override (e.g., 'sonnet', 'opus'). */
   model?: string;
 
-  /** Full command string to execute (e.g., 'genie spawn reviewer'). */
+  /** Full command string to execute (e.g., 'genie agent spawn reviewer'). */
   command: string;
 
   /** Approval policy for the spawned agent. */

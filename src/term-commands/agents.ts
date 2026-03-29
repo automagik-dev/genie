@@ -1257,7 +1257,7 @@ async function resolveWorkerByName(name: string): Promise<registry.Agent> {
   }
 
   console.error(`Agent "${name}" not found.`);
-  console.error('  Run `genie ls` to see agents.');
+  console.error('  Run `genie agent list` to see agents.');
   process.exit(1);
 }
 

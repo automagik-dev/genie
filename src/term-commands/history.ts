@@ -386,7 +386,7 @@ async function resolveContext(workerIdOrName: string, options: HistoryOptions): 
 
   const worker = await findWorker(workerIdOrName);
   if (!worker) {
-    console.error(`Agent "${workerIdOrName}" not found. Run \`genie ls\` to see agents.`);
+    console.error(`Agent "${workerIdOrName}" not found. Run \`genie agent list\` to see agents.`);
     process.exit(1);
   }
 
