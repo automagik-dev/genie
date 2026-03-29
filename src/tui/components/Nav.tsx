@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-/** Navigation panel with 3 tabs: Projects | tmux | Claude — arrow keys navigate, left/right switch tabs */
+/** Navigation panel with 3 tabs: Projects | tmux | Executors — arrow keys navigate, left/right switch tabs */
 
 import { useKeyboard } from '@opentui/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
