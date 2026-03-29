@@ -100,13 +100,7 @@ function parseNotifyPayload(channel: string, raw: string): ParsedEvent | null {
 // ============================================================================
 
 /** Hardcoded actionable event types — events that require team-lead attention. */
-const ACTIONABLE_EVENTS = new Set([
-  'task.blocked',
-  'executor.error',
-  'executor.permission',
-  'task.stage_change',
-  'task.comment',
-]);
+const ACTIONABLE_EVENTS = new Set(['task.blocked', 'executor.error', 'executor.permission']);
 
 /** Check if an event type is actionable (or is a request message). */
 function isActionableEvent(eventType: string): boolean {
@@ -135,6 +129,27 @@ async function writeMailbox(repoPath: string, leader: string, message: string, t
     } catch {
       // Best effort
     }
+  }
+}
+
+/** Walk reports_to hierarchy upward from leader, delivering via provider at each level. */
+async function deliverToHierarchy(leader: string, teamName: string, message: string, traceId: string): Promise<void> {
+  const sql = await getConnection();
+  let current = leader;
+  const visited = new Set<string>([current]);
+  for (;;) {
+    const rows = await sql`
+      SELECT reports_to FROM agents WHERE custom_name = ${current} AND team = ${teamName} LIMIT 1
+    `;
+    const reportsTo = rows[0]?.reports_to as string | null;
+    if (!reportsTo || visited.has(reportsTo)) break;
+    visited.add(reportsTo);
+    try {
+      await deliverViaProvider(reportsTo, teamName, message, traceId);
+    } catch {
+      // Best effort — continue up the chain
+    }
+    current = reportsTo;
   }
 }
 
@@ -183,6 +198,13 @@ async function deliverToTeam(event: ParsedEvent, teamName: string): Promise<void
       await deliverViaProvider(team.leader, teamName, message, traceId);
     } catch {
       // Best effort — PG mailbox already written
+    }
+
+    // Walk reports_to hierarchy upward (team-lead → PM → CPO → ...)
+    try {
+      await deliverToHierarchy(team.leader, teamName, message, traceId);
+    } catch {
+      // Best effort — hierarchy routing failure doesn't block delivery
     }
   }
 
@@ -233,6 +255,10 @@ export interface EventRouterHandle {
  * @param handler Optional custom handler for testing/overriding routing behavior.
  */
 export async function startEventRouter(handler?: EventHandler): Promise<EventRouterHandle> {
+  if (process.env.GENIE_ENABLE_EVENT_ROUTING === 'false') {
+    return { stop: async () => {} };
+  }
+
   const sql = await getConnection();
   const listeners: Array<{ unlisten: () => Promise<void> }> = [];
 
