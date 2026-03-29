@@ -8,12 +8,8 @@ const KEY_TABLE = 'genie-tui';
 const NAV_WIDTH = 30;
 /** TUI's own tmux socket — isolates the nav+split from everything else */
 const TMUX_SOCKET = 'genie-tui';
-/**
- * Genie's agent tmux socket — where all agents/teams/sessions live.
- * The TUI's right pane attaches to sessions on THIS server.
- * TODO: migrate all of genie (spawn, daemon, etc) to use -L genie. For now, agents run on default server.
- */
-const GENIE_AGENT_SOCKET = ''; // empty = default server (until full migration)
+/** Genie's agent tmux socket — where all agents/teams/sessions live. */
+const GENIE_AGENT_SOCKET = 'genie';
 /**
  * Genie's shipped tmux config — scripts/tmux/genie.tmux.conf installed to ~/.genie/tmux.conf
  * on genie setup/update. Falls back to /dev/null if not found (still works with applyTmuxStyle).
@@ -120,8 +116,8 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
     }
   }
   try {
-    // Attach to sessions on the AGENT server (default for now, -L genie after migration)
-    const agentTmux = GENIE_AGENT_SOCKET ? `tmux -L ${GENIE_AGENT_SOCKET}` : 'tmux';
+    // Attach to sessions on the genie agent server
+    const agentTmux = `tmux -L ${GENIE_AGENT_SOCKET}`;
     execSync(`${TMUX} respawn-pane -k -t ${pane} "TMUX='' ${agentTmux} attach-session -t '${targetSession}'"`, {
       stdio: 'ignore',
     });

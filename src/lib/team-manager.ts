@@ -190,7 +190,8 @@ async function killWorkersByName(agentName: string, teamName?: string): Promise<
     try {
       if (w.paneId && w.paneId !== 'inline') {
         const { execSync } = require('node:child_process');
-        execSync(`tmux kill-pane -t ${w.paneId}`, { stdio: 'ignore' });
+        const { genieTmuxCmd } = require('./tmux-wrapper.js');
+        execSync(genieTmuxCmd(`kill-pane -t ${w.paneId}`), { stdio: 'ignore' });
       }
     } catch {
       // Pane may already be gone
