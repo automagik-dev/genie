@@ -53,6 +53,21 @@ function ensureBridge(): IpcBridge | null {
 }
 
 /**
+ * Subscribe to backend events by type. Returns unsubscribe function.
+ */
+export function onEvent(eventType: string, handler: (payload: Record<string, unknown>) => void): () => void {
+  const bridge = ensureBridge();
+  if (!bridge) return () => {};
+
+  return bridge.onMessage((data) => {
+    const msg = data as unknown as { type: string; event?: string; payload?: Record<string, unknown> };
+    if (msg.type === 'event' && msg.event === eventType && msg.payload) {
+      handler(msg.payload);
+    }
+  });
+}
+
+/**
  * Invoke a sidecar IPC command and return the result.
  * Throws if the bridge is not available or the command fails.
  */
