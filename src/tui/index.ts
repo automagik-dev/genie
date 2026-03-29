@@ -46,15 +46,10 @@ export async function launchTui(options: TuiLaunchOptions = {}): Promise<void> {
   // Uses GENIE_TUI_PANE=left to trigger renderer mode (not a subcommand)
   const { execSync } = await import('node:child_process');
   const { tuiTmuxCmd } = await import('./tmux.js');
-  if (options.dev) {
-    execSync(tuiTmuxCmd(`send-keys -t '${leftPane}' "${envPrefix} bun --watch ${genieBin}" Enter`), {
-      stdio: 'ignore',
-    });
-  } else {
-    execSync(tuiTmuxCmd(`send-keys -t '${leftPane}' "${envPrefix} ${bunPath} ${genieBin}" Enter`), {
-      stdio: 'ignore',
-    });
-  }
+  const runCmd = options.dev ? `bun --watch ${genieBin}` : `${bunPath} ${genieBin}`;
+  execSync(tuiTmuxCmd(`send-keys -t '${leftPane}' "${envPrefix} ${runCmd}" Enter`), {
+    stdio: 'ignore',
+  });
 
   // Attach (blocking)
   attachTuiSession();
