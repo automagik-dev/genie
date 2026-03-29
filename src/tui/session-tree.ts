@@ -7,6 +7,9 @@ import type { DiagnosticSnapshot, TmuxPane, TmuxSession, TmuxWindow } from './di
 import type { TreeNode, TuiExecutor } from './types.js';
 
 /** Build a TreeNode tree from tmux sessions, enriched with executor state. */
+/** The TUI's own session name — filtered from the tree to prevent self-attach loops */
+const TUI_SESSION = 'genie-tui';
+
 export function buildSessionTree(snapshot: DiagnosticSnapshot): TreeNode[] {
   const executorByPaneId = new Map<string, TuiExecutor>();
   for (const exec of snapshot.executors) {
@@ -15,7 +18,9 @@ export function buildSessionTree(snapshot: DiagnosticSnapshot): TreeNode[] {
     }
   }
 
-  return snapshot.sessions.map((session) => sessionToNode(session, executorByPaneId));
+  return snapshot.sessions
+    .filter((s) => s.name !== TUI_SESSION)
+    .map((session) => sessionToNode(session, executorByPaneId));
 }
 
 function sessionToNode(session: TmuxSession, executorMap: Map<string, TuiExecutor>): TreeNode {
