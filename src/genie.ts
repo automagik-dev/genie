@@ -3,14 +3,14 @@
 /**
  * genie — Single entrypoint CLI.
  *
- * Top-level commands:
- *   spawn, kill, stop, ls, history, read, answer, work
- *
  * Namespaces:
- *   team, dir, send/inbox, state, hook
+ *   agent  — spawn, kill, stop, resume, list, show, log, send, answer, register, directory, inbox, brief
+ *   task   — create, list, status, done, reset, board, project, releases, type
+ *   team   — create, hire, fire, list, disband
+ *   exec   — list, show, terminate (debug)
  *
- * Utilities:
- *   setup, doctor, update, uninstall, shortcuts
+ * Top-level:
+ *   setup, doctor, update, uninstall, shortcuts, qa, tui, run
  *
  * Session:
  *   genie --session <name>  — Start or resume a named leader session
@@ -344,6 +344,10 @@ program
   .description('(moved) → genie task status')
   .action(errorRedirect('status', 'task status'));
 program.command('done [args...]').description('(moved) → genie task done').action(errorRedirect('done', 'task done'));
+program
+  .command('reset [args...]')
+  .description('(moved) → genie task reset')
+  .action(errorRedirect('reset', 'task reset'));
 program.command('send [args...]').description('(moved) → genie agent send').action(errorRedirect('send', 'agent send'));
 program
   .command('broadcast [args...]')
