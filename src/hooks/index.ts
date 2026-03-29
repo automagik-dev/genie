@@ -165,26 +165,24 @@ async function executeBlockingChain(matched: Handler[], payload: HookPayload): P
   // Build response
   const response: Record<string, unknown> = {};
 
-  // For PreToolUse, use hookSpecificOutput format
-  if (hookEventName === 'PreToolUse') {
-    const hasContext = contextMessages.length > 0;
-    const hasInputChange =
-      currentInput && payload.tool_input && JSON.stringify(currentInput) !== JSON.stringify(payload.tool_input);
+  const hasContext = contextMessages.length > 0;
+  const hasInputChange =
+    currentInput && payload.tool_input && JSON.stringify(currentInput) !== JSON.stringify(payload.tool_input);
 
-    if (hasContext || hasInputChange) {
-      const output: Record<string, unknown> = { hookEventName: 'PreToolUse' };
-      if (hasContext) output.additionalContext = contextMessages.join('\n');
-      if (hasInputChange) {
-        output.permissionDecision = 'allow';
-        output.updatedInput = currentInput;
-      }
-      response.hookSpecificOutput = output;
+  // updatedInput at top level (backward compat, used by tests + older CC versions)
+  if (hasInputChange) {
+    response.updatedInput = currentInput;
+  }
+
+  // For PreToolUse, ALSO emit hookSpecificOutput (the correct CC format)
+  if (hookEventName === 'PreToolUse' && (hasContext || hasInputChange)) {
+    const output: Record<string, unknown> = { hookEventName: 'PreToolUse' };
+    if (hasContext) output.additionalContext = contextMessages.join('\n');
+    if (hasInputChange) {
+      output.permissionDecision = 'allow';
+      output.updatedInput = currentInput;
     }
-  } else {
-    // Non-PreToolUse blocking events use top-level fields
-    if (currentInput && payload.tool_input && JSON.stringify(currentInput) !== JSON.stringify(payload.tool_input)) {
-      response.updatedInput = currentInput;
-    }
+    response.hookSpecificOutput = output;
   }
 
   return response;
