@@ -27,14 +27,21 @@ export async function launchTui(options: { dev?: boolean } = {}): Promise<void> 
   // Send the nav command to the left pane
   const bunPath = process.execPath || 'bun';
   const genieBin = process.argv[1] || 'genie';
-  const devFlag = options.dev ? ' --dev' : '';
 
   // Run the TUI nav renderer in the left pane
+  // Dev mode: bun --watch auto-restarts on source file changes
   const { execSync } = await import('node:child_process');
-  execSync(
-    `tmux send-keys -t '${leftPane}' "GENIE_TUI_PANE=left GENIE_TUI_RIGHT=${rightPane} ${bunPath} ${genieBin} tui${devFlag}" Enter`,
-    { stdio: 'ignore' },
-  );
+  if (options.dev) {
+    execSync(
+      `tmux send-keys -t '${leftPane}' "GENIE_TUI_PANE=left GENIE_TUI_RIGHT=${rightPane} bun --watch ${genieBin} tui" Enter`,
+      { stdio: 'ignore' },
+    );
+  } else {
+    execSync(
+      `tmux send-keys -t '${leftPane}' "GENIE_TUI_PANE=left GENIE_TUI_RIGHT=${rightPane} ${bunPath} ${genieBin} tui" Enter`,
+      { stdio: 'ignore' },
+    );
+  }
 
   // Attach (blocking)
   attachTuiSession();
