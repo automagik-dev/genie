@@ -199,7 +199,7 @@ export function Nav({ tree, onTreeChange, onProjectSelect }: NavProps) {
     : undefined;
 
   return (
-    <box flexDirection="column" width={30} height="100%" backgroundColor={palette.bg}>
+    <box flexDirection="column" width="100%" height="100%" backgroundColor={palette.bg}>
       {/* Tab Bar */}
       <TabBar activeTab={activeTab} focused={tabBarFocused} gaps={gapCounts} />
 
