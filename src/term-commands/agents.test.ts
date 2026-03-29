@@ -142,7 +142,8 @@ describe('buildInitialSplitWindowCommand', () => {
       "claude --append-system-prompt-file '/tmp/prompt file.md' 'Execute the QA spec'",
     );
 
-    expect(command).toContain('tmux split-window -d');
+    expect(command).toContain('tmux -L genie');
+    expect(command).toContain('split-window -d');
     expect(command).toContain("-t '@42'");
     expect(command).toContain("-c '/tmp/genie qa/test'\\''s'");
     expect(command).toContain("-P -F '#{pane_id}'");

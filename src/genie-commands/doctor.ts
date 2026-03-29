@@ -185,7 +185,7 @@ async function checkTmux(): Promise<CheckResult[]> {
 
   // Check if tmux server is running
   try {
-    const serverResult = await $`tmux list-sessions 2>/dev/null`.quiet();
+    const serverResult = await $`tmux -L genie list-sessions 2>/dev/null`.quiet();
     if (serverResult.exitCode === 0) {
       results.push({
         name: 'Server running',
@@ -214,7 +214,7 @@ async function checkTmux(): Promise<CheckResult[]> {
   const sessionName = config.session.name;
 
   try {
-    const sessionResult = await $`tmux has-session -t ${sessionName} 2>/dev/null`.quiet();
+    const sessionResult = await $`tmux -L genie has-session -t ${sessionName} 2>/dev/null`.quiet();
     if (sessionResult.exitCode === 0) {
       results.push({
         name: `Session '${sessionName}' exists`,

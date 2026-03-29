@@ -30,6 +30,7 @@ import {
 import { getProvider } from '../lib/providers/registry.js';
 import { waitForAgentReady } from '../lib/spawn-command.js';
 import * as teamManager from '../lib/team-manager.js';
+import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
 import * as tmux from '../lib/tmux.js';
 import { isPaneAlive } from '../lib/tmux.js';
 
@@ -229,7 +230,7 @@ function relayAll() {
 
     let output;
     try {
-      output = execSync(\`tmux capture-pane -p -t '\${paneId}' -S -80\`, { encoding: 'utf-8' }).trim();
+      output = execSync(\`tmux -L genie capture-pane -p -t '\${paneId}' -S -80\`, { encoding: 'utf-8' }).trim();
     } catch {
       // Pane gone — final relay if we had previous content
       const lastContent = lastHashes.get(workerId + ':content');
@@ -328,7 +329,7 @@ setInterval(async () => {
     try {
       const paneId = readFileSync(join(RELAY_DIR, file), 'utf-8').trim();
       if (!/^%\\d+$/.test(paneId)) throw new Error('invalid pane id');
-      execSync(\`tmux display -t '\${paneId}' -p '#{pane_id}'\`, { stdio: 'ignore' });
+      execSync(\`tmux -L genie display -t '\${paneId}' -p '#{pane_id}'\`, { stdio: 'ignore' });
     } catch {
       const workerId = file.replace(/-pane$/, '');
       // Read meta before cleanup (for liveness reset)
@@ -415,7 +416,7 @@ async function capturePanePid(paneId: string): Promise<number | null> {
   if (paneId === 'inline') return null;
   try {
     const { execSync } = require('node:child_process');
-    const output = execSync(`tmux display -t '${paneId}' -p '#{pane_pid}'`, { encoding: 'utf-8' }).trim();
+    const output = execSync(genieTmuxCmd(`display -t '${paneId}' -p '#{pane_pid}'`), { encoding: 'utf-8' }).trim();
     const pid = Number.parseInt(output, 10);
     return pid > 0 ? pid : null;
   } catch {
@@ -655,7 +656,9 @@ function writeTmuxLaunchScript(workerId: string, fullCommand: string): string {
  */
 export function buildInitialSplitWindowCommand(windowId: string, cwd: string | undefined, fullCommand: string): string {
   const cwdFlag = cwd ? ` -c ${shellQuote(cwd)}` : '';
-  return `tmux split-window -d -t ${shellQuote(windowId)}${cwdFlag} -P -F '#{pane_id}' ${shellQuote(fullCommand)}`;
+  return genieTmuxCmd(
+    `split-window -d -t ${shellQuote(windowId)}${cwdFlag} -P -F '#{pane_id}' ${shellQuote(fullCommand)}`,
+  );
 }
 
 /**
@@ -705,7 +708,7 @@ async function autoConfirmTrustPrompt(paneId: string): Promise<void> {
 
     let content: string;
     try {
-      content = execSync(`tmux capture-pane -t '${paneId}' -p`, { encoding: 'utf-8' });
+      content = execSync(genieTmuxCmd(`capture-pane -t '${paneId}' -p`), { encoding: 'utf-8' });
     } catch {
       return; // Pane gone — nothing to do
     }
@@ -713,7 +716,7 @@ async function autoConfirmTrustPrompt(paneId: string): Promise<void> {
     // Trust prompt detected — send Enter to confirm "Yes, I trust this folder"
     if (content.includes('trust this folder') || content.includes('Quick safety check')) {
       try {
-        execSync(`tmux send-keys -t '${paneId}' Enter`, { encoding: 'utf-8' });
+        execSync(genieTmuxCmd(`send-keys -t '${paneId}' Enter`), { encoding: 'utf-8' });
       } catch {
         // Best effort
       }
@@ -741,16 +744,18 @@ function createTmuxPane(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): strin
     ? shellQuote(writeTmuxLaunchScript(ctx.workerId, ctx.fullCommand))
     : shellQuote(ctx.fullCommand);
 
+  const tmuxPrefix = genieTmuxCmd('');
+
   if (teamWindow?.created) {
     const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
     const paneId = execSync(
-      `tmux split-window -d -t ${shellQuote(teamWindow.windowId)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`,
+      `${tmuxPrefix}split-window -d -t ${shellQuote(teamWindow.windowId)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`,
       {
         encoding: 'utf-8',
       },
     ).trim();
     try {
-      execSync(`tmux kill-pane -t '${teamWindow.paneId}'`, { stdio: 'ignore' });
+      execSync(genieTmuxCmd(`kill-pane -t '${teamWindow.paneId}'`), { stdio: 'ignore' });
     } catch {
       /* best-effort */
     }
@@ -760,14 +765,14 @@ function createTmuxPane(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): strin
   const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
   const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
   if (useLaunchScript) {
-    const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
+    const splitCmd = `${tmuxPrefix}split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
     return execSync(splitCmd, { encoding: 'utf-8' }).trim();
   }
   // Wrap fullCommand in shell quotes so it survives the outer-shell → tmux → inner-shell pipeline.
   // Without this, single quotes from escapeShellArg (e.g. around the initialPrompt) are consumed
   // by the outer shell, and tmux's inner shell sees unquoted args — splitting multi-word prompts.
   const escapedCmd = ctx.fullCommand.replace(/'/g, "'\\''");
-  const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' '${escapedCmd}'`;
+  const splitCmd = `${tmuxPrefix}split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' '${escapedCmd}'`;
   return execSync(splitCmd, { encoding: 'utf-8' }).trim();
 }
 
@@ -781,7 +786,7 @@ async function applySpawnLayout(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null
     layoutTarget = wins[0] ? wins[0].id : `${session}:`;
   }
   try {
-    execSync(`tmux ${buildLayoutCommand(layoutTarget, ctx.layoutMode)}`, { stdio: 'ignore' });
+    execSync(genieTmuxCmd(buildLayoutCommand(layoutTarget, ctx.layoutMode)), { stdio: 'ignore' });
   } catch {
     /* best-effort */
   }
@@ -1198,10 +1203,10 @@ async function cleanupWorkerNativeTeam(w: registry.Agent): Promise<void> {
 function killWorkerPane(w: registry.Agent): void {
   try {
     const { execSync } = require('node:child_process');
-    const currentPane = execSync("tmux display-message -p '#{pane_id}'", { encoding: 'utf-8' }).trim();
+    const currentPane = execSync(genieTmuxCmd("display-message -p '#{pane_id}'"), { encoding: 'utf-8' }).trim();
     const validPaneId = w.paneId && /^(%\d+|inline)$/.test(w.paneId);
     if (validPaneId && w.paneId !== currentPane) {
-      execSync(`tmux kill-pane -t ${w.paneId}`, { stdio: 'ignore' });
+      execSync(genieTmuxCmd(`kill-pane -t ${w.paneId}`), { stdio: 'ignore' });
     } else if (w.paneId === currentPane) {
       console.log('  (skipped pane kill — would kill current session)');
     }

@@ -334,7 +334,8 @@ function attachToWindow(sessionName: string, windowName: string): void {
   console.log('Attaching...');
   const target = `${sessionName}:${windowName}`;
   const cmd = process.env.TMUX ? 'switch-client' : 'attach';
-  spawnSync('tmux', [cmd, '-t', target], { stdio: 'inherit' });
+  const { genieTmuxPrefix } = require('../lib/tmux-wrapper.js');
+  spawnSync('tmux', [...genieTmuxPrefix(), cmd, '-t', target], { stdio: 'inherit' });
 }
 
 export async function sessionCommand(options: SessionOptions = {}): Promise<void> {
