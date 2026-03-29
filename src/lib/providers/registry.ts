@@ -7,6 +7,7 @@
 
 import type { ExecutorProvider } from '../executor-types.js';
 import type { ProviderName } from '../provider-adapters.js';
+import { AppPtyProvider } from './app-pty.js';
 import { ClaudeCodeProvider } from './claude-code.js';
 import { CodexProvider } from './codex.js';
 
@@ -41,6 +42,8 @@ export function listProviders(): ExecutorProvider[] {
 
 const claude = new ClaudeCodeProvider();
 const codex = new CodexProvider();
+const appPty = new AppPtyProvider();
 
 providers.set('claude', claude);
 providers.set('codex', codex);
+providers.set('app-pty', appPty);

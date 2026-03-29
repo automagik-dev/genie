@@ -17,7 +17,7 @@ import { z } from 'zod';
 // Types
 // ============================================================================
 
-export type ProviderName = 'claude' | 'codex';
+export type ProviderName = 'claude' | 'codex' | 'app-pty';
 
 /** Colors available for Claude Code native teammate UI. */
 export type ClaudeTeamColor = 'blue' | 'green' | 'yellow' | 'red' | 'cyan' | 'orange' | 'purple' | 'pink';
