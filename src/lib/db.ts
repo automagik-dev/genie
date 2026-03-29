@@ -402,7 +402,7 @@ export async function getConnection() {
     database: DB_NAME,
     username: 'postgres',
     password: 'postgres',
-    max: 10,
+    max: 50,
     idle_timeout: 1,
     connect_timeout: 5,
     onnotice: () => {},
