@@ -38,6 +38,8 @@ interface TaskInput {
   releaseId?: string;
   boardId?: string;
   columnId?: string;
+  externalId?: string;
+  externalUrl?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -80,6 +82,8 @@ export interface TaskRow {
   traceId: string | null;
   boardId: string | null;
   columnId: string | null;
+  externalId: string | null;
+  externalUrl: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -98,6 +102,7 @@ export interface TaskFilters {
   boardId?: string;
   boardName?: string;
   dueBefore?: string;
+  externalId?: string;
   limit?: number;
   offset?: number;
 }
@@ -256,6 +261,8 @@ function mapTask(row: Record<string, unknown>): TaskRow {
     traceId: str(row.trace_id),
     boardId: str(row.board_id),
     columnId: str(row.column_id),
+    externalId: str(row.external_id),
+    externalUrl: str(row.external_url),
     metadata: (row.metadata as Record<string, unknown>) ?? {},
     createdAt: strOrDefault(row.created_at, ''),
     updatedAt: strOrDefault(row.updated_at, ''),
@@ -534,6 +541,8 @@ function buildTaskVals(input: TaskInput) {
     release: input.releaseId ?? null,
     boardId: input.boardId ?? null,
     columnId: (input.columnId as string | null) ?? null,
+    externalId: input.externalId ?? null,
+    externalUrl: input.externalUrl ?? null,
   };
 }
 
@@ -556,7 +565,8 @@ export async function createTask(input: TaskInput, repoPath?: string, projectId?
       type_id, stage, status, priority,
       parent_id, wish_file, group_name,
       start_date, due_date, estimated_effort,
-      blocked_reason, release_id, board_id, column_id, metadata
+      blocked_reason, release_id, board_id, column_id,
+      external_id, external_url, metadata
     ) VALUES (
       ${repo},
       ${projId},
@@ -577,6 +587,8 @@ export async function createTask(input: TaskInput, repoPath?: string, projectId?
       ${vals.release},
       ${vals.boardId},
       ${vals.columnId},
+      ${vals.externalId},
+      ${vals.externalUrl},
       ${sql.json(input.metadata ?? {})}
     )
     RETURNING *
@@ -642,6 +654,10 @@ function buildFieldConditions(filters: TaskFilters, conditions: string[], values
     conditions.push(`board_id IN (SELECT id FROM boards WHERE name = $${paramIdx++})`);
     values.push(filters.boardName);
   }
+  if (filters.externalId) {
+    conditions.push(`external_id = $${paramIdx++}`);
+    values.push(filters.externalId);
+  }
   if (filters.dueBefore) {
     conditions.push(`due_date <= $${paramIdx++}`);
     values.push(new Date(filters.dueBefore));
@@ -697,6 +713,8 @@ export async function updateTask(
     estimatedEffort: ['estimated_effort', updates.estimatedEffort],
     blockedReason: ['blocked_reason', updates.blockedReason],
     releaseId: ['release_id', updates.releaseId],
+    externalId: ['external_id', updates.externalId],
+    externalUrl: ['external_url', updates.externalUrl],
   };
 
   for (const [key, [col, val]] of Object.entries(fieldMap)) {
@@ -731,6 +749,15 @@ export async function updateTask(
   }
 
   return mapTask(rows[0]);
+}
+
+export async function linkTask(
+  idOrSeq: string,
+  externalId: string,
+  externalUrl: string,
+  repoPath?: string,
+): Promise<TaskRow | null> {
+  return updateTask(idOrSeq, { externalId, externalUrl }, repoPath);
 }
 
 export async function moveTask(
