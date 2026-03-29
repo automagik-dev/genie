@@ -25,6 +25,7 @@ export interface RuntimeEvent {
   data?: Record<string, unknown>;
   source: RuntimeEventSource;
   subject?: string;
+  threadId?: string;
 }
 
 export interface RuntimeEventInput {
@@ -39,6 +40,7 @@ export interface RuntimeEventInput {
   peer?: string;
   data?: Record<string, unknown>;
   subject?: string;
+  threadId?: string;
 }
 
 interface RuntimeEventQuery {
@@ -48,6 +50,7 @@ interface RuntimeEventQuery {
   team?: string;
   teamPrefix?: string;
   subject?: string;
+  threadId?: string;
   kinds?: RuntimeEventKind[];
   since?: string;
   limit?: number;
@@ -77,6 +80,7 @@ interface RuntimeEventRow {
   peer: string | null;
   text: string;
   data: Record<string, unknown> | null;
+  thread_id: string | null;
   created_at: Date | string;
 }
 
@@ -94,6 +98,7 @@ function rowToRuntimeEvent(row: RuntimeEventRow): RuntimeEvent {
     data: row.data ?? undefined,
     source: row.source,
     subject: row.subject ?? undefined,
+    threadId: row.thread_id ?? undefined,
   };
 }
 
@@ -140,6 +145,9 @@ function buildWhere(query: RuntimeEventQuery): { clause: string; values: unknown
   if (query.since) {
     clauses.push(`created_at >= ${nextParam(values, query.since)}`);
   }
+  if (query.threadId) {
+    clauses.push(`thread_id = ${nextParam(values, query.threadId)}`);
+  }
 
   const scopeClause = buildScopeClause(query, values);
   if (scopeClause) clauses.push(scopeClause);
@@ -152,9 +160,10 @@ function buildWhere(query: RuntimeEventQuery): { clause: string; values: unknown
 
 export async function publishRuntimeEvent(input: RuntimeEventInput): Promise<RuntimeEvent> {
   const sql = await getConnection();
+  const threadId = input.threadId ?? `agent:${input.agent}`;
   const rows = await sql<RuntimeEventRow[]>`
     INSERT INTO genie_runtime_events (
-      repo_path, subject, kind, source, agent, team, direction, peer, text, data, created_at
+      repo_path, subject, kind, source, agent, team, direction, peer, text, data, thread_id, created_at
     )
     VALUES (
       ${input.repoPath},
@@ -167,9 +176,10 @@ export async function publishRuntimeEvent(input: RuntimeEventInput): Promise<Run
       ${input.peer ?? null},
       ${input.text},
       ${sql.json(input.data ?? {})},
+      ${threadId},
       ${input.timestamp ?? new Date().toISOString()}
     )
-    RETURNING id, repo_path, subject, kind, source, agent, team, direction, peer, text, data, created_at
+    RETURNING id, repo_path, subject, kind, source, agent, team, direction, peer, text, data, thread_id, created_at
   `;
 
   return rowToRuntimeEvent(rows[0]);
@@ -189,7 +199,7 @@ export async function listRuntimeEvents(query: RuntimeEventQuery = {}): Promise<
   const limit = query.limit ?? 500;
   const rows = (await sql.unsafe(
     `
-      SELECT id, repo_path, subject, kind, source, agent, team, direction, peer, text, data, created_at
+      SELECT id, repo_path, subject, kind, source, agent, team, direction, peer, text, data, thread_id, created_at
       FROM genie_runtime_events
       ${clause}
       ORDER BY id ASC

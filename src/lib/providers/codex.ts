@@ -79,6 +79,16 @@ export class CodexProvider implements ExecutorProvider {
   }
 
   // buildResumeCommand is intentionally undefined — Codex cannot resume.
+
+  /**
+   * Deliver a message to a running executor.
+   *
+   * Codex has no native inbox — this is a no-op.
+   * PG mailbox write happens separately in event-router (always).
+   */
+  async deliverMessage(_executorId: string, _message: { text: string; traceId: string }): Promise<void> {
+    // No-op — Codex has no native inbox mechanism
+  }
 }
 
 // ============================================================================

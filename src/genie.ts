@@ -42,6 +42,7 @@ import {
 } from './term-commands/agents.js';
 import { registerEventsCommands } from './term-commands/audit-events.js';
 import { registerBoardCommands } from './term-commands/board.js';
+import { registerBriefCommands } from './term-commands/brief.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
 import { registerAgentNamespace, registerDirNamespace } from './term-commands/dir.js';
@@ -200,6 +201,7 @@ registerMetricsCommands(program);
 registerExportCommands(program);
 registerImportCommands(program);
 registerTemplateCommands(program);
+registerBriefCommands(program);
 
 // Item registry commands — install, publish (top-level), item uninstall/update (namespaced)
 registerInstallCommand(program);

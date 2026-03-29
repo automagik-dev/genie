@@ -131,6 +131,40 @@ export class ClaudeCodeProvider implements ExecutorProvider {
     const params = resumeContextToParams(ctx);
     return buildClaudeCommand(params);
   }
+
+  /**
+   * Deliver a message to a running executor via Claude Code's native inbox.
+   *
+   * Looks up the executor's team and agent name, then writes to
+   * ~/.claude/teams/<team>/inboxes/<agent>.json.
+   */
+  async deliverMessage(executorId: string, message: { text: string; traceId: string }): Promise<void> {
+    const { getConnection } = await import('../db.js');
+    const sql = await getConnection();
+
+    // Look up executor's agent team + name
+    const rows = await sql`
+      SELECT a.custom_name, a.team
+      FROM executors e
+      JOIN agents a ON e.agent_id = a.id
+      WHERE e.id = ${executorId}
+      LIMIT 1
+    `;
+    if (rows.length === 0) return;
+
+    const { custom_name: agentName, team: teamName } = rows[0];
+    if (!agentName || !teamName) return;
+
+    const { writeNativeInbox } = await import('../claude-native-teams.js');
+    await writeNativeInbox(teamName, agentName, {
+      from: 'system',
+      text: message.text,
+      summary: message.text.slice(0, 120),
+      timestamp: new Date().toISOString(),
+      color: 'red',
+      read: false,
+    });
+  }
 }
 
 // ============================================================================
