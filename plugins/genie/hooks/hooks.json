@@ -1,5 +1,5 @@
 {
-  "description": "Genie plugin hooks — setup, onboarding, dispatch, wish validation, and completion awareness",
+  "description": "Genie plugin hooks — all PreToolUse/PostToolUse/Stop events route through centralized genie hook dispatch. SessionStart scripts run directly (bootstrap).",
   "hooks": {
     "SessionStart": [
       {
@@ -25,7 +25,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "SendMessage",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
@@ -33,24 +33,16 @@
             "timeout": 15
           }
         ]
-      },
+      }
+    ],
+    "PostToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-guard.cjs",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-wish.cjs",
-            "timeout": 5
+            "command": "genie hook dispatch",
+            "timeout": 15
           }
         ]
       }
@@ -61,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-completion.cjs",
+            "command": "genie hook dispatch",
             "timeout": 10
           }
         ]
