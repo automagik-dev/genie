@@ -59,6 +59,7 @@ function buildHooksConfig(): HooksConfig {
   for (const event of DISPATCHED_EVENTS) {
     hooks[event] = [
       {
+        matcher: '*',
         hooks: [
           {
             type: 'command',
