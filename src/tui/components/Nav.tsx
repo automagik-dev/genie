@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-/** Navigation panel with 3 tabs: Projects | tmux | Executors — arrow keys navigate, left/right switch tabs */
+/** Navigation panel with 2 tabs: Sessions | Executors — arrow keys navigate, left/right switch tabs */
 
 import { useKeyboard } from '@opentui/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -20,7 +20,7 @@ interface NavProps {
 }
 
 export function Nav({ tree, onTreeChange, onProjectSelect, onTmuxSessionSelect }: NavProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('projects');
+  const [activeTab, setActiveTab] = useState<TabId>('tmux');
   const [tabBarFocused, setTabBarFocused] = useState(false);
   const [diagnostics, setDiagnostics] = useState<DiagnosticSnapshot | null>(null);
 
