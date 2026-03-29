@@ -33,6 +33,14 @@ export async function kanban_board(params: { boardId: string }) {
   return pgBridge.kanbanBoard(params.boardId);
 }
 
+export async function list_boards() {
+  return pgBridge.listBoards();
+}
+
+export async function move_task(params: { taskId: string; columnName: string }) {
+  return { ok: await pgBridge.moveTask(params.taskId, params.columnName) };
+}
+
 // ============================================================================
 // Team Commands
 // ============================================================================
@@ -129,6 +137,8 @@ export const commands: Record<string, (params: never) => unknown> = {
   show_agent,
   list_tasks,
   kanban_board,
+  list_boards,
+  move_task,
   list_teams,
   dashboard_stats,
   stream_events,
