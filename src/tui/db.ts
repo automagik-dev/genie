@@ -74,3 +74,31 @@ function mapAssignment(row: Record<string, unknown>): TuiAssignment {
     startedAt: row.started_at instanceof Date ? row.started_at.toISOString() : String(row.started_at),
   };
 }
+
+/** Dashboard team summary — name, status, wish, member count. */
+export interface DashboardTeamRow {
+  name: string;
+  status: string;
+  wishSlug: string | null;
+  memberCount: number;
+}
+
+/** Load team summaries for the dashboard. */
+export async function loadTeams(): Promise<DashboardTeamRow[]> {
+  const { getConnection } = await import('../lib/db.js');
+  const sql = await getConnection();
+
+  const rows = await sql`
+    SELECT t.name, t.status, t.wish_slug,
+           COALESCE(jsonb_array_length(t.members), 0) AS member_count
+    FROM teams t
+    ORDER BY t.status ASC, t.name ASC
+  `;
+
+  return rows.map((row: Record<string, unknown>) => ({
+    name: String(row.name),
+    status: String(row.status),
+    wishSlug: row.wish_slug ? String(row.wish_slug) : null,
+    memberCount: Number(row.member_count),
+  }));
+}
