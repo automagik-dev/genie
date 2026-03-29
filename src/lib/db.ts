@@ -44,6 +44,11 @@ function selfHealPostgres(dataDir: string): void {
       stdio: 'ignore',
       timeout: 5000,
     });
+    // Also kill stale pgserve router/wrapper processes on the same data dir
+    execSync(`pkill -9 -f "pgserve.*${dataDir.replace(/\//g, '\\/')}" 2>/dev/null || true`, {
+      stdio: 'ignore',
+      timeout: 5000,
+    });
   } catch {
     // Best effort
   }

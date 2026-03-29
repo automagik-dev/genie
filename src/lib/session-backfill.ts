@@ -30,7 +30,7 @@ interface BackfillProgress {
   totalBytes: number;
   processedBytes: number;
   errors: number;
-  status: 'pending' | 'running' | 'paused' | 'complete';
+  status: 'pending' | 'running' | 'paused' | 'complete' | 'failed';
 }
 
 async function updateSyncState(sql: SqlClient, progress: BackfillProgress): Promise<void> {
@@ -61,6 +61,7 @@ export async function startBackfill(sql: SqlClient): Promise<void> {
   try {
     const existing = await sql`SELECT status FROM session_sync WHERE id = 'backfill'`;
     if (existing.length > 0 && existing[0].status === 'complete') return;
+    // 'failed' status = retry on next start (reset to running)
   } catch {
     // table may not exist yet
   }
@@ -160,15 +161,20 @@ export async function startBackfill(sql: SqlClient): Promise<void> {
       await sleep(SLEEP_BETWEEN_FILES_MS);
     }
 
-    if (running) {
-      progress.status = 'complete';
-      console.log(
-        `[backfill] complete: ${progress.processedFiles}/${progress.totalFiles} files, ${progress.errors} errors`,
-      );
-    } else {
+    if (!running) {
       progress.status = 'paused';
       console.log(
         `[backfill] paused: ${progress.processedFiles}/${progress.totalFiles} files (will resume on next daemon start)`,
+      );
+    } else if (progress.errors > 0 && progress.errors >= progress.totalFiles) {
+      progress.status = 'failed';
+      console.error(
+        `[backfill] failed: ${progress.errors}/${progress.totalFiles} files errored — will retry on next daemon start`,
+      );
+    } else {
+      progress.status = 'complete';
+      console.log(
+        `[backfill] complete: ${progress.processedFiles}/${progress.totalFiles} files, ${progress.errors} errors`,
       );
     }
     await updateSyncState(sql, progress);
