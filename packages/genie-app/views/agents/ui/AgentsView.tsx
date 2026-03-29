@@ -449,6 +449,31 @@ export function AgentsView({ windowId }: AgentsViewProps) {
   const teams = groupByTeam(agents);
   const onlineCount = agents.filter((a) => ['working', 'idle', 'running', 'spawning'].includes(a.state)).length;
 
+  // j/k keyboard navigation
+  const navigateAgent = useCallback(
+    (direction: 1 | -1) => {
+      if (agents.length === 0) return;
+      const idx = selectedId ? agents.findIndex((a) => a.id === selectedId) : -1;
+      const next = direction === 1 ? (idx >= agents.length - 1 ? 0 : idx + 1) : idx <= 0 ? agents.length - 1 : idx - 1;
+      setSelectedId(agents[next].id);
+    },
+    [agents, selectedId],
+  );
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        navigateAgent(1);
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        navigateAgent(-1);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navigateAgent]);
+
   if (state === 'loading') {
     return (
       <div data-window-id={windowId} style={{ ...styles.root, ...styles.loadingBox }}>
