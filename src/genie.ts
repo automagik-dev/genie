@@ -312,70 +312,42 @@ program
 
 function errorRedirect(oldCmd: string, newCmd: string): () => void {
   return () => {
-    const args = process.argv.slice(3).join(' ');
+    // Reconstruct all args after the old command name (positional + flags)
+    const cmdIdx = process.argv.indexOf(oldCmd);
+    const args = cmdIdx >= 0 ? process.argv.slice(cmdIdx + 1).join(' ') : process.argv.slice(3).join(' ');
     const suggestion = args ? `${newCmd} ${args}` : newCmd;
-    console.error(`Command "${oldCmd}" has moved. Did you mean: genie ${suggestion}?`);
+    console.error(`Command "${oldCmd}" has moved. Run:\n\n  genie ${suggestion}\n`);
     process.exit(1);
   };
 }
 
-program
-  .command('spawn [args...]')
-  .description('(moved) → genie agent spawn')
-  .action(errorRedirect('spawn', 'agent spawn'));
-program.command('kill [args...]').description('(moved) → genie agent kill').action(errorRedirect('kill', 'agent kill'));
-program.command('stop [args...]').description('(moved) → genie agent stop').action(errorRedirect('stop', 'agent stop'));
-program
-  .command('resume [args...]')
-  .description('(moved) → genie agent resume')
-  .action(errorRedirect('resume', 'agent resume'));
-program.command('ls').description('(moved) → genie agent list').action(errorRedirect('ls', 'agent list'));
-program
-  .command('read [args...]')
-  .description('(moved) → genie agent log --raw')
-  .action(errorRedirect('read', 'agent log --raw'));
-program
-  .command('history [args...]')
-  .description('(moved) → genie agent log --transcript')
-  .action(errorRedirect('history', 'agent log --transcript'));
-program.command('log [args...]').description('(moved) → genie agent log').action(errorRedirect('log', 'agent log'));
-program
-  .command('status [args...]')
-  .description('(moved) → genie task status')
-  .action(errorRedirect('status', 'task status'));
-program.command('done [args...]').description('(moved) → genie task done').action(errorRedirect('done', 'task done'));
-program
-  .command('reset [args...]')
-  .description('(moved) → genie task reset')
-  .action(errorRedirect('reset', 'task reset'));
-program.command('send [args...]').description('(moved) → genie agent send').action(errorRedirect('send', 'agent send'));
-program
-  .command('broadcast [args...]')
-  .description('(moved) → genie agent send --broadcast')
-  .action(errorRedirect('broadcast', 'agent send --broadcast'));
-program
-  .command('answer [args...]')
-  .description('(moved) → genie agent answer')
-  .action(errorRedirect('answer', 'agent answer'));
-program
-  .command('inbox [args...]')
-  .description('(moved) → genie agent inbox')
-  .action(errorRedirect('inbox', 'agent inbox'));
-program
-  .command('chat [args...]')
-  .description('(moved) → genie agent log --conversations')
-  .action(errorRedirect('chat', 'agent log --conversations'));
-program
-  .command('brief [args...]')
-  .description('(moved) → genie agent brief')
-  .action(errorRedirect('brief', 'agent brief'));
-program
-  .command('dir [args...]')
-  .description('(moved) → genie agent directory / genie agent register')
-  .action(errorRedirect('dir', 'agent directory'));
+/** Helper: create a redirect stub that swallows unknown options so Commander doesn't choke on --flags. */
+function redirect(cmd: string, desc: string, newCmd: string) {
+  return program.command(`${cmd} [args...]`).description(desc).allowUnknownOption().action(errorRedirect(cmd, newCmd));
+}
+
+redirect('spawn', '(moved) → genie agent spawn', 'agent spawn');
+redirect('kill', '(moved) → genie agent kill', 'agent kill');
+redirect('stop', '(moved) → genie agent stop', 'agent stop');
+redirect('resume', '(moved) → genie agent resume', 'agent resume');
+redirect('ls', '(moved) → genie agent list', 'agent list');
+redirect('read', '(moved) → genie agent log --raw', 'agent log --raw');
+redirect('history', '(moved) → genie agent log --transcript', 'agent log --transcript');
+redirect('log', '(moved) → genie agent log', 'agent log');
+redirect('status', '(moved) → genie task status', 'task status');
+redirect('done', '(moved) → genie task done', 'task done');
+redirect('reset', '(moved) → genie task reset', 'task reset');
+redirect('send', '(moved) → genie agent send', 'agent send');
+redirect('broadcast', '(moved) → genie agent send --broadcast', 'agent send --broadcast');
+redirect('answer', '(moved) → genie agent answer', 'agent answer');
+redirect('inbox', '(moved) → genie agent inbox', 'agent inbox');
+redirect('chat', '(moved) → genie agent log --conversations', 'agent log --conversations');
+redirect('brief', '(moved) → genie agent brief', 'agent brief');
+redirect('dir', '(moved) → genie agent directory', 'agent directory');
 program
   .command('show [args...]')
   .description('(moved) → genie task show / genie agent show')
+  .allowUnknownOption()
   .action(errorRedirect('show', 'agent show'));
 
 // ============================================================================
