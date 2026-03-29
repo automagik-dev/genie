@@ -39,6 +39,7 @@ import {
   getTaskActors,
   getTaskTags,
   getType,
+  linkTask,
   listConversations,
   listProjects,
   listReleases,
@@ -1097,6 +1098,73 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       // Cleanup
       await sql`DELETE FROM tasks WHERE repo_path = ${autoRepo}`;
       await sql`DELETE FROM projects WHERE repo_path = ${autoRepo}`;
+    });
+  });
+
+  // ============================================================================
+  // External Linking
+  // ============================================================================
+
+  describe('External Linking', () => {
+    it('should create a task with external_id and external_url', async () => {
+      const task = await createTask(
+        {
+          title: 'Linked task',
+          externalId: 'automagik-dev/genie#789',
+          externalUrl: 'https://github.com/automagik-dev/genie/issues/789',
+        },
+        REPO,
+      );
+      expect(task.externalId).toBe('automagik-dev/genie#789');
+      expect(task.externalUrl).toBe('https://github.com/automagik-dev/genie/issues/789');
+    });
+
+    it('should create a task without external fields (null by default)', async () => {
+      const task = await createTask({ title: 'No link task' }, REPO);
+      expect(task.externalId).toBeNull();
+      expect(task.externalUrl).toBeNull();
+    });
+
+    it('should link an existing task via linkTask()', async () => {
+      const task = await createTask({ title: 'To be linked' }, REPO);
+      expect(task.externalId).toBeNull();
+
+      const updated = await linkTask(task.id, 'JIRA-456', 'https://jira.example.com/JIRA-456', REPO);
+      expect(updated).not.toBeNull();
+      expect(updated!.externalId).toBe('JIRA-456');
+      expect(updated!.externalUrl).toBe('https://jira.example.com/JIRA-456');
+    });
+
+    it('should update external fields via updateTask()', async () => {
+      const task = await createTask(
+        { title: 'Update link', externalId: 'old#1', externalUrl: 'https://old.com/1' },
+        REPO,
+      );
+      const updated = await updateTask(task.id, { externalId: 'new#2', externalUrl: 'https://new.com/2' }, REPO);
+      expect(updated).not.toBeNull();
+      expect(updated!.externalId).toBe('new#2');
+      expect(updated!.externalUrl).toBe('https://new.com/2');
+    });
+
+    it('should filter tasks by externalId', async () => {
+      const extId = `filter-test-${Date.now()}`;
+      await createTask({ title: 'Filtered task', externalId: extId, externalUrl: 'https://example.com' }, REPO);
+      await createTask({ title: 'Other task' }, REPO);
+
+      const filtered = await listTasks({ repoPath: REPO, externalId: extId });
+      expect(filtered.length).toBe(1);
+      expect(filtered[0].externalId).toBe(extId);
+    });
+
+    it('should show external fields in getTask()', async () => {
+      const task = await createTask(
+        { title: 'Detail check', externalId: 'detail#99', externalUrl: 'https://detail.com/99' },
+        REPO,
+      );
+      const fetched = await getTask(task.id, REPO);
+      expect(fetched).not.toBeNull();
+      expect(fetched!.externalId).toBe('detail#99');
+      expect(fetched!.externalUrl).toBe('https://detail.com/99');
     });
   });
 });
