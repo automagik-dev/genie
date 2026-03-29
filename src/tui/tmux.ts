@@ -128,7 +128,7 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
 function setupKeybindings(session: string): void {
   try {
     // Define bindings in the genie-tui key table (session-scoped, not global)
-    execSync(`tmux bind-key -T ${KEY_TABLE} Tab select-pane -t :.+ \\; switch-client -T ${KEY_TABLE}`, {
+    execSync(`tmux bind-key -T ${KEY_TABLE} Tab select-pane -t ${session}:0.1 \\; switch-client -T ${KEY_TABLE}`, {
       stdio: 'ignore',
     });
 
