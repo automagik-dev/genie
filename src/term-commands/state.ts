@@ -218,7 +218,8 @@ function autoKillPane(): void {
     // Small delay to ensure all output is flushed before killing the pane
     setTimeout(() => {
       try {
-        execSync(`tmux kill-pane -t '${paneId}'`, { encoding: 'utf-8' });
+        const { genieTmuxCmd } = require('../lib/tmux-wrapper.js');
+        execSync(genieTmuxCmd(`kill-pane -t '${paneId}'`), { encoding: 'utf-8' });
       } catch {
         // Pane already dead or not in tmux
         process.exit(0);

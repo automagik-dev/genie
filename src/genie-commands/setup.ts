@@ -422,6 +422,34 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   // Save and show summary
   await showSummaryAndSave(config);
 
+  // Install genie tmux config
+  installGenieTmuxConf();
+
   // Print next steps
   printNextSteps();
+}
+
+/** Copy shipped genie.tmux.conf to ~/.genie/tmux.conf if it doesn't exist yet. */
+function installGenieTmuxConf(): void {
+  const { existsSync, copyFileSync, mkdirSync } = require('node:fs') as typeof import('node:fs');
+  const { resolve } = require('node:path') as typeof import('node:path');
+  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+  const dest = join(genieHome, 'tmux.conf');
+  if (existsSync(dest)) return; // already installed
+
+  // Resolve shipped config relative to package root
+  const candidates = [
+    resolve(__dirname, '..', '..', 'scripts', 'tmux', 'genie.tmux.conf'),
+    resolve(__dirname, '..', 'scripts', 'tmux', 'genie.tmux.conf'),
+  ];
+  const src = candidates.find((p) => existsSync(p));
+  if (!src) return;
+
+  try {
+    mkdirSync(genieHome, { recursive: true });
+    copyFileSync(src, dest);
+    console.log(`\x1b[32m\u2713\x1b[0m Installed genie tmux config to ${dest}`);
+  } catch {
+    // non-fatal
+  }
 }

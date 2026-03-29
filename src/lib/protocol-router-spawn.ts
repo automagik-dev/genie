@@ -26,6 +26,7 @@ import {
 } from './provider-adapters.js';
 import { getProvider } from './providers/registry.js';
 import * as teamManager from './team-manager.js';
+import { genieTmuxCmd } from './tmux-wrapper.js';
 import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows } from './tmux.js';
 import * as wishState from './wish-state.js';
 
@@ -118,7 +119,7 @@ async function createExecutorForAutoSpawn(
   // Capture PID from tmux pane
   let pid: number | null = null;
   try {
-    const { stdout: pidOut } = await execAsync(`tmux display -t '${paneId}' -p '#{pane_pid}'`);
+    const { stdout: pidOut } = await execAsync(genieTmuxCmd(`display -t '${paneId}' -p '#{pane_pid}'`));
     const parsed = Number.parseInt(pidOut.trim(), 10);
     if (parsed > 0) pid = parsed;
   } catch {
@@ -157,7 +158,7 @@ async function spawnPaneInSession(
   const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
   // Wrap fullCommand in shell quotes so it survives the outer-shell → tmux → inner-shell pipeline.
   const escapedCmd = fullCommand.replace(/'/g, "'\\''");
-  const { stdout } = await execAsync(`tmux split-window -d ${splitTarget} -P -F '#{pane_id}' '${escapedCmd}'`);
+  const { stdout } = await execAsync(genieTmuxCmd(`split-window -d ${splitTarget} -P -F '#{pane_id}' '${escapedCmd}'`));
   const paneId = stdout.trim();
 
   let layoutTarget = `${session}:${teamWindow?.windowName ?? ''}`;
@@ -166,7 +167,7 @@ async function spawnPaneInSession(
     layoutTarget = wins[0] ? wins[0].id : `${session}:`;
   }
   try {
-    await execAsync(`tmux ${buildLayoutCommand(layoutTarget, resolveLayoutMode())}`);
+    await execAsync(genieTmuxCmd(buildLayoutCommand(layoutTarget, resolveLayoutMode())));
   } catch {
     /* best-effort */
   }

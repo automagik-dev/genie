@@ -208,7 +208,8 @@ async function defaultPublishEvent(subject: string, data: unknown, repoPath: str
 async function defaultCountTmuxSessions(): Promise<number> {
   try {
     const { execSync } = await import('node:child_process');
-    const output = execSync('tmux list-sessions 2>/dev/null', { encoding: 'utf-8' });
+    const { genieTmuxCmd } = await import('./tmux-wrapper.js');
+    const output = execSync(`${genieTmuxCmd('list-sessions')} 2>/dev/null`, { encoding: 'utf-8' });
     return output.trim().split('\n').filter(Boolean).length;
   } catch {
     return 0;

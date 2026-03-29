@@ -405,26 +405,22 @@ function updatePluginRegistry(claudePlugins: string, cacheDir: string, version: 
   }
 }
 
-const GENIE_TMUX_HEADER = '# Genie TUI — tmux configuration';
-
-/** If ~/.tmux.conf was installed by genie, overwrite it and reload tmux. */
+/** Install genie.tmux.conf to ~/.genie/tmux.conf and reload the genie tmux server. */
 function syncTmuxConf(tmuxScriptsSrc: string): void {
   const tmuxConfSrc = join(tmuxScriptsSrc, 'genie.tmux.conf');
-  const tmuxConfDest = join(homedir(), '.tmux.conf');
-  if (!existsSync(tmuxConfSrc) || !existsSync(tmuxConfDest)) return;
+  const tmuxConfDest = join(GENIE_HOME, 'tmux.conf');
+  if (!existsSync(tmuxConfSrc)) return;
 
   try {
-    const existing = readFileSync(tmuxConfDest, 'utf-8');
-    if (!existing.includes(GENIE_TMUX_HEADER)) return;
-
+    mkdirSync(GENIE_HOME, { recursive: true });
     copyFileSync(tmuxConfSrc, tmuxConfDest);
-    success('Updated ~/.tmux.conf (genie-managed)');
+    success(`Installed tmux config to ${tmuxConfDest}`);
 
     try {
-      execSync('tmux source-file ~/.tmux.conf', { stdio: 'ignore' });
-      success('Reloaded tmux configuration');
+      execSync(`tmux -L genie source-file '${tmuxConfDest}'`, { stdio: 'ignore' });
+      success('Reloaded genie tmux server configuration');
     } catch {
-      // tmux not running or reload failed — non-fatal
+      // genie tmux server not running or reload failed — non-fatal
     }
   } catch {
     // Read/write failed — non-fatal
