@@ -10,7 +10,6 @@
  *   5. Team roster with executor states
  */
 
-import { type AgentRequest, getPendingRequests } from './agent-requests.js';
 import { getConnection } from './db.js';
 import { type MailboxMessage, getUnread } from './mailbox.js';
 import { type RuntimeEvent, listRuntimeEvents } from './runtime-events.js';
@@ -41,7 +40,7 @@ export interface Brief {
   unreadMessages: MailboxMessage[];
   taskMessages: TaskConversationMessage[];
   recentEvents: RuntimeEvent[];
-  pendingRequests: AgentRequest[];
+  pendingRequests: PendingRequest[];
   teamRoster: TeamMemberStatus[];
 }
 
@@ -49,6 +48,14 @@ interface TaskConversationMessage {
   taskId: string;
   taskTitle: string;
   senderType: string;
+  senderId: string;
+  body: string;
+  createdAt: string;
+}
+
+interface PendingRequest {
+  id: string;
+  requestType: string;
   senderId: string;
   body: string;
   createdAt: string;
@@ -133,6 +140,31 @@ async function getTeamRoster(teamName: string): Promise<TeamMemberStatus[]> {
   }));
 }
 
+/** Get pending request messages from the messages table (replaces agent_requests query). */
+async function getPendingRequestMessages(team: string): Promise<PendingRequest[]> {
+  const sql = await getConnection();
+  const rows = await sql`
+    SELECT m.id, m.request_type, m.sender_id, m.body, m.created_at
+    FROM messages m
+    JOIN conversations c ON m.conversation_id = c.id
+    JOIN tasks t ON c.linked_entity_id = t.id
+    WHERE c.linked_entity = 'task'
+      AND t.team_name = ${team}
+      AND m.request_type IS NOT NULL
+      AND m.request_status = 'pending'
+    ORDER BY m.created_at DESC
+    LIMIT 100
+  `;
+
+  return rows.map((r: Record<string, unknown>) => ({
+    id: r.id as string,
+    requestType: r.request_type as string,
+    senderId: r.sender_id as string,
+    body: r.body as string,
+    createdAt: r.created_at instanceof Date ? (r.created_at as Date).toISOString() : String(r.created_at),
+  }));
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -158,8 +190,8 @@ export async function generateBrief(options: BriefOptions): Promise<Brief> {
     // 3. Runtime events since last executor ended
     listRuntimeEvents({ team: options.team, since, limit: 100 }),
 
-    // 4. Pending agent requests for the team
-    getPendingRequests(options.team),
+    // 4. Pending requests (messages with request_type and status=pending)
+    getPendingRequestMessages(options.team),
 
     // 5. Team roster with executor states
     getTeamRoster(options.team),
@@ -210,11 +242,11 @@ function formatTaskMessagesSection(messages: TaskConversationMessage[]): string[
   return lines;
 }
 
-function formatRequestsSection(requests: AgentRequest[]): string[] {
+function formatRequestsSection(requests: PendingRequest[]): string[] {
   if (requests.length === 0) return [];
   const lines = [`## Pending Requests (${requests.length})`];
   for (const req of requests) {
-    lines.push(`- [${req.type}] ${req.agentId}: ${truncate(JSON.stringify(req.payload), 80)}`);
+    lines.push(`- [${req.requestType}] ${req.senderId}: ${truncate(req.body, 80)}`);
   }
   lines.push('');
   return lines;

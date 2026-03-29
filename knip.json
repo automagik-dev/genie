@@ -8,7 +8,6 @@
     "src/lib/assignment-registry.ts",
     "src/lib/providers/*.ts",
     "src/lib/task-close-merged.ts",
-    "src/lib/agent-requests.ts",
     "src/lib/event-router.ts",
     "src/lib/brief.ts",
     "src/lib/task-service.ts",

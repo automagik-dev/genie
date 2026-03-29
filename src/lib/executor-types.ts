@@ -308,4 +308,7 @@ export interface ExecutorProvider {
 
   /** Build the shell command to resume an existing session. Only if canResume() is true. */
   buildResumeCommand?(ctx: ResumeContext): LaunchCommand;
+
+  /** Deliver a message to a running executor's native inbox. Optional — not all providers support it. */
+  deliverMessage?(executorId: string, message: { text: string; traceId: string }): Promise<void>;
 }

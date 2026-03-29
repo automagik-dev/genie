@@ -70,7 +70,6 @@ import {
 } from './term-commands/qa.js';
 import * as readCmd from './term-commands/read.js';
 import { registerReleaseCommands } from './term-commands/release.js';
-import { registerRequestCommands } from './term-commands/request.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
 import { registerSessionsCommands } from './term-commands/sessions.js';
 import { registerStateCommands } from './term-commands/state.js';
@@ -202,7 +201,6 @@ registerMetricsCommands(program);
 registerExportCommands(program);
 registerImportCommands(program);
 registerTemplateCommands(program);
-registerRequestCommands(program);
 registerBriefCommands(program);
 
 // Item registry commands — install, publish (top-level), item uninstall/update (namespaced)
