@@ -82,24 +82,6 @@ function ensureSession(sessionName: string): void {
   }
 }
 
-/** Attach a project's tmux session in the right pane (nested) */
-export function attachProject(rightPane: string, targetSession: string): void {
-  const pane = resolveRightPane(rightPane);
-  ensureSession(targetSession);
-  try {
-    execSync(`tmux respawn-pane -k -t ${pane} "TMUX='' tmux attach-session -t '${targetSession}'"`, {
-      stdio: 'ignore',
-    });
-  } catch {
-    // pane doesn't exist
-  }
-}
-
-/** Switch right pane to a different project session */
-export function switchRightPane(rightPane: string, targetSession: string): void {
-  attachProject(rightPane, targetSession);
-}
-
 /** Switch right pane to a specific session window */
 export function attachProjectWindow(rightPane: string, targetSession: string, windowIndex?: number): void {
   const pane = resolveRightPane(rightPane);
@@ -191,21 +173,4 @@ export function cleanup(session: string = SESSION_NAME): void {
 /** Attach to the TUI session (blocking call) */
 export function attachTuiSession(): void {
   spawnSync('tmux', ['attach-session', '-t', SESSION_NAME], { stdio: 'inherit' });
-}
-
-/** List windows in a session (for activity detection) */
-export function listSessionWindows(session: string): Array<{ name: string; index: number; active: boolean }> {
-  try {
-    const output = execSync(
-      `tmux list-windows -t ${session} -F '#{window_name}:#{window_index}:#{?window_active,1,0}' 2>/dev/null`,
-      { encoding: 'utf-8' },
-    ).trim();
-    if (!output) return [];
-    return output.split('\n').map((line) => {
-      const [name, idx, active] = line.split(':');
-      return { name, index: Number.parseInt(idx, 10), active: active === '1' };
-    });
-  } catch {
-    return [];
-  }
 }

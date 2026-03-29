@@ -39,6 +39,7 @@ export const TreeNodeRow = memo(function TreeNodeRow({ node, selected, onSelect,
         <span fg={color}>{icon} </span>
         <span fg={selected ? '#ffffff' : palette.text}>{node.label}</span>
         {activeIndicator ? <span fg={palette.cyan}>{activeIndicator}</span> : null}
+        {node.agentState ? <span fg={getStateColor(node.agentState)}> {node.agentState}</span> : null}
       </text>
     </box>
   );
@@ -46,38 +47,61 @@ export const TreeNodeRow = memo(function TreeNodeRow({ node, selected, onSelect,
 
 function getNodeIcon(node: TreeNodeType): string {
   switch (node.type) {
-    case 'org':
-      return icons.org;
-    case 'project':
-      return node.expanded ? icons.projectOpen : icons.project;
-    case 'board':
-      return node.expanded ? icons.boardOpen : icons.board;
-    case 'column':
-      return icons.column;
-    case 'task':
-      if (node.activePanes > 0) return icons.taskActive;
-      if ((node.data as { status: string }).status === 'done') return icons.taskDone;
-      return icons.task;
+    case 'session':
+      return node.data.attached ? '\u25b6' : '\u25b8'; // ▶ attached, ▸ detached
+    case 'window':
+      return node.data.active ? '\u25a0' : '\u25a1'; // ■ active, □ inactive
+    case 'pane':
+      return getPaneIcon(node);
     default:
       return ' ';
   }
 }
 
+function getPaneIcon(node: TreeNodeType): string {
+  if (node.data.isDead) return '\u2718'; // ✘
+  if (node.agentState === 'working') return '\u25cf'; // ●
+  if (node.agentState === 'idle') return '\u25cb'; // ○
+  if (node.agentState === 'permission') return '\u26a0'; // ⚠
+  if (node.agentState === 'error') return '\u2718'; // ✘
+  if (node.data.command === 'claude') return '\u25c6'; // ◆
+  return '\u25cb'; // ○
+}
+
 function getNodeColor(node: TreeNodeType): string {
   switch (node.type) {
-    case 'org':
-      return palette.purple;
-    case 'project':
-      return node.activePanes > 0 ? palette.emerald : palette.textDim;
-    case 'board':
-      return palette.violet;
-    case 'column':
-      return palette.textMuted;
-    case 'task':
-      if (node.activePanes > 0) return palette.cyan;
-      if ((node.data as { status: string }).status === 'done') return palette.emerald;
-      return palette.text;
+    case 'session':
+      return node.data.attached ? palette.emerald : palette.textDim;
+    case 'window':
+      return node.data.active ? palette.cyan : palette.text;
+    case 'pane':
+      return getPaneColor(node);
     default:
       return palette.text;
+  }
+}
+
+function getPaneColor(node: TreeNodeType): string {
+  if (node.data.isDead) return palette.error;
+  if (node.agentState === 'working') return palette.cyan;
+  if (node.agentState === 'permission') return palette.warning;
+  if (node.agentState === 'error') return palette.error;
+  if (node.agentState === 'idle') return palette.textDim;
+  if (node.data.command === 'claude') return palette.cyan;
+  return palette.textDim;
+}
+
+function getStateColor(state: string): string {
+  switch (state) {
+    case 'working':
+      return palette.cyan;
+    case 'idle':
+      return palette.textDim;
+    case 'permission':
+      return palette.warning;
+    case 'error':
+      return palette.error;
+    default:
+      return palette.textMuted;
   }
 }
