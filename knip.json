@@ -13,12 +13,12 @@
     "src/lib/task-service.ts",
     "src/lib/team-manager.ts",
     "src/lib/log-reader.ts",
-    "src/term-commands/agent/index.ts",
-    "src/term-commands/task/index.ts",
-    "src/term-commands/team/index.ts",
-    "src/term-commands/exec/index.ts",
+    "src/term-commands/agent/*.ts",
+    "src/term-commands/task/*.ts",
+    "src/term-commands/team/*.ts",
+    "src/term-commands/exec/*.ts",
     "src/term-commands/brief.ts",
-    "src/tui/components/DashboardView.tsx"
+    "src/term-commands/app.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["tmux", "which"],
