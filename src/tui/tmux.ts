@@ -76,28 +76,21 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
     }
   }
   try {
-    const agentTmux = `tmux -L ${GENIE_AGENT_SOCKET}`;
-    // Check if right pane already has a nested tmux client running.
-    // If so, use switch-client to avoid creating a new PTY (which triggers
-    // garbled terminal probe sequences: tmux 3.5a^[\^[[1;1R).
-    const paneCmd = execSync(`${TMUX} display-message -t ${pane} -p '#{pane_current_command}'`, {
-      encoding: 'utf-8',
-    }).trim();
-
-    if (paneCmd === 'tmux') {
-      // Nested tmux client already running — respawn with TERM=screen to suppress probes.
-      // Don't send-keys (Ctrl-C kills agent work, TMUX='' breaks switch-client context).
-      execSync(
-        `${TMUX} respawn-pane -k -t ${pane} "TERM=screen TMUX='' ${agentTmux} attach-session -t '${targetSession}'"`,
-        { stdio: 'ignore' },
-      );
-    } else {
-      // No nested client — start fresh. Use TERM=screen to suppress probes.
-      execSync(
-        `${TMUX} respawn-pane -k -t ${pane} "TERM=screen TMUX='' ${agentTmux} attach-session -t '${targetSession}'"`,
-        { stdio: 'ignore' },
-      );
-    }
+    // Write a tiny attach script that:
+    // 1. Starts the nested tmux attach in background
+    // 2. Sleeps to let tmux finish terminal probes
+    // 3. Sends clear-screen escape to hide probe artifacts
+    // This avoids the garbled "tmux 3.5a^[\^[[1;1R" output.
+    const { writeFileSync } = require('node:fs') as typeof import('node:fs');
+    const { join } = require('node:path') as typeof import('node:path');
+    const home = process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`;
+    const script = join(home, 'tui-attach.sh');
+    writeFileSync(
+      script,
+      `#!/bin/sh\nclear\nexec tmux -L ${GENIE_AGENT_SOCKET} attach-session -t '${targetSession}'\n`,
+      { mode: 0o755 },
+    );
+    execSync(`${TMUX} respawn-pane -k -t ${pane} "TMUX='' ${script}"`, { stdio: 'ignore' });
   } catch {
     // pane doesn't exist or command failed
   }
