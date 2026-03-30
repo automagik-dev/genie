@@ -137,32 +137,22 @@ function applyTuiStyle(): void {
 
 /** Set up keybindings in a dedicated key table for TUI */
 function setupTuiKeybindings(): void {
-  try {
-    execSync(
-      tuiTmux(`bind-key -T ${KEY_TABLE} Tab select-pane -t ${TUI_SESSION}:0.1 \\; switch-client -T ${KEY_TABLE}`),
-      { stdio: 'ignore' },
-    );
-    execSync(
-      tuiTmux(
-        `bind-key -T ${KEY_TABLE} C-b if-shell "[ $(tmux -L ${TUI_SOCKET} display-message -p '#\\{pane_width\\}' -t ${TUI_SESSION}:0.0) -gt 5 ]" "resize-pane -t ${TUI_SESSION}:0.0 -x 0" "resize-pane -t ${TUI_SESSION}:0.0 -x ${NAV_WIDTH}" \\; switch-client -T ${KEY_TABLE}`,
-      ),
-      { stdio: 'ignore' },
-    );
-    execSync(
-      tuiTmux(`bind-key -T ${KEY_TABLE} C-t send-keys -t ${TUI_SESSION}:0.1 C-b c \\; switch-client -T ${KEY_TABLE}`),
-      { stdio: 'ignore' },
-    );
-    execSync(tuiTmux(`bind-key -T ${KEY_TABLE} C-q run-shell "tmux -L ${TUI_SOCKET} kill-session -t ${TUI_SESSION}"`), {
-      stdio: 'ignore',
-    });
-    execSync(
-      tuiTmux(`bind-key -T ${KEY_TABLE} 'C-\\\\' run-shell "tmux -L ${TUI_SOCKET} kill-session -t ${TUI_SESSION}"`),
-      { stdio: 'ignore' },
-    );
-    execSync(tuiTmux(`set-hook -t ${TUI_SESSION} client-session-changed "switch-client -T ${KEY_TABLE}"`), {
-      stdio: 'ignore',
-    });
-  } catch {}
+  const bindings = [
+    // Tab: toggle focus between left nav (pane 0) and right terminal (pane 1)
+    `bind-key -T ${KEY_TABLE} Tab if-shell "[ '#{pane_index}' = '0' ]" "select-pane -t ${TUI_SESSION}:0.1" "select-pane -t ${TUI_SESSION}:0.0" \\; switch-client -T ${KEY_TABLE}`,
+    // Ctrl+B: toggle sidebar width (collapse/expand)
+    `bind-key -T ${KEY_TABLE} C-b if-shell "[ $(tmux -L ${TUI_SOCKET} display-message -p '#\\{pane_width\\}' -t ${TUI_SESSION}:0.0) -gt 5 ]" "resize-pane -t ${TUI_SESSION}:0.0 -x 0" "resize-pane -t ${TUI_SESSION}:0.0 -x ${NAV_WIDTH}" \\; switch-client -T ${KEY_TABLE}`,
+    // Ctrl+Q: detach from TUI (don't kill — serve owns the session)
+    `bind-key -T ${KEY_TABLE} C-q detach-client`,
+    `bind-key -T ${KEY_TABLE} 'C-\\\\' detach-client`,
+    // Activate key table on session attach
+    `set-hook -t ${TUI_SESSION} client-session-changed "switch-client -T ${KEY_TABLE}"`,
+  ];
+  for (const cmd of bindings) {
+    try {
+      execSync(tuiTmux(cmd), { stdio: 'ignore' });
+    } catch {}
+  }
 }
 
 /**
