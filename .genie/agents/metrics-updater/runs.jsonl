@@ -11,3 +11,4 @@
 {"timestamp":"2026-03-25T00:00:00Z","duration_ms":31579683120,"api_calls":3,"tools_generated":1,"errors":0,"metrics":{"releases_24h":0,"avg_merge_time_hours":0.7,"ship_rate_pct":96,"merged_prs_7d":48}}
 {"timestamp":"2026-03-28T00:00:00Z","duration_ms":45000,"api_calls":3,"tools_generated":0,"errors":[],"metrics":{"releases_24h":0,"avg_merge_time_hours":2.9,"ship_rate_pct":94,"merged_prs_7d":47}}
 {"timestamp":"2026-03-29T00:00:00Z","duration_ms":52000,"api_calls":2,"tools_generated":0,"errors":[],"metrics":{"releases_24h":0,"avg_merge_time_hours":3.0,"ship_rate_pct":92,"merged_prs_7d":46}}
+{"timestamp":"2026-03-30T00:00:00Z","duration_ms":5000,"api_calls":3,"tools_generated":0,"errors":0,"metrics":{"releases_24h":0,"releases_per_day":0,"avg_merge_time_hours":0.3,"ship_rate_pct":84,"merged_prs_7d":32,"closed_prs_7d":38}}
