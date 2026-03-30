@@ -405,25 +405,38 @@ function updatePluginRegistry(claudePlugins: string, cacheDir: string, version: 
   }
 }
 
-/** Install genie.tmux.conf to ~/.genie/tmux.conf and reload the genie tmux server. */
+/** Install tmux configs to ~/.genie/ and reload the genie tmux server. */
 function syncTmuxConf(tmuxScriptsSrc: string): void {
+  mkdirSync(GENIE_HOME, { recursive: true });
+
+  // Install genie.tmux.conf → ~/.genie/tmux.conf (agent server config)
   const tmuxConfSrc = join(tmuxScriptsSrc, 'genie.tmux.conf');
   const tmuxConfDest = join(GENIE_HOME, 'tmux.conf');
-  if (!existsSync(tmuxConfSrc)) return;
-
-  try {
-    mkdirSync(GENIE_HOME, { recursive: true });
-    copyFileSync(tmuxConfSrc, tmuxConfDest);
-    success(`Installed tmux config to ${tmuxConfDest}`);
-
+  if (existsSync(tmuxConfSrc)) {
     try {
-      execSync(`tmux -L genie source-file '${tmuxConfDest}'`, { stdio: 'ignore' });
-      success('Reloaded genie tmux server configuration');
+      copyFileSync(tmuxConfSrc, tmuxConfDest);
+      success(`Installed tmux config to ${tmuxConfDest}`);
+      try {
+        execSync(`tmux -L genie source-file '${tmuxConfDest}'`, { stdio: 'ignore' });
+        success('Reloaded genie tmux server configuration');
+      } catch {
+        // genie tmux server not running or reload failed — non-fatal
+      }
     } catch {
-      // genie tmux server not running or reload failed — non-fatal
+      // Read/write failed — non-fatal
     }
-  } catch {
-    // Read/write failed — non-fatal
+  }
+
+  // Install tui-tmux.conf → ~/.genie/tui-tmux.conf (TUI display config, no shell probes)
+  const tuiConfSrc = join(tmuxScriptsSrc, 'tui-tmux.conf');
+  const tuiConfDest = join(GENIE_HOME, 'tui-tmux.conf');
+  if (existsSync(tuiConfSrc)) {
+    try {
+      copyFileSync(tuiConfSrc, tuiConfDest);
+      success(`Installed TUI tmux config to ${tuiConfDest}`);
+    } catch {
+      // Read/write failed — non-fatal
+    }
   }
 }
 
@@ -437,7 +450,7 @@ function syncTmuxScripts(globalPkgDir: string): void {
 
   let scriptCount = 0;
   for (const entry of readdirSync(tmuxScriptsSrc)) {
-    if (entry.endsWith('.sh') || entry === 'genie.tmux.conf') {
+    if (entry.endsWith('.sh') || entry === 'genie.tmux.conf' || entry === 'tui-tmux.conf') {
       const src = join(tmuxScriptsSrc, entry);
       const dest = join(scriptsDir, entry);
       copyFileSync(src, dest);
