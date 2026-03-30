@@ -224,6 +224,21 @@ export function registerTeamNamespace(program: Command): void {
         process.exit(1);
       }
     });
+
+  // team cleanup
+  team
+    .command('cleanup')
+    .description('Kill tmux windows for done/archived teams')
+    .option('--dry-run', 'Show what would be cleaned without doing it')
+    .action(async (options: { dryRun?: boolean }) => {
+      try {
+        await handleTeamCleanup(options);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
 }
 
 // ============================================================================
@@ -429,4 +444,65 @@ function printTeamSummary(t: TeamConfig): void {
   console.log(`    Branch: ${t.name} (from ${t.baseBranch})`);
   console.log(`    Worktree: ${t.worktreePath}`);
   console.log(`    Members: ${t.members.length}`);
+}
+
+// ============================================================================
+// Team Cleanup Handler
+// ============================================================================
+
+/** Find the tmux window matching a team name (handles dot-sanitized names). */
+async function findTeamWindow(sessionName: string, teamName: string): Promise<{ name: string } | null> {
+  const tmuxLib = await import('../lib/tmux.js');
+  const session = await tmuxLib.findSessionByName(sessionName);
+  if (!session) return null;
+
+  try {
+    const windows = await tmuxLib.listWindows(sessionName);
+    return windows.find((w) => w.name === teamName || w.name === teamName.replace(/\./g, '_')) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Try to kill a team's tmux window. Returns a log message or null. */
+async function cleanupTeamWindow(t: TeamConfig, dryRun: boolean): Promise<string | null> {
+  if (!t.tmuxSessionName) return null;
+  const match = await findTeamWindow(t.tmuxSessionName, t.name);
+  if (!match) return null;
+
+  if (dryRun) {
+    return `  [dry-run] Would kill window "${match.name}" in session "${t.tmuxSessionName}" (team "${t.name}" [${t.status}])`;
+  }
+
+  const tmuxLib = await import('../lib/tmux.js');
+  const killed = await tmuxLib.killWindow(t.tmuxSessionName, match.name);
+  if (!killed) return null;
+  return `  Killed window "${match.name}" in session "${t.tmuxSessionName}" (team "${t.name}")`;
+}
+
+/** Kill tmux windows for done/archived teams. */
+async function handleTeamCleanup(options: { dryRun?: boolean }): Promise<void> {
+  const allTeams = await teamManager.listTeams(true);
+  const cleanable = allTeams.filter((t) => t.status === 'done' || t.status === 'archived');
+
+  if (cleanable.length === 0) {
+    console.log('No done/archived teams to clean up.');
+    return;
+  }
+
+  let cleaned = 0;
+  for (const t of cleanable) {
+    const msg = await cleanupTeamWindow(t, options.dryRun === true);
+    if (msg) {
+      console.log(msg);
+      cleaned++;
+    }
+  }
+
+  const verb = options.dryRun ? 'Would clean' : 'Cleaned';
+  if (cleaned === 0) {
+    console.log('No tmux windows found for done/archived teams.');
+  } else {
+    console.log(`\n${verb} ${cleaned} window${cleaned === 1 ? '' : 's'}.`);
+  }
 }

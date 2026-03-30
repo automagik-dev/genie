@@ -486,3 +486,16 @@ export async function isPaneAlive(paneId: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Kill a tmux window by session:window target.
+ * Returns true if the window was killed, false if it didn't exist or the kill failed.
+ */
+export async function killWindow(sessionName: string, windowName: string): Promise<boolean> {
+  try {
+    await executeTmux(`kill-window -t ${shellQuote(`${sessionName}:${windowName}`)}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
