@@ -7,7 +7,9 @@
  *   genie db query   — execute arbitrary SQL, print results as table
  */
 
+import { createInterface } from 'node:readline';
 import type { Command } from 'commander';
+import { backup, getSnapshotPath, restore } from '../lib/db-backup.js';
 import { getMigrationStatus, runMigrations } from '../lib/db-migrations.js';
 import { getActivePort, getConnection, getDataDir, isAvailable, shutdown } from '../lib/db.js';
 import { padRight } from '../lib/term-format.js';
@@ -160,6 +162,85 @@ async function dbQueryCommand(query: string): Promise<void> {
   }
 }
 
+/**
+ * Format bytes as human-readable string (e.g. 52.3MB).
+ */
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** i;
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)}${units[i]}`;
+}
+
+/**
+ * `genie db backup` — pg_dump → .genie/snapshot.sql.gz
+ */
+async function dbBackupCommand(): Promise<void> {
+  const available = await isAvailable();
+  if (!available) {
+    console.error('Database is not running. Start it with: genie db status');
+    process.exit(1);
+  }
+
+  try {
+    const result = backup();
+    const compressed = formatBytes(result.compressedBytes);
+    const uncompressed = result.uncompressedBytes > 0 ? `, ${formatBytes(result.uncompressedBytes)} uncompressed` : '';
+    console.log(`✓ Backup created: ${result.path} (${compressed}${uncompressed})`);
+    await shutdown();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Backup failed: ${message}`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Prompt for confirmation on stdin. Returns true if user types y/yes.
+ */
+function confirm(prompt: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(prompt, (answer) => {
+      rl.close();
+      resolve(/^y(es)?$/i.test(answer.trim()));
+    });
+  });
+}
+
+/**
+ * `genie db restore [file]` — rebuild DB from snapshot.
+ */
+async function dbRestoreCommand(file: string | undefined, options: { yes?: boolean }): Promise<void> {
+  const snapshotPath = file ?? getSnapshotPath();
+
+  const available = await isAvailable();
+  if (!available) {
+    console.error('Database is not running. Start it with: genie db status');
+    process.exit(1);
+  }
+
+  if (!options.yes) {
+    const ok = await confirm('This will replace all data in the genie database. Continue? [y/N] ');
+    if (!ok) {
+      console.log('Restore cancelled.');
+      return;
+    }
+  }
+
+  try {
+    // Close our connection pool before dropping the DB
+    await shutdown();
+    restore(file);
+    console.log(`✓ Database restored from: ${snapshotPath}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Restore failed: ${message}`);
+    process.exit(1);
+  }
+}
+
 // ============================================================================
 // Registration
 // ============================================================================
@@ -185,4 +266,11 @@ export function registerDbCommands(program: Command): void {
         console.log(url);
       }
     });
+
+  db.command('backup').description('Dump database to .genie/snapshot.sql.gz').action(dbBackupCommand);
+
+  db.command('restore [file]')
+    .description('Restore database from snapshot (default: .genie/snapshot.sql.gz)')
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .action(dbRestoreCommand);
 }
