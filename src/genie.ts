@@ -469,12 +469,16 @@ program
 
 const args = process.argv.slice(2);
 
-// If GENIE_TUI_PANE=left, we're the TUI renderer inside the left tmux pane — render directly
-if (process.env.GENIE_TUI_PANE === 'left') {
+// TUI renderer mode: only when GENIE_TUI_PANE=left AND no subcommand given.
+// Any subcommand (work, spawn, team, etc.) runs normally regardless of env.
+// Clear the env var after checking so child processes never inherit it.
+if (process.env.GENIE_TUI_PANE === 'left' && args.length === 0) {
+  process.env.GENIE_TUI_PANE = undefined;
   const { launchTui } = await import('./tui/index.js');
   await launchTui();
   process.exit(0);
 }
+process.env.GENIE_TUI_PANE = undefined;
 
 // Default command: genie (no args) → thin TUI client (attach to serve).
 if (args.length === 0) {
