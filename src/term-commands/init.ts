@@ -53,10 +53,22 @@ async function initWorkspace(): Promise<void> {
   console.log(`Workspace created: ${cwd}`);
   if (pgUrl) console.log(`  pgUrl: ${pgUrl}`);
 
-  // Scan for existing agents
+  // Scan for existing agents and auto-register them
   const agents = scanAgents(cwd);
   if (agents.length > 0) {
     console.log(`  Found ${agents.length} agent(s): ${agents.join(', ')}`);
+    try {
+      const { syncAgentDirectory } = await import('../lib/agent-sync.js');
+      const result = await syncAgentDirectory(cwd);
+      if (result.registered.length > 0) {
+        console.log(`  Registered: ${result.registered.join(', ')}`);
+      }
+      if (result.updated.length > 0) {
+        console.log(`  Updated: ${result.updated.join(', ')}`);
+      }
+    } catch {
+      // Sync is best-effort during init — DB may not be ready
+    }
   }
 }
 

@@ -29,6 +29,7 @@ import {
   updateItemInStore,
 } from '../lib/agent-cache.js';
 import * as directory from '../lib/agent-directory.js';
+import { printSyncResult, syncAgentDirectory } from '../lib/agent-sync.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { ALL_BUILTINS } from '../lib/builtin-agents.js';
 import { contractPath } from '../lib/genie-config.js';
@@ -90,14 +91,13 @@ export function registerDirNamespace(program: Command): void {
     .description('List all agents or show single entry details')
     .option('--json', 'Output as JSON')
     .option('--builtins', 'Include built-in roles and council members')
-    .action(async (name: string | undefined, options: { json?: boolean; builtins?: boolean }) => {
+    .option('--all', 'Include archived agents')
+    .action(async (name: string | undefined, options: { json?: boolean; builtins?: boolean; all?: boolean }) => {
       try {
         if (name) {
-          // Show single entry
           await showEntry(name, options.json);
         } else {
-          // List all
-          await listEntries(options.json, options.builtins);
+          await listEntries(options.json, options.builtins, options.all);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -119,6 +119,20 @@ export function registerDirNamespace(program: Command): void {
     .action(async (name: string, options: EditOptions) => {
       try {
         await handleEdit(name, options);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
+
+  // dir sync
+  dir
+    .command('sync')
+    .description('Sync agents from workspace agents/ directory')
+    .action(async () => {
+      try {
+        await handleDirSync();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
@@ -211,6 +225,19 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
   printEntry(entry);
 }
 
+async function handleDirSync(): Promise<void> {
+  const { findWorkspace } = await import('../lib/workspace.js');
+  const ws = findWorkspace();
+  if (!ws) {
+    console.error('Not in a genie workspace. Run `genie init` first.');
+    process.exit(1);
+  }
+
+  console.log(`Syncing agents from ${ws.root}/agents/...`);
+  const result = await syncAgentDirectory(ws.root);
+  printSyncResult(result);
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -253,7 +280,7 @@ async function showEntry(name: string, json?: boolean): Promise<void> {
   console.log('');
 }
 
-async function listEntries(json?: boolean, includeBuiltins?: boolean): Promise<void> {
+async function listEntries(json?: boolean, includeBuiltins?: boolean, includeArchived?: boolean): Promise<void> {
   // One-time migration from legacy JSON → DB (idempotent, best-effort)
   await migrateAgentDirectory().catch(() => {});
 
@@ -261,19 +288,25 @@ async function listEntries(json?: boolean, includeBuiltins?: boolean): Promise<v
   let entries: directory.ScopedDirectoryEntry[];
   try {
     const storeItems = await listItemsFromStore('agent');
-    entries = storeItems.map((item: StoreRow) => {
-      const manifest = (item.manifest ?? {}) as Record<string, unknown>;
-      return {
-        name: item.name,
-        dir: (item.install_path as string) ?? '',
-        repo: (manifest.repo as string) ?? '',
-        promptMode: ((manifest.promptMode as string) ?? 'append') as directory.PromptMode,
-        model: manifest.model as string | undefined,
-        roles: normalizeRoles(manifest.roles as string[] | undefined),
-        registeredAt: item.installed_at as string,
-        scope: 'global' as directory.DirectoryScope,
-      };
-    });
+    entries = storeItems
+      .filter((item: StoreRow) => {
+        if (includeArchived) return true;
+        const manifest = (item.manifest ?? {}) as Record<string, unknown>;
+        return !manifest.archived;
+      })
+      .map((item: StoreRow) => {
+        const manifest = (item.manifest ?? {}) as Record<string, unknown>;
+        return {
+          name: item.name,
+          dir: (item.install_path as string) ?? '',
+          repo: (manifest.repo as string) ?? '',
+          promptMode: ((manifest.promptMode as string) ?? 'append') as directory.PromptMode,
+          model: manifest.model as string | undefined,
+          roles: normalizeRoles(manifest.roles as string[] | undefined),
+          registeredAt: item.installed_at as string,
+          scope: (manifest.archived ? 'archived' : 'global') as directory.DirectoryScope,
+        };
+      });
   } catch {
     // Fallback to legacy
     entries = await directory.ls();
