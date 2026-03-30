@@ -486,12 +486,17 @@ if (args.length === 0) {
     process.exit(1);
   }
 
-  const { isServeRunning, autoStartServe } = await import('./term-commands/serve.js');
+  const { isServeRunning, autoStartServe, isTuiSessionReady, ensureTuiSession } = await import(
+    './term-commands/serve.js'
+  );
 
   // Auto-start serve if not running
   if (!isServeRunning()) {
     console.log('Starting genie serve...');
     await autoStartServe();
+  } else if (!isTuiSessionReady()) {
+    // Serve is alive but TUI tmux session died — recreate it
+    ensureTuiSession(ws.root);
   }
 
   // Set env vars for TUI (workspace root + agent) before attach
