@@ -73,6 +73,7 @@ import {
 import * as readCmd from './term-commands/read.js';
 import { registerReleaseCommands } from './term-commands/release.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
+import { registerServeCommands } from './term-commands/serve.js';
 import { registerSessionsCommands } from './term-commands/sessions.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { registerTagCommands } from './term-commands/tag.js';
@@ -163,14 +164,8 @@ shortcuts
   .action(shortcutsInstallCommand);
 shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
 
-// genie serve — alias for `genie daemon start --foreground`
-program
-  .command('serve')
-  .description('Start genie daemon (foreground)')
-  .action(async () => {
-    // Re-invoke as `genie daemon start --foreground`
-    await program.parseAsync(['node', 'genie', 'daemon', 'start', '--foreground']);
-  });
+// genie serve — infrastructure owner (pgserve + tmux + scheduler)
+registerServeCommands(program);
 
 // ============================================================================
 // Orchestration namespaces
@@ -481,7 +476,7 @@ if (process.env.GENIE_TUI_PANE === 'left') {
   process.exit(0);
 }
 
-// Default command: genie (no args) → launch TUI with workspace detection.
+// Default command: genie (no args) → thin TUI client (attach to serve).
 if (args.length === 0) {
   const { findWorkspace } = await import('./lib/workspace.js');
   const ws = findWorkspace();
@@ -491,8 +486,34 @@ if (args.length === 0) {
     process.exit(1);
   }
 
-  const { launchTui } = await import('./tui/index.js');
-  await launchTui({ workspaceRoot: ws.root, initialAgent: ws.agent });
+  const { isServeRunning, autoStartServe } = await import('./term-commands/serve.js');
+
+  // Auto-start serve if not running
+  if (!isServeRunning()) {
+    console.log('Starting genie serve...');
+    await autoStartServe();
+  }
+
+  // Set env vars for TUI (workspace root + agent) before attach
+  if (ws.root) process.env.GENIE_TUI_WORKSPACE = ws.root;
+  if (ws.agent) process.env.GENIE_TUI_AGENT = ws.agent;
+
+  // Write initial agent to file so the already-running TUI can pick it up.
+  // The TUI reads and deletes this file on its next diagnostics refresh.
+  if (ws.agent) {
+    const { writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const home = process.env.GENIE_HOME ?? join((await import('node:os')).homedir(), '.genie');
+    try {
+      writeFileSync(join(home, 'tui-initial-agent'), ws.agent, 'utf-8');
+    } catch {
+      // best-effort — TUI falls back to env var if file write fails
+    }
+  }
+
+  // Attach to the genie-tui session (blocking call — returns on detach)
+  const { attachTuiSession } = await import('./tui/tmux.js');
+  attachTuiSession();
   process.exit(0);
 }
 if (args.every((a) => a === '--reset')) {

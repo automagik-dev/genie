@@ -24,7 +24,7 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
   const [sessionTree, setSessionTree] = useState<TreeNode[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const lastTarget = useRef<string | null>(null);
-  const initialSelectDone = useRef(false);
+  const genieHome = useRef(process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`);
 
   // Refresh diagnostics every 2s
   useEffect(() => {
@@ -76,15 +76,34 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
     }
   }, [flatNodes.length, selectedIndex]);
 
-  // Initial agent pre-selection (once)
+  // File-based initial agent: thin client writes ~/.genie/tui-initial-agent before attaching.
+  // Check on each diagnostics refresh (2s) so re-attach from a different agent dir works.
+  const [pendingAgent, setPendingAgent] = useState<string | undefined>(initialAgent);
+
   useEffect(() => {
-    if (!initialAgent || initialSelectDone.current || flatNodes.length === 0) return;
-    const idx = flatNodes.findIndex((n) => n.node.id === `agent:${initialAgent}`);
+    if (!diagnostics) return;
+    try {
+      const fs = require('node:fs') as typeof import('node:fs');
+      const agentFile = `${genieHome.current}/tui-initial-agent`;
+      if (fs.existsSync(agentFile)) {
+        const agent = fs.readFileSync(agentFile, 'utf-8').trim();
+        fs.unlinkSync(agentFile);
+        if (agent) setPendingAgent(agent);
+      }
+    } catch {
+      // best-effort
+    }
+  }, [diagnostics]);
+
+  // Apply pending agent selection (from prop or file)
+  useEffect(() => {
+    if (!pendingAgent || flatNodes.length === 0) return;
+    const idx = flatNodes.findIndex((n) => n.node.id === `agent:${pendingAgent}`);
     if (idx >= 0) {
       setSelectedIndex(idx);
-      initialSelectDone.current = true;
+      setPendingAgent(undefined);
     }
-  }, [initialAgent, flatNodes]);
+  }, [pendingAgent, flatNodes]);
 
   // Auto-switch right pane when cursor moves to a new target
   useEffect(() => {
@@ -143,9 +162,12 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
     const node = flatNodes[selectedIndex]?.node;
     if (!node) return;
 
-    // Stopped agent: spawn it
+    // Stopped agent: spawn it and attach to the session
     if (node.type === 'agent' && node.wsAgentState === 'stopped') {
       spawnAgent(node.label);
+      // Attach immediately — ensureAgentSession in tmux.ts creates the session if needed
+      const target = getSessionTarget(node);
+      if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
       return;
     }
 

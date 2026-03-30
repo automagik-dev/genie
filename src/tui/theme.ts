@@ -48,13 +48,3 @@ export const icons = {
   collapsed: '\u25b8', // ▸
   expanded: '\u25be', // ▾
 } as const;
-
-/** tmux status bar style matching the palette */
-export const tmuxStyle = {
-  statusBg: '#1a1028',
-  statusFg: '#e2e8f0',
-  activeBorder: '#7c3aed',
-  inactiveBorder: '#414868',
-  activeTab: '#7c3aed',
-  inactiveTab: '#414868',
-} as const;
