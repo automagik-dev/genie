@@ -386,6 +386,49 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
   return true;
 }
 
+async function resetWishGroups(wishSlug: string | undefined, repo: string): Promise<void> {
+  if (!wishSlug) return;
+  try {
+    const wishState = await import('./wish-state.js');
+    const resetCount = await wishState.resetInProgressGroups(wishSlug, repo);
+    if (resetCount > 0) {
+      console.log(`   Reset ${resetCount} in-progress group(s) for wish "${wishSlug}"`);
+    }
+  } catch {
+    // Best-effort — DB may be unavailable
+  }
+}
+
+async function removeWorktree(worktreePath: string | undefined): Promise<void> {
+  if (!worktreePath || !existsSync(worktreePath)) return;
+  try {
+    await rm(worktreePath, { recursive: true, force: true });
+  } catch {
+    // Best-effort
+  }
+}
+
+/** Clean up tmux session/window for a disbanded team. */
+async function cleanupTeamTmuxSession(tmuxSessionName: string, teamName: string): Promise<void> {
+  if (!tmuxSessionName) return;
+  try {
+    const session = await tmux.findSessionByName(tmuxSessionName);
+    if (!session) return;
+
+    const windows = await tmux.listWindows(tmuxSessionName);
+    const teamWindow = await tmux.findWindowByName(tmuxSessionName, teamName);
+    const dedicatedSession = tmuxSessionName === teamName || (windows.length === 1 && windows[0]?.name === teamName);
+
+    if (dedicatedSession) {
+      await tmux.killSession(tmuxSessionName);
+    } else if (teamWindow) {
+      await tmux.executeTmux(`kill-window -t '${teamWindow.id}'`);
+    }
+  } catch {
+    // Best-effort
+  }
+}
+
 /**
  * Disband a team: remove shared clone and delete team config from PG.
  * Returns true if the team was found and disbanded.
@@ -411,51 +454,10 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     }
   }
 
-  // Reset in-progress wish groups so re-dispatch works cleanly
-  if (config.wishSlug) {
-    try {
-      const wishState = await import('./wish-state.js');
-      const resetCount = await wishState.resetInProgressGroups(config.wishSlug, config.repo);
-      if (resetCount > 0) {
-        console.log(`   Reset ${resetCount} in-progress group(s) for wish "${config.wishSlug}"`);
-      }
-    } catch {
-      // Best-effort — DB may be unavailable
-    }
-  }
+  await resetWishGroups(config.wishSlug, config.repo);
+  await removeWorktree(config.worktreePath);
 
-  // Remove shared clone directory
-  if (config.worktreePath && existsSync(config.worktreePath)) {
-    try {
-      await rm(config.worktreePath, { recursive: true, force: true });
-    } catch {
-      // Best-effort
-    }
-  }
-
-  // Clean up tmux container for the team.
-  // Dedicated team sessions (common in QA) should be fully killed.
-  // Shared sessions should only lose the team's window.
-  const tmuxSessionName = config.tmuxSessionName ?? teamName;
-  if (tmuxSessionName) {
-    try {
-      const session = await tmux.findSessionByName(tmuxSessionName);
-      if (session) {
-        const windows = await tmux.listWindows(tmuxSessionName);
-        const teamWindow = await tmux.findWindowByName(tmuxSessionName, teamName);
-        const dedicatedSession =
-          tmuxSessionName === teamName || (windows.length === 1 && windows[0]?.name === teamName);
-
-        if (dedicatedSession) {
-          await tmux.killSession(tmuxSessionName);
-        } else if (teamWindow) {
-          await tmux.executeTmux(`kill-window -t '${teamWindow.id}'`);
-        }
-      }
-    } catch {
-      // Best-effort
-    }
-  }
+  await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
 
   // Delete team config from PG
   const sql = await getConnection();

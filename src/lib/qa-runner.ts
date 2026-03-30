@@ -113,28 +113,39 @@ type DirtyOverlayOp =
   | { kind: 'delete'; path: string }
   | { kind: 'rename'; from: string; to: string };
 
+function parseStatusEntry(
+  status: string,
+  parts: string[],
+  index: number,
+): { op: DirtyOverlayOp | null; nextIndex: number } {
+  if (status.startsWith('R')) {
+    const from = parts[index] ?? '';
+    const to = parts[index + 1] ?? '';
+    if (from && to) return { op: { kind: 'rename', from, to }, nextIndex: index + 2 };
+    return { op: null, nextIndex: index + 2 };
+  }
+
+  const path = parts[index] ?? '';
+  if (!path) return { op: null, nextIndex: index + 1 };
+
+  const kind = status.startsWith('D') ? 'delete' : 'copy';
+  return { op: { kind, path }, nextIndex: index + 1 };
+}
+
 function parseNameStatusZ(output: string): DirtyOverlayOp[] {
   if (!output) return [];
 
   const parts = output.split('\0').filter(Boolean);
   const ops: DirtyOverlayOp[] = [];
 
-  for (let i = 0; i < parts.length; ) {
+  let i = 0;
+  while (i < parts.length) {
     const status = parts[i++] ?? '';
     if (!status) break;
 
-    if (status.startsWith('R')) {
-      const from = parts[i++] ?? '';
-      const to = parts[i++] ?? '';
-      if (from && to) ops.push({ kind: 'rename', from, to });
-      continue;
-    }
-
-    const path = parts[i++] ?? '';
-    if (!path) continue;
-
-    if (status.startsWith('D')) ops.push({ kind: 'delete', path });
-    else ops.push({ kind: 'copy', path });
+    const { op, nextIndex } = parseStatusEntry(status, parts, i);
+    i = nextIndex;
+    if (op) ops.push(op);
   }
 
   return ops;

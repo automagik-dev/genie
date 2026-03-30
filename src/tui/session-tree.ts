@@ -68,43 +68,9 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
     }
   }
 
-  const nodes: TreeNode[] = [];
-
-  // Build agent nodes from filesystem, enriched with tmux + executor
-  for (const name of agentNames) {
-    const session = sessionByName.get(name);
-    const agentExecutors = executorsByAgent.get(name) ?? [];
-    const wsState = deriveWsAgentState(session, agentExecutors);
-
-    const children: TreeNode[] = [];
-    if (session) {
-      // Add non-home windows as children (window 0 IS the agent row)
-      for (const win of session.windows) {
-        if (win.index === 0) continue;
-        children.push(windowToNode(session.name, win, executorByPaneId));
-      }
-    }
-
-    const windowCount = session ? session.windows.length : 0;
-
-    nodes.push({
-      id: `agent:${name}`,
-      type: 'agent',
-      label: name,
-      depth: 0,
-      expanded: children.length > 0,
-      children,
-      data: { sessionName: name, windowCount },
-      activePanes: session
-        ? session.windows.reduce(
-            (sum, w) => sum + w.panes.filter((p) => p.command === 'claude' || p.title.includes('claude')).length,
-            0,
-          )
-        : 0,
-      agentState: agentExecutors.length > 0 ? deriveExecutorState(agentExecutors) : undefined,
-      wsAgentState: wsState,
-    });
-  }
+  const nodes = agentNames.map((name) =>
+    buildAgentNode(name, sessionByName.get(name), executorsByAgent.get(name) ?? [], executorByPaneId),
+  );
 
   // Add orphan sessions (tmux sessions with no matching agent in filesystem)
   const agentNameSet = new Set(agentNames);
@@ -115,6 +81,43 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
   }
 
   return nodes;
+}
+
+function countClaudePanes(session: TmuxSession): number {
+  return session.windows.reduce(
+    (sum, w) => sum + w.panes.filter((p) => p.command === 'claude' || p.title.includes('claude')).length,
+    0,
+  );
+}
+
+function buildAgentNode(
+  name: string,
+  session: TmuxSession | undefined,
+  agentExecutors: TuiExecutor[],
+  executorByPaneId: Map<string, TuiExecutor>,
+): TreeNode {
+  const wsState = deriveWsAgentState(session, agentExecutors);
+
+  const children: TreeNode[] = [];
+  if (session) {
+    for (const win of session.windows) {
+      if (win.index === 0) continue;
+      children.push(windowToNode(session.name, win, executorByPaneId));
+    }
+  }
+
+  return {
+    id: `agent:${name}`,
+    type: 'agent',
+    label: name,
+    depth: 0,
+    expanded: children.length > 0,
+    children,
+    data: { sessionName: name, windowCount: session ? session.windows.length : 0 },
+    activePanes: session ? countClaudePanes(session) : 0,
+    agentState: agentExecutors.length > 0 ? deriveExecutorState(agentExecutors) : undefined,
+    wsAgentState: wsState,
+  };
 }
 
 /** Derive workspace-level agent state from tmux session + executors */

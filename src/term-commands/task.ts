@@ -472,6 +472,52 @@ export function registerTaskCommands(program: Command): void {
       }
     });
 
+  // biome-ignore lint/suspicious/noExplicitAny: options from commander
+  async function handleTaskList(options: any): Promise<void> {
+    const ts = await getTaskService();
+    const filters: taskServiceTypes.TaskFilters = {
+      stage: options.stage,
+      typeId: options.type,
+      status: options.status,
+      priority: options.priority,
+      releaseId: options.release,
+      dueBefore: options.dueBefore,
+      projectName: options.project,
+      boardName: options.board,
+      externalId: options.gh ? parseGhRef(options.gh).externalId : undefined,
+      allProjects: options.all,
+      limit: Number(options.limit) || 100,
+      offset: Number(options.offset) || 0,
+      ...(options.all ? { limit: 10000 } : {}),
+    };
+
+    let tasks: taskServiceTypes.TaskRow[];
+    if (options.mine) {
+      tasks = await ts.listTasksForActor(currentActor(), filters);
+    } else {
+      tasks = await ts.listTasks(filters);
+    }
+
+    if (options.byColumn) {
+      if (!options.board) {
+        console.error('Error: --by-column requires --board');
+        process.exit(1);
+      }
+      if (!options.includeDone) {
+        tasks = tasks.filter((t) => t.status !== 'done');
+      }
+      await printByColumn(tasks, options.board);
+      return;
+    }
+
+    if (options.json) {
+      console.log(JSON.stringify(tasks, null, 2));
+      return;
+    }
+
+    printTaskList(tasks, options.all);
+  }
+
   // ── task list ──
   task
     .command('list')
@@ -512,49 +558,7 @@ export function registerTaskCommands(program: Command): void {
         json?: boolean;
       }) => {
         try {
-          const ts = await getTaskService();
-          const filters: taskServiceTypes.TaskFilters = {
-            stage: options.stage,
-            typeId: options.type,
-            status: options.status,
-            priority: options.priority,
-            releaseId: options.release,
-            dueBefore: options.dueBefore,
-            projectName: options.project,
-            boardName: options.board,
-            externalId: options.gh ? parseGhRef(options.gh).externalId : undefined,
-            allProjects: options.all,
-            limit: Number(options.limit) || 100,
-            offset: Number(options.offset) || 0,
-            ...(options.all ? { limit: 10000 } : {}),
-          };
-
-          let tasks: taskServiceTypes.TaskRow[];
-          if (options.mine) {
-            tasks = await ts.listTasksForActor(currentActor(), filters);
-          } else {
-            tasks = await ts.listTasks(filters);
-          }
-
-          if (options.byColumn) {
-            if (!options.board) {
-              console.error('Error: --by-column requires --board');
-              process.exit(1);
-            }
-            // Hide done tasks by default in kanban view
-            if (!options.includeDone) {
-              tasks = tasks.filter((t) => t.status !== 'done');
-            }
-            await printByColumn(tasks, options.board);
-            return;
-          }
-
-          if (options.json) {
-            console.log(JSON.stringify(tasks, null, 2));
-            return;
-          }
-
-          printTaskList(tasks, options.all);
+          await handleTaskList(options);
         } catch (error) {
           console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
           process.exit(1);
