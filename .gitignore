@@ -6,6 +6,7 @@ node_modules/
 # Build output
 dist/
 build/
+target/
 *.js.map
 *.tsbuildinfo
 
