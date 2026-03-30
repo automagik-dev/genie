@@ -26,6 +26,38 @@ async function loadExecutorInfo() {
   return { registry: registryMod, executorRegistry: executorMod, assignmentRegistry: assignmentMod };
 }
 
+async function printActiveExecutors(slug: string): Promise<void> {
+  try {
+    const { registry, executorRegistry, assignmentRegistry } = await loadExecutorInfo();
+    const agents = await registry.listAgents({ team: process.env.GENIE_TEAM });
+    const executorInfoLines: string[] = [];
+
+    for (const agent of agents) {
+      if (!agent.currentExecutorId) continue;
+      const executor = await executorRegistry.getExecutor(agent.currentExecutorId);
+      if (!executor || executor.state === 'terminated' || executor.state === 'done') continue;
+
+      const assignment = await assignmentRegistry.getActiveAssignment(executor.id);
+      const taskLabel =
+        assignment?.wishSlug === slug ? `Group ${assignment.groupNumber ?? '?'}` : (assignment?.wishSlug ?? '-');
+      const agentName = agent.customName ?? agent.role ?? agent.id.slice(0, 12);
+      executorInfoLines.push(
+        `  Agent: ${padRight(agentName, 16)} | Executor: ${executor.id.slice(0, 12)} (${executor.provider}) | State: ${padRight(executor.state, 10)} | Task: ${taskLabel}`,
+      );
+    }
+
+    if (executorInfoLines.length > 0) {
+      console.log('\nActive Executors:');
+      console.log('─'.repeat(60));
+      for (const line of executorInfoLines) {
+        console.log(line);
+      }
+    }
+  } catch {
+    // Executor info is best-effort
+  }
+}
+
 async function statusCommand(slug: string): Promise<void> {
   let state = await wishState.getState(slug);
   if (!state) {
@@ -73,36 +105,7 @@ async function statusCommand(slug: string): Promise<void> {
   console.log('');
   console.log(`  Progress: ${done}/${total} done | ${inProgress} in progress | ${ready} ready | ${blocked} blocked`);
 
-  // Show active executors
-  try {
-    const { registry, executorRegistry, assignmentRegistry } = await loadExecutorInfo();
-    const agents = await registry.listAgents({ team: process.env.GENIE_TEAM });
-    const executorInfoLines: string[] = [];
-
-    for (const agent of agents) {
-      if (!agent.currentExecutorId) continue;
-      const executor = await executorRegistry.getExecutor(agent.currentExecutorId);
-      if (!executor || executor.state === 'terminated' || executor.state === 'done') continue;
-
-      const assignment = await assignmentRegistry.getActiveAssignment(executor.id);
-      const taskLabel =
-        assignment?.wishSlug === slug ? `Group ${assignment.groupNumber ?? '?'}` : (assignment?.wishSlug ?? '-');
-      const agentName = agent.customName ?? agent.role ?? agent.id.slice(0, 12);
-      executorInfoLines.push(
-        `  Agent: ${padRight(agentName, 16)} | Executor: ${executor.id.slice(0, 12)} (${executor.provider}) | State: ${padRight(executor.state, 10)} | Task: ${taskLabel}`,
-      );
-    }
-
-    if (executorInfoLines.length > 0) {
-      console.log('\nActive Executors:');
-      console.log('─'.repeat(60));
-      for (const line of executorInfoLines) {
-        console.log(line);
-      }
-    }
-  } catch {
-    // Executor info is best-effort
-  }
+  await printActiveExecutors(slug);
 
   console.log('');
 }

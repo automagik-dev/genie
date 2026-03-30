@@ -12,6 +12,11 @@ import { buildWorkerMap, discoverAllJsonlFiles, ingestFile, liveWorkPending } fr
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
 type SqlClient = any;
 
+// biome-ignore lint/suspicious/noExplicitAny: DiscoveredFile from session-capture, WorkerMap from buildWorkerMap
+type BackfillFile = any;
+// biome-ignore lint/suspicious/noExplicitAny: WorkerMap from session-capture
+type WorkerMap = any;
+
 const CHUNK_SIZE = 64 * 1024;
 const SLEEP_BETWEEN_FILES_MS = 100;
 const LIVE_YIELD_POLL_MS = 200;
@@ -54,36 +59,126 @@ async function updateSyncState(sql: SqlClient, progress: BackfillProgress): Prom
 
 let running = false;
 
-export async function startBackfill(sql: SqlClient): Promise<void> {
-  if (running) return;
-
-  // Check if backfill already complete
+async function shouldSkipBackfill(sql: SqlClient): Promise<boolean> {
   try {
     const existing = await sql`SELECT status FROM session_sync WHERE id = 'backfill'`;
-    if (existing.length > 0 && existing[0].status === 'complete') return;
-    // 'failed' status = retry on next start (reset to running)
+    if (existing.length > 0 && existing[0].status === 'complete') return true;
   } catch {
     // table may not exist yet
   }
 
-  // Check if sessions already exist (not first start)
   try {
     const [{ count }] = await sql`SELECT count(*)::int as count FROM sessions`;
     if (count > 0) {
-      // Check if backfill was previously running (resume)
       const existing = await sql`SELECT status FROM session_sync WHERE id = 'backfill'`;
-      if (existing.length === 0 || existing[0].status === 'complete') return;
-      // If status is 'running' or 'paused', resume below
+      if (existing.length === 0 || existing[0].status === 'complete') return true;
     }
   } catch {
+    return true;
+  }
+
+  return false;
+}
+
+async function yieldToLiveWork(): Promise<void> {
+  while (liveWorkPending) {
+    await sleep(LIVE_YIELD_POLL_MS);
+  }
+}
+
+async function getFileStartOffset(sql: SqlClient, file: BackfillFile): Promise<number> {
+  const existing = await sql`SELECT last_ingested_offset FROM sessions WHERE id = ${file.sessionId}`;
+  if (existing.length > 0) return existing[0].last_ingested_offset ?? 0;
+  return 0;
+}
+
+async function processBackfillFile(
+  sql: SqlClient,
+  file: BackfillFile,
+  progress: BackfillProgress,
+  workerMap: WorkerMap,
+): Promise<void> {
+  const offset = await getFileStartOffset(sql, file);
+  if (offset >= file.fileSize) {
+    progress.processedFiles++;
+    progress.processedBytes += file.fileSize;
     return;
   }
+
+  let currentOffset = offset;
+  while (currentOffset < file.fileSize) {
+    await yieldToLiveWork();
+
+    const result = await ingestFile(sql, file.sessionId, file.jsonlPath, file.projectPath, currentOffset, {
+      chunkSize: CHUNK_SIZE,
+      parentSessionId: file.parentSessionId,
+      isSubagent: file.isSubagent,
+      fileSize: file.fileSize,
+      mtime: file.mtime,
+      workerMap,
+    });
+
+    if (result.newOffset <= currentOffset) break;
+    progress.processedBytes += result.newOffset - currentOffset;
+    currentOffset = result.newOffset;
+  }
+
+  progress.processedFiles++;
+}
+
+async function processAllFiles(
+  sql: SqlClient,
+  allFiles: BackfillFile[],
+  progress: BackfillProgress,
+  workerMap: WorkerMap,
+): Promise<void> {
+  for (const file of allFiles) {
+    if (!running) break;
+    await yieldToLiveWork();
+
+    try {
+      await processBackfillFile(sql, file, progress, workerMap);
+    } catch (err) {
+      progress.errors++;
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[backfill] error on ${file.jsonlPath}: ${message}`);
+    }
+
+    if (progress.processedFiles % 50 === 0) {
+      await updateSyncState(sql, progress);
+    }
+
+    await sleep(SLEEP_BETWEEN_FILES_MS);
+  }
+}
+
+function resolveBackfillStatus(progress: BackfillProgress): void {
+  if (!running) {
+    progress.status = 'paused';
+    console.log(
+      `[backfill] paused: ${progress.processedFiles}/${progress.totalFiles} files (will resume on next daemon start)`,
+    );
+  } else if (progress.errors > 0 && progress.errors >= progress.totalFiles) {
+    progress.status = 'failed';
+    console.error(
+      `[backfill] failed: ${progress.errors}/${progress.totalFiles} files errored — will retry on next daemon start`,
+    );
+  } else {
+    progress.status = 'complete';
+    console.log(
+      `[backfill] complete: ${progress.processedFiles}/${progress.totalFiles} files, ${progress.errors} errors`,
+    );
+  }
+}
+
+export async function startBackfill(sql: SqlClient): Promise<void> {
+  if (running) return;
+  if (await shouldSkipBackfill(sql)) return;
 
   running = true;
   console.log('[backfill] starting session backfill...');
 
   try {
-    // Discover all JSONL files, sort by mtime descending (newest first)
     const allFiles = await discoverAllJsonlFiles();
     allFiles.sort((a, b) => b.mtime - a.mtime);
 
@@ -102,81 +197,9 @@ export async function startBackfill(sql: SqlClient): Promise<void> {
 
     const workerMap = await buildWorkerMap(sql);
 
-    for (const file of allFiles) {
-      if (!running) break;
+    await processAllFiles(sql, allFiles, progress, workerMap);
 
-      // Priority yield: pause when filewatch has live work
-      while (liveWorkPending) {
-        await sleep(LIVE_YIELD_POLL_MS);
-      }
-
-      try {
-        let offset = 0;
-        // Check if this file was partially ingested
-        const existing = await sql`SELECT last_ingested_offset FROM sessions WHERE id = ${file.sessionId}`;
-        if (existing.length > 0) {
-          offset = existing[0].last_ingested_offset ?? 0;
-          if (offset >= file.fileSize) {
-            // Already fully ingested
-            progress.processedFiles++;
-            progress.processedBytes += file.fileSize;
-            continue;
-          }
-        }
-
-        // Ingest in chunks
-        let currentOffset = offset;
-        while (currentOffset < file.fileSize) {
-          // Yield to live work between chunks too
-          while (liveWorkPending) {
-            await sleep(LIVE_YIELD_POLL_MS);
-          }
-
-          const result = await ingestFile(sql, file.sessionId, file.jsonlPath, file.projectPath, currentOffset, {
-            chunkSize: CHUNK_SIZE,
-            parentSessionId: file.parentSessionId,
-            isSubagent: file.isSubagent,
-            fileSize: file.fileSize,
-            mtime: file.mtime,
-            workerMap,
-          });
-
-          if (result.newOffset <= currentOffset) break; // No progress — avoid infinite loop
-          progress.processedBytes += result.newOffset - currentOffset;
-          currentOffset = result.newOffset;
-        }
-
-        progress.processedFiles++;
-      } catch (err) {
-        progress.errors++;
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[backfill] error on ${file.jsonlPath}: ${message}`);
-      }
-
-      // Update progress every 50 files
-      if (progress.processedFiles % 50 === 0) {
-        await updateSyncState(sql, progress);
-      }
-
-      await sleep(SLEEP_BETWEEN_FILES_MS);
-    }
-
-    if (!running) {
-      progress.status = 'paused';
-      console.log(
-        `[backfill] paused: ${progress.processedFiles}/${progress.totalFiles} files (will resume on next daemon start)`,
-      );
-    } else if (progress.errors > 0 && progress.errors >= progress.totalFiles) {
-      progress.status = 'failed';
-      console.error(
-        `[backfill] failed: ${progress.errors}/${progress.totalFiles} files errored — will retry on next daemon start`,
-      );
-    } else {
-      progress.status = 'complete';
-      console.log(
-        `[backfill] complete: ${progress.processedFiles}/${progress.totalFiles} files, ${progress.errors} errors`,
-      );
-    }
+    resolveBackfillStatus(progress);
     await updateSyncState(sql, progress);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

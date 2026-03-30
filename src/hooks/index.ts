@@ -127,54 +127,38 @@ async function runHandler(
   }
 }
 
-async function executeBlockingChain(matched: Handler[], payload: HookPayload): Promise<Record<string, unknown>> {
-  let currentInput = payload.tool_input ? { ...payload.tool_input } : undefined;
-  const contextMessages: string[] = [];
-  const hookEventName = payload.hook_event_name;
-
-  for (const handler of matched) {
-    const result = await runHandler(handler, payload, currentInput);
-    if (!result) continue;
-
-    // Legacy deny format — convert to hookSpecificOutput for PreToolUse
-    if (result.decision === 'deny') {
-      if (hookEventName === 'PreToolUse') {
-        return {
-          hookSpecificOutput: {
-            hookEventName: 'PreToolUse',
-            permissionDecision: 'deny',
-            permissionDecisionReason: result.reason ?? `Denied by handler: ${handler.name}`,
-          },
-        };
-      }
-      return { decision: 'block', reason: result.reason ?? `Denied by handler: ${handler.name}` };
-    }
-
-    // Collect hookSpecificOutput (additionalContext, etc.)
-    if (result.hookSpecificOutput?.additionalContext) {
-      contextMessages.push(result.hookSpecificOutput.additionalContext);
-    }
-
-    // Collect updatedInput from either format
-    const inputUpdate = result.hookSpecificOutput?.updatedInput ?? result.updatedInput;
-    if (inputUpdate) {
-      currentInput = { ...currentInput, ...inputUpdate };
-    }
+function buildDenyResponse(
+  handler: Handler,
+  reason: string | undefined,
+  hookEventName: string,
+): Record<string, unknown> {
+  if (hookEventName === 'PreToolUse') {
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: reason ?? `Denied by handler: ${handler.name}`,
+      },
+    };
   }
+  return { decision: 'block', reason: reason ?? `Denied by handler: ${handler.name}` };
+}
 
-  // Build response
+function buildBlockingResponse(
+  hookEventName: string,
+  contextMessages: string[],
+  currentInput: Record<string, unknown> | undefined,
+  originalInput: Record<string, unknown> | undefined,
+): Record<string, unknown> {
   const response: Record<string, unknown> = {};
-
   const hasContext = contextMessages.length > 0;
   const hasInputChange =
-    currentInput && payload.tool_input && JSON.stringify(currentInput) !== JSON.stringify(payload.tool_input);
+    currentInput && originalInput && JSON.stringify(currentInput) !== JSON.stringify(originalInput);
 
-  // updatedInput at top level (backward compat, used by tests + older CC versions)
   if (hasInputChange) {
     response.updatedInput = currentInput;
   }
 
-  // For PreToolUse, ALSO emit hookSpecificOutput (the correct CC format)
   if (hookEventName === 'PreToolUse' && (hasContext || hasInputChange)) {
     const output: Record<string, unknown> = { hookEventName: 'PreToolUse' };
     if (hasContext) output.additionalContext = contextMessages.join('\n');
@@ -186,6 +170,32 @@ async function executeBlockingChain(matched: Handler[], payload: HookPayload): P
   }
 
   return response;
+}
+
+async function executeBlockingChain(matched: Handler[], payload: HookPayload): Promise<Record<string, unknown>> {
+  let currentInput = payload.tool_input ? { ...payload.tool_input } : undefined;
+  const contextMessages: string[] = [];
+  const hookEventName = payload.hook_event_name;
+
+  for (const handler of matched) {
+    const result = await runHandler(handler, payload, currentInput);
+    if (!result) continue;
+
+    if (result.decision === 'deny') {
+      return buildDenyResponse(handler, result.reason, hookEventName);
+    }
+
+    if (result.hookSpecificOutput?.additionalContext) {
+      contextMessages.push(result.hookSpecificOutput.additionalContext);
+    }
+
+    const inputUpdate = result.hookSpecificOutput?.updatedInput ?? result.updatedInput;
+    if (inputUpdate) {
+      currentInput = { ...currentInput, ...inputUpdate };
+    }
+  }
+
+  return buildBlockingResponse(hookEventName, contextMessages, currentInput, payload.tool_input);
 }
 
 async function executeNonBlockingHandlers(matched: Handler[], payload: HookPayload): Promise<void> {

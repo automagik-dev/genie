@@ -206,6 +206,31 @@ interface SpawnPtyOpts {
   taskId: string | null;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: ReadableStream from Bun.spawn
+async function pipeStdout(stdout: any, sessionId: string, ptyHandle: PtyHandle): Promise<void> {
+  const reader = stdout.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value);
+      if (dataCallback) dataCallback(sessionId, text);
+      if (ptyHandle.onData) ptyHandle.onData(text);
+    }
+  } catch {
+    // Stream closed
+  }
+}
+
+function onProcExit(sessionId: string, code: number, ptyHandle: PtyHandle): void {
+  const session = sessions.get(sessionId);
+  if (session) session.state = 'exited';
+  if (exitCallback) exitCallback(sessionId, code);
+  if (ptyHandle.onExit) ptyHandle.onExit(code);
+  handlePtyExit(sessionId, code);
+}
+
 function spawnPty(command: string, opts: SpawnPtyOpts): PtySession {
   const sessionId = randomUUID();
 
@@ -277,31 +302,8 @@ function spawnPty(command: string, opts: SpawnPtyOpts): PtySession {
       onExit: null,
     };
 
-    // Read stdout in background
-    void (async () => {
-      const reader = proc.stdout.getReader();
-      const decoder = new TextDecoder();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = decoder.decode(value);
-          if (dataCallback) dataCallback(sessionId, text);
-          if (ptyHandle.onData) ptyHandle.onData(text);
-        }
-      } catch {
-        // Stream closed
-      }
-    })();
-
-    // Wait for exit
-    void proc.exited.then((code) => {
-      const session = sessions.get(sessionId);
-      if (session) session.state = 'exited';
-      if (exitCallback) exitCallback(sessionId, code);
-      if (ptyHandle.onExit) ptyHandle.onExit(code);
-      handlePtyExit(sessionId, code);
-    });
+    void pipeStdout(proc.stdout, sessionId, ptyHandle);
+    void proc.exited.then((code) => onProcExit(sessionId, code, ptyHandle));
   }
 
   const session: PtySession = {

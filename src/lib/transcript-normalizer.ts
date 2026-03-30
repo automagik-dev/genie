@@ -104,18 +104,12 @@ function summarizeRecord(record: Record<string, unknown>, keys: string[]): strin
 }
 
 /** One-line summary of a tool call's input for display. */
-export function summarizeToolInput(name: string, input: unknown, density: TranscriptDensity = 'comfortable'): string {
-  const compactMax = density === 'compact' ? 72 : 120;
-  if (typeof input === 'string') {
-    const normalized = isCommandTool(name, input) ? stripWrappedShell(input) : compactWhitespace(input);
-    return truncate(normalized, compactMax);
-  }
-  const record = asRecord(input);
-  if (!record) {
-    const serialized = compactWhitespace(formatUnknown(input));
-    return serialized ? truncate(serialized, compactMax) : `Inspect ${name} input`;
-  }
+function summarizeStringInput(name: string, input: string, compactMax: number): string {
+  const normalized = isCommandTool(name, input) ? stripWrappedShell(input) : compactWhitespace(input);
+  return truncate(normalized, compactMax);
+}
 
+function summarizeRecordInput(name: string, record: Record<string, unknown>, compactMax: number): string {
   const command =
     typeof record.command === 'string' ? record.command : typeof record.cmd === 'string' ? record.cmd : null;
   if (command && isCommandTool(name, record)) {
@@ -130,15 +124,26 @@ export function summarizeToolInput(name: string, input: unknown, density: Transc
 
   if (Array.isArray(record.paths) && record.paths.length > 0) {
     const first = record.paths.find((value): value is string => typeof value === 'string' && value.trim().length > 0);
-    if (first) {
-      return truncate(`${record.paths.length} paths, starting with ${first}`, compactMax);
-    }
+    if (first) return truncate(`${record.paths.length} paths, starting with ${first}`, compactMax);
   }
 
   const keys = Object.keys(record);
   if (keys.length === 0) return `No ${name} input`;
   if (keys.length === 1) return truncate(`${keys[0]} payload`, compactMax);
   return truncate(`${keys.length} fields: ${keys.slice(0, 3).join(', ')}`, compactMax);
+}
+
+export function summarizeToolInput(name: string, input: unknown, density: TranscriptDensity = 'comfortable'): string {
+  const compactMax = density === 'compact' ? 72 : 120;
+  if (typeof input === 'string') return summarizeStringInput(name, input, compactMax);
+
+  const record = asRecord(input);
+  if (!record) {
+    const serialized = compactWhitespace(formatUnknown(input));
+    return serialized ? truncate(serialized, compactMax) : `Inspect ${name} input`;
+  }
+
+  return summarizeRecordInput(name, record, compactMax);
 }
 
 /** Parse structured tool results with header metadata + body. */
@@ -171,28 +176,39 @@ export function parseStructuredToolResult(result: string | undefined) {
 }
 
 /** One-line summary of a tool call's result for display. */
+function summarizeStructuredResult(
+  structured: { body: string; status: string | null; exitCode: string | null },
+  maxLen: number,
+): string | null {
+  if (structured.body) {
+    return truncate(structured.body.split('\n')[0] ?? structured.body, maxLen);
+  }
+  if (structured.status === 'completed') return 'Completed';
+  if (structured.status === 'failed' || structured.status === 'error') {
+    return structured.exitCode ? `Failed with exit code ${structured.exitCode}` : 'Failed';
+  }
+  return null;
+}
+
 export function summarizeToolResult(
   result: string | undefined,
   isError: boolean | undefined,
   density: TranscriptDensity = 'comfortable',
 ): string {
+  const maxLen = density === 'compact' ? 84 : 140;
   if (!result) return isError ? 'Tool failed' : 'Waiting for result';
+
   const structured = parseStructuredToolResult(result);
   if (structured) {
-    if (structured.body) {
-      return truncate(structured.body.split('\n')[0] ?? structured.body, density === 'compact' ? 84 : 140);
-    }
-    if (structured.status === 'completed') return 'Completed';
-    if (structured.status === 'failed' || structured.status === 'error') {
-      return structured.exitCode ? `Failed with exit code ${structured.exitCode}` : 'Failed';
-    }
+    const summary = summarizeStructuredResult(structured, maxLen);
+    if (summary) return summary;
   }
+
   const resultLines = result
     .split(/\r?\n/)
     .map((line) => compactWhitespace(line))
     .filter(Boolean);
-  const firstLine = resultLines[0] ?? result;
-  return truncate(firstLine, density === 'compact' ? 84 : 140);
+  return truncate(resultLines[0] ?? result, maxLen);
 }
 
 // ============================================================================
@@ -334,195 +350,197 @@ export function groupToolBlocks(blocks: TranscriptBlock[]): TranscriptBlock[] {
  * 2. groupCommandBlocks — collapse bash/shell runs into command_group
  * 3. groupToolBlocks — collapse file-op tools into tool_group
  */
+// biome-ignore lint/suspicious/noExplicitAny: NormalizerEntry variant — different fields per kind
+type EntryVariant = any;
+
+function appendText(existing: string, addition: string): string {
+  return existing.endsWith('\n') || addition.startsWith('\n') ? existing + addition : `${existing}\n${addition}`;
+}
+
+function handleMessageEntry(entry: EntryVariant, streaming: boolean, blocks: TranscriptBlock[]): void {
+  const isStreaming = streaming && entry.kind === 'assistant' && entry.delta === true;
+  const previous = blocks[blocks.length - 1];
+  if (previous?.type === 'message' && previous.role === entry.kind) {
+    previous.text = appendText(previous.text, entry.text);
+    previous.ts = entry.ts;
+    previous.streaming = previous.streaming || isStreaming;
+  } else {
+    blocks.push({ type: 'message', role: entry.kind, ts: entry.ts, text: entry.text, streaming: isStreaming });
+  }
+}
+
+function handleThinkingEntry(entry: EntryVariant, streaming: boolean, blocks: TranscriptBlock[]): void {
+  const isStreaming = streaming && entry.delta === true;
+  const previous = blocks[blocks.length - 1];
+  if (previous?.type === 'thinking') {
+    previous.text = appendText(previous.text, entry.text);
+    previous.ts = entry.ts;
+    previous.streaming = previous.streaming || isStreaming;
+  } else {
+    blocks.push({ type: 'thinking', ts: entry.ts, text: entry.text, streaming: isStreaming });
+  }
+}
+
+function handleToolCallEntry(
+  entry: EntryVariant,
+  blocks: TranscriptBlock[],
+  pendingToolBlocks: Map<string, ToolBlock>,
+): void {
+  const toolBlock: ToolBlock = {
+    type: 'tool',
+    ts: entry.ts,
+    name: displayToolName(entry.name, entry.input),
+    toolUseId: entry.toolUseId ?? extractToolUseId(entry.input),
+    input: entry.input,
+    status: 'running',
+  };
+  blocks.push(toolBlock);
+  if (toolBlock.toolUseId) pendingToolBlocks.set(toolBlock.toolUseId, toolBlock);
+}
+
+function handleToolResultEntry(
+  entry: EntryVariant,
+  blocks: TranscriptBlock[],
+  pendingToolBlocks: Map<string, ToolBlock>,
+): void {
+  const matched =
+    pendingToolBlocks.get(entry.toolUseId) ??
+    [...blocks].reverse().find((block): block is ToolBlock => block.type === 'tool' && block.status === 'running');
+
+  if (matched) {
+    matched.result = entry.content;
+    matched.isError = entry.isError;
+    matched.status = entry.isError ? 'error' : 'completed';
+    matched.endTs = entry.ts;
+    pendingToolBlocks.delete(entry.toolUseId);
+  } else {
+    blocks.push({
+      type: 'tool',
+      ts: entry.ts,
+      endTs: entry.ts,
+      name: entry.toolName ?? 'tool',
+      toolUseId: entry.toolUseId,
+      input: null,
+      result: entry.content,
+      isError: entry.isError,
+      status: entry.isError ? 'error' : 'completed',
+    });
+  }
+}
+
+function handleStderrEntry(entry: EntryVariant, blocks: TranscriptBlock[]): void {
+  if (shouldHideNiceModeStderr(entry.text)) return;
+  const prev = blocks[blocks.length - 1];
+  if (prev && prev.type === 'stderr_group') {
+    prev.lines.push({ ts: entry.ts, text: entry.text });
+    prev.endTs = entry.ts;
+  } else {
+    blocks.push({ type: 'stderr_group', ts: entry.ts, endTs: entry.ts, lines: [{ ts: entry.ts, text: entry.text }] });
+  }
+}
+
+function handleSystemEntry(
+  entry: EntryVariant,
+  blocks: TranscriptBlock[],
+  pendingActivityBlocks: Map<string, ActivityBlock>,
+): boolean {
+  if (compactWhitespace(entry.text).toLowerCase() === 'turn started') return true;
+
+  const activity = parseSystemActivity(entry.text);
+  if (!activity) {
+    blocks.push({ type: 'event', ts: entry.ts, label: 'system', tone: 'warn', text: entry.text });
+    return true;
+  }
+
+  const existing = activity.activityId ? pendingActivityBlocks.get(activity.activityId) : undefined;
+  if (existing) {
+    existing.status = activity.status;
+    existing.ts = entry.ts;
+    if (activity.status === 'completed' && activity.activityId) {
+      pendingActivityBlocks.delete(activity.activityId);
+    }
+  } else {
+    const block: ActivityBlock = {
+      type: 'activity',
+      ts: entry.ts,
+      activityId: activity.activityId,
+      name: activity.name,
+      status: activity.status,
+    };
+    blocks.push(block);
+    if (activity.status === 'running' && activity.activityId) {
+      pendingActivityBlocks.set(activity.activityId, block);
+    }
+  }
+  return true;
+}
+
+function handleFallbackEntry(entry: EntryVariant, blocks: TranscriptBlock[]): void {
+  const activeCommandBlock = [...blocks]
+    .reverse()
+    .find(
+      (block): block is ToolBlock =>
+        block.type === 'tool' && block.status === 'running' && isCommandTool(block.name, block.input),
+    );
+  if (activeCommandBlock) {
+    activeCommandBlock.result = activeCommandBlock.result
+      ? appendText(activeCommandBlock.result, entry.text)
+      : entry.text;
+    return;
+  }
+
+  const previous = blocks[blocks.length - 1];
+  if (previous?.type === 'stdout') {
+    previous.text = appendText(previous.text, entry.text);
+    previous.ts = entry.ts;
+  } else {
+    blocks.push({ type: 'stdout', ts: entry.ts, text: entry.text });
+  }
+}
+
+function handleInitEntry(entry: EntryVariant, blocks: TranscriptBlock[]): void {
+  blocks.push({
+    type: 'event',
+    ts: entry.ts,
+    label: 'init',
+    tone: 'info',
+    text: `model ${entry.model}${entry.sessionId ? ` \u2022 session ${entry.sessionId}` : ''}`,
+  });
+}
+
+function handleResultEntry(entry: EntryVariant, blocks: TranscriptBlock[]): void {
+  blocks.push({
+    type: 'event',
+    ts: entry.ts,
+    label: 'result',
+    tone: entry.isError ? 'error' : 'info',
+    text: entry.text.trim() || entry.errors[0] || (entry.isError ? 'Run failed' : 'Completed'),
+  });
+}
+
 export function normalizeTranscript(entries: NormalizerEntry[], streaming: boolean): TranscriptBlock[] {
   const blocks: TranscriptBlock[] = [];
   const pendingToolBlocks = new Map<string, ToolBlock>();
   const pendingActivityBlocks = new Map<string, ActivityBlock>();
 
+  const kindHandlers: Record<string, (e: NormalizerEntry) => void> = {
+    assistant: (e) => handleMessageEntry(e, streaming, blocks),
+    user: (e) => handleMessageEntry(e, streaming, blocks),
+    thinking: (e) => handleThinkingEntry(e, streaming, blocks),
+    tool_call: (e) => handleToolCallEntry(e, blocks, pendingToolBlocks),
+    tool_result: (e) => handleToolResultEntry(e, blocks, pendingToolBlocks),
+    init: (e) => handleInitEntry(e, blocks),
+    result: (e) => handleResultEntry(e, blocks),
+    stderr: (e) => handleStderrEntry(e, blocks),
+    system: (e) => handleSystemEntry(e, blocks, pendingActivityBlocks),
+  };
+
   for (const entry of entries) {
-    const previous = blocks[blocks.length - 1];
-
-    if (entry.kind === 'assistant' || entry.kind === 'user') {
-      const isStreaming = streaming && entry.kind === 'assistant' && entry.delta === true;
-      if (previous?.type === 'message' && previous.role === entry.kind) {
-        previous.text += previous.text.endsWith('\n') || entry.text.startsWith('\n') ? entry.text : `\n${entry.text}`;
-        previous.ts = entry.ts;
-        previous.streaming = previous.streaming || isStreaming;
-      } else {
-        blocks.push({
-          type: 'message',
-          role: entry.kind,
-          ts: entry.ts,
-          text: entry.text,
-          streaming: isStreaming,
-        });
-      }
-      continue;
-    }
-
-    if (entry.kind === 'thinking') {
-      const isStreaming = streaming && entry.delta === true;
-      if (previous?.type === 'thinking') {
-        previous.text += previous.text.endsWith('\n') || entry.text.startsWith('\n') ? entry.text : `\n${entry.text}`;
-        previous.ts = entry.ts;
-        previous.streaming = previous.streaming || isStreaming;
-      } else {
-        blocks.push({
-          type: 'thinking',
-          ts: entry.ts,
-          text: entry.text,
-          streaming: isStreaming,
-        });
-      }
-      continue;
-    }
-
-    if (entry.kind === 'tool_call') {
-      const toolBlock: ToolBlock = {
-        type: 'tool',
-        ts: entry.ts,
-        name: displayToolName(entry.name, entry.input),
-        toolUseId: entry.toolUseId ?? extractToolUseId(entry.input),
-        input: entry.input,
-        status: 'running',
-      };
-      blocks.push(toolBlock);
-      if (toolBlock.toolUseId) {
-        pendingToolBlocks.set(toolBlock.toolUseId, toolBlock);
-      }
-      continue;
-    }
-
-    if (entry.kind === 'tool_result') {
-      const matched =
-        pendingToolBlocks.get(entry.toolUseId) ??
-        [...blocks].reverse().find((block): block is ToolBlock => block.type === 'tool' && block.status === 'running');
-
-      if (matched) {
-        matched.result = entry.content;
-        matched.isError = entry.isError;
-        matched.status = entry.isError ? 'error' : 'completed';
-        matched.endTs = entry.ts;
-        pendingToolBlocks.delete(entry.toolUseId);
-      } else {
-        blocks.push({
-          type: 'tool',
-          ts: entry.ts,
-          endTs: entry.ts,
-          name: entry.toolName ?? 'tool',
-          toolUseId: entry.toolUseId,
-          input: null,
-          result: entry.content,
-          isError: entry.isError,
-          status: entry.isError ? 'error' : 'completed',
-        });
-      }
-      continue;
-    }
-
-    if (entry.kind === 'init') {
-      blocks.push({
-        type: 'event',
-        ts: entry.ts,
-        label: 'init',
-        tone: 'info',
-        text: `model ${entry.model}${entry.sessionId ? ` \u2022 session ${entry.sessionId}` : ''}`,
-      });
-      continue;
-    }
-
-    if (entry.kind === 'result') {
-      blocks.push({
-        type: 'event',
-        ts: entry.ts,
-        label: 'result',
-        tone: entry.isError ? 'error' : 'info',
-        text: entry.text.trim() || entry.errors[0] || (entry.isError ? 'Run failed' : 'Completed'),
-      });
-      continue;
-    }
-
-    if (entry.kind === 'stderr') {
-      if (shouldHideNiceModeStderr(entry.text)) {
-        continue;
-      }
-      const prev = blocks[blocks.length - 1];
-      if (prev && prev.type === 'stderr_group') {
-        prev.lines.push({ ts: entry.ts, text: entry.text });
-        prev.endTs = entry.ts;
-      } else {
-        blocks.push({
-          type: 'stderr_group',
-          ts: entry.ts,
-          endTs: entry.ts,
-          lines: [{ ts: entry.ts, text: entry.text }],
-        });
-      }
-      continue;
-    }
-
-    if (entry.kind === 'system') {
-      if (compactWhitespace(entry.text).toLowerCase() === 'turn started') {
-        continue;
-      }
-      const activity = parseSystemActivity(entry.text);
-      if (activity) {
-        const existing = activity.activityId ? pendingActivityBlocks.get(activity.activityId) : undefined;
-        if (existing) {
-          existing.status = activity.status;
-          existing.ts = entry.ts;
-          if (activity.status === 'completed' && activity.activityId) {
-            pendingActivityBlocks.delete(activity.activityId);
-          }
-        } else {
-          const block: ActivityBlock = {
-            type: 'activity',
-            ts: entry.ts,
-            activityId: activity.activityId,
-            name: activity.name,
-            status: activity.status,
-          };
-          blocks.push(block);
-          if (activity.status === 'running' && activity.activityId) {
-            pendingActivityBlocks.set(activity.activityId, block);
-          }
-        }
-        continue;
-      }
-      blocks.push({
-        type: 'event',
-        ts: entry.ts,
-        label: 'system',
-        tone: 'warn',
-        text: entry.text,
-      });
-      continue;
-    }
-
-    // Fallback: stdout or unrecognized entry kinds
-    // If there's an active command tool, append to its result
-    const activeCommandBlock = [...blocks]
-      .reverse()
-      .find(
-        (block): block is ToolBlock =>
-          block.type === 'tool' && block.status === 'running' && isCommandTool(block.name, block.input),
-      );
-    if (activeCommandBlock) {
-      activeCommandBlock.result = activeCommandBlock.result
-        ? `${activeCommandBlock.result}${activeCommandBlock.result.endsWith('\n') || entry.text.startsWith('\n') ? entry.text : `\n${entry.text}`}`
-        : entry.text;
-      continue;
-    }
-
-    if (previous?.type === 'stdout') {
-      previous.text += previous.text.endsWith('\n') || entry.text.startsWith('\n') ? entry.text : `\n${entry.text}`;
-      previous.ts = entry.ts;
+    const handler = kindHandlers[entry.kind];
+    if (handler) {
+      handler(entry);
     } else {
-      blocks.push({
-        type: 'stdout',
-        ts: entry.ts,
-        text: entry.text,
-      });
+      handleFallbackEntry(entry, blocks);
     }
   }
 
