@@ -27,7 +27,7 @@ import {
 import { getProvider } from './providers/registry.js';
 import * as teamManager from './team-manager.js';
 import { genieTmuxCmd } from './tmux-wrapper.js';
-import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows } from './tmux.js';
+import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows, resolveRepoSession } from './tmux.js';
 import * as wishState from './wish-state.js';
 
 const execAsync = promisify(exec);
@@ -191,7 +191,10 @@ export async function spawnWorkerFromTemplate(
   const fullCommand = buildFullCommand(launch);
   const workerId = await generateWorkerId(team, template.role);
 
-  const session = (await getCurrentSessionName()) ?? team;
+  // Session resolution: team config → repo path mapping → current session → team name
+  const teamConfig = await teamManager.getTeam(team);
+  const session =
+    teamConfig?.tmuxSessionName ?? (await resolveRepoSession(repoPath)) ?? (await getCurrentSessionName()) ?? team;
   const { paneId, teamWindow } = await spawnPaneInSession(session, team, repoPath, fullCommand);
 
   const now = new Date().toISOString();

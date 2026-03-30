@@ -26,15 +26,25 @@ export function registerTeamNamespace(program: Command): void {
     .requiredOption('--repo <path>', 'Path to the git repository')
     .option('--branch <branch>', 'Base branch to create from', 'dev')
     .option('--wish <slug>', 'Wish slug — auto-spawns a task leader with wish context')
-    .option('--session <name>', 'Tmux session name (avoids session explosion on parallel creates)')
+    .option('--tmux-session <name>', 'Tmux session to place team window in (default: derived from repo path)')
+    .option('--session <name>', 'Alias for --tmux-session (deprecated)')
     .option('--no-spawn', 'Create team and copy wish without spawning the leader (useful for testing)')
     .action(
       async (
         name: string,
-        options: { repo: string; branch: string; wish?: string; session?: string; spawn?: boolean },
+        options: {
+          repo: string;
+          branch: string;
+          wish?: string;
+          tmuxSession?: string;
+          session?: string;
+          spawn?: boolean;
+        },
       ) => {
         try {
-          await handleTeamCreate(name, options);
+          // --session is a deprecated alias for --tmux-session
+          const merged = { ...options, tmuxSession: options.tmuxSession ?? options.session };
+          await handleTeamCreate(name, merged);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.error(`Error: ${message}`);
@@ -222,7 +232,7 @@ export function registerTeamNamespace(program: Command): void {
 
 async function handleTeamCreate(
   name: string,
-  options: { repo: string; branch: string; wish?: string; session?: string; spawn?: boolean },
+  options: { repo: string; branch: string; wish?: string; tmuxSession?: string; spawn?: boolean },
 ): Promise<void> {
   const resolvedRepo = resolve(options.repo);
 
@@ -248,11 +258,11 @@ async function handleTeamCreate(
   const config = await teamManager.createTeam(name, options.repo, options.branch);
 
   // Always resolve tmuxSessionName — prevents session explosion on parallel creates
-  // Resolution: explicit flag → PG agent session → repo path mapping → team name fallback
+  // Resolution: explicit --tmux-session → PG agent session → repo path mapping
   const { findSessionByRepo } = await import('../lib/agent-directory.js');
   const { resolveRepoSession } = await import('../lib/tmux.js');
   config.tmuxSessionName =
-    options.session ?? (await findSessionByRepo(resolvedRepo)) ?? (await resolveRepoSession(resolvedRepo));
+    options.tmuxSession ?? (await findSessionByRepo(resolvedRepo)) ?? (await resolveRepoSession(resolvedRepo));
   if (options.wish) {
     config.wishSlug = options.wish;
   }
@@ -269,7 +279,7 @@ async function handleTeamCreate(
   }
 
   if (options.wish && options.spawn !== false) {
-    await spawnLeaderWithWish(config, options.wish, options.repo, options.session);
+    await spawnLeaderWithWish(config, options.wish, options.repo, options.tmuxSession);
   }
 }
 
