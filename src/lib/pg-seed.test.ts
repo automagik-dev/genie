@@ -6,6 +6,12 @@ import { getConnection } from './db.js';
 import { needsSeed, runSeed } from './pg-seed.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
+function hasUnmigratedTeamFiles(teamsDir: string): boolean {
+  if (!existsSync(teamsDir)) return false;
+  const files = require('node:fs').readdirSync(teamsDir) as string[];
+  return files.some((f: string) => f.endsWith('.json') && !f.endsWith('.migrated'));
+}
+
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanup: () => Promise<void>;
 
@@ -446,16 +452,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         require('node:fs').renameSync(workersPath, `${workersPath}.migrated`);
       }
       // Remove teams dir migrated markers don't interfere
-      const teamsDir = join(testHome, 'teams');
-      if (existsSync(teamsDir)) {
-        const files = require('node:fs').readdirSync(teamsDir) as string[];
-        for (const f of files) {
-          if (f.endsWith('.json') && !f.endsWith('.migrated')) {
-            // unmigrated team file exists → needsSeed = true
-            return; // skip assertion
-          }
-        }
-      }
+      if (hasUnmigratedTeamFiles(join(testHome, 'teams'))) return;
       expect(needsSeed()).toBe(false);
     });
   });

@@ -792,53 +792,30 @@ async function applySpawnLayout(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null
   }
 }
 
-async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
-  const teamWindow = ctx.spawnIntoCurrentWindow
-    ? null
-    : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.sessionOverride);
+// biome-ignore lint/suspicious/noExplicitAny: SpawnCtx + teamWindow types from complex internal types
+async function createTmuxExecutor(ctx: SpawnCtx, paneId: string, pid: number | null, teamWindow: any): Promise<void> {
+  if (!ctx.agentIdentityId || !ctx.executorId) return;
+  await createAndLinkExecutor(
+    ctx.agentIdentityId,
+    ctx.validated.provider,
+    resolveExecutorTransport(ctx.validated.provider, 'tmux'),
+    {
+      id: ctx.executorId,
+      pid,
+      tmuxSession: ctx.validated.team,
+      tmuxPaneId: paneId,
+      tmuxWindow: teamWindow?.windowName ?? null,
+      tmuxWindowId: teamWindow?.windowId ?? null,
+      claudeSessionId: ctx.claudeSessionId ?? null,
+      state: 'spawning',
+      repoPath: ctx.cwd,
+      paneColor: ctx.spawnColor,
+    },
+  );
+}
 
-  let paneId: string;
-  try {
-    paneId = createTmuxPane(ctx, teamWindow);
-  } catch (err) {
-    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
-    return process.exit(1) as never;
-  }
-
-  // Executor model: capture PID and create executor record
-  const pid = await capturePanePid(paneId);
-  if (ctx.agentIdentityId && ctx.executorId) {
-    await createAndLinkExecutor(
-      ctx.agentIdentityId,
-      ctx.validated.provider,
-      resolveExecutorTransport(ctx.validated.provider, 'tmux'),
-      {
-        id: ctx.executorId,
-        pid,
-        tmuxSession: ctx.validated.team,
-        tmuxPaneId: paneId,
-        tmuxWindow: teamWindow?.windowName ?? null,
-        tmuxWindowId: teamWindow?.windowId ?? null,
-        claudeSessionId: ctx.claudeSessionId ?? null,
-        state: 'spawning',
-        repoPath: ctx.cwd,
-        paneColor: ctx.spawnColor,
-      },
-    );
-  }
-
-  await applySpawnLayout(ctx, teamWindow);
-
-  // Watch for Claude Code workspace trust prompt and auto-confirm
-  // (upstream bug: --dangerously-skip-permissions doesn't bypass it)
-  // Only for Claude provider — Codex doesn't have this prompt
-  if (ctx.validated.provider === 'claude') {
-    await autoConfirmTrustPrompt(paneId);
-  }
-
-  const workerEntry = await registerSpawnWorker(ctx, paneId, teamWindow);
-  await notifySpawnJoin(ctx, paneId);
-
+// biome-ignore lint/suspicious/noExplicitAny: worker entry type from registry
+async function finalizeTmuxSpawn(ctx: SpawnCtx, paneId: string, teamWindow: any, workerEntry: any): Promise<void> {
   if (ctx.spawnColor && paneId !== 'inline') {
     await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
   }
@@ -863,17 +840,44 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
     console.log(`  Window:   ${teamWindow.windowName} (${teamWindow.windowId})`);
   }
   printSpawnInfo(ctx, paneId, workerEntry);
+}
 
-  // Wait for agent readiness after spawn
-  if (paneId !== 'inline') {
-    const result = await waitForAgentReady(paneId);
-    if (result.ready) {
-      console.log(`  ✓ Agent ready (${(result.elapsedMs / 1000).toFixed(1)}s)`);
-    } else {
-      console.log(`  ⚠ Agent readiness timeout (${Math.round(result.elapsedMs / 1000)}s) — proceeding anyway`);
-    }
+async function awaitAgentReadiness(paneId: string): Promise<void> {
+  if (paneId === 'inline') return;
+  const result = await waitForAgentReady(paneId);
+  if (result.ready) {
+    console.log(`  ✓ Agent ready (${(result.elapsedMs / 1000).toFixed(1)}s)`);
+  } else {
+    console.log(`  ⚠ Agent readiness timeout (${Math.round(result.elapsedMs / 1000)}s) — proceeding anyway`);
+  }
+}
+
+async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
+  const teamWindow = ctx.spawnIntoCurrentWindow
+    ? null
+    : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.sessionOverride);
+
+  let paneId: string;
+  try {
+    paneId = createTmuxPane(ctx, teamWindow);
+  } catch (err) {
+    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
+    return process.exit(1) as never;
   }
 
+  const pid = await capturePanePid(paneId);
+  await createTmuxExecutor(ctx, paneId, pid, teamWindow);
+  await applySpawnLayout(ctx, teamWindow);
+
+  if (ctx.validated.provider === 'claude') {
+    await autoConfirmTrustPrompt(paneId);
+  }
+
+  const workerEntry = await registerSpawnWorker(ctx, paneId, teamWindow);
+  await notifySpawnJoin(ctx, paneId);
+  await finalizeTmuxSpawn(ctx, paneId, teamWindow, workerEntry);
+
+  await awaitAgentReadiness(paneId);
   return paneId;
 }
 

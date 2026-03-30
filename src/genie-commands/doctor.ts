@@ -357,11 +357,7 @@ export async function doctorCommand(options?: { fix?: boolean }): Promise<void> 
  * `genie doctor --fix` — automated recovery for stale PG state.
  * Kills zombie postgres, cleans shared memory, removes stale files, restarts daemon.
  */
-async function doctorFix(): Promise<void> {
-  console.log('\n\x1b[1mGenie Doctor \u2014 Auto Fix\x1b[0m');
-  console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m\n`);
-
-  // 1. Kill zombie/stale postgres processes
+async function killStalePostgres(): Promise<void> {
   console.log('  Killing stale postgres processes...');
   try {
     const { execSync } = await import('node:child_process');
@@ -370,8 +366,9 @@ async function doctorFix(): Promise<void> {
   } catch {
     console.log('  \x1b[33m!\x1b[0m Could not kill stale postgres processes');
   }
+}
 
-  // 2. Clean shared memory segments
+async function cleanSharedMemory(): Promise<void> {
   console.log('  Cleaning shared memory...');
   try {
     const { execSync } = await import('node:child_process');
@@ -383,10 +380,9 @@ async function doctorFix(): Promise<void> {
   } catch {
     console.log('  \x1b[32m\u2713\x1b[0m No stale shared memory');
   }
+}
 
-  // 3. Stop existing daemon before cleanup (prevents dual-instance)
-  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
-  const pidFile = join(genieHome, 'scheduler.pid');
+async function stopExistingDaemon(pidFile: string): Promise<void> {
   try {
     const { readFileSync } = await import('node:fs');
     const pid = Number.parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
@@ -402,8 +398,9 @@ async function doctorFix(): Promise<void> {
   } catch {
     // No PID file or unreadable — no daemon to stop
   }
+}
 
-  // 4. Remove stale port/PID files
+function removeStaleFiles(genieHome: string, pidFile: string): void {
   const portFile = join(genieHome, 'pgserve.port');
   const postmasterPid = join(genieHome, 'data', 'pgserve', 'postmaster.pid');
 
@@ -417,8 +414,9 @@ async function doctorFix(): Promise<void> {
       }
     }
   }
+}
 
-  // 5. Restart daemon
+async function restartDaemon(): Promise<void> {
   console.log('  Restarting daemon...');
   try {
     const { spawn } = await import('node:child_process');
@@ -429,12 +427,26 @@ async function doctorFix(): Promise<void> {
       stdio: 'ignore',
     });
     child.unref();
-    // Wait briefly for daemon to start
     await new Promise((resolve) => setTimeout(resolve, 2000));
     console.log('  \x1b[32m\u2713\x1b[0m Daemon restart initiated');
   } catch {
     console.log('  \x1b[33m!\x1b[0m Could not restart daemon \u2014 run: genie daemon start');
   }
+}
+
+async function doctorFix(): Promise<void> {
+  console.log('\n\x1b[1mGenie Doctor \u2014 Auto Fix\x1b[0m');
+  console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m\n`);
+
+  await killStalePostgres();
+  await cleanSharedMemory();
+
+  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+  const pidFile = join(genieHome, 'scheduler.pid');
+
+  await stopExistingDaemon(pidFile);
+  removeStaleFiles(genieHome, pidFile);
+  await restartDaemon();
 
   console.log(`\n\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
   console.log('\x1b[32mFix complete.\x1b[0m Run \x1b[36mgenie doctor\x1b[0m to verify.\n');

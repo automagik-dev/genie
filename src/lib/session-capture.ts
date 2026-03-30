@@ -157,77 +157,92 @@ function extractTextContent(content: unknown): string | null {
 // JSONL discovery — main sessions + subagent sessions
 // ============================================================================
 
+async function discoverMainSession(
+  filePath: string,
+  projectPath: string,
+  name: string,
+): Promise<DiscoveredFile | null> {
+  try {
+    const st = await stat(filePath);
+    return {
+      sessionId: basename(name, '.jsonl'),
+      jsonlPath: filePath,
+      projectPath,
+      parentSessionId: null,
+      isSubagent: false,
+      mtime: Math.floor(st.mtimeMs),
+      fileSize: st.size,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function discoverSubagentSessions(projectPath: string, parentName: string): Promise<DiscoveredFile[]> {
+  const results: DiscoveredFile[] = [];
+  const subagentsDir = join(projectPath, parentName, 'subagents');
+  try {
+    const subFiles = await readdir(subagentsDir);
+    for (const subFile of subFiles) {
+      if (!subFile.endsWith('.jsonl')) continue;
+      try {
+        const filePath = join(subagentsDir, subFile);
+        const st = await stat(filePath);
+        results.push({
+          sessionId: basename(subFile, '.jsonl'),
+          jsonlPath: filePath,
+          projectPath,
+          parentSessionId: parentName,
+          isSubagent: true,
+          mtime: Math.floor(st.mtimeMs),
+          fileSize: st.size,
+        });
+      } catch {
+        // deleted between readdir and stat
+      }
+    }
+  } catch {
+    // no subagents dir
+  }
+  return results;
+}
+
+async function discoverProjectSessions(projectPath: string): Promise<DiscoveredFile[]> {
+  const results: DiscoveredFile[] = [];
+  try {
+    const entries = await readdir(projectPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        const file = await discoverMainSession(join(projectPath, entry.name), projectPath, entry.name);
+        if (file) results.push(file);
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        const subs = await discoverSubagentSessions(projectPath, entry.name);
+        results.push(...subs);
+      }
+    }
+  } catch {
+    // readdir on project failed
+  }
+  return results;
+}
+
 export async function discoverAllJsonlFiles(): Promise<DiscoveredFile[]> {
   const claudeDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects');
-  const results: DiscoveredFile[] = [];
 
   let projects: string[];
   try {
     projects = await readdir(claudeDir);
   } catch {
-    return results;
+    return [];
   }
 
+  const results: DiscoveredFile[] = [];
   for (const project of projects) {
-    const projectPath = join(claudeDir, project);
-
-    // Claude Code stores JSONL files directly in project dirs: <project>/<session-id>.jsonl
-    // Subagent sessions: <project>/<session-id>/subagents/<sub-id>.jsonl
-    try {
-      const entries = await readdir(projectPath, { withFileTypes: true });
-      for (const entry of entries) {
-        // Main sessions: direct .jsonl files in project dir
-        if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-          const sessionId = basename(entry.name, '.jsonl');
-          const filePath = join(projectPath, entry.name);
-          try {
-            const st = await stat(filePath);
-            results.push({
-              sessionId,
-              jsonlPath: filePath,
-              projectPath,
-              parentSessionId: null,
-              isSubagent: false,
-              mtime: Math.floor(st.mtimeMs),
-              fileSize: st.size,
-            });
-          } catch {
-            // File may have been deleted between readdir and stat
-          }
-          continue;
-        }
-
-        // Subagent sessions: <session-id>/subagents/<sub-id>.jsonl
-        if (!entry.isDirectory()) continue;
-        const subagentsDir = join(projectPath, entry.name, 'subagents');
-        try {
-          const subFiles = await readdir(subagentsDir);
-          for (const subFile of subFiles) {
-            if (!subFile.endsWith('.jsonl')) continue;
-            const subSessionId = basename(subFile, '.jsonl');
-            const filePath = join(subagentsDir, subFile);
-            try {
-              const st = await stat(filePath);
-              results.push({
-                sessionId: subSessionId,
-                jsonlPath: filePath,
-                projectPath,
-                parentSessionId: entry.name,
-                isSubagent: true,
-                mtime: Math.floor(st.mtimeMs),
-                fileSize: st.size,
-              });
-            } catch {
-              // deleted between readdir and stat
-            }
-          }
-        } catch {
-          // no subagents dir
-        }
-      }
-    } catch {
-      // readdir on project failed
-    }
+    const files = await discoverProjectSessions(join(claudeDir, project));
+    results.push(...files);
   }
 
   return results;
@@ -291,41 +306,16 @@ export async function buildWorkerMap(sql: SqlClient): Promise<Map<string, Worker
 // Ensure session record exists
 // ============================================================================
 
-async function ensureSession(
-  sql: SqlClient,
-  sessionId: string,
-  jsonlPath: string,
-  projectPath: string,
-  workerMap: Map<string, WorkerMatch>,
-  opts?: { parentSessionId?: string | null; isSubagent?: boolean; fileSize?: number; mtime?: number },
-): Promise<{
+interface SessionContext {
   agentId: string | null;
   team: string | null;
   wishSlug: string | null;
   taskId: string | null;
   lastOffset: number;
   totalTurns: number;
-}> {
-  const existing =
-    await sql`SELECT agent_id, team, wish_slug, task_id, last_ingested_offset, total_turns FROM sessions WHERE id = ${sessionId}`;
-  if (existing.length > 0) {
-    return {
-      agentId: existing[0].agent_id,
-      team: existing[0].team,
-      wishSlug: existing[0].wish_slug,
-      taskId: existing[0].task_id,
-      lastOffset: existing[0].last_ingested_offset ?? 0,
-      totalTurns: existing[0].total_turns ?? 0,
-    };
-  }
+}
 
-  const worker = workerMap.get(sessionId);
-  const status = worker ? 'active' : 'orphaned';
-  await sql`
-    INSERT INTO sessions (id, agent_id, executor_id, team, wish_slug, task_id, role, project_path, jsonl_path, status, last_ingested_offset, total_turns, parent_session_id, is_subagent, file_size, file_mtime)
-    VALUES (${sessionId}, ${worker?.agentId ?? null}, ${worker?.executorId ?? null}, ${worker?.team ?? null}, ${worker?.wishSlug ?? null}, ${worker?.taskId ?? null}, ${worker?.role ?? null}, ${projectPath}, ${jsonlPath}, ${status}, 0, 0, ${opts?.parentSessionId ?? null}, ${opts?.isSubagent ?? false}, ${opts?.fileSize ?? 0}, ${opts?.mtime ?? 0})
-    ON CONFLICT (id) DO NOTHING
-  `;
+function workerToContext(worker: WorkerMatch | undefined): SessionContext {
   return {
     agentId: worker?.agentId ?? null,
     team: worker?.team ?? null,
@@ -334,6 +324,37 @@ async function ensureSession(
     lastOffset: 0,
     totalTurns: 0,
   };
+}
+
+async function ensureSession(
+  sql: SqlClient,
+  sessionId: string,
+  jsonlPath: string,
+  projectPath: string,
+  workerMap: Map<string, WorkerMatch>,
+  opts?: { parentSessionId?: string | null; isSubagent?: boolean; fileSize?: number; mtime?: number },
+): Promise<SessionContext> {
+  const existing =
+    await sql`SELECT agent_id, team, wish_slug, task_id, last_ingested_offset, total_turns FROM sessions WHERE id = ${sessionId}`;
+  if (existing.length > 0) {
+    const row = existing[0];
+    return {
+      agentId: row.agent_id,
+      team: row.team,
+      wishSlug: row.wish_slug,
+      taskId: row.task_id,
+      lastOffset: row.last_ingested_offset ?? 0,
+      totalTurns: row.total_turns ?? 0,
+    };
+  }
+
+  const worker = workerMap.get(sessionId);
+  await sql`
+    INSERT INTO sessions (id, agent_id, executor_id, team, wish_slug, task_id, role, project_path, jsonl_path, status, last_ingested_offset, total_turns, parent_session_id, is_subagent, file_size, file_mtime)
+    VALUES (${sessionId}, ${worker?.agentId ?? null}, ${worker?.executorId ?? null}, ${worker?.team ?? null}, ${worker?.wishSlug ?? null}, ${worker?.taskId ?? null}, ${worker?.role ?? null}, ${projectPath}, ${jsonlPath}, ${worker ? 'active' : 'orphaned'}, 0, 0, ${opts?.parentSessionId ?? null}, ${opts?.isSubagent ?? false}, ${opts?.fileSize ?? 0}, ${opts?.mtime ?? 0})
+    ON CONFLICT (id) DO NOTHING
+  `;
+  return workerToContext(worker);
 }
 
 // ============================================================================
@@ -346,6 +367,116 @@ interface ParseResult {
   turnCount: number;
 }
 
+function stringifyInput(input: unknown): string | null {
+  if (!input) return null;
+  return typeof input === 'string' ? input : JSON.stringify(input);
+}
+
+function extractBlockOutput(block: ContentBlock): string | null {
+  if (typeof block.content === 'string') return block.content;
+  return block.content ? extractTextContent(block.content) : null;
+}
+
+function extractContentBlocks(entry: JsonlEntry): ContentBlock[] {
+  if (!entry.message?.content || !Array.isArray(entry.message.content)) return [];
+  return entry.message.content.filter((b: unknown): b is ContentBlock => typeof b === 'object' && b !== null);
+}
+
+interface ParseContext {
+  sessionId: string;
+  agentId: string | null;
+  team: string | null;
+  wishSlug: string | null;
+  taskId: string | null;
+}
+
+function buildToolEventRow(
+  pending: { name: string; input: unknown; turnIndex: number; timestamp: string },
+  toolUseId: string,
+  output: string | null,
+  isError: boolean,
+  ctx: ParseContext,
+): ToolEventRow {
+  return {
+    session_id: ctx.sessionId,
+    turn_index: pending.turnIndex,
+    timestamp: pending.timestamp,
+    tool_name: pending.name,
+    sub_tool: extractSubTool(pending.name, pending.input),
+    tool_use_id: toolUseId,
+    input_raw: stringifyInput(pending.input),
+    output_raw: output,
+    is_error: isError,
+    error_message: isError ? (output?.slice(0, 1000) ?? null) : null,
+    duration_ms: null,
+    agent_id: ctx.agentId,
+    team: ctx.team,
+    wish_slug: ctx.wishSlug,
+    task_id: ctx.taskId,
+  };
+}
+
+function processToolUseBlocks(
+  blocks: ContentBlock[],
+  sessionId: string,
+  turnIndex: number,
+  timestamp: string,
+  contentRows: ContentRow[],
+  pendingToolUses: Map<string, { name: string; input: unknown; turnIndex: number; timestamp: string }>,
+): number {
+  let idx = turnIndex;
+  for (const block of blocks) {
+    if (block.type !== 'tool_use' || !block.name || !block.id) continue;
+    contentRows.push({
+      session_id: sessionId,
+      turn_index: idx,
+      role: 'tool_input',
+      content: stringifyInput(block.input) ?? '',
+      tool_name: block.name,
+      timestamp,
+    });
+    idx++;
+    pendingToolUses.set(block.id, { name: block.name, input: block.input, turnIndex: idx - 1, timestamp });
+  }
+  return idx;
+}
+
+function processToolResultBlocks(
+  blocks: ContentBlock[],
+  sessionId: string,
+  turnIndex: number,
+  timestamp: string,
+  contentRows: ContentRow[],
+  toolEvents: ToolEventRow[],
+  pendingToolUses: Map<string, { name: string; input: unknown; turnIndex: number; timestamp: string }>,
+  ctx: ParseContext,
+): number {
+  let idx = turnIndex;
+  for (const block of blocks) {
+    if (block.type !== 'tool_result' || !block.tool_use_id) continue;
+    const output = extractBlockOutput(block);
+    if (output && output.length > 0) {
+      contentRows.push({
+        session_id: sessionId,
+        turn_index: idx,
+        role: 'tool_output',
+        content: output,
+        tool_name: null,
+        timestamp,
+      });
+      idx++;
+    }
+
+    const pending = pendingToolUses.get(block.tool_use_id);
+    if (pending) {
+      const isError = block.is_error === true || (typeof output === 'string' && output.includes('<tool_use_error>'));
+      toolEvents.push(buildToolEventRow(pending, block.tool_use_id, output, isError, ctx));
+      pendingToolUses.delete(block.tool_use_id);
+    }
+  }
+  return idx;
+}
+
 function parseJsonlChunk(
   data: string,
   sessionId: string,
@@ -355,9 +486,8 @@ function parseJsonlChunk(
   const contentRows: ContentRow[] = [];
   const toolEvents: ToolEventRow[] = [];
   let turnIndex = startTurnIndex;
-
-  // Collect tool uses for pairing with results
   const pendingToolUses = new Map<string, { name: string; input: unknown; turnIndex: number; timestamp: string }>();
+  const ctx: ParseContext = { sessionId, ...context };
 
   for (const line of data.split('\n')) {
     if (!line.trim()) continue;
@@ -368,132 +498,41 @@ function parseJsonlChunk(
       continue;
     }
 
+    if (entry.type !== 'assistant') continue;
+
     const timestamp = entry.timestamp ?? new Date().toISOString();
-    const blocks: ContentBlock[] = [];
+    const blocks = extractContentBlocks(entry);
 
-    // Extract content blocks from message
-    if (entry.message?.content) {
-      if (Array.isArray(entry.message.content)) {
-        for (const b of entry.message.content) {
-          if (typeof b === 'object' && b !== null) blocks.push(b as ContentBlock);
-        }
-      }
+    // Extract assistant text
+    const text = extractTextContent(entry.message?.content);
+    if (text && text.length > 0) {
+      contentRows.push({
+        session_id: sessionId,
+        turn_index: turnIndex,
+        role: 'assistant',
+        content: text,
+        tool_name: null,
+        timestamp,
+      });
+      turnIndex++;
     }
 
-    if (entry.type === 'assistant') {
-      // Extract assistant text
-      const text = extractTextContent(entry.message?.content);
-      if (text && text.length > 0) {
-        contentRows.push({
-          session_id: sessionId,
-          turn_index: turnIndex,
-          role: 'assistant',
-          content: text,
-          tool_name: null,
-          timestamp,
-        });
-        turnIndex++;
-      }
-
-      // Extract tool uses from content blocks
-      for (const block of blocks) {
-        if (block.type === 'tool_use' && block.name && block.id) {
-          const inputStr = block.input
-            ? typeof block.input === 'string'
-              ? block.input
-              : JSON.stringify(block.input)
-            : null;
-          contentRows.push({
-            session_id: sessionId,
-            turn_index: turnIndex,
-            role: 'tool_input',
-            content: inputStr ?? '',
-            tool_name: block.name,
-            timestamp,
-          });
-          turnIndex++;
-
-          pendingToolUses.set(block.id, { name: block.name, input: block.input, turnIndex: turnIndex - 1, timestamp });
-        }
-      }
-
-      // Extract tool results from content blocks
-      for (const block of blocks) {
-        if (block.type === 'tool_result' && block.tool_use_id) {
-          const output =
-            typeof block.content === 'string'
-              ? block.content
-              : block.content
-                ? extractTextContent(block.content)
-                : null;
-          if (output && output.length > 0) {
-            contentRows.push({
-              session_id: sessionId,
-              turn_index: turnIndex,
-              role: 'tool_output',
-              content: output,
-              tool_name: null,
-              timestamp,
-            });
-            turnIndex++;
-          }
-
-          // Pair with pending tool use → create tool_event
-          const pending = pendingToolUses.get(block.tool_use_id);
-          if (pending) {
-            const isError =
-              block.is_error === true || (typeof output === 'string' && output.includes('<tool_use_error>'));
-            toolEvents.push({
-              session_id: sessionId,
-              turn_index: pending.turnIndex,
-              timestamp: pending.timestamp,
-              tool_name: pending.name,
-              sub_tool: extractSubTool(pending.name, pending.input),
-              tool_use_id: block.tool_use_id,
-              input_raw: pending.input
-                ? typeof pending.input === 'string'
-                  ? pending.input
-                  : JSON.stringify(pending.input)
-                : null,
-              output_raw: output,
-              is_error: isError,
-              error_message: isError ? (output?.slice(0, 1000) ?? null) : null,
-              duration_ms: null,
-              agent_id: context.agentId,
-              team: context.team,
-              wish_slug: context.wishSlug,
-              task_id: context.taskId,
-            });
-            pendingToolUses.delete(block.tool_use_id);
-          }
-        }
-      }
-    }
+    turnIndex = processToolUseBlocks(blocks, sessionId, turnIndex, timestamp, contentRows, pendingToolUses);
+    turnIndex = processToolResultBlocks(
+      blocks,
+      sessionId,
+      turnIndex,
+      timestamp,
+      contentRows,
+      toolEvents,
+      pendingToolUses,
+      ctx,
+    );
   }
 
   // Orphaned tool uses (no matching result — session may have crashed)
   for (const [toolUseId, pending] of pendingToolUses) {
-    toolEvents.push({
-      session_id: sessionId,
-      turn_index: pending.turnIndex,
-      timestamp: pending.timestamp,
-      tool_name: pending.name,
-      sub_tool: extractSubTool(pending.name, pending.input),
-      tool_use_id: toolUseId,
-      input_raw: pending.input
-        ? typeof pending.input === 'string'
-          ? pending.input
-          : JSON.stringify(pending.input)
-        : null,
-      output_raw: null,
-      is_error: false,
-      error_message: null,
-      duration_ms: null,
-      agent_id: context.agentId,
-      team: context.team,
-      wish_slug: context.wishSlug,
-      task_id: context.taskId,
-    });
+    toolEvents.push(buildToolEventRow(pending, toolUseId, null, false, ctx));
   }
 
   return { contentRows, toolEvents, turnCount: turnIndex - startTurnIndex };
