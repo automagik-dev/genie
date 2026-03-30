@@ -5,6 +5,9 @@
  * listeners, and exposes IPC command handlers. Handles graceful shutdown.
  */
 
+// Self-contained: the app backend owns pgserve directly (no daemon dependency)
+process.env.GENIE_APP = '1';
+
 import { getConnection } from '../../../src/lib/db.js';
 import { commands } from './ipc.js';
 import * as pgBridge from './pg-bridge.js';

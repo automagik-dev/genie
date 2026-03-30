@@ -249,8 +249,8 @@ async function _ensurePgserve(): Promise<number> {
     throw new Error('pgserve not available in CI');
   }
 
-  // 4a. If we ARE the daemon — spawn pgserve directly (daemon owns PG).
-  if (process.env.GENIE_IS_DAEMON === '1') {
+  // 4a. If we ARE the daemon or the standalone app — spawn pgserve directly.
+  if (process.env.GENIE_IS_DAEMON === '1' || process.env.GENIE_APP === '1') {
     mkdirSync(DATA_DIR, { recursive: true });
     selfHealPostgres(DATA_DIR);
     try {
