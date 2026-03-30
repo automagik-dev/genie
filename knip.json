@@ -3,6 +3,7 @@
   "entry": [
     "src/hooks/dispatch-command.ts",
     "src/tui/render.tsx",
+    "src/tui/tmux.ts",
     "src/lib/executor-types.ts",
     "src/lib/executor-registry.ts",
     "src/lib/assignment-registry.ts",

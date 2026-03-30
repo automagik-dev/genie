@@ -81,7 +81,7 @@ async function initAgent(name: string): Promise<void> {
   mkdirSync(join(agentDir, '.claude'), { recursive: true });
 
   // Scaffold AGENTS.md, SOUL.md, HEARTBEAT.md
-  scaffoldAgentFiles(agentDir);
+  scaffoldAgentFiles(agentDir, name);
 
   // Write .claude/settings.local.json
   writeFileSync(join(agentDir, '.claude', 'settings.local.json'), `${JSON.stringify({ agentName: name }, null, 2)}\n`);
