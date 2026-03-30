@@ -60,9 +60,11 @@ Define your agent's mission here. What is their primary goal? What do they own?
 
 /**
  * Write scaffold templates (SOUL.md, HEARTBEAT.md, AGENTS.md) into the target directory.
+ * If `agentName` is provided, substitutes it into the AGENTS.md frontmatter.
  */
-export function scaffoldAgentFiles(targetDir: string): void {
+export function scaffoldAgentFiles(targetDir: string, agentName?: string): void {
   writeFileSync(join(targetDir, 'SOUL.md'), SOUL_TEMPLATE);
   writeFileSync(join(targetDir, 'HEARTBEAT.md'), HEARTBEAT_TEMPLATE);
-  writeFileSync(join(targetDir, 'AGENTS.md'), AGENTS_TEMPLATE);
+  const agentsMd = agentName ? AGENTS_TEMPLATE.replace('name: my-agent', `name: ${agentName}`) : AGENTS_TEMPLATE;
+  writeFileSync(join(targetDir, 'AGENTS.md'), agentsMd);
 }

@@ -176,7 +176,7 @@ export function parseWishGroups(content: string): GroupDefinition[] {
           .map((d) =>
             d
               .trim()
-              .replace(/^group\s*/i, '')
+              .replace(/^groups?\s*/i, '')
               .trim(),
           )
           .filter(Boolean);
