@@ -262,6 +262,20 @@ export async function syncAgentDirectory(workspaceRoot: string): Promise<SyncRes
   return result;
 }
 
+/** Print sync result summary to console. Shared by dir sync and agent dir sync. */
+export function printSyncResult(result: SyncResult): void {
+  if (result.registered.length > 0) console.log(`  Registered: ${result.registered.join(', ')}`);
+  if (result.updated.length > 0) console.log(`  Updated: ${result.updated.join(', ')}`);
+  if (result.reactivated.length > 0) console.log(`  Reactivated: ${result.reactivated.join(', ')}`);
+  if (result.archived.length > 0) console.log(`  Archived: ${result.archived.join(', ')}`);
+  if (result.unchanged.length > 0) console.log(`  Unchanged: ${result.unchanged.join(', ')}`);
+  for (const err of result.errors) {
+    console.error(`  Error (${err.name}): ${err.error}`);
+  }
+  const total = result.registered.length + result.updated.length + result.unchanged.length + result.reactivated.length;
+  console.log(`\nSync complete: ${total} active agent(s), ${result.archived.length} archived.`);
+}
+
 /** Archive app_store agents whose directories no longer exist on disk. */
 async function archiveMissingAgents(
   workspaceRoot: string,
