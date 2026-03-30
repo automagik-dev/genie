@@ -90,25 +90,31 @@ function normalizeRoles(roles?: string[]): string[] | undefined {
     .filter(Boolean);
 }
 
-async function listEntries(json?: boolean, includeBuiltins?: boolean): Promise<void> {
+async function listEntries(json?: boolean, includeBuiltins?: boolean, includeArchived?: boolean): Promise<void> {
   await migrateAgentDirectory().catch(() => {});
 
   let entries: directory.ScopedDirectoryEntry[];
   try {
     const storeItems = await listItemsFromStore('agent');
-    entries = storeItems.map((item: StoreRow) => {
-      const manifest = (item.manifest ?? {}) as Record<string, unknown>;
-      return {
-        name: item.name,
-        dir: (item.install_path as string) ?? '',
-        repo: (manifest.repo as string) ?? '',
-        promptMode: ((manifest.promptMode as string) ?? 'append') as directory.PromptMode,
-        model: manifest.model as string | undefined,
-        roles: normalizeRoles(manifest.roles as string[] | undefined),
-        registeredAt: item.installed_at as string,
-        scope: 'global' as directory.DirectoryScope,
-      };
-    });
+    entries = storeItems
+      .filter((item: StoreRow) => {
+        if (includeArchived) return true;
+        const manifest = (item.manifest ?? {}) as Record<string, unknown>;
+        return !manifest.archived;
+      })
+      .map((item: StoreRow) => {
+        const manifest = (item.manifest ?? {}) as Record<string, unknown>;
+        return {
+          name: item.name,
+          dir: (item.install_path as string) ?? '',
+          repo: (manifest.repo as string) ?? '',
+          promptMode: ((manifest.promptMode as string) ?? 'append') as directory.PromptMode,
+          model: manifest.model as string | undefined,
+          roles: normalizeRoles(manifest.roles as string[] | undefined),
+          registeredAt: item.installed_at as string,
+          scope: (manifest.archived ? 'archived' : 'global') as directory.DirectoryScope,
+        };
+      });
   } catch {
     entries = await directory.ls();
   }
@@ -153,14 +159,15 @@ export function registerAgentDirectory(parent: Command): void {
     .description('List all agents or show single entry details from directory')
     .option('--json', 'Output as JSON')
     .option('--builtins', 'Include built-in roles and council members')
-    .action(async (name: string | undefined, options: { json?: boolean; builtins?: boolean }) => {
+    .option('--all', 'Include archived agents')
+    .action(async (name: string | undefined, options: { json?: boolean; builtins?: boolean; all?: boolean }) => {
       try {
         if (name === 'sync') {
           await handleSync();
         } else if (name) {
           await showEntry(name, options.json);
         } else {
-          await listEntries(options.json, options.builtins);
+          await listEntries(options.json, options.builtins, options.all);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -181,21 +188,15 @@ async function handleSync(): Promise<void> {
   console.log(`Syncing agents from ${ws.root}/agents/...`);
   const result = await syncAgentDirectory(ws.root);
 
-  if (result.registered.length > 0) {
-    console.log(`  Registered: ${result.registered.join(', ')}`);
-  }
-  if (result.updated.length > 0) {
-    console.log(`  Updated: ${result.updated.join(', ')}`);
-  }
-  if (result.unchanged.length > 0) {
-    console.log(`  Unchanged: ${result.unchanged.join(', ')}`);
-  }
-  if (result.errors.length > 0) {
-    for (const err of result.errors) {
-      console.error(`  Error (${err.name}): ${err.error}`);
-    }
+  if (result.registered.length > 0) console.log(`  Registered: ${result.registered.join(', ')}`);
+  if (result.updated.length > 0) console.log(`  Updated: ${result.updated.join(', ')}`);
+  if (result.reactivated.length > 0) console.log(`  Reactivated: ${result.reactivated.join(', ')}`);
+  if (result.archived.length > 0) console.log(`  Archived: ${result.archived.join(', ')}`);
+  if (result.unchanged.length > 0) console.log(`  Unchanged: ${result.unchanged.join(', ')}`);
+  for (const err of result.errors) {
+    console.error(`  Error (${err.name}): ${err.error}`);
   }
 
-  const total = result.registered.length + result.updated.length + result.unchanged.length;
-  console.log(`\nSync complete: ${total} agent(s) found.`);
+  const total = result.registered.length + result.updated.length + result.unchanged.length + result.reactivated.length;
+  console.log(`\nSync complete: ${total} active agent(s), ${result.archived.length} archived.`);
 }
