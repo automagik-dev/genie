@@ -77,11 +77,12 @@ export function registerProjectCommands(program: Command): void {
   project
     .command('list')
     .description('List all projects')
+    .option('--all', 'Include archived projects')
     .option('--json', 'Output as JSON')
-    .action(async (options: { json?: boolean }) => {
+    .action(async (options: { all?: boolean; json?: boolean }) => {
       try {
         const ts = await getTaskService();
-        const projects = await ts.listProjects();
+        const projects = await ts.listProjectsFiltered(options.all);
 
         if (options.json) {
           console.log(JSON.stringify(projects, null, 2));
@@ -145,6 +146,36 @@ export function registerProjectCommands(program: Command): void {
 
         const tasks = await ts.listTasks({ projectName: name, allProjects: true });
         printProjectDetail(p, tasks);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
+
+  // ── project archive ──
+  project
+    .command('archive <name>')
+    .description('Archive a project (cascades to boards and unfinished tasks)')
+    .action(async (name: string) => {
+      try {
+        const ts = await getTaskService();
+        await ts.archiveProject(name);
+        console.log(`Archived project "${name}" and cascaded to boards + unfinished tasks.`);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
+
+  // ── project unarchive ──
+  project
+    .command('unarchive <name>')
+    .description('Restore an archived project and its boards (tasks stay as-is)')
+    .action(async (name: string) => {
+      try {
+        const ts = await getTaskService();
+        await ts.unarchiveProject(name);
+        console.log(`Unarchived project "${name}" and restored boards.`);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);

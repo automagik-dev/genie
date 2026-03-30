@@ -45,6 +45,8 @@ export interface BoardRow {
   name: string;
   projectId: string | null;
   description: string | null;
+  status: string;
+  archivedAt: string | null;
   columns: BoardColumn[];
   config: Record<string, unknown>;
   createdAt: string;
@@ -101,6 +103,8 @@ function mapBoard(row: Record<string, unknown>): BoardRow {
     name: row.name as string,
     projectId: str(row.project_id),
     description: str(row.description),
+    status: strOrDefault(row.status, 'active'),
+    archivedAt: str(row.archived_at),
     columns: parseJsonb<BoardColumn[]>(row.columns, []),
     config: parseJsonb<Record<string, unknown>>(row.config, {}),
     createdAt: strOrDefault(row.created_at, ''),
@@ -218,17 +222,28 @@ export async function getBoard(nameOrId: string, projectId?: string): Promise<Bo
   return null;
 }
 
-export async function listBoards(projectId?: string): Promise<BoardRow[]> {
+export async function listBoards(projectId?: string, includeArchived = false): Promise<BoardRow[]> {
   const sql = await getConnection();
 
   if (projectId) {
+    if (includeArchived) {
+      const rows = await sql`
+        SELECT * FROM boards WHERE project_id = ${projectId} ORDER BY name
+      `;
+      return rows.map(mapBoard);
+    }
     const rows = await sql`
-      SELECT * FROM boards WHERE project_id = ${projectId} ORDER BY name
+      SELECT * FROM boards WHERE project_id = ${projectId}
+        AND (status IS NULL OR status = 'active') ORDER BY name
     `;
     return rows.map(mapBoard);
   }
 
-  const rows = await sql`SELECT * FROM boards ORDER BY name`;
+  if (includeArchived) {
+    const rows = await sql`SELECT * FROM boards ORDER BY name`;
+    return rows.map(mapBoard);
+  }
+  const rows = await sql`SELECT * FROM boards WHERE status IS NULL OR status = 'active' ORDER BY name`;
   return rows.map(mapBoard);
 }
 
