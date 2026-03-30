@@ -87,7 +87,13 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
     const script = join(home, 'tui-attach.sh');
     writeFileSync(
       script,
-      `#!/bin/sh\nclear\nexec tmux -L ${GENIE_AGENT_SOCKET} attach-session -t '${targetSession}'\n`,
+      [
+        '#!/bin/sh',
+        'clear',
+        `tmux -L ${GENIE_AGENT_SOCKET} set-option -t '${targetSession}' status off 2>/dev/null`,
+        `exec tmux -L ${GENIE_AGENT_SOCKET} attach-session -t '${targetSession}'`,
+        '',
+      ].join('\n'),
       { mode: 0o755 },
     );
     execSync(`${TMUX} respawn-pane -k -t ${pane} "TMUX='' ${script}"`, { stdio: 'ignore' });
