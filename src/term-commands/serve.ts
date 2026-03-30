@@ -48,7 +48,7 @@ function tuiTmuxConf(): string {
 // PID helpers
 // ============================================================================
 
-function readServePid(): number | null {
+export function readServePid(): number | null {
   const path = servePidPath();
   if (!existsSync(path)) return null;
   const raw = readFileSync(path, 'utf-8').trim();
@@ -71,7 +71,7 @@ function removeServePid(): void {
   }
 }
 
-function isProcessAlive(pid: number): boolean {
+export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -142,12 +142,117 @@ function startAgentTmuxServer(agents: string[]): void {
   }
 }
 
-/** Start the TUI tmux server */
-function startTuiTmuxServer(): void {
-  const conf = tuiTmuxConf();
-  if (!isTmuxServerRunning(TUI_SOCKET, conf)) {
-    execSync(tuiTmux('new-session -d -s genie-tui'), { stdio: 'ignore' });
+const TUI_SESSION = 'genie-tui';
+const NAV_WIDTH = 30;
+const KEY_TABLE = 'genie-tui';
+
+/** Theme colors for TUI tmux styling */
+const TUI_STYLE = {
+  activeBorder: '#7c3aed',
+  inactiveBorder: '#414868',
+};
+
+/** Apply visual theme to TUI session */
+function applyTuiStyle(): void {
+  const cmds = [
+    `set-option -t ${TUI_SESSION} pane-border-style 'fg=${TUI_STYLE.inactiveBorder}'`,
+    `set-option -t ${TUI_SESSION} pane-active-border-style 'fg=${TUI_STYLE.activeBorder}'`,
+    `set-option -t ${TUI_SESSION} mouse off`,
+    `set-option -t ${TUI_SESSION} status off`,
+    `set-option -t ${TUI_SESSION} pane-border-status off`,
+  ];
+  for (const cmd of cmds) {
+    try {
+      execSync(tuiTmux(cmd), { stdio: 'ignore' });
+    } catch {}
   }
+}
+
+/** Set up keybindings in a dedicated key table for TUI */
+function setupTuiKeybindings(): void {
+  try {
+    execSync(
+      tuiTmux(`bind-key -T ${KEY_TABLE} Tab select-pane -t ${TUI_SESSION}:0.1 \\; switch-client -T ${KEY_TABLE}`),
+      { stdio: 'ignore' },
+    );
+    execSync(
+      tuiTmux(
+        `bind-key -T ${KEY_TABLE} C-b if-shell "[ $(tmux -L ${TUI_SOCKET} display-message -p '#\\{pane_width\\}' -t ${TUI_SESSION}:0.0) -gt 5 ]" "resize-pane -t ${TUI_SESSION}:0.0 -x 0" "resize-pane -t ${TUI_SESSION}:0.0 -x ${NAV_WIDTH}" \\; switch-client -T ${KEY_TABLE}`,
+      ),
+      { stdio: 'ignore' },
+    );
+    execSync(
+      tuiTmux(`bind-key -T ${KEY_TABLE} C-t send-keys -t ${TUI_SESSION}:0.1 C-b c \\; switch-client -T ${KEY_TABLE}`),
+      { stdio: 'ignore' },
+    );
+    execSync(tuiTmux(`bind-key -T ${KEY_TABLE} C-q run-shell "tmux -L ${TUI_SOCKET} kill-session -t ${TUI_SESSION}"`), {
+      stdio: 'ignore',
+    });
+    execSync(
+      tuiTmux(`bind-key -T ${KEY_TABLE} 'C-\\\\' run-shell "tmux -L ${TUI_SOCKET} kill-session -t ${TUI_SESSION}"`),
+      { stdio: 'ignore' },
+    );
+    execSync(tuiTmux(`set-hook -t ${TUI_SESSION} client-session-changed "switch-client -T ${KEY_TABLE}"`), {
+      stdio: 'ignore',
+    });
+  } catch {}
+}
+
+/**
+ * Start the TUI tmux server with full session setup:
+ * left pane (nav) + right pane (agent display).
+ * If session already exists (serve restart), reuse it.
+ */
+function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
+  // Check if session already exists
+  try {
+    execSync(tuiTmux(`has-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
+    // Session exists — reuse it
+    const panes = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
+      .trim()
+      .split('\n');
+    return { leftPane: panes[0], rightPane: panes[1] || panes[0] };
+  } catch {
+    // Session doesn't exist — create it
+  }
+
+  const cols = 120;
+  const rows = 40;
+
+  execSync(tuiTmux(`new-session -d -s ${TUI_SESSION} -x ${cols} -y ${rows} -e GENIE_TUI_PANE=left`), {
+    stdio: 'ignore',
+  });
+  execSync(tuiTmux(`split-window -h -t ${TUI_SESSION}:0 -l ${cols - NAV_WIDTH - 1}`), { stdio: 'ignore' });
+
+  const panes = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
+    .trim()
+    .split('\n');
+
+  applyTuiStyle();
+  setupTuiKeybindings();
+
+  return { leftPane: panes[0], rightPane: panes[1] || panes[0] };
+}
+
+/**
+ * Send TUI launch script to left pane.
+ * Writes ~/.genie/tui-launch.sh with workspace env vars, sends it to the pane.
+ */
+function sendTuiLaunchScript(leftPane: string, rightPane: string, workspaceRoot?: string): void {
+  const home = genieHome();
+  const bunPath = process.execPath || 'bun';
+  const genieBin = process.argv[1] || 'genie';
+  const scriptPath = join(home, 'tui-launch.sh');
+
+  const envVars = ['GENIE_TUI_PANE=left', `GENIE_TUI_RIGHT=${rightPane}`];
+  if (workspaceRoot) envVars.push(`GENIE_TUI_WORKSPACE=${workspaceRoot}`);
+
+  const content = `#!/bin/sh\nexport ${envVars.join('\nexport ')}\nexec ${bunPath} ${genieBin}\n`;
+  writeFileSync(scriptPath, content, { mode: 0o755 });
+
+  try {
+    execSync(tuiTmux(`send-keys -t '${leftPane}' '${scriptPath}' Enter`), { stdio: 'ignore' });
+  } catch {}
 }
 
 /** Kill a tmux server by socket */
@@ -227,10 +332,21 @@ async function startForeground(): Promise<void> {
   const sessions = listAgentSessions();
   console.log(`  Agent sessions: ${sessions.length > 0 ? sessions.join(', ') : '(none)'}`);
 
-  // 3. Start TUI tmux server
+  // 3. Start TUI tmux server with split layout
   console.log(`  Starting tmux -L ${TUI_SOCKET} server...`);
-  startTuiTmuxServer();
-  console.log('  TUI server ready');
+  const { leftPane, rightPane } = startTuiTmuxServer();
+
+  // 4. Send launch script to left pane (discovers workspace from serve cwd)
+  const ws = (() => {
+    try {
+      const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+      return findWorkspace();
+    } catch {
+      return null;
+    }
+  })();
+  sendTuiLaunchScript(leftPane, rightPane, ws?.root);
+  console.log('  TUI server ready (session: genie-tui)');
 
   // 4. Start scheduler + event-router + inbox-watcher
   console.log('  Starting scheduler daemon...');
