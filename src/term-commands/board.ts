@@ -164,7 +164,7 @@ async function handleBoardCreate(
   console.log(`Created board "${board.name}" (${board.id}) with ${board.columns.length} columns`);
 }
 
-async function handleBoardList(options: { project?: string; json?: boolean }): Promise<void> {
+async function handleBoardList(options: { project?: string; all?: boolean; json?: boolean }): Promise<void> {
   const bs = await getBoardService();
   const ts = await getTaskService();
 
@@ -173,7 +173,7 @@ async function handleBoardList(options: { project?: string; json?: boolean }): P
     projectId = await resolveProjectId(options.project);
   }
 
-  const boards = await bs.listBoards(projectId);
+  const boards = await bs.listBoards(projectId, options.all);
 
   if (options.json) {
     console.log(JSON.stringify(boards, null, 2));
@@ -577,8 +577,9 @@ export function registerBoardCommands(program: Command): void {
     .command('list')
     .description('List all boards')
     .option('--project <project>', 'Filter by project')
+    .option('--all', 'Include archived boards')
     .option('--json', 'Output as JSON')
-    .action(async (options: { project?: string; json?: boolean }) => {
+    .action(async (options: { project?: string; all?: boolean; json?: boolean }) => {
       try {
         await handleBoardList(options);
       } catch (error) {
@@ -706,6 +707,23 @@ export function registerBoardCommands(program: Command): void {
     .action(async (nameParts: string[], options: { project?: string; json?: boolean }) => {
       try {
         await handleBoardReconcile(nameParts.join(' '), options);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
+
+  // ── board archive ──
+  board
+    .command('archive <name...>')
+    .description('Archive a board and its unfinished tasks')
+    .option('--project <project>', 'Disambiguate by project')
+    .action(async (nameParts: string[], options: { project?: string }) => {
+      try {
+        const ts = await getTaskService();
+        const board = await resolveBoard(nameParts.join(' '), options.project);
+        await ts.archiveBoard(board.id);
+        console.log(`Archived board "${board.name}" and its unfinished tasks.`);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);

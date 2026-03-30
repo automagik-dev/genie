@@ -128,11 +128,12 @@ function getProjectName(repoPath: string): string {
 function formatTaskRow(t: taskServiceTypes.TaskRow, showProject: boolean, hasExternal: boolean): string {
   const seq = showProject ? `${getProjectName(t.repoPath)}#${t.seq}` : `#${t.seq}`;
   const title = truncate(t.title, 38);
-  const color = PRIORITY_COLORS[t.priority] ?? '';
+  const color = t.status === 'archived' ? '\x1b[90m' : (PRIORITY_COLORS[t.priority] ?? '');
   const due = formatDate(t.dueDate);
   const proj = showProject ? `${padRight(getProjectName(t.repoPath), 16)} ` : '';
   const ext = hasExternal ? `${padRight(truncate(t.externalId ?? '', 25), 27)} ` : '';
-  return `  ${padRight(seq, showProject ? 22 : 6)} ${proj}${padRight(title, 40)} ${ext}${padRight(t.stage, 12)} ${padRight(t.status, 12)} ${color}${padRight(t.priority, 10)}${RESET} ${padRight(due, 12)}`;
+  const statusLabel = t.status === 'archived' ? '\x1b[90m[archived]\x1b[0m' : t.status;
+  return `  ${padRight(seq, showProject ? 22 : 6)} ${proj}${padRight(title, 40)} ${ext}${padRight(t.stage, 12)} ${padRight(statusLabel, 12)} ${color}${padRight(t.priority, 10)}${RESET} ${padRight(due, 12)}`;
 }
 
 function printTaskList(tasks: taskServiceTypes.TaskRow[], showProject = false): void {
@@ -486,6 +487,7 @@ export function registerTaskCommands(program: Command): void {
       boardName: options.board,
       externalId: options.gh ? parseGhRef(options.gh).externalId : undefined,
       allProjects: options.all,
+      includeArchived: options.all,
       limit: Number(options.limit) || 100,
       offset: Number(options.offset) || 0,
       ...(options.all ? { limit: 10000 } : {}),
@@ -815,6 +817,38 @@ export function registerTaskCommands(program: Command): void {
     .action(async (options: { since?: string; dryRun?: boolean; repo?: string }) => {
       try {
         await handleCloseMerged(options);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
+
+  // ── task archive ──
+  task
+    .command('archive <id>')
+    .description('Archive a task (soft-delete — preserves all data)')
+    .action(async (id: string) => {
+      try {
+        const ts = await getTaskService();
+        const actor = currentActor();
+        const t = await ts.archiveTask(id, actor);
+        console.log(`Archived task #${t.seq}: ${t.title}`);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
+
+  // ── task unarchive ──
+  task
+    .command('unarchive <id>')
+    .description('Restore an archived task to its previous status')
+    .action(async (id: string) => {
+      try {
+        const ts = await getTaskService();
+        const actor = currentActor();
+        const t = await ts.unarchiveTask(id, actor);
+        console.log(`Unarchived task #${t.seq}: ${t.title} (status: ${t.status})`);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
