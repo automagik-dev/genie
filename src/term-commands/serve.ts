@@ -48,7 +48,7 @@ function tuiTmuxConf(): string {
 // PID helpers
 // ============================================================================
 
-export function readServePid(): number | null {
+function readServePid(): number | null {
   const path = servePidPath();
   if (!existsSync(path)) return null;
   const raw = readFileSync(path, 'utf-8').trim();
@@ -71,7 +71,7 @@ function removeServePid(): void {
   }
 }
 
-export function isProcessAlive(pid: number): boolean {
+function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
