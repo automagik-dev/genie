@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",
+    "@tauri-apps/api": "^2.5.0",
     "@opentui/core": "^0.1.91",
     "@opentui/react": "^0.1.91",
     "commander": "^12.1.0",
