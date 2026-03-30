@@ -17,4 +17,10 @@ export async function renderNav(): Promise<void> {
   });
 
   createRoot(renderer).render(<App rightPane={rightPane} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />);
+
+  // Keep process alive until renderer is destroyed (Ctrl+Q, SIGTERM, etc.)
+  // Without this, bun exits immediately after render() returns.
+  await new Promise<void>((resolve) => {
+    (renderer as unknown as { once: (event: string, fn: () => void) => void }).once('destroy', resolve);
+  });
 }
