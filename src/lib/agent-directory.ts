@@ -35,7 +35,7 @@ export interface DirectoryEntry {
   registeredAt: string;
 }
 
-export type DirectoryScope = 'project' | 'global' | 'built-in';
+export type DirectoryScope = 'project' | 'global' | 'built-in' | 'archived';
 
 export interface ScopedDirectoryEntry extends DirectoryEntry {
   scope: DirectoryScope;
