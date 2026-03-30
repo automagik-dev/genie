@@ -29,6 +29,7 @@ import {
   updateItemInStore,
 } from '../lib/agent-cache.js';
 import * as directory from '../lib/agent-directory.js';
+import { syncAgentDirectory } from '../lib/agent-sync.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { ALL_BUILTINS } from '../lib/builtin-agents.js';
 import { contractPath } from '../lib/genie-config.js';
@@ -125,6 +126,20 @@ export function registerDirNamespace(program: Command): void {
         process.exit(1);
       }
     });
+
+  // dir sync
+  dir
+    .command('sync')
+    .description('Sync agents from workspace agents/ directory')
+    .action(async () => {
+      try {
+        await handleDirSync();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
 }
 
 interface DirAddOptions {
@@ -209,6 +224,28 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
   const scope = options.global ? 'global' : 'project';
   console.log(`Agent "${name}" updated (${scope}).`);
   printEntry(entry);
+}
+
+async function handleDirSync(): Promise<void> {
+  const { findWorkspace } = await import('../lib/workspace.js');
+  const ws = findWorkspace();
+  if (!ws) {
+    console.error('Not in a genie workspace. Run `genie init` first.');
+    process.exit(1);
+  }
+
+  console.log(`Syncing agents from ${ws.root}/agents/...`);
+  const result = await syncAgentDirectory(ws.root);
+
+  if (result.registered.length > 0) console.log(`  Registered: ${result.registered.join(', ')}`);
+  if (result.updated.length > 0) console.log(`  Updated: ${result.updated.join(', ')}`);
+  if (result.unchanged.length > 0) console.log(`  Unchanged: ${result.unchanged.join(', ')}`);
+  for (const err of result.errors) {
+    console.error(`  Error (${err.name}): ${err.error}`);
+  }
+
+  const total = result.registered.length + result.updated.length + result.unchanged.length;
+  console.log(`\nSync complete: ${total} agent(s) found.`);
 }
 
 // ============================================================================
