@@ -16,8 +16,13 @@ export function registerAppCommand(program: Command): void {
     .option('--dev', 'Development mode')
     .action(async (options: { backendOnly?: boolean; tui?: boolean; dev?: boolean }) => {
       if (options.tui) {
-        const { launchTui } = await import('../tui/index.js');
-        await launchTui({ dev: options.dev });
+        const { isServeRunning, autoStartServe } = await import('./serve.js');
+        if (!isServeRunning()) {
+          console.log('Starting genie serve...');
+          await autoStartServe();
+        }
+        const { attachTuiSession } = await import('../tui/tmux.js');
+        attachTuiSession();
         return;
       }
 

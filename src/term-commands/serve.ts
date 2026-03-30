@@ -86,6 +86,7 @@ function isProcessAlive(pid: number): boolean {
 
 const GENIE_SOCKET = 'genie';
 const TUI_SOCKET = 'genie-tui';
+const TUI_SESSION = 'genie-tui';
 
 function tmuxCmd(socket: string, conf: string, subcmd: string): string {
   return `tmux -L ${socket} -f ${conf} ${subcmd}`;
@@ -142,7 +143,6 @@ function startAgentTmuxServer(agents: string[]): void {
   }
 }
 
-const TUI_SESSION = 'genie-tui';
 const NAV_WIDTH = 30;
 const KEY_TABLE = 'genie-tui';
 
@@ -271,6 +271,56 @@ function listAgentSessions(): string[] {
     return out.trim().split('\n').filter(Boolean);
   } catch {
     return [];
+  }
+}
+
+// ============================================================================
+// Public helpers (used by genie.ts thin client)
+// ============================================================================
+
+/** Check if genie serve is currently running */
+export function isServeRunning(): boolean {
+  const pid = readServePid();
+  return pid !== null && isProcessAlive(pid);
+}
+
+/**
+ * Auto-start genie serve in daemon mode and wait until ready.
+ * Ready = PID file exists + PID alive + genie-tui session exists on -L genie-tui.
+ */
+export async function autoStartServe(): Promise<void> {
+  if (isServeRunning()) return;
+
+  const bunPath = process.execPath ?? 'bun';
+  const genieBin = process.argv[1] ?? 'genie';
+
+  const { spawn: spawnChild } = await import('node:child_process');
+  const child = spawnChild(bunPath, [genieBin, 'serve', '--foreground'], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, GENIE_IS_DAEMON: '1' },
+  });
+  child.unref();
+
+  // Poll for readiness: PID alive + genie-tui session exists
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (isServeRunning() && isTuiSessionReady()) return;
+  }
+
+  if (!isServeRunning()) {
+    throw new Error('genie serve failed to start within 15s. Run `genie serve` manually.');
+  }
+}
+
+/** Check if the genie-tui session exists on the TUI socket */
+function isTuiSessionReady(): boolean {
+  try {
+    execSync(tmuxCmd(TUI_SOCKET, tuiTmuxConf(), `has-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
   }
 }
 
