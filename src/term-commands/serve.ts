@@ -231,6 +231,11 @@ function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
   applyTuiStyle();
   setupTuiKeybindings();
 
+  // Focus left pane (nav) so keyboard input goes to OpenTUI by default
+  try {
+    execSync(tuiTmux(`select-pane -t ${panes[0]}`), { stdio: 'ignore' });
+  } catch {}
+
   return { leftPane: panes[0], rightPane: panes[1] || panes[0] };
 }
 
