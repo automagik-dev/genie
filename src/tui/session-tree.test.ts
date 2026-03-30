@@ -318,4 +318,107 @@ describe('getSessionTarget', () => {
 
     expect(getSessionTarget(fakeNode)).toBeNull();
   });
+
+  test('resolves stopped agent target (for spawn+attach)', () => {
+    // Stopped agents have no session, but getSessionTarget should still resolve
+    // because data.sessionName is set to the agent name
+    const tree = buildWorkspaceTree({
+      agentNames: ['atlas'],
+      sessions: [],
+      executors: [],
+    });
+
+    expect(tree[0].wsAgentState).toBe('stopped');
+    const target = getSessionTarget(tree[0]);
+    expect(target).toEqual({ sessionName: 'atlas' });
+  });
+
+  test('resolves pane node target', () => {
+    const pane = makePane({ sessionName: 'sofia', windowIndex: 1, paneId: '%5' });
+    const win = makeWindow({ sessionName: 'sofia', index: 1, name: 'work', panes: [pane] });
+    const win0 = makeWindow({ sessionName: 'sofia', index: 0 });
+    const session = makeSession('sofia', [win0, win]);
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['sofia'],
+      sessions: [session],
+      executors: [],
+    });
+
+    // Pane is a child of window, which is a child of agent
+    const paneNode = tree[0].children[0].children[0];
+    const target = getSessionTarget(paneNode);
+    expect(target).toEqual({ sessionName: 'sofia', windowIndex: 1 });
+  });
+
+  test('session node target in legacy mode', () => {
+    const tree = buildSessionTree({
+      sessions: [makeSession('team-lead')],
+      executors: [],
+      assignments: [],
+      gaps: {
+        deadPidExecutors: [],
+        orphanPanes: [],
+        linkedCount: 0,
+        totalExecutors: 0,
+        totalClaudePanes: 0,
+        deadPaneCount: 0,
+      },
+      timestamp: Date.now(),
+    });
+
+    const target = getSessionTarget(tree[0]);
+    expect(target).toEqual({ sessionName: 'team-lead' });
+  });
+});
+
+// ─── Navigation Behavior Tests ─────────────────────────────────────────────
+
+describe('navigation behavior', () => {
+  test('running agent auto-attach: getSessionTarget returns valid target', () => {
+    const tree = buildWorkspaceTree({
+      agentNames: ['sofia'],
+      sessions: [makeSession('sofia')],
+      executors: [],
+    });
+
+    const agent = tree[0];
+    expect(agent.wsAgentState).toBe('running');
+    expect(agent.type).toBe('agent');
+
+    // Auto-attach condition: type=agent AND wsAgentState=running → should resolve target
+    const target = getSessionTarget(agent);
+    expect(target).not.toBeNull();
+    expect(target!.sessionName).toBe('sofia');
+  });
+
+  test('stopped agent skips auto-attach but resolves target for Enter spawn', () => {
+    const tree = buildWorkspaceTree({
+      agentNames: ['vegapunk'],
+      sessions: [],
+      executors: [],
+    });
+
+    const agent = tree[0];
+    expect(agent.wsAgentState).toBe('stopped');
+
+    // Auto-attach guard: type=agent AND wsAgentState !== running → skip
+    // But target should still resolve for Enter (spawn+attach)
+    const target = getSessionTarget(agent);
+    expect(target).not.toBeNull();
+    expect(target!.sessionName).toBe('vegapunk');
+  });
+
+  test('initial agent pre-selection: agent found by ID', () => {
+    const tree = buildWorkspaceTree({
+      agentNames: ['sofia', 'vegapunk', 'atlas'],
+      sessions: [makeSession('sofia'), makeSession('vegapunk')],
+      executors: [],
+    });
+
+    // Simulate findIndex for initial agent 'vegapunk'
+    const flatIds = tree.map((n) => n.id);
+    const idx = flatIds.indexOf('agent:vegapunk');
+    expect(idx).toBe(1);
+  });
 });
