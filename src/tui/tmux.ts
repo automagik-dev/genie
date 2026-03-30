@@ -76,9 +76,14 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
     }
   }
   try {
-    // Attach to sessions on the genie agent server
+    // Attach to sessions on the genie agent server.
+    // Use a wrapper script that clears probe artifacts:
+    // 1. Sleep briefly so tmux finishes its terminal capability detection
+    // 2. Clear screen to hide probe escape sequences
+    // 3. Attach to the agent session
     const agentTmux = `tmux -L ${GENIE_AGENT_SOCKET}`;
-    execSync(`${TMUX} respawn-pane -k -t ${pane} "TMUX='' ${agentTmux} attach-session -t '${targetSession}'"`, {
+    const attachCmd = `sleep 0.1 && printf '\\033[2J\\033[H' && TMUX='' ${agentTmux} attach-session -t '${targetSession}'`;
+    execSync(`${TMUX} respawn-pane -k -t ${pane} "sh -c \\"${attachCmd}\\""`, {
       stdio: 'ignore',
     });
   } catch {
