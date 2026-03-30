@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "dev.automagik.genie",
   "build": {
-    "beforeDevCommand": "cd .. && npx vite --port 1420",
-    "beforeBuildCommand": "cd .. && npx vite build",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
   },
