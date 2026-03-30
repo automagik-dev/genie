@@ -476,7 +476,7 @@ if (process.env.GENIE_TUI_PANE === 'left') {
   process.exit(0);
 }
 
-// Default command: genie (no args) → launch TUI with workspace detection.
+// Default command: genie (no args) → thin TUI client (attach to serve).
 if (args.length === 0) {
   const { findWorkspace } = await import('./lib/workspace.js');
   const ws = findWorkspace();
@@ -486,8 +486,21 @@ if (args.length === 0) {
     process.exit(1);
   }
 
-  const { launchTui } = await import('./tui/index.js');
-  await launchTui({ workspaceRoot: ws.root, initialAgent: ws.agent });
+  const { isServeRunning, autoStartServe } = await import('./term-commands/serve.js');
+
+  // Auto-start serve if not running
+  if (!isServeRunning()) {
+    console.log('Starting genie serve...');
+    await autoStartServe();
+  }
+
+  // Set env vars for TUI (workspace root + agent) before attach
+  if (ws.root) process.env.GENIE_TUI_WORKSPACE = ws.root;
+  if (ws.agent) process.env.GENIE_TUI_AGENT = ws.agent;
+
+  // Attach to the genie-tui session (blocking call — returns on detach)
+  const { attachTuiSession } = await import('./tui/tmux.js');
+  attachTuiSession();
   process.exit(0);
 }
 if (args.every((a) => a === '--reset')) {
