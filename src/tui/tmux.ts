@@ -13,19 +13,19 @@ const TMUX_SOCKET = 'genie-tui';
 /** Genie's agent tmux socket — where all agents/teams/sessions live. */
 const GENIE_AGENT_SOCKET = 'genie';
 /**
- * Genie's shipped tmux config — scripts/tmux/genie.tmux.conf installed to ~/.genie/tmux.conf
- * on genie setup/update. Falls back to /dev/null if not found (still works with applyTmuxStyle).
+ * TUI tmux config — minimal config WITHOUT shell probes.
+ * The full genie.tmux.conf has #() shell commands in pane-border-format that
+ * cause garbled escape sequences when the TUI attaches to agent sessions.
+ * Falls back to /dev/null if tui config not found.
  */
-const GENIE_TMUX_CONF = (() => {
+const TUI_TMUX_CONF = (() => {
   const { existsSync } = require('node:fs') as typeof import('node:fs');
-  const candidates = [
-    `${process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`}/tmux.conf`,
-    `${process.env.HOME}/.tmux.conf`,
-  ];
-  return candidates.find((p) => existsSync(p)) ?? '/dev/null';
+  const home = process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`;
+  const tuiConf = `${home}/tui-tmux.conf`;
+  return existsSync(tuiConf) ? tuiConf : '/dev/null';
 })();
-/** Prefix for all tmux commands — dedicated socket + genie config (ignores user's global tmux) */
-const TMUX = `tmux -L ${TMUX_SOCKET} -f ${GENIE_TMUX_CONF}`;
+/** Prefix for all TUI tmux commands — TUI socket + TUI config (no shell probes) */
+const TMUX = `tmux -L ${TMUX_SOCKET} -f ${TUI_TMUX_CONF}`;
 
 /**
  * Resolve the right pane ID — self-healing if the pane was killed/recreated.
@@ -76,24 +76,36 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
     }
   }
   try {
-    // Attach to sessions on the genie agent server.
-    // Use a wrapper script that clears probe artifacts:
-    // 1. Sleep briefly so tmux finishes its terminal capability detection
-    // 2. Clear screen to hide probe escape sequences
-    // 3. Attach to the agent session
     const agentTmux = `tmux -L ${GENIE_AGENT_SOCKET}`;
-    const attachCmd = `sleep 0.1 && printf '\\033[2J\\033[H' && TMUX='' ${agentTmux} attach-session -t '${targetSession}'`;
-    execSync(`${TMUX} respawn-pane -k -t ${pane} "sh -c \\"${attachCmd}\\""`, {
-      stdio: 'ignore',
-    });
+    // Check if right pane already has a nested tmux client running.
+    // If so, use switch-client to avoid creating a new PTY (which triggers
+    // garbled terminal probe sequences: tmux 3.5a^[\^[[1;1R).
+    const paneCmd = execSync(`${TMUX} display-message -t ${pane} -p '#{pane_current_command}'`, {
+      encoding: 'utf-8',
+    }).trim();
+
+    if (paneCmd === 'tmux') {
+      // Nested tmux client already running — respawn with TERM=screen to suppress probes.
+      // Don't send-keys (Ctrl-C kills agent work, TMUX='' breaks switch-client context).
+      execSync(
+        `${TMUX} respawn-pane -k -t ${pane} "TERM=screen TMUX='' ${agentTmux} attach-session -t '${targetSession}'"`,
+        { stdio: 'ignore' },
+      );
+    } else {
+      // No nested client — start fresh. Use TERM=screen to suppress probes.
+      execSync(
+        `${TMUX} respawn-pane -k -t ${pane} "TERM=screen TMUX='' ${agentTmux} attach-session -t '${targetSession}'"`,
+        { stdio: 'ignore' },
+      );
+    }
   } catch {
-    // pane doesn't exist
+    // pane doesn't exist or command failed
   }
 }
 
 /** Attach to the TUI session (blocking call) */
 export function attachTuiSession(): void {
-  spawnSync('tmux', ['-L', TMUX_SOCKET, '-f', GENIE_TMUX_CONF, 'attach-session', '-t', SESSION_NAME], {
+  spawnSync('tmux', ['-L', TMUX_SOCKET, '-f', TUI_TMUX_CONF, 'attach-session', '-t', SESSION_NAME], {
     stdio: 'inherit',
   });
 }
