@@ -1,31 +1,16 @@
 /**
  * TUI tmux runtime helpers — attach, navigate, pane management.
  *
- * Session creation is handled by `genie serve` (see serve.ts).
- * This module only provides runtime operations for the TUI client.
+ * TUI session lives on the DEFAULT tmux server (no -L flag).
+ * Agent sessions live on the genie server (-L genie).
+ * This module bridges the two for the right-pane attach.
  */
 
 import { execSync, spawnSync } from 'node:child_process';
 
 const SESSION_NAME = 'genie-tui';
-/** TUI's own tmux socket — isolates the nav+split from everything else */
-const TMUX_SOCKET = 'genie-tui';
 /** Genie's agent tmux socket — where all agents/teams/sessions live. */
 const GENIE_AGENT_SOCKET = 'genie';
-/**
- * TUI tmux config — minimal config WITHOUT shell probes.
- * The full genie.tmux.conf has #() shell commands in pane-border-format that
- * cause garbled escape sequences when the TUI attaches to agent sessions.
- * Falls back to /dev/null if tui config not found.
- */
-const TUI_TMUX_CONF = (() => {
-  const { existsSync } = require('node:fs') as typeof import('node:fs');
-  const home = process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`;
-  const tuiConf = `${home}/tui-tmux.conf`;
-  return existsSync(tuiConf) ? tuiConf : '/dev/null';
-})();
-/** Prefix for all TUI tmux commands — TUI socket + TUI config (no shell probes) */
-const TMUX = `tmux -L ${TMUX_SOCKET} -f ${TUI_TMUX_CONF}`;
 
 /**
  * Resolve the right pane ID — self-healing if the pane was killed/recreated.
@@ -33,11 +18,11 @@ const TMUX = `tmux -L ${TMUX_SOCKET} -f ${TUI_TMUX_CONF}`;
  */
 function resolveRightPane(rightPane: string): string {
   try {
-    execSync(`${TMUX} display-message -t ${rightPane} -p ''`, { stdio: 'ignore' });
+    execSync(`tmux display-message -t ${rightPane} -p ''`, { stdio: 'ignore' });
     return rightPane;
   } catch {
     try {
-      const panes = execSync(`${TMUX} list-panes -t ${SESSION_NAME}:0 -F '#{pane_id}'`, { encoding: 'utf-8' })
+      const panes = execSync(`tmux list-panes -t ${SESSION_NAME}:0 -F '#{pane_id}'`, { encoding: 'utf-8' })
         .trim()
         .split('\n');
       return panes[1] || panes[0];
@@ -76,35 +61,20 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
     }
   }
   try {
-    // Write a tiny attach script that:
-    // 1. Starts the nested tmux attach in background
-    // 2. Sleeps to let tmux finish terminal probes
-    // 3. Sends clear-screen escape to hide probe artifacts
-    // This avoids the garbled "tmux 3.5a^[\^[[1;1R" output.
-    const { writeFileSync } = require('node:fs') as typeof import('node:fs');
-    const { join } = require('node:path') as typeof import('node:path');
-    const home = process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`;
-    const script = join(home, 'tui-attach.sh');
-    writeFileSync(
-      script,
-      [
-        '#!/bin/sh',
-        'clear',
-        `tmux -L ${GENIE_AGENT_SOCKET} set-option -t '${targetSession}' status off 2>/dev/null`,
-        `exec tmux -L ${GENIE_AGENT_SOCKET} attach-session -t '${targetSession}'`,
-        '',
-      ].join('\n'),
-      { mode: 0o755 },
-    );
-    execSync(`${TMUX} respawn-pane -k -t ${pane} "TMUX='' ${script}"`, { stdio: 'ignore' });
+    // Respawn right pane with a while-true loop so it survives agent exit.
+    // When the inner attach ends (agent exits or detach), the loop re-attaches.
+    // If the session is destroyed, attach fails quickly and retries after sleep.
+    // Selecting a different agent calls respawn-pane -k again, killing this loop.
+    const attachCmd = `tmux -L ${GENIE_AGENT_SOCKET} attach-session -t '${targetSession}'`;
+    execSync(`tmux respawn-pane -k -t ${pane} "TMUX='' while true; do ${attachCmd} 2>/dev/null; sleep 0.5; done"`, {
+      stdio: 'ignore',
+    });
   } catch {
     // pane doesn't exist or command failed
   }
 }
 
-/** Attach to the TUI session (blocking call) */
+/** Attach to the TUI session on default tmux server (blocking call) */
 export function attachTuiSession(): void {
-  spawnSync('tmux', ['-L', TMUX_SOCKET, '-f', TUI_TMUX_CONF, 'attach-session', '-t', SESSION_NAME], {
-    stdio: 'inherit',
-  });
+  spawnSync('tmux', ['attach-session', '-t', SESSION_NAME], { stdio: 'inherit' });
 }

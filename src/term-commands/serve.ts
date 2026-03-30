@@ -5,7 +5,7 @@
  *   - pgserve (database)
  *   - tmux -L genie server (agent sessions)
  *   - Agent sessions from workspace manifest
- *   - tmux -L genie-tui server (TUI display)
+ *   - TUI session on default tmux server
  *   - Scheduler, event-router, inbox-watcher
  *   - PID file at .genie/serve.pid
  *
@@ -39,10 +39,7 @@ function genieTmuxConf(): string {
   return candidates.find((p) => existsSync(p)) ?? '/dev/null';
 }
 
-function tuiTmuxConf(): string {
-  const candidates = [join(genieHome(), 'tui-tmux.conf')];
-  return candidates.find((p) => existsSync(p)) ?? '/dev/null';
-}
+// TUI uses default tmux server (no separate socket or config)
 
 // ============================================================================
 // PID helpers
@@ -85,25 +82,21 @@ function isProcessAlive(pid: number): boolean {
 // ============================================================================
 
 const GENIE_SOCKET = 'genie';
-const TUI_SOCKET = 'genie-tui';
 const TUI_SESSION = 'genie-tui';
 
-function tmuxCmd(socket: string, conf: string, subcmd: string): string {
-  return `tmux -L ${socket} -f ${conf} ${subcmd}`;
-}
-
 function genieTmux(subcmd: string): string {
-  return tmuxCmd(GENIE_SOCKET, genieTmuxConf(), subcmd);
+  return `tmux -L ${GENIE_SOCKET} -f ${genieTmuxConf()} ${subcmd}`;
 }
 
+/** Plain tmux command (default server — used for TUI session) */
 function tuiTmux(subcmd: string): string {
-  return tmuxCmd(TUI_SOCKET, tuiTmuxConf(), subcmd);
+  return `tmux ${subcmd}`;
 }
 
 /** Check if a tmux server is running on a socket */
-function isTmuxServerRunning(socket: string, conf: string): boolean {
+function isGenieTmuxRunning(): boolean {
   try {
-    execSync(tmuxCmd(socket, conf, 'list-sessions'), { stdio: 'ignore' });
+    execSync(genieTmux('list-sessions'), { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -141,7 +134,7 @@ function setupTuiKeybindings(): void {
     // Tab: toggle focus between left nav (pane 0) and right terminal (pane 1)
     `bind-key -T ${KEY_TABLE} Tab if-shell "[ '#{pane_index}' = '0' ]" "select-pane -t ${TUI_SESSION}:0.1" "select-pane -t ${TUI_SESSION}:0.0" \\; switch-client -T ${KEY_TABLE}`,
     // Ctrl+B: toggle sidebar width (collapse/expand)
-    `bind-key -T ${KEY_TABLE} C-b if-shell "[ $(tmux -L ${TUI_SOCKET} display-message -p '#\\{pane_width\\}' -t ${TUI_SESSION}:0.0) -gt 5 ]" "resize-pane -t ${TUI_SESSION}:0.0 -x 0" "resize-pane -t ${TUI_SESSION}:0.0 -x ${NAV_WIDTH}" \\; switch-client -T ${KEY_TABLE}`,
+    `bind-key -T ${KEY_TABLE} C-b if-shell "[ $(tmux display-message -p '#\\{pane_width\\}' -t ${TUI_SESSION}:0.0) -gt 5 ]" "resize-pane -t ${TUI_SESSION}:0.0 -x 0" "resize-pane -t ${TUI_SESSION}:0.0 -x ${NAV_WIDTH}" \\; switch-client -T ${KEY_TABLE}`,
     // Ctrl+Q: detach from TUI (don't kill — serve owns the session)
     `bind-key -T ${KEY_TABLE} C-q detach-client`,
     `bind-key -T ${KEY_TABLE} 'C-\\\\' detach-client`,
@@ -217,10 +210,10 @@ function sendTuiLaunchScript(leftPane: string, rightPane: string, workspaceRoot?
   } catch {}
 }
 
-/** Kill a tmux server by socket */
-function killTmuxServer(socket: string, conf: string): void {
+/** Kill the TUI session on the default tmux server */
+function killTuiSession(): void {
   try {
-    execSync(tmuxCmd(socket, conf, 'kill-server'), { stdio: 'ignore' });
+    execSync(`tmux kill-session -t ${TUI_SESSION} 2>/dev/null`, { stdio: 'ignore' });
   } catch {
     // not running
   }
@@ -248,7 +241,7 @@ export function isServeRunning(): boolean {
 
 /**
  * Auto-start genie serve in daemon mode and wait until ready.
- * Ready = PID file exists + PID alive + genie-tui session exists on -L genie-tui.
+ * Ready = PID file exists + PID alive + genie-tui session exists on default server.
  */
 export async function autoStartServe(): Promise<void> {
   if (isServeRunning()) return;
@@ -276,10 +269,10 @@ export async function autoStartServe(): Promise<void> {
   }
 }
 
-/** Check if the genie-tui session exists on the TUI socket */
+/** Check if the genie-tui session exists on the default tmux server */
 export function isTuiSessionReady(): boolean {
   try {
-    execSync(tmuxCmd(TUI_SOCKET, tuiTmuxConf(), `has-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
+    execSync(`tmux has-session -t ${TUI_SESSION} 2>/dev/null`, { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -378,8 +371,8 @@ async function startForeground(): Promise<void> {
   // 2b. Sync agent directory + start watcher
   handles.agentWatcher = await startAgentSync();
 
-  // 3. Start TUI tmux server with split layout
-  console.log(`  Starting tmux -L ${TUI_SOCKET} server...`);
+  // 3. Start TUI session on default tmux server
+  console.log('  Setting up TUI session...');
   const { leftPane, rightPane } = startTuiTmuxServer();
 
   // 4. Send launch script to left pane (discovers workspace from serve cwd)
@@ -412,9 +405,9 @@ async function startForeground(): Promise<void> {
     console.log('\nShutting down genie serve...');
     handles.agentWatcher?.close();
     handles.schedulerHandle?.stop();
-    killTmuxServer(TUI_SOCKET, tuiTmuxConf());
+    killTuiSession();
     // NEVER kill the agent tmux server — agent sessions are eternal and must
-    // survive serve restarts. Only the TUI display server is owned by serve.
+    // survive serve restarts. Only the TUI session is owned by serve.
     removeServePid();
     console.log('genie serve stopped.');
   };
@@ -485,8 +478,8 @@ async function stopServe(): Promise<void> {
   if (!isProcessAlive(pid)) {
     console.log(`Stale PID file (PID ${pid} not running). Cleaning up.`);
     removeServePid();
-    // Only kill TUI server — agent server is independent
-    killTmuxServer(TUI_SOCKET, tuiTmuxConf());
+    // Only kill TUI session — agent server is independent
+    killTuiSession();
     return;
   }
 
@@ -518,8 +511,8 @@ async function stopServe(): Promise<void> {
     }
   }
 
-  // Only kill TUI display server — agent tmux server is eternal
-  killTmuxServer(TUI_SOCKET, tuiTmuxConf());
+  // Only kill TUI session — agent tmux server is eternal
+  killTuiSession();
 
   removeServePid();
   console.log('genie serve stopped.');
@@ -538,15 +531,15 @@ async function printPgserveStatus(): Promise<void> {
 
 /** Print tmux server statuses */
 function printTmuxStatus(): void {
-  const agentRunning = isTmuxServerRunning(GENIE_SOCKET, genieTmuxConf());
+  const agentRunning = isGenieTmuxRunning();
   const sessions = agentRunning ? listAgentSessions() : [];
   console.log(`  tmux -L ${GENIE_SOCKET}: ${agentRunning ? `running (${sessions.length} sessions)` : 'stopped'}`);
   if (sessions.length > 0) {
     console.log(`              ${sessions.join(', ')}`);
   }
 
-  const tuiRunning = isTmuxServerRunning(TUI_SOCKET, tuiTmuxConf());
-  console.log(`  tmux -L ${TUI_SOCKET}: ${tuiRunning ? 'running' : 'stopped'}`);
+  const tuiReady = isTuiSessionReady();
+  console.log(`  TUI session: ${tuiReady ? 'running' : 'stopped'}`);
 }
 
 /** Print scheduler and inbox status */
