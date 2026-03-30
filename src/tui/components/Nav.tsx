@@ -162,10 +162,11 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
     const node = flatNodes[selectedIndex]?.node;
     if (!node) return;
 
-    // Stopped agent: spawn it and attach to the session
-    if (node.type === 'agent' && node.wsAgentState === 'stopped') {
-      spawnAgent(node.label);
-      // Attach immediately — ensureAgentSession in tmux.ts creates the session if needed
+    // Agent node: spawn if not running, then attach
+    if (node.type === 'agent') {
+      if (node.wsAgentState !== 'running') {
+        spawnAgent(node.label);
+      }
       const target = getSessionTarget(node);
       if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
       return;
