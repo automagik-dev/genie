@@ -15,6 +15,7 @@ const STATUS_ICONS: Record<string, string> = {
   ready: '🟢',
   in_progress: '🔄',
   done: '✅',
+  archived: '📦',
 };
 
 async function loadExecutorInfo() {

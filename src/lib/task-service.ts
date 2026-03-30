@@ -48,6 +48,8 @@ export interface ProjectRow {
   name: string;
   repoPath: string | null;
   description: string | null;
+  status: string;
+  archivedAt: string | null;
   createdAt: string;
 }
 
@@ -84,6 +86,7 @@ export interface TaskRow {
   columnId: string | null;
   externalId: string | null;
   externalUrl: string | null;
+  archivedAt: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -103,6 +106,7 @@ export interface TaskFilters {
   boardName?: string;
   dueBefore?: string;
   externalId?: string;
+  includeArchived?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -263,6 +267,7 @@ function mapTask(row: Record<string, unknown>): TaskRow {
     columnId: str(row.column_id),
     externalId: str(row.external_id),
     externalUrl: str(row.external_url),
+    archivedAt: str(row.archived_at),
     metadata: (row.metadata as Record<string, unknown>) ?? {},
     createdAt: strOrDefault(row.created_at, ''),
     updatedAt: strOrDefault(row.updated_at, ''),
@@ -386,6 +391,8 @@ function mapProject(row: Record<string, unknown>): ProjectRow {
     name: row.name as string,
     repoPath: str(row.repo_path),
     description: str(row.description),
+    status: strOrDefault(row.status, 'active'),
+    archivedAt: str(row.archived_at),
     createdAt: String(row.created_at),
   };
 }
@@ -630,7 +637,13 @@ function buildScopeConditions(filters: TaskFilters, conditions: string[], values
 }
 
 /** Build field-level filter conditions. */
-function buildFieldConditions(filters: TaskFilters, conditions: string[], values: unknown[], startIdx: number): number {
+function buildFieldConditions(
+  filters: TaskFilters,
+  conditions: string[],
+  values: unknown[],
+  startIdx: number,
+  colPrefix = '',
+): number {
   let paramIdx = startIdx;
   const simple: [string, string | undefined][] = [
     ['stage', filters.stage],
@@ -641,9 +654,13 @@ function buildFieldConditions(filters: TaskFilters, conditions: string[], values
   ];
   for (const [col, val] of simple) {
     if (val) {
-      conditions.push(`${col} = $${paramIdx++}`);
+      conditions.push(`${colPrefix}${col} = $${paramIdx++}`);
       values.push(val);
     }
+  }
+  // Exclude archived by default unless explicitly filtered or includeArchived
+  if (!filters.status && !filters.includeArchived) {
+    conditions.push(`${colPrefix}status != 'archived'`);
   }
   if (filters.parentId !== undefined) {
     if (filters.parentId === null) {
@@ -1607,6 +1624,137 @@ export async function markDone(idOrSeq: string, actor?: Actor, comment?: string,
 }
 
 // ============================================================================
+// Archive / Unarchive
+// ============================================================================
+
+/** Archive a task — sets status='archived', archived_at=now(). */
+export async function archiveTask(idOrSeq: string, actor?: Actor, repoPath?: string): Promise<TaskRow> {
+  const sql = await getConnection();
+  const repo = repoPath ?? getRepoPath();
+  const id = await resolveTaskId(idOrSeq, repo);
+  if (!id) throw new Error(`Task not found: ${idOrSeq}`);
+
+  const rows = await sql`
+    UPDATE tasks
+    SET status = 'archived', archived_at = now(), updated_at = now()
+    WHERE id = ${id}
+    RETURNING *
+  `;
+  if (rows.length === 0) throw new Error(`Task not found: ${idOrSeq}`);
+
+  recordAuditEvent('task', id, 'archived', actor?.actorId ?? getActor(), {}).catch(() => {});
+  return mapTask(rows[0]);
+}
+
+/** Unarchive a task — restores previous status from stage_log or defaults to 'ready'. */
+export async function unarchiveTask(idOrSeq: string, actor?: Actor, repoPath?: string): Promise<TaskRow> {
+  const sql = await getConnection();
+  const repo = repoPath ?? getRepoPath();
+  const id = await resolveTaskId(idOrSeq, repo);
+  if (!id) throw new Error(`Task not found: ${idOrSeq}`);
+
+  // Infer previous status: if ended_at is set it was done, otherwise default to 'ready'.
+  // Never restore to 'blocked' — use 'ready' instead.
+  const task = await sql`SELECT * FROM tasks WHERE id = ${id} LIMIT 1`;
+  if (task.length === 0) throw new Error(`Task not found: ${idOrSeq}`);
+
+  let restoredStatus = 'ready';
+  if (task[0].ended_at) {
+    restoredStatus = 'done';
+  }
+
+  const rows = await sql`
+    UPDATE tasks
+    SET status = ${restoredStatus}, archived_at = NULL, updated_at = now()
+    WHERE id = ${id}
+    RETURNING *
+  `;
+  if (rows.length === 0) throw new Error(`Task not found: ${idOrSeq}`);
+
+  recordAuditEvent('task', id, 'unarchived', actor?.actorId ?? getActor(), { restoredStatus }).catch(() => {});
+  return mapTask(rows[0]);
+}
+
+/** Archive a project and cascade to its boards and unfinished tasks. */
+export async function archiveProject(name: string): Promise<void> {
+  const sql = await getConnection();
+  const project = await getProjectByName(name);
+  if (!project) throw new Error(`Project not found: ${name}`);
+
+  // Archive the project
+  await sql`
+    UPDATE projects SET status = 'archived', archived_at = now()
+    WHERE id = ${project.id}
+  `;
+
+  // Cascade: archive boards for this project
+  await sql`
+    UPDATE boards SET status = 'archived', archived_at = now(), updated_at = now()
+    WHERE project_id = ${project.id} AND (status IS NULL OR status = 'active')
+  `;
+
+  // Cascade: archive unfinished tasks (not done, cancelled, or already archived)
+  await sql`
+    UPDATE tasks SET status = 'archived', archived_at = now(), updated_at = now()
+    WHERE project_id = ${project.id}
+      AND status NOT IN ('done', 'cancelled', 'archived')
+  `;
+
+  recordAuditEvent('project', project.id, 'archived', getActor(), { name }).catch(() => {});
+}
+
+/** Unarchive a project — restores project and its boards (tasks stay as-is). */
+export async function unarchiveProject(name: string): Promise<void> {
+  const sql = await getConnection();
+  const project = await getProjectByName(name);
+  if (!project) throw new Error(`Project not found: ${name}`);
+
+  // Restore the project
+  await sql`
+    UPDATE projects SET status = 'active', archived_at = NULL
+    WHERE id = ${project.id}
+  `;
+
+  // Restore boards for this project
+  await sql`
+    UPDATE boards SET status = 'active', archived_at = NULL, updated_at = now()
+    WHERE project_id = ${project.id} AND status = 'archived'
+  `;
+
+  recordAuditEvent('project', project.id, 'unarchived', getActor(), { name }).catch(() => {});
+}
+
+/** Archive a board and its unfinished tasks. */
+export async function archiveBoard(boardId: string): Promise<void> {
+  const sql = await getConnection();
+
+  await sql`
+    UPDATE boards SET status = 'archived', archived_at = now(), updated_at = now()
+    WHERE id = ${boardId}
+  `;
+
+  // Cascade: archive unfinished tasks on this board
+  await sql`
+    UPDATE tasks SET status = 'archived', archived_at = now(), updated_at = now()
+    WHERE board_id = ${boardId}
+      AND status NOT IN ('done', 'cancelled', 'archived')
+  `;
+
+  recordAuditEvent('board', boardId, 'archived', getActor(), {}).catch(() => {});
+}
+
+/** List projects, optionally including archived ones. */
+export async function listProjectsFiltered(includeArchived = false): Promise<ProjectRow[]> {
+  const sql = await getConnection();
+  if (includeArchived) {
+    const rows = await sql`SELECT * FROM projects ORDER BY name`;
+    return rows.map(mapProject);
+  }
+  const rows = await sql`SELECT * FROM projects WHERE status IS NULL OR status = 'active' ORDER BY name`;
+  return rows.map(mapProject);
+}
+
+// ============================================================================
 // Delete Notification Preference
 // ============================================================================
 
@@ -1656,6 +1804,8 @@ export async function listTasksForActor(actor: Actor, filters: TaskFilters = {})
   if (filters.status) {
     conditions.push(`t.status = $${paramIdx++}`);
     values.push(filters.status);
+  } else if (!filters.includeArchived) {
+    conditions.push(`t.status != 'archived'`);
   }
   if (filters.priority) {
     conditions.push(`t.priority = $${paramIdx++}`);
