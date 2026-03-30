@@ -461,7 +461,8 @@ async function startForeground(): Promise<void> {
     handles.agentWatcher?.close();
     handles.schedulerHandle?.stop();
     killTmuxServer(TUI_SOCKET, tuiTmuxConf());
-    killTmuxServer(GENIE_SOCKET, genieTmuxConf());
+    // NEVER kill the agent tmux server — agent sessions are eternal and must
+    // survive serve restarts. Only the TUI display server is owned by serve.
     removeServePid();
     console.log('genie serve stopped.');
   };
@@ -532,9 +533,8 @@ async function stopServe(): Promise<void> {
   if (!isProcessAlive(pid)) {
     console.log(`Stale PID file (PID ${pid} not running). Cleaning up.`);
     removeServePid();
-    // Still kill tmux servers in case they're orphaned
+    // Only kill TUI server — agent server is independent
     killTmuxServer(TUI_SOCKET, tuiTmuxConf());
-    killTmuxServer(GENIE_SOCKET, genieTmuxConf());
     return;
   }
 
@@ -566,9 +566,8 @@ async function stopServe(): Promise<void> {
     }
   }
 
-  // Clean up tmux servers
+  // Only kill TUI display server — agent tmux server is eternal
   killTmuxServer(TUI_SOCKET, tuiTmuxConf());
-  killTmuxServer(GENIE_SOCKET, genieTmuxConf());
 
   removeServePid();
   console.log('genie serve stopped.');
