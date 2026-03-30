@@ -35,6 +35,52 @@ async function showEntry(name: string, json?: boolean): Promise<void> {
   console.log('');
 }
 
+function printRegisteredAgentsTable(entries: directory.ScopedDirectoryEntry[]): void {
+  const nameW = 22;
+  const scopeW = 10;
+  const modelW = 8;
+  const termW = process.stdout.columns || 120;
+
+  const repoValues = entries.map((e) => (e.repo ? contractPath(e.repo) : contractPath(e.dir)));
+  const maxRepoLen = Math.max('REPO'.length, ...repoValues.map((v) => v.length));
+  const fixedW = 2 + nameW + scopeW + modelW;
+  const repoW = Math.min(maxRepoLen + 2, Math.max(30, termW - fixedW - 20));
+
+  console.log('');
+  console.log('REGISTERED AGENTS');
+  console.log('-'.repeat(Math.max(90, fixedW + repoW + 20)));
+  console.log(
+    `  ${'NAME'.padEnd(nameW)}${'SCOPE'.padEnd(scopeW)}${'REPO'.padEnd(repoW)}${'MODEL'.padEnd(modelW)}ROLES`,
+  );
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const repo = repoValues[i];
+    const roles = entry.roles?.join(', ') || '-';
+    console.log(
+      `  ${entry.name.padEnd(nameW)}${entry.scope.padEnd(scopeW)}${repo.padEnd(repoW)}${(entry.model || '-').padEnd(modelW)}${roles}`,
+    );
+  }
+  console.log('');
+}
+
+function printBuiltinAgentsTable(): void {
+  const nameW = 22;
+  const catW = 10;
+  const modelW = 8;
+
+  console.log('BUILT-IN AGENTS');
+  console.log('-'.repeat(80));
+  console.log(`  ${'NAME'.padEnd(nameW)}${'TYPE'.padEnd(catW)}${'MODEL'.padEnd(modelW)}DESCRIPTION`);
+
+  for (const agent of ALL_BUILTINS) {
+    console.log(
+      `  ${agent.name.padEnd(nameW)}${agent.category.padEnd(catW)}${(agent.model || '-').padEnd(modelW)}${agent.description}`,
+    );
+  }
+  console.log('');
+}
+
 function normalizeRoles(roles?: string[]): string[] | undefined {
   if (!roles) return undefined;
   return roles
@@ -91,49 +137,11 @@ async function listEntries(json?: boolean, includeBuiltins?: boolean): Promise<v
   }
 
   if (entries.length > 0) {
-    const nameW = 22;
-    const scopeW = 10;
-    const modelW = 8;
-    const termW = process.stdout.columns || 120;
-
-    const repoValues = entries.map((e) => (e.repo ? contractPath(e.repo) : contractPath(e.dir)));
-    const maxRepoLen = Math.max('REPO'.length, ...repoValues.map((v) => v.length));
-    const fixedW = 2 + nameW + scopeW + modelW;
-    const repoW = Math.min(maxRepoLen + 2, Math.max(30, termW - fixedW - 20));
-
-    console.log('');
-    console.log('REGISTERED AGENTS');
-    console.log('-'.repeat(Math.max(90, fixedW + repoW + 20)));
-    console.log(
-      `  ${'NAME'.padEnd(nameW)}${'SCOPE'.padEnd(scopeW)}${'REPO'.padEnd(repoW)}${'MODEL'.padEnd(modelW)}ROLES`,
-    );
-
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      const repo = repoValues[i];
-      const roles = entry.roles?.join(', ') || '-';
-      console.log(
-        `  ${entry.name.padEnd(nameW)}${entry.scope.padEnd(scopeW)}${repo.padEnd(repoW)}${(entry.model || '-').padEnd(modelW)}${roles}`,
-      );
-    }
-    console.log('');
+    printRegisteredAgentsTable(entries);
   }
 
   if (includeBuiltins) {
-    const nameW = 22;
-    const catW = 10;
-    const modelW = 8;
-
-    console.log('BUILT-IN AGENTS');
-    console.log('-'.repeat(80));
-    console.log(`  ${'NAME'.padEnd(nameW)}${'TYPE'.padEnd(catW)}${'MODEL'.padEnd(modelW)}DESCRIPTION`);
-
-    for (const agent of ALL_BUILTINS) {
-      console.log(
-        `  ${agent.name.padEnd(nameW)}${agent.category.padEnd(catW)}${(agent.model || '-').padEnd(modelW)}${agent.description}`,
-      );
-    }
-    console.log('');
+    printBuiltinAgentsTable();
   }
 }
 

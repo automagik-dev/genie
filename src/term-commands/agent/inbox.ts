@@ -14,6 +14,21 @@ async function getTaskService(): Promise<typeof taskServiceTypes> {
   return _taskService;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: conversation + message from dynamic import
+function printConversation(conv: any, lastMsg: any): void {
+  const name = conv.name ?? conv.id;
+  const type = conv.type === 'dm' ? 'DM' : 'Group';
+  const linked = conv.linkedEntity ? ` [${conv.linkedEntity}:${conv.linkedEntityId}]` : '';
+  const preview = lastMsg ? truncate(lastMsg.body, 50) : '(no messages)';
+  const time = lastMsg ? formatTime(lastMsg.createdAt) : '';
+
+  console.log(`  ${padRight(name, 30)} ${padRight(type, 6)}${linked}`);
+  if (lastMsg) {
+    console.log(`    ${time} ${lastMsg.senderId}: ${preview}`);
+  }
+  console.log('');
+}
+
 async function handleInbox(agent: string | undefined, options: { json?: boolean }): Promise<void> {
   const ts = await getTaskService();
   const resolvedAgent = agent ?? (await detectSenderIdentity());
@@ -37,17 +52,7 @@ async function handleInbox(agent: string | undefined, options: { json?: boolean 
   for (const conv of conversations) {
     const messages = await ts.getMessages(conv.id, { limit: 1 });
     const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-    const name = conv.name ?? conv.id;
-    const type = conv.type === 'dm' ? 'DM' : 'Group';
-    const linked = conv.linkedEntity ? ` [${conv.linkedEntity}:${conv.linkedEntityId}]` : '';
-    const preview = lastMsg ? truncate(lastMsg.body, 50) : '(no messages)';
-    const time = lastMsg ? formatTime(lastMsg.createdAt) : '';
-
-    console.log(`  ${padRight(name, 30)} ${padRight(type, 6)}${linked}`);
-    if (lastMsg) {
-      console.log(`    ${time} ${lastMsg.senderId}: ${preview}`);
-    }
-    console.log('');
+    printConversation(conv, lastMsg);
   }
 }
 

@@ -1316,6 +1316,122 @@ export function startDaemon(
     }
   };
 
+  async function setupListenNotify(d: SchedulerDeps, onTrigger: () => Promise<void>): Promise<SqlClient | null> {
+    try {
+      const sql = await d.getConnection();
+      await sql.listen('genie_trigger_due', async () => {
+        if (!running) return;
+        await onTrigger();
+      });
+      d.log({ timestamp: d.now().toISOString(), level: 'info', event: 'listen_started', channel: 'genie_trigger_due' });
+      return sql;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      d.log({ timestamp: d.now().toISOString(), level: 'warn', event: 'listen_failed', error: message });
+      return null;
+    }
+  }
+
+  function startOrphanTimer(d: SchedulerDeps, cfg: SchedulerConfig): ReturnType<typeof setInterval> {
+    return setInterval(async () => {
+      if (!running) return;
+      try {
+        await reconcileOrphans(d, cfg);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        d.log({
+          timestamp: d.now().toISOString(),
+          level: 'error',
+          event: 'orphan_reconciliation_error',
+          error: message,
+        });
+      }
+    }, cfg.orphanCheckIntervalMs);
+  }
+
+  async function startEventRouterSafe(d: SchedulerDeps): Promise<ReturnType<typeof startEventRouter> | null> {
+    try {
+      const handle = await startEventRouter();
+      d.log({ timestamp: d.now().toISOString(), level: 'info', event: 'event_router_started' });
+      return handle;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      d.log({ timestamp: d.now().toISOString(), level: 'warn', event: 'event_router_start_failed', error: message });
+      return null;
+    }
+  }
+
+  async function initSessionCapture(
+    d: SchedulerDeps,
+    cfg: SchedulerConfig,
+  ): Promise<ReturnType<typeof setInterval> | null> {
+    try {
+      const captureSql = await d.getConnection();
+      const { startFilewatch } = await import('./session-filewatch.js');
+      const { startBackfill } = await import('./session-backfill.js');
+      const filewatchOk = await startFilewatch(captureSql);
+      if (!filewatchOk) {
+        const { ingestFileFull, discoverAllJsonlFiles, buildWorkerMap } = await import('./session-capture.js');
+        d.log({ timestamp: d.now().toISOString(), level: 'warn', event: 'filewatch_failed_fallback_polling' });
+        const timer = setInterval(async () => {
+          if (!running) return;
+          try {
+            const files = await discoverAllJsonlFiles();
+            const workerMap = await buildWorkerMap(captureSql);
+            for (const f of files) {
+              await ingestFileFull(captureSql, f.sessionId, f.jsonlPath, f.projectPath, 0, {
+                parentSessionId: f.parentSessionId,
+                isSubagent: f.isSubagent,
+                workerMap,
+              });
+            }
+          } catch {
+            /* best-effort fallback */
+          }
+        }, cfg.heartbeatIntervalMs);
+        startBackfill(captureSql).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          d.log({ timestamp: d.now().toISOString(), level: 'error', event: 'backfill_error', error: msg });
+        });
+        return timer;
+      }
+      startBackfill(captureSql).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        d.log({ timestamp: d.now().toISOString(), level: 'error', event: 'backfill_error', error: msg });
+      });
+      return null;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      d.log({ timestamp: d.now().toISOString(), level: 'warn', event: 'session_capture_init_failed', error: message });
+      return null;
+    }
+  }
+
+  async function runHeartbeat(d: SchedulerDeps): Promise<void> {
+    if (!running) return;
+    try {
+      await collectHeartbeats(d);
+      await collectMachineSnapshot(d);
+      await emitWorkerEvents(d);
+      try {
+        const retSql = await d.getConnection();
+        await retSql`DELETE FROM heartbeats WHERE created_at < now() - interval '7 days'`;
+        await retSql`DELETE FROM machine_snapshots WHERE created_at < now() - interval '30 days'`;
+        await retSql`DELETE FROM audit_events WHERE entity_type LIKE 'otel_%' AND created_at < now() - interval '30 days'`;
+      } catch {
+        // Best-effort
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      d.log({
+        timestamp: d.now().toISOString(),
+        level: 'error',
+        event: 'heartbeat_error',
+        error: message,
+      });
+    }
+  }
+
   const done = (async () => {
     deps.log({
       timestamp: deps.now().toISOString(),
@@ -1339,136 +1455,12 @@ export function startDaemon(
       });
     }
 
-    // Set up LISTEN/NOTIFY for real-time trigger notifications
-    try {
-      const sql = await deps.getConnection();
-      listenConnection = sql;
-
-      await sql.listen('genie_trigger_due', async () => {
-        if (!running) return;
-        await processTriggers();
-      });
-
-      deps.log({
-        timestamp: deps.now().toISOString(),
-        level: 'info',
-        event: 'listen_started',
-        channel: 'genie_trigger_due',
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      deps.log({
-        timestamp: deps.now().toISOString(),
-        level: 'warn',
-        event: 'listen_failed',
-        error: message,
-      });
-      // Continue with poll-only mode
-    }
-
-    // Start heartbeat collection (every 60s) — collects liveness + snapshots + events + retention
-    heartbeatTimer = setInterval(async () => {
-      if (!running) return;
-      try {
-        await collectHeartbeats(deps);
-        await collectMachineSnapshot(deps);
-        await emitWorkerEvents(deps);
-        // Session JSONL ingestion moved to filewatch (event-driven, off-heartbeat)
-        // Retention cleanup
-        try {
-          const retSql = await deps.getConnection();
-          await retSql`DELETE FROM heartbeats WHERE created_at < now() - interval '7 days'`;
-          await retSql`DELETE FROM machine_snapshots WHERE created_at < now() - interval '30 days'`;
-          await retSql`DELETE FROM audit_events WHERE entity_type LIKE 'otel_%' AND created_at < now() - interval '30 days'`;
-        } catch {
-          // Best-effort
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        deps.log({
-          timestamp: deps.now().toISOString(),
-          level: 'error',
-          event: 'heartbeat_error',
-          error: message,
-        });
-      }
-    }, config.heartbeatIntervalMs);
-
-    // Start orphan reconciliation (every 5m)
-    orphanTimer = setInterval(async () => {
-      if (!running) return;
-      try {
-        await reconcileOrphans(deps, config);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        deps.log({
-          timestamp: deps.now().toISOString(),
-          level: 'error',
-          event: 'orphan_reconciliation_error',
-          error: message,
-        });
-      }
-    }, config.orphanCheckIntervalMs);
-
-    // Start inbox watcher (polls native inboxes for unread messages)
+    listenConnection = await setupListenNotify(deps, processTriggers);
+    heartbeatTimer = setInterval(() => runHeartbeat(deps), config.heartbeatIntervalMs);
+    orphanTimer = startOrphanTimer(deps, config);
     inboxWatcherHandle = startInboxWatcherIfEnabled(deps);
-
-    // Start event router (subscription-based NOTIFY routing to teams)
-    try {
-      eventRouterHandle = await startEventRouter();
-      deps.log({ timestamp: deps.now().toISOString(), level: 'info', event: 'event_router_started' });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      deps.log({
-        timestamp: deps.now().toISOString(),
-        level: 'warn',
-        event: 'event_router_start_failed',
-        error: message,
-      });
-    }
-
-    // Session capture v2: filewatch (event-driven) + backfill (lazy, one-time)
-    try {
-      const captureSql = await deps.getConnection();
-      const { startFilewatch } = await import('./session-filewatch.js');
-      const { startBackfill } = await import('./session-backfill.js');
-      const filewatchOk = await startFilewatch(captureSql);
-      if (!filewatchOk) {
-        // Filewatch failed (path missing, recursive unsupported, too many watchers)
-        // Fall back to polling ingest every 60s as degraded mode
-        const { ingestFileFull, discoverAllJsonlFiles, buildWorkerMap } = await import('./session-capture.js');
-        deps.log({ timestamp: deps.now().toISOString(), level: 'warn', event: 'filewatch_failed_fallback_polling' });
-        captureFallbackTimer = setInterval(async () => {
-          if (!running) return;
-          try {
-            const files = await discoverAllJsonlFiles();
-            const workerMap = await buildWorkerMap(captureSql);
-            for (const f of files) {
-              await ingestFileFull(captureSql, f.sessionId, f.jsonlPath, f.projectPath, 0, {
-                parentSessionId: f.parentSessionId,
-                isSubagent: f.isSubagent,
-                workerMap,
-              });
-            }
-          } catch {
-            /* best-effort fallback */
-          }
-        }, config.heartbeatIntervalMs);
-      }
-      // Backfill runs in background — non-blocking, auto-skips if already complete
-      startBackfill(captureSql).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        deps.log({ timestamp: deps.now().toISOString(), level: 'error', event: 'backfill_error', error: message });
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      deps.log({
-        timestamp: deps.now().toISOString(),
-        level: 'warn',
-        event: 'session_capture_init_failed',
-        error: message,
-      });
-    }
+    eventRouterHandle = await startEventRouterSafe(deps);
+    captureFallbackTimer = await initSessionCapture(deps, config);
 
     // Initial trigger check
     await processTriggers();

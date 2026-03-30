@@ -320,26 +320,59 @@ async function doneCommand(ref: string): Promise<void> {
 /**
  * `genie status <slug>` — pretty-print all groups with state/assignee/timestamps.
  */
+async function autoInitWishState(slug: string): Promise<Awaited<ReturnType<typeof wishState.createState>>> {
+  const wishPath = resolveWishPath(slug);
+  if (!wishPath) {
+    console.error(`❌ No state found for wish "${slug}" and no WISH.md found in cwd or repo root`);
+    console.error(`   Create it first: genie wish <agent> ${slug}`);
+    process.exit(1);
+  }
+  const content = await readFile(wishPath, 'utf-8');
+  const groups = parseWishGroups(content);
+  if (groups.length === 0) {
+    console.error(`❌ No execution groups found in ${wishPath}`);
+    process.exit(1);
+  }
+  const state = await wishState.createState(slug, groups);
+  console.log(`📝 Auto-initialized state for wish "${slug}" (${groups.length} groups)`);
+  return state;
+}
+
+async function printWishExecutors(slug: string): Promise<void> {
+  try {
+    const { registry, executorRegistry, assignmentRegistry } = await loadExecutorInfo();
+    const agents = await registry.listAgents({ team: process.env.GENIE_TEAM });
+    const executorInfoLines: string[] = [];
+
+    for (const agent of agents) {
+      if (!agent.currentExecutorId) continue;
+      const executor = await executorRegistry.getExecutor(agent.currentExecutorId);
+      if (!executor || executor.state === 'terminated' || executor.state === 'done') continue;
+
+      const assignment = await assignmentRegistry.getActiveAssignment(executor.id);
+      const taskLabel =
+        assignment?.wishSlug === slug ? `Group ${assignment.groupNumber ?? '?'}` : (assignment?.wishSlug ?? '-');
+      const name = agent.customName ?? agent.role ?? agent.id.slice(0, 12);
+      executorInfoLines.push(
+        `  Agent: ${padRight(name, 16)} | Executor: ${executor.id.slice(0, 12)} (${executor.provider}) | State: ${padRight(executor.state, 10)} | Task: ${taskLabel}`,
+      );
+    }
+
+    if (executorInfoLines.length > 0) {
+      console.log('\nActive Executors:');
+      console.log('─'.repeat(60));
+      for (const line of executorInfoLines) {
+        console.log(line);
+      }
+    }
+  } catch {
+    // Executor info is best-effort — DB may be unavailable
+  }
+}
+
 async function statusCommand(slug: string): Promise<void> {
   try {
-    let state = await wishState.getState(slug);
-    if (!state) {
-      // Auto-initialize state from WISH.md instead of failing
-      const wishPath = resolveWishPath(slug);
-      if (!wishPath) {
-        console.error(`❌ No state found for wish "${slug}" and no WISH.md found in cwd or repo root`);
-        console.error(`   Create it first: genie wish <agent> ${slug}`);
-        process.exit(1);
-      }
-      const content = await readFile(wishPath, 'utf-8');
-      const groups = parseWishGroups(content);
-      if (groups.length === 0) {
-        console.error(`❌ No execution groups found in ${wishPath}`);
-        process.exit(1);
-      }
-      state = await wishState.createState(slug, groups);
-      console.log(`📝 Auto-initialized state for wish "${slug}" (${groups.length} groups)`);
-    }
+    const state = (await wishState.getState(slug)) ?? (await autoInitWishState(slug));
 
     console.log(`\nWish: ${state.wish}`);
     console.log('─'.repeat(60));
@@ -370,36 +403,7 @@ async function statusCommand(slug: string): Promise<void> {
     console.log('');
     console.log(`  Progress: ${done}/${total} done | ${inProgress} in progress | ${ready} ready | ${blocked} blocked`);
 
-    // Show active executors for this wish
-    try {
-      const { registry, executorRegistry, assignmentRegistry } = await loadExecutorInfo();
-      const agents = await registry.listAgents({ team: process.env.GENIE_TEAM });
-      const executorInfoLines: string[] = [];
-
-      for (const agent of agents) {
-        if (!agent.currentExecutorId) continue;
-        const executor = await executorRegistry.getExecutor(agent.currentExecutorId);
-        if (!executor || executor.state === 'terminated' || executor.state === 'done') continue;
-
-        const assignment = await assignmentRegistry.getActiveAssignment(executor.id);
-        const taskLabel =
-          assignment?.wishSlug === slug ? `Group ${assignment.groupNumber ?? '?'}` : (assignment?.wishSlug ?? '-');
-        const name = agent.customName ?? agent.role ?? agent.id.slice(0, 12);
-        executorInfoLines.push(
-          `  Agent: ${padRight(name, 16)} | Executor: ${executor.id.slice(0, 12)} (${executor.provider}) | State: ${padRight(executor.state, 10)} | Task: ${taskLabel}`,
-        );
-      }
-
-      if (executorInfoLines.length > 0) {
-        console.log('\nActive Executors:');
-        console.log('─'.repeat(60));
-        for (const line of executorInfoLines) {
-          console.log(line);
-        }
-      }
-    } catch {
-      // Executor info is best-effort — DB may be unavailable
-    }
+    await printWishExecutors(slug);
 
     console.log('');
   } catch (error) {

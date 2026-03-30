@@ -548,6 +548,28 @@ async function readSessionMetadata(filePath: string): Promise<SessionMetadata> {
  *   3. Newest team-lead session in the repo
  *   4. Newest session as a last resort
  */
+function rootScore(metadata: { teamName?: string; agentName?: string }): number {
+  if (!metadata.teamName && !metadata.agentName) return 2;
+  if (metadata.agentName === 'team-lead') return 1;
+  return 0;
+}
+
+function compareSessionRanking(
+  a: { name: string; mtime: number; metadata: { teamName?: string; agentName?: string } },
+  b: { name: string; mtime: number; metadata: { teamName?: string; agentName?: string } },
+  leadRefs: Map<string, number>,
+): number {
+  const aLeadRefs = leadRefs.get(a.name.replace('.jsonl', '')) ?? 0;
+  const bLeadRefs = leadRefs.get(b.name.replace('.jsonl', '')) ?? 0;
+  if (aLeadRefs !== bLeadRefs) return bLeadRefs - aLeadRefs;
+
+  const aRoot = rootScore(a.metadata);
+  const bRoot = rootScore(b.metadata);
+  if (aRoot !== bRoot) return bRoot - aRoot;
+
+  return b.mtime - a.mtime;
+}
+
 export async function discoverClaudeParentSessionId(cwd?: string): Promise<string | null> {
   const envSessionId = process.env.CLAUDE_CODE_SESSION_ID;
   if (envSessionId) return envSessionId;
@@ -573,21 +595,7 @@ export async function discoverClaudeParentSessionId(cwd?: string): Promise<strin
     );
     const leadRefs = await countLeadSessionRefs();
 
-    ranked.sort((a, b) => {
-      const aId = a.name.replace('.jsonl', '');
-      const bId = b.name.replace('.jsonl', '');
-      const aLeadRefs = leadRefs.get(aId) ?? 0;
-      const bLeadRefs = leadRefs.get(bId) ?? 0;
-      if (aLeadRefs !== bLeadRefs) return bLeadRefs - aLeadRefs;
-
-      const aRootScore =
-        !a.metadata.teamName && !a.metadata.agentName ? 2 : a.metadata.agentName === 'team-lead' ? 1 : 0;
-      const bRootScore =
-        !b.metadata.teamName && !b.metadata.agentName ? 2 : b.metadata.agentName === 'team-lead' ? 1 : 0;
-      if (aRootScore !== bRootScore) return bRootScore - aRootScore;
-
-      return b.mtime - a.mtime;
-    });
+    ranked.sort((a, b) => compareSessionRanking(a, b, leadRefs));
 
     return ranked[0]?.name.replace('.jsonl', '') ?? null;
   } catch {
