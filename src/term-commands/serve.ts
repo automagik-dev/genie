@@ -356,9 +356,40 @@ function discoverAgents(): string[] {
 
 interface DaemonHandles {
   schedulerHandle: { stop: () => void; done: Promise<void> } | null;
+  agentWatcher: { close: () => void } | null;
 }
 
-const handles: DaemonHandles = { schedulerHandle: null };
+const handles: DaemonHandles = { schedulerHandle: null, agentWatcher: null };
+
+/** Sync agent directory from workspace and start file watcher. */
+async function startAgentSync(): Promise<{ close: () => void } | null> {
+  try {
+    const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+    const ws = findWorkspace();
+    if (!ws) return null;
+
+    const { syncAgentDirectory, watchAgentDirectory } = await import('../lib/agent-sync.js');
+    const syncResult = await syncAgentDirectory(ws.root);
+    const synced = syncResult.registered.length + syncResult.updated.length;
+    if (synced > 0) {
+      console.log(`  Agent sync: ${syncResult.registered.length} registered, ${syncResult.updated.length} updated`);
+    }
+
+    const watcher = watchAgentDirectory(ws.root, {
+      onSync: (name, action) => {
+        console.log(`  [agent-watcher] ${name}: ${action}`);
+      },
+    });
+    if (watcher) {
+      console.log('  Agent watcher started (watching agents/ directory)');
+    }
+    return watcher;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  Agent sync failed: ${msg}`);
+    return null;
+  }
+}
 
 /** Start all services in foreground mode */
 async function startForeground(): Promise<void> {
@@ -392,6 +423,9 @@ async function startForeground(): Promise<void> {
   const sessions = listAgentSessions();
   console.log(`  Agent sessions: ${sessions.length > 0 ? sessions.join(', ') : '(none)'}`);
 
+  // 2b. Sync agent directory + start watcher
+  handles.agentWatcher = await startAgentSync();
+
   // 3. Start TUI tmux server with split layout
   console.log(`  Starting tmux -L ${TUI_SOCKET} server...`);
   const { leftPane, rightPane } = startTuiTmuxServer();
@@ -424,6 +458,7 @@ async function startForeground(): Promise<void> {
   // Signal handlers for graceful shutdown
   const shutdown = () => {
     console.log('\nShutting down genie serve...');
+    handles.agentWatcher?.close();
     handles.schedulerHandle?.stop();
     killTmuxServer(TUI_SOCKET, tuiTmuxConf());
     killTmuxServer(GENIE_SOCKET, genieTmuxConf());
