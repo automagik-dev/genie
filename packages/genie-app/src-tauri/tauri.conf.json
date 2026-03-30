@@ -1,13 +1,13 @@
 {
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/config.schema.json",
+  "productName": "Genie",
+  "version": "0.1.0",
+  "identifier": "dev.automagik.genie",
   "build": {
-    "devPath": "http://localhost:1420",
-    "distDir": "../dist"
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
   },
-  "package": {
-    "productName": "Genie",
-    "version": "0.1.0"
-  },
-  "tauri": {
+  "app": {
     "windows": [
       {
         "title": "Genie",
@@ -19,23 +19,12 @@
         "fullscreen": false
       }
     ],
-    "bundle": {
-      "identifier": "dev.automagik.genie",
-      "active": true,
-      "targets": "all",
-      "externalBin": ["genie-sidecar"]
-    },
     "security": {
       "csp": null
-    },
-    "allowlist": {
-      "shell": {
-        "sidecar": true,
-        "open": true
-      },
-      "process": {
-        "exit": true
-      }
     }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all"
   }
 }
