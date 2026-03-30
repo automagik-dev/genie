@@ -255,13 +255,25 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
   );
 }
 
-/** Spawn a stopped agent by launching `genie spawn <name>` in background */
+/** Spawn a stopped agent by launching `genie spawn <name>` in its workspace directory */
 function spawnAgent(name: string): void {
   try {
     const { spawn } = require('node:child_process') as typeof import('node:child_process');
+    const { join, resolve } = require('node:path') as typeof import('node:path');
+    const { existsSync } = require('node:fs') as typeof import('node:fs');
+
+    // Resolve agent CWD from workspace path
+    const wsRoot = process.env.GENIE_TUI_WORKSPACE;
+    let cwd: string | undefined;
+    if (wsRoot) {
+      const agentDir = resolve(join(wsRoot, 'agents', name));
+      if (existsSync(agentDir)) cwd = agentDir;
+    }
+
     spawn('genie', ['spawn', name], {
       detached: true,
       stdio: 'ignore',
+      cwd,
     }).unref();
   } catch {
     // best-effort spawn
