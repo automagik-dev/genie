@@ -315,13 +315,23 @@ export async function autoStartServe(): Promise<void> {
 }
 
 /** Check if the genie-tui session exists on the TUI socket */
-function isTuiSessionReady(): boolean {
+export function isTuiSessionReady(): boolean {
   try {
     execSync(tmuxCmd(TUI_SOCKET, tuiTmuxConf(), `has-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * Ensure the TUI tmux session exists and is ready for attachment.
+ * If the TUI server died while serve is still running, recreate it.
+ */
+export function ensureTuiSession(workspaceRoot?: string): void {
+  if (isTuiSessionReady()) return;
+  const { leftPane, rightPane } = startTuiTmuxServer();
+  sendTuiLaunchScript(leftPane, rightPane, workspaceRoot);
 }
 
 // ============================================================================
