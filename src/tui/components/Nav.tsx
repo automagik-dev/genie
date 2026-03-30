@@ -24,7 +24,7 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
   const [sessionTree, setSessionTree] = useState<TreeNode[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const lastTarget = useRef<string | null>(null);
-  const genieHome = useRef(process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`);
+  const initialSelectDone = useRef(false);
 
   // Refresh diagnostics every 2s
   useEffect(() => {
@@ -76,34 +76,15 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
     }
   }, [flatNodes.length, selectedIndex]);
 
-  // File-based initial agent: thin client writes ~/.genie/tui-initial-agent before attaching.
-  // Check on each diagnostics refresh (2s) so re-attach from a different agent dir works.
-  const [pendingAgent, setPendingAgent] = useState<string | undefined>(initialAgent);
-
+  // Initial agent pre-selection (once)
   useEffect(() => {
-    if (!diagnostics) return;
-    try {
-      const fs = require('node:fs') as typeof import('node:fs');
-      const agentFile = `${genieHome.current}/tui-initial-agent`;
-      if (fs.existsSync(agentFile)) {
-        const agent = fs.readFileSync(agentFile, 'utf-8').trim();
-        fs.unlinkSync(agentFile);
-        if (agent) setPendingAgent(agent);
-      }
-    } catch {
-      // best-effort
-    }
-  }, [diagnostics]);
-
-  // Apply pending agent selection (from prop or file)
-  useEffect(() => {
-    if (!pendingAgent || flatNodes.length === 0) return;
-    const idx = flatNodes.findIndex((n) => n.node.id === `agent:${pendingAgent}`);
+    if (!initialAgent || initialSelectDone.current || flatNodes.length === 0) return;
+    const idx = flatNodes.findIndex((n) => n.node.id === `agent:${initialAgent}`);
     if (idx >= 0) {
       setSelectedIndex(idx);
-      setPendingAgent(undefined);
+      initialSelectDone.current = true;
     }
-  }, [pendingAgent, flatNodes]);
+  }, [initialAgent, flatNodes]);
 
   // Auto-switch right pane when cursor moves to a new target
   useEffect(() => {
@@ -162,11 +143,12 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
     const node = flatNodes[selectedIndex]?.node;
     if (!node) return;
 
-    // Agent node: spawn if not running, then attach
     if (node.type === 'agent') {
-      if (node.wsAgentState !== 'running') {
+      // No session → spawn the agent (creates session + window 0 with Claude)
+      if (node.wsAgentState === 'stopped') {
         spawnAgent(node.label);
       }
+      // Attach right pane to the agent's session (existing or just-spawned)
       const target = getSessionTarget(node);
       if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
       return;
@@ -255,26 +237,19 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
   );
 }
 
-/** Spawn a stopped agent by launching `genie spawn <name>` in its workspace directory */
+/** Spawn a stopped agent by launching `genie spawn <name>` from its workspace directory */
 function spawnAgent(name: string): void {
   try {
     const { spawn } = require('node:child_process') as typeof import('node:child_process');
     const { join, resolve } = require('node:path') as typeof import('node:path');
     const { existsSync } = require('node:fs') as typeof import('node:fs');
-
-    // Resolve agent CWD from workspace path
     const wsRoot = process.env.GENIE_TUI_WORKSPACE;
     let cwd: string | undefined;
     if (wsRoot) {
       const agentDir = resolve(join(wsRoot, 'agents', name));
       if (existsSync(agentDir)) cwd = agentDir;
     }
-
-    spawn('genie', ['spawn', name], {
-      detached: true,
-      stdio: 'ignore',
-      cwd,
-    }).unref();
+    spawn('genie', ['spawn', name, '--session', name], { detached: true, stdio: 'ignore', cwd }).unref();
   } catch {
     // best-effort spawn
   }

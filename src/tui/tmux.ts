@@ -1,28 +1,30 @@
 /**
  * TUI tmux runtime helpers — attach, navigate, pane management.
  *
- * TUI session lives on the DEFAULT tmux server (no -L flag).
- * Agent sessions live on the genie server (-L genie).
- * This module bridges the two for the right-pane attach.
+ * Session creation is handled by `genie serve` (see serve.ts).
+ * This module only provides runtime operations for the TUI client.
  */
 
 import { execSync, spawnSync } from 'node:child_process';
 
 const SESSION_NAME = 'genie-tui';
-/** Genie's agent tmux socket — where all agents/teams/sessions live. */
+const TMUX_SOCKET = 'genie-tui';
 const GENIE_AGENT_SOCKET = 'genie';
+const TUI_TMUX_CONF = (() => {
+  const { existsSync } = require('node:fs') as typeof import('node:fs');
+  const home = process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`;
+  const tuiConf = `${home}/tui-tmux.conf`;
+  return existsSync(tuiConf) ? tuiConf : '/dev/null';
+})();
+const TMUX = `tmux -L ${TMUX_SOCKET} -f ${TUI_TMUX_CONF}`;
 
-/**
- * Resolve the right pane ID — self-healing if the pane was killed/recreated.
- * Falls back to re-discovering from the session layout.
- */
 function resolveRightPane(rightPane: string): string {
   try {
-    execSync(`tmux display-message -t ${rightPane} -p ''`, { stdio: 'ignore' });
+    execSync(`${TMUX} display-message -t ${rightPane} -p ''`, { stdio: 'ignore' });
     return rightPane;
   } catch {
     try {
-      const panes = execSync(`tmux list-panes -t ${SESSION_NAME}:0 -F '#{pane_id}'`, { encoding: 'utf-8' })
+      const panes = execSync(`${TMUX} list-panes -t ${SESSION_NAME}:0 -F '#{pane_id}'`, { encoding: 'utf-8' })
         .trim()
         .split('\n');
       return panes[1] || panes[0];
@@ -32,49 +34,45 @@ function resolveRightPane(rightPane: string): string {
   }
 }
 
-/** Ensure a tmux session exists on the agent server, creating it if needed */
-function ensureAgentSession(sessionName: string): void {
-  const agentTmux = `tmux -L ${GENIE_AGENT_SOCKET}`;
-  try {
-    execSync(`${agentTmux} has-session -t '${sessionName}' 2>/dev/null`, { stdio: 'ignore' });
-  } catch {
-    try {
-      execSync(`${agentTmux} new-session -d -s '${sessionName}'`, { stdio: 'ignore' });
-    } catch {
-      // race: another process created it
-    }
-  }
-}
-
-/** Switch right pane to a specific session window on the genie agent server */
+/** Switch right pane to a specific agent session. NEVER kills the pane. */
 export function attachProjectWindow(rightPane: string, targetSession: string, windowIndex?: number): void {
-  // Guard: never attach the TUI session to itself (causes infinite loop)
   if (targetSession === SESSION_NAME) return;
   const pane = resolveRightPane(rightPane);
-  ensureAgentSession(targetSession);
+  const agentTmux = `tmux -L ${GENIE_AGENT_SOCKET}`;
+
+  // Ensure agent session exists
+  try {
+    execSync(`${agentTmux} has-session -t '${targetSession}' 2>/dev/null`, { stdio: 'ignore' });
+  } catch {
+    return; // No session — don't create empty ones, don't kill the pane
+  }
+
   if (windowIndex !== undefined) {
     try {
-      const agentTmux = `tmux -L ${GENIE_AGENT_SOCKET}`;
       execSync(`${agentTmux} select-window -t '${targetSession}:${windowIndex}'`, { stdio: 'ignore' });
-    } catch {
-      // window may not exist
-    }
+    } catch {}
   }
+
+  // Hide green status bar
   try {
-    // Respawn right pane with a while-true loop so it survives agent exit.
-    // When the inner attach ends (agent exits or detach), the loop re-attaches.
-    // If the session is destroyed, attach fails quickly and retries after sleep.
-    // Selecting a different agent calls respawn-pane -k again, killing this loop.
-    const attachCmd = `tmux -L ${GENIE_AGENT_SOCKET} attach-session -t '${targetSession}'`;
-    execSync(`tmux respawn-pane -k -t ${pane} "TMUX='' while true; do ${attachCmd} 2>/dev/null; sleep 0.5; done"`, {
-      stdio: 'ignore',
-    });
-  } catch {
-    // pane doesn't exist or command failed
-  }
+    execSync(`${agentTmux} set-option -t '${targetSession}' status off 2>/dev/null`, { stdio: 'ignore' });
+  } catch {}
+
+  // respawn-pane with a loop wrapper — the pane process is bash running a loop,
+  // so if the attach ends (agent exit, detach), the loop retries and the pane survives.
+  try {
+    const cmd = `while true; do TMUX='' ${agentTmux} attach-session -t '${targetSession}' 2>/dev/null; sleep 0.3; done`;
+    execSync(`${TMUX} respawn-pane -k -t ${pane} "bash -c '${cmd}'"`, { stdio: 'ignore' });
+  } catch {}
+
+  // Restore focus to left pane
+  try {
+    execSync(`${TMUX} select-pane -t ${SESSION_NAME}:0.0`, { stdio: 'ignore' });
+  } catch {}
 }
 
-/** Attach to the TUI session on default tmux server (blocking call) */
 export function attachTuiSession(): void {
-  spawnSync('tmux', ['attach-session', '-t', SESSION_NAME], { stdio: 'inherit' });
+  spawnSync('tmux', ['-L', TMUX_SOCKET, '-f', TUI_TMUX_CONF, 'attach-session', '-t', SESSION_NAME], {
+    stdio: 'inherit',
+  });
 }
