@@ -110,39 +110,6 @@ function isTmuxServerRunning(socket: string, conf: string): boolean {
   }
 }
 
-/** Start the genie agent tmux server and create sessions for all agents */
-function startAgentTmuxServer(agents: string[]): void {
-  const conf = genieTmuxConf();
-
-  // Start server with a bootstrap session (tmux needs at least one)
-  if (!isTmuxServerRunning(GENIE_SOCKET, conf)) {
-    execSync(genieTmux('new-session -d -s _bootstrap'), { stdio: 'ignore' });
-  }
-
-  // Create a session per agent
-  for (const agent of agents) {
-    try {
-      execSync(genieTmux(`has-session -t '${agent}'`), { stdio: 'ignore' });
-    } catch {
-      // Session doesn't exist — create it
-      try {
-        execSync(genieTmux(`new-session -d -s '${agent}'`), { stdio: 'ignore' });
-      } catch {
-        // race or naming conflict
-      }
-    }
-  }
-
-  // Kill the bootstrap session if we have real agent sessions
-  if (agents.length > 0) {
-    try {
-      execSync(genieTmux('kill-session -t _bootstrap'), { stdio: 'ignore' });
-    } catch {
-      // already gone or was the only session
-    }
-  }
-}
-
 const NAV_WIDTH = 30;
 const KEY_TABLE = 'genie-tui';
 
@@ -343,18 +310,6 @@ export function ensureTuiSession(workspaceRoot?: string): void {
 // Workspace agent scanning
 // ============================================================================
 
-/** Scan for agents from workspace.json and filesystem */
-function discoverAgents(): string[] {
-  try {
-    const { findWorkspace, scanAgents } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
-    const ws = findWorkspace();
-    if (!ws) return [];
-    return scanAgents(ws.root);
-  } catch {
-    return [];
-  }
-}
-
 // ============================================================================
 // Service management
 // ============================================================================
@@ -421,12 +376,14 @@ async function startForeground(): Promise<void> {
     console.error(`  pgserve failed: ${msg}`);
   }
 
-  // 2. Start genie agent tmux server + agent sessions
-  const agents = discoverAgents();
-  console.log(`  Starting tmux -L ${GENIE_SOCKET} server...`);
-  startAgentTmuxServer(agents);
+  // 2. Report agent tmux server state (don't create empty sessions —
+  // sessions are created on-demand by `genie spawn`).
   const sessions = listAgentSessions();
-  console.log(`  Agent sessions: ${sessions.length > 0 ? sessions.join(', ') : '(none)'}`);
+  if (sessions.length > 0) {
+    console.log(`  Agent server (-L ${GENIE_SOCKET}): ${sessions.length} sessions`);
+  } else {
+    console.log(`  Agent server (-L ${GENIE_SOCKET}): no sessions yet (created on first spawn)`);
+  }
 
   // 2b. Sync agent directory + start watcher
   handles.agentWatcher = await startAgentSync();
