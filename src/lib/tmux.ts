@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { shellQuote } from './team-lead-command.js';
 import { executeTmux as wrapperExecuteTmux } from './tmux-wrapper.js';
 
@@ -441,7 +442,6 @@ async function rehydratePaneColorHook(windowId: string): Promise<void> {
  * in the existing `genie` session instead of creating a new session per team.
  */
 export async function resolveRepoSession(repoPath: string): Promise<string> {
-  const { basename } = require('node:path');
   const derived = basename(repoPath);
 
   try {
