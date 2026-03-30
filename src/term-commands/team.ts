@@ -106,13 +106,14 @@ export function registerTeamNamespace(program: Command): void {
     .command('ls [name]')
     .alias('list')
     .description('List teams or members of a team')
+    .option('--all', 'Include archived teams')
     .option('--json', 'Output as JSON')
-    .action(async (name: string | undefined, options: { json?: boolean }) => {
+    .action(async (name: string | undefined, options: { all?: boolean; json?: boolean }) => {
       try {
         if (name) {
           await printMembers(name, options.json);
         } else {
-          await printTeams(options.json);
+          await printTeams(options.json, options.all);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -121,15 +122,56 @@ export function registerTeamNamespace(program: Command): void {
       }
     });
 
-  // team disband
+  // team archive
+  team
+    .command('archive <name>')
+    .description('Archive a team (preserves all data, kills members)')
+    .action(async (name: string) => {
+      try {
+        const archived = await teamManager.archiveTeam(name);
+        if (archived) {
+          console.log(`Team "${name}" archived.`);
+        } else {
+          console.error(`Team "${name}" not found.`);
+          process.exit(1);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
+
+  // team unarchive
+  team
+    .command('unarchive <name>')
+    .description('Restore an archived team')
+    .action(async (name: string) => {
+      try {
+        const restored = await teamManager.unarchiveTeam(name);
+        if (restored) {
+          console.log(`Team "${name}" unarchived.`);
+        } else {
+          console.error(`Team "${name}" not found.`);
+          process.exit(1);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
+
+  // team disband (now archives instead of deleting)
   team
     .command('disband <name>')
-    .description('Disband a team: kill members, remove worktree, delete config')
+    .description('Disband a team (archives — preserves data). Use `genie team archive` directly.')
     .action(async (name: string) => {
       try {
         const disbanded = await teamManager.disbandTeam(name);
         if (disbanded) {
-          console.log(`Team "${name}" disbanded.`);
+          console.log('Note: disband now archives the team. Use `genie team archive` directly.');
+          console.log(`Team "${name}" disbanded (archived).`);
         } else {
           console.error(`Team "${name}" not found.`);
           process.exit(1);
@@ -343,8 +385,8 @@ async function printMembers(name: string, json?: boolean): Promise<void> {
 }
 
 /** Print all teams. */
-async function printTeams(json?: boolean): Promise<void> {
-  const teams = await teamManager.listTeams();
+async function printTeams(json?: boolean, includeArchived?: boolean): Promise<void> {
+  const teams = await teamManager.listTeams(includeArchived);
 
   if (json) {
     console.log(JSON.stringify(teams, null, 2));
@@ -368,7 +410,9 @@ async function printTeams(json?: boolean): Promise<void> {
 /** Print a single team summary line. */
 function printTeamSummary(t: TeamConfig): void {
   const status = t.status ?? 'in_progress';
-  console.log(`  ${t.name}  [${status}]`);
+  const dimmed = status === 'archived' ? '\x1b[90m' : '';
+  const reset = status === 'archived' ? '\x1b[0m' : '';
+  console.log(`  ${dimmed}${t.name}  [${status}]${reset}`);
   console.log(`    Repo: ${t.repo}`);
   console.log(`    Branch: ${t.name} (from ${t.baseBranch})`);
   console.log(`    Worktree: ${t.worktreePath}`);

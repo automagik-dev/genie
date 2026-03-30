@@ -29,7 +29,7 @@ import * as tmux from './tmux.js';
 // ============================================================================
 
 /** Team lifecycle status. */
-export type TeamStatus = 'in_progress' | 'done' | 'blocked';
+export type TeamStatus = 'in_progress' | 'done' | 'blocked' | 'archived';
 
 /** Persisted team configuration. */
 export interface TeamConfig {
@@ -57,6 +57,8 @@ export interface TeamConfig {
   tmuxSessionName?: string;
   /** Wish slug this team is working on (set via --wish). */
   wishSlug?: string;
+  /** ISO timestamp when the team was archived (null if not archived). */
+  archivedAt?: string;
 }
 
 // ============================================================================
@@ -90,6 +92,7 @@ interface TeamConfigRow {
   native_teams_enabled?: boolean;
   tmux_session_name?: string;
   wish_slug?: string;
+  archived_at?: Date | string | null;
 }
 
 /** Map a PG row to a TeamConfig object. */
@@ -108,6 +111,9 @@ function rowToTeamConfig(row: TeamConfigRow): TeamConfig {
   if (row.native_teams_enabled) config.nativeTeamsEnabled = row.native_teams_enabled;
   if (row.tmux_session_name) config.tmuxSessionName = row.tmux_session_name;
   if (row.wish_slug) config.wishSlug = row.wish_slug;
+  if (row.archived_at) {
+    config.archivedAt = row.archived_at instanceof Date ? row.archived_at.toISOString() : String(row.archived_at);
+  }
   return config;
 }
 
@@ -430,8 +436,60 @@ async function cleanupTeamTmuxSession(tmuxSessionName: string, teamName: string)
 }
 
 /**
- * Disband a team: remove shared clone and delete team config from PG.
+ * Archive a team: set status='archived', kill members, clean up tmux.
+ * Preserves all data (members, wish_slug, metadata).
+ */
+export async function archiveTeam(teamName: string): Promise<boolean> {
+  const config = await getTeam(teamName);
+  if (!config) return false;
+
+  // Kill all running team members (scoped to this team only)
+  for (const member of config.members) {
+    try {
+      await killWorkersByName(member, teamName);
+    } catch {
+      // Best-effort — continue with other members
+    }
+  }
+
+  await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
+
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE teams SET status = 'archived', archived_at = now(), updated_at = now()
+    WHERE name = ${teamName}
+  `;
+  if (result.count === 0) return false;
+
+  recordAuditEvent('team', teamName, 'archived', getActor(), { repo: config.repo }).catch(() => {});
+  return true;
+}
+
+/**
+ * Unarchive a team: restore status to 'done' or 'in_progress'.
+ */
+export async function unarchiveTeam(teamName: string): Promise<boolean> {
+  const config = await getTeam(teamName);
+  if (!config) return false;
+
+  const restoredStatus = 'done';
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE teams SET status = ${restoredStatus}, archived_at = NULL, updated_at = now()
+    WHERE name = ${teamName}
+  `;
+  if (result.count === 0) return false;
+
+  recordAuditEvent('team', teamName, 'unarchived', getActor(), { repo: config.repo, restoredStatus }).catch(() => {});
+  return true;
+}
+
+/**
+ * Disband a team: archives instead of deleting (data-preserving).
+ * Kills members, cleans up native team config, resets wish groups, removes worktree.
  * Returns true if the team was found and disbanded.
+ *
+ * @deprecated Use `archiveTeam` directly. Disband now archives to preserve data.
  */
 export async function disbandTeam(teamName: string): Promise<boolean> {
   const config = await getTeam(teamName);
@@ -459,9 +517,12 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
 
   await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
 
-  // Delete team config from PG
+  // Archive instead of delete — preserves all historical data
   const sql = await getConnection();
-  const result = await sql`DELETE FROM teams WHERE name = ${teamName}`;
+  const result = await sql`
+    UPDATE teams SET status = 'archived', archived_at = now(), updated_at = now()
+    WHERE name = ${teamName}
+  `;
   if (result.count === 0) return false;
 
   recordAuditEvent('team', teamName, 'disbanded', getActor(), { repo: config.repo }).catch(() => {});
@@ -526,11 +587,15 @@ export async function getTeam(name: string): Promise<TeamConfig | null> {
   }
 }
 
-/** List all teams globally. */
-export async function listTeams(): Promise<TeamConfig[]> {
+/** List all teams globally, optionally including archived. */
+export async function listTeams(includeArchived = false): Promise<TeamConfig[]> {
   try {
     const sql = await getConnection();
-    const rows = await sql`SELECT * FROM teams ORDER BY created_at DESC`;
+    if (includeArchived) {
+      const rows = await sql`SELECT * FROM teams ORDER BY created_at DESC`;
+      return rows.map(rowToTeamConfig);
+    }
+    const rows = await sql`SELECT * FROM teams WHERE status != 'archived' ORDER BY created_at DESC`;
     return rows.map(rowToTeamConfig);
   } catch {
     return [];
