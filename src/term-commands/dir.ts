@@ -29,7 +29,7 @@ import {
   updateItemInStore,
 } from '../lib/agent-cache.js';
 import * as directory from '../lib/agent-directory.js';
-import { syncAgentDirectory } from '../lib/agent-sync.js';
+import { printSyncResult, syncAgentDirectory } from '../lib/agent-sync.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { ALL_BUILTINS } from '../lib/builtin-agents.js';
 import { contractPath } from '../lib/genie-config.js';
@@ -235,18 +235,7 @@ async function handleDirSync(): Promise<void> {
 
   console.log(`Syncing agents from ${ws.root}/agents/...`);
   const result = await syncAgentDirectory(ws.root);
-
-  if (result.registered.length > 0) console.log(`  Registered: ${result.registered.join(', ')}`);
-  if (result.updated.length > 0) console.log(`  Updated: ${result.updated.join(', ')}`);
-  if (result.reactivated.length > 0) console.log(`  Reactivated: ${result.reactivated.join(', ')}`);
-  if (result.archived.length > 0) console.log(`  Archived: ${result.archived.join(', ')}`);
-  if (result.unchanged.length > 0) console.log(`  Unchanged: ${result.unchanged.join(', ')}`);
-  for (const err of result.errors) {
-    console.error(`  Error (${err.name}): ${err.error}`);
-  }
-
-  const total = result.registered.length + result.updated.length + result.unchanged.length + result.reactivated.length;
-  console.log(`\nSync complete: ${total} active agent(s), ${result.archived.length} archived.`);
+  printSyncResult(result);
 }
 
 // ============================================================================
