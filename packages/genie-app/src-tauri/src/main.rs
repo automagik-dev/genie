@@ -22,13 +22,20 @@ impl SidecarBridge {
     fn request(&self, command: &str, params: Value) -> oneshot::Receiver<Result<Value, String>> {
         let (tx, rx) = oneshot::channel();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.pending.lock().unwrap().insert(id, tx);
 
         let msg = serde_json::json!({ "id": id, "command": command, "params": params });
 
-        if let Ok(mut stdin) = self.stdin.lock() {
-            let _ = writeln!(stdin, "{}", msg);
-            let _ = stdin.flush();
+        let write_ok = self
+            .stdin
+            .lock()
+            .map(|mut stdin| writeln!(stdin, "{}", msg).and_then(|_| stdin.flush()).is_ok())
+            .unwrap_or(false);
+
+        if write_ok {
+            self.pending.lock().unwrap().insert(id, tx);
+        } else {
+            // Sidecar stdin is broken — fail immediately instead of hanging
+            let _ = tx.send(Err("Sidecar process is not running".to_string()));
         }
 
         rx
@@ -62,7 +69,8 @@ fn main() {
         .setup(|app| {
             let app_handle = app.handle().clone();
 
-            // Resolve backend entry point (dev: relative to Cargo manifest dir)
+            // Resolve backend entry point (dev mode: compile-time path from Cargo manifest)
+            // TODO: for production builds, resolve from app.path().resource_dir() + bundled sidecar
             let backend_entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .expect("Cannot resolve package root")
