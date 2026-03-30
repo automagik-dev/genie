@@ -224,9 +224,10 @@ async function handleTeamCreate(
   name: string,
   options: { repo: string; branch: string; wish?: string; session?: string; spawn?: boolean },
 ): Promise<void> {
+  const resolvedRepo = resolve(options.repo);
+
   // Validate wish exists before creating team — auto-copy from cwd if needed
   if (options.wish) {
-    const resolvedRepo = resolve(options.repo);
     const wishPath = join(resolvedRepo, '.genie', 'wishes', options.wish, 'WISH.md');
     if (!existsSync(wishPath)) {
       // Auto-copy: search cwd for the wish
@@ -246,19 +247,16 @@ async function handleTeamCreate(
 
   const config = await teamManager.createTeam(name, options.repo, options.branch);
 
-  // Store wish slug and tmux session in team config
-  let needsUpdate = false;
+  // Always resolve tmuxSessionName — prevents session explosion on parallel creates
+  // Resolution: explicit flag → PG agent session → repo path mapping → team name fallback
+  const { findSessionByRepo } = await import('../lib/agent-directory.js');
+  const { resolveRepoSession } = await import('../lib/tmux.js');
+  config.tmuxSessionName =
+    options.session ?? (await findSessionByRepo(resolvedRepo)) ?? (await resolveRepoSession(resolvedRepo));
   if (options.wish) {
     config.wishSlug = options.wish;
-    needsUpdate = true;
   }
-  if (options.session) {
-    config.tmuxSessionName = options.session;
-    needsUpdate = true;
-  }
-  if (needsUpdate) {
-    await teamManager.updateTeamConfig(name, config);
-  }
+  await teamManager.updateTeamConfig(name, config);
 
   console.log(`Team "${config.name}" created.`);
   console.log(`  Worktree: ${config.worktreePath}`);
@@ -293,11 +291,15 @@ async function spawnLeaderWithWish(
 ): Promise<void> {
   const { handleWorkerSpawn } = await import('./agents.js');
   const { findSessionByRepo } = await import('../lib/agent-directory.js');
+  const { resolveRepoSession } = await import('../lib/tmux.js');
   const resolvedRepo = resolve(repoPath);
 
-  // Resolve tmux session BEFORE spawning — prevents parallel creates from each creating a new session
-  // Resolution: 1) explicit --session, 2) repo owner agent's session, 3) team name as new session
-  const tmuxSession = sessionOverride ?? (await findSessionByRepo(resolvedRepo)) ?? config.name;
+  // Use already-resolved session from handleTeamCreate, with fallback chain for safety
+  const tmuxSession =
+    sessionOverride ??
+    config.tmuxSessionName ??
+    (await findSessionByRepo(resolvedRepo)) ??
+    (await resolveRepoSession(resolvedRepo));
   config.tmuxSessionName = tmuxSession;
   await teamManager.updateTeamConfig(config.name, config);
 
