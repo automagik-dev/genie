@@ -85,11 +85,12 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
     }).trim();
 
     if (paneCmd === 'tmux') {
-      // Nested tmux client already running — switch session without new PTY
-      execSync(`${TMUX} send-keys -t ${pane} "" C-c`, { stdio: 'ignore' });
-      execSync(`${TMUX} send-keys -t ${pane} "TMUX='' ${agentTmux} switch-client -t '${targetSession}'" Enter`, {
-        stdio: 'ignore',
-      });
+      // Nested tmux client already running — respawn with TERM=screen to suppress probes.
+      // Don't send-keys (Ctrl-C kills agent work, TMUX='' breaks switch-client context).
+      execSync(
+        `${TMUX} respawn-pane -k -t ${pane} "TERM=screen TMUX='' ${agentTmux} attach-session -t '${targetSession}'"`,
+        { stdio: 'ignore' },
+      );
     } else {
       // No nested client — start fresh. Use TERM=screen to suppress probes.
       execSync(
