@@ -9,14 +9,23 @@
     "./components": "./components.ts",
     "./views/*": "./views/*/ui/*.tsx"
   },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
   "genieOs": {
     "services": ["sidecar"]
   },
-  "peerDependencies": {
-    "react": ">=19"
+  "dependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   },
   "devDependencies": {
     "typescript": "^5.8.0",
-    "@types/react": "^19.2.14"
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.5.2",
+    "vite": "^6.3.5"
   }
 }
