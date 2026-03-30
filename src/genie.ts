@@ -73,6 +73,7 @@ import {
 import * as readCmd from './term-commands/read.js';
 import { registerReleaseCommands } from './term-commands/release.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
+import { registerServeCommands } from './term-commands/serve.js';
 import { registerSessionsCommands } from './term-commands/sessions.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { registerTagCommands } from './term-commands/tag.js';
@@ -163,14 +164,8 @@ shortcuts
   .action(shortcutsInstallCommand);
 shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
 
-// genie serve — alias for `genie daemon start --foreground`
-program
-  .command('serve')
-  .description('Start genie daemon (foreground)')
-  .action(async () => {
-    // Re-invoke as `genie daemon start --foreground`
-    await program.parseAsync(['node', 'genie', 'daemon', 'start', '--foreground']);
-  });
+// genie serve — infrastructure owner (pgserve + tmux + scheduler)
+registerServeCommands(program);
 
 // ============================================================================
 // Orchestration namespaces
