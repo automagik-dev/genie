@@ -168,6 +168,30 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
 }
 
 /**
+ * Find the tmux session name for the agent that owns a given repo path.
+ * Queries PG agents table for an active agent whose repo_path matches.
+ * Returns null if no match or PG is unavailable.
+ */
+export async function findSessionByRepo(repoPath: string): Promise<string | null> {
+  try {
+    const { getConnection } = await import('./db.js');
+    const sql = await getConnection();
+    const rows = await sql`
+      SELECT session FROM agents
+      WHERE repo_path = ${repoPath}
+        AND session IS NOT NULL
+        AND session != ''
+        AND state IN ('working', 'idle', 'permission', 'question')
+      ORDER BY started_at DESC
+      LIMIT 1
+    `;
+    return rows.length > 0 ? (rows[0].session as string) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * List agents from all scopes with scope labels.
  * Returns PG-derived entries + built-in entries.
  */
