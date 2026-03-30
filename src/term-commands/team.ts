@@ -250,11 +250,12 @@ async function spawnLeaderWithWish(
   sessionOverride?: string,
 ): Promise<void> {
   const { handleWorkerSpawn } = await import('./agents.js');
-  const { getCurrentSessionName } = await import('../lib/tmux.js');
+  const { findSessionByRepo } = await import('../lib/agent-directory.js');
   const resolvedRepo = resolve(repoPath);
 
   // Resolve tmux session BEFORE spawning — prevents parallel creates from each creating a new session
-  const tmuxSession = sessionOverride ?? (await getCurrentSessionName(config.name)) ?? config.name;
+  // Resolution: 1) explicit --session, 2) repo owner agent's session, 3) team name as new session
+  const tmuxSession = sessionOverride ?? (await findSessionByRepo(resolvedRepo)) ?? config.name;
   config.tmuxSessionName = tmuxSession;
   await teamManager.updateTeamConfig(config.name, config);
 
