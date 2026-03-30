@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "identifier": "dev.automagik.genie",
   "build": {
+    "beforeDevCommand": "cd .. && bun run dev",
+    "beforeBuildCommand": "cd .. && bun run build",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
   },
