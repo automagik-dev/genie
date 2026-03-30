@@ -23,5 +23,12 @@
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["tmux", "which"],
   "ignoreExportsUsedInFile": false,
-  "ignoreDependencies": ["@tauri-apps/cli", "react-dom", "@vitejs/plugin-react", "vite", "@types/react-dom"]
+  "ignoreDependencies": [
+    "@tauri-apps/cli",
+    "@tauri-apps/api",
+    "react-dom",
+    "@vitejs/plugin-react",
+    "vite",
+    "@types/react-dom"
+  ]
 }
