@@ -1,13 +1,14 @@
 /**
- * Database backup & restore — pg_dump/psql wrappers for genie DB snapshots.
+ * Database backup & restore — pg_dump + node:zlib for genie DB snapshots.
  *
- * - backup(): pg_dump → gzip → .genie/snapshot.sql.gz
- * - restore(): gunzip → psql (drop + create + restore + migrate)
+ * No external dependencies beyond pg_dump (ships with pgserve).
+ * Compression uses node:zlib, restore pipes through postgres.js.
  */
 
-import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { type SpawnSyncReturns, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { getActivePort } from './db.js';
 import { resolveRepoPath } from './wish-state.js';
 
@@ -40,37 +41,51 @@ interface BackupResult {
 }
 
 /**
- * Run pg_dump → gzip → snapshot.sql.gz.
+ * Run pg_dump → zlib.gzip → snapshot.sql.gz.
  * Replaces the previous snapshot (single file, not accumulating).
+ * Uses spawnSync so pg_dump exit code is checked directly — no shell pipeline.
  */
 export function backup(cwd?: string): BackupResult {
   const port = getActivePort();
   const snapshotPath = getSnapshotPath(cwd);
   const genieDir = join(resolveRepoPath(cwd), '.genie');
+  const tmpPath = `${snapshotPath}.tmp`;
 
   mkdirSync(genieDir, { recursive: true });
 
-  // pg_dump piped through gzip — single atomic write
-  execSync(`pg_dump --no-owner --no-acl | gzip > "${snapshotPath}.tmp"`, {
+  // pg_dump → stdout buffer, exit code checked directly
+  const result: SpawnSyncReturns<Buffer> = spawnSync('pg_dump', ['--no-owner', '--no-acl'], {
     env: pgEnv(port),
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 120_000,
+    maxBuffer: 1024 * 1024 * 1024, // 1GB
   });
 
-  // Atomic rename
-  execSync(`mv "${snapshotPath}.tmp" "${snapshotPath}"`, { stdio: 'ignore' });
+  if (result.status !== 0) {
+    const stderr = result.stderr?.toString().trim() || 'unknown error';
+    throw new Error(`pg_dump failed (exit ${result.status}): ${stderr}`);
+  }
+
+  // Compress with node:zlib (synchronous — data already in memory)
+  const compressed = gzipSync(result.stdout);
+
+  // Atomic write: tmp → rename
+  writeFileSync(tmpPath, compressed);
+  renameSync(tmpPath, snapshotPath);
 
   const compressedBytes = statSync(snapshotPath).size;
 
   // Get uncompressed size estimate from pg_database_size
   let uncompressedBytes = 0;
   try {
-    const out = execSync(`psql -t -A -c "SELECT pg_database_size('${DB_NAME}')"`, {
+    const sizeResult = spawnSync('psql', ['-t', '-A', '-c', `SELECT pg_database_size('${DB_NAME}')`], {
       env: pgEnv(port),
       encoding: 'utf-8',
       timeout: 10_000,
-    }).trim();
-    uncompressedBytes = Number.parseInt(out, 10) || 0;
+    });
+    if (sizeResult.status === 0) {
+      uncompressedBytes = Number.parseInt(sizeResult.stdout.trim(), 10) || 0;
+    }
   } catch {
     // Non-critical — just won't show uncompressed size
   }
@@ -80,7 +95,8 @@ export function backup(cwd?: string): BackupResult {
 
 /**
  * Restore DB from a snapshot file.
- * Drops the existing DB, creates fresh, restores, then runs migrations.
+ * Drops the existing DB, creates fresh, restores via psql stdin.
+ * Decompression uses node:zlib — no gunzip binary needed.
  */
 export function restore(snapshotFile?: string, cwd?: string): void {
   const port = getActivePort();
@@ -91,33 +107,54 @@ export function restore(snapshotFile?: string, cwd?: string): void {
   }
 
   const env = pgEnv(port);
-
-  // Drop and recreate the database
-  // Connect to 'postgres' DB to drop/create genie
   const adminEnv = { ...env, PGDATABASE: 'postgres' };
 
   // Terminate existing connections
-  execSync(
-    `psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${DB_NAME}' AND pid <> pg_backend_pid()"`,
-    { env: adminEnv, stdio: ['pipe', 'pipe', 'pipe'], timeout: 10_000 },
+  spawnSync(
+    'psql',
+    [
+      '-c',
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${DB_NAME}' AND pid <> pg_backend_pid()`,
+    ],
+    {
+      env: adminEnv,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 10_000,
+    },
   );
 
-  execSync(`psql -c "DROP DATABASE IF EXISTS ${DB_NAME}"`, {
+  // Drop and recreate
+  const dropResult = spawnSync('psql', ['-c', `DROP DATABASE IF EXISTS ${DB_NAME}`], {
     env: adminEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 10_000,
   });
+  if (dropResult.status !== 0) {
+    throw new Error(`Failed to drop database: ${dropResult.stderr?.toString().trim()}`);
+  }
 
-  execSync(`psql -c "CREATE DATABASE ${DB_NAME}"`, {
+  const createResult = spawnSync('psql', ['-c', `CREATE DATABASE ${DB_NAME}`], {
     env: adminEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 10_000,
   });
+  if (createResult.status !== 0) {
+    throw new Error(`Failed to create database: ${createResult.stderr?.toString().trim()}`);
+  }
 
-  // Restore from compressed dump
-  execSync(`gunzip -c "${filePath}" | psql`, {
+  // Decompress with node:zlib, feed to psql via stdin
+  const compressed = readFileSync(filePath);
+  const sql = gunzipSync(compressed);
+
+  const restoreResult = spawnSync('psql', [], {
     env: { ...env, PGDATABASE: DB_NAME },
+    input: sql,
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 300_000,
+    maxBuffer: 1024 * 1024 * 1024,
   });
+
+  if (restoreResult.status !== 0) {
+    throw new Error(`psql restore failed (exit ${restoreResult.status}): ${restoreResult.stderr?.toString().trim()}`);
+  }
 }
