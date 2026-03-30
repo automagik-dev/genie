@@ -1,4 +1,4 @@
-.PHONY: build build-app lint lint-fix format typecheck test check clean
+.PHONY: build build-app tauri tauri-dev lint lint-fix format typecheck test check clean
 
 build:
 	bun run build
@@ -22,6 +22,12 @@ test:
 	bun test
 
 check: lint typecheck test
+
+tauri:
+	cd packages/genie-app && bunx tauri build
+
+tauri-dev:
+	cd packages/genie-app && bunx tauri dev
 
 clean:
 	rm -rf dist node_modules
