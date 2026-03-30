@@ -6,6 +6,7 @@
 import type { Command } from 'commander';
 import { type StoreRow, listItemsFromStore, migrateAgentDirectory } from '../../lib/agent-cache.js';
 import * as directory from '../../lib/agent-directory.js';
+import { syncAgentDirectory } from '../../lib/agent-sync.js';
 import { ALL_BUILTINS } from '../../lib/builtin-agents.js';
 import { contractPath } from '../../lib/genie-config.js';
 
@@ -154,7 +155,9 @@ export function registerAgentDirectory(parent: Command): void {
     .option('--builtins', 'Include built-in roles and council members')
     .action(async (name: string | undefined, options: { json?: boolean; builtins?: boolean }) => {
       try {
-        if (name) {
+        if (name === 'sync') {
+          await handleSync();
+        } else if (name) {
           await showEntry(name, options.json);
         } else {
           await listEntries(options.json, options.builtins);
@@ -165,4 +168,34 @@ export function registerAgentDirectory(parent: Command): void {
         process.exit(1);
       }
     });
+}
+
+async function handleSync(): Promise<void> {
+  const { findWorkspace } = await import('../../lib/workspace.js');
+  const ws = findWorkspace();
+  if (!ws) {
+    console.error('Not in a genie workspace. Run `genie init` first.');
+    process.exit(1);
+  }
+
+  console.log(`Syncing agents from ${ws.root}/agents/...`);
+  const result = await syncAgentDirectory(ws.root);
+
+  if (result.registered.length > 0) {
+    console.log(`  Registered: ${result.registered.join(', ')}`);
+  }
+  if (result.updated.length > 0) {
+    console.log(`  Updated: ${result.updated.join(', ')}`);
+  }
+  if (result.unchanged.length > 0) {
+    console.log(`  Unchanged: ${result.unchanged.join(', ')}`);
+  }
+  if (result.errors.length > 0) {
+    for (const err of result.errors) {
+      console.error(`  Error (${err.name}): ${err.error}`);
+    }
+  }
+
+  const total = result.registered.length + result.updated.length + result.unchanged.length;
+  console.log(`\nSync complete: ${total} agent(s) found.`);
 }
