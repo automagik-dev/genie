@@ -469,8 +469,10 @@ program
 
 const args = process.argv.slice(2);
 
-// If GENIE_TUI_PANE=left, we're the TUI renderer inside the left tmux pane — render directly
-if (process.env.GENIE_TUI_PANE === 'left') {
+// If GENIE_TUI_PANE=left AND no args, we're the TUI renderer inside the left tmux pane.
+// Must check args.length — otherwise `genie work`, `genie spawn`, etc. launched from
+// within TUI panes would render the TUI instead of running the command.
+if (process.env.GENIE_TUI_PANE === 'left' && args.length === 0) {
   const { launchTui } = await import('./tui/index.js');
   await launchTui();
   process.exit(0);
