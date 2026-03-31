@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { tmuxBin } from './ensure-tmux.js';
 import { shellQuote } from './team-lead-command.js';
 import { executeTmux as wrapperExecuteTmux } from './tmux-wrapper.js';
 
@@ -374,14 +375,15 @@ function ensurePaneColorScript(): void {
   if (existsSync(PANE_COLOR_SCRIPT)) return;
 
   mkdirSync(dirname(PANE_COLOR_SCRIPT), { recursive: true });
+  const bin = tmuxBin();
   writeFileSync(
     PANE_COLOR_SCRIPT,
     `#!/bin/bash
 # Genie tmux pane color router — reads @genie_color pane option
 PANE_ID="$1"
-COLOR=$(tmux display-message -p -t "$PANE_ID" '#{@genie_color}' 2>/dev/null)
+COLOR=$(${bin} display-message -p -t "$PANE_ID" '#{@genie_color}' 2>/dev/null)
 [ -z "$COLOR" ] && COLOR="default"
-tmux set-option -w pane-active-border-style "fg=$COLOR"
+${bin} set-option -w pane-active-border-style "fg=$COLOR"
 `,
   );
   chmodSync(PANE_COLOR_SCRIPT, 0o755);

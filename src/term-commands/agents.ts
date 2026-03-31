@@ -15,6 +15,7 @@ import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
+import { tmuxBin } from '../lib/ensure-tmux.js';
 import * as executorRegistry from '../lib/executor-registry.js';
 import type { TransportType as ExecutorTransport } from '../lib/executor-types.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
@@ -115,6 +116,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, statSy
 import { createHash } from 'crypto';
 import { join } from 'path';
 
+const TMUX_BIN = '${tmuxBin().replace(/\\/g, '\\\\').replace(/'/g, "\\'")}';
 const RELAY_DIR = '${escapedRelayDir}';
 const INBOX_DIR = '${escapedInboxDir}';
 const INBOX = join(INBOX_DIR, '${leaderInboxName}.json');
@@ -244,7 +246,7 @@ function relayAll() {
 
     let output;
     try {
-      output = execSync(\`tmux -L genie capture-pane -p -t '\${paneId}' -S -80\`, { encoding: 'utf-8' }).trim();
+      output = execSync(\`\${TMUX_BIN} -L genie capture-pane -p -t '\${paneId}' -S -80\`, { encoding: 'utf-8' }).trim();
     } catch {
       // Pane gone — final relay if we had previous content
       const lastContent = lastHashes.get(workerId + ':content');
@@ -343,7 +345,7 @@ setInterval(async () => {
     try {
       const paneId = readFileSync(join(RELAY_DIR, file), 'utf-8').trim();
       if (!/^%\\d+$/.test(paneId)) throw new Error('invalid pane id');
-      execSync(\`tmux -L genie display -t '\${paneId}' -p '#{pane_id}'\`, { stdio: 'ignore' });
+      execSync(\`\${TMUX_BIN} -L genie display -t '\${paneId}' -p '#{pane_id}'\`, { stdio: 'ignore' });
     } catch {
       const workerId = file.replace(/-pane$/, '');
       // Read meta before cleanup (for liveness reset)

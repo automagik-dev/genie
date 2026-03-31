@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import { ensureTmux, tmuxBin } from '../lib/ensure-tmux.js';
 
 // ============================================================================
 // Paths
@@ -85,7 +86,7 @@ const GENIE_SOCKET = 'genie';
 const TUI_SESSION = 'genie-tui';
 
 function genieTmux(subcmd: string): string {
-  return `tmux -L ${GENIE_SOCKET} -f ${genieTmuxConf()} ${subcmd}`;
+  return `${tmuxBin()} -L ${GENIE_SOCKET} -f ${genieTmuxConf()} ${subcmd}`;
 }
 
 /** TUI tmux config — minimal, no shell probes, no prefix key interference */
@@ -96,7 +97,7 @@ function tuiTmuxConf(): string {
 
 /** TUI tmux command — uses -L genie-tui socket + minimal TUI config */
 function tuiTmux(subcmd: string): string {
-  return `tmux -L genie-tui -f ${tuiTmuxConf()} ${subcmd}`;
+  return `${tmuxBin()} -L genie-tui -f ${tuiTmuxConf()} ${subcmd}`;
 }
 
 /** Check if a tmux server is running on a socket */
@@ -351,6 +352,9 @@ async function startForeground(): Promise<void> {
   writeServePid(process.pid);
 
   console.log(`genie serve starting (PID ${process.pid})`);
+
+  // Ensure tmux is available (downloads static binary if missing)
+  await ensureTmux();
 
   // 1. Start pgserve
   console.log('  Starting pgserve...');

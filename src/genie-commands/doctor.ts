@@ -10,6 +10,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { $ } from 'bun';
 import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-settings.js';
+import { tmuxBin } from '../lib/ensure-tmux.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
 import { checkCommand } from '../lib/system-detect.js';
 
@@ -185,7 +186,7 @@ async function checkTmux(): Promise<CheckResult[]> {
 
   // Check if tmux server is running
   try {
-    const serverResult = await $`tmux -L genie list-sessions 2>/dev/null`.quiet();
+    const serverResult = await $`${tmuxBin()} -L genie list-sessions 2>/dev/null`.quiet();
     if (serverResult.exitCode === 0) {
       results.push({
         name: 'Server running',
@@ -214,7 +215,7 @@ async function checkTmux(): Promise<CheckResult[]> {
   const sessionName = config.session.name;
 
   try {
-    const sessionResult = await $`tmux -L genie has-session -t ${sessionName} 2>/dev/null`.quiet();
+    const sessionResult = await $`${tmuxBin()} -L genie has-session -t ${sessionName} 2>/dev/null`.quiet();
     if (sessionResult.exitCode === 0) {
       results.push({
         name: `Session '${sessionName}' exists`,
