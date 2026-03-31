@@ -48,6 +48,8 @@ export interface ProjectRow {
   name: string;
   repoPath: string | null;
   description: string | null;
+  leaderAgent: string | null;
+  tmuxSession: string | null;
   status: string;
   archivedAt: string | null;
   createdAt: string;
@@ -391,6 +393,8 @@ function mapProject(row: Record<string, unknown>): ProjectRow {
     name: row.name as string,
     repoPath: str(row.repo_path),
     description: str(row.description),
+    leaderAgent: str(row.leader_agent),
+    tmuxSession: str(row.tmux_session),
     status: strOrDefault(row.status, 'active'),
     archivedAt: str(row.archived_at),
     createdAt: String(row.created_at),
