@@ -1,7 +1,7 @@
 ---
 title: "Add external_id and external_url fields to genie tasks"
 date: 2026-03-29
-status: APPROVED
+status: SHIPPED
 slug: task-external-linking
 github_issue: 796
 priority: P1
