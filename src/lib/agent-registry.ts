@@ -346,8 +346,20 @@ export async function getTeamLeadEntry(teamName: string, session?: string, repoP
   const legacyId = buildLegacyTeamLeadEntryId(teamName);
   const lr = await sql`SELECT * FROM agents WHERE id = ${legacyId}`;
   if (lr.length > 0) return rowToAgent(lr[0]);
-  const sr =
-    await sql`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} ORDER BY started_at DESC LIMIT 1`;
+
+  // Resolve the actual leader name — query for both legacy 'team-lead' and dynamic leader
+  let leaderName: string | null = null;
+  try {
+    const { getTeam } = await import('./team-manager.js');
+    const config = await getTeam(teamName);
+    if (config?.leader && config.leader !== 'team-lead') leaderName = config.leader;
+  } catch {
+    // Fallback to team-lead only
+  }
+
+  const sr = leaderName
+    ? await sql`SELECT * FROM agents WHERE (role = 'team-lead' OR role = ${leaderName}) AND team = ${teamName} ORDER BY started_at DESC LIMIT 1`
+    : await sql`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} ORDER BY started_at DESC LIMIT 1`;
   return sr.length > 0 ? rowToAgent(sr[0]) : null;
 }
 
@@ -375,9 +387,23 @@ async function findTeamLeadBySession(
     const a = rowToAgent(legRows[0]);
     if (a.session === session && (!repoPath || a.repoPath === repoPath)) return a;
   }
-  const scanRows = await sql<
-    AgentRow[]
-  >`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} AND session = ${session} ${repoPath ? sql`AND repo_path = ${repoPath}` : sql``} LIMIT 1`;
+  // Resolve the actual leader name for a broader scan
+  let leaderName: string | null = null;
+  try {
+    const { getTeam } = await import('./team-manager.js');
+    const config = await getTeam(teamName);
+    if (config?.leader && config.leader !== 'team-lead') leaderName = config.leader;
+  } catch {
+    // Fallback to team-lead only
+  }
+
+  const scanRows = leaderName
+    ? await sql<
+        AgentRow[]
+      >`SELECT * FROM agents WHERE (role = 'team-lead' OR role = ${leaderName}) AND team = ${teamName} AND session = ${session} ${repoPath ? sql`AND repo_path = ${repoPath}` : sql``} LIMIT 1`
+    : await sql<
+        AgentRow[]
+      >`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} AND session = ${session} ${repoPath ? sql`AND repo_path = ${repoPath}` : sql``} LIMIT 1`;
   return scanRows.length > 0 ? rowToAgent(scanRows[0]) : null;
 }
 

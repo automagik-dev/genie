@@ -59,6 +59,15 @@ export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
   const teamName = process.env.GENIE_TEAM ?? payload.team_name;
   if (!teamName) return;
 
+  // Also skip auto-spawn for the team's actual leader (not just 'team-lead' alias)
+  try {
+    const { getTeam } = await import('../../lib/team-manager.js');
+    const config = await getTeam(teamName);
+    if (config?.leader && recipient === config.leader) return;
+  } catch {
+    // Fallback — proceed with spawn check
+  }
+
   try {
     const registryMod = await import('../../lib/agent-registry.js');
     const tmuxMod = await import('../../lib/tmux.js');

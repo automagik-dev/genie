@@ -62,12 +62,22 @@ interface SessionOptions {
  * The leadSessionId is a placeholder -- CC updates it internally once started.
  * CC recognizes itself as leader because --team-name is passed without --agent-id.
  */
+async function resolveSessionLeaderName(teamName: string): Promise<string> {
+  try {
+    const { resolveLeaderName } = await import('../lib/team-manager.js');
+    return await resolveLeaderName(teamName);
+  } catch {
+    return 'team-lead'; // Fallback for legacy teams or when DB is unavailable
+  }
+}
+
 async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise<void> {
-  await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending');
+  const leaderName = await resolveSessionLeaderName(teamName);
+  await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending', leaderName);
 
   await registerNativeMember(teamName, {
     agentName: basename(cwd),
-    agentType: 'team-lead',
+    agentType: leaderName,
     color: 'blue',
     cwd,
   });
@@ -93,12 +103,14 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
     const paneId = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_id}'`)).trim();
     const now = new Date().toISOString();
     const sanitized = sanitizeTeamName(windowName);
+    const leaderName = await resolveSessionLeaderName(windowName);
+    const sanitizedLeader = sanitizeTeamName(leaderName);
     await registry.register({
-      id: `${sanitized}-team-lead`,
+      id: `${sanitized}-${sanitizedLeader}`,
       paneId,
       session: sessionName,
       team: windowName,
-      role: 'team-lead',
+      role: leaderName,
       worktree: null,
       startedAt: now,
       state: 'working',
@@ -107,11 +119,11 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
       provider: 'claude',
       transport: 'tmux',
       nativeTeamEnabled: true,
-      nativeAgentId: `team-lead@${sanitized}`,
+      nativeAgentId: `${sanitizedLeader}@${sanitized}`,
     });
 
-    // Executor model: create agent identity + executor for team-lead session
-    const agentIdentity = await registry.findOrCreateAgent('team-lead', sanitized, 'team-lead');
+    // Executor model: create agent identity + executor for leader session
+    const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
     await executorRegistry.terminateActiveExecutor(agentIdentity.id);
 
     let pid: number | null = null;

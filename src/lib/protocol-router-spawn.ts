@@ -245,7 +245,16 @@ export async function spawnWorkerFromTemplate(
       tmuxPaneId: paneId,
       cwd: repoPath,
     });
-    await nativeTeams.writeNativeInbox(team, 'team-lead', {
+    // Resolve the actual leader name for inbox notification
+    let leaderInboxTarget = 'team-lead';
+    try {
+      const { getTeam } = await import('./team-manager.js');
+      const teamConfig = await getTeam(team);
+      if (teamConfig?.leader) leaderInboxTarget = teamConfig.leader;
+    } catch {
+      // Fallback to 'team-lead' for legacy teams
+    }
+    await nativeTeams.writeNativeInbox(team, leaderInboxTarget, {
       from: agentName,
       text: `Worker ${agentName} (${template.provider}) auto-spawned${resumeSessionId ? ' with --resume' : ''}. Ready for tasks.`,
       summary: `${agentName} auto-spawned`,
