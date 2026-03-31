@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `unique-leader-names` |
 | **Date** | 2026-03-30 |
 | **Updated** | 2026-03-31 — rewritten: naming → full context resolution architecture |
