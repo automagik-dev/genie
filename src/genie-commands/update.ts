@@ -417,7 +417,8 @@ function syncTmuxConf(tmuxScriptsSrc: string): void {
       copyFileSync(tmuxConfSrc, tmuxConfDest);
       success(`Installed tmux config to ${tmuxConfDest}`);
       try {
-        execSync(`tmux -L genie source-file '${tmuxConfDest}'`, { stdio: 'ignore' });
+        const { tmuxBin } = require('../lib/ensure-tmux.js');
+        execSync(`${tmuxBin()} -L genie source-file '${tmuxConfDest}'`, { stdio: 'ignore' });
         success('Reloaded genie tmux server configuration');
       } catch {
         // genie tmux server not running or reload failed — non-fatal
