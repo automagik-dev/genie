@@ -1,160 +1,198 @@
-# Wish: Unique Leader Names — Kill the Generic "team-lead"
+# Wish: Automatic Context Resolution — Identity, Routing, and Wish Discovery
 
 | Field | Value |
 |-------|-------|
 | **Status** | DRAFT |
 | **Slug** | `unique-leader-names` |
 | **Date** | 2026-03-30 |
+| **Updated** | 2026-03-31 — rewritten: naming → full context resolution architecture |
 | **Design** | Trace of Claude Code source (`cli.js` Z7K/lC8/MG functions) |
 
 ## Summary
 
-Replace the hardcoded `"team-lead"` agent name with unique, per-team leader names. Claude Code's native teams system resolves the leader from `config.leadAgentId` → `members[].name`, only falling back to `"team-lead"` when the member isn't found. Our code hardcodes `"team-lead"` in 94 places, causing: (1) ambiguous messaging when multiple teams exist, (2) permission requests that can't be routed to the right leader, (3) no way for workers to report back to their orchestrator.
+Today, `genie team create` and `genie work` require manual `--repo`, `--session`, and `--wish` flags. The spawned leader is always named `"team-lead"`, causing ambiguity when multiple teams run in parallel. Permission requests get stuck because the leader can't be found.
+
+The fix: make the system resolve everything automatically from two inputs — **who is calling** and **which wish** (namespaced as `repo/slug`). The filesystem is the source of truth (WISH.md files in repos). PG is the harness (indexes, queries, relationships). Leaders get unique names. Workers know who to report to.
 
 ## Problem
 
-```
-# Today: 3 teams running, all leaders named "team-lead"
-genie send "done" --to team-lead
-# ⚠ Worker "team-lead" is ambiguous. Found 3 live matches.
+```bash
+# Today: Sofia wants to execute a wish for the genie repo
+genie team create tmux-fix --repo /workspace/repos/genie --wish fix-tmux-session-explosion --session genie
+# 4 manual flags. Sofia has to know the repo path, session name, everything.
 
-# Permission request from genie-os agent:
-"Permission request sent to team 'genie' leader"
-# But the leader is dead/missing → stuck forever
+# And the leader is named "team-lead" — same as every other team's leader
+# → "Worker 'team-lead' is ambiguous. Found 3 live matches."
+# → Permission requests stuck: no active team-lead to approve
+# → Workers can't report back: don't know who spawned them
+```
+
+```bash
+# Target: one command, zero manual flags
+genie work genie/fix-tmux-session-explosion
+# System resolves: repo, session, leader name, orchestrator — all automatic
 ```
 
 ## Scope
 
 ### IN
-- Leader name derived from team name: `{team}-lead` (e.g., `tmux-fix-lead`, `ext-link-lead`)
-- `genie team create --leader <name>` flag for custom leader names
-- All 94 `"team-lead"` references updated to use dynamic name from team config
-- `leadAgentId` in native team config uses the real leader name
-- Inbox files use leader name: `inboxes/{leader-name}.json` instead of `inboxes/team-lead.json`
-- `genie send --to team-lead` still works as alias → resolves to the team's actual leader
-- Spawned workers know their leader's name (via kickoff prompt + team config)
-- `genie done` notifications route to the actual leader name
-- Backward compat: existing teams with `team-lead` continue to work
+
+**1. Namespaced wish resolution**
+- `genie work genie/fix-tmux-session-explosion` → resolves to `/workspace/repos/genie/.genie/wishes/fix-tmux-session-explosion/WISH.md`
+- Convention: `{repo-basename}/{wish-slug}` — filesystem is the source of truth
+- On-demand resolution: check if path exists, no pre-scan required
+- PG wish index: sync discovered wishes for querying (`wishes` table with slug, repo, project, status)
+
+**2. Unique leader identity**
+- Leader name = wish slug (e.g., `fix-tmux-session-explosion`) or team name for ad-hoc teams
+- `leadAgentId` in CC native teams uses the real name, not `"team-lead"`
+- All 94 hardcoded `"team-lead"` references updated to use dynamic resolution
+- `"team-lead"` becomes a backward-compat alias (resolves via team config)
+
+**3. Automatic orchestrator tracking**
+- `genie work` / `genie team create` captures `GENIE_AGENT_NAME` of the caller as `spawner`
+- Team config stores `spawner` field
+- Kickoff prompt includes: `"Report completion to: {spawner}"`
+- Workers can `genie send "done" --to {spawner}` — no hardcoded target
+
+**4. Automatic repo/session resolution**
+- `genie work genie/slug` → repo from namespace, session from repo mapping
+- `genie team create foo` (no `--repo`) → resolves from cwd or `GENIE_TEAM` context
+- Session resolution: namespace → repo → `basename(repo)` → tmux session (already mapped by agent-sync)
+
+**5. Team without wish (ad-hoc)**
+- `genie team create hotfix-auth --repo genie` → no wish, free-form work
+- `wish_slug` is nullable in team config
+- Leader name = team name (`hotfix-auth`)
+- Without wish: no lifecycle management (no waves, no review gates)
+- With wish: full lifecycle via `genie work`
 
 ### OUT
-- Renaming workers (engineer, reviewer, qa, fix) — separate concern
-- Changing the Claude Code native teams protocol — we work within it
+- New CLI commands for wish creation — writing WISH.md to the repo IS creating the wish
+- Changes to Claude Code native teams protocol — we work within it
 - Multi-leader teams — one leader per team
-- Agent personality/identity system — this is naming only
-
-## Claude Code Source Evidence
-
-```javascript
-// CC resolves leader name dynamically (cli.js decompiled):
-async function getLeaderName(teamName) {
-  let team = await loadTeamConfig(teamName);
-  // Uses leadAgentId to find the member, gets their .name
-  return team.members.find(m => m.agentId === team.leadAgentId)?.name || "team-lead";
-}
-
-// Permission requests go to the resolved leader name:
-async function sendPermissionRequest(request) {
-  let leaderName = await getLeaderName(request.teamName);
-  await sendMessage(leaderName, { ...request });
-}
-
-// Leader check uses agentId, not name:
-function isLeader(config) {
-  return getMyAgentId() === config.leadAgentId;
-}
-```
-
-**Key insight:** CC doesn't require "team-lead" — it uses `leadAgentId` for routing. We can set `leadAgentId: "tmux-fix-lead@tmux-fix"` and CC will route permissions to `"tmux-fix-lead"`.
+- Agent personality system — this is identity/routing only
+- Renaming workers (engineer, reviewer, qa, fix) — separate concern
 
 ## Decisions
 
 | Decision | Rationale |
 |----------|-----------|
-| Default name = `{team}-lead` | Unique per team, predictable, no collisions. `tmux-fix-lead`, `ext-link-lead`. |
-| `--leader` flag for custom names | Sometimes you want `carlos` or `mika` instead of `ext-link-lead`. |
-| Keep `"team-lead"` as messaging alias | Backward compat. `genie send --to team-lead` resolves to the team's actual leader when sender is in a team context (via `GENIE_TEAM` env). |
-| Inbox file follows leader name | `inboxes/tmux-fix-lead.json` not `inboxes/team-lead.json`. CC reads from the member name. |
-| Kickoff prompt includes orchestrator name | `"Report completion to: sofia (via genie send --to sofia)"` — no env var needed. |
+| Filesystem = source of truth | WISH.md in a repo IS the wish. No `genie wish create` needed. |
+| PG = harness/index | Sync wishes from filesystem to PG for querying. Like agent-sync for agents. |
+| Namespace = repo basename | `genie/slug` maps to `/workspace/repos/genie`. Convention over configuration. |
+| Leader name = wish slug or team name | The team IS the leader. `fix-tmux-session-explosion` is both the team and the agent. No separate naming. |
+| `spawner` in team config | The system knows who created the team. Workers know who to report to. No env var — it's in the prompt. |
+| `wish_slug` nullable | Teams can exist without wishes. Wish = structured lifecycle. No wish = ad-hoc. |
+| `"team-lead"` as alias | Backward compat. Old teams keep working. Alias resolves via team config. |
 
 ## Success Criteria
 
-- [ ] `genie team create foo --repo X` creates leader with name `foo-lead` and `leadAgentId: "foo-lead@foo"`
-- [ ] `genie team create foo --repo X --leader carlos` creates leader named `carlos`
-- [ ] Permission requests from workers route to `foo-lead` (not generic `team-lead`)
-- [ ] `genie send "done" --to team-lead` resolves to the actual leader name when sent from within a team
-- [ ] `genie done slug#1` notifies the actual leader name, not hardcoded `team-lead`
-- [ ] Workers' dispatch prompts include `--to {leader-name}` instead of `--to team-lead`
-- [ ] Existing teams with `team-lead` name continue to work (backward compat)
-- [ ] No `"Worker 'team-lead' is ambiguous"` errors when multiple teams are running
+- [ ] `genie work genie/fix-tmux-session-explosion` resolves repo, session, leader — zero manual flags
+- [ ] Leader agent is named `fix-tmux-session-explosion`, not `team-lead`
+- [ ] CC permission requests route to `fix-tmux-session-explosion` (verified via native team config)
+- [ ] Workers' prompts contain `"Report completion to: sofia"` (spawner tracked)
+- [ ] `genie work genie/nonexistent` → clear error: "Wish not found in repo genie"
+- [ ] `genie team create hotfix --repo genie` works without wish (ad-hoc team, leader = `hotfix`)
+- [ ] 3 parallel teams → no ambiguous leader errors
+- [ ] PG `wishes` table synced from filesystem (slug, repo, status, updated_at)
+- [ ] Existing teams with `team-lead` name continue to work
+- [ ] All 1575+ tests pass
 
 ## Files to Modify
 
 ```
-# Core (leader identity)
-src/lib/claude-native-teams.ts         — 12 refs: leadAgentId, member registration, inbox
-src/lib/team-auto-spawn.ts             — 6 refs: agentName hardcoded to 'team-lead'
-src/lib/agent-registry.ts              — 4 refs: PG queries filter role='team-lead'
+# Resolution layer (new)
+src/lib/wish-resolve.ts                — resolveWish(namespace/slug) → { repo, wishPath, session }
+src/lib/wish-sync.ts                   — sync .genie/wishes/ to PG wishes table
+
+# Leader identity (94 refs to update)
+src/lib/claude-native-teams.ts         — dynamic leadAgentId + inbox
+src/lib/team-auto-spawn.ts             — spawn with real leader name
+src/lib/agent-registry.ts              — parameterized role queries
 
 # Spawn path
-src/term-commands/team.ts              — 6 refs: standardTeam array, handleWorkerSpawn, sendMessage
-src/lib/protocol-router-spawn.ts       — 1 ref: inbox write target
-src/genie-commands/session.ts          — 10 refs: session creation, agent identity
+src/term-commands/team.ts              — capture spawner, use wish slug as leader name
+src/term-commands/dispatch.ts          — genie work accepts namespace/slug
+src/genie-commands/session.ts          — session creation with real leader name
 
-# Messaging
-src/term-commands/msg.ts               — 7 refs: routing, --to default, sender resolution
-src/term-commands/state.ts             — 6 refs: genie done notifications
-src/term-commands/dispatch.ts          — 2 refs: work/review prompt templates
-src/term-commands/agents.ts            — 5 refs: inbox path, status, dead worker notify
+# Messaging (route to real leader)
+src/term-commands/msg.ts               — resolve "team-lead" alias, dynamic routing
+src/term-commands/state.ts             — genie done notifies real leader + spawner
+src/term-commands/agents.ts            — inbox path, status checks
+src/lib/protocol-router-spawn.ts       — inbox target
+src/lib/inbox-watcher.ts               — auto-spawn with real name
+src/lib/event-router.ts                — event routing
 
-# Support
-src/lib/qa-runner.ts                   — 8 refs: QA team-lead spawn
-src/lib/inbox-watcher.ts               — 5 refs: auto-spawn for inactive teams
-src/lib/event-router.ts                — 2 refs: event routing to leader
-src/hooks/handlers/auto-spawn.ts       — 1 ref: skip check
-src/genie.ts                           — 2 refs: qa report command
+# DB migration
+src/lib/db.ts                          — wishes table schema
 ```
 
 ## Execution Strategy
 
 ### Wave 1 (parallel — foundation)
-| Group | Agent | Description |
-|-------|-------|-------------|
-| 1 | engineer | Add `leaderName` to team config + `resolveLeaderName()` helper |
-| 2 | engineer | Update `claude-native-teams.ts` — dynamic leadAgentId + inbox |
+| Group | Description |
+|-------|-------------|
+| 1 | `wish-resolve.ts` — namespace parsing + repo/session resolution |
+| 2 | Leader name in team config + `resolveLeaderName()` + spawner tracking |
 
-### Wave 2 (after Wave 1 — spawn path)
-| Group | Agent | Description |
-|-------|-------|-------------|
-| 3 | engineer | Update `team.ts` + `session.ts` — `--leader` flag, spawn with real name |
-| 4 | engineer | Update `protocol-router-spawn.ts` + `team-auto-spawn.ts` — use config leader |
+### Wave 2 (after Wave 1 — wiring)
+| Group | Description |
+|-------|-------------|
+| 3 | `genie work` accepts `namespace/slug`, calls wish-resolve, creates team automatically |
+| 4 | `claude-native-teams.ts` + `team-auto-spawn.ts` — dynamic leadAgentId |
 
 ### Wave 3 (after Wave 2 — messaging)
-| Group | Agent | Description |
-|-------|-------|-------------|
-| 5 | engineer | Update `msg.ts` + `state.ts` + `dispatch.ts` — dynamic leader routing |
-| 6 | engineer | Update `agents.ts` + `inbox-watcher.ts` + `event-router.ts` + remaining |
+| Group | Description |
+|-------|-------------|
+| 5 | All messaging: msg.ts, state.ts, dispatch.ts, agents.ts — route to real leader + spawner |
+| 6 | wish-sync: filesystem → PG index, DB migration for wishes table |
 
-### Wave 4 (after Wave 3)
-| Group | Agent | Description |
-|-------|-------|-------------|
-| 7 | engineer | Backward compat: `team-lead` alias in messaging, migration for existing configs |
-| review | reviewer | Full review of all changes |
+### Wave 4 (after Wave 3 — compat + cleanup)
+| Group | Description |
+|-------|-------------|
+| 7 | Backward compat alias, remaining refs, inbox-watcher, event-router |
+| review | Full review against all criteria |
 
 ## Execution Groups
 
-### Group 1: Leader name in team config
-**Goal:** Add `leaderName` field to team config and a resolver function.
+### Group 1: Wish resolution from namespace
+**Goal:** `genie work genie/fix-tmux-session-explosion` resolves to a concrete wish path, repo, and session.
 
 **Deliverables:**
-1. Add `leaderName: string` to `TeamConfig` interface in `team-manager.ts`
-2. Add `resolveLeaderName(teamName: string): string` helper — reads from config, falls back to `"team-lead"`
-3. `genie team create` stores `leaderName` in config (default: `{team}-lead`)
-4. Add `--leader <name>` option to `genie team create`
+1. Create `src/lib/wish-resolve.ts` with `resolveWish(ref: string): { repo, wishPath, session, slug }`
+2. Parse `namespace/slug` format — namespace maps to repo via `/workspace/repos/{namespace}`
+3. Verify WISH.md exists at resolved path
+4. Resolve tmux session from repo basename
+5. Handle edge cases: wish not found, repo not found, ambiguous namespace
 
 **Acceptance Criteria:**
-- [ ] Team config JSON includes `leaderName` after creation
-- [ ] `resolveLeaderName("foo")` returns `"foo-lead"` for new teams
-- [ ] `resolveLeaderName("old-team")` returns `"team-lead"` for legacy teams without the field
+- [ ] `resolveWish("genie/fix-tmux-session-explosion")` returns correct repo path, wish path, and session
+- [ ] `resolveWish("nonexistent/slug")` throws clear error
+- [ ] `resolveWish("fix-tmux-session-explosion")` without namespace → searches all known repos or errors
+
+**Validation:**
+```bash
+cd /home/genie/workspace/repos/genie && bun test src/lib/wish-resolve.test.ts 2>/dev/null; echo "exit: $?"
+```
+
+**depends-on:** none
+
+---
+
+### Group 2: Leader identity + spawner tracking
+**Goal:** Team config stores unique leader name and who created the team.
+
+**Deliverables:**
+1. Add `leaderName: string` to team config (default: wish slug or team name)
+2. Add `spawner: string` to team config (from `GENIE_AGENT_NAME` or `"cli"`)
+3. `resolveLeaderName(teamName)` helper — reads from config, falls back to `"team-lead"` for legacy
+4. `genie team create` stores both fields automatically
+
+**Acceptance Criteria:**
+- [ ] New team config has `leaderName` and `spawner` fields
+- [ ] `resolveLeaderName("foo")` returns `"foo"` for new teams
+- [ ] Legacy teams without `leaderName` fall back to `"team-lead"`
 
 **Validation:**
 ```bash
@@ -165,44 +203,22 @@ cd /home/genie/workspace/repos/genie && bun test src/lib/team-manager.test.ts 2>
 
 ---
 
-### Group 2: Dynamic leadAgentId in native teams
-**Goal:** `claude-native-teams.ts` uses the real leader name from config.
+### Group 3: Wire `genie work` to wish-resolve
+**Goal:** `genie work genie/slug` creates team + spawns leader automatically.
 
 **Deliverables:**
-1. `ensureNativeTeam()` accepts `leaderName` parameter instead of hardcoding `"team-lead"`
-2. `leadAgentId` becomes `{leaderName}@{sanitized}` instead of `team-lead@{sanitized}`
-3. Member registration uses the real leader name
-4. Inbox creation uses `inboxes/{leaderName}.json`
-5. `listTeamsWithUnreadMessages()` checks leader inbox by resolved name
+1. `genie work` command accepts `namespace/slug` format
+2. Calls `resolveWish()` to get repo, session, wish path
+3. Calls `handleTeamCreate()` internally — team name = wish slug
+4. Leader agent named as wish slug, spawned in resolved session
+5. Kickoff prompt includes: `"Report completion to: {spawner} (via genie send --to {spawner})"`
+6. `genie team create foo --repo genie` still works for ad-hoc (no wish)
 
 **Acceptance Criteria:**
-- [ ] Native team config has `leadAgentId: "foo-lead@foo"` for team "foo"
-- [ ] Inbox file created at `inboxes/foo-lead.json`
-- [ ] CC routes permission requests to `"foo-lead"` (validated by reading config)
-
-**Validation:**
-```bash
-cd /home/genie/workspace/repos/genie && bun test src/lib/claude-native-teams.test.ts 2>/dev/null; echo "exit: $?"
-```
-
-**depends-on:** Group 1
-
----
-
-### Group 3: Spawn path — team create + session
-**Goal:** `genie team create` and `genie session` spawn leaders with unique names.
-
-**Deliverables:**
-1. `spawnLeaderWithWish()` passes `leaderName` to `handleWorkerSpawn()` instead of `"team-lead"`
-2. `handleWorkerSpawn()` uses leader name for `--agent-name` and `--agent-id`
-3. `genie session` pre-creates native team with configured leader name
-4. `standardTeam` array uses dynamic leader name: `[leaderName, 'engineer', 'reviewer', 'qa', 'fix']`
-5. Kickoff prompt includes: `"Report completion to: {spawnerName} (via genie send --to {spawnerName})"`
-
-**Acceptance Criteria:**
-- [ ] `genie team create foo --repo X` spawns agent with `--agent-name foo-lead`
-- [ ] `genie team create foo --repo X --leader carlos` spawns agent with `--agent-name carlos`
-- [ ] Kickoff prompt contains orchestrator name for reporting
+- [ ] `genie work genie/fix-tmux-session-explosion` creates team, resolves everything, spawns leader
+- [ ] Leader is named `fix-tmux-session-explosion`, not `team-lead`
+- [ ] Kickoff prompt contains spawner name
+- [ ] `genie team create hotfix --repo genie` works without wish
 
 **Validation:**
 ```bash
@@ -213,115 +229,118 @@ cd /home/genie/workspace/repos/genie && bun build src/genie.ts --outdir /tmp/gen
 
 ---
 
-### Group 4: Auto-spawn + protocol router
-**Goal:** `team-auto-spawn.ts` and `protocol-router-spawn.ts` use config leader name.
+### Group 4: Native teams — dynamic leadAgentId
+**Goal:** Claude Code native teams use the real leader name for permission routing.
 
 **Deliverables:**
-1. `ensureTeamLeadAlive()` resolves leader name from team config
-2. `spawnTeamLead()` uses resolved name for `agentName`
-3. `protocol-router-spawn.ts` writes to leader inbox by resolved name
+1. `ensureNativeTeam()` accepts `leaderName` parameter
+2. `leadAgentId` = `{leaderName}@{sanitizedTeam}`
+3. Member registration uses real leader name
+4. Inbox created at `inboxes/{leaderName}.json`
 
 **Acceptance Criteria:**
-- [ ] Auto-spawn creates leader with correct name from config
-- [ ] Protocol router writes to `inboxes/{leaderName}.json`
+- [ ] Native team config: `leadAgentId: "fix-tmux-session-explosion@fix-tmux-session-explosion"`
+- [ ] CC routes permission requests to the correct leader
+- [ ] Inbox file at correct path
 
 **Validation:**
 ```bash
-cd /home/genie/workspace/repos/genie && bun test src/lib/team-auto-spawn.test.ts 2>/dev/null; echo "exit: $?"
+cd /home/genie/workspace/repos/genie && bun test src/lib/claude-native-teams.test.ts 2>/dev/null; echo "exit: $?"
 ```
 
-**depends-on:** Group 1, Group 2
+**depends-on:** Group 2
 
 ---
 
-### Group 5: Messaging — send, done, dispatch
-**Goal:** All message routing uses the real leader name.
+### Group 5: Messaging — dynamic routing
+**Goal:** All message routing uses real leader name + spawner.
 
 **Deliverables:**
-1. `genie send --to team-lead` resolves to actual leader name via `GENIE_TEAM` env context
-2. `genie done slug#N` notifies the resolved leader name in `notifyWaveCompletion()`
-3. `dispatch.ts` work/review prompts use `--to {leaderName}` instead of `--to team-lead`
-4. `msg.ts` sender resolution handles dynamic leader names
+1. `genie send --to team-lead` resolves to actual leader via team config
+2. `genie done slug#N` notifies resolved leader AND spawner
+3. `dispatch.ts` work/review prompts use `--to {leaderName}`
+4. `msg.ts` sender resolution handles dynamic names
+5. `agents.ts` inbox path uses resolved leader name
 
 **Acceptance Criteria:**
-- [ ] `genie send "hello" --to team-lead` resolves to `foo-lead` when `GENIE_TEAM=foo`
-- [ ] `genie done slug#1` sends completion to `foo-lead`
-- [ ] Dispatched work prompts contain `--to foo-lead`
+- [ ] `genie send "done" --to team-lead` resolves correctly within team context
+- [ ] `genie done slug#1` notifies both leader and spawner
+- [ ] No "Worker 'team-lead' is ambiguous" errors
 
 **Validation:**
 ```bash
 cd /home/genie/workspace/repos/genie && bun test src/term-commands/msg.test.ts 2>/dev/null; echo "exit: $?"
 ```
 
-**depends-on:** Group 1, Group 3
+**depends-on:** Group 2, Group 3
 
 ---
 
-### Group 6: Remaining references
-**Goal:** Update all remaining hardcoded "team-lead" references.
+### Group 6: Wish sync — filesystem → PG
+**Goal:** PG indexes wishes from filesystem for querying.
 
 **Deliverables:**
-1. `agents.ts` inbox path + status checks + dead worker notifications
-2. `inbox-watcher.ts` auto-spawn uses resolved leader name
-3. `event-router.ts` routes to resolved leader
-4. `agent-registry.ts` PG queries use parameterized role (not hardcoded `'team-lead'`)
-5. `qa-runner.ts` spawns QA leader with team-specific name
-6. `auto-spawn.ts` hook handler updated
+1. DB migration: `wishes` table (slug, repo, namespace, status, file_path, created_at, updated_at)
+2. `wish-sync.ts`: scan all repos' `.genie/wishes/*/WISH.md`, parse status from frontmatter, upsert to PG
+3. Called on `genie work`, `genie status`, and optionally on daemon startup
+4. `genie wish list` queries PG (not filesystem) — fast, cross-repo
 
 **Acceptance Criteria:**
-- [ ] `grep -r '"team-lead"' src/ --include='*.ts' | grep -v test | grep -v comment` returns 0 hardcoded refs (only alias handling)
-- [ ] All existing tests pass
+- [ ] `wishes` table populated after sync
+- [ ] `genie wish list` shows wishes across all repos with status
+- [ ] Sync is idempotent — multiple runs don't create duplicates
+
+**Validation:**
+```bash
+cd /home/genie/workspace/repos/genie && bun test src/lib/wish-sync.test.ts 2>/dev/null; echo "exit: $?"
+```
+
+**depends-on:** Group 1
+
+---
+
+### Group 7: Backward compat + cleanup
+**Goal:** Existing teams continue to work. All hardcoded refs cleaned up.
+
+**Deliverables:**
+1. `"team-lead"` alias in messaging — resolves to actual leader via team config
+2. Legacy team configs (no `leaderName`) fall back to `"team-lead"`
+3. Remaining hardcoded refs in inbox-watcher, event-router, qa-runner, hooks
+4. `grep -r '"team-lead"' src/ --include='*.ts' | grep -v test` returns only alias handling code
+
+**Acceptance Criteria:**
+- [ ] Old team configs work without migration
+- [ ] All 1575+ tests pass
+- [ ] No hardcoded `"team-lead"` outside alias resolution
 
 **Validation:**
 ```bash
 cd /home/genie/workspace/repos/genie && bun test 2>/dev/null | tail -5; echo "exit: $?"
 ```
 
-**depends-on:** Group 2, Group 4, Group 5
-
----
-
-### Group 7: Backward compatibility + alias
-**Goal:** Existing teams with `team-lead` continue to work. `"team-lead"` becomes a routing alias.
-
-**Deliverables:**
-1. `resolveLeaderName()` returns `"team-lead"` for configs without `leaderName` field
-2. `genie send --to team-lead` always resolves: first check `GENIE_TEAM` config, then fall through
-3. Migration: on team load, if `leaderName` is missing, set it to `"team-lead"` (no rename)
-4. Document the new behavior in CLI help text
-
-**Acceptance Criteria:**
-- [ ] Old team configs (no `leaderName` field) still work
-- [ ] `genie send --to team-lead` works in both old and new teams
-- [ ] No breaking changes for running agents
-
-**Validation:**
-```bash
-cd /home/genie/workspace/repos/genie && bun test 2>/dev/null | tail -5; echo "exit: $?"
-```
-
-**depends-on:** Group 5, Group 6
+**depends-on:** Group 4, Group 5, Group 6
 
 ---
 
 ## QA Criteria
 
-- [ ] Create 3 teams in parallel — each leader has a unique name, no ambiguity errors
-- [ ] Worker in team "foo" can `genie send "done" --to foo-lead` successfully
-- [ ] Worker in team "foo" can `genie send "done" --to team-lead` and it resolves to `foo-lead`
-- [ ] Permission request from a worker routes to the correct leader
-- [ ] Existing team with `team-lead` name continues to receive messages
-- [ ] `genie team list` shows unique leader names per team
+- [ ] `genie work genie/some-wish` → full lifecycle: resolve, create team, spawn leader, execute
+- [ ] `genie team create adhoc --repo genie` → ad-hoc team without wish
+- [ ] 3 parallel `genie work` → 3 unique leaders, no ambiguity
+- [ ] Permission request from worker → routes to correct leader
+- [ ] Worker completes → spawner (sofia) receives notification
+- [ ] `genie wish list` → shows wishes across all repos from PG index
+- [ ] Legacy teams with `team-lead` → still functional
 - [ ] All 1575+ existing tests pass
 
 ## Assumptions / Risks
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| Claude Code behavior changes in future versions | Medium | Our trace is against v2.1.88. Pin behavior to `leadAgentId` resolution which is stable. |
-| Existing running agents break mid-session | Low | Only affects new teams. Old configs keep `"team-lead"` via fallback. |
-| Worker prompts with `--to team-lead` from cached wishes | Low | Alias resolution handles this. Workers can use either name. |
-| 94 references means large diff | Medium | Grouped into 7 execution groups. Each group is independently testable. |
+| Claude Code changes permission routing | Medium | Traced against v2.1.88. Uses `leadAgentId` resolution which is stable API. |
+| Namespace collision (two repos with same basename) | Low | Error on ambiguity. Accept full path as fallback: `--repo /path`. |
+| 94-ref migration breaks something | Medium | 7 groups, each independently testable. Alias preserves backward compat. |
+| Wish slug contains characters invalid for agent names | Low | Sanitize slug same way team names are sanitized today. |
 
 ---
 
