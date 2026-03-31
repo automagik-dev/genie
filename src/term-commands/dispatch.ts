@@ -293,6 +293,28 @@ function buildFallbackWaves(content: string): Wave[] {
 }
 
 // ============================================================================
+// Leader Resolution
+// ============================================================================
+
+/**
+ * Resolve the leader name for --to in dispatch prompts.
+ * Uses GENIE_TEAM to look up the team config's leader field.
+ * Falls back to 'team-lead' for legacy teams.
+ */
+async function resolveLeaderTarget(): Promise<string> {
+  const teamName = process.env.GENIE_TEAM;
+  if (!teamName) return 'team-lead';
+
+  try {
+    const teamManager = await import('../lib/team-manager.js');
+    const config = await teamManager.getTeam(teamName);
+    return config?.leader || 'team-lead';
+  } catch {
+    return 'team-lead';
+  }
+}
+
+// ============================================================================
 // Auto-Orchestration (fire-and-forget)
 // ============================================================================
 
@@ -567,7 +589,8 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
   console.log(`   Group: ${group}`);
 
   const effectiveRole = `${agentName}-${group}`;
-  const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to team-lead`;
+  const leaderTarget = await resolveLeaderTarget();
+  const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to ${leaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
@@ -642,7 +665,8 @@ async function reviewCommand(agentName: string, ref: string): Promise<void> {
   console.log(`   Group: ${group}`);
   if (diff) console.log(`   Diff: ${diff.split('\n').length} lines`);
 
-  const reviewPrompt = `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to team-lead`;
+  const reviewLeaderTarget = await resolveLeaderTarget();
+  const reviewPrompt = `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to ${reviewLeaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',

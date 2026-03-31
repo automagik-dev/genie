@@ -74,8 +74,12 @@ async function checkHierarchy(from: string, to: string): Promise<{ allowed: bool
     // Siblings: same manager
     if (sender.reportsTo && sender.reportsTo === recipient.reportsTo) return { allowed: true };
 
-    // Team-lead can reach anyone in their team
-    if (from === 'team-lead' && sender.team && sender.team === recipient.team) return { allowed: true };
+    // Leader can reach anyone in their team (matches 'team-lead' alias or actual leader name)
+    if (sender.team && sender.team === recipient.team) {
+      const teamMgr = await import('../../lib/team-manager.js');
+      const teamConfig = await teamMgr.getTeam(sender.team).catch(() => null);
+      if (from === 'team-lead' || from === teamConfig?.leader) return { allowed: true };
+    }
 
     const manager = sender.reportsTo ?? 'your manager';
     return {
