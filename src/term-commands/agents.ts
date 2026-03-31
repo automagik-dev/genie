@@ -665,10 +665,10 @@ export function buildInitialSplitWindowCommand(windowId: string, cwd: string | u
  * Resolve team window for spawn. Returns null if team is unset or resolution fails.
  *
  * Session resolution order:
- *   1. Explicit `sessionOverride` (from --session flag)
- *   2. `getCurrentSessionName()` (TMUX env or list-sessions fallback)
- *   3. Team config `tmuxSessionName` (stored during team create)
- *   4. Team name as session name (last resort)
+ *   1. Explicit `sessionOverride` (from --tmux-session flag)
+ *   2. Team config `tmuxSessionName` (stored during team create — source of truth)
+ *   3. `resolveRepoSession(cwd)` (derive from repo path)
+ *   4. Team name as session name (absolute last resort)
  */
 async function resolveSpawnTeamWindow(
   team: string | undefined,
@@ -677,10 +677,16 @@ async function resolveSpawnTeamWindow(
 ): Promise<TeamWindowInfo | null> {
   if (!team) return null;
   try {
-    let sessionName = sessionOverride ?? (await tmux.getCurrentSessionName(team));
+    let sessionName = sessionOverride;
     if (!sessionName) {
       const teamConfig = await teamManager.getTeam(team);
-      sessionName = teamConfig?.tmuxSessionName ?? team;
+      sessionName = teamConfig?.tmuxSessionName;
+    }
+    if (!sessionName) {
+      sessionName = await tmux.resolveRepoSession(cwd);
+    }
+    if (!sessionName) {
+      sessionName = team;
     }
     return await tmux.ensureTeamWindow(sessionName, team, cwd);
   } catch (err) {

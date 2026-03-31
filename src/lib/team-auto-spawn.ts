@@ -38,14 +38,26 @@ function getSystemPromptFile(workingDir: string): string | null {
 
 /**
  * Ensure a tmux session exists for the given team.
- * Uses the current tmux session if inside one, otherwise creates a session named after the team.
+ *
+ * Resolution order:
+ *   1. Current tmux session (caller is inside tmux)
+ *   2. Team config `tmuxSessionName` (stored during team create)
+ *   3. Create/find session named after team (last resort)
  */
 async function ensureSession(teamName: string): Promise<string> {
   // If inside tmux, reuse the current session
   const current = await tmux.getCurrentSessionName();
   if (current) return current;
 
-  // Otherwise create/find a session named after the team (folder-based naming)
+  // Check team config for stored session name
+  const { getTeam } = await import('./team-manager.js');
+  const teamConfig = await getTeam(teamName);
+  if (teamConfig?.tmuxSessionName) {
+    const existing = await tmux.findSessionByName(teamConfig.tmuxSessionName);
+    if (existing) return teamConfig.tmuxSessionName;
+  }
+
+  // Fallback: create/find session named after the team
   const sessionName = sanitizeTeamName(teamName);
   const existing = await tmux.findSessionByName(sessionName);
   if (existing) return sessionName;
