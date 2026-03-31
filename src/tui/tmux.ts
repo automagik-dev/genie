@@ -35,6 +35,16 @@ function resolveRightPane(rightPane: string): string {
   }
 }
 
+export function hasProjectSession(targetSession: string): boolean {
+  const agentTmux = `${tmuxBin()} -L ${GENIE_AGENT_SOCKET}`;
+  try {
+    execSync(`${agentTmux} has-session -t '${targetSession}' 2>/dev/null`, { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Switch right pane to a specific agent session. NEVER kills the pane. */
 export function attachProjectWindow(rightPane: string, targetSession: string, windowIndex?: number): void {
   if (targetSession === SESSION_NAME) return;
@@ -42,11 +52,7 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
   const agentTmux = `${tmuxBin()} -L ${GENIE_AGENT_SOCKET}`;
 
   // Ensure agent session exists
-  try {
-    execSync(`${agentTmux} has-session -t '${targetSession}' 2>/dev/null`, { stdio: 'ignore' });
-  } catch {
-    return; // No session — don't create empty ones, don't kill the pane
-  }
+  if (!hasProjectSession(targetSession)) return; // No session — don't create empty ones, don't kill the pane
 
   if (windowIndex !== undefined) {
     try {

@@ -5,7 +5,13 @@ import { useKeyboard } from '@opentui/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { scanAgents } from '../../lib/workspace.js';
 import { type DiagnosticSnapshot, collectDiagnostics } from '../diagnostics.js';
-import { buildSessionTree, buildWorkspaceTree, getSessionTarget } from '../session-tree.js';
+import { consumeInitialAgentSignal } from '../initial-agent.js';
+import {
+  buildSessionTree,
+  buildWorkspaceTree,
+  getSessionTarget,
+  resolvePreferredWindowIndex,
+} from '../session-tree.js';
 import { palette } from '../theme.js';
 import { flattenTree, toggleNode } from '../tree.js';
 import type { TreeNode } from '../types.js';
@@ -23,8 +29,8 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
   const [diagnostics, setDiagnostics] = useState<DiagnosticSnapshot | null>(null);
   const [sessionTree, setSessionTree] = useState<TreeNode[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [requestedInitialAgent, setRequestedInitialAgent] = useState<string | undefined>(initialAgent);
   const lastTarget = useRef<string | null>(null);
-  const initialSelectDone = useRef(false);
 
   // Refresh diagnostics every 2s
   useEffect(() => {
@@ -33,7 +39,13 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
     async function refresh() {
       try {
         const snap = await collectDiagnostics();
-        if (active) setDiagnostics(snap);
+        if (!active) return;
+        setDiagnostics(snap);
+
+        const signaledAgent = consumeInitialAgentSignal();
+        if (signaledAgent) {
+          setRequestedInitialAgent(signaledAgent);
+        }
       } catch (err) {
         console.error('TUI: diagnostics failed:', err);
       }
@@ -76,15 +88,19 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
     }
   }, [flatNodes.length, selectedIndex]);
 
-  // Initial agent pre-selection (once)
+  // Initial agent selection / auto-spawn. Triggered by startup env or file signal.
   useEffect(() => {
-    if (!initialAgent || initialSelectDone.current || flatNodes.length === 0) return;
-    const idx = flatNodes.findIndex((n) => n.node.id === `agent:${initialAgent}`);
+    if (!requestedInitialAgent || flatNodes.length === 0) return;
+    const idx = flatNodes.findIndex((n) => n.node.id === `agent:${requestedInitialAgent}`);
     if (idx >= 0) {
       setSelectedIndex(idx);
-      initialSelectDone.current = true;
+      const node = flatNodes[idx].node;
+      if (node.type === 'agent' && node.wsAgentState === 'stopped') {
+        spawnAgent(node.label, onTmuxSessionSelect);
+      }
+      setRequestedInitialAgent(undefined);
     }
-  }, [initialAgent, flatNodes]);
+  }, [requestedInitialAgent, flatNodes, onTmuxSessionSelect]);
 
   // Auto-switch right pane when cursor moves to a new target
   useEffect(() => {
@@ -92,12 +108,12 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
     if (!current) return;
     const target = getSessionTarget(current);
     if (!target) return;
-    const key = `${target.sessionName}:${target.windowIndex ?? ''}`;
-    if (key === lastTarget.current) return;
-    lastTarget.current = key;
 
     // Only auto-attach for running agents (or session/window/pane nodes)
     if (current.type === 'agent' && current.wsAgentState !== 'running') return;
+    const key = `${target.sessionName}:${target.windowIndex ?? ''}`;
+    if (key === lastTarget.current) return;
+    lastTarget.current = key;
     onTmuxSessionSelect(target.sessionName, target.windowIndex);
   }, [selectedIndex, flatNodes, onTmuxSessionSelect]);
 
@@ -146,11 +162,12 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
     if (node.type === 'agent') {
       // No session → spawn the agent (creates session + window 0 with Claude)
       if (node.wsAgentState === 'stopped') {
-        spawnAgent(node.label);
+        spawnAgent(node.label, onTmuxSessionSelect);
+      } else {
+        // Attach right pane to the agent's session when already running
+        const target = getSessionTarget(node);
+        if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
       }
-      // Attach right pane to the agent's session (existing or just-spawned)
-      const target = getSessionTarget(node);
-      if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
       return;
     }
 
@@ -238,31 +255,74 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
 }
 
 /** Spawn a stopped agent by launching `genie spawn <name>` from its workspace directory */
-function spawnAgent(name: string): void {
+function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, windowIndex?: number) => void): void {
   try {
     const { spawn } = require('node:child_process') as typeof import('node:child_process');
     const { join, resolve } = require('node:path') as typeof import('node:path');
     const { existsSync } = require('node:fs') as typeof import('node:fs');
+    const bunPath = process.execPath || 'bun';
+    const genieBin = process.argv[1];
     const wsRoot = process.env.GENIE_TUI_WORKSPACE;
     let cwd: string | undefined;
     if (wsRoot) {
       const agentDir = resolve(join(wsRoot, 'agents', name));
       if (existsSync(agentDir)) cwd = agentDir;
     }
-    spawn('genie', ['spawn', name, '--session', name], { detached: true, stdio: 'ignore', cwd }).unref();
+    const child =
+      genieBin && genieBin !== 'genie'
+        ? spawn(bunPath, [genieBin, 'spawn', name, '--session', name], { detached: true, stdio: 'ignore', cwd })
+        : spawn('genie', ['spawn', name, '--session', name], { detached: true, stdio: 'ignore', cwd });
+    child.unref();
+    if (onTmuxSessionSelect) {
+      attachSpawnedAgentWhenReady(name, onTmuxSessionSelect);
+    }
   } catch {
     // best-effort spawn
   }
+}
+
+function attachSpawnedAgentWhenReady(
+  sessionName: string,
+  onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void,
+  attempt = 0,
+): void {
+  const maxAttempts = 40;
+  const retryDelayMs = 250;
+
+  void (async () => {
+    try {
+      const snap = await collectDiagnostics();
+      const session = snap.sessions.find((candidate) => candidate.name === sessionName);
+      if (session) {
+        const windowIndex = resolvePreferredWindowIndex(session, sessionName);
+        if (windowIndex !== undefined) {
+          onTmuxSessionSelect(sessionName, windowIndex);
+          return;
+        }
+      }
+    } catch {
+      // best-effort polling
+    }
+
+    if (attempt >= maxAttempts) {
+      onTmuxSessionSelect(sessionName);
+      return;
+    }
+
+    setTimeout(() => {
+      attachSpawnedAgentWhenReady(sessionName, onTmuxSessionSelect, attempt + 1);
+    }, retryDelayMs);
+  })();
 }
 
 /** Merge expanded state from old tree into new tree (preserves user navigation) */
 function mergeExpandedState(oldTree: TreeNode[], newTree: TreeNode[]): TreeNode[] {
   if (oldTree.length === 0) return newTree;
 
-  const oldState = new Map<string, boolean>();
+  const oldState = new Map<string, { expanded: boolean; childCount: number }>();
   function collect(nodes: TreeNode[]) {
     for (const n of nodes) {
-      oldState.set(n.id, n.expanded);
+      oldState.set(n.id, { expanded: n.expanded, childCount: n.children.length });
       collect(n.children);
     }
   }
@@ -271,7 +331,13 @@ function mergeExpandedState(oldTree: TreeNode[], newTree: TreeNode[]): TreeNode[
   function apply(nodes: TreeNode[]): TreeNode[] {
     return nodes.map((n) => ({
       ...n,
-      expanded: oldState.has(n.id) ? (oldState.get(n.id) as boolean) : n.expanded,
+      expanded: (() => {
+        const previous = oldState.get(n.id);
+        if (!previous) return n.expanded;
+        // Let nodes auto-expand the first time they gain children.
+        if (previous.childCount === 0 && n.children.length > 0) return n.expanded;
+        return previous.expanded;
+      })(),
       children: apply(n.children),
     }));
   }

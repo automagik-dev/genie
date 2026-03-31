@@ -8,6 +8,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import type { StoreRow } from './agent-cache.js';
 import { BUILTIN_COUNCIL_MEMBERS, BUILTIN_ROLES, type BuiltinAgent } from './builtin-agents.js';
 
 // ============================================================================
@@ -140,7 +141,21 @@ export async function rm(name: string, _options?: ScopeOptions): Promise<boolean
  * Resolution order: PG agents (by role) → built-in roles → built-in council.
  */
 export async function resolve(name: string): Promise<ResolvedAgent | null> {
-  // 1. Check PG agents table — look for agents with matching role
+  // 1. Check app_store — source of truth for synced/scaffolded agents
+  try {
+    const { getItemFromStore } = await import('./agent-cache.js');
+    const item = await getItemFromStore(name);
+    if (item && item.item_type === 'agent') {
+      const manifest = (item.manifest ?? {}) as Record<string, unknown>;
+      if (!manifest.archived) {
+        return { entry: storeRowToEntry(item), builtin: false };
+      }
+    }
+  } catch {
+    /* app_store unavailable — fall through */
+  }
+
+  // 2. Check PG agents table — look for agents with matching role
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
@@ -152,13 +167,13 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
     /* PG unavailable — fall through to built-ins */
   }
 
-  // 2. Check built-in roles
+  // 3. Check built-in roles
   const builtinRole = BUILTIN_ROLES.find((r: BuiltinAgent) => r.name === name);
   if (builtinRole) {
     return { entry: builtinToEntry(builtinRole), builtin: true };
   }
 
-  // 3. Check built-in council members
+  // 4. Check built-in council members
   const councilMember = BUILTIN_COUNCIL_MEMBERS.find((m: BuiltinAgent) => m.name === name);
   if (councilMember) {
     return { entry: builtinToEntry(councilMember), builtin: true };
@@ -292,6 +307,19 @@ function builtinToEntry(agent: BuiltinAgent): DirectoryEntry {
     model: agent.model,
     roles: [],
     registeredAt: '(built-in)',
+  };
+}
+
+function storeRowToEntry(item: StoreRow): DirectoryEntry {
+  const manifest = (item.manifest ?? {}) as Record<string, unknown>;
+  return {
+    name: item.name,
+    dir: (item.install_path as string) ?? '',
+    repo: (manifest.repo as string) ?? undefined,
+    promptMode: ((manifest.promptMode as string) ?? 'append') as PromptMode,
+    model: manifest.model as string | undefined,
+    roles: Array.isArray(manifest.roles) ? (manifest.roles as string[]) : [],
+    registeredAt: item.installed_at,
   };
 }
 

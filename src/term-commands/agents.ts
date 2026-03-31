@@ -1064,12 +1064,26 @@ async function resolveAgentForSpawn(
     identityPath = directory.loadIdentity(entry);
   }
 
+  const repoPath = resolveAgentWorkingDir(entry, options.cwd);
+
   return {
     entry,
-    repoPath: options.cwd ?? (entry.repo || undefined) ?? (entry.dir || undefined) ?? process.cwd(),
+    repoPath,
     identityPath,
     model: options.model ?? entry.model,
   };
+}
+
+export function resolveAgentWorkingDir(entry: directory.DirectoryEntry, explicitCwd?: string): string {
+  if (explicitCwd) return explicitCwd;
+  if (entry.dir) return entry.dir;
+
+  const repo = entry.repo;
+  if (repo && require('node:fs').existsSync(repo)) {
+    return repo;
+  }
+
+  return process.cwd();
 }
 
 /** Build SpawnParams from resolved agent + options. */
