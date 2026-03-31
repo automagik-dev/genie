@@ -41,7 +41,6 @@ export function registerAgentCommands(program: Command): void {
   agent.on('command:*', (operands: string[]) => {
     const cmd = operands[0];
     const available = agent.commands.map((c) => c.name()).join(', ');
-    console.error(`Unknown agent command '${cmd}'. Available: ${available}`);
-    process.exitCode = 1;
+    agent.error(`Unknown agent command '${cmd}'. Available: ${available}`);
   });
 }

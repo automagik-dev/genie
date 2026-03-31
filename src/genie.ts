@@ -108,9 +108,9 @@ program.configureHelp({
 
 program.configureOutput({
   outputError: (str, write) => {
-    const cmd = program.commands.find((c) => process.argv.includes(c.name()));
+    const cmd = program.commands.find((c) => process.argv.slice(2, 6).includes(c.name()));
     const prefix = cmd ? `genie ${cmd.name()}` : 'genie';
-    write(`\x1b[31mError (${prefix}): ${str}\x1b[0m`);
+    write(`\x1b[31mError (${prefix}): ${str}\x1b[0m\n`);
   },
 });
 
