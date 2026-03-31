@@ -389,12 +389,61 @@ export async function deleteNativeTeam(teamName: string): Promise<boolean> {
 // Inbox Scanning
 // ============================================================================
 
+/** Extract the leader inbox name from a native team config's leadAgentId. */
+function extractLeaderInboxName(config: NativeTeamConfig | null): string {
+  if (!config?.leadAgentId) return 'team-lead';
+  const atIdx = config.leadAgentId.indexOf('@');
+  return atIdx > 0 ? config.leadAgentId.slice(0, atIdx) : 'team-lead';
+}
+
+/** Scan a single team directory for unread leader inbox messages. */
+async function scanTeamInbox(
+  base: string,
+  name: string,
+): Promise<{
+  teamName: string;
+  unreadCount: number;
+  workingDir: string | null;
+  firstUnreadText: string | null;
+} | null> {
+  let config: NativeTeamConfig | null = null;
+  try {
+    const cfgContent = await readFile(join(base, name, 'config.json'), 'utf-8');
+    config = JSON.parse(cfgContent);
+  } catch {
+    // Config missing or malformed
+  }
+
+  const leaderInboxName = extractLeaderInboxName(config);
+  const inboxFile = join(base, name, 'inboxes', `${leaderInboxName}.json`);
+
+  let messages: NativeInboxMessage[];
+  try {
+    const content = await readFile(inboxFile, 'utf-8');
+    messages = JSON.parse(content);
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(messages)) return null;
+  const unread = messages.filter((m) => m.read === false);
+  if (unread.length === 0) return null;
+
+  let workingDir: string | null = null;
+  if (config) {
+    const leadMember = config.members.find((m) => m.agentId === config?.leadAgentId || m.name === leaderInboxName);
+    if (leadMember?.cwd) workingDir = leadMember.cwd;
+  }
+
+  return { teamName: name, unreadCount: unread.length, workingDir, firstUnreadText: unread[0]?.text ?? null };
+}
+
 /**
- * List all teams that have unread messages in their team-lead inbox.
+ * List all teams that have unread messages in their leader's inbox.
  *
- * Scans `~/.claude/teams/` for teams where `inboxes/team-lead.json`
+ * Scans `~/.claude/teams/` for teams where the leader's inbox
  * contains messages with `read: false`. Returns the team name, unread
- * count, and working directory (from config.json → members → team-lead → cwd).
+ * count, and working directory (from config.json → members → leader → cwd).
  */
 export async function listTeamsWithUnreadInbox(): Promise<
   Array<{ teamName: string; unreadCount: number; workingDir: string | null; firstUnreadText: string | null }>
@@ -404,7 +453,7 @@ export async function listTeamsWithUnreadInbox(): Promise<
   try {
     teamDirs = await readdir(base);
   } catch {
-    return []; // No teams directory
+    return [];
   }
 
   const results: Array<{
@@ -415,51 +464,8 @@ export async function listTeamsWithUnreadInbox(): Promise<
   }> = [];
 
   for (const name of teamDirs) {
-    // Load config to find the actual leader name
-    let leaderInboxName = 'team-lead';
-    let config: NativeTeamConfig | null = null;
-    try {
-      const cfgContent = await readFile(join(base, name, 'config.json'), 'utf-8');
-      config = JSON.parse(cfgContent);
-      if (config?.leadAgentId) {
-        // Extract agent name from leadAgentId (format: "name@team")
-        const atIdx = config.leadAgentId.indexOf('@');
-        if (atIdx > 0) leaderInboxName = config.leadAgentId.slice(0, atIdx);
-      }
-    } catch {
-      // Config missing or malformed — fall back to team-lead
-    }
-
-    // Read inbox messages for the actual leader
-    const inboxFile = join(base, name, 'inboxes', `${leaderInboxName}.json`);
-    let messages: NativeInboxMessage[];
-    try {
-      const content = await readFile(inboxFile, 'utf-8');
-      messages = JSON.parse(content);
-    } catch {
-      continue; // No inbox or invalid JSON
-    }
-
-    if (!Array.isArray(messages)) continue;
-
-    const unread = messages.filter((m) => m.read === false);
-    if (unread.length === 0) continue;
-
-    // Get workingDir from config.json → leader member → cwd
-    let workingDir: string | null = null;
-    if (config) {
-      const leadMember = config.members.find((m) => m.agentId === config?.leadAgentId || m.name === leaderInboxName);
-      if (leadMember?.cwd) {
-        workingDir = leadMember.cwd;
-      }
-    }
-
-    results.push({
-      teamName: name,
-      unreadCount: unread.length,
-      workingDir,
-      firstUnreadText: unread[0]?.text ?? null,
-    });
+    const entry = await scanTeamInbox(base, name);
+    if (entry) results.push(entry);
   }
 
   return results;
