@@ -435,7 +435,7 @@ async function runPreparedSpec(
       team: teamName,
       session: teamName,
       cwd: worktreePath,
-      role: 'team-lead',
+      role: 'qa',
       extraArgs: ['--append-system-prompt-file', promptFile],
       initialPrompt: `Execute the QA spec "${spec.name}" end-to-end right now. Do not stop after partial progress or a wait step. Continue until you validate the expectations, publish qa-report, and run team done. Your full instructions are in the system prompt.`,
     });
