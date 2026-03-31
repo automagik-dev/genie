@@ -131,6 +131,69 @@ function getTmuxVersion() {
 }
 
 /**
+ * Download static tmux binary from official tmux-builds.
+ * Inlined here because the plugin build only copies smart-install.js.
+ */
+async function downloadTmuxBinary() {
+  const TMUX_VERSION = '3.6a';
+  const os = process.platform;
+  const cpu = process.arch;
+  const assetMap = {
+    'linux-x64': `tmux-${TMUX_VERSION}-linux-x86_64.tar.gz`,
+    'linux-arm64': `tmux-${TMUX_VERSION}-linux-arm64.tar.gz`,
+    'darwin-arm64': `tmux-${TMUX_VERSION}-macos-arm64.tar.gz`,
+    'darwin-x64': `tmux-${TMUX_VERSION}-macos-x86_64.tar.gz`,
+  };
+  const asset = assetMap[`${os}-${cpu}`];
+  if (!asset) {
+    console.error(`tmux: no prebuilt binary for ${os}-${cpu}.`);
+    return false;
+  }
+
+  const url = `https://github.com/tmux/tmux-builds/releases/download/v${TMUX_VERSION}/${asset}`;
+  const { tmpdir } = await import('node:os');
+  const { copyFileSync, chmodSync, rmSync, writeFileSync } = await import('node:fs');
+  const tempDir = join(tmpdir(), `genie-tmux-${Date.now()}`);
+  const dest = join(GENIE_DIR, 'bin', 'tmux');
+
+  console.error(`Downloading tmux ${TMUX_VERSION} (${asset})...`);
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    console.error(`Downloaded ${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB`);
+
+    mkdirSync(tempDir, { recursive: true });
+    writeFileSync(join(tempDir, asset), buffer);
+    const tarResult = spawnSync('tar', ['-xzf', join(tempDir, asset), '-C', tempDir], { stdio: 'ignore' });
+    if (tarResult.status !== 0) throw new Error('tar extraction failed');
+
+    const extracted = join(tempDir, 'tmux');
+    if (!existsSync(extracted)) throw new Error('tarball did not contain tmux binary');
+
+    mkdirSync(join(GENIE_DIR, 'bin'), { recursive: true });
+    copyFileSync(extracted, dest);
+    chmodSync(dest, 0o755);
+
+    const verify = spawnSync(dest, ['-V'], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    if (verify.status !== 0) throw new Error('binary not executable');
+
+    console.error(`${verify.stdout.trim()} installed to ${dest}`);
+    return true;
+  } catch (e) {
+    try {
+      if (existsSync(dest)) (await import('node:fs')).unlinkSync(dest);
+    } catch {}
+    console.error(`tmux download failed: ${e.message}`);
+    return false;
+  } finally {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+/**
  * Check if beads (bd) is installed
  */
 function getBeadsPath() {
@@ -325,25 +388,30 @@ try {
     installBun();
   }
 
-  // 2. Check tmux - REQUIRED, but can't auto-install
+  // 2. Check tmux — auto-download static binary if missing
   if (!isTmuxInstalled()) {
-    console.error('');
-    console.error('ERROR: tmux is required but not installed.');
-    console.error('');
-    console.error('Please install tmux manually:');
-    if (process.platform === 'darwin') {
-      console.error('  brew install tmux');
-    } else if (process.platform === 'linux') {
-      console.error('  sudo apt install tmux    # Debian/Ubuntu');
-      console.error('  sudo dnf install tmux    # Fedora/RHEL');
-      console.error('  sudo pacman -S tmux      # Arch');
-    } else if (IS_WINDOWS) {
-      console.error('  WSL is required for tmux on Windows');
-      console.error('  Inside WSL: sudo apt install tmux');
+    const tmuxCached = join(GENIE_DIR, 'bin', 'tmux');
+    if (existsSync(tmuxCached)) {
+      console.error(`tmux found at ${tmuxCached}`);
+    } else {
+      const ok = await downloadTmuxBinary();
+      if (!ok) {
+        console.error('Please install tmux manually:');
+        if (process.platform === 'darwin') {
+          console.error('  brew install tmux');
+        } else if (process.platform === 'linux') {
+          console.error('  sudo apt install tmux    # Debian/Ubuntu');
+          console.error('  sudo dnf install tmux    # Fedora/RHEL');
+          console.error('  sudo pacman -S tmux      # Arch');
+        } else if (IS_WINDOWS) {
+          console.error('  WSL is required for tmux on Windows');
+          console.error('  Inside WSL: sudo apt install tmux');
+        }
+        console.error('');
+        console.error('Then restart Claude Code.');
+        process.exit(2);
+      }
     }
-    console.error('');
-    console.error('Then restart Claude Code.');
-    process.exit(2); // Exit code 2 = blocking error for Claude to process
   }
 
   // 3. Check/install beads
