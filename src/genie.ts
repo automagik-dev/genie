@@ -494,7 +494,7 @@ process.env.GENIE_TUI_PANE = undefined;
 
 // Default command: genie (no args) → thin TUI client (attach to serve).
 if (args.length === 0) {
-  const { findWorkspace } = await import('./lib/workspace.js');
+  const { findWorkspace, scanAgents } = await import('./lib/workspace.js');
   const ws = findWorkspace();
 
   if (!ws) {
@@ -515,18 +515,20 @@ if (args.length === 0) {
     ensureTuiSession(ws.root);
   }
 
+  const initialAgent = ws.agent ?? scanAgents(ws.root)[0];
+
   // Set env vars for TUI (workspace root + agent) before attach
   if (ws.root) process.env.GENIE_TUI_WORKSPACE = ws.root;
-  if (ws.agent) process.env.GENIE_TUI_AGENT = ws.agent;
+  if (initialAgent) process.env.GENIE_TUI_AGENT = initialAgent;
 
   // Write initial agent to file so the already-running TUI can pick it up.
   // The TUI reads and deletes this file on its next diagnostics refresh.
-  if (ws.agent) {
+  if (initialAgent) {
     const { writeFileSync } = await import('node:fs');
     const { join } = await import('node:path');
     const home = process.env.GENIE_HOME ?? join((await import('node:os')).homedir(), '.genie');
     try {
-      writeFileSync(join(home, 'tui-initial-agent'), ws.agent, 'utf-8');
+      writeFileSync(join(home, 'tui-initial-agent'), initialAgent, 'utf-8');
     } catch {
       // best-effort — TUI falls back to env var if file write fails
     }

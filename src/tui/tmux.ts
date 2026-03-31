@@ -5,7 +5,7 @@
  * This module only provides runtime operations for the TUI client.
  */
 
-import { execSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 
 const SESSION_NAME = 'genie-tui';
@@ -17,63 +17,68 @@ const TUI_TMUX_CONF = (() => {
   const tuiConf = `${home}/tui-tmux.conf`;
   return existsSync(tuiConf) ? tuiConf : '/dev/null';
 })();
-const TMUX = `${tmuxBin()} -L ${TMUX_SOCKET} -f ${TUI_TMUX_CONF}`;
+const TMUX_BIN = tmuxBin();
+
+function runTuiTmux(args: string[], stdio: 'ignore' | 'inherit' = 'ignore') {
+  return spawnSync(TMUX_BIN, ['-L', TMUX_SOCKET, '-f', TUI_TMUX_CONF, ...args], { stdio });
+}
+
+function runTuiTmuxOutput(args: string[]): string | null {
+  const result = spawnSync(TMUX_BIN, ['-L', TMUX_SOCKET, '-f', TUI_TMUX_CONF, ...args], { encoding: 'utf-8' });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function runAgentTmux(args: string[], stdio: 'ignore' | 'inherit' = 'ignore') {
+  return spawnSync(TMUX_BIN, ['-L', GENIE_AGENT_SOCKET, ...args], { stdio });
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildAttachLoop(targetSession: string): string {
+  const attachCommand = [TMUX_BIN, '-L', GENIE_AGENT_SOCKET, 'attach-session', '-t', targetSession]
+    .map(shellQuote)
+    .join(' ');
+  return `while true; do TMUX='' ${attachCommand} 2>/dev/null; sleep 0.3; done`;
+}
 
 function resolveRightPane(rightPane: string): string {
-  try {
-    execSync(`${TMUX} display-message -t ${rightPane} -p ''`, { stdio: 'ignore' });
+  if (runTuiTmux(['display-message', '-t', rightPane, '-p', '']).status === 0) {
     return rightPane;
-  } catch {
-    try {
-      const panes = execSync(`${TMUX} list-panes -t ${SESSION_NAME}:0 -F '#{pane_id}'`, { encoding: 'utf-8' })
-        .trim()
-        .split('\n');
-      return panes[1] || panes[0];
-    } catch {
-      return rightPane;
-    }
   }
+
+  const panes = runTuiTmuxOutput(['list-panes', '-t', `${SESSION_NAME}:0`, '-F', '#{pane_id}'])?.split('\n') ?? [];
+  return panes[1] || panes[0] || rightPane;
+}
+
+export function hasProjectSession(targetSession: string): boolean {
+  return runAgentTmux(['has-session', '-t', targetSession]).status === 0;
 }
 
 /** Switch right pane to a specific agent session. NEVER kills the pane. */
 export function attachProjectWindow(rightPane: string, targetSession: string, windowIndex?: number): void {
   if (targetSession === SESSION_NAME) return;
   const pane = resolveRightPane(rightPane);
-  const agentTmux = `${tmuxBin()} -L ${GENIE_AGENT_SOCKET}`;
 
   // Ensure agent session exists
-  try {
-    execSync(`${agentTmux} has-session -t '${targetSession}' 2>/dev/null`, { stdio: 'ignore' });
-  } catch {
-    return; // No session — don't create empty ones, don't kill the pane
-  }
+  if (!hasProjectSession(targetSession)) return; // No session — don't create empty ones, don't kill the pane
 
   if (windowIndex !== undefined) {
-    try {
-      execSync(`${agentTmux} select-window -t '${targetSession}:${windowIndex}'`, { stdio: 'ignore' });
-    } catch {}
+    runAgentTmux(['select-window', '-t', `${targetSession}:${windowIndex}`]);
   }
 
   // Hide green status bar
-  try {
-    execSync(`${agentTmux} set-option -t '${targetSession}' status off 2>/dev/null`, { stdio: 'ignore' });
-  } catch {}
+  runAgentTmux(['set-option', '-t', targetSession, 'status', 'off']);
 
   // respawn-pane with a loop wrapper — the pane process is bash running a loop,
   // so if the attach ends (agent exit, detach), the loop retries and the pane survives.
-  try {
-    const cmd = `while true; do TMUX='' ${agentTmux} attach-session -t '${targetSession}' 2>/dev/null; sleep 0.3; done`;
-    execSync(`${TMUX} respawn-pane -k -t ${pane} "bash -c '${cmd}'"`, { stdio: 'ignore' });
-  } catch {}
+  runTuiTmux(['respawn-pane', '-k', '-t', pane, 'sh', '-lc', buildAttachLoop(targetSession)]);
 
   // Restore focus to left pane
-  try {
-    execSync(`${TMUX} select-pane -t ${SESSION_NAME}:0.0`, { stdio: 'ignore' });
-  } catch {}
+  runTuiTmux(['select-pane', '-t', `${SESSION_NAME}:0.0`]);
 }
 
 export function attachTuiSession(): void {
-  spawnSync(tmuxBin(), ['-L', TMUX_SOCKET, '-f', TUI_TMUX_CONF, 'attach-session', '-t', SESSION_NAME], {
-    stdio: 'inherit',
-  });
+  runTuiTmux(['attach-session', '-t', SESSION_NAME], 'inherit');
 }

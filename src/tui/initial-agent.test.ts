@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { consumeInitialAgentSignal } from './initial-agent.js';
 
 // ─── File-based initial agent communication ─────────────────────────────────
 // Tests the thin client → TUI communication mechanism:
@@ -11,10 +12,13 @@ import { join } from 'node:path';
 describe('tui-initial-agent file protocol', () => {
   let testDir: string;
   let agentFilePath: string;
+  let originalGenieHome: string | undefined;
 
   beforeEach(() => {
+    originalGenieHome = process.env.GENIE_HOME;
     testDir = join(tmpdir(), `genie-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(testDir, { recursive: true });
+    process.env.GENIE_HOME = testDir;
     agentFilePath = join(testDir, 'tui-initial-agent');
   });
 
@@ -23,19 +27,19 @@ describe('tui-initial-agent file protocol', () => {
       if (existsSync(agentFilePath)) unlinkSync(agentFilePath);
       rmSync(testDir, { recursive: true, force: true });
     } catch {}
+    if (originalGenieHome === undefined) {
+      process.env.GENIE_HOME = undefined;
+    } else {
+      process.env.GENIE_HOME = originalGenieHome;
+    }
   });
 
   test('write agent name, read it back, file deleted', () => {
-    // Simulate genie.ts thin client writing the file
     writeFileSync(agentFilePath, 'sofia', 'utf-8');
     expect(existsSync(agentFilePath)).toBe(true);
 
-    // Simulate Nav.tsx reading the file
-    const agent = readFileSync(agentFilePath, 'utf-8').trim();
+    const agent = consumeInitialAgentSignal();
     expect(agent).toBe('sofia');
-
-    // Simulate Nav.tsx deleting after read
-    unlinkSync(agentFilePath);
     expect(existsSync(agentFilePath)).toBe(false);
   });
 
@@ -47,31 +51,26 @@ describe('tui-initial-agent file protocol', () => {
 
   test('empty file ignored', () => {
     writeFileSync(agentFilePath, '', 'utf-8');
-    const agent = readFileSync(agentFilePath, 'utf-8').trim();
-    expect(agent).toBe('');
-    // Nav checks `if (agent)` — empty string is falsy, skipped
-    unlinkSync(agentFilePath);
+    expect(consumeInitialAgentSignal()).toBeUndefined();
+    expect(existsSync(agentFilePath)).toBe(false);
   });
 
   test('whitespace-only file ignored', () => {
     writeFileSync(agentFilePath, '  \n  ', 'utf-8');
-    const agent = readFileSync(agentFilePath, 'utf-8').trim();
-    expect(agent).toBe('');
-    unlinkSync(agentFilePath);
+    expect(consumeInitialAgentSignal()).toBeUndefined();
+    expect(existsSync(agentFilePath)).toBe(false);
   });
 
   test('agent name with newline is trimmed', () => {
     writeFileSync(agentFilePath, 'vegapunk\n', 'utf-8');
-    const agent = readFileSync(agentFilePath, 'utf-8').trim();
-    expect(agent).toBe('vegapunk');
-    unlinkSync(agentFilePath);
+    expect(consumeInitialAgentSignal()).toBe('vegapunk');
+    expect(existsSync(agentFilePath)).toBe(false);
   });
 
   test('multiple writes: last one wins', () => {
     writeFileSync(agentFilePath, 'sofia', 'utf-8');
     writeFileSync(agentFilePath, 'vegapunk', 'utf-8');
-    const agent = readFileSync(agentFilePath, 'utf-8').trim();
-    expect(agent).toBe('vegapunk');
-    unlinkSync(agentFilePath);
+    expect(consumeInitialAgentSignal()).toBe('vegapunk');
+    expect(existsSync(agentFilePath)).toBe(false);
   });
 });

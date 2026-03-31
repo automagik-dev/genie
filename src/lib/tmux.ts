@@ -475,15 +475,15 @@ export async function resolveRepoSession(repoPath: string): Promise<string> {
 }
 
 /**
- * Check if a tmux pane is still alive by attempting a minimal capture.
+ * Check if a tmux pane is still alive.
  * Returns false for invalid pane IDs ('inline', empty, non-%N format).
  */
 export async function isPaneAlive(paneId: string): Promise<boolean> {
   if (!paneId || paneId === 'inline') return false;
   if (!/^%\d+$/.test(paneId)) return false;
   try {
-    await capturePaneContent(paneId, 1);
-    return true;
+    const paneDead = (await executeTmux(`display-message -t '${paneId}' -p '#{pane_dead}'`)).trim();
+    return paneDead !== '1';
   } catch {
     return false;
   }
