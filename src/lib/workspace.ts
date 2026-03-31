@@ -85,17 +85,37 @@ export function getWorkspaceConfig(root: string): WorkspaceConfig {
 
 // ─── Agent Scanning ───────────────────────────────────────────────────────────
 
-/** List all agent names found under {root}/agents/{name}/AGENTS.md */
+/** List all agent names found under {root}/agents/{name}/AGENTS.md,
+ *  including sub-agents in {name}/.genie/agents/{sub}/AGENTS.md (scoped as name/sub). */
 export function scanAgents(root: string): string[] {
   const agentsDir = join(root, 'agents');
   if (!existsSync(agentsDir)) return [];
 
   try {
-    return readdirSync(agentsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && existsSync(join(agentsDir, d.name, 'AGENTS.md')))
-      .map((d) => d.name)
-      .sort();
+    const entries = readdirSync(agentsDir, { withFileTypes: true });
+    const names: string[] = [];
+    for (const d of entries) {
+      if (!d.isDirectory() || !existsSync(join(agentsDir, d.name, 'AGENTS.md'))) continue;
+      names.push(d.name);
+      scanSubAgents(join(agentsDir, d.name), d.name, names);
+    }
+    return names.sort();
   } catch {
     return [];
+  }
+}
+
+/** Scan sub-agents in {parentDir}/.genie/agents/ */
+function scanSubAgents(parentDir: string, parentName: string, out: string[]): void {
+  const subDir = join(parentDir, '.genie', 'agents');
+  if (!existsSync(subDir)) return;
+  try {
+    for (const sub of readdirSync(subDir, { withFileTypes: true })) {
+      if (sub.isDirectory() && existsSync(join(subDir, sub.name, 'AGENTS.md'))) {
+        out.push(`${parentName}/${sub.name}`);
+      }
+    }
+  } catch {
+    /* sub-agents dir may not be readable */
   }
 }
