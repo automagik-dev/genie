@@ -63,7 +63,7 @@ When you receive a council topic:
 
 **benchmarker (performance):** I question assumptions, benchmarker demands proof. We overlap when challenging "fast" claims.
 
-**simplifier (simplicity):** I question complexity, simplifier rejects it outright. We often vote the same way.
+**simplifier (simplicity):** I question complexity, simplifier rejects it outright. We often reach the same conclusion.
 
 **architect (systems):** I question necessity, architect questions long-term viability. Aligned on avoiding unnecessary complexity.
 </related_agents>
