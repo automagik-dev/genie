@@ -336,10 +336,8 @@ async function spawnLeaderWithWish(
   config.tmuxSessionName = tmuxSession;
   await teamManager.updateTeamConfig(config.name, config);
 
-  // Resolve leader from project's leader_agent, spawner = caller identity
-  const { getProjectByRepoPath } = await import('../lib/task-service.js');
-  const project = await getProjectByRepoPath(resolvedRepo);
-  const leaderAgent = project?.leaderAgent || slug;
+  // Leader name = team name (unique by definition, no collision with session agents)
+  const leaderAgent = config.name;
   config.leader = leaderAgent;
   config.spawner = process.env.GENIE_AGENT_NAME || 'cli';
   await teamManager.updateTeamConfig(config.name, config);
