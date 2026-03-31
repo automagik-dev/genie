@@ -95,7 +95,7 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
     if (idx >= 0) {
       setSelectedIndex(idx);
       const node = flatNodes[idx].node;
-      if (node.type === 'agent' && node.wsAgentState === 'stopped') {
+      if (node.type === 'agent' && node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
         spawnAgent(node.label, onTmuxSessionSelect);
       }
       setRequestedInitialAgent(undefined);
@@ -161,9 +161,9 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
 
     if (node.type === 'agent') {
       // No session → spawn the agent (creates session + window 0 with Claude)
-      if (node.wsAgentState === 'stopped') {
+      if (node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
         spawnAgent(node.label, onTmuxSessionSelect);
-      } else {
+      } else if (node.wsAgentState === 'running') {
         // Attach right pane to the agent's session when already running
         const target = getSessionTarget(node);
         if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);

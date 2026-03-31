@@ -494,8 +494,7 @@ process.env.GENIE_TUI_PANE = undefined;
 
 // Default command: genie (no args) → thin TUI client (attach to serve).
 if (args.length === 0) {
-  const { findWorkspace } = await import('./lib/workspace.js');
-  const { resolveInitialAgent } = await import('./tui/initial-agent.js');
+  const { findWorkspace, scanAgents } = await import('./lib/workspace.js');
   const ws = findWorkspace();
 
   if (!ws) {
@@ -516,7 +515,7 @@ if (args.length === 0) {
     ensureTuiSession(ws.root);
   }
 
-  const initialAgent = resolveInitialAgent(ws.root, ws.agent);
+  const initialAgent = ws.agent ?? scanAgents(ws.root)[0];
 
   // Set env vars for TUI (workspace root + agent) before attach
   if (ws.root) process.env.GENIE_TUI_WORKSPACE = ws.root;

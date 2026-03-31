@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { scanAgents } from '../lib/workspace.js';
 
 function getInitialAgentFilePath(): string {
   const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
@@ -20,13 +19,4 @@ export function consumeInitialAgentSignal(): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-/** Prefer the explicit workspace agent; otherwise fall back to the first agent in the workspace. */
-export function resolveInitialAgent(workspaceRoot?: string, explicitAgent?: string): string | undefined {
-  if (explicitAgent) return explicitAgent;
-  if (!workspaceRoot) return undefined;
-
-  const agents = scanAgents(workspaceRoot);
-  return agents[0];
 }

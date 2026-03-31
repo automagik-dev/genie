@@ -98,6 +98,12 @@ export function resolvePreferredWindowIndex(session: TmuxSession, agentName?: st
   return preferred?.index;
 }
 
+function hasLiveClaudeWindow(session: TmuxSession): boolean {
+  return session.windows.some((window) =>
+    window.panes.some((pane) => !pane.isDead && (pane.command === 'claude' || pane.title.includes('claude'))),
+  );
+}
+
 function countClaudePanes(session: TmuxSession): number {
   return session.windows.reduce(
     (sum, w) => sum + w.panes.filter((p) => p.command === 'claude' || p.title.includes('claude')).length,
@@ -140,9 +146,9 @@ function buildAgentNode(
 function deriveWsAgentState(session: TmuxSession | undefined, agentExecutors: TuiExecutor[]): AgentState {
   if (!session) return 'stopped';
 
-  // If tmux already has a useful attach target for this session, the agent is
-  // effectively running from the TUI's perspective even if executor rows are stale.
-  if (resolvePreferredWindowIndex(session, session.name) !== undefined) return 'running';
+  // A live Claude pane wins over stale executor rows, but fallback shell windows
+  // alone should not mask spawning/error states.
+  if (hasLiveClaudeWindow(session)) return 'running';
 
   // Check executor states
   for (const exec of agentExecutors) {

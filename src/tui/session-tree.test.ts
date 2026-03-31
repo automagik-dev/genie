@@ -161,6 +161,52 @@ describe('buildWorkspaceTree', () => {
     expect(tree[0].wsAgentState).toBe('spawning');
   });
 
+  test('fallback shell window does not mask error executor state', () => {
+    const win0 = makeWindow({ sessionName: 'sofia', index: 0, name: 'zsh' });
+    const win1 = makeWindow({
+      sessionName: 'sofia',
+      index: 1,
+      name: 'shell',
+      active: true,
+      panes: [makePane({ sessionName: 'sofia', windowIndex: 1, paneId: '%1', command: 'zsh', title: 'shell' })],
+    });
+    const executor = makeExecutor({
+      agentName: 'sofia',
+      state: 'error',
+    });
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['sofia'],
+      sessions: [makeSession('sofia', [win0, win1])],
+      executors: [executor],
+    });
+
+    expect(tree[0].wsAgentState).toBe('error');
+  });
+
+  test('fallback shell window does not mask spawning executor state', () => {
+    const win0 = makeWindow({ sessionName: 'sofia', index: 0, name: 'zsh' });
+    const win1 = makeWindow({
+      sessionName: 'sofia',
+      index: 1,
+      name: 'shell',
+      active: true,
+      panes: [makePane({ sessionName: 'sofia', windowIndex: 1, paneId: '%1', command: 'zsh', title: 'shell' })],
+    });
+    const executor = makeExecutor({
+      agentName: 'sofia',
+      state: 'spawning',
+    });
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['sofia'],
+      sessions: [makeSession('sofia', [win0, win1])],
+      executors: [executor],
+    });
+
+    expect(tree[0].wsAgentState).toBe('spawning');
+  });
+
   test('live claude pane wins over stale spawning executor state', () => {
     const win0 = makeWindow({ sessionName: 'sofia', index: 0, name: 'zsh' });
     const win1 = makeWindow({
