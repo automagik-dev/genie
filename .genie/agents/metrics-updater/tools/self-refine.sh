@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# self-refine.sh — Prepare refinement context and trigger /refine on AGENT.md
+# self-refine.sh — Prepare refinement context and trigger /refine on AGENTS.md
 #
 # This script:
 # 1. Generates a performance report from runs.jsonl
-# 2. Appends performance context to the bottom of AGENT.md temporarily
-# 3. Calls /refine in file mode on AGENT.md (via the agent's Claude Code session)
+# 2. Appends performance context to the bottom of AGENTS.md temporarily
+# 3. Calls /refine in file mode on AGENTS.md (via the agent's Claude Code session)
 # 4. Updates state.json with last_refined_at
 #
 # Usage:
 #   bash self-refine.sh [--agent-dir <path>] [--dry-run]
 #
 # The agent should call this after run-metrics.sh completes.
-# In dry-run mode, it prepares the context file but doesn't modify AGENT.md.
+# In dry-run mode, it prepares the context file but doesn't modify AGENTS.md.
 
 set -euo pipefail
 
@@ -27,9 +27,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-AGENT_FILE="$AGENT_DIR/AGENT.md"
-STATE_FILE="$AGENT_DIR/state.json"
-RUNS_FILE="$AGENT_DIR/runs.jsonl"
+AGENT_FILE="$AGENT_DIR/AGENTS.md"
+STATE_FILE="$AGENT_DIR/state/state.json"
+RUNS_FILE="$AGENT_DIR/state/runs.jsonl"
 CONTEXT_FILE="$AGENT_DIR/refine-context.md"
 
 log() { echo "[self-refine] $*" >&2; }
@@ -88,17 +88,17 @@ CTXEOF
 log "Refinement context written to: $CONTEXT_FILE"
 
 if [[ "$DRY_RUN" == "true" ]]; then
-  log "DRY RUN — context file prepared but AGENT.md not modified"
+  log "DRY RUN — context file prepared but AGENTS.md not modified"
   cat "$CONTEXT_FILE"
   exit 0
 fi
 
-# --- Step 5: Append context to AGENT.md for /refine ---
-# The agent will call `/refine @AGENT.md` which reads this file.
+# --- Step 5: Append context to AGENTS.md for /refine ---
+# The agent will call `/refine @AGENTS.md` which reads this file.
 # We append the context so the refiner has performance data.
-log "Appending refinement context to AGENT.md..."
+log "Appending refinement context to AGENTS.md..."
 
-# Save original AGENT.md
+# Save original AGENTS.md
 cp "$AGENT_FILE" "$AGENT_FILE.pre-refine"
 
 cat >> "$AGENT_FILE" << APPENDEOF
@@ -110,7 +110,7 @@ $(cat "$CONTEXT_FILE")
 <!-- REFINE_CONTEXT_END -->
 APPENDEOF
 
-log "AGENT.md prepared for /refine. The agent should now run:"
+log "AGENTS.md prepared for /refine. The agent should now run:"
 log "  /refine @$AGENT_FILE"
 log ""
 log "After /refine completes, update state.json with:"

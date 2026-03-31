@@ -218,7 +218,7 @@ def main():
     if not args.runs_file:
         script_dir = Path(__file__).parent
         agent_dir = script_dir.parent
-        args.runs_file = str(agent_dir / 'runs.jsonl')
+        args.runs_file = str(agent_dir / 'state' / 'runs.jsonl')
 
     runs = load_runs(args.runs_file)
     if args.last_n > 0:

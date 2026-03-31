@@ -348,7 +348,7 @@ def main():
     agent_dir = script_dir.parent
 
     if not args.runs_file:
-        args.runs_file = str(agent_dir / 'runs.jsonl')
+        args.runs_file = str(agent_dir / 'state' / 'runs.jsonl')
     if not args.tools_dir:
         args.tools_dir = str(script_dir)
 

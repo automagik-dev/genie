@@ -55,8 +55,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-STATE_FILE="$AGENT_DIR/state.json"
-RUNS_FILE="$AGENT_DIR/runs.jsonl"
+STATE_FILE="$AGENT_DIR/state/state.json"
+RUNS_FILE="$AGENT_DIR/state/runs.jsonl"
 README_FILE="$REPO_ROOT/README.md"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -226,7 +226,6 @@ elif [[ "$README_CHANGED" == "true" ]]; then
 
   cd "$REPO_ROOT"
   git add README.md
-  git add .genie/agents/metrics-updater/state.json
   git commit -m "$COMMIT_MSG"
   log "Committed successfully"
 else

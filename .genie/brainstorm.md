@@ -1,6 +1,7 @@
 # Brainstorm Jar
 ## Raw
 ## Simmering
+- **genie-subagents-devrel-qa** — Consolidate DevRel tools/brain + QA specs into .genie/agents/ sub-agents
 ## Ready
 ## Poured
 - **task-leader-architecture** — Task leader built-in role, --wish flag, autonomous lifecycle → [WISH.md](.genie/wishes/task-leader-architecture/WISH.md)
