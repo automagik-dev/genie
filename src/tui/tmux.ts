@@ -6,6 +6,7 @@
  */
 
 import { execSync, spawnSync } from 'node:child_process';
+import { tmuxBin } from '../lib/ensure-tmux.js';
 
 const SESSION_NAME = 'genie-tui';
 const TMUX_SOCKET = 'genie-tui';
@@ -16,7 +17,7 @@ const TUI_TMUX_CONF = (() => {
   const tuiConf = `${home}/tui-tmux.conf`;
   return existsSync(tuiConf) ? tuiConf : '/dev/null';
 })();
-const TMUX = `tmux -L ${TMUX_SOCKET} -f ${TUI_TMUX_CONF}`;
+const TMUX = `${tmuxBin()} -L ${TMUX_SOCKET} -f ${TUI_TMUX_CONF}`;
 
 function resolveRightPane(rightPane: string): string {
   try {
@@ -38,7 +39,7 @@ function resolveRightPane(rightPane: string): string {
 export function attachProjectWindow(rightPane: string, targetSession: string, windowIndex?: number): void {
   if (targetSession === SESSION_NAME) return;
   const pane = resolveRightPane(rightPane);
-  const agentTmux = `tmux -L ${GENIE_AGENT_SOCKET}`;
+  const agentTmux = `${tmuxBin()} -L ${GENIE_AGENT_SOCKET}`;
 
   // Ensure agent session exists
   try {
@@ -72,7 +73,7 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
 }
 
 export function attachTuiSession(): void {
-  spawnSync('tmux', ['-L', TMUX_SOCKET, '-f', TUI_TMUX_CONF, 'attach-session', '-t', SESSION_NAME], {
+  spawnSync(tmuxBin(), ['-L', TMUX_SOCKET, '-f', TUI_TMUX_CONF, 'attach-session', '-t', SESSION_NAME], {
     stdio: 'inherit',
   });
 }
