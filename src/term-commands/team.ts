@@ -26,15 +26,25 @@ export function registerTeamNamespace(program: Command): void {
     .requiredOption('--repo <path>', 'Path to the git repository')
     .option('--branch <branch>', 'Base branch to create from', 'dev')
     .option('--wish <slug>', 'Wish slug — auto-spawns a task leader with wish context')
-    .option('--session <name>', 'Tmux session name (avoids session explosion on parallel creates)')
+    .option('--tmux-session <name>', 'Tmux session to place team window in (default: derived from repo path)')
+    .option('--session <name>', 'Alias for --tmux-session (deprecated)')
     .option('--no-spawn', 'Create team and copy wish without spawning the leader (useful for testing)')
     .action(
       async (
         name: string,
-        options: { repo: string; branch: string; wish?: string; session?: string; spawn?: boolean },
+        options: {
+          repo: string;
+          branch: string;
+          wish?: string;
+          tmuxSession?: string;
+          session?: string;
+          spawn?: boolean;
+        },
       ) => {
         try {
-          await handleTeamCreate(name, options);
+          // --session is a deprecated alias for --tmux-session
+          const merged = { ...options, tmuxSession: options.tmuxSession ?? options.session };
+          await handleTeamCreate(name, merged);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.error(`Error: ${message}`);
@@ -214,6 +224,21 @@ export function registerTeamNamespace(program: Command): void {
         process.exit(1);
       }
     });
+
+  // team cleanup
+  team
+    .command('cleanup')
+    .description('Kill tmux windows for done/archived teams')
+    .option('--dry-run', 'Show what would be cleaned without doing it')
+    .action(async (options: { dryRun?: boolean }) => {
+      try {
+        await handleTeamCleanup(options);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
 }
 
 // ============================================================================
@@ -222,11 +247,12 @@ export function registerTeamNamespace(program: Command): void {
 
 async function handleTeamCreate(
   name: string,
-  options: { repo: string; branch: string; wish?: string; session?: string; spawn?: boolean },
+  options: { repo: string; branch: string; wish?: string; tmuxSession?: string; spawn?: boolean },
 ): Promise<void> {
+  const resolvedRepo = resolve(options.repo);
+
   // Validate wish exists before creating team — auto-copy from cwd if needed
   if (options.wish) {
-    const resolvedRepo = resolve(options.repo);
     const wishPath = join(resolvedRepo, '.genie', 'wishes', options.wish, 'WISH.md');
     if (!existsSync(wishPath)) {
       // Auto-copy: search cwd for the wish
@@ -246,19 +272,16 @@ async function handleTeamCreate(
 
   const config = await teamManager.createTeam(name, options.repo, options.branch);
 
-  // Store wish slug and tmux session in team config
-  let needsUpdate = false;
+  // Always resolve tmuxSessionName — prevents session explosion on parallel creates
+  // Resolution: explicit --tmux-session → PG agent session → repo path mapping
+  const { findSessionByRepo } = await import('../lib/agent-directory.js');
+  const { resolveRepoSession } = await import('../lib/tmux.js');
+  config.tmuxSessionName =
+    options.tmuxSession ?? (await findSessionByRepo(resolvedRepo)) ?? (await resolveRepoSession(resolvedRepo));
   if (options.wish) {
     config.wishSlug = options.wish;
-    needsUpdate = true;
   }
-  if (options.session) {
-    config.tmuxSessionName = options.session;
-    needsUpdate = true;
-  }
-  if (needsUpdate) {
-    await teamManager.updateTeamConfig(name, config);
-  }
+  await teamManager.updateTeamConfig(name, config);
 
   console.log(`Team "${config.name}" created.`);
   console.log(`  Worktree: ${config.worktreePath}`);
@@ -271,7 +294,7 @@ async function handleTeamCreate(
   }
 
   if (options.wish && options.spawn !== false) {
-    await spawnLeaderWithWish(config, options.wish, options.repo, options.session);
+    await spawnLeaderWithWish(config, options.wish, options.repo, options.tmuxSession);
   }
 }
 
@@ -293,11 +316,15 @@ async function spawnLeaderWithWish(
 ): Promise<void> {
   const { handleWorkerSpawn } = await import('./agents.js');
   const { findSessionByRepo } = await import('../lib/agent-directory.js');
+  const { resolveRepoSession } = await import('../lib/tmux.js');
   const resolvedRepo = resolve(repoPath);
 
-  // Resolve tmux session BEFORE spawning — prevents parallel creates from each creating a new session
-  // Resolution: 1) explicit --session, 2) repo owner agent's session, 3) team name as new session
-  const tmuxSession = sessionOverride ?? (await findSessionByRepo(resolvedRepo)) ?? config.name;
+  // Use already-resolved session from handleTeamCreate, with fallback chain for safety
+  const tmuxSession =
+    sessionOverride ??
+    config.tmuxSessionName ??
+    (await findSessionByRepo(resolvedRepo)) ??
+    (await resolveRepoSession(resolvedRepo));
   config.tmuxSessionName = tmuxSession;
   await teamManager.updateTeamConfig(config.name, config);
 
@@ -417,4 +444,65 @@ function printTeamSummary(t: TeamConfig): void {
   console.log(`    Branch: ${t.name} (from ${t.baseBranch})`);
   console.log(`    Worktree: ${t.worktreePath}`);
   console.log(`    Members: ${t.members.length}`);
+}
+
+// ============================================================================
+// Team Cleanup Handler
+// ============================================================================
+
+/** Find the tmux window matching a team name (handles dot-sanitized names). */
+async function findTeamWindow(sessionName: string, teamName: string): Promise<{ name: string } | null> {
+  const tmuxLib = await import('../lib/tmux.js');
+  const session = await tmuxLib.findSessionByName(sessionName);
+  if (!session) return null;
+
+  try {
+    const windows = await tmuxLib.listWindows(sessionName);
+    return windows.find((w) => w.name === teamName || w.name === teamName.replace(/\./g, '_')) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Try to kill a team's tmux window. Returns a log message or null. */
+async function cleanupTeamWindow(t: TeamConfig, dryRun: boolean): Promise<string | null> {
+  if (!t.tmuxSessionName) return null;
+  const match = await findTeamWindow(t.tmuxSessionName, t.name);
+  if (!match) return null;
+
+  if (dryRun) {
+    return `  [dry-run] Would kill window "${match.name}" in session "${t.tmuxSessionName}" (team "${t.name}" [${t.status}])`;
+  }
+
+  const tmuxLib = await import('../lib/tmux.js');
+  const killed = await tmuxLib.killWindow(t.tmuxSessionName, match.name);
+  if (!killed) return null;
+  return `  Killed window "${match.name}" in session "${t.tmuxSessionName}" (team "${t.name}")`;
+}
+
+/** Kill tmux windows for done/archived teams. */
+async function handleTeamCleanup(options: { dryRun?: boolean }): Promise<void> {
+  const allTeams = await teamManager.listTeams(true);
+  const cleanable = allTeams.filter((t) => t.status === 'done' || t.status === 'archived');
+
+  if (cleanable.length === 0) {
+    console.log('No done/archived teams to clean up.');
+    return;
+  }
+
+  let cleaned = 0;
+  for (const t of cleanable) {
+    const msg = await cleanupTeamWindow(t, options.dryRun === true);
+    if (msg) {
+      console.log(msg);
+      cleaned++;
+    }
+  }
+
+  const verb = options.dryRun ? 'Would clean' : 'Cleaned';
+  if (cleaned === 0) {
+    console.log('No tmux windows found for done/archived teams.');
+  } else {
+    console.log(`\n${verb} ${cleaned} window${cleaned === 1 ? '' : 's'}.`);
+  }
 }

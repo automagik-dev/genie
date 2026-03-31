@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { shellQuote } from './team-lead-command.js';
 import { executeTmux as wrapperExecuteTmux } from './tmux-wrapper.js';
 
@@ -429,6 +430,49 @@ async function rehydratePaneColorHook(windowId: string): Promise<void> {
 }
 
 /**
+ * Resolve the tmux session that should host windows for a given repo.
+ *
+ * Resolution order:
+ *   1. `basename(repoPath)` exact match against existing tmux sessions
+ *   2. `process.env.TMUX` current session (caller is inside tmux)
+ *   3. `tmux list-sessions` partial match (session name contains basename)
+ *   4. Return derived basename (ensureTeamWindow will create it on demand)
+ *
+ * This prevents session explosion: teams for `/workspace/repos/genie` land
+ * in the existing `genie` session instead of creating a new session per team.
+ */
+export async function resolveRepoSession(repoPath: string): Promise<string> {
+  const derived = basename(repoPath);
+
+  try {
+    const sessions = await listSessions();
+
+    // 1. Exact match — basename maps directly to a session
+    const exact = sessions.find((s) => s.name === derived);
+    if (exact) return exact.name;
+
+    // 2. Inside tmux — use current session
+    if (process.env.TMUX) {
+      try {
+        const name = (await executeTmux("display-message -p '#{session_name}'")).trim();
+        if (name) return name;
+      } catch {
+        /* fall through */
+      }
+    }
+
+    // 3. Partial match — session name contains the repo basename
+    const partial = sessions.find((s) => s.name.includes(derived));
+    if (partial) return partial.name;
+  } catch {
+    /* tmux not available — fall through to derived name */
+  }
+
+  // 4. Last resort — derived basename (will be created on demand by ensureTeamWindow)
+  return derived;
+}
+
+/**
  * Check if a tmux pane is still alive by attempting a minimal capture.
  * Returns false for invalid pane IDs ('inline', empty, non-%N format).
  */
@@ -437,6 +481,19 @@ export async function isPaneAlive(paneId: string): Promise<boolean> {
   if (!/^%\d+$/.test(paneId)) return false;
   try {
     await capturePaneContent(paneId, 1);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Kill a tmux window by session:window target.
+ * Returns true if the window was killed, false if it didn't exist or the kill failed.
+ */
+export async function killWindow(sessionName: string, windowName: string): Promise<boolean> {
+  try {
+    await executeTmux(`kill-window -t ${shellQuote(`${sessionName}:${windowName}`)}`);
     return true;
   } catch {
     return false;
