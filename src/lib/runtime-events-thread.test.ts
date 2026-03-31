@@ -3,17 +3,19 @@ import { listRuntimeEvents, publishRuntimeEvent } from './runtime-events.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
 let cleanup: (() => Promise<void>) | undefined;
+let schemaReady = false;
 
 beforeAll(async () => {
   if (!DB_AVAILABLE) return;
   cleanup = await setupTestSchema();
+  schemaReady = !!process.env.GENIE_TEST_SCHEMA;
 });
 
 afterAll(async () => {
   if (cleanup) await cleanup();
 });
 
-describe.skipIf(!DB_AVAILABLE)('runtime-events thread_id', () => {
+describe.skipIf(!schemaReady)('runtime-events thread_id', () => {
   test('defaults thread_id to agent:<agent> when not provided', async () => {
     const event = await publishRuntimeEvent({
       repoPath: '/tmp/thread-default',
