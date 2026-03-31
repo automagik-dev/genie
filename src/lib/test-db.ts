@@ -92,7 +92,7 @@ export async function setupTestSchema(): Promise<() => Promise<void>> {
     try {
       await adminSql.end({ timeout: 1 });
     } catch {
-      /* ignore */
+      /* Best-effort cleanup: connection may already be closed */
     }
     return async () => {};
   }
