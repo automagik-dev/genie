@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { tmuxBin } from './ensure-tmux.js';
 
 const exec = promisify(execCallback);
 
@@ -30,7 +31,7 @@ export function genieTmuxPrefix(): string[] {
 
 /** Build a tmux command string prefixed with `-L genie -f <config>`. */
 export function genieTmuxCmd(subcommand: string): string {
-  return `tmux ${genieTmuxPrefix().join(' ')} ${subcommand}`;
+  return `${tmuxBin()} ${genieTmuxPrefix().join(' ')} ${subcommand}`;
 }
 
 /**
@@ -86,7 +87,7 @@ export async function executeTmux(args: string | string[]): Promise<string> {
   // Prepend genie server flags: -L genie -f <config>
   finalArgs = [...genieTmuxPrefix(), ...finalArgs];
 
-  const command = `tmux ${finalArgs.join(' ')}`;
+  const command = `${tmuxBin()} ${finalArgs.join(' ')}`;
   const { stdout } = await exec(command, options);
   return stdout.trim();
 }
