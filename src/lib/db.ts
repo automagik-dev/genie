@@ -418,8 +418,11 @@ export async function getConnection() {
   });
 
   try {
-    // Always call runMigrations — it's idempotent (checks _genie_migrations table)
-    await runMigrations(sqlClient);
+    // Skip migrations in test mode — setupTestSchema() already ran them in the isolated schema.
+    // Running them again here races with other test workers on public._genie_migrations.
+    if (!testSchema) {
+      await runMigrations(sqlClient);
+    }
 
     // Run idempotent JSON → PG seed if source files exist
     if (!testSchema && needsSeed()) {
