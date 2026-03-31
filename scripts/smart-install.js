@@ -325,25 +325,34 @@ try {
     installBun();
   }
 
-  // 2. Check tmux - REQUIRED, but can't auto-install
+  // 2. Check tmux — auto-download static binary if missing
   if (!isTmuxInstalled()) {
-    console.error('');
-    console.error('ERROR: tmux is required but not installed.');
-    console.error('');
-    console.error('Please install tmux manually:');
-    if (process.platform === 'darwin') {
-      console.error('  brew install tmux');
-    } else if (process.platform === 'linux') {
-      console.error('  sudo apt install tmux    # Debian/Ubuntu');
-      console.error('  sudo dnf install tmux    # Fedora/RHEL');
-      console.error('  sudo pacman -S tmux      # Arch');
-    } else if (IS_WINDOWS) {
-      console.error('  WSL is required for tmux on Windows');
-      console.error('  Inside WSL: sudo apt install tmux');
+    const tmuxCached = join(GENIE_DIR, 'bin', 'tmux');
+    if (existsSync(tmuxCached)) {
+      console.error(`tmux found at ${tmuxCached}`);
+    } else {
+      console.error('tmux not found — downloading static binary...');
+      try {
+        // Import and run the shared tmux downloader
+        await import('./postinstall-tmux.js');
+      } catch (e) {
+        console.error(`tmux auto-download failed: ${e.message}`);
+        console.error('Please install tmux manually:');
+        if (process.platform === 'darwin') {
+          console.error('  brew install tmux');
+        } else if (process.platform === 'linux') {
+          console.error('  sudo apt install tmux    # Debian/Ubuntu');
+          console.error('  sudo dnf install tmux    # Fedora/RHEL');
+          console.error('  sudo pacman -S tmux      # Arch');
+        } else if (IS_WINDOWS) {
+          console.error('  WSL is required for tmux on Windows');
+          console.error('  Inside WSL: sudo apt install tmux');
+        }
+        console.error('');
+        console.error('Then restart Claude Code.');
+        process.exit(2);
+      }
     }
-    console.error('');
-    console.error('Then restart Claude Code.');
-    process.exit(2); // Exit code 2 = blocking error for Claude to process
   }
 
   // 3. Check/install beads
