@@ -17,7 +17,9 @@ import {
   hireAgent,
   listMembers,
   listTeams,
+  resolveLeaderName,
   setTeamStatus,
+  updateTeamConfig,
   validateBranchName,
 } from './team-manager.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
@@ -271,6 +273,49 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       test('setTeamStatus throws for non-existent team', async () => {
         expect(setTeamStatus('nonexistent', 'done')).rejects.toThrow('not found');
+      });
+    });
+
+    describe('leader and spawner', () => {
+      test('new team gets leader and spawner when set via updateTeamConfig', async () => {
+        const config = await createTeam('feat/leader-test', TEST_REPO, 'dev');
+        config.leader = 'fix-tmux-session-explosion';
+        config.spawner = 'sofia';
+        await updateTeamConfig(config.name, config);
+
+        const updated = await getTeam('feat/leader-test');
+        expect(updated!.leader).toBe('fix-tmux-session-explosion');
+        expect(updated!.spawner).toBe('sofia');
+      });
+
+      test('resolveLeaderName returns leader for teams with leader set', async () => {
+        const config = await createTeam('feat/leader-resolve', TEST_REPO, 'dev');
+        config.leader = 'my-wish-slug';
+        await updateTeamConfig(config.name, config);
+
+        const name = await resolveLeaderName('feat/leader-resolve');
+        expect(name).toBe('my-wish-slug');
+      });
+
+      test('resolveLeaderName falls back to team-lead for legacy teams', async () => {
+        await createTeam('feat/legacy-leader', TEST_REPO, 'dev');
+        // No leader set — legacy team
+        const name = await resolveLeaderName('feat/legacy-leader');
+        expect(name).toBe('team-lead');
+      });
+
+      test('resolveLeaderName throws for nonexistent team', async () => {
+        expect(resolveLeaderName('nonexistent-team')).rejects.toThrow('not found');
+      });
+
+      test('spawner persisted in PG teams table', async () => {
+        const config = await createTeam('feat/spawner-pg', TEST_REPO, 'dev');
+        config.spawner = 'genie-pm';
+        await updateTeamConfig(config.name, config);
+
+        const sql = await getConnection();
+        const rows = await sql`SELECT spawner FROM teams WHERE name = ${'feat/spawner-pg'}`;
+        expect(rows[0].spawner).toBe('genie-pm');
       });
     });
 

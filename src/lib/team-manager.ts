@@ -57,6 +57,8 @@ export interface TeamConfig {
   tmuxSessionName?: string;
   /** Wish slug this team is working on (set via --wish). */
   wishSlug?: string;
+  /** Agent name (or 'cli') that created this team — workers report completion here. */
+  spawner?: string;
   /** ISO timestamp when the team was archived (null if not archived). */
   archivedAt?: string;
 }
@@ -92,6 +94,7 @@ interface TeamConfigRow {
   native_teams_enabled?: boolean;
   tmux_session_name?: string;
   wish_slug?: string;
+  spawner?: string;
   archived_at?: Date | string | null;
 }
 
@@ -111,6 +114,7 @@ function rowToTeamConfig(row: TeamConfigRow): TeamConfig {
   if (row.native_teams_enabled) config.nativeTeamsEnabled = row.native_teams_enabled;
   if (row.tmux_session_name) config.tmuxSessionName = row.tmux_session_name;
   if (row.wish_slug) config.wishSlug = row.wish_slug;
+  if (row.spawner) config.spawner = row.spawner;
   if (row.archived_at) {
     config.archivedAt = row.archived_at instanceof Date ? row.archived_at.toISOString() : String(row.archived_at);
   }
@@ -311,7 +315,7 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
     INSERT INTO teams (
       name, repo, base_branch, worktree_path, leader,
       members, status, native_team_parent_session_id,
-      native_teams_enabled, tmux_session_name, wish_slug, created_at
+      native_teams_enabled, tmux_session_name, wish_slug, spawner, created_at
     ) VALUES (
       ${config.name}, ${config.repo}, ${config.baseBranch},
       ${config.worktreePath}, ${config.leader ?? null},
@@ -319,7 +323,7 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
       ${config.nativeTeamParentSessionId ?? null},
       ${config.nativeTeamsEnabled ?? false},
       ${config.tmuxSessionName ?? null}, ${config.wishSlug ?? null},
-      ${config.createdAt}
+      ${config.spawner ?? null}, ${config.createdAt}
     ) ON CONFLICT (name) DO NOTHING
   `;
 
@@ -570,7 +574,8 @@ export async function updateTeamConfig(name: string, config: TeamConfig): Promis
       native_team_parent_session_id = ${config.nativeTeamParentSessionId ?? null},
       native_teams_enabled = ${config.nativeTeamsEnabled ?? false},
       tmux_session_name = ${config.tmuxSessionName ?? null},
-      wish_slug = ${config.wishSlug ?? null}
+      wish_slug = ${config.wishSlug ?? null},
+      spawner = ${config.spawner ?? null}
     WHERE name = ${name}
   `;
 }
@@ -621,6 +626,18 @@ export async function killTeamMembers(teamName: string): Promise<void> {
       // Best-effort — continue with other members
     }
   }
+}
+
+/**
+ * Resolve the leader name for a team.
+ * Returns config.leader for teams that have it set, falls back to "team-lead" for legacy teams.
+ */
+export async function resolveLeaderName(teamName: string): Promise<string> {
+  const config = await getTeam(teamName);
+  if (!config) {
+    throw new Error(`Team "${teamName}" not found.`);
+  }
+  return config.leader || 'team-lead';
 }
 
 /** Set team lifecycle status. */
