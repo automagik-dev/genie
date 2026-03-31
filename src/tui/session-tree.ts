@@ -68,9 +68,14 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
     }
   }
 
-  const nodes = agentNames.map((name) =>
-    buildAgentNode(name, sessionByName.get(name), executorsByAgent.get(name) ?? [], executorByPaneId),
-  );
+  // Group agents into hierarchy and build nodes
+  const { topLevel, subsByParent } = groupAgentNames(agentNames);
+
+  const nodes = topLevel.map((name) => {
+    const node = buildAgentNode(name, sessionByName.get(name), executorsByAgent.get(name) ?? [], executorByPaneId);
+    appendSubAgentNodes(node, subsByParent.get(name), sessionByName, executorsByAgent, executorByPaneId);
+    return node;
+  });
 
   // Add orphan sessions (tmux sessions with no matching agent in filesystem)
   const agentNameSet = new Set(agentNames);
@@ -102,6 +107,47 @@ function hasLiveClaudeWindow(session: TmuxSession): boolean {
   return session.windows.some((window) =>
     window.panes.some((pane) => !pane.isDead && (pane.command === 'claude' || pane.title.includes('claude'))),
   );
+}
+
+/** Separate scoped names (parent/sub) from top-level names. */
+function groupAgentNames(names: string[]): { topLevel: string[]; subsByParent: Map<string, string[]> } {
+  const topLevel: string[] = [];
+  const subsByParent = new Map<string, string[]>();
+  for (const name of names) {
+    const slashIdx = name.indexOf('/');
+    if (slashIdx === -1) {
+      topLevel.push(name);
+    } else {
+      const parent = name.slice(0, slashIdx);
+      const subs = subsByParent.get(parent) ?? [];
+      subs.push(name);
+      subsByParent.set(parent, subs);
+    }
+  }
+  return { topLevel, subsByParent };
+}
+
+/** Append sub-agent nodes as children of a parent agent node. */
+function appendSubAgentNodes(
+  parent: TreeNode,
+  subs: string[] | undefined,
+  sessionByName: Map<string, TmuxSession>,
+  executorsByAgent: Map<string, TuiExecutor[]>,
+  executorByPaneId: Map<string, TuiExecutor>,
+): void {
+  if (!subs) return;
+  for (const subName of subs) {
+    const subLabel = subName.slice(subName.indexOf('/') + 1);
+    const subNode = buildAgentNode(
+      subName,
+      sessionByName.get(subName),
+      executorsByAgent.get(subName) ?? [],
+      executorByPaneId,
+    );
+    subNode.label = subLabel;
+    subNode.depth = 1;
+    parent.children.push(subNode);
+  }
 }
 
 function countClaudePanes(session: TmuxSession): number {

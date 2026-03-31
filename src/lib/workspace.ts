@@ -5,7 +5,8 @@
  * If the cwd passes through `agents/<name>/`, the agent name is extracted.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -30,15 +31,19 @@ const WORKSPACE_MARKER = '.genie/workspace.json';
 
 /**
  * Walk up from `cwd` looking for `.genie/workspace.json`.
+ * Falls back to the registered workspace root from ~/.genie/config.json.
  * Returns workspace root + optional agent name, or null if not in a workspace.
  */
 export function findWorkspace(cwd?: string): WorkspaceInfo | null {
   const startDir = resolve(cwd ?? process.cwd());
   let current = startDir;
 
+  // 1. Walk-up from cwd
   while (true) {
     const candidate = join(current, WORKSPACE_MARKER);
     if (existsSync(candidate)) {
+      // Persist workspace root for global access
+      saveWorkspaceRoot(current);
       const agent = detectAgent(startDir, current);
       return { root: current, agent: agent ?? undefined };
     }
@@ -47,7 +52,40 @@ export function findWorkspace(cwd?: string): WorkspaceInfo | null {
     current = parent;
   }
 
+  // 2. Fall back to registered workspace root
+  const savedRoot = loadWorkspaceRoot();
+  if (savedRoot && existsSync(join(savedRoot, WORKSPACE_MARKER))) {
+    const agent = detectAgent(startDir, savedRoot);
+    return { root: savedRoot, agent: agent ?? undefined };
+  }
+
   return null;
+}
+
+const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+
+function saveWorkspaceRoot(root: string): void {
+  try {
+    const configPath = join(GENIE_HOME, 'config.json');
+    const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf-8')) : {};
+    if (config.workspaceRoot === root) return;
+    config.workspaceRoot = root;
+    mkdirSync(GENIE_HOME, { recursive: true });
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+  } catch {
+    /* best-effort */
+  }
+}
+
+function loadWorkspaceRoot(): string | null {
+  try {
+    const configPath = join(GENIE_HOME, 'config.json');
+    if (!existsSync(configPath)) return null;
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return typeof config.workspaceRoot === 'string' ? config.workspaceRoot : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
