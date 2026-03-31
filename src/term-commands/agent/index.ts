@@ -37,4 +37,10 @@ export function registerAgentCommands(program: Command): void {
   registerAgentBrief(agent);
   registerAgentLog(agent);
   registerAgentSend(agent);
+
+  agent.on('command:*', (operands: string[]) => {
+    const cmd = operands[0];
+    const available = agent.commands.map((c) => c.name()).join(', ');
+    agent.error(`Unknown agent command '${cmd}'. Available: ${available}`);
+  });
 }
