@@ -16,7 +16,7 @@
  *   genie serve status    — show service health
  */
 
-import { execSync, spawn } from 'node:child_process';
+import { execSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -118,6 +118,41 @@ const TUI_STYLE = {
   inactiveBorder: '#414868',
 };
 
+export function getTuiKeybindings(sessionName = TUI_SESSION): string[] {
+  return [
+    // Tab: toggle focus between left nav (pane 0) and right terminal (pane 1)
+    `bind-key -T root Tab if-shell "[ '#{pane_index}' = '0' ]" "select-pane -t ${sessionName}:0.1" "select-pane -t ${sessionName}:0.0"`,
+    // Ctrl+1 / Ctrl+2: explicit left/right focus, even when the right pane is running a nested agent session
+    `bind-key -T root C-1 select-pane -t ${sessionName}:0.0`,
+    `bind-key -T root C-2 select-pane -t ${sessionName}:0.1`,
+    // Ctrl+B: toggle sidebar width (collapse/expand)
+    `bind-key -T root C-b if-shell "[ $(tmux display-message -p '#\\{pane_width\\}' -t ${sessionName}:0.0) -gt 5 ]" "resize-pane -t ${sessionName}:0.0 -x 0" "resize-pane -t ${sessionName}:0.0 -x ${NAV_WIDTH}"`,
+    // Ctrl+T: new window in agent session (sends C-b c to the nested tmux in right pane)
+    `bind-key -T root C-t send-keys -t ${sessionName}:0.1 C-b c`,
+    // Ctrl+D: detach from TUI (leave running)
+    'bind-key -T root C-d detach-client',
+    // Ctrl+Q: focus nav pane + pass through for quit confirmation popup
+    `bind-key -T root C-q select-pane -t ${sessionName}:0.0 \\; send-keys -t ${sessionName}:0.0 C-q`,
+  ];
+}
+
+export function getTuiQuitBindingArgs(sessionName = TUI_SESSION): string[] {
+  return [
+    'bind-key',
+    '-T',
+    'root',
+    'C-q',
+    'select-pane',
+    '-t',
+    `${sessionName}:0.0`,
+    '\\;',
+    'send-keys',
+    '-t',
+    `${sessionName}:0.0`,
+    'C-q',
+  ];
+}
+
 /** Apply visual theme to TUI session */
 function applyTuiStyle(): void {
   const cmds = [
@@ -136,21 +171,15 @@ function applyTuiStyle(): void {
 
 /** Set up keybindings in root table so they work immediately */
 function setupTuiKeybindings(): void {
-  const bindings = [
-    // Tab: toggle focus between left nav (pane 0) and right terminal (pane 1)
-    `bind-key -T root Tab if-shell "[ '#{pane_index}' = '0' ]" "select-pane -t ${TUI_SESSION}:0.1" "select-pane -t ${TUI_SESSION}:0.0"`,
-    // Ctrl+B: toggle sidebar width (collapse/expand)
-    `bind-key -T root C-b if-shell "[ $(tmux display-message -p '#\\{pane_width\\}' -t ${TUI_SESSION}:0.0) -gt 5 ]" "resize-pane -t ${TUI_SESSION}:0.0 -x 0" "resize-pane -t ${TUI_SESSION}:0.0 -x ${NAV_WIDTH}"`,
-    // Ctrl+T: new window in agent session (sends C-b c to the nested tmux in right pane)
-    `bind-key -T root C-t send-keys -t ${TUI_SESSION}:0.1 C-b c`,
-    // Ctrl+D: detach from TUI (leave running)
-    'bind-key -T root C-d detach-client',
-    // Ctrl+Q: focus nav pane + pass through for quit confirmation popup
-    `bind-key -T root C-q select-pane -t ${TUI_SESSION}:0.0 \\; send-keys -t ${TUI_SESSION}:0.0 C-q`,
-  ];
-  for (const cmd of bindings) {
+  for (const cmd of getTuiKeybindings()) {
     try {
-      execSync(tuiTmux(cmd), { stdio: 'ignore' });
+      if (cmd.startsWith('bind-key -T root C-q ')) {
+        spawnSync(tmuxBin(), ['-L', 'genie-tui', '-f', tuiTmuxConf(), ...getTuiQuitBindingArgs()], {
+          stdio: 'ignore',
+        });
+      } else {
+        execSync(tuiTmux(cmd), { stdio: 'ignore' });
+      }
     } catch {}
   }
 }

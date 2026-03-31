@@ -23,9 +23,11 @@ interface NavProps {
   workspaceRoot?: string;
   /** Pre-select this agent on initial render */
   initialAgent?: string;
+  /** Disable nav keyboard shortcuts while a modal owns input */
+  keyboardDisabled?: boolean;
 }
 
-export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavProps) {
+export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboardDisabled = false }: NavProps) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticSnapshot | null>(null);
   const [sessionTree, setSessionTree] = useState<TreeNode[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -177,6 +179,7 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent }: NavPro
   }, [flatNodes, selectedIndex, handleToggle, onTmuxSessionSelect]);
 
   useKeyboard((key) => {
+    if (keyboardDisabled) return;
     if (key.name === 'up' || key.name === 'k' || key.name === 'down' || key.name === 'j') {
       handleVerticalNav(key.name);
     } else if (key.name === 'right' || key.name === 'l' || key.name === 'left' || key.name === 'h') {
