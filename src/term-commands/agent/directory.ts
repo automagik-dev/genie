@@ -4,7 +4,6 @@
  */
 
 import type { Command } from 'commander';
-import { type StoreRow, listItemsFromStore, migrateAgentDirectory } from '../../lib/agent-cache.js';
 import * as directory from '../../lib/agent-directory.js';
 import { printSyncResult, syncAgentDirectory } from '../../lib/agent-sync.js';
 import { ALL_BUILTINS } from '../../lib/builtin-agents.js';
@@ -82,42 +81,8 @@ function printBuiltinAgentsTable(): void {
   console.log('');
 }
 
-function normalizeRoles(roles?: string[]): string[] | undefined {
-  if (!roles) return undefined;
-  return roles
-    .flatMap((r) => r.split(','))
-    .map((r) => r.trim())
-    .filter(Boolean);
-}
-
-async function listEntries(json?: boolean, includeBuiltins?: boolean, includeArchived?: boolean): Promise<void> {
-  await migrateAgentDirectory().catch(() => {});
-
-  let entries: directory.ScopedDirectoryEntry[];
-  try {
-    const storeItems = await listItemsFromStore('agent');
-    entries = storeItems
-      .filter((item: StoreRow) => {
-        if (includeArchived) return true;
-        const manifest = (item.manifest ?? {}) as Record<string, unknown>;
-        return !manifest.archived;
-      })
-      .map((item: StoreRow) => {
-        const manifest = (item.manifest ?? {}) as Record<string, unknown>;
-        return {
-          name: item.name,
-          dir: (item.install_path as string) ?? '',
-          repo: (manifest.repo as string) ?? '',
-          promptMode: ((manifest.promptMode as string) ?? 'append') as directory.PromptMode,
-          model: manifest.model as string | undefined,
-          roles: normalizeRoles(manifest.roles as string[] | undefined),
-          registeredAt: item.installed_at as string,
-          scope: (manifest.archived ? 'archived' : 'global') as directory.DirectoryScope,
-        };
-      });
-  } catch {
-    entries = await directory.ls();
-  }
+async function listEntries(json?: boolean, includeBuiltins?: boolean, _includeArchived?: boolean): Promise<void> {
+  const entries = await directory.ls();
 
   if (json) {
     const result: Record<string, unknown>[] = entries.map((e) => ({ ...e, builtin: false }));

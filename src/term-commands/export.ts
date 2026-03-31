@@ -9,7 +9,6 @@
  *   genie export projects           — Projects
  *   genie export schedules [name]   — Schedules with run_spec
  *   genie export agents             — Agents, templates, checkpoints
- *   genie export apps               — App store (KhalOS, graceful skip)
  *   genie export comms              — Conversations, messages, mailbox
  *   genie export config             — OS config (KhalOS, graceful skip)
  */
@@ -367,18 +366,6 @@ export function registerExportCommands(program: Command): void {
     async (options: ExportOptions) => {
       try {
         await runExport(['agents'], 'partial', (sql) => exportGroup(sql, 'agents'), options);
-      } catch (error) {
-        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-        process.exit(1);
-      }
-    },
-  );
-
-  // genie export apps
-  sharedOpts(exp.command('apps').description('Export app store (graceful skip if missing)')).action(
-    async (options: ExportOptions) => {
-      try {
-        await runExport(['apps'], 'partial', (sql) => exportGroup(sql, 'apps'), options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
