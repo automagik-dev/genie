@@ -17,10 +17,10 @@
 
 | Metric | Value | Updated |
 |--------|-------|---------|
-| Releases/day | **0** | 2026-03-30 |
-| Avg merge time | **0.3h** | 2026-03-30 |
-| SHIP rate | **84%** | 2026-03-30 |
-| Merged PRs (7d) | **32** | 2026-03-30 |
+| Releases/day | **0** | 2026-03-31 |
+| Avg merge time | **0.3h** | 2026-03-31 |
+| SHIP rate | **85%** | 2026-03-31 |
+| Merged PRs (7d) | **35** | 2026-03-31 |
 
 <!-- METRICS:END -->
 

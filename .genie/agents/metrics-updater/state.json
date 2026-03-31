@@ -1,11 +1,9 @@
 {
-  "last_run": "2026-03-30T00:00:00Z",
+  "last_run": "2026-03-31T00:00:00Z",
   "last_metrics": {
     "releases_24h": 0,
-    "releases_per_day": 0,
-    "avg_merge_time_hours": 0.3,
-    "ship_rate_pct": 84,
-    "merged_prs_7d": 32,
-    "closed_prs_7d": 38
+    "merged_prs_7d": 35,
+    "avg_merge_time_h": 0.3,
+    "ship_rate_pct": 85
   }
 }
