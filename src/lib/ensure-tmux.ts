@@ -16,7 +16,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { arch, homedir, platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -149,10 +149,8 @@ async function downloadTmux(): Promise<string> {
       throw new Error('Tarball did not contain a tmux binary');
     }
 
-    // 4. Move to cache
+    // 4. Move to cache (copy, not rename — may cross filesystem boundaries with /tmp)
     mkdirSync(genieBinDir(), { recursive: true });
-    // Copy instead of rename (may cross filesystem boundaries with /tmp)
-    const { copyFileSync } = require('node:fs');
     copyFileSync(extractedBin, dest);
     chmodSync(dest, 0o755);
 

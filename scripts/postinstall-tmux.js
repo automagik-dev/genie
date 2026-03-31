@@ -2,14 +2,14 @@
 /**
  * postinstall-tmux.js — Download tmux static binary if not on PATH.
  *
- * Runs during `bun add -g @automagik/genie` and from smart-install.js.
+ * Runs during `bun add -g @automagik/genie` and callable from smart-install.js.
  * Downloads from the official tmux-builds repository:
  *   https://github.com/tmux/tmux-builds
  *
  * Standalone — no imports outside node builtins.
  */
 
-import { execSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { arch, homedir, platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,7 +77,9 @@ async function downloadTmux() {
     const tarball = join(tempDir, asset);
     writeFileSync(tarball, buffer);
 
-    execSync(`tar -xzf '${tarball}' -C '${tempDir}'`, { stdio: 'ignore' });
+    // Use spawnSync with args array to avoid shell injection with special path chars
+    const tarResult = spawnSync('tar', ['-xzf', tarball, '-C', tempDir], { stdio: 'ignore' });
+    if (tarResult.status !== 0) throw new Error('Failed to extract tmux tarball');
 
     const extracted = join(tempDir, 'tmux');
     if (!existsSync(extracted)) throw new Error('Tarball did not contain tmux binary');
@@ -108,7 +110,14 @@ async function downloadTmux() {
   }
 }
 
-// Main
-if (!isTmuxOnPath() && !isTmuxCached()) {
-  downloadTmux().catch(() => {});
+/**
+ * Ensure tmux is available — download if missing.
+ * Exported for use by smart-install.js and other callers.
+ */
+export async function ensureTmux() {
+  if (isTmuxOnPath() || isTmuxCached()) return true;
+  return downloadTmux();
 }
+
+// Run directly when invoked as a script (postinstall or CLI)
+await ensureTmux();

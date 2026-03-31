@@ -131,6 +131,69 @@ function getTmuxVersion() {
 }
 
 /**
+ * Download static tmux binary from official tmux-builds.
+ * Inlined here because the plugin build only copies smart-install.js.
+ */
+async function downloadTmuxBinary() {
+  const TMUX_VERSION = '3.6a';
+  const os = process.platform;
+  const cpu = process.arch;
+  const assetMap = {
+    'linux-x64': `tmux-${TMUX_VERSION}-linux-x86_64.tar.gz`,
+    'linux-arm64': `tmux-${TMUX_VERSION}-linux-arm64.tar.gz`,
+    'darwin-arm64': `tmux-${TMUX_VERSION}-macos-arm64.tar.gz`,
+    'darwin-x64': `tmux-${TMUX_VERSION}-macos-x86_64.tar.gz`,
+  };
+  const asset = assetMap[`${os}-${cpu}`];
+  if (!asset) {
+    console.error(`tmux: no prebuilt binary for ${os}-${cpu}.`);
+    return false;
+  }
+
+  const url = `https://github.com/tmux/tmux-builds/releases/download/v${TMUX_VERSION}/${asset}`;
+  const { tmpdir } = await import('node:os');
+  const { copyFileSync, chmodSync, rmSync, writeFileSync } = await import('node:fs');
+  const tempDir = join(tmpdir(), `genie-tmux-${Date.now()}`);
+  const dest = join(GENIE_DIR, 'bin', 'tmux');
+
+  console.error(`Downloading tmux ${TMUX_VERSION} (${asset})...`);
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    console.error(`Downloaded ${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB`);
+
+    mkdirSync(tempDir, { recursive: true });
+    writeFileSync(join(tempDir, asset), buffer);
+    const tarResult = spawnSync('tar', ['-xzf', join(tempDir, asset), '-C', tempDir], { stdio: 'ignore' });
+    if (tarResult.status !== 0) throw new Error('tar extraction failed');
+
+    const extracted = join(tempDir, 'tmux');
+    if (!existsSync(extracted)) throw new Error('tarball did not contain tmux binary');
+
+    mkdirSync(join(GENIE_DIR, 'bin'), { recursive: true });
+    copyFileSync(extracted, dest);
+    chmodSync(dest, 0o755);
+
+    const verify = spawnSync(dest, ['-V'], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    if (verify.status !== 0) throw new Error('binary not executable');
+
+    console.error(`${verify.stdout.trim()} installed to ${dest}`);
+    return true;
+  } catch (e) {
+    try {
+      if (existsSync(dest)) (await import('node:fs')).unlinkSync(dest);
+    } catch {}
+    console.error(`tmux download failed: ${e.message}`);
+    return false;
+  } finally {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+/**
  * Check if beads (bd) is installed
  */
 function getBeadsPath() {
@@ -331,12 +394,8 @@ try {
     if (existsSync(tmuxCached)) {
       console.error(`tmux found at ${tmuxCached}`);
     } else {
-      console.error('tmux not found — downloading static binary...');
-      try {
-        // Import and run the shared tmux downloader
-        await import('./postinstall-tmux.js');
-      } catch (e) {
-        console.error(`tmux auto-download failed: ${e.message}`);
+      const ok = await downloadTmuxBinary();
+      if (!ok) {
         console.error('Please install tmux manually:');
         if (process.platform === 'darwin') {
           console.error('  brew install tmux');
