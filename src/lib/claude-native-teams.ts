@@ -184,6 +184,7 @@ export async function ensureNativeTeam(
   teamName: string,
   description: string,
   leadSessionId: string,
+  leaderName?: string,
 ): Promise<NativeTeamConfig> {
   const dir = teamDir(teamName);
   const inboxDir = inboxesDir(teamName);
@@ -195,11 +196,12 @@ export async function ensureNativeTeam(
   if (existing) return existing;
 
   const sanitized = sanitizeTeamName(teamName);
+  const resolvedLeader = sanitizeTeamName(leaderName ?? 'team-lead');
   const config: NativeTeamConfig = {
     name: sanitized,
     description,
     createdAt: Date.now(),
-    leadAgentId: `team-lead@${sanitized}`,
+    leadAgentId: `${resolvedLeader}@${sanitized}`,
     leadSessionId,
     members: [],
   };
@@ -413,8 +415,23 @@ export async function listTeamsWithUnreadInbox(): Promise<
   }> = [];
 
   for (const name of teamDirs) {
-    // Read inbox messages
-    const inboxFile = join(base, name, 'inboxes', 'team-lead.json');
+    // Load config to find the actual leader name
+    let leaderInboxName = 'team-lead';
+    let config: NativeTeamConfig | null = null;
+    try {
+      const cfgContent = await readFile(join(base, name, 'config.json'), 'utf-8');
+      config = JSON.parse(cfgContent);
+      if (config?.leadAgentId) {
+        // Extract agent name from leadAgentId (format: "name@team")
+        const atIdx = config.leadAgentId.indexOf('@');
+        if (atIdx > 0) leaderInboxName = config.leadAgentId.slice(0, atIdx);
+      }
+    } catch {
+      // Config missing or malformed — fall back to team-lead
+    }
+
+    // Read inbox messages for the actual leader
+    const inboxFile = join(base, name, 'inboxes', `${leaderInboxName}.json`);
     let messages: NativeInboxMessage[];
     try {
       const content = await readFile(inboxFile, 'utf-8');
@@ -428,17 +445,13 @@ export async function listTeamsWithUnreadInbox(): Promise<
     const unread = messages.filter((m) => m.read === false);
     if (unread.length === 0) continue;
 
-    // Get workingDir from config.json → members → team-lead → cwd
+    // Get workingDir from config.json → leader member → cwd
     let workingDir: string | null = null;
-    try {
-      const cfgContent = await readFile(join(base, name, 'config.json'), 'utf-8');
-      const config: NativeTeamConfig = JSON.parse(cfgContent);
-      const leadMember = config.members.find((m) => m.name === 'team-lead' || m.agentId.startsWith('team-lead@'));
+    if (config) {
+      const leadMember = config.members.find((m) => m.agentId === config!.leadAgentId || m.name === leaderInboxName);
       if (leadMember?.cwd) {
         workingDir = leadMember.cwd;
       }
-    } catch {
-      // Config missing or malformed — workingDir stays null
     }
 
     results.push({
@@ -550,7 +563,8 @@ async function readSessionMetadata(filePath: string): Promise<SessionMetadata> {
  */
 function rootScore(metadata: { teamName?: string; agentName?: string }): number {
   if (!metadata.teamName && !metadata.agentName) return 2;
-  if (metadata.agentName === 'team-lead') return 1;
+  // Score leader sessions higher — matches both legacy "team-lead" and dynamic leader names
+  if (metadata.agentName === 'team-lead' || (metadata.teamName && !metadata.agentName)) return 1;
   return 0;
 }
 
@@ -663,6 +677,7 @@ export async function registerAsTeamLead(
     cwd?: string;
     tmuxPaneId?: string;
     color?: string;
+    leaderName?: string;
   },
 ): Promise<{ sessionId: string; config: NativeTeamConfig }> {
   const sessionId = await discoverClaudeSessionId(opts?.cwd);
@@ -673,8 +688,10 @@ export async function registerAsTeamLead(
     );
   }
 
+  const resolvedLeaderName = opts?.leaderName ?? 'team-lead';
+
   // Create or load the native team, using the real CC session ID
-  const config = await ensureNativeTeam(teamName, `Genie team: ${teamName}`, sessionId);
+  const config = await ensureNativeTeam(teamName, `Genie team: ${teamName}`, sessionId, resolvedLeaderName);
 
   // Update leadSessionId if the team already existed with a stale ID
   if (config.leadSessionId !== sessionId) {
@@ -684,13 +701,14 @@ export async function registerAsTeamLead(
 
   // Register the leader as a member (CC expects the lead in the members array)
   const sanitized = sanitizeTeamName(teamName);
-  const leadAgentId = `team-lead@${sanitized}`;
+  const sanitizedLeader = sanitizeTeamName(resolvedLeaderName);
+  const leadAgentId = `${sanitizedLeader}@${sanitized}`;
   const existingLead = config.members.find((m) => m.agentId === leadAgentId);
 
   const resolvedPaneId = opts?.tmuxPaneId ?? process.env.TMUX_PANE;
   if (!existingLead || !existingLead.isActive) {
     await registerNativeMember(teamName, {
-      agentName: 'team-lead',
+      agentName: resolvedLeaderName,
       agentType: 'general-purpose',
       color: opts?.color ?? 'blue',
       tmuxPaneId: resolvedPaneId,
@@ -702,8 +720,8 @@ export async function registerAsTeamLead(
     await saveConfig(teamName, config);
   }
 
-  // Ensure the team-lead inbox exists
-  const inbox = inboxPath(teamName, 'team-lead');
+  // Ensure the leader's inbox exists
+  const inbox = inboxPath(teamName, resolvedLeaderName);
   if (!existsSync(inbox)) {
     await writeFile(inbox, '[]');
   }

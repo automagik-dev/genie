@@ -245,7 +245,7 @@ export function registerTeamNamespace(program: Command): void {
 // Team Create Handler (extracted for cognitive complexity)
 // ============================================================================
 
-async function handleTeamCreate(
+export async function handleTeamCreate(
   name: string,
   options: { repo: string; branch: string; wish?: string; tmuxSession?: string; spawn?: boolean },
 ): Promise<void> {
