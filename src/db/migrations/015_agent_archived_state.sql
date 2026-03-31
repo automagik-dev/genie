@@ -34,26 +34,6 @@ ALTER TABLE agents ADD CONSTRAINT agents_state_check
   ));
 
 -- ============================================================================
--- App store: add 'archived' to approval_status CHECK constraint
--- ============================================================================
-
-DO $$
-BEGIN
-  EXECUTE (
-    SELECT string_agg('ALTER TABLE app_store DROP CONSTRAINT ' || quote_ident(conname), '; ')
-    FROM pg_constraint
-    WHERE conrelid = 'app_store'::regclass
-      AND contype = 'c'
-      AND pg_get_constraintdef(oid) LIKE '%approval_status%'
-  );
-EXCEPTION WHEN OTHERS THEN
-  NULL;
-END $$;
-
-ALTER TABLE app_store ADD CONSTRAINT app_store_approval_status_check
-  CHECK (approval_status IN ('local', 'pending', 'approved', 'rejected', 'archived'));
-
--- ============================================================================
 -- Index: fast lookup for non-archived agents in directory listings
 -- ============================================================================
 CREATE INDEX IF NOT EXISTS idx_agents_not_archived

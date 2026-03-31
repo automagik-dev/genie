@@ -18,16 +18,7 @@ export interface ExportDocument {
   data: Record<string, unknown[]>;
 }
 
-export type ExportGroup =
-  | 'boards'
-  | 'tasks'
-  | 'tags'
-  | 'projects'
-  | 'schedules'
-  | 'agents'
-  | 'apps'
-  | 'comms'
-  | 'config';
+export type ExportGroup = 'boards' | 'tasks' | 'tags' | 'projects' | 'schedules' | 'agents' | 'comms' | 'config';
 
 /** Tables belonging to each export group */
 export const GROUP_TABLES: Record<ExportGroup, string[]> = {
@@ -37,7 +28,6 @@ export const GROUP_TABLES: Record<ExportGroup, string[]> = {
   projects: ['projects'],
   schedules: ['schedules'],
   agents: ['agents', 'agent_templates', 'agent_checkpoints'],
-  apps: ['app_store', 'installed_apps', 'app_versions'],
   comms: ['conversations', 'conversation_members', 'messages', 'mailbox', 'team_chat', 'notification_preferences'],
   config: ['os_config', 'instances', 'warm_pool', 'golden_images'],
 };
@@ -49,7 +39,6 @@ export const ALL_GROUPS: ExportGroup[] = [
   'projects',
   'schedules',
   'agents',
-  'apps',
   'comms',
   'config',
 ];
