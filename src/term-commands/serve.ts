@@ -144,8 +144,8 @@ function setupTuiKeybindings(): void {
     `bind-key -T root C-t send-keys -t ${TUI_SESSION}:0.1 C-b c`,
     // Ctrl+D: detach from TUI (leave running)
     'bind-key -T root C-d detach-client',
-    // Ctrl+Q: pass through to TUI pane for quit confirmation popup
-    `bind-key -T root C-q send-keys -t ${TUI_SESSION}:0.0 C-q`,
+    // Ctrl+Q: focus nav pane + pass through for quit confirmation popup
+    `bind-key -T root C-q select-pane -t ${TUI_SESSION}:0.0 \\; send-keys -t ${TUI_SESSION}:0.0 C-q`,
   ];
   for (const cmd of bindings) {
     try {
