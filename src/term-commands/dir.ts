@@ -12,22 +12,11 @@
  * Commands:
  *   genie agent register <name>  — Register agent locally + auto-register in Omni
  *
- * Storage: Primary source is `app_store` table (item_type='agent').
- * Legacy `agents` table kept for backward compat with spawn.
- * JSON cache (~/.genie/agent-directory.json) regenerated after every mutation.
+ * Storage: agent-directory.json is the source of truth for registered agents.
  */
 
 import { resolve as resolvePath } from 'node:path';
 import type { Command } from 'commander';
-import {
-  type StoreRow,
-  listItemsFromStore,
-  migrateAgentDirectory,
-  regenerateAgentCache,
-  registerItemInStore,
-  removeItemFromStore,
-  updateItemInStore,
-} from '../lib/agent-cache.js';
 import * as directory from '../lib/agent-directory.js';
 import { printSyncResult, syncAgentDirectory } from '../lib/agent-sync.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
@@ -65,9 +54,6 @@ export function registerDirNamespace(program: Command): void {
     .action(async (name: string, options: { global?: boolean }) => {
       try {
         const removed = await directory.rm(name, { global: options.global });
-        // Also remove from app_store
-        await removeItemFromStore(name).catch(() => {});
-        await regenerateAgentCache();
         recordAuditEvent('item', name, 'item_removed', getActor(), { type: 'agent', source: 'dir_rm' }).catch(() => {});
 
         if (removed) {
@@ -164,18 +150,6 @@ async function handleDirAdd(name: string, options: DirAddOptions): Promise<void>
     { global: options.global },
   );
 
-  // Also register in app_store (primary source of truth)
-  try {
-    await registerItemInStore({
-      name,
-      itemType: 'agent',
-      installPath: resolvedDir,
-      manifest: { promptMode, model: options.model, roles: normalizeRoles(options.roles), repo: options.repo },
-    });
-  } catch {
-    // Best-effort — legacy agents table is still the spawn path
-  }
-  await regenerateAgentCache();
   recordAuditEvent('item', name, 'item_registered', getActor(), { type: 'agent', source: 'dir_add' }).catch(() => {});
 
   const scope = options.global ? 'global' : 'project';
@@ -207,16 +181,6 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
 
   const entry = await directory.edit(name, updates, { global: options.global });
 
-  // Also update app_store
-  try {
-    await updateItemInStore(name, {
-      installPath: updates.dir,
-      manifest: { promptMode: updates.promptMode, model: updates.model, roles: updates.roles, repo: updates.repo },
-    });
-  } catch {
-    // Best-effort
-  }
-  await regenerateAgentCache();
   recordAuditEvent('item', name, 'item_updated', getActor(), { type: 'agent', source: 'dir_edit' }).catch(() => {});
 
   const scope = options.global ? 'global' : 'project';
@@ -279,37 +243,8 @@ async function showEntry(name: string, json?: boolean): Promise<void> {
   console.log('');
 }
 
-async function listEntries(json?: boolean, includeBuiltins?: boolean, includeArchived?: boolean): Promise<void> {
-  // One-time migration from legacy JSON → DB (idempotent, best-effort)
-  await migrateAgentDirectory().catch(() => {});
-
-  // Try app_store first (primary), fall back to legacy agents table
-  let entries: directory.ScopedDirectoryEntry[];
-  try {
-    const storeItems = await listItemsFromStore('agent');
-    entries = storeItems
-      .filter((item: StoreRow) => {
-        if (includeArchived) return true;
-        const manifest = (item.manifest ?? {}) as Record<string, unknown>;
-        return !manifest.archived;
-      })
-      .map((item: StoreRow) => {
-        const manifest = (item.manifest ?? {}) as Record<string, unknown>;
-        return {
-          name: item.name,
-          dir: (item.install_path as string) ?? '',
-          repo: (manifest.repo as string) ?? '',
-          promptMode: ((manifest.promptMode as string) ?? 'append') as directory.PromptMode,
-          model: manifest.model as string | undefined,
-          roles: normalizeRoles(manifest.roles as string[] | undefined),
-          registeredAt: item.installed_at as string,
-          scope: (manifest.archived ? 'archived' : 'global') as directory.DirectoryScope,
-        };
-      });
-  } catch {
-    // Fallback to legacy
-    entries = await directory.ls();
-  }
+async function listEntries(json?: boolean, includeBuiltins?: boolean, _includeArchived?: boolean): Promise<void> {
+  const entries = await directory.ls();
 
   if (json) {
     listEntriesJson(entries, includeBuiltins);
