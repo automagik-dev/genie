@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scanAgents } from '../lib/workspace.js';
 
-export function getInitialAgentFilePath(): string {
+function getInitialAgentFilePath(): string {
   const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
   return join(genieHome, 'tui-initial-agent');
 }
