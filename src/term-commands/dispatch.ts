@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import * as protocolRouter from '../lib/protocol-router.js';
+import { parseWishRef, resolveWish } from '../lib/wish-resolve.js';
 import type { GroupDefinition } from '../lib/wish-state.js';
 import * as wishState from '../lib/wish-state.js';
 import { handleWorkerSpawn } from './agents.js';
@@ -292,6 +293,28 @@ function buildFallbackWaves(content: string): Wave[] {
 }
 
 // ============================================================================
+// Leader Resolution
+// ============================================================================
+
+/**
+ * Resolve the leader name for --to in dispatch prompts.
+ * Uses GENIE_TEAM to look up the team config's leader field.
+ * Falls back to 'team-lead' for legacy teams.
+ */
+async function resolveLeaderTarget(): Promise<string> {
+  const teamName = process.env.GENIE_TEAM;
+  if (!teamName) return 'team-lead';
+
+  try {
+    const teamManager = await import('../lib/team-manager.js');
+    const config = await teamManager.getTeam(teamName);
+    return config?.leader || 'team-lead';
+  } catch {
+    return 'team-lead';
+  }
+}
+
+// ============================================================================
 // Auto-Orchestration (fire-and-forget)
 // ============================================================================
 
@@ -333,13 +356,37 @@ export function detectWorkMode(
  * notifying the team-lead.
  */
 async function autoOrchestrateCommand(slug: string): Promise<void> {
-  const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
+  let wishPath: string;
+  let actualSlug = slug;
+
+  // Check for namespace/slug format — resolve and auto-create team
+  const parsed = parseWishRef(slug);
+  if (parsed.namespace) {
+    const resolved = await resolveWish(slug);
+    wishPath = resolved.wishPath;
+    actualSlug = resolved.slug;
+
+    // Auto-create team using the resolved repo and session
+    const { handleTeamCreate } = await import('./team.js');
+    await handleTeamCreate(actualSlug, {
+      repo: resolved.repo,
+      branch: 'dev',
+      wish: actualSlug,
+      tmuxSession: resolved.session,
+    });
+    return; // handleTeamCreate spawns the leader, which runs the full lifecycle
+  }
+
+  wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
   if (!existsSync(wishPath)) {
     console.error(`❌ Wish not found: ${wishPath}`);
     console.error(`   Create it first: genie wish <agent> ${slug}`);
     process.exit(1);
   }
+
+  // Best-effort: sync wish to PG index (non-blocking)
+  import('../lib/wish-sync.js').then((ws) => ws.syncWishes(process.cwd())).catch(() => {});
 
   const content = await readFile(wishPath, 'utf-8');
   const groups = parseWishGroups(content);
@@ -545,7 +592,8 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
   console.log(`   Group: ${group}`);
 
   const effectiveRole = `${agentName}-${group}`;
-  const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to team-lead`;
+  const leaderTarget = await resolveLeaderTarget();
+  const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to ${leaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
@@ -620,7 +668,8 @@ async function reviewCommand(agentName: string, ref: string): Promise<void> {
   console.log(`   Group: ${group}`);
   if (diff) console.log(`   Diff: ${diff.split('\n').length} lines`);
 
-  const reviewPrompt = `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to team-lead`;
+  const reviewLeaderTarget = await resolveLeaderTarget();
+  const reviewPrompt = `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to ${reviewLeaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',

@@ -245,7 +245,7 @@ export function registerTeamNamespace(program: Command): void {
 // Team Create Handler (extracted for cognitive complexity)
 // ============================================================================
 
-async function handleTeamCreate(
+export async function handleTeamCreate(
   name: string,
   options: { repo: string; branch: string; wish?: string; tmuxSession?: string; spawn?: boolean },
 ): Promise<void> {
@@ -328,6 +328,11 @@ async function spawnLeaderWithWish(
   config.tmuxSessionName = tmuxSession;
   await teamManager.updateTeamConfig(config.name, config);
 
+  // Set leader name = wish slug, spawner = caller identity
+  config.leader = slug;
+  config.spawner = process.env.GENIE_AGENT_NAME || 'cli';
+  await teamManager.updateTeamConfig(config.name, config);
+
   // Locate WISH.md in source repo
   const sourceWishPath = join(resolvedRepo, '.genie', 'wishes', slug, 'WISH.md');
   if (!existsSync(sourceWishPath)) {
@@ -342,17 +347,19 @@ async function spawnLeaderWithWish(
   await copyFile(sourceWishPath, destWishPath);
   console.log(`  Wish: copied ${slug}/WISH.md into worktree`);
 
-  // Hire the standard team: team-lead + engineer + reviewer + qa + fix
-  const standardTeam = ['team-lead', 'engineer', 'reviewer', 'qa', 'fix'];
+  // Hire the standard team: leader + engineer + reviewer + qa + fix
+  const leaderName = config.leader || 'team-lead';
+  const standardTeam = [leaderName, 'engineer', 'reviewer', 'qa', 'fix'];
   for (const role of standardTeam) {
     await teamManager.hireAgent(config.name, role);
   }
   console.log(`  Team: hired ${standardTeam.join(', ')}`);
 
   // Spawn leader — AGENTS.md comes from the built-in resolver, prompt delivered as initialPrompt
-  const members = standardTeam.filter((r) => r !== 'team-lead').join(', ');
-  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
-  await handleWorkerSpawn('team-lead', {
+  const members = standardTeam.filter((r) => r !== leaderName).join(', ');
+  const spawner = config.spawner || 'cli';
+  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Report completion to: ${spawner} (via genie send --to ${spawner}). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
+  await handleWorkerSpawn(leaderName, {
     provider: 'claude',
     team: config.name,
     cwd: config.worktreePath,
@@ -362,9 +369,9 @@ async function spawnLeaderWithWish(
 
   // Deliver kickoff prompt via mailbox as backup (durable, queued to disk)
   const protocolRouter = await import('../lib/protocol-router.js');
-  const result = await protocolRouter.sendMessage(config.worktreePath, 'cli', 'team-lead', kickoffPrompt);
+  const result = await protocolRouter.sendMessage(config.worktreePath, 'cli', leaderName, kickoffPrompt);
   if (!result.delivered) {
-    console.warn(`⚠ Backup delivery to team-lead failed: ${result.reason ?? 'unknown'}`);
+    console.warn(`⚠ Backup delivery to ${leaderName} failed: ${result.reason ?? 'unknown'}`);
   }
   console.log('  Leader: spawned and working');
 }

@@ -340,14 +340,28 @@ export async function removeSubPane(workerId: string, paneId: string, _registryP
   await sql`UPDATE agents SET sub_panes = ${sql.json(filtered)} WHERE id = ${workerId}`;
 }
 
+/** Resolve the dynamic leader name for a team (null if only 'team-lead' applies). */
+async function resolveDynamicLeaderName(teamName: string): Promise<string | null> {
+  try {
+    const { getTeam } = await import('./team-manager.js');
+    const config = await getTeam(teamName);
+    return config?.leader && config.leader !== 'team-lead' ? config.leader : null;
+  } catch {
+    return null; // Fallback to team-lead only
+  }
+}
+
 export async function getTeamLeadEntry(teamName: string, session?: string, repoPath?: string): Promise<Agent | null> {
   const sql = await getConnection();
   if (session) return findTeamLeadBySession(sql, teamName, session, repoPath);
   const legacyId = buildLegacyTeamLeadEntryId(teamName);
   const lr = await sql`SELECT * FROM agents WHERE id = ${legacyId}`;
   if (lr.length > 0) return rowToAgent(lr[0]);
-  const sr =
-    await sql`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} ORDER BY started_at DESC LIMIT 1`;
+
+  const leaderName = await resolveDynamicLeaderName(teamName);
+  const sr = leaderName
+    ? await sql`SELECT * FROM agents WHERE (role = 'team-lead' OR role = ${leaderName}) AND team = ${teamName} ORDER BY started_at DESC LIMIT 1`
+    : await sql`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} ORDER BY started_at DESC LIMIT 1`;
   return sr.length > 0 ? rowToAgent(sr[0]) : null;
 }
 
@@ -375,9 +389,15 @@ async function findTeamLeadBySession(
     const a = rowToAgent(legRows[0]);
     if (a.session === session && (!repoPath || a.repoPath === repoPath)) return a;
   }
-  const scanRows = await sql<
-    AgentRow[]
-  >`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} AND session = ${session} ${repoPath ? sql`AND repo_path = ${repoPath}` : sql``} LIMIT 1`;
+
+  const leaderName = await resolveDynamicLeaderName(teamName);
+  const scanRows = leaderName
+    ? await sql<
+        AgentRow[]
+      >`SELECT * FROM agents WHERE (role = 'team-lead' OR role = ${leaderName}) AND team = ${teamName} AND session = ${session} ${repoPath ? sql`AND repo_path = ${repoPath}` : sql``} LIMIT 1`
+    : await sql<
+        AgentRow[]
+      >`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} AND session = ${session} ${repoPath ? sql`AND repo_path = ${repoPath}` : sql``} LIMIT 1`;
   return scanRows.length > 0 ? rowToAgent(scanRows[0]) : null;
 }
 
