@@ -55,7 +55,12 @@ export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
 
   return (
     <box width="100%" height="100%">
-      <Nav onTmuxSessionSelect={handleTmuxSessionSelect} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />
+      <Nav
+        onTmuxSessionSelect={handleTmuxSessionSelect}
+        workspaceRoot={workspaceRoot}
+        initialAgent={initialAgent}
+        keyboardDisabled={showQuit}
+      />
       {showQuit ? <QuitDialog onConfirm={handleQuit} onCancel={() => setShowQuit(false)} /> : null}
     </box>
   );
