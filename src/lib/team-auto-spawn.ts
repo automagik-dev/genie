@@ -111,10 +111,15 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     return { created: false, session: currentSession, window: sanitizeWindowName(teamName) };
   }
 
+  // Resolve the actual leader name from team config (falls back to 'team-lead' for legacy)
+  const { getTeam } = await import('./team-manager.js');
+  const teamConfig = await getTeam(teamName);
+  const leaderName = teamConfig?.leader || 'team-lead';
+
   // Create native team structure
-  await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending');
+  await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending', leaderName);
   await registerNativeMember(teamName, {
-    agentName: 'team-lead',
+    agentName: leaderName,
     agentType: 'general-purpose',
     color: 'blue',
     cwd: workingDir,

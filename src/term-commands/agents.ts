@@ -38,6 +38,19 @@ import { isPaneAlive } from '../lib/tmux.js';
 // Helper Functions
 // ============================================================================
 
+/**
+ * Resolve the leader name for a team from team config.
+ * Falls back to 'team-lead' for legacy teams without a leader set.
+ */
+async function resolveTeamLeaderName(teamNameOrDefault: string): Promise<string> {
+  try {
+    const config = await teamManager.getTeam(teamNameOrDefault);
+    return config?.leader || 'team-lead';
+  } catch {
+    return 'team-lead';
+  }
+}
+
 /** Check if a process is alive by PID file. */
 function isRelayAlive(pidFile: string): boolean {
   const { readFileSync, existsSync } = require('node:fs');
@@ -79,6 +92,7 @@ async function ensureOtelRelay(team: string): Promise<boolean> {
   if (isRelayAlive(pidFile)) return true;
 
   const inboxDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'teams', team, 'inboxes');
+  const leaderInboxName = nativeTeams.sanitizeTeamName(await resolveTeamLeaderName(team));
   const escapedRelayDir = relayDir.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   const escapedInboxDir = inboxDir.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   const escapedPidFile = pidFile.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -103,7 +117,7 @@ import { join } from 'path';
 
 const RELAY_DIR = '${escapedRelayDir}';
 const INBOX_DIR = '${escapedInboxDir}';
-const INBOX = join(INBOX_DIR, 'team-lead.json');
+const INBOX = join(INBOX_DIR, '${leaderInboxName}.json');
 const PID_FILE = '${escapedPidFile}';
 const PORT = ${OTEL_RELAY_PORT};
 const SILENCE_MS = 5000;
@@ -570,7 +584,9 @@ async function notifySpawnJoin(ctx: SpawnCtx, paneId: string): Promise<void> {
     cwd: ctx.cwd,
     planModeRequired: nt.planModeRequired,
   });
-  await nativeTeams.writeNativeInbox(ctx.validated.team, 'team-lead', {
+  // Resolve the actual leader name for the inbox notification
+  const leaderName = await resolveTeamLeaderName(ctx.validated.team);
+  await nativeTeams.writeNativeInbox(ctx.validated.team, leaderName, {
     from: ctx.agentName,
     text: `Worker ${ctx.agentName} (${ctx.validated.provider}) joined team ${ctx.validated.team}. cwd: ${ctx.cwd}. Ready for tasks.`,
     summary: `${ctx.agentName} (${ctx.validated.provider}) joined`,
@@ -1430,7 +1446,10 @@ function formatGroupStatus(
  * Returns undefined if no wish context found.
  */
 export async function buildResumeContext(agent: registry.Agent): Promise<string | undefined> {
-  if (agent.role === 'team-lead' && agent.wishSlug) {
+  // Check if this agent is a leader (by role 'team-lead' or matching the team's leader name)
+  const isLeader =
+    agent.role === 'team-lead' || (agent.team && agent.role === (await resolveTeamLeaderName(agent.team)));
+  if (isLeader && agent.wishSlug) {
     try {
       const wishState = await import('../lib/wish-state.js');
       const state = await wishState.getState(agent.wishSlug, agent.repoPath);
