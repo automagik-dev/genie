@@ -143,8 +143,10 @@ function setupTuiKeybindings(): void {
     `bind-key -T root C-b if-shell "[ $(tmux display-message -p '#\\{pane_width\\}' -t ${TUI_SESSION}:0.0) -gt 5 ]" "resize-pane -t ${TUI_SESSION}:0.0 -x 0" "resize-pane -t ${TUI_SESSION}:0.0 -x ${NAV_WIDTH}"`,
     // Ctrl+T: new window in agent session (sends C-b c to the nested tmux in right pane)
     `bind-key -T root C-t send-keys -t ${TUI_SESSION}:0.1 C-b c`,
-    // Ctrl+Q: detach from TUI
-    'bind-key -T root C-q detach-client',
+    // Ctrl+D: detach from TUI (leave running)
+    'bind-key -T root C-d detach-client',
+    // Ctrl+Q: focus nav pane + pass through for quit confirmation popup
+    `bind-key -T root C-q select-pane -t ${TUI_SESSION}:0.0 \\; send-keys -t ${TUI_SESSION}:0.0 C-q`,
   ];
   for (const cmd of bindings) {
     try {

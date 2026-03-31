@@ -4,7 +4,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseWishRef, resolveWish } from './wish-resolve.js';
 
@@ -91,7 +91,7 @@ describe('resolveWish', () => {
 
   test('bare slug found in cwd resolves correctly', async () => {
     // Temporarily change cwd to a dir with a wish
-    const repoDir = join(FAKE_REPOS, 'myrepo');
+    const repoDir = await realpath(join(FAKE_REPOS, 'myrepo'));
     const originalCwd = process.cwd();
     process.chdir(repoDir);
 
