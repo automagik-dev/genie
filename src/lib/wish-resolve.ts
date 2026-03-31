@@ -16,12 +16,12 @@ const REPOS_BASE = '/home/genie/workspace/repos';
 // Types
 // ============================================================================
 
-export interface WishRef {
+interface WishRef {
   namespace?: string;
   slug: string;
 }
 
-export interface ResolvedWish {
+interface ResolvedWish {
   repo: string;
   wishPath: string;
   session: string;
