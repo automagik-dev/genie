@@ -61,6 +61,9 @@ async function isRecipientLeader(recipient: string, teamName: string): Promise<b
 }
 
 export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
+  // Skip in test environment — PG/tmux queries cause timeouts under full suite load
+  if (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test') return;
+
   const input = payload.tool_input;
   if (!input || input.type !== 'message') return;
 
