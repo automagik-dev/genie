@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `fix-tmux-session-explosion` |
 | **Date** | 2026-03-18 |
 | **Updated** | 2026-03-30 — rewritten per Felipe's design direction |
