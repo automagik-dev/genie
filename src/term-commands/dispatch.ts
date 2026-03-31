@@ -385,6 +385,9 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
     process.exit(1);
   }
 
+  // Best-effort: sync wish to PG index (non-blocking)
+  import('../lib/wish-sync.js').then((ws) => ws.syncWishes(process.cwd())).catch(() => {});
+
   const content = await readFile(wishPath, 'utf-8');
   const groups = parseWishGroups(content);
   const waves = parseExecutionStrategy(content);
