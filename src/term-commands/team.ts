@@ -29,6 +29,14 @@ export function registerTeamNamespace(program: Command): void {
     .option('--tmux-session <name>', 'Tmux session to place team window in (default: derived from repo path)')
     .option('--session <name>', 'Alias for --tmux-session (deprecated)')
     .option('--no-spawn', 'Create team and copy wish without spawning the leader (useful for testing)')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  genie team create my-feature --repo .                          # Create team in current repo
+  genie team create my-feature --repo . --wish my-feature-slug   # Create team with a wish
+  genie team create hotfix --repo . --branch main                # Create from main branch`,
+    )
     .action(
       async (
         name: string,

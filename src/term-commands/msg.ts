@@ -526,6 +526,14 @@ export function registerSendInboxCommands(program: Command): void {
     .option('--to <agent>', 'Recipient agent name (default: team-lead)', 'team-lead')
     .option('--from <sender>', 'Sender ID (auto-detected from context)')
     .option('--team <name>', 'Explicit team context for sender/recipient resolution')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  genie send 'start task #3' --to engineer         # Message a specific agent
+  genie send 'status update' --to team-lead         # Report to team lead
+  genie send 'deploy ready' --team my-feature       # Message within team context`,
+    )
     .action(async (body: string, options: { to: string; from?: string; team?: string }) => {
       try {
         await handleSend(body, options);

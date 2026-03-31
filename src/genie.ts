@@ -32,6 +32,7 @@ import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { getActor, recordAuditEvent } from './lib/audit.js';
 import { shutdown as shutdownDb } from './lib/db.js';
 import { stopOtelReceiver } from './lib/otel-receiver.js';
+import { registerAgentCommands } from './term-commands/agent/index.js';
 import {
   type SpawnOptions,
   handleLsCommand,
@@ -46,7 +47,7 @@ import { registerBoardCommands } from './term-commands/board.js';
 import { registerBriefCommands } from './term-commands/brief.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
-import { registerAgentNamespace, registerDirNamespace } from './term-commands/dir.js';
+import { registerDirNamespace } from './term-commands/dir.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import { registerExportCommands } from './term-commands/export.js';
 import * as historyCmd from './term-commands/history.js';
@@ -99,6 +100,19 @@ try {
 const program = new Command();
 
 program.name('genie').description('Genie CLI - AI-assisted development').version(VERSION);
+
+program.configureHelp({
+  sortSubcommands: true,
+  showGlobalOptions: true,
+});
+
+program.configureOutput({
+  outputError: (str, write) => {
+    const cmd = program.commands.find((c) => process.argv.slice(2, 6).includes(c.name()));
+    const prefix = cmd ? `genie ${cmd.name()}` : 'genie';
+    write(`\x1b[31mError (${prefix}): ${str}\x1b[0m\n`);
+  },
+});
 
 // ============================================================================
 // Named session — genie --session <name>
@@ -182,7 +196,7 @@ registerAppCommand(program);
 registerInitCommands(program);
 registerTeamNamespace(program);
 registerDirNamespace(program);
-registerAgentNamespace(program);
+registerAgentCommands(program);
 registerSendInboxCommands(program);
 registerStateCommands(program);
 registerDispatchCommands(program);
@@ -249,7 +263,7 @@ program.hook('postAction', (_thisCommand, actionCommand) => {
 });
 
 // ============================================================================
-// Top-level agent commands (promoted from genie agent namespace)
+// Top-level aliases — shortcuts for genie agent <command>
 // ============================================================================
 
 // genie spawn <name>
@@ -268,6 +282,15 @@ program
   .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
   .option('--session <session>', 'Tmux session name to spawn into')
   .option('--no-auto-resume', 'Disable auto-resume on pane death')
+  .addHelpText(
+    'after',
+    `
+Examples:
+  genie spawn engineer                          # Spawn built-in engineer role
+  genie spawn researcher --model sonnet         # Spawn with model override
+  genie spawn my-agent --team my-feature        # Spawn into a specific team
+  genie spawn council--questioner --provider codex  # Use Codex provider`,
+  )
   .action(async (name: string, options: SpawnOptions) => {
     try {
       await handleWorkerSpawn(name, options);
