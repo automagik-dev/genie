@@ -100,6 +100,29 @@ async function findMemberByPane(teamName: string, paneId: string): Promise<strin
 }
 
 // ============================================================================
+// Leader Alias Resolution
+// ============================================================================
+
+/**
+ * Resolve the 'team-lead' alias to the actual leader name for a given team context.
+ * Falls back to 'team-lead' for legacy teams without a leader set.
+ */
+async function resolveLeaderAlias(recipient: string, teamContext?: string): Promise<string> {
+  if (recipient !== 'team-lead') return recipient;
+
+  const teamManager = await getTeamManager();
+
+  // Try explicit team context first
+  const teamName = teamContext ?? process.env.GENIE_TEAM;
+  if (teamName) {
+    const config = await teamManager.getTeam(teamName);
+    if (config?.leader) return config.leader;
+  }
+
+  return 'team-lead';
+}
+
+// ============================================================================
 // Scope Checking
 // ============================================================================
 
@@ -124,11 +147,12 @@ export async function checkSendScope(_repoPath: string, sender: string, recipien
   return `Scope violation: "${recipient}" is not in sender's team(s): ${teamNames}`;
 }
 
-/** Build the list of teams the sender belongs to, including env-based team-lead membership. */
+/** Build the list of teams the sender belongs to, including env-based leader membership. */
 function resolveSenderTeams(teams: teamManagerTypes.TeamConfig[], sender: string): teamManagerTypes.TeamConfig[] {
   let senderTeams = teams.filter((t) => t.members.includes(sender));
 
-  if (sender === 'team-lead') {
+  // If sender is the leader (by name or 'team-lead' alias), include the leader's team
+  if (sender === 'team-lead' || teams.some((t) => t.leader === sender)) {
     const envTeam = process.env.GENIE_TEAM;
     if (envTeam) {
       const leaderTeam = teams.find((t) => t.name === envTeam);
@@ -141,9 +165,10 @@ function resolveSenderTeams(teams: teamManagerTypes.TeamConfig[], sender: string
   return senderTeams;
 }
 
-/** Check whether a recipient is reachable within a given team (direct member, team-lead, or prefixed name). */
+/** Check whether a recipient is reachable within a given team (direct member, leader, or prefixed name). */
 function isRecipientInTeam(team: teamManagerTypes.TeamConfig, recipient: string): boolean {
-  if (team.members.includes(recipient) || recipient === 'team-lead') return true;
+  // Direct member, legacy team-lead alias, or actual leader name
+  if (team.members.includes(recipient) || recipient === 'team-lead' || recipient === team.leader) return true;
   if (recipient.startsWith(`${team.name}-`)) {
     const roleOnly = recipient.slice(team.name.length + 1);
     if (team.members.includes(roleOnly)) return true;
@@ -161,9 +186,13 @@ async function findAgentTeam(_repoPath: string, agentName: string): Promise<team
   const memberTeam = teams.find((t) => t.members.includes(agentName));
   if (memberTeam) return memberTeam;
 
-  if (agentName === 'team-lead') {
+  // Match by leader name or legacy 'team-lead' alias
+  if (agentName === 'team-lead' || teams.some((t) => t.leader === agentName)) {
     const envTeam = process.env.GENIE_TEAM;
     if (envTeam) return teams.find((t) => t.name === envTeam) ?? null;
+    // Also find by leader field directly
+    const leaderTeam = teams.find((t) => t.leader === agentName);
+    if (leaderTeam) return leaderTeam;
   }
 
   return null;
@@ -429,6 +458,12 @@ async function handleSend(body: string, options: { to: string; from?: string; te
   const mailbox = await getMailbox();
   const repoPath = process.cwd();
   const from = options.from ?? (await detectSenderIdentity(options.team));
+
+  // Resolve 'team-lead' alias to actual leader name
+  const resolvedTo = await resolveLeaderAlias(options.to, options.team);
+  if (resolvedTo !== options.to) {
+    options = { ...options, to: resolvedTo };
+  }
 
   const scopeError = await checkSendScope(repoPath, from, options.to);
   if (scopeError) {

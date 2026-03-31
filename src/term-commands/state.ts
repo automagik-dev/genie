@@ -235,7 +235,27 @@ function autoKillPane(): void {
 // ============================================================================
 
 /**
- * Notify team-lead of wave or wish completion via protocol-router.
+ * Resolve the leader name and spawner for the current team context.
+ * Falls back to 'team-lead' for legacy teams.
+ */
+async function resolveNotificationTargets(): Promise<{ leader: string; spawner?: string }> {
+  const teamName = process.env.GENIE_TEAM;
+  if (!teamName) return { leader: 'team-lead' };
+
+  try {
+    const teamManager = await import('../lib/team-manager.js');
+    const config = await teamManager.getTeam(teamName);
+    return {
+      leader: config?.leader || 'team-lead',
+      spawner: config?.spawner,
+    };
+  } catch {
+    return { leader: 'team-lead' };
+  }
+}
+
+/**
+ * Notify leader (and spawner) of wave or wish completion via protocol-router.
  * Best-effort — failures are logged but do not block the done flow.
  */
 async function notifyWaveCompletion(
@@ -246,17 +266,27 @@ async function notifyWaveCompletion(
   try {
     const protocolRouter = await import('../lib/protocol-router.js');
     const repoPath = process.cwd();
+    const { leader, spawner } = await resolveNotificationTargets();
+
     const message = wishComplete
       ? `WISH COMPLETE — all groups done: [${waveResult.waveGroups.join(', ')}]. Run \`genie team done\` to clean up.`
       : `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}]. Run /review or advance to next wave.`;
-    const result = await protocolRouter.sendMessage(repoPath, 'cli', 'team-lead', message);
+
+    // Notify leader
+    const result = await protocolRouter.sendMessage(repoPath, 'cli', leader, message);
     if (result && typeof result === 'object' && 'delivered' in result && !result.delivered) {
-      console.warn('   ⚠️ Wave-complete notification may not have been delivered.');
+      console.warn(`   ⚠️ Wave-complete notification to ${leader} may not have been delivered.`);
     } else {
-      console.log('   Notified team-lead of wave completion.');
+      console.log(`   Notified ${leader} of wave completion.`);
+    }
+
+    // Also notify spawner if different from leader
+    if (spawner && spawner !== leader && spawner !== 'cli') {
+      await protocolRouter.sendMessage(repoPath, 'cli', spawner, message).catch(() => {});
+      console.log(`   Notified spawner (${spawner}) of wave completion.`);
     }
   } catch {
-    console.warn('   ⚠️ Could not notify team-lead (messaging unavailable).');
+    console.warn('   ⚠️ Could not notify leader (messaging unavailable).');
   }
 }
 
