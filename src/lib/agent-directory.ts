@@ -8,7 +8,6 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { StoreRow } from './agent-cache.js';
 import { BUILTIN_COUNCIL_MEMBERS, BUILTIN_ROLES, type BuiltinAgent } from './builtin-agents.js';
 
 // ============================================================================
@@ -44,6 +43,14 @@ export interface ScopedDirectoryEntry extends DirectoryEntry {
 
 interface ScopeOptions {
   global?: boolean;
+}
+
+interface StoreRow {
+  name: string;
+  item_type: string;
+  install_path: string | null;
+  manifest: Record<string, unknown> | null;
+  installed_at: string;
 }
 
 /** Resolved agent — either a user directory entry or a built-in. */
@@ -143,7 +150,6 @@ export async function rm(name: string, _options?: ScopeOptions): Promise<boolean
 export async function resolve(name: string): Promise<ResolvedAgent | null> {
   // 1. Check app_store — source of truth for synced/scaffolded agents
   try {
-    const { getItemFromStore } = await import('./agent-cache.js');
     const item = await getItemFromStore(name);
     if (item && item.item_type === 'agent') {
       const manifest = (item.manifest ?? {}) as Record<string, unknown>;
@@ -308,6 +314,18 @@ function builtinToEntry(agent: BuiltinAgent): DirectoryEntry {
     roles: [],
     registeredAt: '(built-in)',
   };
+}
+
+async function getItemFromStore(name: string): Promise<StoreRow | null> {
+  const { getConnection } = await import('./db.js');
+  const sql = await getConnection();
+  const rows = await sql`
+    SELECT name, item_type, install_path, manifest, installed_at
+    FROM app_store
+    WHERE name = ${name}
+    LIMIT 1
+  `;
+  return (rows[0] as StoreRow | undefined) ?? null;
 }
 
 function storeRowToEntry(item: StoreRow): DirectoryEntry {
