@@ -20,6 +20,8 @@ const getTeam = () => process.env.GENIE_TEAM;
 type SubjectEventInput = Omit<RuntimeEventInput, 'repoPath' | 'subject'>;
 
 async function emit(subject: string, event: SubjectEventInput): Promise<void> {
+  // Skip event emission in test environment — PG connection attempts cause 16s timeouts
+  if (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test') return;
   try {
     const { publishSubjectEvent } = await import('../../lib/runtime-events.js');
     await publishSubjectEvent(process.cwd(), subject, event);
