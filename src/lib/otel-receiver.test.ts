@@ -6,8 +6,9 @@ describe('otel-receiver', () => {
 
   beforeEach(() => {
     origPort = process.env.GENIE_OTEL_PORT;
-    // Use a random high port to avoid conflicts with running pgserve
-    process.env.GENIE_OTEL_PORT = String(49152 + Math.floor(Math.random() * 16383));
+    // Use a random high port to avoid conflicts with running pgserve or parallel tests
+    // Range 57000-63999 avoids typical pgserve ports (19643-19700) and ephemeral ports
+    process.env.GENIE_OTEL_PORT = String(57000 + Math.floor(Math.random() * 7000));
   });
 
   afterEach(() => {
