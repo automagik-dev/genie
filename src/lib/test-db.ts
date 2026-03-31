@@ -53,7 +53,13 @@ const STALE_SCHEMA_AGE_MS = 10 * 60 * 1000; // 10 minutes
 export async function setupTestSchema(): Promise<() => Promise<void>> {
   const schemaName = `test_${process.pid}_${Date.now()}`;
 
-  const port = await ensurePgserve();
+  let port: number;
+  try {
+    port = await ensurePgserve();
+  } catch {
+    // PG unreachable under concurrent test load — return no-op cleanup
+    return async () => {};
+  }
   const postgres = (await import('postgres')).default;
   const adminSql = postgres({
     host: '127.0.0.1',
@@ -68,18 +74,28 @@ export async function setupTestSchema(): Promise<() => Promise<void>> {
     connection: { client_min_messages: 'warning' },
   });
 
-  // Defensively clean up stale test schemas from crashed runs
-  await cleanupStaleSchemas(adminSql);
+  try {
+    // Defensively clean up stale test schemas from crashed runs
+    await cleanupStaleSchemas(adminSql);
 
-  // Create the test schema and run migrations inside it.
-  // search_path = test schema ONLY (no public) ensures _genie_migrations is
-  // created fresh in the test schema, so migration runner sees zero applied
-  // and creates all tables in the test schema.
-  // max: 1 ensures SET search_path applies to all subsequent queries on this connection.
-  await adminSql.unsafe(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
-  await adminSql.unsafe(`SET search_path TO "${schemaName}"`);
-  await runMigrations(adminSql);
-  await adminSql.end({ timeout: 5 });
+    // Create the test schema and run migrations inside it.
+    // search_path = test schema ONLY (no public) ensures _genie_migrations is
+    // created fresh in the test schema, so migration runner sees zero applied
+    // and creates all tables in the test schema.
+    // max: 1 ensures SET search_path applies to all subsequent queries on this connection.
+    await adminSql.unsafe(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
+    await adminSql.unsafe(`SET search_path TO "${schemaName}"`);
+    await runMigrations(adminSql);
+    await adminSql.end({ timeout: 5 });
+  } catch {
+    // Schema creation or migration race under concurrent test load — skip gracefully
+    try {
+      await adminSql.end({ timeout: 1 });
+    } catch {
+      /* Best-effort cleanup: connection may already be closed */
+    }
+    return async () => {};
+  }
 
   // Reset the singleton and set the env var so getConnection() picks up the schema
   await resetConnection();

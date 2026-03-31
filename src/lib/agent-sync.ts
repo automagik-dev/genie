@@ -82,7 +82,8 @@ function getRepoPathForAgent(agentDir: string): string | null {
 // Discovery
 // ============================================================================
 
-/** Discover all agents in {workspaceRoot}/agents/ that have AGENTS.md. */
+/** Discover all agents in {workspaceRoot}/agents/ that have AGENTS.md.
+ *  Also recursively discovers sub-agents in {agent}/.genie/agents/. */
 function discoverAgents(workspaceRoot: string): AgentInfo[] {
   const agentsDir = join(workspaceRoot, 'agents');
   if (!existsSync(agentsDir)) return [];
@@ -101,11 +102,40 @@ function discoverAgents(workspaceRoot: string): AgentInfo[] {
         repoUrl: getGitRemoteUrl(agentDir),
         productRepo: getRepoPathForAgent(agentDir),
       });
+
+      // Discover sub-agents in .genie/agents/
+      discoverSubAgents(agentDir, entry.name, agents);
     }
   } catch {
     // agents/ dir may not be readable
   }
   return agents;
+}
+
+/** Discover sub-agents inside {parentDir}/.genie/agents/.
+ *  Names are scoped as {parentName}/{subName} to avoid collisions
+ *  (e.g. genie/qa vs totvs/qa). */
+function discoverSubAgents(parentDir: string, parentName: string, agents: AgentInfo[]): void {
+  const subAgentsDir = join(parentDir, '.genie', 'agents');
+  if (!existsSync(subAgentsDir)) return;
+
+  try {
+    const entries = readdirSync(subAgentsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const subDir = join(subAgentsDir, entry.name);
+      if (!existsSync(join(subDir, 'AGENTS.md'))) continue;
+
+      agents.push({
+        name: `${parentName}/${entry.name}`,
+        dir: subDir,
+        repoUrl: getGitRemoteUrl(parentDir),
+        productRepo: getRepoPathForAgent(parentDir),
+      });
+    }
+  } catch {
+    // sub-agents dir may not be readable
+  }
 }
 
 /** Discover a single agent by name. */
