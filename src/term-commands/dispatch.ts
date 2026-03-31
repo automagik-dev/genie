@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import * as protocolRouter from '../lib/protocol-router.js';
+import { parseWishRef, resolveWish } from '../lib/wish-resolve.js';
 import type { GroupDefinition } from '../lib/wish-state.js';
 import * as wishState from '../lib/wish-state.js';
 import { handleWorkerSpawn } from './agents.js';
@@ -333,7 +334,28 @@ export function detectWorkMode(
  * notifying the team-lead.
  */
 async function autoOrchestrateCommand(slug: string): Promise<void> {
-  const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
+  let wishPath: string;
+  let actualSlug = slug;
+
+  // Check for namespace/slug format — resolve and auto-create team
+  const parsed = parseWishRef(slug);
+  if (parsed.namespace) {
+    const resolved = await resolveWish(slug);
+    wishPath = resolved.wishPath;
+    actualSlug = resolved.slug;
+
+    // Auto-create team using the resolved repo and session
+    const { handleTeamCreate } = await import('./team.js');
+    await handleTeamCreate(actualSlug, {
+      repo: resolved.repo,
+      branch: 'dev',
+      wish: actualSlug,
+      tmuxSession: resolved.session,
+    });
+    return; // handleTeamCreate spawns the leader, which runs the full lifecycle
+  }
+
+  wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
   if (!existsSync(wishPath)) {
     console.error(`❌ Wish not found: ${wishPath}`);
