@@ -44,6 +44,18 @@ export function registerAgentSend(parent: Command): void {
 // Hierarchy ACL
 // ============================================================================
 
+/** Check if an agent name matches the team's leader (by alias or actual name). */
+async function isTeamLeader(agentName: string, teamName: string): Promise<boolean> {
+  if (agentName === 'team-lead') return true;
+  try {
+    const teamMgr = await import('../../lib/team-manager.js');
+    const config = await teamMgr.getTeam(teamName);
+    return agentName === config?.leader;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Check hierarchy: sender can reach recipient if:
  * 1. sender is 'cli' (bypass)
@@ -74,11 +86,9 @@ async function checkHierarchy(from: string, to: string): Promise<{ allowed: bool
     // Siblings: same manager
     if (sender.reportsTo && sender.reportsTo === recipient.reportsTo) return { allowed: true };
 
-    // Leader can reach anyone in their team (matches 'team-lead' alias or actual leader name)
-    if (sender.team && sender.team === recipient.team) {
-      const teamMgr = await import('../../lib/team-manager.js');
-      const teamConfig = await teamMgr.getTeam(sender.team).catch(() => null);
-      if (from === 'team-lead' || from === teamConfig?.leader) return { allowed: true };
+    // Leader can reach anyone in their team
+    if (sender.team && sender.team === recipient.team && (await isTeamLeader(from, sender.team))) {
+      return { allowed: true };
     }
 
     const manager = sender.reportsTo ?? 'your manager';
