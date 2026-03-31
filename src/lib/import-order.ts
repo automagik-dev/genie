@@ -21,23 +21,13 @@ const IMPORT_LEVELS: string[][] = [
     'task_types',
     'notification_preferences',
     // Optional (KhalOS)
-    'app_store',
     'os_config',
     'golden_images',
     'warm_pool',
     'instances',
   ],
   // Level 1: Depend on Level 0
-  [
-    'triggers',
-    'boards',
-    'board_templates',
-    'agents',
-    'conversations',
-    // Optional (KhalOS)
-    'installed_apps',
-    'app_versions',
-  ],
+  ['triggers', 'boards', 'board_templates', 'agents', 'conversations'],
   // Level 2: Depend on Level 1
   ['tasks', 'runs', 'messages', 'conversation_members', 'mailbox', 'team_chat'],
   // Level 3: Depend on Level 2
