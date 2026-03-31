@@ -112,8 +112,10 @@ function discoverAgents(workspaceRoot: string): AgentInfo[] {
   return agents;
 }
 
-/** Discover sub-agents inside {parentDir}/.genie/agents/. */
-function discoverSubAgents(parentDir: string, _parentName: string, agents: AgentInfo[]): void {
+/** Discover sub-agents inside {parentDir}/.genie/agents/.
+ *  Names are scoped as {parentName}/{subName} to avoid collisions
+ *  (e.g. genie/qa vs totvs/qa). */
+function discoverSubAgents(parentDir: string, parentName: string, agents: AgentInfo[]): void {
   const subAgentsDir = join(parentDir, '.genie', 'agents');
   if (!existsSync(subAgentsDir)) return;
 
@@ -125,7 +127,7 @@ function discoverSubAgents(parentDir: string, _parentName: string, agents: Agent
       if (!existsSync(join(subDir, 'AGENTS.md'))) continue;
 
       agents.push({
-        name: entry.name,
+        name: `${parentName}/${entry.name}`,
         dir: subDir,
         repoUrl: getGitRemoteUrl(parentDir),
         productRepo: getRepoPathForAgent(parentDir),
