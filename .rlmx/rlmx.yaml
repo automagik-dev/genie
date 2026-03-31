@@ -1,0 +1,99 @@
+# rlmx.yaml — Config for rlmx (RLM algorithm CLI)
+# Docs: https://github.com/automagik-dev/rlmx
+#
+# Prompts live in separate .md files in this directory:
+#   SYSTEM.md   — system prompt (LLM behavior & REPL instructions)
+#   CRITERIA.md — output criteria (appended to system prompt for FINAL answers)
+#   TOOLS.md    — custom Python tools (injected into REPL namespace)
+
+# ─── Model ────────────────────────────────────────────────
+# LLM provider and model selection.
+# provider: any pi/ai provider (anthropic, openai, google, etc.)
+# model: model ID for the main RLM loop
+# sub-call-model: model for llm_query() sub-calls (cheaper/faster)
+model:
+  provider: google
+  model: gemini-3.1-flash-lite-preview
+  sub-call-model: gemini-3.1-flash-lite-preview
+
+# ─── Context ──────────────────────────────────────────────
+# Configure which files are loaded when --context points to a directory.
+# extensions: file extensions to include (default: [.md])
+# exclude: directories/patterns to skip
+context:
+  extensions:
+    - .md
+  exclude:
+    - node_modules
+    - .git
+    - dist
+
+# ─── Budget ───────────────────────────────────────────────
+# Cost and resource limits. null = unlimited.
+# max-cost: maximum USD spend per run
+# max-tokens: maximum total tokens (input + output) per run
+# max-depth: maximum recursive rlm_query depth
+budget:
+  max-cost: null
+  max-tokens: null
+  max-depth: null
+
+# ─── Tools Level ──────────────────────────────────────────
+# Controls which built-in functions are available in the REPL.
+# core     — 6 paper functions only (default, paper-faithful)
+# standard — core + batteries.py convenience functions + gemini batteries (if google)
+# full     — standard + auto-detected package info in system prompt
+tools-level: core
+
+# ─── Storage ─────────────────────────────────────────────
+# pgserve-backed large context handling.
+# enabled: auto (activate when context exceeds model limit) | always | never
+# mode: persistent (disk) | memory (in-memory only)
+# data-dir: where pgserve stores data
+# port: 0 = auto-assign
+# chunk-size: null = auto-calculate from model context window
+# chunk-utilization: fraction of context window to use per chunk (0-1)
+# chars-per-token: character-to-token ratio for estimation
+storage:
+  enabled: auto
+  mode: persistent
+  data-dir: ~/.rlmx/data
+  port: 0
+  chunk-size: null
+  chunk-utilization: 0.6
+  chars-per-token: 4
+
+# ─── Cache (CAG Mode) ───────────────────────────────────
+# Enable cache-augmented generation. Full context is baked into the
+# system prompt and cached at the provider for subsequent queries.
+# cache:
+#   enabled: false             # true to enable CAG mode (or use --cache flag)
+#   retention: long            # short|long — maps to pi/ai cacheRetention
+#   ttl: 3600                  # seconds — provider-specific TTL
+#   expire-time: ""            # ISO 8601 — for Google explicit caching
+#   session-prefix: ""         # prepended to content hash for sessionId
+
+# ─── Gemini 3 Native ────────────────────────────────────
+# Gemini-specific features. Silently ignored for non-Google providers.
+# All features are opt-in and additive — no breaking changes.
+# gemini:
+#   thinking-level: null         # minimal|low|medium|high — controls thinking depth
+#   google-search: false         # Enable Google Search grounding (web_search() battery)
+#   url-context: false           # Enable URL Context (fetch_url() battery)
+#   code-execution: false        # Enable server-side Python execution
+#   media-resolution:            # Control media token costs per type
+#     images: auto               # low|medium|high|auto
+#     pdfs: auto                 # low|medium|high|auto
+#     video: auto                # low|medium|high|auto
+#   computer-use: false          # Planned for v0.5
+#   maps-grounding: false        # Planned for v0.5
+#   file-search: false           # Planned for v0.5
+
+# ─── Output ─────────────────────────────────────────────
+# Structured output configuration.
+# output:
+#   schema:                      # JSON Schema for structured output (Gemini only)
+#     type: object               # When set, model output is guaranteed to match schema
+#     properties:                # Falls back to FINAL() text parsing on non-Google
+#       answer:
+#         type: string
