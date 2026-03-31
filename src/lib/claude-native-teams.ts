@@ -448,7 +448,7 @@ export async function listTeamsWithUnreadInbox(): Promise<
     // Get workingDir from config.json → leader member → cwd
     let workingDir: string | null = null;
     if (config) {
-      const leadMember = config.members.find((m) => m.agentId === config!.leadAgentId || m.name === leaderInboxName);
+      const leadMember = config.members.find((m) => m.agentId === config?.leadAgentId || m.name === leaderInboxName);
       if (leadMember?.cwd) {
         workingDir = leadMember.cwd;
       }
