@@ -33,13 +33,27 @@ skills/                         Skill prompt files (brainstorm, wish, work, revi
 
 ## CLI Namespaces
 
+Top-level aliases (`genie spawn`, `genie kill`, etc.) are shortcuts for the `genie agent` namespace. Both forms work identically.
+
+### Agent Commands
 ```bash
-genie agent spawn <name>              # Spawn agent
-genie agent list                      # List agents
+# Top-level aliases (shortcuts)
+genie spawn <name>                    # Alias for: genie agent spawn <name>
+genie kill <name>                     # Alias for: genie agent kill <name>
+genie stop <name>                     # Alias for: genie agent stop <name>
+genie resume [name]                   # Alias for: genie agent resume [name]
+genie ls                              # Alias for: genie agent list
+genie log [agent]                     # Alias for: genie agent log [agent]
+genie read <name>                     # Read terminal output from agent pane
+genie history <name>                  # Show compressed session history
+genie answer <name> <choice>          # Alias for: genie agent answer <name> <choice>
+
+# Full namespace commands
+genie agent spawn <name>              # Spawn agent (resolves from directory or built-ins)
+genie agent list                      # List agents with runtime status
 genie agent log <name>                # Unified log (default)
-genie agent log <name> --raw          # Pane capture (was: genie read)
-genie agent log <name> --transcript   # Compressed transcript (was: genie history)
-genie agent log --search "query"      # Session search (was: genie sessions search)
+genie agent log <name> --raw          # Pane capture
+genie agent log <name> --transcript   # Compressed transcript
 genie agent send '<msg>' --to <name>  # Direct message (hierarchy-enforced)
 genie agent send '<msg>' --broadcast  # Team broadcast
 genie agent inbox                     # View inbox
@@ -47,14 +61,26 @@ genie agent brief --team <name>       # Cold-start summary
 genie agent answer <name> <choice>    # Answer prompt
 genie agent show <name>               # Agent + executor detail
 genie agent stop/kill/resume <name>   # Lifecycle management
+genie agent register <name>           # Register agent locally + Omni
+genie agent directory [name]          # List/show directory entries
+```
 
+### Task Commands
+```bash
 genie task create --title 'x'         # Create task
 genie task list                       # List tasks
 genie task status <slug>              # Wish group status
 genie task done <ref>                 # Mark group done
 genie task board/project/releases/type  # Planning hierarchy
+```
 
+### Team Commands
+```bash
 genie team create/hire/fire/list/disband  # Team lifecycle
+```
+
+### Other
+```bash
 genie exec list/show/terminate           # Executor debug
 genie run <spec>                         # Wish/spec runner (top-level)
 ```
