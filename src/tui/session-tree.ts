@@ -83,6 +83,27 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
   return nodes;
 }
 
+export function resolvePreferredWindowIndex(session: TmuxSession, agentName?: string): number | undefined {
+  const windows = [...session.windows].sort((a, b) => a.index - b.index);
+  const hasClaudePane = (window: TmuxWindow) =>
+    window.panes.some((pane) => !pane.isDead && (pane.command === 'claude' || pane.title.includes('claude')));
+
+  const preferred =
+    windows.find((window) => window.active && hasClaudePane(window)) ??
+    (agentName ? windows.find((window) => window.name === agentName) : undefined) ??
+    windows.find((window) => hasClaudePane(window)) ??
+    windows.find((window) => window.active && window.index !== 0) ??
+    windows.find((window) => window.index !== 0);
+
+  return preferred?.index;
+}
+
+function hasLiveClaudeWindow(session: TmuxSession): boolean {
+  return session.windows.some((window) =>
+    window.panes.some((pane) => !pane.isDead && (pane.command === 'claude' || pane.title.includes('claude'))),
+  );
+}
+
 function countClaudePanes(session: TmuxSession): number {
   return session.windows.reduce(
     (sum, w) => sum + w.panes.filter((p) => p.command === 'claude' || p.title.includes('claude')).length,
@@ -97,6 +118,7 @@ function buildAgentNode(
   executorByPaneId: Map<string, TuiExecutor>,
 ): TreeNode {
   const wsState = deriveWsAgentState(session, agentExecutors);
+  const attachWindowIndex = session ? resolvePreferredWindowIndex(session, name) : undefined;
 
   const children: TreeNode[] = [];
   if (session) {
@@ -113,7 +135,7 @@ function buildAgentNode(
     depth: 0,
     expanded: children.length > 0,
     children,
-    data: { sessionName: name, windowCount: session ? session.windows.length : 0 },
+    data: { sessionName: name, windowCount: session ? session.windows.length : 0, attachWindowIndex },
     activePanes: session ? countClaudePanes(session) : 0,
     agentState: agentExecutors.length > 0 ? deriveExecutorState(agentExecutors) : undefined,
     wsAgentState: wsState,
@@ -123,6 +145,10 @@ function buildAgentNode(
 /** Derive workspace-level agent state from tmux session + executors */
 function deriveWsAgentState(session: TmuxSession | undefined, agentExecutors: TuiExecutor[]): AgentState {
   if (!session) return 'stopped';
+
+  // A live Claude pane wins over stale executor rows, but fallback shell windows
+  // alone should not mask spawning/error states.
+  if (hasLiveClaudeWindow(session)) return 'running';
 
   // Check executor states
   for (const exec of agentExecutors) {
@@ -241,6 +267,15 @@ function derivePaneState(pane: TmuxPane, executor: TuiExecutor | undefined): Tre
 export function getSessionTarget(node: TreeNode): { sessionName: string; windowIndex?: number } | null {
   if (node.type === 'agent') {
     const sessionName = node.data.sessionName as string;
+    const attachWindowIndex = node.data.attachWindowIndex;
+    if (typeof attachWindowIndex === 'number') {
+      return { sessionName, windowIndex: attachWindowIndex };
+    }
+    const firstWindowChild = node.children.find((child) => child.type === 'window');
+    if (firstWindowChild) {
+      const parts = firstWindowChild.id.split(':');
+      return { sessionName, windowIndex: Number(parts[2]) };
+    }
     return { sessionName };
   }
   if (node.type === 'session') {
