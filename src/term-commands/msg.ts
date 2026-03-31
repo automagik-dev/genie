@@ -460,19 +460,16 @@ async function handleSend(body: string, options: { to: string; from?: string; te
   const from = options.from ?? (await detectSenderIdentity(options.team));
 
   // Resolve 'team-lead' alias to actual leader name
-  const resolvedTo = await resolveLeaderAlias(options.to, options.team);
-  if (resolvedTo !== options.to) {
-    options = { ...options, to: resolvedTo };
-  }
+  const to = await resolveLeaderAlias(options.to, options.team);
 
-  const scopeError = await checkSendScope(repoPath, from, options.to);
+  const scopeError = await checkSendScope(repoPath, from, to);
   if (scopeError) {
     console.error(`Error: ${scopeError}`);
     process.exit(1);
   }
 
   const senderActor = localActor(from);
-  const recipientActor = localActor(options.to);
+  const recipientActor = localActor(to);
 
   const conv = await ts.findOrCreateConversation({
     type: 'dm',
@@ -483,19 +480,19 @@ async function handleSend(body: string, options: { to: string; from?: string; te
   await ts.addMember(conv.id, senderActor);
   await ts.addMember(conv.id, recipientActor);
 
-  const mailboxMessage = await mailbox.send(repoPath, from, options.to, body);
+  const mailboxMessage = await mailbox.send(repoPath, from, to, body);
   const msg = await ts.sendMessage(conv.id, senderActor, body);
 
   // Emit runtime event for real-time observability (fire-and-forget)
   try {
     const { publishSubjectEvent } = await import('../lib/runtime-events.js');
-    await publishSubjectEvent(repoPath, `genie.msg.${options.to}`, {
+    await publishSubjectEvent(repoPath, `genie.msg.${to}`, {
       kind: 'message',
       agent: from,
       direction: 'out',
-      peer: options.to,
+      peer: to,
       text: body,
-      data: { messageId: msg.id, conversationId: conv.id, from, to: options.to },
+      data: { messageId: msg.id, conversationId: conv.id, from, to },
       source: 'mailbox',
     });
   } catch {
@@ -503,16 +500,16 @@ async function handleSend(body: string, options: { to: string; from?: string; te
   }
 
   // Best-effort native inbox bridge
-  const bridged = await bridgeToNativeInbox(from, options.to, body, options.team).catch((err) => {
+  const bridged = await bridgeToNativeInbox(from, to, body, options.team).catch((err) => {
     const reason = err instanceof Error ? err.message : String(err);
     console.warn(`[genie send] Native inbox bridge failed: ${reason}`);
     return false;
   });
   if (bridged) {
-    await mailbox.markDelivered(repoPath, options.to, mailboxMessage.id).catch(() => {});
+    await mailbox.markDelivered(repoPath, to, mailboxMessage.id).catch(() => {});
   }
 
-  console.log(`Message sent to "${options.to}".`);
+  console.log(`Message sent to "${to}".`);
   console.log(`  ID: ${msg.id}`);
   console.log(`  Conversation: ${conv.id}`);
 }
