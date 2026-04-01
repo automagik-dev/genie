@@ -33,7 +33,7 @@ import { waitForAgentReady } from '../lib/spawn-command.js';
 import * as teamManager from '../lib/team-manager.js';
 import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
 import * as tmux from '../lib/tmux.js';
-import { isPaneAlive } from '../lib/tmux.js';
+import { executeTmux, isPaneAlive } from '../lib/tmux.js';
 
 // ============================================================================
 // Helper Functions
@@ -967,7 +967,16 @@ async function rejectDuplicateRole(team: string, role: string): Promise<void> {
   for (const w of existing) {
     if (w.role === role && w.team === team) {
       const alive = await isPaneAlive(w.paneId);
-      if (alive) {
+      // tmux recycles pane IDs — a pane may be "alive" but belong to a
+      // completely different session now.  Verify the pane is still in the
+      // expected session before blocking.
+      if (alive && w.session) {
+        const paneSession = await getPaneSession(w.paneId);
+        if (paneSession !== w.session) {
+          // Pane was recycled — treat as dead
+          await registry.unregister(w.id);
+          continue;
+        }
         console.error(
           `Error: Worker with role "${role}" already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
             `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
@@ -977,6 +986,15 @@ async function rejectDuplicateRole(team: string, role: string): Promise<void> {
       // Dead worker with same role — clean up stale registry entry so spawn can proceed
       await registry.unregister(w.id);
     }
+  }
+}
+
+/** Get the session name a pane belongs to, or null if unreachable. */
+async function getPaneSession(paneId: string): Promise<string | null> {
+  try {
+    return (await executeTmux(`display-message -t '${paneId}' -p '#{session_name}'`)).trim() || null;
+  } catch {
+    return null;
   }
 }
 

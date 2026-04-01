@@ -98,7 +98,7 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
       setSelectedIndex(idx);
       const node = flatNodes[idx].node;
       if (node.type === 'agent' && node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
-        spawnAgent(node.label, onTmuxSessionSelect);
+        spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
       }
       setRequestedInitialAgent(undefined);
     }
@@ -164,7 +164,7 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
     if (node.type === 'agent') {
       // No session → spawn the agent (creates session + window 0 with Claude)
       if (node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
-        spawnAgent(node.label, onTmuxSessionSelect);
+        spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
       } else if (node.wsAgentState === 'running') {
         // Attach right pane to the agent's session when already running
         const target = getSessionTarget(node);
@@ -191,7 +191,7 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
       } catch {
         // best-effort
       }
-      spawnAgent(node.label, onTmuxSessionSelect);
+      spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
     })();
   }, [flatNodes, selectedIndex, onTmuxSessionSelect]);
 
@@ -276,6 +276,11 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
   );
 }
 
+/** Extract the full agent name from a TreeNode (node.id = "agent:<full-name>"). */
+function agentNameFromNode(node: TreeNode): string {
+  return node.id.replace(/^agent:/, '');
+}
+
 /** Spawn a stopped agent by launching `genie spawn <name>` from its workspace directory */
 function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, windowIndex?: number) => void): void {
   try {
@@ -285,18 +290,22 @@ function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, wi
     const bunPath = process.execPath || 'bun';
     const genieBin = process.argv[1];
     const wsRoot = process.env.GENIE_TUI_WORKSPACE;
+    // tmux session names use the agent name (/ replaced with -)
+    const sessionName = name.replace(/\//g, '-');
     let cwd: string | undefined;
     if (wsRoot) {
-      const agentDir = resolve(join(wsRoot, 'agents', name));
+      // For scoped agents like "genie/qa", resolve to the parent agent dir
+      const parentName = name.includes('/') ? name.slice(0, name.indexOf('/')) : name;
+      const agentDir = resolve(join(wsRoot, 'agents', parentName));
       if (existsSync(agentDir)) cwd = agentDir;
     }
     const child =
       genieBin && genieBin !== 'genie'
-        ? spawn(bunPath, [genieBin, 'spawn', name, '--session', name], { detached: true, stdio: 'ignore', cwd })
-        : spawn('genie', ['spawn', name, '--session', name], { detached: true, stdio: 'ignore', cwd });
+        ? spawn(bunPath, [genieBin, 'spawn', name, '--session', sessionName], { detached: true, stdio: 'ignore', cwd })
+        : spawn('genie', ['spawn', name, '--session', sessionName], { detached: true, stdio: 'ignore', cwd });
     child.unref();
     if (onTmuxSessionSelect) {
-      attachSpawnedAgentWhenReady(name, onTmuxSessionSelect);
+      attachSpawnedAgentWhenReady(sessionName, onTmuxSessionSelect);
     }
   } catch {
     // best-effort spawn
