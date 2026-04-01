@@ -396,19 +396,6 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
   return true;
 }
 
-async function resetWishGroups(wishSlug: string | undefined, repo: string): Promise<void> {
-  if (!wishSlug) return;
-  try {
-    const wishState = await import('./wish-state.js');
-    const resetCount = await wishState.resetInProgressGroups(wishSlug, repo);
-    if (resetCount > 0) {
-      console.log(`   Reset ${resetCount} in-progress group(s) for wish "${wishSlug}"`);
-    }
-  } catch {
-    // Best-effort — DB may be unavailable
-  }
-}
-
 async function removeWorktree(worktreePath: string | undefined): Promise<void> {
   if (!worktreePath || !existsSync(worktreePath)) return;
   try {
@@ -524,18 +511,49 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     }
   }
 
-  await resetWishGroups(config.wishSlug, config.repo);
   await removeWorktree(config.worktreePath);
-
   await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
 
-  // Archive instead of delete — preserves all historical data
+  // Atomically reset wish groups + archive team in a single transaction
+  // to prevent orphaned wish state if either operation fails
   const sql = await getConnection();
-  const result = await sql`
-    UPDATE teams SET status = 'archived', archived_at = now(), updated_at = now()
-    WHERE name = ${teamName}
-  `;
-  if (result.count === 0) return false;
+  let disbanded = false;
+  await sql.begin(async (tx: typeof sql) => {
+    // Reset wish groups inline within the transaction
+    if (config.wishSlug) {
+      try {
+        const wishFile = `.genie/wishes/${config.wishSlug}/WISH.md`;
+        const parent = await tx`
+          SELECT id FROM tasks
+          WHERE wish_file = ${wishFile} AND repo_path = ${config.repo} AND parent_id IS NULL
+          LIMIT 1
+        `;
+        if (parent.length > 0) {
+          const parentId = parent[0].id as string;
+          const inProgress = await tx`
+            SELECT id FROM tasks WHERE parent_id = ${parentId} AND status = 'in_progress'
+          `;
+          if (inProgress.length > 0) {
+            const ids = inProgress.map((r: Record<string, unknown>) => r.id as string);
+            await tx`UPDATE tasks SET status = 'ready', started_at = NULL, updated_at = now() WHERE id = ANY(${ids})`;
+            await tx`DELETE FROM task_actors WHERE task_id = ANY(${ids}) AND role = 'assignee'`;
+            console.log(`   Reset ${ids.length} in-progress group(s) for wish "${config.wishSlug}"`);
+          }
+        }
+      } catch {
+        // Best-effort within transaction — don't abort archive on wish state issues
+      }
+    }
+
+    // Archive instead of delete — preserves all historical data
+    const result = await tx`
+      UPDATE teams SET status = 'archived', archived_at = now(), updated_at = now()
+      WHERE name = ${teamName}
+    `;
+    disbanded = result.count > 0;
+  });
+
+  if (!disbanded) return false;
 
   recordAuditEvent('team', teamName, 'disbanded', getActor(), { repo: config.repo }).catch(() => {});
 
