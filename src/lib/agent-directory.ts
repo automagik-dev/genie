@@ -45,14 +45,6 @@ interface ScopeOptions {
   global?: boolean;
 }
 
-interface StoreRow {
-  name: string;
-  item_type: string;
-  install_path: string | null;
-  manifest: Record<string, unknown> | null;
-  installed_at: string;
-}
-
 /** Resolved agent — either a user directory entry or a built-in. */
 interface ResolvedAgent {
   /** The agent entry (user or synthetic built-in). */
@@ -148,20 +140,7 @@ export async function rm(name: string, _options?: ScopeOptions): Promise<boolean
  * Resolution order: PG agents (by role) → built-in roles → built-in council.
  */
 export async function resolve(name: string): Promise<ResolvedAgent | null> {
-  // 1. Check app_store — source of truth for synced/scaffolded agents
-  try {
-    const item = await getItemFromStore(name);
-    if (item && item.item_type === 'agent') {
-      const manifest = (item.manifest ?? {}) as Record<string, unknown>;
-      if (!manifest.archived) {
-        return { entry: storeRowToEntry(item), builtin: false };
-      }
-    }
-  } catch {
-    /* app_store unavailable — fall through */
-  }
-
-  // 2. Check PG agents table — look for agents with matching role
+  // 1. Check PG agents table — look for agents with matching role
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
@@ -313,31 +292,6 @@ function builtinToEntry(agent: BuiltinAgent): DirectoryEntry {
     model: agent.model,
     roles: [],
     registeredAt: '(built-in)',
-  };
-}
-
-async function getItemFromStore(name: string): Promise<StoreRow | null> {
-  const { getConnection } = await import('./db.js');
-  const sql = await getConnection();
-  const rows = await sql`
-    SELECT name, item_type, install_path, manifest, installed_at
-    FROM app_store
-    WHERE name = ${name}
-    LIMIT 1
-  `;
-  return (rows[0] as StoreRow | undefined) ?? null;
-}
-
-function storeRowToEntry(item: StoreRow): DirectoryEntry {
-  const manifest = (item.manifest ?? {}) as Record<string, unknown>;
-  return {
-    name: item.name,
-    dir: (item.install_path as string) ?? '',
-    repo: (manifest.repo as string) ?? undefined,
-    promptMode: ((manifest.promptMode as string) ?? 'append') as PromptMode,
-    model: manifest.model as string | undefined,
-    roles: Array.isArray(manifest.roles) ? (manifest.roles as string[]) : [],
-    registeredAt: item.installed_at,
   };
 }
 
