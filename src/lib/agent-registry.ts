@@ -260,7 +260,7 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
         reason: 'stale_spawn',
       }).catch(() => {});
     }
-    return rows.map((r) => r.id);
+    return rows.map((r: { id: string }) => r.id);
   } catch {
     return []; // Best-effort — don't block startup if DB is unavailable
   }
