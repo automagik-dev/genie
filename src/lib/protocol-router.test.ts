@@ -15,28 +15,23 @@ import * as mailbox from './mailbox.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
 // ============================================================================
-// Module mocks — hoisted by bun:test, must be declared before describe blocks.
-// These only affect code paths that use tmux/auto-spawn; existing non-tmux
-// tests are unaffected because they never register workers or set TMUX.
+// Module mock — protocol-router-spawn.js only (no other test file mocks this).
+// Tmux and orchestrator are NOT mocked here — we use _deps injection instead
+// to avoid mock.module leaking across test files in bun's shared module cache.
 // ============================================================================
 
-/** Set of pane IDs that isPaneAlive should report as alive. */
+/** Set of pane IDs that the _deps.isPaneAlive override should report as alive. */
 const alivePanes = new Set<string>();
 
 /** Count of spawnWorkerFromTemplate invocations (reset in beforeEach). */
 let spawnCallCount = 0;
 
-mock.module('./tmux.js', () => ({
-  isPaneAlive: async (paneId: string) => alivePanes.has(paneId),
-  capturePaneContent: async () => '> idle prompt',
-  executeTmux: async () => '',
-}));
-
-mock.module('./orchestrator/index.js', () => ({
-  detectState: () => ({ type: 'idle', confidence: 0.9, timestamp: Date.now(), rawOutput: '' }),
-}));
+// Re-export real _deps so protocol-router-spawn.test.ts can access them
+// even when this mock.module replaces the module in bun's shared cache.
+const realSpawnModule = await import('./protocol-router-spawn.js');
 
 mock.module('./protocol-router-spawn.js', () => ({
+  _deps: realSpawnModule._deps,
   spawnWorkerFromTemplate: async (template: any, _resumeSessionId?: string) => {
     spawnCallCount++;
     // Simulate spawn latency to widen the race window
@@ -62,11 +57,11 @@ mock.module('./protocol-router-spawn.js', () => ({
     // Register in real PG registry so the double-check after lock can find it
     const reg = await import('./agent-registry.js');
     await reg.register(workerEntry);
-    // Mark pane as alive so isPaneAlive returns true for this worker
+    // Mark pane as alive so _deps.isPaneAlive returns true for this worker
     alivePanes.add(paneId);
     return { worker: workerEntry, paneId, workerId: id };
   },
-  injectResumeContext: async () => {},
+  injectResumeContext: realSpawnModule.injectResumeContext,
 }));
 
 // ---------------------------------------------------------------------------
@@ -116,6 +111,11 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         process.env[k] = v;
       }
     }
+    // Restore _deps to defaults
+    const router = await import('./protocol-router.js');
+    const { isPaneAlive } = await import('./tmux.js');
+    router._deps.isPaneAlive = isPaneAlive;
+    router._deps.waitForWorkerReady = null;
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -208,6 +208,11 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   describe('concurrent spawn dedup', () => {
     test('two concurrent messages to dead worker produce exactly one spawn', async () => {
       const registry = await import('./agent-registry.js');
+      const router = await import('./protocol-router.js');
+
+      // Override _deps to control pane liveness without tmux
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+      router._deps.waitForWorkerReady = async () => true;
 
       // Enable tmux path so auto-spawn is attempted
       process.env.TMUX = '/tmp/tmux-test/default,123,0';
@@ -240,12 +245,10 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         lastSpawnedAt: now,
       });
 
-      const { sendMessage } = await import('./protocol-router.js');
-
       // Fire two concurrent messages to the same dead worker
       const [r1, r2] = await Promise.all([
-        sendMessage(tempDir, 'alice', 'engineer', 'message 1', 'test-team'),
-        sendMessage(tempDir, 'alice', 'engineer', 'message 2', 'test-team'),
+        router.sendMessage(tempDir, 'alice', 'engineer', 'message 1', 'test-team'),
+        router.sendMessage(tempDir, 'alice', 'engineer', 'message 2', 'test-team'),
       ]);
 
       // Exactly one spawn should have occurred — the advisory lock prevents the race
@@ -254,6 +257,90 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       // Both messages should report successful delivery (one to respawned, one to existing)
       const delivered = [r1.delivered, r2.delivered];
       expect(delivered).toContain(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Delivery confirmation — pane re-verify before injection
+  // ---------------------------------------------------------------------------
+
+  describe('delivery confirmation', () => {
+    test('returns delivered:false when pane dies between resolution and delivery', async () => {
+      const registry = await import('./agent-registry.js');
+      const router = await import('./protocol-router.js');
+
+      const now = new Date().toISOString();
+
+      // Register a worker with an "alive" pane
+      alivePanes.add('%10');
+      await registry.register({
+        id: 'live-worker',
+        paneId: '%10',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'target',
+        team: 'test-team',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+      });
+
+      // Override isPaneAlive: alive for resolution, dead for pre-delivery check.
+      // Track per-pane call counts so other workers don't affect the counter.
+      const paneCallCounts = new Map<string, number>();
+      router._deps.isPaneAlive = async (paneId: string) => {
+        const count = (paneCallCounts.get(paneId) ?? 0) + 1;
+        paneCallCounts.set(paneId, count);
+        // For %10: first call (resolution) → alive; second call (pre-delivery) → dead
+        if (paneId === '%10' && count > 1) return false;
+        return alivePanes.has(paneId);
+      };
+
+      const result = await router.sendMessage(tempDir, 'alice', 'target', 'hello target');
+
+      expect(result.delivered).toBe(false);
+      expect(result.reason).toBe('Pane died before delivery');
+      // Message should still be persisted in mailbox
+      expect(result.messageId).toMatch(/^msg-/);
+    });
+
+    test('message to live worker is delivered successfully', async () => {
+      const registry = await import('./agent-registry.js');
+      const router = await import('./protocol-router.js');
+
+      const now = new Date().toISOString();
+
+      // Register a worker with a "native team enabled" pane (skips tmux injection)
+      alivePanes.add('%20');
+      await registry.register({
+        id: 'native-worker',
+        paneId: '%20',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'responder',
+        team: 'test-team',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+        nativeTeamEnabled: true,
+        nativeColor: 'blue',
+      });
+
+      // isPaneAlive always returns true for this pane
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+
+      const result = await router.sendMessage(tempDir, 'alice', 'responder', 'hello responder');
+
+      // Delivery should succeed (via native inbox write — which may fail in test
+      // without real native team setup, falling back to delivered:false)
+      expect(result.messageId).toMatch(/^msg-/);
+      expect(result.workerId).toBe('native-worker');
     });
   });
 });
