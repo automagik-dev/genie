@@ -63,7 +63,6 @@ ARCH=""
 INSTALL_MODE="install"
 LOCAL_PATH=""  # If set, use local source instead of npm
 AUTO_LOCAL_DETECTED=false  # True if local mode was auto-detected
-DEV_MODE=false  # If true, link plugins instead of copying (for development)
 PKG_DIR=""  # Set by locate_package_dir after install
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,30 +164,6 @@ check_and_repair_symlink() {
     fi
 
     return 0
-}
-
-readonly OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
-
-# Remove genie paths from OpenClaw config (for uninstall)
-remove_openclaw_plugin_paths() {
-    if [[ ! -f "$OPENCLAW_CONFIG" ]] || ! check_command jq; then
-        return 0
-    fi
-
-    local tmp_config
-    tmp_config=$(mktemp)
-
-    # Remove paths containing plugins/genie
-    if jq '
-        .plugins.load.paths = [.plugins.load.paths[]? | select(contains("plugins/genie") | not)] |
-        del(.plugins.entries["genie"])
-    ' "$OPENCLAW_CONFIG" > "$tmp_config" 2>/dev/null; then
-        mv "$tmp_config" "$OPENCLAW_CONFIG"
-        return 0
-    else
-        rm -f "$tmp_config"
-        return 1
-    fi
 }
 
 # Verify symlink was created successfully
@@ -593,45 +568,6 @@ offer_claude_plugin() {
     fi
 }
 
-offer_openclaw_plugin() {
-    if ! check_command openclaw; then
-        info "OpenClaw not found — skipping plugin install"
-        return 0
-    fi
-
-    if openclaw plugins list 2>/dev/null | grep -q "genie"; then
-        success "Genie OpenClaw plugin already discovered"
-        return 0
-    fi
-
-    if [[ -z "$PKG_DIR" ]]; then
-        warn "Could not locate installed Genie package directory"
-        return 1
-    fi
-
-    if [[ ! -f "$PKG_DIR/openclaw.plugin.json" ]]; then
-        warn "OpenClaw plugin manifest not found: $PKG_DIR/openclaw.plugin.json"
-        return 1
-    fi
-
-    info "Installing Genie plugin for OpenClaw..."
-    if $DEV_MODE; then
-        log "Linking OpenClaw plugin (dev mode)..."
-        if openclaw plugins install -l "$PKG_DIR"; then
-            success "OpenClaw plugin linked"
-        else
-            warn "OpenClaw plugin link failed"
-        fi
-    else
-        log "Installing OpenClaw plugin (copy mode)..."
-        if openclaw plugins install "$PKG_DIR"; then
-            success "OpenClaw plugin installed"
-        else
-            warn "OpenClaw plugin install failed"
-        fi
-    fi
-}
-
 offer_codex_skills() {
     local skills_source="$PKG_DIR/skills"
     if [[ ! -d "$skills_source" ]]; then
@@ -856,9 +792,6 @@ run_install() {
     offer_claude_plugin
     echo
 
-    offer_openclaw_plugin
-    echo
-
     offer_codex_skills
 
     # Agent mode: structured output for piped installs
@@ -917,29 +850,7 @@ run_uninstall() {
         fi
     fi
 
-    # 3. OpenClaw plugin (default: yes)
-    if check_command openclaw && openclaw plugins list 2>/dev/null | grep -q "genie"; then
-        if confirm "Remove OpenClaw plugin?"; then
-            local ext_dir="$HOME/.openclaw/extensions/genie"
-
-            # Best effort: disable in config first (if present)
-            openclaw plugins disable genie 2>/dev/null || true
-
-            if [[ -e "$ext_dir" || -L "$ext_dir" ]]; then
-                rm -rf "$ext_dir"
-            fi
-
-            # Also remove paths from OpenClaw config
-            remove_openclaw_plugin_paths
-
-            success "OpenClaw plugin removed"
-            removed_something=true
-        else
-            info "Keeping OpenClaw plugin"
-        fi
-    fi
-
-    # 4. Codex/OpenCode skills (default: yes)
+    # 3. Codex/OpenCode skills (default: yes)
     local codex_link="$CODEX_SKILLS_DIR/genie"
     if [[ -e "$codex_link" || -L "$codex_link" ]]; then
         if confirm "Remove Codex/OpenCode skills?"; then
@@ -951,7 +862,7 @@ run_uninstall() {
         fi
     fi
 
-    # 5. Config directory (default: no - preserve settings)
+    # 4. Config directory (default: no - preserve settings)
     if [[ -d "$GENIE_HOME" ]]; then
         if confirm_no "Remove ~/.genie config directory?"; then
             rm -rf "$GENIE_HOME"
@@ -1097,7 +1008,6 @@ Commands:
   (default)       Interactive install from npm
   uninstall       Remove Genie CLI and components
   --local PATH    Install from local source directory (for development)
-  --dev, -d       Dev mode: link OpenClaw plugin instead of copying
   --help          Show this help message
 EOF
 }
@@ -1115,9 +1025,6 @@ parse_args() {
                     exit 2
                 fi
                 LOCAL_PATH="$(cd "$1" && pwd)"  # Resolve to absolute path
-                ;;
-            --dev|-d)
-                DEV_MODE=true
                 ;;
             --help|-h)
                 print_usage
