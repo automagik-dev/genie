@@ -549,7 +549,9 @@ export async function isPaneAlive(paneId: string): Promise<boolean> {
   if (!/^%\d+$/.test(paneId)) return false;
   try {
     const paneDead = (await executeTmux(`display-message -t '${paneId}' -p '#{pane_dead}'`)).trim();
-    return paneDead !== '1';
+    // tmux 3.5+ returns empty string (not error) for non-existent panes —
+    // only "0" means alive; "1" means dead; anything else means not found.
+    return paneDead === '0';
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (
