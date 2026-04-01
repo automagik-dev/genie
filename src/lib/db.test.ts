@@ -338,3 +338,79 @@ describe('daemon-owned pgserve', () => {
     expect(source.includes('selfHealPostgres')).toBe(true);
   });
 });
+
+describe('retention cleanup', () => {
+  test('retention DELETEs are present in getConnection()', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // All 4 retention policies present
+    expect(source).toContain("DELETE FROM heartbeats WHERE created_at < now() - interval '7 days'");
+    expect(source).toContain("DELETE FROM machine_snapshots WHERE created_at < now() - interval '30 days'");
+    expect(source).toContain("DELETE FROM audit_events WHERE entity_type LIKE 'otel_%' AND created_at < now() - interval '30 days'");
+    expect(source).toContain("DELETE FROM genie_runtime_events WHERE created_at < now() - interval '14 days'");
+  });
+
+  test('retention is guarded by retentionRan flag', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    expect(source).toContain('let retentionRan = false');
+    expect(source).toContain('!retentionRan');
+    expect(source).toContain('retentionRan = true');
+  });
+
+  test('retention failure is non-fatal — logs warning, does not throw', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    expect(source).toContain('retention cleanup warning');
+    // retentionRan set to true even on failure to prevent retries
+    const catchBlock = source.slice(
+      source.indexOf('catch (retErr)'),
+      source.indexOf('catch (retErr)') + 300,
+    );
+    expect(catchBlock).toContain('retentionRan = true');
+  });
+
+  test('retention migration file exists with all 4 tables', () => {
+    const migration = readFileSync(join(__dirname, '..', 'db', 'migrations', '019_retention.sql'), 'utf-8');
+    expect(migration).toContain('DELETE FROM heartbeats');
+    expect(migration).toContain('DELETE FROM machine_snapshots');
+    expect(migration).toContain('DELETE FROM audit_events');
+    expect(migration).toContain('DELETE FROM genie_runtime_events');
+  });
+});
+
+describe('pool error recovery', () => {
+  test('migration failure resets both sqlClient and activePort', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // Find the migration/seed catch block
+    const catchIdx = source.indexOf('Migration/seed failure');
+    expect(catchIdx).toBeGreaterThan(-1);
+    const catchBlock = source.slice(catchIdx, catchIdx + 300);
+    // Both must be null'd to force full reconnect
+    expect(catchBlock).toContain('sqlClient = null');
+    expect(catchBlock).toContain('activePort = null');
+  });
+
+  test('health-check failure in cached client resets both sqlClient and activePort', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // Find the cached client health check catch block
+    const healthCheckIdx = source.indexOf('Connection is broken');
+    expect(healthCheckIdx).toBeGreaterThan(-1);
+    const block = source.slice(healthCheckIdx, healthCheckIdx + 200);
+    expect(block).toContain('sqlClient = null');
+    expect(block).toContain('activePort = null');
+  });
+});
+
+describe('migration directory resolution', () => {
+  test('does not use process.cwd() for migration lookup', () => {
+    const source = readFileSync(join(__dirname, 'db-migrations.ts'), 'utf-8');
+    // The legacy cwd fallback was removed for deterministic resolution
+    expect(source).not.toContain('process.cwd()');
+  });
+
+  test('uses only import.meta.dir-based paths', () => {
+    const source = readFileSync(join(__dirname, 'db-migrations.ts'), 'utf-8');
+    expect(source).toContain('import.meta.dir');
+    // Two deterministic candidates: dev and bundled
+    expect(source).toContain('getMigrationsDir()');
+    expect(source).toContain('getPackageRootMigrationsDir()');
+  });
+});
