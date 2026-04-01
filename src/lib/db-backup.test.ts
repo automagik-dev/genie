@@ -50,12 +50,12 @@ describe('restore error handling', () => {
     const tmpFile = join(tmpdir(), `genie-bad-snapshot-${Date.now()}.sql.gz`);
     writeFileSync(tmpFile, 'not gzip data');
     try {
-      // Should fail at decompression or psql — either way it throws
+      // restore calls getActivePort() which needs pgserve — will throw if not running
       expect(() => restore(tmpFile)).toThrow();
     } finally {
       rmSync(tmpFile, { force: true });
     }
-  });
+  }, 15000);
 });
 
 // ============================================================================
@@ -80,14 +80,14 @@ describe('backup error handling', () => {
     expect(existsSync(genieDir)).toBe(false);
 
     const { backup } = await import('./db-backup.js');
-    // backup will fail (no pg_dump or no DB) but should create the directory first
+    // backup calls pg_dump which needs pgserve — will fail but should create dir first
     try {
       backup(tmpDir);
     } catch {
       // Expected — pg_dump will fail without a running DB on this port
     }
     expect(existsSync(genieDir)).toBe(true);
-  });
+  }, 15000);
 });
 
 // ============================================================================
