@@ -178,6 +178,23 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
     if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
   }, [flatNodes, selectedIndex, handleToggle, onTmuxSessionSelect]);
 
+  const handleRetry = useCallback(() => {
+    const node = flatNodes[selectedIndex]?.node;
+    if (!node || node.type !== 'agent') return;
+    if (node.wsAgentState !== 'spawning' && node.wsAgentState !== 'error') return;
+
+    // Reset stuck agents then respawn
+    void (async () => {
+      try {
+        const { reconcileStaleSpawns } = await import('../../lib/agent-registry.js');
+        await reconcileStaleSpawns();
+      } catch {
+        // best-effort
+      }
+      spawnAgent(node.label, onTmuxSessionSelect);
+    })();
+  }, [flatNodes, selectedIndex, onTmuxSessionSelect]);
+
   useKeyboard((key) => {
     if (keyboardDisabled) return;
     if (key.name === 'up' || key.name === 'k' || key.name === 'down' || key.name === 'j') {
@@ -186,6 +203,8 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
       handleExpandCollapse(key.name);
     } else if (key.name === 'enter' || key.name === 'return') {
       handleEnter();
+    } else if (key.name === 'r') {
+      handleRetry();
     }
   });
 
@@ -249,7 +268,7 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
       <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
         <text>
           <span fg={palette.textMuted}>
-            {'\u2191\u2193'}:nav {'\u2190\u2192'}:expand Enter:{workspaceRoot ? 'spawn/attach' : 'attach'}
+            {'\u2191\u2193'}:nav {'\u2190\u2192'}:expand Enter:{workspaceRoot ? 'spawn/attach' : 'attach'} R:retry
           </span>
         </text>
       </box>

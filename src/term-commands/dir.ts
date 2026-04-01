@@ -138,6 +138,7 @@ interface DirAddOptions {
 async function handleDirAdd(name: string, options: DirAddOptions): Promise<void> {
   const promptMode = validatePromptMode(options.promptMode);
   const resolvedDir = resolvePath(options.dir);
+  if (options.repo) validateRepoPath(options.repo);
   const entry = await directory.add(
     {
       name,
@@ -204,6 +205,18 @@ async function handleDirSync(): Promise<void> {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/**
+ * Validate that a REPO value looks like a real path.
+ * Accepts: absolute paths (/...), home-relative (~/...), dot-relative (./..., ../...).
+ * Rejects: bare words like 'genie' that are likely agent names, not paths.
+ */
+export function validateRepoPath(repo: string): void {
+  if (repo.startsWith('/') || repo.startsWith('~/') || repo.startsWith('./') || repo.startsWith('../')) return;
+  throw new Error(
+    `Invalid --repo value "${repo}". Must be a path (absolute "/...", home-relative "~/...", or dot-relative "./..." / "../..."). Got a bare word instead.`,
+  );
+}
 
 function validatePromptMode(mode: string): 'system' | 'append' {
   if (mode !== 'system' && mode !== 'append') {

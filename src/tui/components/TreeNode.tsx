@@ -132,6 +132,10 @@ function getPaneColor(node: TreeNodeType): string {
 
 function getNodeSuffix(node: TreeNodeType): string {
   if (node.type === 'agent') {
+    // Show retry hint for stuck agents (spawning with no live panes)
+    if (node.wsAgentState === 'spawning' && node.activePanes === 0) {
+      return ' [stuck — press R to retry]';
+    }
     const wc = node.data.windowCount as number;
     if (wc > 1) return ` (${wc} windows)`;
     if (wc === 1) return ' (1 window)';

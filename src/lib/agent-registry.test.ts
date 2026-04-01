@@ -17,6 +17,7 @@ import {
   list,
   listAgents,
   listTemplates,
+  reconcileStaleSpawns,
   register,
   removeSubPane,
   saveTemplate,
@@ -251,6 +252,62 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     });
     test('null', async () => {
       expect(await getTeamLeadEntry('no-such-team')).toBeNull();
+    });
+  });
+
+  describe('reconcileStaleSpawns', () => {
+    test('resets stuck spawning agents with no pane', async () => {
+      // Agent stuck: spawning, no pane, started >2s ago
+      const oldStart = new Date(Date.now() - 5_000).toISOString();
+      await register(makeAgent({ id: 'stuck-1', paneId: '', state: 'spawning', startedAt: oldStart }));
+      await register(makeAgent({ id: 'stuck-2', paneId: '', state: 'spawning', startedAt: oldStart }));
+
+      // Use 2s threshold for test speed (production uses 60s)
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset.sort()).toEqual(['stuck-1', 'stuck-2']);
+
+      const a1 = await get('stuck-1');
+      expect(a1!.state).toBe('error');
+      const a2 = await get('stuck-2');
+      expect(a2!.state).toBe('error');
+    });
+
+    test('does not touch spawning agents with a pane', async () => {
+      const oldStart = new Date(Date.now() - 5_000).toISOString();
+      await register(makeAgent({ id: 'has-pane', paneId: '%42', state: 'spawning', startedAt: oldStart }));
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).toEqual([]);
+
+      const a = await get('has-pane');
+      expect(a!.state).toBe('spawning');
+    });
+
+    test('does not touch recently spawning agents', async () => {
+      // Just now — should not be reset even with 2s threshold
+      await register(makeAgent({ id: 'recent', paneId: '', state: 'spawning' }));
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).toEqual([]);
+
+      const a = await get('recent');
+      expect(a!.state).toBe('spawning');
+    });
+
+    test('does not touch non-spawning agents', async () => {
+      const oldStart = new Date(Date.now() - 5_000).toISOString();
+      await register(makeAgent({ id: 'working-agent', paneId: '', state: 'working', startedAt: oldStart }));
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).toEqual([]);
+
+      const a = await get('working-agent');
+      expect(a!.state).toBe('working');
+    });
+
+    test('returns empty array when nothing to reconcile', async () => {
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).toEqual([]);
     });
   });
 
