@@ -412,9 +412,15 @@ async function resetWishGroups(wishSlug: string | undefined, repo: string): Prom
 async function removeWorktree(worktreePath: string | undefined): Promise<void> {
   if (!worktreePath || !existsSync(worktreePath)) return;
   try {
-    await rm(worktreePath, { recursive: true, force: true });
+    // Use git worktree remove for proper cleanup of object store references
+    await $`git worktree remove --force ${worktreePath}`.quiet();
   } catch {
-    // Best-effort
+    // Fallback to rm for non-worktree clones (e.g., --shared clones)
+    try {
+      await rm(worktreePath, { recursive: true, force: true });
+    } catch {
+      // Best-effort
+    }
   }
 }
 
@@ -447,12 +453,14 @@ export async function archiveTeam(teamName: string): Promise<boolean> {
   const config = await getTeam(teamName);
   if (!config) return false;
 
-  // Kill all running team members (scoped to this team only)
-  for (const member of config.members) {
-    try {
-      await killWorkersByName(member, teamName);
-    } catch {
-      // Best-effort — continue with other members
+  // Kill all running team members in parallel — must complete BEFORE DB update
+  // to prevent zombie workers writing to an archived team
+  const killResults = await Promise.allSettled(config.members.map((member) => killWorkersByName(member, teamName)));
+  for (let i = 0; i < killResults.length; i++) {
+    if (killResults[i].status === 'rejected') {
+      console.error(
+        `   Failed to kill member "${config.members[i]}": ${(killResults[i] as PromiseRejectedResult).reason}`,
+      );
     }
   }
 
