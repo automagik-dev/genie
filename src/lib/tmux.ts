@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import { tmuxBin } from './ensure-tmux.js';
 import { shellQuote } from './team-lead-command.js';
-import { executeTmux as wrapperExecuteTmux } from './tmux-wrapper.js';
+// tmux-wrapper imported dynamically inside executeTmux for test mockability
 
 // Basic interfaces for tmux objects
 interface TmuxSession {
@@ -30,8 +30,9 @@ interface TmuxPane {
  * Execute a tmux command and return the result
  */
 export async function executeTmux(tmuxCommand: string): Promise<string> {
+  const { executeTmux: wrapperExec } = await import('./tmux-wrapper.js');
   try {
-    return await wrapperExecuteTmux(tmuxCommand);
+    return await wrapperExec(tmuxCommand);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to execute tmux command: ${message}`);
