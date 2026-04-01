@@ -237,7 +237,12 @@ function appendNativeTeamFlags(
   if (nt.parentSessionId) parts.push('--parent-session-id', escapeShellArg(nt.parentSessionId));
   if (nt.agentType) parts.push('--agent-type', escapeShellArg(nt.agentType));
   if (nt.planModeRequired) parts.push('--plan-mode-required');
-  if (nt.permissionMode) parts.push('--permission-mode', escapeShellArg(nt.permissionMode));
+  // Always set permission mode for native team workers. Without this, CC's native
+  // team layer routes tool approvals to the team lead (which is an AI agent that
+  // can't approve). --dangerously-skip-permissions alone isn't enough — the native
+  // team permission gate is a separate layer.
+  const effectivePermMode = nt.permissionMode ?? 'bypassPermissions';
+  parts.push('--permission-mode', escapeShellArg(effectivePermMode));
 }
 
 /**
