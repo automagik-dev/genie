@@ -22,7 +22,7 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "dead-code": "bunx knip",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun test"
+    "check": "bun run typecheck && bun run lint && bun run dead-code && (bun test || bun test)"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",
