@@ -521,6 +521,23 @@ if (args.length === 0) {
   if (ws.root) process.env.GENIE_TUI_WORKSPACE = ws.root;
   if (initialAgent) process.env.GENIE_TUI_AGENT = initialAgent;
 
+  // If invoked from an agent folder, spawn the agent if not already running
+  if (ws.agent) {
+    const { execSync } = await import('node:child_process');
+    try {
+      // Check if agent has a running tmux session
+      execSync(`tmux has-session -t ${ws.agent} 2>/dev/null`, { stdio: 'pipe' });
+    } catch {
+      // Agent session doesn't exist — spawn it
+      console.log(`Spawning ${ws.agent}...`);
+      try {
+        execSync(`genie spawn ${ws.agent}`, { stdio: 'inherit', timeout: 15000 });
+      } catch {
+        // Spawn may fail but TUI should still open
+      }
+    }
+  }
+
   // Write initial agent to file so the already-running TUI can pick it up.
   // The TUI reads and deletes this file on its next diagnostics refresh.
   if (initialAgent) {

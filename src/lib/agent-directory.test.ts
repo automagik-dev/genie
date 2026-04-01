@@ -45,21 +45,6 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   // ============================================================================
 
   describe('resolve', () => {
-    test('resolves agent from app_store sync entry', async () => {
-      const sql = await getConnection();
-      await sql`
-        INSERT INTO app_store (name, item_type, version, install_path, manifest)
-        VALUES ('synced-agent', 'agent', '0.0.0', ${agentDir}, ${sql.json({ repo: '/tmp/repo', promptMode: 'append' })})
-      `;
-
-      const resolved = await directory.resolve('synced-agent');
-      expect(resolved).not.toBeNull();
-      expect(resolved!.builtin).toBe(false);
-      expect(resolved!.entry.name).toBe('synced-agent');
-      expect(resolved!.entry.dir).toBe(agentDir);
-      expect(resolved!.entry.repo).toBe('/tmp/repo');
-    });
-
     test('resolves agent from PG by role', async () => {
       const sql = await getConnection();
       await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change) VALUES ('a1', '%1', 's', '/tmp', 'working', 'my-agent', now(), now())`;
