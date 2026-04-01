@@ -17,8 +17,18 @@ import { readFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import type postgres from 'postgres';
 import type { ConflictMode } from '../lib/export-format.js';
-import { validateExportDocument } from '../lib/export-format.js';
+import { GROUP_TABLES, validateExportDocument } from '../lib/export-format.js';
 import { SELF_REFERENTIAL_COLUMNS, getPrimaryKey, sortByImportOrder } from '../lib/import-order.js';
+
+/** Canonical set of tables that can appear in an export/import document. */
+const VALID_TABLES = new Set(Object.values(GROUP_TABLES).flat());
+
+/** Throws if the table name is not in the export schema whitelist. */
+export function assertValidTable(name: string): void {
+  if (!VALID_TABLES.has(name)) {
+    throw new Error(`Invalid table name: "${name}" is not in the schema whitelist`);
+  }
+}
 
 type Sql = postgres.Sql;
 
@@ -51,6 +61,7 @@ async function detectConflicts(
   rows: Record<string, unknown>[],
 ): Promise<Record<string, unknown>[]> {
   if (rows.length === 0) return [];
+  assertValidTable(table);
   const pk = getPrimaryKey(table);
 
   if (pk.length === 1) {
@@ -122,6 +133,7 @@ async function insertOneRow(
   prepared: PreparedRow,
   mode: ConflictMode,
 ): Promise<void> {
+  assertValidTable(table);
   const { quotedCols, placeholders, values } = prepared;
   const pk = getPrimaryKey(table);
 
@@ -142,6 +154,7 @@ async function insertOneRow(
 }
 
 async function updateSelfRefs(tx: Sql, table: string, updates: { pk: unknown; value: unknown }[]): Promise<void> {
+  assertValidTable(table);
   const selfRefCol = SELF_REFERENTIAL_COLUMNS[table];
   const pk = getPrimaryKey(table);
   if (pk.length !== 1) return;
