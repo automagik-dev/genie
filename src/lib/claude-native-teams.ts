@@ -110,6 +110,16 @@ function lockPath(filePath: string): string {
 const LOCK_TIMEOUT_MS = 5000;
 const LOCK_POLL_MS = 50;
 
+/** Check if a PID is still alive using kill -0 (signal 0 = existence check). */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function acquireLock(path: string): Promise<void> {
   const lock = lockPath(path);
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
@@ -119,7 +129,25 @@ async function acquireLock(path: string): Promise<void> {
       await writeFile(lock, String(process.pid), { flag: 'wx' });
       return; // acquired
     } catch {
-      // Lock exists — wait with jitter and retry
+      // Lock exists — check if holder PID is still alive
+      try {
+        const content = await readFile(lock, 'utf-8');
+        const holderPid = Number.parseInt(content.trim(), 10);
+        if (!Number.isNaN(holderPid) && !isPidAlive(holderPid)) {
+          // Holder is dead — remove stale lock and retry immediately
+          try {
+            await unlink(lock);
+          } catch {
+            // Another process may have already cleaned it up
+          }
+          continue;
+        }
+      } catch {
+        // Lock file disappeared between check and read — retry
+        continue;
+      }
+
+      // Lock holder is alive — wait with jitter and retry
       const jitter = Math.floor(Math.random() * LOCK_POLL_MS);
       await new Promise((r) => setTimeout(r, LOCK_POLL_MS + jitter));
     }

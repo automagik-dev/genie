@@ -28,6 +28,7 @@ const defaultConfig: SchedulerConfig = {
   heartbeatIntervalMs: 60_000,
   orphanCheckIntervalMs: 300_000,
   deadHeartbeatThreshold: 2,
+  leaseRecoveryIntervalMs: 60_000,
 };
 
 function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {

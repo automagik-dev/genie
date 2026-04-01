@@ -102,6 +102,12 @@ function parseNotifyPayload(channel: string, raw: string): ParsedEvent | null {
 /** Hardcoded actionable event types — events that require team-lead attention. */
 const ACTIONABLE_EVENTS = new Set(['task.blocked', 'executor.error', 'executor.permission']);
 
+/** Critical events that get retried — lost delivery can leave agents permanently stuck. */
+const CRITICAL_EVENTS = new Set(['task.blocked', 'executor.error', 'executor.permission']);
+
+const MAX_RETRIES = 3;
+const BASE_BACKOFF_MS = 500;
+
 /** Check if an event type is actionable (or is a request message). */
 function isActionableEvent(eventType: string): boolean {
   return ACTIONABLE_EVENTS.has(eventType) || eventType.startsWith('request.');
@@ -173,8 +179,8 @@ async function deliverViaProvider(leader: string, teamName: string, message: str
   }
 }
 
-/** Deliver an event to a single team's destinations. */
-async function deliverToTeam(event: ParsedEvent, teamName: string): Promise<void> {
+/** Core delivery logic for a single team — called directly or via retry wrapper. */
+async function deliverToTeamOnce(event: ParsedEvent, teamName: string): Promise<void> {
   const team = await getTeam(teamName);
   if (!team) return;
 
@@ -194,34 +200,49 @@ async function deliverToTeam(event: ParsedEvent, teamName: string): Promise<void
   // 2. Deliver to team-lead — PG mailbox (audit trail) + native inbox via provider
   if (team.leader) {
     await writeMailbox(team.repo, team.leader, message, traceId);
-    try {
-      await deliverViaProvider(team.leader, teamName, message, traceId);
-    } catch {
-      // Best effort — PG mailbox already written
-    }
+    await deliverViaProvider(team.leader, teamName, message, traceId);
 
     // Walk reports_to hierarchy upward (team-lead → PM → CPO → ...)
-    try {
-      await deliverToHierarchy(team.leader, teamName, message, traceId);
-    } catch {
-      // Best effort — hierarchy routing failure doesn't block delivery
-    }
+    await deliverToHierarchy(team.leader, teamName, message, traceId);
   }
 
   // 3. Log as runtime event
-  try {
-    await publishRuntimeEvent({
-      repoPath: team.repo,
-      kind: 'system',
-      agent: event.agentId ?? 'system',
-      team: teamName,
-      text: event.summary,
-      source: 'hook',
-      threadId: event.taskId ? `task:${event.taskId}` : `team:${teamName}`,
-      data: { channel: event.channel, eventType: event.eventType, traceId, ...event.payload },
-    });
-  } catch {
-    // Best effort
+  await publishRuntimeEvent({
+    repoPath: team.repo,
+    kind: 'system',
+    agent: event.agentId ?? 'system',
+    team: teamName,
+    text: event.summary,
+    source: 'hook',
+    threadId: event.taskId ? `task:${event.taskId}` : `team:${teamName}`,
+    data: { channel: event.channel, eventType: event.eventType, traceId, ...event.payload },
+  });
+}
+
+/** Deliver an event to a single team's destinations. Retries critical events up to 3x with backoff. */
+async function deliverToTeam(event: ParsedEvent, teamName: string): Promise<void> {
+  if (!CRITICAL_EVENTS.has(event.eventType)) {
+    // Non-critical: single attempt, best-effort
+    try {
+      await deliverToTeamOnce(event, teamName);
+    } catch {
+      // Best effort
+    }
+    return;
+  }
+
+  // Critical events: retry up to MAX_RETRIES times with exponential backoff
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await deliverToTeamOnce(event, teamName);
+      return; // Success
+    } catch {
+      if (attempt < MAX_RETRIES) {
+        const backoff = BASE_BACKOFF_MS * 2 ** (attempt - 1);
+        await new Promise((r) => setTimeout(r, backoff));
+      }
+      // Final attempt failure — give up silently (event routing is best-effort)
+    }
   }
 }
 

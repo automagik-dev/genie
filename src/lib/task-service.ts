@@ -811,36 +811,41 @@ export async function moveTask(
   const columnId = boardId ? await resolveColumnId(sql, boardId, toStage) : null;
 
   try {
-    const rows = boardId
-      ? await sql`
-          UPDATE tasks SET stage = ${toStage}, column_id = ${columnId}, updated_at = now()
-          WHERE id = ${id}
-          RETURNING *
-        `
-      : await sql`
-          UPDATE tasks SET stage = ${toStage}, updated_at = now()
-          WHERE id = ${id}
-          RETURNING *
-        `;
+    // Wrap stage update + log + comment in a transaction to prevent lost writes
+    const result = await sql.begin(async (tx: typeof sql) => {
+      const rows = boardId
+        ? await tx`
+            UPDATE tasks SET stage = ${toStage}, column_id = ${columnId}, updated_at = now()
+            WHERE id = ${id}
+            RETURNING *
+          `
+        : await tx`
+            UPDATE tasks SET stage = ${toStage}, updated_at = now()
+            WHERE id = ${id}
+            RETURNING *
+          `;
 
-    // Log the transition
-    await sql`
-      INSERT INTO task_stage_log (task_id, from_stage, to_stage, actor_type, actor_id)
-      VALUES (${id}, ${fromStage}, ${toStage}, ${actor?.actorType ?? null}, ${actor?.actorId ?? null})
-    `;
+      // Log the transition
+      await tx`
+        INSERT INTO task_stage_log (task_id, from_stage, to_stage, actor_type, actor_id)
+        VALUES (${id}, ${fromStage}, ${toStage}, ${actor?.actorType ?? null}, ${actor?.actorId ?? null})
+      `;
 
-    // Audit event for stage change
+      // Inline comment
+      if (comment && actor) {
+        await commentOnTask(id, actor, comment, repo);
+      }
+
+      return mapTask(rows[0]);
+    });
+
+    // Audit event for stage change (fire-and-forget, outside transaction)
     recordAuditEvent('task', id, 'stage_change', actor?.actorId ?? getActor(), {
       from: fromStage,
       to: toStage,
     }).catch(() => {});
 
-    // Inline comment
-    if (comment && actor) {
-      await commentOnTask(id, actor, comment, repo);
-    }
-
-    return mapTask(rows[0]);
+    return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes('Invalid stage')) {
@@ -944,32 +949,42 @@ export async function checkoutTask(idOrSeq: string, runId: string, repoPath?: st
   const id = await resolveTaskId(idOrSeq, repo);
   if (!id) throw new Error(`Task not found: ${idOrSeq}`);
 
-  // Dependency gate: reject checkout if unsatisfied dependencies exist
-  const blockers = await getBlockingDependencies(idOrSeq, repo);
-  if (blockers.length > 0) {
-    const details = blockers.map((b) => `#${b.seq} (${b.status}) ${b.title}`).join(', ');
-    throw new Error(`Task ${idOrSeq} blocked by: ${details}`);
-  }
+  // Wrap dependency check + claim in a transaction to prevent concurrent checkout races
+  return sql.begin(async (tx: typeof sql) => {
+    // Dependency gate: reject checkout if unsatisfied dependencies exist
+    const blockerRows = await tx`
+      SELECT t.id, t.seq, t.title, t.status
+      FROM task_dependencies td
+      JOIN tasks t ON td.depends_on_id = t.id
+      WHERE td.task_id = ${id}
+        AND td.dep_type = 'depends_on'
+        AND t.status NOT IN ('done', 'cancelled')
+    `;
+    if (blockerRows.length > 0) {
+      const details = blockerRows.map((b: Record<string, unknown>) => `#${b.seq} (${b.status}) ${b.title}`).join(', ');
+      throw new Error(`Task ${idOrSeq} blocked by: ${details}`);
+    }
 
-  const rows = await sql`
-    UPDATE tasks
-    SET checkout_run_id = ${runId},
-        execution_locked_at = now(),
-        status = 'in_progress',
-        started_at = COALESCE(started_at, now()),
-        updated_at = now()
-    WHERE id = ${id}
-      AND (checkout_run_id IS NULL OR checkout_run_id = ${runId})
-    RETURNING *
-  `;
+    const rows = await tx`
+      UPDATE tasks
+      SET checkout_run_id = ${runId},
+          execution_locked_at = now(),
+          status = 'in_progress',
+          started_at = COALESCE(started_at, now()),
+          updated_at = now()
+      WHERE id = ${id}
+        AND (checkout_run_id IS NULL OR checkout_run_id = ${runId})
+      RETURNING *
+    `;
 
-  if (rows.length === 0) {
-    const existing = await sql`SELECT checkout_run_id FROM tasks WHERE id = ${id}`;
-    const owner = existing.length > 0 ? (existing[0].checkout_run_id as string) : 'unknown';
-    throw new Error(`Task ${idOrSeq} is already checked out by run: ${owner}`);
-  }
+    if (rows.length === 0) {
+      const existing = await tx`SELECT checkout_run_id FROM tasks WHERE id = ${id}`;
+      const owner = existing.length > 0 ? (existing[0].checkout_run_id as string) : 'unknown';
+      throw new Error(`Task ${idOrSeq} is already checked out by run: ${owner}`);
+    }
 
-  return mapTask(rows[0]);
+    return mapTask(rows[0]);
+  });
 }
 
 /** Release a task checkout. */
