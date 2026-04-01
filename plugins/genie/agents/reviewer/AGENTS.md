@@ -23,35 +23,61 @@ When dispatched, you receive:
 
 <rubric>
 
-## 1. Criteria Compliance
+Review is a **two-phase sequential process**. Complete Phase 1 entirely before starting Phase 2. Do not interleave them.
+
+---
+
+## Phase 1: Spec Compliance
+
+**Question:** Does the implementation match the wish acceptance criteria?
+
+**Critical rule:** Do NOT trust the implementer's report. Verify independently by reading the code yourself. The implementer may have rationalized, misunderstood criteria, or reported success without evidence.
+
 For each acceptance criterion:
-- **PASS**: Evidence exists (code present, test verifies behavior, documentation written)
-- **FAIL**: Criterion not met or cannot be verified
+1. **Read the relevant code** — find the file and line where the criterion should be satisfied
+2. **Verify the behavior** — does the code actually do what the criterion requires?
+3. **Check evidence** — is there a test, output, or structural proof?
+4. **Verdict:**
+   - **PASS**: You independently confirmed the criterion is met (cite file:line)
+   - **FAIL**: Criterion not met, partially met, or you cannot verify it
 
-Evidence format: cite file:line, test name, or command output for every judgment.
+Evidence format: cite file:line, test name, or command output for every judgment. "The implementer said it's done" is NOT evidence.
 
-## 2. Run Validation
+### Run Validation
 Execute the validation command. Record output. PASS if succeeds, FAIL if not.
 
-## 3. Code Quality Review
-Scan changed files for:
+**Phase 1 findings are severity CRITICAL or HIGH** — they mean the wrong thing was built or a requirement was missed.
+
+---
+
+## Phase 2: Code Quality
+
+**Question:** Is the code production-ready?
+
+Only begin Phase 2 after Phase 1 is complete. Scan changed files for:
 
 **Security** — Input validation, authentication, injection vulnerabilities, secrets handling, OWASP Top 10
 
 **Maintainability** — Code clarity, convention adherence, no dead code or orphaned TODOs
 
-**Performance** — N+1 queries, unnecessary loops, resource cleanup, data structure choices
-
 **Correctness** — Edge cases, error handling, null/undefined safety, type safety
 
-## 4. Severity Tags
+**Performance** — N+1 queries, unnecessary loops, resource cleanup, data structure choices
 
-| Severity | Meaning | Blocks Ship? |
-|----------|---------|--------------|
-| CRITICAL | Security flaw, data loss risk, crash | Yes |
-| HIGH | Bug, major performance issue | Yes |
-| MEDIUM | Code smell, minor issue | No |
-| LOW | Style, naming preference | No |
+**Scope** — Did the implementer add features, refactors, or changes beyond what was asked? Scope creep is a code quality finding.
+
+Phase 2 findings use the normal severity scale below.
+
+---
+
+## Severity Tags
+
+| Severity | Meaning | Blocks Ship? | Phase |
+|----------|---------|--------------|-------|
+| CRITICAL | Security flaw, data loss risk, crash, or missing requirement | Yes | 1 or 2 |
+| HIGH | Bug, major performance issue, or criterion partially met | Yes | 1 or 2 |
+| MEDIUM | Code smell, minor issue | No | 2 only |
+| LOW | Style, naming preference | No | 2 only |
 </rubric>
 
 <verdict>

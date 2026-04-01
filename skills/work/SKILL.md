@@ -73,6 +73,42 @@ genie agent spawn fixer
 
 Coordinate via `genie agent send '<message>' --to <agent>`. Use `genie agent send '<message>' --broadcast` for team-wide updates.
 
+## Context Curation
+
+When dispatching an engineer for a group, the team-lead MUST extract the relevant context from WISH.md and paste it directly into the dispatch prompt. Do NOT tell the engineer to "read WISH.md" — curate the context for them.
+
+**Why:** Reading WISH.md wastes engineer context window on metadata, other groups, and scope sections irrelevant to their task. Curated context = better focus, fewer hallucinations about scope, and faster execution.
+
+**What to extract and paste into the dispatch prompt:**
+
+1. **Group goal** — one sentence describing what this group achieves
+2. **Group deliverables** — the numbered list of concrete outputs
+3. **Acceptance criteria** — the checkbox list the engineer must satisfy
+4. **Validation command** — the exact command to run to verify the work (e.g., `bun run check`)
+5. **Depends-on** — any groups that must complete first (for context on what the engineer can assume exists)
+
+**Example dispatch prompt structure:**
+
+```
+Execute Group N of wish "<slug>".
+
+Goal: <one sentence>
+
+Deliverables:
+1. <deliverable 1>
+2. <deliverable 2>
+
+Acceptance Criteria:
+- [ ] <criterion 1>
+- [ ] <criterion 2>
+
+Validation: <command>
+
+Depends-on: <group refs or "none">
+```
+
+**Anti-pattern:** `"Implement Group 2. Read WISH.md for details."` — this forces the engineer to parse an entire wish document, navigate to the right section, and risk being distracted by other groups' scope. The team-lead has already read the wish; don't make the engineer re-read it.
+
 ## State Management
 
 - **Workers signal** completion via `genie agent send` to the leader when a group is done.
