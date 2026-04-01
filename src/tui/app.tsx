@@ -32,17 +32,19 @@ export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
   });
 
   const handleQuit = useCallback(() => {
-    // Kill genie serve via its PID file
+    // Best-effort: signal genie serve to stop
     try {
       const genieHome = process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`;
       const pid = readFileSync(`${genieHome}/serve.pid`, 'utf-8').trim();
       process.kill(Number.parseInt(pid, 10), 'SIGTERM');
     } catch {
-      // Fallback: kill the TUI tmux server directly
-      try {
-        execSync('tmux -L genie-tui kill-server', { stdio: 'ignore' });
-      } catch {}
+      // PID file missing or unreadable — continue to tmux kill
     }
+    // Always kill the TUI tmux server directly — the serve PID may be
+    // a zombie (defunct) that accepts signals but never acts on them.
+    try {
+      execSync('tmux -L genie-tui kill-server', { stdio: 'ignore' });
+    } catch {}
   }, []);
 
   const handleTmuxSessionSelect = useCallback(
