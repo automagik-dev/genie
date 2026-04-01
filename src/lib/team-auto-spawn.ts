@@ -137,7 +137,7 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     const target = `${session}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const cmd = buildTeamLeadCommand(teamName, { systemPromptFile: systemPromptFile ?? undefined });
+    const cmd = buildTeamLeadCommand(teamName, { systemPromptFile: systemPromptFile ?? undefined, leaderName });
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   }
 

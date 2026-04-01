@@ -28,6 +28,8 @@ interface BuildTeamLeadCommandOptions {
   sessionId?: string;
   /** Override promptMode instead of reading from config (useful for testing) */
   promptMode?: 'append' | 'system';
+  /** Actual leader name — used for --agent-id and --agent-name instead of 'team-lead'. Falls back to teamName. */
+  leaderName?: string;
 }
 
 /**
@@ -44,6 +46,8 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
   const sanitized = sanitizeTeamName(teamName);
   const qTeam = shellQuote(sanitized);
   const folderName = basename(process.cwd());
+  const resolvedLeader = options?.leaderName ?? teamName;
+  const sanitizedLeader = sanitizeTeamName(resolvedLeader);
   const parts = [
     'GENIE_WORKER=1',
     'CLAUDECODE=1',
@@ -51,8 +55,8 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     `GENIE_TEAM=${qTeam}`,
     `GENIE_AGENT_NAME=${shellQuote(folderName)}`,
     'claude',
-    `--agent-id ${shellQuote(`team-lead@${sanitized}`)}`,
-    '--agent-name team-lead',
+    `--agent-id ${shellQuote(`${sanitizedLeader}@${sanitized}`)}`,
+    `--agent-name ${shellQuote(sanitizedLeader)}`,
     `--team-name ${qTeam}`,
     '--agent-type team-lead',
     '--dangerously-skip-permissions',
