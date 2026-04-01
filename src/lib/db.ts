@@ -173,6 +173,24 @@ let exitHandlerRegistered = false;
 /** Whether retention cleanup has already run in this process */
 let retentionRan = false;
 
+/** Prune old rows from unbounded tables. Runs once per process, non-fatal. */
+async function runRetention(sql: any): Promise<void> {
+  try {
+    await sql.unsafe(`
+      DELETE FROM heartbeats WHERE created_at < now() - interval '7 days';
+      DELETE FROM machine_snapshots WHERE created_at < now() - interval '30 days';
+      DELETE FROM audit_events WHERE entity_type LIKE 'otel_%' AND created_at < now() - interval '30 days';
+      DELETE FROM genie_runtime_events WHERE created_at < now() - interval '14 days';
+    `);
+    retentionRan = true;
+  } catch (retErr) {
+    // Non-fatal — log warning and continue, never block startup
+    retentionRan = true; // Don't retry on next call
+    const msg = retErr instanceof Error ? retErr.message : String(retErr);
+    process.stderr.write(`[genie] retention cleanup warning: ${msg}\n`);
+  }
+}
+
 /**
  * Ensure pgserve is running. Starts it if not already listening.
  * Idempotent — safe to call multiple times.
@@ -431,23 +449,9 @@ export async function getConnection() {
       await runSeed(sqlClient);
     }
 
-    // Run retention cleanup once per process — prune old rows from unbounded tables.
-    // Runs AFTER migrations succeed. Failure is non-fatal: log and continue.
+    // Run retention cleanup once per process (non-fatal).
     if (!testSchema && !retentionRan) {
-      try {
-        await sqlClient.unsafe(`
-          DELETE FROM heartbeats WHERE created_at < now() - interval '7 days';
-          DELETE FROM machine_snapshots WHERE created_at < now() - interval '30 days';
-          DELETE FROM audit_events WHERE entity_type LIKE 'otel_%' AND created_at < now() - interval '30 days';
-          DELETE FROM genie_runtime_events WHERE created_at < now() - interval '14 days';
-        `);
-        retentionRan = true;
-      } catch (retErr) {
-        // Non-fatal — log warning and continue, never block startup
-        retentionRan = true; // Don't retry on next call
-        const msg = retErr instanceof Error ? retErr.message : String(retErr);
-        process.stderr.write(`[genie] retention cleanup warning: ${msg}\n`);
-      }
+      await runRetention(sqlClient);
     }
   } catch (err) {
     // Migration/seed failure — reset client AND port so next call fully reconnects

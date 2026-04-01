@@ -345,7 +345,9 @@ describe('retention cleanup', () => {
     // All 4 retention policies present
     expect(source).toContain("DELETE FROM heartbeats WHERE created_at < now() - interval '7 days'");
     expect(source).toContain("DELETE FROM machine_snapshots WHERE created_at < now() - interval '30 days'");
-    expect(source).toContain("DELETE FROM audit_events WHERE entity_type LIKE 'otel_%' AND created_at < now() - interval '30 days'");
+    expect(source).toContain(
+      "DELETE FROM audit_events WHERE entity_type LIKE 'otel_%' AND created_at < now() - interval '30 days'",
+    );
     expect(source).toContain("DELETE FROM genie_runtime_events WHERE created_at < now() - interval '14 days'");
   });
 
@@ -360,10 +362,7 @@ describe('retention cleanup', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     expect(source).toContain('retention cleanup warning');
     // retentionRan set to true even on failure to prevent retries
-    const catchBlock = source.slice(
-      source.indexOf('catch (retErr)'),
-      source.indexOf('catch (retErr)') + 300,
-    );
+    const catchBlock = source.slice(source.indexOf('catch (retErr)'), source.indexOf('catch (retErr)') + 300);
     expect(catchBlock).toContain('retentionRan = true');
   });
 
