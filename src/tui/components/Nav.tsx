@@ -98,13 +98,7 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
       setSelectedIndex(idx);
       const node = flatNodes[idx].node;
       if (node.type === 'agent' && node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
-        void (async () => {
-          try {
-            const { reconcileStaleSpawns } = await import('../../lib/agent-registry.js');
-            await reconcileStaleSpawns();
-          } catch {}
-          spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
-        })();
+        spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
       }
       setRequestedInitialAgent(undefined);
     }
@@ -170,17 +164,7 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
     if (node.type === 'agent') {
       // No session → spawn the agent (creates session + window 0 with Claude)
       if (node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
-        // Reconcile stale executor records before spawning — previous spawn
-        // attempts may have left "spawning" rows that block new ones.
-        void (async () => {
-          try {
-            const { reconcileStaleSpawns } = await import('../../lib/agent-registry.js');
-            await reconcileStaleSpawns();
-          } catch {
-            // best-effort — spawn may still succeed
-          }
-          spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
-        })();
+        spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
       } else if (node.wsAgentState === 'running') {
         // Attach right pane to the agent's session when already running
         const target = getSessionTarget(node);

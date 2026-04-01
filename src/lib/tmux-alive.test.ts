@@ -32,6 +32,11 @@ describe('isPaneAlive', () => {
     expect(await isPaneAlive('%2')).toBe(false);
   });
 
+  test('returns false when tmux returns empty string (non-existent pane in tmux 3.5+)', async () => {
+    mockExecuteTmux.mockResolvedValueOnce('');
+    expect(await isPaneAlive('%2')).toBe(false);
+  });
+
   test('returns false when pane is not found (tmux reachable)', async () => {
     mockExecuteTmux.mockRejectedValueOnce(new Error("can't find pane %99"));
     expect(await isPaneAlive('%99')).toBe(false);
