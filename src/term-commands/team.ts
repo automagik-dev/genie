@@ -376,12 +376,8 @@ async function spawnLeaderWithWish(
     initialPrompt: kickoffPrompt,
   });
 
-  // Deliver kickoff prompt via mailbox as backup (durable, queued to disk)
-  const protocolRouter = await import('../lib/protocol-router.js');
-  const result = await protocolRouter.sendMessage(config.worktreePath, 'cli', leaderAgent, kickoffPrompt);
-  if (!result.delivered) {
-    console.warn(`⚠ Backup delivery to ${leaderAgent} failed: ${result.reason ?? 'unknown'}`);
-  }
+  // initialPrompt is passed as CLI positional arg — no mailbox backup needed
+  // (sending via both paths causes duplicate prompts in the agent's input)
   console.log(`  Leader: ${leaderAgent} spawned as ${slug}`);
 }
 
