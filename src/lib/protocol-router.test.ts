@@ -26,10 +26,24 @@ const alivePanes = new Set<string>();
 /** Count of spawnWorkerFromTemplate invocations (reset in beforeEach). */
 let spawnCallCount = 0;
 
-mock.module('./tmux.js', () => ({
-  isPaneAlive: async (paneId: string) => alivePanes.has(paneId),
-  capturePaneContent: async () => '> idle prompt',
-  executeTmux: async () => '',
+// Mock tmux-wrapper (not tmux.js) to avoid poisoning the global module cache
+// for other test files that import real functions from ./tmux.js.
+// The real isPaneAlive/capturePaneContent use executeTmux which calls the wrapper.
+mock.module('./tmux-wrapper.js', () => ({
+  executeTmux: async (cmd: string) => {
+    // isPaneAlive calls: display-message -t '%NN' -p '#{pane_dead}'
+    const paneMatch = cmd.match(/display-message -t '(%\d+)' -p '#\{pane_dead\}'/);
+    if (paneMatch) {
+      return alivePanes.has(paneMatch[1]) ? '0' : '1';
+    }
+    // capturePaneContent calls: capture-pane
+    if (cmd.includes('capture-pane')) {
+      return '> idle prompt';
+    }
+    return '';
+  },
+  genieTmuxPrefix: () => ['-L', 'genie'],
+  genieTmuxCmd: (sub: string) => `tmux -L genie ${sub}`,
 }));
 
 mock.module('./orchestrator/index.js', () => ({
