@@ -78,7 +78,7 @@ export function backup(cwd?: string): BackupResult {
   // Get uncompressed size estimate from pg_database_size
   let uncompressedBytes = 0;
   try {
-    const sizeResult = spawnSync('psql', ['-t', '-A', '-c', `SELECT pg_database_size('${DB_NAME}')`], {
+    const sizeResult = spawnSync('psql', ['-t', '-A', '-c', 'SELECT pg_database_size(current_database())'], {
       env: pgEnv(port),
       encoding: 'utf-8',
       timeout: 10_000,
@@ -109,12 +109,14 @@ export function restore(snapshotFile?: string, cwd?: string): void {
   const env = pgEnv(port);
   const adminEnv = { ...env, PGDATABASE: 'postgres' };
 
-  // Terminate existing connections
+  // Terminate existing connections (use psql variable to avoid string interpolation)
   spawnSync(
     'psql',
     [
+      '-v',
+      `target_db=${DB_NAME}`,
       '-c',
-      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${DB_NAME}' AND pid <> pg_backend_pid()`,
+      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :'target_db' AND pid <> pg_backend_pid()",
     ],
     {
       env: adminEnv,
@@ -123,8 +125,8 @@ export function restore(snapshotFile?: string, cwd?: string): void {
     },
   );
 
-  // Drop and recreate
-  const dropResult = spawnSync('psql', ['-c', `DROP DATABASE IF EXISTS ${DB_NAME}`], {
+  // Drop and recreate (use psql variable to avoid string interpolation)
+  const dropResult = spawnSync('psql', ['-v', `target_db=${DB_NAME}`, '-c', 'DROP DATABASE IF EXISTS :"target_db"'], {
     env: adminEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 10_000,
@@ -133,7 +135,7 @@ export function restore(snapshotFile?: string, cwd?: string): void {
     throw new Error(`Failed to drop database: ${dropResult.stderr?.toString().trim()}`);
   }
 
-  const createResult = spawnSync('psql', ['-c', `CREATE DATABASE ${DB_NAME}`], {
+  const createResult = spawnSync('psql', ['-v', `target_db=${DB_NAME}`, '-c', 'CREATE DATABASE :"target_db"'], {
     env: adminEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 10_000,
