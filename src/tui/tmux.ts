@@ -82,3 +82,29 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
 export function attachTuiSession(): void {
   runTuiTmux(['attach-session', '-t', SESSION_NAME], 'inherit');
 }
+
+/** Spawn a fresh parallel worker of the same agent type via `genie spawn`. */
+export function newAgentWindow(agentName: string): void {
+  const { spawn } = require('node:child_process') as typeof import('node:child_process');
+  const { join, resolve } = require('node:path') as typeof import('node:path');
+  const { existsSync } = require('node:fs') as typeof import('node:fs');
+  const bunPath = process.execPath || 'bun';
+  const genieBin = process.argv[1];
+  const wsRoot = process.env.GENIE_TUI_WORKSPACE;
+
+  let cwd: string | undefined;
+  if (wsRoot) {
+    const parentName = agentName.includes('/') ? agentName.slice(0, agentName.indexOf('/')) : agentName;
+    const agentDir = resolve(join(wsRoot, 'agents', parentName));
+    if (existsSync(agentDir)) cwd = agentDir;
+  }
+
+  // No --session: genie spawn assigns a unique session ID automatically.
+  // This creates a parallel worker of the same role, not a resume.
+  const args = ['spawn', agentName];
+  const child =
+    genieBin && genieBin !== 'genie'
+      ? spawn(bunPath, [genieBin, ...args], { detached: true, stdio: 'ignore', cwd })
+      : spawn('genie', args, { detached: true, stdio: 'ignore', cwd });
+  child.unref();
+}

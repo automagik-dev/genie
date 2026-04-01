@@ -7,7 +7,7 @@ import { useKeyboard } from '@opentui/react';
 import { useCallback, useState } from 'react';
 import { Nav } from './components/Nav.js';
 import { QuitDialog } from './components/QuitDialog.js';
-import { attachProjectWindow } from './tmux.js';
+import { attachProjectWindow, newAgentWindow } from './tmux.js';
 
 interface AppProps {
   rightPane?: string;
@@ -59,6 +59,7 @@ export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
     <box width="100%" height="100%">
       <Nav
         onTmuxSessionSelect={handleTmuxSessionSelect}
+        onNewAgentWindow={newAgentWindow}
         workspaceRoot={workspaceRoot}
         initialAgent={initialAgent}
         keyboardDisabled={showQuit}

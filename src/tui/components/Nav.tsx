@@ -19,6 +19,8 @@ import { TreeNodeRow } from './TreeNode.js';
 
 interface NavProps {
   onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void;
+  /** Spawn a parallel worker of the same agent type */
+  onNewAgentWindow?: (agentName: string) => void;
   /** Workspace root path — enables workspace mode (merged agent tree) */
   workspaceRoot?: string;
   /** Pre-select this agent on initial render */
@@ -27,7 +29,13 @@ interface NavProps {
   keyboardDisabled?: boolean;
 }
 
-export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboardDisabled = false }: NavProps) {
+export function Nav({
+  onTmuxSessionSelect,
+  onNewAgentWindow,
+  workspaceRoot,
+  initialAgent,
+  keyboardDisabled = false,
+}: NavProps) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticSnapshot | null>(null);
   const [sessionTree, setSessionTree] = useState<TreeNode[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -205,6 +213,12 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
       handleEnter();
     } else if (key.name === 'r') {
       handleRetry();
+    } else if (key.ctrl && key.name === 't') {
+      // Ctrl+T: spawn a parallel worker of the selected agent
+      const node = flatNodes[selectedIndex]?.node;
+      if (node?.type === 'agent' && node.wsAgentState === 'running' && onNewAgentWindow) {
+        onNewAgentWindow(agentNameFromNode(node));
+      }
     }
   });
 
@@ -268,7 +282,8 @@ export function Nav({ onTmuxSessionSelect, workspaceRoot, initialAgent, keyboard
       <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
         <text>
           <span fg={palette.textMuted}>
-            {'\u2191\u2193'}:nav {'\u2190\u2192'}:expand Enter:{workspaceRoot ? 'spawn/attach' : 'attach'} R:retry
+            {'\u2191\u2193'}:nav {'\u2190\u2192'}:expand Enter:{workspaceRoot ? 'spawn/attach' : 'attach'} ^T:new
+            R:retry
           </span>
         </text>
       </box>
