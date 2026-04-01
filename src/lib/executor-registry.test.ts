@@ -11,6 +11,7 @@ import { completeAssignment, createAssignment, getActiveAssignment } from './ass
 import { getConnection } from './db.js';
 import {
   type CreateExecutorOpts,
+  createAndLinkExecutor,
   createExecutor,
   findExecutorByPane,
   findExecutorBySession,
@@ -834,6 +835,133 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
       expect(names).toContain('idx_executors_agent_id');
       expect(names).toContain('idx_executors_state');
       expect(names).toContain('idx_executors_provider');
+    });
+  });
+
+  // ==========================================================================
+  // Atomic Create + Link (createAndLinkExecutor)
+  // ==========================================================================
+
+  describe('createAndLinkExecutor', () => {
+    test('creates executor and sets current_executor_id atomically', async () => {
+      const agentId = await seedAgent();
+      const exec = await createAndLinkExecutor(agentId, 'claude', 'tmux', {
+        pid: 7001,
+        tmuxSession: 'genie',
+        tmuxPaneId: '%50',
+      });
+
+      expect(exec.id).toBeTruthy();
+      expect(exec.agentId).toBe(agentId);
+      expect(exec.pid).toBe(7001);
+      expect(exec.state).toBe('spawning');
+
+      // FK should be set in the same transaction
+      const agent = await getAgent(agentId);
+      expect(agent!.currentExecutorId).toBe(exec.id);
+    });
+
+    test('linked executor is returned by getCurrentExecutor', async () => {
+      const agentId = await seedAgent();
+      const exec = await createAndLinkExecutor(agentId, 'claude', 'tmux');
+
+      const current = await getCurrentExecutor(agentId);
+      expect(current).not.toBeNull();
+      expect(current!.id).toBe(exec.id);
+    });
+
+    test('replaces previous FK when called again', async () => {
+      const agentId = await seedAgent();
+      const e1 = await createAndLinkExecutor(agentId, 'claude', 'tmux', { pid: 8001 });
+      const e2 = await createAndLinkExecutor(agentId, 'claude', 'tmux', { pid: 8002 });
+
+      // FK now points to e2
+      const agent = await getAgent(agentId);
+      expect(agent!.currentExecutorId).toBe(e2.id);
+
+      // Both executors exist in history
+      const history = await listExecutors(agentId);
+      expect(history.length).toBe(2);
+      expect(history.map((e) => e.id)).toContain(e1.id);
+      expect(history.map((e) => e.id)).toContain(e2.id);
+    });
+
+    test('accepts all CreateExecutorOpts', async () => {
+      const agentId = await seedAgent();
+      const exec = await createAndLinkExecutor(agentId, 'claude', 'tmux', {
+        id: 'linked-exec-id',
+        pid: 9001,
+        tmuxSession: 'genie',
+        tmuxPaneId: '%99',
+        tmuxWindow: 'test-window',
+        state: 'running',
+        metadata: { key: 'value' },
+        repoPath: '/tmp/repo',
+      });
+
+      expect(exec.id).toBe('linked-exec-id');
+      expect(exec.state).toBe('running');
+      expect(exec.metadata).toEqual({ key: 'value' });
+    });
+
+    test('no orphaned executor if agent does not exist', async () => {
+      // Inserting an executor for a non-existent agent should fail the FK constraint
+      // and the transaction should roll back both the INSERT and UPDATE
+      try {
+        await createAndLinkExecutor('nonexistent-agent', 'claude', 'tmux');
+        expect(true).toBe(false); // Should not reach
+      } catch {
+        // Expected — FK violation
+      }
+
+      // No executor should have been created
+      const all = await listExecutors();
+      expect(all.length).toBe(0);
+    });
+  });
+
+  // ==========================================================================
+  // Atomic terminateActiveExecutor (WHERE current_executor_id = $id)
+  // ==========================================================================
+
+  describe('terminateActiveExecutor atomicity', () => {
+    test('only nulls FK if still pointing to the same executor', async () => {
+      const agentId = await seedAgent();
+      const e1 = await createAndLinkExecutor(agentId, 'claude', 'tmux', { state: 'working' });
+
+      // Simulate a concurrent spawn: e2 takes over the FK before terminate runs
+      const e2 = await createAndLinkExecutor(agentId, 'claude', 'tmux', { state: 'spawning' });
+
+      // Now terminate e1 — the FK should NOT be nulled since it points to e2
+      const sql = await getConnection();
+      await terminateExecutor(e1.id);
+      await sql`UPDATE agents SET current_executor_id = NULL WHERE id = ${agentId} AND current_executor_id = ${e1.id}`;
+
+      // FK should still point to e2
+      const agent = await getAgent(agentId);
+      expect(agent!.currentExecutorId).toBe(e2.id);
+    });
+
+    test('concurrent terminate + spawn does not orphan new executor', async () => {
+      const agentId = await seedAgent();
+
+      // Simulate rapid terminate + respawn cycles
+      for (let i = 0; i < 5; i++) {
+        await terminateActiveExecutor(agentId);
+        await createAndLinkExecutor(agentId, 'claude', 'tmux', { pid: 2000 + i });
+      }
+
+      const all = await listExecutors(agentId);
+      expect(all.length).toBe(5);
+
+      // Only the last one should be non-terminated (previous 4 terminated by guard)
+      const active = all.filter((e) => e.state !== 'terminated');
+      expect(active.length).toBe(1);
+      expect(active[0].pid).toBe(2004);
+
+      // FK points to the last executor
+      const agent = await getAgent(agentId);
+      expect(agent!.currentExecutorId).toBe(active[0].id);
     });
   });
 });

@@ -124,7 +124,6 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
 
     // Executor model: create agent identity + executor for leader session
     const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
-    await executorRegistry.terminateActiveExecutor(agentIdentity.id);
 
     let pid: number | null = null;
     try {
@@ -135,7 +134,8 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
       /* best-effort */
     }
 
-    const executor = await executorRegistry.createExecutor(agentIdentity.id, 'claude', 'tmux', {
+    // Atomic: create executor + set as current in a single transaction
+    await executorRegistry.createAndLinkExecutor(agentIdentity.id, 'claude', 'tmux', {
       pid,
       tmuxSession: sessionName,
       tmuxPaneId: paneId,
@@ -143,7 +143,6 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
       state: 'spawning',
       repoPath: workspaceDir,
     });
-    await registry.setCurrentExecutor(agentIdentity.id, executor.id);
   } catch {
     // Best-effort — don't block session startup if registration fails
   }
@@ -227,6 +226,16 @@ async function createSession(
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   console.log(`Started Claude Code as ${agentName} in ${workspaceDir}`);
 
+  // Guard: terminate old executor before spawning new one (prevents duplicates)
+  try {
+    const sanitized = sanitizeTeamName(windowName);
+    const leaderName = await resolveSessionLeaderName(windowName);
+    const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+    await executorRegistry.terminateActiveExecutor(agentIdentity.id);
+  } catch {
+    // Best-effort — don't block session creation if guard fails
+  }
+
   // Register interactive session so spawned agents can find the team-lead
   await registerSessionInRegistry(sessionName, windowName, workspaceDir);
 }
@@ -285,6 +294,16 @@ async function focusTeamWindow(
     await launchWithContinueFallback(target, windowName, systemPromptFile);
     console.log(`Started Claude Code as ${basename(workingDir)}@${sanitizeTeamName(windowName)} in ${workingDir}`);
 
+    // Guard: terminate old executor before registering new one
+    try {
+      const sanitized = sanitizeTeamName(windowName);
+      const leaderName = await resolveSessionLeaderName(windowName);
+      const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+      await executorRegistry.terminateActiveExecutor(agentIdentity.id);
+    } catch {
+      // Best-effort guard
+    }
+
     // Register interactive session so spawned agents can find the team-lead
     await registerSessionInRegistry(sessionName, windowName, workingDir);
   } else {
@@ -302,6 +321,16 @@ async function focusTeamWindow(
       await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
       await launchWithContinueFallback(target, windowName, systemPromptFile);
+
+      // Guard: terminate old executor before registering new one
+      try {
+        const sanitized = sanitizeTeamName(windowName);
+        const leaderName = await resolveSessionLeaderName(windowName);
+        const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+        await executorRegistry.terminateActiveExecutor(agentIdentity.id);
+      } catch {
+        // Best-effort guard
+      }
 
       await registerSessionInRegistry(sessionName, windowName, workingDir);
     }
