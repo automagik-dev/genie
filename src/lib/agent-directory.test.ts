@@ -45,20 +45,8 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   // ============================================================================
 
   describe('resolve', () => {
-    test('resolves agent from app_store sync entry', async () => {
-      const sql = await getConnection();
-      await sql`
-        INSERT INTO app_store (name, item_type, version, install_path, manifest)
-        VALUES ('synced-agent', 'agent', '0.0.0', ${agentDir}, ${sql.json({ repo: '/tmp/repo', promptMode: 'append' })})
-      `;
-
-      const resolved = await directory.resolve('synced-agent');
-      expect(resolved).not.toBeNull();
-      expect(resolved!.builtin).toBe(false);
-      expect(resolved!.entry.name).toBe('synced-agent');
-      expect(resolved!.entry.dir).toBe(agentDir);
-      expect(resolved!.entry.repo).toBe('/tmp/repo');
-    });
+    // app_store table was dropped in migration 018_drop_app_store (PR #932)
+    // The resolve() code catches the missing table gracefully, but the test can't INSERT.
 
     test('resolves agent from PG by role', async () => {
       const sql = await getConnection();
