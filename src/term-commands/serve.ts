@@ -127,8 +127,8 @@ export function getTuiKeybindings(sessionName = TUI_SESSION): string[] {
     `bind-key -T root C-2 select-pane -t ${sessionName}:0.1`,
     // Ctrl+B: toggle sidebar width (collapse/expand)
     `bind-key -T root C-b if-shell "[ $(tmux display-message -p '#\\{pane_width\\}' -t ${sessionName}:0.0) -gt 5 ]" "resize-pane -t ${sessionName}:0.0 -x 0" "resize-pane -t ${sessionName}:0.0 -x ${NAV_WIDTH}"`,
-    // Ctrl+T: new window in agent session (sends C-b c to the nested tmux in right pane)
-    `bind-key -T root C-t send-keys -t ${sessionName}:0.1 C-b c`,
+    // Ctrl+T: focus nav pane + pass through — TUI handles new agent window via useKeyboard
+    `bind-key -T root C-t select-pane -t ${sessionName}:0.0 \\; send-keys -t ${sessionName}:0.0 C-t`,
     // Ctrl+D: detach from TUI (leave running)
     'bind-key -T root C-d detach-client',
     // Ctrl+Q: focus nav pane + pass through for quit confirmation popup
