@@ -26,7 +26,12 @@ const alivePanes = new Set<string>();
 /** Count of spawnWorkerFromTemplate invocations (reset in beforeEach). */
 let spawnCallCount = 0;
 
+// Re-export real _deps so protocol-router-spawn.test.ts can access them
+// even when this mock.module replaces the module in bun's shared cache.
+const realSpawnModule = await import('./protocol-router-spawn.js');
+
 mock.module('./protocol-router-spawn.js', () => ({
+  _deps: realSpawnModule._deps,
   spawnWorkerFromTemplate: async (template: any, _resumeSessionId?: string) => {
     spawnCallCount++;
     // Simulate spawn latency to widen the race window
@@ -56,7 +61,7 @@ mock.module('./protocol-router-spawn.js', () => ({
     alivePanes.add(paneId);
     return { worker: workerEntry, paneId, workerId: id };
   },
-  injectResumeContext: async () => {},
+  injectResumeContext: realSpawnModule.injectResumeContext,
 }));
 
 // ---------------------------------------------------------------------------
