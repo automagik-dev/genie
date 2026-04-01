@@ -15,6 +15,7 @@
 
 import * as registry from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
+import { getConnection } from './db.js';
 import * as mailbox from './mailbox.js';
 import { detectState } from './orchestrator/index.js';
 import { capturePaneContent, executeTmux, isPaneAlive } from './tmux.js';
@@ -135,32 +136,55 @@ async function ensureWorkerAlive(
     template.provider === 'claude' && worker?.claudeSessionId ? worker.claudeSessionId : undefined;
 
   try {
-    // Clean up ghost worker entries (dead panes) for this role before spawning
-    await cleanupDeadWorkers(recipientId, workerTeam);
+    const sql = await getConnection();
 
-    if (worker) {
-      await registry.unregister(worker.id);
+    // Advisory lock keyed on recipient — prevents concurrent cleanup+respawn
+    // for the same agent. Lock is held from cleanup through spawn return,
+    // released automatically on transaction commit/rollback.
+    const lockResult = await sql.begin(async (tx: typeof sql) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${recipientId}))`;
+
+      // Double-check: another process may have spawned while we waited for the lock
+      const postLockLive = await findLiveWorkerFuzzy(recipientId);
+      if (postLockLive) return { type: 'existing' as const, worker: postLockLive };
+
+      // Clean up ghost worker entries (dead panes) for this role before spawning
+      await cleanupDeadWorkers(recipientId, workerTeam);
+
+      if (worker) {
+        await registry.unregister(worker.id);
+      }
+
+      const { spawnWorkerFromTemplate } = await import('./protocol-router-spawn.js');
+      const spawnResult = await spawnWorkerFromTemplate(template, resumeSessionId);
+      return { type: 'spawned' as const, ...spawnResult };
+    });
+
+    if (lockResult.type === 'existing') {
+      return { worker: lockResult.worker, respawned: false };
     }
-
-    const { spawnWorkerFromTemplate } = await import('./protocol-router-spawn.js');
-    const result = await spawnWorkerFromTemplate(template, resumeSessionId);
 
     await registry.saveTemplate({
       ...template,
       lastSpawnedAt: new Date().toISOString(),
     });
 
-    await waitForWorkerReady(result.paneId);
+    await waitForWorkerReady(lockResult.paneId);
 
     // Verify the pane survived startup — if Claude exited (e.g. stale resume
     // or startup error), the pane is dead and delivery would silently fail.
-    if (!(await isPaneAlive(result.paneId))) {
-      await registry.unregister(result.worker.id);
+    if (!(await isPaneAlive(lockResult.paneId))) {
+      await registry.unregister(lockResult.worker.id);
       return null;
     }
 
-    return { worker: result.worker, respawned: true };
-  } catch {
+    return { worker: lockResult.worker, respawned: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[protocol-router] Spawn failed for "${recipientId}": ${msg}`);
+    if (worker) {
+      await registry.update(worker.id, { state: 'error' }).catch(() => {});
+    }
     return null;
   }
 }

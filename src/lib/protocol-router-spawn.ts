@@ -15,6 +15,7 @@ import { promisify } from 'node:util';
 import * as registry from './agent-registry.js';
 import type { WorkerTemplate } from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
+import { getConnection } from './db.js';
 import * as executorRegistry from './executor-registry.js';
 import * as mailbox from './mailbox.js';
 import { buildLayoutCommand, resolveLayoutMode } from './mosaic-layout.js';
@@ -102,43 +103,49 @@ async function createExecutorForAutoSpawn(
   const agentName = template.role ?? 'worker';
   const agentIdentity = await registry.findOrCreateAgent(agentName, template.team, template.role);
 
-  // Concurrent guard: terminate active executor before creating new one
-  const currentExec = await executorRegistry.getCurrentExecutor(agentIdentity.id);
-  if (currentExec && currentExec.state !== 'terminated' && currentExec.state !== 'done') {
-    const providerImpl = getProvider(currentExec.provider);
-    if (providerImpl) {
-      try {
-        await providerImpl.terminate(currentExec);
-      } catch {
-        /* best-effort */
+  const sql = await getConnection();
+  await sql.begin(async (tx: typeof sql) => {
+    // Advisory lock on agent ID — prevents concurrent executor guard for same agent
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${agentIdentity.id}))`;
+
+    // Concurrent guard: terminate active executor before creating new one
+    const currentExec = await executorRegistry.getCurrentExecutor(agentIdentity.id);
+    if (currentExec && currentExec.state !== 'terminated' && currentExec.state !== 'done') {
+      const providerImpl = getProvider(currentExec.provider);
+      if (providerImpl) {
+        try {
+          await providerImpl.terminate(currentExec);
+        } catch {
+          /* best-effort */
+        }
       }
+      await executorRegistry.terminateActiveExecutor(agentIdentity.id);
     }
-    await executorRegistry.terminateActiveExecutor(agentIdentity.id);
-  }
 
-  // Capture PID from tmux pane
-  let pid: number | null = null;
-  try {
-    const { stdout: pidOut } = await execAsync(genieTmuxCmd(`display -t '${paneId}' -p '#{pane_pid}'`));
-    const parsed = Number.parseInt(pidOut.trim(), 10);
-    if (parsed > 0) pid = parsed;
-  } catch {
-    /* best-effort */
-  }
+    // Capture PID from tmux pane
+    let pid: number | null = null;
+    try {
+      const { stdout: pidOut } = await execAsync(genieTmuxCmd(`display -t '${paneId}' -p '#{pane_pid}'`));
+      const parsed = Number.parseInt(pidOut.trim(), 10);
+      if (parsed > 0) pid = parsed;
+    } catch {
+      /* best-effort */
+    }
 
-  const executorTransport = template.provider === 'codex' ? ('api' as const) : ('tmux' as const);
-  const executor = await executorRegistry.createExecutor(agentIdentity.id, template.provider, executorTransport, {
-    pid,
-    tmuxSession: session,
-    tmuxPaneId: paneId,
-    tmuxWindow: teamWindow?.windowName ?? null,
-    tmuxWindowId: teamWindow?.windowId ?? null,
-    claudeSessionId: effectiveSessionId ?? null,
-    state: 'spawning',
-    repoPath,
-    paneColor: spawnColor ?? null,
+    const executorTransport = template.provider === 'codex' ? ('api' as const) : ('tmux' as const);
+    const executor = await executorRegistry.createExecutor(agentIdentity.id, template.provider, executorTransport, {
+      pid,
+      tmuxSession: session,
+      tmuxPaneId: paneId,
+      tmuxWindow: teamWindow?.windowName ?? null,
+      tmuxWindowId: teamWindow?.windowId ?? null,
+      claudeSessionId: effectiveSessionId ?? null,
+      state: 'spawning',
+      repoPath,
+      paneColor: spawnColor ?? null,
+    });
+    await registry.setCurrentExecutor(agentIdentity.id, executor.id);
   });
-  await registry.setCurrentExecutor(agentIdentity.id, executor.id);
 }
 
 /** Resolve target window and spawn a pane, returning pane ID and window info. */
