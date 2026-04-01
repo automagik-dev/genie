@@ -33,6 +33,12 @@ export interface DirectoryEntry {
   omniAgentId?: string;
   /** ISO timestamp of registration. */
   registeredAt: string;
+  /** Agent description from AGENTS.md frontmatter. */
+  description?: string;
+  /** Display color for TUI/terminal output. */
+  color?: string;
+  /** AI provider: 'claude' | 'codex'. Resolved at spawn time. */
+  provider?: string;
 }
 
 export type DirectoryScope = 'project' | 'global' | 'built-in' | 'archived';
@@ -113,13 +119,16 @@ export async function add(
     throw new Error(`Agent "${entry.name}" already exists. Use "genie dir edit" to update or "genie dir rm" first.`);
   }
 
-  // Store as a directory agent in PG (identity columns only)
+  // Build metadata JSONB from frontmatter fields
+  const metadata = buildMetadata(full);
+
+  // Store as a directory agent in PG with metadata
   const { getConnection } = await import('./db.js');
   const sql = await getConnection();
   await sql`
-    INSERT INTO agents (id, role, custom_name, started_at)
-    VALUES (${`dir:${entry.name}`}, ${entry.name}, ${entry.name}, now())
-    ON CONFLICT (id) DO NOTHING
+    INSERT INTO agents (id, role, custom_name, started_at, metadata)
+    VALUES (${`dir:${entry.name}`}, ${entry.name}, ${entry.name}, now(), ${sql.json(metadata)})
+    ON CONFLICT (id) DO UPDATE SET metadata = ${sql.json(metadata)}
   `;
 
   return full;
@@ -140,13 +149,14 @@ export async function rm(name: string, _options?: ScopeOptions): Promise<boolean
  * Resolution order: PG agents (by role) → built-in roles → built-in council.
  */
 export async function resolve(name: string): Promise<ResolvedAgent | null> {
-  // 1. Check PG agents table — look for agents with matching role
+  // 1. Check PG agents table — look for agents with matching role, include metadata
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
-    const rows = await sql`SELECT DISTINCT role FROM agents WHERE role = ${name} LIMIT 1`;
+    const rows = await sql`SELECT role, metadata FROM agents WHERE role = ${name} LIMIT 1`;
     if (rows.length > 0) {
-      return { entry: roleToEntry(name), builtin: false };
+      const meta = parseMetadata(rows[0].metadata);
+      return { entry: roleToEntry(name, undefined, meta), builtin: false };
     }
   } catch {
     /* PG unavailable — fall through to built-ins */
@@ -204,7 +214,7 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
     const rows = await sql`
-      SELECT DISTINCT ON (a.role) a.role, a.team, e.repo_path, e.provider
+      SELECT DISTINCT ON (a.role) a.role, a.team, a.metadata, e.repo_path, e.provider
       FROM agents a
       LEFT JOIN executors e ON a.current_executor_id = e.id
       WHERE a.role IS NOT NULL
@@ -213,7 +223,8 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
     for (const row of rows) {
       const name = row.role as string;
       if (!seen.has(name)) {
-        const entry = roleToEntry(name, row.team as string);
+        const meta = parseMetadata(row.metadata);
+        const entry = roleToEntry(name, row.team as string, meta);
         const repoPath = row.repo_path as string;
         if (repoPath) {
           entry.dir = repoPath;
@@ -244,7 +255,12 @@ export async function get(name: string, _options?: ScopeOptions): Promise<Direct
  */
 export async function edit(
   name: string,
-  updates: Partial<Pick<DirectoryEntry, 'dir' | 'repo' | 'promptMode' | 'model' | 'roles' | 'omniAgentId'>>,
+  updates: Partial<
+    Pick<
+      DirectoryEntry,
+      'dir' | 'repo' | 'promptMode' | 'model' | 'roles' | 'omniAgentId' | 'description' | 'color' | 'provider'
+    >
+  >,
   _options?: ScopeOptions,
 ): Promise<DirectoryEntry> {
   if (updates.dir) {
@@ -262,7 +278,23 @@ export async function edit(
     throw new Error(`Agent "${name}" not found in directory.`);
   }
 
-  return Object.assign(existing, updates);
+  const updated = Object.assign(existing, updates);
+
+  // Build metadata patch from updated entry and persist to PG
+  const metadataPatch = buildMetadata(updated);
+  try {
+    const { getConnection } = await import('./db.js');
+    const sql = await getConnection();
+    await sql`
+      UPDATE agents
+      SET metadata = metadata || ${sql.json(metadataPatch)}
+      WHERE id = ${`dir:${name}`}
+    `;
+  } catch {
+    /* PG unavailable — in-memory update still applied */
+  }
+
+  return updated;
 }
 
 /**
@@ -295,17 +327,48 @@ function builtinToEntry(agent: BuiltinAgent): DirectoryEntry {
   };
 }
 
-/** Convert a PG agent role to a synthetic DirectoryEntry. */
-function roleToEntry(role: string, team?: string): DirectoryEntry {
+/** Convert a PG agent role to a synthetic DirectoryEntry, enriched with metadata. */
+function roleToEntry(role: string, team?: string, metadata?: Record<string, unknown>): DirectoryEntry {
   const builtin = [...BUILTIN_ROLES, ...BUILTIN_COUNCIL_MEMBERS].find((b) => b.name === role);
   if (builtin) return builtinToEntry(builtin);
 
   return {
     name: role,
-    dir: '',
-    promptMode: 'append',
+    dir: (metadata?.dir as string) || '',
+    promptMode: (metadata?.promptMode as PromptMode) || 'append',
+    model: metadata?.model as string | undefined,
     roles: [],
     registeredAt: new Date().toISOString(),
-    ...(team ? { repo: team } : {}),
+    description: metadata?.description as string | undefined,
+    color: metadata?.color as string | undefined,
+    provider: metadata?.provider as string | undefined,
+    ...(metadata?.repo ? { repo: metadata.repo as string } : team ? { repo: team } : {}),
   };
+}
+
+/** Build a metadata JSONB object from a DirectoryEntry's frontmatter fields. */
+function buildMetadata(entry: DirectoryEntry): Record<string, unknown> {
+  const meta: Record<string, unknown> = {};
+  if (entry.dir) meta.dir = entry.dir;
+  if (entry.repo) meta.repo = entry.repo;
+  if (entry.model) meta.model = entry.model;
+  if (entry.promptMode && entry.promptMode !== 'append') meta.promptMode = entry.promptMode;
+  if (entry.description) meta.description = entry.description;
+  if (entry.color) meta.color = entry.color;
+  if (entry.provider) meta.provider = entry.provider;
+  return meta;
+}
+
+/** Parse a JSONB metadata value — handles both parsed objects and string-encoded JSON. */
+function parseMetadata(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
