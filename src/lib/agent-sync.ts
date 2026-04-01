@@ -17,9 +17,10 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, watch as fsWatch, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, watch as fsWatch, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import * as directory from './agent-directory.js';
+import { parseFrontmatter } from './frontmatter.js';
 
 // ============================================================================
 // Types
@@ -221,6 +222,11 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult): Promise<vo
   const orgRepo = agent.repoUrl ? extractOrgRepo(agent.repoUrl) : null;
   const repoPath = orgRepo ?? agent.repoUrl ?? agent.dir;
 
+  // Read and parse AGENTS.md frontmatter for identity fields
+  const agentsMdPath = join(agent.dir, 'AGENTS.md');
+  const content = readFileSync(agentsMdPath, 'utf-8');
+  const fm = parseFrontmatter(content);
+
   const existing = await directory.get(agent.name);
 
   if (!existing) {
@@ -228,20 +234,39 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult): Promise<vo
       name: agent.name,
       dir: agent.dir,
       repo: repoPath,
-      promptMode: 'append',
+      promptMode: fm.promptMode ?? 'append',
+      model: fm.model,
+      description: fm.description,
+      color: fm.color,
+      provider: fm.provider,
     });
     result.registered.push(agent.name);
     return;
   }
 
-  // Check if update needed
-  const needsUpdate = existing.repo !== repoPath || existing.dir !== agent.dir;
+  // AGENTS.md always wins — update identity fields from frontmatter on every sync
+  const identityUpdate: Parameters<typeof directory.edit>[1] = {
+    dir: agent.dir,
+    repo: repoPath,
+    promptMode: fm.promptMode ?? 'append',
+    model: fm.model,
+    description: fm.description,
+    color: fm.color,
+    provider: fm.provider,
+  };
+
+  // Check if any field actually changed
+  const needsUpdate =
+    existing.repo !== repoPath ||
+    existing.dir !== agent.dir ||
+    existing.promptMode !== (fm.promptMode ?? 'append') ||
+    existing.model !== fm.model ||
+    existing.description !== fm.description ||
+    existing.color !== fm.color ||
+    existing.provider !== fm.provider;
 
   if (needsUpdate) {
-    await directory.edit(agent.name, {
-      dir: agent.dir,
-      repo: repoPath,
-    });
+    await directory.edit(agent.name, identityUpdate);
     result.updated.push(agent.name);
   } else {
     result.unchanged.push(agent.name);

@@ -99,6 +99,19 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     test('returns empty array when no agents', async () => {
       expect(await directory.ls()).toEqual([]);
     });
+
+    test('ls includes metadata fields from PG', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:ls-meta', 'ls-meta', 'ls-meta', now(), '{"model":"opus","color":"green","provider":"codex","description":"Ls test"}')`;
+
+      const entries = await directory.ls();
+      const entry = entries.find((e) => e.name === 'ls-meta');
+      expect(entry).not.toBeNull();
+      expect(entry!.model).toBe('opus');
+      expect(entry!.color).toBe('green');
+      expect(entry!.provider).toBe('codex');
+      expect(entry!.description).toBe('Ls test');
+    });
   });
 
   // ============================================================================
@@ -130,6 +143,29 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       const entry = await directory.add({ name: 'test-agent', dir: agentDir, promptMode: 'append' });
       expect(entry.name).toBe('test-agent');
       expect(entry.registeredAt).toBeTruthy();
+    });
+
+    test('add writes metadata to PG', async () => {
+      await directory.add({
+        name: 'meta-add-agent',
+        dir: agentDir,
+        promptMode: 'system',
+        model: 'opus',
+        color: 'red',
+        description: 'A test agent',
+        provider: 'codex',
+      });
+
+      const sql = await getConnection();
+      const rows = await sql`SELECT metadata FROM agents WHERE id = 'dir:meta-add-agent'`;
+      expect(rows.length).toBe(1);
+      const metadata = rows[0].metadata as Record<string, unknown>;
+      expect(metadata.model).toBe('opus');
+      expect(metadata.color).toBe('red');
+      expect(metadata.description).toBe('A test agent');
+      expect(metadata.provider).toBe('codex');
+      expect(metadata.promptMode).toBe('system');
+      expect(metadata.dir).toBe(agentDir);
     });
 
     test('rm returns false for non-existent', async () => {
@@ -168,6 +204,51 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change) VALUES ('dir:editable', '%1', 's', '/tmp', 'done', 'editable', now(), now())`;
 
       await expect(directory.edit('editable', { dir: '/nonexistent/path' })).rejects.toThrow('does not exist');
+    });
+
+    test('edit persists model to PG metadata', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:meta-agent', 'meta-agent', 'meta-agent', now(), '{}')`;
+
+      await directory.edit('meta-agent', { model: 'opus' });
+
+      // Read directly from PG to verify persistence
+      const rows = await sql`SELECT metadata FROM agents WHERE id = 'dir:meta-agent'`;
+      expect(rows.length).toBe(1);
+      const metadata = rows[0].metadata as Record<string, unknown>;
+      expect(metadata.model).toBe('opus');
+    });
+
+    test('edit persists multiple metadata fields to PG', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:multi-meta', 'multi-meta', 'multi-meta', now(), '{}')`;
+
+      await directory.edit('multi-meta', {
+        model: 'sonnet',
+        color: 'blue',
+        provider: 'codex',
+        description: 'Test agent',
+      });
+
+      const rows = await sql`SELECT metadata FROM agents WHERE id = 'dir:multi-meta'`;
+      const metadata = rows[0].metadata as Record<string, unknown>;
+      expect(metadata.model).toBe('sonnet');
+      expect(metadata.color).toBe('blue');
+      expect(metadata.provider).toBe('codex');
+      expect(metadata.description).toBe('Test agent');
+    });
+
+    test('get returns edited model after PG round-trip', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:roundtrip', 'roundtrip', 'roundtrip', now(), '{}')`;
+
+      await directory.edit('roundtrip', { model: 'opus', provider: 'codex' });
+
+      // Resolve fresh from PG — simulates process restart
+      const entry = await directory.get('roundtrip');
+      expect(entry).not.toBeNull();
+      expect(entry!.model).toBe('opus');
+      expect(entry!.provider).toBe('codex');
     });
   });
 
