@@ -39,12 +39,12 @@ afterAll(async () => {
 // Helper: insert team into PG
 // ---------------------------------------------------------------------------
 
-async function insertTeam(name: string, repo: string, members: string[]): Promise<void> {
+async function insertTeam(name: string, repo: string, members: string[], leader?: string): Promise<void> {
   const sql = await getConnection();
   await sql`
-    INSERT INTO teams (name, repo, base_branch, worktree_path, members, status, created_at)
-    VALUES (${name}, ${repo}, 'dev', ${join(repo, '.worktrees', name)}, ${JSON.stringify(members)}, 'in_progress', now())
-    ON CONFLICT (name) DO UPDATE SET members = ${JSON.stringify(members)}
+    INSERT INTO teams (name, repo, base_branch, worktree_path, leader, members, status, created_at)
+    VALUES (${name}, ${repo}, 'dev', ${join(repo, '.worktrees', name)}, ${leader ?? null}, ${JSON.stringify(members)}, 'in_progress', now())
+    ON CONFLICT (name) DO UPDATE SET members = ${JSON.stringify(members)}, leader = ${leader ?? null}
   `;
 }
 
@@ -188,30 +188,30 @@ describe.skipIf(!DB_AVAILABLE)('checkSendScope', () => {
     expect(error).toContain('outsider');
   });
 
-  test('team-lead can always send to team-lead recipient', async () => {
-    await insertTeam('my-team', tempDir, ['implementor']);
+  test('member can send to leader by name', async () => {
+    await insertTeam('my-team', tempDir, ['implementor'], 'my-leader');
 
-    // implementor (member) can send to team-lead
-    const error = await checkSendScope(tempDir, 'implementor', 'team-lead');
+    // implementor (member) can send to the leader by name
+    const error = await checkSendScope(tempDir, 'implementor', 'my-leader');
     expect(error).toBeNull();
   });
 
-  test('team-lead uses GENIE_TEAM for team lookup', async () => {
-    await insertTeam('leader-team', tempDir, ['worker-a', 'worker-b']);
+  test('leader uses GENIE_TEAM for team lookup', async () => {
+    await insertTeam('leader-team', tempDir, ['worker-a', 'worker-b'], 'boss');
 
     process.env.GENIE_TEAM = 'leader-team';
 
-    // team-lead can send to team member
-    const error = await checkSendScope(tempDir, 'team-lead', 'worker-a');
+    // leader can send to team member
+    const error = await checkSendScope(tempDir, 'boss', 'worker-a');
     expect(error).toBeNull();
   });
 
-  test('team-lead blocked from sending to non-member', async () => {
-    await insertTeam('leader-team', tempDir, ['worker-a']);
+  test('leader blocked from sending to non-member', async () => {
+    await insertTeam('leader-team', tempDir, ['worker-a'], 'boss');
 
     process.env.GENIE_TEAM = 'leader-team';
 
-    const error = await checkSendScope(tempDir, 'team-lead', 'outsider');
+    const error = await checkSendScope(tempDir, 'boss', 'outsider');
     expect(error).not.toBeNull();
     expect(error).toContain('Scope violation');
   });
