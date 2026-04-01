@@ -45,6 +45,8 @@ export interface SchedulerConfig {
   orphanCheckIntervalMs: number;
   /** Number of consecutive dead heartbeats before marking a run as failed. Default: 2. */
   deadHeartbeatThreshold: number;
+  /** Lease recovery interval in ms. Default: 60000 (60s). Reclaims triggers stuck in 'executing' with expired leases. */
+  leaseRecoveryIntervalMs: number;
 }
 
 interface TriggerRow {
@@ -268,6 +270,7 @@ function resolveConfig(overrides?: Partial<SchedulerConfig>): SchedulerConfig {
     heartbeatIntervalMs: overrides?.heartbeatIntervalMs ?? 60_000,
     orphanCheckIntervalMs: overrides?.orphanCheckIntervalMs ?? 300_000,
     deadHeartbeatThreshold: overrides?.deadHeartbeatThreshold ?? 2,
+    leaseRecoveryIntervalMs: overrides?.leaseRecoveryIntervalMs ?? 60_000,
   };
 }
 
@@ -1229,10 +1232,12 @@ export function startDaemon(
   let listenConnection: SqlClient | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let orphanTimer: ReturnType<typeof setInterval> | null = null;
+  let leaseRecoveryTimer: ReturnType<typeof setInterval> | null = null;
   let inboxWatcherHandle: NodeJS.Timeout | null = null;
   let captureFallbackTimer: ReturnType<typeof setInterval> | null = null;
   let eventRouterHandle: EventRouterHandle | null = null;
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: stop() is a flat cleanup sequence for all daemon resources
   const stop = () => {
     running = false;
     if (pollTimeout) {
@@ -1251,6 +1256,10 @@ export function startDaemon(
     if (orphanTimer) {
       clearInterval(orphanTimer);
       orphanTimer = null;
+    }
+    if (leaseRecoveryTimer) {
+      clearInterval(leaseRecoveryTimer);
+      leaseRecoveryTimer = null;
     }
     if (inboxWatcherHandle) {
       stopInboxWatcher(inboxWatcherHandle);
@@ -1330,6 +1339,27 @@ export function startDaemon(
       d.log({ timestamp: d.now().toISOString(), level: 'warn', event: 'listen_failed', error: message });
       return null;
     }
+  }
+
+  function startLeaseRecoveryTimer(
+    d: SchedulerDeps,
+    cfg: SchedulerConfig,
+    dId: string,
+  ): ReturnType<typeof setInterval> {
+    return setInterval(async () => {
+      if (!running) return;
+      try {
+        await reclaimExpiredLeases(d, dId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        d.log({
+          timestamp: d.now().toISOString(),
+          level: 'error',
+          event: 'lease_recovery_error',
+          error: message,
+        });
+      }
+    }, cfg.leaseRecoveryIntervalMs);
   }
 
   function startOrphanTimer(d: SchedulerDeps, cfg: SchedulerConfig): ReturnType<typeof setInterval> {
@@ -1458,6 +1488,7 @@ export function startDaemon(
     listenConnection = await setupListenNotify(deps, processTriggers);
     heartbeatTimer = setInterval(() => runHeartbeat(deps), config.heartbeatIntervalMs);
     orphanTimer = startOrphanTimer(deps, config);
+    leaseRecoveryTimer = startLeaseRecoveryTimer(deps, config, daemonId);
     inboxWatcherHandle = startInboxWatcherIfEnabled(deps);
     eventRouterHandle = await startEventRouterSafe(deps);
     captureFallbackTimer = await initSessionCapture(deps, config);
