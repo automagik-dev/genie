@@ -73,7 +73,9 @@ export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
   const teamName = process.env.GENIE_TEAM ?? payload.team_name;
   if (!teamName) return;
 
-  // Skip auto-spawn for the team's leader (resolved dynamically, never hardcoded)
+  // Skip auto-spawn for the team's leader — check the well-known alias first,
+  // then resolve dynamically for custom leader names.
+  if (recipient === 'team-lead') return;
   if (await isRecipientLeader(recipient, teamName)) return;
 
   try {
