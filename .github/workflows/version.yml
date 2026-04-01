@@ -85,7 +85,7 @@ jobs:
 
       - name: Format versioned JSON (Biome)
         run: |
-          bunx biome format --write package.json openclaw.plugin.json plugins/genie/.claude-plugin/plugin.json plugins/genie/package.json .claude-plugin/marketplace.json 2>/dev/null || true
+          bunx biome format --write package.json plugins/genie/.claude-plugin/plugin.json plugins/genie/package.json .claude-plugin/marketplace.json 2>/dev/null || true
 
       - name: Commit and tag
         run: |
