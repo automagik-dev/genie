@@ -2,7 +2,7 @@
   "id": "genie",
   "name": "Genie",
   "description": "Skills, agents, and hooks for the Genie CLI terminal orchestration toolkit",
-  "version": "4.260401.1",
+  "version": "4.260401.2",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
