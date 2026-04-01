@@ -82,6 +82,17 @@ export function extractWishContext(content: string): string {
   return content.slice(0, 2000).trim();
 }
 
+const SLUG_PATTERN = /^[a-zA-Z0-9._-]+$/;
+
+/** Validate a slug against path traversal. Throws on invalid input. */
+export function validateSlug(slug: string): void {
+  if (!SLUG_PATTERN.test(slug)) {
+    console.error(`❌ Invalid slug: "${slug}"`);
+    console.error('   Slugs must match [a-zA-Z0-9._-]+ (no slashes, dots-dots, or special characters)');
+    process.exit(1);
+  }
+}
+
 /** Escape regex special characters. */
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -377,6 +388,7 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
     return; // handleTeamCreate spawns the leader, which runs the full lifecycle
   }
 
+  validateSlug(slug);
   wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
   if (!existsSync(wishPath)) {
@@ -438,6 +450,7 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
  * `genie brainstorm <agent> <slug>` — Read DRAFT.md, spawn agent with content.
  */
 async function brainstormCommand(agentName: string, slug: string): Promise<void> {
+  validateSlug(slug);
   const draftPath = join(process.cwd(), '.genie', 'brainstorms', slug, 'DRAFT.md');
 
   if (!existsSync(draftPath)) {
@@ -480,6 +493,7 @@ async function brainstormCommand(agentName: string, slug: string): Promise<void>
  * `genie wish <agent> <slug>` — Read DESIGN.md, spawn agent with content.
  */
 async function wishCommand(agentName: string, slug: string): Promise<void> {
+  validateSlug(slug);
   const designPath = join(process.cwd(), '.genie', 'brainstorms', slug, 'DESIGN.md');
 
   if (!existsSync(designPath)) {
@@ -529,6 +543,7 @@ async function wishCommand(agentName: string, slug: string): Promise<void> {
  */
 async function workDispatchCommand(agentName: string, ref: string): Promise<void> {
   const { slug, group } = parseRef(ref);
+  validateSlug(slug);
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
   if (!existsSync(wishPath)) {
@@ -615,6 +630,7 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
  */
 async function reviewCommand(agentName: string, ref: string): Promise<void> {
   const { slug, group } = parseRef(ref);
+  validateSlug(slug);
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
   if (!existsSync(wishPath)) {
