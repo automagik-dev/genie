@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 
 const mockConfirm = mock<(options: { message: string; default?: boolean }) => Promise<boolean>>(async () => true);
 const mockIsSetupComplete = mock(() => true);
+const mockScanAgents = mock<(root: string) => string[]>(() => []);
 
 mock.module('@inquirer/prompts', () => ({
   confirm: (options: { message: string; default?: boolean }) => mockConfirm(options),
@@ -13,6 +14,15 @@ mock.module('@inquirer/prompts', () => ({
 
 mock.module('../lib/genie-config.js', () => ({
   isSetupComplete: () => mockIsSetupComplete(),
+  loadGenieConfigSync: () => ({ promptMode: 'append' }),
+}));
+
+// Stub findWorkspace to prevent it from discovering the host machine's workspace
+// via its global fallback. scanAgents is also mocked so tests can control whether
+// agents "exist" without relying on the real filesystem.
+mock.module('../lib/workspace.js', () => ({
+  findWorkspace: () => null,
+  scanAgents: (root: string) => mockScanAgents(root),
 }));
 
 const { registerInitCommands } = await import('./init.js');
@@ -33,8 +43,10 @@ beforeEach(() => {
 
   mockConfirm.mockReset();
   mockIsSetupComplete.mockReset();
+  mockScanAgents.mockReset();
   mockConfirm.mockResolvedValue(true);
   mockIsSetupComplete.mockReturnValue(true);
+  mockScanAgents.mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -75,14 +87,8 @@ describe('genie init default agent bootstrap', () => {
     expect(existsSync(join(testDir, 'agents', 'genie', 'AGENTS.md'))).toBe(false);
   });
 
-  // SKIP: This test passes in isolation but fails in the full suite due to bun's
-  // module caching. When init.js is imported by another test file first, the cached
-  // module binds the real @inquirer/prompts and workspace.js — mock.module only
-  // applies to future imports, not cached ones. Needs bun test isolation fix.
-  test.skip('does not prompt when an agent already exists', async () => {
-    const existingAgentDir = join(testDir, 'agents', 'atlas');
-    mkdirSync(existingAgentDir, { recursive: true });
-    writeFileSync(join(existingAgentDir, 'AGENTS.md'), '---\nname: atlas\n---\n');
+  test('does not prompt when an agent already exists', async () => {
+    mockScanAgents.mockReturnValue(['atlas']);
 
     const program = new Command();
     registerInitCommands(program);
