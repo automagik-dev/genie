@@ -99,6 +99,9 @@ export function registerDirNamespace(program: Command): void {
     .option('--repo <path>', 'Default git repo')
     .option('--prompt-mode <mode>', 'Prompt mode: append or system')
     .option('--model <model>', 'Default model')
+    .option('--provider <provider>', 'AI provider: claude or codex')
+    .option('--color <color>', 'Display color for TUI')
+    .option('--description <desc>', 'Agent description')
     .option('--roles <roles...>', 'Built-in roles this agent can orchestrate')
     .option('--global', 'Edit in global directory instead of project')
     .action(async (name: string, options: EditOptions) => {
@@ -162,6 +165,9 @@ interface EditOptions {
   repo?: string;
   promptMode?: string;
   model?: string;
+  provider?: string;
+  color?: string;
+  description?: string;
   roles?: string[];
   global?: boolean;
 }
@@ -172,10 +178,15 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
   if (options.repo) updates.repo = resolvePath(options.repo);
   if (options.promptMode) updates.promptMode = validatePromptMode(options.promptMode);
   if (options.model) updates.model = options.model;
+  if (options.provider) updates.provider = options.provider;
+  if (options.color) updates.color = options.color;
+  if (options.description) updates.description = options.description;
   if (options.roles) updates.roles = normalizeRoles(options.roles);
 
   if (Object.keys(updates).length === 0) {
-    console.error('No fields to update. Provide at least one of: --dir, --repo, --prompt-mode, --model, --roles');
+    console.error(
+      'No fields to update. Provide at least one of: --dir, --repo, --prompt-mode, --model, --provider, --color, --description, --roles',
+    );
     process.exit(1);
   }
 
@@ -216,8 +227,11 @@ function printEntry(entry: directory.DirectoryEntry): void {
   console.log(`  Name: ${entry.name}`);
   console.log(`  Dir: ${contractPath(entry.dir)}`);
   if (entry.repo) console.log(`  Repo: ${contractPath(entry.repo)}`);
-  console.log(`  Prompt mode: ${entry.promptMode}`);
+  console.log(`  PromptMode: ${entry.promptMode}`);
   if (entry.model) console.log(`  Model: ${entry.model}`);
+  if (entry.provider) console.log(`  Provider: ${entry.provider}`);
+  if (entry.color) console.log(`  Color: ${entry.color}`);
+  if (entry.description) console.log(`  Description: ${entry.description}`);
   if (entry.roles?.length) console.log(`  Roles: ${entry.roles.join(', ')}`);
   console.log(`  Registered: ${entry.registeredAt}`);
 }
@@ -298,7 +312,8 @@ function normalizeRoles(roles?: string[]): string[] | undefined {
 function printRegisteredTable(entries: directory.ScopedDirectoryEntry[]): void {
   const nameW = 22;
   const scopeW = 10;
-  const modelW = 8;
+  const modelW = 10;
+  const providerW = 10;
 
   // Compute repo paths and roles upfront for dynamic sizing
   const repoValues: string[] = [];
@@ -310,7 +325,7 @@ function printRegisteredTable(entries: directory.ScopedDirectoryEntry[]): void {
 
   // Size REPO column to fit longest value, capped to leave room for ROLES
   const termW = process.stdout.columns || 120;
-  const fixedW = 2 + nameW + scopeW + modelW; // leading indent + fixed columns
+  const fixedW = 2 + nameW + scopeW + modelW + providerW; // leading indent + fixed columns
   const maxRepoLen = Math.max('REPO'.length, ...repoValues.map((v) => v.length));
   const repoW = Math.min(maxRepoLen + 2, Math.max(30, termW - fixedW - 20));
 
@@ -320,10 +335,10 @@ function printRegisteredTable(entries: directory.ScopedDirectoryEntry[]): void {
   console.log('REGISTERED AGENTS');
   console.log('-'.repeat(Math.max(90, totalW)));
   console.log(
-    `  ${'NAME'.padEnd(nameW)}${'SCOPE'.padEnd(scopeW)}${'REPO'.padEnd(repoW)}${'MODEL'.padEnd(modelW)}ROLES`,
+    `  ${'NAME'.padEnd(nameW)}${'SCOPE'.padEnd(scopeW)}${'REPO'.padEnd(repoW)}${'MODEL'.padEnd(modelW)}${'PROVIDER'.padEnd(providerW)}ROLES`,
   );
   console.log(
-    `  ${'-'.repeat(nameW - 2)}  ${'-'.repeat(scopeW - 2)}  ${'-'.repeat(repoW - 2)}  ${'-'.repeat(modelW - 2)}  ${'-'.repeat(20)}`,
+    `  ${'-'.repeat(nameW - 2)}  ${'-'.repeat(scopeW - 2)}  ${'-'.repeat(repoW - 2)}  ${'-'.repeat(modelW - 2)}  ${'-'.repeat(providerW - 2)}  ${'-'.repeat(20)}`,
   );
 
   for (let i = 0; i < entries.length; i++) {
@@ -331,7 +346,7 @@ function printRegisteredTable(entries: directory.ScopedDirectoryEntry[]): void {
     const repo = repoValues[i];
     const roles = roleValues[i];
     console.log(
-      `  ${entry.name.padEnd(nameW)}${entry.scope.padEnd(scopeW)}${repo.padEnd(repoW)}${(entry.model || '-').padEnd(modelW)}${roles}`,
+      `  ${entry.name.padEnd(nameW)}${entry.scope.padEnd(scopeW)}${repo.padEnd(repoW)}${(entry.model || '-').padEnd(modelW)}${(entry.provider || '-').padEnd(providerW)}${roles}`,
     );
   }
   console.log('');
