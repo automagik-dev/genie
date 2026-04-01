@@ -19,8 +19,8 @@ import { TreeNodeRow } from './TreeNode.js';
 
 interface NavProps {
   onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void;
-  /** Create a new claude window in an agent's session */
-  onNewAgentWindow?: (sessionName: string) => void;
+  /** Spawn a parallel worker of the same agent type */
+  onNewAgentWindow?: (agentName: string) => void;
   /** Workspace root path — enables workspace mode (merged agent tree) */
   workspaceRoot?: string;
   /** Pre-select this agent on initial render */
@@ -214,11 +214,10 @@ export function Nav({
     } else if (key.name === 'r') {
       handleRetry();
     } else if (key.ctrl && key.name === 't') {
-      // Ctrl+T: new claude window for the selected running agent
+      // Ctrl+T: spawn a parallel worker of the selected agent
       const node = flatNodes[selectedIndex]?.node;
       if (node?.type === 'agent' && node.wsAgentState === 'running' && onNewAgentWindow) {
-        const target = getSessionTarget(node);
-        if (target) onNewAgentWindow(target.sessionName);
+        onNewAgentWindow(agentNameFromNode(node));
       }
     }
   });

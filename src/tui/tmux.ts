@@ -83,24 +83,28 @@ export function attachTuiSession(): void {
   runTuiTmux(['attach-session', '-t', SESSION_NAME], 'inherit');
 }
 
-/** Create a new claude window in an agent's session on the genie tmux server. */
-export function newAgentWindow(sessionName: string): void {
-  // Find the spawn script for this agent — it contains the full claude command with all flags
-  const { readdirSync } = require('node:fs') as typeof import('node:fs');
-  const { join } = require('node:path') as typeof import('node:path');
-  const scriptsDir = join(process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`, 'spawn-scripts');
-  try {
-    const scripts = readdirSync(scriptsDir);
-    // Match spawn script by session name prefix (e.g., "genie-ceo-*.sh" for session "ceo")
-    const prefix = `genie-${sessionName}-`;
-    const script = scripts.find((f: string) => f.startsWith(prefix) && f.endsWith('.sh'));
-    if (script) {
-      runAgentTmux(['new-window', '-t', sessionName, 'sh', '-c', join(scriptsDir, script)]);
-      return;
-    }
-  } catch {
-    // scripts dir missing — fall back
+/** Spawn a fresh parallel worker of the same agent type via `genie spawn`. */
+export function newAgentWindow(agentName: string): void {
+  const { spawn } = require('node:child_process') as typeof import('node:child_process');
+  const { join, resolve } = require('node:path') as typeof import('node:path');
+  const { existsSync } = require('node:fs') as typeof import('node:fs');
+  const bunPath = process.execPath || 'bun';
+  const genieBin = process.argv[1];
+  const wsRoot = process.env.GENIE_TUI_WORKSPACE;
+
+  let cwd: string | undefined;
+  if (wsRoot) {
+    const parentName = agentName.includes('/') ? agentName.slice(0, agentName.indexOf('/')) : agentName;
+    const agentDir = resolve(join(wsRoot, 'agents', parentName));
+    if (existsSync(agentDir)) cwd = agentDir;
   }
-  // Fallback: create a plain window (better than nothing)
-  runAgentTmux(['new-window', '-t', sessionName]);
+
+  // No --session: genie spawn assigns a unique session ID automatically.
+  // This creates a parallel worker of the same role, not a resume.
+  const args = ['spawn', agentName];
+  const child =
+    genieBin && genieBin !== 'genie'
+      ? spawn(bunPath, [genieBin, ...args], { detached: true, stdio: 'ignore', cwd })
+      : spawn('genie', args, { detached: true, stdio: 'ignore', cwd });
+  child.unref();
 }
