@@ -45,9 +45,6 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   // ============================================================================
 
   describe('resolve', () => {
-    // app_store table was dropped in migration 018_drop_app_store (PR #932)
-    // The resolve() code catches the missing table gracefully, but the test can't INSERT.
-
     test('resolves agent from PG by role', async () => {
       const sql = await getConnection();
       await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change) VALUES ('a1', '%1', 's', '/tmp', 'working', 'my-agent', now(), now())`;
