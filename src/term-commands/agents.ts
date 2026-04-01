@@ -1011,7 +1011,7 @@ async function resolveNativeTeam(
 }
 
 export interface SpawnOptions {
-  provider: string;
+  provider?: string;
   team: string;
   model?: string;
   skill?: string;
@@ -1088,8 +1088,11 @@ async function buildSpawnParams(
   options: SpawnOptions,
   agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
 ): Promise<{ params: SpawnParams; parentSessionId: string; spawnColor: ClaudeTeamColor }> {
+  // Provider resolution chain: CLI --provider > directory entry > default 'claude'
+  const resolvedProvider = (options.provider ?? agent.entry.provider ?? 'claude') as ProviderName;
+
   const params: SpawnParams = {
-    provider: options.provider as ProviderName,
+    provider: resolvedProvider,
     team,
     role: name,
     skill: options.skill,
@@ -1102,6 +1105,7 @@ async function buildSpawnParams(
 
   const { parentSessionId, spawnColor, nativeTeam } = await resolveNativeTeam(team, agent.repoPath, {
     ...options,
+    provider: resolvedProvider,
     role: name,
   });
   if (nativeTeam) params.nativeTeam = nativeTeam;

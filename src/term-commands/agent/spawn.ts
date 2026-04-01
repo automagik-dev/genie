@@ -10,7 +10,7 @@ export function registerAgentSpawn(parent: Command): void {
   parent
     .command('spawn <name>')
     .description('Spawn a new agent by name (resolves from directory or built-ins)')
-    .option('--provider <provider>', 'Provider: claude or codex', 'claude')
+    .option('--provider <provider>', 'Provider: claude or codex')
     .option('--team <team>', 'Team name', process.env.GENIE_TEAM ?? 'genie')
     .option('--model <model>', 'Model override (e.g., sonnet, opus)')
     .option('--skill <skill>', 'Skill to load (optional)')
