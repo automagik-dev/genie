@@ -110,19 +110,39 @@ function resolveHandlers(event: string, toolName?: string): Handler[] {
     .sort((a, b) => a.priority - b.priority);
 }
 
+/** Log handler decision when GENIE_HOOK_DEBUG is enabled. */
+function hookDebug(handlerName: string, decision: string, elapsedMs: number): void {
+  if (process.env.GENIE_HOOK_DEBUG === '1') {
+    console.error(`[hook-debug] ${handlerName} → ${decision} (${elapsedMs}ms)`);
+  }
+}
+
 /** Run a single handler, returning its result or undefined on error. */
-async function runHandler(
+export async function runHandler(
   handler: Handler,
   payload: HookPayload,
   currentInput: Record<string, unknown> | undefined,
+  isBlocking: boolean,
 ): Promise<HandlerResult> {
   const handlerPayload: HookPayload = { ...payload };
   if (currentInput) handlerPayload.tool_input = currentInput;
+  const start = Date.now();
   try {
-    return await handler.fn(handlerPayload);
+    const result = await handler.fn(handlerPayload);
+    hookDebug(
+      handler.name,
+      result?.decision ?? result?.hookSpecificOutput?.permissionDecision ?? 'allow',
+      Date.now() - start,
+    );
+    return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[genie-hook] Handler "${handler.name}" threw: ${msg}`);
+    if (isBlocking) {
+      hookDebug(handler.name, 'deny (crash)', Date.now() - start);
+      return { decision: 'deny', reason: `handler crashed: ${msg}` };
+    }
+    hookDebug(handler.name, 'allow (crash, non-blocking)', Date.now() - start);
     return undefined;
   }
 }
@@ -178,7 +198,7 @@ async function executeBlockingChain(matched: Handler[], payload: HookPayload): P
   const hookEventName = payload.hook_event_name;
 
   for (const handler of matched) {
-    const result = await runHandler(handler, payload, currentInput);
+    const result = await runHandler(handler, payload, currentInput, true);
     if (!result) continue;
 
     if (result.decision === 'deny') {

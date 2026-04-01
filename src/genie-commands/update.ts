@@ -471,6 +471,60 @@ function syncTmuxScripts(globalPkgDir: string): void {
   syncTmuxConf(tmuxScriptsSrc);
 }
 
+/** Update marketplace.json version field to match the installed CLI version. */
+function syncMarketplaceVersion(claudePlugins: string, version: string): void {
+  const marketplacePath = join(claudePlugins, 'marketplaces', 'automagik', '.claude-plugin', 'marketplace.json');
+  try {
+    if (!existsSync(marketplacePath)) return;
+    const data = JSON.parse(readFileSync(marketplacePath, 'utf-8'));
+    if (Array.isArray(data.plugins)) {
+      for (const plugin of data.plugins) {
+        if (plugin.name === 'genie') {
+          plugin.version = version;
+        }
+      }
+    }
+    writeFileSync(marketplacePath, JSON.stringify(data, null, 2));
+    success(`Updated marketplace.json to v${version}`);
+  } catch (err) {
+    log(`Marketplace version update failed (non-fatal): ${err}`);
+  }
+}
+
+/** Update plugins/genie/package.json version field to match the installed CLI version. */
+function syncPluginPackageVersion(claudePlugins: string, version: string): void {
+  const pkgPath = join(claudePlugins, 'marketplaces', 'automagik', 'plugins', 'genie', 'package.json');
+  try {
+    if (!existsSync(pkgPath)) return;
+    const data = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    data.version = version;
+    writeFileSync(pkgPath, JSON.stringify(data, null, 2));
+    success(`Updated plugin package.json to v${version}`);
+  } catch (err) {
+    log(`Plugin package.json update failed (non-fatal): ${err}`);
+  }
+}
+
+/** Repoint the skills symlink to the current cache version. */
+function syncSkillsSymlink(claudePlugins: string, version: string): void {
+  const skillsLink = join(claudePlugins, 'marketplaces', 'automagik', 'plugins', 'genie', 'skills');
+  const cacheSkills = join('..', '..', 'cache', 'automagik', 'genie', version, 'skills');
+  try {
+    const { symlinkSync, unlinkSync, lstatSync } = require('node:fs') as typeof import('node:fs');
+    // Remove existing symlink/dir if present
+    try {
+      lstatSync(skillsLink);
+      unlinkSync(skillsLink);
+    } catch {
+      // doesn't exist — fine
+    }
+    symlinkSync(cacheSkills, skillsLink);
+    success(`Skills symlink → cache/${version}/skills`);
+  } catch (err) {
+    log(`Skills symlink update failed (non-fatal): ${err}`);
+  }
+}
+
 async function syncPlugin(installType: InstallationType): Promise<void> {
   log('Syncing Claude Code plugin...');
 
@@ -518,6 +572,9 @@ async function syncPlugin(installType: InstallationType): Promise<void> {
   }
 
   updatePluginRegistry(claudePlugins, cacheDir, version);
+  syncMarketplaceVersion(claudePlugins, version);
+  syncPluginPackageVersion(claudePlugins, version);
+  syncSkillsSymlink(claudePlugins, version);
   syncTmuxScripts(globalPkgDir);
 
   success(`Plugin synced to v${version}`);

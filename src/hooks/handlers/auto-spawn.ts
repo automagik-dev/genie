@@ -114,5 +114,11 @@ export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[genie-hook] Auto-spawn failed for "${recipient}": ${msg}`);
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        additionalContext: `auto-spawn warning: failed to spawn "${recipient}": ${msg}`,
+      },
+    };
   }
 }
