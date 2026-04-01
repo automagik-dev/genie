@@ -49,14 +49,24 @@ function buildSpawnArgs(template: {
   return args;
 }
 
-/** Check if the recipient is the team's actual leader (dynamic name, not 'team-lead' alias). */
+/** Check if the recipient is the team's actual leader.
+ *  Falls back to the well-known 'team-lead' alias when PG is unreachable
+ *  or when the team config is not found, so we never accidentally try to
+ *  auto-spawn the leader.
+ */
 async function isRecipientLeader(recipient: string, teamName: string): Promise<boolean> {
   try {
     const { getTeam } = await import('../../lib/team-manager.js');
     const config = await getTeam(teamName);
-    return !!config?.leader && recipient === config.leader;
+    if (!config) {
+      // Team not found (PG returned null) -- fall back to canonical alias
+      return recipient === 'team-lead';
+    }
+    return !!config.leader && recipient === config.leader;
   } catch {
-    return false;
+    // PG unavailable -- fall back to the canonical leader alias.
+    // Returning false here would cause auto-spawn of the leader, which is wrong.
+    return recipient === 'team-lead';
   }
 }
 
