@@ -57,14 +57,17 @@ async function ensureSession(teamName: string): Promise<string> {
     if (existing) return teamConfig.tmuxSessionName;
   }
 
-  // Fallback: create/find session named after the team
+  // Fallback: atomically create session named after the team.
+  // Uses new-session directly and catches "duplicate session" to eliminate TOCTOU race.
   const sessionName = sanitizeTeamName(teamName);
-  const existing = await tmux.findSessionByName(sessionName);
-  if (existing) return sessionName;
-
-  const session = await tmux.createSession(sessionName);
-  if (!session) {
-    throw new Error(`Failed to create tmux session "${sessionName}"`);
+  try {
+    await tmux.createSession(sessionName);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // "duplicate session" means another process created it first — that's fine
+    if (!message.includes('duplicate session')) {
+      throw error;
+    }
   }
   return sessionName;
 }
