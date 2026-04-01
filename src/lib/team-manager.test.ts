@@ -297,15 +297,25 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         expect(name).toBe('my-wish-slug');
       });
 
-      test('resolveLeaderName falls back to team-lead for legacy teams', async () => {
+      test('resolveLeaderName falls back to teamName for legacy teams (never returns team-lead)', async () => {
         await createTeam('feat/legacy-leader', TEST_REPO, 'dev');
-        // No leader set — legacy team
+        // No leader set — legacy team, should return teamName not 'team-lead'
         const name = await resolveLeaderName('feat/legacy-leader');
-        expect(name).toBe('team-lead');
+        expect(name).toBe('feat/legacy-leader');
       });
 
-      test('resolveLeaderName throws for nonexistent team', async () => {
-        expect(resolveLeaderName('nonexistent-team')).rejects.toThrow('not found');
+      test('resolveLeaderName returns teamName for nonexistent team (never throws)', async () => {
+        const name = await resolveLeaderName('nonexistent-team');
+        expect(name).toBe('nonexistent-team');
+      });
+
+      test('resolveLeaderName skips leader if it equals team-lead', async () => {
+        const config = await createTeam('feat/skip-team-lead', TEST_REPO, 'dev');
+        config.leader = 'team-lead';
+        await updateTeamConfig(config.name, config);
+        const name = await resolveLeaderName('feat/skip-team-lead');
+        // Should return teamName, not 'team-lead'
+        expect(name).toBe('feat/skip-team-lead');
       });
 
       test('spawner persisted in PG teams table', async () => {

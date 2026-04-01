@@ -17,6 +17,7 @@ import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import * as registry from '../lib/agent-registry.js';
+import { reconcileStaleSpawns } from '../lib/agent-registry.js';
 import {
   deleteNativeTeam,
   ensureNativeTeam,
@@ -67,7 +68,7 @@ async function resolveSessionLeaderName(teamName: string): Promise<string> {
     const { resolveLeaderName } = await import('../lib/team-manager.js');
     return await resolveLeaderName(teamName);
   } catch {
-    return 'team-lead'; // Fallback for legacy teams or when DB is unavailable
+    return teamName; // Fallback when DB is unavailable — never return 'team-lead'
   }
 }
 
@@ -352,6 +353,9 @@ function attachToWindow(sessionName: string, windowName: string): void {
 }
 
 export async function sessionCommand(options: SessionOptions = {}): Promise<void> {
+  // One-shot startup reconciliation: reset agents stuck in 'spawning' with no pane for >60s
+  await reconcileStaleSpawns();
+
   const workspaceDir = options.dir ?? process.cwd();
   const sessionName = options.name ?? sanitizeWindowName(basename(workspaceDir));
 

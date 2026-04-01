@@ -19,7 +19,7 @@ export function registerAgentSend(parent: Command): void {
   parent
     .command('send <body>')
     .description('Send a direct message to an agent (hierarchy-enforced)')
-    .option('--to <agent>', 'Recipient agent name (default: team-lead)', 'team-lead')
+    .option('--to <agent>', 'Recipient agent name (default: team leader)', 'team-lead')
     .option('--from <sender>', 'Sender ID (auto-detected from context)')
     .option('--team <name>', 'Explicit team context for sender/recipient resolution')
     .option('--broadcast', 'Send to all direct reports')
@@ -44,13 +44,12 @@ export function registerAgentSend(parent: Command): void {
 // Hierarchy ACL
 // ============================================================================
 
-/** Check if an agent name matches the team's leader (by alias or actual name). */
+/** Check if an agent name matches the team's leader (by resolved name). */
 async function isTeamLeader(agentName: string, teamName: string): Promise<boolean> {
-  if (agentName === 'team-lead') return true;
   try {
-    const teamMgr = await import('../../lib/team-manager.js');
-    const config = await teamMgr.getTeam(teamName);
-    return agentName === config?.leader;
+    const { resolveLeaderName } = await import('../../lib/team-manager.js');
+    const leaderName = await resolveLeaderName(teamName);
+    return agentName === leaderName;
   } catch {
     return false;
   }
