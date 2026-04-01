@@ -166,6 +166,7 @@ const defaultConfig: SchedulerConfig = {
   heartbeatIntervalMs: 60_000,
   orphanCheckIntervalMs: 300_000,
   deadHeartbeatThreshold: 2,
+  leaseRecoveryIntervalMs: 60_000,
 };
 
 // ============================================================================
@@ -1427,6 +1428,153 @@ describe('scheduler-daemon', () => {
       await recoverOnStartup(deps, 'daemon-1', defaultConfig);
 
       expect(resumedAgents).toHaveLength(0);
+    });
+  });
+
+  // ==========================================================================
+  // Lease Recovery — periodic reclaim of expired trigger leases
+  // ==========================================================================
+
+  describe('periodic lease recovery', () => {
+    test('reclaimExpiredLeases resets expired executing triggers to pending', async () => {
+      const triggers = [
+        {
+          id: 'trig-stuck',
+          schedule_id: 'sched-1',
+          due_at: new Date('2026-03-20T10:00:00Z'),
+          status: 'executing',
+          leased_until: new Date('2026-03-20T11:50:00Z'),
+          leased_by: 'crashed-daemon',
+          idempotency_key: null,
+        },
+      ];
+      const { deps, logs, mock } = createMockDeps({ triggers });
+
+      const count = await reclaimExpiredLeases(deps, 'recovery-daemon');
+
+      expect(count).toBe(1);
+      const reclaimLog = logs.find((l) => l.event === 'expired_leases_reclaimed');
+      expect(reclaimLog).toBeDefined();
+      expect(reclaimLog?.count).toBe(1);
+      expect(reclaimLog?.daemon_id).toBe('recovery-daemon');
+
+      const updateQuery = mock.queries.find(
+        (q) => q.query.includes('UPDATE triggers') && q.query.includes('leased_until'),
+      );
+      expect(updateQuery).toBeDefined();
+    });
+
+    test('does not reclaim triggers with valid (unexpired) leases', async () => {
+      const { deps, logs } = createMockDeps({ triggers: [] });
+
+      const count = await reclaimExpiredLeases(deps, 'daemon-1');
+
+      expect(count).toBe(0);
+      const reclaimLog = logs.find((l) => l.event === 'expired_leases_reclaimed');
+      expect(reclaimLog).toBeUndefined();
+    });
+
+    test('startup recovery reclaims expired trigger leases', async () => {
+      const triggers = [
+        {
+          id: 'trig-stuck-1',
+          schedule_id: 'sched-1',
+          due_at: new Date('2026-03-20T10:00:00Z'),
+          status: 'executing',
+          leased_until: new Date('2026-03-20T11:00:00Z'),
+          leased_by: 'dead-daemon',
+          idempotency_key: null,
+        },
+      ];
+      const { deps, logs } = createMockDeps({ triggers, runs: [] });
+
+      await recoverOnStartup(deps, 'new-daemon', defaultConfig);
+
+      const recoveryLog = logs.find((l) => l.event === 'recovery_completed');
+      expect(recoveryLog).toBeDefined();
+      expect(recoveryLog?.reclaimed_leases).toBe(1);
+    });
+
+    test('daemon runs periodic lease recovery during operation', async () => {
+      let reclaimCallCount = 0;
+      const triggers = [
+        {
+          id: 'trig-stuck',
+          schedule_id: 'sched-1',
+          due_at: new Date('2026-03-20T10:00:00Z'),
+          status: 'executing',
+          leased_until: new Date('2026-03-20T11:00:00Z'),
+          leased_by: 'crashed-daemon',
+          idempotency_key: null,
+        },
+      ];
+      const { deps } = createMockDeps(
+        { triggers, runs: [] },
+        {
+          sleep: async () => {},
+        },
+      );
+
+      const origGetConnection = deps.getConnection;
+      deps.getConnection = async () => {
+        const sql = await origGetConnection();
+        const wrappedSql = (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const query = strings.join('?');
+          if (query.includes('UPDATE triggers') && query.includes('leased_until')) {
+            reclaimCallCount++;
+          }
+          return sql(strings, ...values);
+        };
+        wrappedSql.begin = sql.begin;
+        wrappedSql.listen = sql.listen;
+        wrappedSql.end = sql.end;
+        return wrappedSql;
+      };
+
+      const handle = startDaemon(
+        {
+          pollIntervalMs: 200,
+          leaseRecoveryIntervalMs: 50,
+          heartbeatIntervalMs: 100_000,
+          orphanCheckIntervalMs: 100_000,
+        },
+        deps,
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      handle.stop();
+      await Promise.race([handle.done, new Promise((resolve) => setTimeout(resolve, 2000))]);
+
+      expect(reclaimCallCount).toBeGreaterThanOrEqual(2);
+    });
+
+    test('claimDueTriggers sets 5-minute lease on claimed triggers', async () => {
+      const triggers = [
+        {
+          id: 'trig-1',
+          schedule_id: 'sched-1',
+          due_at: new Date('2026-03-20T11:00:00Z'),
+          status: 'pending',
+          idempotency_key: null,
+          leased_by: null,
+          leased_until: null,
+        },
+      ];
+      const { deps, mock } = createMockDeps({ triggers });
+
+      await claimDueTriggers(deps, defaultConfig, 'daemon-1');
+
+      const leaseQuery = mock.queries.find(
+        (q) => q.query.includes('UPDATE triggers') && q.query.includes('leased_until') && q.query.includes('leased_by'),
+      );
+      expect(leaseQuery).toBeDefined();
+      const expectedLeaseUntil = new Date('2026-03-20T12:05:00Z');
+      if (leaseQuery?.values) {
+        const leaseUntilValue = leaseQuery.values.find(
+          (v) => v instanceof Date && (v as Date).getTime() === expectedLeaseUntil.getTime(),
+        );
+        expect(leaseUntilValue).toBeDefined();
+      }
     });
   });
 });
