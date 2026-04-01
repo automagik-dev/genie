@@ -33,6 +33,13 @@ import * as wishState from './wish-state.js';
 
 const execAsync = promisify(exec);
 
+// Testable dependency injection — override in tests to avoid mock.module leaking.
+export const _deps = {
+  findAnyGroupByAssignee: wishState.findAnyGroupByAssignee as typeof wishState.findAnyGroupByAssignee,
+  mailboxSend: mailbox.send as typeof mailbox.send,
+  writeNativeInbox: nativeTeams.writeNativeInbox as typeof nativeTeams.writeNativeInbox,
+};
+
 async function resolveParentSession(_repoPath: string, team: string): Promise<string> {
   const teamConfig = await teamManager.getTeam(team);
   if (teamConfig?.nativeTeamParentSessionId) return teamConfig.nativeTeamParentSessionId;
@@ -261,7 +268,7 @@ export async function spawnWorkerFromTemplate(
       leaderInboxTarget = team; // Fallback to team name, never 'team-lead'
     }
     try {
-      await nativeTeams.writeNativeInbox(team, leaderInboxTarget, {
+      await _deps.writeNativeInbox(team, leaderInboxTarget, {
         from: agentName,
         text: `Worker ${agentName} (${template.provider}) auto-spawned${resumeSessionId ? ' with --resume' : ''}. Ready for tasks.`,
         summary: `${agentName} auto-spawned`,
@@ -353,8 +360,8 @@ export async function injectResumeContext(
   try {
     // Query PG for any in_progress group assigned to this agent
     const match =
-      (await wishState.findAnyGroupByAssignee(workerId, repoPath)) ??
-      (await wishState.findAnyGroupByAssignee(agentName, repoPath));
+      (await _deps.findAnyGroupByAssignee(workerId, repoPath)) ??
+      (await _deps.findAnyGroupByAssignee(agentName, repoPath));
     if (!match) return;
 
     const { slug, groupName, group } = match;
@@ -388,7 +395,7 @@ export async function injectResumeContext(
       .filter(Boolean)
       .join('\n');
 
-    await mailbox.send(repoPath, 'genie', workerId, resumePrompt);
+    await _deps.mailboxSend(repoPath, 'genie', workerId, resumePrompt);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[protocol-router] Resume context injection failed: ${msg}`);
