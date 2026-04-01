@@ -258,7 +258,13 @@ async function deliverToWorker(
     }
   }
 
-  if (delivered) await mailbox.markDelivered(repoPath, worker.id, message.id);
+  if (delivered) {
+    await mailbox.markDelivered(repoPath, worker.id, message.id);
+  } else {
+    console.error(
+      `[protocol-router] Delivery failed: all paths exhausted (worker=${worker.id}, pane=${worker.paneId}, msg="${body.slice(0, 50)}")`,
+    );
+  }
   return { messageId: message.id, workerId: worker.id, delivered };
 }
 
@@ -336,6 +342,20 @@ export async function sendMessage(
   const liveMatches = await resolveRecipient(to);
 
   if (liveMatches.length === 1) {
+    // Re-verify pane alive right before delivery — catches TOCTOU race
+    // where the pane dies between resolveRecipient and actual injection.
+    if (!(await _deps.isPaneAlive(liveMatches[0].paneId))) {
+      const message = await mailbox.send(repoPath, from, liveMatches[0].id, body);
+      console.error(
+        `[protocol-router] Delivery failed: pane dead (worker=${liveMatches[0].id}, msg="${body.slice(0, 50)}")`,
+      );
+      return {
+        messageId: message.id,
+        workerId: liveMatches[0].id,
+        delivered: false,
+        reason: 'Pane died before delivery',
+      };
+    }
     return deliverToWorker(repoPath, from, liveMatches[0], body);
   }
 
@@ -367,6 +387,20 @@ export async function sendMessage(
   if (dirResolved || worker) {
     const alive = await ensureWorkerAlive(worker, to);
     if (alive) {
+      // Re-verify pane alive right before delivery — catches race where
+      // the pane dies between ensureWorkerAlive and actual injection.
+      if (!(await _deps.isPaneAlive(alive.worker.paneId))) {
+        const message = await mailbox.send(repoPath, from, alive.worker.id, body);
+        console.error(
+          `[protocol-router] Delivery failed: pane dead after spawn (worker=${alive.worker.id}, msg="${body.slice(0, 50)}")`,
+        );
+        return {
+          messageId: message.id,
+          workerId: alive.worker.id,
+          delivered: false,
+          reason: 'Pane died after spawn',
+        };
+      }
       return deliverToWorker(repoPath, from, alive.worker, body);
     }
   }
@@ -404,6 +438,10 @@ async function injectToTmuxPane(worker: registry.Agent, message: mailbox.Mailbox
 
   // Validate paneId to prevent shell injection
   if (!/^%\d+$/.test(worker.paneId)) return false;
+
+  // Re-verify pane alive immediately before injection — tmux send-keys can
+  // succeed on dead panes without error, producing a false delivery success.
+  if (!(await _deps.isPaneAlive(worker.paneId))) return false;
 
   try {
     // Escape single quotes for shell embedding

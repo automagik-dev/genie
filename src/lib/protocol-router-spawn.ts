@@ -260,14 +260,21 @@ export async function spawnWorkerFromTemplate(
     } catch {
       leaderInboxTarget = team; // Fallback to team name, never 'team-lead'
     }
-    await nativeTeams.writeNativeInbox(team, leaderInboxTarget, {
-      from: agentName,
-      text: `Worker ${agentName} (${template.provider}) auto-spawned${resumeSessionId ? ' with --resume' : ''}. Ready for tasks.`,
-      summary: `${agentName} auto-spawned`,
-      timestamp: now,
-      color: spawnColor ?? 'blue',
-      read: false,
-    });
+    try {
+      await nativeTeams.writeNativeInbox(team, leaderInboxTarget, {
+        from: agentName,
+        text: `Worker ${agentName} (${template.provider}) auto-spawned${resumeSessionId ? ' with --resume' : ''}. Ready for tasks.`,
+        summary: `${agentName} auto-spawned`,
+        timestamp: now,
+        color: spawnColor ?? 'blue',
+        read: false,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[protocol-router] Native inbox write failed for team="${team}" target="${leaderInboxTarget}": ${msg}`,
+      );
+    }
   }
 
   if (spawnColor) {
@@ -382,7 +389,8 @@ export async function injectResumeContext(
       .join('\n');
 
     await mailbox.send(repoPath, 'genie', workerId, resumePrompt);
-  } catch {
-    /* Best-effort — resume context is not critical */
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[protocol-router] Resume context injection failed: ${msg}`);
   }
 }
