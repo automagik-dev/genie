@@ -77,6 +77,44 @@ export async function createExecutor(
   return rowToExecutor(rows[0]);
 }
 
+/**
+ * Atomically create an executor and set it as the agent's current executor.
+ * Both operations happen in a single SQL transaction to prevent orphaned records.
+ */
+export async function createAndLinkExecutor(
+  agentId: string,
+  provider: ProviderName,
+  transport: TransportType,
+  opts: CreateExecutorOpts = {},
+): Promise<Executor> {
+  const sql = await getConnection();
+  const id = opts.id ?? randomUUID();
+  const now = new Date().toISOString();
+
+  return sql.begin(async (tx: any) => {
+    const rows = await tx<ExecutorRow[]>`
+      INSERT INTO executors (
+        id, agent_id, provider, transport, pid,
+        tmux_session, tmux_pane_id, tmux_window, tmux_window_id,
+        claude_session_id, state, metadata, worktree, repo_path, pane_color,
+        started_at
+      ) VALUES (
+        ${id}, ${agentId}, ${provider}, ${transport}, ${opts.pid ?? null},
+        ${opts.tmuxSession ?? null}, ${opts.tmuxPaneId ?? null},
+        ${opts.tmuxWindow ?? null}, ${opts.tmuxWindowId ?? null},
+        ${opts.claudeSessionId ?? null}, ${opts.state ?? 'spawning'},
+        ${tx.json(opts.metadata ?? {})}, ${opts.worktree ?? null},
+        ${opts.repoPath ?? null}, ${opts.paneColor ?? null},
+        ${now}
+      ) RETURNING *
+    `;
+
+    await tx`UPDATE agents SET current_executor_id = ${id} WHERE id = ${agentId}`;
+
+    return rowToExecutor(rows[0]);
+  });
+}
+
 /** Get an executor by ID. */
 export async function getExecutor(id: string): Promise<Executor | null> {
   const sql = await getConnection();
@@ -138,8 +176,8 @@ export async function terminateActiveExecutor(agentId: string): Promise<void> {
   // Terminate the executor
   await terminateExecutor(executorId);
 
-  // Null the FK
-  await sql`UPDATE agents SET current_executor_id = NULL WHERE id = ${agentId}`;
+  // Atomic null — only if still pointing to the same executor (prevents race with concurrent spawns)
+  await sql`UPDATE agents SET current_executor_id = NULL WHERE id = ${agentId} AND current_executor_id = ${executorId}`;
 }
 
 /** List executors, optionally filtered by agent ID. */
