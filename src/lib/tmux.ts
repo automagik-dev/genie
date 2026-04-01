@@ -296,20 +296,73 @@ async function ensureMasterWindow(session: string, masterName: string): Promise<
 }
 
 /**
+ * Atomically ensure a tmux session exists.
+ * Uses `new-session` directly and catches "duplicate session" errors,
+ * eliminating the TOCTOU race of find-then-create.
+ */
+async function ensureSessionExists(name: string): Promise<void> {
+  try {
+    await executeTmux(`new-session -d -s "${name}" -e LC_ALL=C.UTF-8 -e LANG=C.UTF-8`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // "duplicate session" means another process created it first — that's fine
+    if (message.includes('duplicate session')) return;
+    throw error;
+  }
+}
+
+/**
  * Ensure a tmux window exists for a team within a session.
  * Idempotent: if the window already exists, returns its first pane.
  * If not, creates the window and returns pane 0.
+ *
+ * Retries with backoff on "no server running" errors (tmux server crash recovery).
  */
 export async function ensureTeamWindow(
   session: string,
   teamName: string,
   workingDir?: string,
 ): Promise<{ windowId: string; windowName: string; paneId: string; created: boolean }> {
-  // Auto-create session if it doesn't exist (enables --session with new session names)
-  const sessionExists = await findSessionByName(session);
-  if (!sessionExists) {
-    await createSession(session);
+  const maxRetries = 3;
+  const baseDelayMs = 250;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await ensureTeamWindowOnce(session, teamName, workingDir);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes('no server running') ||
+        message.includes('server exited') ||
+        message.includes('error connecting')
+      ) {
+        if (attempt < maxRetries - 1) {
+          const delay = baseDelayMs * 2 ** attempt;
+          console.warn(
+            `[genie-tmux] tmux server unreachable (attempt ${attempt + 1}/${maxRetries}), retrying in ${delay}ms...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+      }
+      throw error;
+    }
   }
+
+  // Unreachable, but TypeScript doesn't know that
+  throw new Error(`Failed to ensure team window after ${maxRetries} attempts`);
+}
+
+/**
+ * Single-attempt implementation of ensureTeamWindow (called by the retry wrapper).
+ */
+async function ensureTeamWindowOnce(
+  session: string,
+  teamName: string,
+  workingDir?: string,
+): Promise<{ windowId: string; windowName: string; paneId: string; created: boolean }> {
+  // Atomic session creation — eliminates TOCTOU race
+  await ensureSessionExists(session);
 
   const existing = await findWindowByName(session, teamName);
   if (existing) {
@@ -475,8 +528,21 @@ export async function resolveRepoSession(repoPath: string): Promise<string> {
 }
 
 /**
+ * Error thrown when the tmux server is unreachable (crashed, not started, etc.).
+ * Callers can catch this to distinguish "tmux is down" from "pane is dead".
+ */
+export class TmuxUnreachableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TmuxUnreachableError';
+  }
+}
+
+/**
  * Check if a tmux pane is still alive.
  * Returns false for invalid pane IDs ('inline', empty, non-%N format).
+ * Returns false when the pane is dead but tmux is reachable.
+ * Throws TmuxUnreachableError when the tmux server itself is unreachable.
  */
 export async function isPaneAlive(paneId: string): Promise<boolean> {
   if (!paneId || paneId === 'inline') return false;
@@ -484,7 +550,16 @@ export async function isPaneAlive(paneId: string): Promise<boolean> {
   try {
     const paneDead = (await executeTmux(`display-message -t '${paneId}' -p '#{pane_dead}'`)).trim();
     return paneDead !== '1';
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      message.includes('no server running') ||
+      message.includes('server exited') ||
+      message.includes('error connecting')
+    ) {
+      throw new TmuxUnreachableError(message);
+    }
+    // Pane not found, session not found, etc. — pane is dead but tmux is reachable
     return false;
   }
 }
