@@ -196,8 +196,22 @@ const mockCapturePaneContent = mock<(paneId: string, lines?: number) => Promise<
 const mockDetectState =
   mock<(output: string) => { type: string; confidence: number; timestamp: number; rawOutput: string }>();
 
-mock.module('./tmux.js', () => ({
-  capturePaneContent: (paneId: string, lines?: number) => mockCapturePaneContent(paneId, lines),
+// Mock tmux-wrapper (not tmux.js) to avoid poisoning the global module cache
+// for other test files that import real functions from ./tmux.js.
+mock.module('./tmux-wrapper.js', () => ({
+  executeTmux: async (cmd: string) => {
+    // capturePaneContent calls: capture-pane -p ... -t '<paneId>' -S -<lines> -E -
+    if (cmd.includes('capture-pane')) {
+      const paneMatch = cmd.match(/-t '(%\d+)'/);
+      const linesMatch = cmd.match(/-S -(\d+)/);
+      const paneId = paneMatch ? paneMatch[1] : '';
+      const lines = linesMatch ? Number.parseInt(linesMatch[1], 10) : 200;
+      return mockCapturePaneContent(paneId, lines);
+    }
+    return '';
+  },
+  genieTmuxPrefix: () => ['-L', 'genie'],
+  genieTmuxCmd: (sub: string) => `tmux -L genie ${sub}`,
 }));
 
 mock.module('./orchestrator/index.js', () => ({
