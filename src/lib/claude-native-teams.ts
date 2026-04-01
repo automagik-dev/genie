@@ -196,7 +196,7 @@ export async function ensureNativeTeam(
   if (existing) return existing;
 
   const sanitized = sanitizeTeamName(teamName);
-  const resolvedLeader = sanitizeTeamName(leaderName ?? 'team-lead');
+  const resolvedLeader = sanitizeTeamName(leaderName ?? teamName);
   const config: NativeTeamConfig = {
     name: sanitized,
     description,
@@ -390,10 +390,10 @@ export async function deleteNativeTeam(teamName: string): Promise<boolean> {
 // ============================================================================
 
 /** Extract the leader inbox name from a native team config's leadAgentId. */
-function extractLeaderInboxName(config: NativeTeamConfig | null): string {
-  if (!config?.leadAgentId) return 'team-lead';
+function extractLeaderInboxName(config: NativeTeamConfig | null, teamName?: string): string {
+  if (!config?.leadAgentId) return teamName ?? 'unknown';
   const atIdx = config.leadAgentId.indexOf('@');
-  return atIdx > 0 ? config.leadAgentId.slice(0, atIdx) : 'team-lead';
+  return atIdx > 0 ? config.leadAgentId.slice(0, atIdx) : (teamName ?? 'unknown');
 }
 
 /** Scan a single team directory for unread leader inbox messages. */
@@ -414,7 +414,7 @@ async function scanTeamInbox(
     // Config missing or malformed
   }
 
-  const leaderInboxName = extractLeaderInboxName(config);
+  const leaderInboxName = extractLeaderInboxName(config, name);
   const inboxFile = join(base, name, 'inboxes', `${leaderInboxName}.json`);
 
   let messages: NativeInboxMessage[];
@@ -569,8 +569,8 @@ async function readSessionMetadata(filePath: string): Promise<SessionMetadata> {
  */
 function rootScore(metadata: { teamName?: string; agentName?: string }): number {
   if (!metadata.teamName && !metadata.agentName) return 2;
-  // Score leader sessions higher — matches both legacy "team-lead" and dynamic leader names
-  if (metadata.agentName === 'team-lead' || (metadata.teamName && !metadata.agentName)) return 1;
+  // Score leader sessions higher — matches sessions without an explicit agentName (leader sessions)
+  if (metadata.teamName && !metadata.agentName) return 1;
   return 0;
 }
 
@@ -694,7 +694,7 @@ export async function registerAsTeamLead(
     );
   }
 
-  const resolvedLeaderName = opts?.leaderName ?? 'team-lead';
+  const resolvedLeaderName = opts?.leaderName ?? teamName;
 
   // Create or load the native team, using the real CC session ID
   const config = await ensureNativeTeam(teamName, `Genie team: ${teamName}`, sessionId, resolvedLeaderName);

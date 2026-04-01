@@ -246,13 +246,12 @@ export async function spawnWorkerFromTemplate(
       cwd: repoPath,
     });
     // Resolve the actual leader name for inbox notification
-    let leaderInboxTarget = 'team-lead';
+    let leaderInboxTarget: string;
     try {
-      const { getTeam } = await import('./team-manager.js');
-      const teamConfig = await getTeam(team);
-      if (teamConfig?.leader) leaderInboxTarget = teamConfig.leader;
+      const { resolveLeaderName } = await import('./team-manager.js');
+      leaderInboxTarget = await resolveLeaderName(team);
     } catch {
-      // Fallback to 'team-lead' for legacy teams
+      leaderInboxTarget = team; // Fallback to team name, never 'team-lead'
     }
     await nativeTeams.writeNativeInbox(team, leaderInboxTarget, {
       from: agentName,

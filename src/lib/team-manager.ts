@@ -629,15 +629,18 @@ export async function killTeamMembers(teamName: string): Promise<void> {
 }
 
 /**
- * Resolve the leader name for a team.
- * Returns config.leader for teams that have it set, falls back to "team-lead" for legacy teams.
+ * Resolve the actual leader name for a team. Never returns 'team-lead'.
+ * Resolution order: team config DB → teamName as fallback.
+ * If DB is unreachable or team doesn't exist, returns teamName (never 'team-lead').
  */
 export async function resolveLeaderName(teamName: string): Promise<string> {
-  const config = await getTeam(teamName);
-  if (!config) {
-    throw new Error(`Team "${teamName}" not found.`);
+  try {
+    const config = await getTeam(teamName);
+    if (config?.leader && config.leader !== 'team-lead') return config.leader;
+  } catch {
+    // DB unreachable — fall through to teamName
   }
-  return config.leader || 'team-lead';
+  return teamName;
 }
 
 /** Set team lifecycle status. */

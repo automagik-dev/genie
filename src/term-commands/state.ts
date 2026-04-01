@@ -236,7 +236,7 @@ function autoKillPane(): void {
 
 /**
  * Resolve the leader name and spawner for the current team context.
- * Falls back to 'team-lead' for legacy teams.
+ * Never returns 'team-lead' — falls back to teamName via resolveLeaderName().
  */
 async function resolveNotificationTargets(): Promise<{ leader: string; spawner?: string }> {
   const teamName = process.env.GENIE_TEAM;
@@ -244,13 +244,14 @@ async function resolveNotificationTargets(): Promise<{ leader: string; spawner?:
 
   try {
     const teamManager = await import('../lib/team-manager.js');
+    const leader = await teamManager.resolveLeaderName(teamName);
     const config = await teamManager.getTeam(teamName);
     return {
-      leader: config?.leader || 'team-lead',
+      leader,
       spawner: config?.spawner,
     };
   } catch {
-    return { leader: 'team-lead' };
+    return { leader: teamName };
   }
 }
 

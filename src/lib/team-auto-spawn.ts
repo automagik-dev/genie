@@ -114,10 +114,9 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     return { created: false, session: currentSession, window: sanitizeWindowName(teamName) };
   }
 
-  // Resolve the actual leader name from team config (falls back to 'team-lead' for legacy)
-  const { getTeam } = await import('./team-manager.js');
-  const teamConfig = await getTeam(teamName);
-  const leaderName = teamConfig?.leader || 'team-lead';
+  // Resolve the actual leader name from team config (never returns 'team-lead')
+  const { resolveLeaderName } = await import('./team-manager.js');
+  const leaderName = await resolveLeaderName(teamName);
 
   // Create native team structure
   await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending', leaderName);
@@ -141,7 +140,7 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     const target = `${session}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const cmd = buildTeamLeadCommand(teamName, { systemPromptFile: systemPromptFile ?? undefined });
+    const cmd = buildTeamLeadCommand(teamName, { systemPromptFile: systemPromptFile ?? undefined, leaderName });
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   }
 

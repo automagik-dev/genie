@@ -41,15 +41,10 @@ import { isPaneAlive } from '../lib/tmux.js';
 
 /**
  * Resolve the leader name for a team from team config.
- * Falls back to 'team-lead' for legacy teams without a leader set.
+ * Never returns 'team-lead' — uses resolveLeaderName() which falls back to teamName.
  */
 async function resolveTeamLeaderName(teamNameOrDefault: string): Promise<string> {
-  try {
-    const config = await teamManager.getTeam(teamNameOrDefault);
-    return config?.leader || 'team-lead';
-  } catch {
-    return 'team-lead';
-  }
+  return teamManager.resolveLeaderName(teamNameOrDefault);
 }
 
 /** Check if a process is alive by PID file. */

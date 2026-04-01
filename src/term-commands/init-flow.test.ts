@@ -20,6 +20,12 @@ mock.module('../genie-commands/setup.js', () => ({
   setupCommand: () => mockSetupCommand(),
 }));
 
+// Prevent workspace walk-up from detecting the host genie workspace
+mock.module('../lib/workspace.js', () => ({
+  findWorkspace: () => null,
+  scanAgents: () => [],
+}));
+
 const { registerInitCommands } = await import('./init.js');
 
 let originalCwd: string;

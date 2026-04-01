@@ -310,18 +310,17 @@ function buildFallbackWaves(content: string): Wave[] {
 /**
  * Resolve the leader name for --to in dispatch prompts.
  * Uses GENIE_TEAM to look up the team config's leader field.
- * Falls back to 'team-lead' for legacy teams.
+ * Never returns 'team-lead' — falls back to teamName.
  */
 async function resolveLeaderTarget(): Promise<string> {
   const teamName = process.env.GENIE_TEAM;
   if (!teamName) return 'team-lead';
 
   try {
-    const teamManager = await import('../lib/team-manager.js');
-    const config = await teamManager.getTeam(teamName);
-    return config?.leader || 'team-lead';
+    const { resolveLeaderName } = await import('../lib/team-manager.js');
+    return await resolveLeaderName(teamName);
   } catch {
-    return 'team-lead';
+    return teamName;
   }
 }
 
