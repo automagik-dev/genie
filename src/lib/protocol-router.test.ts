@@ -15,26 +15,16 @@ import * as mailbox from './mailbox.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
 // ============================================================================
-// Module mocks — hoisted by bun:test, must be declared before describe blocks.
-// These only affect code paths that use tmux/auto-spawn; existing non-tmux
-// tests are unaffected because they never register workers or set TMUX.
+// Module mock — protocol-router-spawn.js only (no other test file mocks this).
+// Tmux and orchestrator are NOT mocked here — we use _deps injection instead
+// to avoid mock.module leaking across test files in bun's shared module cache.
 // ============================================================================
 
-/** Set of pane IDs that isPaneAlive should report as alive. */
+/** Set of pane IDs that the _deps.isPaneAlive override should report as alive. */
 const alivePanes = new Set<string>();
 
 /** Count of spawnWorkerFromTemplate invocations (reset in beforeEach). */
 let spawnCallCount = 0;
-
-mock.module('./tmux.js', () => ({
-  isPaneAlive: async (paneId: string) => alivePanes.has(paneId),
-  capturePaneContent: async () => '> idle prompt',
-  executeTmux: async () => '',
-}));
-
-mock.module('./orchestrator/index.js', () => ({
-  detectState: () => ({ type: 'idle', confidence: 0.9, timestamp: Date.now(), rawOutput: '' }),
-}));
 
 mock.module('./protocol-router-spawn.js', () => ({
   spawnWorkerFromTemplate: async (template: any, _resumeSessionId?: string) => {
@@ -62,7 +52,7 @@ mock.module('./protocol-router-spawn.js', () => ({
     // Register in real PG registry so the double-check after lock can find it
     const reg = await import('./agent-registry.js');
     await reg.register(workerEntry);
-    // Mark pane as alive so isPaneAlive returns true for this worker
+    // Mark pane as alive so _deps.isPaneAlive returns true for this worker
     alivePanes.add(paneId);
     return { worker: workerEntry, paneId, workerId: id };
   },
@@ -116,6 +106,11 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         process.env[k] = v;
       }
     }
+    // Restore _deps to defaults
+    const router = await import('./protocol-router.js');
+    const { isPaneAlive } = await import('./tmux.js');
+    router._deps.isPaneAlive = isPaneAlive;
+    router._deps.waitForWorkerReady = null;
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -208,6 +203,11 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   describe('concurrent spawn dedup', () => {
     test('two concurrent messages to dead worker produce exactly one spawn', async () => {
       const registry = await import('./agent-registry.js');
+      const router = await import('./protocol-router.js');
+
+      // Override _deps to control pane liveness without tmux
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+      router._deps.waitForWorkerReady = async () => true;
 
       // Enable tmux path so auto-spawn is attempted
       process.env.TMUX = '/tmp/tmux-test/default,123,0';
@@ -240,12 +240,10 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         lastSpawnedAt: now,
       });
 
-      const { sendMessage } = await import('./protocol-router.js');
-
       // Fire two concurrent messages to the same dead worker
       const [r1, r2] = await Promise.all([
-        sendMessage(tempDir, 'alice', 'engineer', 'message 1', 'test-team'),
-        sendMessage(tempDir, 'alice', 'engineer', 'message 2', 'test-team'),
+        router.sendMessage(tempDir, 'alice', 'engineer', 'message 1', 'test-team'),
+        router.sendMessage(tempDir, 'alice', 'engineer', 'message 2', 'test-team'),
       ]);
 
       // Exactly one spawn should have occurred — the advisory lock prevents the race
