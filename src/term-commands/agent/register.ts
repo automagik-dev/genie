@@ -12,6 +12,7 @@ import type { Command } from 'commander';
 import * as directory from '../../lib/agent-directory.js';
 import { contractPath } from '../../lib/genie-config.js';
 import { findOmniAgent, registerAgentInOmni, resolveOmniApiUrl } from '../../lib/omni-registration.js';
+import { validateRepoPath } from '../dir.js';
 
 interface RegisterOptions {
   dir: string;
@@ -78,6 +79,7 @@ async function handleOmniRegistration(
 
 async function handleAgentRegister(name: string, options: RegisterOptions): Promise<void> {
   const promptMode = validatePromptMode(options.promptMode);
+  if (options.repo) validateRepoPath(options.repo);
   const roles = normalizeRoles(options.roles);
   const entry = await directory.add(
     {

@@ -235,6 +235,37 @@ export async function list(): Promise<Agent[]> {
   return rows.map(rowToAgent);
 }
 
+/**
+ * Reconcile stale spawns: reset agents stuck in 'spawning' state
+ * with no pane_id for longer than the threshold back to 'error'.
+ * Returns the IDs of agents that were reset.
+ *
+ * @param thresholdSeconds - How long an agent must be stuck before reset (default: 60)
+ */
+export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<string[]> {
+  try {
+    const sql = await getConnection();
+    const rows = await sql<{ id: string }[]>`
+      UPDATE agents
+      SET state = 'error', last_state_change = now()
+      WHERE state = 'spawning'
+        AND (pane_id IS NULL OR pane_id = '')
+        AND started_at < now() - interval '1 second' * ${thresholdSeconds}
+      RETURNING id
+    `;
+    for (const row of rows) {
+      console.error(`[reconcile] Reset stuck agent ${row.id} from spawning → error`);
+      recordAuditEvent('worker', row.id, 'state_changed', 'reconciler', {
+        state: 'error',
+        reason: 'stale_spawn',
+      }).catch(() => {});
+    }
+    return rows.map((r: { id: string }) => r.id);
+  } catch {
+    return []; // Best-effort — don't block startup if DB is unavailable
+  }
+}
+
 export async function filterBySession(sessionName: string): Promise<Agent[]> {
   const sql = await getConnection();
   const rows = await sql`SELECT * FROM agents WHERE session = ${sessionName}`;
@@ -340,14 +371,14 @@ export async function removeSubPane(workerId: string, paneId: string, _registryP
   await sql`UPDATE agents SET sub_panes = ${sql.json(filtered)} WHERE id = ${workerId}`;
 }
 
-/** Resolve the dynamic leader name for a team (null if only 'team-lead' applies). */
+/** Resolve the dynamic leader name for a team. Never returns 'team-lead'. */
 async function resolveDynamicLeaderName(teamName: string): Promise<string | null> {
   try {
-    const { getTeam } = await import('./team-manager.js');
-    const config = await getTeam(teamName);
-    return config?.leader && config.leader !== 'team-lead' ? config.leader : null;
+    const { resolveLeaderName } = await import('./team-manager.js');
+    const name = await resolveLeaderName(teamName);
+    return name !== teamName ? name : null;
   } catch {
-    return null; // Fallback to team-lead only
+    return null;
   }
 }
 

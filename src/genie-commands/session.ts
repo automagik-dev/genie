@@ -17,6 +17,7 @@ import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import * as registry from '../lib/agent-registry.js';
+import { reconcileStaleSpawns } from '../lib/agent-registry.js';
 import {
   deleteNativeTeam,
   ensureNativeTeam,
@@ -67,7 +68,7 @@ async function resolveSessionLeaderName(teamName: string): Promise<string> {
     const { resolveLeaderName } = await import('../lib/team-manager.js');
     return await resolveLeaderName(teamName);
   } catch {
-    return 'team-lead'; // Fallback for legacy teams or when DB is unavailable
+    return teamName; // Fallback when DB is unavailable — never return 'team-lead'
   }
 }
 
@@ -87,8 +88,13 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
  * Build the claude launch command with native team flags.
  * Delegates to the shared buildTeamLeadCommand (single source of truth).
  */
-export function buildClaudeCommand(teamName: string, systemPromptFile?: string, continueName?: string): string {
-  return buildTeamLeadCommand(teamName, { systemPromptFile, continueName });
+export function buildClaudeCommand(
+  teamName: string,
+  systemPromptFile?: string,
+  continueName?: string,
+  leaderName?: string,
+): string {
+  return buildTeamLeadCommand(teamName, { systemPromptFile, continueName, leaderName });
 }
 
 /**
@@ -190,6 +196,7 @@ async function createSession(
   windowName: string,
   workspaceDir: string,
   systemPromptFile: string | null,
+  leaderName?: string,
 ): Promise<void> {
   await ensureNativeTeamForLeader(windowName, workspaceDir);
   console.log(`Native team "${windowName}" ready at ~/.claude/teams/${sanitizeTeamName(windowName)}/`);
@@ -222,7 +229,7 @@ async function createSession(
 
   const agentName = basename(workspaceDir);
   // First run — no session to continue, just start fresh with --name
-  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined);
+  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined, leaderName);
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   console.log(`Started Claude Code as ${agentName} in ${workspaceDir}`);
 
@@ -251,10 +258,16 @@ async function launchWithContinueFallback(
   target: string,
   windowName: string,
   systemPromptFile: string | null,
+  leaderName?: string,
 ): Promise<void> {
   const continueName = sanitizeTeamName(windowName);
   const hasPriorSession = sessionExists(continueName);
-  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, hasPriorSession ? continueName : undefined);
+  const cmd = buildClaudeCommand(
+    windowName,
+    systemPromptFile || undefined,
+    hasPriorSession ? continueName : undefined,
+    leaderName,
+  );
 
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
 
@@ -265,7 +278,7 @@ async function launchWithContinueFallback(
 
     if (['bash', 'zsh', 'sh', 'fish'].includes(afterCmd)) {
       console.log('Resume failed unexpectedly, starting fresh session...');
-      const freshCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined);
+      const freshCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined, leaderName);
       await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(freshCmd)} Enter`);
     }
   }
@@ -277,6 +290,7 @@ async function focusTeamWindow(
   windowName: string,
   workingDir: string,
   systemPromptFile: string | null,
+  leaderName?: string,
 ): Promise<void> {
   const teamWindow = await tmux.ensureTeamWindow(sessionName, windowName, workingDir);
   if (teamWindow.created) {
@@ -291,7 +305,7 @@ async function focusTeamWindow(
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
-    await launchWithContinueFallback(target, windowName, systemPromptFile);
+    await launchWithContinueFallback(target, windowName, systemPromptFile, leaderName);
     console.log(`Started Claude Code as ${basename(workingDir)}@${sanitizeTeamName(windowName)} in ${workingDir}`);
 
     // Guard: terminate old executor before registering new one
@@ -320,7 +334,7 @@ async function focusTeamWindow(
       const cdCmd = `cd ${shellQuote(workingDir)}`;
       await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
-      await launchWithContinueFallback(target, windowName, systemPromptFile);
+      await launchWithContinueFallback(target, windowName, systemPromptFile, leaderName);
 
       // Guard: terminate old executor before registering new one
       try {
@@ -380,12 +394,48 @@ function attachToWindow(sessionName: string, windowName: string): void {
   spawnSync(tmuxBin(), [...genieTmuxPrefix(), cmd, '-t', target], { stdio: 'inherit' });
 }
 
+/** Reconcile stale leadAgentId entries in native team configs. */
+async function reconcileLeaderConfigs(): Promise<void> {
+  try {
+    const { readdirSync, readFileSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { resolveLeaderName } = await import('../lib/team-manager.js');
+    const teamsDir = join(process.env.HOME ?? '/root', '.claude', 'teams');
+    const teams = readdirSync(teamsDir);
+    for (const team of teams) {
+      try {
+        const configPath = join(teamsDir, team, 'config.json');
+        const raw = readFileSync(configPath, 'utf-8');
+        const config = JSON.parse(raw);
+        if (config.leadAgentId?.startsWith('team-lead@')) {
+          const actualLeader = await resolveLeaderName(team);
+          const sanitized = sanitizeTeamName(team);
+          config.leadAgentId = `${sanitizeTeamName(actualLeader)}@${sanitized}`;
+          writeFileSync(configPath, JSON.stringify(config, null, 2));
+          console.log(`[reconcile] Updated leadAgentId for team "${team}": ${config.leadAgentId}`);
+        }
+      } catch {
+        /* skip individual team errors */
+      }
+    }
+  } catch {
+    /* teams dir doesn't exist yet or DB unavailable — best-effort */
+  }
+}
+
 export async function sessionCommand(options: SessionOptions = {}): Promise<void> {
+  // One-shot startup reconciliation: reset agents stuck in 'spawning' with no pane for >60s
+  await reconcileStaleSpawns();
+
+  // Reconcile stale 'team-lead@' leadAgentId entries in native team configs
+  await reconcileLeaderConfigs();
+
   const workspaceDir = options.dir ?? process.cwd();
   const sessionName = options.name ?? sanitizeWindowName(basename(workspaceDir));
 
   try {
     const windowName = await deriveWindowName(sessionName, workspaceDir, options.team);
+    const leaderName = await resolveSessionLeaderName(windowName);
 
     if (options.reset) await handleReset(sessionName, windowName);
 
@@ -408,7 +458,7 @@ export async function sessionCommand(options: SessionOptions = {}): Promise<void
     }
 
     if (!session) {
-      await createSession(sessionName, windowName, workspaceDir, systemPromptFile);
+      await createSession(sessionName, windowName, workspaceDir, systemPromptFile, leaderName);
       attachToWindow(sessionName, windowName);
     } else if (process.env.TMUX) {
       // Already inside tmux — launch Claude Code in the CURRENT pane
@@ -417,13 +467,13 @@ export async function sessionCommand(options: SessionOptions = {}): Promise<void
       await tmux.executeTmux(`rename-window ${shellQuote(currentWindowName)}`);
       await ensureNativeTeamForLeader(currentWindowName, workspaceDir);
       // Fresh session — random suffix means no prior conversation to continue
-      const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, undefined);
+      const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, undefined, leaderName);
       const { execSync: execSyncCmd } = require('node:child_process');
       execSyncCmd(cmd, { stdio: 'inherit', cwd: workspaceDir });
     } else {
       // Outside tmux — attach to existing session
       console.log(`Session "${sessionName}" already exists`);
-      await focusTeamWindow(sessionName, windowName, workspaceDir, systemPromptFile);
+      await focusTeamWindow(sessionName, windowName, workspaceDir, systemPromptFile, leaderName);
       attachToWindow(sessionName, windowName);
     }
   } catch (error) {
