@@ -32,6 +32,16 @@ interface DeliveryResult {
 }
 
 // ============================================================================
+// Dependency injection (testability without mock.module)
+// ============================================================================
+
+/** Overridable deps for testing — avoids mock.module which leaks across test files in bun. */
+export const _deps = {
+  isPaneAlive: isPaneAlive as (paneId: string) => Promise<boolean>,
+  waitForWorkerReady: null as null | ((paneId: string, timeoutMs?: number) => Promise<boolean>),
+};
+
+// ============================================================================
 // Auto-Spawn Helpers
 // ============================================================================
 
@@ -78,7 +88,7 @@ async function resolveRecipient(recipientId: string): Promise<registry.Agent[]> 
 
   for (const w of allWorkers) {
     if (await isWorkerDead(w)) continue;
-    if (!(await isPaneAlive(w.paneId))) continue;
+    if (!(await _deps.isPaneAlive(w.paneId))) continue;
 
     if (w.id === recipientId) byId.push(w);
     else if (w.role === recipientId) byRole.push(w);
@@ -107,7 +117,7 @@ async function ensureWorkerAlive(
   worker: registry.Agent | null,
   recipientId: string,
 ): Promise<{ worker: registry.Agent; respawned: boolean } | null> {
-  if (worker && worker.state !== 'suspended' && (await isPaneAlive(worker.paneId))) {
+  if (worker && worker.state !== 'suspended' && (await _deps.isPaneAlive(worker.paneId))) {
     return { worker, respawned: false };
   }
 
@@ -169,11 +179,12 @@ async function ensureWorkerAlive(
       lastSpawnedAt: new Date().toISOString(),
     });
 
-    await waitForWorkerReady(lockResult.paneId);
+    const readyCheck = _deps.waitForWorkerReady ?? waitForWorkerReady;
+    await readyCheck(lockResult.paneId);
 
     // Verify the pane survived startup — if Claude exited (e.g. stale resume
     // or startup error), the pane is dead and delivery would silently fail.
-    if (!(await isPaneAlive(lockResult.paneId))) {
+    if (!(await _deps.isPaneAlive(lockResult.paneId))) {
       await registry.unregister(lockResult.worker.id);
       return null;
     }
@@ -199,7 +210,7 @@ async function cleanupDeadWorkers(recipientId: string, team?: string): Promise<v
     if (team && w.team !== team) continue;
     const matches = w.role === recipientId || w.id === recipientId;
     if (!matches) continue;
-    if (await isPaneAlive(w.paneId)) continue;
+    if (await _deps.isPaneAlive(w.paneId)) continue;
     await registry.unregister(w.id);
   }
 }
