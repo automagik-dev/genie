@@ -50,14 +50,14 @@ describe('buildClaudeCommand', () => {
     expect(cmd).toContain('GENIE_WORKER=1');
   });
 
-  test('includes --agent-id with team-lead@team pattern', () => {
+  test('includes --agent-id with leader@team pattern', () => {
     const cmd = buildClaudeCommand('my-team');
-    expect(cmd).toContain(`--agent-id 'team-lead@my-team'`);
+    expect(cmd).toContain(`--agent-id 'my-team@my-team'`);
   });
 
-  test('includes --agent-name as team-lead', () => {
+  test('includes --agent-name matching team name', () => {
     const cmd = buildClaudeCommand('genie');
-    expect(cmd).toContain('--agent-name team-lead');
+    expect(cmd).toContain("--agent-name 'genie'");
   });
 
   test('with system prompt file references it via --append-system-prompt-file', () => {
