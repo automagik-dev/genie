@@ -439,6 +439,19 @@ function syncTmuxConf(tmuxScriptsSrc: string): void {
       // Read/write failed — non-fatal
     }
   }
+
+  // Install osc52-copy.sh → ~/.genie/osc52-copy.sh (clipboard helper for nested tmux)
+  const osc52Src = join(tmuxScriptsSrc, 'osc52-copy.sh');
+  const osc52Dest = join(GENIE_HOME, 'osc52-copy.sh');
+  if (existsSync(osc52Src)) {
+    try {
+      copyFileSync(osc52Src, osc52Dest);
+      chmodSync(osc52Dest, 0o755);
+      success(`Installed OSC 52 clipboard helper to ${osc52Dest}`);
+    } catch {
+      // Read/write failed — non-fatal
+    }
+  }
 }
 
 /** Copy tmux scripts from the global package to ~/.genie/scripts/ */
