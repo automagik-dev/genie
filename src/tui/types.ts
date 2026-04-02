@@ -46,6 +46,19 @@ export interface TuiExecutor {
   team: string | null;
 }
 
+/** Context menu item for agent actions. */
+export interface MenuItem {
+  label: string;
+  /** Display-only shortcut hint (e.g., 'S', 'K') */
+  shortcut: string;
+  /** Action identifier dispatched on selection */
+  action: string;
+  /** Visual separator above this item */
+  separator?: boolean;
+  /** Item requires text input (e.g., send message) */
+  needsInput?: boolean;
+}
+
 /** Active assignment linking an executor to a task. */
 export interface TuiAssignment {
   id: string;

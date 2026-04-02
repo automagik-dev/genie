@@ -181,7 +181,12 @@ function buildAgentNode(
     depth: 0,
     expanded: children.length > 0,
     children,
-    data: { sessionName: name, windowCount: session ? session.windows.length : 0, attachWindowIndex },
+    data: {
+      sessionName: name,
+      windowCount: session ? session.windows.length : 0,
+      attachWindowIndex,
+      provider: agentExecutors[0]?.provider ?? null,
+    },
     activePanes: session ? countClaudePanes(session) : 0,
     agentState: agentExecutors.length > 0 ? deriveExecutorState(agentExecutors) : undefined,
     wsAgentState: wsState,
@@ -294,8 +299,16 @@ function paneToNode(
 function derivePaneLabel(pane: TmuxPane, executor: TuiExecutor | undefined, isClaude: boolean): string {
   if (executor?.agentName && executor?.team) return `${executor.team}/${executor.agentName}`;
   if (executor?.agentName) return executor.agentName;
+  // Use custom pane title if it was explicitly set (differs from command and hostname defaults)
+  if (pane.title && pane.title !== pane.command && !isDefaultPaneTitle(pane.title)) return pane.title;
   if (isClaude) return 'claude';
   return pane.command;
+}
+
+function isDefaultPaneTitle(title: string): boolean {
+  // tmux defaults: hostname, hostname.local, or "~" prefix patterns
+  const hostname = require('node:os').hostname();
+  return title === hostname || title.startsWith(`${hostname}.`) || title.startsWith('\u2733');
 }
 
 function derivePaneState(pane: TmuxPane, executor: TuiExecutor | undefined): TreeNode['agentState'] {
