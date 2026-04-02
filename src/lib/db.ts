@@ -1,8 +1,8 @@
 /**
  * Database connection management for Genie.
  *
- * The daemon owns pgserve. CLI commands read the port file and connect.
- * If no daemon is running, the CLI auto-starts it.
+ * `genie serve` owns pgserve. CLI commands read the port file and connect.
+ * If no serve process is running, the CLI auto-starts `genie serve --headless`.
  * Self-healing: health checks on every connection, automatic recovery.
  */
 
@@ -209,30 +209,32 @@ export async function ensurePgserve(): Promise<number> {
   }
 }
 
-/** Auto-start the scheduler daemon if not already running. */
+/** Auto-start genie serve (headless) if not already running. */
 async function autoStartDaemon(): Promise<void> {
-  // Check if daemon is already running via PID file
-  const pidPath = join(GENIE_HOME, 'scheduler.pid');
-  try {
-    const pidStr = readFileSync(pidPath, 'utf-8').trim();
-    const pid = Number.parseInt(pidStr, 10);
-    if (!Number.isNaN(pid) && pid > 0) {
-      try {
-        process.kill(pid, 0); // Check if alive
-        return; // Daemon already running, just wait for port file
-      } catch {
-        // Stale PID — proceed to start
+  // Check if serve is already running via PID file (serve.pid is the canonical source)
+  for (const pidName of ['serve.pid', 'scheduler.pid']) {
+    const pidPath = join(GENIE_HOME, pidName);
+    try {
+      const pidStr = readFileSync(pidPath, 'utf-8').trim();
+      const pid = Number.parseInt(pidStr, 10);
+      if (!Number.isNaN(pid) && pid > 0) {
+        try {
+          process.kill(pid, 0); // Check if alive
+          return; // Already running, just wait for port file
+        } catch {
+          // Stale PID — proceed to start
+        }
       }
+    } catch {
+      // No PID file — continue checking next
     }
-  } catch {
-    // No PID file — proceed to start
   }
 
-  // Start daemon in background
+  // Start genie serve --headless in background
   const bunPath = process.execPath ?? 'bun';
   const genieBin = process.argv[1] ?? 'genie';
 
-  const child = spawn(bunPath, [genieBin, 'daemon', 'start'], {
+  const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless'], {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env },
@@ -269,8 +271,8 @@ async function _ensurePgserve(): Promise<number> {
     throw new Error('pgserve not available in CI');
   }
 
-  // 4a. If we ARE the daemon or the standalone app — spawn pgserve directly.
-  if (process.env.GENIE_IS_DAEMON === '1' || process.env.GENIE_APP === '1') {
+  // 4a. If we ARE the daemon (genie serve) — spawn pgserve directly.
+  if (process.env.GENIE_IS_DAEMON === '1') {
     mkdirSync(DATA_DIR, { recursive: true });
     selfHealPostgres(DATA_DIR);
     try {
@@ -284,7 +286,7 @@ async function _ensurePgserve(): Promise<number> {
     }
   }
 
-  // 4b. CLI command — auto-start daemon, wait for port file.
+  // 4b. CLI command — auto-start genie serve --headless, wait for port file.
   await autoStartDaemon();
   const deadline = Date.now() + 16000;
   while (Date.now() < deadline) {
@@ -297,7 +299,7 @@ async function _ensurePgserve(): Promise<number> {
     await new Promise((r) => setTimeout(r, 500));
   }
   process.env.GENIE_PG_AVAILABLE = 'false';
-  throw new Error('Timed out waiting for daemon to start pgserve (16s). Run: genie daemon start');
+  throw new Error('Timed out waiting for genie serve to start pgserve (16s). Run: genie serve');
 }
 
 /** Resolve the pgserve CLI binary path — checks local dep, global, then PATH. */
