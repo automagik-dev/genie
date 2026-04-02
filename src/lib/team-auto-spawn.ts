@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { sanitizeWindowName } from '../genie-commands/session.js';
 import { ensureNativeTeam, loadConfig, registerNativeMember, sanitizeTeamName } from './claude-native-teams.js';
-import { buildTeamLeadCommand, shellQuote } from './team-lead-command.js';
+import { buildTeamLeadCommand, sessionExists, shellQuote } from './team-lead-command.js';
 import * as tmux from './tmux.js';
 
 interface EnsureTeamLeadResult {
@@ -140,7 +140,13 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     const target = `${session}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const cmd = buildTeamLeadCommand(teamName, { systemPromptFile: systemPromptFile ?? undefined, leaderName });
+    const continueName = sanitizeTeamName(teamName);
+    const hasPriorSession = sessionExists(continueName, workingDir);
+    const cmd = buildTeamLeadCommand(teamName, {
+      systemPromptFile: systemPromptFile ?? undefined,
+      leaderName,
+      continueName: hasPriorSession ? continueName : undefined,
+    });
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   }
 

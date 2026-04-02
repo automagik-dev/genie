@@ -111,13 +111,13 @@ grep -q "Q2 2026\|desktop" /tmp/automagik-docs/genie/index.mdx
 1. New step in quickstart:
    - Title: "Choose Your Agent"
    - Brief explanation: Genie works with any agent
-   - List 4 options: Claude Code, Codex, Open Claw, Custom
+   - List 3 options: Claude Code, Codex, Custom
    - Recommend Claude Code (but empowered to choose)
    - Joke/personality touch ("we don't care which one you marry")
 
 **Acceptance Criteria:**
 - [ ] Step added to quickstart flow (positioned between Install and main steps)
-- [ ] Lists: Claude Code, Codex, Open Claw, Custom
+- [ ] Lists: Claude Code, Codex, Custom
 - [ ] Includes tone/voice ("agent-agnostic")
 - [ ] No broken links
 
