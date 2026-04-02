@@ -1099,6 +1099,39 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await sql`DELETE FROM tasks WHERE repo_path = ${autoRepo}`;
       await sql`DELETE FROM projects WHERE repo_path = ${autoRepo}`;
     });
+
+    it('should honor projectName filter even when allProjects is true (#971)', async () => {
+      const projNameA = `test-all-proj-a-${Date.now()}`;
+      const projNameB = `test-all-proj-b-${Date.now()}`;
+      const repoA = `${REPO}-all-proj-a`;
+      const repoB = `${REPO}-all-proj-b`;
+
+      // Create two projects with tasks
+      const projectA = await createProject({ name: projNameA });
+      const projectB = await createProject({ name: projNameB });
+      await createTask({ title: 'Task in A' }, repoA, projectA.id);
+      await createTask({ title: 'Task in B' }, repoB, projectB.id);
+
+      // allProjects=true + projectName should return ONLY tasks in that project
+      const filtered = await listTasks({ allProjects: true, projectName: projNameA });
+      expect(filtered.length).toBeGreaterThanOrEqual(1);
+      for (const t of filtered) {
+        expect(t.projectId).toBe(projectA.id);
+      }
+
+      // Same for listTasksForActor
+      await assignTask(filtered[0].id, actor, 'assignee', {}, repoA);
+      const actorFiltered = await listTasksForActor(actor, { allProjects: true, projectName: projNameA });
+      expect(actorFiltered.length).toBeGreaterThanOrEqual(1);
+      for (const t of actorFiltered) {
+        expect(t.projectId).toBe(projectA.id);
+      }
+
+      // Cleanup
+      await sql`DELETE FROM task_actors WHERE task_id = ${filtered[0].id}`;
+      await sql`DELETE FROM tasks WHERE repo_path IN (${repoA}, ${repoB})`;
+      await sql`DELETE FROM projects WHERE name IN (${projNameA}, ${projNameB})`;
+    });
   });
 
   // ============================================================================

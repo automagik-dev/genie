@@ -643,11 +643,12 @@ export async function getTask(idOrSeq: string, repoPath?: string): Promise<TaskR
 /** Build scope conditions for task listing (project/repo/all). */
 function buildScopeConditions(filters: TaskFilters, conditions: string[], values: unknown[], startIdx: number): number {
   let paramIdx = startIdx;
-  if (filters.allProjects) {
-    // No repo scoping — show all projects
-  } else if (filters.projectName) {
+  if (filters.projectName) {
+    // Explicit project filter always applies (even with --all)
     conditions.push(`project_id = (SELECT id FROM projects WHERE name = $${paramIdx++})`);
     values.push(filters.projectName);
+  } else if (filters.allProjects) {
+    // No repo scoping — show all projects
   } else {
     conditions.push(`repo_path = $${paramIdx++}`);
     values.push(filters.repoPath ?? getRepoPath());
@@ -1816,11 +1817,12 @@ export async function listTasksForActor(actor: Actor, filters: TaskFilters = {})
   let paramIdx = 1;
 
   // Scope conditions (project/repo/all) — mirrors buildScopeConditions with t. prefix
-  if (filters.allProjects) {
-    // No repo scoping — show all projects
-  } else if (filters.projectName) {
+  if (filters.projectName) {
+    // Explicit project filter always applies (even with --all)
     conditions.push(`t.project_id = (SELECT id FROM projects WHERE name = $${paramIdx++})`);
     values.push(filters.projectName);
+  } else if (filters.allProjects) {
+    // No repo scoping — show all projects
   } else {
     conditions.push(`t.repo_path = $${paramIdx++}`);
     values.push(filters.repoPath ?? getRepoPath());
