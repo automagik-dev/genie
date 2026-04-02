@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "test \"$CI\" = true || husky",
     "version": "bun run scripts/version.ts",
-    "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun --external pgserve && chmod +x dist/*.js",
+    "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun --external pgserve --external @automagik/genie-brain && chmod +x dist/*.js",
     "build:app": "bun run scripts/build-app.ts",
     "build:plugin": "node scripts/build.js",
     "sync": "node scripts/sync.js",
