@@ -1194,9 +1194,12 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   }
   await rejectDuplicateRole(team, effectiveRole);
 
-  // 2b. Override CWD with team worktree path if available
+  // 2b. Override CWD with team worktree path if available.
+  // Only override for agents without their own registered directory — sub-agents
+  // (e.g. genie/brain-engineer at .genie/agents/brain-engineer/) need their own
+  // CWD to avoid loading a parent agent's AGENTS.md via directory-tree walk.
   const teamConfig = await teamManager.getTeam(team);
-  if (teamConfig?.worktreePath) {
+  if (teamConfig?.worktreePath && !agent.entry?.dir) {
     agent = { ...agent, repoPath: teamConfig.worktreePath };
   }
 
@@ -1460,10 +1463,24 @@ export async function handleWorkerResume(name: string | undefined, options: { al
 }
 
 /** Build SpawnParams for a resume operation from agent + template. */
-function buildResumeParams(agent: registry.Agent, template: registry.WorkerTemplate | undefined): SpawnParams {
+async function buildResumeParams(
+  agent: registry.Agent,
+  template: registry.WorkerTemplate | undefined,
+): Promise<SpawnParams> {
   const agentName = agent.role ?? agent.id;
   const provider = (template?.provider ?? agent.provider ?? 'claude') as ProviderName;
   const team = template?.team ?? agent.team ?? 'genie';
+
+  // Restore identity file on resume so the agent keeps its AGENTS.md identity
+  // instead of falling back to CWD-based discovery (which walks up and may find
+  // a parent agent's AGENTS.md — e.g. sub-agents loading the root genie identity).
+  let systemPromptFile: string | undefined;
+  let promptMode: SpawnParams['promptMode'];
+  const dirEntry = await directory.get(agentName);
+  if (dirEntry?.dir) {
+    systemPromptFile = directory.loadIdentity(dirEntry) ?? undefined;
+    promptMode = dirEntry.promptMode;
+  }
 
   return {
     provider,
@@ -1474,6 +1491,8 @@ function buildResumeParams(agent: registry.Agent, template: registry.WorkerTempl
     // biome-ignore lint/style/noNonNullAssertion: caller guarantees claudeSessionId exists
     resume: agent.claudeSessionId!,
     name: `${team}-${agentName}`,
+    systemPromptFile,
+    promptMode,
   };
 }
 
@@ -1537,7 +1556,7 @@ async function buildFullResumeParams(
   agent: registry.Agent,
   template: registry.WorkerTemplate | undefined,
 ): Promise<SpawnParams> {
-  const params = buildResumeParams(agent, template);
+  const params = await buildResumeParams(agent, template);
 
   const resumeContext = await buildResumeContext(agent);
   if (resumeContext) {
