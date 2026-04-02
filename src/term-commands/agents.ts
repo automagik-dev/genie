@@ -974,6 +974,21 @@ function prependEnvVars(command: string, env?: Record<string, string>): string {
 }
 
 /**
+ * Find a dead worker with a resumable Claude session for the given role/team.
+ * Must run BEFORE rejectDuplicateRole which would unregister the dead worker
+ * and lose the claudeSessionId needed for resume.
+ */
+async function findDeadResumable(team: string, role: string): Promise<registry.Agent | null> {
+  const existing = await registry.list();
+  const candidate = existing.find(
+    (w) => w.role === role && w.team === team && w.claudeSessionId && w.provider === 'claude',
+  );
+  if (!candidate) return null;
+  const alive = await isPaneAlive(candidate.paneId);
+  return alive ? null : candidate;
+}
+
+/**
  * Reject spawn if a live worker with the same role already exists in the team.
  * Dead/suspended workers (pane gone) are auto-cleaned from registry — only live panes block.
  */
@@ -1193,22 +1208,13 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     return process.exit(1) as never;
   }
   // Auto-resume: if a dead worker exists with a Claude session, resume instead of fresh spawn.
-  // Must run BEFORE rejectDuplicateRole which would unregister the dead worker and lose the sessionId.
-  {
-    const existing = await registry.list();
-    const deadResumable = existing.find(
-      (w) => w.role === effectiveRole && w.team === team && w.claudeSessionId && w.provider === 'claude',
+  const deadResumable = await findDeadResumable(team, effectiveRole);
+  if (deadResumable) {
+    console.log(
+      `Resuming existing session for "${effectiveRole}" (session: ${deadResumable.claudeSessionId!.slice(0, 8)}...)`,
     );
-    if (deadResumable) {
-      const alive = await isPaneAlive(deadResumable.paneId);
-      if (!alive) {
-        console.log(
-          `Resuming existing session for "${effectiveRole}" (session: ${deadResumable.claudeSessionId.slice(0, 8)}...)`,
-        );
-        await resumeAgent(deadResumable);
-        return deadResumable.id;
-      }
-    }
+    await resumeAgent(deadResumable);
+    return deadResumable.id;
   }
 
   await rejectDuplicateRole(team, effectiveRole);
