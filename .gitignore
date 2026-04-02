@@ -70,3 +70,4 @@ yarn-error.log*
 # QA specs in .genie/qa/ are tracked (they are code)
 # QA results live in ~/.genie/qa/ (global, not per-repo)
 
+core

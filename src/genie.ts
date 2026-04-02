@@ -44,6 +44,7 @@ import {
 import { registerAppCommand } from './term-commands/app.js';
 import { registerEventsCommands } from './term-commands/audit-events.js';
 import { registerBoardCommands } from './term-commands/board.js';
+import { registerBrainCommands } from './term-commands/brain.js';
 import { registerBriefCommands } from './term-commands/brief.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
@@ -213,6 +214,7 @@ registerMetricsCommands(program);
 registerExportCommands(program);
 registerImportCommands(program);
 registerTemplateCommands(program);
+registerBrainCommands(program);
 registerBriefCommands(program);
 
 // ============================================================================

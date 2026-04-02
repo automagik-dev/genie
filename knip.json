@@ -24,6 +24,7 @@
   "ignoreBinaries": ["tmux", "which"],
   "ignoreExportsUsedInFile": false,
   "ignoreDependencies": [
+    "@automagik/genie-brain",
     "@tauri-apps/cli",
     "@tauri-apps/api",
     "react-dom",
