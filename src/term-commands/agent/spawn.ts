@@ -21,6 +21,9 @@ export function registerAgentSpawn(parent: Command): void {
     .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
     .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
     .option('--session <session>', 'Tmux session name to spawn into')
+    .option('--role <role>', 'Override role name for registration (avoids duplicate guard)')
+    .option('--new-window', 'Create a new tmux window instead of splitting')
+    .option('--window <target>', 'Tmux window to split into (e.g., genie:3)')
     .option('--no-auto-resume', 'Disable auto-resume on pane death')
     .action(async (name: string, options: SpawnOptions) => {
       try {

@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod';
+import { buildDispatchCommand } from '../hooks/inject.js';
 
 // ============================================================================
 // Types
@@ -88,6 +89,10 @@ export interface SpawnParams {
   otelLogPrompts?: boolean;
   /** Wish slug for OTEL_RESOURCE_ATTRIBUTES correlation. */
   otelWishSlug?: string;
+  /** Create a new tmux window instead of splitting into an existing one. */
+  newWindow?: boolean;
+  /** Tmux window target to split into (e.g., "genie:3"). */
+  windowTarget?: string;
 }
 
 /** Result of a successful launch-command build. */
@@ -137,6 +142,8 @@ const spawnParamsSchema = z.object({
   otelPort: z.number().optional(),
   otelLogPrompts: z.boolean().optional(),
   otelWishSlug: z.string().optional(),
+  newWindow: z.boolean().optional(),
+  windowTarget: z.string().optional(),
 });
 
 /**
@@ -341,6 +348,19 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   if (params.name) parts.push('--name', escapeShellArg(params.name));
 
   appendSystemPromptFlags(parts, params);
+
+  // Inject hook dispatch via --settings (deep-merges with existing settings)
+  const dispatchCmd = buildDispatchCommand();
+  const hookEntry = { type: 'command', command: dispatchCmd, timeout: 15 };
+  const hooksSettings = JSON.stringify({
+    hooks: {
+      PreToolUse: [{ matcher: '*', hooks: [hookEntry] }],
+      PostToolUse: [{ matcher: '*', hooks: [hookEntry] }],
+      UserPromptSubmit: [{ hooks: [hookEntry] }],
+      Stop: [{ hooks: [hookEntry] }],
+    },
+  });
+  parts.push('--settings', escapeShellArg(hooksSettings));
 
   if (params.extraArgs) {
     for (const arg of params.extraArgs) parts.push(escapeShellArg(arg));

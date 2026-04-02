@@ -83,28 +83,60 @@ export function attachTuiSession(): void {
   runTuiTmux(['attach-session', '-t', SESSION_NAME], 'inherit');
 }
 
+/** Find the next numeric suffix for a role name by listing tmux windows in the agent's session. */
+function nextRoleSuffix(baseName: string): number {
+  const sessionName = baseName.replace(/\//g, '-');
+  const output = spawnSync(
+    TMUX_BIN,
+    ['-L', GENIE_AGENT_SOCKET, 'list-windows', '-t', sessionName, '-F', '#{window_name}'],
+    {
+      encoding: 'utf-8',
+    },
+  );
+  const names = output.status === 0 ? output.stdout.trim().split('\n') : [];
+  // Count existing windows + check for existing suffixed roles
+  let max = names.length + 1;
+  const re = new RegExp(`^${baseName}-(\\d+)$`);
+  for (const n of names) {
+    const m = n.match(re);
+    if (m) max = Math.max(max, Number.parseInt(m[1], 10) + 1);
+  }
+  return max;
+}
+
 /** Spawn a fresh parallel worker of the same agent type via `genie spawn`. */
 export function newAgentWindow(agentName: string): void {
-  const { spawn } = require('node:child_process') as typeof import('node:child_process');
-  const { join, resolve } = require('node:path') as typeof import('node:path');
-  const { existsSync } = require('node:fs') as typeof import('node:fs');
-  const bunPath = process.execPath || 'bun';
-  const genieBin = process.argv[1];
-  const wsRoot = process.env.GENIE_TUI_WORKSPACE;
+  // Reconcile stale spawns first to clear dead workers that block the duplicate guard
+  void (async () => {
+    try {
+      const { reconcileStaleSpawns } = await import('../lib/agent-registry.js');
+      await reconcileStaleSpawns();
+    } catch {
+      // best-effort
+    }
 
-  let cwd: string | undefined;
-  if (wsRoot) {
-    const parentName = agentName.includes('/') ? agentName.slice(0, agentName.indexOf('/')) : agentName;
-    const agentDir = resolve(join(wsRoot, 'agents', parentName));
-    if (existsSync(agentDir)) cwd = agentDir;
-  }
+    const { spawn } = require('node:child_process') as typeof import('node:child_process');
+    const { join, resolve } = require('node:path') as typeof import('node:path');
+    const { existsSync } = require('node:fs') as typeof import('node:fs');
+    const bunPath = process.execPath || 'bun';
+    const genieBin = process.argv[1];
+    const wsRoot = process.env.GENIE_TUI_WORKSPACE;
 
-  // No --session: genie spawn assigns a unique session ID automatically.
-  // This creates a parallel worker of the same role, not a resume.
-  const args = ['spawn', agentName];
-  const child =
-    genieBin && genieBin !== 'genie'
-      ? spawn(bunPath, [genieBin, ...args], { detached: true, stdio: 'ignore', cwd })
-      : spawn('genie', args, { detached: true, stdio: 'ignore', cwd });
-  child.unref();
+    let cwd: string | undefined;
+    if (wsRoot) {
+      const parentName = agentName.includes('/') ? agentName.slice(0, agentName.indexOf('/')) : agentName;
+      const agentDir = resolve(join(wsRoot, 'agents', parentName));
+      if (existsSync(agentDir)) cwd = agentDir;
+    }
+
+    const suffix = nextRoleSuffix(agentName);
+    const role = `${agentName}-${suffix}`;
+    const sessionName = agentName.replace(/\//g, '-');
+    const args = ['spawn', agentName, '--role', role, '--session', sessionName, '--new-window'];
+    const child =
+      genieBin && genieBin !== 'genie'
+        ? spawn(bunPath, [genieBin, ...args], { detached: true, stdio: 'ignore', cwd })
+        : spawn('genie', args, { detached: true, stdio: 'ignore', cwd });
+    child.unref();
+  })();
 }
