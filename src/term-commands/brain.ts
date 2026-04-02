@@ -25,11 +25,26 @@ async function installBrain(): Promise<boolean> {
   console.log('');
 
   try {
-    // Install directly from GitHub — bun resolves git repos natively
-    // Only people with repo access (SSH key or GH token) can install
-    execSync(`bun add ${BRAIN_REPO}`, {
+    // Get GitHub token from gh CLI
+    let ghToken = '';
+    try {
+      ghToken = execSync('gh auth token', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    } catch {
+      console.error('  ✗ GitHub CLI not authenticated. Run: gh auth login');
+      return false;
+    }
+
+    // Clone brain repo into node_modules (git clone works with private repos + gh token)
+    const brainDir = 'node_modules/@automagik/genie-brain';
+    execSync(`rm -rf ${brainDir}`, { stdio: 'pipe' });
+    execSync('mkdir -p node_modules/@automagik', { stdio: 'pipe' });
+    execSync(`git clone --depth 1 https://${ghToken}@github.com/automagik-dev/genie-brain.git ${brainDir}`, {
       stdio: 'inherit',
     });
+
+    // Install brain's deps + build
+    execSync('bun install', { cwd: brainDir, stdio: 'inherit' });
+    execSync('bun run build', { cwd: brainDir, stdio: 'inherit' });
 
     console.log('');
     console.log('  ✓ Brain installed from GitHub.');
