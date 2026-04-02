@@ -1,6 +1,5 @@
-// OpenClaw standalone extension entrypoint.
-// Install via: openclaw plugins install @automagik/genie
-// Manifest is resolved from the package root: openclaw.plugin.json
+// Standalone extension entrypoint.
+// Manifest is resolved from the plugin directory.
 
 import register from './index';
 
