@@ -24,6 +24,7 @@ import type { Agent } from './agent-registry.js';
 import { computeNextCronDue, parseDuration } from './cron.js';
 import { type EventRouterHandle, startEventRouter } from './event-router.js';
 import { getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
+import { subscribeDelivery } from './mailbox.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
 
 // ============================================================================
@@ -1236,6 +1237,7 @@ export function startDaemon(
   let inboxWatcherHandle: NodeJS.Timeout | null = null;
   let captureFallbackTimer: ReturnType<typeof setInterval> | null = null;
   let eventRouterHandle: EventRouterHandle | null = null;
+  let deliveryUnsub: (() => Promise<void>) | null = null;
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: stop() is a flat cleanup sequence for all daemon resources
   const stop = () => {
@@ -1275,6 +1277,10 @@ export function startDaemon(
     }
     eventRouterHandle?.stop().catch(() => {});
     eventRouterHandle = null;
+    if (deliveryUnsub) {
+      deliveryUnsub().catch(() => {});
+      deliveryUnsub = null;
+    }
     // Stop session capture layers
     import('./session-filewatch.js').then((m) => m.stopFilewatch()).catch(() => {});
     import('./session-backfill.js').then((m) => m.stopBackfill()).catch(() => {});
@@ -1491,6 +1497,22 @@ export function startDaemon(
     leaseRecoveryTimer = startLeaseRecoveryTimer(deps, config, daemonId);
     inboxWatcherHandle = startInboxWatcherIfEnabled(deps);
     eventRouterHandle = await startEventRouterSafe(deps);
+
+    // Subscribe to PG LISTEN/NOTIFY for instant message delivery
+    try {
+      deliveryUnsub = await subscribeDelivery(async (toWorker, messageId) => {
+        try {
+          const { deliverToPane } = await import('./protocol-router.js');
+          await deliverToPane(toWorker, messageId);
+        } catch {
+          // Fallback: inbox-watcher will pick it up on next poll cycle
+        }
+      });
+      deps.log({ timestamp: deps.now().toISOString(), level: 'info', event: 'mailbox_delivery_listen_started' });
+    } catch {
+      // PG LISTEN not available — inbox-watcher polling remains the fallback
+    }
+
     captureFallbackTimer = await initSessionCapture(deps, config);
 
     // Initial trigger check
