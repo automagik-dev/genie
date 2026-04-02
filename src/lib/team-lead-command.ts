@@ -133,7 +133,11 @@ export function sessionExists(name: string, cwd?: string): boolean {
     }
 
     const needle = name.toLowerCase();
-    return files.some((file) => fileHasSessionName(join(projectPath, file), needle));
+    return files.some((file) => {
+      const full = join(projectPath, file);
+      // Check exact name and {team}-{name} format (CC stores team-prefixed names)
+      return fileHasSessionName(full, needle) || fileHasSessionName(full, `${needle}-${needle}`);
+    });
   } catch {
     return false;
   }
