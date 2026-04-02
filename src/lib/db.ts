@@ -331,7 +331,19 @@ async function startPgserveOnPort(port: number): Promise<number> {
 
   const child = spawn(
     findPgserveBin(),
-    ['--port', String(port), '--host', DEFAULT_HOST, '--data', DATA_DIR, '--log', 'warn', '--no-stats', '--no-cluster'],
+    [
+      '--port',
+      String(port),
+      '--host',
+      DEFAULT_HOST,
+      '--data',
+      DATA_DIR,
+      '--log',
+      'warn',
+      '--no-stats',
+      '--no-cluster',
+      '--pgvector',
+    ],
     { detached: true, stdio: 'ignore' },
   );
 

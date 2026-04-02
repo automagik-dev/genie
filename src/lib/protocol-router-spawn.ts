@@ -291,6 +291,17 @@ export async function spawnWorkerFromTemplate(
   // Inject resume context if agent was working on a wish group
   await injectResumeContext(repoPath, workerId, agentName, team);
 
+  // Auto-brain: discover brain/ dir → register in knowledge graph
+  try {
+    // @ts-expect-error — brain is enterprise-only, not in genie's deps
+    const brain = await import('@automagik/genie-brain');
+    if (brain.autoBrain) {
+      await brain.autoBrain({ agentId: workerId, workdir: repoPath });
+    }
+  } catch {
+    /* brain not installed — fine, no behavior change */
+  }
+
   return { worker: workerEntry, paneId, workerId };
 }
 
