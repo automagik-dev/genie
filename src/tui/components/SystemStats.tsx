@@ -1,44 +1,17 @@
 /** @jsxImportSource @opentui/react */
-/** System stats footer — version, CPU, RAM, swap, load average */
+/** System stats footer — version, CPU (with per-core heatmap), RAM, swap, load */
 
-import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import { useEffect, useRef, useState } from 'react';
+import si from 'systeminformation';
 import { VERSION } from '../../lib/version.js';
 import { palette } from '../theme.js';
 
 interface SystemInfo {
-  cpuPercent: number;
-  ramUsedGB: number;
-  ramTotalGB: number;
-  swapUsedGB: number;
-  swapTotalGB: number;
-  loadAvg: [number, number, number];
-}
-
-function getCpuTimes(): { idle: number; total: number } {
-  const cpus = os.cpus();
-  let idle = 0;
-  let total = 0;
-  for (const cpu of cpus) {
-    const t = cpu.times;
-    idle += t.idle;
-    total += t.user + t.nice + t.sys + t.idle + t.irq;
-  }
-  return { idle, total };
-}
-
-function getSwapInfo(): { total: number; used: number } {
-  try {
-    const meminfo = readFileSync('/proc/meminfo', 'utf-8');
-    const totalMatch = meminfo.match(/SwapTotal:\s+(\d+)/);
-    const freeMatch = meminfo.match(/SwapFree:\s+(\d+)/);
-    const total = totalMatch ? Number.parseInt(totalMatch[1], 10) * 1024 : 0;
-    const free = freeMatch ? Number.parseInt(freeMatch[1], 10) * 1024 : 0;
-    return { total, used: total - free };
-  } catch {
-    return { total: 0, used: 0 };
-  }
+  cpu: { combined: number; cores: number[] };
+  ram: { activeGB: number; totalGB: number; percent: number };
+  swap: { usedGB: number; totalGB: number; percent: number };
+  load: { avg1: number; percent: number; coreCount: number };
 }
 
 function toGB(bytes: number): number {
@@ -46,56 +19,94 @@ function toGB(bytes: number): number {
 }
 
 function bar(percent: number, width: number): string {
-  const filled = Math.round((percent / 100) * width);
+  const p = Math.max(0, Math.min(100, percent));
+  const filled = Math.round((p / 100) * width);
   return '\u2588'.repeat(filled) + '\u2591'.repeat(width - filled);
+}
+
+/** Map a 0-100 load to a colored single-char block for the core heatmap. */
+function coreChar(load: number): { ch: string; fg: string } {
+  if (load > 80) return { ch: '\u2588', fg: palette.error };
+  if (load > 50) return { ch: '\u2593', fg: palette.warning };
+  if (load > 20) return { ch: '\u2592', fg: palette.emerald };
+  return { ch: '\u2591', fg: palette.textMuted };
 }
 
 export function SystemStats() {
   const [stats, setStats] = useState<SystemInfo | null>(null);
-  const prevCpu = useRef(getCpuTimes());
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    function refresh() {
-      const now = getCpuTimes();
-      const prev = prevCpu.current;
-      const idleDelta = now.idle - prev.idle;
-      const totalDelta = now.total - prev.total;
-      const cpuPercent = totalDelta > 0 ? Math.round(((totalDelta - idleDelta) / totalDelta) * 100) : 0;
-      prevCpu.current = now;
+    mountedRef.current = true;
 
-      const ramTotal = os.totalmem();
-      const ramFree = os.freemem();
-      const swap = getSwapInfo();
-      const load = os.loadavg();
+    async function refresh() {
+      try {
+        const [cpu, mem] = await Promise.all([si.currentLoad(), si.mem()]);
+        if (!mountedRef.current) return;
 
-      setStats({
-        cpuPercent,
-        ramUsedGB: toGB(ramTotal - ramFree),
-        ramTotalGB: toGB(ramTotal),
-        swapUsedGB: toGB(swap.used),
-        swapTotalGB: toGB(swap.total),
-        loadAvg: [Math.round(load[0] * 10) / 10, Math.round(load[1] * 10) / 10, Math.round(load[2] * 10) / 10],
-      });
+        const coreCount = os.cpus().length;
+        const avg1 = os.loadavg()[0];
+
+        setStats({
+          cpu: {
+            combined: Math.round(cpu.currentLoad),
+            cores: cpu.cpus.map((c) => Math.round(c.load)),
+          },
+          ram: {
+            activeGB: toGB(mem.active),
+            totalGB: toGB(mem.total),
+            percent: mem.total > 0 ? Math.round((mem.active / mem.total) * 100) : 0,
+          },
+          swap: {
+            usedGB: toGB(mem.swapused),
+            totalGB: toGB(mem.swaptotal),
+            percent: mem.swaptotal > 0 ? Math.round((mem.swapused / mem.swaptotal) * 100) : 0,
+          },
+          load: {
+            avg1: Math.round(avg1 * 10) / 10,
+            percent: coreCount > 0 ? Math.round((avg1 / coreCount) * 100) : 0,
+            coreCount,
+          },
+        });
+      } catch {
+        // best-effort — don't crash the TUI
+      }
     }
 
-    // Short delay for initial CPU delta to be meaningful
-    const init = setTimeout(refresh, 500);
+    refresh();
     const timer = setInterval(refresh, 3000);
     return () => {
-      clearTimeout(init);
+      mountedRef.current = false;
       clearInterval(timer);
     };
   }, []);
 
-  if (!stats) return null;
+  if (!stats) {
+    return (
+      <box paddingX={1} backgroundColor={palette.bgLight}>
+        <text>
+          <span fg={palette.purple}>genie</span>
+          <span fg={palette.textDim}> v{VERSION}</span>
+        </text>
+      </box>
+    );
+  }
 
   const BAR_W = 8;
-  const ramPct = stats.ramTotalGB > 0 ? Math.round((stats.ramUsedGB / stats.ramTotalGB) * 100) : 0;
-  const swpPct = stats.swapTotalGB > 0 ? Math.round((stats.swapUsedGB / stats.swapTotalGB) * 100) : 0;
+  const { cpu, ram, swap, load } = stats;
 
-  const cpuClr = stats.cpuPercent > 80 ? palette.error : stats.cpuPercent > 50 ? palette.warning : palette.emerald;
-  const ramClr = ramPct > 80 ? palette.error : ramPct > 50 ? palette.warning : palette.emerald;
-  const swpClr = swpPct > 50 ? palette.warning : palette.textDim;
+  const cpuClr = cpu.combined > 80 ? palette.error : cpu.combined > 50 ? palette.warning : palette.emerald;
+  const ramClr = ram.percent > 80 ? palette.error : ram.percent > 50 ? palette.warning : palette.emerald;
+  const swpClr = swap.percent > 50 ? palette.warning : palette.textDim;
+  const loadClr = load.percent > 80 ? palette.error : load.percent > 50 ? palette.warning : palette.emerald;
+
+  // Build per-core heatmap rows (fit sidebar width ~24 chars)
+  // Each cell carries its absolute core index for a stable React key.
+  const COLS = 21;
+  const coreRows: { ch: string; fg: string; id: number }[][] = [];
+  for (let i = 0; i < cpu.cores.length; i += COLS) {
+    coreRows.push(cpu.cores.slice(i, i + COLS).map((load, ci) => ({ ...coreChar(load), id: i + ci })));
+  }
 
   return (
     <box flexDirection="column" paddingX={1} backgroundColor={palette.bgLight}>
@@ -104,34 +115,49 @@ export function SystemStats() {
         <span fg={palette.purple}>genie</span>
         <span fg={palette.textDim}> v{VERSION}</span>
       </text>
-      {/* CPU */}
+      {/* CPU combined */}
       <text>
         <span fg={palette.textMuted}>CPU </span>
-        <span fg={cpuClr}>{String(stats.cpuPercent).padStart(3)}%</span>
-        <span fg={cpuClr}> {bar(stats.cpuPercent, BAR_W)}</span>
+        <span fg={cpuClr}>
+          {String(cpu.combined).padStart(3)}% {bar(cpu.combined, BAR_W)}
+        </span>
+        <span fg={palette.textDim}> {load.coreCount}c</span>
       </text>
-      {/* RAM */}
+      {/* Per-core heatmap (always visible — compact) */}
+      {coreRows.map((row) => (
+        <text key={`cr-${row[0].id}`}>
+          <span fg={palette.textMuted}>{'    '}</span>
+          {row.map((cell) => (
+            <span key={`c${cell.id}`} fg={cell.fg}>
+              {cell.ch}
+            </span>
+          ))}
+        </text>
+      ))}
+      {/* RAM — uses "active" memory (excludes buffers/cache) */}
       <text>
         <span fg={palette.textMuted}>RAM </span>
         <span fg={ramClr}>
-          {stats.ramUsedGB}/{stats.ramTotalGB}G
+          {ram.activeGB}/{ram.totalGB}G {bar(ram.percent, BAR_W)}
         </span>
-        <span fg={ramClr}> {bar(ramPct, BAR_W)}</span>
       </text>
       {/* Swap (only if swap exists) */}
-      {stats.swapTotalGB > 0 ? (
+      {swap.totalGB > 0 ? (
         <text>
           <span fg={palette.textMuted}>SWP </span>
           <span fg={swpClr}>
-            {stats.swapUsedGB}/{stats.swapTotalGB}G
+            {swap.usedGB}/{swap.totalGB}G {bar(swap.percent, BAR_W)}
           </span>
-          <span fg={swpClr}> {bar(swpPct, BAR_W)}</span>
         </text>
       ) : null}
-      {/* Load average */}
+      {/* Load — humanized as % of cores */}
       <text>
         <span fg={palette.textMuted}>Load </span>
-        <span fg={palette.textDim}>{stats.loadAvg.join(' ')}</span>
+        <span fg={loadClr}>{load.percent}%</span>
+        <span fg={palette.textDim}>
+          {' '}
+          ({load.avg1}/{load.coreCount} cores)
+        </span>
       </text>
     </box>
   );
