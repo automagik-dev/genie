@@ -311,14 +311,15 @@ describe('buildWorkspaceTree', () => {
   });
 
   test('sub-agents with running sessions show correct state', () => {
-    const qaWin0 = makeWindow({ sessionName: 'genie/qa', index: 0, name: 'zsh' });
+    // Tmux session names use dashes (slashes are forbidden in tmux session names)
+    const qaWin0 = makeWindow({ sessionName: 'genie-qa', index: 0, name: 'zsh' });
     const qaWin1 = makeWindow({
-      sessionName: 'genie/qa',
+      sessionName: 'genie-qa',
       index: 1,
       name: 'qa',
-      panes: [makePane({ sessionName: 'genie/qa', windowIndex: 1, paneId: '%5', command: 'claude', title: 'claude' })],
+      panes: [makePane({ sessionName: 'genie-qa', windowIndex: 1, paneId: '%5', command: 'claude', title: 'claude' })],
     });
-    const qaSession = makeSession('genie/qa', [qaWin0, qaWin1]);
+    const qaSession = makeSession('genie-qa', [qaWin0, qaWin1]);
 
     const tree = buildWorkspaceTree({
       agentNames: ['genie', 'genie/qa'],
