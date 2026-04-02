@@ -66,7 +66,7 @@ Document how to use Genie with different AI agents. Create a new page showing pr
 1. `genie/concepts/byoa.mdx` with:
    - Definition: BYOA = Bring Your Own Agent
    - Genie doesn't care which agent backs workers
-   - List providers: Claude Code, Codex, Open Claw, Gemini CLI, custom
+   - List providers: Claude Code, Codex, Gemini CLI, custom
    - `/spawn --provider <provider>` flag usage
    - Auto-respawn template system (if agent goes offline, respawned from saved config)
    - Why it matters: future-proofs, no vendor lock-in

@@ -8,7 +8,6 @@ Runtime-specific patterns for dispatching subagents from orchestrator skills (/w
 |--------|---------|---------------|
 | `Task` tool available with `isolation: "worktree"` | Claude Code | Teams + worktrees |
 | Codex environment (`CODEX_ENV` or native subagent API) | Codex | Native subagents |
-| Neither above, `term` CLI available | OpenClaw | term → Claude Code → Teams |
 
 Default: **Claude Code**. If detection is ambiguous, use Claude Code path.
 
@@ -57,28 +56,6 @@ codex_subagent(
 - **Isolation:** Codex-managed sandboxes (automatic)
 - **Model:** Codex default
 - **Coordination:** Codex response collection
-
-## OpenClaw
-
-Documented for future validation. Three-layer chain: OpenClaw → genie → Claude Code → Teams.
-
-```bash
-# Spawn a Claude Code worker via genie
-genie agent spawn --role implementor
-
-# Or for heavy multi-file work with bead tracking
-bd create "<task title>" --type task
-genie work <bead-id>
-
-# Monitor
-genie agent list
-genie agent read <agent>
-```
-
-- **Isolation:** Claude Code worktrees (same as CC path, initiated via genie)
-- **Model:** sonnet (passed to CC via genie)
-- **Coordination:** genie agent status + bead updates
-- **Risk:** 3 layers of indirection — use timeouts, fall back to sequential on failure
 
 ## Rules
 
