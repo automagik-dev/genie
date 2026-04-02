@@ -5,15 +5,16 @@
  *   - pgserve (database)
  *   - tmux -L genie server (agent sessions)
  *   - Agent sessions from workspace manifest
- *   - TUI session on default tmux server
+ *   - TUI session on default tmux server (unless --headless)
  *   - Scheduler, event-router, inbox-watcher
  *   - PID file at .genie/serve.pid
  *
  * Subcommands:
- *   genie serve           — start foreground (default)
- *   genie serve --daemon  — start background
- *   genie serve stop      — stop everything
- *   genie serve status    — show service health
+ *   genie serve             — start foreground with TUI (default)
+ *   genie serve --headless  — start without TUI (services only)
+ *   genie serve --daemon    — start background
+ *   genie serve stop        — stop everything
+ *   genie serve status      — show service health
  */
 
 import { execSync, spawn, spawnSync } from 'node:child_process';
@@ -395,8 +396,10 @@ async function startAgentSync(): Promise<{ close: () => void } | null> {
   }
 }
 
-/** Start all services in foreground mode */
-async function startForeground(): Promise<void> {
+/** Start all services in foreground mode.
+ *  @param headless If true, skip TUI setup (services only: pgserve, scheduler, inbox-watcher).
+ */
+async function startForeground(headless?: boolean): Promise<void> {
   const existingPid = readServePid();
   if (existingPid && isProcessAlive(existingPid)) {
     console.log(`genie serve already running (PID ${existingPid})`);
@@ -407,10 +410,13 @@ async function startForeground(): Promise<void> {
   process.env.GENIE_IS_DAEMON = '1';
   writeServePid(process.pid);
 
-  console.log(`genie serve starting (PID ${process.pid})`);
+  const mode = headless ? 'headless' : 'full';
+  console.log(`genie serve starting (PID ${process.pid}, mode: ${mode})`);
 
   // Ensure tmux is available (downloads static binary if missing)
-  await ensureTmux();
+  if (!headless) {
+    await ensureTmux();
+  }
 
   // 1. Start pgserve
   console.log('  Starting pgserve...');
@@ -418,6 +424,16 @@ async function startForeground(): Promise<void> {
     const { ensurePgserve } = await import('../lib/db.js');
     const port = await ensurePgserve();
     console.log(`  pgserve ready on port ${port}`);
+
+    // Register pgserve PID in service registry
+    try {
+      const { registerService } = await import('../lib/service-registry.js');
+      // pgserve child PID is internal to db.ts — register our own process
+      // as the owner; db.ts exit handler cleans up pgserve child
+      registerService('pgserve-owner', process.pid);
+    } catch {
+      // Registry not available — non-fatal
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  pgserve failed: ${msg}`);
@@ -425,31 +441,35 @@ async function startForeground(): Promise<void> {
 
   // 2. Report agent tmux server state (don't create empty sessions —
   // sessions are created on-demand by `genie spawn`).
-  const sessions = listAgentSessions();
-  if (sessions.length > 0) {
-    console.log(`  Agent server (-L ${GENIE_SOCKET}): ${sessions.length} sessions`);
-  } else {
-    console.log(`  Agent server (-L ${GENIE_SOCKET}): no sessions yet (created on first spawn)`);
+  if (!headless) {
+    const sessions = listAgentSessions();
+    if (sessions.length > 0) {
+      console.log(`  Agent server (-L ${GENIE_SOCKET}): ${sessions.length} sessions`);
+    } else {
+      console.log(`  Agent server (-L ${GENIE_SOCKET}): no sessions yet (created on first spawn)`);
+    }
   }
 
   // 2b. Sync agent directory + start watcher
   handles.agentWatcher = await startAgentSync();
 
-  // 3. Start TUI session on default tmux server
-  console.log('  Setting up TUI session...');
-  const { leftPane, rightPane } = startTuiTmuxServer();
+  // 3. Start TUI session on default tmux server (skip in headless mode)
+  if (!headless) {
+    console.log('  Setting up TUI session...');
+    const { leftPane, rightPane } = startTuiTmuxServer();
 
-  // 4. Send launch script to left pane (discovers workspace from serve cwd)
-  const ws = (() => {
-    try {
-      const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
-      return findWorkspace();
-    } catch {
-      return null;
-    }
-  })();
-  sendTuiLaunchScript(leftPane, rightPane, ws?.root);
-  console.log('  TUI server ready (session: genie-tui)');
+    // Send launch script to left pane (discovers workspace from serve cwd)
+    const ws = (() => {
+      try {
+        const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+        return findWorkspace();
+      } catch {
+        return null;
+      }
+    })();
+    sendTuiLaunchScript(leftPane, rightPane, ws?.root);
+    console.log('  TUI server ready (session: genie-tui)');
+  }
 
   // 4. Start scheduler + event-router + inbox-watcher
   console.log('  Starting scheduler daemon...');
@@ -457,31 +477,95 @@ async function startForeground(): Promise<void> {
     const { startDaemon } = await import('../lib/scheduler-daemon.js');
     handles.schedulerHandle = startDaemon();
     console.log('  Scheduler started (includes event-router + inbox-watcher)');
+
+    // Register scheduler in service registry
+    try {
+      const { registerService } = await import('../lib/service-registry.js');
+      registerService('scheduler', process.pid);
+    } catch {
+      // Registry not available — non-fatal
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  Scheduler failed: ${msg}`);
   }
 
-  console.log('\ngenie serve is running. Press Ctrl+C to stop.');
+  const stopMsg = headless ? 'Send SIGTERM to stop.' : 'Press Ctrl+C to stop.';
+  console.log(`\ngenie serve is running (${mode}). ${stopMsg}`);
 
   // Signal handlers for graceful shutdown
+  let shutdownStarted = false;
   const shutdown = () => {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
+
     console.log('\nShutting down genie serve...');
+
+    // 1. Stop agent watcher
     handles.agentWatcher?.close();
+
+    // 2. Stop scheduler (drains in-flight)
     handles.schedulerHandle?.stop();
-    killTuiSession();
+
+    // 3. Kill registered services via registry
+    try {
+      const { killAllServices } = require('../lib/service-registry.js');
+      killAllServices();
+    } catch {
+      // Registry not available — best effort
+    }
+
+    // 4. Kill TUI session (skip in headless mode)
+    if (!headless) {
+      killTuiSession();
+    }
+
     // NEVER kill the agent tmux server — agent sessions are eternal and must
     // survive serve restarts. Only the TUI session is owned by serve.
+
+    // 5. Remove pgserve lockfile
+    try {
+      const lockfilePath = join(genieHome(), 'pgserve.port');
+      if (existsSync(lockfilePath)) {
+        unlinkSync(lockfilePath);
+      }
+    } catch {
+      // Best effort
+    }
+
+    // 6. Remove PID file
     removeServePid();
     console.log('genie serve stopped.');
   };
 
-  process.on('SIGTERM', () => {
+  // Set up force-kill timeout: if graceful shutdown takes > 10s, SIGKILL remaining
+  const forceKillShutdown = () => {
     shutdown();
+    const forceTimer = setTimeout(() => {
+      console.error('Graceful shutdown timeout (10s). Force-killing remaining processes.');
+      try {
+        const { getRegisteredServices } = require('../lib/service-registry.js');
+        for (const svc of getRegisteredServices()) {
+          try {
+            process.kill(svc.pid, 'SIGKILL');
+          } catch {
+            // already dead
+          }
+        }
+      } catch {
+        // registry not available
+      }
+      process.exit(1);
+    }, 10_000);
+    forceTimer.unref();
+  };
+
+  process.on('SIGTERM', () => {
+    forceKillShutdown();
     process.exit(143);
   });
   process.on('SIGINT', () => {
-    shutdown();
+    forceKillShutdown();
     process.exit(130);
   });
 
@@ -496,8 +580,10 @@ async function startForeground(): Promise<void> {
   removeServePid();
 }
 
-/** Start as a background daemon */
-async function startBackground(): Promise<void> {
+/** Start as a background daemon.
+ *  @param headless If true, pass --headless to the foreground process.
+ */
+async function startBackground(headless?: boolean): Promise<void> {
   const existingPid = readServePid();
   if (existingPid && isProcessAlive(existingPid)) {
     console.log(`genie serve already running (PID ${existingPid})`);
@@ -508,7 +594,10 @@ async function startBackground(): Promise<void> {
   const bunPath = process.execPath ?? 'bun';
   const genieBin = process.argv[1] ?? 'genie';
 
-  const child = spawn(bunPath, [genieBin, 'serve', '--foreground'], {
+  const args = [genieBin, 'serve', '--foreground'];
+  if (headless) args.push('--headless');
+
+  const child = spawn(bunPath, args, {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, GENIE_IS_DAEMON: '1' },
@@ -664,6 +753,7 @@ async function statusServe(): Promise<void> {
 interface ServeStartOptions {
   daemon?: boolean;
   foreground?: boolean;
+  headless?: boolean;
 }
 
 export function registerServeCommands(program: Command): void {
@@ -674,11 +764,12 @@ export function registerServeCommands(program: Command): void {
     .description('Start genie serve')
     .option('--daemon', 'Run in background')
     .option('--foreground', 'Run in foreground (default)')
+    .option('--headless', 'Run without TUI (services only: pgserve, scheduler, inbox-watcher)')
     .action(async (options: ServeStartOptions) => {
       if (options.daemon) {
-        await startBackground();
+        await startBackground(options.headless);
       } else {
-        await startForeground();
+        await startForeground(options.headless);
       }
     });
 
