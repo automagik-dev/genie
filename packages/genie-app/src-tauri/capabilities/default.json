@@ -1,6 +1,0 @@
-{
-  "identifier": "default",
-  "description": "Default capabilities for Genie desktop app",
-  "windows": ["main"],
-  "permissions": ["core:default", "shell:allow-open", "shell:allow-execute", "process:allow-exit"]
-}
