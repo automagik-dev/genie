@@ -611,7 +611,22 @@ export async function createTask(input: TaskInput, repoPath?: string, projectId?
     )
     RETURNING *
   `;
-  return mapTask(rows[0]);
+  const task = mapTask(rows[0]);
+
+  // Auto-brain: create ephemeral brain when explicitly requested via metadata { brain: true }
+  if (input.metadata?.brain) {
+    try {
+      // @ts-expect-error — brain is enterprise-only, not in genie's deps
+      const brain = await import('@automagik/genie-brain');
+      if (brain.taskBrain) {
+        await brain.taskBrain({ taskId: String(task.id), workdir: repo });
+      }
+    } catch {
+      /* brain not installed — fine, no behavior change */
+    }
+  }
+
+  return task;
 }
 
 export async function getTask(idOrSeq: string, repoPath?: string): Promise<TaskRow | null> {
