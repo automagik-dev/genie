@@ -483,14 +483,21 @@ const args = process.argv.slice(2);
 
 // TUI renderer mode: only when GENIE_TUI_PANE=left AND no subcommand given.
 // Any subcommand (work, spawn, team, etc.) runs normally regardless of env.
-// Clear the env var after checking so child processes never inherit it.
-if (process.env.GENIE_TUI_PANE === 'left' && args.length === 0) {
-  process.env.GENIE_TUI_PANE = undefined;
+// Delete TUI env vars so child processes never inherit them and accidentally
+// launch a second TUI nav (note: `= undefined` sets the STRING "undefined",
+// only `delete` actually removes the var from the environment).
+const isTuiPane = process.env.GENIE_TUI_PANE === 'left' && args.length === 0;
+// biome-ignore lint/performance/noDelete: process.env requires delete — assignment sets the string "undefined"
+delete process.env.GENIE_TUI_PANE;
+// biome-ignore lint/performance/noDelete: process.env requires delete
+delete process.env.GENIE_TUI_RIGHT;
+// biome-ignore lint/performance/noDelete: process.env requires delete
+delete process.env.GENIE_IS_DAEMON;
+if (isTuiPane) {
   const { launchTui } = await import('./tui/index.js');
   await launchTui();
   process.exit(0);
 }
-process.env.GENIE_TUI_PANE = undefined;
 
 // Default command: genie (no args) → thin TUI client (attach to serve).
 if (args.length === 0) {
