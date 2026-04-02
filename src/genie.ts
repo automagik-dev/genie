@@ -490,6 +490,7 @@ const args = process.argv.slice(2);
 // launch a second TUI nav (note: `= undefined` sets the STRING "undefined",
 // only `delete` actually removes the var from the environment).
 const isTuiPane = process.env.GENIE_TUI_PANE === 'left' && args.length === 0;
+const tuiRightPane = process.env.GENIE_TUI_RIGHT;
 // biome-ignore lint/performance/noDelete: process.env requires delete — assignment sets the string "undefined"
 delete process.env.GENIE_TUI_PANE;
 // biome-ignore lint/performance/noDelete: process.env requires delete
@@ -497,6 +498,10 @@ delete process.env.GENIE_TUI_RIGHT;
 // biome-ignore lint/performance/noDelete: process.env requires delete
 delete process.env.GENIE_IS_DAEMON;
 if (isTuiPane) {
+  // Restore GENIE_TUI_RIGHT so the TUI renderer can read it (we deleted it
+  // from the environment to prevent child process inheritance, but the TUI
+  // itself still needs it to control the right pane).
+  if (tuiRightPane) process.env.GENIE_TUI_RIGHT = tuiRightPane;
   const { launchTui } = await import('./tui/index.js');
   await launchTui();
   process.exit(0);
