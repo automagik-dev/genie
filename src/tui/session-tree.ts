@@ -14,6 +14,11 @@ import type { AgentState, TreeNode, TuiExecutor } from './types.js';
 /** The TUI's own session name — filtered from the tree to prevent self-attach loops */
 const TUI_SESSION = 'genie-tui';
 
+/** Normalize agent name to tmux session name (slashes → dashes, since tmux forbids slashes). */
+function toSessionName(agentName: string): string {
+  return agentName.replace(/\//g, '-');
+}
+
 // ─── Legacy Mode (no workspace) ──────────────────────────────────────────────
 
 /** Build a TreeNode tree from tmux sessions, enriched with executor state. */
@@ -72,15 +77,20 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
   const { topLevel, subsByParent } = groupAgentNames(agentNames);
 
   const nodes = topLevel.map((name) => {
-    const node = buildAgentNode(name, sessionByName.get(name), executorsByAgent.get(name) ?? [], executorByPaneId);
+    const node = buildAgentNode(
+      name,
+      sessionByName.get(toSessionName(name)),
+      executorsByAgent.get(name) ?? [],
+      executorByPaneId,
+    );
     appendSubAgentNodes(node, subsByParent.get(name), sessionByName, executorsByAgent, executorByPaneId);
     return node;
   });
 
   // Add orphan sessions (tmux sessions with no matching agent in filesystem)
-  const agentNameSet = new Set(agentNames);
+  const claimedSessions = new Set(agentNames.map(toSessionName));
   for (const [name, session] of sessionByName) {
-    if (!agentNameSet.has(name)) {
+    if (!claimedSessions.has(name)) {
       nodes.push(sessionToNode(session, executorByPaneId));
     }
   }
@@ -140,7 +150,7 @@ function appendSubAgentNodes(
     const subLabel = subName.slice(subName.indexOf('/') + 1);
     const subNode = buildAgentNode(
       subName,
-      sessionByName.get(subName),
+      sessionByName.get(toSessionName(subName)),
       executorsByAgent.get(subName) ?? [],
       executorByPaneId,
     );
@@ -182,7 +192,7 @@ function buildAgentNode(
     expanded: children.length > 0,
     children,
     data: {
-      sessionName: name,
+      sessionName: toSessionName(name),
       windowCount: session ? session.windows.length : 0,
       attachWindowIndex,
       provider: agentExecutors[0]?.provider ?? null,

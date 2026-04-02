@@ -2,7 +2,7 @@
 /** Sessions panel — single tree view of tmux sessions > windows > panes */
 
 import { useKeyboard } from '@opentui/react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { scanAgents } from '../../lib/workspace.js';
 import { buildMenuItems } from '../context-menu-items.js';
 import { type DiagnosticSnapshot, collectDiagnostics } from '../diagnostics.js';
@@ -44,6 +44,7 @@ export function Nav({
   const [requestedInitialAgent, setRequestedInitialAgent] = useState<string | undefined>(initialAgent);
   const [contextMenuNodeId, setContextMenuNodeId] = useState<string | null>(null);
   const lastTarget = useRef<string | null>(null);
+  const selectedNodeId = useRef<string | null>(null);
 
   // Refresh diagnostics every 2s
   useEffect(() => {
@@ -94,12 +95,29 @@ export function Nav({
 
   const flatNodes = useMemo(() => flattenTree(sessionTree), [sessionTree]);
 
-  // Clamp selectedIndex when tree shrinks
+  // Keep selectedNodeId in sync with the current selection
   useEffect(() => {
-    if (flatNodes.length > 0 && selectedIndex >= flatNodes.length) {
+    const node = flatNodes[selectedIndex]?.node;
+    if (node) selectedNodeId.current = node.id;
+  }, [selectedIndex, flatNodes]);
+
+  // Stabilize selection across tree rebuilds: if the node at selectedIndex changed,
+  // find the previously selected node by ID and restore the correct index.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selectedIndex intentionally excluded — including it creates infinite loop since effect calls setSelectedIndex
+  useLayoutEffect(() => {
+    if (flatNodes.length === 0) return;
+    if (selectedIndex >= flatNodes.length) {
       setSelectedIndex(flatNodes.length - 1);
+      return;
     }
-  }, [flatNodes.length, selectedIndex]);
+    if (!selectedNodeId.current) return;
+    const currentAtIndex = flatNodes[selectedIndex]?.node;
+    if (currentAtIndex && currentAtIndex.id === selectedNodeId.current) return;
+    const restored = flatNodes.findIndex((n) => n.node.id === selectedNodeId.current);
+    if (restored >= 0) {
+      setSelectedIndex(restored);
+    }
+  }, [flatNodes]);
 
   // Initial agent selection / auto-spawn. Triggered by startup env or file signal.
   useEffect(() => {
