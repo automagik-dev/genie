@@ -184,6 +184,18 @@ export async function getUnread(repoPath: string, workerId: string | string[]): 
 }
 
 /**
+ * Get a single message by ID.
+ */
+export async function getById(messageId: string): Promise<MailboxMessage | null> {
+  const sql = await getConnection();
+  const rows = await sql`
+    SELECT * FROM mailbox WHERE id = ${messageId} LIMIT 1
+  `;
+  if (rows.length === 0) return null;
+  return rowToMessage(rows[0]);
+}
+
+/**
  * Mark a message as read.
  */
 export async function markRead(messageId: string): Promise<boolean> {
@@ -218,10 +230,9 @@ export function toNativeInboxMessage(msg: MailboxMessage, color = 'blue'): Nativ
  * Calls the callback with (toWorker, messageId) on each new insert.
  * Returns an unsubscribe function.
  *
- * Internal for now — will be exported when inbox-watcher integration lands.
+ * Used by the scheduler daemon for instant message delivery.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- future inbox-watcher integration
-async function _subscribeDelivery(
+export async function subscribeDelivery(
   callback: (toWorker: string, messageId: string) => void,
 ): Promise<() => Promise<void>> {
   const sql = await getConnection();

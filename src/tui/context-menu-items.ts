@@ -23,14 +23,14 @@ function buildAgentItems(node: TreeNode): MenuItem[] {
 
   if (ws === 'running') {
     return [
-      { label: 'New agent', shortcut: 'N', action: 'agent-new-window' },
+      { label: 'Clone', shortcut: 'N', action: 'agent-new-window' },
       { label: 'New window', shortcut: 'W', action: 'new-empty-window' },
       { label: 'Rename...', shortcut: 'R', action: 'rename-session', needsInput: true, separator: true },
       { label: 'Remove', shortcut: 'K', action: 'kill' },
     ];
   }
 
-  return [{ label: 'Spawn agent', shortcut: 'S', action: 'spawn' }];
+  return [{ label: 'Start', shortcut: 'S', action: 'spawn' }];
 }
 
 function buildSessionItems(): MenuItem[] {
