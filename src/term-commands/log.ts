@@ -306,14 +306,10 @@ export async function logCommand(agentName: string | undefined, options: LogOpti
     events = await readAgentLog(agent, repoPath, filter);
     label = agent.id;
   } else {
-    // No agent, no team — show all agents
+    // No agent, no team — show all events (unfiltered)
     const allAgents = await agentRegistry.list();
-    if (allAgents.length === 0) {
-      console.error('No agents found. Run `genie ls` to see agents.');
-      process.exit(1);
-    }
     events = await readTeamLog(allAgents, repoPath, 'all', filter);
-    label = `all agents (${allAgents.length})`;
+    label = allAgents.length > 0 ? `all agents (${allAgents.length})` : 'all events';
   }
 
   // Output
@@ -380,11 +376,7 @@ async function followCommand(
     setupShutdown(handle.stop);
   } else {
     const allAgents = await agentRegistry.list();
-    if (allAgents.length === 0) {
-      console.error('No agents found. Run `genie ls` to see agents.');
-      process.exit(1);
-    }
-    label = `all agents (${allAgents.length})`;
+    label = allAgents.length > 0 ? `all agents (${allAgents.length})` : 'all events';
 
     const handle = await followTeamLog(allAgents, repoPath, 'all', filter, outputEvent);
     console.error(

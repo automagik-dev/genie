@@ -336,7 +336,7 @@ async function startPgFollow(
   const eventKey = (e: LogEvent): string => `${e.timestamp}|${e.kind}|${e.agent}|${e.text.slice(0, 80)}`;
 
   const matchesScope = (event: RuntimeEvent) => {
-    if (team === 'all') return agentIds.has(event.agent);
+    if (team === 'all') return true;
     if (team && event.team === team) return true;
     return agentIds.has(event.agent);
   };
@@ -354,8 +354,8 @@ async function startPgFollow(
 
   const handle = await followRuntimeEvents(
     {
-      repoPath,
-      agentIds: [...agentIds],
+      repoPath: team === 'all' ? undefined : repoPath,
+      agentIds: team === 'all' ? undefined : [...agentIds],
       team: team && team !== 'all' ? team : undefined,
       kinds: filter?.kinds,
       scopeMode: team && team !== 'all' ? 'any' : 'all',

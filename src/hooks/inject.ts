@@ -31,7 +31,7 @@ function escapeShellArg(arg: string): string {
   return `'${arg.replace(/'/g, "'\\''")}'`;
 }
 
-function buildDispatchCommand(): string {
+export function buildDispatchCommand(): string {
   const entrypoint = fileURLToPath(new URL('../genie.ts', import.meta.url));
   if (!existsSync(entrypoint)) return 'genie hook dispatch';
 
