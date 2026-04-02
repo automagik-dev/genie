@@ -17,6 +17,7 @@ import { palette } from '../theme.js';
 import { flattenTree, toggleNode } from '../tree.js';
 import type { TreeNode } from '../types.js';
 import { ContextMenu } from './ContextMenu.js';
+import { SystemStats } from './SystemStats.js';
 import { TreeNodeRow } from './TreeNode.js';
 
 interface NavProps {
@@ -499,6 +500,9 @@ export function Nav({
           positionY={flatNodes.findIndex((n) => n.node.id === contextMenuNodeId) + 1}
         />
       ) : null}
+
+      {/* System stats */}
+      <SystemStats />
 
       {/* Footer */}
       <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
