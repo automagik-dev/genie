@@ -1516,6 +1516,7 @@ async function buildResumeParams(
     // biome-ignore lint/style/noNonNullAssertion: caller guarantees claudeSessionId exists
     resume: agent.claudeSessionId!,
     name: `${team}-${agentName}`,
+    model: dirEntry?.model,
     systemPromptFile,
     promptMode,
   };
