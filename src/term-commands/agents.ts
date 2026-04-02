@@ -1192,6 +1192,25 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
     return process.exit(1) as never;
   }
+  // Auto-resume: if a dead worker exists with a Claude session, resume instead of fresh spawn.
+  // Must run BEFORE rejectDuplicateRole which would unregister the dead worker and lose the sessionId.
+  {
+    const existing = await registry.list();
+    const deadResumable = existing.find(
+      (w) => w.role === effectiveRole && w.team === team && w.claudeSessionId && w.provider === 'claude',
+    );
+    if (deadResumable) {
+      const alive = await isPaneAlive(deadResumable.paneId);
+      if (!alive) {
+        console.log(
+          `Resuming existing session for "${effectiveRole}" (session: ${deadResumable.claudeSessionId.slice(0, 8)}...)`,
+        );
+        await resumeAgent(deadResumable);
+        return deadResumable.id;
+      }
+    }
+  }
+
   await rejectDuplicateRole(team, effectiveRole);
 
   // 2b. Override CWD with team worktree path if available.
