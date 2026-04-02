@@ -1,190 +1,131 @@
 ---
 name: brain
-description: "Obsidian-style knowledge vault — store, search, and retrieve agent knowledge across sessions via notesmd-cli."
+description: "Knowledge graph engine — search, analyze, and manage AI agent brains with confidence scoring, autoschema, and multimodal support."
 ---
 
-# /brain — Agent Knowledge Vault
+# /brain — Knowledge Graph Engine
 
-Persistent long-term memory for agents. Knowledge is stored in `brain/`, searched before answering, and written back every session.
-
-## Brain vs Memory
-
-These are **different tools for different purposes**:
-
-| | **Brain** (this skill) | **Memory** (Claude native) |
-|---|---|---|
-| **What** | Context graph — entities, relationships, domain knowledge | Behavioral learnings — feedback, decisions, user preferences |
-| **Tool** | `notesmd-cli` (Obsidian-style vault) | `.claude/memory/` files with YAML frontmatter |
-| **When** | Domain intel, playbooks, company/person context, session logs | Corrections, conventions, project rules, user profile |
-| **Updated by** | `/brain` (this skill) | `/learn` skill, auto memory system |
-| **Format** | Markdown notes in `brain/` directory | Typed memory files (user, feedback, project, reference) |
-
-**Rule of thumb:** If it's *knowledge about the world* → brain. If it's *how the agent should behave* → memory.
+Search, analyze, and manage knowledge brains powered by genie-brain. Brains are Postgres-backed, Obsidian-compatible knowledge vaults with BM25 + vector search, confidence scoring, and agentic autoschema.
 
 ## When to Use
-- Agent needs to recall prior session context, decisions, or intel
-- New intel (person, company, deal) is discovered mid-session
-- A playbook pattern is confirmed or updated
-- Provisioning a new agent with a knowledge vault
+- Search for knowledge before answering a question
+- Check what the brain knows (and doesn't know) about a topic
+- Analyze content with deep reasoning
+- Ingest new content into the brain
+- Check brain health and coverage gaps
 
-## Flow
+## Prerequisites
 
-### Session Start (mandatory)
-
-1. Read the conversation opener. Derive 2-3 search terms from the topic.
-2. `notesmd-cli search-content "<term>"` for each term.
-3. `notesmd-cli print "<note-name>"` for relevant hits.
-4. Only then begin forming a response.
-5. Fall back to external research (web search, browser) only if brain is insufficient.
-
-On topic shift mid-conversation: re-run `notesmd-cli search-content "<new-topic>"` before answering.
-
-### Write-Back (3 mandatory triggers)
-
-### Trigger 1: Session End (always)
-
-```bash
-notesmd-cli daily
-# Write: discussion summary, decisions, intel discovered, actions taken
-```
-
-### Trigger 2: New Intel Discovered (immediately)
-
-```bash
-notesmd-cli create "Intelligence/<person-or-company-name>"
-# Write now — do not wait until session end
-```
-
-### Trigger 3: Playbook Pattern Updated (immediately)
-
-```bash
-notesmd-cli print "Playbooks/<playbook-name>"
-# Edit: add confirmed pattern, new rule, exception, or example
-```
+Brain must be installed: `genie brain install`
+If not installed, guide the user to run the install command.
 
 ## Commands
 
-| Command | Purpose |
-|---------|---------|
-| `notesmd-cli search-content "<keyword>"` | Search vault content (use BEFORE answering domain questions) |
-| `notesmd-cli print "<note-name>"` | Read a specific note |
-| `notesmd-cli daily` | Open/create today's session log in `Daily/` |
-| `notesmd-cli create "<name>"` | Create a note (use folder prefix: `"Intelligence/Name"`) |
-| `notesmd-cli list` | Browse full vault structure |
-| `notesmd-cli set-default --vault <path>` | Configure vault path (one-time setup) |
-
-## Installation (Auto-Detect)
-
-On first use, check if `notesmd-cli` is available:
-
+### Search — find knowledge with confidence
 ```bash
-command -v notesmd-cli >/dev/null 2>&1 && echo "installed" || echo "missing"
+genie brain search "<query>" --brain <id>
 ```
+Returns ranked results with confidence level (FULL/HIGH/PARTIAL/LOW/NONE).
+- FULL/HIGH → brain knows this well, use the results
+- PARTIAL → brain has some info, may need to supplement
+- LOW/NONE → gap detected, go external or research
 
-**If missing**, offer to install from https://github.com/Yakitrak/notesmd-cli:
+**Always search before answering domain questions.** If confidence is LOW/NONE, say so — don't hallucinate.
 
+### Health — check brain quality
 ```bash
-# macOS (Homebrew)
-brew install yakitrak/yakitrak/notesmd-cli
-
-# Linux / manual
-# Download the latest release binary from:
-# https://github.com/Yakitrak/notesmd-cli/releases
-# Place in /usr/local/bin/notesmd-cli and chmod +x
-
-# Or use the bundled install script (if available)
-bash skills/brain/scripts/install-notesmd.sh --vault ./brain
+genie brain health --path <brain-path> [--fix]
 ```
+7-dimension score: Schema, Freshness, Coverage, Connections, Content, Conflicts, Acceptance.
+`--fix` auto-repairs: adds missing dates, converts tags, generates MOCs.
 
-After install, configure the vault:
-
+### Status — brain dashboard
 ```bash
-notesmd-cli set-default --vault ./brain/
+genie brain status
 ```
+Lists all registered brains with file counts, health, and query stats.
 
-If the user declines installation, skip brain operations gracefully and note that `/brain` requires `notesmd-cli`.
-
-## Provisioning a New Agent Brain
-
+### Init — create a new brain
 ```bash
-mkdir -p brain/{_Templates,Company,Daily,Domains,Intelligence,Playbooks}
-notesmd-cli set-default --vault ./brain/
-cp skills/brain/templates/*.md brain/_Templates/
-notesmd-cli list
+genie brain init --name <name> --path <path> [--type gtm|pm|engineering|research|personal]
 ```
+Creates an Obsidian-compatible vault with autoschema. Brain types provide base scaffolding.
 
-Then add the protocol snippets below to the agent's config files.
-
-### CLAUDE.md Template Block
-
-```markdown
-## FIRST THING YOU DO (every session)
-
-1. Read the conversation opener to understand the topic
-2. Derive 2-3 search terms
-3. Run: `notesmd-cli search-content "<term>"` for each
-4. If results found: `notesmd-cli print "<note-name>"`
-5. Only THEN begin forming your response
-6. If brain is insufficient: use web search as fallback
-
-## WHEN TOPIC SHIFTS
-
-Re-run `notesmd-cli search-content "<new-topic>"` before answering.
-
-## AT SESSION END (mandatory)
-
-Run `notesmd-cli daily`. Log: discussion, decisions, intel, actions.
-
-## WRITE IMMEDIATELY WHEN
-
-- New intel discovered -> `notesmd-cli create "Intelligence/<name>"`
-- Playbook updated -> edit relevant `Playbooks/` note
-- Domain insight validated -> update relevant `Domains/` note
-```
-
-### AGENTS.md Protocol Snippet
-
-```markdown
-## Brain Protocol
-
-### Session Start
-- Derive 2-3 keywords from topic
-- `notesmd-cli search-content "<keyword>"` for each
-- `notesmd-cli print "<note-name>"` for relevant results
-- External research only when brain is insufficient
-
-### Mid-Conversation
-- Re-scan on topic shift: `notesmd-cli search-content "<new-topic>"`
-
-### Session End (mandatory)
-- `notesmd-cli daily` — log: discussion, decisions, intel, actions
-
-### Write Immediately When
-- New intel -> `notesmd-cli create "Intelligence/<name>"`
-- Playbook updated -> edit `Playbooks/` note now
-```
-
-## Auto-Sync (optional)
-
-Push brain changes to GitHub via inotifywait + cron:
-
+### Process — ingest new content
 ```bash
-# Watcher (scripts/brain-sync.sh)
-while inotifywait -r -e modify,create,delete ./brain/ 2>/dev/null; do
-  cd brain && git add -A && \
-  git commit -m "brain: auto-sync $(date +%Y-%m-%d_%H:%M)" && \
-  git push && cd ..
-done
-
-# Cron fallback (every 30 min)
-# */30 * * * * cd /path/to/workspace && bash scripts/brain-sync.sh >> logs/brain-sync.log 2>&1
+genie brain process --brain <id> --path <path>
 ```
+Processes files in `to_process/`:
+- Markdown → classified and moved to decided folder
+- Images → described via Gemini Vision → .desc.md
+- Audio → transcribed → .transcript.md
+- PDF → extracted → .extracted.md
+- Code → symbols extracted → .symbols.md
+
+### Analyze — deep reasoning via rlmx
+```bash
+genie brain analyze "<query>" --brain <id> --path <path>
+```
+Uses rlmx reasoning engine for deep analysis with file references.
+
+### Link — discover connections
+```bash
+genie brain link --brain <id>
+```
+Generates wikilinks from tag overlap and wikilink references.
+
+## How Agents Should Use This
+
+### Before answering domain questions:
+1. Search the brain: `genie brain search "<topic>" --brain <my-brain-id>`
+2. Check confidence level
+3. If FULL/HIGH → cite the results
+4. If PARTIAL → use results + note limitations
+5. If NONE → say "brain doesn't cover this" and research externally
+
+### After learning something new:
+1. Write a .md file with frontmatter to `brain/to_process/`
+2. Run `genie brain process` to classify and index it
+3. The brain grows over time
+
+### Session hygiene:
+- Start: check `genie brain status` for brain health
+- During: search brain before making claims
+- End: write session learnings to brain
+
+## Brain Types
+
+| Type | Use Case | Base Folders |
+|------|----------|-------------|
+| `gtm` | Marketing, competitive intel | Intelligence/, DevRel/, Company/ |
+| `pm` | Product management | Backlog/, Roadmap/, Specs/ |
+| `engineering` | Architecture, code | Architecture/, Decisions/, Runbooks/ |
+| `research` | R&D, papers | Papers/, Notes/, Experiments/ |
+| `personal` | Personal knowledge (PARA) | Projects/, Areas/, Resources/ |
+| `generic` | Auto-decided by content | (autoschema decides) |
+
+## Confidence Levels
+
+| Level | Meaning | Agent Action |
+|-------|---------|-------------|
+| **FULL** | Brain knows this well (3+ strong results) | Use directly, cite sources |
+| **HIGH** | Good coverage (2+ results) | Use with confidence |
+| **PARTIAL** | Some info available | Use + supplement if needed |
+| **LOW** | Weak match | Go external, mention brain gap |
+| **NONE** | Brain doesn't know this | Research externally, don't guess |
+
+## Available Brains on This Server
+
+Run `genie brain status` to see all. Current brains include:
+- **genie-gtm** — Marketing intelligence, competitors, DevRel
+- **vegapunk** — R&D, architecture, code analysis
+- **totvs** — Client project management
+- **sofia** — Personal assistant knowledge
+- **namastex-global** — Company-wide shared knowledge
 
 ## Rules
-
-- Local knowledge first. External research is fallback, never default.
-- Run startup search every session, no exceptions.
-- Write back on all 3 triggers. The brain goes stale if agents only read.
-- Never skip the daily log at session end.
-- Write intel immediately when discovered — do not batch until session end.
-- Templates live in `skills/brain/templates/`. Copy to `brain/_Templates/` during provisioning.
+- **Search before claiming.** If the brain has an answer, use it.
+- **Respect confidence.** NONE means NONE — don't fabricate.
+- **Write back.** If you learn something the brain should know, add it.
+- **Use frontmatter.** All brain files need YAML frontmatter (type, tags, dates).
+- **Keep it Obsidian-compatible.** Wikilinks, not regular links.
