@@ -193,11 +193,36 @@ function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
   // Check if session already exists
   try {
     execSync(tuiTmux(`has-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
-    // Session exists — reuse it
+    // Session exists — reuse it, but ensure the split is healthy
     const panes = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
       .trim()
       .split('\n');
-    return { leftPane: panes[0], rightPane: panes[1] || panes[0] };
+
+    if (panes.length >= 2) {
+      // Both panes exist — clear the right pane so it doesn't show stale content
+      // (e.g., a leftover TUI nav renderer from a crashed serve process)
+      try {
+        execSync(tuiTmux(`respawn-pane -k -t ${panes[1]} 'cat'`), { stdio: 'ignore' });
+      } catch {}
+      return { leftPane: panes[0], rightPane: panes[1] };
+    }
+
+    // Only 1 pane — re-create the split
+    const cols =
+      Number.parseInt(
+        execSync(tuiTmux(`display-message -t ${TUI_SESSION}:0 -p '#{window_width}'`), { encoding: 'utf-8' }).trim(),
+        10,
+      ) || 120;
+    execSync(tuiTmux(`split-window -h -t ${TUI_SESSION}:0 -l ${cols - NAV_WIDTH - 1}`), { stdio: 'ignore' });
+    const refreshed = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
+      .trim()
+      .split('\n');
+    applyTuiStyle();
+    setupTuiKeybindings();
+    try {
+      execSync(tuiTmux(`select-pane -t ${refreshed[0]}`), { stdio: 'ignore' });
+    } catch {}
+    return { leftPane: refreshed[0], rightPane: refreshed[1] || refreshed[0] };
   } catch {
     // Session doesn't exist — create it
   }
