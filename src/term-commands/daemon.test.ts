@@ -87,7 +87,8 @@ describe('generateSystemdUnit', () => {
     expect(unit).toContain('[Service]');
     expect(unit).toContain('[Install]');
     expect(unit).toContain('Type=simple');
-    expect(unit).toContain('daemon start --foreground');
+    // Now points to genie serve --headless --foreground
+    expect(unit).toContain('serve start --headless --foreground');
     expect(unit).toContain('Restart=on-failure');
     expect(unit).toContain('WantedBy=default.target');
   });
@@ -99,7 +100,8 @@ describe('generateSystemdUnit', () => {
 
   test('includes description and documentation', () => {
     const unit = generateSystemdUnit();
-    expect(unit).toContain('Description=Genie Scheduler Daemon');
+    // Updated description reflects unified serve
+    expect(unit).toContain('Description=Genie Serve (headless)');
     expect(unit).toContain('SyslogIdentifier=genie-scheduler');
   });
 

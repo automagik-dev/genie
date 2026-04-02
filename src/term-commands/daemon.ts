@@ -1,10 +1,13 @@
 /**
- * Daemon commands — CLI interface for scheduler daemon lifecycle management.
+ * Daemon commands — CLI interface (redirects to `genie serve --headless`).
+ *
+ * `genie daemon start` is now an alias for `genie serve --headless`.
+ * `genie daemon stop/status/logs` still work by reading serve.pid / scheduler.pid.
  *
  * Commands:
  *   genie daemon install  — generate systemd service unit, enable
- *   genie daemon start    — start scheduler daemon (background or foreground)
- *   genie daemon stop     — stop scheduler daemon gracefully
+ *   genie daemon start    — alias for `genie serve --headless`
+ *   genie daemon stop     — stop genie serve gracefully
  *   genie daemon status   — show daemon state, PID, uptime, stats
  *   genie daemon logs     — tail structured JSON log
  */
@@ -42,7 +45,7 @@ function systemdUnitPath(): string {
 // PID file helpers
 // ============================================================================
 
-/** Read the stored PID. Returns null if no PID file or process not running. */
+/** Read the stored scheduler PID (legacy). Returns null if no PID file or invalid. */
 export function readPid(): number | null {
   const path = pidFilePath();
   if (!existsSync(path)) return null;
@@ -52,14 +55,14 @@ export function readPid(): number | null {
   return pid;
 }
 
-/** Write the current PID to the PID file. */
+/** Write the current PID to the scheduler PID file. */
 export function writePid(pid: number): void {
   const dir = genieHome();
   mkdirSync(dir, { recursive: true });
   writeFileSync(pidFilePath(), String(pid), 'utf-8');
 }
 
-/** Remove the PID file. */
+/** Remove the scheduler PID file. */
 export function removePid(): void {
   const path = pidFilePath();
   if (existsSync(path)) {
@@ -80,22 +83,50 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 // ============================================================================
+// serve.pid helpers (canonical PID file for unified serve process)
+// ============================================================================
+
+function servePidPath(): string {
+  return join(genieHome(), 'serve.pid');
+}
+
+/** Read PID from serve.pid. Returns null if missing or invalid. */
+function readServePid(): number | null {
+  const path = servePidPath();
+  if (!existsSync(path)) return null;
+  const raw = readFileSync(path, 'utf-8').trim();
+  const pid = Number.parseInt(raw, 10);
+  if (Number.isNaN(pid) || pid <= 0) return null;
+  return pid;
+}
+
+/** Remove serve.pid if it exists. */
+function removeServePid(): void {
+  const path = servePidPath();
+  if (existsSync(path)) {
+    try {
+      unlinkSync(path);
+    } catch {}
+  }
+}
+
+// ============================================================================
 // systemd unit template
 // ============================================================================
 
-/** Generate a systemd user service unit file for the scheduler. */
+/** Generate a systemd user service unit file pointing to genie serve --headless. */
 export function generateSystemdUnit(): string {
   const genieBin = process.argv[1] ?? 'genie';
   const bunPath = process.execPath ?? 'bun';
 
   return `[Unit]
-Description=Genie Scheduler Daemon
+Description=Genie Serve (headless) — pgserve + scheduler + services
 Documentation=https://github.com/automagik/genie
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=${bunPath} ${genieBin} daemon start --foreground
+ExecStart=${bunPath} ${genieBin} serve start --headless --foreground
 Restart=on-failure
 RestartSec=5
 Environment=GENIE_HOME=${genieHome()}
@@ -146,7 +177,7 @@ async function daemonInstallCommand(): Promise<void> {
     const stderr = reloadResult.stderr?.toString().trim();
     console.log('\nNote: systemctl daemon-reload failed (systemd may not be available).');
     if (stderr) console.log(`  ${stderr}`);
-    console.log('You can still run the daemon manually: genie daemon start --foreground');
+    console.log('You can still run manually: genie serve --headless --foreground');
     return;
   }
 
@@ -157,112 +188,75 @@ async function daemonInstallCommand(): Promise<void> {
   if (enableResult.status === 0) {
     console.log('Enabled genie-scheduler.service');
     console.log('\nTo start: systemctl --user start genie-scheduler');
-    console.log('Or:       genie daemon start');
+    console.log('Or:       genie serve --headless');
   } else {
     const stderr = enableResult.stderr?.toString().trim();
     console.log('\nNote: systemctl enable failed.');
     if (stderr) console.log(`  ${stderr}`);
-    console.log('You can start manually: genie daemon start');
+    console.log('You can start manually: genie serve --headless');
   }
 }
 
 /**
- * `genie daemon start [--foreground]` — start the scheduler daemon.
+ * `genie daemon start [--foreground]` — redirects to `genie serve --headless`.
+ * Deprecated: use `genie serve --headless` directly.
  */
 async function daemonStartCommand(options: StartOptions): Promise<void> {
-  // Check if already running
-  const existingPid = readPid();
-  if (existingPid && isProcessAlive(existingPid)) {
-    console.log(`Scheduler daemon already running (PID ${existingPid})`);
-    process.exit(0);
-  }
+  console.log('Note: `genie daemon start` now redirects to `genie serve --headless`.');
+  console.log('      Use `genie serve --headless` directly in the future.\n');
 
-  // Clean up stale PID file
-  if (existingPid) {
-    removePid();
-  }
+  const { spawn: spawnChild } = await import('node:child_process');
+  const bunPath = process.execPath ?? 'bun';
+  const genieBin = process.argv[1] ?? 'genie';
 
   if (options.foreground) {
-    await runForeground();
+    // In foreground mode (systemd), delegate to genie serve --headless --foreground
+    const args = [genieBin, 'serve', 'start', '--headless', '--foreground'];
+    const child = spawnChild(bunPath, args, {
+      stdio: 'inherit',
+      env: { ...process.env },
+    });
+    child.on('exit', (code) => process.exit(code ?? 0));
+    // Keep this process alive while child runs
+    await new Promise(() => {});
   } else {
-    await runBackground();
-  }
-}
-
-/** Run the scheduler in the current process (foreground mode, for systemd). */
-async function runForeground(): Promise<void> {
-  const { startDaemon } = await import('../lib/scheduler-daemon.js');
-
-  process.env.GENIE_IS_DAEMON = '1';
-  writePid(process.pid);
-  console.log(`Scheduler daemon starting (PID ${process.pid}, foreground)`);
-
-  const handle = startDaemon();
-
-  const shutdown = () => {
-    console.log('Shutting down scheduler daemon...');
-    handle.stop();
-  };
-
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
-
-  await handle.done;
-  removePid();
-  console.log('Scheduler daemon stopped.');
-}
-
-/** Spawn the scheduler as a detached background process. */
-async function runBackground(): Promise<void> {
-  const { spawn } = await import('node:child_process');
-  const genieBin = process.argv[1] ?? 'genie';
-  const bunPath = process.execPath ?? 'bun';
-
-  const child = spawn(bunPath, [genieBin, 'daemon', 'start', '--foreground'], {
-    detached: true,
-    stdio: 'ignore',
-    env: { ...process.env, GENIE_IS_DAEMON: '1' },
-  });
-
-  child.unref();
-
-  if (child.pid) {
-    // Wait briefly for the process to start and write its PID
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    // Verify it's still alive
-    if (isProcessAlive(child.pid)) {
-      console.log(`Scheduler daemon started (PID ${child.pid})`);
-      console.log(`  Log: ${logFilePath()}`);
-    } else {
-      console.error('Error: daemon process exited immediately. Check logs:');
-      console.error(`  ${logFilePath()}`);
-      process.exit(1);
-    }
-  } else {
-    console.error('Error: failed to spawn daemon process');
-    process.exit(1);
+    // Background mode: spawn genie serve --headless --daemon
+    const args = [genieBin, 'serve', 'start', '--headless', '--daemon'];
+    const child = spawnChild(bunPath, args, {
+      stdio: 'inherit',
+      env: { ...process.env },
+    });
+    child.on('exit', (code) => process.exit(code ?? 0));
   }
 }
 
 /**
- * `genie daemon stop` — stop the scheduler daemon gracefully.
+ * `genie daemon stop` — stop the serve process (which owns scheduler + pgserve).
+ * Checks both serve.pid and scheduler.pid for backwards compatibility.
  */
 async function daemonStopCommand(): Promise<void> {
-  const pid = readPid();
+  // Check serve.pid first (canonical), then scheduler.pid (legacy)
+  let pid = readServePid();
+  let source = 'serve';
 
   if (!pid) {
-    console.log('No scheduler daemon PID file found. Daemon is not running.');
+    pid = readPid();
+    source = 'scheduler';
+  }
+
+  if (!pid) {
+    console.log('No serve or scheduler PID file found. Nothing is running.');
     return;
   }
 
   if (!isProcessAlive(pid)) {
-    console.log(`Stale PID file (PID ${pid} is not running). Cleaning up.`);
+    console.log(`Stale PID file (${source}, PID ${pid} is not running). Cleaning up.`);
+    removeServePid();
     removePid();
     return;
   }
 
-  console.log(`Stopping scheduler daemon (PID ${pid})...`);
+  console.log(`Stopping genie serve (PID ${pid})...`);
   process.kill(pid, 'SIGTERM');
 
   // Wait up to 10s for graceful shutdown
@@ -272,14 +266,15 @@ async function daemonStopCommand(): Promise<void> {
   }
 
   if (isProcessAlive(pid)) {
-    console.log('Daemon did not stop within 10s. Sending SIGKILL.');
+    console.log('Did not stop within 10s. Sending SIGKILL.');
     try {
       process.kill(pid, 'SIGKILL');
     } catch {}
   }
 
+  removeServePid();
   removePid();
-  console.log('Scheduler daemon stopped.');
+  console.log('Genie serve stopped.');
 }
 
 /** Try to read process uptime from /proc. Returns formatted string or null. */
@@ -341,9 +336,12 @@ async function printDaemonStats(): Promise<void> {
 
 /**
  * `genie daemon status` — show daemon state and stats.
+ * Checks both serve.pid (canonical) and scheduler.pid (legacy).
  */
 async function daemonStatusCommand(): Promise<void> {
-  const pid = readPid();
+  const sPid = readServePid();
+  const schPid = readPid();
+  const pid = sPid && isProcessAlive(sPid) ? sPid : schPid;
   const running = pid !== null && isProcessAlive(pid);
 
   console.log('\nGenie Scheduler Daemon');
@@ -371,7 +369,7 @@ async function daemonStatusCommand(): Promise<void> {
 
   await printDaemonStats();
 
-  console.log(`  PID file: ${pidFilePath()}`);
+  console.log(`  PID file: ${servePidPath()} (canonical) / ${pidFilePath()} (legacy)`);
   console.log(`  Log file: ${logFilePath()}`);
   console.log('');
 }
@@ -486,7 +484,9 @@ function formatUptime(ms: number): string {
 // ============================================================================
 
 export function registerDaemonCommands(program: Command): void {
-  const daemon = program.command('daemon').description('Manage scheduler daemon lifecycle');
+  const daemon = program
+    .command('daemon')
+    .description('Manage scheduler daemon lifecycle (redirects to genie serve --headless)');
 
   daemon
     .command('install')
@@ -497,7 +497,7 @@ export function registerDaemonCommands(program: Command): void {
 
   daemon
     .command('start')
-    .description('Start the scheduler daemon')
+    .description('Start the scheduler daemon (alias for genie serve --headless)')
     .option('--foreground', 'Run in foreground (for systemd ExecStart)')
     .action(async (options: StartOptions) => {
       await daemonStartCommand(options);
@@ -505,7 +505,7 @@ export function registerDaemonCommands(program: Command): void {
 
   daemon
     .command('stop')
-    .description('Stop the scheduler daemon gracefully')
+    .description('Stop genie serve gracefully')
     .action(async () => {
       await daemonStopCommand();
     });
