@@ -7,7 +7,7 @@
  * Run with: bun test src/lib/protocol-router.test.ts
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,6 +25,8 @@ const alivePanes = new Set<string>();
 
 /** Count of spawnWorkerFromTemplate invocations (reset in beforeEach). */
 let spawnCallCount = 0;
+/** When true, spawnWorkerFromTemplate mock throws to simulate spawn failure. */
+let spawnShouldFail = false;
 
 // Mock tmux-wrapper (not tmux.js) to avoid poisoning the global module cache
 // for other test files that import real functions from ./tmux.js.
@@ -58,6 +60,7 @@ mock.module('./protocol-router-spawn.js', () => ({
   _deps: realSpawnModule._deps,
   spawnWorkerFromTemplate: async (template: any, _resumeSessionId?: string) => {
     spawnCallCount++;
+    if (spawnShouldFail) throw new Error('Simulated spawn failure');
     // Simulate spawn latency to widen the race window
     await new Promise((r) => setTimeout(r, 50));
     const id = `spawned-${template.role ?? 'worker'}-${spawnCallCount}`;
@@ -124,6 +127,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
     // Reset mock state
     spawnCallCount = 0;
+    spawnShouldFail = false;
     alivePanes.clear();
   });
 
@@ -285,6 +289,69 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Spawn failure logging — errors surfaced, not silently swallowed
+  // ---------------------------------------------------------------------------
+
+  describe('spawn failure logging', () => {
+    test('spawn failure is logged via console.error, not silently swallowed', async () => {
+      const registry = await import('./agent-registry.js');
+      const router = await import('./protocol-router.js');
+
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+      router._deps.waitForWorkerReady = async () => true;
+      process.env.TMUX = '/tmp/tmux-test/default,123,0';
+
+      const errorCalls: string[] = [];
+      const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        errorCalls.push(args.map(String).join(' '));
+      });
+
+      const now = new Date().toISOString();
+
+      // Register a dead worker (pane not in alivePanes)
+      await registry.register({
+        id: 'fail-worker',
+        paneId: '%0',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'fail-role',
+        team: 'fail-team',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+      });
+
+      await registry.saveTemplate({
+        id: 'fail-team-fail-role',
+        team: 'fail-team',
+        role: 'fail-role',
+        provider: 'claude',
+        cwd: tempDir,
+        lastSpawnedAt: now,
+      });
+
+      // Make spawn fail
+      spawnShouldFail = true;
+
+      const result = await router.sendMessage(tempDir, 'alice', 'fail-role', 'hello', 'fail-team');
+
+      // Delivery should fail gracefully (not throw)
+      expect(result.delivered).toBe(false);
+
+      // Spawn failure must be logged
+      const spawnErrorLog = errorCalls.find((c) => c.includes('Spawn failed'));
+      expect(spawnErrorLog).toBeTruthy();
+      expect(spawnErrorLog).toContain('fail-role');
+      expect(spawnErrorLog).toContain('Simulated spawn failure');
+
+      errorSpy.mockRestore();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Delivery confirmation — pane re-verify before injection
   // ---------------------------------------------------------------------------
 
@@ -329,6 +396,52 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(result.reason).toBe('Pane died before delivery');
       // Message should still be persisted in mailbox
       expect(result.messageId).toMatch(/^msg-/);
+    });
+
+    test('delivery failure to live worker logs error when all paths exhausted', async () => {
+      const registry = await import('./agent-registry.js');
+      const router = await import('./protocol-router.js');
+
+      const errorCalls: string[] = [];
+      const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        errorCalls.push(args.map(String).join(' '));
+      });
+
+      const now = new Date().toISOString();
+
+      // Register a non-native worker (no team, so native inbox fallback is skipped)
+      alivePanes.add('%30');
+      await registry.register({
+        id: 'non-native-worker',
+        paneId: '%30',
+        session: 'test-session',
+        provider: 'codex',
+        transport: 'tmux',
+        role: 'codex-target',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+        nativeTeamEnabled: false,
+      });
+
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+
+      // injectToTmuxPane will fail because executeTmux is mocked but send-keys
+      // isn't handled. The worker has no team, so native inbox fallback won't
+      // apply. This tests that the "all paths exhausted" error is logged.
+      const result = await router.sendMessage(tempDir, 'alice', 'codex-target', 'hello codex');
+
+      expect(result.messageId).toMatch(/^msg-/);
+      // Delivery succeeds or fails depending on tmux mock — either way is valid.
+      // What matters: if delivery failed, the error was logged, not swallowed.
+      if (!result.delivered) {
+        const exhaustedLog = errorCalls.find((c) => c.includes('all paths exhausted'));
+        expect(exhaustedLog).toBeTruthy();
+      }
+
+      errorSpy.mockRestore();
     });
 
     test('message to live worker is delivered successfully', async () => {

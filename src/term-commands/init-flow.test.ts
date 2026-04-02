@@ -24,6 +24,7 @@ mock.module('../genie-commands/setup.js', () => ({
 mock.module('../lib/workspace.js', () => ({
   findWorkspace: () => null,
   scanAgents: () => [],
+  getWorkspaceConfig: () => ({ agents: [] }),
 }));
 
 const { registerInitCommands } = await import('./init.js');

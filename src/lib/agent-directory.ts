@@ -285,11 +285,20 @@ export async function edit(
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
-    await sql`
+    // Try dir: prefix first (directory-managed agents), fall back to role match
+    // for runtime-spawned agents that share a name with workspace agents
+    const result = await sql`
       UPDATE agents
       SET metadata = metadata || ${sql.json(metadataPatch)}
       WHERE id = ${`dir:${name}`}
     `;
+    if (result.count === 0) {
+      await sql`
+        UPDATE agents
+        SET metadata = metadata || ${sql.json(metadataPatch)}
+        WHERE role = ${name}
+      `;
+    }
   } catch {
     /* PG unavailable — in-memory update still applied */
   }
@@ -327,10 +336,17 @@ function builtinToEntry(agent: BuiltinAgent): DirectoryEntry {
   };
 }
 
-/** Convert a PG agent role to a synthetic DirectoryEntry, enriched with metadata. */
+/** Convert a PG agent role to a synthetic DirectoryEntry, enriched with metadata.
+ *  When metadata is present, it takes priority over built-in defaults
+ *  (PG entries represent user overrides or directory-synced agents). */
 function roleToEntry(role: string, team?: string, metadata?: Record<string, unknown>): DirectoryEntry {
-  const builtin = [...BUILTIN_ROLES, ...BUILTIN_COUNCIL_MEMBERS].find((b) => b.name === role);
-  if (builtin) return builtinToEntry(builtin);
+  const hasMetadata = metadata && Object.keys(metadata).length > 0;
+
+  // Only fall back to built-in when there's no PG metadata to use
+  if (!hasMetadata) {
+    const builtin = [...BUILTIN_ROLES, ...BUILTIN_COUNCIL_MEMBERS].find((b) => b.name === role);
+    if (builtin) return builtinToEntry(builtin);
+  }
 
   return {
     name: role,
