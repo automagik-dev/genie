@@ -756,7 +756,7 @@ async function autoConfirmTrustPrompt(paneId: string): Promise<void> {
  * First agent in a newly created team window reuses the blank pane via send-keys.
  * Subsequent agents split-window into the same team window.
  */
-function createTmuxPane(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): string {
+function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow: TeamWindowInfo | null): string {
   const { execSync } = require('node:child_process');
   const useLaunchScript = ctx.validated.provider === 'claude' && Boolean(ctx.validated.nativeTeam?.enabled);
   const tmuxCommand = useLaunchScript
@@ -764,6 +764,21 @@ function createTmuxPane(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): strin
     : shellQuote(ctx.fullCommand);
 
   const tmuxPrefix = genieTmuxCmd('');
+
+  // --window: split into a specific tmux window target (e.g., "genie:3")
+  if (ctx.validated.windowTarget) {
+    const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
+    const cmd = `${tmuxPrefix}split-window -d -t ${shellQuote(ctx.validated.windowTarget)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
+    return execSync(cmd, { encoding: 'utf-8' }).trim();
+  }
+
+  // --new-window: create a dedicated window instead of splitting
+  if (ctx.validated.newWindow) {
+    const session = ctx.sessionOverride ?? teamWindow?.windowId?.split(':')[0] ?? ctx.validated.team;
+    const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
+    const cmd = `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
+    return execSync(cmd, { encoding: 'utf-8' }).trim();
+  }
 
   if (teamWindow?.created) {
     const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
@@ -1047,6 +1062,10 @@ export interface SpawnOptions {
   session?: string;
   /** Auto-resume on pane death (default true, set to false by --no-auto-resume). */
   autoResume?: boolean;
+  /** Create a new tmux window instead of splitting into an existing one. */
+  newWindow?: boolean;
+  /** Tmux window target to spawn into (e.g., "genie:3"). Splits into this exact window. */
+  window?: string;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
@@ -1119,6 +1138,8 @@ async function buildSpawnParams(
     systemPromptFile: agent.identityPath ?? undefined,
     promptMode: agent.entry.promptMode,
     initialPrompt: options.initialPrompt,
+    newWindow: options.newWindow,
+    windowTarget: options.window,
   };
 
   const { parentSessionId, spawnColor, nativeTeam } = await resolveNativeTeam(team, agent.repoPath, {
