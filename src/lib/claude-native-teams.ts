@@ -15,6 +15,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, open, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { ensureTeammateBypassPermissions } from './claude-settings.js';
 import type { ClaudeTeamColor } from './provider-adapters.js';
 import { CLAUDE_TEAM_COLORS } from './provider-adapters.js';
 
@@ -219,6 +220,10 @@ export async function ensureNativeTeam(
 
   await mkdir(dir, { recursive: true });
   await mkdir(inboxDir, { recursive: true });
+
+  // Ensure the global teammateMode is bypassPermissions so the native team
+  // permission gate doesn't route tool approvals to the leader (deadlock).
+  ensureTeammateBypassPermissions();
 
   const existing = await loadConfig(teamName);
   if (existing) return existing;

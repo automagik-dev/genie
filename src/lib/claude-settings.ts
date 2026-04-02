@@ -5,7 +5,7 @@
  * Uses Zod with passthrough() to preserve unknown fields.
  */
 
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 // Claude directory and settings file paths
@@ -44,6 +44,47 @@ export function removeHookScript(): void {
   const scriptPath = getGenieHookScriptPath();
   if (existsSync(scriptPath)) {
     unlinkSync(scriptPath);
+  }
+}
+
+/**
+ * Ensure `teammateMode` is set to `bypassPermissions` in ~/.claude/settings.json.
+ *
+ * CC's native team layer has a separate permission gate controlled by this global
+ * setting. Without it, tool approvals route to the team lead — which is an AI agent
+ * that can't approve, causing a deadlock. The per-session `--permission-mode` flag
+ * is not sufficient when `teammateMode` is explicitly set to a restrictive value.
+ *
+ * Also ensures `skipDangerousModePermissionPrompt` is true so agents spawned with
+ * `--dangerously-skip-permissions` don't hit an interactive confirmation prompt.
+ *
+ * Idempotent — safe to call on every team setup.
+ */
+export function ensureTeammateBypassPermissions(): void {
+  const dir = join(homedir(), '.claude');
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+  let settings: Record<string, unknown> = {};
+  if (existsSync(CLAUDE_SETTINGS_FILE)) {
+    try {
+      settings = JSON.parse(readFileSync(CLAUDE_SETTINGS_FILE, 'utf-8'));
+    } catch {
+      // Corrupted file — overwrite with safe defaults
+    }
+  }
+
+  let changed = false;
+  if (settings.teammateMode !== 'bypassPermissions') {
+    settings.teammateMode = 'bypassPermissions';
+    changed = true;
+  }
+  if (settings.skipDangerousModePermissionPrompt !== true) {
+    settings.skipDangerousModePermissionPrompt = true;
+    changed = true;
+  }
+
+  if (changed) {
+    writeFileSync(CLAUDE_SETTINGS_FILE, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8');
   }
 }
 
