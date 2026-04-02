@@ -29,7 +29,6 @@ async function installBrain(): Promise<boolean> {
     // Only people with repo access (SSH key or GH token) can install
     execSync(`bun add ${BRAIN_REPO}`, {
       stdio: 'inherit',
-      timeout: 60_000,
     });
 
     console.log('');
