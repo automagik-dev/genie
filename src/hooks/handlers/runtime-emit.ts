@@ -12,10 +12,8 @@
  */
 
 import type { RuntimeEventInput } from '../../lib/runtime-events.js';
+import { resolveAgentName, resolveTeamName } from '../resolve-agent-name.js';
 import type { HandlerResult, HookPayload } from '../types.js';
-
-const getAgent = () => process.env.GENIE_AGENT_NAME ?? 'unknown';
-const getTeam = () => process.env.GENIE_TEAM;
 
 type SubjectEventInput = Omit<RuntimeEventInput, 'repoPath' | 'subject'>;
 
@@ -36,11 +34,12 @@ export async function emitToolCallEvent(payload: HookPayload): Promise<HandlerRe
   const input = payload.tool_input;
   if (!toolName || !input) return;
 
-  await emit(`genie.tool.${getAgent()}.call`, {
+  const agent = resolveAgentName(payload);
+  await emit(`genie.tool.${agent}.call`, {
     timestamp: new Date().toISOString(),
     kind: 'tool_call',
-    agent: getAgent(),
-    team: getTeam(),
+    agent,
+    team: resolveTeamName(payload),
     text: summarizeToolCall(toolName, input),
     data: { toolCall: { name: toolName, input } },
     source: 'hook',
@@ -64,12 +63,13 @@ export async function emitMessageEvent(payload: HookPayload): Promise<HandlerRes
   const content = (input.content ?? input.message) as string | undefined;
   if (!to || !content) return;
 
+  const agent = resolveAgentName(payload);
   const subject = msgType === 'broadcast' ? 'genie.msg.broadcast' : `genie.msg.${to}`;
   await emit(subject, {
     timestamp: new Date().toISOString(),
     kind: 'message',
-    agent: getAgent(),
-    team: getTeam(),
+    agent,
+    team: resolveTeamName(payload),
     peer: to,
     direction: 'out',
     text: content,
@@ -84,11 +84,12 @@ export async function emitUserPromptEvent(payload: HookPayload): Promise<Handler
   const prompt = payload.prompt as string | undefined;
   if (!prompt) return;
 
-  await emit(`genie.user.${getAgent()}.prompt`, {
+  const agent = resolveAgentName(payload);
+  await emit(`genie.user.${agent}.prompt`, {
     timestamp: new Date().toISOString(),
     kind: 'user',
-    agent: getAgent(),
-    team: getTeam(),
+    agent,
+    team: resolveTeamName(payload),
     text: prompt,
     source: 'hook',
   });
@@ -101,11 +102,12 @@ export async function emitAssistantResponseEvent(payload: HookPayload): Promise<
   const lastMessage = payload.last_assistant_message as string | undefined;
   if (!lastMessage) return;
 
-  await emit(`genie.agent.${getAgent()}.response`, {
+  const agent = resolveAgentName(payload);
+  await emit(`genie.agent.${agent}.response`, {
     timestamp: new Date().toISOString(),
     kind: 'assistant',
-    agent: getAgent(),
-    team: getTeam(),
+    agent,
+    team: resolveTeamName(payload),
     text: lastMessage,
     source: 'hook',
   });
