@@ -6,7 +6,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { GROUP_TABLES } from '../lib/export-format.js';
-import { assertValidTable } from './import.js';
+import { assertValidColumnName, assertValidTable } from './import.js';
 
 describe('assertValidTable', () => {
   test('accepts all tables from GROUP_TABLES', () => {
@@ -38,5 +38,54 @@ describe('assertValidTable', () => {
 
   test('error message includes the invalid table name', () => {
     expect(() => assertValidTable('evil_table')).toThrow('Invalid table name: "evil_table"');
+  });
+});
+
+describe('assertValidColumnName', () => {
+  test('accepts normal column names', () => {
+    for (const name of ['id', 'name', 'created_at', 'parent_id', '_private', 'Col123']) {
+      expect(() => assertValidColumnName(name)).not.toThrow();
+    }
+  });
+
+  test('rejects column name with embedded double quote (SQL injection)', () => {
+    expect(() => assertValidColumnName('foo"; DROP TABLE x; --')).toThrow('disallowed characters');
+  });
+
+  test('rejects column name with spaces', () => {
+    expect(() => assertValidColumnName('column name')).toThrow('disallowed characters');
+  });
+
+  test('rejects column name with semicolon', () => {
+    expect(() => assertValidColumnName('col;DELETE')).toThrow('disallowed characters');
+  });
+
+  test('rejects column name starting with a digit', () => {
+    expect(() => assertValidColumnName('1column')).toThrow('disallowed characters');
+  });
+
+  test('rejects empty string', () => {
+    expect(() => assertValidColumnName('')).toThrow('disallowed characters');
+  });
+
+  test('rejects column with parentheses', () => {
+    expect(() => assertValidColumnName('col()')).toThrow('disallowed characters');
+  });
+
+  test('rejects column with single quotes', () => {
+    expect(() => assertValidColumnName("col'val")).toThrow('disallowed characters');
+  });
+
+  test('truncates long malicious names in error message', () => {
+    const longName = `${'a'.repeat(100)}"injection`;
+    try {
+      assertValidColumnName(longName);
+      throw new Error('Expected to throw');
+    } catch (e) {
+      const msg = (e as Error).message;
+      // Should be truncated to 60 chars in the error message
+      expect(msg.length).toBeLessThan(200);
+      expect(msg).toContain('disallowed characters');
+    }
   });
 });

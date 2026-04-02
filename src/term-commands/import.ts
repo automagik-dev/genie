@@ -32,6 +32,21 @@ export function assertValidTable(name: string): void {
 
 type Sql = postgres.Sql;
 
+/** Regex for valid SQL identifiers: starts with letter or underscore, then alphanumerics/underscores. */
+const VALID_COLUMN_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+/**
+ * Validates a column name to prevent SQL injection via malicious JSON keys.
+ * Rejects any name that isn't a plain alphanumeric identifier.
+ */
+export function assertValidColumnName(name: string): void {
+  if (!VALID_COLUMN_RE.test(name)) {
+    throw new Error(
+      `Invalid column name: "${name.slice(0, 60)}" contains disallowed characters. Column names must match /^[a-zA-Z_][a-zA-Z0-9_]*$/.`,
+    );
+  }
+}
+
 // ============================================================================
 // Lazy loaders
 // ============================================================================
@@ -103,6 +118,11 @@ function prepareRow(
   const entries = Object.entries(row);
   const columns = entries.map(([k]) => k);
   const values = entries.map(([, v]) => v);
+
+  // Validate all column names before they touch SQL (defense against injection via JSON keys)
+  for (const col of columns) {
+    assertValidColumnName(col);
+  }
 
   // Null out self-referential column for first pass
   if (selfRefCol && row[selfRefCol] != null) {
