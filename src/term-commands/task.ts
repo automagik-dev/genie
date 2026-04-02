@@ -513,7 +513,8 @@ export function registerTaskCommands(program: Command): void {
     }
 
     if (options.json) {
-      console.log(JSON.stringify(tasks, null, 2));
+      const indent = process.stdout.isTTY ? 2 : 0;
+      process.stdout.write(`${JSON.stringify(tasks, null, indent)}\n`);
       return;
     }
 
