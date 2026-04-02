@@ -5,9 +5,15 @@
  * Reads JSON from stdin, resolves matching handlers, executes the chain,
  * and writes JSON result to stdout.
  *
+ * Output format follows CC hook protocol:
+ * - PreToolUse: { hookSpecificOutput: { hookEventName, permissionDecision, ... } }
+ * - Other blocking: { decision: "block", reason: "..." }
+ * - Non-blocking: fire-and-forget, no output
+ *
  * Blocking events (PreToolUse, TeammateIdle, TaskCompleted):
  *   Chain of responsibility — handlers run in priority order.
  *   - deny: short-circuits, returns immediately
+ *   - hookSpecificOutput: collected, merged at end
  *   - updatedInput: merges into payload for next handler
  *   - allow/void: continues to next handler
  *
@@ -16,8 +22,16 @@
  */
 
 import { autoSpawn } from './handlers/auto-spawn.js';
+import { branchGuard } from './handlers/branch-guard.js';
 import { identityInject } from './handlers/identity-inject.js';
-import type { Handler, HandlerResult, HookDecision, HookPayload } from './types.js';
+import { orchestrationGuard } from './handlers/orchestration-guard.js';
+import {
+  emitAssistantResponseEvent,
+  emitMessageEvent,
+  emitToolCallEvent,
+  emitUserPromptEvent,
+} from './handlers/runtime-emit.js';
+import type { Handler, HandlerResult, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
 // ============================================================================
@@ -25,6 +39,20 @@ import { isBlockingEvent } from './types.js';
 // ============================================================================
 
 const handlers: Handler[] = [
+  {
+    name: 'branch-guard',
+    event: 'PreToolUse',
+    matcher: /^Bash$/,
+    priority: 1,
+    fn: branchGuard,
+  },
+  {
+    name: 'orchestration-guard',
+    event: 'PreToolUse',
+    matcher: /^Bash$/,
+    priority: 2,
+    fn: orchestrationGuard,
+  },
   {
     name: 'identity-inject',
     event: 'PreToolUse',
@@ -38,6 +66,32 @@ const handlers: Handler[] = [
     matcher: /^SendMessage$/,
     priority: 20,
     fn: autoSpawn,
+  },
+  {
+    name: 'runtime-emit-tool',
+    event: 'PreToolUse',
+    matcher: /.*/,
+    priority: 30,
+    fn: emitToolCallEvent,
+  },
+  {
+    name: 'runtime-emit-msg',
+    event: 'PostToolUse',
+    matcher: /^SendMessage$/,
+    priority: 30,
+    fn: emitMessageEvent,
+  },
+  {
+    name: 'runtime-emit-user-prompt',
+    event: 'UserPromptSubmit',
+    priority: 30,
+    fn: emitUserPromptEvent,
+  },
+  {
+    name: 'runtime-emit-assistant-response',
+    event: 'Stop',
+    priority: 30,
+    fn: emitAssistantResponseEvent,
   },
 ];
 
@@ -56,43 +110,112 @@ function resolveHandlers(event: string, toolName?: string): Handler[] {
     .sort((a, b) => a.priority - b.priority);
 }
 
+/** Log handler decision when GENIE_HOOK_DEBUG is enabled. */
+function hookDebug(handlerName: string, decision: string, elapsedMs: number): void {
+  if (process.env.GENIE_HOOK_DEBUG === '1') {
+    console.error(`[hook-debug] ${handlerName} → ${decision} (${elapsedMs}ms)`);
+  }
+}
+
 /** Run a single handler, returning its result or undefined on error. */
-async function runHandler(
+export async function runHandler(
   handler: Handler,
   payload: HookPayload,
   currentInput: Record<string, unknown> | undefined,
+  isBlocking: boolean,
 ): Promise<HandlerResult> {
   const handlerPayload: HookPayload = { ...payload };
   if (currentInput) handlerPayload.tool_input = currentInput;
+  const start = Date.now();
   try {
-    return await handler.fn(handlerPayload);
+    const result = await handler.fn(handlerPayload);
+    hookDebug(
+      handler.name,
+      result?.decision ?? result?.hookSpecificOutput?.permissionDecision ?? 'allow',
+      Date.now() - start,
+    );
+    return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[genie-hook] Handler "${handler.name}" threw: ${msg}`);
+    if (isBlocking) {
+      hookDebug(handler.name, 'deny (crash)', Date.now() - start);
+      return { decision: 'deny', reason: `handler crashed: ${msg}` };
+    }
+    hookDebug(handler.name, 'allow (crash, non-blocking)', Date.now() - start);
     return undefined;
   }
 }
 
-async function executeBlockingChain(matched: Handler[], payload: HookPayload): Promise<HookDecision> {
+function buildDenyResponse(
+  handler: Handler,
+  reason: string | undefined,
+  hookEventName: string,
+): Record<string, unknown> {
+  if (hookEventName === 'PreToolUse') {
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: reason ?? `Denied by handler: ${handler.name}`,
+      },
+    };
+  }
+  return { decision: 'block', reason: reason ?? `Denied by handler: ${handler.name}` };
+}
+
+function buildBlockingResponse(
+  hookEventName: string,
+  contextMessages: string[],
+  currentInput: Record<string, unknown> | undefined,
+  originalInput: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const response: Record<string, unknown> = {};
+  const hasContext = contextMessages.length > 0;
+  const hasInputChange =
+    currentInput && originalInput && JSON.stringify(currentInput) !== JSON.stringify(originalInput);
+
+  if (hasInputChange) {
+    response.updatedInput = currentInput;
+  }
+
+  if (hookEventName === 'PreToolUse' && (hasContext || hasInputChange)) {
+    const output: Record<string, unknown> = { hookEventName: 'PreToolUse' };
+    if (hasContext) output.additionalContext = contextMessages.join('\n');
+    if (hasInputChange) {
+      output.permissionDecision = 'allow';
+      output.updatedInput = currentInput;
+    }
+    response.hookSpecificOutput = output;
+  }
+
+  return response;
+}
+
+async function executeBlockingChain(matched: Handler[], payload: HookPayload): Promise<Record<string, unknown>> {
   let currentInput = payload.tool_input ? { ...payload.tool_input } : undefined;
+  const contextMessages: string[] = [];
+  const hookEventName = payload.hook_event_name;
 
   for (const handler of matched) {
-    const result = await runHandler(handler, payload, currentInput);
+    const result = await runHandler(handler, payload, currentInput, true);
     if (!result) continue;
 
     if (result.decision === 'deny') {
-      return { decision: 'deny', reason: result.reason ?? `Denied by handler: ${handler.name}` };
+      return buildDenyResponse(handler, result.reason, hookEventName);
     }
-    if (result.updatedInput) {
-      currentInput = { ...currentInput, ...result.updatedInput };
+
+    if (result.hookSpecificOutput?.additionalContext) {
+      contextMessages.push(result.hookSpecificOutput.additionalContext);
+    }
+
+    const inputUpdate = result.hookSpecificOutput?.updatedInput ?? result.updatedInput;
+    if (inputUpdate) {
+      currentInput = { ...currentInput, ...inputUpdate };
     }
   }
 
-  if (currentInput && payload.tool_input && JSON.stringify(currentInput) !== JSON.stringify(payload.tool_input)) {
-    return { updatedInput: currentInput };
-  }
-
-  return {};
+  return buildBlockingResponse(hookEventName, contextMessages, currentInput, payload.tool_input);
 }
 
 async function executeNonBlockingHandlers(matched: Handler[], payload: HookPayload): Promise<void> {
@@ -130,14 +253,12 @@ export async function dispatch(stdin: string): Promise<string> {
   const matched = resolveHandlers(event, toolName);
 
   if (matched.length === 0) {
-    // No handlers — implicit allow (empty stdout)
     return '';
   }
 
   if (isBlockingEvent(event)) {
     const result = await executeBlockingChain(matched, payload);
-    // Only output JSON if there's an actual decision/update to communicate
-    if (result.decision || result.updatedInput) {
+    if (Object.keys(result).length > 0) {
       return JSON.stringify(result);
     }
     return '';

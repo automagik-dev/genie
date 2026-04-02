@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { sanitizeWindowName } from '../genie-commands/session.js';
 import { ensureNativeTeam, loadConfig, registerNativeMember, sanitizeTeamName } from './claude-native-teams.js';
-import { buildTeamLeadCommand, shellQuote } from './team-lead-command.js';
+import { buildTeamLeadCommand, sessionExists, shellQuote } from './team-lead-command.js';
 import * as tmux from './tmux.js';
 
 interface EnsureTeamLeadResult {
@@ -38,21 +38,36 @@ function getSystemPromptFile(workingDir: string): string | null {
 
 /**
  * Ensure a tmux session exists for the given team.
- * Uses the current tmux session if inside one, otherwise creates a session named after the team.
+ *
+ * Resolution order:
+ *   1. Current tmux session (caller is inside tmux)
+ *   2. Team config `tmuxSessionName` (stored during team create)
+ *   3. Create/find session named after team (last resort)
  */
 async function ensureSession(teamName: string): Promise<string> {
   // If inside tmux, reuse the current session
   const current = await tmux.getCurrentSessionName();
   if (current) return current;
 
-  // Otherwise create/find a session named after the team (folder-based naming)
-  const sessionName = sanitizeTeamName(teamName);
-  const existing = await tmux.findSessionByName(sessionName);
-  if (existing) return sessionName;
+  // Check team config for stored session name
+  const { getTeam } = await import('./team-manager.js');
+  const teamConfig = await getTeam(teamName);
+  if (teamConfig?.tmuxSessionName) {
+    const existing = await tmux.findSessionByName(teamConfig.tmuxSessionName);
+    if (existing) return teamConfig.tmuxSessionName;
+  }
 
-  const session = await tmux.createSession(sessionName);
-  if (!session) {
-    throw new Error(`Failed to create tmux session "${sessionName}"`);
+  // Fallback: atomically create session named after the team.
+  // Uses new-session directly and catches "duplicate session" to eliminate TOCTOU race.
+  const sessionName = sanitizeTeamName(teamName);
+  try {
+    await tmux.createSession(sessionName);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // "duplicate session" means another process created it first — that's fine
+    if (!message.includes('duplicate session')) {
+      throw error;
+    }
   }
   return sessionName;
 }
@@ -64,7 +79,7 @@ async function ensureSession(teamName: string): Promise<string> {
  * 1. Its native config.json exists, AND
  * 2. A tmux window with the team name exists in any session
  */
-async function isTeamActive(teamName: string): Promise<boolean> {
+export async function isTeamActive(teamName: string): Promise<boolean> {
   const config = await loadConfig(teamName);
   if (!config) return false;
 
@@ -99,10 +114,14 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     return { created: false, session: currentSession, window: sanitizeWindowName(teamName) };
   }
 
+  // Resolve the actual leader name from team config (never returns 'team-lead')
+  const { resolveLeaderName } = await import('./team-manager.js');
+  const leaderName = await resolveLeaderName(teamName);
+
   // Create native team structure
-  await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending');
+  await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending', leaderName);
   await registerNativeMember(teamName, {
-    agentName: 'team-lead',
+    agentName: leaderName,
     agentType: 'general-purpose',
     color: 'blue',
     cwd: workingDir,
@@ -121,7 +140,13 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     const target = `${session}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const cmd = buildTeamLeadCommand(teamName, { systemPromptFile: systemPromptFile ?? undefined });
+    const continueName = sanitizeTeamName(teamName);
+    const hasPriorSession = sessionExists(continueName, workingDir);
+    const cmd = buildTeamLeadCommand(teamName, {
+      systemPromptFile: systemPromptFile ?? undefined,
+      leaderName,
+      continueName: hasPriorSession ? continueName : undefined,
+    });
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   }
 

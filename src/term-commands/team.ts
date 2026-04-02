@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, cp, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import type { TeamConfig } from '../lib/team-manager.js';
@@ -26,35 +26,40 @@ export function registerTeamNamespace(program: Command): void {
     .requiredOption('--repo <path>', 'Path to the git repository')
     .option('--branch <branch>', 'Base branch to create from', 'dev')
     .option('--wish <slug>', 'Wish slug — auto-spawns a task leader with wish context')
-    .action(async (name: string, options: { repo: string; branch: string; wish?: string }) => {
-      try {
-        // Validate wish exists before creating team
-        if (options.wish) {
-          const resolvedRepo = resolve(options.repo);
-          const wishPath = join(resolvedRepo, '.genie', 'wishes', options.wish, 'WISH.md');
-          if (!existsSync(wishPath)) {
-            console.error(`Error: Wish not found at ${wishPath}`);
-            process.exit(1);
-          }
+    .option('--tmux-session <name>', 'Tmux session to place team window in (default: derived from repo path)')
+    .option('--session <name>', 'Alias for --tmux-session (deprecated)')
+    .option('--no-spawn', 'Create team and copy wish without spawning the leader (useful for testing)')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  genie team create my-feature --repo .                          # Create team in current repo
+  genie team create my-feature --repo . --wish my-feature-slug   # Create team with a wish
+  genie team create hotfix --repo . --branch main                # Create from main branch`,
+    )
+    .action(
+      async (
+        name: string,
+        options: {
+          repo: string;
+          branch: string;
+          wish?: string;
+          tmuxSession?: string;
+          session?: string;
+          spawn?: boolean;
+        },
+      ) => {
+        try {
+          // --session is a deprecated alias for --tmux-session
+          const merged = { ...options, tmuxSession: options.tmuxSession ?? options.session };
+          await handleTeamCreate(name, merged);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`Error: ${message}`);
+          process.exit(1);
         }
-
-        const config = await teamManager.createTeam(name, options.repo, options.branch);
-        console.log(`Team "${config.name}" created.`);
-        console.log(`  Worktree: ${config.worktreePath}`);
-        console.log(`  Branch: ${config.name} (from ${config.baseBranch})`);
-        if (config.nativeTeamsEnabled) {
-          console.log('  Native teams: enabled');
-        }
-
-        if (options.wish) {
-          await spawnLeaderWithWish(config, options.wish, options.repo);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
-        process.exit(1);
-      }
-    });
+      },
+    );
 
   // team hire
   team
@@ -119,13 +124,14 @@ export function registerTeamNamespace(program: Command): void {
     .command('ls [name]')
     .alias('list')
     .description('List teams or members of a team')
+    .option('--all', 'Include archived teams')
     .option('--json', 'Output as JSON')
-    .action(async (name: string | undefined, options: { json?: boolean }) => {
+    .action(async (name: string | undefined, options: { all?: boolean; json?: boolean }) => {
       try {
         if (name) {
           await printMembers(name, options.json);
         } else {
-          await printTeams(options.json);
+          await printTeams(options.json, options.all);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -134,15 +140,56 @@ export function registerTeamNamespace(program: Command): void {
       }
     });
 
-  // team disband
+  // team archive
+  team
+    .command('archive <name>')
+    .description('Archive a team (preserves all data, kills members)')
+    .action(async (name: string) => {
+      try {
+        const archived = await teamManager.archiveTeam(name);
+        if (archived) {
+          console.log(`Team "${name}" archived.`);
+        } else {
+          console.error(`Team "${name}" not found.`);
+          process.exit(1);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
+
+  // team unarchive
+  team
+    .command('unarchive <name>')
+    .description('Restore an archived team')
+    .action(async (name: string) => {
+      try {
+        const restored = await teamManager.unarchiveTeam(name);
+        if (restored) {
+          console.log(`Team "${name}" unarchived.`);
+        } else {
+          console.error(`Team "${name}" not found.`);
+          process.exit(1);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
+
+  // team disband (now archives instead of deleting)
   team
     .command('disband <name>')
-    .description('Disband a team: kill members, remove worktree, delete config')
+    .description('Disband a team (archives — preserves data). Use `genie team archive` directly.')
     .action(async (name: string) => {
       try {
         const disbanded = await teamManager.disbandTeam(name);
         if (disbanded) {
-          console.log(`Team "${name}" disbanded.`);
+          console.log('Note: disband now archives the team. Use `genie team archive` directly.');
+          console.log(`Team "${name}" disbanded (archived).`);
         } else {
           console.error(`Team "${name}" not found.`);
           process.exit(1);
@@ -185,6 +232,78 @@ export function registerTeamNamespace(program: Command): void {
         process.exit(1);
       }
     });
+
+  // team cleanup
+  team
+    .command('cleanup')
+    .description('Kill tmux windows for done/archived teams')
+    .option('--dry-run', 'Show what would be cleaned without doing it')
+    .action(async (options: { dryRun?: boolean }) => {
+      try {
+        await handleTeamCleanup(options);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
+}
+
+// ============================================================================
+// Team Create Handler (extracted for cognitive complexity)
+// ============================================================================
+
+export async function handleTeamCreate(
+  name: string,
+  options: { repo: string; branch: string; wish?: string; tmuxSession?: string; spawn?: boolean },
+): Promise<void> {
+  const resolvedRepo = resolve(options.repo);
+
+  // Validate wish exists before creating team — auto-copy from cwd if needed
+  if (options.wish) {
+    const wishPath = join(resolvedRepo, '.genie', 'wishes', options.wish, 'WISH.md');
+    if (!existsSync(wishPath)) {
+      // Auto-copy: search cwd for the wish
+      const cwdWishDir = join(process.cwd(), '.genie', 'wishes', options.wish);
+      const cwdWishPath = join(cwdWishDir, 'WISH.md');
+      if (existsSync(cwdWishPath)) {
+        const destDir = join(resolvedRepo, '.genie', 'wishes', options.wish);
+        await mkdir(destDir, { recursive: true });
+        await cp(cwdWishDir, destDir, { recursive: true });
+        console.log(`Wish: copied ${options.wish}/WISH.md to repo`);
+      } else {
+        console.error(`Error: Wish not found at ${wishPath}`);
+        process.exit(1);
+      }
+    }
+  }
+
+  const config = await teamManager.createTeam(name, options.repo, options.branch);
+
+  // Always resolve tmuxSessionName — prevents session explosion on parallel creates
+  // Resolution: explicit --tmux-session → PG agent session → repo path mapping
+  const { findSessionByRepo } = await import('../lib/agent-directory.js');
+  const { resolveRepoSession } = await import('../lib/tmux.js');
+  config.tmuxSessionName =
+    options.tmuxSession ?? (await findSessionByRepo(resolvedRepo)) ?? (await resolveRepoSession(resolvedRepo));
+  if (options.wish) {
+    config.wishSlug = options.wish;
+  }
+  await teamManager.updateTeamConfig(name, config);
+
+  console.log(`Team "${config.name}" created.`);
+  console.log(`  Worktree: ${config.worktreePath}`);
+  console.log(`  Branch: ${config.name} (from ${config.baseBranch})`);
+  if (config.tmuxSessionName) {
+    console.log(`  Session: ${config.tmuxSessionName}`);
+  }
+  if (config.nativeTeamsEnabled) {
+    console.log('  Native teams: enabled');
+  }
+
+  if (options.wish && options.spawn !== false) {
+    await spawnLeaderWithWish(config, options.wish, options.repo, options.tmuxSession);
+  }
 }
 
 // ============================================================================
@@ -193,10 +312,35 @@ export function registerTeamNamespace(program: Command): void {
 
 /**
  * Copy wish into worktree, hire leader, build context, and auto-spawn.
+ *
+ * Resolves the tmux session name BEFORE spawning workers and stores it
+ * in the team config so all subsequent spawns use the same session.
  */
-async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: string): Promise<void> {
+async function spawnLeaderWithWish(
+  config: TeamConfig,
+  slug: string,
+  repoPath: string,
+  sessionOverride?: string,
+): Promise<void> {
   const { handleWorkerSpawn } = await import('./agents.js');
+  const { findSessionByRepo } = await import('../lib/agent-directory.js');
+  const { resolveRepoSession } = await import('../lib/tmux.js');
   const resolvedRepo = resolve(repoPath);
+
+  // Use already-resolved session from handleTeamCreate, with fallback chain for safety
+  const tmuxSession =
+    sessionOverride ??
+    config.tmuxSessionName ??
+    (await findSessionByRepo(resolvedRepo)) ??
+    (await resolveRepoSession(resolvedRepo));
+  config.tmuxSessionName = tmuxSession;
+  await teamManager.updateTeamConfig(config.name, config);
+
+  // Leader name = team name (unique by definition, no collision with session agents)
+  const leaderAgent = config.name;
+  config.leader = leaderAgent;
+  config.spawner = process.env.GENIE_AGENT_NAME || 'cli';
+  await teamManager.updateTeamConfig(config.name, config);
 
   // Locate WISH.md in source repo
   const sourceWishPath = join(resolvedRepo, '.genie', 'wishes', slug, 'WISH.md');
@@ -212,23 +356,29 @@ async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: s
   await copyFile(sourceWishPath, destWishPath);
   console.log(`  Wish: copied ${slug}/WISH.md into worktree`);
 
-  // Hire the standard team: team-lead + engineer + reviewer + qa + fix
-  const standardTeam = ['team-lead', 'engineer', 'reviewer', 'qa', 'fix'];
-  for (const role of standardTeam) {
+  // Hire the standard team: leader (team-lead template) + engineer + reviewer + qa + fix
+  const standardRoles = ['team-lead', 'engineer', 'reviewer', 'qa', 'fix'];
+  for (const role of standardRoles) {
     await teamManager.hireAgent(config.name, role);
   }
-  console.log(`  Team: hired ${standardTeam.join(', ')}`);
+  console.log(`  Team: hired ${standardRoles.join(', ')}`);
 
-  // Spawn leader — AGENTS.md comes from the built-in resolver, all context in the initial prompt
-  const members = standardTeam.filter((r) => r !== 'team-lead').join(', ');
-  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
+  // Spawn leader — use team-lead template for behavior, leaderAgent for identity
+  const members = standardRoles.filter((r) => r !== 'team-lead').join(', ');
+  const spawner = config.spawner || 'cli';
+  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Report completion to: ${spawner} (via genie send --to ${spawner}). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
   await handleWorkerSpawn('team-lead', {
     provider: 'claude',
     team: config.name,
+    role: leaderAgent,
     cwd: config.worktreePath,
+    session: tmuxSession,
     initialPrompt: kickoffPrompt,
   });
-  console.log('  Leader: spawned and working');
+
+  // initialPrompt is passed as CLI positional arg — no mailbox backup needed
+  // (sending via both paths causes duplicate prompts in the agent's input)
+  console.log(`  Leader: ${leaderAgent} spawned as ${slug}`);
 }
 
 // ============================================================================
@@ -274,8 +424,8 @@ async function printMembers(name: string, json?: boolean): Promise<void> {
 }
 
 /** Print all teams. */
-async function printTeams(json?: boolean): Promise<void> {
-  const teams = await teamManager.listTeams();
+async function printTeams(json?: boolean, includeArchived?: boolean): Promise<void> {
+  const teams = await teamManager.listTeams(includeArchived);
 
   if (json) {
     console.log(JSON.stringify(teams, null, 2));
@@ -299,9 +449,72 @@ async function printTeams(json?: boolean): Promise<void> {
 /** Print a single team summary line. */
 function printTeamSummary(t: TeamConfig): void {
   const status = t.status ?? 'in_progress';
-  console.log(`  ${t.name}  [${status}]`);
+  const dimmed = status === 'archived' ? '\x1b[90m' : '';
+  const reset = status === 'archived' ? '\x1b[0m' : '';
+  console.log(`  ${dimmed}${t.name}  [${status}]${reset}`);
   console.log(`    Repo: ${t.repo}`);
   console.log(`    Branch: ${t.name} (from ${t.baseBranch})`);
   console.log(`    Worktree: ${t.worktreePath}`);
   console.log(`    Members: ${t.members.length}`);
+}
+
+// ============================================================================
+// Team Cleanup Handler
+// ============================================================================
+
+/** Find the tmux window matching a team name (handles dot-sanitized names). */
+async function findTeamWindow(sessionName: string, teamName: string): Promise<{ name: string } | null> {
+  const tmuxLib = await import('../lib/tmux.js');
+  const session = await tmuxLib.findSessionByName(sessionName);
+  if (!session) return null;
+
+  try {
+    const windows = await tmuxLib.listWindows(sessionName);
+    return windows.find((w) => w.name === teamName || w.name === teamName.replace(/\./g, '_')) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Try to kill a team's tmux window. Returns a log message or null. */
+async function cleanupTeamWindow(t: TeamConfig, dryRun: boolean): Promise<string | null> {
+  if (!t.tmuxSessionName) return null;
+  const match = await findTeamWindow(t.tmuxSessionName, t.name);
+  if (!match) return null;
+
+  if (dryRun) {
+    return `  [dry-run] Would kill window "${match.name}" in session "${t.tmuxSessionName}" (team "${t.name}" [${t.status}])`;
+  }
+
+  const tmuxLib = await import('../lib/tmux.js');
+  const killed = await tmuxLib.killWindow(t.tmuxSessionName, match.name);
+  if (!killed) return null;
+  return `  Killed window "${match.name}" in session "${t.tmuxSessionName}" (team "${t.name}")`;
+}
+
+/** Kill tmux windows for done/archived teams. */
+async function handleTeamCleanup(options: { dryRun?: boolean }): Promise<void> {
+  const allTeams = await teamManager.listTeams(true);
+  const cleanable = allTeams.filter((t) => t.status === 'done' || t.status === 'archived');
+
+  if (cleanable.length === 0) {
+    console.log('No done/archived teams to clean up.');
+    return;
+  }
+
+  let cleaned = 0;
+  for (const t of cleanable) {
+    const msg = await cleanupTeamWindow(t, options.dryRun === true);
+    if (msg) {
+      console.log(msg);
+      cleaned++;
+    }
+  }
+
+  const verb = options.dryRun ? 'Would clean' : 'Cleaned';
+  if (cleaned === 0) {
+    console.log('No tmux windows found for done/archived teams.');
+  } else {
+    console.log(`\n${verb} ${cleaned} window${cleaned === 1 ? '' : 's'}.`);
+  }
 }

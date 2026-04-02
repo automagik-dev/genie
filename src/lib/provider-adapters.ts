@@ -12,12 +12,13 @@
  */
 
 import { z } from 'zod';
+import { buildDispatchCommand } from '../hooks/inject.js';
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type ProviderName = 'claude' | 'codex';
+export type ProviderName = 'claude' | 'codex' | 'app-pty';
 
 /** Colors available for Claude Code native teammate UI. */
 export type ClaudeTeamColor = 'blue' | 'green' | 'yellow' | 'red' | 'cyan' | 'orange' | 'purple' | 'pink';
@@ -58,13 +59,17 @@ export interface SpawnParams {
   team: string;
   role?: string;
   skill?: string;
+  /** Agent ID this executor belongs to. Used by executor model (Groups 3+). */
+  agentId?: string;
+  /** Pre-generated executor ID. Used by executor model (Groups 3+). */
+  executorId?: string;
   /** Extra CLI flags forwarded verbatim to the provider binary. */
   extraArgs?: string[];
   /** Claude Code native teammate integration. */
   nativeTeam?: NativeTeamParams;
   /** Session UUID for new sessions (emits --session-id). */
   sessionId?: string;
-  /** Session name to continue (emits --continue). Mutually exclusive with sessionId. */
+  /** Session ID to resume (emits --resume). Mutually exclusive with sessionId. */
   resume?: string;
   /** Path to a system prompt file (AGENTS.md). Emits --system-prompt-file or --append-system-prompt-file. */
   systemPromptFile?: string;
@@ -78,6 +83,16 @@ export interface SpawnParams {
   initialPrompt?: string;
   /** Display name for the CC session (emits --name). Used in /resume and terminal title. */
   name?: string;
+  /** OTel receiver port to inject as OTEL_EXPORTER_OTLP_ENDPOINT. Undefined = skip injection. */
+  otelPort?: number;
+  /** Whether to log user prompts via OTel (default: true). */
+  otelLogPrompts?: boolean;
+  /** Wish slug for OTEL_RESOURCE_ATTRIBUTES correlation. */
+  otelWishSlug?: string;
+  /** Create a new tmux window instead of splitting into an existing one. */
+  newWindow?: boolean;
+  /** Tmux window target to split into (e.g., "genie:3"). */
+  windowTarget?: string;
 }
 
 /** Result of a successful launch-command build. */
@@ -124,6 +139,11 @@ const spawnParamsSchema = z.object({
   model: z.string().optional(),
   initialPrompt: z.string().optional(),
   name: z.string().optional(),
+  otelPort: z.number().optional(),
+  otelLogPrompts: z.boolean().optional(),
+  otelWishSlug: z.string().optional(),
+  newWindow: z.boolean().optional(),
+  windowTarget: z.string().optional(),
 });
 
 /**
@@ -163,6 +183,20 @@ function hasBinary(name: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function resolveShellBinary(name: string): string | null {
+  try {
+    const { execFileSync } = require('node:child_process');
+    const shell = process.env.SHELL || '/bin/sh';
+    const resolved = execFileSync(shell, ['-lc', `command -v ${name}`], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return resolved || null;
+  } catch {
+    return null;
   }
 }
 
@@ -210,7 +244,12 @@ function appendNativeTeamFlags(
   if (nt.parentSessionId) parts.push('--parent-session-id', escapeShellArg(nt.parentSessionId));
   if (nt.agentType) parts.push('--agent-type', escapeShellArg(nt.agentType));
   if (nt.planModeRequired) parts.push('--plan-mode-required');
-  if (nt.permissionMode) parts.push('--permission-mode', escapeShellArg(nt.permissionMode));
+  // Always set permission mode for native team workers. Without this, CC's native
+  // team layer routes tool approvals to the team lead (which is an AI agent that
+  // can't approve). --dangerously-skip-permissions alone isn't enough — the native
+  // team permission gate is a separate layer.
+  const effectivePermMode = nt.permissionMode ?? 'bypassPermissions';
+  parts.push('--permission-mode', escapeShellArg(effectivePermMode));
 }
 
 /**
@@ -250,21 +289,56 @@ function appendSystemPromptFlags(parts: string[], params: SpawnParams): void {
   }
 }
 
+/**
+ * Inject OTel env vars into the env map when otelPort is configured.
+ * Skips injection if OTEL_EXPORTER_OTLP_ENDPOINT is already set (user overrides win).
+ */
+function appendOtelEnv(env: Record<string, string>, params: SpawnParams): void {
+  if (!params.otelPort || process.env.OTEL_EXPORTER_OTLP_ENDPOINT) return;
+
+  env.CLAUDE_CODE_ENABLE_TELEMETRY = '1';
+  env.OTEL_LOGS_EXPORTER = 'otlp';
+  env.OTEL_METRICS_EXPORTER = 'otlp';
+  env.OTEL_EXPORTER_OTLP_PROTOCOL = 'http/json';
+  env.OTEL_EXPORTER_OTLP_ENDPOINT = `http://127.0.0.1:${params.otelPort}`;
+  env.OTEL_LOG_TOOL_DETAILS = '1';
+  if (params.otelLogPrompts !== false) {
+    env.OTEL_LOG_USER_PROMPTS = '1';
+  }
+
+  const resourceParts: string[] = [];
+  if (params.role) resourceParts.push(`agent.name=${params.role}`);
+  if (params.team) resourceParts.push(`team.name=${params.team}`);
+  if (params.otelWishSlug) resourceParts.push(`wish.slug=${params.otelWishSlug}`);
+  if (params.role) resourceParts.push(`agent.role=${params.role}`);
+  if (resourceParts.length > 0) {
+    env.OTEL_RESOURCE_ATTRIBUTES = resourceParts.join(',');
+  }
+}
+
 export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('claude');
 
-  const parts: string[] = ['claude', '--dangerously-skip-permissions'];
+  const claudeBinary = resolveShellBinary('claude') ?? 'claude';
+  const parts: string[] = [claudeBinary, '--dangerously-skip-permissions'];
   const env: Record<string, string> = {};
+
+  // Mark as worker so SessionStart hooks (smart-install, first-run-check,
+  // session-context) fast-exit — workers inherit parent's deps and config.
+  env.GENIE_WORKER = '1';
 
   if (params.role) env.GENIE_AGENT_NAME = params.role;
   if (params.team) env.GENIE_TEAM = params.team;
+
+  // OTel telemetry injection — only if not already set (user overrides win)
+  appendOtelEnv(env, params);
 
   if (params.nativeTeam?.enabled) {
     appendNativeTeamFlags(parts, env, params.nativeTeam, params);
   }
 
   if (params.resume) {
-    parts.push('--continue', escapeShellArg(params.resume));
+    parts.push('--resume', escapeShellArg(params.resume));
   } else if (params.sessionId) {
     parts.push('--session-id', escapeShellArg(params.sessionId));
   }
@@ -274,6 +348,19 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   if (params.name) parts.push('--name', escapeShellArg(params.name));
 
   appendSystemPromptFlags(parts, params);
+
+  // Inject hook dispatch via --settings (deep-merges with existing settings)
+  const dispatchCmd = buildDispatchCommand();
+  const hookEntry = { type: 'command', command: dispatchCmd, timeout: 15 };
+  const hooksSettings = JSON.stringify({
+    hooks: {
+      PreToolUse: [{ matcher: '*', hooks: [hookEntry] }],
+      PostToolUse: [{ matcher: '*', hooks: [hookEntry] }],
+      UserPromptSubmit: [{ hooks: [hookEntry] }],
+      Stop: [{ hooks: [hookEntry] }],
+    },
+  });
+  parts.push('--settings', escapeShellArg(hooksSettings));
 
   if (params.extraArgs) {
     for (const arg of params.extraArgs) parts.push(escapeShellArg(arg));

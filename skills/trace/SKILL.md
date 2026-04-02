@@ -18,7 +18,7 @@ Investigate unknown failures. Dispatch a trace subagent to reproduce, trace, and
 1. **Collect symptoms:** gather error messages, stack traces, logs, and expected vs actual behavior from the wish or reporter.
 2. **Dispatch tracer:** the spawned agent IS the tracer — it performs a read-only inline investigation. Send symptoms + relevant context (files, recent changes, environment).
 3. **Investigate:** the tracer autonomously reproduces, hypothesizes, traces, and isolates root cause.
-4. **Signal findings:** tracer reports findings back to the leader via `genie send '<diagnosis summary>' --to <leader>`.
+4. **Signal findings:** tracer reports findings back to the leader via `genie agent send '<diagnosis summary>' --to <leader>`.
 5. **Receive report:** structured diagnosis with root cause, evidence, recommended correction, and affected scope.
 6. **Hand off:** pass the report to `/fix` or escalate to the orchestrator.
 
@@ -39,8 +39,51 @@ Trace must run in **isolation** — the subagent must not modify any source file
 
 ```bash
 # Spawn a tracer subagent (read-only investigation)
-genie spawn tracer
+genie agent spawn tracer
 ```
+
+## Task Lifecycle Integration (v4)
+
+When a PG task exists for the work being investigated, log findings as task comments:
+
+| Event | Command |
+|-------|---------|
+| Investigation start | `genie task comment #<seq> "Trace: investigating — [symptom summary]"` |
+| Root cause found | `genie task comment #<seq> "Root cause: [summary] — [file:line]"` |
+| Multiple causes | `genie task comment #<seq> "Root causes: [count] identified — see trace report"` |
+| Investigation failed | `genie task comment #<seq> "Trace: could not determine root cause — [reason]"` |
+
+Include file paths and line numbers in every root cause comment so the task history is actionable without reading the full report.
+
+**Graceful degradation:** If no PG task exists for the investigated work, skip all `genie task` commands. Findings logging is an enhancement — the trace flow must never fail due to missing tasks.
+
+## Example
+
+An engineer reports that `genie work` dispatches engineers but they sit idle. The orchestrator runs `/trace`:
+
+```bash
+# 1. Spawn a tracer (read-only — no code changes)
+genie agent spawn tracer
+
+# 2. Send the symptoms
+genie agent send 'Trace: genie work dispatches engineers but they start idle at the prompt. No task received. genie task status shows in_progress but nothing happens. Check dispatch.ts workDispatchCommand and protocol-router.ts sendMessage.' --to tracer
+
+# 3. Wait for findings
+sleep 60 && genie agent log tracer --raw
+```
+
+The tracer investigates and reports back:
+
+```
+Root cause: workDispatchCommand (dispatch.ts:532) spawns without initialPrompt
+Evidence: protocolRouter.sendMessage fails silently under concurrent dispatch — 4/6 engineers got no message
+Causal chain: missing initialPrompt → agent starts with empty prompt → no task → idle forever
+Recommended correction: add initialPrompt to handleWorkerSpawn in dispatch.ts
+Affected scope: brainstormCommand, wishCommand, workDispatchCommand, reviewCommand
+Confidence: high
+```
+
+The orchestrator then hands the report to `/fix`.
 
 ## Rules
 - Never fix during trace — investigation only, always separate from correction.

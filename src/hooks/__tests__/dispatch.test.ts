@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { dispatch } from '../index.js';
+import { dispatch, runHandler } from '../index.js';
+import type { Handler, HookPayload } from '../types.js';
 
 describe('genie hook dispatch', () => {
   const originalEnv = { ...process.env };
@@ -80,6 +81,25 @@ describe('genie hook dispatch', () => {
     expect(result).toBe('');
   });
 
+  test('identity-inject works with native CC SendMessage (no type, message field)', async () => {
+    const payload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'SendMessage',
+      tool_input: {
+        to: 'team-lead',
+        message: 'hello from native CC',
+      },
+    };
+
+    const result = await dispatch(JSON.stringify(payload));
+    const parsed = JSON.parse(result);
+
+    expect(parsed.updatedInput).toBeDefined();
+    expect(parsed.updatedInput.message).toBe('[from:test-worker] hello from native CC');
+    // Should not create a content field
+    expect(parsed.updatedInput.content).toBeUndefined();
+  });
+
   test('identity-inject skips non-message types', async () => {
     const payload = {
       hook_event_name: 'PreToolUse',
@@ -158,5 +178,50 @@ describe('handler chain behavior', () => {
     const result = await dispatch(JSON.stringify(payload));
     const parsed = JSON.parse(result);
     expect(parsed.updatedInput.content).toBe('[from:test-worker] hello boss');
+  });
+});
+
+describe('runHandler crash behavior', () => {
+  const crashingHandler: Handler = {
+    name: 'crashing-handler',
+    event: 'PreToolUse',
+    matcher: /^Bash$/,
+    priority: 1,
+    fn: async () => {
+      throw new Error('handler exploded');
+    },
+  };
+
+  const payload: HookPayload = {
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'echo hello' },
+  };
+
+  test('blocking handler crash returns deny', async () => {
+    const result = await runHandler(crashingHandler, payload, undefined, true);
+    expect(result).toBeDefined();
+    expect(result!.decision).toBe('deny');
+    expect(result!.reason).toContain('handler crashed');
+    expect(result!.reason).toContain('handler exploded');
+  });
+
+  test('non-blocking handler crash returns undefined (allow)', async () => {
+    const result = await runHandler(crashingHandler, payload, undefined, false);
+    expect(result).toBeUndefined();
+  });
+
+  test('successful handler returns its result unchanged', async () => {
+    const okHandler: Handler = {
+      name: 'ok-handler',
+      event: 'PreToolUse',
+      matcher: /^Bash$/,
+      priority: 1,
+      fn: async () => ({ decision: 'deny' as const, reason: 'nope' }),
+    };
+    const result = await runHandler(okHandler, payload, undefined, true);
+    expect(result).toBeDefined();
+    expect(result!.decision).toBe('deny');
+    expect(result!.reason).toBe('nope');
   });
 });

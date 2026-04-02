@@ -19,17 +19,9 @@ import {
   workingPatterns,
 } from './patterns.js';
 
-export type ClaudeStateType =
-  | 'idle'
-  | 'working'
-  | 'permission'
-  | 'question'
-  | 'error'
-  | 'complete'
-  | 'tool_use'
-  | 'unknown';
+type ClaudeStateType = 'idle' | 'working' | 'permission' | 'question' | 'error' | 'complete' | 'tool_use' | 'unknown';
 
-export interface ClaudeState {
+interface ClaudeState {
   type: ClaudeStateType;
   detail?: string;
   options?: string[];

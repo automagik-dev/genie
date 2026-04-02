@@ -1,356 +1,288 @@
 /**
- * Tests for Agent Directory module.
- *
+ * Tests for Agent Directory — PG-backed, derived from agents table + built-ins.
  * Run with: bun test src/lib/agent-directory.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as directory from './agent-directory.js';
+import { getConnection } from './db.js';
+import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
-// ============================================================================
-// Test setup — use temp dirs for GENIE_HOME (global) and GENIE_PROJECT_ROOT
-// ============================================================================
+describe.skipIf(!DB_AVAILABLE)('pg', () => {
+  let cleanup: () => Promise<void>;
+  let testDir: string;
+  let agentDir: string;
 
-let testDir: string;
-let agentDir: string;
-let projectRoot: string;
-let globalHome: string;
+  beforeAll(async () => {
+    cleanup = await setupTestSchema();
+  });
 
-beforeEach(() => {
-  testDir = join(tmpdir(), `genie-dir-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  mkdirSync(testDir, { recursive: true });
+  afterAll(async () => {
+    await cleanup();
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
 
-  // Separate project and global directories
-  projectRoot = join(testDir, 'project');
-  globalHome = join(testDir, 'global');
-  mkdirSync(projectRoot, { recursive: true });
-  mkdirSync(globalHome, { recursive: true });
+  beforeEach(async () => {
+    const sql = await getConnection();
+    await sql`DELETE FROM agents`;
 
-  process.env.GENIE_HOME = globalHome;
-  process.env.GENIE_PROJECT_ROOT = projectRoot;
+    testDir = join(tmpdir(), `genie-dir-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    agentDir = join(testDir, 'test-agent');
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(agentDir, 'AGENTS.md'), '# Test Agent');
+  });
 
-  // Create a fake agent dir with AGENTS.md
-  agentDir = join(testDir, 'test-agent-home');
-  mkdirSync(agentDir, { recursive: true });
-  writeFileSync(join(agentDir, 'AGENTS.md'), '# Test Agent\nYou are a test agent.');
-});
+  // ============================================================================
+  // resolve()
+  // ============================================================================
 
-afterEach(() => {
-  rmSync(testDir, { recursive: true, force: true });
-  process.env.GENIE_HOME = undefined;
-  process.env.GENIE_PROJECT_ROOT = undefined;
-});
+  describe('resolve', () => {
+    test('resolves agent from PG by role', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change) VALUES ('a1', '%1', 's', '/tmp', 'working', 'my-agent', now(), now())`;
 
-// ============================================================================
-// add()
-// ============================================================================
-
-describe('add', () => {
-  test('persists entry to project directory by default', async () => {
-    const entry = await directory.add({
-      name: 'test-agent',
-      dir: agentDir,
-      promptMode: 'append',
+      const resolved = await directory.resolve('my-agent');
+      expect(resolved).not.toBeNull();
+      expect(resolved!.entry.name).toBe('my-agent');
     });
 
-    expect(entry.name).toBe('test-agent');
-    expect(entry.dir).toBe(agentDir);
-    expect(entry.promptMode).toBe('append');
-    expect(entry.registeredAt).toBeTruthy();
-
-    // Verify persisted in project scope
-    const retrieved = await directory.get('test-agent');
-    expect(retrieved).not.toBeNull();
-    expect(retrieved!.name).toBe('test-agent');
-
-    // Verify NOT in global scope
-    const globalRetrieved = await directory.get('test-agent', { global: true });
-    expect(globalRetrieved).toBeNull();
-  });
-
-  test('persists to global directory with global option', async () => {
-    const entry = await directory.add({ name: 'global-agent', dir: agentDir, promptMode: 'append' }, { global: true });
-
-    expect(entry.name).toBe('global-agent');
-
-    // Verify in global scope
-    const globalRetrieved = await directory.get('global-agent', { global: true });
-    expect(globalRetrieved).not.toBeNull();
-
-    // Verify NOT in project scope
-    const projectRetrieved = await directory.get('global-agent');
-    expect(projectRetrieved).toBeNull();
-  });
-
-  test('persists with all optional fields', async () => {
-    const entry = await directory.add({
-      name: 'full-agent',
-      dir: agentDir,
-      repo: agentDir, // reuse dir as repo for test
-      promptMode: 'system',
-      model: 'opus',
-      roles: ['implementor', 'tester'],
+    test('resolves built-in role', async () => {
+      const resolved = await directory.resolve('engineer');
+      expect(resolved).not.toBeNull();
+      expect(resolved!.builtin).toBe(true);
     });
 
-    expect(entry.repo).toBe(agentDir);
-    expect(entry.promptMode).toBe('system');
-    expect(entry.model).toBe('opus');
-    expect(entry.roles).toEqual(['implementor', 'tester']);
+    test('resolves built-in council member', async () => {
+      const resolved = await directory.resolve('council--architect');
+      expect(resolved).not.toBeNull();
+      expect(resolved!.builtin).toBe(true);
+    });
+
+    test('PG agent overrides built-in', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change) VALUES ('eng1', '%1', 's', '/tmp', 'working', 'engineer', now(), now())`;
+
+      const resolved = await directory.resolve('engineer');
+      expect(resolved).not.toBeNull();
+      expect(resolved!.builtin).toBe(false);
+    });
+
+    test('returns null for unknown name', async () => {
+      expect(await directory.resolve('nonexistent-xyz')).toBeNull();
+    });
   });
 
-  test('rejects duplicate name in same scope', async () => {
-    await directory.add({ name: 'agent1', dir: agentDir, promptMode: 'append' });
-    await expect(directory.add({ name: 'agent1', dir: agentDir, promptMode: 'append' })).rejects.toThrow(
-      'already exists',
-    );
+  // ============================================================================
+  // ls()
+  // ============================================================================
+
+  describe('ls', () => {
+    test('lists distinct roles from agents table', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change) VALUES ('a1', '%1', 's', '/tmp', 'working', 'engineer', now(), now())`;
+      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change) VALUES ('a2', '%2', 's', '/tmp', 'working', 'reviewer', now(), now())`;
+      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change) VALUES ('a3', '%3', 's', '/tmp', 'working', 'engineer', now(), now())`;
+
+      const entries = await directory.ls();
+      const names = entries.map((e) => e.name).sort();
+      expect(names).toEqual(['engineer', 'reviewer']);
+    });
+
+    test('returns empty array when no agents', async () => {
+      expect(await directory.ls()).toEqual([]);
+    });
+
+    test('ls includes metadata fields from PG', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:ls-meta', 'ls-meta', 'ls-meta', now(), '{"model":"opus","color":"green","provider":"codex","description":"Ls test"}')`;
+
+      const entries = await directory.ls();
+      const entry = entries.find((e) => e.name === 'ls-meta');
+      expect(entry).not.toBeNull();
+      expect(entry!.model).toBe('opus');
+      expect(entry!.color).toBe('green');
+      expect(entry!.provider).toBe('codex');
+      expect(entry!.description).toBe('Ls test');
+    });
   });
 
-  test('allows same name in different scopes', async () => {
-    await directory.add({ name: 'engineer', dir: agentDir, promptMode: 'append' });
-    const globalEntry = await directory.add(
-      { name: 'engineer', dir: agentDir, promptMode: 'system' },
-      { global: true },
-    );
-    expect(globalEntry.promptMode).toBe('system');
+  // ============================================================================
+  // add() / rm()
+  // ============================================================================
+
+  describe('add and rm', () => {
+    test('add validates dir exists', async () => {
+      await expect(directory.add({ name: 'ghost', dir: '/nonexistent', promptMode: 'append' })).rejects.toThrow(
+        'does not exist',
+      );
+    });
+
+    test('add validates AGENTS.md exists', async () => {
+      const emptyDir = join(testDir, 'empty');
+      mkdirSync(emptyDir, { recursive: true });
+      await expect(directory.add({ name: 'no-agents', dir: emptyDir, promptMode: 'append' })).rejects.toThrow(
+        'AGENTS.md not found',
+      );
+    });
+
+    test('add rejects empty name', async () => {
+      await expect(directory.add({ name: '', dir: agentDir, promptMode: 'append' })).rejects.toThrow(
+        'name is required',
+      );
+    });
+
+    test('add returns entry with registeredAt', async () => {
+      const entry = await directory.add({ name: 'test-agent', dir: agentDir, promptMode: 'append' });
+      expect(entry.name).toBe('test-agent');
+      expect(entry.registeredAt).toBeTruthy();
+    });
+
+    test('add writes metadata to PG', async () => {
+      await directory.add({
+        name: 'meta-add-agent',
+        dir: agentDir,
+        promptMode: 'system',
+        model: 'opus',
+        color: 'red',
+        description: 'A test agent',
+        provider: 'codex',
+      });
+
+      const sql = await getConnection();
+      const rows = await sql`SELECT metadata FROM agents WHERE id = 'dir:meta-add-agent'`;
+      expect(rows.length).toBe(1);
+      const metadata = rows[0].metadata as Record<string, unknown>;
+      expect(metadata.model).toBe('opus');
+      expect(metadata.color).toBe('red');
+      expect(metadata.description).toBe('A test agent');
+      expect(metadata.provider).toBe('codex');
+      expect(metadata.promptMode).toBe('system');
+      expect(metadata.dir).toBe(agentDir);
+    });
+
+    test('rm returns false for non-existent', async () => {
+      expect(await directory.rm('nonexistent')).toBe(false);
+    });
   });
 
-  test('rejects missing directory', async () => {
-    await expect(directory.add({ name: 'ghost', dir: '/nonexistent/path', promptMode: 'append' })).rejects.toThrow(
-      'does not exist',
-    );
+  // ============================================================================
+  // get()
+  // ============================================================================
+
+  describe('get', () => {
+    test('returns built-in agent entry', async () => {
+      const entry = await directory.get('engineer');
+      expect(entry).not.toBeNull();
+      expect(entry!.name).toBe('engineer');
+    });
+
+    test('returns null for unknown agent', async () => {
+      expect(await directory.get('nonexistent-xyz')).toBeNull();
+    });
   });
 
-  test('rejects directory without AGENTS.md', async () => {
-    const emptyDir = join(testDir, 'empty');
-    mkdirSync(emptyDir, { recursive: true });
-    await expect(directory.add({ name: 'no-agents', dir: emptyDir, promptMode: 'append' })).rejects.toThrow(
-      'AGENTS.md not found',
-    );
+  // ============================================================================
+  // edit()
+  // ============================================================================
+
+  describe('edit', () => {
+    test('rejects edit of non-existent entry', async () => {
+      await expect(directory.edit('nonexistent-xyz', { model: 'opus' })).rejects.toThrow('not found');
+    });
+
+    test('validates new dir if provided', async () => {
+      // First register an agent via PG
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change) VALUES ('dir:editable', '%1', 's', '/tmp', 'done', 'editable', now(), now())`;
+
+      await expect(directory.edit('editable', { dir: '/nonexistent/path' })).rejects.toThrow('does not exist');
+    });
+
+    test('edit persists model to PG metadata', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:meta-agent', 'meta-agent', 'meta-agent', now(), '{}')`;
+
+      await directory.edit('meta-agent', { model: 'opus' });
+
+      // Read directly from PG to verify persistence
+      const rows = await sql`SELECT metadata FROM agents WHERE id = 'dir:meta-agent'`;
+      expect(rows.length).toBe(1);
+      const metadata = rows[0].metadata as Record<string, unknown>;
+      expect(metadata.model).toBe('opus');
+    });
+
+    test('edit persists multiple metadata fields to PG', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:multi-meta', 'multi-meta', 'multi-meta', now(), '{}')`;
+
+      await directory.edit('multi-meta', {
+        model: 'sonnet',
+        color: 'blue',
+        provider: 'codex',
+        description: 'Test agent',
+      });
+
+      const rows = await sql`SELECT metadata FROM agents WHERE id = 'dir:multi-meta'`;
+      const metadata = rows[0].metadata as Record<string, unknown>;
+      expect(metadata.model).toBe('sonnet');
+      expect(metadata.color).toBe('blue');
+      expect(metadata.provider).toBe('codex');
+      expect(metadata.description).toBe('Test agent');
+    });
+
+    test('get returns edited model after PG round-trip', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:roundtrip', 'roundtrip', 'roundtrip', now(), '{}')`;
+
+      await directory.edit('roundtrip', { model: 'opus', provider: 'codex' });
+
+      // Resolve fresh from PG — simulates process restart
+      const entry = await directory.get('roundtrip');
+      expect(entry).not.toBeNull();
+      expect(entry!.model).toBe('opus');
+      expect(entry!.provider).toBe('codex');
+    });
   });
 
-  test('rejects empty name', async () => {
-    await expect(directory.add({ name: '', dir: agentDir, promptMode: 'append' })).rejects.toThrow('name is required');
-  });
-});
+  // ============================================================================
+  // loadIdentity()
+  // ============================================================================
 
-// ============================================================================
-// rm()
-// ============================================================================
+  describe('loadIdentity', () => {
+    test('returns path to AGENTS.md', () => {
+      const entry = { name: 'test', dir: agentDir, promptMode: 'append' as const, registeredAt: '' };
+      expect(directory.loadIdentity(entry)).toBe(join(agentDir, 'AGENTS.md'));
+    });
 
-describe('rm', () => {
-  test('removes existing entry from project', async () => {
-    await directory.add({ name: 'to-remove', dir: agentDir, promptMode: 'append' });
-    const removed = await directory.rm('to-remove');
-    expect(removed).toBe(true);
+    test('returns null when dir is empty', () => {
+      const entry = { name: 'test', dir: '', promptMode: 'append' as const, registeredAt: '' };
+      expect(directory.loadIdentity(entry)).toBeNull();
+    });
 
-    const retrieved = await directory.get('to-remove');
-    expect(retrieved).toBeNull();
-  });
-
-  test('removes existing entry from global', async () => {
-    await directory.add({ name: 'global-rm', dir: agentDir, promptMode: 'append' }, { global: true });
-    const removed = await directory.rm('global-rm', { global: true });
-    expect(removed).toBe(true);
-
-    const retrieved = await directory.get('global-rm', { global: true });
-    expect(retrieved).toBeNull();
+    test('returns null when AGENTS.md missing', () => {
+      const entry = { name: 'test', dir: '/nonexistent', promptMode: 'append' as const, registeredAt: '' };
+      expect(directory.loadIdentity(entry)).toBeNull();
+    });
   });
 
-  test('returns false for non-existent entry', async () => {
-    const removed = await directory.rm('nonexistent');
-    expect(removed).toBe(false);
-  });
-});
+  // ============================================================================
+  // getProjectRoot()
+  // ============================================================================
 
-// ============================================================================
-// resolve()
-// ============================================================================
-
-describe('resolve', () => {
-  test('resolves project directory entry', async () => {
-    await directory.add({ name: 'my-agent', dir: agentDir, promptMode: 'append' });
-    const resolved = await directory.resolve('my-agent');
-    expect(resolved).not.toBeNull();
-    expect(resolved!.builtin).toBe(false);
-    expect(resolved!.entry.name).toBe('my-agent');
-  });
-
-  test('resolves global directory entry', async () => {
-    await directory.add({ name: 'global-agent', dir: agentDir, promptMode: 'append' }, { global: true });
-    const resolved = await directory.resolve('global-agent');
-    expect(resolved).not.toBeNull();
-    expect(resolved!.builtin).toBe(false);
-    expect(resolved!.entry.name).toBe('global-agent');
-  });
-
-  test('project entry shadows global entry', async () => {
-    await directory.add({ name: 'shadow', dir: agentDir, promptMode: 'system' }, { global: true });
-    await directory.add({ name: 'shadow', dir: agentDir, promptMode: 'append' });
-    const resolved = await directory.resolve('shadow');
-    expect(resolved).not.toBeNull();
-    expect(resolved!.entry.promptMode).toBe('append'); // project wins
-  });
-
-  test('resolves built-in role', async () => {
-    const resolved = await directory.resolve('engineer');
-    expect(resolved).not.toBeNull();
-    expect(resolved!.builtin).toBe(true);
-    expect(resolved!.entry.name).toBe('engineer');
-  });
-
-  test('resolves built-in council member', async () => {
-    const resolved = await directory.resolve('council--architect');
-    expect(resolved).not.toBeNull();
-    expect(resolved!.builtin).toBe(true);
-    expect(resolved!.entry.name).toBe('council--architect');
-  });
-
-  test('user entry overrides built-in', async () => {
-    await directory.add({ name: 'engineer', dir: agentDir, promptMode: 'system' });
-    const resolved = await directory.resolve('engineer');
-    expect(resolved).not.toBeNull();
-    expect(resolved!.builtin).toBe(false);
-    expect(resolved!.entry.promptMode).toBe('system');
-  });
-
-  test('returns null for unknown name', async () => {
-    const resolved = await directory.resolve('nonexistent');
-    expect(resolved).toBeNull();
-  });
-});
-
-// ============================================================================
-// ls()
-// ============================================================================
-
-describe('ls', () => {
-  test('lists project entries with scope label', async () => {
-    await directory.add({ name: 'agent-a', dir: agentDir, promptMode: 'append' });
-
-    const entries = await directory.ls();
-    expect(entries.length).toBe(1);
-    expect(entries[0].name).toBe('agent-a');
-    expect(entries[0].scope).toBe('project');
-  });
-
-  test('lists global entries with scope label', async () => {
-    await directory.add({ name: 'agent-g', dir: agentDir, promptMode: 'append' }, { global: true });
-
-    const entries = await directory.ls();
-    expect(entries.length).toBe(1);
-    expect(entries[0].name).toBe('agent-g');
-    expect(entries[0].scope).toBe('global');
-  });
-
-  test('lists entries from both scopes', async () => {
-    await directory.add({ name: 'proj-agent', dir: agentDir, promptMode: 'append' });
-    await directory.add({ name: 'glob-agent', dir: agentDir, promptMode: 'system' }, { global: true });
-
-    const entries = await directory.ls();
-    expect(entries.length).toBe(2);
-    const names = entries.map((e) => e.name).sort();
-    expect(names).toEqual(['glob-agent', 'proj-agent']);
-
-    const projEntry = entries.find((e) => e.name === 'proj-agent');
-    expect(projEntry!.scope).toBe('project');
-    const globEntry = entries.find((e) => e.name === 'glob-agent');
-    expect(globEntry!.scope).toBe('global');
-  });
-
-  test('project entry shadows global entry in listing', async () => {
-    await directory.add({ name: 'shadow', dir: agentDir, promptMode: 'system' }, { global: true });
-    await directory.add({ name: 'shadow', dir: agentDir, promptMode: 'append' });
-
-    const entries = await directory.ls();
-    expect(entries.length).toBe(1);
-    expect(entries[0].name).toBe('shadow');
-    expect(entries[0].scope).toBe('project');
-    expect(entries[0].promptMode).toBe('append');
-  });
-
-  test('returns empty array when no entries', async () => {
-    const entries = await directory.ls();
-    expect(entries).toEqual([]);
-  });
-});
-
-// ============================================================================
-// edit()
-// ============================================================================
-
-describe('edit', () => {
-  test('updates model', async () => {
-    await directory.add({ name: 'editable', dir: agentDir, promptMode: 'append' });
-    const updated = await directory.edit('editable', { model: 'opus' });
-    expect(updated.model).toBe('opus');
-
-    // Verify persisted
-    const retrieved = await directory.get('editable');
-    expect(retrieved!.model).toBe('opus');
-  });
-
-  test('updates promptMode', async () => {
-    await directory.add({ name: 'editable', dir: agentDir, promptMode: 'append' });
-    const updated = await directory.edit('editable', { promptMode: 'system' });
-    expect(updated.promptMode).toBe('system');
-  });
-
-  test('updates roles', async () => {
-    await directory.add({ name: 'editable', dir: agentDir, promptMode: 'append' });
-    const updated = await directory.edit('editable', { roles: ['implementor', 'reviewer'] });
-    expect(updated.roles).toEqual(['implementor', 'reviewer']);
-  });
-
-  test('edits global entry with global option', async () => {
-    await directory.add({ name: 'global-edit', dir: agentDir, promptMode: 'append' }, { global: true });
-    const updated = await directory.edit('global-edit', { model: 'sonnet' }, { global: true });
-    expect(updated.model).toBe('sonnet');
-  });
-
-  test('rejects edit of non-existent entry', async () => {
-    await expect(directory.edit('nonexistent', { model: 'opus' })).rejects.toThrow('not found');
-  });
-
-  test('validates new dir if provided', async () => {
-    await directory.add({ name: 'editable', dir: agentDir, promptMode: 'append' });
-    await expect(directory.edit('editable', { dir: '/nonexistent/path' })).rejects.toThrow('does not exist');
-  });
-});
-
-// ============================================================================
-// loadIdentity()
-// ============================================================================
-
-describe('loadIdentity', () => {
-  test('returns path to AGENTS.md', async () => {
-    const entry = await directory.add({ name: 'identity-test', dir: agentDir, promptMode: 'append' });
-    const identity = directory.loadIdentity(entry);
-    expect(identity).toBe(join(agentDir, 'AGENTS.md'));
-  });
-
-  test('returns null when AGENTS.md missing', async () => {
-    const emptyEntry = {
-      name: 'no-identity',
-      dir: '/nonexistent',
-      promptMode: 'append' as const,
-      registeredAt: new Date().toISOString(),
-    };
-    const identity = directory.loadIdentity(emptyEntry);
-    expect(identity).toBeNull();
-  });
-});
-
-// ============================================================================
-// getProjectRoot()
-// ============================================================================
-
-describe('getProjectRoot', () => {
-  test('respects GENIE_PROJECT_ROOT env var', () => {
-    process.env.GENIE_PROJECT_ROOT = '/custom/root';
-    expect(directory.getProjectRoot()).toBe('/custom/root');
-    process.env.GENIE_PROJECT_ROOT = projectRoot; // restore
+  describe('getProjectRoot', () => {
+    test('respects GENIE_PROJECT_ROOT env var', () => {
+      const prev = process.env.GENIE_PROJECT_ROOT;
+      process.env.GENIE_PROJECT_ROOT = '/custom/root';
+      expect(directory.getProjectRoot()).toBe('/custom/root');
+      process.env.GENIE_PROJECT_ROOT = prev;
+    });
   });
 });

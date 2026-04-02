@@ -46,7 +46,7 @@ const CodexConfigSchema = z.object({
 // Worker profile configuration
 // Defines how to launch a Claude worker
 // Uses preprocess to migrate legacy "claudio" launcher values to "claude"
-export const WorkerProfileSchema = z
+const WorkerProfileSchema = z
   .object({
     /** Which binary to invoke */
     launcher: z.preprocess((val) => (val === 'claudio' ? 'claude' : val), z.literal('claude')),
@@ -55,9 +55,26 @@ export const WorkerProfileSchema = z
   })
   .passthrough();
 
+// OTel observability configuration
+const OtelConfigSchema = z.object({
+  /** Whether OTel telemetry injection is enabled for spawned agents. Default: true. */
+  enabled: z.boolean().default(true),
+  /** Port for the OTLP HTTP/JSON receiver. Default: pgserve port + 1 (19643). */
+  port: z.number().optional(),
+  /** Whether to log user prompts via OTel. Default: true for internal agents. */
+  logPrompts: z.boolean().default(true),
+});
+
+// Omni integration configuration
+const OmniConfigSchema = z.object({
+  apiUrl: z.string(),
+  apiKey: z.string().optional(),
+  defaultInstanceId: z.string().optional(),
+});
+
 // Council preset configuration
 // Defines a pair of profiles for dual-model deliberation
-export const CouncilPresetSchema = z.object({
+const CouncilPresetSchema = z.object({
   /** Worker profile name for left pane */
   left: z.string(),
   /** Worker profile name for right pane */
@@ -94,6 +111,12 @@ export const GenieConfigSchema = z.object({
   promptMode: z.enum(['append', 'system']).default('append'),
   // Whether task leaders should auto-merge PRs to dev (default: false — leave PR open for human)
   autoMergeDev: z.boolean().default(false),
+  // Default project for task commands when outside any repo
+  defaultProject: z.string().optional(),
+  // OTel observability (optional — telemetry injection for spawned agents)
+  otel: OtelConfigSchema.optional(),
+  // Omni integration (optional — multi-channel messaging)
+  omni: OmniConfigSchema.optional(),
 });
 
 // Inferred types

@@ -12,9 +12,10 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { ensureTeammateBypassPermissions } from './claude-settings.js';
 import type { ClaudeTeamColor } from './provider-adapters.js';
 import { CLAUDE_TEAM_COLORS } from './provider-adapters.js';
 
@@ -73,6 +74,16 @@ export function sanitizeTeamName(name: string): string {
   return name.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
 }
 
+/** List all team directories in ~/.claude/teams/. */
+export async function listTeams(): Promise<string[]> {
+  try {
+    const entries = await readdir(teamsBaseDir());
+    return entries.filter((e) => !e.startsWith('.'));
+  } catch {
+    return [];
+  }
+}
+
 function teamDir(teamName: string): string {
   return join(teamsBaseDir(), sanitizeTeamName(teamName));
 }
@@ -100,6 +111,16 @@ function lockPath(filePath: string): string {
 const LOCK_TIMEOUT_MS = 5000;
 const LOCK_POLL_MS = 50;
 
+/** Check if a PID is still alive using kill -0 (signal 0 = existence check). */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function acquireLock(path: string): Promise<void> {
   const lock = lockPath(path);
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
@@ -109,7 +130,25 @@ async function acquireLock(path: string): Promise<void> {
       await writeFile(lock, String(process.pid), { flag: 'wx' });
       return; // acquired
     } catch {
-      // Lock exists — wait with jitter and retry
+      // Lock exists — check if holder PID is still alive
+      try {
+        const content = await readFile(lock, 'utf-8');
+        const holderPid = Number.parseInt(content.trim(), 10);
+        if (!Number.isNaN(holderPid) && !isPidAlive(holderPid)) {
+          // Holder is dead — remove stale lock and retry immediately
+          try {
+            await unlink(lock);
+          } catch {
+            // Another process may have already cleaned it up
+          }
+          continue;
+        }
+      } catch {
+        // Lock file disappeared between check and read — retry
+        continue;
+      }
+
+      // Lock holder is alive — wait with jitter and retry
       const jitter = Math.floor(Math.random() * LOCK_POLL_MS);
       await new Promise((r) => setTimeout(r, LOCK_POLL_MS + jitter));
     }
@@ -148,6 +187,20 @@ async function saveConfig(teamName: string, config: NativeTeamConfig): Promise<v
   await writeFile(configPath(teamName), JSON.stringify(config, null, 2));
 }
 
+async function countLeadSessionRefs(): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const teams = await listTeams();
+
+  for (const team of teams) {
+    const config = await loadConfig(team);
+    const leadSessionId = config?.leadSessionId;
+    if (!leadSessionId) continue;
+    counts.set(leadSessionId, (counts.get(leadSessionId) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -160,6 +213,7 @@ export async function ensureNativeTeam(
   teamName: string,
   description: string,
   leadSessionId: string,
+  leaderName?: string,
 ): Promise<NativeTeamConfig> {
   const dir = teamDir(teamName);
   const inboxDir = inboxesDir(teamName);
@@ -167,15 +221,20 @@ export async function ensureNativeTeam(
   await mkdir(dir, { recursive: true });
   await mkdir(inboxDir, { recursive: true });
 
+  // Ensure the global teammateMode is bypassPermissions so the native team
+  // permission gate doesn't route tool approvals to the leader (deadlock).
+  ensureTeammateBypassPermissions();
+
   const existing = await loadConfig(teamName);
   if (existing) return existing;
 
   const sanitized = sanitizeTeamName(teamName);
+  const resolvedLeader = sanitizeTeamName(leaderName ?? teamName);
   const config: NativeTeamConfig = {
     name: sanitized,
     description,
     createdAt: Date.now(),
-    leadAgentId: `team-lead@${sanitized}`,
+    leadAgentId: `${resolvedLeader}@${sanitized}`,
     leadSessionId,
     members: [],
   };
@@ -278,6 +337,46 @@ export async function writeNativeInbox(
 }
 
 /**
+ * Resolve a genie worker ID to the native team member name.
+ *
+ * Matching strategy:
+ *   1. Exact match on member.name
+ *   2. Match on agentId prefix (workerId@team)
+ *   3. Strip team prefix from workerId and match (e.g., "bugfix-4-engineer" → "engineer")
+ *
+ * Returns the native member name if found, null otherwise.
+ */
+export async function resolveNativeMemberName(teamName: string, genieWorkerId: string): Promise<string | null> {
+  const config = await loadConfig(teamName);
+  if (!config || config.members.length === 0) return null;
+
+  const sanitizedId = sanitizeTeamName(genieWorkerId);
+  const sanitizedTeam = sanitizeTeamName(teamName);
+
+  // 1. Exact match on name
+  const exactMatch = config.members.find((m) => m.name === sanitizedId && m.isActive);
+  if (exactMatch) return exactMatch.name;
+
+  // 2. Match on agentId
+  const agentIdMatch = config.members.find((m) => m.agentId === `${sanitizedId}@${sanitizedTeam}` && m.isActive);
+  if (agentIdMatch) return agentIdMatch.name;
+
+  // 3. Strip team prefix and match (e.g., "bugfix-4-engineer" → "engineer")
+  const teamPrefix = `${sanitizedTeam}-`;
+  if (sanitizedId.startsWith(teamPrefix)) {
+    const stripped = sanitizedId.slice(teamPrefix.length);
+    const prefixMatch = config.members.find((m) => m.name === stripped && m.isActive);
+    if (prefixMatch) return prefixMatch.name;
+  }
+
+  // 4. Fallback: try inactive members (recently unregistered)
+  const inactiveMatch = config.members.find((m) => m.name === sanitizedId);
+  if (inactiveMatch) return inactiveMatch.name;
+
+  return null;
+}
+
+/**
  * Assign the next unused color from the palette for a team.
  */
 export async function assignColor(teamName: string): Promise<ClaudeTeamColor> {
@@ -320,6 +419,92 @@ export async function deleteNativeTeam(teamName: string): Promise<boolean> {
 }
 
 // ============================================================================
+// Inbox Scanning
+// ============================================================================
+
+/** Extract the leader inbox name from a native team config's leadAgentId. */
+function extractLeaderInboxName(config: NativeTeamConfig | null, teamName?: string): string {
+  if (!config?.leadAgentId) return teamName ?? 'unknown';
+  const atIdx = config.leadAgentId.indexOf('@');
+  return atIdx > 0 ? config.leadAgentId.slice(0, atIdx) : (teamName ?? 'unknown');
+}
+
+/** Scan a single team directory for unread leader inbox messages. */
+async function scanTeamInbox(
+  base: string,
+  name: string,
+): Promise<{
+  teamName: string;
+  unreadCount: number;
+  workingDir: string | null;
+  firstUnreadText: string | null;
+} | null> {
+  let config: NativeTeamConfig | null = null;
+  try {
+    const cfgContent = await readFile(join(base, name, 'config.json'), 'utf-8');
+    config = JSON.parse(cfgContent);
+  } catch {
+    // Config missing or malformed
+  }
+
+  const leaderInboxName = extractLeaderInboxName(config, name);
+  const inboxFile = join(base, name, 'inboxes', `${leaderInboxName}.json`);
+
+  let messages: NativeInboxMessage[];
+  try {
+    const content = await readFile(inboxFile, 'utf-8');
+    messages = JSON.parse(content);
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(messages)) return null;
+  const unread = messages.filter((m) => m.read === false);
+  if (unread.length === 0) return null;
+
+  let workingDir: string | null = null;
+  if (config) {
+    const leadMember = config.members.find((m) => m.agentId === config?.leadAgentId || m.name === leaderInboxName);
+    if (leadMember?.cwd) workingDir = leadMember.cwd;
+  }
+
+  return { teamName: name, unreadCount: unread.length, workingDir, firstUnreadText: unread[0]?.text ?? null };
+}
+
+/**
+ * List all teams that have unread messages in their leader's inbox.
+ *
+ * Scans `~/.claude/teams/` for teams where the leader's inbox
+ * contains messages with `read: false`. Returns the team name, unread
+ * count, and working directory (from config.json → members → leader → cwd).
+ */
+export async function listTeamsWithUnreadInbox(): Promise<
+  Array<{ teamName: string; unreadCount: number; workingDir: string | null; firstUnreadText: string | null }>
+> {
+  const base = teamsBaseDir();
+  let teamDirs: string[];
+  try {
+    teamDirs = await readdir(base);
+  } catch {
+    return [];
+  }
+
+  const results: Array<{
+    teamName: string;
+    unreadCount: number;
+    workingDir: string | null;
+    firstUnreadText: string | null;
+  }> = [];
+
+  for (const name of teamDirs) {
+    const entry = await scanTeamInbox(base, name);
+    if (entry) results.push(entry);
+  }
+
+  return results;
+}
+
+// ============================================================================
 // Session Discovery
 // ============================================================================
 
@@ -339,7 +524,7 @@ function sanitizePath(p: string): string {
  *   2. Find the most recently modified .jsonl in ~/.claude/projects/<sanitized-cwd>/
  *      The UUID filename IS the session ID.
  */
-export async function discoverClaudeSessionId(cwd?: string): Promise<string | null> {
+async function discoverClaudeSessionId(cwd?: string): Promise<string | null> {
   // 1. Env var (when running as a teammate, CC sets this)
   const envSessionId = process.env.CLAUDE_CODE_SESSION_ID;
   if (envSessionId) return envSessionId;
@@ -366,6 +551,106 @@ export async function discoverClaudeSessionId(cwd?: string): Promise<string | nu
 
     // Filename is <uuid>.jsonl — extract the UUID
     return newest.name.replace('.jsonl', '');
+  } catch {
+    return null;
+  }
+}
+
+interface SessionMetadata {
+  teamName?: string;
+  agentName?: string;
+}
+
+async function readSessionMetadata(filePath: string): Promise<SessionMetadata> {
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(filePath, 'r');
+    const buffer = Buffer.alloc(8192);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const head = buffer.toString('utf-8', 0, bytesRead);
+
+    for (const line of head.split('\n').slice(0, 20)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const entry = JSON.parse(trimmed) as { teamName?: unknown; agentName?: unknown };
+        const teamName = typeof entry.teamName === 'string' ? entry.teamName : undefined;
+        const agentName = typeof entry.agentName === 'string' ? entry.agentName : undefined;
+        if (teamName || agentName) return { teamName, agentName };
+      } catch {
+        // Ignore malformed lines and keep scanning the JSONL head.
+      }
+    }
+  } catch {
+    return {};
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+
+  return {};
+}
+
+/**
+ * Discover an eligible parent session ID for spawning native teammates.
+ *
+ * Outside Claude Code we want a root/leader session, not the most recent worker
+ * session in the repo. Prefer:
+ *   1. Current env session (when already inside Claude Code)
+ *   2. Newest root session in the repo (no teamName/agentName)
+ *   3. Newest team-lead session in the repo
+ *   4. Newest session as a last resort
+ */
+function rootScore(metadata: { teamName?: string; agentName?: string }): number {
+  if (!metadata.teamName && !metadata.agentName) return 2;
+  // Score leader sessions higher — matches sessions without an explicit agentName (leader sessions)
+  if (metadata.teamName && !metadata.agentName) return 1;
+  return 0;
+}
+
+function compareSessionRanking(
+  a: { name: string; mtime: number; metadata: { teamName?: string; agentName?: string } },
+  b: { name: string; mtime: number; metadata: { teamName?: string; agentName?: string } },
+  leadRefs: Map<string, number>,
+): number {
+  const aLeadRefs = leadRefs.get(a.name.replace('.jsonl', '')) ?? 0;
+  const bLeadRefs = leadRefs.get(b.name.replace('.jsonl', '')) ?? 0;
+  if (aLeadRefs !== bLeadRefs) return bLeadRefs - aLeadRefs;
+
+  const aRoot = rootScore(a.metadata);
+  const bRoot = rootScore(b.metadata);
+  if (aRoot !== bRoot) return bRoot - aRoot;
+
+  return b.mtime - a.mtime;
+}
+
+export async function discoverClaudeParentSessionId(cwd?: string): Promise<string | null> {
+  const envSessionId = process.env.CLAUDE_CODE_SESSION_ID;
+  if (envSessionId) return envSessionId;
+
+  const projectDir = join(claudeConfigDir(), 'projects', sanitizePath(cwd ?? process.cwd()));
+
+  try {
+    const entries = await readdir(projectDir);
+    const jsonls = entries.filter((e) => e.endsWith('.jsonl'));
+    if (jsonls.length === 0) return null;
+
+    const ranked = await Promise.all(
+      jsonls.map(async (name) => {
+        const filePath = join(projectDir, name);
+        const s = await stat(filePath);
+        const metadata = await readSessionMetadata(filePath);
+        return {
+          name,
+          mtime: s.mtimeMs,
+          metadata,
+        };
+      }),
+    );
+    const leadRefs = await countLeadSessionRefs();
+
+    ranked.sort((a, b) => compareSessionRanking(a, b, leadRefs));
+
+    return ranked[0]?.name.replace('.jsonl', '') ?? null;
   } catch {
     return null;
   }
@@ -431,6 +716,7 @@ export async function registerAsTeamLead(
     cwd?: string;
     tmuxPaneId?: string;
     color?: string;
+    leaderName?: string;
   },
 ): Promise<{ sessionId: string; config: NativeTeamConfig }> {
   const sessionId = await discoverClaudeSessionId(opts?.cwd);
@@ -441,8 +727,10 @@ export async function registerAsTeamLead(
     );
   }
 
+  const resolvedLeaderName = opts?.leaderName ?? teamName;
+
   // Create or load the native team, using the real CC session ID
-  const config = await ensureNativeTeam(teamName, `Genie team: ${teamName}`, sessionId);
+  const config = await ensureNativeTeam(teamName, `Genie team: ${teamName}`, sessionId, resolvedLeaderName);
 
   // Update leadSessionId if the team already existed with a stale ID
   if (config.leadSessionId !== sessionId) {
@@ -452,13 +740,14 @@ export async function registerAsTeamLead(
 
   // Register the leader as a member (CC expects the lead in the members array)
   const sanitized = sanitizeTeamName(teamName);
-  const leadAgentId = `team-lead@${sanitized}`;
+  const sanitizedLeader = sanitizeTeamName(resolvedLeaderName);
+  const leadAgentId = `${sanitizedLeader}@${sanitized}`;
   const existingLead = config.members.find((m) => m.agentId === leadAgentId);
 
   const resolvedPaneId = opts?.tmuxPaneId ?? process.env.TMUX_PANE;
   if (!existingLead || !existingLead.isActive) {
     await registerNativeMember(teamName, {
-      agentName: 'team-lead',
+      agentName: resolvedLeaderName,
       agentType: 'general-purpose',
       color: opts?.color ?? 'blue',
       tmuxPaneId: resolvedPaneId,
@@ -470,8 +759,8 @@ export async function registerAsTeamLead(
     await saveConfig(teamName, config);
   }
 
-  // Ensure the team-lead inbox exists
-  const inbox = inboxPath(teamName, 'team-lead');
+  // Ensure the leader's inbox exists
+  const inbox = inboxPath(teamName, resolvedLeaderName);
   if (!existsSync(inbox)) {
     await writeFile(inbox, '[]');
   }

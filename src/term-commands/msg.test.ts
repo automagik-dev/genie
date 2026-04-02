@@ -10,12 +10,43 @@
  * Run with: bun test src/term-commands/msg.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { rm } from 'node:fs/promises';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkSendScope, detectSenderIdentity } from './msg.js';
+import { Command } from 'commander';
+import { getConnection } from '../lib/db.js';
+import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { checkSendScope, detectSenderIdentity, registerSendInboxCommands } from './msg.js';
+
+// ---------------------------------------------------------------------------
+// PG test schema (required since team-manager now reads from PG)
+// ---------------------------------------------------------------------------
+
+let cleanupSchema: (() => Promise<void>) | undefined;
+
+beforeAll(async () => {
+  if (!DB_AVAILABLE) return;
+  cleanupSchema = await setupTestSchema();
+});
+
+afterAll(async () => {
+  if (cleanupSchema) await cleanupSchema();
+});
+
+// ---------------------------------------------------------------------------
+// Helper: insert team into PG
+// ---------------------------------------------------------------------------
+
+async function insertTeam(name: string, repo: string, members: string[], leader?: string): Promise<void> {
+  const sql = await getConnection();
+  await sql`
+    INSERT INTO teams (name, repo, base_branch, worktree_path, leader, members, status, created_at)
+    VALUES (${name}, ${repo}, 'dev', ${join(repo, '.worktrees', name)}, ${leader ?? null}, ${JSON.stringify(members)}, 'in_progress', now())
+    ON CONFLICT (name) DO UPDATE SET members = ${JSON.stringify(members)}, leader = ${leader ?? null}
+  `;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers: save/restore env vars
@@ -47,7 +78,7 @@ afterEach(() => {
 // detectSenderIdentity tests
 // ---------------------------------------------------------------------------
 
-describe('detectSenderIdentity', () => {
+describe.skipIf(!DB_AVAILABLE)('detectSenderIdentity', () => {
   // Scenario 1: Team-lead via Bash tool — GENIE_AGENT_NAME='team-lead'
   test('returns "team-lead" when GENIE_AGENT_NAME is set (team-lead via Bash tool)', async () => {
     process.env.GENIE_AGENT_NAME = 'team-lead';
@@ -117,18 +148,17 @@ describe('detectSenderIdentity', () => {
 // checkSendScope tests
 // ---------------------------------------------------------------------------
 
-describe('checkSendScope', () => {
+describe.skipIf(!DB_AVAILABLE)('checkSendScope', () => {
   let tempDir: string;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'scope-test-'));
-    // Create .genie/teams directory
-    await mkdir(join(tempDir, '.genie', 'teams'), { recursive: true });
-    // Point GENIE_HOME to tempDir/.genie so listTeams() finds team files written here
-    process.env.GENIE_HOME = join(tempDir, '.genie');
   });
 
   afterEach(async () => {
+    // Clean up test teams from PG
+    const sql = await getConnection();
+    await sql`DELETE FROM teams WHERE name LIKE 'scope-test-%' OR name = 'leader-team' OR name = 'my-team'`;
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -143,31 +173,14 @@ describe('checkSendScope', () => {
   });
 
   test('allows sending within same team', async () => {
-    // Create team with both sender and recipient as members
-    const teamConfig = {
-      name: 'test-team',
-      repo: tempDir,
-      baseBranch: 'dev',
-      worktreePath: join(tempDir, '.worktrees', 'test-team'),
-      members: ['alice', 'bob'],
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(tempDir, '.genie', 'teams', 'test-team.json'), JSON.stringify(teamConfig));
+    await insertTeam('scope-test-team', tempDir, ['alice', 'bob']);
 
     const error = await checkSendScope(tempDir, 'alice', 'bob');
     expect(error).toBeNull();
   });
 
   test('rejects sending to non-team-member', async () => {
-    const teamConfig = {
-      name: 'test-team',
-      repo: tempDir,
-      baseBranch: 'dev',
-      worktreePath: join(tempDir, '.worktrees', 'test-team'),
-      members: ['alice'],
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(tempDir, '.genie', 'teams', 'test-team.json'), JSON.stringify(teamConfig));
+    await insertTeam('scope-test-reject', tempDir, ['alice']);
 
     const error = await checkSendScope(tempDir, 'alice', 'outsider');
     expect(error).not.toBeNull();
@@ -175,56 +188,43 @@ describe('checkSendScope', () => {
     expect(error).toContain('outsider');
   });
 
-  test('team-lead can always send to team-lead recipient', async () => {
-    const teamConfig = {
-      name: 'my-team',
-      repo: tempDir,
-      baseBranch: 'dev',
-      worktreePath: join(tempDir, '.worktrees', 'my-team'),
-      members: ['implementor'],
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(tempDir, '.genie', 'teams', 'my-team.json'), JSON.stringify(teamConfig));
+  test('member can send to leader by name', async () => {
+    await insertTeam('my-team', tempDir, ['implementor'], 'my-leader');
 
-    // implementor (member) can send to team-lead
-    const error = await checkSendScope(tempDir, 'implementor', 'team-lead');
+    // implementor (member) can send to the leader by name
+    const error = await checkSendScope(tempDir, 'implementor', 'my-leader');
     expect(error).toBeNull();
   });
 
-  test('team-lead uses GENIE_TEAM for team lookup', async () => {
-    const teamConfig = {
-      name: 'leader-team',
-      repo: tempDir,
-      baseBranch: 'dev',
-      worktreePath: join(tempDir, '.worktrees', 'leader-team'),
-      members: ['worker-a', 'worker-b'],
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(tempDir, '.genie', 'teams', 'leader-team.json'), JSON.stringify(teamConfig));
+  test('leader uses GENIE_TEAM for team lookup', async () => {
+    await insertTeam('leader-team', tempDir, ['worker-a', 'worker-b'], 'boss');
 
     process.env.GENIE_TEAM = 'leader-team';
 
-    // team-lead can send to team member
-    const error = await checkSendScope(tempDir, 'team-lead', 'worker-a');
+    // leader can send to team member
+    const error = await checkSendScope(tempDir, 'boss', 'worker-a');
     expect(error).toBeNull();
   });
 
-  test('team-lead blocked from sending to non-member', async () => {
-    const teamConfig = {
-      name: 'leader-team',
-      repo: tempDir,
-      baseBranch: 'dev',
-      worktreePath: join(tempDir, '.worktrees', 'leader-team'),
-      members: ['worker-a'],
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(tempDir, '.genie', 'teams', 'leader-team.json'), JSON.stringify(teamConfig));
+  test('leader blocked from sending to non-member', async () => {
+    await insertTeam('leader-team', tempDir, ['worker-a'], 'boss');
 
     process.env.GENIE_TEAM = 'leader-team';
 
-    const error = await checkSendScope(tempDir, 'team-lead', 'outsider');
+    const error = await checkSendScope(tempDir, 'boss', 'outsider');
     expect(error).not.toBeNull();
     expect(error).toContain('Scope violation');
+  });
+});
+
+describe.skipIf(!DB_AVAILABLE)('send command registration', () => {
+  test('send command accepts explicit --team context', () => {
+    const program = new Command();
+    registerSendInboxCommands(program);
+
+    const sendCmd = program.commands.find((cmd) => cmd.name() === 'send');
+    expect(sendCmd).toBeDefined();
+    expect(sendCmd?.options.some((option) => option.long === '--team')).toBe(true);
   });
 });
 
@@ -232,7 +232,7 @@ describe('checkSendScope', () => {
 // Shared buildTeamLeadCommand — single source of truth
 // ---------------------------------------------------------------------------
 
-describe('buildTeamLeadCommand (shared module)', () => {
+describe.skipIf(!DB_AVAILABLE)('buildTeamLeadCommand (shared module)', () => {
   test('sets GENIE_AGENT_NAME to folder name', async () => {
     const { basename } = await import('node:path');
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
@@ -252,10 +252,10 @@ describe('buildTeamLeadCommand (shared module)', () => {
     expect(cmd).toContain('CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1');
   });
 
-  test('includes --continue when continueName provided', async () => {
+  test('includes --resume when continueName provided', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie', { continueName: 'genie' });
-    expect(cmd).toContain('--continue');
+    expect(cmd).toContain('--resume');
     expect(cmd).toContain('genie');
   });
 
@@ -285,7 +285,7 @@ describe('buildTeamLeadCommand (shared module)', () => {
 // Verify session.ts delegates to shared module
 // ---------------------------------------------------------------------------
 
-describe('session.ts: delegates to shared buildTeamLeadCommand', () => {
+describe.skipIf(!DB_AVAILABLE)('session.ts: delegates to shared buildTeamLeadCommand', () => {
   test('session buildClaudeCommand sets GENIE_AGENT_NAME to folder name', async () => {
     const { basename } = await import('node:path');
     const { buildClaudeCommand } = await import('../genie-commands/session.js');
@@ -299,7 +299,7 @@ describe('session.ts: delegates to shared buildTeamLeadCommand', () => {
 // Verify provider-adapters sets GENIE_AGENT_NAME for spawned workers
 // ---------------------------------------------------------------------------
 
-describe('provider-adapters: GENIE_AGENT_NAME for workers', () => {
+describe.skipIf(!DB_AVAILABLE)('provider-adapters: GENIE_AGENT_NAME for workers', () => {
   // Mock Bun.which to pretend claude is installed (hasBinary check)
   const originalWhich = (Bun as Record<string, unknown>).which;
   beforeEach(() => {

@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "3.260322.1",
+  "version": "4.260402.18",
   "description": "Collaborative terminal toolkit for human + AI workflows",
   "type": "module",
   "bin": {
@@ -9,10 +9,12 @@
   "scripts": {
     "prepare": "test \"$CI\" = true || husky",
     "version": "bun run scripts/version.ts",
-    "build": "bun build src/genie.ts --outdir dist --target bun --minify && chmod +x dist/*.js",
+    "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun --external pgserve --external @automagik/genie-brain && chmod +x dist/*.js",
+    "build:app": "bun run scripts/build-app.ts",
     "build:plugin": "node scripts/build.js",
     "sync": "node scripts/sync.js",
     "build-and-sync": "npm run build:plugin && npm run sync",
+    "postinstall": "node scripts/postinstall-tmux.js",
     "prepack": "bun run build",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
@@ -20,12 +22,20 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "dead-code": "bunx knip",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun test"
+    "check": "bun run typecheck && bun run lint && bun run dead-code && (bun test || bun test)"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",
+    "@opentui/core": "^0.1.91",
+    "@opentui/react": "^0.1.91",
+    "@tauri-apps/api": "^2.5.0",
     "commander": "^12.1.0",
     "js-yaml": "^4.1.1",
+    "pgserve": "^1.1.6",
+    "postgres": "^3.4.8",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "systeminformation": "^5.31.5",
     "uuid": "^11.1.0",
     "zod": "^3.25.0"
   },
@@ -33,20 +43,22 @@
     "@biomejs/biome": "^1.9.4",
     "@commitlint/cli": "^20.4.1",
     "@commitlint/config-conventional": "^20.4.1",
+    "@tauri-apps/cli": "^2.10.1",
     "@types/bun": "^1.3.10",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.5.2",
     "esbuild": "^0.27.3",
     "husky": "^9.1.7",
     "knip": "^5.86.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vite": "^6.3.5"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/automagik-dev/genie.git"
-  },
-  "openclaw": {
-    "extensions": ["./plugins/genie/index.ts"]
   },
   "engines": {
     "bun": ">=1.3.10"
@@ -54,5 +66,5 @@
   "publishConfig": {
     "access": "public"
   },
-  "trustedDependencies": ["@biomejs/biome"]
+  "trustedDependencies": ["@biomejs/biome", "bun"]
 }

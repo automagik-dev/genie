@@ -1,14 +1,12 @@
 /**
- * Team Chat — JSONL-based group channel per team.
+ * Team Chat — PG-backed group channel per team.
  *
- * Each team has a chat channel stored at `<repoPath>/.genie/chat/<team-name>.jsonl`.
- * Messages are appended as newline-delimited JSON for efficient append-only writes.
+ * Each team has a chat channel stored in the `team_chat` PG table,
+ * scoped by team name and repo_path.
  */
 
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
-import { acquireLock } from './file-lock.js';
+import { getConnection } from './db.js';
 
 // ============================================================================
 // Types
@@ -26,16 +24,24 @@ export interface ChatMessage {
 }
 
 // ============================================================================
-// Paths
+// Internal helpers
 // ============================================================================
 
-function chatDir(repoPath: string): string {
-  return join(repoPath, '.genie', 'chat');
+interface ChatRow {
+  id: string;
+  sender: string;
+  body: string;
+  created_at: Date | string;
 }
 
-function chatFilePath(repoPath: string, teamName: string): string {
-  const safeName = teamName.replace(/\//g, '--');
-  return join(chatDir(repoPath), `${safeName}.jsonl`);
+/** Map a PG row to the ChatMessage interface. */
+function rowToMessage(row: ChatRow): ChatMessage {
+  return {
+    id: row.id,
+    sender: row.sender,
+    body: row.body,
+    timestamp: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+  };
 }
 
 // ============================================================================
@@ -44,7 +50,7 @@ function chatFilePath(repoPath: string, teamName: string): string {
 
 /**
  * Post a message to a team's chat channel.
- * Appends a JSON line to the team's JSONL file.
+ * Inserts a row into the team_chat PG table.
  */
 export async function postMessage(
   repoPath: string,
@@ -52,25 +58,16 @@ export async function postMessage(
   sender: string,
   body: string,
 ): Promise<ChatMessage> {
-  // Ensure chat directory exists before acquiring lock (lock file needs parent dir)
-  const dir = chatDir(repoPath);
-  await mkdir(dir, { recursive: true });
-  const release = await acquireLock(chatFilePath(repoPath, teamName));
-  try {
-    const msg: ChatMessage = {
-      id: `chat-${uuidv4()}`,
-      sender,
-      body,
-      timestamp: new Date().toISOString(),
-    };
+  const sql = await getConnection();
+  const id = `chat-${uuidv4()}`;
+  const now = new Date().toISOString();
 
-    const filePath = chatFilePath(repoPath, teamName);
-    await appendFile(filePath, `${JSON.stringify(msg)}\n`);
+  await sql`
+    INSERT INTO team_chat (id, team, repo_path, sender, body, created_at)
+    VALUES (${id}, ${teamName}, ${repoPath}, ${sender}, ${body}, ${now})
+  `;
 
-    return msg;
-  } finally {
-    await release();
-  }
+  return { id, sender, body, timestamp: now };
 }
 
 /**
@@ -78,30 +75,21 @@ export async function postMessage(
  * Optionally filter messages since a given timestamp.
  */
 export async function readMessages(repoPath: string, teamName: string, since?: string): Promise<ChatMessage[]> {
-  const filePath = chatFilePath(repoPath, teamName);
-
-  let content: string;
-  try {
-    content = await readFile(filePath, 'utf-8');
-  } catch {
-    return [];
-  }
-
-  const lines = content.trim().split('\n').filter(Boolean);
-  let messages: ChatMessage[] = [];
-
-  for (const line of lines) {
-    try {
-      messages.push(JSON.parse(line));
-    } catch {
-      // Skip malformed lines
-    }
-  }
+  const sql = await getConnection();
 
   if (since) {
-    const sinceTime = new Date(since).getTime();
-    messages = messages.filter((m) => new Date(m.timestamp).getTime() >= sinceTime);
+    const rows = await sql`
+      SELECT * FROM team_chat
+      WHERE team = ${teamName} AND repo_path = ${repoPath} AND created_at >= ${since}
+      ORDER BY created_at ASC
+    `;
+    return rows.map(rowToMessage);
   }
 
-  return messages;
+  const rows = await sql`
+    SELECT * FROM team_chat
+    WHERE team = ${teamName} AND repo_path = ${repoPath}
+    ORDER BY created_at ASC
+  `;
+  return rows.map(rowToMessage);
 }

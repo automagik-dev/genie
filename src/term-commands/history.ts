@@ -16,6 +16,7 @@
  */
 
 import * as workerRegistry from '../lib/agent-registry.js';
+import { formatTime } from '../lib/term-format.js';
 import type { TranscriptEntry, TranscriptFilter, TranscriptRole } from '../lib/transcript.js';
 
 // ============================================================================
@@ -70,15 +71,6 @@ interface SessionStats {
 // ============================================================================
 // Event Extraction (from TranscriptEntry)
 // ============================================================================
-
-function formatTime(timestamp: string): string {
-  try {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  } catch {
-    return '??:??';
-  }
-}
 
 function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
@@ -310,41 +302,34 @@ function getEventIcon(type: CompressedEvent['type']): string {
   }
 }
 
+function formatToolDetail(toolCall: NonNullable<TranscriptEntry['toolCall']>): string {
+  const input = toolCall.input as Record<string, unknown>;
+  if (toolCall.name === 'Bash' || toolCall.name === 'shell') {
+    return `  ${toolCall.name}: ${input.command ?? ''}`;
+  }
+  if (['Read', 'Edit', 'Write'].includes(toolCall.name)) {
+    return `  ${toolCall.name}: ${input.file_path ?? ''}`;
+  }
+  return `  ${toolCall.name}`;
+}
+
 function formatTranscriptEntryForDisplay(entry: TranscriptEntry): string[] {
   const time = formatTime(entry.timestamp);
 
-  if (entry.role === 'user') {
-    return [`\n[${time}] USER:`, entry.text];
+  switch (entry.role) {
+    case 'user':
+      return [`\n[${time}] USER:`, entry.text];
+    case 'tool_call':
+      return entry.toolCall ? [`\n[${time}] TOOL:`, formatToolDetail(entry.toolCall)] : [];
+    case 'assistant':
+      return [`\n[${time}] ASSISTANT:`, truncate(entry.text, 500)];
+    case 'tool_result':
+      return [`\n[${time}] RESULT:`, `  ${truncate(entry.text, 500)}`];
+    case 'system':
+      return [`\n[${time}] SYSTEM:`, entry.text];
+    default:
+      return [];
   }
-
-  if (entry.role === 'tool_call' && entry.toolCall) {
-    const input = entry.toolCall.input as Record<string, unknown>;
-    let detail: string;
-    if (entry.toolCall.name === 'Bash' || entry.toolCall.name === 'shell') {
-      detail = `  ${entry.toolCall.name}: ${input.command ?? ''}`;
-    } else if (['Read', 'Edit', 'Write'].includes(entry.toolCall.name)) {
-      detail = `  ${entry.toolCall.name}: ${input.file_path ?? ''}`;
-    } else {
-      detail = `  ${entry.toolCall.name}`;
-    }
-    return [`\n[${time}] TOOL:`, detail];
-  }
-
-  if (entry.role === 'assistant') {
-    const text = entry.text.slice(0, 500) + (entry.text.length > 500 ? '...' : '');
-    return [`\n[${time}] ASSISTANT:`, text];
-  }
-
-  if (entry.role === 'tool_result') {
-    const text = entry.text.slice(0, 500) + (entry.text.length > 500 ? '...' : '');
-    return [`\n[${time}] RESULT:`, `  ${text}`];
-  }
-
-  if (entry.role === 'system') {
-    return [`\n[${time}] SYSTEM:`, entry.text];
-  }
-
-  return [];
 }
 
 function formatFullConversation(entries: TranscriptEntry[]): string {
@@ -401,7 +386,7 @@ async function resolveContext(workerIdOrName: string, options: HistoryOptions): 
 
   const worker = await findWorker(workerIdOrName);
   if (!worker) {
-    console.error(`Agent "${workerIdOrName}" not found. Run \`genie ls\` to see agents.`);
+    console.error(`Agent "${workerIdOrName}" not found. Run \`genie agent list\` to see agents.`);
     process.exit(1);
   }
 

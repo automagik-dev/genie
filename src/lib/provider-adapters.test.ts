@@ -228,6 +228,44 @@ describe('buildClaudeCommand', () => {
     expect(content).toContain('User agent instructions');
     expect(content).toContain('Built-in prompt');
   });
+
+  it('sets GENIE_WORKER=1 in env for spawn latency optimization (#712)', () => {
+    const result = buildClaudeCommand({ provider: 'claude', team: 'work', role: 'implementor' });
+    expect(result.env).toBeDefined();
+    expect(result.env!.GENIE_WORKER).toBe('1');
+  });
+
+  it('sets GENIE_WORKER=1 even without role or nativeTeam', () => {
+    const result = buildClaudeCommand({ provider: 'claude', team: 'work' });
+    expect(result.env).toBeDefined();
+    expect(result.env!.GENIE_WORKER).toBe('1');
+  });
+
+  it('initialPrompt with quotes and newlines survives tmux split-window re-quoting (#776)', () => {
+    const prompt =
+      'Execute Group 1 of wish "db-cleanup".\n\nWhen done:\n1. Run: genie done db-cleanup#1\n2. Run: genie send \'Group 1 complete.\' --to team-lead';
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'engineer-1',
+      initialPrompt: prompt,
+    });
+
+    // The command contains the prompt as a shell-escaped positional arg
+    expect(result.command).toContain('claude');
+    expect(result.command).toContain('engineer-1');
+
+    // Simulate the tmux split-window re-quoting fix:
+    // fullCommand is re-wrapped in single quotes for the outer shell → tmux → inner shell pipeline.
+    const fullCommand = result.command;
+    const reQuoted = fullCommand.replace(/'/g, "'\\''");
+
+    // The re-quoted command round-trips through sh -c back to the original fullCommand.
+    // This proves the outer shell → tmux → inner shell pipeline preserves the command.
+    const { execSync } = require('node:child_process');
+    const roundTripped = execSync(`printf '%s' '${reQuoted}'`, { encoding: 'utf-8' });
+    expect(roundTripped).toBe(fullCommand);
+  });
 });
 
 // ============================================================================
@@ -348,5 +386,95 @@ describe('buildLaunchCommand', () => {
     const result = buildLaunchCommand({ provider: 'codex', team: 'work' });
     expect(result.provider).toBe('codex');
     expect(result.command).toContain('Genie worker');
+  });
+});
+
+// ============================================================================
+// OTel Env Injection Tests
+// ============================================================================
+
+describe('OTel env injection in buildClaudeCommand', () => {
+  const originalWhich = (Bun as Record<string, unknown>).which;
+  const savedOtelEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  beforeAll(() => {
+    (Bun as Record<string, unknown>).which = (name: string) =>
+      name === 'claude' ? '/usr/local/bin/claude' : typeof originalWhich === 'function' ? originalWhich(name) : null;
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = undefined as unknown as string;
+  });
+  afterAll(() => {
+    (Bun as Record<string, unknown>).which = originalWhich;
+    if (savedOtelEndpoint !== undefined) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = savedOtelEndpoint;
+    else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = undefined as unknown as string;
+  });
+
+  it('injects OTel env vars when otelPort is set', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      role: 'engineer',
+      otelPort: 19643,
+    });
+    expect(result.env).toBeDefined();
+    expect(result.env?.CLAUDE_CODE_ENABLE_TELEMETRY).toBe('1');
+    expect(result.env?.OTEL_LOGS_EXPORTER).toBe('otlp');
+    expect(result.env?.OTEL_METRICS_EXPORTER).toBe('otlp');
+    expect(result.env?.OTEL_EXPORTER_OTLP_PROTOCOL).toBe('http/json');
+    expect(result.env?.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://127.0.0.1:19643');
+    expect(result.env?.OTEL_LOG_TOOL_DETAILS).toBe('1');
+    expect(result.env?.OTEL_LOG_USER_PROMPTS).toBe('1');
+  });
+
+  it('includes OTEL_RESOURCE_ATTRIBUTES with agent context', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      role: 'engineer',
+      otelPort: 19643,
+      otelWishSlug: 'my-wish',
+    });
+    const attrs = result.env?.OTEL_RESOURCE_ATTRIBUTES ?? '';
+    expect(attrs).toContain('agent.name=engineer');
+    expect(attrs).toContain('team.name=test-team');
+    expect(attrs).toContain('wish.slug=my-wish');
+    expect(attrs).toContain('agent.role=engineer');
+  });
+
+  it('does not inject OTel env vars when otelPort is not set', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      role: 'engineer',
+    });
+    expect(result.env?.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
+    expect(result.env?.OTEL_LOGS_EXPORTER).toBeUndefined();
+  });
+
+  it('respects otelLogPrompts=false', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'test-team',
+      role: 'engineer',
+      otelPort: 19643,
+      otelLogPrompts: false,
+    });
+    expect(result.env?.OTEL_LOG_USER_PROMPTS).toBeUndefined();
+  });
+
+  it('does not inject when OTEL_EXPORTER_OTLP_ENDPOINT already set', () => {
+    const orig = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://some-other-collector:4318';
+    try {
+      const result = buildClaudeCommand({
+        provider: 'claude',
+        team: 'test-team',
+        role: 'engineer',
+        otelPort: 19643,
+      });
+      // Should not override user's existing OTEL_EXPORTER_OTLP_ENDPOINT
+      expect(result.env?.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
+    } finally {
+      if (orig) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = orig;
+      else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = undefined;
+    }
   });
 });

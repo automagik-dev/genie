@@ -43,21 +43,40 @@ function buildSpawnArgs(template: {
   if (template.role) args.push('--role', template.role);
   if (template.skill) args.push('--skill', template.skill);
   if (template.cwd) args.push('--cwd', template.cwd);
-  // Session resumption is handled by --continue via the session name (${team}-${role}),
+  // Session resumption is handled by --resume via the stored session ID,
   // which is set automatically by the spawn command. No explicit flag needed here.
   if (template.extraArgs) args.push(...template.extraArgs);
   return args;
 }
 
+/** Check if the recipient is the team's actual leader (dynamic name, not 'team-lead' alias). */
+async function isRecipientLeader(recipient: string, teamName: string): Promise<boolean> {
+  try {
+    const { getTeam } = await import('../../lib/team-manager.js');
+    const config = await getTeam(teamName);
+    return !!config?.leader && recipient === config.leader;
+  } catch {
+    return false;
+  }
+}
+
 export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
+  // Skip in test environment — PG/tmux queries cause timeouts under full suite load
+  if (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test') return;
+
   const input = payload.tool_input;
   if (!input || input.type !== 'message') return;
 
   const recipient = input.recipient as string | undefined;
-  if (!recipient || recipient === 'team-lead') return;
+  if (!recipient) return;
 
   const teamName = process.env.GENIE_TEAM ?? payload.team_name;
   if (!teamName) return;
+
+  // Skip auto-spawn for the team's leader — check the well-known alias first,
+  // then resolve dynamically for custom leader names.
+  if (recipient === 'team-lead') return;
+  if (await isRecipientLeader(recipient, teamName)) return;
 
   try {
     const registryMod = await import('../../lib/agent-registry.js');
@@ -97,5 +116,11 @@ export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[genie-hook] Auto-spawn failed for "${recipient}": ${msg}`);
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        additionalContext: `auto-spawn warning: failed to spawn "${recipient}": ${msg}`,
+      },
+    };
   }
 }

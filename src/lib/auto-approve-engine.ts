@@ -8,14 +8,13 @@
  * 1. Watch for permission_request events (from event-listener)
  * 2. Evaluate each request against config (from auto-approve evaluateRequest)
  * 3. If approved: send approval via tmux send-keys -t <pane> Enter
- * 4. Log every decision to audit file: .genie/auto-approve-audit.jsonl
+ * 4. Log every decision to audit_events PG table via recordAuditEvent()
  * 5. If denied/escalated: log it but don't send keys (human must decide)
  * 6. Expose start/stop for the engine
  */
 
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import type { NormalizedEvent } from '../term-commands/events.js';
+import { recordAuditEvent } from './audit.js';
 import { type AutoApproveConfig, type Decision, evaluateRequest } from './auto-approve.js';
 import { type PermissionRequest, extractPermissionRequest } from './event-listener.js';
 import { executeTmux } from './tmux.js';
@@ -23,26 +22,6 @@ import { executeTmux } from './tmux.js';
 // ============================================================================
 // Types
 // ============================================================================
-
-/**
- * Audit log entry written to .genie/auto-approve-audit.jsonl
- */
-export interface AuditLogEntry {
-  /** ISO timestamp of the decision */
-  timestamp: string;
-  /** tmux pane ID (e.g., "%42") */
-  paneId: string | undefined;
-  /** Tool name that was evaluated */
-  toolName: string;
-  /** Decision action: approve, deny, or escalate */
-  action: 'approve' | 'deny' | 'escalate';
-  /** Human-readable reason for the decision */
-  reason: string;
-  /** Associated wish ID */
-  wishId: string | undefined;
-  /** The permission request ID */
-  requestId: string;
-}
 
 /**
  * Engine statistics
@@ -64,14 +43,14 @@ export interface EngineStats {
 interface AutoApproveEngineOptions {
   /** The merged auto-approve configuration */
   config: AutoApproveConfig;
-  /** Base directory for the audit log (audit log goes in <auditDir>/.genie/auto-approve-audit.jsonl) */
-  auditDir: string;
   /**
    * Function to send approval to a tmux pane.
    * Defaults to sendApprovalViaTmux if not provided.
    * Can be overridden for testing.
    */
   sendApproval: (paneId: string) => Promise<void>;
+  /** @deprecated No longer used — audit events are written to PG via recordAuditEvent(). Kept for backward compat. */
+  auditDir?: string;
 }
 
 /**
@@ -90,39 +69,6 @@ export interface AutoApproveEngine {
   processEvent: (event: NormalizedEvent) => Promise<void>;
   /** Get engine statistics */
   getStats: () => EngineStats;
-}
-
-// ============================================================================
-// Audit Log
-// ============================================================================
-
-const AUDIT_LOG_FILENAME = 'auto-approve-audit.jsonl';
-
-/**
- * Get the path to the audit log file
- */
-function getAuditLogPath(auditDir: string): string {
-  return join(auditDir, '.genie', AUDIT_LOG_FILENAME);
-}
-
-/**
- * Ensure the directory for the audit log exists
- */
-function ensureAuditDir(auditDir: string): void {
-  const dir = join(auditDir, '.genie');
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-}
-
-/**
- * Append an audit log entry to the JSONL audit file
- */
-function writeAuditEntry(auditDir: string, entry: AuditLogEntry): void {
-  ensureAuditDir(auditDir);
-  const logPath = getAuditLogPath(auditDir);
-  const line = `${JSON.stringify(entry)}\n`;
-  appendFileSync(logPath, line, 'utf-8');
 }
 
 // ============================================================================
@@ -170,7 +116,7 @@ export async function sendApprovalViaTmux(paneId: string): Promise<void> {
  * @returns AutoApproveEngine instance
  */
 export function createAutoApproveEngine(options: AutoApproveEngineOptions): AutoApproveEngine {
-  const { config, auditDir, sendApproval } = options;
+  const { config, sendApproval } = options;
 
   let running = false;
   let stats: EngineStats = { approved: 0, denied: 0, escalated: 0, total: 0 };
@@ -179,16 +125,14 @@ export function createAutoApproveEngine(options: AutoApproveEngineOptions): Auto
     stats = { approved: 0, denied: 0, escalated: 0, total: 0 };
   }
 
-  function buildAuditEntry(request: PermissionRequest, decision: Decision): AuditLogEntry {
-    return {
-      timestamp: new Date().toISOString(),
-      paneId: request.paneId,
+  /** Record an auto-approve decision to audit_events in PG (best-effort). */
+  function auditDecision(request: PermissionRequest, decision: Decision): void {
+    recordAuditEvent('approval', request.id, decision.action, request.paneId ?? null, {
       toolName: request.toolName,
-      action: decision.action,
       reason: decision.reason,
       wishId: request.wishId,
-      requestId: request.id,
-    };
+      paneId: request.paneId,
+    }).catch(() => {});
   }
 
   function recordStat(action: Decision['action']): void {
@@ -207,17 +151,12 @@ export function createAutoApproveEngine(options: AutoApproveEngineOptions): Auto
     try {
       await sendApproval(request.paneId);
     } catch (err) {
-      const failEntry = buildAuditEntry(
+      auditDecision(
         request,
         escalate(
           `Approval delivery failed via sendApproval (${err instanceof Error ? err.message : String(err)}); send-keys did not reach pane`,
         ),
       );
-      try {
-        writeAuditEntry(auditDir, failEntry);
-      } catch {
-        /* best-effort */
-      }
     }
   }
 
@@ -231,27 +170,15 @@ export function createAutoApproveEngine(options: AutoApproveEngineOptions): Auto
       const decision = escalate(
         `Security: invalid pane ID "${request.paneId}" — possible command injection; escalating to human review`,
       );
-      try {
-        writeAuditEntry(auditDir, buildAuditEntry(request, decision));
-      } catch {
-        /* best-effort */
-      }
+      auditDecision(request, decision);
       recordStat(decision.action);
       return decision;
     }
 
     const decision = evaluateRequest(request, config);
 
-    // Write audit log entry — escalate if audit trail cannot be written
-    try {
-      writeAuditEntry(auditDir, buildAuditEntry(request, decision));
-    } catch (err) {
-      const failDecision = escalate(
-        `Audit log write failed (${err instanceof Error ? err.message : String(err)}); escalating to human review to preserve audit trail`,
-      );
-      recordStat(failDecision.action);
-      return failDecision;
-    }
+    // Record audit event to PG (best-effort, never blocks)
+    auditDecision(request, decision);
 
     recordStat(decision.action);
 

@@ -28,13 +28,23 @@ When dispatched, you receive:
 - Confirm root cause and fix approach
 - Identify affected files and scope of change
 
-## 2. Fix It
+## 2. Verify Before Implementing
+Before applying any review finding or fix suggestion, **verify it is correct**:
+- **Read the code** the finding references — navigate to the exact file and line
+- **Confirm the issue exists** in the current code — the finding may reference stale code, a different branch, or a misunderstanding
+- **Trace the logic** — does the reported behavior actually happen, or did the reviewer misread control flow?
+- **If the finding is wrong**, report back with evidence rather than implementing a bogus fix. A fix for a non-existent bug introduces a real bug.
+- **If the finding is partially correct**, fix only the real part and document what was inaccurate about the original report
+
+This step is mandatory. Blindly applying review feedback is as dangerous as blindly ignoring it.
+
+## 3. Fix It
 - Make minimal, targeted changes
 - Follow project standards
 - Add a regression test if the bug is non-trivial
 - Document the fix inline where the code was unclear
 
-## 3. Verify the Fix
+## 4. Verify the Fix
 - Run existing tests to catch regressions
 - Verify the fix addresses root cause, not just symptoms
 - Test edge cases around the fix

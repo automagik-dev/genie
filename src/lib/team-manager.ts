@@ -1,7 +1,7 @@
 /**
  * Team Manager — CRUD for team lifecycle with git clone --shared isolation.
  *
- * Teams are stored as JSON files in `~/.genie/teams/<safe-name>.json` (global).
+ * Teams are stored in PostgreSQL `teams` table (via embedded pgserve).
  * Each team owns a shared clone at `<worktreeBase>/<team-name>`.
  * Team name IS the branch name (conventional prefixes: feat/, fix/, chore/, etc.).
  *
@@ -11,22 +11,25 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path, { join } from 'node:path';
 import { $ } from 'bun';
 import * as registry from './agent-registry.js';
+import { getActor, recordAuditEvent } from './audit.js';
 import { BUILTIN_COUNCIL_MEMBERS } from './builtin-agents.js';
 import * as nativeTeamsManager from './claude-native-teams.js';
-import { acquireLock } from './file-lock.js';
+import { getConnection } from './db.js';
+import * as executorRegistry from './executor-registry.js';
 import { loadGenieConfigSync } from './genie-config.js';
+import * as tmux from './tmux.js';
 
 // ============================================================================
 // Types
 // ============================================================================
 
 /** Team lifecycle status. */
-export type TeamStatus = 'in_progress' | 'done' | 'blocked';
+export type TeamStatus = 'in_progress' | 'done' | 'blocked' | 'archived';
 
 /** Persisted team configuration. */
 export interface TeamConfig {
@@ -50,28 +53,80 @@ export interface TeamConfig {
   nativeTeamParentSessionId?: string;
   /** Whether this team uses Claude Code native teams. */
   nativeTeamsEnabled?: boolean;
+  /** Tmux session name used by this team — single source of truth for all workers. */
+  tmuxSessionName?: string;
+  /** Wish slug this team is working on (set via --wish). */
+  wishSlug?: string;
+  /** Agent name (or 'cli') that created this team — workers report completion here. */
+  spawner?: string;
+  /** ISO timestamp when the team was archived (null if not archived). */
+  archivedAt?: string;
 }
 
 // ============================================================================
-// Paths — global team storage at ~/.genie/teams/
+// PG Row Mapping
+// ============================================================================
+
+/** Parse JSONB members — handles both parsed arrays and string-encoded JSON. */
+function parseMembers(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+interface TeamConfigRow {
+  name: string;
+  repo: string;
+  base_branch: string;
+  worktree_path: string;
+  members: unknown;
+  status: TeamStatus;
+  created_at: Date | string;
+  leader?: string;
+  native_team_parent_session_id?: string;
+  native_teams_enabled?: boolean;
+  tmux_session_name?: string;
+  wish_slug?: string;
+  spawner?: string;
+  archived_at?: Date | string | null;
+}
+
+/** Map a PG row to a TeamConfig object. */
+function rowToTeamConfig(row: TeamConfigRow): TeamConfig {
+  const config: TeamConfig = {
+    name: row.name,
+    repo: row.repo,
+    baseBranch: row.base_branch,
+    worktreePath: row.worktree_path,
+    members: parseMembers(row.members),
+    status: row.status,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+  };
+  if (row.leader) config.leader = row.leader;
+  if (row.native_team_parent_session_id) config.nativeTeamParentSessionId = row.native_team_parent_session_id;
+  if (row.native_teams_enabled) config.nativeTeamsEnabled = row.native_teams_enabled;
+  if (row.tmux_session_name) config.tmuxSessionName = row.tmux_session_name;
+  if (row.wish_slug) config.wishSlug = row.wish_slug;
+  if (row.spawner) config.spawner = row.spawner;
+  if (row.archived_at) {
+    config.archivedAt = row.archived_at instanceof Date ? row.archived_at.toISOString() : String(row.archived_at);
+  }
+  return config;
+}
+
+// ============================================================================
+// Paths — worktree resolution (still needed for git operations)
 // ============================================================================
 
 function getGenieDir(): string {
   return process.env.GENIE_HOME ?? join(homedir(), '.genie');
-}
-
-function teamsDir(): string {
-  return join(getGenieDir(), 'teams');
-}
-
-/** Sanitize team name for use as a filename (slashes become dashes). */
-function safeFileName(name: string): string {
-  return name.replace(/\//g, '--');
-}
-
-function teamFilePath(name: string): string {
-  const safeName = safeFileName(path.basename(name) === name ? name : name);
-  return join(teamsDir(), `${safeName}.json`);
 }
 
 /** Resolve the worktree base directory from config. */
@@ -132,10 +187,21 @@ async function killWorkersByName(agentName: string, teamName?: string): Promise<
     (w) => (w.role === agentName || w.id === agentName) && (!teamName || w.team === teamName),
   );
   for (const w of matches) {
+    // Terminate executor first (if linked)
+    if (w.currentExecutorId) {
+      try {
+        await executorRegistry.terminateExecutor(w.currentExecutorId);
+        await registry.setCurrentExecutor(w.id, null);
+      } catch {
+        // Best-effort
+      }
+    }
+    // Kill tmux pane via executor pane ID or legacy agent pane ID
     try {
       if (w.paneId && w.paneId !== 'inline') {
         const { execSync } = require('node:child_process');
-        execSync(`tmux kill-pane -t ${w.paneId}`, { stdio: 'ignore' });
+        const { genieTmuxCmd } = require('./tmux-wrapper.js');
+        execSync(genieTmuxCmd(`kill-pane -t ${w.paneId}`), { stdio: 'ignore' });
       }
     } catch {
       // Pane may already be gone
@@ -206,21 +272,16 @@ async function ensureWorktree(
  * Create a new team with a shared clone.
  *
  * Idempotent — if the team already exists, returns existing config.
- * Steps: validate name → git pull on baseBranch → git clone --shared → persist config.
+ * Steps: validate name → git pull on baseBranch → git clone --shared → persist to PG.
  */
 export async function createTeam(name: string, repo: string, baseBranch = 'dev'): Promise<TeamConfig> {
   validateBranchName(name);
 
   const repoPath = path.resolve(repo);
-  const dir = teamsDir();
-  await mkdir(dir, { recursive: true });
 
-  // Idempotent: return existing team if it already exists
-  const filePath = teamFilePath(name);
-  if (existsSync(filePath)) {
-    const content = await readFile(filePath, 'utf-8');
-    return JSON.parse(content);
-  }
+  // Idempotent: return existing team if it already exists in PG
+  const existing = await getTeam(name);
+  if (existing) return existing;
 
   const worktreeBase = getWorktreeBase(repoPath);
   const worktreePath = join(worktreeBase, name);
@@ -249,7 +310,25 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
     }
   }
 
-  await writeFile(filePath, JSON.stringify(config, null, 2));
+  const sql = await getConnection();
+  await sql`
+    INSERT INTO teams (
+      name, repo, base_branch, worktree_path, leader,
+      members, status, native_team_parent_session_id,
+      native_teams_enabled, tmux_session_name, wish_slug, spawner, created_at
+    ) VALUES (
+      ${config.name}, ${config.repo}, ${config.baseBranch},
+      ${config.worktreePath}, ${config.leader ?? null},
+      ${JSON.stringify(config.members)}, ${config.status},
+      ${config.nativeTeamParentSessionId ?? null},
+      ${config.nativeTeamsEnabled ?? false},
+      ${config.tmuxSessionName ?? null}, ${config.wishSlug ?? null},
+      ${config.spawner ?? null}, ${config.createdAt}
+    ) ON CONFLICT (name) DO NOTHING
+  `;
+
+  recordAuditEvent('team', name, 'created', getActor(), { repo: repoPath, baseBranch }).catch(() => {});
+
   return config;
 }
 
@@ -279,8 +358,11 @@ export async function hireAgent(teamName: string, agentName: string): Promise<st
     added = [agentName];
   }
 
-  const filePath = teamFilePath(teamName);
-  await writeFile(filePath, JSON.stringify(config, null, 2));
+  const sql = await getConnection();
+  await sql`
+    UPDATE teams SET members = ${JSON.stringify(config.members)}
+    WHERE name = ${teamName}
+  `;
   return added;
 }
 
@@ -298,8 +380,11 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
   if (idx === -1) return false;
 
   config.members.splice(idx, 1);
-  const filePath = teamFilePath(teamName);
-  await writeFile(filePath, JSON.stringify(config, null, 2));
+  const sql = await getConnection();
+  await sql`
+    UPDATE teams SET members = ${JSON.stringify(config.members)}
+    WHERE name = ${teamName}
+  `;
 
   // Best-effort kill running agent
   try {
@@ -311,21 +396,110 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
   return true;
 }
 
+async function removeWorktree(worktreePath: string | undefined): Promise<void> {
+  if (!worktreePath || !existsSync(worktreePath)) return;
+  try {
+    // Use git worktree remove for proper cleanup of object store references
+    await $`git worktree remove --force ${worktreePath}`.quiet();
+  } catch {
+    // Fallback to rm for non-worktree clones (e.g., --shared clones)
+    try {
+      await rm(worktreePath, { recursive: true, force: true });
+    } catch {
+      // Best-effort
+    }
+  }
+}
+
+/** Clean up tmux session/window for a disbanded team. */
+async function cleanupTeamTmuxSession(tmuxSessionName: string, teamName: string): Promise<void> {
+  if (!tmuxSessionName) return;
+  try {
+    const session = await tmux.findSessionByName(tmuxSessionName);
+    if (!session) return;
+
+    const windows = await tmux.listWindows(tmuxSessionName);
+    const teamWindow = await tmux.findWindowByName(tmuxSessionName, teamName);
+    const dedicatedSession = tmuxSessionName === teamName || (windows.length === 1 && windows[0]?.name === teamName);
+
+    if (dedicatedSession) {
+      await tmux.killSession(tmuxSessionName);
+    } else if (teamWindow) {
+      await tmux.executeTmux(`kill-window -t '${teamWindow.id}'`);
+    }
+  } catch {
+    // Best-effort
+  }
+}
+
 /**
- * Disband a team: remove shared clone and delete team config.
+ * Archive a team: set status='archived', kill members, clean up tmux.
+ * Preserves all data (members, wish_slug, metadata).
+ */
+export async function archiveTeam(teamName: string): Promise<boolean> {
+  const config = await getTeam(teamName);
+  if (!config) return false;
+
+  // Kill all running team members in parallel — must complete BEFORE DB update
+  // to prevent zombie workers writing to an archived team
+  const killResults = await Promise.allSettled(config.members.map((member) => killWorkersByName(member, teamName)));
+  for (let i = 0; i < killResults.length; i++) {
+    if (killResults[i].status === 'rejected') {
+      console.error(
+        `   Failed to kill member "${config.members[i]}": ${(killResults[i] as PromiseRejectedResult).reason}`,
+      );
+    }
+  }
+
+  await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
+
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE teams SET status = 'archived', archived_at = now(), updated_at = now()
+    WHERE name = ${teamName}
+  `;
+  if (result.count === 0) return false;
+
+  recordAuditEvent('team', teamName, 'archived', getActor(), { repo: config.repo }).catch(() => {});
+  return true;
+}
+
+/**
+ * Unarchive a team: restore status to 'done' or 'in_progress'.
+ */
+export async function unarchiveTeam(teamName: string): Promise<boolean> {
+  const config = await getTeam(teamName);
+  if (!config) return false;
+
+  const restoredStatus = 'done';
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE teams SET status = ${restoredStatus}, archived_at = NULL, updated_at = now()
+    WHERE name = ${teamName}
+  `;
+  if (result.count === 0) return false;
+
+  recordAuditEvent('team', teamName, 'unarchived', getActor(), { repo: config.repo, restoredStatus }).catch(() => {});
+  return true;
+}
+
+/**
+ * Disband a team: archives instead of deleting (data-preserving).
+ * Kills members, cleans up native team config, resets wish groups, removes worktree.
  * Returns true if the team was found and disbanded.
+ *
+ * @deprecated Use `archiveTeam` directly. Disband now archives to preserve data.
  */
 export async function disbandTeam(teamName: string): Promise<boolean> {
   const config = await getTeam(teamName);
   if (!config) return false;
 
-  // Clean up native teams if enabled
-  if (config.nativeTeamsEnabled) {
-    try {
-      await nativeTeamsManager.deleteNativeTeam(teamName);
-    } catch {
-      // Best-effort
-    }
+  // Clean up ~/.claude/teams/<name>/ (config.json, settings.json, inboxes)
+  // Always attempt — hook injection writes settings.json regardless of nativeTeamsEnabled
+  try {
+    await nativeTeamsManager.deleteNativeTeam(teamName);
+  } catch {
+    // Best-effort
   }
 
   // Kill all running team members (scoped to this team only)
@@ -337,22 +511,51 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     }
   }
 
-  // Remove shared clone directory
-  if (config.worktreePath && existsSync(config.worktreePath)) {
-    try {
-      await rm(config.worktreePath, { recursive: true, force: true });
-    } catch {
-      // Best-effort
-    }
-  }
+  await removeWorktree(config.worktreePath);
+  await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
 
-  // Delete team config file
-  const filePath = teamFilePath(teamName);
-  try {
-    await unlink(filePath);
-  } catch {
-    return false;
-  }
+  // Atomically reset wish groups + archive team in a single transaction
+  // to prevent orphaned wish state if either operation fails
+  const sql = await getConnection();
+  let disbanded = false;
+  await sql.begin(async (tx: typeof sql) => {
+    // Reset wish groups inline within the transaction
+    if (config.wishSlug) {
+      try {
+        const wishFile = `.genie/wishes/${config.wishSlug}/WISH.md`;
+        const parent = await tx`
+          SELECT id FROM tasks
+          WHERE wish_file = ${wishFile} AND repo_path = ${config.repo} AND parent_id IS NULL
+          LIMIT 1
+        `;
+        if (parent.length > 0) {
+          const parentId = parent[0].id as string;
+          const inProgress = await tx`
+            SELECT id FROM tasks WHERE parent_id = ${parentId} AND status = 'in_progress'
+          `;
+          if (inProgress.length > 0) {
+            const ids = inProgress.map((r: Record<string, unknown>) => r.id as string);
+            await tx`UPDATE tasks SET status = 'ready', started_at = NULL, updated_at = now() WHERE id = ANY(${ids})`;
+            await tx`DELETE FROM task_actors WHERE task_id = ANY(${ids}) AND role = 'assignee'`;
+            console.log(`   Reset ${ids.length} in-progress group(s) for wish "${config.wishSlug}"`);
+          }
+        }
+      } catch {
+        // Best-effort within transaction — don't abort archive on wish state issues
+      }
+    }
+
+    // Archive instead of delete — preserves all historical data
+    const result = await tx`
+      UPDATE teams SET status = 'archived', archived_at = now(), updated_at = now()
+      WHERE name = ${teamName}
+    `;
+    disbanded = result.count > 0;
+  });
+
+  if (!disbanded) return false;
+
+  recordAuditEvent('team', teamName, 'disbanded', getActor(), { repo: config.repo }).catch(() => {});
 
   // Prune stale configs (remove team configs whose clone directories are gone)
   await pruneStaleWorktrees(config.repo);
@@ -363,58 +566,68 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
 /**
  * Prune stale team configs.
  *
- * Scans all team configs — if a team's worktreePath (clone directory) no longer
- * exists on disk, deletes that team's config file.
+ * Scans all team configs in PG — if a team's worktreePath (clone directory) no longer
+ * exists on disk, deletes that team's row and its ~/.claude/teams/ dir.
  */
-export async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
-  const dir = teamsDir();
-  let files: string[];
-  try {
-    files = await readdir(dir);
-  } catch {
-    return; // No teams dir — nothing to prune
-  }
+async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
+  const sql = await getConnection();
+  const rows = await sql`SELECT name, worktree_path FROM teams`;
 
-  for (const file of files) {
-    if (!file.endsWith('.json')) continue;
-    try {
-      const content = await readFile(join(dir, file), 'utf-8');
-      const config: TeamConfig = JSON.parse(content);
-      if (config.worktreePath && !existsSync(config.worktreePath)) {
-        await unlink(join(dir, file));
+  for (const row of rows) {
+    if (row.worktree_path && !existsSync(row.worktree_path)) {
+      // Clean up orphaned ~/.claude/teams/<name>/ (settings.json, hooks)
+      try {
+        await nativeTeamsManager.deleteNativeTeam(row.name);
+      } catch {
+        // Best-effort
       }
-    } catch {
-      // Skip corrupted files
+      await sql`DELETE FROM teams WHERE name = ${row.name}`;
     }
   }
+}
+
+/** Update team config in PG (full overwrite). */
+export async function updateTeamConfig(name: string, config: TeamConfig): Promise<void> {
+  const sql = await getConnection();
+  await sql`
+    UPDATE teams SET
+      repo = ${config.repo},
+      base_branch = ${config.baseBranch},
+      worktree_path = ${config.worktreePath},
+      leader = ${config.leader ?? null},
+      members = ${JSON.stringify(config.members)},
+      status = ${config.status},
+      native_team_parent_session_id = ${config.nativeTeamParentSessionId ?? null},
+      native_teams_enabled = ${config.nativeTeamsEnabled ?? false},
+      tmux_session_name = ${config.tmuxSessionName ?? null},
+      wish_slug = ${config.wishSlug ?? null},
+      spawner = ${config.spawner ?? null}
+    WHERE name = ${name}
+  `;
 }
 
 /** Get a team by name. Returns null if not found. */
 export async function getTeam(name: string): Promise<TeamConfig | null> {
   try {
-    const content = await readFile(teamFilePath(name), 'utf-8');
-    return JSON.parse(content);
+    const sql = await getConnection();
+    const rows = await sql`SELECT * FROM teams WHERE name = ${name}`;
+    if (rows.length === 0) return null;
+    return rowToTeamConfig(rows[0]);
   } catch {
     return null;
   }
 }
 
-/** List all teams globally. */
-export async function listTeams(): Promise<TeamConfig[]> {
-  const dir = teamsDir();
+/** List all teams globally, optionally including archived. */
+export async function listTeams(includeArchived = false): Promise<TeamConfig[]> {
   try {
-    const files = await readdir(dir);
-    const teams: TeamConfig[] = [];
-    for (const file of files) {
-      if (!file.endsWith('.json')) continue;
-      try {
-        const content = await readFile(join(dir, file), 'utf-8');
-        teams.push(JSON.parse(content));
-      } catch {
-        // skip corrupted files
-      }
+    const sql = await getConnection();
+    if (includeArchived) {
+      const rows = await sql`SELECT * FROM teams ORDER BY created_at DESC`;
+      return rows.map(rowToTeamConfig);
     }
-    return teams;
+    const rows = await sql`SELECT * FROM teams WHERE status != 'archived' ORDER BY created_at DESC`;
+    return rows.map(rowToTeamConfig);
   } catch {
     return [];
   }
@@ -441,18 +654,29 @@ export async function killTeamMembers(teamName: string): Promise<void> {
   }
 }
 
-/** Set team lifecycle status. */
-export async function setTeamStatus(teamName: string, status: TeamStatus): Promise<void> {
-  const filePath = teamFilePath(teamName);
-  const release = await acquireLock(filePath);
+/**
+ * Resolve the actual leader name for a team. Never returns 'team-lead'.
+ * Resolution order: team config DB → teamName as fallback.
+ * If DB is unreachable or team doesn't exist, returns teamName (never 'team-lead').
+ */
+export async function resolveLeaderName(teamName: string): Promise<string> {
   try {
     const config = await getTeam(teamName);
-    if (!config) {
-      throw new Error(`Team "${teamName}" not found.`);
-    }
-    config.status = status;
-    await writeFile(filePath, JSON.stringify(config, null, 2));
-  } finally {
-    await release();
+    if (config?.leader && config.leader !== 'team-lead') return config.leader;
+  } catch {
+    // DB unreachable — fall through to teamName
+  }
+  return teamName;
+}
+
+/** Set team lifecycle status. */
+export async function setTeamStatus(teamName: string, status: TeamStatus): Promise<void> {
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE teams SET status = ${status}
+    WHERE name = ${teamName}
+  `;
+  if (result.count === 0) {
+    throw new Error(`Team "${teamName}" not found.`);
   }
 }

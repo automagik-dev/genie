@@ -1,26 +1,48 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+/**
+ * Tests for wish-state.ts — PG-backed state machine for wish execution groups.
+ *
+ * Requires pgserve (auto-started via getConnection).
+ * Each test uses a unique repo_path for isolation.
+ */
+
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { execSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 import {
   type GroupDefinition,
   completeGroup,
   createState,
+  findAnyGroupByAssignee,
+  findGroupByAssignee,
   getGroupState,
+  getOrCreateState,
   getState,
+  isWishComplete,
   resetGroup,
+  resetInProgressGroups,
+  resolveRepoPath,
   startGroup,
 } from './wish-state.js';
 
-describe('wish-state', () => {
-  let cwd: string;
+let cwd: string;
 
-  beforeEach(async () => {
-    cwd = await mkdtemp(join(tmpdir(), 'genie-wish-state-'));
+describe.skipIf(!DB_AVAILABLE)('pg', () => {
+  let cleanupSchema: () => Promise<void>;
+
+  beforeAll(async () => {
+    cleanupSchema = await setupTestSchema();
   });
 
-  afterEach(async () => {
-    await rm(cwd, { recursive: true, force: true });
+  afterAll(async () => {
+    await cleanupSchema();
+  });
+
+  beforeEach(() => {
+    // Unique repo path per test for isolation
+    cwd = `/tmp/genie-wish-state-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   });
 
   const sampleGroups: GroupDefinition[] = [
@@ -35,7 +57,7 @@ describe('wish-state', () => {
   // ============================================================================
 
   describe('createState', () => {
-    test('creates state file with correct initial statuses', async () => {
+    test('creates state with correct initial statuses', async () => {
       const state = await createState('test-wish', sampleGroups, cwd);
 
       expect(state.wish).toBe('test-wish');
@@ -45,15 +67,13 @@ describe('wish-state', () => {
       expect(state.groups['4'].status).toBe('blocked');
     });
 
-    test('persists state file to disk', async () => {
+    test('persists state to PG', async () => {
       await createState('test-wish', sampleGroups, cwd);
 
-      const filePath = join(cwd, '.genie', 'state', 'test-wish.json');
-      const content = await readFile(filePath, 'utf-8');
-      const parsed = JSON.parse(content);
-
-      expect(parsed.wish).toBe('test-wish');
-      expect(parsed.groups['1'].status).toBe('ready');
+      const state = await getState('test-wish', cwd);
+      expect(state).not.toBeNull();
+      expect(state?.wish).toBe('test-wish');
+      expect(state?.groups['1'].status).toBe('ready');
     });
 
     test('groups with no deps are ready', async () => {
@@ -88,7 +108,7 @@ describe('wish-state', () => {
       expect(result.startedAt).toBeTruthy();
     });
 
-    test('persists state change to disk', async () => {
+    test('persists state change to PG', async () => {
       await createState('test-wish', sampleGroups, cwd);
       await startGroup('test-wish', '1', 'agent-a', cwd);
 
@@ -264,6 +284,39 @@ describe('wish-state', () => {
   });
 
   // ============================================================================
+  // getOrCreateState
+  // ============================================================================
+
+  describe('getOrCreateState', () => {
+    test('creates state when none exists', async () => {
+      const state = await getOrCreateState('new-wish', sampleGroups, cwd);
+
+      expect(state.wish).toBe('new-wish');
+      expect(state.groups['1'].status).toBe('ready');
+      expect(state.groups['2'].status).toBe('blocked');
+    });
+
+    test('returns existing state without overwriting', async () => {
+      await createState('existing-wish', sampleGroups, cwd);
+      await startGroup('existing-wish', '1', 'agent-a', cwd);
+
+      // Call getOrCreateState — should return existing state, not reset it
+      const state = await getOrCreateState('existing-wish', sampleGroups, cwd);
+
+      expect(state.groups['1'].status).toBe('in_progress');
+      expect(state.groups['1'].assignee).toBe('agent-a');
+    });
+
+    test('is idempotent — multiple calls return same state', async () => {
+      const first = await getOrCreateState('idem-wish', sampleGroups, cwd);
+      const second = await getOrCreateState('idem-wish', sampleGroups, cwd);
+
+      expect(first.wish).toBe(second.wish);
+      expect(Object.keys(first.groups)).toEqual(Object.keys(second.groups));
+    });
+  });
+
+  // ============================================================================
   // Full lifecycle
   // ============================================================================
 
@@ -357,7 +410,7 @@ describe('wish-state', () => {
       expect(result.startedAt).toBeUndefined();
     });
 
-    test('persists reset to disk', async () => {
+    test('persists reset to PG', async () => {
       await createState('test-wish', sampleGroups, cwd);
       await startGroup('test-wish', '1', 'agent-a', cwd);
       await resetGroup('test-wish', '1', cwd);
@@ -407,6 +460,280 @@ describe('wish-state', () => {
       const result = await startGroup('test-wish', '1', 'agent-b', cwd);
       expect(result.status).toBe('in_progress');
       expect(result.assignee).toBe('agent-b');
+    });
+  });
+
+  // ============================================================================
+  // findGroupByAssignee
+  // ============================================================================
+
+  describe('findGroupByAssignee', () => {
+    test('finds group by exact assignee match', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+
+      const result = await findGroupByAssignee('test-wish', 'agent-a', cwd);
+
+      expect(result).not.toBeNull();
+      expect(result?.groupName).toBe('1');
+      expect(result?.group.status).toBe('in_progress');
+      expect(result?.group.assignee).toBe('agent-a');
+    });
+
+    test('finds group by team-prefixed workerId', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'engineer', cwd);
+
+      const result = await findGroupByAssignee('test-wish', 'fire-and-forget-engineer', cwd);
+
+      expect(result).not.toBeNull();
+      expect(result?.groupName).toBe('1');
+      expect(result?.group.assignee).toBe('engineer');
+    });
+
+    test('returns null when no matching assignee', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+
+      const result = await findGroupByAssignee('test-wish', 'agent-b', cwd);
+
+      expect(result).toBeNull();
+    });
+
+    test('returns null for nonexistent slug', async () => {
+      const result = await findGroupByAssignee('nonexistent', 'agent-a', cwd);
+      expect(result).toBeNull();
+    });
+
+    test('ignores done groups', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+      await completeGroup('test-wish', '1', cwd);
+
+      const result = await findGroupByAssignee('test-wish', 'agent-a', cwd);
+
+      expect(result).toBeNull();
+    });
+
+    test('ignores ready groups', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+
+      const result = await findGroupByAssignee('test-wish', 'agent-a', cwd);
+
+      expect(result).toBeNull();
+    });
+
+    test('returns first matching in_progress group', async () => {
+      const groups: GroupDefinition[] = [{ name: 'a' }, { name: 'b' }];
+      await createState('multi', groups, cwd);
+      await startGroup('multi', 'a', 'agent-a', cwd);
+      await startGroup('multi', 'b', 'agent-a', cwd);
+
+      const result = await findGroupByAssignee('multi', 'agent-a', cwd);
+
+      expect(result).not.toBeNull();
+      expect(result?.group.status).toBe('in_progress');
+    });
+  });
+
+  // ============================================================================
+  // findAnyGroupByAssignee
+  // ============================================================================
+
+  describe('findAnyGroupByAssignee', () => {
+    test('finds group across all wishes', async () => {
+      await createState('wish-a', sampleGroups, cwd);
+      await startGroup('wish-a', '1', 'agent-x', cwd);
+
+      const result = await findAnyGroupByAssignee('agent-x', cwd);
+
+      expect(result).not.toBeNull();
+      expect(result?.slug).toBe('wish-a');
+      expect(result?.groupName).toBe('1');
+    });
+
+    test('matches team-prefixed worker IDs', async () => {
+      await createState('wish-b', [{ name: '1' }], cwd);
+      await startGroup('wish-b', '1', 'engineer', cwd);
+
+      const result = await findAnyGroupByAssignee('team-name-engineer', cwd);
+
+      expect(result).not.toBeNull();
+      expect(result?.slug).toBe('wish-b');
+      expect(result?.group.assignee).toBe('engineer');
+    });
+
+    test('returns null when no match', async () => {
+      await createState('wish-c', sampleGroups, cwd);
+
+      const result = await findAnyGroupByAssignee('nobody', cwd);
+      expect(result).toBeNull();
+    });
+  });
+
+  // ============================================================================
+  // isWishComplete
+  // ============================================================================
+
+  describe('isWishComplete', () => {
+    test('returns false when no state exists', async () => {
+      expect(await isWishComplete('nonexistent', cwd)).toBe(false);
+    });
+
+    test('returns false when some groups are not done', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+      await completeGroup('test-wish', '1', cwd);
+
+      expect(await isWishComplete('test-wish', cwd)).toBe(false);
+    });
+
+    test('returns true when all groups are done', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+
+      await startGroup('test-wish', '1', 'a', cwd);
+      await completeGroup('test-wish', '1', cwd);
+
+      await startGroup('test-wish', '2', 'b', cwd);
+      await completeGroup('test-wish', '2', cwd);
+
+      await startGroup('test-wish', '3', 'c', cwd);
+      await completeGroup('test-wish', '3', cwd);
+
+      await startGroup('test-wish', '4', 'd', cwd);
+      await completeGroup('test-wish', '4', cwd);
+
+      expect(await isWishComplete('test-wish', cwd)).toBe(true);
+    });
+
+    test('returns false when groups are in_progress', async () => {
+      await createState('test-wish', [{ name: '1' }], cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+
+      expect(await isWishComplete('test-wish', cwd)).toBe(false);
+    });
+  });
+
+  // ============================================================================
+  // resetInProgressGroups
+  // ============================================================================
+
+  describe('resetInProgressGroups', () => {
+    test('returns 0 for nonexistent wish', async () => {
+      expect(await resetInProgressGroups('nonexistent', cwd)).toBe(0);
+    });
+
+    test('resets all in_progress groups to ready', async () => {
+      const groups: GroupDefinition[] = [{ name: 'a' }, { name: 'b' }, { name: 'c' }];
+      await createState('reset-all', groups, cwd);
+      await startGroup('reset-all', 'a', 'agent-1', cwd);
+      await startGroup('reset-all', 'b', 'agent-2', cwd);
+
+      const count = await resetInProgressGroups('reset-all', cwd);
+      expect(count).toBe(2);
+
+      const state = await getState('reset-all', cwd);
+      expect(state?.groups.a.status).toBe('ready');
+      expect(state?.groups.a.assignee).toBeUndefined();
+      expect(state?.groups.b.status).toBe('ready');
+      expect(state?.groups.b.assignee).toBeUndefined();
+      expect(state?.groups.c.status).toBe('ready'); // was already ready
+    });
+
+    test('does not touch done groups', async () => {
+      await createState('reset-done', sampleGroups, cwd);
+      await startGroup('reset-done', '1', 'a', cwd);
+      await completeGroup('reset-done', '1', cwd);
+      await startGroup('reset-done', '2', 'b', cwd);
+
+      const count = await resetInProgressGroups('reset-done', cwd);
+      expect(count).toBe(1); // only group 2
+
+      const state = await getState('reset-done', cwd);
+      expect(state?.groups['1'].status).toBe('done');
+      expect(state?.groups['2'].status).toBe('ready');
+    });
+
+    test('returns 0 when no groups are in_progress', async () => {
+      await createState('reset-none', [{ name: '1' }], cwd);
+      const count = await resetInProgressGroups('reset-none', cwd);
+      expect(count).toBe(0);
+    });
+  });
+
+  // ============================================================================
+  // resolveRepoPath — worktree normalization
+  // ============================================================================
+
+  describe('resolveRepoPath', () => {
+    let mainRepo: string;
+    let worktreePath: string;
+    let originalCwd: string;
+
+    beforeAll(() => {
+      originalCwd = process.cwd();
+
+      // Create a real git repo
+      mainRepo = mkdtempSync(join(tmpdir(), 'genie-resolve-test-'));
+      execSync('git init', { cwd: mainRepo, stdio: 'pipe' });
+      execSync('git config user.email "test@test.com"', { cwd: mainRepo, stdio: 'pipe' });
+      execSync('git config user.name "Test"', { cwd: mainRepo, stdio: 'pipe' });
+      execSync('git commit --allow-empty -m "init"', { cwd: mainRepo, stdio: 'pipe' });
+
+      // Create a worktree
+      worktreePath = `${mainRepo}-worktree`;
+      execSync(`git worktree add ${worktreePath} -b test-branch`, { cwd: mainRepo, stdio: 'pipe' });
+    });
+
+    afterAll(() => {
+      process.chdir(originalCwd);
+      try {
+        execSync(`git worktree remove ${worktreePath} --force`, { cwd: mainRepo, stdio: 'pipe' });
+      } catch {
+        /* already cleaned up */
+      }
+      rmSync(mainRepo, { recursive: true, force: true });
+      rmSync(worktreePath, { recursive: true, force: true });
+    });
+
+    test('returns cwd when cwd is explicitly provided', () => {
+      const result = resolveRepoPath('/some/explicit/path');
+      expect(result).toBe('/some/explicit/path');
+    });
+
+    test('returns main repo path from main repo', () => {
+      process.chdir(mainRepo);
+      const result = resolveRepoPath();
+      expect(result).toBe(mainRepo);
+    });
+
+    test('returns main repo path from worktree (not worktree path)', () => {
+      process.chdir(worktreePath);
+      const result = resolveRepoPath();
+      // Key assertion: from worktree, resolveRepoPath returns the main repo
+      expect(result).toBe(mainRepo);
+    });
+
+    test('main repo and worktree resolve to the same path', () => {
+      process.chdir(mainRepo);
+      const fromMain = resolveRepoPath();
+
+      process.chdir(worktreePath);
+      const fromWorktree = resolveRepoPath();
+
+      expect(fromMain).toBe(fromWorktree);
+    });
+
+    test('falls back to cwd when not in a git repo', () => {
+      // Use /var/tmp to avoid /tmp/.git which may exist on some machines
+      const base = existsSync('/var/tmp') ? '/var/tmp' : tmpdir();
+      const nonGitDir = mkdtempSync(join(base, 'genie-non-git-'));
+      process.chdir(nonGitDir);
+
+      const result = resolveRepoPath();
+      expect(result).toBe(nonGitDir);
+
+      rmSync(nonGitDir, { recursive: true, force: true });
     });
   });
 });

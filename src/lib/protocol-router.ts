@@ -13,10 +13,9 @@
  *   4. Native inbox fallback
  */
 
-import { resolveSessionName } from '../genie-commands/session.js';
-import { filterBySession as registryFilterBySession } from './agent-registry.js';
 import * as registry from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
+import { getConnection } from './db.js';
 import * as mailbox from './mailbox.js';
 import { detectState } from './orchestrator/index.js';
 import { capturePaneContent, executeTmux, isPaneAlive } from './tmux.js';
@@ -25,8 +24,6 @@ import { capturePaneContent, executeTmux, isPaneAlive } from './tmux.js';
 // Types
 // ============================================================================
 
-type DirectoryResolution = { entry: { name: string } } | null;
-
 interface DeliveryResult {
   messageId: string;
   workerId: string;
@@ -34,75 +31,15 @@ interface DeliveryResult {
   reason?: string;
 }
 
-export interface ProtocolRouterTestDeps {
-  registry?: Pick<
-    typeof registry,
-    'filterBySession' | 'get' | 'list' | 'listTemplates' | 'saveTemplate' | 'unregister'
-  >;
-  resolveSessionName?: typeof resolveSessionName;
-  resolveDirectory?: (recipientId: string) => Promise<DirectoryResolution>;
-  spawnWorkerFromTemplate?: (
-    template: registry.WorkerTemplate,
-    resumeSessionId?: string,
-    senderSession?: string,
-  ) => Promise<{ worker: registry.Agent; paneId: string; workerId: string }>;
-  detectState?: typeof detectState;
-  capturePaneContent?: typeof capturePaneContent;
-  executeTmux?: typeof executeTmux;
-  isPaneAlive?: typeof isPaneAlive;
-}
+// ============================================================================
+// Dependency injection (testability without mock.module)
+// ============================================================================
 
-let testDeps: Partial<ProtocolRouterTestDeps> = {};
-
-export function __setProtocolRouterTestDeps(deps: Partial<ProtocolRouterTestDeps>): void {
-  testDeps = { ...testDeps, ...deps };
-}
-
-export function __resetProtocolRouterTestDeps(): void {
-  testDeps = {};
-}
-
-function getRegistryApi(): typeof registry {
-  return (testDeps.registry as typeof registry | undefined) ?? registry;
-}
-
-function getResolveSessionName(): typeof resolveSessionName {
-  return testDeps.resolveSessionName ?? resolveSessionName;
-}
-
-function getDetectState(): typeof detectState {
-  return testDeps.detectState ?? detectState;
-}
-
-function getCapturePaneContent(): typeof capturePaneContent {
-  return testDeps.capturePaneContent ?? capturePaneContent;
-}
-
-function getExecuteTmux(): typeof executeTmux {
-  return testDeps.executeTmux ?? executeTmux;
-}
-
-function getIsPaneAlive(): typeof isPaneAlive {
-  return testDeps.isPaneAlive ?? isPaneAlive;
-}
-
-async function resolveDirectory(recipientId: string): Promise<DirectoryResolution> {
-  if (testDeps.resolveDirectory) return testDeps.resolveDirectory(recipientId);
-  const { resolve } = await import('./agent-directory.js');
-  return resolve(recipientId);
-}
-
-async function spawnFromTemplate(
-  template: registry.WorkerTemplate,
-  continueName?: string,
-  senderSession?: string,
-): Promise<{ worker: registry.Agent; paneId: string; workerId: string }> {
-  if (testDeps.spawnWorkerFromTemplate) {
-    return testDeps.spawnWorkerFromTemplate(template, continueName, senderSession);
-  }
-  const { spawnWorkerFromTemplate } = await import('./protocol-router-spawn.js');
-  return spawnWorkerFromTemplate(template, continueName, senderSession);
-}
+/** Overridable deps for testing — avoids mock.module which leaks across test files in bun. */
+export const _deps = {
+  isPaneAlive: isPaneAlive as (paneId: string) => Promise<boolean>,
+  waitForWorkerReady: null as null | ((paneId: string, timeoutMs?: number) => Promise<boolean>),
+};
 
 // ============================================================================
 // Auto-Spawn Helpers
@@ -117,8 +54,8 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const content = await getCapturePaneContent()(paneId, 30);
-      const state = getDetectState()(content);
+      const content = await capturePaneContent(paneId, 30);
+      const state = detectState(content);
       if (state.type === 'idle') return true;
     } catch {
       /* pane not ready yet */
@@ -128,53 +65,30 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
   return false;
 }
 
-/** Fetch workers scoped to a session, or all workers if no session specified. */
-async function scopedWorkers(senderSession?: string): Promise<registry.Agent[]> {
-  const registryApi = getRegistryApi();
-  return senderSession
-    ? (testDeps.registry?.filterBySession?.(senderSession) ?? registryFilterBySession(senderSession))
-    : registryApi.list();
-}
-
-async function scopedTemplates(senderSession?: string): Promise<registry.WorkerTemplate[]> {
-  const templates = await getRegistryApi().listTemplates();
-  if (!senderSession) return templates;
-
-  const scoped: registry.WorkerTemplate[] = [];
-  for (const template of templates) {
-    if ((await getResolveSessionName()(template.cwd)) === senderSession) {
-      scoped.push(template);
-    }
+/** Check if a worker is in a dead state (suspended/terminated/offline). */
+async function isWorkerDead(w: registry.Agent): Promise<boolean> {
+  if (w.currentExecutorId) {
+    const state = await registry.getAgentEffectiveState(w.id);
+    return state === 'terminated' || state === 'offline';
   }
-  return scoped;
-}
-
-function matchesRecipient(agent: Pick<registry.Agent, 'id' | 'role' | 'team'>, recipientId: string): boolean {
-  return agent.id === recipientId || agent.role === recipientId || `${agent.team}:${agent.role}` === recipientId;
-}
-
-function matchesTemplate(template: registry.WorkerTemplate, recipientId: string): boolean {
-  return (
-    template.id === recipientId || template.role === recipientId || `${template.team}:${template.role}` === recipientId
-  );
+  return w.state === 'suspended';
 }
 
 /**
  * Resolve a recipient to live workers using strict tiered matching.
  * Priority: exact ID > role > team:role.
- * Only returns workers with alive panes (non-suspended).
- * When senderSession is provided, only matches workers in the same session (project isolation).
+ * Only returns workers with alive panes (non-suspended/terminated).
  */
-async function resolveRecipient(recipientId: string, senderSession?: string): Promise<registry.Agent[]> {
-  const allWorkers = await scopedWorkers(senderSession);
+async function resolveRecipient(recipientId: string): Promise<registry.Agent[]> {
+  const allWorkers = await registry.list();
 
   const byId: registry.Agent[] = [];
   const byRole: registry.Agent[] = [];
   const byTeamRole: registry.Agent[] = [];
 
   for (const w of allWorkers) {
-    if (w.state === 'suspended') continue;
-    if (!(await getIsPaneAlive()(w.paneId))) continue;
+    if (await isWorkerDead(w)) continue;
+    if (!(await _deps.isPaneAlive(w.paneId))) continue;
 
     if (w.id === recipientId) byId.push(w);
     else if (w.role === recipientId) byRole.push(w);
@@ -190,104 +104,98 @@ async function resolveRecipient(recipientId: string, senderSession?: string): Pr
  * Find exactly one live worker by tiered match.
  * Returns null if zero or multiple matches (ambiguous).
  */
-async function findLiveWorkerFuzzy(recipientId: string, senderSession?: string): Promise<registry.Agent | null> {
-  const matches = await resolveRecipient(recipientId, senderSession);
+async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Agent | null> {
+  const matches = await resolveRecipient(recipientId);
   return matches.length === 1 ? matches[0] : null;
-}
-
-async function findWorkerCandidate(recipientId: string, senderSession?: string): Promise<registry.Agent | null> {
-  const workers = await scopedWorkers(senderSession);
-  const exact = workers.find((worker) => worker.id === recipientId);
-  if (exact) return exact;
-
-  const byRole = workers.find((worker) => worker.role === recipientId);
-  if (byRole) return byRole;
-
-  return workers.find((worker) => `${worker.team}:${worker.role}` === recipientId) ?? null;
-}
-
-async function findTemplateCandidate(
-  recipientId: string,
-  worker: registry.Agent | null,
-  senderSession?: string,
-): Promise<registry.WorkerTemplate | null> {
-  const templates = await scopedTemplates(senderSession);
-  const workerTeam = worker?.team;
-
-  const exact = templates.find(
-    (template) => (!workerTeam || template.team === workerTeam) && template.id === recipientId,
-  );
-  if (exact) return exact;
-
-  const byRole = templates.find(
-    (template) => (!workerTeam || template.team === workerTeam) && template.role === recipientId,
-  );
-  if (byRole) return byRole;
-
-  return (
-    templates.find(
-      (template) =>
-        (!workerTeam || template.team === workerTeam) && `${template.team}:${template.role}` === recipientId,
-    ) ?? null
-  );
 }
 
 /**
  * Ensure a worker is alive, auto-spawning from template if needed.
- * Handles suspended workers by resuming with --continue flag.
+ * Handles suspended workers by resuming with --resume <session-id>.
  */
 async function ensureWorkerAlive(
   worker: registry.Agent | null,
   recipientId: string,
-  senderSession?: string,
 ): Promise<{ worker: registry.Agent; respawned: boolean } | null> {
-  if (worker && worker.state !== 'suspended' && (await getIsPaneAlive()(worker.paneId))) {
+  if (worker && worker.state !== 'suspended' && (await _deps.isPaneAlive(worker.paneId))) {
     return { worker, respawned: false };
   }
 
   // Always check for a live worker before attempting to spawn — prevents
   // duplicate spawns when the registry entry is stale/dead but another
   // instance with the same role is already alive.
-  const live = await findLiveWorkerFuzzy(recipientId, senderSession);
+  const live = await findLiveWorkerFuzzy(recipientId);
   if (live) return { worker: live, respawned: false };
 
   if (!process.env.TMUX) return null;
 
-  const template = await findTemplateCandidate(recipientId, worker, senderSession);
+  const templates = await registry.listTemplates();
+  const candidates = [worker?.role, worker?.id, recipientId].filter((v): v is string => Boolean(v));
+  const uniqueCandidates = [...new Set(candidates)];
+  const workerTeam = worker?.team;
+  const template = templates.find((t) => {
+    // Only match templates from the same team to prevent cross-team contamination
+    if (workerTeam && t.team !== workerTeam) return false;
+    return uniqueCandidates.some((q) => t.id === q || t.role === q || `${t.team}:${t.role}` === q);
+  });
   if (!template) return null;
 
-  // Derive continue name from template metadata — matches the --name value
-  // set during spawn (${team}-${role}). Claude Code's --continue resumes by name.
-  const continueName =
-    template.provider === 'claude' && template.role ? `${template.team}-${template.role}` : undefined;
+  // Use stored Claude session ID for --resume (session-id based, not name-based).
+  // Falls back to undefined (fresh session) if no prior session ID exists.
+  const resumeSessionId =
+    template.provider === 'claude' && worker?.claudeSessionId ? worker.claudeSessionId : undefined;
 
   try {
-    // Clean up ghost worker entries (dead panes) for this role before spawning
-    const registryApi = getRegistryApi();
-    await cleanupDeadWorkers(recipientId, worker?.team, senderSession ?? worker?.session);
+    const sql = await getConnection();
 
-    if (worker) {
-      await registryApi.unregister(worker.id);
+    // Advisory lock keyed on recipient — prevents concurrent cleanup+respawn
+    // for the same agent. Lock is held from cleanup through spawn return,
+    // released automatically on transaction commit/rollback.
+    const lockResult = await sql.begin(async (tx: typeof sql) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${recipientId}))`;
+
+      // Double-check: another process may have spawned while we waited for the lock
+      const postLockLive = await findLiveWorkerFuzzy(recipientId);
+      if (postLockLive) return { type: 'existing' as const, worker: postLockLive };
+
+      // Clean up ghost worker entries (dead panes) for this role before spawning
+      await cleanupDeadWorkers(recipientId, workerTeam);
+
+      if (worker) {
+        await registry.unregister(worker.id);
+      }
+
+      const { spawnWorkerFromTemplate } = await import('./protocol-router-spawn.js');
+      const spawnResult = await spawnWorkerFromTemplate(template, resumeSessionId);
+      return { type: 'spawned' as const, ...spawnResult };
+    });
+
+    if (lockResult.type === 'existing') {
+      return { worker: lockResult.worker, respawned: false };
     }
 
-    const result = await spawnFromTemplate(template, continueName, senderSession);
-
-    await registryApi.saveTemplate({
+    await registry.saveTemplate({
       ...template,
       lastSpawnedAt: new Date().toISOString(),
     });
 
-    await waitForWorkerReady(result.paneId);
+    const readyCheck = _deps.waitForWorkerReady ?? waitForWorkerReady;
+    await readyCheck(lockResult.paneId);
 
     // Verify the pane survived startup — if Claude exited (e.g. stale resume
     // or startup error), the pane is dead and delivery would silently fail.
-    if (!(await getIsPaneAlive()(result.paneId))) {
-      await registryApi.unregister(result.worker.id);
+    if (!(await _deps.isPaneAlive(lockResult.paneId))) {
+      await registry.unregister(lockResult.worker.id);
       return null;
     }
 
-    return { worker: result.worker, respawned: true };
-  } catch {
+    return { worker: lockResult.worker, respawned: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[protocol-router] Spawn failed for "${recipientId}": ${msg}`);
+    if (worker) {
+      await registry.update(worker.id, { state: 'error' }).catch(() => {});
+    }
     return null;
   }
 }
@@ -296,17 +204,14 @@ async function ensureWorkerAlive(
  * Remove dead worker entries matching a role/ID to prevent ghost accumulation.
  * Only removes workers whose tmux panes are no longer alive.
  */
-async function cleanupDeadWorkers(recipientId: string, team?: string, session?: string): Promise<void> {
-  const registryApi = getRegistryApi();
-  const allWorkers = session
-    ? await (testDeps.registry?.filterBySession?.(session) ?? registryFilterBySession(session))
-    : await registryApi.list();
+async function cleanupDeadWorkers(recipientId: string, team?: string): Promise<void> {
+  const allWorkers = await registry.list();
   for (const w of allWorkers) {
     if (team && w.team !== team) continue;
     const matches = w.role === recipientId || w.id === recipientId;
     if (!matches) continue;
-    if (await getIsPaneAlive()(w.paneId)) continue;
-    await registryApi.unregister(w.id);
+    if (await _deps.isPaneAlive(w.paneId)) continue;
+    await registry.unregister(w.id);
   }
 }
 
@@ -331,11 +236,35 @@ async function deliverToWorker(
   body: string,
 ): Promise<DeliveryResult> {
   const message = await mailbox.send(repoPath, from, worker.id, body);
-  const delivered =
-    worker.nativeTeamEnabled && worker.team && worker.role
-      ? await writeToNativeInbox(worker, message)
-      : await injectToTmuxPane(worker, message);
-  if (delivered) await mailbox.markDelivered(repoPath, worker.id, message.id);
+
+  let delivered = false;
+
+  // Primary delivery path
+  if (worker.nativeTeamEnabled && worker.team && worker.role) {
+    delivered = await writeToNativeInbox(worker, message);
+  } else {
+    delivered = await injectToTmuxPane(worker, message);
+  }
+
+  // Fallback: if primary delivery failed but worker has a team, try native inbox
+  if (!delivered && worker.team) {
+    const agentName = worker.role || worker.id.split('-').slice(-1)[0] || worker.id;
+    try {
+      const nativeMsg = mailbox.toNativeInboxMessage(message, worker.nativeColor ?? 'blue');
+      await nativeTeams.writeNativeInbox(worker.team, agentName, nativeMsg);
+      delivered = true;
+    } catch {
+      // Fallback failed too — non-fatal
+    }
+  }
+
+  if (delivered) {
+    await mailbox.markDelivered(repoPath, worker.id, message.id);
+  } else {
+    console.error(
+      `[protocol-router] Delivery failed: all paths exhausted (worker=${worker.id}, pane=${worker.paneId}, msg="${body.slice(0, 50)}")`,
+    );
+  }
   return { messageId: message.id, workerId: worker.id, delivered };
 }
 
@@ -349,13 +278,24 @@ async function deliverViaNativeInbox(
   const resolvedTeam = teamName ?? (await nativeTeams.discoverTeamName());
   if (!resolvedTeam) return null;
 
-  // Verify the recipient exists as a registered native team member
+  // Verify the recipient exists as a registered native team member.
+  // Match by: exact name, agentId, or role extracted from team-prefixed worker ID
+  // e.g., worker ID "sofia-50ju-engineer" should match member name "engineer"
   const config = await nativeTeams.loadConfig(resolvedTeam).catch(() => null);
   if (!config) return null;
-  const memberExists = config.members?.some(
-    (m: { name?: string; agentId?: string }) => m.name === to || m.agentId === `${to}@${resolvedTeam}`,
+  const sanitizedTo = nativeTeams.sanitizeTeamName(to);
+  const matchedMember = config.members?.find(
+    (m: { name?: string; agentId?: string }) =>
+      m.name === to ||
+      m.name === sanitizedTo ||
+      m.agentId === `${to}@${resolvedTeam}` ||
+      m.agentId === `${sanitizedTo}@${resolvedTeam}`,
   );
-  if (!memberExists) return null;
+  if (!matchedMember) return null;
+
+  // Use the member's registered name for inbox writing (not the raw worker ID),
+  // so we write to "engineer.json" instead of "sofia-50ju-engineer.json"
+  const inboxName = matchedMember.name ?? to;
 
   try {
     const message = await mailbox.send(repoPath, from, to, body);
@@ -367,7 +307,7 @@ async function deliverViaNativeInbox(
       color: 'blue',
       read: false,
     };
-    await nativeTeams.writeNativeInbox(resolvedTeam, to, nativeMsg);
+    await nativeTeams.writeNativeInbox(resolvedTeam, inboxName, nativeMsg);
     await mailbox.markDelivered(repoPath, to, message.id);
     return { messageId: message.id, workerId: to, delivered: true };
   } catch {
@@ -379,11 +319,9 @@ async function deliverViaNativeInbox(
  * Send a message to a recipient using directory-first resolution.
  *
  * Resolution order:
- *   1. Live workers (ID > role > team:role), scoped to senderSession if provided
+ *   1. Live workers (ID > role > team:role)
  *   2. Agent directory + worker registry → auto-spawn from template
  *   3. Native team inbox fallback
- *
- * @param senderSession — When set, only resolves recipients in the same tmux session (project isolation).
  */
 export async function sendMessage(
   repoPath: string,
@@ -391,12 +329,33 @@ export async function sendMessage(
   to: string,
   body: string,
   teamName?: string,
-  senderSession?: string,
 ): Promise<DeliveryResult> {
+  // Self-delivery guard: suppress messages where sender === recipient.
+  // Without this, the message lands in the sender's own native inbox and
+  // Claude Code surfaces it as an incoming teammate message, wasting turns
+  // and risking infinite echo loops. (See #818)
+  if (from === to) {
+    return { messageId: '', workerId: to, delivered: true, reason: 'Self-delivery suppressed' };
+  }
+
   // 1. Find live workers using strict tiered matching (ID > role > team:role)
-  const liveMatches = await resolveRecipient(to, senderSession);
+  const liveMatches = await resolveRecipient(to);
 
   if (liveMatches.length === 1) {
+    // Re-verify pane alive right before delivery — catches TOCTOU race
+    // where the pane dies between resolveRecipient and actual injection.
+    if (!(await _deps.isPaneAlive(liveMatches[0].paneId))) {
+      const message = await mailbox.send(repoPath, from, liveMatches[0].id, body);
+      console.error(
+        `[protocol-router] Delivery failed: pane dead (worker=${liveMatches[0].id}, msg="${body.slice(0, 50)}")`,
+      );
+      return {
+        messageId: message.id,
+        workerId: liveMatches[0].id,
+        delivered: false,
+        reason: 'Pane died before delivery',
+      };
+    }
     return deliverToWorker(repoPath, from, liveMatches[0], body);
   }
 
@@ -412,38 +371,37 @@ export async function sendMessage(
   // 2. No live match — directory-first resolution for auto-spawn
   // Check agent directory to validate recipient exists (enables spawn for
   // agents registered in directory but not yet spawned in this session).
-  const dirResolved = await resolveDirectory(to);
+  const { resolve } = await import('./agent-directory.js');
+  const dirResolved = await resolve(to);
 
-  // Also check worker registry for session context (provides claudeSessionId for resume)
-  let worker = await getRegistryApi().get(to);
-  if (!worker || (senderSession && worker.session !== senderSession)) {
-    worker = await findWorkerCandidate(to, senderSession);
+  // Also check worker registry for session context (provides claudeSessionId for --resume)
+  let worker = await registry.get(to);
+  if (!worker) {
+    const allWorkers = await registry.list();
+    // Prefer suspended workers (they have valid sessions to resume)
+    worker =
+      allWorkers.find((w) => w.role === to && w.state === 'suspended') ?? allWorkers.find((w) => w.role === to) ?? null;
   }
 
   // Try auto-spawn if agent is known via directory OR registry
   if (dirResolved || worker) {
-    const alive = await ensureWorkerAlive(worker, to, senderSession);
+    const alive = await ensureWorkerAlive(worker, to);
     if (alive) {
+      // Re-verify pane alive right before delivery — catches race where
+      // the pane dies between ensureWorkerAlive and actual injection.
+      if (!(await _deps.isPaneAlive(alive.worker.paneId))) {
+        const message = await mailbox.send(repoPath, from, alive.worker.id, body);
+        console.error(
+          `[protocol-router] Delivery failed: pane dead after spawn (worker=${alive.worker.id}, msg="${body.slice(0, 50)}")`,
+        );
+        return {
+          messageId: message.id,
+          workerId: alive.worker.id,
+          delivered: false,
+          reason: 'Pane died after spawn',
+        };
+      }
       return deliverToWorker(repoPath, from, alive.worker, body);
-    }
-  }
-
-  if (senderSession) {
-    const workerMatchesSession = worker ? matchesRecipient(worker, to) && worker.session === senderSession : false;
-    const templateMatchesSession =
-      (await findTemplateCandidate(to, worker, senderSession)) !== null ||
-      (dirResolved !== null &&
-        (await scopedTemplates(senderSession)).some(
-          (template) => matchesTemplate(template, to) || matchesTemplate(template, dirResolved.entry.name),
-        ));
-
-    if (!workerMatchesSession && !templateMatchesSession) {
-      return {
-        messageId: '',
-        workerId: to,
-        delivered: false,
-        reason: `Worker "${to}" not found in session "${senderSession}"`,
-      };
     }
   }
 
@@ -481,18 +439,44 @@ async function injectToTmuxPane(worker: registry.Agent, message: mailbox.Mailbox
   // Validate paneId to prevent shell injection
   if (!/^%\d+$/.test(worker.paneId)) return false;
 
+  // Re-verify pane alive immediately before injection — tmux send-keys can
+  // succeed on dead panes without error, producing a false delivery success.
+  if (!(await _deps.isPaneAlive(worker.paneId))) return false;
+
   try {
     // Escape single quotes for shell embedding
     const escaped = message.body.replace(/'/g, "'\\''");
     // Send text first, then Enter after a short delay so the pane can process the input
-    await getExecuteTmux()(`send-keys -t '${worker.paneId}' '${escaped}'`);
+    await executeTmux(`send-keys -t '${worker.paneId}' '${escaped}'`);
     await new Promise((resolve) => setTimeout(resolve, 200));
-    await getExecuteTmux()(`send-keys -t '${worker.paneId}' Enter`);
+    await executeTmux(`send-keys -t '${worker.paneId}' Enter`);
     return true;
   } catch {
     // Best-effort — pane may be dead or busy
     return false;
   }
+}
+
+/**
+ * Attempt instant pane delivery for a specific message.
+ * Used by the scheduler daemon's PG LISTEN/NOTIFY handler to push
+ * messages into tmux panes without waiting for the next poll cycle.
+ *
+ * Returns true if the message was injected into the pane.
+ */
+export async function deliverToPane(toWorker: string, messageId: string): Promise<boolean> {
+  const worker = await registry.get(toWorker);
+  if (!worker || !worker.paneId) return false;
+  if (!(await _deps.isPaneAlive(worker.paneId))) return false;
+
+  const message = await mailbox.getById(messageId);
+  if (!message || message.deliveredAt) return false;
+
+  const injected = await injectToTmuxPane(worker, message);
+  if (injected && worker.repoPath) {
+    await mailbox.markDelivered(worker.repoPath, worker.id, messageId);
+  }
+  return injected;
 }
 
 /**
