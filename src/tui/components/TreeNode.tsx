@@ -10,9 +10,16 @@ interface TreeNodeProps {
   selected: boolean;
   onSelect: (id: string) => void;
   onToggle: (id: string) => void;
+  onContextMenu?: (id: string) => void;
 }
 
-export const TreeNodeRow = memo(function TreeNodeRow({ node, selected, onSelect, onToggle }: TreeNodeProps) {
+export const TreeNodeRow = memo(function TreeNodeRow({
+  node,
+  selected,
+  onSelect,
+  onToggle,
+  onContextMenu,
+}: TreeNodeProps) {
   const indent = '  '.repeat(node.depth);
   const hasChildren = node.children.length > 0;
   const expandIcon = hasChildren ? (node.expanded ? icons.expanded : icons.collapsed) : ' ';
@@ -26,7 +33,12 @@ export const TreeNodeRow = memo(function TreeNodeRow({ node, selected, onSelect,
       height={1}
       width="100%"
       backgroundColor={selected ? palette.violet : undefined}
-      onMouseDown={() => {
+      onMouseDown={(event: { button?: number }) => {
+        if (event.button === 2 && onContextMenu) {
+          onSelect(node.id);
+          onContextMenu(node.id);
+          return;
+        }
         onSelect(node.id);
         if (hasChildren) onToggle(node.id);
       }}
@@ -40,6 +52,7 @@ export const TreeNodeRow = memo(function TreeNodeRow({ node, selected, onSelect,
         <span fg={selected ? '#ffffff' : palette.text}>{node.label}</span>
         {suffix ? <span fg={palette.textDim}>{suffix}</span> : null}
         {node.agentState ? <span fg={getStateColor(node.agentState)}> {node.agentState}</span> : null}
+        <span fg={palette.textMuted}>{` [${node.type}]`}</span>
       </text>
     </box>
   );
