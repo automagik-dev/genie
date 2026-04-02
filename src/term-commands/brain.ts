@@ -1,9 +1,9 @@
 /**
  * genie brain — delegate to @automagik/genie-brain (enterprise).
  *
- * This is the integration point. genie CLI dynamically imports brain
- * and passes all args through. If brain isn't installed, prints
- * install instructions and offers `genie brain install`.
+ * Brain installs directly from the private GitHub repo.
+ * Only people with repo access can install = enterprise license.
+ * Source code stays in git, never published to npm.
  *
  * Brain is NEVER a hard dependency. genie works exactly the same
  * without it. Zero behavior change for OSS users.
@@ -13,48 +13,26 @@ import { execSync } from 'node:child_process';
 import type { Command } from 'commander';
 
 const BRAIN_PKG = '@automagik/genie-brain';
-const BRAIN_REGISTRY = 'https://npm.pkg.github.com';
-const BRAIN_SCOPE = '@automagik';
+const BRAIN_REPO = 'github:automagik-dev/genie-brain';
 
-/** Install brain package from GitHub Packages */
+/** Install brain package directly from GitHub repo */
 async function installBrain(): Promise<boolean> {
   console.log('');
-  console.log('  Installing @automagik/genie-brain (enterprise)...');
+  console.log('  Installing genie-brain from GitHub (enterprise)...');
+  console.log('');
+  console.log('  Source: https://github.com/automagik-dev/genie-brain');
+  console.log('  Requires: GitHub org membership (automagik-dev)');
   console.log('');
 
   try {
-    // Configure npm scope for GitHub Packages (idempotent)
-    execSync(`npm config set ${BRAIN_SCOPE}:registry ${BRAIN_REGISTRY}`, { stdio: 'inherit' });
-
-    // Check if user has a GitHub token configured
-    let hasToken = false;
-    try {
-      const rc = execSync(`npm config get //${BRAIN_REGISTRY.replace('https://', '')}/:_authToken`, {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim();
-      hasToken = rc.length > 0 && rc !== 'undefined';
-    } catch {
-      /* no token */
-    }
-
-    if (!hasToken) {
-      console.log('  GitHub Packages requires authentication.');
-      console.log('  Set your token:');
-      console.log('');
-      console.log(`    echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN" >> ~/.npmrc`);
-      console.log('');
-      console.log('  Generate a token at: https://github.com/settings/tokens');
-      console.log('  Required scope: read:packages');
-      console.log('');
-      return false;
-    }
-
-    // Install the package
-    execSync(`bun add ${BRAIN_PKG}`, { stdio: 'inherit' });
+    // Install directly from GitHub — bun resolves git repos natively
+    // Only people with repo access (SSH key or GH token) can install
+    execSync(`bun add ${BRAIN_REPO}`, {
+      stdio: 'inherit',
+    });
 
     console.log('');
-    console.log('  ✓ Brain installed successfully.');
+    console.log('  ✓ Brain installed from GitHub.');
     console.log('');
 
     // Auto-run migrations
@@ -76,12 +54,24 @@ async function installBrain(): Promise<boolean> {
     return true;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`  ✗ Install failed: ${msg}`);
-    console.log('');
-    console.log('  Manual install:');
-    console.log(`    npm config set ${BRAIN_SCOPE}:registry ${BRAIN_REGISTRY}`);
-    console.log(`    bun add ${BRAIN_PKG}`);
-    console.log('');
+
+    if (msg.includes('Authentication') || msg.includes('permission') || msg.includes('404')) {
+      console.error('  ✗ Access denied. Brain is enterprise-only.');
+      console.log('');
+      console.log('  You need:');
+      console.log('    1. Membership in the automagik-dev GitHub org');
+      console.log('    2. SSH key or GH token configured for git');
+      console.log('');
+      console.log('  Manual install:');
+      console.log(`    bun add ${BRAIN_REPO}`);
+      console.log('');
+    } else {
+      console.error(`  ✗ Install failed: ${msg}`);
+      console.log('');
+      console.log('  Manual install:');
+      console.log(`    bun add ${BRAIN_REPO}`);
+      console.log('');
+    }
     return false;
   }
 }
@@ -119,7 +109,7 @@ async function executeBrainCommand(args: string[]): Promise<void> {
       await brain.execute(args);
     } else {
       console.error('Brain module loaded but execute() not found.');
-      console.error('Update: bun add @automagik/genie-brain@latest');
+      console.error('Update: genie brain install');
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
