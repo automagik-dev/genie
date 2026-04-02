@@ -236,6 +236,11 @@ export async function findActiveSession(projectDir: string): Promise<ClaudeSessi
   return sessions[0];
 }
 
+async function findSessionById(projectDir: string, sessionId: string): Promise<ClaudeSession | null> {
+  const sessions = await listSessions(projectDir);
+  return sessions.find((session) => session.sessionId === sessionId) ?? null;
+}
+
 // ============================================================================
 // Log Entry Parsing
 // ============================================================================
@@ -316,7 +321,7 @@ export function parseLogEntry(line: string): ClaudeLogEntry | null {
  * @param logPath - Path to the .jsonl log file
  * @returns Array of parsed log entries
  */
-export async function readLogFile(logPath: string): Promise<ClaudeLogEntry[]> {
+async function readLogFile(logPath: string): Promise<ClaudeLogEntry[]> {
   const entries: ClaudeLogEntry[] = [];
 
   try {
@@ -385,7 +390,7 @@ async function findLogsForWorkspace(
  * @param claudeDir - Optional custom Claude directory
  * @returns Log file path and session info, or null if not found
  */
-export async function getLogsForPane(
+async function getLogsForPane(
   paneWorkdir: string,
   claudeDir?: string,
 ): Promise<{ logPath: string; session: ClaudeSession; projectDir: string } | null> {
@@ -480,6 +485,20 @@ export function claudeEntryToTranscript(entry: ClaudeLogEntry): TranscriptEntry[
 export const claudeTranscriptProvider: TranscriptProvider = {
   async discoverLogPath(worker: Agent): Promise<string | null> {
     const workspacePath = worker.worktree || worker.repoPath;
+    const projectDir = await findClaudeProjectDir(workspacePath);
+    if (!projectDir) return null;
+
+    if (worker.claudeSessionId) {
+      const directPath = join(projectDir, `${worker.claudeSessionId}.jsonl`);
+      try {
+        await access(directPath);
+        return directPath;
+      } catch {
+        const session = await findSessionById(projectDir, worker.claudeSessionId);
+        if (session?.fullPath) return session.fullPath;
+      }
+    }
+
     const result = await getLogsForPane(workspacePath);
     return result?.logPath ?? null;
   },

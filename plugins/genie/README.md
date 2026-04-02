@@ -1,6 +1,6 @@
 # Genie Plugin
 
-Company-standard Claude Code/OpenClaw plugin for the Genie workflow.
+Company-standard Claude Code plugin for the Genie workflow.
 
 ## Features
 
@@ -32,7 +32,6 @@ Universal review gate (plan, execution, PR) returning `SHIP`, `FIX-FIRST`, or `B
 ```text
 genie/
 ├── .claude-plugin/plugin.json
-├── openclaw.plugin.json
 ├── genie.ts
 ├── skills -> ../../skills
 ├── agents/
@@ -45,7 +44,6 @@ genie/
 
 ```bash
 ls ~/.claude/plugins/genie/plugin.json
-openclaw plugins list | rg genie
 ```
 
 Smoke-test the core commands:

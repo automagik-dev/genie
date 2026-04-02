@@ -39,8 +39,27 @@ Audit and maintain these doc types:
 
 ```bash
 # Spawn a docs subagent
-genie spawn docs
+genie agent spawn docs
 ```
+
+## Example
+
+After shipping a new `genie work` dispatch fix, the orchestrator runs `/docs` to update documentation:
+
+```bash
+# 1. Spawn a docs subagent
+genie agent spawn docs
+
+# 2. Send the task
+genie agent send 'Audit and update docs after PR #746 (initialPrompt added to dispatch). Check: README.md, CLAUDE.md, CO-ORCHESTRATION-GUIDE.md, skills/work/SKILL.md — verify dispatch examples match current code. Fix any stale references.' --to docs
+```
+
+The docs agent:
+1. Scans all doc surfaces for references to `genie work`, dispatch, `protocolRouter.sendMessage`
+2. Finds CO-ORCHESTRATION-GUIDE.md still references the old dispatch flow
+3. Updates the guide with the new `initialPrompt` pattern
+4. Validates every file path and API reference exists in the codebase
+5. Reports: "Updated 1 file (CO-ORCHESTRATION-GUIDE.md). 3 files verified current. 0 dead references."
 
 ## Rules
 - Validate every claim against actual code — no fiction.

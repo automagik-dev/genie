@@ -12,12 +12,11 @@
  * 8. reviewCommand() — review with diff context
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
-import { parseRef } from './state.js';
-
 import {
   buildContextPrompt,
   detectWorkMode,
@@ -27,6 +26,18 @@ import {
   parseWishGroups,
   writeContextFile,
 } from './dispatch.js';
+import { parseRef } from './state.js';
+
+let cleanupSchema: () => Promise<void>;
+
+beforeAll(async () => {
+  if (!DB_AVAILABLE) return;
+  cleanupSchema = await setupTestSchema();
+});
+
+afterAll(async () => {
+  if (cleanupSchema) await cleanupSchema();
+});
 
 // ============================================================================
 // Sample WISH.md content for testing
@@ -427,7 +438,7 @@ describe('dispatch commands - file reading', () => {
 // State Machine Integration
 // ============================================================================
 
-describe('dispatch commands - state machine integration', () => {
+describe.skipIf(!DB_AVAILABLE)('dispatch commands - state machine integration', () => {
   let tempDir: string;
 
   beforeEach(async () => {
@@ -558,6 +569,27 @@ describe('parseWishGroups()', () => {
     expect(groups[0].dependsOn).toEqual([]);
     expect(groups[1].dependsOn).toEqual(['1']);
     expect(groups[2].dependsOn).toEqual(['1', '2']);
+  });
+
+  it('should handle parenthetical descriptions containing commas (#752)', () => {
+    const content =
+      '### Group 1: Components\n**depends-on:** none\n\n### Group 2: Integration\n**depends-on:** Group 1 (GlassCard, StatusDot, ProgressBar)';
+    const groups = parseWishGroups(content);
+    expect(groups[0].dependsOn).toEqual([]);
+    expect(groups[1].dependsOn).toEqual(['1']);
+  });
+
+  it('should handle multiple groups with parenthetical descriptions containing commas (#752)', () => {
+    const content =
+      '### Group 1: A\n**depends-on:** none\n\n### Group 2: B\n**depends-on:** none\n\n### Group 3: C\n**depends-on:** Group 1, Group 2 (after review)';
+    const groups = parseWishGroups(content);
+    expect(groups[2].dependsOn).toEqual(['1', '2']);
+  });
+
+  it('should parse depends-on: none as empty array', () => {
+    const content = '### Group 1: Solo\n**depends-on:** none';
+    const groups = parseWishGroups(content);
+    expect(groups[0].dependsOn).toEqual([]);
   });
 });
 

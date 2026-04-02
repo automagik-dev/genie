@@ -22,11 +22,42 @@ This skill is multi-agent aware and operates on the shared worktree:
 ## Flow
 1. **Read context:** scan current code, docs, conventions. Check `.genie/brainstorm.md` in the shared worktree for an existing entry matching this slug/topic — use as seed if found. If context was injected from dispatch, use it directly.
 2. **Init persistence:** create `.genie/brainstorms/<slug>/DRAFT.md` immediately in the shared worktree. Create `.genie/brainstorm.md` if missing (see Jar).
-3. **Clarify intent:** one question at a time, prefer multiple-choice.
-4. **Show WRS bar** after every exchange (see WRS).
-5. **Persist draft** when WRS changes OR every 2 minutes — whichever comes first.
-6. **Propose approaches:** 2-3 options with trade-offs. Recommend one.
-7. **Crystallize** when WRS = 100: write `DESIGN.md`, update jar, hand off.
+3. **Scope-size check:** if the request touches multiple independent subsystems, flag for decomposition before refining details (see Scope-Size Detection).
+4. **Clarify intent:** one question at a time, prefer multiple-choice.
+5. **Show WRS bar** after every exchange (see WRS).
+6. **Persist draft** when WRS changes OR every 2 minutes — whichever comes first.
+7. **Propose approaches:** 2-3 options with trade-offs. Apply Design-for-Isolation principles. Recommend one.
+8. **Crystallize** when WRS = 100: write `DESIGN.md`, spec self-review, update jar, hand off.
+
+## Scope-Size Detection
+
+Before refining any details, assess whether the request is a single cohesive project or multiple independent ones. Multi-subsystem requests waste brainstorm cycles because refinement assumptions for subsystem A may not hold for subsystem B.
+
+**Signs the request needs decomposition:**
+- Touches 3+ unrelated directories or modules
+- Requires changes to both infrastructure and application layers
+- Combines UI + API + data model changes with no shared interface
+- Different parts could ship independently without blocking each other
+- Different parts would naturally be assigned to different engineers
+
+**When detected:**
+1. Stop refining details immediately.
+2. Tell the user: "This looks like it spans multiple independent subsystems. Refining them together risks a wish that's too broad to execute cleanly."
+3. Help decompose into sub-projects, each getting its own brainstorm → wish → work cycle.
+4. For each sub-project, identify: purpose, rough scope, and dependencies on other sub-projects.
+5. Start a fresh brainstorm for the first sub-project (or let the user pick).
+
+## Design-for-Isolation
+
+When proposing approaches and writing the Approach section of DESIGN.md, apply these principles:
+
+- **Single purpose per unit** — each module, file, or component should do one thing well. If you can't describe its purpose in one sentence, it's doing too much.
+- **Well-defined interfaces** — units communicate through explicit contracts (function signatures, event schemas, API endpoints), not shared mutable state or implicit conventions.
+- **Independent testability** — each unit can be understood and tested without loading the full system. If testing requires spinning up 5 other services, the boundaries are wrong.
+- **File size as complexity signal** — when a file grows large, that's a signal it's doing too much. Propose splits before the file becomes unmanageable, not after.
+- **Explicit dependencies** — every dependency between units should be visible in the interface, not hidden in implementation details.
+
+These principles apply to the design itself, not just the code that implements it. A design that produces isolated, testable units is easier to execute, review, and maintain.
 
 ## WRS — Wish Readiness Score
 
@@ -77,8 +108,14 @@ Brainstorm index at `.genie/brainstorm.md`. Tracks all topics across sessions.
 Triggered automatically when WRS = 100.
 
 1. Write `.genie/brainstorms/<slug>/DESIGN.md` from `DRAFT.md` using the Design Template below.
-2. Update `.genie/brainstorm.md` — move item to Poured with wish link.
-3. Auto-invoke `/review` (plan review) on the `DESIGN.md`.
+2. **Spec self-review** — before invoking /review, run this 4-point checklist on the DESIGN.md:
+   1. **Placeholder scan** — any TBD, TODO, or incomplete sections? Fill them or mark as explicit OUT-of-scope.
+   2. **Internal consistency** — do sections contradict each other? (e.g., scope says X is OUT but success criteria tests X)
+   3. **Scope check** — focused enough for a single wish? If it spans multiple independent subsystems, split before proceeding.
+   4. **Ambiguity check** — could any requirement be interpreted two different ways? Tighten the language.
+   Fix issues inline in the DESIGN.md, then continue.
+3. Update `.genie/brainstorm.md` — move item to Poured with wish link.
+4. Auto-invoke `/review` (plan review) on the `DESIGN.md`.
 
 ## Output Options
 
@@ -147,6 +184,26 @@ Chosen approach with rationale. Reference alternatives considered.
 - [ ] Testable criterion 1
 - [ ] Testable criterion 2
 ```
+
+## Task Lifecycle Integration (v4)
+
+On crystallize, create a draft task in PG so the brainstorm is tracked in `genie task list`:
+
+### On crystallize (WRS = 100)
+```bash
+# Create draft task (starts at draft stage by default)
+genie task create "<brainstorm title>" --type software
+
+# Link to the design draft
+genie task comment #<seq> "Draft: .genie/brainstorms/<slug>/DRAFT.md"
+```
+
+| Event | Command |
+|-------|---------|
+| Crystallize | `genie task create "<brainstorm title>" --type software` |
+| Link draft | `genie task comment #<seq> "Draft: .genie/brainstorms/<slug>/DRAFT.md"` |
+
+**Graceful degradation:** If PG is unavailable or `genie task` commands fail, warn but do not block the crystallize flow. The DESIGN.md and brainstorm jar are the source of truth — PG tasks are an optional tracking enhancement.
 
 ## Rules
 - One question per message. Never batch questions.

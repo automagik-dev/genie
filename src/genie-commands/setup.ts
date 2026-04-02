@@ -422,6 +422,46 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   // Save and show summary
   await showSummaryAndSave(config);
 
+  // Install genie tmux config
+  installGenieTmuxConf();
+
   // Print next steps
   printNextSteps();
+}
+
+/** Copy shipped genie.tmux.conf to ~/.genie/tmux.conf if it doesn't exist yet. */
+function installGenieTmuxConf(): void {
+  const { existsSync, copyFileSync, mkdirSync, chmodSync } = require('node:fs') as typeof import('node:fs');
+  const { resolve, dirname } = require('node:path') as typeof import('node:path');
+  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+  const dest = join(genieHome, 'tmux.conf');
+  if (existsSync(dest)) return; // already installed
+
+  // Resolve shipped config relative to package root
+  const candidates = [
+    resolve(__dirname, '..', '..', 'scripts', 'tmux', 'genie.tmux.conf'),
+    resolve(__dirname, '..', 'scripts', 'tmux', 'genie.tmux.conf'),
+  ];
+  const src = candidates.find((p) => existsSync(p));
+  if (!src) return;
+
+  try {
+    mkdirSync(genieHome, { recursive: true });
+    copyFileSync(src, dest);
+    console.log(`\x1b[32m\u2713\x1b[0m Installed genie tmux config to ${dest}`);
+  } catch {
+    // non-fatal
+  }
+
+  // Install osc52-copy.sh clipboard helper alongside the tmux config
+  const osc52Src = join(dirname(src), 'osc52-copy.sh');
+  const osc52Dest = join(genieHome, 'osc52-copy.sh');
+  if (existsSync(osc52Src)) {
+    try {
+      copyFileSync(osc52Src, osc52Dest);
+      chmodSync(osc52Dest, 0o755);
+    } catch {
+      // non-fatal
+    }
+  }
 }

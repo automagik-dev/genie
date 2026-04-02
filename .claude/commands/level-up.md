@@ -107,7 +107,7 @@ Silently scan the user's environment. Do NOT ask permission for each check. Just
    - Cron jobs, launchd services, or systemd services calling Claude on a schedule?
    - Background agents running 24/7 (pm2, systemd)?
    - Autonomous loop scripts (PRD + test suite patterns)?
-   - Agent orchestration configs (Agent Teams, Gastown, OpenClaw)?
+   - Agent orchestration configs (Agent Teams, Gastown)?
    - Evidence of agents managing other agents?
 ```
 
@@ -541,7 +541,7 @@ Show ONLY the next level transition. Do not dump all 10 levels. Focus is everyth
    - Agents talk to each other through shared files. One agent writes a task list, another picks up items, does the work, and marks them done. They coordinate through your project folder and git branches, like coworkers using a shared task board.
 
 4. **Always-on assistants**
-   - OpenClaw: an open source framework that runs Claude as a persistent assistant you can message via WhatsApp or Telegram. You text it like a colleague. It's always available, always has your context.
+   - Persistent agent frameworks that run Claude as an always-available assistant you can message via WhatsApp or Telegram. You text it like a colleague. It's always available, always has your context.
 
 **Community tip:** Level 10 is experimental. The community is actively building and testing these patterns. Things break. The value is in the learning. Very few people are here, and those who are spend significant time managing the systems. This is not "set and forget." This is "build, monitor, iterate."
 

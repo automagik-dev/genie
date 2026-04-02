@@ -1,219 +1,263 @@
 /**
- * Mailbox — Unit Tests & Edge Cases
+ * Mailbox — Unit Tests & Edge Cases (PG backend)
  *
- * Tests durable message store with unread/read semantics.
+ * Tests durable message store with unread/read semantics against PostgreSQL.
  * QA Plan tests: U-MSG-06, U-MSG-07, U-MSG-08, C-MB-01
  *
  * Run with: bun test src/lib/__tests__/mailbox.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { inbox, markDelivered, send, toNativeInboxMessage } from '../mailbox.js';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { getUnread, inbox, markDelivered, markRead, readOutbox, send, toNativeInboxMessage } from '../mailbox.js';
+import { DB_AVAILABLE, setupTestSchema } from '../test-db.js';
 
-let tempDir: string;
+describe.skipIf(!DB_AVAILABLE)('pg', () => {
+  let cleanup: () => Promise<void>;
+  const REPO = '/tmp/mailbox-test-repo';
 
-beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), 'genie-mailbox-test-'));
-});
-
-afterEach(async () => {
-  await rm(tempDir, { recursive: true, force: true });
-});
-
-// ============================================================================
-// Basic send/inbox
-// ============================================================================
-
-describe('send', () => {
-  test('persists message to mailbox', async () => {
-    const msg = await send(tempDir, 'operator', 'worker-1', 'hello worker');
-    expect(msg.id).toMatch(/^msg-/);
-    expect(msg.from).toBe('operator');
-    expect(msg.to).toBe('worker-1');
-    expect(msg.body).toBe('hello worker');
-    expect(msg.read).toBe(false);
-    expect(msg.deliveredAt).toBeNull();
-    expect(msg.createdAt).toBeTruthy();
+  beforeAll(async () => {
+    cleanup = await setupTestSchema();
   });
 
-  // U-MSG-06: send() creates dir if missing
-  test('U-MSG-06: creates mailbox directory if missing', async () => {
-    // tempDir has no .genie/mailbox/ yet
-    const msg = await send(tempDir, 'sender', 'new-worker', 'first message');
-    expect(msg.id).toMatch(/^msg-/);
-
-    // Verify inbox works
-    const messages = await inbox(tempDir, 'new-worker');
-    expect(messages.length).toBe(1);
-    expect(messages[0].body).toBe('first message');
+  afterAll(async () => {
+    await cleanup();
   });
 
-  test('appends multiple messages to same worker mailbox', async () => {
-    await send(tempDir, 'alice', 'bob', 'msg 1');
-    await send(tempDir, 'charlie', 'bob', 'msg 2');
-    await send(tempDir, 'alice', 'bob', 'msg 3');
+  // ============================================================================
+  // Basic send/inbox
+  // ============================================================================
 
-    const messages = await inbox(tempDir, 'bob');
-    expect(messages.length).toBe(3);
-    expect(messages[0].from).toBe('alice');
-    expect(messages[1].from).toBe('charlie');
-    expect(messages[2].from).toBe('alice');
-  });
-});
+  describe('send', () => {
+    test('persists message to mailbox', async () => {
+      const msg = await send(REPO, 'operator', 'worker-1', 'hello worker');
+      expect(msg.id).toMatch(/^msg-/);
+      expect(msg.from).toBe('operator');
+      expect(msg.to).toBe('worker-1');
+      expect(msg.body).toBe('hello worker');
+      expect(msg.read).toBe(false);
+      expect(msg.deliveredAt).toBeNull();
+      expect(msg.createdAt).toBeTruthy();
+    });
 
-// ============================================================================
-// inbox
-// ============================================================================
+    // U-MSG-06: send() works without any prior setup (PG handles it)
+    test('U-MSG-06: sends to new worker without prior setup', async () => {
+      const msg = await send(REPO, 'sender', 'new-worker', 'first message');
+      expect(msg.id).toMatch(/^msg-/);
 
-describe('inbox', () => {
-  test('returns empty for non-existent worker', async () => {
-    const messages = await inbox(tempDir, 'nonexistent');
-    expect(messages).toEqual([]);
-  });
+      const messages = await inbox(REPO, 'new-worker');
+      expect(messages.length).toBe(1);
+      expect(messages[0].body).toBe('first message');
+    });
 
-  test('returns all messages', async () => {
-    await send(tempDir, 'a', 'target', 'hello');
-    await send(tempDir, 'b', 'target', 'world');
+    test('appends multiple messages to same worker mailbox', async () => {
+      const repo = '/tmp/multi-msg-test';
+      await send(repo, 'alice', 'bob', 'msg 1');
+      await send(repo, 'charlie', 'bob', 'msg 2');
+      await send(repo, 'alice', 'bob', 'msg 3');
 
-    const messages = await inbox(tempDir, 'target');
-    expect(messages.length).toBe(2);
-  });
-});
-
-// ============================================================================
-// markDelivered
-// ============================================================================
-
-describe('markDelivered', () => {
-  test('marks message as delivered', async () => {
-    const msg = await send(tempDir, 'sender', 'worker', 'test');
-    expect(msg.deliveredAt).toBeNull();
-
-    const result = await markDelivered(tempDir, 'worker', msg.id);
-    expect(result).toBe(true);
-
-    const messages = await inbox(tempDir, 'worker');
-    const delivered = messages.find((m) => m.id === msg.id);
-    expect(delivered?.deliveredAt).toBeTruthy();
+      const messages = await inbox(repo, 'bob');
+      expect(messages.length).toBe(3);
+      expect(messages[0].from).toBe('alice');
+      expect(messages[1].from).toBe('charlie');
+      expect(messages[2].from).toBe('alice');
+    });
   });
 
-  // U-MSG-07: markDelivered on non-existent message
-  test('U-MSG-07: returns false for non-existent message', async () => {
-    await send(tempDir, 'sender', 'worker', 'test');
-    const result = await markDelivered(tempDir, 'worker', 'msg-nonexistent');
-    expect(result).toBe(false);
+  // ============================================================================
+  // inbox
+  // ============================================================================
+
+  describe('inbox', () => {
+    test('returns empty for non-existent worker', async () => {
+      const messages = await inbox(REPO, 'nonexistent');
+      expect(messages).toEqual([]);
+    });
+
+    test('returns all messages', async () => {
+      const repo = '/tmp/inbox-test';
+      await send(repo, 'a', 'target', 'hello');
+      await send(repo, 'b', 'target', 'world');
+
+      const messages = await inbox(repo, 'target');
+      expect(messages.length).toBe(2);
+    });
   });
 
-  test('returns false for non-existent worker', async () => {
-    const result = await markDelivered(tempDir, 'no-worker', 'msg-123');
-    expect(result).toBe(false);
-  });
-});
+  // ============================================================================
+  // readOutbox
+  // ============================================================================
 
-// ============================================================================
-// toNativeInboxMessage
-// ============================================================================
+  describe('readOutbox', () => {
+    test('returns messages sent by a worker', async () => {
+      const repo = '/tmp/outbox-test';
+      await send(repo, 'sender-agent', 'recipient-1', 'msg A');
+      await send(repo, 'sender-agent', 'recipient-2', 'msg B');
+      await send(repo, 'other-agent', 'recipient-1', 'msg C');
 
-describe('toNativeInboxMessage', () => {
-  // U-MSG-08: Body truncation > 8 words
-  test('U-MSG-08: truncates body > 8 words with ... suffix', () => {
-    const msg = {
-      id: 'msg-test',
-      from: 'sender',
-      to: 'worker',
-      body: 'one two three four five six seven eight nine ten',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      read: false,
-      deliveredAt: null,
-    };
+      const outbox = await readOutbox(repo, 'sender-agent');
+      expect(outbox.length).toBe(2);
+      expect(outbox[0].body).toBe('msg A');
+      expect(outbox[1].body).toBe('msg B');
+    });
 
-    const native = toNativeInboxMessage(msg);
-    expect(native.summary).toBe('one two three four five six seven eight...');
-    expect(native.text).toBe(msg.body); // full body preserved
-    expect(native.from).toBe('sender');
-    expect(native.color).toBe('blue'); // default color
+    test('returns empty for non-existent worker', async () => {
+      const outbox = await readOutbox(REPO, 'no-such-sender');
+      expect(outbox).toEqual([]);
+    });
   });
 
-  test('does not truncate body <= 8 words', () => {
-    const msg = {
-      id: 'msg-test',
-      from: 'sender',
-      to: 'worker',
-      body: 'short message here',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      read: false,
-      deliveredAt: null,
-    };
+  // ============================================================================
+  // markDelivered
+  // ============================================================================
 
-    const native = toNativeInboxMessage(msg);
-    expect(native.summary).toBe('short message here');
-    expect(native.summary).not.toContain('...');
+  describe('markDelivered', () => {
+    test('marks message as delivered', async () => {
+      const repo = '/tmp/deliver-test';
+      const msg = await send(repo, 'sender', 'worker', 'test');
+      expect(msg.deliveredAt).toBeNull();
+
+      const result = await markDelivered(repo, 'worker', msg.id);
+      expect(result).toBe(true);
+
+      const messages = await inbox(repo, 'worker');
+      const delivered = messages.find((m) => m.id === msg.id);
+      expect(delivered?.deliveredAt).toBeTruthy();
+    });
+
+    // U-MSG-07: markDelivered on non-existent message
+    test('U-MSG-07: returns false for non-existent message', async () => {
+      const repo = '/tmp/deliver-notfound-test';
+      await send(repo, 'sender', 'worker', 'test');
+      const result = await markDelivered(repo, 'worker', 'msg-nonexistent');
+      expect(result).toBe(false);
+    });
+
+    test('returns false for non-existent worker', async () => {
+      const result = await markDelivered(REPO, 'no-worker', 'msg-123');
+      expect(result).toBe(false);
+    });
   });
 
-  test('respects custom color', () => {
-    const msg = {
-      id: 'msg-test',
-      from: 'sender',
-      to: 'worker',
-      body: 'test',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      read: false,
-      deliveredAt: null,
-    };
+  // ============================================================================
+  // getUnread / markRead
+  // ============================================================================
 
-    const native = toNativeInboxMessage(msg, 'red');
-    expect(native.color).toBe('red');
+  describe('getUnread / markRead', () => {
+    test('getUnread returns only unread messages', async () => {
+      const repo = '/tmp/unread-test';
+      const msg1 = await send(repo, 'a', 'reader', 'unread msg');
+      const msg2 = await send(repo, 'b', 'reader', 'also unread');
+
+      // Mark one as read
+      await markRead(msg1.id);
+
+      const unread = await getUnread(repo, 'reader');
+      expect(unread.length).toBe(1);
+      expect(unread[0].id).toBe(msg2.id);
+    });
+
+    test('markRead returns false for non-existent message', async () => {
+      const result = await markRead('msg-no-such');
+      expect(result).toBe(false);
+    });
   });
-});
 
-// ============================================================================
-// Concurrency — C-MB-01
-// ============================================================================
+  // ============================================================================
+  // toNativeInboxMessage
+  // ============================================================================
 
-describe('concurrent mailbox writes', () => {
-  // C-MB-01: 10 concurrent send() to same worker
-  // NOTE: Known bug per QA plan — mailbox has no file lock.
-  // This test documents whether messages are lost under concurrent write.
-  test('C-MB-01: 10 concurrent send() — check for data loss', async () => {
-    const results = await Promise.allSettled(
-      Array.from({ length: 10 }, (_, i) => send(tempDir, `sender-${i}`, 'target-worker', `message ${i}`)),
-    );
+  describe('toNativeInboxMessage', () => {
+    // U-MSG-08: Body truncation > 8 words
+    test('U-MSG-08: truncates body > 8 words with ... suffix', () => {
+      const msg = {
+        id: 'msg-test',
+        from: 'sender',
+        to: 'worker',
+        body: 'one two three four five six seven eight nine ten',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        read: false,
+        deliveredAt: null,
+      };
 
-    const fulfilled = results.filter((r) => r.status === 'fulfilled');
-    expect(fulfilled.length).toBe(10);
+      const native = toNativeInboxMessage(msg);
+      expect(native.summary).toBe('one two three four five six seven eight...');
+      expect(native.text).toBe(msg.body); // full body preserved
+      expect(native.from).toBe('sender');
+      expect(native.color).toBe('blue'); // default color
+    });
 
-    const messages = await inbox(tempDir, 'target-worker');
+    test('does not truncate body <= 8 words', () => {
+      const msg = {
+        id: 'msg-test',
+        from: 'sender',
+        to: 'worker',
+        body: 'short message here',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        read: false,
+        deliveredAt: null,
+      };
 
-    // Due to read-modify-write race (no lock), some messages may be lost
-    // This test documents the actual behavior
-    if (messages.length < 10) {
-      console.warn(
-        `[C-MB-01] DATA LOSS DETECTED: ${messages.length}/10 messages survived concurrent writes. This is a known bug: mailbox.send() uses read-modify-write without file lock.`,
+      const native = toNativeInboxMessage(msg);
+      expect(native.summary).toBe('short message here');
+      expect(native.summary).not.toContain('...');
+    });
+
+    test('respects custom color', () => {
+      const msg = {
+        id: 'msg-test',
+        from: 'sender',
+        to: 'worker',
+        body: 'test',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        read: false,
+        deliveredAt: null,
+      };
+
+      const native = toNativeInboxMessage(msg, 'red');
+      expect(native.color).toBe('red');
+    });
+  });
+
+  // ============================================================================
+  // Concurrency — C-MB-01
+  // ============================================================================
+
+  describe('concurrent mailbox writes', () => {
+    // C-MB-01: 10 concurrent send() to same worker — PG handles concurrency
+    test('C-MB-01: 10 concurrent send() — no data loss with PG', async () => {
+      const repo = '/tmp/concurrent-test';
+      const results = await Promise.allSettled(
+        Array.from({ length: 10 }, (_, i) => send(repo, `sender-${i}`, 'target-worker', `message ${i}`)),
       );
-    }
 
-    // At minimum, one message should survive
-    expect(messages.length).toBeGreaterThanOrEqual(1);
-    // Ideally all 10 should be there
-    // expect(messages.length).toBe(10); // Uncomment after adding file lock
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      expect(fulfilled.length).toBe(10);
+
+      const messages = await inbox(repo, 'target-worker');
+      // PG guarantees no data loss under concurrent writes
+      expect(messages.length).toBe(10);
+    });
   });
-});
 
-// ============================================================================
-// Failure Modes — F-* related
-// ============================================================================
+  // ============================================================================
+  // Repo scoping
+  // ============================================================================
 
-describe('mailbox failure modes', () => {
-  test('inbox returns empty for corrupted mailbox JSON', async () => {
-    const { mkdir } = await import('node:fs/promises');
-    const dir = join(tempDir, '.genie', 'mailbox');
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, 'bad-worker.json'), 'not valid json at all!');
+  describe('repo scoping', () => {
+    test('messages are scoped to repo_path', async () => {
+      const repo1 = '/tmp/repo-scope-1';
+      const repo2 = '/tmp/repo-scope-2';
 
-    const messages = await inbox(tempDir, 'bad-worker');
-    expect(messages).toEqual([]);
+      await send(repo1, 'a', 'worker', 'repo1 msg');
+      await send(repo2, 'b', 'worker', 'repo2 msg');
+
+      const inbox1 = await inbox(repo1, 'worker');
+      const inbox2 = await inbox(repo2, 'worker');
+
+      expect(inbox1.length).toBe(1);
+      expect(inbox1[0].body).toBe('repo1 msg');
+      expect(inbox2.length).toBe(1);
+      expect(inbox2[0].body).toBe('repo2 msg');
+    });
   });
 });

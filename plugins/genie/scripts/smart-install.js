@@ -436,6 +436,11 @@ function installGenieCli() {
 
 // Main execution
 try {
+  // Workers inherit parent's deps — skip all checks to reduce spawn latency (#712)
+  if (process.env.GENIE_WORKER === '1') {
+    process.exit(0);
+  }
+
   // Quick check: if everything is already installed, exit silently
   if (isBunInstalled() && isTmuxInstalled() && !needsInstall() && !genieCliNeedsInstall()) {
     process.exit(0);
@@ -508,9 +513,19 @@ try {
     }
   }
 } catch (e) {
-  // Only Bun install failure reaches here — everything else is graceful
-  console.error('Critical installation failed:', e.message);
-  console.error('Continuing anyway to let remaining hooks run...');
+  // Only Bun install failure reaches here — everything else is graceful.
+  // Don't say "continuing anyway" — be specific about what failed and what to do.
+  console.error('');
+  console.error('Genie setup failed: Bun runtime could not be installed.');
+  console.error(`  Error: ${e.message}`);
+  console.error('');
+  console.error('What to do:');
+  console.error('  1. Install Bun manually: curl -fsSL https://bun.com/install | bash');
+  console.error('  2. Restart your terminal to update PATH');
+  console.error('  3. Start a new Claude Code session');
+  console.error('');
+  console.error('Genie features will be unavailable until Bun is installed.');
   // Exit 0 so the hook chain continues (first-run-check, session-context)
+  // but session state is not corrupted — no partial markers were written
   process.exit(0);
 }

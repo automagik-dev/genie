@@ -5,6 +5,7 @@
  *   1. Raw pane ID (starts with %) -> passthrough
  *   2. Worker[:index] (left side is registered worker) -> registry lookup + subpane index
  *   3. Session:window (contains :, left side is tmux session) -> tmux lookup
+ *   4. Bare name -> exact ID → role (team) → customName → partial ID → substring → role (global) → partial role → partial customName
  *
  * Returns { paneId, session, workerId?, paneIndex?, resolvedVia }
  */
@@ -56,6 +57,9 @@ interface ResolveOptions {
 
   /** Custom session derivation from pane ID (for testing) */
   deriveSession?: (paneId: string) => Promise<string | null>;
+
+  /** Custom current team resolver (for testing) */
+  getCurrentTeam?: () => Promise<string | null>;
 }
 
 // ============================================================================
@@ -139,7 +143,7 @@ async function defaultDeriveSession(paneId: string): Promise<string | null> {
 // ============================================================================
 
 /**
- * Resolve a target string to a tmux pane ID using a 3-level resolution chain.
+ * Resolve a target string to a tmux pane ID using a multi-level resolution chain.
  *
  * @param target - The target string (e.g., "%17", "wish-42", "wish-42:1", "genie:OMNI")
  * @param options - Optional overrides for testing
@@ -185,13 +189,13 @@ async function resolveWindowId(
 ): Promise<ResolvedTarget> {
   const matchingWorker = Object.values(workers).find((w) => w.windowId === target);
   if (!matchingWorker) {
-    throw new Error(`Window "${target}" not found in worker registry.\nRun 'genie ls' to list agents.`);
+    throw new Error(`Window "${target}" not found in worker registry.\nRun 'genie agent list' to list agents.`);
   }
   if (opts.checkLiveness) {
     await assertLive(
       matchingWorker.paneId,
       opts.isPaneLive,
-      `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. Run 'genie kill ${matchingWorker.id}' to clean up.`,
+      `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. Run 'genie agent kill${matchingWorker.id}' to clean up.`,
     );
   }
   return {
@@ -219,26 +223,257 @@ function resolveWorkerSubPane(worker: Agent, leftSide: string, rightSide: string
   return paneId;
 }
 
-/**
- * Resolve a target by role name, scoped to the current tmux session (= team).
- * Returns null if no unique match. Throws on ambiguity.
- */
-async function resolveByRole(target: string, workers: Record<string, Agent>): Promise<ResolvedTarget | null> {
-  const currentTeam = (await getCurrentSessionName()) ?? process.env.GENIE_TEAM;
-  if (!currentTeam) return null;
+// ============================================================================
+// Fuzzy Name Resolution (customName, partial ID, global role)
+// ============================================================================
 
-  const candidates = Object.entries(workers).filter(([, w]) => w.role === target && w.team === currentTeam);
+/** Pick a single match from candidates. Returns null if empty, the match if unique, throws on ambiguity. */
+function pickUnique(target: string, candidates: [string, Agent][], label: string): ResolvedTarget | null {
   if (candidates.length === 0) return null;
+  if (candidates.length === 1) {
+    const [id, w] = candidates[0];
+    return { paneId: w.paneId, session: w.session, workerId: id, resolvedVia: 'worker' };
+  }
+  const ids = candidates.map(([id]) => id).join(', ');
+  throw new Error(`Ambiguous target "${target}" — ${label}: ${ids}\nUse the full ID instead.`);
+}
 
-  if (candidates.length > 1) {
-    const ids = candidates.map(([id]) => id).join(', ');
-    throw new Error(
-      `Ambiguous target "${target}" — ${candidates.length} workers with role "${target}" in team "${currentTeam}": ${ids}\nUse the full ID instead.`,
+/** Resolve a target by role name, scoped to a specific team. */
+function resolveByRole(
+  target: string,
+  workers: Record<string, Agent>,
+  currentTeam: string | null,
+): ResolvedTarget | null {
+  if (!currentTeam) return null;
+  const candidates = Object.entries(workers).filter(([, w]) => w.role === target && w.team === currentTeam);
+  return pickUnique(target, candidates, `${candidates.length} workers with role "${target}" in team "${currentTeam}"`);
+}
+
+/** Resolve a target by customName. Prefers team-scoped match, falls back to global. */
+function resolveByCustomName(
+  target: string,
+  workers: Record<string, Agent>,
+  currentTeam: string | null,
+): ResolvedTarget | null {
+  if (currentTeam) {
+    const teamCandidates = Object.entries(workers).filter(([, w]) => w.customName === target && w.team === currentTeam);
+    const teamHit = pickUnique(
+      target,
+      teamCandidates,
+      `${teamCandidates.length} workers with customName "${target}" in team "${currentTeam}"`,
     );
+    if (teamHit) return teamHit;
+  }
+  const allCandidates = Object.entries(workers).filter(([, w]) => w.customName === target);
+  return pickUnique(target, allCandidates, `${allCandidates.length} workers with customName "${target}"`);
+}
+
+/** Resolve a target by partial ID suffix match. Prefers same-team on ambiguity. */
+function resolveByPartialId(
+  target: string,
+  workers: Record<string, Agent>,
+  currentTeam: string | null,
+): ResolvedTarget | null {
+  const candidates = Object.entries(workers).filter(([id]) => id !== target && id.endsWith(target));
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) {
+    const [id, w] = candidates[0];
+    return { paneId: w.paneId, session: w.session, workerId: id, resolvedVia: 'worker' };
   }
 
-  const [matchedId, matchedWorker] = candidates[0];
-  return { paneId: matchedWorker.paneId, session: matchedWorker.session, workerId: matchedId, resolvedVia: 'worker' };
+  if (currentTeam) {
+    const teamCandidates = candidates.filter(([, w]) => w.team === currentTeam);
+    if (teamCandidates.length === 1) {
+      const [id, w] = teamCandidates[0];
+      return { paneId: w.paneId, session: w.session, workerId: id, resolvedVia: 'worker' };
+    }
+  }
+
+  const ids = candidates.map(([id]) => id).join(', ');
+  throw new Error(
+    `Ambiguous target "${target}" — matches ${candidates.length} workers: ${ids}\nUse the full ID instead.`,
+  );
+}
+
+/** Resolve a target by substring match on worker ID. Prefers same-team on ambiguity. */
+function resolveBySubstring(
+  target: string,
+  workers: Record<string, Agent>,
+  currentTeam: string | null,
+): ResolvedTarget | null {
+  // Only match IDs that contain the target but don't end with it (endsWith is handled by resolveByPartialId)
+  const candidates = Object.entries(workers).filter(
+    ([id]) => id !== target && !id.endsWith(target) && id.includes(target),
+  );
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) {
+    const [id, w] = candidates[0];
+    return { paneId: w.paneId, session: w.session, workerId: id, resolvedVia: 'worker' };
+  }
+
+  if (currentTeam) {
+    const teamCandidates = candidates.filter(([, w]) => w.team === currentTeam);
+    if (teamCandidates.length === 1) {
+      const [id, w] = teamCandidates[0];
+      return { paneId: w.paneId, session: w.session, workerId: id, resolvedVia: 'worker' };
+    }
+  }
+
+  const ids = candidates.map(([id]) => id).join(', ');
+  throw new Error(
+    `Ambiguous target "${target}" — matches ${candidates.length} workers: ${ids}\nUse the full ID instead.`,
+  );
+}
+
+/** Resolve a target by role name across all teams (global fallback). */
+function resolveByRoleGlobal(target: string, workers: Record<string, Agent>): ResolvedTarget | null {
+  const candidates = Object.entries(workers).filter(([, w]) => w.role === target);
+  return pickUnique(target, candidates, `${candidates.length} workers with role "${target}"`);
+}
+
+/** Resolve by partial role prefix (e.g., "eng" matches "engineer"). Team-scoped first, then global. */
+function resolveByPartialRole(
+  target: string,
+  workers: Record<string, Agent>,
+  currentTeam: string | null,
+): ResolvedTarget | null {
+  const matches = ([, w]: [string, Agent]) => w.role !== undefined && w.role !== target && w.role.startsWith(target);
+
+  if (currentTeam) {
+    const teamCandidates = Object.entries(workers).filter((e) => matches(e) && e[1].team === currentTeam);
+    const teamHit = pickUnique(
+      target,
+      teamCandidates,
+      `${teamCandidates.length} workers with role starting with "${target}" in team "${currentTeam}"`,
+    );
+    if (teamHit) return teamHit;
+  }
+
+  const allCandidates = Object.entries(workers).filter(matches);
+  return pickUnique(target, allCandidates, `${allCandidates.length} workers with role starting with "${target}"`);
+}
+
+/** Resolve by partial customName prefix (e.g., "eng" matches "engineer-4"). Team-scoped first, then global. */
+function resolveByPartialCustomName(
+  target: string,
+  workers: Record<string, Agent>,
+  currentTeam: string | null,
+): ResolvedTarget | null {
+  const matches = ([, w]: [string, Agent]) =>
+    w.customName !== undefined && w.customName !== target && w.customName.startsWith(target);
+
+  if (currentTeam) {
+    const teamCandidates = Object.entries(workers).filter((e) => matches(e) && e[1].team === currentTeam);
+    const teamHit = pickUnique(
+      target,
+      teamCandidates,
+      `${teamCandidates.length} workers with customName starting with "${target}" in team "${currentTeam}"`,
+    );
+    if (teamHit) return teamHit;
+  }
+
+  const allCandidates = Object.entries(workers).filter(matches);
+  return pickUnique(target, allCandidates, `${allCandidates.length} workers with customName starting with "${target}"`);
+}
+
+// ============================================================================
+// Extracted sub-resolvers (keeps resolveTarget under complexity limit)
+// ============================================================================
+
+/** Resolve a colon target: worker:index or session:window. */
+async function resolveColonTarget(
+  target: string,
+  workers: Record<string, Agent>,
+  opts: {
+    checkLiveness: boolean;
+    isPaneLive: (id: string) => Promise<boolean>;
+    cleanupDeadPane: (workerId: string, paneId: string) => Promise<void>;
+    tmuxLookup: (sessionName: string, windowName?: string) => Promise<{ paneId: string; session: string } | null>;
+  },
+): Promise<ResolvedTarget> {
+  const colonIndex = target.indexOf(':');
+  const leftSide = target.substring(0, colonIndex);
+  const rightSide = target.substring(colonIndex + 1);
+  const worker = workers[leftSide];
+
+  if (worker) {
+    const paneId = resolveWorkerSubPane(worker, leftSide, rightSide);
+    const index = Number.parseInt(rightSide, 10);
+    if (opts.checkLiveness) {
+      await assertLive(
+        paneId,
+        opts.isPaneLive,
+        `Worker ${leftSide}: pane ${paneId} is dead. Run 'genie agent kill${leftSide}' to clean up.`,
+        () => opts.cleanupDeadPane(leftSide, paneId),
+      );
+    }
+    return { paneId, session: worker.session, workerId: leftSide, paneIndex: index, resolvedVia: 'worker' };
+  }
+
+  const sessionWindowResult = await opts.tmuxLookup(leftSide, rightSide);
+  if (!sessionWindowResult) {
+    throw new Error(
+      `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'genie agent list' to list agents.`,
+    );
+  }
+  if (opts.checkLiveness) {
+    await assertLive(
+      sessionWindowResult.paneId,
+      opts.isPaneLive,
+      `Session "${leftSide}" window "${rightSide}": pane ${sessionWindowResult.paneId} is dead.`,
+    );
+  }
+  return { paneId: sessionWindowResult.paneId, session: sessionWindowResult.session, resolvedVia: 'session:window' };
+}
+
+/** Resolve a bare name: exact ID → role (team) → customName → partial ID → substring → role (global) → partial role → partial customName. */
+async function resolveBareName(
+  target: string,
+  workers: Record<string, Agent>,
+  opts: {
+    checkLiveness: boolean;
+    isPaneLive: (id: string) => Promise<boolean>;
+    cleanupDeadPane: (workerId: string, paneId: string) => Promise<void>;
+    getCurrentTeam?: () => Promise<string | null>;
+  },
+): Promise<ResolvedTarget> {
+  const worker = workers[target];
+  if (worker) {
+    if (opts.checkLiveness) {
+      await assertLive(
+        worker.paneId,
+        opts.isPaneLive,
+        `Worker ${target}: pane ${worker.paneId} is dead. Run 'genie agent kill${target}' to clean up.`,
+        () => opts.cleanupDeadPane(target, worker.paneId),
+      );
+    }
+    return { paneId: worker.paneId, session: worker.session, workerId: target, resolvedVia: 'worker' };
+  }
+
+  const currentTeam = opts.getCurrentTeam
+    ? await opts.getCurrentTeam()
+    : ((await getCurrentSessionName()) ?? process.env.GENIE_TEAM ?? null);
+
+  const fuzzyMatch =
+    resolveByRole(target, workers, currentTeam) ??
+    resolveByCustomName(target, workers, currentTeam) ??
+    resolveByPartialId(target, workers, currentTeam) ??
+    resolveBySubstring(target, workers, currentTeam) ??
+    resolveByRoleGlobal(target, workers) ??
+    resolveByPartialRole(target, workers, currentTeam) ??
+    resolveByPartialCustomName(target, workers, currentTeam);
+
+  if (fuzzyMatch) {
+    const rid = fuzzyMatch.workerId ?? target;
+    if (opts.checkLiveness) {
+      await assertLive(fuzzyMatch.paneId, opts.isPaneLive, `Worker ${rid}: pane ${fuzzyMatch.paneId} is dead.`, () =>
+        opts.cleanupDeadPane(rid, fuzzyMatch.paneId),
+      );
+    }
+    return fuzzyMatch;
+  }
+
+  throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'genie agent list' to list agents.`);
 }
 
 export async function resolveTarget(target: string, options: ResolveOptions = {}): Promise<ResolvedTarget> {
@@ -267,70 +502,17 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
   const workers = await getWorkers(injectedWorkers, options.registryPath);
 
   // Level 2: Worker[:index] or session:window
-  const colonIndex = target.indexOf(':');
-  if (colonIndex !== -1) {
-    const leftSide = target.substring(0, colonIndex);
-    const rightSide = target.substring(colonIndex + 1);
-    const worker = workers[leftSide];
-
-    if (worker) {
-      const paneId = resolveWorkerSubPane(worker, leftSide, rightSide);
-      const index = Number.parseInt(rightSide, 10);
-      if (checkLiveness) {
-        await assertLive(
-          paneId,
-          isPaneLive,
-          `Worker ${leftSide}: pane ${paneId} is dead. Run 'genie kill ${leftSide}' to clean up.`,
-          () => cleanupDeadPane(leftSide, paneId),
-        );
-      }
-      return { paneId, session: worker.session, workerId: leftSide, paneIndex: index, resolvedVia: 'worker' };
-    }
-
-    // Not a worker -- try session:window
-    const sessionWindowResult = await tmuxLookup(leftSide, rightSide);
-    if (!sessionWindowResult) {
-      throw new Error(
-        `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'genie ls' to list agents.`,
-      );
-    }
-    if (checkLiveness) {
-      await assertLive(
-        sessionWindowResult.paneId,
-        isPaneLive,
-        `Session "${leftSide}" window "${rightSide}": pane ${sessionWindowResult.paneId} is dead.`,
-      );
-    }
-    return { paneId: sessionWindowResult.paneId, session: sessionWindowResult.session, resolvedVia: 'session:window' };
+  if (target.indexOf(':') !== -1) {
+    return resolveColonTarget(target, workers, { checkLiveness, isPaneLive, cleanupDeadPane, tmuxLookup });
   }
 
-  // No colon: check worker registry by exact ID
-  const worker = workers[target];
-  if (worker) {
-    if (checkLiveness) {
-      await assertLive(
-        worker.paneId,
-        isPaneLive,
-        `Worker ${target}: pane ${worker.paneId} is dead. Run 'genie kill ${target}' to clean up.`,
-        () => cleanupDeadPane(target, worker.paneId),
-      );
-    }
-    return { paneId: worker.paneId, session: worker.session, workerId: target, resolvedVia: 'worker' };
-  }
-
-  // Fallback: match by role scoped to current tmux session (e.g., "fix" → "genie-pm-fix")
-  const roleMatch = await resolveByRole(target, workers);
-  if (roleMatch) {
-    const rid = roleMatch.workerId ?? target;
-    if (checkLiveness) {
-      await assertLive(roleMatch.paneId, isPaneLive, `Worker ${rid}: pane ${roleMatch.paneId} is dead.`, () =>
-        cleanupDeadPane(rid, roleMatch.paneId),
-      );
-    }
-    return roleMatch;
-  }
-
-  throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'genie ls' to list agents.`);
+  // Level 3: Bare name — exact ID → role (team) → customName → partial ID → substring → role (global) → partial role → partial customName
+  return resolveBareName(target, workers, {
+    checkLiveness,
+    isPaneLive,
+    cleanupDeadPane,
+    getCurrentTeam: options.getCurrentTeam,
+  });
 }
 
 // ============================================================================

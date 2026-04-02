@@ -109,7 +109,52 @@ When a failure is found but the root cause is unclear:
 
 ```bash
 # Spawn a reviewer subagent
-genie spawn reviewer
+genie agent spawn reviewer
+```
+
+## Task Lifecycle Integration (v4)
+
+When a PG task exists for the reviewed work, log the verdict as a task comment:
+
+| Verdict | Task Action |
+|---------|-------------|
+| **SHIP** | `genie task comment #<seq> "SHIP — all criteria passed"` |
+| **FIX-FIRST** | `genie task comment #<seq> "FIX-FIRST: [gap list]"` then `genie task move #<seq> --to build` |
+| **BLOCKED** | `genie task block #<seq> --reason "<reason>"` |
+
+**Graceful degradation:** If no PG task exists for the reviewed work, skip all `genie task` commands. Verdict logging is an enhancement — the review flow must never fail due to missing tasks.
+
+## Example
+
+After `/work` completes wish `fix-dispatch-initial-prompt`, the orchestrator dispatches `/review`:
+
+```bash
+genie agent spawn reviewer
+genie agent send 'Review wish fix-dispatch-initial-prompt execution. Criteria:
+1. initialPrompt added to all 5 dispatch call sites
+2. protocolRouter.sendMessage kept as backup with warning logging
+3. bun test passes
+4. bun run typecheck clean
+Check: gh pr diff 746, then run validations.' --to reviewer
+```
+
+Reviewer output:
+
+```
+## Review: fix-dispatch-initial-prompt (Execution)
+
+### Checklist
+- [x] All acceptance criteria met — 5/5 call sites have initialPrompt
+- [x] Validation: bun test — 1137 pass, 0 fail
+- [x] Validation: bun run typecheck — clean
+- [x] No scope creep — only dispatch.ts and team.ts modified
+- [x] No regressions — test count unchanged
+
+### Gaps
+(none)
+
+### Verdict: SHIP
+Next: create PR targeting dev
 ```
 
 ## Rules

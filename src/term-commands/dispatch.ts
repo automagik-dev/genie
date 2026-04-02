@@ -23,6 +23,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import * as protocolRouter from '../lib/protocol-router.js';
+import { parseWishRef, resolveWish } from '../lib/wish-resolve.js';
 import type { GroupDefinition } from '../lib/wish-state.js';
 import * as wishState from '../lib/wish-state.js';
 import { handleWorkerSpawn } from './agents.js';
@@ -80,6 +82,17 @@ export function extractWishContext(content: string): string {
   return content.slice(0, 2000).trim();
 }
 
+const SLUG_PATTERN = /^[a-zA-Z0-9._-]+$/;
+
+/** Validate a slug against path traversal. Throws on invalid input. */
+export function validateSlug(slug: string): void {
+  if (!SLUG_PATTERN.test(slug)) {
+    console.error(`❌ Invalid slug: "${slug}"`);
+    console.error('   Slugs must match [a-zA-Z0-9._-]+ (no slashes, dots-dots, or special characters)');
+    process.exit(1);
+  }
+}
+
 /** Escape regex special characters. */
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -97,6 +110,8 @@ export function buildContextPrompt(opts: {
   wishContext?: string;
   command: string;
   skill?: string;
+  /** Pre-computed enrichment from brain vault (via enrichContext). */
+  enrichedContext?: string;
 }): string {
   const parts = [
     `# Dispatch Context (${opts.command})`,
@@ -111,6 +126,10 @@ export function buildContextPrompt(opts: {
   }
 
   parts.push('## Assigned Section', '', opts.sectionContent, '');
+
+  if (opts.enrichedContext) {
+    parts.push(opts.enrichedContext);
+  }
 
   if (opts.skill) {
     parts.push('## Initial Command', '', `Run \`/${opts.skill}\` to begin.`, '');
@@ -164,13 +183,12 @@ export function parseWishGroups(content: string): GroupDefinition[] {
       const depsStr = depsMatch[1].trim();
       const depsNormalized = depsStr.replace(/\s*\([^)]*\)/g, '').trim();
       if (depsNormalized.toLowerCase() !== 'none') {
-        dependsOn = depsStr
+        dependsOn = depsNormalized
           .split(',')
           .map((d) =>
             d
               .trim()
-              .replace(/^group\s*/i, '')
-              .replace(/\s*\(.*\)\s*$/, '')
+              .replace(/^groups?\s*/i, '')
               .trim(),
           )
           .filter(Boolean);
@@ -188,12 +206,12 @@ export function parseWishGroups(content: string): GroupDefinition[] {
 // Execution Strategy Parser
 // ============================================================================
 
-export interface WaveGroup {
+interface WaveGroup {
   group: string;
   agent: string;
 }
 
-export interface Wave {
+interface Wave {
   name: string;
   groups: WaveGroup[];
 }
@@ -286,14 +304,29 @@ function buildFallbackWaves(content: string): Wave[] {
 }
 
 // ============================================================================
-// Auto-Orchestration
+// Leader Resolution
 // ============================================================================
 
-/** Poll interval for checking wave completion (30 seconds). */
-export const ORCHESTRATE_POLL_MS = 30_000;
+/**
+ * Resolve the leader name for --to in dispatch prompts.
+ * Uses GENIE_TEAM to look up the team config's leader field.
+ * Never returns 'team-lead' — falls back to teamName.
+ */
+async function resolveLeaderTarget(): Promise<string> {
+  const teamName = process.env.GENIE_TEAM;
+  if (!teamName) return 'team-lead';
 
-/** Maximum time to wait for a wave to complete (30 minutes). */
-export const ORCHESTRATE_TIMEOUT_MS = 30 * 60 * 1000;
+  try {
+    const { resolveLeaderName } = await import('../lib/team-manager.js');
+    return await resolveLeaderName(teamName);
+  } catch {
+    return teamName;
+  }
+}
+
+// ============================================================================
+// Auto-Orchestration (fire-and-forget)
+// ============================================================================
 
 /**
  * Detect whether `genie work` should run in auto or manual mode.
@@ -325,19 +358,46 @@ export function detectWorkMode(
 }
 
 /**
- * `genie work <slug>` — Auto-orchestrate full wish execution.
+ * `genie work <slug>` — Fire-and-forget wish dispatch.
  *
- * Reads the Execution Strategy, spawns all agents per wave in parallel,
- * monitors completion via state polling, advances waves, and exits when done.
+ * Reads the Execution Strategy, finds the first wave with unstarted groups,
+ * spawns all agents for that wave in parallel, prints guidance, and returns
+ * the terminal immediately. Wave advancement is handled by `genie done`
+ * notifying the team-lead.
  */
-export async function autoOrchestrateCommand(slug: string): Promise<void> {
-  const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
+async function autoOrchestrateCommand(slug: string): Promise<void> {
+  let wishPath: string;
+  let actualSlug = slug;
+
+  // Check for namespace/slug format — resolve and auto-create team
+  const parsed = parseWishRef(slug);
+  if (parsed.namespace) {
+    const resolved = await resolveWish(slug);
+    wishPath = resolved.wishPath;
+    actualSlug = resolved.slug;
+
+    // Auto-create team using the resolved repo and session
+    const { handleTeamCreate } = await import('./team.js');
+    await handleTeamCreate(actualSlug, {
+      repo: resolved.repo,
+      branch: 'dev',
+      wish: actualSlug,
+      tmuxSession: resolved.session,
+    });
+    return; // handleTeamCreate spawns the leader, which runs the full lifecycle
+  }
+
+  validateSlug(slug);
+  wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
   if (!existsSync(wishPath)) {
     console.error(`❌ Wish not found: ${wishPath}`);
     console.error(`   Create it first: genie wish <agent> ${slug}`);
     process.exit(1);
   }
+
+  // Best-effort: sync wish to PG index (non-blocking)
+  import('../lib/wish-sync.js').then((ws) => ws.syncWishes(process.cwd())).catch(() => {});
 
   const content = await readFile(wishPath, 'utf-8');
   const groups = parseWishGroups(content);
@@ -348,63 +408,37 @@ export async function autoOrchestrateCommand(slug: string): Promise<void> {
     process.exit(1);
   }
 
-  // Auto-initialize wish state
-  let state = await wishState.getState(slug);
-  if (!state) {
-    state = await wishState.createState(slug, groups);
-    console.log(`📝 Initialized state for wish "${slug}" (${groups.length} groups)`);
+  // Auto-initialize wish state if missing (prevents polling loop when no state exists)
+  const state = await wishState.getOrCreateState(slug, groups);
+
+  // Find the first wave with groups that are still `ready` (not started/done)
+  const nextWave = waves.find((wave) =>
+    wave.groups.some((g) => {
+      const gs = state?.groups[g.group];
+      return !gs || gs.status === 'ready';
+    }),
+  );
+
+  if (!nextWave) {
+    console.log(`✅ All waves already dispatched for wish "${slug}"`);
+    return;
   }
 
-  console.log(`🚀 Auto-orchestrating wish "${slug}" — ${waves.length} waves, ${groups.length} groups`);
+  console.log(`🚀 Dispatching ${nextWave.name} for wish "${slug}" — ${nextWave.groups.length} group(s)`);
 
-  for (const wave of waves) {
-    console.log(`\n⏳ ${wave.name} — dispatching ${wave.groups.length} group(s)`);
+  // Dispatch all groups in this wave concurrently.
+  // workDispatchCommand spawns a tmux pane and returns immediately.
+  await Promise.all(
+    nextWave.groups.map(({ group, agent }) => {
+      const ref = `${slug}#${group}`;
+      return workDispatchCommand(agent, ref);
+    }),
+  );
 
-    // Dispatch all groups in this wave concurrently.
-    // workDispatchCommand spawns a tmux pane and returns immediately,
-    // so Promise.all resolves once all panes are created.
-    await Promise.all(
-      wave.groups.map(({ group, agent }) => {
-        const ref = `${slug}#${group}`;
-        return workDispatchCommand(agent, ref);
-      }),
-    );
-
-    // Poll state until all groups in wave are done
-    const waveStart = Date.now();
-    const waveGroupNames = wave.groups.map((g) => g.group);
-
-    while (true) {
-      const currentState = await wishState.getState(slug);
-      if (!currentState) {
-        console.error('❌ State file disappeared during orchestration');
-        process.exit(1);
-      }
-
-      const allDone = waveGroupNames.every((g) => currentState.groups[g]?.status === 'done');
-      if (allDone) {
-        console.log(`✅ ${wave.name} complete`);
-        break;
-      }
-
-      // Check timeout
-      if (Date.now() - waveStart > ORCHESTRATE_TIMEOUT_MS) {
-        const pending = waveGroupNames
-          .filter((g) => currentState.groups[g]?.status !== 'done')
-          .map((g) => `${g} (${currentState.groups[g]?.status ?? 'unknown'})`)
-          .join(', ');
-        console.error(`❌ ${wave.name} timed out after 30min — pending: ${pending}`);
-        process.exit(1);
-      }
-
-      // Log status and wait
-      const statuses = waveGroupNames.map((g) => `${g}:${currentState.groups[g]?.status ?? '?'}`).join(' ');
-      console.log(`   ⏳ ${statuses}`);
-      await new Promise((resolve) => setTimeout(resolve, ORCHESTRATE_POLL_MS));
-    }
-  }
-
-  console.log(`\n🎉 All waves complete — wish "${slug}" fully executed`);
+  const groupList = nextWave.groups.map((g) => g.group).join(', ');
+  console.log(`\n✅ Agents dispatched for ${nextWave.name} (groups: ${groupList})`);
+  console.log(`   Monitor: genie status ${slug}`);
+  console.log('   Logs:    genie read <agent>');
 }
 
 // ============================================================================
@@ -414,7 +448,8 @@ export async function autoOrchestrateCommand(slug: string): Promise<void> {
 /**
  * `genie brainstorm <agent> <slug>` — Read DRAFT.md, spawn agent with content.
  */
-export async function brainstormCommand(agentName: string, slug: string): Promise<void> {
+async function brainstormCommand(agentName: string, slug: string): Promise<void> {
+  validateSlug(slug);
   const draftPath = join(process.cwd(), '.genie', 'brainstorms', slug, 'DRAFT.md');
 
   if (!existsSync(draftPath)) {
@@ -437,18 +472,27 @@ export async function brainstormCommand(agentName: string, slug: string): Promis
   console.log(`📝 Dispatching brainstorm to ${agentName} for "${slug}"`);
   console.log(`   Draft: ${draftPath}`);
 
+  const brainstormPrompt = `Brainstorm "${slug}". Your context is in the system prompt. Explore the idea, ask clarifying questions, and build toward a design.`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Brainstorm "${slug}". Your context is in the system prompt. Explore the idea, ask clarifying questions, and build toward a design.`,
+    initialPrompt: brainstormPrompt,
   });
+
+  // Deliver work prompt via mailbox as backup (durable, queued to disk)
+  const repoPath = process.cwd();
+  const result = await protocolRouter.sendMessage(repoPath, 'cli', agentName, brainstormPrompt);
+  if (!result.delivered) {
+    console.warn(`⚠ Backup delivery to ${agentName} failed: ${result.reason ?? 'unknown'}`);
+  }
 }
 
 /**
  * `genie wish <agent> <slug>` — Read DESIGN.md, spawn agent with content.
  */
-export async function wishCommand(agentName: string, slug: string): Promise<void> {
+async function wishCommand(agentName: string, slug: string): Promise<void> {
+  validateSlug(slug);
   const designPath = join(process.cwd(), '.genie', 'brainstorms', slug, 'DESIGN.md');
 
   if (!existsSync(designPath)) {
@@ -469,12 +513,20 @@ export async function wishCommand(agentName: string, slug: string): Promise<void
   console.log(`📝 Dispatching wish to ${agentName} for "${slug}"`);
   console.log(`   Design: ${designPath}`);
 
+  const wishPrompt = `Create a wish from the design for "${slug}". Your context is in the system prompt. Write the WISH.md with execution groups, acceptance criteria, and validation commands.`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Create a wish from the design for "${slug}". Your context is in the system prompt. Write the WISH.md with execution groups, acceptance criteria, and validation commands.`,
+    initialPrompt: wishPrompt,
   });
+
+  // Deliver work prompt via mailbox as backup (durable, queued to disk)
+  const repoPath = process.cwd();
+  const result = await protocolRouter.sendMessage(repoPath, 'cli', agentName, wishPrompt);
+  if (!result.delivered) {
+    console.warn(`⚠ Backup delivery to ${agentName} failed: ${result.reason ?? 'unknown'}`);
+  }
 }
 
 /**
@@ -488,8 +540,9 @@ export async function wishCommand(agentName: string, slug: string): Promise<void
  * 5. Build context with wish-level info + group section
  * 6. Spawn agent
  */
-export async function workDispatchCommand(agentName: string, ref: string): Promise<void> {
+async function workDispatchCommand(agentName: string, ref: string): Promise<void> {
   const { slug, group } = parseRef(ref);
+  validateSlug(slug);
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
   if (!existsSync(wishPath)) {
@@ -512,13 +565,9 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
     process.exit(1);
   }
 
-  // Auto-initialize state if no state file exists
-  let state = await wishState.getState(slug);
-  if (!state) {
-    const groups = parseWishGroups(content);
-    state = await wishState.createState(slug, groups);
-    console.log(`📝 Initialized state for wish "${slug}" (${groups.length} groups)`);
-  }
+  // Auto-initialize state if missing (prevents polling loop when no state exists)
+  const groups = parseWishGroups(content);
+  await wishState.getOrCreateState(slug, groups);
 
   // Start group in state machine (enforces dependencies)
   try {
@@ -532,12 +581,23 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
 
   // Build context with wish-level info + group section
   const wishContext = extractWishContext(content);
+
+  // Enrich with brain vault context (best-effort, non-blocking)
+  let enrichedContext: string | undefined;
+  try {
+    const { enrichContext } = await import('../lib/context-enrichment.js');
+    enrichedContext = enrichContext({ query: `${slug} ${group}: ${groupSection.slice(0, 500)}` }) || undefined;
+  } catch {
+    // enrichment unavailable — proceed without
+  }
+
   const context = buildContextPrompt({
     filePath: wishPath,
     sectionContent: groupSection,
     wishContext,
     command: `work ${ref}`,
     skill: 'work',
+    enrichedContext,
   });
 
   const contextFile = await writeContextFile(context);
@@ -545,20 +605,31 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
   console.log(`   Wish: ${wishPath}`);
   console.log(`   Group: ${group}`);
 
+  const effectiveRole = `${agentName}-${group}`;
+  const leaderTarget = await resolveLeaderTarget();
+  const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to ${leaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
-    role: `${agentName}-${group}`,
+    role: effectiveRole,
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to team-lead`,
+    initialPrompt: workPrompt,
   });
+
+  // Deliver work prompt via mailbox as backup (durable, queued to disk)
+  const repoPath = process.cwd();
+  const result = await protocolRouter.sendMessage(repoPath, 'cli', effectiveRole, workPrompt);
+  if (!result.delivered) {
+    console.warn(`⚠ Backup delivery to ${effectiveRole} failed: ${result.reason ?? 'unknown'}`);
+  }
 }
 
 /**
  * `genie review <agent> <slug>#<group>` — Spawn with group + git diff context.
  */
-export async function reviewCommand(agentName: string, ref: string): Promise<void> {
+async function reviewCommand(agentName: string, ref: string): Promise<void> {
   const { slug, group } = parseRef(ref);
+  validateSlug(slug);
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
   if (!existsSync(wishPath)) {
@@ -587,12 +658,23 @@ export async function reviewCommand(agentName: string, ref: string): Promise<voi
     diff ? `\`\`\`diff\n${diff}\n\`\`\`` : '(no uncommitted changes found — review committed changes)',
   ].join('\n');
 
+  // Enrich with brain vault context (best-effort, non-blocking)
+  let enrichedReviewContext: string | undefined;
+  try {
+    const { enrichContext } = await import('../lib/context-enrichment.js');
+    enrichedReviewContext =
+      enrichContext({ query: `review ${slug} ${group}: ${groupSection.slice(0, 500)}` }) || undefined;
+  } catch {
+    // enrichment unavailable — proceed without
+  }
+
   const context = buildContextPrompt({
     filePath: wishPath,
     sectionContent: reviewContent,
     wishContext,
     command: `review ${ref}`,
     skill: 'review',
+    enrichedContext: enrichedReviewContext,
   });
 
   const contextFile = await writeContextFile(context);
@@ -601,12 +683,21 @@ export async function reviewCommand(agentName: string, ref: string): Promise<voi
   console.log(`   Group: ${group}`);
   if (diff) console.log(`   Diff: ${diff.split('\n').length} lines`);
 
+  const reviewLeaderTarget = await resolveLeaderTarget();
+  const reviewPrompt = `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to ${reviewLeaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to team-lead`,
+    initialPrompt: reviewPrompt,
   });
+
+  // Deliver work prompt via mailbox as backup (durable, queued to disk)
+  const repoPath = process.cwd();
+  const result = await protocolRouter.sendMessage(repoPath, 'cli', agentName, reviewPrompt);
+  if (!result.delivered) {
+    console.warn(`⚠ Backup delivery to ${agentName} failed: ${result.reason ?? 'unknown'}`);
+  }
 }
 
 // ============================================================================

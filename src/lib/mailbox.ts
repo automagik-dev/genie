@@ -1,18 +1,18 @@
 /**
  * Mailbox — Durable message store with unread/read semantics.
  *
- * Messages persist to `.genie/mailbox/<worker-id>.json` before
- * any push delivery attempt. This ensures durability (DEC-7).
+ * Messages persist to PostgreSQL `mailbox` table before any push delivery
+ * attempt. This ensures durability (DEC-7).
  *
  * Delivery is state-aware: messages are queued and pushed to tmux
  * panes only when the worker is idle (not mid-turn).
+ *
+ * PG LISTEN/NOTIFY triggers instant delivery notification on new inserts.
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import path, { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { NativeInboxMessage } from './claude-native-teams.js';
-import { acquireLock } from './file-lock.js';
+import { getConnection } from './db.js';
 
 // ============================================================================
 // Types
@@ -35,107 +35,176 @@ export interface MailboxMessage {
   deliveredAt: string | null;
 }
 
-interface WorkerMailbox {
-  workerId: string;
-  messages: MailboxMessage[];
-  lastUpdated: string;
-}
-
 // ============================================================================
-// Paths
+// Internal helpers
 // ============================================================================
 
-function mailboxDir(repoPath: string): string {
-  return join(repoPath, '.genie', 'mailbox');
+interface MailboxRow {
+  id: string;
+  from_worker: string;
+  to_worker: string;
+  body: string;
+  created_at: Date | string;
+  read: boolean;
+  delivered_at: Date | string | null;
 }
 
-function mailboxFilePath(repoPath: string, workerId: string): string {
-  const safeId = path.basename(workerId);
-  return join(mailboxDir(repoPath), `${safeId}.json`);
+function generateMessageId(): string {
+  return `msg-${uuidv4()}`;
 }
 
-// ============================================================================
-// Internal
-// ============================================================================
-
-async function loadMailbox(repoPath: string, workerId: string): Promise<WorkerMailbox> {
-  try {
-    const content = await readFile(mailboxFilePath(repoPath, workerId), 'utf-8');
-    return JSON.parse(content);
-  } catch {
-    return { workerId, messages: [], lastUpdated: new Date().toISOString() };
-  }
+/** Map a PG row to the MailboxMessage interface. */
+function rowToMessage(row: MailboxRow): MailboxMessage {
+  return {
+    id: row.id,
+    from: row.from_worker,
+    to: row.to_worker,
+    body: row.body,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    read: row.read,
+    deliveredAt: row.delivered_at
+      ? row.delivered_at instanceof Date
+        ? row.delivered_at.toISOString()
+        : String(row.delivered_at)
+      : null,
+  };
 }
 
-async function saveMailbox(repoPath: string, mailbox: WorkerMailbox): Promise<void> {
-  const dir = mailboxDir(repoPath);
-  await mkdir(dir, { recursive: true });
-  mailbox.lastUpdated = new Date().toISOString();
-  await writeFile(mailboxFilePath(repoPath, mailbox.workerId), JSON.stringify(mailbox, null, 2));
+function normalizeWorkerIds(worker: string | string[]): string[] {
+  const values = Array.isArray(worker) ? worker : [worker];
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 // ============================================================================
 // Public API
 // ============================================================================
 
-function generateMessageId(): string {
-  return `msg-${uuidv4()}`;
-}
-
 /**
  * Write a message to a worker's mailbox.
  * This persists BEFORE any delivery attempt (DEC-7).
+ * PG trigger auto-fires NOTIFY genie_mailbox_delivery.
  */
 export async function send(repoPath: string, from: string, to: string, body: string): Promise<MailboxMessage> {
-  // Ensure mailbox directory exists before acquiring lock (lock file needs parent dir)
-  await mkdir(mailboxDir(repoPath), { recursive: true });
-  const release = await acquireLock(mailboxFilePath(repoPath, to));
+  const sql = await getConnection();
+  const id = generateMessageId();
+  const now = new Date().toISOString();
+
+  await sql`
+    INSERT INTO mailbox (id, from_worker, to_worker, body, repo_path, read, delivered_at, created_at)
+    VALUES (${id}, ${from}, ${to}, ${body}, ${repoPath}, false, ${null}, ${now})
+  `;
+
+  const message: MailboxMessage = {
+    id,
+    from,
+    to,
+    body,
+    createdAt: now,
+    read: false,
+    deliveredAt: null,
+  };
+
+  // Mirror mailbox writes into the PG runtime event log for follow/QA flows.
   try {
-    const mailbox = await loadMailbox(repoPath, to);
-
-    const message: MailboxMessage = {
-      id: generateMessageId(),
-      from,
-      to,
-      body,
-      createdAt: new Date().toISOString(),
-      read: false,
-      deliveredAt: null,
-    };
-
-    mailbox.messages.push(message);
-    await saveMailbox(repoPath, mailbox);
-
-    return message;
-  } finally {
-    await release();
+    const { publishSubjectEvent } = await import('./runtime-events.js');
+    await publishSubjectEvent(repoPath, `genie.msg.${to}`, {
+      kind: 'message',
+      agent: from,
+      direction: 'out',
+      peer: to,
+      text: body,
+      data: { messageId: message.id, from, to },
+      source: 'mailbox',
+      timestamp: message.createdAt,
+    });
+  } catch {
+    // Event log unavailable — mailbox durability already succeeded
   }
+
+  return message;
 }
 
 /**
  * Get all messages for a worker (inbox view).
  */
-export async function inbox(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
-  const mailbox = await loadMailbox(repoPath, workerId);
-  return mailbox.messages;
+export async function inbox(repoPath: string, workerId: string | string[]): Promise<MailboxMessage[]> {
+  const sql = await getConnection();
+  const workerIds = normalizeWorkerIds(workerId);
+  if (workerIds.length === 0) return [];
+  const rows = await sql`
+    SELECT * FROM mailbox
+    WHERE to_worker = ANY(${workerIds}) AND repo_path = ${repoPath}
+    ORDER BY created_at ASC
+  `;
+  return rows.map(rowToMessage);
+}
+
+/**
+ * Read sent messages from a worker's outbox.
+ * Queries the same mailbox table filtered by from_worker.
+ */
+export async function readOutbox(repoPath: string, workerId: string | string[]): Promise<MailboxMessage[]> {
+  const sql = await getConnection();
+  const workerIds = normalizeWorkerIds(workerId);
+  if (workerIds.length === 0) return [];
+  const rows = await sql`
+    SELECT * FROM mailbox
+    WHERE from_worker = ANY(${workerIds}) AND repo_path = ${repoPath}
+    ORDER BY created_at ASC
+  `;
+  return rows.map(rowToMessage);
 }
 
 /**
  * Mark a message as delivered (pane injection succeeded).
  */
 export async function markDelivered(repoPath: string, workerId: string, messageId: string): Promise<boolean> {
-  await mkdir(mailboxDir(repoPath), { recursive: true });
-  const release = await acquireLock(mailboxFilePath(repoPath, workerId));
-  try {
-    const mailbox = await loadMailbox(repoPath, workerId);
-    const msg = mailbox.messages.find((m) => m.id === messageId);
-    if (!msg) return false;
-    msg.deliveredAt = new Date().toISOString();
-    await saveMailbox(repoPath, mailbox);
-    return true;
-  } finally {
-    await release();
-  }
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE mailbox SET delivered_at = now()
+    WHERE id = ${messageId} AND to_worker = ${workerId} AND repo_path = ${repoPath}
+    RETURNING id
+  `;
+  return result.length > 0;
+}
+
+/**
+ * Get unread messages for a worker.
+ */
+export async function getUnread(repoPath: string, workerId: string | string[]): Promise<MailboxMessage[]> {
+  const sql = await getConnection();
+  const workerIds = normalizeWorkerIds(workerId);
+  if (workerIds.length === 0) return [];
+  const rows = await sql`
+    SELECT * FROM mailbox
+    WHERE to_worker = ANY(${workerIds}) AND repo_path = ${repoPath} AND read = false
+    ORDER BY created_at ASC
+  `;
+  return rows.map(rowToMessage);
+}
+
+/**
+ * Get a single message by ID.
+ */
+export async function getById(messageId: string): Promise<MailboxMessage | null> {
+  const sql = await getConnection();
+  const rows = await sql`
+    SELECT * FROM mailbox WHERE id = ${messageId} LIMIT 1
+  `;
+  if (rows.length === 0) return null;
+  return rowToMessage(rows[0]);
+}
+
+/**
+ * Mark a message as read.
+ */
+export async function markRead(messageId: string): Promise<boolean> {
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE mailbox SET read = true WHERE id = ${messageId}
+    RETURNING id
+  `;
+  return result.length > 0;
 }
 
 /**
@@ -153,5 +222,27 @@ export function toNativeInboxMessage(msg: MailboxMessage, color = 'blue'): Nativ
     timestamp: msg.createdAt,
     color,
     read: false,
+  };
+}
+
+/**
+ * Subscribe to mailbox delivery notifications via PG LISTEN/NOTIFY.
+ * Calls the callback with (toWorker, messageId) on each new insert.
+ * Returns an unsubscribe function.
+ *
+ * Used by the scheduler daemon for instant message delivery.
+ */
+export async function subscribeDelivery(
+  callback: (toWorker: string, messageId: string) => void,
+): Promise<() => Promise<void>> {
+  const sql = await getConnection();
+  const listener = await sql.listen('genie_mailbox_delivery', (payload: string) => {
+    const [toWorker, messageId] = payload.split(':');
+    if (toWorker && messageId) {
+      callback(toWorker, messageId);
+    }
+  });
+  return async () => {
+    await listener.unlisten();
   };
 }

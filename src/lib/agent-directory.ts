@@ -1,21 +1,14 @@
 /**
- * Agent Directory — Persistent agent registry with CRUD operations.
+ * Agent Directory — Derived from PG agents table + built-in definitions.
  *
- * Stores agent identity entries at two levels:
- *   - Project: `<repo-root>/.genie/agents.json` (default)
- *   - Global:  `~/.genie/agent-directory.json`
- *
- * Resolution order: project → global → built-in roles → built-in council.
- * Uses file-lock pattern (same as agent-registry.ts) for concurrent access.
+ * Resolution order: PG agents (by role) → built-in roles → built-in council.
+ * No JSON files — agent-directory.json and agents.json are eliminated.
+ * Built-in agent definitions remain in code (builtin-agents.ts).
  */
 
-import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { BUILTIN_COUNCIL_MEMBERS, BUILTIN_ROLES, type BuiltinAgent } from './builtin-agents.js';
-import { acquireLock } from './file-lock.js';
 
 // ============================================================================
 // Types
@@ -36,27 +29,30 @@ export interface DirectoryEntry {
   model?: string;
   /** Built-in roles this agent can orchestrate. */
   roles?: string[];
+  /** Omni agent UUID — set when agent is registered in Omni. */
+  omniAgentId?: string;
   /** ISO timestamp of registration. */
   registeredAt: string;
+  /** Agent description from AGENTS.md frontmatter. */
+  description?: string;
+  /** Display color for TUI/terminal output. */
+  color?: string;
+  /** AI provider: 'claude' | 'codex'. Resolved at spawn time. */
+  provider?: string;
 }
 
-export type DirectoryScope = 'project' | 'global' | 'built-in';
+export type DirectoryScope = 'project' | 'global' | 'built-in' | 'archived';
 
 export interface ScopedDirectoryEntry extends DirectoryEntry {
   scope: DirectoryScope;
 }
 
-export interface ScopeOptions {
+interface ScopeOptions {
   global?: boolean;
 }
 
-interface AgentDirectoryData {
-  entries: Record<string, DirectoryEntry>;
-  lastUpdated: string;
-}
-
 /** Resolved agent — either a user directory entry or a built-in. */
-export interface ResolvedAgent {
+interface ResolvedAgent {
   /** The agent entry (user or synthetic built-in). */
   entry: DirectoryEntry;
   /** Whether this came from the built-in registry. */
@@ -67,14 +63,6 @@ export interface ResolvedAgent {
 // Configuration
 // ============================================================================
 
-function getGlobalDir(): string {
-  return process.env.GENIE_HOME ?? join(homedir(), '.genie');
-}
-
-function getGlobalDirectoryPath(): string {
-  return join(getGlobalDir(), 'agent-directory.json');
-}
-
 /**
  * Detect the project root via git. Falls back to process.cwd().
  * Respects GENIE_PROJECT_ROOT env var for testing.
@@ -82,78 +70,10 @@ function getGlobalDirectoryPath(): string {
 export function getProjectRoot(): string {
   if (process.env.GENIE_PROJECT_ROOT) return process.env.GENIE_PROJECT_ROOT;
   try {
+    const { execSync } = require('node:child_process');
     return execSync('git rev-parse --show-toplevel', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
   } catch {
     return process.cwd();
-  }
-}
-
-/**
- * Detect the main repository root when inside a git worktree.
- * Worktrees have their own toplevel but share .git with the main repo.
- * Returns null if not inside a worktree (i.e., already in the main repo).
- */
-function getMainRepoRoot(): string | null {
-  try {
-    const commonDir = execSync('git rev-parse --git-common-dir', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    const toplevel = execSync('git rev-parse --show-toplevel', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    // --git-common-dir returns the shared .git dir (absolute or relative).
-    // For worktrees it points to the main repo's .git, for the main repo it's just ".git".
-    const { resolve: resolvePath } = require('node:path');
-    const absCommon = resolvePath(commonDir);
-    const mainRoot = dirname(absCommon);
-    // If mainRoot equals toplevel, we're in the main repo — no fallback needed.
-    if (mainRoot === toplevel) return null;
-    return mainRoot;
-  } catch {
-    return null;
-  }
-}
-
-function getProjectDirectoryPath(): string {
-  return join(getProjectRoot(), '.genie', 'agents.json');
-}
-
-/** Return the file path for the target scope. */
-function getTargetPath(global?: boolean): string {
-  return global ? getGlobalDirectoryPath() : getProjectDirectoryPath();
-}
-
-// ============================================================================
-// Internal
-// ============================================================================
-
-async function loadDirectoryFrom(filePath: string): Promise<AgentDirectoryData> {
-  try {
-    const content = await readFile(filePath, 'utf-8');
-    return JSON.parse(content);
-  } catch {
-    return { entries: {}, lastUpdated: new Date().toISOString() };
-  }
-}
-
-async function saveDirectoryTo(data: AgentDirectoryData, filePath: string): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  data.lastUpdated = new Date().toISOString();
-  await writeFile(filePath, JSON.stringify(data, null, 2));
-}
-
-async function withDirectoryAt<T>(filePath: string, fn: (data: AgentDirectoryData) => T | Promise<T>): Promise<T> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const release = await acquireLock(filePath);
-  try {
-    const data = await loadDirectoryFrom(filePath);
-    const result = await fn(data);
-    await saveDirectoryTo(data, filePath);
-    return result;
-  } finally {
-    await release();
   }
 }
 
@@ -164,11 +84,11 @@ async function withDirectoryAt<T>(filePath: string, fn: (data: AgentDirectoryDat
 /**
  * Add an agent to the directory.
  * Validates that dir exists and contains AGENTS.md.
- * Defaults to project scope; pass { global: true } for global.
+ * Stores as a record in PG agents table.
  */
 export async function add(
   entry: Omit<DirectoryEntry, 'registeredAt'>,
-  options?: ScopeOptions,
+  _options?: ScopeOptions,
 ): Promise<DirectoryEntry> {
   if (!entry.name || entry.name.trim() === '') {
     throw new Error('Agent name is required.');
@@ -193,61 +113,53 @@ export async function add(
     registeredAt: new Date().toISOString(),
   };
 
-  const filePath = getTargetPath(options?.global);
-  await withDirectoryAt(filePath, (data) => {
-    if (data.entries[entry.name]) {
-      throw new Error(`Agent "${entry.name}" already exists. Use "genie dir edit" to update or "genie dir rm" first.`);
-    }
-    data.entries[entry.name] = full;
-  });
+  // Check if already exists as a non-builtin
+  const existing = await resolve(entry.name);
+  if (existing && !existing.builtin) {
+    throw new Error(`Agent "${entry.name}" already exists. Use "genie dir edit" to update or "genie dir rm" first.`);
+  }
+
+  // Build metadata JSONB from frontmatter fields
+  const metadata = buildMetadata(full);
+
+  // Store as a directory agent in PG with metadata
+  const { getConnection } = await import('./db.js');
+  const sql = await getConnection();
+  await sql`
+    INSERT INTO agents (id, role, custom_name, started_at, metadata)
+    VALUES (${`dir:${entry.name}`}, ${entry.name}, ${entry.name}, now(), ${sql.json(metadata)})
+    ON CONFLICT (id) DO UPDATE SET metadata = ${sql.json(metadata)}
+  `;
 
   return full;
 }
 
 /**
  * Remove an agent from the directory.
- * Defaults to project scope; pass { global: true } for global.
  */
-export async function rm(name: string, options?: ScopeOptions): Promise<boolean> {
-  let removed = false;
-  const filePath = getTargetPath(options?.global);
-  await withDirectoryAt(filePath, (data) => {
-    if (data.entries[name]) {
-      delete data.entries[name];
-      removed = true;
-    }
-  });
-  return removed;
+export async function rm(name: string, _options?: ScopeOptions): Promise<boolean> {
+  const { getConnection } = await import('./db.js');
+  const sql = await getConnection();
+  const result = await sql`DELETE FROM agents WHERE id = ${`dir:${name}`}`;
+  return result.count > 0;
 }
 
 /**
  * Resolve an agent by name.
- * Resolution order: project → global → built-in roles → built-in council.
+ * Resolution order: PG agents (by role) → built-in roles → built-in council.
  */
 export async function resolve(name: string): Promise<ResolvedAgent | null> {
-  // 1. Check project directory (worktree or main repo)
-  const projectData = await loadDirectoryFrom(getProjectDirectoryPath());
-  const projectEntry = projectData.entries[name];
-  if (projectEntry) {
-    return { entry: projectEntry, builtin: false };
-  }
-
-  // 1b. If inside a worktree, also check the main repo's agents.json
-  const mainRoot = getMainRepoRoot();
-  if (mainRoot) {
-    const mainDirPath = join(mainRoot, '.genie', 'agents.json');
-    const mainData = await loadDirectoryFrom(mainDirPath);
-    const mainEntry = mainData.entries[name];
-    if (mainEntry) {
-      return { entry: mainEntry, builtin: false };
+  // 1. Check PG agents table — look for agents with matching role, include metadata
+  try {
+    const { getConnection } = await import('./db.js');
+    const sql = await getConnection();
+    const rows = await sql`SELECT role, metadata FROM agents WHERE role = ${name} LIMIT 1`;
+    if (rows.length > 0) {
+      const meta = parseMetadata(rows[0].metadata);
+      return { entry: roleToEntry(name, undefined, meta), builtin: false };
     }
-  }
-
-  // 2. Check global directory
-  const globalData = await loadDirectoryFrom(getGlobalDirectoryPath());
-  const globalEntry = globalData.entries[name];
-  if (globalEntry) {
-    return { entry: globalEntry, builtin: false };
+  } catch {
+    /* PG unavailable — fall through to built-ins */
   }
 
   // 3. Check built-in roles
@@ -266,93 +178,131 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
 }
 
 /**
+ * Find the tmux session name for the agent that owns a given repo path.
+ * Queries PG agents table for an active agent whose repo_path matches.
+ * Returns null if no match or PG is unavailable.
+ */
+export async function findSessionByRepo(repoPath: string): Promise<string | null> {
+  try {
+    const { getConnection } = await import('./db.js');
+    const sql = await getConnection();
+    const rows = await sql`
+      SELECT session FROM agents
+      WHERE repo_path = ${repoPath}
+        AND session IS NOT NULL
+        AND session != ''
+        AND state IN ('working', 'idle', 'permission', 'question')
+      ORDER BY started_at DESC
+      LIMIT 1
+    `;
+    return rows.length > 0 ? (rows[0].session as string) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * List agents from all scopes with scope labels.
- * Returns project + global + (optionally built-in) entries.
- * Project entries shadow global entries of the same name.
+ * Returns PG-derived entries + built-in entries.
  */
 export async function ls(): Promise<ScopedDirectoryEntry[]> {
   const result: ScopedDirectoryEntry[] = [];
   const seen = new Set<string>();
 
-  // Project entries (worktree or main repo)
-  const projectData = await loadDirectoryFrom(getProjectDirectoryPath());
-  for (const entry of Object.values(projectData.entries)) {
-    result.push({ ...entry, scope: 'project' });
-    seen.add(entry.name);
-  }
-
-  // Main repo entries (when inside a worktree, check the parent repo too)
-  const mainRoot = getMainRepoRoot();
-  if (mainRoot) {
-    const mainDirPath = join(mainRoot, '.genie', 'agents.json');
-    const mainData = await loadDirectoryFrom(mainDirPath);
-    for (const entry of Object.values(mainData.entries)) {
-      if (!seen.has(entry.name)) {
-        result.push({ ...entry, scope: 'project' });
-        seen.add(entry.name);
+  // PG agents — distinct roles with directory metadata
+  try {
+    const { getConnection } = await import('./db.js');
+    const sql = await getConnection();
+    const rows = await sql`
+      SELECT DISTINCT ON (a.role) a.role, a.team, a.metadata, e.repo_path, e.provider
+      FROM agents a
+      LEFT JOIN executors e ON a.current_executor_id = e.id
+      WHERE a.role IS NOT NULL
+      ORDER BY a.role, a.started_at DESC
+    `;
+    for (const row of rows) {
+      const name = row.role as string;
+      if (!seen.has(name)) {
+        const meta = parseMetadata(row.metadata);
+        const entry = roleToEntry(name, row.team as string, meta);
+        const repoPath = row.repo_path as string;
+        if (repoPath) {
+          entry.dir = repoPath;
+          entry.repo = repoPath;
+        }
+        result.push({ ...entry, scope: 'global' });
+        seen.add(name);
       }
     }
-  }
-
-  // Global entries (skip names already in project)
-  const globalData = await loadDirectoryFrom(getGlobalDirectoryPath());
-  for (const entry of Object.values(globalData.entries)) {
-    if (!seen.has(entry.name)) {
-      result.push({ ...entry, scope: 'global' });
-      seen.add(entry.name);
-    }
+  } catch {
+    /* PG unavailable — show built-ins only */
   }
 
   return result;
 }
 
 /**
- * Get a single entry by name from a specific scope.
- * Defaults to project scope; pass { global: true } for global.
+ * Get a single entry by name.
  */
-export async function get(name: string, options?: ScopeOptions): Promise<DirectoryEntry | null> {
-  const filePath = getTargetPath(options?.global);
-  const data = await loadDirectoryFrom(filePath);
-  return data.entries[name] ?? null;
+export async function get(name: string, _options?: ScopeOptions): Promise<DirectoryEntry | null> {
+  const resolved = await resolve(name);
+  return resolved?.entry ?? null;
 }
 
 /**
  * Edit an existing agent entry.
  * Only provided fields are updated.
- * Defaults to project scope; pass { global: true } for global.
  */
 export async function edit(
   name: string,
-  updates: Partial<Pick<DirectoryEntry, 'dir' | 'repo' | 'promptMode' | 'model' | 'roles'>>,
-  options?: ScopeOptions,
+  updates: Partial<
+    Pick<
+      DirectoryEntry,
+      'dir' | 'repo' | 'promptMode' | 'model' | 'roles' | 'omniAgentId' | 'description' | 'color' | 'provider'
+    >
+  >,
+  _options?: ScopeOptions,
 ): Promise<DirectoryEntry> {
-  let updated: DirectoryEntry | null = null;
-
-  const filePath = getTargetPath(options?.global);
-  await withDirectoryAt(filePath, (data) => {
-    const existing = data.entries[name];
-    if (!existing) {
-      throw new Error(`Agent "${name}" not found in directory.`);
+  if (updates.dir) {
+    if (!existsSync(updates.dir)) {
+      throw new Error(`Directory does not exist: ${updates.dir}`);
     }
-
-    // Validate new dir if provided
-    if (updates.dir) {
-      if (!existsSync(updates.dir)) {
-        throw new Error(`Directory does not exist: ${updates.dir}`);
-      }
-      const agentsPath = join(updates.dir, 'AGENTS.md');
-      if (!existsSync(agentsPath)) {
-        throw new Error(`AGENTS.md not found in ${updates.dir}.`);
-      }
+    const agentsPath = join(updates.dir, 'AGENTS.md');
+    if (!existsSync(agentsPath)) {
+      throw new Error(`AGENTS.md not found in ${updates.dir}.`);
     }
+  }
 
-    Object.assign(existing, updates);
-    updated = existing;
-  });
-
-  if (!updated) {
+  const existing = await get(name);
+  if (!existing) {
     throw new Error(`Agent "${name}" not found in directory.`);
   }
+
+  const updated = Object.assign(existing, updates);
+
+  // Build metadata patch from updated entry and persist to PG
+  const metadataPatch = buildMetadata(updated);
+  try {
+    const { getConnection } = await import('./db.js');
+    const sql = await getConnection();
+    // Try dir: prefix first (directory-managed agents), fall back to role match
+    // for runtime-spawned agents that share a name with workspace agents
+    const result = await sql`
+      UPDATE agents
+      SET metadata = metadata || ${sql.json(metadataPatch)}
+      WHERE id = ${`dir:${name}`}
+    `;
+    if (result.count === 0) {
+      await sql`
+        UPDATE agents
+        SET metadata = metadata || ${sql.json(metadataPatch)}
+        WHERE role = ${name}
+      `;
+    }
+  } catch {
+    /* PG unavailable — in-memory update still applied */
+  }
+
   return updated;
 }
 
@@ -362,6 +312,7 @@ export async function edit(
  * Returns null if the file doesn't exist.
  */
 export function loadIdentity(entry: DirectoryEntry): string | null {
+  if (!entry.dir) return null;
   const agentsPath = join(entry.dir, 'AGENTS.md');
   if (existsSync(agentsPath)) {
     return agentsPath;
@@ -377,10 +328,63 @@ export function loadIdentity(entry: DirectoryEntry): string | null {
 function builtinToEntry(agent: BuiltinAgent): DirectoryEntry {
   return {
     name: agent.name,
-    dir: '', // built-ins don't have a home directory
+    dir: '',
     promptMode: agent.promptMode ?? 'append',
     model: agent.model,
     roles: [],
     registeredAt: '(built-in)',
   };
+}
+
+/** Convert a PG agent role to a synthetic DirectoryEntry, enriched with metadata.
+ *  When metadata is present, it takes priority over built-in defaults
+ *  (PG entries represent user overrides or directory-synced agents). */
+function roleToEntry(role: string, team?: string, metadata?: Record<string, unknown>): DirectoryEntry {
+  const hasMetadata = metadata && Object.keys(metadata).length > 0;
+
+  // Only fall back to built-in when there's no PG metadata to use
+  if (!hasMetadata) {
+    const builtin = [...BUILTIN_ROLES, ...BUILTIN_COUNCIL_MEMBERS].find((b) => b.name === role);
+    if (builtin) return builtinToEntry(builtin);
+  }
+
+  return {
+    name: role,
+    dir: (metadata?.dir as string) || '',
+    promptMode: (metadata?.promptMode as PromptMode) || 'append',
+    model: metadata?.model as string | undefined,
+    roles: [],
+    registeredAt: new Date().toISOString(),
+    description: metadata?.description as string | undefined,
+    color: metadata?.color as string | undefined,
+    provider: metadata?.provider as string | undefined,
+    ...(metadata?.repo ? { repo: metadata.repo as string } : team ? { repo: team } : {}),
+  };
+}
+
+/** Build a metadata JSONB object from a DirectoryEntry's frontmatter fields. */
+function buildMetadata(entry: DirectoryEntry): Record<string, unknown> {
+  const meta: Record<string, unknown> = {};
+  if (entry.dir) meta.dir = entry.dir;
+  if (entry.repo) meta.repo = entry.repo;
+  if (entry.model) meta.model = entry.model;
+  if (entry.promptMode && entry.promptMode !== 'append') meta.promptMode = entry.promptMode;
+  if (entry.description) meta.description = entry.description;
+  if (entry.color) meta.color = entry.color;
+  if (entry.provider) meta.provider = entry.provider;
+  return meta;
+}
+
+/** Parse a JSONB metadata value — handles both parsed objects and string-encoded JSON. */
+function parseMetadata(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }

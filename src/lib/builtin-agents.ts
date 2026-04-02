@@ -11,8 +11,8 @@
 
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import * as yaml from 'js-yaml';
 import type { PromptMode } from './agent-directory.js';
+import { parseFrontmatter } from './frontmatter.js';
 
 // ============================================================================
 // Types
@@ -65,32 +65,6 @@ function resolvePackageRoot(): string {
 }
 
 // ============================================================================
-// Frontmatter Parser
-// ============================================================================
-
-interface AgentFrontmatter {
-  name?: string;
-  description?: string;
-  model?: string;
-  color?: string;
-  promptMode?: string;
-}
-
-/**
- * Parse YAML frontmatter from a markdown file.
- * Returns an empty object if no frontmatter is found.
- */
-function parseFrontmatter(content: string): AgentFrontmatter {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return {};
-  try {
-    return (yaml.load(match[1]) as AgentFrontmatter) ?? {};
-  } catch {
-    return {};
-  }
-}
-
-// ============================================================================
 // Agent Scanner
 // ============================================================================
 
@@ -125,7 +99,7 @@ function scanAgents(agentsDir: string): BuiltinAgent[] {
       description: fm.description || '',
       agentPath: agentsPath,
       model: fm.model === 'inherit' ? undefined : fm.model,
-      promptMode: (fm.promptMode as PromptMode) || undefined,
+      promptMode: fm.promptMode || undefined,
       category: isCouncil ? 'council' : 'role',
       color: fm.color,
     });

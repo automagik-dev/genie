@@ -2,14 +2,13 @@
 
 /**
  * Pre-build script: generates date-based version and updates ALL version files
- * Format: 3.YYMMDD.N (e.g., 3.260201.1 = Feb 1, 2026, first publish of the day)
+ * Format: 4.YYMMDD.N (e.g., 4.260201.1 = Feb 1, 2026, first publish of the day)
  * N increments per day: .1, .2, .3, etc.
  *
  * Syncs versions across:
  * - package.json (root)
  * - src/lib/version.ts
  * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
- * - openclaw.plugin.json (OpenClaw — root level)
  * - plugins/genie/package.json (smart-install version checks)
  * - .claude-plugin/marketplace.json (marketplace listing)
  */
@@ -22,7 +21,7 @@ import { dirname, join } from 'node:path';
 // Count existing versions for today from git tags
 function getTodayPublishCount(datePrefix: string): number {
   try {
-    const output = execSync(`git tag --list "v3.${datePrefix}.*"`, {
+    const output = execSync(`git tag --list "v4.${datePrefix}.*"`, {
       encoding: 'utf-8',
       timeout: 5000,
     });
@@ -32,7 +31,7 @@ function getTodayPublishCount(datePrefix: string): number {
   }
 }
 
-// Generate version: 3.YYMMDD.N where N = daily publish counter
+// Generate version: 4.YYMMDD.N where N = daily publish counter
 function generateVersion(): string {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2);
@@ -43,7 +42,7 @@ function generateVersion(): string {
   const existing = getTodayPublishCount(datePrefix);
   const n = existing + 1;
 
-  return `3.${datePrefix}.${n}`;
+  return `4.${datePrefix}.${n}`;
 }
 
 async function updateJsonVersion(filePath: string, version: string): Promise<boolean> {
@@ -88,13 +87,10 @@ async function main() {
   // 3. Update Claude Code plugin manifest
   await updateJsonVersion(join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'), version);
 
-  // 4. Update OpenClaw plugin manifest (root level)
-  await updateJsonVersion(join(rootDir, 'openclaw.plugin.json'), version);
-
-  // 5. Update plugin package.json (used by smart-install.js for version checks)
+  // 4. Update plugin package.json (used by smart-install.js for version checks)
   await updateJsonVersion(join(rootDir, 'plugins/genie/package.json'), version);
 
-  // 6. Update marketplace.json plugin version
+  // 5. Update marketplace.json plugin version
   const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
   if (existsSync(marketplacePath)) {
     try {

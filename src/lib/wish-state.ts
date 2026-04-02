@@ -1,8 +1,9 @@
 /**
- * Wish State Machine — Deterministic state tracking for wish execution groups.
+ * Wish State Machine — PG-backed state tracking for wish execution groups.
  *
- * State file: `.genie/state/<slug>.json` in CWD (shared worktree).
- * Only genie commands mutate state. Agents NEVER touch the state file.
+ * State is stored in PG `tasks` + `task_dependencies` + `task_actors` tables.
+ * Parent task = wish, child tasks = execution groups.
+ * PG handles concurrency natively — no file locks needed.
  *
  * State transitions:
  *   blocked → ready (when all dependencies complete)
@@ -10,33 +11,34 @@
  *   in_progress → done (via completeGroup, recalculates dependents)
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { z } from 'zod';
-import { acquireLock } from './file-lock.js';
+import { getConnection } from './db.js';
 
 // ============================================================================
 // Schemas
 // ============================================================================
 
-export const GroupStatusSchema = z.enum(['blocked', 'ready', 'in_progress', 'done']);
+const GroupStatusSchema = z.enum(['blocked', 'ready', 'in_progress', 'done']);
 
-export const GroupStateSchema = z.object({
+const GroupStateSchema = z.object({
   status: GroupStatusSchema,
   assignee: z.string().optional(),
   dependsOn: z.array(z.string()).default([]),
   startedAt: z.string().optional(),
   completedAt: z.string().optional(),
 });
-export type GroupState = z.infer<typeof GroupStateSchema>;
+type GroupState = z.infer<typeof GroupStateSchema>;
 
-export const WishStateSchema = z.object({
+const WishStateSchema = z.object({
   wish: z.string(),
   groups: z.record(z.string(), GroupStateSchema),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
-export type WishState = z.infer<typeof WishStateSchema>;
+type WishState = z.infer<typeof WishStateSchema>;
 
 // ============================================================================
 // Group definition (input to createState)
@@ -48,71 +50,78 @@ export interface GroupDefinition {
 }
 
 // ============================================================================
-// State locking
-// ============================================================================
-
-async function withStateLock<T>(statePath: string, fn: (state: WishState) => T | Promise<T>): Promise<T> {
-  const release = await acquireLock(statePath);
-  try {
-    const state = await loadState(statePath);
-    if (!state) throw new Error(`State file not found: ${statePath}`);
-    const result = await fn(state);
-    await saveState(statePath, state);
-    return result;
-  } finally {
-    await release();
-  }
-}
-
-// ============================================================================
-// File I/O
-// ============================================================================
-
-function getStatePath(slug: string, cwd?: string): string {
-  return join(cwd ?? process.cwd(), '.genie', 'state', `${slug}.json`);
-}
-
-async function loadState(statePath: string): Promise<WishState | null> {
-  try {
-    const content = await readFile(statePath, 'utf-8');
-    return WishStateSchema.parse(JSON.parse(content));
-  } catch {
-    return null;
-  }
-}
-
-async function saveState(statePath: string, state: WishState): Promise<void> {
-  await mkdir(dirname(statePath), { recursive: true });
-  state.updatedAt = new Date().toISOString();
-  await writeFile(statePath, JSON.stringify(state, null, 2));
-}
-
-// ============================================================================
 // Internal helpers
 // ============================================================================
 
-/**
- * Recalculate statuses of groups that depend on the completed group.
- * A group transitions from `blocked` to `ready` when ALL its dependencies are `done`.
+/** Resolve repo root via git, fallback to cwd.
+ * Uses git-common-dir to normalize across worktrees — returns the main repo path
+ * even when called from a linked worktree.
  */
-function recalculateDependents(state: WishState): void {
-  for (const [, group] of Object.entries(state.groups)) {
-    if (group.status !== 'blocked') continue;
-    if (group.dependsOn.length === 0) continue;
+function normalizeGitPath(path: string): string {
+  if (process.platform !== 'darwin') return path;
+  if (!path.startsWith('/private/')) return path;
+  const logicalPath = path.slice('/private'.length);
+  return existsSync(logicalPath) ? logicalPath : path;
+}
 
-    const allDepsDone = group.dependsOn.every((dep) => {
-      const depGroup = state.groups[dep];
-      return depGroup?.status === 'done';
-    });
-
-    if (allDepsDone) {
-      group.status = 'ready';
-    }
+export function resolveRepoPath(cwd?: string): string {
+  if (cwd) return cwd;
+  try {
+    // git-common-dir returns the shared .git for worktrees, or .git for main repo.
+    // GIT_CEILING_DIRECTORIES prevents git from walking above cwd into unrelated
+    // repos (e.g. a stale /tmp/.git on shared servers).
+    const currentDir = process.cwd();
+    const commonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, GIT_CEILING_DIRECTORIES: dirname(currentDir) },
+    }).trim();
+    // For main repos: commonDir = /path/to/repo/.git → parent = /path/to/repo
+    // For worktrees: commonDir = /path/to/main-repo/.git → same parent
+    return normalizeGitPath(dirname(commonDir));
+  } catch {
+    return normalizeGitPath(process.cwd());
   }
 }
 
+/** Construct wish_file path from slug. */
+function wishFilePath(slug: string): string {
+  return `.genie/wishes/${slug}/WISH.md`;
+}
+
+/** Convert PG timestamp to ISO string, or undefined if null. */
+function toISO(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (v instanceof Date) return v.toISOString();
+  return String(v);
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type varies
+type Sql = any;
+
+/** Find parent task for a wish slug. */
+async function findParent(sql: Sql, slug: string, repoPath: string) {
+  const wishFile = wishFilePath(slug);
+  const rows = await sql`
+    SELECT * FROM tasks
+    WHERE wish_file = ${wishFile} AND repo_path = ${repoPath} AND parent_id IS NULL
+    LIMIT 1
+  `;
+  return rows.length > 0 ? rows[0] : null;
+}
+
+/** Find a child task (group) under a parent. */
+async function findGroup(sql: Sql, parentId: string, groupName: string) {
+  const rows = await sql`
+    SELECT * FROM tasks
+    WHERE parent_id = ${parentId} AND group_name = ${groupName}
+    LIMIT 1
+  `;
+  return rows.length > 0 ? rows[0] : null;
+}
+
 // ============================================================================
-// Validation
+// Validation (pure logic — no I/O)
 // ============================================================================
 
 /** Check for self-dependencies and references to non-existent groups. */
@@ -185,18 +194,56 @@ function validateGroups(groups: GroupDefinition[]): void {
 // ============================================================================
 
 /**
- * Initialize state file from wish group definitions.
+ * Initialize wish state from group definitions.
+ * Creates parent task (wish) + child tasks (groups) + dependencies in PG.
  * Groups with no dependencies start as `ready`. Others start as `blocked`.
  */
 export async function createState(slug: string, groups: GroupDefinition[], cwd?: string): Promise<WishState> {
   validateGroups(groups);
 
-  const statePath = getStatePath(slug, cwd);
-  await mkdir(dirname(statePath), { recursive: true });
+  const sql = await getConnection();
+  const repoPath = resolveRepoPath(cwd);
+  const wishFile = wishFilePath(slug);
 
-  const now = new Date().toISOString();
+  // Delete existing state for this slug (matches old file-overwrite behavior)
+  const existingParent = await findParent(sql, slug, repoPath);
+  if (existingParent) {
+    await sql`DELETE FROM tasks WHERE id = ${existingParent.id as string}`;
+  }
+
+  // Create parent task (the wish itself)
+  const [parent] = await sql`
+    INSERT INTO tasks (repo_path, title, wish_file, type_id, stage, status)
+    VALUES (${repoPath}, ${slug}, ${wishFile}, 'software', 'draft', 'ready')
+    RETURNING *
+  `;
+
+  // Create child tasks (one per group)
+  const childIds: Record<string, string> = {};
+  for (const group of groups) {
+    const deps = group.dependsOn ?? [];
+    const status = deps.length === 0 ? 'ready' : 'blocked';
+    const [child] = await sql`
+      INSERT INTO tasks (repo_path, title, parent_id, group_name, type_id, stage, status)
+      VALUES (${repoPath}, ${`Group ${group.name}`}, ${parent.id as string}, ${group.name}, 'software', 'draft', ${status})
+      RETURNING id
+    `;
+    childIds[group.name] = child.id as string;
+  }
+
+  // Create dependencies between children
+  for (const group of groups) {
+    for (const dep of group.dependsOn ?? []) {
+      await sql`
+        INSERT INTO task_dependencies (task_id, depends_on_id, dep_type)
+        VALUES (${childIds[group.name]}, ${childIds[dep]}, 'depends_on')
+      `;
+    }
+  }
+
+  // Reconstruct WishState shape
+  const now = toISO(parent.created_at) ?? new Date().toISOString();
   const groupEntries: Record<string, GroupState> = {};
-
   for (const group of groups) {
     const deps = group.dependsOn ?? [];
     groupEntries[group.name] = {
@@ -205,15 +252,12 @@ export async function createState(slug: string, groups: GroupDefinition[], cwd?:
     };
   }
 
-  const state: WishState = {
+  return {
     wish: slug,
     groups: groupEntries,
     createdAt: now,
     updatedAt: now,
   };
-
-  await saveState(statePath, state);
-  return state;
 }
 
 /**
@@ -222,39 +266,63 @@ export async function createState(slug: string, groups: GroupDefinition[], cwd?:
  * Returns the updated group state, or throws on failure.
  */
 export async function startGroup(slug: string, groupName: string, assignee: string, cwd?: string): Promise<GroupState> {
-  const statePath = getStatePath(slug, cwd);
+  const sql = await getConnection();
+  const repoPath = resolveRepoPath(cwd);
 
-  return withStateLock(statePath, (state) => {
-    const group = state.groups[groupName];
-    if (!group) {
-      throw new Error(`Group "${groupName}" not found in wish "${slug}"`);
+  const parent = await findParent(sql, slug, repoPath);
+  if (!parent) throw new Error(`State not found for wish "${slug}"`);
+
+  const child = await findGroup(sql, parent.id as string, groupName);
+  if (!child) throw new Error(`Group "${groupName}" not found in wish "${slug}"`);
+
+  if (child.status === 'in_progress') {
+    const actors = await sql`
+      SELECT actor_id FROM task_actors WHERE task_id = ${child.id as string} AND role = 'assignee' LIMIT 1
+    `;
+    const current = actors.length > 0 ? (actors[0].actor_id as string) : 'unknown';
+    throw new Error(`Group "${groupName}" is already in progress (assigned to ${current})`);
+  }
+
+  if (child.status === 'done') {
+    throw new Error(`Group "${groupName}" is already done`);
+  }
+
+  // Check dependencies
+  const deps = await sql`
+    SELECT t.group_name, t.status
+    FROM task_dependencies td
+    JOIN tasks t ON t.id = td.depends_on_id
+    WHERE td.task_id = ${child.id as string}
+  `;
+
+  for (const dep of deps) {
+    if (dep.status !== 'done') {
+      throw new Error(
+        `Cannot start group "${groupName}": dependency "${dep.group_name}" is ${dep.status} (must be done)`,
+      );
     }
+  }
 
-    if (group.status === 'in_progress') {
-      throw new Error(`Group "${groupName}" is already in progress (assigned to ${group.assignee ?? 'unknown'})`);
-    }
+  // Update status to in_progress
+  const now = new Date();
+  await sql`
+    UPDATE tasks SET status = 'in_progress', started_at = COALESCE(started_at, ${now}), updated_at = ${now}
+    WHERE id = ${child.id as string}
+  `;
 
-    if (group.status === 'done') {
-      throw new Error(`Group "${groupName}" is already done`);
-    }
+  // Assign actor
+  await sql`
+    INSERT INTO task_actors (task_id, actor_type, actor_id, role)
+    VALUES (${child.id as string}, 'local', ${assignee}, 'assignee')
+    ON CONFLICT (task_id, actor_type, actor_id, role) DO UPDATE SET created_at = now()
+  `;
 
-    // Check dependencies
-    for (const dep of group.dependsOn) {
-      const depGroup = state.groups[dep];
-      if (!depGroup) {
-        throw new Error(`Dependency "${dep}" not found in wish "${slug}"`);
-      }
-      if (depGroup.status !== 'done') {
-        throw new Error(`Cannot start group "${groupName}": dependency "${dep}" is ${depGroup.status} (must be done)`);
-      }
-    }
-
-    group.status = 'in_progress';
-    group.assignee = assignee;
-    group.startedAt = new Date().toISOString();
-
-    return { ...group };
-  });
+  return {
+    status: 'in_progress',
+    assignee,
+    dependsOn: deps.map((d: Record<string, unknown>) => d.group_name as string),
+    startedAt: now.toISOString(),
+  };
 }
 
 /**
@@ -262,26 +330,58 @@ export async function startGroup(slug: string, groupName: string, assignee: stri
  * Recalculates dependent groups (blocked → ready when all deps done).
  */
 export async function completeGroup(slug: string, groupName: string, cwd?: string): Promise<GroupState> {
-  const statePath = getStatePath(slug, cwd);
+  const sql = await getConnection();
+  const repoPath = resolveRepoPath(cwd);
 
-  return withStateLock(statePath, (state) => {
-    const group = state.groups[groupName];
-    if (!group) {
-      throw new Error(`Group "${groupName}" not found in wish "${slug}"`);
-    }
+  const parent = await findParent(sql, slug, repoPath);
+  if (!parent) throw new Error(`Group "${groupName}" not found in wish "${slug}"`);
 
-    if (group.status !== 'in_progress') {
-      throw new Error(`Cannot complete group "${groupName}": must be in_progress (currently ${group.status})`);
-    }
+  const child = await findGroup(sql, parent.id as string, groupName);
+  if (!child) throw new Error(`Group "${groupName}" not found in wish "${slug}"`);
 
-    group.status = 'done';
-    group.completedAt = new Date().toISOString();
+  if (child.status !== 'in_progress') {
+    throw new Error(`Cannot complete group "${groupName}": must be in_progress (currently ${child.status})`);
+  }
 
-    // Recalculate dependents
-    recalculateDependents(state);
+  const now = new Date();
+  await sql`
+    UPDATE tasks SET status = 'done', ended_at = ${now}, updated_at = ${now}
+    WHERE id = ${child.id as string}
+  `;
 
-    return { ...group };
-  });
+  // Recalculate dependents: blocked siblings → ready when ALL deps done
+  await sql`
+    UPDATE tasks SET status = 'ready', updated_at = ${now}
+    WHERE parent_id = ${parent.id as string}
+      AND status = 'blocked'
+      AND EXISTS (
+        SELECT 1 FROM task_dependencies WHERE task_id = tasks.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM task_dependencies td
+        JOIN tasks dep ON dep.id = td.depends_on_id
+        WHERE td.task_id = tasks.id
+          AND dep.status != 'done'
+      )
+  `;
+
+  // Build return value
+  const actors = await sql`
+    SELECT actor_id FROM task_actors WHERE task_id = ${child.id as string} AND role = 'assignee' LIMIT 1
+  `;
+  const deps = await sql`
+    SELECT t.group_name FROM task_dependencies td
+    JOIN tasks t ON t.id = td.depends_on_id
+    WHERE td.task_id = ${child.id as string}
+  `;
+
+  return {
+    status: 'done',
+    assignee: actors.length > 0 ? (actors[0].actor_id as string) : undefined,
+    dependsOn: deps.map((d: Record<string, unknown>) => d.group_name as string),
+    startedAt: toISO(child.started_at),
+    completedAt: now.toISOString(),
+  };
 }
 
 /**
@@ -289,23 +389,181 @@ export async function completeGroup(slug: string, groupName: string, cwd?: strin
  * Clears assignee and startedAt. Only valid from in_progress status.
  */
 export async function resetGroup(slug: string, groupName: string, cwd?: string): Promise<GroupState> {
-  const statePath = getStatePath(slug, cwd);
-  return withStateLock(statePath, (state) => {
-    const group = state.groups[groupName];
-    if (!group) throw new Error(`Group "${groupName}" not found`);
-    if (group.status !== 'in_progress')
-      throw new Error(`Cannot reset: must be in_progress (currently ${group.status})`);
-    group.status = 'ready';
-    group.assignee = undefined;
-    group.startedAt = undefined;
-    return { ...group };
-  });
+  const sql = await getConnection();
+  const repoPath = resolveRepoPath(cwd);
+
+  const parent = await findParent(sql, slug, repoPath);
+  if (!parent) throw new Error(`Group "${groupName}" not found`);
+
+  const child = await findGroup(sql, parent.id as string, groupName);
+  if (!child) throw new Error(`Group "${groupName}" not found`);
+
+  if (child.status !== 'in_progress') {
+    throw new Error(`Cannot reset: must be in_progress (currently ${child.status})`);
+  }
+
+  const now = new Date();
+  await sql`UPDATE tasks SET status = 'ready', started_at = NULL, updated_at = ${now} WHERE id = ${child.id as string}`;
+  await sql`DELETE FROM task_actors WHERE task_id = ${child.id as string} AND role = 'assignee'`;
+
+  const deps = await sql`
+    SELECT t.group_name FROM task_dependencies td
+    JOIN tasks t ON t.id = td.depends_on_id
+    WHERE td.task_id = ${child.id as string}
+  `;
+
+  return {
+    status: 'ready',
+    assignee: undefined,
+    dependsOn: deps.map((d: Record<string, unknown>) => d.group_name as string),
+    startedAt: undefined,
+  };
 }
 
-/** Read current state. Lockless by design — reads are eventually consistent. */
+/**
+ * Find a group assigned to a specific worker that is currently in_progress.
+ * Searches all groups in the wish state for an assignee match.
+ *
+ * Matching strategy: checks if the group's assignee matches workerId exactly,
+ * or if workerId ends with the assignee (to handle team-prefixed worker IDs
+ * like "fire-and-forget-engineer" matching assignee "engineer").
+ *
+ * @public - consumed by OTel relay liveness check (Group 4 deliverable)
+ */
+export async function findGroupByAssignee(
+  slug: string,
+  workerId: string,
+  cwd?: string,
+): Promise<{ groupName: string; group: GroupState } | null> {
+  const state = await getState(slug, cwd);
+  if (!state) return null;
+
+  for (const [groupName, group] of Object.entries(state.groups)) {
+    if (group.status !== 'in_progress' || !group.assignee) continue;
+    if (group.assignee === workerId) return { groupName, group: { ...group } };
+    // Handle team-prefixed IDs: "team-engineer" matches assignee "engineer"
+    if (workerId.endsWith(`-${group.assignee}`)) return { groupName, group: { ...group } };
+  }
+  return null;
+}
+
+/**
+ * Find any in_progress group assigned to a worker across ALL wishes in a repo.
+ * Used by protocol-router-spawn for resume context injection.
+ *
+ * Returns the first match with slug, groupName, and group state.
+ */
+export async function findAnyGroupByAssignee(
+  workerId: string,
+  cwd?: string,
+): Promise<{ slug: string; groupName: string; group: GroupState } | null> {
+  const sql = await getConnection();
+  const repoPath = resolveRepoPath(cwd);
+
+  // Find all in_progress group tasks with assignees in this repo
+  const rows = await sql`
+    SELECT t.group_name, ta.actor_id AS assignee, p.wish_file
+    FROM tasks t
+    JOIN task_actors ta ON ta.task_id = t.id AND ta.role = 'assignee'
+    JOIN tasks p ON p.id = t.parent_id
+    WHERE t.repo_path = ${repoPath}
+      AND t.status = 'in_progress'
+      AND t.group_name IS NOT NULL
+      AND p.wish_file IS NOT NULL
+    ORDER BY t.created_at
+  `;
+
+  for (const row of rows) {
+    const assignee = row.assignee as string;
+    if (assignee !== workerId && !workerId.endsWith(`-${assignee}`)) continue;
+
+    // Extract slug from wish_file path
+    const wishFile = row.wish_file as string;
+    const slugMatch = wishFile.match(/\.genie\/wishes\/([^/]+)\/WISH\.md/);
+    if (!slugMatch) continue;
+    const slug = slugMatch[1];
+    const groupName = row.group_name as string;
+
+    // Get full group state
+    const state = await getState(slug, cwd);
+    if (!state) continue;
+    const group = state.groups[groupName];
+    if (!group) continue;
+
+    return { slug, groupName, group: { ...group } };
+  }
+
+  return null;
+}
+
+/**
+ * Get existing state or create it from group definitions.
+ * Avoids the "no state file" gap that causes polling loops.
+ */
+export async function getOrCreateState(slug: string, groups: GroupDefinition[], cwd?: string): Promise<WishState> {
+  const existing = await getState(slug, cwd);
+  if (existing) return existing;
+  return createState(slug, groups, cwd);
+}
+
+/** Read current state. Returns null if no state exists for this wish. */
 export async function getState(slug: string, cwd?: string): Promise<WishState | null> {
-  const statePath = getStatePath(slug, cwd);
-  return loadState(statePath);
+  const sql = await getConnection();
+  const repoPath = resolveRepoPath(cwd);
+
+  const parent = await findParent(sql, slug, repoPath);
+  if (!parent) return null;
+
+  // Get all children
+  const children = await sql`SELECT * FROM tasks WHERE parent_id = ${parent.id as string} ORDER BY created_at`;
+  if (children.length === 0) return null;
+
+  const childIds = children.map((c: Record<string, unknown>) => c.id as string);
+
+  // Get dependencies: which group each child depends on
+  const deps = await sql`
+    SELECT td.task_id, t.group_name AS dep_group
+    FROM task_dependencies td
+    JOIN tasks t ON t.id = td.depends_on_id
+    WHERE td.task_id = ANY(${childIds})
+  `;
+  const depsMap: Record<string, string[]> = {};
+  for (const dep of deps) {
+    const taskId = dep.task_id as string;
+    if (!depsMap[taskId]) depsMap[taskId] = [];
+    depsMap[taskId].push(dep.dep_group as string);
+  }
+
+  // Get assignees
+  const actors = await sql`
+    SELECT task_id, actor_id FROM task_actors
+    WHERE task_id = ANY(${childIds}) AND role = 'assignee'
+  `;
+  const assigneeMap: Record<string, string> = {};
+  for (const actor of actors) {
+    assigneeMap[actor.task_id as string] = actor.actor_id as string;
+  }
+
+  // Reconstruct WishState
+  const groups: Record<string, GroupState> = {};
+  for (const child of children) {
+    const id = child.id as string;
+    const groupName = child.group_name as string;
+    groups[groupName] = {
+      status: child.status as GroupState['status'],
+      assignee: assigneeMap[id],
+      dependsOn: depsMap[id] ?? [],
+      startedAt: toISO(child.started_at),
+      completedAt: toISO(child.ended_at),
+    };
+  }
+
+  return {
+    wish: slug,
+    groups,
+    createdAt: toISO(parent.created_at) ?? '',
+    updatedAt: toISO(parent.updated_at) ?? '',
+  };
 }
 
 /**
@@ -315,4 +573,53 @@ export async function getGroupState(slug: string, groupName: string, cwd?: strin
   const state = await getState(slug, cwd);
   if (!state) return null;
   return state.groups[groupName] ?? null;
+}
+
+/**
+ * Check if all groups in a wish are done.
+ * Returns true only when every group has status === 'done'.
+ */
+export async function isWishComplete(slug: string, cwd?: string): Promise<boolean> {
+  const state = await getState(slug, cwd);
+  if (!state) return false;
+  const groups = Object.values(state.groups);
+  return groups.length > 0 && groups.every((g) => g.status === 'done');
+}
+
+/**
+ * Reset all in_progress groups back to ready for a wish.
+ * Used during team disband to prevent stale state from blocking re-dispatch.
+ * Returns the number of groups that were reset.
+ */
+export async function resetInProgressGroups(slug: string, cwd?: string): Promise<number> {
+  const sql = await getConnection();
+  const repoPath = resolveRepoPath(cwd);
+
+  const parent = await findParent(sql, slug, repoPath);
+  if (!parent) return 0;
+
+  const now = new Date();
+
+  // Find all in_progress children
+  const inProgress = await sql`
+    SELECT id FROM tasks
+    WHERE parent_id = ${parent.id as string} AND status = 'in_progress'
+  `;
+
+  if (inProgress.length === 0) return 0;
+
+  const ids = inProgress.map((r: Record<string, unknown>) => r.id as string);
+
+  // Reset to ready, clear started_at
+  await sql`
+    UPDATE tasks SET status = 'ready', started_at = NULL, updated_at = ${now}
+    WHERE id = ANY(${ids})
+  `;
+
+  // Remove assignees
+  await sql`
+    DELETE FROM task_actors WHERE task_id = ANY(${ids}) AND role = 'assignee'
+  `;
+
+  return ids.length;
 }

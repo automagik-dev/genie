@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DISPATCHED_EVENTS } from './types.js';
 
 interface HookEntry {
@@ -24,8 +25,23 @@ interface HookMatcher {
 
 type HooksConfig = Record<string, HookMatcher[]>;
 
-const DISPATCH_COMMAND = 'genie hook dispatch';
 const DISPATCH_TIMEOUT = 15; // seconds — auto-spawn can take up to 10s
+
+function escapeShellArg(arg: string): string {
+  return `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
+export function buildDispatchCommand(): string {
+  const entrypoint = fileURLToPath(new URL('../genie.ts', import.meta.url));
+  if (!existsSync(entrypoint)) return 'genie hook dispatch';
+
+  const bun = process.execPath || 'bun';
+  return `${escapeShellArg(bun)} run ${escapeShellArg(entrypoint)} hook dispatch`;
+}
+
+function isGenieDispatchCommand(command: string | undefined): boolean {
+  return typeof command === 'string' && /(?:^|\s)hook\s+dispatch(?:\s|$)/.test(command);
+}
 
 function claudeConfigDir(): string {
   return process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
@@ -38,14 +54,16 @@ function teamSettingsPath(teamName: string): string {
 
 function buildHooksConfig(): HooksConfig {
   const hooks: HooksConfig = {};
+  const dispatchCommand = buildDispatchCommand();
 
   for (const event of DISPATCHED_EVENTS) {
     hooks[event] = [
       {
+        matcher: '*',
         hooks: [
           {
             type: 'command',
-            command: DISPATCH_COMMAND,
+            command: dispatchCommand,
             timeout: DISPATCH_TIMEOUT,
           },
         ],
@@ -79,7 +97,8 @@ async function injectIntoFile(settingsPath: string): Promise<boolean> {
   if (existingHooks) {
     const allInjected = DISPATCHED_EVENTS.every((event) => {
       const existing = existingHooks[event];
-      return existing?.some((m) => m.hooks?.some((h) => h.command === DISPATCH_COMMAND));
+      const desiredCommand = hooksConfig[event][0].hooks[0].command;
+      return existing?.some((m) => m.hooks?.some((h) => h.command === desiredCommand));
     });
     if (allInjected) {
       return false; // already injected
@@ -90,11 +109,20 @@ async function injectIntoFile(settingsPath: string): Promise<boolean> {
   const mergedHooks: HooksConfig = existingHooks ? { ...existingHooks } : {};
   for (const event of DISPATCHED_EVENTS) {
     const genieEntry = hooksConfig[event][0];
-    const existingEntries = mergedHooks[event] ?? [];
+    const existingEntries = (mergedHooks[event] ?? []).map((matcher) => ({
+      ...matcher,
+      hooks: matcher.hooks?.map((hook) =>
+        isGenieDispatchCommand(hook.command)
+          ? { ...hook, command: genieEntry.hooks[0].command, timeout: DISPATCH_TIMEOUT }
+          : hook,
+      ),
+    }));
     // Only add if not already present
-    const alreadyPresent = existingEntries.some((m) => m.hooks?.some((h) => h.command === DISPATCH_COMMAND));
+    const alreadyPresent = existingEntries.some((m) => m.hooks?.some((h) => isGenieDispatchCommand(h.command)));
     if (!alreadyPresent) {
       mergedHooks[event] = [...existingEntries, genieEntry];
+    } else {
+      mergedHooks[event] = existingEntries;
     }
   }
   settings.hooks = mergedHooks;
@@ -132,7 +160,7 @@ export async function isTeamHooked(teamName: string): Promise<boolean> {
     // Check ALL dispatched events, not just the first one
     return DISPATCHED_EVENTS.every((event) => {
       const existing = hooks[event];
-      return existing?.some((m) => m.hooks?.some((h) => h.command === DISPATCH_COMMAND));
+      return existing?.some((m) => m.hooks?.some((h) => isGenieDispatchCommand(h.command)));
     });
   } catch {
     return false;

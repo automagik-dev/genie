@@ -91,14 +91,23 @@ async function runCommandSilent(
   command: string,
   args: string[],
   cwd?: string,
+  timeoutMs = 4000,
 ): Promise<{ success: boolean; output: string }> {
   return new Promise((resolve) => {
     const output: string[] = [];
+    let settled = false;
 
     const child = spawn(command, args, {
       cwd,
       stdio: ['inherit', 'pipe', 'pipe'],
     });
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGTERM');
+      resolve({ success: false, output: `Timed out after ${timeoutMs}ms` });
+    }, timeoutMs);
 
     child.stdout?.on('data', (data) => {
       output.push(data.toString());
@@ -109,10 +118,16 @@ async function runCommandSilent(
     });
 
     child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve({ success: code === 0, output: output.join('') });
     });
 
     child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve({ success: false, output: err.message });
     });
   });
@@ -153,7 +168,7 @@ async function detectInstallationType(): Promise<InstallationType> {
   return hasBun ? 'bun' : 'npm';
 }
 
-async function updateViaBun(channel: string): Promise<void> {
+async function updateViaBun(channel: string): Promise<boolean> {
   // Delete global lockfile — it pins old versions even with --force --no-cache
   try {
     require('node:fs').unlinkSync(join(homedir(), '.bun', 'install', 'global', 'bun.lock'));
@@ -165,21 +180,42 @@ async function updateViaBun(channel: string): Promise<void> {
   const result = await runCommand('bun', ['add', '-g', '--force', '--no-cache', `@automagik/genie@${channel}`]);
   if (!result.success) {
     error('Failed to update via bun');
-    process.exit(1);
+    return false;
   }
   console.log();
-  success(`Genie CLI updated (${channel})!`);
+  success(`Genie CLI updated via bun (${channel})!`);
+  return true;
 }
 
-async function updateViaNpm(channel: string): Promise<void> {
+async function updateViaNpm(channel: string): Promise<boolean> {
   log(`Updating via npm (channel: ${channel})...`);
   const result = await runCommand('npm', ['install', '-g', `@automagik/genie@${channel}`]);
   if (!result.success) {
     error('Failed to update via npm');
-    process.exit(1);
+    return false;
   }
   console.log();
-  success(`Genie CLI updated (${channel})!`);
+  success(`Genie CLI updated via npm (${channel})!`);
+  return true;
+}
+
+/** Detect which package-manager global installs exist (npm, bun, or both). */
+export async function detectGlobalInstalls(): Promise<Set<'npm' | 'bun'>> {
+  const found = new Set<'npm' | 'bun'>();
+
+  const [npmResult, bunResult] = await Promise.all([
+    runCommandSilent('npm', ['list', '-g', '@automagik/genie']),
+    runCommandSilent('bun', ['pm', 'ls', '-g']),
+  ]);
+
+  if (npmResult.success && !npmResult.output.includes('(empty)')) {
+    found.add('npm');
+  }
+  if (bunResult.success && bunResult.output.includes('@automagik/genie')) {
+    found.add('bun');
+  }
+
+  return found;
 }
 
 async function updateSource(): Promise<void> {
@@ -369,29 +405,52 @@ function updatePluginRegistry(claudePlugins: string, cacheDir: string, version: 
   }
 }
 
-const GENIE_TMUX_HEADER = '# Genie TUI — tmux configuration';
-
-/** If ~/.tmux.conf was installed by genie, overwrite it and reload tmux. */
+/** Install tmux configs to ~/.genie/ and reload the genie tmux server. */
 function syncTmuxConf(tmuxScriptsSrc: string): void {
+  mkdirSync(GENIE_HOME, { recursive: true });
+
+  // Install genie.tmux.conf → ~/.genie/tmux.conf (agent server config)
   const tmuxConfSrc = join(tmuxScriptsSrc, 'genie.tmux.conf');
-  const tmuxConfDest = join(homedir(), '.tmux.conf');
-  if (!existsSync(tmuxConfSrc) || !existsSync(tmuxConfDest)) return;
-
-  try {
-    const existing = readFileSync(tmuxConfDest, 'utf-8');
-    if (!existing.includes(GENIE_TMUX_HEADER)) return;
-
-    copyFileSync(tmuxConfSrc, tmuxConfDest);
-    success('Updated ~/.tmux.conf (genie-managed)');
-
+  const tmuxConfDest = join(GENIE_HOME, 'tmux.conf');
+  if (existsSync(tmuxConfSrc)) {
     try {
-      execSync('tmux source-file ~/.tmux.conf', { stdio: 'ignore' });
-      success('Reloaded tmux configuration');
+      copyFileSync(tmuxConfSrc, tmuxConfDest);
+      success(`Installed tmux config to ${tmuxConfDest}`);
+      try {
+        const { tmuxBin } = require('../lib/ensure-tmux.js');
+        execSync(`${tmuxBin()} -L genie source-file '${tmuxConfDest}'`, { stdio: 'ignore' });
+        success('Reloaded genie tmux server configuration');
+      } catch {
+        // genie tmux server not running or reload failed — non-fatal
+      }
     } catch {
-      // tmux not running or reload failed — non-fatal
+      // Read/write failed — non-fatal
     }
-  } catch {
-    // Read/write failed — non-fatal
+  }
+
+  // Install tui-tmux.conf → ~/.genie/tui-tmux.conf (TUI display config, no shell probes)
+  const tuiConfSrc = join(tmuxScriptsSrc, 'tui-tmux.conf');
+  const tuiConfDest = join(GENIE_HOME, 'tui-tmux.conf');
+  if (existsSync(tuiConfSrc)) {
+    try {
+      copyFileSync(tuiConfSrc, tuiConfDest);
+      success(`Installed TUI tmux config to ${tuiConfDest}`);
+    } catch {
+      // Read/write failed — non-fatal
+    }
+  }
+
+  // Install osc52-copy.sh → ~/.genie/osc52-copy.sh (clipboard helper for nested tmux)
+  const osc52Src = join(tmuxScriptsSrc, 'osc52-copy.sh');
+  const osc52Dest = join(GENIE_HOME, 'osc52-copy.sh');
+  if (existsSync(osc52Src)) {
+    try {
+      copyFileSync(osc52Src, osc52Dest);
+      chmodSync(osc52Dest, 0o755);
+      success(`Installed OSC 52 clipboard helper to ${osc52Dest}`);
+    } catch {
+      // Read/write failed — non-fatal
+    }
   }
 }
 
@@ -405,7 +464,7 @@ function syncTmuxScripts(globalPkgDir: string): void {
 
   let scriptCount = 0;
   for (const entry of readdirSync(tmuxScriptsSrc)) {
-    if (entry.endsWith('.sh') || entry === 'genie.tmux.conf') {
+    if (entry.endsWith('.sh') || entry === 'genie.tmux.conf' || entry === 'tui-tmux.conf') {
       const src = join(tmuxScriptsSrc, entry);
       const dest = join(scriptsDir, entry);
       copyFileSync(src, dest);
@@ -423,6 +482,60 @@ function syncTmuxScripts(globalPkgDir: string): void {
   }
 
   syncTmuxConf(tmuxScriptsSrc);
+}
+
+/** Update marketplace.json version field to match the installed CLI version. */
+function syncMarketplaceVersion(claudePlugins: string, version: string): void {
+  const marketplacePath = join(claudePlugins, 'marketplaces', 'automagik', '.claude-plugin', 'marketplace.json');
+  try {
+    if (!existsSync(marketplacePath)) return;
+    const data = JSON.parse(readFileSync(marketplacePath, 'utf-8'));
+    if (Array.isArray(data.plugins)) {
+      for (const plugin of data.plugins) {
+        if (plugin.name === 'genie') {
+          plugin.version = version;
+        }
+      }
+    }
+    writeFileSync(marketplacePath, JSON.stringify(data, null, 2));
+    success(`Updated marketplace.json to v${version}`);
+  } catch (err) {
+    log(`Marketplace version update failed (non-fatal): ${err}`);
+  }
+}
+
+/** Update plugins/genie/package.json version field to match the installed CLI version. */
+function syncPluginPackageVersion(claudePlugins: string, version: string): void {
+  const pkgPath = join(claudePlugins, 'marketplaces', 'automagik', 'plugins', 'genie', 'package.json');
+  try {
+    if (!existsSync(pkgPath)) return;
+    const data = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    data.version = version;
+    writeFileSync(pkgPath, JSON.stringify(data, null, 2));
+    success(`Updated plugin package.json to v${version}`);
+  } catch (err) {
+    log(`Plugin package.json update failed (non-fatal): ${err}`);
+  }
+}
+
+/** Repoint the skills symlink to the current cache version. */
+function syncSkillsSymlink(claudePlugins: string, version: string): void {
+  const skillsLink = join(claudePlugins, 'marketplaces', 'automagik', 'plugins', 'genie', 'skills');
+  const cacheSkills = join('..', '..', '..', '..', 'cache', 'automagik', 'genie', version, 'skills');
+  try {
+    const { symlinkSync, unlinkSync, lstatSync } = require('node:fs') as typeof import('node:fs');
+    // Remove existing symlink/dir if present
+    try {
+      lstatSync(skillsLink);
+      unlinkSync(skillsLink);
+    } catch {
+      // doesn't exist — fine
+    }
+    symlinkSync(cacheSkills, skillsLink);
+    success(`Skills symlink → cache/${version}/skills`);
+  } catch (err) {
+    log(`Skills symlink update failed (non-fatal): ${err}`);
+  }
 }
 
 async function syncPlugin(installType: InstallationType): Promise<void> {
@@ -472,6 +585,9 @@ async function syncPlugin(installType: InstallationType): Promise<void> {
   }
 
   updatePluginRegistry(claudePlugins, cacheDir, version);
+  syncMarketplaceVersion(claudePlugins, version);
+  syncPluginPackageVersion(claudePlugins, version);
+  syncSkillsSymlink(claudePlugins, version);
   syncTmuxScripts(globalPkgDir);
 
   success(`Plugin synced to v${version}`);
@@ -538,17 +654,31 @@ export async function updateCommand(options: { next?: boolean; stable?: boolean 
     process.exit(1);
   }
 
-  switch (installType) {
-    case 'source':
-      await updateSource();
-      break;
-    case 'bun':
-      await updateViaBun(channel);
-      await syncPlugin(installType);
-      break;
-    case 'npm':
-      await updateViaNpm(channel);
-      await syncPlugin(installType);
-      break;
+  if (installType === 'source') {
+    await updateSource();
+    return;
   }
+
+  // Detect all global installs (npm + bun) to update both when they coexist
+  const globalInstalls = await detectGlobalInstalls();
+
+  // Primary update — exit on failure
+  const primaryMethod = installType as 'npm' | 'bun';
+  const primaryOk = primaryMethod === 'bun' ? await updateViaBun(channel) : await updateViaNpm(channel);
+  if (!primaryOk) {
+    process.exit(1);
+  }
+
+  // Secondary update — warn on failure, don't block
+  const secondaryMethod = primaryMethod === 'bun' ? 'npm' : 'bun';
+  if (globalInstalls.has(secondaryMethod)) {
+    console.log();
+    log(`Also updating ${secondaryMethod}-global install...`);
+    const secondaryOk = secondaryMethod === 'bun' ? await updateViaBun(channel) : await updateViaNpm(channel);
+    if (!secondaryOk) {
+      error(`Secondary update via ${secondaryMethod} failed (non-blocking)`);
+    }
+  }
+
+  await syncPlugin(installType);
 }

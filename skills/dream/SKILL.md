@@ -15,10 +15,18 @@ Pick SHIP-ready wishes, build a dependency-ordered execution plan, spawn paralle
 1. **Pick wishes** from `.genie/brainstorm.md` in the shared worktree.
 2. **Generate DREAM.md** with dependency-ordered execution plan.
 3. **Human confirms** DREAM.md (may edit before run).
-4. **Phase 1 — Execute:** dispatch workers per wish via `genie work`, collect outcomes.
-5. **Phase 2 — Review + PR:** review each group, create PRs, fix valid issues, CI green.
-6. **Phase 3 — Merge + QA:** merge to dev, spawn qa, QA loop until criteria proven.
-7. **Phase 4 — Report:** write DREAM-REPORT.md as the wake-up artifact.
+4. **Create dream task (v4):** register the dream run in PG:
+   ```bash
+   genie task create "Dream run <date>" --type software --tags chore
+   ```
+5. **Create child tasks (v4):** one per wish in the dream:
+   ```bash
+   genie task create "<wish title>" --parent #<dream-seq> --type software
+   ```
+6. **Phase 1 — Execute:** dispatch workers per wish via `genie work`, collect outcomes.
+7. **Phase 2 — Review + PR:** review each group, create PRs, fix valid issues, CI green.
+8. **Phase 3 — Merge + QA:** merge to dev, spawn qa, QA loop until criteria proven.
+9. **Phase 4 — Report:** write DREAM-REPORT.md as the wake-up artifact, log to parent task.
 
 ## Picker
 
@@ -79,9 +87,13 @@ genie team hire qa             # for QA loop on dev
    - Same-layer wishes dispatch in parallel.
    - Dispatch workers via `genie work <agent> <slug>#<group>` — gets state tracking for free.
    - Parallel groups within a wish dispatched simultaneously.
-3. Monitor via `genie status <slug>`. Mark groups done via `genie done <ref>`.
-4. Workers signal completion via `genie send`.
-5. If a group gets stuck, use `genie reset <ref>` to retry.
+3. Monitor via `genie task status <slug>`. Mark groups done via `genie task done <ref>`.
+4. **Track progress (v4):** as each wish starts execution, move its child task:
+   ```bash
+   genie task move #<wish-seq> --to build --comment "Execution started"
+   ```
+5. Workers signal completion via `genie agent send`.
+6. If a group gets stuck, use `genie reset <ref>` to retry.
 
 ### Worker Contract
 
@@ -95,7 +107,7 @@ Each worker executes independently:
 6. CI check: run CI. If fail → fix and retry (max 3 retries). Poll CI status — do not sleep.
    - After 3 failures: mark BLOCKED.
 7. Only after CI green: `gh pr create --base dev`.
-8. Report to lead via `genie send`:
+8. Report to lead via `genie agent send`:
    - Success: `DONE: PR at <url>. CI: green. Groups: N/N.`
    - Failure: `BLOCKED: <reason>. Groups: N/N.`
 
@@ -116,12 +128,18 @@ Each worker executes independently:
 **Trigger:** all PRs reviewed and marked SHIP.
 
 1. Merge PRs to dev in `merge_order`.
-2. Spawn qa on dev branch: `genie spawn qa`.
+2. Spawn qa on dev branch: `genie agent spawn qa`.
 3. QA loop: test against wish acceptance criteria → failures get `/report` → `/trace` → `/fix` → retest.
 4. Each fix creates a new PR to dev, goes through review, merge, retest.
 5. Continue until all wish criteria are proven or blocked.
 
 ## Phase 4: Report
+
+**Log report to parent task (v4):**
+```bash
+genie task comment #<dream-seq> "Dream report: X wishes shipped, Y blocked. See DREAM-REPORT.md"
+genie task done #<dream-seq> --comment "Dream run complete"
+```
 
 Write to `.genie/DREAM-REPORT.md` in the shared worktree:
 
@@ -150,6 +168,22 @@ After report is written:
 genie team disband dream-<date>
 ```
 
+## Task Lifecycle Integration (v4)
+
+When PG is available, the dream run is fully tracked in the task system:
+
+| Event | Command |
+|-------|---------|
+| Dream run starts | `genie task create "Dream run <date>" --type software --tags chore` |
+| Per-wish tracking | `genie task create "<wish title>" --parent #<dream-seq> --type software` |
+| Wish execution starts | `genie task move #<wish-seq> --to build --comment "Execution started"` |
+| Wish completes | `genie task move #<wish-seq> --to done --comment "Shipped — PR #<num>"` |
+| Wish blocked | `genie task block #<wish-seq> --reason "<reason>"` |
+| Dream report written | `genie task comment #<dream-seq> "Dream report: X shipped, Y blocked"` |
+| Dream run complete | `genie task done #<dream-seq> --comment "Dream run complete"` |
+
+**Graceful degradation:** If PG is unavailable or `genie task` commands fail, skip task tracking and fall back to current behavior. Task integration is optional — the dream flow must never break due to missing tasks. Log a warning and continue.
+
 ## Rules
 - Never early-stop: if a wish returns BLOCKED, record reason and continue with remaining wishes.
 - Never skip Phase 2 — every DONE PR must be reviewed.
@@ -158,4 +192,4 @@ genie team disband dream-<date>
 - Do not expand scope beyond what WISH.md defines.
 - Always write DREAM-REPORT.md, even if all wishes BLOCKED.
 - Poll CI status instead of sleeping — never use `sleep` in CI retry loops.
-- Use `genie done`, `genie status`, and `genie reset` for state tracking.
+- Use `genie task done`, `genie task status`, and `genie reset` for state tracking.

@@ -6,6 +6,8 @@ node_modules/
 # Build output
 dist/
 build/
+target/
+gen/
 *.js.map
 *.tsbuildinfo
 
@@ -62,4 +64,10 @@ yarn-error.log*
 .genie/mailbox/
 .genie/tasks.json
 .genie/state.json
+.genie/state/
+.genie/chat/
 
+# QA specs in .genie/qa/ are tracked (they are code)
+# QA results live in ~/.genie/qa/ (global, not per-repo)
+
+core
