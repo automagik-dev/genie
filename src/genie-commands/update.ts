@@ -508,7 +508,7 @@ function syncPluginPackageVersion(claudePlugins: string, version: string): void 
 /** Repoint the skills symlink to the current cache version. */
 function syncSkillsSymlink(claudePlugins: string, version: string): void {
   const skillsLink = join(claudePlugins, 'marketplaces', 'automagik', 'plugins', 'genie', 'skills');
-  const cacheSkills = join('..', '..', 'cache', 'automagik', 'genie', version, 'skills');
+  const cacheSkills = join('..', '..', '..', '..', 'cache', 'automagik', 'genie', version, 'skills');
   try {
     const { symlinkSync, unlinkSync, lstatSync } = require('node:fs') as typeof import('node:fs');
     // Remove existing symlink/dir if present
