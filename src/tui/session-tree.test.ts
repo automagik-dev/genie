@@ -292,6 +292,66 @@ describe('buildWorkspaceTree', () => {
 
     expect(tree[0].agentState).toBe('working');
   });
+
+  test('sub-agents (e.g., genie/qa) appear nested under parent', () => {
+    const tree = buildWorkspaceTree({
+      agentNames: ['genie', 'genie/qa', 'genie/fix'],
+      sessions: [],
+      executors: [],
+    });
+
+    expect(tree).toHaveLength(1);
+    expect(tree[0].label).toBe('genie');
+    expect(tree[0].type).toBe('agent');
+    expect(tree[0].children).toHaveLength(2);
+    expect(tree[0].children[0].label).toBe('qa');
+    expect(tree[0].children[0].depth).toBe(1);
+    expect(tree[0].children[1].label).toBe('fix');
+    expect(tree[0].children[1].depth).toBe(1);
+  });
+
+  test('sub-agents with running sessions show correct state', () => {
+    const qaWin0 = makeWindow({ sessionName: 'genie/qa', index: 0, name: 'zsh' });
+    const qaWin1 = makeWindow({
+      sessionName: 'genie/qa',
+      index: 1,
+      name: 'qa',
+      panes: [makePane({ sessionName: 'genie/qa', windowIndex: 1, paneId: '%5', command: 'claude', title: 'claude' })],
+    });
+    const qaSession = makeSession('genie/qa', [qaWin0, qaWin1]);
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['genie', 'genie/qa'],
+      sessions: [qaSession],
+      executors: [],
+    });
+
+    expect(tree).toHaveLength(1);
+    const parent = tree[0];
+    expect(parent.label).toBe('genie');
+    expect(parent.wsAgentState).toBe('stopped');
+    expect(parent.children).toHaveLength(1);
+
+    const qaChild = parent.children[0];
+    expect(qaChild.label).toBe('qa');
+    expect(qaChild.wsAgentState).toBe('running');
+  });
+
+  test('orphan sessions with sub-agents: unmatched session appended at end', () => {
+    const orphanSession = makeSession('mystery-agent');
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['genie', 'genie/qa'],
+      sessions: [orphanSession],
+      executors: [],
+    });
+
+    expect(tree).toHaveLength(2);
+    expect(tree[0].type).toBe('agent');
+    expect(tree[0].label).toBe('genie');
+    expect(tree[1].type).toBe('session');
+    expect(tree[1].label).toBe('mystery-agent');
+  });
 });
 
 // ─── buildSessionTree (legacy mode) Tests ────────────────────────────────────
