@@ -227,7 +227,11 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult): Promise<vo
   const content = readFileSync(agentsMdPath, 'utf-8');
   const fm = parseFrontmatter(content);
 
-  const existing = await directory.get(agent.name);
+  // Use resolve() to distinguish PG entries from built-ins.
+  // get() returns built-in entries too, which would skip the add() path
+  // and silently fail the edit() (no dir: row in PG for built-in names).
+  const resolved = await directory.resolve(agent.name);
+  const existing = resolved && !resolved.builtin ? resolved.entry : null;
 
   if (!existing) {
     await directory.add({
