@@ -1,5 +1,6 @@
 {
-  "last_run": "2026-04-01T00:00:00Z",
+  "last_run": "2026-04-02T00:00:00.000Z",
+  "last_run_status": "failed",
   "last_metrics": {
     "releases_24h": 0,
     "merged_prs_7d": 35,
