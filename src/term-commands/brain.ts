@@ -25,11 +25,25 @@ async function installBrain(): Promise<boolean> {
   console.log('');
 
   try {
-    // Install directly from GitHub — bun resolves git repos natively
-    // Only people with repo access (SSH key or GH token) can install
-    execSync(`bun add ${BRAIN_REPO}`, {
+    // Verify GitHub CLI is authenticated (no token extraction — gh handles auth securely)
+    try {
+      execSync('gh auth token', { stdio: 'pipe' });
+    } catch {
+      console.error('  ✗ GitHub CLI not authenticated. Run: gh auth login');
+      return false;
+    }
+
+    // Clone brain repo using gh CLI (handles private repos without exposing tokens in process list)
+    const brainDir = 'node_modules/@automagik/genie-brain';
+    execSync(`rm -rf "${brainDir}"`, { stdio: 'pipe' });
+    execSync('mkdir -p node_modules/@automagik', { stdio: 'pipe' });
+    execSync(`gh repo clone automagik-dev/genie-brain "${brainDir}" -- --depth 1`, {
       stdio: 'inherit',
     });
+
+    // Install brain's deps + build
+    execSync('bun install', { cwd: brainDir, stdio: 'inherit' });
+    execSync('bun run build', { cwd: brainDir, stdio: 'inherit' });
 
     console.log('');
     console.log('  ✓ Brain installed from GitHub.');
@@ -78,10 +92,11 @@ async function installBrain(): Promise<boolean> {
 
 function uninstallBrain(): void {
   try {
-    execSync(`bun remove ${BRAIN_PKG}`, { stdio: 'inherit' });
+    const brainDir = 'node_modules/@automagik/genie-brain';
+    execSync(`rm -rf "${brainDir}"`, { stdio: 'pipe' });
     console.log('  ✓ Brain uninstalled.');
   } catch {
-    console.error('  Uninstall failed. Manual: bun remove @automagik/genie-brain');
+    console.error('  Uninstall failed. Manual: rm -rf node_modules/@automagik/genie-brain');
   }
 }
 
