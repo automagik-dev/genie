@@ -1211,7 +1211,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   const deadResumable = await findDeadResumable(team, effectiveRole);
   if (deadResumable) {
     console.log(
-      `Resuming existing session for "${effectiveRole}" (session: ${deadResumable.claudeSessionId!.slice(0, 8)}...)`,
+      `Resuming existing session for "${effectiveRole}" (session: ${deadResumable.claudeSessionId?.slice(0, 8)}...)`,
     );
     await resumeAgent(deadResumable);
     return deadResumable.id;
