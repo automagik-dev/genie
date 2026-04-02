@@ -1,8 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
+// Import the real workspace module so we can spyOn individual exports.
+// Using spyOn instead of mock.module avoids leaking an incomplete mock to
+// other test files (bun 1.3.x leaks mock.module across parallel workers).
+import * as workspace from '../lib/workspace.js';
 
 const mockConfirm = mock<(options: { message: string; default?: boolean }) => Promise<boolean>>(async () => false);
 const mockIsSetupComplete = mock<() => boolean>(() => true);
@@ -20,17 +24,12 @@ mock.module('../genie-commands/setup.js', () => ({
   setupCommand: () => mockSetupCommand(),
 }));
 
-// Prevent workspace walk-up from detecting the host genie workspace
-mock.module('../lib/workspace.js', () => ({
-  findWorkspace: () => null,
-  scanAgents: () => [],
-  getWorkspaceConfig: () => ({ agents: [] }),
-}));
-
 const { registerInitCommands } = await import('./init.js');
 
 let originalCwd: string;
 let testDir: string;
+let findWorkspaceSpy: ReturnType<typeof spyOn>;
+let scanAgentsSpy: ReturnType<typeof spyOn>;
 
 describe('genie init setup gating', () => {
   beforeEach(() => {
@@ -38,6 +37,10 @@ describe('genie init setup gating', () => {
     testDir = join(tmpdir(), `genie-init-flow-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(testDir, { recursive: true });
     process.chdir(testDir);
+
+    // Spy on workspace functions to prevent host workspace detection
+    findWorkspaceSpy = spyOn(workspace, 'findWorkspace').mockReturnValue(null);
+    scanAgentsSpy = spyOn(workspace, 'scanAgents').mockReturnValue([]);
 
     mockConfirm.mockReset();
     mockIsSetupComplete.mockReset();
@@ -48,6 +51,8 @@ describe('genie init setup gating', () => {
   });
 
   afterEach(() => {
+    findWorkspaceSpy.mockRestore();
+    scanAgentsSpy.mockRestore();
     process.chdir(originalCwd);
     rmSync(testDir, { recursive: true, force: true });
   });

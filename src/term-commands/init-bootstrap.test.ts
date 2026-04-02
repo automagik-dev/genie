@@ -3,10 +3,13 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
+// Import the real workspace module so we can spyOn individual exports.
+// Using spyOn instead of mock.module avoids leaking an incomplete mock to
+// other test files (bun 1.3.x leaks mock.module across parallel workers).
+import * as workspace from '../lib/workspace.js';
 
 const mockConfirm = mock<(options: { message: string; default?: boolean }) => Promise<boolean>>(async () => true);
 const mockIsSetupComplete = mock(() => true);
-const mockScanAgents = mock<(root: string) => string[]>(() => []);
 
 mock.module('@inquirer/prompts', () => ({
   confirm: (options: { message: string; default?: boolean }) => mockConfirm(options),
@@ -17,20 +20,13 @@ mock.module('../lib/genie-config.js', () => ({
   loadGenieConfigSync: () => ({ promptMode: 'append' }),
 }));
 
-// Stub findWorkspace to prevent it from discovering the host machine's workspace
-// via its global fallback. scanAgents is also mocked so tests can control whether
-// agents "exist" without relying on the real filesystem.
-mock.module('../lib/workspace.js', () => ({
-  findWorkspace: () => null,
-  scanAgents: (root: string) => mockScanAgents(root),
-  getWorkspaceConfig: () => ({ agents: [] }),
-}));
-
 const { registerInitCommands } = await import('./init.js');
 
 let originalCwd: string;
 let testDir: string;
 let cwdSpy: ReturnType<typeof spyOn>;
+let findWorkspaceSpy: ReturnType<typeof spyOn>;
+let scanAgentsSpy: ReturnType<typeof spyOn>;
 
 beforeEach(() => {
   originalCwd = process.cwd();
@@ -42,15 +38,20 @@ beforeEach(() => {
   // test files that also call process.chdir() in the same bun process.
   cwdSpy = spyOn(process, 'cwd').mockReturnValue(testDir);
 
+  // Spy on workspace functions — prevents findWorkspace from discovering the
+  // host machine's workspace, and lets tests control scanAgents results.
+  findWorkspaceSpy = spyOn(workspace, 'findWorkspace').mockReturnValue(null);
+  scanAgentsSpy = spyOn(workspace, 'scanAgents').mockReturnValue([]);
+
   mockConfirm.mockReset();
   mockIsSetupComplete.mockReset();
-  mockScanAgents.mockReset();
   mockConfirm.mockResolvedValue(true);
   mockIsSetupComplete.mockReturnValue(true);
-  mockScanAgents.mockReturnValue([]);
 });
 
 afterEach(() => {
+  findWorkspaceSpy.mockRestore();
+  scanAgentsSpy.mockRestore();
   cwdSpy.mockRestore();
   process.chdir(originalCwd);
   rmSync(testDir, { recursive: true, force: true });
@@ -89,7 +90,7 @@ describe('genie init default agent bootstrap', () => {
   });
 
   test('does not prompt when an agent already exists', async () => {
-    mockScanAgents.mockReturnValue(['atlas']);
+    scanAgentsSpy.mockReturnValue(['atlas']);
 
     const program = new Command();
     registerInitCommands(program);
