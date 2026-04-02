@@ -228,8 +228,15 @@ async function createSession(
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
   const agentName = basename(workspaceDir);
-  // First run — no session to continue, just start fresh with --name
-  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined, leaderName);
+  // Check for prior CC session to resume, start fresh only if none found
+  const continueName = sanitizeTeamName(windowName);
+  const hasPriorSession = sessionExists(continueName);
+  const cmd = buildClaudeCommand(
+    windowName,
+    systemPromptFile || undefined,
+    hasPriorSession ? continueName : undefined,
+    leaderName,
+  );
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   console.log(`Started Claude Code as ${agentName} in ${workspaceDir}`);
 
@@ -423,6 +430,39 @@ async function reconcileLeaderConfigs(): Promise<void> {
   }
 }
 
+/**
+ * Launch Claude Code inside an existing tmux pane (the "inside-tmux" path).
+ *
+ * Checks for a prior CC session to resume. If one exists, reuses the window
+ * name and passes --resume. Otherwise creates a fresh session with a unique
+ * suffix to avoid window-name collisions.
+ */
+async function launchInsideTmux(
+  windowName: string,
+  workspaceDir: string,
+  systemPromptFile: string | null,
+  leaderName?: string,
+): Promise<void> {
+  const continueName = sanitizeTeamName(windowName);
+  const hasPriorSession = sessionExists(continueName);
+  if (hasPriorSession) {
+    // Resume existing session — don't create a new suffixed window
+    await ensureNativeTeamForLeader(windowName, workspaceDir);
+    const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName, leaderName);
+    const { execSync: execSyncCmd } = require('node:child_process');
+    execSyncCmd(cmd, { stdio: 'inherit', cwd: workspaceDir });
+  } else {
+    // No prior session — create fresh with suffix for uniqueness
+    const suffix = Date.now().toString(36).slice(-4);
+    const currentWindowName = `${windowName}-${suffix}`;
+    await tmux.executeTmux(`rename-window ${shellQuote(currentWindowName)}`);
+    await ensureNativeTeamForLeader(currentWindowName, workspaceDir);
+    const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, undefined, leaderName);
+    const { execSync: execSyncCmd } = require('node:child_process');
+    execSyncCmd(cmd, { stdio: 'inherit', cwd: workspaceDir });
+  }
+}
+
 export async function sessionCommand(options: SessionOptions = {}): Promise<void> {
   // One-shot startup reconciliation: reset agents stuck in 'spawning' with no pane for >60s
   await reconcileStaleSpawns();
@@ -462,14 +502,7 @@ export async function sessionCommand(options: SessionOptions = {}): Promise<void
       attachToWindow(sessionName, windowName);
     } else if (process.env.TMUX) {
       // Already inside tmux — launch Claude Code in the CURRENT pane
-      const suffix = Date.now().toString(36).slice(-4);
-      const currentWindowName = `${windowName}-${suffix}`;
-      await tmux.executeTmux(`rename-window ${shellQuote(currentWindowName)}`);
-      await ensureNativeTeamForLeader(currentWindowName, workspaceDir);
-      // Fresh session — random suffix means no prior conversation to continue
-      const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, undefined, leaderName);
-      const { execSync: execSyncCmd } = require('node:child_process');
-      execSyncCmd(cmd, { stdio: 'inherit', cwd: workspaceDir });
+      await launchInsideTmux(windowName, workspaceDir, systemPromptFile, leaderName);
     } else {
       // Outside tmux — attach to existing session
       console.log(`Session "${sessionName}" already exists`);
