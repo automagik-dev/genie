@@ -458,6 +458,28 @@ async function injectToTmuxPane(worker: registry.Agent, message: mailbox.Mailbox
 }
 
 /**
+ * Attempt instant pane delivery for a specific message.
+ * Used by the scheduler daemon's PG LISTEN/NOTIFY handler to push
+ * messages into tmux panes without waiting for the next poll cycle.
+ *
+ * Returns true if the message was injected into the pane.
+ */
+export async function deliverToPane(toWorker: string, messageId: string): Promise<boolean> {
+  const worker = await registry.get(toWorker);
+  if (!worker || !worker.paneId) return false;
+  if (!(await _deps.isPaneAlive(worker.paneId))) return false;
+
+  const message = await mailbox.getById(messageId);
+  if (!message || message.deliveredAt) return false;
+
+  const injected = await injectToTmuxPane(worker, message);
+  if (injected && worker.repoPath) {
+    await mailbox.markDelivered(worker.repoPath, worker.id, messageId);
+  }
+  return injected;
+}
+
+/**
  * Get the inbox for a worker (all messages, with read/unread status).
  */
 export async function getInbox(repoPath: string, workerId: string): Promise<mailbox.MailboxMessage[]> {
