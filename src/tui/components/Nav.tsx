@@ -314,10 +314,20 @@ function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, wi
       const agentDir = resolve(join(wsRoot, 'agents', parentName));
       if (existsSync(agentDir)) cwd = agentDir;
     }
+    // Strip TUI env vars so spawned agents don't inherit them and accidentally
+    // launch a second TUI nav sidebar instead of claude.
+    const {
+      GENIE_TUI_PANE: _a,
+      GENIE_TUI_RIGHT: _b,
+      GENIE_TUI_WORKSPACE: _c,
+      GENIE_IS_DAEMON: _d,
+      ...cleanEnv
+    } = process.env;
+    const spawnOpts = { detached: true, stdio: 'ignore' as const, cwd, env: cleanEnv };
     const child =
       genieBin && genieBin !== 'genie'
-        ? spawn(bunPath, [genieBin, 'spawn', name, '--session', sessionName], { detached: true, stdio: 'ignore', cwd })
-        : spawn('genie', ['spawn', name, '--session', sessionName], { detached: true, stdio: 'ignore', cwd });
+        ? spawn(bunPath, [genieBin, 'spawn', name, '--session', sessionName], spawnOpts)
+        : spawn('genie', ['spawn', name, '--session', sessionName], spawnOpts);
     child.unref();
     if (onTmuxSessionSelect) {
       attachSpawnedAgentWhenReady(sessionName, onTmuxSessionSelect);
