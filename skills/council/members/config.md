@@ -23,7 +23,7 @@ Override per-session at spawn time:
 
 ```bash
 # Use codex/o3 for the architect
-genie spawn council--architect --team <team> --session <team> --provider codex --model o3
+genie spawn council--architect --team <team> --provider codex --model o3
 
 # Use haiku for all members (faster, cheaper)
 # Pass --model haiku to the dispatch script
