@@ -438,6 +438,7 @@ async function capturePanePid(paneId: string): Promise<number | null> {
 /** Resolve the executor transport type from provider and spawn transport. */
 function resolveExecutorTransport(provider: ProviderName, spawnTransport: 'tmux' | 'inline'): ExecutorTransport {
   if (provider === 'codex') return 'api';
+  if (provider === 'claude-sdk') return 'process';
   return spawnTransport === 'inline' ? 'process' : 'tmux';
 }
 
@@ -756,6 +757,7 @@ async function autoConfirmTrustPrompt(paneId: string): Promise<void> {
  * First agent in a newly created team window reuses the blank pane via send-keys.
  * Subsequent agents split-window into the same team window.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing tmux pane routing logic, split targets and launch modes are interdependent
 function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow: TeamWindowInfo | null): string {
   const { execSync } = require('node:child_process');
   const useLaunchScript = ctx.validated.provider === 'claude' && Boolean(ctx.validated.nativeTeam?.enabled);
@@ -920,6 +922,90 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   await registry.update(ctx.workerId, { state: 'idle' }).catch(() => {});
 
   return paneId;
+}
+
+async function resolveSdkPermissions(
+  permissionsConfig: directory.DirectoryEntry['permissions'] | undefined,
+): Promise<{ allow: string[]; deny: string[]; bashAllowPatterns?: string[]; bashDenyPatterns?: string[] }> {
+  const sdkPerms = await import('../lib/providers/claude-sdk-permissions.js');
+  if (!permissionsConfig) return sdkPerms.PRESET_FULL;
+  if (permissionsConfig.preset) return sdkPerms.resolvePreset(permissionsConfig.preset);
+  return {
+    allow: permissionsConfig.allow ?? ['*'],
+    deny: permissionsConfig.deny ?? [],
+    bashAllowPatterns: permissionsConfig.bashAllowPatterns,
+    bashDenyPatterns: permissionsConfig.bashDenyPatterns,
+  };
+}
+
+async function runSdkQuery(
+  ctx: SpawnCtx,
+  permConfig: { allow: string[]; deny: string[]; bashAllowPatterns?: string[]; bashDenyPatterns?: string[] },
+): Promise<void> {
+  const { ClaudeSdkProvider } = await import('../lib/providers/claude-sdk.js');
+  const sdkProvider = new ClaudeSdkProvider();
+  const spawnContext = {
+    agentId: ctx.agentIdentityId ?? ctx.workerId,
+    executorId: ctx.executorId ?? crypto.randomUUID(),
+    team: ctx.validated.team,
+    role: ctx.validated.role,
+    skill: ctx.validated.skill,
+    cwd: ctx.cwd,
+    model: ctx.validated.model,
+    systemPrompt: ctx.validated.systemPrompt,
+    systemPromptFile: ctx.validated.systemPromptFile,
+    initialPrompt: ctx.validated.initialPrompt,
+    name: ctx.validated.name,
+  };
+
+  const prompt =
+    ctx.validated.initialPrompt ??
+    `You are ${ctx.validated.role ?? 'an agent'} on team "${ctx.validated.team}". Awaiting instructions.`;
+  const { messages } = sdkProvider.runQuery(spawnContext, prompt, permConfig);
+
+  if (ctx.executorId) {
+    await executorRegistry.updateExecutorState(ctx.executorId, 'running').catch(() => {});
+  }
+
+  try {
+    for await (const _message of messages) {
+      // Messages are consumed — the SDK drives tool execution internally.
+    }
+  } catch (err) {
+    if (!(err instanceof Error && err.name === 'AbortError')) {
+      console.error(`SDK query error: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+}
+
+async function launchSdkSpawn(
+  ctx: SpawnCtx,
+  permissionsConfig?: directory.DirectoryEntry['permissions'],
+): Promise<string> {
+  if (ctx.agentIdentityId && ctx.executorId) {
+    await createAndLinkExecutor(ctx.agentIdentityId, 'claude-sdk' as ProviderName, 'process', {
+      id: ctx.executorId,
+      claudeSessionId: null,
+      state: 'spawning',
+      repoPath: ctx.cwd,
+    });
+  }
+
+  await registerSpawnWorker(ctx, 'sdk');
+
+  console.log(`Agent "${ctx.workerId}" starting via Claude Agent SDK...`);
+  console.log(`  Provider: claude-sdk | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
+  console.log('');
+
+  const permConfig = await resolveSdkPermissions(permissionsConfig);
+  await runSdkQuery(ctx, permConfig);
+
+  if (ctx.executorId) {
+    await executorRegistry.updateExecutorState(ctx.executorId, 'done').catch(() => {});
+  }
+  await registry.unregister(ctx.workerId);
+  console.log(`\nAgent "${ctx.workerId}" SDK session ended.`);
+  return ctx.workerId;
 }
 
 async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
@@ -1296,6 +1382,11 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     team: validated.team,
     provider: validated.provider,
   }).catch(() => {});
+
+  // SDK provider: in-process query, no tmux/shell needed
+  if (validated.provider === 'claude-sdk') {
+    return await launchSdkSpawn(ctx, agent.entry.permissions);
+  }
 
   if (insideTmux) {
     return await launchTmuxSpawn(ctx);
