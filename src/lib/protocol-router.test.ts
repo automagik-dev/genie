@@ -480,4 +480,189 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(result.workerId).toBe('native-worker');
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Completion guard — skip auto-spawn for done/terminated executors (#1017)
+  // ---------------------------------------------------------------------------
+
+  describe('completion guard', () => {
+    test('skips auto-spawn when last executor state is done', async () => {
+      const registry = await import('./agent-registry.js');
+      const executorReg = await import('./executor-registry.js');
+      const router = await import('./protocol-router.js');
+
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+      router._deps.waitForWorkerReady = async () => true;
+      process.env.TMUX = '/tmp/tmux-test/default,123,0';
+
+      const now = new Date().toISOString();
+
+      // Register a dead worker (pane not alive)
+      await registry.register({
+        id: 'done-agent',
+        paneId: '%0',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'done-role',
+        team: 'done-team',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+      });
+
+      // Create an executor in 'done' state and link it to the agent
+      const executor = await executorReg.createAndLinkExecutor('done-agent', 'claude', 'tmux', {
+        state: 'done',
+      });
+      await executorReg.updateExecutorState(executor.id, 'done');
+
+      // Register a template so auto-spawn WOULD be attempted
+      await registry.saveTemplate({
+        id: 'done-team-done-role',
+        team: 'done-team',
+        role: 'done-role',
+        provider: 'claude',
+        cwd: tempDir,
+        lastSpawnedAt: now,
+      });
+
+      const result = await router.sendMessage(tempDir, 'alice', 'done-role', 'hello done', 'done-team');
+
+      // Should NOT auto-spawn — the completion guard prevents it
+      expect(spawnCallCount).toBe(0);
+      expect(result.delivered).toBe(false);
+    });
+
+    test('skips auto-spawn when last executor state is terminated', async () => {
+      const registry = await import('./agent-registry.js');
+      const executorReg = await import('./executor-registry.js');
+      const router = await import('./protocol-router.js');
+
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+      router._deps.waitForWorkerReady = async () => true;
+      process.env.TMUX = '/tmp/tmux-test/default,123,0';
+
+      const now = new Date().toISOString();
+
+      await registry.register({
+        id: 'term-agent',
+        paneId: '%0',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'term-role',
+        team: 'term-team',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+      });
+
+      const executor = await executorReg.createAndLinkExecutor('term-agent', 'claude', 'tmux');
+      await executorReg.updateExecutorState(executor.id, 'terminated');
+
+      await registry.saveTemplate({
+        id: 'term-team-term-role',
+        team: 'term-team',
+        role: 'term-role',
+        provider: 'claude',
+        cwd: tempDir,
+        lastSpawnedAt: now,
+      });
+
+      const result = await router.sendMessage(tempDir, 'alice', 'term-role', 'hello term', 'term-team');
+
+      expect(spawnCallCount).toBe(0);
+      expect(result.delivered).toBe(false);
+    });
+
+    test('still auto-spawns when last executor state is error', async () => {
+      const registry = await import('./agent-registry.js');
+      const executorReg = await import('./executor-registry.js');
+      const router = await import('./protocol-router.js');
+
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+      router._deps.waitForWorkerReady = async () => true;
+      process.env.TMUX = '/tmp/tmux-test/default,123,0';
+
+      const now = new Date().toISOString();
+
+      await registry.register({
+        id: 'err-agent',
+        paneId: '%0',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'err-role',
+        team: 'err-team',
+        state: 'error',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+      });
+
+      const executor = await executorReg.createAndLinkExecutor('err-agent', 'claude', 'tmux');
+      await executorReg.updateExecutorState(executor.id, 'error');
+
+      await registry.saveTemplate({
+        id: 'err-team-err-role',
+        team: 'err-team',
+        role: 'err-role',
+        provider: 'claude',
+        cwd: tempDir,
+        lastSpawnedAt: now,
+      });
+
+      const result = await router.sendMessage(tempDir, 'alice', 'err-role', 'hello err', 'err-team');
+
+      // Error-state agents SHOULD be auto-spawned (error != intentional completion)
+      expect(spawnCallCount).toBe(1);
+    });
+
+    test('still auto-spawns when no prior executor exists (first spawn)', async () => {
+      const registry = await import('./agent-registry.js');
+      const router = await import('./protocol-router.js');
+
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+      router._deps.waitForWorkerReady = async () => true;
+      process.env.TMUX = '/tmp/tmux-test/default,123,0';
+
+      const now = new Date().toISOString();
+
+      // Register a worker WITHOUT any executor (first spawn scenario)
+      await registry.register({
+        id: 'fresh-agent',
+        paneId: '%0',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'fresh-role',
+        team: 'fresh-team',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+      });
+
+      await registry.saveTemplate({
+        id: 'fresh-team-fresh-role',
+        team: 'fresh-team',
+        role: 'fresh-role',
+        provider: 'claude',
+        cwd: tempDir,
+        lastSpawnedAt: now,
+      });
+
+      const result = await router.sendMessage(tempDir, 'alice', 'fresh-role', 'hello fresh', 'fresh-team');
+
+      // First-time spawn should work — no executor record means no completion guard
+      expect(spawnCallCount).toBe(1);
+    });
+  });
 });
