@@ -912,6 +912,13 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   await finalizeTmuxSpawn(ctx, paneId, teamWindow, workerEntry);
 
   await awaitAgentReadiness(paneId);
+
+  // Transition executor + legacy worker from 'spawning' to 'running'
+  if (ctx.executorId) {
+    await executorRegistry.updateExecutorState(ctx.executorId, 'running').catch(() => {});
+  }
+  await registry.update(ctx.workerId, { state: 'idle' }).catch(() => {});
+
   return paneId;
 }
 
