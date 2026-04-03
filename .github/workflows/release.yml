@@ -31,9 +31,9 @@ jobs:
             echo "Release ${TAG} already exists — deriving hotfix version."
             TODAY=$(date -u +%y%m%d)
             EXISTING=$(gh release list --limit 100 --json tagName \
-              -q "[.[].tagName | select(startswith(\"v3.${TODAY}.\"))] | length")
+              -q "[.[].tagName | select(startswith(\"v4.${TODAY}.\"))] | length")
             BUILD=$((EXISTING + 1))
-            VERSION="3.${TODAY}.${BUILD}"
+            VERSION="4.${TODAY}.${BUILD}"
             echo "Hotfix version: v${VERSION}"
             echo "hotfix=true" >> "$GITHUB_OUTPUT"
           else
@@ -77,7 +77,7 @@ jobs:
         run: |
           TAG="${{ steps.ver.outputs.tag }}"
           if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="Initial release of genie v3 CLI."
+            RELEASE_NOTES="Initial release of genie v4 CLI."
           fi
           printf '%s' "$RELEASE_NOTES" > /tmp/release-notes.md
           if gh release view "${TAG}" > /dev/null 2>&1; then
