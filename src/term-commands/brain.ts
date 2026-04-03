@@ -39,10 +39,11 @@ interface UpdateCheck {
   latestVersion?: string;
 }
 
-export function checkForUpdates(): UpdateCheck {
+export function checkForUpdates(cachePath?: string): UpdateCheck {
   try {
-    if (!existsSync(CACHE_PATH)) return { updateAvailable: false };
-    const cache = JSON.parse(readFileSync(CACHE_PATH, 'utf-8'));
+    const p = cachePath ?? CACHE_PATH;
+    if (!existsSync(p)) return { updateAvailable: false };
+    const cache = JSON.parse(readFileSync(p, 'utf-8'));
     if (cache.updateAvailable && cache.latestVersion) {
       return { updateAvailable: true, latestVersion: cache.latestVersion };
     }
