@@ -131,7 +131,9 @@ async function updateBrain(): Promise<boolean> {
 
   console.log('  Updating brain from GitHub...');
 
-  // git pull origin main
+  // Ensure we're on main before pulling — if the clone is on dev,
+  // `git pull origin main` merges main INTO dev, keeping the dev version.
+  execSync(`git -C "${BRAIN_DIR}" checkout main`, { stdio: 'pipe' });
   execSync(`git -C "${BRAIN_DIR}" pull origin main`, { stdio: 'inherit' });
 
   // Rebuild
