@@ -39,14 +39,14 @@ jobs:
           BRANCH="${{ github.event.workflow_run.head_branch || 'dev' }}"
           if [ "$BRANCH" = "main" ]; then
             echo "branch=dev" >> "$GITHUB_OUTPUT"
-            echo "prefix=3" >> "$GITHUB_OUTPUT"
+            echo "prefix=4" >> "$GITHUB_OUTPUT"
             echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
           else
             echo "branch=dev" >> "$GITHUB_OUTPUT"
             echo "prefix=4" >> "$GITHUB_OUTPUT"
             echo "npm_tag=next" >> "$GITHUB_OUTPUT"
           fi
-          echo "Resolved: branch=dev, prefix=$([ "$BRANCH" = "main" ] && echo 3 || echo 4)"
+          echo "Resolved: branch=dev, prefix=4"
 
       - uses: actions/checkout@v4
         with:
