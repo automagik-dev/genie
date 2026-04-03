@@ -1,66 +1,53 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkForUpdates } from './brain.js';
 
 /**
  * Tests for the cache-only checkForUpdates function.
  *
- * checkForUpdates reads ~/.genie/brain-version-check.json synchronously.
+ * checkForUpdates reads a JSON cache file synchronously.
  * It never makes network calls and never throws.
  *
- * We test it by writing/removing a temp cache file and overriding CACHE_PATH
- * is not possible (module-level const), so we test the exported function
- * against the real cache path. We save/restore the file around the tests.
+ * We use a temp directory so tests never touch the real ~/.genie/
+ * and work in CI without permission issues.
  */
 
-// The real cache path is ~/.genie/brain-version-check.json
-// We test the function's behavior with various cache states.
-// Since we can't easily override the const, we test the contract:
-// - Returns { updateAvailable: false } when cache doesn't exist or is invalid
-// - Returns { updateAvailable: true, latestVersion } when cache says so
-
 describe('checkForUpdates', () => {
-  const realCachePath = join(process.env.HOME ?? '/tmp', '.genie', 'brain-version-check.json');
-  let savedCache: string | null = null;
+  let tempDir: string;
+  let cachePath: string;
 
-  beforeEach(() => {
-    // Save existing cache if any
+  beforeAll(() => {
+    tempDir = join(tmpdir(), `brain-test-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    cachePath = join(tempDir, 'brain-version-check.json');
+  });
+
+  afterAll(() => {
     try {
-      const { readFileSync } = require('node:fs');
-      savedCache = readFileSync(realCachePath, 'utf-8');
+      rmSync(tempDir, { recursive: true, force: true });
     } catch {
-      savedCache = null;
+      /* best effort */
     }
   });
 
-  afterEach(() => {
-    // Restore original cache
-    if (savedCache !== null) {
-      writeFileSync(realCachePath, savedCache);
-    } else {
-      try {
-        rmSync(realCachePath);
-      } catch {
-        /* didn't exist */
-      }
+  beforeEach(() => {
+    try {
+      rmSync(cachePath);
+    } catch {
+      /* ok */
     }
   });
 
   test('returns updateAvailable false when cache does not exist', () => {
-    try {
-      rmSync(realCachePath);
-    } catch {
-      /* ok */
-    }
-    const result = checkForUpdates();
+    const result = checkForUpdates(cachePath);
     expect(result).toEqual({ updateAvailable: false });
   });
 
   test('returns updateAvailable true when cache says so', () => {
-    mkdirSync(join(process.env.HOME ?? '/tmp', '.genie'), { recursive: true });
     writeFileSync(
-      realCachePath,
+      cachePath,
       JSON.stringify({
         checkedAt: new Date().toISOString(),
         localVersion: '1.260401.1',
@@ -69,14 +56,13 @@ describe('checkForUpdates', () => {
         updateAvailable: true,
       }),
     );
-    const result = checkForUpdates();
+    const result = checkForUpdates(cachePath);
     expect(result).toEqual({ updateAvailable: true, latestVersion: '0.260403.2' });
   });
 
   test('returns updateAvailable false when cache says no update', () => {
-    mkdirSync(join(process.env.HOME ?? '/tmp', '.genie'), { recursive: true });
     writeFileSync(
-      realCachePath,
+      cachePath,
       JSON.stringify({
         checkedAt: new Date().toISOString(),
         localVersion: '1.260403.2',
@@ -85,24 +71,20 @@ describe('checkForUpdates', () => {
         updateAvailable: false,
       }),
     );
-    const result = checkForUpdates();
+    const result = checkForUpdates(cachePath);
     expect(result).toEqual({ updateAvailable: false });
   });
 
   test('returns updateAvailable false when cache is invalid JSON', () => {
-    mkdirSync(join(process.env.HOME ?? '/tmp', '.genie'), { recursive: true });
-    writeFileSync(realCachePath, 'not valid json{{{');
-    const result = checkForUpdates();
+    writeFileSync(cachePath, 'not valid json{{{');
+    const result = checkForUpdates(cachePath);
     expect(result).toEqual({ updateAvailable: false });
   });
 
   test('never throws regardless of cache content', () => {
-    mkdirSync(join(process.env.HOME ?? '/tmp', '.genie'), { recursive: true });
-    writeFileSync(realCachePath, JSON.stringify({ random: 'garbage', updateAvailable: 'yes' }));
-    // Should not throw
-    const result = checkForUpdates();
+    writeFileSync(cachePath, JSON.stringify({ random: 'garbage', updateAvailable: 'yes' }));
     // updateAvailable is string 'yes' which is truthy but latestVersion is undefined
-    // so it should return updateAvailable: false
+    const result = checkForUpdates(cachePath);
     expect(result.updateAvailable).toBe(false);
   });
 });
