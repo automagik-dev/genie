@@ -20,6 +20,17 @@ const BRAIN_REPO = 'github:automagik-dev/genie-brain';
 const BRAIN_DIR = 'node_modules/@automagik/genie-brain';
 const CACHE_PATH = join(homedir(), '.genie', 'brain-version-check.json');
 
+/** Compare dot-separated version strings numerically (e.g., "260403.9" vs "260403.10"). */
+export function compareVersions(a: string, b: string): number {
+  const partsA = a.split('.').map(Number);
+  const partsB = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const diff = (partsA[i] ?? 0) - (partsB[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Read brain version from its local package.json. Returns undefined on failure. */
@@ -76,7 +87,7 @@ function refreshVersionCache(localVersion?: string): void {
     // Compare: strip prefix digit for comparison (dev uses 1.x, main uses 0.x)
     const localCore = version.replace(/^\d+\./, '');
     const latestCore = latestVersion.replace(/^\d+\./, '');
-    const updateAvailable = latestCore > localCore;
+    const updateAvailable = compareVersions(latestCore, localCore) > 0;
 
     // Write cache
     const cacheDir = join(homedir(), '.genie');
@@ -138,13 +149,13 @@ async function updateBrain(): Promise<boolean> {
 
   console.log(`\n  Updated: ${oldVersion} → ${newVersion}`);
 
-  // Run migrations (warn on failure, don't abort)
+  // Run migrations via subprocess — import() cache returns stale pre-update
+  // module, so new migrations would be skipped. A fresh bun process loads
+  // the rebuilt code from disk.
   try {
-    const brain = await import(BRAIN_PKG);
-    if (brain.runAllMigrations) {
-      await brain.runAllMigrations();
-      console.log('  Migrations applied.');
-    }
+    const migrateScript = `const b = require('${BRAIN_PKG}'); if (b.runAllMigrations) b.runAllMigrations().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); }); else process.exit(0);`;
+    execSync(`bun -e "${migrateScript}"`, { cwd: BRAIN_DIR, stdio: 'inherit' });
+    console.log('  Migrations applied.');
   } catch {
     console.log('  Migration skipped. Run: genie brain migrate');
   }
