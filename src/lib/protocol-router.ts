@@ -16,6 +16,7 @@
 import * as registry from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
 import { getConnection } from './db.js';
+import { getCurrentExecutor } from './executor-registry.js';
 import * as mailbox from './mailbox.js';
 import { detectState } from './orchestrator/index.js';
 import { capturePaneContent, executeTmux, isPaneAlive } from './tmux.js';
@@ -126,6 +127,16 @@ async function ensureWorkerAlive(
   // instance with the same role is already alive.
   const live = await findLiveWorkerFuzzy(recipientId);
   if (live) return { worker: live, respawned: false };
+
+  // Completion guard: don't auto-spawn agents whose last executor finished
+  // intentionally. An agent that reached 'done' or 'terminated' shouldn't be
+  // auto-resurrected by stale messages — explicit dispatch handles re-spawn.
+  if (worker?.currentExecutorId) {
+    const lastExecutor = await getCurrentExecutor(worker.id);
+    if (lastExecutor && (lastExecutor.state === 'done' || lastExecutor.state === 'terminated')) {
+      return null;
+    }
+  }
 
   if (!process.env.TMUX) return null;
 
