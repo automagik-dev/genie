@@ -16,6 +16,7 @@ export function registerOmniCommands(program: Command): void {
     .option('--nats-url <url>', 'NATS server URL', process.env.GENIE_NATS_URL ?? 'localhost:4222')
     .option('--max-concurrent <n>', 'Max concurrent agent sessions', process.env.GENIE_MAX_CONCURRENT ?? '20')
     .option('--idle-timeout <ms>', 'Idle timeout in ms', process.env.GENIE_IDLE_TIMEOUT_MS ?? '900000')
+    .option('--executor <type>', 'Executor type: tmux (default) or sdk', process.env.GENIE_EXECUTOR_TYPE ?? 'tmux')
     .action(async (options) => {
       const { OmniBridge } = await import('../services/omni-bridge.js');
 
@@ -23,6 +24,7 @@ export function registerOmniCommands(program: Command): void {
         natsUrl: options.natsUrl,
         maxConcurrent: Number(options.maxConcurrent),
         idleTimeoutMs: Number(options.idleTimeout),
+        executorType: options.executor as 'tmux' | 'sdk',
       });
 
       await bridge.start();

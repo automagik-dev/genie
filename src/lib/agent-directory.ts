@@ -37,8 +37,14 @@ export interface DirectoryEntry {
   description?: string;
   /** Display color for TUI/terminal output. */
   color?: string;
-  /** AI provider: 'claude' | 'codex'. Resolved at spawn time. */
+  /** AI provider: 'claude' | 'codex' | 'claude-sdk'. Resolved at spawn time. */
   provider?: string;
+  /** Permission config for SDK provider (allowlist-only). */
+  permissions?: {
+    preset?: string;
+    allow?: string[];
+    bashAllowPatterns?: string[];
+  };
 }
 
 export type DirectoryScope = 'project' | 'global' | 'built-in' | 'archived';
@@ -258,7 +264,16 @@ export async function edit(
   updates: Partial<
     Pick<
       DirectoryEntry,
-      'dir' | 'repo' | 'promptMode' | 'model' | 'roles' | 'omniAgentId' | 'description' | 'color' | 'provider'
+      | 'dir'
+      | 'repo'
+      | 'promptMode'
+      | 'model'
+      | 'roles'
+      | 'omniAgentId'
+      | 'description'
+      | 'color'
+      | 'provider'
+      | 'permissions'
     >
   >,
   _options?: ScopeOptions,
@@ -358,6 +373,7 @@ function roleToEntry(role: string, team?: string, metadata?: Record<string, unkn
     description: metadata?.description as string | undefined,
     color: metadata?.color as string | undefined,
     provider: metadata?.provider as string | undefined,
+    permissions: metadata?.permissions as DirectoryEntry['permissions'],
     ...(metadata?.repo ? { repo: metadata.repo as string } : team ? { repo: team } : {}),
   };
 }
@@ -372,6 +388,7 @@ function buildMetadata(entry: DirectoryEntry): Record<string, unknown> {
   if (entry.description) meta.description = entry.description;
   if (entry.color) meta.color = entry.color;
   if (entry.provider) meta.provider = entry.provider;
+  if (entry.permissions) meta.permissions = entry.permissions;
   return meta;
 }
 

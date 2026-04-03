@@ -35,6 +35,9 @@ export function registerDirNamespace(program: Command): void {
     .option('--prompt-mode <mode>', 'Prompt mode: append or system', 'append')
     .option('--model <model>', 'Default model (sonnet, opus, codex)')
     .option('--roles <roles...>', 'Built-in roles this agent can orchestrate')
+    .option('--permission-preset <preset>', 'Permission preset: full, read-only, chat-only')
+    .option('--allow <tools>', 'Comma-separated tool allow list (e.g. "Read,Glob,Grep,Bash")')
+    .option('--bash-allow <patterns>', 'Comma-separated regex patterns for allowed bash commands')
     .option('--global', 'Write to global directory instead of project')
     .action(async (name: string, options: DirAddOptions) => {
       try {
@@ -103,6 +106,9 @@ export function registerDirNamespace(program: Command): void {
     .option('--color <color>', 'Display color for TUI')
     .option('--description <desc>', 'Agent description')
     .option('--roles <roles...>', 'Built-in roles this agent can orchestrate')
+    .option('--permission-preset <preset>', 'Permission preset: full, read-only, chat-only')
+    .option('--allow <tools>', 'Comma-separated tool allow list (e.g. "Read,Glob,Grep,Bash")')
+    .option('--bash-allow <patterns>', 'Comma-separated regex patterns for allowed bash commands')
     .option('--global', 'Edit in global directory instead of project')
     .action(async (name: string, options: EditOptions) => {
       try {
@@ -135,6 +141,9 @@ interface DirAddOptions {
   promptMode: string;
   model?: string;
   roles?: string[];
+  permissionPreset?: string;
+  allow?: string;
+  bashAllow?: string;
   global?: boolean;
 }
 
@@ -142,6 +151,7 @@ async function handleDirAdd(name: string, options: DirAddOptions): Promise<void>
   const promptMode = validatePromptMode(options.promptMode);
   const resolvedDir = resolvePath(options.dir);
   if (options.repo) validateRepoPath(options.repo);
+  const permissions = buildPermissions(options.permissionPreset, options.allow, options.bashAllow);
   const entry = await directory.add(
     {
       name,
@@ -150,6 +160,7 @@ async function handleDirAdd(name: string, options: DirAddOptions): Promise<void>
       promptMode,
       model: options.model,
       roles: normalizeRoles(options.roles),
+      ...(permissions && { permissions }),
     },
     { global: options.global },
   );
@@ -170,6 +181,9 @@ interface EditOptions {
   color?: string;
   description?: string;
   roles?: string[];
+  permissionPreset?: string;
+  allow?: string;
+  bashAllow?: string;
   global?: boolean;
 }
 
@@ -184,9 +198,12 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
   if (options.description) updates.description = options.description;
   if (options.roles) updates.roles = normalizeRoles(options.roles);
 
+  const permissions = buildPermissions(options.permissionPreset, options.allow, options.bashAllow);
+  if (permissions) updates.permissions = permissions;
+
   if (Object.keys(updates).length === 0) {
     console.error(
-      'No fields to update. Provide at least one of: --dir, --repo, --prompt-mode, --model, --provider, --color, --description, --roles',
+      'No fields to update. Provide at least one of: --dir, --repo, --prompt-mode, --model, --provider, --color, --description, --roles, --permission-preset, --allow, --bash-allow',
     );
     process.exit(1);
   }
@@ -246,6 +263,13 @@ function printEntry(entry: directory.DirectoryEntry): void {
   if (entry.color) console.log(`  Color: ${entry.color}`);
   if (entry.description) console.log(`  Description: ${entry.description}`);
   if (entry.roles?.length) console.log(`  Roles: ${entry.roles.join(', ')}`);
+  if (entry.permissions?.preset) console.log(`  Permissions: preset=${entry.permissions.preset}`);
+  else if (entry.permissions?.allow) {
+    console.log(`  Permissions: allow=${entry.permissions.allow.join(',')}`);
+    if (entry.permissions.bashAllowPatterns?.length) {
+      console.log(`  Bash Allow: ${entry.permissions.bashAllowPatterns.join(', ')}`);
+    }
+  }
   console.log(`  Registered: ${entry.registeredAt}`);
 }
 
@@ -311,6 +335,30 @@ function listEntriesJson(entries: directory.ScopedDirectoryEntry[], includeBuilt
     }
   }
   console.log(JSON.stringify(result, null, 2));
+}
+
+/** Build permissions config from CLI flags. Returns undefined if no flags set. */
+function buildPermissions(
+  permissionPreset?: string,
+  allow?: string,
+  bashAllow?: string,
+): directory.DirectoryEntry['permissions'] | undefined {
+  if (!permissionPreset && !allow && !bashAllow) return undefined;
+  if (permissionPreset) return { preset: permissionPreset };
+  return {
+    ...(allow && {
+      allow: allow
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    }),
+    ...(bashAllow && {
+      bashAllowPatterns: bashAllow
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    }),
+  };
 }
 
 /** Normalize roles: split comma-separated values into individual array items. */
