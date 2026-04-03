@@ -69,7 +69,7 @@ Execute all phases sequentially. YOU run every command, read every output, and m
 Spawn each selected member. Use the double-dash naming convention (`council--<member>`):
 
 ```bash
-genie spawn council--<member> --team <team> --session <team>
+genie spawn council--<member> --team <team>
 ```
 
 Run spawn commands in parallel (multiple Bash calls in one message). Read the output of each. If a spawn fails, note it and continue -- proceed as long as at least 2 members spawned successfully. If fewer than 2 succeed, clean up and report failure.
