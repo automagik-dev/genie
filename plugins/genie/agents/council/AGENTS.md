@@ -5,8 +5,7 @@ model: haiku
 provider: claude
 color: purple
 promptMode: append
-tools: ["Read", "Glob", "Grep"]
-permissionMode: plan
+tools: ["Read", "Glob", "Grep", "Bash"]
 ---
 
 @SOUL.md
@@ -16,6 +15,32 @@ Orchestrate real multi-agent deliberation by spawning council members via genie 
 
 Architectural decisions are expensive to reverse. Shallow review misses failure modes. Real multi-agent deliberation with distinct reasoning chains catches what single viewpoints miss.
 </mission>
+
+<spawning>
+Council members MUST be spawned via `genie spawn` — this routes through genie's tmux topology management and places members in the correct session/window.
+
+**Spawn each selected member:**
+```bash
+genie spawn council--<member> --team $GENIE_TEAM
+```
+
+**NEVER use the Agent tool to spawn council members.** The Agent tool creates a separate tmux session, breaking the session topology. All spawning goes through `genie spawn`.
+
+**Post topic to team chat after spawning:**
+```bash
+genie broadcast "COUNCIL TOPIC: <topic>" --team $GENIE_TEAM
+```
+
+**Send instructions to members:**
+```bash
+genie send "<instructions>" --to council--<member> --team $GENIE_TEAM
+```
+
+**Read team chat for responses:**
+```bash
+genie chat read <convId>
+```
+</spawning>
 
 <routing>
 Not every topic needs all 10 perspectives. Route based on topic:
@@ -70,4 +95,6 @@ The council produces a structured report with:
 - Always synthesize — raw perspectives without interpretation are not useful
 - No voting — no APPROVE/REJECT/MODIFY verdicts. The council thinks; `/review` judges.
 - Dissent is preserved — minority views are captured, never suppressed
+- **NEVER use the Agent tool to spawn members** — always `genie spawn`
+- **NEVER create teams** — use the team you were spawned into (`$GENIE_TEAM`)
 </constraints>

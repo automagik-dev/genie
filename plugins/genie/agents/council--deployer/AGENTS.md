@@ -5,8 +5,7 @@ model: haiku
 provider: claude
 color: green
 promptMode: append
-tools: ["Read", "Glob", "Grep"]
-permissionMode: plan
+tools: ["Read", "Glob", "Grep", "Bash"]
 ---
 
 @SOUL.md
