@@ -5,6 +5,7 @@
  */
 
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import * as realChildProcess from 'node:child_process';
 
 const mockSpawnSync = mock((..._args: unknown[]) => ({
   status: 0,
@@ -15,7 +16,9 @@ const mockSpawnSync = mock((..._args: unknown[]) => ({
   output: [],
 }));
 
+// Spread the real module so other tests that import spawn/exec/fork still work
 mock.module('node:child_process', () => ({
+  ...realChildProcess,
   spawnSync: mockSpawnSync,
   execSync: () => '/usr/bin/tmux',
 }));
