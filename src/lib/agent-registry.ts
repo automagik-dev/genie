@@ -250,6 +250,7 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
       SET state = 'error', last_state_change = now()
       WHERE state = 'spawning'
         AND (pane_id IS NULL OR pane_id = '')
+        AND current_executor_id IS NULL
         AND started_at < now() - interval '1 second' * ${thresholdSeconds}
       RETURNING id
     `;
@@ -502,12 +503,15 @@ export async function findOrCreateAgent(name: string, team: string, role?: strin
   `;
   if (existing.length > 0) return rowToAgentIdentity(existing[0]);
 
-  // Create new agent with identity columns only
+  // Create new agent with identity columns only.
+  // state = NULL: identity records track state through their current executor,
+  // not the legacy state column. NULL prevents reconcileStaleSpawns() from
+  // falsely marking identity records as 'error'.
   const id = randomUUID();
   const now = new Date().toISOString();
   const rows = await sql<AgentIdentityRow[]>`
-    INSERT INTO agents (id, custom_name, team, role, started_at, created_at, updated_at)
-    VALUES (${id}, ${name}, ${team}, ${role ?? null}, ${now}, ${now}, ${now})
+    INSERT INTO agents (id, custom_name, team, role, started_at, state, created_at, updated_at)
+    VALUES (${id}, ${name}, ${team}, ${role ?? null}, ${now}, ${null}, ${now}, ${now})
     ON CONFLICT (custom_name, team) WHERE custom_name IS NOT NULL AND team IS NOT NULL
     DO UPDATE SET updated_at = now()
     RETURNING id, started_at, role, custom_name, team, native_agent_id, native_color,
