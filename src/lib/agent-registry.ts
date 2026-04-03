@@ -20,6 +20,7 @@ import { recordAuditEvent } from './audit.js';
 import { type Sql, getConnection } from './db.js';
 import type { AgentIdentity, ExecutorState } from './executor-types.js';
 import type { ProviderName } from './provider-adapters.js';
+import { isPaneAlive } from './tmux.js';
 
 export type AgentState = 'spawning' | 'working' | 'idle' | 'permission' | 'question' | 'done' | 'error' | 'suspended';
 export type TransportType = 'tmux' | 'inline';
@@ -261,7 +262,39 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
         reason: 'stale_spawn',
       }).catch(() => {});
     }
-    return rows.map((r: { id: string }) => r.id);
+    const resetIds = rows.map((r: { id: string }) => r.id);
+
+    // Second pass: agents stuck in 'spawning' with a pane_id that is actually dead.
+    // These were missed by the first pass because they have a non-empty pane_id.
+    const staleWithPane = await sql<{ id: string; pane_id: string }[]>`
+      SELECT id, pane_id FROM agents
+      WHERE state = 'spawning'
+        AND pane_id IS NOT NULL AND pane_id != ''
+        AND started_at < now() - interval '1 second' * ${thresholdSeconds}
+    `;
+    for (const row of staleWithPane) {
+      try {
+        const alive = await isPaneAlive(row.pane_id);
+        if (!alive) {
+          await sql`
+            UPDATE agents
+            SET state = 'error', last_state_change = now()
+            WHERE id = ${row.id} AND state = 'spawning'
+          `;
+          console.error(`[reconcile] Reset stuck agent ${row.id} (dead pane ${row.pane_id}) from spawning → error`);
+          recordAuditEvent('worker', row.id, 'state_changed', 'reconciler', {
+            state: 'error',
+            reason: 'stale_spawn_dead_pane',
+          }).catch(() => {});
+          resetIds.push(row.id);
+        }
+      } catch {
+        // TmuxUnreachableError or other — skip this agent, don't mark as dead
+        // when we can't verify pane status
+      }
+    }
+
+    return resetIds;
   } catch {
     return []; // Best-effort — don't block startup if DB is unavailable
   }
