@@ -80,7 +80,12 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
 }
 
 export function attachTuiSession(): void {
-  runTuiTmux(['attach-session', '-t', SESSION_NAME], 'inherit');
+  if (process.env.TMUX) {
+    // Already inside a tmux session — switch-client avoids nested attach
+    runTuiTmux(['switch-client', '-t', SESSION_NAME], 'inherit');
+  } else {
+    runTuiTmux(['attach-session', '-t', SESSION_NAME], 'inherit');
+  }
 }
 
 /** Find the next numeric suffix for a role name by listing tmux windows in the agent's session. */
