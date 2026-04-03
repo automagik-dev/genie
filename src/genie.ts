@@ -511,6 +511,15 @@ if (isTuiPane) {
 
 // Default command: genie (no args) → thin TUI client (attach to serve).
 if (args.length === 0) {
+  // Guard against nested tmux cascade — running `genie` inside the TUI right pane
+  if (process.env.TMUX?.includes('genie-tui')) {
+    console.log('Already inside the genie TUI. Use Ctrl-b d to detach, or run genie commands directly.');
+    process.exit(0);
+  }
+  if (process.env.TMUX) {
+    console.warn('Note: switching to genie TUI from within another tmux session.');
+  }
+
   const { findWorkspace, scanAgents } = await import('./lib/workspace.js');
   const ws = findWorkspace();
 
