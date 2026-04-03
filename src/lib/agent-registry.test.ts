@@ -272,15 +272,16 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(a2!.state).toBe('error');
     });
 
-    test('does not touch spawning agents with a pane', async () => {
+    test('resets spawning agents with a dead pane', async () => {
       const oldStart = new Date(Date.now() - 5_000).toISOString();
+      // pane %42 does not exist in test env, so isPaneAlive returns false
       await register(makeAgent({ id: 'has-pane', paneId: '%42', state: 'spawning', startedAt: oldStart }));
 
       const reset = await reconcileStaleSpawns(2);
-      expect(reset).toEqual([]);
+      expect(reset).toEqual(['has-pane']);
 
       const a = await get('has-pane');
-      expect(a!.state).toBe('spawning');
+      expect(a!.state).toBe('error');
     });
 
     test('does not touch recently spawning agents', async () => {
@@ -308,6 +309,20 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     test('returns empty array when nothing to reconcile', async () => {
       const reset = await reconcileStaleSpawns(2);
       expect(reset).toEqual([]);
+    });
+
+    test('does not touch identity records with current_executor_id', async () => {
+      // Identity record created by findOrCreateAgent — has executor linked
+      const agent = await findOrCreateAgent('id-eng', 'id-team', 'engineer');
+      const exec = await createExecutor(agent.id, 'claude', 'tmux', { repoPath: '/tmp' });
+      await setCurrentExecutor(agent.id, exec.id);
+
+      // Backdate started_at so it would match the threshold
+      const sql = await getConnection();
+      await sql`UPDATE agents SET started_at = now() - interval '10 seconds' WHERE id = ${agent.id}`;
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).not.toContain(agent.id);
     });
   });
 

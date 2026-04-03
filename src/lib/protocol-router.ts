@@ -16,6 +16,7 @@
 import * as registry from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
 import { getConnection } from './db.js';
+import { getCurrentExecutor } from './executor-registry.js';
 import * as mailbox from './mailbox.js';
 import { detectState } from './orchestrator/index.js';
 import { capturePaneContent, executeTmux, isPaneAlive } from './tmux.js';
@@ -63,6 +64,13 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
     await new Promise((r) => setTimeout(r, AUTO_SPAWN_POLL_INTERVAL_MS));
   }
   return false;
+}
+
+/** Check if a worker's last executor completed intentionally (done/terminated). */
+async function isExecutorCompleted(worker: registry.Agent | null): Promise<boolean> {
+  if (!worker?.currentExecutorId) return false;
+  const executor = await getCurrentExecutor(worker.id);
+  return executor != null && (executor.state === 'done' || executor.state === 'terminated');
 }
 
 /** Check if a worker is in a dead state (suspended/terminated/offline). */
@@ -126,6 +134,11 @@ async function ensureWorkerAlive(
   // instance with the same role is already alive.
   const live = await findLiveWorkerFuzzy(recipientId);
   if (live) return { worker: live, respawned: false };
+
+  // Completion guard: don't auto-spawn agents whose last executor finished
+  // intentionally. An agent that reached 'done' or 'terminated' shouldn't be
+  // auto-resurrected by stale messages — explicit dispatch handles re-spawn.
+  if (await isExecutorCompleted(worker)) return null;
 
   if (!process.env.TMUX) return null;
 

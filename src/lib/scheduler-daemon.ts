@@ -772,7 +772,7 @@ export async function attemptAgentResume(
 
   // Concurrency cap: count active workers
   const workers = await deps.listWorkers();
-  const activeCount = workers.filter((w) => !['done', 'error', 'suspended'].includes(w.state)).length;
+  const activeCount = workers.filter((w) => !['done', 'error', 'suspended', 'spawning'].includes(w.state)).length;
   if (activeCount >= config.maxConcurrent) {
     deps.log({
       timestamp: now.toISOString(),
