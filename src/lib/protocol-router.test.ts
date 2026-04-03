@@ -618,7 +618,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         lastSpawnedAt: now,
       });
 
-      const result = await router.sendMessage(tempDir, 'alice', 'err-role', 'hello err', 'err-team');
+      await router.sendMessage(tempDir, 'alice', 'err-role', 'hello err', 'err-team');
 
       // Error-state agents SHOULD be auto-spawned (error != intentional completion)
       expect(spawnCallCount).toBe(1);
@@ -659,7 +659,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         lastSpawnedAt: now,
       });
 
-      const result = await router.sendMessage(tempDir, 'alice', 'fresh-role', 'hello fresh', 'fresh-team');
+      await router.sendMessage(tempDir, 'alice', 'fresh-role', 'hello fresh', 'fresh-team');
 
       // First-time spawn should work — no executor record means no completion guard
       expect(spawnCallCount).toBe(1);
