@@ -272,15 +272,16 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(a2!.state).toBe('error');
     });
 
-    test('does not touch spawning agents with a pane', async () => {
+    test('resets spawning agents with a dead pane', async () => {
       const oldStart = new Date(Date.now() - 5_000).toISOString();
+      // pane %42 does not exist in test env, so isPaneAlive returns false
       await register(makeAgent({ id: 'has-pane', paneId: '%42', state: 'spawning', startedAt: oldStart }));
 
       const reset = await reconcileStaleSpawns(2);
-      expect(reset).toEqual([]);
+      expect(reset).toEqual(['has-pane']);
 
       const a = await get('has-pane');
-      expect(a!.state).toBe('spawning');
+      expect(a!.state).toBe('error');
     });
 
     test('does not touch recently spawning agents', async () => {
