@@ -1,13 +1,30 @@
 /**
  * Mailbox — Durable message store with unread/read semantics.
  *
+ * ## Migration note (commit 44a153a3)
+ *
+ * Previously messages were written to `.genie/mailbox/<worker>.json` files and
+ * delivered by a polling loop that woke up every few seconds to check for new
+ * entries. This introduced latency proportional to the poll interval and made
+ * cross-process coordination fragile.
+ *
+ * The current implementation replaced file-based polling with PostgreSQL:
+ *  - Messages are persisted to the `mailbox` table (durable, queryable).
+ *  - A `AFTER INSERT` trigger fires `pg_notify('genie_mailbox_delivery', …)`
+ *    with payload `<to_worker>:<message_id>`.
+ *  - `subscribeDelivery()` calls `sql.listen('genie_mailbox_delivery', …)` so
+ *    the scheduler daemon receives the notification instantly — no polling.
+ *  - A 30-second fallback poll catches any notifications missed during
+ *    reconnects or daemon restarts.
+ *
+ * `.genie/mailbox/` JSON files are no longer written or read; references to
+ * that path in older docs are outdated.
+ *
  * Messages persist to PostgreSQL `mailbox` table before any push delivery
  * attempt. This ensures durability (DEC-7).
  *
  * Delivery is state-aware: messages are queued and pushed to tmux
  * panes only when the worker is idle (not mid-turn).
- *
- * PG LISTEN/NOTIFY triggers instant delivery notification on new inserts.
  */
 
 import { v4 as uuidv4 } from 'uuid';
