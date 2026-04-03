@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkForUpdates } from './brain.js';
+import { checkForUpdates, compareVersions } from './brain.js';
 
 /**
  * Tests for the cache-only checkForUpdates function.
@@ -86,5 +86,35 @@ describe('checkForUpdates', () => {
     // updateAvailable is string 'yes' which is truthy but latestVersion is undefined
     const result = checkForUpdates(cachePath);
     expect(result.updateAvailable).toBe(false);
+  });
+});
+
+describe('compareVersions', () => {
+  test('equal versions return 0', () => {
+    expect(compareVersions('260403.1', '260403.1')).toBe(0);
+  });
+
+  test('a > b returns positive', () => {
+    expect(compareVersions('260403.2', '260403.1')).toBeGreaterThan(0);
+  });
+
+  test('a < b returns negative', () => {
+    expect(compareVersions('260403.1', '260403.2')).toBeLessThan(0);
+  });
+
+  test('handles multi-digit segments correctly (the bug)', () => {
+    // String comparison: "260403.9" > "260403.10" → true (wrong)
+    // Numeric comparison: 9 < 10 → correct
+    expect(compareVersions('260403.10', '260403.9')).toBeGreaterThan(0);
+    expect(compareVersions('260403.9', '260403.10')).toBeLessThan(0);
+  });
+
+  test('handles different segment counts', () => {
+    expect(compareVersions('260403.1.1', '260403.1')).toBeGreaterThan(0);
+    expect(compareVersions('260403', '260403.0')).toBe(0);
+  });
+
+  test('handles major version differences', () => {
+    expect(compareVersions('260404.1', '260403.99')).toBeGreaterThan(0);
   });
 });
