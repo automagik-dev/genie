@@ -5,32 +5,126 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@automagik/genie"><img alt="npm version" src="https://img.shields.io/npm/v/@automagik/genie?style=flat-square&color=00D9FF" /></a>
-  <a href="https://github.com/automagik-dev/genie"><img alt="GitHub" src="https://img.shields.io/github/stars/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
-  <a href="https://discord.gg/xcW8c7fF3R"><img alt="Discord" src="https://img.shields.io/discord/1095114867012292758?style=flat-square&color=00D9FF&label=discord" /></a>
+  <strong>Describe what you want. Wake up to pull requests.</strong>
 </p>
 
-<h2 align="center">Wishes in, PRs out.</h2>
+<p align="center">
+  <a href="https://www.npmjs.com/package/@automagik/genie"><img alt="npm" src="https://img.shields.io/npm/v/@automagik/genie?style=flat-square&color=00D9FF" /></a>
+  <a href="https://www.npmjs.com/package/@automagik/genie"><img alt="downloads" src="https://img.shields.io/npm/dm/@automagik/genie?style=flat-square&color=00D9FF" /></a>
+  <a href="https://github.com/automagik-dev/genie/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
+  <a href="https://discord.gg/xcW8c7fF3R"><img alt="discord" src="https://img.shields.io/discord/1095114867012292758?style=flat-square&color=00D9FF&label=discord" /></a>
+</p>
 
-<!-- METRICS:START -->
+<br />
 
-| Metric | Value | Updated |
-|--------|-------|---------|
-| Releases/day | **0** | 2026-03-31 |
-| Avg merge time | **0.3h** | 2026-03-31 |
-| SHIP rate | **85%** | 2026-03-31 |
-| Merged PRs (7d) | **35** | 2026-03-31 |
+<!-- TODO: Record a 30-second terminal demo with vhs/asciinema and uncomment this:
+<p align="center">
+  <img src=".github/assets/genie-demo.gif" alt="Genie demo — from wish to PR in 60 seconds" width="720" />
+</p>
+-->
 
-<!-- METRICS:END -->
+Genie is a CLI that turns one sentence into a finished pull request. You describe what you want — Genie interviews you, writes a plan, spawns parallel agents in isolated worktrees, reviews the code with a 10-critic council, and opens a PR. You review. You merge. That's it.
 
-## What is Genie?
+```bash
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
+```
 
-Genie is an AI orchestration CLI that turns vague ideas into shipped PRs. You describe the problem — Genie interviews you, plans the work, dispatches parallel agents, and reviews the code. You approve and ship.
+```bash
+genie            # opens the TUI
+/wish            # "Add dark mode with system preference detection"
+# ... go get coffee. Come back to a reviewed PR.
+```
 
-## Get Started
+---
 
-**Prerequisites:** curl, bash, git (pre-installed on macOS/Linux/WSL)
+## How it works
+
+```
+  "Add dark mode"
+       |
+   /brainstorm ──── Genie asks questions until the idea is concrete
+       |
+   /wish ────────── Turns it into a plan: scope, criteria, task groups
+       |
+   /work ────────── Agents spawn in parallel worktrees. Each gets its own branch.
+       |
+   /review ──────── 10 critics review. Severity-tagged. Nothing ships dirty.
+       |
+   Pull Request ─── You approve. You merge. Done.
+```
+
+---
+
+## Why Genie?
+
+<table>
+<tr>
+<td width="50%">
+
+### Without Genie
+
+- Re-explain context every time you open a new chat
+- One agent, one file at a time
+- Copy-paste PR descriptions manually
+- Review AI code yourself, line by line
+- "Can you also..." — context lost mid-conversation
+- No memory between sessions
+
+</td>
+<td width="50%">
+
+### With Genie
+
+- Context captured once, inherited by every agent
+- Parallel agents in isolated worktrees
+- Automated severity-gated review before you see it
+- Queue wishes overnight, wake up to reviewed PRs
+- 10-critic council catches what you'd miss
+- Persistent brain — agents remember everything
+
+</td>
+</tr>
+</table>
+
+---
+
+## Features
+
+| | Feature | What it does |
+|---|---------|-------------|
+| **🧞** | **Wish Pipeline** | Brainstorm → Plan → Execute → Review → Ship. One flow from idea to PR. |
+| **⚡** | **Parallel Agents** | Multiple agents work simultaneously, each in its own worktree. No conflicts. |
+| **🏛️** | **10-Critic Council** | Architecture, security, DX, performance, ops — 10 specialist perspectives on every design. |
+| **🔍** | **Automated Review** | Severity-tagged findings. CRITICAL blocks the PR. You only see clean code. |
+| **🌙** | **Overnight Mode** | `/dream` — queue wishes before bed. Wake up to reviewed PRs. |
+| **📋** | **Kanban Boards** | Task boards with custom pipelines, WIP limits, and stage gates. |
+| **🧠** | **Brain** | Optional knowledge graph with Obsidian vaults. Agents share context and memory. |
+| **🗄️** | **Postgres-Backed** | All state in PG. Tasks, events, messages — queryable, durable, real-time. |
+| **🖥️** | **Terminal UI** | Full TUI with session tree, system stats, and one-click agent management. |
+| **🔌** | **Any AI Provider** | Claude, Codex, or any OpenAI-compatible model. Your agents, your choice. |
+| **📦** | **Portable Context** | Identity, skills, memory — markdown files in your repo. Git-versioned. You own it. |
+| **🔭** | **Full Observability** | Events, metrics, session replay, cost tracking. See everything your agents do. |
+
+---
+
+## Quick start
+
+### Option 1: Paste into your AI agent
+
+Copy this into Claude Code, Codex, or any AI coding agent:
+
+```
+Install Genie, then run /wizard to set up this project:
+
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
+genie
+/wizard
+```
+
+### Option 2: Install manually
+
+**Prerequisites:** curl, bash, git (pre-installed on macOS / Linux / WSL)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
@@ -38,73 +132,106 @@ genie
 /wizard
 ```
 
-The wizard handles everything: project scaffold, identity, first wish, execution, and review.
+The wizard handles everything: project scaffold, agent identity, first wish, execution, and review.
 
-## How It Works
+---
 
-```
- You describe an idea
-  └─ /brainstorm ─── Genie asks clarifying questions until the idea is concrete
-      └─ /wish ───── Crystallizes intent into a plan with scope + acceptance criteria
-          └─ /work ── Agents spawn in isolated worktrees, execute in parallel
-              └─ /review ── Automated severity-gated review. You approve the PR.
-```
+## Skills
 
-## Features
+14 built-in skills that compose into workflows:
 
-### Orchestration
-- **Wish pipeline** — Brainstorm, plan, execute, review, ship. One continuous flow.
-- **Parallel agents** — Multiple agents work simultaneously in isolated worktrees.
-- **Automated review** — Severity-tagged gaps. Nothing ships with CRITICAL issues.
-- **10-critic council** — 10 specialist perspectives critique your design before you commit.
-- **Overnight mode** — Queue wishes before bed. Wake up to reviewed PRs.
+| Skill | What it does |
+|-------|-------------|
+| `/brainstorm` | Explore vague ideas with guided questions |
+| `/wish` | Turn an idea into a scoped plan with acceptance criteria |
+| `/work` | Execute a wish with parallel agents |
+| `/review` | Severity-gated code review (SHIP or FIX-FIRST) |
+| `/council` | 10-perspective architectural deliberation |
+| `/dream` | Batch-execute wishes overnight |
+| `/trace` | Investigate bugs — reproduce, isolate, root cause |
+| `/fix` | Minimal targeted bug fixes |
+| `/report` | Deep investigation with browser + trace |
+| `/refine` | Transform rough prompts into structured specs |
+| `/learn` | Correct agent behavior from mistakes |
+| `/docs` | Audit and generate documentation |
+| `/pm` | Full project management playbook |
+| `/wizard` | Guided first-run onboarding |
 
-### Task Management
-- **Boards** — Kanban-style pipelines with columns, gates, and WIP limits. Create from templates or build your own.
-- **Tasks** — Full lifecycle: create, assign, move through stages (`draft` → `brainstorm` → `wish` → `build` → `review` → `qa` → `ship`), block/unblock, add dependencies.
-- **Projects** — Named task boards that scope work to a specific initiative.
-- **Tags, types, releases** — Organize tasks with custom tags, define task types with stage pipelines, group work into releases.
+---
 
-### Observability
-- **Events** — Audit log with error aggregation, cost breakdown, tool analytics, and per-entity timelines.
-- **Metrics** — Machine snapshots, heartbeat history, per-agent resource usage.
-- **Sessions** — List, replay, and full-text search across Claude Code session transcripts.
-- **Unified log** — `genie log --follow` streams transcript, messages, tool calls, and state changes from the PG event log in one feed.
-
-### Infrastructure
-- **Postgres-backed** — All state in PostgreSQL (pgserve). Tasks, messages, events, metrics — queryable with `genie db query`.
-- **Scheduling** — Cron-based triggers with a systemd daemon. Heartbeat collection and orphan reconciliation built in.
-- **Export/Import** — Full backup and restore across boards, tasks, tags, projects, schedules, agents, and conversations.
-- **PG messaging** — Direct messages, broadcasts, threaded conversations, and inbox — all persisted and searchable.
-
-### Developer Experience
-- **14 built-in skills** — `/brainstorm`, `/wish`, `/work`, `/review`, `/council`, `/dream`, `/trace`, `/fix`, `/report`, `/refine`, `/learn`, `/docs`, `/genie`, `/wizard`.
-- **BYOA** — Bring your own agent. Works with Claude, Codex, or any OpenAI-compatible provider.
-- **Portable context** — Identity, skills, memory — markdown files you own, git-versioned.
-- **QA system** — Self-testing specs with `genie qa run`. Validates CLI correctness continuously.
-
-### CLI at a Glance
-
-46 commands across agent lifecycle, task management, boards, observability, messaging, and infrastructure. [Full CLI reference →](https://docs.automagik.dev/genie/cli/session)
+## CLI at a glance
 
 ```bash
-genie spawn engineer --model sonnet     # Spawn an agent
-genie task create "Add dark mode"       # Create a task
-genie board show                        # View your Kanban board
-genie events costs --last 24h           # Check API spend
-genie log --follow --team my-team       # Stream team activity
-genie export all -o backup.json         # Full backup
+genie                                  # Launch TUI
+genie spawn engineer --model sonnet    # Spawn an agent
+genie team create my-team --wish auth  # Multi-agent team on a wish
+genie task create "Add dark mode"      # Create a task
+genie board show                       # View your Kanban board
+genie send 'check auth' --to engineer  # Message an agent
+genie events costs --last 24h          # Check API spend
+genie log --follow                     # Stream all activity
+genie export all -o backup.json        # Full backup
 ```
+
+46 commands. [Full CLI reference →](https://docs.automagik.dev/genie/cli/session)
+
+---
+
+## What's new in v4
+
+v4 is a ground-up rewrite. 700 commits. 300 files changed. ~19K lines added.
+
+| What changed | v3 | v4 |
+|---|---|---|
+| **State** | JSON files + NATS | PostgreSQL + LISTEN/NOTIFY |
+| **Default UI** | CLI help | Full terminal UI |
+| **Agent memory** | None | Brain with Obsidian vaults + pgvector |
+| **Task management** | Basic | Kanban boards, templates, projects |
+| **Observability** | Minimal | OTLP, session capture, audit trail |
+| **Review** | Single pass | 10-critic council, real multi-agent deliberation |
+| **Stability** | Best effort | Advisory locks, spawn watchdog, 205 bug fixes |
+
+[Full v4 release notes →](https://github.com/automagik-dev/genie/releases/tag/v4.260402.18)
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────┐
+│                  genie CLI                    │
+├──────────┬──────────┬───────────┬────────────┤
+│  Skills  │  Agents  │   Tasks   │   Events   │
+│ 14 built │ spawn,   │  boards,  │ audit log, │
+│ in + DIY │ resume,  │  kanban,  │ metrics,   │
+│          │ teams    │  projects │ sessions   │
+├──────────┴──────────┴───────────┴────────────┤
+│              PostgreSQL (pgserve)              │
+│  agents │ tasks │ events │ messages │ brain   │
+├──────────────────────────────────────────────┤
+│     Claude Code  /  Codex  /  any LLM         │
+└──────────────────────────────────────────────┘
+```
+
+Genie orchestrates — it doesn't replace your AI coding tool. It adds structure, parallelism, review, and memory on top of whatever agent you already use.
+
+---
+
+## Community
+
+- **[Discord](https://discord.gg/xcW8c7fF3R)** — Questions, show & tell, wish sharing
+- **[GitHub Issues](https://github.com/automagik-dev/genie/issues)** — Bug reports and feature requests
+- **[Documentation](https://docs.automagik.dev/genie)** — Full guides and CLI reference
 
 ---
 
 <p align="center">
-  <a href="https://docs.automagik.dev/genie"><strong>Documentation</strong></a> &middot;
-  <a href="https://github.com/automagik-dev/genie"><strong>GitHub</strong></a> &middot;
+  <a href="https://docs.automagik.dev/genie"><strong>Docs</strong></a> &middot;
+  <a href="https://github.com/automagik-dev/genie/releases/tag/v4.260402.18"><strong>v4 Release Notes</strong></a> &middot;
   <a href="https://discord.gg/xcW8c7fF3R"><strong>Discord</strong></a> &middot;
   <a href="LICENSE"><strong>MIT License</strong></a>
 </p>
 
 <p align="center">
-  <sub>You make the decisions. Genie does everything else.</sub>
+  <sub>Wishes in, PRs out.</sub>
 </p>
