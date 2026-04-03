@@ -19,6 +19,20 @@ genie ls --json                                        # Agent state from PG
 NEVER use `Agent` to spawn agents — use `genie spawn` instead.
 NEVER use `TeamCreate` or `TeamDelete` — use `genie team create` / `genie team disband` instead.
 
+## Spawn Session Rule
+
+NEVER pass `--session <team-name>` to `genie spawn`. The team config already stores the correct `tmuxSessionName` (resolved at team creation from the parent session). Passing `--session` overrides this and creates a separate tmux session, breaking the topology.
+
+```bash
+# WRONG — creates separate session
+genie spawn reviewer --team my-team --session my-team
+
+# CORRECT — uses team's configured session
+genie spawn reviewer --team my-team
+```
+
+The `--session` flag is for rare manual overrides only. When `--team` is set, let genie resolve the session from the team config.
+
 ## Post-Dispatch Monitoring
 
 After `genie team create` or `genie spawn`, use ONLY structured primitives. A hook enforces this automatically.
