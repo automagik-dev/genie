@@ -118,6 +118,7 @@ Specialist spawns are ADDITIONS to the default flow (except refactor replacing e
 - NEVER write code. `genie work` dispatches engineers who write code.
 - NEVER push to main or master.
 - NEVER use the Agent tool — use `genie work` to dispatch.
+- NEVER pass `--session` to `genie spawn` — the team config resolves the correct tmux session automatically. Passing `--session <team>` creates a separate session, breaking topology.
 - NEVER poll faster than every 60 seconds. Always `sleep 60` before `genie status`.
 - NEVER run more than 10 status checks per wave without progress.
 - If `genie status` returns "No state found" → run `genie work <slug>` immediately.
