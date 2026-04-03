@@ -18,7 +18,7 @@ import { buildDispatchCommand } from '../hooks/inject.js';
 // Types
 // ============================================================================
 
-export type ProviderName = 'claude' | 'codex' | 'app-pty';
+export type ProviderName = 'claude' | 'codex' | 'app-pty' | 'claude-sdk';
 
 /** Colors available for Claude Code native teammate UI. */
 export type ClaudeTeamColor = 'blue' | 'green' | 'yellow' | 'red' | 'cyan' | 'orange' | 'purple' | 'pink';
@@ -115,7 +115,7 @@ interface LaunchCommand {
 // ============================================================================
 
 const spawnParamsSchema = z.object({
-  provider: z.enum(['claude', 'codex']),
+  provider: z.enum(['claude', 'codex', 'claude-sdk']),
   team: z.string().min(1, 'Team name is required'),
   role: z.string().optional(),
   skill: z.string().optional(),
@@ -441,9 +441,16 @@ export function buildLaunchCommand(params: SpawnParams): LaunchCommand {
       return buildClaudeCommand(validated);
     case 'codex':
       return buildCodexCommand(validated);
+    case 'claude-sdk':
+      // SDK provider runs in-process — return metadata-only launch command
+      return {
+        command: 'claude-sdk-in-process',
+        provider: 'claude-sdk',
+        meta: { role: validated.role, skill: validated.skill },
+      };
     default:
       throw new Error(
-        `Unknown provider "${(validated as unknown as { provider: string }).provider}". Valid providers: claude, codex`,
+        `Unknown provider "${(validated as unknown as { provider: string }).provider}". Valid providers: claude, codex, claude-sdk`,
       );
   }
 }
