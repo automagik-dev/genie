@@ -27,8 +27,8 @@ Human (Orchestrator)
 ## Quick Start
 
 ```bash
-# 1. Start the genie daemon for auto-sync
-genie daemon start
+# 1. Start genie serve (manages all background services)
+genie serve --daemon
 
 # 2. Create wishes to work on (via the /wish skill in a genie session)
 # /wish "Implement user authentication"
@@ -85,12 +85,12 @@ genie work next
 ```
 
 **What happens when you run `genie work wish-1`:**
-1. Daemon starts (if not running) for auto-sync
+1. `genie serve` auto-starts if not running (pgserve + scheduler + services)
 2. Wish is claimed (status → in_progress)
 3. Worktree created for the wish
-4. New tmux pane spawned in the worktree directory
-5. Claude CLI launched with initial prompt
-6. Work bound to agent via slot system
+4. New tmux pane spawned on `tmux -L genie` socket
+5. Claude Code launched with initial prompt and identity hooks
+6. Agent registered in PostgreSQL with pane ID, team, and role
 
 ### Phase 3: Monitoring Workers
 
@@ -156,20 +156,24 @@ genie kill wish-1
 
 Note: This does NOT close the wish. The task remains `in_progress`.
 
-## Daemon Management
+## Service Management
 
-The daemon auto-commits and syncs changes:
+`genie serve` is the unified infrastructure owner. It manages pgserve (database), the scheduler, event router, inbox watcher, and the TUI. The old `genie daemon` commands still work as aliases.
 
 ```bash
-genie daemon start     # Start with auto-commit
-genie daemon status    # Check if running
-genie daemon stop      # Stop daemon
-genie daemon restart   # Restart with fresh config
+genie serve              # Start foreground with TUI (default)
+genie serve --headless   # Services only, no TUI
+genie serve --daemon     # Start in background
+genie serve stop         # Stop all services gracefully
+genie serve status       # Show service health
 
-# Options for start/restart:
-#   --no-auto-commit  Disable auto-commit
-#   --auto-push       Enable auto-push to remote
+# Legacy aliases (redirect to genie serve --headless):
+genie daemon start       # → genie serve --headless
+genie daemon stop        # Stop genie serve
+genie daemon status      # Show daemon state
 ```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for full service topology details.
 
 ## Multi-Worker Patterns
 
@@ -247,15 +251,16 @@ git worktree remove .worktrees/<wish-id> --force
 | `genie kill <id>` | Force kill worker |
 | `genie read <id>` | Read worker pane output |
 | `genie exec <id> <cmd>` | Execute command in worker pane |
-| `genie daemon start` | Start daemon |
-| `genie daemon stop` | Stop daemon |
-| `genie daemon status` | Show daemon status |
+| `genie serve` | Start foreground with TUI |
+| `genie serve --daemon` | Start in background |
+| `genie serve stop` | Stop all services |
+| `genie serve status` | Show service health |
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         Human Terminal                          │
+│                     tmux -L genie (eternal)                      │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
 │  │  Worker 1   │  │  Worker 2   │  │  Worker 3   │  ...        │
 │  │  (Claude)   │  │  (Claude)   │  │  (Claude)   │             │
@@ -271,22 +276,26 @@ git worktree remove .worktrees/<wish-id> --force
 │         └────────────────┼────────────────┘                     │
 │                          ▼                                      │
 │                   ┌─────────────┐                               │
-│                   │   .genie/   │  ◀── Shared via redirect     │
+│                   │   .genie/   │  ◀── Shared across worktrees │
 │                   │   wishes/   │                               │
 │                   └──────┬──────┘                               │
 │                          │                                      │
 │                          ▼                                      │
-│                   ┌─────────────┐                               │
-│                   │ genie daemon│  ◀── Auto-commit & sync      │
-│                   └─────────────┘                               │
+│  ┌──────────────────────────────────────────────────────┐       │
+│  │              genie serve (unified)                    │       │
+│  │  pgserve │ scheduler │ event-router │ inbox-watcher  │       │
+│  └──────────────────────────────────────────────────────┘       │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+For detailed architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Next Steps
 
 After reading this guide:
-1. Start with `genie daemon start`
+1. Start with `genie serve --daemon` (or `genie serve` for TUI mode)
 2. Launch a session with `genie` and create wishes via `/wish`
 3. Try `genie work <id>` to spawn your first worker
 4. Practice the workflow with simple tasks
 5. Scale up to multi-worker orchestration
+6. Read [ARCHITECTURE.md](ARCHITECTURE.md) for internals
