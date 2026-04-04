@@ -963,7 +963,7 @@ async function runSdkQuery(
     spawnContext,
     prompt,
     permConfig,
-    hasExtraOptions ? extraOptions : undefined,
+    hasExtraOptions ? (extraOptions as Partial<import('@anthropic-ai/claude-agent-sdk').Options>) : undefined,
     sdkConfig,
   );
 
@@ -1216,14 +1216,6 @@ export interface SpawnOptions {
   stream?: boolean;
   /** Streaming output format: text, json, ndjson (--stream-format). Default: text. */
   streamFormat?: string;
-  /** SDK: maximum number of conversation turns (--sdk-max-turns). */
-  sdkMaxTurns?: number;
-  /** SDK: maximum budget in USD (--sdk-max-budget). */
-  sdkMaxBudget?: number;
-  /** SDK: enable streaming shortcut (--sdk-stream). */
-  sdkStream?: boolean;
-  /** SDK: reasoning effort level (--sdk-effort). */
-  sdkEffort?: string;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
