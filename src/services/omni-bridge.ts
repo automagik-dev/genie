@@ -169,10 +169,18 @@ export class OmniBridge {
       this.idleCheckTimer = null;
     }
 
-    // Clear all idle timers
+    // Shutdown all live sessions and clear idle timers
     for (const entry of this.sessions.values()) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
+      if (!entry.spawning && entry.session) {
+        try {
+          await this.executor.shutdown(entry.session);
+        } catch {
+          // Session may already be dead — continue cleanup
+        }
+      }
     }
+    this.sessions.clear();
 
     // Unsubscribe
     if (this.sub) {
@@ -264,6 +272,10 @@ export class OmniBridge {
         // Still spawning — buffer the message
         if (entry.buffer.length < MAX_BUFFER_PER_CHAT) {
           entry.buffer.push(message);
+        } else {
+          console.warn(
+            `[omni-bridge] Buffer overflow for chat ${message.chatId} (size=${entry.buffer.length}), dropping message`,
+          );
         }
         return;
       }
@@ -290,8 +302,8 @@ export class OmniBridge {
   private async spawnSession(message: OmniMessage): Promise<void> {
     const key = `${message.agent}:${message.chatId}`;
 
-    // Check concurrency limit
-    const activeCount = Array.from(this.sessions.values()).filter((e) => !e.spawning).length;
+    // Check concurrency limit (spawning entries count toward capacity)
+    const activeCount = this.sessions.size;
     if (activeCount >= this.maxConcurrent) {
       // Queue the message and send auto-reply
       this.messageQueue.push(message);
@@ -336,7 +348,7 @@ export class OmniBridge {
       console.log(`[omni-bridge] Session active: ${key} (pane=${session.paneId})`);
     } catch (err) {
       console.error(`[omni-bridge] Failed to spawn session for ${key}:`, err);
-      this.sessions.delete(key);
+      this.removeSession(key);
     }
   }
 
@@ -357,9 +369,6 @@ export class OmniBridge {
         // Already dead — that's fine
       }
       this.removeSession(key);
-
-      // Process queued messages now that a slot is free
-      await this.drainQueue();
     }, this.idleTimeoutMs);
   }
 
@@ -394,12 +403,15 @@ export class OmniBridge {
   }
 
   /**
-   * Remove a session and clean up its idle timer.
+   * Remove a session, clean up its idle timer, and drain the queue.
    */
   private removeSession(key: string): void {
     const entry = this.sessions.get(key);
     if (entry?.idleTimer) clearTimeout(entry.idleTimer);
     this.sessions.delete(key);
+
+    // A slot freed up — drain queued messages
+    void this.drainQueue();
   }
 
   /**
@@ -407,7 +419,7 @@ export class OmniBridge {
    */
   private async drainQueue(): Promise<void> {
     while (this.messageQueue.length > 0) {
-      const activeCount = Array.from(this.sessions.values()).filter((e) => !e.spawning).length;
+      const activeCount = this.sessions.size;
       if (activeCount >= this.maxConcurrent) break;
 
       const message = this.messageQueue.shift();

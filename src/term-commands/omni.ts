@@ -20,10 +20,16 @@ export function registerOmniCommands(program: Command): void {
     .action(async (options) => {
       const { OmniBridge } = await import('../services/omni-bridge.js');
 
+      const maxConcurrent = Number(options.maxConcurrent);
+      if (isNaN(maxConcurrent)) throw new Error('--max-concurrent must be a number');
+
+      const idleTimeoutMs = Number(options.idleTimeout);
+      if (isNaN(idleTimeoutMs)) throw new Error('--idle-timeout must be a number');
+
       const bridge = new OmniBridge({
         natsUrl: options.natsUrl,
-        maxConcurrent: Number(options.maxConcurrent),
-        idleTimeoutMs: Number(options.idleTimeout),
+        maxConcurrent,
+        idleTimeoutMs,
         executorType: options.executor as 'tmux' | 'sdk',
       });
 
