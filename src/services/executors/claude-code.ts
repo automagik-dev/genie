@@ -6,22 +6,24 @@
  * injects env vars for NATS reply routing.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as directory from '../../lib/agent-directory.js';
 import { shellQuote } from '../../lib/team-lead-command.js';
-import { ensureTeamWindow, executeTmux, isPaneAlive, killWindow } from '../../lib/tmux.js';
+import { ensureTeamWindow, executeTmux, isPaneAlive, isPaneProcessRunning, killWindow } from '../../lib/tmux.js';
 import type { IExecutor, OmniMessage, OmniSession } from '../executor.js';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-/** Sanitize a string for use as a tmux window name. */
+/** Sanitize a string for use as a tmux window name. Hash suffix prevents collisions. */
 function sanitizeWindowName(chatId: string): string {
-  return chatId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'chat';
+  const hash = createHash('md5').update(chatId).digest('hex').slice(0, 12);
+  const prefix = chatId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
+  return `${prefix}-${hash}` || 'chat';
 }
 
 /** Path to the omni-reply script installed at spawn time. */
@@ -153,11 +155,15 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
   }
 
   /**
-   * Check if a session's tmux pane is still alive.
+   * Check if a session's tmux pane is alive AND the Claude process is running inside it.
+   * A pane can be alive (not dead) but the Claude process may have exited/crashed.
    */
   async isAlive(session: OmniSession): Promise<boolean> {
     try {
-      return await isPaneAlive(session.paneId);
+      const paneAlive = await isPaneAlive(session.paneId);
+      if (!paneAlive) return false;
+      // Verify the Claude process is actually running inside the pane
+      return await isPaneProcessRunning(session.paneId, 'claude');
     } catch {
       return false;
     }
@@ -206,12 +212,30 @@ fi
 
 [ -z "$MSG" ] && exit 0
 
-# Build JSON payload
-PAYLOAD=$(printf '{"content":"%s","agent":"%s","chat_id":"%s","timestamp":"%s"}' \\
-  "$(echo "$MSG" | sed 's/"/\\\\"/g' | tr '\\n' ' ')" \\
-  "\${GENIE_OMNI_AGENT:-unknown}" \\
-  "\${GENIE_OMNI_CHAT_ID:-unknown}" \\
-  "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)")
+# Build JSON payload — use jq for correct escaping, bash fallback for all JSON-special chars
+if command -v jq &>/dev/null; then
+  PAYLOAD=$(jq -nc \\
+    --arg content "$MSG" \\
+    --arg agent "\${GENIE_OMNI_AGENT:-unknown}" \\
+    --arg chat_id "\${GENIE_OMNI_CHAT_ID:-unknown}" \\
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" \\
+    '{content:\$content,agent:\$agent,chat_id:\$chat_id,timestamp:\$ts}')
+else
+  json_escape() {
+    local s="\$1"
+    s="\${s//\\\\/\\\\\\\\}"
+    s="\${s//\\"/\\\\\\"}"
+    s="\${s//\$'\\n'/\\\\n}"
+    s="\${s//\$'\\r'/\\\\r}"
+    s="\${s//\$'\\t'/\\\\t}"
+    printf '%s' "\$s"
+  }
+  PAYLOAD=$(printf '{"content":"%s","agent":"%s","chat_id":"%s","timestamp":"%s"}' \\
+    "$(json_escape "$MSG")" \\
+    "$(json_escape "\${GENIE_OMNI_AGENT:-unknown}")" \\
+    "$(json_escape "\${GENIE_OMNI_CHAT_ID:-unknown}")" \\
+    "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)")
+fi
 
 # Publish to NATS (try nats CLI first, fall back to nc)
 if command -v nats &>/dev/null; then
