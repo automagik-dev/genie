@@ -523,7 +523,7 @@ describe('Event routing completeness', () => {
   ];
 
   it('getEventType returns non-null for all known message types', () => {
-    for (const { name, msg } of messageFactories) {
+    for (const { msg } of messageFactories) {
       const eventType = getEventType(msg as any);
       expect(eventType).not.toBeNull();
       expect(typeof eventType).toBe('string');
@@ -533,7 +533,7 @@ describe('Event routing completeness', () => {
   });
 
   it('buildEventDetails returns a details object for all known message types', () => {
-    for (const { name, msg } of messageFactories) {
+    for (const { msg } of messageFactories) {
       const details = buildEventDetails(msg as any);
       expect(details).toBeDefined();
       expect(typeof details).toBe('object');
