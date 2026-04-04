@@ -306,6 +306,7 @@ async function printByColumn(tasks: taskServiceTypes.TaskRow[], boardName: strin
 
 interface CreateOptions {
   type?: string;
+  stage?: string;
   priority?: string;
   due?: string;
   start?: string;
@@ -378,6 +379,7 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
     {
       title,
       typeId: options.type,
+      stage: options.stage,
       priority: options.priority as 'urgent' | 'high' | 'normal' | 'low',
       dueDate: options.due,
       startDate: options.start,
@@ -450,6 +452,7 @@ export function registerTaskCommands(program: Command): void {
     .command('create <title>')
     .description('Create a new task')
     .option('--type <type>', 'Task type', 'software')
+    .option('--stage <name>', 'Initial stage (defaults to first stage of the task type)')
     .option('--priority <priority>', 'Priority: urgent, high, normal, low', 'normal')
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
     .option('--start <date>', 'Start date (YYYY-MM-DD)')
