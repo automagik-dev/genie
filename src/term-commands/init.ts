@@ -7,7 +7,7 @@
  */
 
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import type { Command } from 'commander';
 import { type WorkspaceConfig, findWorkspace, scanAgents } from '../lib/workspace.js';
@@ -38,8 +38,9 @@ async function ensureSetupCompleteForInit(): Promise<void> {
   await setupCommand();
 }
 
-function scaffoldAgentInWorkspace(workspaceRoot: string, name: string): void {
-  const agentDir = join(workspaceRoot, 'agents', name);
+function scaffoldAgentInWorkspace(workspaceRoot: string, name: string, agentsDir?: string): void {
+  const baseDir = agentsDir ?? join(workspaceRoot, 'agents');
+  const agentDir = join(baseDir, name);
   if (existsSync(agentDir)) {
     throw new Error(`Agent directory already exists: ${agentDir}`);
   }
@@ -139,8 +140,17 @@ async function initWorkspace(): Promise<void> {
   await syncWorkspaceAgents(cwd);
 }
 
+/** Resolve the agents parent directory based on --dir option and CWD. */
+function resolveAgentsDir(wsRoot: string, dirOption?: string): string {
+  if (dirOption) return resolve(dirOption);
+  const cwd = process.cwd();
+  // If CWD is inside an agents/ directory, use CWD directly
+  if (cwd.includes('/agents')) return cwd;
+  return join(wsRoot, 'agents');
+}
+
 /** genie init agent <name> — scaffold agent directory */
-async function initAgent(name: string): Promise<void> {
+async function initAgent(name: string, options: { dir?: string }): Promise<void> {
   const cwd = process.cwd();
   const ws = findWorkspace(cwd);
   if (!ws) {
@@ -148,8 +158,10 @@ async function initAgent(name: string): Promise<void> {
     process.exit(1);
   }
 
+  const agentsDir = resolveAgentsDir(ws.root, options.dir);
+
   try {
-    scaffoldAgentInWorkspace(ws.root, name);
+    scaffoldAgentInWorkspace(ws.root, name, agentsDir);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
@@ -170,8 +182,9 @@ export function registerInitCommands(program: Command): void {
   init
     .command('agent <name>')
     .description('Scaffold a new agent in the workspace')
-    .action(async (name: string) => {
+    .option('--dir <path>', 'Target directory for agent (default: CWD if inside agents/, else workspace agents/)')
+    .action(async (name: string, options: { dir?: string }) => {
       await ensureSetupCompleteForInit();
-      await initAgent(name);
+      await initAgent(name, options);
     });
 }
