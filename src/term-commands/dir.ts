@@ -234,6 +234,9 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
 
   const entry = await directory.edit(name, updates, { global: options.global });
 
+  // Sync frontmatter-relevant fields back to AGENTS.md on disk
+  directory.syncFrontmatterToDisk(entry, updates);
+
   recordAuditEvent('item', name, 'item_updated', getActor(), { type: 'agent', source: 'dir_edit' }).catch(() => {});
 
   const scope = options.global ? 'global' : 'project';

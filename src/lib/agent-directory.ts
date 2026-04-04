@@ -261,7 +261,6 @@ export async function get(name: string, _options?: ScopeOptions): Promise<Direct
 /**
  * Edit an existing agent entry.
  * Only provided fields are updated.
- * After updating PG, syncs frontmatter-relevant fields back to AGENTS.md on disk.
  */
 export async function edit(
   name: string,
@@ -322,9 +321,6 @@ export async function edit(
   } catch {
     /* PG unavailable — in-memory update still applied */
   }
-
-  // Sync frontmatter-relevant fields back to AGENTS.md on disk
-  syncFrontmatterToDisk(updated, updates);
 
   return updated;
 }
@@ -424,7 +420,7 @@ const FRONTMATTER_KEYS = new Set(['name', 'description', 'model', 'color', 'prom
  * Only writes if the agent has a dir with AGENTS.md and the edit touched
  * frontmatter-relevant fields. Best-effort — never throws.
  */
-function syncFrontmatterToDisk(
+export function syncFrontmatterToDisk(
   entry: DirectoryEntry,
   updates: Partial<Pick<DirectoryEntry, 'dir' | 'model' | 'description' | 'color' | 'promptMode' | 'provider' | 'sdk'>>,
 ): void {
