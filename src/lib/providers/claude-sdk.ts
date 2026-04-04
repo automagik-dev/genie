@@ -18,6 +18,7 @@ import type {
   SpawnContext,
   TransportType,
 } from '../executor-types.js';
+import { routeSdkMessage } from './claude-sdk-events.js';
 import type { PermissionConfig } from './claude-sdk-permissions.js';
 import { createPermissionGate } from './claude-sdk-permissions.js';
 
@@ -101,7 +102,11 @@ export class ClaudeSdkProvider implements ExecutorProvider {
     const self = this;
     const wrappedMessages = (async function* (): AsyncGenerator<SDKMessage, void> {
       try {
-        yield* messages;
+        for await (const msg of messages) {
+          yield msg;
+          // Fire-and-forget event routing — never blocks stream
+          routeSdkMessage(msg, ctx.executorId, ctx.agentId).catch(() => {});
+        }
       } finally {
         tracker.done = true;
         self.activeQueries.delete(ctx.executorId);
