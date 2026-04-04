@@ -1435,9 +1435,8 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
 
   // SDK provider: in-process query, no tmux/shell needed
   if (validated.provider === 'claude-sdk') {
-    const streamFormat = (options.streamFormat ?? 'text') as import(
-      '../lib/providers/claude-sdk-stream.js',
-    ).StreamFormat;
+    type SdkStreamFormat = import('../lib/providers/claude-sdk-stream.js').StreamFormat;
+    const streamFormat = (options.streamFormat ?? 'text') as SdkStreamFormat;
     const streamOpts = options.stream || options.sdkStream ? { stream: true as const, streamFormat } : undefined;
 
     // Build runtime overrides from --sdk-* flags (highest priority, override directory config)
