@@ -15,7 +15,6 @@ import { getConnection } from '../lib/db.js';
 import type { IExecutor, OmniMessage, OmniSession } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
 import { ClaudeSdkOmniExecutor } from './executors/claude-sdk.js';
-import { deleteSession as deleteOmniSession } from './omni-sessions.js';
 
 // ============================================================================
 // Configuration
@@ -358,12 +357,7 @@ export class OmniBridge {
       } catch {
         // Already dead — that's fine
       }
-      // Remove PG row for this session
-      try {
-        await deleteOmniSession(entry.session.id);
-      } catch {
-        // Best-effort PG cleanup
-      }
+      // PG row already deleted by executor.shutdown()
       this.removeSession(key);
 
       // Process queued messages now that a slot is free

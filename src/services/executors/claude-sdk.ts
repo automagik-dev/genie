@@ -113,7 +113,10 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     });
 
     // Persist session to PG
-    const instanceId = env.OMNI_INSTANCE_ID || sessionId;
+    const instanceId = env.OMNI_INSTANCE_ID;
+    if (!instanceId) {
+      throw new Error('OMNI_INSTANCE_ID is required in env for session persistence');
+    }
     await upsertSession(sessionId, agentName, chatId, instanceId, undefined);
 
     const now = Date.now();
@@ -201,13 +204,14 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       state.claudeSessionId = result.sessionId;
     }
 
-    // Persist claudeSessionId and update last_activity_at in PG
-    await touchSession(session.id, result.sessionId);
-
+    // Reply first — delivery must not depend on PG write success
     const replyText = result.text;
     if (replyText) {
       await this.sendViaOmniCli(message.instanceId, message.chatId, replyText);
     }
+
+    // Persist claudeSessionId and update last_activity_at (best-effort)
+    touchSession(session.id, result.sessionId).catch(() => {});
 
     session.lastActivityAt = Date.now();
   }
