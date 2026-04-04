@@ -30,18 +30,9 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   query: mockQuery,
 }));
 
-// Mock audit to prevent PG calls
-mock.module('../lib/audit.js', () => ({
-  recordAuditEvent: mock(() => Promise.resolve()),
-  getActor: () => 'test-actor',
-  queryAuditEvents: mock(() => Promise.resolve([])),
-  queryErrorPatterns: mock(() => Promise.resolve([])),
-  queryCostBreakdown: mock(() => Promise.resolve([])),
-  queryToolUsage: mock(() => Promise.resolve([])),
-  queryTimeline: mock(() => Promise.resolve([])),
-  querySummary: mock(() => Promise.resolve({ total: 0, byType: {}, byAgent: {} })),
-  generateTraceId: () => 'trace-test-id',
-}));
+// No audit mocking — routeSdkMessage is fire-and-forget (.catch(() => {}))
+// and these tests never iterate the message stream, so audit is never invoked.
+// Removing audit mocks prevents spyOn leaks that corrupt audit.test.ts in the same bun process.
 
 // ============================================================================
 // Dynamic imports (must come after mock.module)
