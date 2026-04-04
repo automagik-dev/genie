@@ -32,6 +32,31 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   }),
 }));
 
+// Mock omni-sessions (PG operations)
+mock.module('../../omni-sessions.js', () => ({
+  upsertSession: mock(async () => ({})),
+  getSession: mock(async () => null),
+  touchSession: mock(async () => {}),
+  deleteSession: mock(async () => {}),
+}));
+
+// Mock child_process — include all exports that transitive imports may need
+mock.module('node:child_process', () => ({
+  execFile: mock((_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
+    cb(null);
+  }),
+  spawn: mock(() => ({
+    on: mock(),
+    stdout: { on: mock() },
+    stderr: { on: mock() },
+    kill: mock(),
+    pid: 0,
+  })),
+  spawnSync: mock(() => ({ status: 0, stdout: '', stderr: '' })),
+  execSync: mock(() => ''),
+  exec: mock((_cmd: string, cb: (err: Error | null) => void) => cb(null)),
+}));
+
 const { ClaudeSdkOmniExecutor } = await import('../claude-sdk.js');
 const directory = await import('../../../lib/agent-directory.js');
 
@@ -116,10 +141,7 @@ describe('ClaudeSdkOmniExecutor', () => {
   });
 
   describe('deliver', () => {
-    it('calls runQuery with message content and publishes reply via NATS', async () => {
-      const natsPublish = mock();
-      executor.setNatsPublish(natsPublish);
-
+    it('calls runQuery with message content and sends reply via omni CLI', async () => {
       const session = await executor.spawn('test-agent', 'chat-1', {});
       const message = {
         content: 'Hello agent',
@@ -132,20 +154,12 @@ describe('ClaudeSdkOmniExecutor', () => {
       await executor.deliver(session, message);
       await executor.waitForDeliveries(session.id);
 
-      // Verify NATS publish was called with the reply
-      expect(natsPublish).toHaveBeenCalledTimes(1);
-      const [topic, payload] = natsPublish.mock.calls[0];
-      expect(topic).toBe('omni.reply.inst-1.chat-1');
-      const parsed = JSON.parse(payload);
-      expect(parsed.content).toBe('response text');
-      expect(parsed.agent).toBe('test-agent');
-      expect(parsed.chat_id).toBe('chat-1');
+      // Verify omni CLI was called (via execFile mock)
+      const { execFile } = await import('node:child_process');
+      expect(execFile).toHaveBeenCalled();
     });
 
     it('returns immediately without awaiting the query', async () => {
-      const natsPublish = mock();
-      executor.setNatsPublish(natsPublish);
-
       const session = await executor.spawn('test-agent', 'chat-imm', {});
       const message = {
         content: 'Hello',
@@ -157,11 +171,8 @@ describe('ClaudeSdkOmniExecutor', () => {
 
       // deliver() should resolve before the query completes
       await executor.deliver(session, message);
-      // At this point, the async queue may not have published yet — this proves
-      // deliver() does not block on the SDK query.
-      // After waiting, the publish should be done.
+      // After waiting, the delivery should be done.
       await executor.waitForDeliveries(session.id);
-      expect(natsPublish).toHaveBeenCalledTimes(1);
     });
 
     it('throws if session not found', async () => {
@@ -180,26 +191,7 @@ describe('ClaudeSdkOmniExecutor', () => {
       ).rejects.toThrow('No SDK session found');
     });
 
-    it('does not throw when NATS publish is not set', async () => {
-      // No setNatsPublish call — natsPublish is null
-      const session = await executor.spawn('test-agent', 'chat-no-nats', {});
-      const message = {
-        content: 'Hello agent',
-        sender: 'user',
-        instanceId: 'inst-1',
-        chatId: 'chat-no-nats',
-        agent: 'test-agent',
-      };
-
-      // Should not throw — reply is silently dropped when no NATS
-      await executor.deliver(session, message);
-      await executor.waitForDeliveries(session.id);
-    });
-
     it('updates lastActivityAt after delivery', async () => {
-      const natsPublish = mock();
-      executor.setNatsPublish(natsPublish);
-
       const session = await executor.spawn('test-agent', 'chat-ts', {});
       const before = session.lastActivityAt;
 
@@ -252,9 +244,6 @@ describe('ClaudeSdkOmniExecutor', () => {
         });
       });
 
-      const natsPublish = mock();
-      executor.setNatsPublish(natsPublish);
-
       // Spawn 3 independent sessions
       const s1 = await executor.spawn('agent-a', 'chat-1', {});
       const s2 = await executor.spawn('agent-b', 'chat-2', {});
@@ -295,9 +284,6 @@ describe('ClaudeSdkOmniExecutor', () => {
 
       // All 3 completed
       expect(events.filter((e) => e.startsWith('end:'))).toHaveLength(3);
-
-      // All 3 NATS publishes happened
-      expect(natsPublish).toHaveBeenCalledTimes(3);
     });
   });
 

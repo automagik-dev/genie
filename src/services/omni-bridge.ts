@@ -11,9 +11,11 @@
  */
 
 import { type NatsConnection, StringCodec, type Subscription, connect } from 'nats';
+import { getConnection } from '../lib/db.js';
 import type { IExecutor, OmniMessage, OmniSession } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
 import { ClaudeSdkOmniExecutor } from './executors/claude-sdk.js';
+import { deleteSession as deleteOmniSession } from './omni-sessions.js';
 
 // ============================================================================
 // Configuration
@@ -116,6 +118,15 @@ export class OmniBridge {
       return;
     }
 
+    // PG is mandatory — verify connectivity before proceeding
+    try {
+      const sql = await getConnection();
+      await sql`SELECT 1`;
+    } catch (err) {
+      console.error('[omni-bridge] PG is required but not reachable. Exiting.', err);
+      process.exit(1);
+    }
+
     console.log(`[omni-bridge] Connecting to NATS at ${this.natsUrl}...`);
 
     this.nc = await connect({
@@ -127,15 +138,6 @@ export class OmniBridge {
     });
 
     console.log('[omni-bridge] Connected to NATS');
-
-    // Wire NATS publish into SDK executor for reply routing
-    if (this.executor instanceof ClaudeSdkOmniExecutor) {
-      const nc = this.nc;
-      const sc = this.sc;
-      this.executor.setNatsPublish((topic, payload) => {
-        nc.publish(topic, sc.encode(payload));
-      });
-    }
 
     // Subscribe to all omni messages
     this.sub = this.nc.subscribe('omni.message.>');
@@ -355,6 +357,12 @@ export class OmniBridge {
         await this.executor.shutdown(entry.session);
       } catch {
         // Already dead — that's fine
+      }
+      // Remove PG row for this session
+      try {
+        await deleteOmniSession(entry.session.id);
+      } catch {
+        // Best-effort PG cleanup
       }
       this.removeSession(key);
 

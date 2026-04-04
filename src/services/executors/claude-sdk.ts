@@ -1,8 +1,13 @@
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import * as directory from '../../lib/agent-directory.js';
 import { resolvePermissionConfig } from '../../lib/providers/claude-sdk-permissions.js';
 import { ClaudeSdkProvider } from '../../lib/providers/claude-sdk.js';
 import type { IExecutor, OmniMessage, OmniSession } from '../executor.js';
+import { deleteSession, getSession, touchSession, upsertSession } from '../omni-sessions.js';
+
+const execFileAsync = promisify(execFileCb);
 
 // ============================================================================
 // Types
@@ -70,7 +75,6 @@ async function collectQueryResult(queryMessages: Query): Promise<QueryResult> {
 
 export class ClaudeSdkOmniExecutor implements IExecutor {
   private sessions = new Map<string, SdkSessionState>();
-  private natsPublish: ((topic: string, payload: string) => void) | null = null;
 
   /**
    * Per-session delivery queues. Each session chains its deliveries so messages
@@ -80,11 +84,10 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
   private deliveryQueues = new Map<string, Promise<void>>();
 
   /**
-   * Set the NATS publish function for reply routing.
-   * Called by the bridge after construction.
+   * Send a reply via the omni CLI instead of NATS publish.
    */
-  setNatsPublish(fn: (topic: string, payload: string) => void): void {
-    this.natsPublish = fn;
+  private async sendViaOmniCli(instanceId: string, chatId: string, text: string): Promise<void> {
+    await execFileAsync('omni', ['send', '--instance', instanceId, '--to', chatId, '--text', text]);
   }
 
   /**
@@ -93,7 +96,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
    * Resolves the agent from the genie directory, creates a ClaudeSdkProvider
    * instance, and stores an AbortController for shutdown.
    */
-  async spawn(agentName: string, chatId: string, _env: Record<string, string>): Promise<OmniSession> {
+  async spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<OmniSession> {
     const resolved = await directory.resolve(agentName);
     if (!resolved) {
       throw new Error(`Agent "${agentName}" not found in genie directory`);
@@ -108,6 +111,10 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       running: true,
       provider,
     });
+
+    // Persist session to PG
+    const instanceId = env.OMNI_INSTANCE_ID || sessionId;
+    await upsertSession(sessionId, agentName, chatId, instanceId, undefined);
 
     const now = Date.now();
     return {
@@ -156,6 +163,14 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       throw new Error(`Agent "${session.agentName}" not found in genie directory`);
     }
 
+    // Lazy resume: if in-memory state has no claudeSessionId, check PG
+    if (!state.claudeSessionId) {
+      const pgSession = await getSession(session.id);
+      if (pgSession?.claudeSessionId) {
+        state.claudeSessionId = pgSession.claudeSessionId;
+      }
+    }
+
     const entry = resolved.entry;
     const permissionConfig = resolvePermissionConfig(entry.permissions);
     const systemPrompt = await loadSystemPrompt(entry);
@@ -185,17 +200,13 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     if (result.sessionId) {
       state.claudeSessionId = result.sessionId;
     }
+
+    // Persist claudeSessionId and update last_activity_at in PG
+    await touchSession(session.id, result.sessionId);
+
     const replyText = result.text;
-    if (replyText && this.natsPublish) {
-      const topic = `omni.reply.${message.instanceId}.${message.chatId}`;
-      const payload = JSON.stringify({
-        content: replyText,
-        agent: session.agentName,
-        chat_id: message.chatId,
-        instance_id: message.instanceId,
-        timestamp: new Date().toISOString(),
-      });
-      this.natsPublish(topic, payload);
+    if (replyText) {
+      await this.sendViaOmniCli(message.instanceId, message.chatId, replyText);
     }
 
     session.lastActivityAt = Date.now();
@@ -224,6 +235,8 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       this.sessions.delete(session.id);
       this.deliveryQueues.delete(session.id);
     }
+    // Remove PG row
+    await deleteSession(session.id);
   }
 
   /**
