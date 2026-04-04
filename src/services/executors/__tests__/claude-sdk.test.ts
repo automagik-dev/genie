@@ -69,7 +69,7 @@ describe('ClaudeSdkOmniExecutor', () => {
 
   describe('spawn', () => {
     it('creates session with correct id format', async () => {
-      const session = await executor.spawn('test-agent', 'chat-123', {});
+      const session = await executor.spawn('test-agent', 'chat-123', { OMNI_INSTANCE_ID: 'inst-1' });
       expect(session.id).toBe('test-agent:chat-123');
       expect(session.agentName).toBe('test-agent');
       expect(session.chatId).toBe('chat-123');
@@ -79,7 +79,7 @@ describe('ClaudeSdkOmniExecutor', () => {
     });
 
     it('resolves agent from directory', async () => {
-      await executor.spawn('my-agent', 'chat-1', {});
+      await executor.spawn('my-agent', 'chat-1', { OMNI_INSTANCE_ID: 'inst-1' });
       expect(directory.resolve).toHaveBeenCalledWith('my-agent');
     });
 
@@ -91,12 +91,12 @@ describe('ClaudeSdkOmniExecutor', () => {
 
   describe('isAlive', () => {
     it('returns true for active session', async () => {
-      const session = await executor.spawn('test-agent', 'chat-1', {});
+      const session = await executor.spawn('test-agent', 'chat-1', { OMNI_INSTANCE_ID: 'inst-1' });
       expect(await executor.isAlive(session)).toBe(true);
     });
 
     it('returns false after shutdown', async () => {
-      const session = await executor.spawn('test-agent', 'chat-1', {});
+      const session = await executor.spawn('test-agent', 'chat-1', { OMNI_INSTANCE_ID: 'inst-1' });
       await executor.shutdown(session);
       expect(await executor.isAlive(session)).toBe(false);
     });
@@ -118,7 +118,7 @@ describe('ClaudeSdkOmniExecutor', () => {
 
   describe('shutdown', () => {
     it('aborts via AbortController', async () => {
-      const session = await executor.spawn('test-agent', 'chat-1', {});
+      const session = await executor.spawn('test-agent', 'chat-1', { OMNI_INSTANCE_ID: 'inst-1' });
       await executor.shutdown(session);
       // Session is removed, isAlive returns false
       expect(await executor.isAlive(session)).toBe(false);
@@ -142,7 +142,7 @@ describe('ClaudeSdkOmniExecutor', () => {
 
   describe('deliver', () => {
     it('calls runQuery with message content and sends reply via omni CLI', async () => {
-      const session = await executor.spawn('test-agent', 'chat-1', {});
+      const session = await executor.spawn('test-agent', 'chat-1', { OMNI_INSTANCE_ID: 'inst-1' });
       const message = {
         content: 'Hello agent',
         sender: 'user',
@@ -160,7 +160,7 @@ describe('ClaudeSdkOmniExecutor', () => {
     });
 
     it('returns immediately without awaiting the query', async () => {
-      const session = await executor.spawn('test-agent', 'chat-imm', {});
+      const session = await executor.spawn('test-agent', 'chat-imm', { OMNI_INSTANCE_ID: 'inst-1' });
       const message = {
         content: 'Hello',
         sender: 'user',
@@ -192,7 +192,7 @@ describe('ClaudeSdkOmniExecutor', () => {
     });
 
     it('updates lastActivityAt after delivery', async () => {
-      const session = await executor.spawn('test-agent', 'chat-ts', {});
+      const session = await executor.spawn('test-agent', 'chat-ts', { OMNI_INSTANCE_ID: 'inst-1' });
       const before = session.lastActivityAt;
 
       // Small delay to ensure timestamp changes
@@ -245,9 +245,9 @@ describe('ClaudeSdkOmniExecutor', () => {
       });
 
       // Spawn 3 independent sessions
-      const s1 = await executor.spawn('agent-a', 'chat-1', {});
-      const s2 = await executor.spawn('agent-b', 'chat-2', {});
-      const s3 = await executor.spawn('agent-c', 'chat-3', {});
+      const s1 = await executor.spawn('agent-a', 'chat-1', { OMNI_INSTANCE_ID: 'inst-1' });
+      const s2 = await executor.spawn('agent-b', 'chat-2', { OMNI_INSTANCE_ID: 'inst-1' });
+      const s3 = await executor.spawn('agent-c', 'chat-3', { OMNI_INSTANCE_ID: 'inst-1' });
 
       const mkMsg = (chatId: string) => ({
         content: `msg for ${chatId}`,
@@ -289,8 +289,8 @@ describe('ClaudeSdkOmniExecutor', () => {
 
   describe('multiple sessions', () => {
     it('manages independent sessions for different chats', async () => {
-      const s1 = await executor.spawn('agent-a', 'chat-1', {});
-      const s2 = await executor.spawn('agent-b', 'chat-2', {});
+      const s1 = await executor.spawn('agent-a', 'chat-1', { OMNI_INSTANCE_ID: 'inst-1' });
+      const s2 = await executor.spawn('agent-b', 'chat-2', { OMNI_INSTANCE_ID: 'inst-1' });
 
       expect(s1.id).not.toBe(s2.id);
       expect(await executor.isAlive(s1)).toBe(true);
