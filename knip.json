@@ -18,13 +18,16 @@
     "src/term-commands/task/index.ts",
     "src/term-commands/team/index.ts",
     "src/term-commands/exec/index.ts",
-    "src/term-commands/brief.ts"
+    "src/term-commands/brief.ts",
+    "src/services/omni-reply.ts",
+    "src/services/omni-bridge.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["tmux", "which"],
   "ignoreExportsUsedInFile": false,
   "ignoreDependencies": [
     "@automagik/genie-brain",
+    "esbuild",
     "@tauri-apps/cli",
     "@tauri-apps/api",
     "react-dom",

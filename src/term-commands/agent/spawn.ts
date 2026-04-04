@@ -10,7 +10,7 @@ export function registerAgentSpawn(parent: Command): void {
   parent
     .command('spawn <name>')
     .description('Spawn a new agent by name (resolves from directory or built-ins)')
-    .option('--provider <provider>', 'Provider: claude or codex')
+    .option('--provider <provider>', 'Provider: claude, codex, or claude-sdk')
     .option('--team <team>', 'Team name', process.env.GENIE_TEAM ?? 'genie')
     .option('--model <model>', 'Model override (e.g., sonnet, opus)')
     .option('--skill <skill>', 'Skill to load (optional)')
@@ -25,7 +25,13 @@ export function registerAgentSpawn(parent: Command): void {
     .option('--new-window', 'Create a new tmux window instead of splitting')
     .option('--window <target>', 'Tmux window to split into (e.g., genie:3)')
     .option('--no-auto-resume', 'Disable auto-resume on pane death')
+    .option('--prompt <prompt>', 'Initial prompt (first user message)')
+    .option('--sdk-max-turns <n>', 'SDK: max conversation turns', Number)
+    .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', Number)
+    .option('--sdk-stream', 'SDK: enable streaming output (shortcut for --stream)')
+    .option('--sdk-effort <level>', 'SDK: reasoning effort level (low, medium, high, max)')
     .action(async (name: string, options: SpawnOptions) => {
+      if (options.prompt) options.initialPrompt = options.prompt;
       try {
         await handleWorkerSpawn(name, options);
       } catch (error) {

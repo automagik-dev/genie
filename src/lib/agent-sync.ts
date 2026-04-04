@@ -233,6 +233,9 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult): Promise<vo
   const resolved = await directory.resolve(agent.name);
   const existing = resolved && !resolved.builtin ? resolved.entry : null;
 
+  // Cast fm.sdk to the directory config type for passthrough storage
+  const sdkConfig = fm.sdk as Record<string, unknown> | undefined;
+
   if (!existing) {
     await directory.add({
       name: agent.name,
@@ -243,6 +246,7 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult): Promise<vo
       description: fm.description,
       color: fm.color,
       provider: fm.provider,
+      sdk: sdkConfig,
     });
     result.registered.push(agent.name);
     return;
@@ -257,10 +261,13 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult): Promise<vo
     description: fm.description,
     color: fm.color,
     provider: fm.provider,
+    sdk: sdkConfig,
   };
 
-  // Check if any field actually changed
+  // Check if any field actually changed (deep compare sdk via JSON serialization)
+  const sdkChanged = JSON.stringify(existing.sdk) !== JSON.stringify(sdkConfig);
   const needsUpdate =
+    sdkChanged ||
     existing.repo !== repoPath ||
     existing.dir !== agent.dir ||
     existing.promptMode !== (fm.promptMode ?? 'append') ||
