@@ -283,3 +283,122 @@ describe('AgentFrontmatterSchema', () => {
     expect(result.success).toBe(false);
   });
 });
+
+// ============================================================================
+// SDK frontmatter block
+// ============================================================================
+
+describe('parseFrontmatter — sdk block', () => {
+  test('parses AGENTS.md with sdk: block into sdk field', () => {
+    const content = `---
+name: senior-engineer
+description: "Senior engineer with full tool access"
+model: opus
+provider: claude-sdk
+promptMode: system
+color: green
+sdk:
+  permissionMode: acceptEdits
+  tools:
+    - Read
+    - Glob
+    - Grep
+    - Bash
+  allowedTools:
+    - Read
+    - Glob
+  effort: high
+  maxBudgetUsd: 10.00
+  maxTurns: 100
+  enableFileCheckpointing: true
+  persistSession: true
+  mcpServers:
+    github:
+      command: npx
+      args:
+        - "-y"
+        - "@modelcontextprotocol/server-github"
+  agents:
+    researcher:
+      description: "Quick codebase research"
+      tools:
+        - Read
+        - Glob
+        - Grep
+      model: haiku
+      effort: low
+  systemPrompt: "You are a senior engineer at Namastex."
+---
+
+# Senior Engineer Identity
+`;
+    const result = parseFrontmatter(content);
+    expect(result.name).toBe('senior-engineer');
+    expect(result.provider).toBe('claude-sdk');
+    expect(result.sdk).toBeDefined();
+    expect(result.sdk!.permissionMode).toBe('acceptEdits');
+    expect(result.sdk!.tools).toEqual(['Read', 'Glob', 'Grep', 'Bash']);
+    expect(result.sdk!.maxBudgetUsd).toBe(10.0);
+    expect(result.sdk!.maxTurns).toBe(100);
+    expect(result.sdk!.enableFileCheckpointing).toBe(true);
+    expect(result.sdk!.mcpServers).toBeDefined();
+    expect(result.sdk!.mcpServers as Record<string, unknown>).toHaveProperty('github');
+    expect(result.sdk!.agents).toBeDefined();
+    expect(result.sdk!.systemPrompt).toBe('You are a senior engineer at Namastex.');
+  });
+
+  test('provider: claude-sdk parses without warning', () => {
+    captureWarnings();
+    const content = `---
+provider: claude-sdk
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.provider).toBe('claude-sdk');
+    // No warnings should be emitted for valid provider
+    const providerWarns = warnMock.mock.calls.flat().filter((msg: string) => String(msg).includes('provider'));
+    expect(providerWarns.length).toBe(0);
+  });
+
+  test('unknown fields inside sdk: block are preserved (not dropped)', () => {
+    const content = `---
+name: test-agent
+sdk:
+  customField: "custom-value"
+  nestedCustom:
+    deep: true
+  futureOption: 42
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.sdk).toBeDefined();
+    expect(result.sdk!.customField).toBe('custom-value');
+    expect(result.sdk!.nestedCustom).toEqual({ deep: true });
+    expect(result.sdk!.futureOption).toBe(42);
+  });
+
+  test('sdk: block does not trigger unknown field warning', () => {
+    captureWarnings();
+    const content = `---
+name: test
+sdk:
+  effort: high
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.sdk).toBeDefined();
+    // sdk is a known key — should not warn
+    const sdkWarns = warnMock.mock.calls.flat().filter((msg: string) => String(msg).includes('"sdk"'));
+    expect(sdkWarns.length).toBe(0);
+  });
+
+  test('missing sdk: block results in undefined sdk field', () => {
+    const content = `---
+name: test-agent
+model: opus
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.sdk).toBeUndefined();
+  });
+});
