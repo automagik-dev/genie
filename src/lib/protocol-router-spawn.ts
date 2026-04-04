@@ -52,7 +52,7 @@ function buildSpawnParams(
   spawnColor: ClaudeTeamColor | undefined,
   resumeSessionId?: string,
 ): SpawnParams {
-  const isClaude = template.provider === 'claude';
+  const isClaude = template.provider === 'claude' || template.provider === 'claude-sdk';
   const sessionName = template.role ? `${template.team}-${template.role}` : undefined;
   // Generate a new session ID for fresh spawns, or use stored ID for resume
   const newSessionId = isClaude && !resumeSessionId ? crypto.randomUUID() : undefined;
@@ -139,7 +139,12 @@ async function createExecutorForAutoSpawn(
       /* best-effort */
     }
 
-    const executorTransport = template.provider === 'codex' ? ('api' as const) : ('tmux' as const);
+    const executorTransport =
+      template.provider === 'codex'
+        ? ('api' as const)
+        : template.provider === 'claude-sdk'
+          ? ('process' as const)
+          : ('tmux' as const);
     const executor = await executorRegistry.createExecutor(agentIdentity.id, template.provider, executorTransport, {
       pid,
       tmuxSession: session,
@@ -213,7 +218,7 @@ export async function spawnWorkerFromTemplate(
 
   const now = new Date().toISOString();
   const agentName = template.role ?? 'worker';
-  const isClaude = template.provider === 'claude';
+  const isClaude = template.provider === 'claude' || template.provider === 'claude-sdk';
   const effectiveSessionId = resumeSessionId ?? params.sessionId;
 
   const workerEntry: registry.Agent = {
