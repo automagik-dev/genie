@@ -1,7 +1,6 @@
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import * as directory from '../../lib/agent-directory.js';
-import type { PermissionConfig } from '../../lib/providers/claude-sdk-permissions.js';
-import { PRESET_FULL, resolvePreset } from '../../lib/providers/claude-sdk-permissions.js';
+import { resolvePermissionConfig } from '../../lib/providers/claude-sdk-permissions.js';
 import { ClaudeSdkProvider } from '../../lib/providers/claude-sdk.js';
 import type { IExecutor, OmniMessage, OmniSession } from '../executor.js';
 
@@ -20,20 +19,6 @@ interface SdkSessionState {
 // ============================================================================
 // Helpers
 // ============================================================================
-
-/** Resolve permission config from a directory entry. */
-function resolvePermissionConfig(entry: directory.DirectoryEntry): PermissionConfig {
-  if (entry.permissions?.preset) {
-    return resolvePreset(entry.permissions.preset);
-  }
-  if (entry.permissions?.allow) {
-    return {
-      allow: entry.permissions.allow,
-      bashAllowPatterns: entry.permissions.bashAllowPatterns,
-    };
-  }
-  return PRESET_FULL;
-}
 
 /** Load system prompt from AGENTS.md if available. */
 async function loadSystemPrompt(entry: directory.DirectoryEntry): Promise<string | undefined> {
@@ -88,6 +73,13 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
   private natsPublish: ((topic: string, payload: string) => void) | null = null;
 
   /**
+   * Per-session delivery queues. Each session chains its deliveries so messages
+   * within a single session are processed in order, but different sessions
+   * proceed independently and concurrently.
+   */
+  private deliveryQueues = new Map<string, Promise<void>>();
+
+  /**
    * Set the NATS publish function for reply routing.
    * Called by the bridge after construction.
    */
@@ -131,10 +123,11 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
   }
 
   /**
-   * Deliver a message by running a stateless SDK query.
+   * Deliver a message by enqueuing an async SDK query.
    *
-   * Creates a new query() per message, collects the result text,
-   * and publishes the reply via NATS.
+   * Returns immediately after enqueuing. Within a session, deliveries are
+   * chained so ordering is preserved. Across sessions, deliveries run
+   * concurrently so one slow chat does not block others.
    */
   async deliver(session: OmniSession, message: OmniMessage): Promise<void> {
     const state = this.sessions.get(session.id);
@@ -142,13 +135,29 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       throw new Error(`No SDK session found for ${session.id}`);
     }
 
+    // Chain onto the existing queue for this session (or start fresh)
+    const previous = this.deliveryQueues.get(session.id) ?? Promise.resolve();
+    const current = previous.then(() => this._processDelivery(session, state, message));
+
+    // Swallow errors at the queue level so one failure doesn't break the chain
+    this.deliveryQueues.set(
+      session.id,
+      current.catch(() => {}),
+    );
+  }
+
+  /**
+   * Internal: run the SDK query for a single delivery.
+   * Called from the per-session queue — never directly from deliver().
+   */
+  private async _processDelivery(session: OmniSession, state: SdkSessionState, message: OmniMessage): Promise<void> {
     const resolved = await directory.resolve(session.agentName);
     if (!resolved) {
       throw new Error(`Agent "${session.agentName}" not found in genie directory`);
     }
 
     const entry = resolved.entry;
-    const permissionConfig = resolvePermissionConfig(entry);
+    const permissionConfig = resolvePermissionConfig(entry.permissions);
     const systemPrompt = await loadSystemPrompt(entry);
 
     // Resume existing session or start fresh
@@ -193,6 +202,18 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
   }
 
   /**
+   * Wait for all pending deliveries for a session (or all sessions) to complete.
+   * Useful for tests and graceful shutdown.
+   */
+  async waitForDeliveries(sessionId?: string): Promise<void> {
+    if (sessionId) {
+      await this.deliveryQueues.get(sessionId);
+    } else {
+      await Promise.all([...this.deliveryQueues.values()]);
+    }
+  }
+
+  /**
    * Shut down a session by aborting any active query.
    */
   async shutdown(session: OmniSession): Promise<void> {
@@ -201,6 +222,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       state.abortController.abort();
       state.running = false;
       this.sessions.delete(session.id);
+      this.deliveryQueues.delete(session.id);
     }
   }
 
