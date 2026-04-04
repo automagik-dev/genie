@@ -82,7 +82,7 @@ export function registerOmniCommands(program: Command): void {
 
       // Always try to read PG sessions
       let pgCount = 0;
-      let pgSessions: Awaited<ReturnType<typeof import('../services/omni-sessions.js').listSessions>> = [];
+      let pgSessions: import('../services/omni-sessions.js').OmniSessionRecord[] = [];
       try {
         const { listSessions, countSessions } = await import('../services/omni-sessions.js');
         pgCount = await countSessions();

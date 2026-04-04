@@ -20,7 +20,8 @@
     "src/term-commands/exec/index.ts",
     "src/term-commands/brief.ts",
     "src/services/omni-reply.ts",
-    "src/services/omni-bridge.ts"
+    "src/services/omni-bridge.ts",
+    "src/services/omni-sessions.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["tmux", "which"],
