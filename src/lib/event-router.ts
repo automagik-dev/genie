@@ -215,7 +215,8 @@ async function deliverToTeamOnce(event: ParsedEvent, teamName: string): Promise<
     text: event.summary,
     source: 'hook',
     threadId: event.taskId ? `task:${event.taskId}` : `team:${teamName}`,
-    data: { channel: event.channel, eventType: event.eventType, traceId, ...event.payload },
+    traceId,
+    data: { channel: event.channel, eventType: event.eventType, ...event.payload },
   });
 }
 
