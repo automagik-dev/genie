@@ -20,17 +20,19 @@ const STALENESS_THRESHOLD_SECS = 120; // 2 minutes
 function getLastCommitInfo(filePath: string, cwd: string): { author: string; age: number; message: string } | null {
   try {
     // Get last commit timestamp, author, and subject for the file
-    const output = execSync(
-      `git log -1 --format="%at|%an|%s" -- ${JSON.stringify(filePath)}`,
-      { encoding: 'utf-8', timeout: 5000, cwd, stdio: ['pipe', 'pipe', 'pipe'] },
-    );
+    const output = execSync(`git log -1 --format="%at|%an|%s" -- ${JSON.stringify(filePath)}`, {
+      encoding: 'utf-8',
+      timeout: 5000,
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
 
     const trimmed = output.trim();
     if (!trimmed) return null;
 
     const [timestampStr, author, ...messageParts] = trimmed.split('|');
-    const timestamp = parseInt(timestampStr, 10);
-    if (isNaN(timestamp)) return null;
+    const timestamp = Number.parseInt(timestampStr, 10);
+    if (Number.isNaN(timestamp)) return null;
 
     const age = Math.floor(Date.now() / 1000) - timestamp;
     return { author: author ?? 'unknown', age, message: messageParts.join('|') };
@@ -73,10 +75,7 @@ export async function freshness(payload: HookPayload): Promise<HandlerResult> {
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
           permissionDecision: 'allow',
-          additionalContext:
-            `[freshness] Stale read warning: ${filePath} was modified ${commitInfo.age}s ago ` +
-            `by "${commitInfo.author}" (${commitInfo.message}). ` +
-            'Contents may have changed since you last read it.',
+          additionalContext: `[freshness] Stale read warning: ${filePath} was modified ${commitInfo.age}s ago by "${commitInfo.author}" (${commitInfo.message}). Contents may have changed since you last read it.`,
         },
       };
     }
@@ -85,18 +84,18 @@ export async function freshness(payload: HookPayload): Promise<HandlerResult> {
     if (diskAge < STALENESS_THRESHOLD_SECS && currentAgent) {
       // Check git status to see if the file has uncommitted changes
       try {
-        const status = execSync(
-          `git status --porcelain -- ${JSON.stringify(filePath)}`,
-          { encoding: 'utf-8', timeout: 5000, cwd, stdio: ['pipe', 'pipe', 'pipe'] },
-        );
+        const status = execSync(`git status --porcelain -- ${JSON.stringify(filePath)}`, {
+          encoding: 'utf-8',
+          timeout: 5000,
+          cwd,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
         if (status.trim()) {
           return {
             hookSpecificOutput: {
               hookEventName: 'PreToolUse',
               permissionDecision: 'allow',
-              additionalContext:
-                `[freshness] Stale read warning: ${filePath} has uncommitted changes ` +
-                `(modified ${diskAge}s ago). Another agent may be editing this file concurrently.`,
+              additionalContext: `[freshness] Stale read warning: ${filePath} has uncommitted changes (modified ${diskAge}s ago). Another agent may be editing this file concurrently.`,
             },
           };
         }

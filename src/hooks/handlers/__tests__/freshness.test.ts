@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { HookPayload } from '../../types.js';
 import { freshness } from '../freshness.js';
 
@@ -60,10 +60,10 @@ describe('freshness handler', () => {
     const testFile = join(repoDir, 'target.ts');
     writeFileSync(testFile, 'const x = 1;\n');
     execSync('git add .', { cwd: repoDir, stdio: 'pipe' });
-    execSync(
-      'GIT_COMMITTER_DATE="2020-01-01T00:00:00" git commit -m "old initial" --date="2020-01-01T00:00:00"',
-      { cwd: repoDir, stdio: 'pipe' },
-    );
+    execSync('GIT_COMMITTER_DATE="2020-01-01T00:00:00" git commit -m "old initial" --date="2020-01-01T00:00:00"', {
+      cwd: repoDir,
+      stdio: 'pipe',
+    });
 
     // Modify without committing (simulates another agent's uncommitted edit)
     writeFileSync(testFile, 'const x = 2;\n');
@@ -112,10 +112,10 @@ describe('freshness handler', () => {
     const testFile = join(repoDir, 'old.ts');
     writeFileSync(testFile, 'const old = true;\n');
     execSync('git add .', { cwd: repoDir, stdio: 'pipe' });
-    execSync(
-      'GIT_COMMITTER_DATE="2020-01-01T00:00:00" git commit -m "old commit" --date="2020-01-01T00:00:00"',
-      { cwd: repoDir, stdio: 'pipe' },
-    );
+    execSync('GIT_COMMITTER_DATE="2020-01-01T00:00:00" git commit -m "old commit" --date="2020-01-01T00:00:00"', {
+      cwd: repoDir,
+      stdio: 'pipe',
+    });
 
     // Touch the file to set mtime to a distant past
     execSync(`touch -t 202001010000 ${testFile}`, { stdio: 'pipe' });
