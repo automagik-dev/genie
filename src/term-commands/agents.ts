@@ -930,6 +930,8 @@ async function runSdkQuery(
   ctx: SpawnCtx,
   permConfig: { allow: string[]; bashAllowPatterns?: string[] },
   streamOpts?: { stream: boolean; streamFormat?: import('../lib/providers/claude-sdk-stream.js').StreamFormat },
+  sdkConfig?: import('../lib/sdk-directory-types.js').SdkDirectoryConfig,
+  runtimeExtraOptions?: Record<string, unknown>,
 ): Promise<void> {
   const { ClaudeSdkProvider } = await import('../lib/providers/claude-sdk.js');
   const sdkProvider = new ClaudeSdkProvider();
@@ -952,8 +954,19 @@ async function runSdkQuery(
     `You are ${ctx.validated.role ?? 'an agent'} on team "${ctx.validated.team}". Awaiting instructions.`;
 
   const streaming = streamOpts?.stream ?? false;
-  const extraOptions = streaming ? { includePartialMessages: true } : undefined;
-  const { messages } = sdkProvider.runQuery(spawnContext, prompt, permConfig, extraOptions);
+  // Runtime overrides: streaming + CLI --sdk-* flags (highest priority, over directory sdkConfig)
+  const extraOptions: Record<string, unknown> = {
+    ...(streaming && { includePartialMessages: true }),
+    ...runtimeExtraOptions,
+  };
+  const hasExtraOptions = Object.keys(extraOptions).length > 0;
+  const { messages } = sdkProvider.runQuery(
+    spawnContext,
+    prompt,
+    permConfig,
+    hasExtraOptions ? (extraOptions as Partial<import('@anthropic-ai/claude-agent-sdk').Options>) : undefined,
+    sdkConfig,
+  );
 
   if (ctx.executorId) {
     await executorRegistry.updateExecutorState(ctx.executorId, 'running').catch(() => {});
@@ -1002,6 +1015,8 @@ async function launchSdkSpawn(
   ctx: SpawnCtx,
   permissionsConfig?: directory.DirectoryEntry['permissions'],
   streamOpts?: { stream: boolean; streamFormat?: import('../lib/providers/claude-sdk-stream.js').StreamFormat },
+  sdkConfig?: import('../lib/sdk-directory-types.js').SdkDirectoryConfig,
+  runtimeExtraOptions?: Record<string, unknown>,
 ): Promise<string> {
   if (ctx.agentIdentityId && ctx.executorId) {
     await createAndLinkExecutor(ctx.agentIdentityId, 'claude-sdk' as ProviderName, 'process', {
@@ -1020,7 +1035,7 @@ async function launchSdkSpawn(
 
   const { resolvePermissionConfig } = await import('../lib/providers/claude-sdk-permissions.js');
   const permConfig = resolvePermissionConfig(permissionsConfig);
-  await runSdkQuery(ctx, permConfig, streamOpts);
+  await runSdkQuery(ctx, permConfig, streamOpts, sdkConfig, runtimeExtraOptions);
 
   if (ctx.executorId) {
     await executorRegistry.updateExecutorState(ctx.executorId, 'done').catch(() => {});
@@ -1202,6 +1217,14 @@ export interface SpawnOptions {
   stream?: boolean;
   /** Streaming output format: text, json, ndjson (--stream-format). Default: text. */
   streamFormat?: string;
+  /** SDK: maximum number of conversation turns (--sdk-max-turns). */
+  sdkMaxTurns?: number;
+  /** SDK: maximum budget in USD (--sdk-max-budget). */
+  sdkMaxBudget?: number;
+  /** SDK: enable streaming shortcut (--sdk-stream). */
+  sdkStream?: boolean;
+  /** SDK: reasoning effort level (--sdk-effort). */
+  sdkEffort?: string;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
@@ -1415,8 +1438,22 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   if (validated.provider === 'claude-sdk') {
     type SdkStreamFormat = import('../lib/providers/claude-sdk-stream.js').StreamFormat;
     const streamFormat = (options.streamFormat ?? 'text') as SdkStreamFormat;
-    const streamOpts = options.stream ? { stream: true as const, streamFormat } : undefined;
-    return await launchSdkSpawn(ctx, agent.entry.permissions, streamOpts);
+    const streamOpts = options.stream || options.sdkStream ? { stream: true as const, streamFormat } : undefined;
+
+    // Build runtime overrides from --sdk-* flags (highest priority, override directory config)
+    const runtimeExtra: Record<string, unknown> = {};
+    if (options.sdkMaxTurns != null) runtimeExtra.maxTurns = options.sdkMaxTurns;
+    if (options.sdkMaxBudget != null) runtimeExtra.maxBudgetUsd = options.sdkMaxBudget;
+    if (options.sdkEffort) runtimeExtra.effort = options.sdkEffort;
+    const hasRuntimeExtra = Object.keys(runtimeExtra).length > 0;
+
+    return await launchSdkSpawn(
+      ctx,
+      agent.entry.permissions,
+      streamOpts,
+      agent.entry.sdk,
+      hasRuntimeExtra ? runtimeExtra : undefined,
+    );
   }
 
   if (insideTmux) {

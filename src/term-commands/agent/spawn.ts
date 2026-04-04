@@ -26,6 +26,10 @@ export function registerAgentSpawn(parent: Command): void {
     .option('--window <target>', 'Tmux window to split into (e.g., genie:3)')
     .option('--no-auto-resume', 'Disable auto-resume on pane death')
     .option('--prompt <prompt>', 'Initial prompt (first user message)')
+    .option('--sdk-max-turns <n>', 'SDK: max conversation turns', Number)
+    .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', Number)
+    .option('--sdk-stream', 'SDK: enable streaming output (shortcut for --stream)')
+    .option('--sdk-effort <level>', 'SDK: reasoning effort level (low, medium, high, max)')
     .action(async (name: string, options: SpawnOptions) => {
       if (options.prompt) options.initialPrompt = options.prompt;
       try {
