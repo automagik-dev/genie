@@ -35,24 +35,6 @@ describe('branch-guard', () => {
     }
   });
 
-  describe('blocks gh pr create targeting main/master', () => {
-    const blocked = [
-      'gh pr create --base main --title "test"',
-      'gh pr create --base master --title "test"',
-      'gh pr create -B main --title "test"',
-      'gh pr create -B master --title "test"',
-      'gh pr create --base main --body "test" --title "test"',
-    ];
-
-    for (const cmd of blocked) {
-      test(`blocks: ${cmd}`, async () => {
-        const result = await branchGuard(makePayload(cmd));
-        expect(result).toBeDefined();
-        expect(result!.decision).toBe('deny');
-      });
-    }
-  });
-
   describe('blocks gh pr create without --base', () => {
     const blocked = ['gh pr create --title "test" --body "test"', 'gh pr create --title "no base"', 'gh pr create'];
 
@@ -115,6 +97,12 @@ describe('branch-guard', () => {
       'gh pr create --base dev --title "test" --body "test"',
       'gh pr create -B dev --title "test"',
       'gh pr create --base dev',
+
+      // PR targeting main/master (creating PRs is proposing, not merging)
+      'gh pr create --base main --title "test"',
+      'gh pr create --base master --title "test"',
+      'gh pr create -B main --title "test"',
+      'gh pr create -B master --title "test"',
 
       // Read-only git commands mentioning main
       'git diff main...HEAD',
