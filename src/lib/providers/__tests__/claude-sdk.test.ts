@@ -143,14 +143,14 @@ describe('ClaudeSdkProvider', () => {
     });
   });
 
-  describe('terminate — idempotent for unknown executor', () => {
+  describe('terminate -- idempotent for unknown executor', () => {
     it('does not throw when terminating unknown executor', async () => {
       await provider.terminate({ id: 'nonexistent' } as any);
       // Should complete without error
     });
   });
 
-  describe('runQuery — extraOptions merging', () => {
+  describe('runQuery -- extraOptions merging', () => {
     it('passes extraOptions through to SDK query', () => {
       provider.runQuery(ctx, 'test', undefined, { maxTokens: 1000 } as any);
       expect(sdk.query).toHaveBeenCalledWith(
@@ -163,11 +163,194 @@ describe('ClaudeSdkProvider', () => {
     });
   });
 
-  describe('runQuery — without permissionConfig', () => {
+  describe('runQuery -- without permissionConfig', () => {
     it('does not set hooks when no permissionConfig', () => {
       provider.runQuery(ctx, 'no perms');
       const callArgs = (sdk.query as ReturnType<typeof mock>).mock.calls.at(-1)?.[0];
       expect(callArgs.options.hooks).toBeUndefined();
+    });
+  });
+
+  describe('runQuery -- sdkConfig merging', () => {
+    it('applies sdkConfig via translateSdkConfig when provided', () => {
+      const sdkConfig = {
+        maxTurns: 10,
+        maxBudgetUsd: 5.0,
+        effort: 'high' as const,
+        allowedTools: ['Bash', 'Read'],
+      };
+      provider.runQuery(ctx, 'test', undefined, undefined, sdkConfig);
+      const callArgs = (sdk.query as ReturnType<typeof mock>).mock.calls.at(-1)?.[0];
+      expect(callArgs.options.maxTurns).toBe(10);
+      expect(callArgs.options.maxBudgetUsd).toBe(5.0);
+      expect(callArgs.options.effort).toBe('high');
+      expect(callArgs.options.allowedTools).toEqual(['Bash', 'Read']);
+    });
+
+    it('extraOptions override sdkConfig values', () => {
+      const sdkConfig = {
+        maxTurns: 10,
+        effort: 'low' as const,
+      };
+      const extraOptions = { maxTurns: 50 };
+      provider.runQuery(ctx, 'test', undefined, extraOptions, sdkConfig);
+      const callArgs = (sdk.query as ReturnType<typeof mock>).mock.calls.at(-1)?.[0];
+      // extraOptions should win over sdkConfig
+      expect(callArgs.options.maxTurns).toBe(50);
+      // sdkConfig value that was not overridden should remain
+      expect(callArgs.options.effort).toBe('low');
+    });
+
+    it('merges permission hooks with sdkConfig hooks', () => {
+      const permissionConfig = { allow: ['Read'] };
+      const sdkConfig = {
+        maxTurns: 5,
+      };
+      provider.runQuery(ctx, 'test', permissionConfig, undefined, sdkConfig);
+      const callArgs = (sdk.query as ReturnType<typeof mock>).mock.calls.at(-1)?.[0];
+      // Permission hooks should still be present
+      expect(callArgs.options.hooks?.PreToolUse).toBeDefined();
+      expect(callArgs.options.hooks.PreToolUse.length).toBeGreaterThan(0);
+      // sdkConfig field should also be present
+      expect(callArgs.options.maxTurns).toBe(5);
+    });
+  });
+});
+
+// ============================================================================
+// translateSdkConfig -- standalone tests
+// ============================================================================
+
+const { translateSdkConfig } = await import('../claude-sdk.js');
+
+describe('translateSdkConfig', () => {
+  it('maps all basic SdkDirectoryConfig fields to Options', () => {
+    const result = translateSdkConfig({
+      permissionMode: 'acceptEdits',
+      tools: ['Bash', 'Read'],
+      allowedTools: ['Bash'],
+      disallowedTools: ['Write'],
+      maxTurns: 20,
+      maxBudgetUsd: 10.5,
+      effort: 'medium',
+      thinking: { type: 'adaptive' },
+      persistSession: false,
+      enableFileCheckpointing: true,
+      includePartialMessages: true,
+      includeHookEvents: false,
+      promptSuggestions: true,
+      agentProgressSummaries: true,
+      systemPrompt: 'Custom prompt',
+      betas: ['context-1m-2025-08-07'],
+      settingSources: ['user', 'project'],
+      settings: '/path/to/settings.json',
+    });
+
+    expect(result.permissionMode).toBe('acceptEdits');
+    expect(result.tools).toEqual(['Bash', 'Read']);
+    expect(result.allowedTools).toEqual(['Bash']);
+    expect(result.disallowedTools).toEqual(['Write']);
+    expect(result.maxTurns).toBe(20);
+    expect(result.maxBudgetUsd).toBe(10.5);
+    expect(result.effort).toBe('medium');
+    expect(result.thinking).toEqual({ type: 'adaptive' });
+    expect(result.persistSession).toBe(false);
+    expect(result.enableFileCheckpointing).toBe(true);
+    expect(result.includePartialMessages).toBe(true);
+    expect(result.includeHookEvents).toBe(false);
+    expect(result.promptSuggestions).toBe(true);
+    expect(result.agentProgressSummaries).toBe(true);
+    expect(result.systemPrompt).toBe('Custom prompt');
+    expect(result.betas).toEqual(['context-1m-2025-08-07']);
+    expect(result.settingSources).toEqual(['user', 'project']);
+    expect(result.settings).toBe('/path/to/settings.json');
+  });
+
+  it('maps complex nested fields (agents, mcpServers, plugins, sandbox)', () => {
+    const result = translateSdkConfig({
+      agents: {
+        reviewer: {
+          description: 'A reviewer agent',
+          prompt: 'You review code',
+          tools: ['Read', 'Grep'],
+        },
+      },
+      mcpServers: {
+        myServer: { command: 'node', args: ['server.js'] },
+      },
+      plugins: [{ type: 'local', path: '/my/plugin' }],
+      sandbox: {
+        enabled: true,
+        autoAllowBashIfSandboxed: true,
+        network: { allowLocalBinding: true },
+      },
+      outputFormat: {
+        type: 'json_schema',
+        schema: { type: 'object', properties: { result: { type: 'string' } } },
+      },
+    });
+
+    expect(result.agents).toEqual({
+      reviewer: {
+        description: 'A reviewer agent',
+        prompt: 'You review code',
+        tools: ['Read', 'Grep'],
+      },
+    });
+    expect(result.mcpServers).toEqual({
+      myServer: { command: 'node', args: ['server.js'] },
+    });
+    expect(result.plugins).toEqual([{ type: 'local', path: '/my/plugin' }]);
+    expect(result.sandbox).toEqual({
+      enabled: true,
+      autoAllowBashIfSandboxed: true,
+      network: { allowLocalBinding: true },
+    });
+    expect(result.outputFormat).toEqual({
+      type: 'json_schema',
+      schema: { type: 'object', properties: { result: { type: 'string' } } },
+    });
+  });
+
+  it('returns empty object for empty config', () => {
+    const result = translateSdkConfig({});
+    expect(result).toEqual({});
+  });
+
+  it('skips undefined fields', () => {
+    const result = translateSdkConfig({ maxTurns: 5 });
+    expect(Object.keys(result)).toEqual(['maxTurns']);
+    expect(result.maxTurns).toBe(5);
+  });
+
+  it('handles persistSession: false (falsy but valid)', () => {
+    const result = translateSdkConfig({ persistSession: false });
+    expect(result.persistSession).toBe(false);
+  });
+
+  it('handles maxTurns: 0 (zero is valid)', () => {
+    const result = translateSdkConfig({ maxTurns: 0 });
+    expect(result.maxTurns).toBe(0);
+  });
+
+  it('handles maxBudgetUsd: 0 (zero is valid)', () => {
+    const result = translateSdkConfig({ maxBudgetUsd: 0 });
+    expect(result.maxBudgetUsd).toBe(0);
+  });
+
+  it('handles tools as preset object', () => {
+    const result = translateSdkConfig({ tools: { type: 'preset', preset: 'claude_code' } });
+    expect(result.tools).toEqual({ type: 'preset', preset: 'claude_code' });
+  });
+
+  it('handles systemPrompt as preset object', () => {
+    const result = translateSdkConfig({
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Extra instructions' },
+    });
+    expect(result.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+      append: 'Extra instructions',
     });
   });
 });
