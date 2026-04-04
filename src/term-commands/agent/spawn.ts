@@ -6,6 +6,15 @@
 import type { Command } from 'commander';
 import { type SpawnOptions, handleWorkerSpawn } from '../agents.js';
 
+/** Commander option parser that rejects NaN for numeric flags. */
+function parseNumericFlag(flagName: string): (value: string) => number {
+  return (value: string) => {
+    const n = Number(value);
+    if (Number.isNaN(n)) throw new Error(`${flagName} must be a number, got: ${value}`);
+    return n;
+  };
+}
+
 export function registerAgentSpawn(parent: Command): void {
   parent
     .command('spawn <name>')
@@ -26,8 +35,8 @@ export function registerAgentSpawn(parent: Command): void {
     .option('--window <target>', 'Tmux window to split into (e.g., genie:3)')
     .option('--no-auto-resume', 'Disable auto-resume on pane death')
     .option('--prompt <prompt>', 'Initial prompt (first user message)')
-    .option('--sdk-max-turns <n>', 'SDK: max conversation turns', Number)
-    .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', Number)
+    .option('--sdk-max-turns <n>', 'SDK: max conversation turns', parseNumericFlag('--sdk-max-turns'))
+    .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', parseNumericFlag('--sdk-max-budget'))
     .option('--sdk-stream', 'SDK: enable streaming output (shortcut for --stream)')
     .option('--sdk-effort <level>', 'SDK: reasoning effort level (low, medium, high, max)')
     .action(async (name: string, options: SpawnOptions) => {

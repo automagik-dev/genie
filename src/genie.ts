@@ -95,6 +95,15 @@ try {
   // Not in a git repo — that's fine
 }
 
+/** Commander option parser that rejects NaN for numeric flags. */
+function parseNumericFlag(flagName: string): (value: string) => number {
+  return (value: string) => {
+    const n = Number(value);
+    if (Number.isNaN(n)) throw new Error(`${flagName} must be a number, got: ${value}`);
+    return n;
+  };
+}
+
 const program = new Command();
 
 program.name('genie').description('Genie CLI - AI-assisted development').version(VERSION);
@@ -280,8 +289,8 @@ program
   .option('--no-auto-resume', 'Disable auto-resume on pane death')
   .option('--stream', 'Stream SDK messages to stdout in real-time (claude-sdk provider)')
   .option('--stream-format <format>', 'Streaming output format: text, json, ndjson (default: text)', 'text')
-  .option('--sdk-max-turns <n>', 'SDK: max conversation turns', Number)
-  .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', Number)
+  .option('--sdk-max-turns <n>', 'SDK: max conversation turns', parseNumericFlag('--sdk-max-turns'))
+  .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', parseNumericFlag('--sdk-max-budget'))
   .option('--sdk-stream', 'SDK: enable streaming output (shortcut for --stream)')
   .option('--sdk-effort <level>', 'SDK: reasoning effort level (low, medium, high, max)')
   .addHelpText(

@@ -478,6 +478,13 @@ export function buildSdkConfig(options: SdkDirOptions): SdkDirectoryConfig | und
   return Object.keys(config).length > 0 ? config : undefined;
 }
 
+/** Parse a string to a number, throwing if NaN. */
+function toSafeNumber(value: string, flagName: string): number {
+  const n = Number(value);
+  if (Number.isNaN(n)) throw new Error(`${flagName} must be a number, got: ${value}`);
+  return n;
+}
+
 /** Apply scalar (string/number) SDK options to the config. */
 function applyScalarSdkOptions(config: SdkDirectoryConfig, options: SdkDirOptions): void {
   if (options.sdkPermissionMode !== undefined) {
@@ -486,8 +493,8 @@ function applyScalarSdkOptions(config: SdkDirectoryConfig, options: SdkDirOption
   if (options.sdkTools !== undefined) config.tools = splitComma(options.sdkTools);
   if (options.sdkAllowedTools !== undefined) config.allowedTools = splitComma(options.sdkAllowedTools);
   if (options.sdkDisallowedTools !== undefined) config.disallowedTools = splitComma(options.sdkDisallowedTools);
-  if (options.sdkMaxTurns !== undefined) config.maxTurns = Number(options.sdkMaxTurns);
-  if (options.sdkMaxBudget !== undefined) config.maxBudgetUsd = Number(options.sdkMaxBudget);
+  if (options.sdkMaxTurns !== undefined) config.maxTurns = toSafeNumber(options.sdkMaxTurns, '--sdk-max-turns');
+  if (options.sdkMaxBudget !== undefined) config.maxBudgetUsd = toSafeNumber(options.sdkMaxBudget, '--sdk-max-budget');
   if (options.sdkEffort !== undefined) config.effort = options.sdkEffort as SdkDirectoryConfig['effort'];
   if (options.sdkThinking !== undefined) config.thinking = parseThinkingConfig(options.sdkThinking);
   if (options.sdkBetas !== undefined) config.betas = splitComma(options.sdkBetas) as SdkBeta[];
@@ -554,7 +561,7 @@ function parseThinkingConfig(value: string): SdkThinkingConfig {
   if (value === 'disabled') return { type: 'disabled' };
   if (value === 'enabled') return { type: 'enabled' };
   if (value.startsWith('enabled:')) {
-    const budget = Number(value.slice('enabled:'.length));
+    const budget = toSafeNumber(value.slice('enabled:'.length), '--sdk-thinking budgetTokens');
     return { type: 'enabled', budgetTokens: budget };
   }
   throw new Error(`Invalid --sdk-thinking value: "${value}". Expected adaptive|disabled|enabled[:budgetTokens].`);
