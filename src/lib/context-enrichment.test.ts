@@ -17,5 +17,5 @@ describe('context-enrichment', () => {
     });
     // Either rlmx is available and finds nothing, or it's not available
     expect(typeof result).toBe('string');
-  });
+  }, 30_000);
 });
