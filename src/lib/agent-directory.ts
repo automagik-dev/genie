@@ -9,6 +9,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUILTIN_COUNCIL_MEMBERS, BUILTIN_ROLES, type BuiltinAgent } from './builtin-agents.js';
+import { serializeSdkConfig, writeFrontmatter } from './frontmatter-writer.js';
 import type { SdkDirectoryConfig } from './sdk-directory-types.js';
 
 // ============================================================================
@@ -441,13 +442,11 @@ export function syncFrontmatterToDisk(
     if (updates.promptMode !== undefined) fmUpdates.promptMode = updates.promptMode;
     if (updates.provider !== undefined) fmUpdates.provider = updates.provider;
     if (updates.sdk !== undefined) {
-      const { serializeSdkConfig } = require('./frontmatter-writer.js');
       fmUpdates.sdk = serializeSdkConfig(updates.sdk);
     }
 
     if (Object.keys(fmUpdates).length === 0) return;
 
-    const { writeFrontmatter } = require('./frontmatter-writer.js');
     writeFrontmatter(agentsPath, fmUpdates);
   } catch {
     /* Best-effort — disk write failure should not break directory edit */
