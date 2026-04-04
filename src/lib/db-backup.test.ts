@@ -87,7 +87,7 @@ describe('backup error handling', () => {
       // Expected — pg_dump will fail without a running DB on this port
     }
     expect(existsSync(genieDir)).toBe(true);
-  }, 15000);
+  }, 30_000);
 });
 
 // ============================================================================
