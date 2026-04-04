@@ -39,7 +39,7 @@ export type SdkThinkingConfig =
 export type SdkMcpServerConfig = SdkMcpStdioServerConfig | SdkMcpSSEServerConfig | SdkMcpHttpServerConfig;
 
 /** MCP server using stdio transport (command + args). */
-export interface SdkMcpStdioServerConfig {
+interface SdkMcpStdioServerConfig {
   /** Transport type. Defaults to 'stdio' when omitted. */
   type?: 'stdio';
   /** Command to launch the MCP server process. */
@@ -51,7 +51,7 @@ export interface SdkMcpStdioServerConfig {
 }
 
 /** MCP server using Server-Sent Events transport. */
-export interface SdkMcpSSEServerConfig {
+interface SdkMcpSSEServerConfig {
   /** Transport type — must be 'sse'. */
   type: 'sse';
   /** URL of the SSE endpoint. */
@@ -61,7 +61,7 @@ export interface SdkMcpSSEServerConfig {
 }
 
 /** MCP server using HTTP Streamable transport. */
-export interface SdkMcpHttpServerConfig {
+interface SdkMcpHttpServerConfig {
   /** Transport type — must be 'http'. */
   type: 'http';
   /** URL of the HTTP endpoint. */
