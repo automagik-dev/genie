@@ -113,12 +113,21 @@ function isActionableEvent(eventType: string): boolean {
   return ACTIONABLE_EVENTS.has(eventType) || eventType.startsWith('request.');
 }
 
-/** Resolve which teams should receive an event. */
+/** Resolve which teams should receive an event. Scoped to agent membership when agentId is present. */
 async function resolveTargetTeams(event: ParsedEvent): Promise<string[]> {
   if (!isActionableEvent(event.eventType)) return [];
 
   const teams = await listTeams();
-  return teams.filter((t) => t.status === 'in_progress').map((t) => t.name);
+  const active = teams.filter((t) => t.status === 'in_progress');
+
+  // If the event has an agentId, only route to teams where that agent is a member or leader
+  if (event.agentId) {
+    const aid = event.agentId;
+    const scoped = active.filter((t) => t.members.includes(aid) || t.leader === aid);
+    return scoped.map((t) => t.name);
+  }
+
+  return active.map((t) => t.name);
 }
 
 /** Write to PG mailbox with trace_id, falling back to legacy send. */
