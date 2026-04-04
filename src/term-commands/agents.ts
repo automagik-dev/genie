@@ -924,17 +924,7 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   return paneId;
 }
 
-async function resolveSdkPermissions(
-  permissionsConfig: directory.DirectoryEntry['permissions'] | undefined,
-): Promise<{ allow: string[]; bashAllowPatterns?: string[] }> {
-  const sdkPerms = await import('../lib/providers/claude-sdk-permissions.js');
-  if (!permissionsConfig) return sdkPerms.PRESET_FULL;
-  if (permissionsConfig.preset) return sdkPerms.resolvePreset(permissionsConfig.preset);
-  return {
-    allow: permissionsConfig.allow ?? ['*'],
-    bashAllowPatterns: permissionsConfig.bashAllowPatterns,
-  };
-}
+// resolveSdkPermissions removed — use resolvePermissionConfig from claude-sdk-permissions
 
 async function runSdkQuery(
   ctx: SpawnCtx,
@@ -1002,7 +992,8 @@ async function launchSdkSpawn(
   console.log(`  Provider: claude-sdk | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
   console.log('');
 
-  const permConfig = await resolveSdkPermissions(permissionsConfig);
+  const { resolvePermissionConfig } = await import('../lib/providers/claude-sdk-permissions.js');
+  const permConfig = resolvePermissionConfig(permissionsConfig);
   await runSdkQuery(ctx, permConfig);
 
   if (ctx.executorId) {

@@ -51,6 +51,31 @@ export function resolvePreset(name: string): PermissionConfig {
   return preset;
 }
 
+/**
+ * Resolve a PermissionConfig from an agent entry's optional permissions field.
+ *
+ * Resolution order:
+ * 1. If a preset name is specified, resolve it.
+ * 2. If an explicit allow list is given, use it (with optional bashAllowPatterns).
+ * 3. Fall back to PRESET_FULL (allow everything).
+ */
+export function resolvePermissionConfig(permissions?: {
+  preset?: string;
+  allow?: string[];
+  bashAllowPatterns?: string[];
+}): PermissionConfig {
+  if (permissions?.preset) {
+    return resolvePreset(permissions.preset);
+  }
+  if (permissions?.allow) {
+    return {
+      allow: permissions.allow,
+      bashAllowPatterns: permissions.bashAllowPatterns,
+    };
+  }
+  return PRESET_FULL;
+}
+
 // ============================================================================
 // Bash Pattern Matching
 // ============================================================================

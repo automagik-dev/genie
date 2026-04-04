@@ -130,6 +130,7 @@ describe('ClaudeSdkOmniExecutor', () => {
       };
 
       await executor.deliver(session, message);
+      await executor.waitForDeliveries(session.id);
 
       // Verify NATS publish was called with the reply
       expect(natsPublish).toHaveBeenCalledTimes(1);
@@ -139,6 +140,28 @@ describe('ClaudeSdkOmniExecutor', () => {
       expect(parsed.content).toBe('response text');
       expect(parsed.agent).toBe('test-agent');
       expect(parsed.chat_id).toBe('chat-1');
+    });
+
+    it('returns immediately without awaiting the query', async () => {
+      const natsPublish = mock();
+      executor.setNatsPublish(natsPublish);
+
+      const session = await executor.spawn('test-agent', 'chat-imm', {});
+      const message = {
+        content: 'Hello',
+        sender: 'user',
+        instanceId: 'inst-1',
+        chatId: 'chat-imm',
+        agent: 'test-agent',
+      };
+
+      // deliver() should resolve before the query completes
+      await executor.deliver(session, message);
+      // At this point, the async queue may not have published yet — this proves
+      // deliver() does not block on the SDK query.
+      // After waiting, the publish should be done.
+      await executor.waitForDeliveries(session.id);
+      expect(natsPublish).toHaveBeenCalledTimes(1);
     });
 
     it('throws if session not found', async () => {
@@ -170,6 +193,7 @@ describe('ClaudeSdkOmniExecutor', () => {
 
       // Should not throw — reply is silently dropped when no NATS
       await executor.deliver(session, message);
+      await executor.waitForDeliveries(session.id);
     });
 
     it('updates lastActivityAt after delivery', async () => {
@@ -190,7 +214,90 @@ describe('ClaudeSdkOmniExecutor', () => {
         agent: 'test-agent',
       });
 
+      await executor.waitForDeliveries(session.id);
       expect(session.lastActivityAt).toBeGreaterThanOrEqual(before);
+    });
+  });
+
+  describe('concurrent delivery', () => {
+    it('3 concurrent sessions process independently without blocking each other', async () => {
+      // Track the order of query starts and completions per session
+      const events: string[] = [];
+      const resolvers: Record<string, () => void> = {};
+
+      // Override the SDK mock to use per-session delays
+      const sdk = await import('@anthropic-ai/claude-agent-sdk');
+      (sdk.query as ReturnType<typeof mock>).mockImplementation(() => {
+        // Each call gets a unique ID based on call count
+        const callNum = events.length;
+        const sessionTag = `call-${callNum}`;
+        events.push(`start:${sessionTag}`);
+
+        const barrier = new Promise<void>((resolve) => {
+          resolvers[sessionTag] = resolve;
+        });
+
+        const gen = (async function* () {
+          await barrier;
+          events.push(`end:${sessionTag}`);
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: `reply-${sessionTag}` }] } };
+        })();
+
+        return Object.assign(gen, {
+          interrupt: mock(),
+          setPermissionMode: mock(),
+          setModel: mock(),
+          return: mock(async () => ({ value: undefined, done: true })),
+          throw: mock(async () => ({ value: undefined, done: true })),
+        });
+      });
+
+      const natsPublish = mock();
+      executor.setNatsPublish(natsPublish);
+
+      // Spawn 3 independent sessions
+      const s1 = await executor.spawn('agent-a', 'chat-1', {});
+      const s2 = await executor.spawn('agent-b', 'chat-2', {});
+      const s3 = await executor.spawn('agent-c', 'chat-3', {});
+
+      const mkMsg = (chatId: string) => ({
+        content: `msg for ${chatId}`,
+        sender: 'user',
+        instanceId: 'inst-1',
+        chatId,
+        agent: 'test-agent',
+      });
+
+      // Fire all 3 deliveries — deliver() should return immediately for each
+      await executor.deliver(s1, mkMsg('chat-1'));
+      await executor.deliver(s2, mkMsg('chat-2'));
+      await executor.deliver(s3, mkMsg('chat-3'));
+
+      // All 3 queries should have started (events captured synchronously on enqueue)
+      // Give a tick for the async generators to begin
+      await new Promise((r) => setTimeout(r, 10));
+      expect(events.filter((e) => e.startsWith('start:'))).toHaveLength(3);
+
+      // Complete session 3 first (out of order) to prove independence
+      resolvers['call-2']!();
+      await executor.waitForDeliveries(s3.id);
+
+      // Session 3 done, sessions 1 and 2 still pending
+      expect(events.filter((e) => e.startsWith('end:'))).toHaveLength(1);
+
+      // Complete session 1
+      resolvers['call-0']!();
+      await executor.waitForDeliveries(s1.id);
+
+      // Complete session 2
+      resolvers['call-1']!();
+      await executor.waitForDeliveries(s2.id);
+
+      // All 3 completed
+      expect(events.filter((e) => e.startsWith('end:'))).toHaveLength(3);
+
+      // All 3 NATS publishes happened
+      expect(natsPublish).toHaveBeenCalledTimes(3);
     });
   });
 
