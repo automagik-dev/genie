@@ -4,6 +4,14 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 const mockRecordAuditEvent = mock(() => Promise.resolve());
 mock.module('../../audit.js', () => ({
   recordAuditEvent: mockRecordAuditEvent,
+  getActor: () => 'test-actor',
+  queryAuditEvents: mock(() => Promise.resolve([])),
+  queryErrorPatterns: mock(() => Promise.resolve([])),
+  queryCostBreakdown: mock(() => Promise.resolve([])),
+  queryToolUsage: mock(() => Promise.resolve([])),
+  queryTimeline: mock(() => Promise.resolve([])),
+  querySummary: mock(() => Promise.resolve({ total: 0, byType: {}, byAgent: {} })),
+  generateTraceId: () => 'trace-test-id',
 }));
 
 const { getEventType, buildEventDetails, routeSdkMessage } = await import('../claude-sdk-events.js');
