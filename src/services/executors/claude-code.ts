@@ -6,7 +6,7 @@
  * injects env vars for NATS reply routing.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -19,9 +19,11 @@ import type { IExecutor, OmniMessage, OmniSession } from '../executor.js';
 // Constants
 // ============================================================================
 
-/** Sanitize a string for use as a tmux window name. */
+/** Sanitize a string for use as a tmux window name (collision-proof via hash suffix). */
 function sanitizeWindowName(chatId: string): string {
-  return chatId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'chat';
+  const prefix = chatId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 30) || 'chat';
+  const hash = createHash('sha256').update(chatId).digest('hex').slice(0, 8);
+  return `${prefix}-${hash}`;
 }
 
 /** Path to the omni-reply script installed at spawn time. */
@@ -206,12 +208,21 @@ fi
 
 [ -z "$MSG" ] && exit 0
 
-# Build JSON payload
-PAYLOAD=$(printf '{"content":"%s","agent":"%s","chat_id":"%s","timestamp":"%s"}' \\
-  "$(echo "$MSG" | sed 's/"/\\\\"/g' | tr '\\n' ' ')" \\
-  "\${GENIE_OMNI_AGENT:-unknown}" \\
-  "\${GENIE_OMNI_CHAT_ID:-unknown}" \\
-  "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)")
+# Build JSON payload (use jq for proper escaping of all metacharacters)
+AGENT="\${GENIE_OMNI_AGENT:-unknown}"
+CHAT="\${GENIE_OMNI_CHAT_ID:-unknown}"
+TS="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
+
+if command -v jq &>/dev/null; then
+  PAYLOAD=$(jq -nc --arg c "$MSG" --arg a "$AGENT" --arg ch "$CHAT" --arg ts "$TS" \\
+    '{"content":$c,"agent":$a,"chat_id":$ch,"timestamp":$ts}')
+else
+  # Fallback: use node/bun to JSON-stringify safely
+  PAYLOAD=$(node -e "process.stdout.write(JSON.stringify({content:process.argv[1],agent:process.argv[2],chat_id:process.argv[3],timestamp:process.argv[4]}))" \\
+    "$MSG" "$AGENT" "$CHAT" "$TS" 2>/dev/null) || \\
+  PAYLOAD=$(bun -e "process.stdout.write(JSON.stringify({content:process.argv[1],agent:process.argv[2],chat_id:process.argv[3],timestamp:process.argv[4]}))" \\
+    "$MSG" "$AGENT" "$CHAT" "$TS")
+fi
 
 # Publish to NATS (try nats CLI first, fall back to nc)
 if command -v nats &>/dev/null; then
