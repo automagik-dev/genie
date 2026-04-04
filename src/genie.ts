@@ -278,6 +278,8 @@ program
   .option('--new-window', 'Create a new tmux window instead of splitting')
   .option('--window <target>', 'Tmux window to split into (e.g., genie:3)')
   .option('--no-auto-resume', 'Disable auto-resume on pane death')
+  .option('--stream', 'Stream SDK messages to stdout in real-time (claude-sdk provider)')
+  .option('--stream-format <format>', 'Streaming output format: text, json, ndjson (default: text)', 'text')
   .addHelpText(
     'after',
     `
