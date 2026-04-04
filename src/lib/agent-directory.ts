@@ -261,6 +261,7 @@ export async function get(name: string, _options?: ScopeOptions): Promise<Direct
 /**
  * Edit an existing agent entry.
  * Only provided fields are updated.
+ * After updating PG, syncs frontmatter-relevant fields back to AGENTS.md on disk.
  */
 export async function edit(
   name: string,
@@ -321,6 +322,9 @@ export async function edit(
   } catch {
     /* PG unavailable — in-memory update still applied */
   }
+
+  // Sync frontmatter-relevant fields back to AGENTS.md on disk
+  syncFrontmatterToDisk(updated, updates);
 
   return updated;
 }
@@ -410,4 +414,46 @@ function parseMetadata(raw: unknown): Record<string, unknown> {
     }
   }
   return {};
+}
+
+/** Frontmatter-relevant keys that should be synced back to AGENTS.md on edit. */
+const FRONTMATTER_KEYS = new Set(['name', 'description', 'model', 'color', 'promptMode', 'provider', 'sdk']);
+
+/**
+ * Sync frontmatter-relevant fields back to the agent's AGENTS.md file.
+ * Only writes if the agent has a dir with AGENTS.md and the edit touched
+ * frontmatter-relevant fields. Best-effort — never throws.
+ */
+function syncFrontmatterToDisk(
+  entry: DirectoryEntry,
+  updates: Partial<Pick<DirectoryEntry, 'dir' | 'model' | 'description' | 'color' | 'promptMode' | 'provider' | 'sdk'>>,
+): void {
+  try {
+    if (!entry.dir) return;
+    const agentsPath = join(entry.dir, 'AGENTS.md');
+    if (!existsSync(agentsPath)) return;
+
+    // Only write if the edit touched frontmatter-relevant fields
+    const touchedFrontmatter = Object.keys(updates).some((k) => FRONTMATTER_KEYS.has(k));
+    if (!touchedFrontmatter) return;
+
+    // Build the frontmatter update object from relevant fields
+    const fmUpdates: Record<string, unknown> = {};
+    if (updates.model !== undefined) fmUpdates.model = updates.model;
+    if (updates.description !== undefined) fmUpdates.description = updates.description;
+    if (updates.color !== undefined) fmUpdates.color = updates.color;
+    if (updates.promptMode !== undefined) fmUpdates.promptMode = updates.promptMode;
+    if (updates.provider !== undefined) fmUpdates.provider = updates.provider;
+    if (updates.sdk !== undefined) {
+      const { serializeSdkConfig } = require('./frontmatter-writer.js');
+      fmUpdates.sdk = serializeSdkConfig(updates.sdk);
+    }
+
+    if (Object.keys(fmUpdates).length === 0) return;
+
+    const { writeFrontmatter } = require('./frontmatter-writer.js');
+    writeFrontmatter(agentsPath, fmUpdates);
+  } catch {
+    /* Best-effort — disk write failure should not break directory edit */
+  }
 }
