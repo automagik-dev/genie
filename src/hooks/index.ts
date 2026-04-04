@@ -21,8 +21,11 @@
  *   Fire-and-forget — all handlers run, output is ignored.
  */
 
+import { auditContext } from './handlers/audit-context.js';
 import { autoSpawn } from './handlers/auto-spawn.js';
+import { brainInject } from './handlers/brain-inject.js';
 import { branchGuard } from './handlers/branch-guard.js';
+import { freshness } from './handlers/freshness.js';
 import { identityInject } from './handlers/identity-inject.js';
 import { orchestrationGuard } from './handlers/orchestration-guard.js';
 import {
@@ -52,6 +55,27 @@ const handlers: Handler[] = [
     matcher: /^Bash$/,
     priority: 2,
     fn: orchestrationGuard,
+  },
+  {
+    name: 'brain-inject',
+    event: 'PreToolUse',
+    matcher: /.*/,
+    priority: 5,
+    fn: brainInject,
+  },
+  {
+    name: 'freshness',
+    event: 'PreToolUse',
+    matcher: /^Read$/,
+    priority: 8,
+    fn: freshness,
+  },
+  {
+    name: 'audit-context',
+    event: 'PreToolUse',
+    matcher: /^(Write|Edit)$/,
+    priority: 8,
+    fn: auditContext,
   },
   {
     name: 'identity-inject',
