@@ -78,6 +78,31 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     test('returns null for unknown name', async () => {
       expect(await directory.resolve('nonexistent-xyz')).toBeNull();
     });
+
+    test('resolve returns sdk config from PG metadata', async () => {
+      const sql = await getConnection();
+      const sdkMeta = {
+        sdk: {
+          permissionMode: 'dontAsk',
+          maxTurns: 25,
+          betas: ['interleaved-thinking'],
+          systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Be concise.' },
+        },
+      };
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:sdk-resolve', 'sdk-resolve', 'sdk-resolve', now(), ${sql.json(sdkMeta)})`;
+
+      const resolved = await directory.resolve('sdk-resolve');
+      expect(resolved).not.toBeNull();
+      expect(resolved!.entry.sdk).toBeDefined();
+      expect(resolved!.entry.sdk!.permissionMode).toBe('dontAsk');
+      expect(resolved!.entry.sdk!.maxTurns).toBe(25);
+      expect(resolved!.entry.sdk!.betas).toEqual(['interleaved-thinking']);
+      expect(resolved!.entry.sdk!.systemPrompt).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+        append: 'Be concise.',
+      });
+    });
   });
 
   // ============================================================================
@@ -171,6 +196,39 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     test('rm returns false for non-existent', async () => {
       expect(await directory.rm('nonexistent')).toBe(false);
     });
+
+    test('add with sdk config persists to PG metadata', async () => {
+      const sdkConfig = {
+        permissionMode: 'bypassPermissions' as const,
+        allowDangerouslySkipPermissions: true,
+        maxTurns: 10,
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {
+          myServer: { command: 'node', args: ['server.js'] },
+        },
+      };
+
+      await directory.add({
+        name: 'sdk-add-agent',
+        dir: agentDir,
+        promptMode: 'append',
+        sdk: sdkConfig,
+      });
+
+      const sql = await getConnection();
+      const rows = await sql`SELECT metadata FROM agents WHERE id = 'dir:sdk-add-agent'`;
+      expect(rows.length).toBe(1);
+      const metadata = rows[0].metadata as Record<string, unknown>;
+      expect(metadata.sdk).toBeDefined();
+      const sdk = metadata.sdk as Record<string, unknown>;
+      expect(sdk.permissionMode).toBe('bypassPermissions');
+      expect(sdk.allowDangerouslySkipPermissions).toBe(true);
+      expect(sdk.maxTurns).toBe(10);
+      expect(sdk.model).toBe('claude-sonnet-4-20250514');
+      expect(sdk.mcpServers).toEqual({
+        myServer: { command: 'node', args: ['server.js'] },
+      });
+    });
   });
 
   // ============================================================================
@@ -249,6 +307,41 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(entry).not.toBeNull();
       expect(entry!.model).toBe('opus');
       expect(entry!.provider).toBe('codex');
+    });
+
+    test('edit with sdk config round-trips through PG', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:sdk-edit', 'sdk-edit', 'sdk-edit', now(), '{}')`;
+
+      const sdkConfig = {
+        permissionMode: 'acceptEdits' as const,
+        maxBudgetUsd: 5.0,
+        effort: 'high' as const,
+        allowedTools: ['Read', 'Write', 'Bash'],
+        sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
+      };
+
+      await directory.edit('sdk-edit', { sdk: sdkConfig });
+
+      // Read directly from PG to verify persistence
+      const rows = await sql`SELECT metadata FROM agents WHERE id = 'dir:sdk-edit'`;
+      expect(rows.length).toBe(1);
+      const metadata = rows[0].metadata as Record<string, unknown>;
+      expect(metadata.sdk).toBeDefined();
+      const sdk = metadata.sdk as Record<string, unknown>;
+      expect(sdk.permissionMode).toBe('acceptEdits');
+      expect(sdk.maxBudgetUsd).toBe(5.0);
+      expect(sdk.effort).toBe('high');
+      expect(sdk.allowedTools).toEqual(['Read', 'Write', 'Bash']);
+      expect(sdk.sandbox).toEqual({ enabled: true, autoAllowBashIfSandboxed: true });
+
+      // Verify round-trip via get()
+      const entry = await directory.get('sdk-edit');
+      expect(entry).not.toBeNull();
+      expect(entry!.sdk).toBeDefined();
+      expect(entry!.sdk!.permissionMode).toBe('acceptEdits');
+      expect(entry!.sdk!.maxBudgetUsd).toBe(5.0);
+      expect(entry!.sdk!.effort).toBe('high');
     });
   });
 

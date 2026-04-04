@@ -9,6 +9,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUILTIN_COUNCIL_MEMBERS, BUILTIN_ROLES, type BuiltinAgent } from './builtin-agents.js';
+import type { SdkDirectoryConfig } from './sdk-directory-types.js';
 
 // ============================================================================
 // Types
@@ -45,6 +46,8 @@ export interface DirectoryEntry {
     allow?: string[];
     bashAllowPatterns?: string[];
   };
+  /** Claude Agent SDK configuration. Persisted as JSONB in PG. */
+  sdk?: SdkDirectoryConfig;
 }
 
 export type DirectoryScope = 'project' | 'global' | 'built-in' | 'archived';
@@ -274,6 +277,7 @@ export async function edit(
       | 'color'
       | 'provider'
       | 'permissions'
+      | 'sdk'
     >
   >,
   _options?: ScopeOptions,
@@ -374,6 +378,7 @@ function roleToEntry(role: string, team?: string, metadata?: Record<string, unkn
     color: metadata?.color as string | undefined,
     provider: metadata?.provider as string | undefined,
     permissions: metadata?.permissions as DirectoryEntry['permissions'],
+    sdk: metadata?.sdk as SdkDirectoryConfig | undefined,
     ...(metadata?.repo ? { repo: metadata.repo as string } : team ? { repo: team } : {}),
   };
 }
@@ -389,6 +394,7 @@ function buildMetadata(entry: DirectoryEntry): Record<string, unknown> {
   if (entry.color) meta.color = entry.color;
   if (entry.provider) meta.provider = entry.provider;
   if (entry.permissions) meta.permissions = entry.permissions;
+  if (entry.sdk) meta.sdk = entry.sdk;
   return meta;
 }
 
