@@ -6,6 +6,7 @@
  *   genie dir rm <name>    — Remove an agent
  *   genie dir ls [<name>]  — List all or show single entry
  *   genie dir edit <name>  — Update entry fields
+ *   genie dir export <name> — Print full AGENTS.md frontmatter from PG state
  *
  * Agent Namespace — Agent lifecycle commands.
  *
@@ -136,6 +137,21 @@ export function registerDirNamespace(program: Command): void {
         process.exit(1);
       }
     });
+
+  // dir export <name>
+  dir
+    .command('export <name>')
+    .description('Print full AGENTS.md frontmatter for an agent from PG state')
+    .option('--stdout', 'Print to stdout as raw YAML (default)')
+    .action(async (name: string) => {
+      try {
+        await handleDirExport(name);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
 }
 
 interface DirAddOptions extends SdkDirOptions {
@@ -236,6 +252,37 @@ async function handleDirSync(): Promise<void> {
   console.log(`Syncing agents from ${ws.root}/agents/...`);
   const result = await syncAgentDirectory(ws.root);
   printSyncResult(result);
+}
+
+async function handleDirExport(name: string): Promise<void> {
+  const entry = await directory.get(name);
+  if (!entry) {
+    console.error(`Agent "${name}" not found in directory.`);
+    process.exit(1);
+  }
+
+  // Build frontmatter object from directory entry
+  const fm: Record<string, unknown> = {};
+  if (entry.name) fm.name = entry.name;
+  if (entry.description) fm.description = entry.description;
+  if (entry.model) fm.model = entry.model;
+  if (entry.color) fm.color = entry.color;
+  if (entry.promptMode) fm.promptMode = entry.promptMode;
+  if (entry.provider) fm.provider = entry.provider;
+  if (entry.sdk && Object.keys(entry.sdk).length > 0) {
+    const { serializeSdkConfig } = await import('../lib/frontmatter-writer.js');
+    fm.sdk = serializeSdkConfig(entry.sdk);
+  }
+
+  const yamlLib = await import('js-yaml');
+  const yamlStr = yamlLib.dump(fm, {
+    lineWidth: -1,
+    noRefs: true,
+    sortKeys: false,
+    quotingType: '"',
+  });
+
+  console.log(`---\n${yamlStr}---`);
 }
 
 // ============================================================================
