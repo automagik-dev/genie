@@ -20,7 +20,7 @@ import type { IExecutor, OmniMessage, OmniSession } from '../executor.js';
 // ============================================================================
 
 /** Sanitize a string for use as a tmux window name. Hash suffix prevents collisions. */
-function sanitizeWindowName(chatId: string): string {
+export function sanitizeWindowName(chatId: string): string {
   const hash = createHash('md5').update(chatId).digest('hex').slice(0, 12);
   const prefix = chatId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
   return `${prefix}-${hash}` || 'chat';
