@@ -62,14 +62,14 @@ export function translateSdkConfig(sdkConfig: SdkDirectoryConfig): Partial<Optio
 
   // Session & checkpointing
   if (sdkConfig.persistSession != null) opts.persistSession = sdkConfig.persistSession;
-  if (sdkConfig.enableFileCheckpointing) opts.enableFileCheckpointing = sdkConfig.enableFileCheckpointing;
+  if (sdkConfig.enableFileCheckpointing != null) opts.enableFileCheckpointing = sdkConfig.enableFileCheckpointing;
 
   // Output & streaming
   if (sdkConfig.outputFormat) opts.outputFormat = sdkConfig.outputFormat as Options['outputFormat'];
-  if (sdkConfig.includePartialMessages) opts.includePartialMessages = sdkConfig.includePartialMessages;
+  if (sdkConfig.includePartialMessages != null) opts.includePartialMessages = sdkConfig.includePartialMessages;
   if (sdkConfig.includeHookEvents != null) opts.includeHookEvents = sdkConfig.includeHookEvents;
-  if (sdkConfig.promptSuggestions) opts.promptSuggestions = sdkConfig.promptSuggestions;
-  if (sdkConfig.agentProgressSummaries) opts.agentProgressSummaries = sdkConfig.agentProgressSummaries;
+  if (sdkConfig.promptSuggestions != null) opts.promptSuggestions = sdkConfig.promptSuggestions;
+  if (sdkConfig.agentProgressSummaries != null) opts.agentProgressSummaries = sdkConfig.agentProgressSummaries;
 
   // System prompt
   if (sdkConfig.systemPrompt) opts.systemPrompt = sdkConfig.systemPrompt;
