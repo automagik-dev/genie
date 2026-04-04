@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, runSeed } from './pg-seed.js';
+import { isWSL2 } from './wsl2-detect.js';
 
 /**
  * Re-export Sql type for callers that need to annotate sql connection parameters.
@@ -327,9 +328,15 @@ function findPgserveBin(): string {
  * Avoids the self-referencing proxy deadlock that occurs when the
  * MultiTenantRouter Bun TCP proxy runs in the same event loop as
  * the daemon that also connects to it.
+ *
+ * On WSL2, uses an extended timeout (30s) due to slower I/O performance.
  */
 async function startPgserveOnPort(port: number): Promise<number> {
   mkdirSync(DATA_DIR, { recursive: true });
+
+  const isWsl = isWSL2();
+  const timeoutMs = isWsl ? 30000 : 15000;
+  const timeoutSec = timeoutMs / 1000;
 
   const child = spawn(
     findPgserveBin(),
@@ -352,7 +359,13 @@ async function startPgserveOnPort(port: number): Promise<number> {
   child.unref();
   pgserveChild = child;
 
-  const deadline = Date.now() + 15000;
+  const initialBootstrapMs = isWsl ? 2000 : 100;
+  await new Promise((r) => setTimeout(r, initialBootstrapMs));
+
+  const deadline = Date.now() + timeoutMs;
+  let retryDelayMs = 100;
+  const maxRetryDelayMs = 1000;
+
   while (Date.now() < deadline) {
     if (await isPostgresHealthy(port)) {
       activePort = port;
@@ -361,7 +374,9 @@ async function startPgserveOnPort(port: number): Promise<number> {
       writeLockfile(port);
       return port;
     }
-    await new Promise((r) => setTimeout(r, 500));
+
+    await new Promise((r) => setTimeout(r, retryDelayMs));
+    retryDelayMs = Math.min(Math.floor(retryDelayMs * 1.5), maxRetryDelayMs);
   }
 
   try {
@@ -369,7 +384,9 @@ async function startPgserveOnPort(port: number): Promise<number> {
   } catch {
     /* dead */
   }
-  throw new Error(`pgserve failed to start on port ${port} (timeout after 15s)`);
+
+  process.env.GENIE_PG_AVAILABLE = 'false';
+  throw new Error(`pgserve failed to start on port ${port} (timeout after ${timeoutSec}s)`);
 }
 
 /** Register process exit handler to clean up lockfile (once). */
