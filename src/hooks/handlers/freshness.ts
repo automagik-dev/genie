@@ -51,6 +51,44 @@ function getFileModAge(filePath: string): number | null {
   }
 }
 
+/** Build a warning result for a recently committed file. */
+function buildCommitWarning(
+  filePath: string,
+  commitInfo: { author: string; age: number; message: string },
+): HandlerResult {
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      additionalContext: `[freshness] Stale read warning: ${filePath} was modified ${commitInfo.age}s ago by "${commitInfo.author}" (${commitInfo.message}). Contents may have changed since you last read it.`,
+    },
+  };
+}
+
+/** Check for uncommitted changes and return a warning result if any exist. */
+function checkUncommittedChanges(filePath: string, cwd: string, diskAge: number): HandlerResult {
+  try {
+    const status = execSync(`git status --porcelain -- ${JSON.stringify(filePath)}`, {
+      encoding: 'utf-8',
+      timeout: 5000,
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    if (status.trim()) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          additionalContext: `[freshness] Stale read warning: ${filePath} has uncommitted changes (modified ${diskAge}s ago). Another agent may be editing this file concurrently.`,
+        },
+      };
+    }
+  } catch {
+    // git status failed — skip warning
+  }
+  return;
+}
+
 export async function freshness(payload: HookPayload): Promise<HandlerResult> {
   const input = payload.tool_input;
   if (!input) return;
@@ -63,46 +101,20 @@ export async function freshness(payload: HookPayload): Promise<HandlerResult> {
 
   // Check disk modification time first (catches uncommitted changes)
   const diskAge = getFileModAge(filePath);
-  if (diskAge !== null && diskAge < STALENESS_THRESHOLD_SECS) {
-    // File was recently modified on disk — check if by another agent via git
-    const commitInfo = getLastCommitInfo(filePath, cwd);
+  if (diskAge === null || diskAge >= STALENESS_THRESHOLD_SECS) return;
 
-    if (commitInfo && commitInfo.age < STALENESS_THRESHOLD_SECS) {
-      // Skip warning if the current agent made the change
-      if (currentAgent && commitInfo.author.includes(currentAgent)) return;
+  // File was recently modified on disk — check if by another agent via git
+  const commitInfo = getLastCommitInfo(filePath, cwd);
 
-      return {
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
-          additionalContext: `[freshness] Stale read warning: ${filePath} was modified ${commitInfo.age}s ago by "${commitInfo.author}" (${commitInfo.message}). Contents may have changed since you last read it.`,
-        },
-      };
-    }
+  if (commitInfo && commitInfo.age < STALENESS_THRESHOLD_SECS) {
+    // Skip warning if the current agent made the change
+    if (currentAgent && commitInfo.author.includes(currentAgent)) return;
+    return buildCommitWarning(filePath, commitInfo);
+  }
 
-    // No recent commit but file was modified on disk — could be another agent's uncommitted work
-    if (diskAge < STALENESS_THRESHOLD_SECS && currentAgent) {
-      // Check git status to see if the file has uncommitted changes
-      try {
-        const status = execSync(`git status --porcelain -- ${JSON.stringify(filePath)}`, {
-          encoding: 'utf-8',
-          timeout: 5000,
-          cwd,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-        if (status.trim()) {
-          return {
-            hookSpecificOutput: {
-              hookEventName: 'PreToolUse',
-              permissionDecision: 'allow',
-              additionalContext: `[freshness] Stale read warning: ${filePath} has uncommitted changes (modified ${diskAge}s ago). Another agent may be editing this file concurrently.`,
-            },
-          };
-        }
-      } catch {
-        // git status failed — skip warning
-      }
-    }
+  // No recent commit but file was modified on disk — could be another agent's uncommitted work
+  if (currentAgent) {
+    return checkUncommittedChanges(filePath, cwd, diskAge);
   }
 
   return;
