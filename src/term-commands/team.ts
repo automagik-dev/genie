@@ -366,7 +366,15 @@ async function spawnLeaderWithWish(
   // Spawn leader — use team-lead template for behavior, leaderAgent for identity
   const members = standardRoles.filter((r) => r !== 'team-lead').join(', ');
   const spawner = config.spawner || 'cli';
-  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Report completion to: ${spawner} (via genie send --to ${spawner}). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
+  let kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Report completion to: ${spawner} (via genie send --to ${spawner}). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
+
+  // Auto-inject recent broadcasts so the leader has immediate context (#1015)
+  const broadcasts = await getRecentBroadcasts(config.name);
+  if (broadcasts.length > 0) {
+    const broadcastLines = broadcasts.map((b) => `[${b.sender}] ${b.text}`).join('\n');
+    kickoffPrompt += `\n\nRecent team broadcasts for context:\n${broadcastLines}`;
+  }
+
   await handleWorkerSpawn('team-lead', {
     provider: 'claude',
     team: config.name,
@@ -394,6 +402,42 @@ async function autoDetectTeam(): Promise<string | null> {
   if (teams.length === 1) return teams[0].name;
 
   return null;
+}
+
+/**
+ * Fetch recent broadcast messages for a team (last N minutes).
+ * Best-effort — returns empty array if DB is unavailable or no broadcasts exist.
+ */
+async function getRecentBroadcasts(
+  teamName: string,
+  minutesAgo = 5,
+): Promise<Array<{ sender: string; text: string; timestamp: string }>> {
+  try {
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    const since = new Date(Date.now() - minutesAgo * 60 * 1000);
+
+    const rows = await sql`
+      SELECT m.sender_id, m.body, m.created_at
+      FROM messages m
+      JOIN conversations c ON c.id = m.conversation_id
+      WHERE c.linked_entity = 'team'
+        AND c.linked_entity_id = ${teamName}
+        AND c.parent_message_id IS NULL
+        AND m.created_at > ${since}
+      ORDER BY m.created_at ASC
+      LIMIT 20
+    `;
+
+    return rows.map((r: Record<string, unknown>) => ({
+      sender: String(r.sender_id),
+      text: String(r.body),
+      timestamp: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+    }));
+  } catch {
+    // Best-effort — DB may not be available, don't block spawn
+    return [];
+  }
 }
 
 /** Print members of a specific team. */
