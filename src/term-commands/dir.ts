@@ -22,12 +22,13 @@ import { printSyncResult, syncAgentDirectory } from '../lib/agent-sync.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { ALL_BUILTINS } from '../lib/builtin-agents.js';
 import { contractPath } from '../lib/genie-config.js';
+import type { SdkBeta, SdkDirectoryConfig, SdkThinkingConfig } from '../lib/sdk-directory-types.js';
 
 export function registerDirNamespace(program: Command): void {
   const dir = program.command('dir').description('Agent directory management');
 
   // dir add <name>
-  dir
+  const addCmd = dir
     .command('add <name>')
     .description('Register an agent in the directory')
     .requiredOption('--dir <path>', 'Agent folder (CWD + AGENTS.md)')
@@ -38,16 +39,17 @@ export function registerDirNamespace(program: Command): void {
     .option('--permission-preset <preset>', 'Permission preset: full, read-only, chat-only')
     .option('--allow <tools>', 'Comma-separated tool allow list (e.g. "Read,Glob,Grep,Bash")')
     .option('--bash-allow <patterns>', 'Comma-separated regex patterns for allowed bash commands')
-    .option('--global', 'Write to global directory instead of project')
-    .action(async (name: string, options: DirAddOptions) => {
-      try {
-        await handleDirAdd(name, options);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
-        process.exit(1);
-      }
-    });
+    .option('--global', 'Write to global directory instead of project');
+  registerSdkFlags(addCmd);
+  addCmd.action(async (name: string, options: DirAddOptions) => {
+    try {
+      await handleDirAdd(name, options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
+  });
 
   // dir rm <name>
   dir
@@ -95,7 +97,7 @@ export function registerDirNamespace(program: Command): void {
     });
 
   // dir edit <name>
-  dir
+  const editCmd = dir
     .command('edit <name>')
     .description('Update an agent directory entry')
     .option('--dir <path>', 'Agent folder (CWD + AGENTS.md)')
@@ -109,16 +111,17 @@ export function registerDirNamespace(program: Command): void {
     .option('--permission-preset <preset>', 'Permission preset: full, read-only, chat-only')
     .option('--allow <tools>', 'Comma-separated tool allow list (e.g. "Read,Glob,Grep,Bash")')
     .option('--bash-allow <patterns>', 'Comma-separated regex patterns for allowed bash commands')
-    .option('--global', 'Edit in global directory instead of project')
-    .action(async (name: string, options: EditOptions) => {
-      try {
-        await handleEdit(name, options);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
-        process.exit(1);
-      }
-    });
+    .option('--global', 'Edit in global directory instead of project');
+  registerSdkFlags(editCmd);
+  editCmd.action(async (name: string, options: EditOptions) => {
+    try {
+      await handleEdit(name, options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
+  });
 
   // dir sync
   dir
@@ -135,7 +138,7 @@ export function registerDirNamespace(program: Command): void {
     });
 }
 
-interface DirAddOptions {
+interface DirAddOptions extends SdkDirOptions {
   dir: string;
   repo?: string;
   promptMode: string;
@@ -152,6 +155,7 @@ async function handleDirAdd(name: string, options: DirAddOptions): Promise<void>
   const resolvedDir = resolvePath(options.dir);
   if (options.repo) validateRepoPath(options.repo);
   const permissions = buildPermissions(options.permissionPreset, options.allow, options.bashAllow);
+  const sdk = buildSdkConfig(options);
   const entry = await directory.add(
     {
       name,
@@ -161,6 +165,7 @@ async function handleDirAdd(name: string, options: DirAddOptions): Promise<void>
       model: options.model,
       roles: normalizeRoles(options.roles),
       ...(permissions && { permissions }),
+      ...(sdk && { sdk }),
     },
     { global: options.global },
   );
@@ -172,7 +177,7 @@ async function handleDirAdd(name: string, options: DirAddOptions): Promise<void>
   printEntry(entry);
 }
 
-interface EditOptions {
+interface EditOptions extends SdkDirOptions {
   dir?: string;
   repo?: string;
   promptMode?: string;
@@ -201,9 +206,12 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
   const permissions = buildPermissions(options.permissionPreset, options.allow, options.bashAllow);
   if (permissions) updates.permissions = permissions;
 
+  const sdk = buildSdkConfig(options);
+  if (sdk) updates.sdk = sdk;
+
   if (Object.keys(updates).length === 0) {
     console.error(
-      'No fields to update. Provide at least one of: --dir, --repo, --prompt-mode, --model, --provider, --color, --description, --roles, --permission-preset, --allow, --bash-allow',
+      'No fields to update. Provide at least one of: --dir, --repo, --prompt-mode, --model, --provider, --color, --description, --roles, --permission-preset, --allow, --bash-allow, --sdk-*',
     );
     process.exit(1);
   }
@@ -269,6 +277,9 @@ function printEntry(entry: directory.DirectoryEntry): void {
     if (entry.permissions.bashAllowPatterns?.length) {
       console.log(`  Bash Allow: ${entry.permissions.bashAllowPatterns.join(', ')}`);
     }
+  }
+  if (entry.sdk) {
+    printSdkConfig(entry.sdk);
   }
   console.log(`  Registered: ${entry.registeredAt}`);
 }
@@ -337,6 +348,264 @@ function listEntriesJson(entries: directory.ScopedDirectoryEntry[], includeBuilt
   console.log(JSON.stringify(result, null, 2));
 }
 
+// ============================================================================
+// SDK CLI Options
+// ============================================================================
+
+/** Options shape produced by the --sdk-* CLI flags. */
+interface SdkDirOptions {
+  sdkPermissionMode?: string;
+  sdkTools?: string;
+  sdkAllowedTools?: string;
+  sdkDisallowedTools?: string;
+  sdkMaxTurns?: string;
+  sdkMaxBudget?: string;
+  sdkEffort?: string;
+  sdkThinking?: string;
+  sdkPersistSession?: boolean;
+  sdkFileCheckpointing?: boolean;
+  sdkOutputFormat?: string;
+  sdkStreamPartial?: boolean;
+  sdkHookEvents?: boolean;
+  sdkPromptSuggestions?: boolean;
+  sdkProgressSummaries?: boolean;
+  sdkSandbox?: boolean;
+  sdkBetas?: string;
+  sdkSystemPrompt?: string;
+  sdkMcpServer?: string[];
+  sdkPlugin?: string[];
+  sdkAgent?: string;
+  sdkSubagent?: string[];
+}
+
+/** Register all --sdk-* option flags on a Commander command. */
+function registerSdkFlags(cmd: Command): void {
+  cmd
+    .option(
+      '--sdk-permission-mode <mode>',
+      'SDK permission mode: default|acceptEdits|bypassPermissions|plan|dontAsk|auto',
+    )
+    .option('--sdk-tools <list>', 'SDK tools: comma-separated tool names')
+    .option('--sdk-allowed-tools <list>', 'SDK auto-approved tools: comma-separated')
+    .option('--sdk-disallowed-tools <list>', 'SDK blacklisted tools: comma-separated')
+    .option('--sdk-max-turns <n>', 'SDK max conversation turns')
+    .option('--sdk-max-budget <usd>', 'SDK max budget in USD')
+    .option('--sdk-effort <level>', 'SDK effort: low|medium|high|max')
+    .option('--sdk-thinking <config>', 'SDK thinking: adaptive|disabled|enabled[:budgetTokens]')
+    .option('--sdk-persist-session', 'SDK: enable session persistence')
+    .option('--no-sdk-persist-session', 'SDK: disable session persistence')
+    .option('--sdk-file-checkpointing', 'SDK: enable file checkpointing')
+    .option('--sdk-output-format <path>', 'SDK: path to JSON schema file for output format')
+    .option('--sdk-stream-partial', 'SDK: include partial messages in stream')
+    .option('--sdk-hook-events', 'SDK: include hook events in stream')
+    .option('--sdk-prompt-suggestions', 'SDK: enable prompt suggestions')
+    .option('--sdk-progress-summaries', 'SDK: enable agent progress summaries')
+    .option('--sdk-sandbox', 'SDK: enable sandbox')
+    .option('--sdk-betas <list>', 'SDK beta flags: comma-separated')
+    .option('--sdk-system-prompt <string>', 'SDK system prompt text')
+    .option('--sdk-mcp-server <spec>', 'SDK MCP server: name:command:args (repeatable)', collectRepeat, [])
+    .option('--sdk-plugin <path>', 'SDK plugin path (repeatable)', collectRepeat, [])
+    .option('--sdk-agent <name>', 'SDK main agent name')
+    .option('--sdk-subagent <spec>', 'SDK subagent: name:json (repeatable)', collectRepeat, []);
+}
+
+/** Commander repeatable option collector. */
+function collectRepeat(value: string, previous: string[]): string[] {
+  return previous.concat([value]);
+}
+
+/**
+ * Parse all --sdk-* CLI options into an SdkDirectoryConfig object.
+ * Returns undefined if no SDK flags were provided.
+ */
+export function buildSdkConfig(options: SdkDirOptions): SdkDirectoryConfig | undefined {
+  const config: SdkDirectoryConfig = {};
+
+  applyScalarSdkOptions(config, options);
+  applyBooleanSdkOptions(config, options);
+  applyRepeatableSdkOptions(config, options);
+
+  return Object.keys(config).length > 0 ? config : undefined;
+}
+
+/** Apply scalar (string/number) SDK options to the config. */
+function applyScalarSdkOptions(config: SdkDirectoryConfig, options: SdkDirOptions): void {
+  if (options.sdkPermissionMode !== undefined) {
+    config.permissionMode = options.sdkPermissionMode as SdkDirectoryConfig['permissionMode'];
+  }
+  if (options.sdkTools !== undefined) config.tools = splitComma(options.sdkTools);
+  if (options.sdkAllowedTools !== undefined) config.allowedTools = splitComma(options.sdkAllowedTools);
+  if (options.sdkDisallowedTools !== undefined) config.disallowedTools = splitComma(options.sdkDisallowedTools);
+  if (options.sdkMaxTurns !== undefined) config.maxTurns = Number(options.sdkMaxTurns);
+  if (options.sdkMaxBudget !== undefined) config.maxBudgetUsd = Number(options.sdkMaxBudget);
+  if (options.sdkEffort !== undefined) config.effort = options.sdkEffort as SdkDirectoryConfig['effort'];
+  if (options.sdkThinking !== undefined) config.thinking = parseThinkingConfig(options.sdkThinking);
+  if (options.sdkBetas !== undefined) config.betas = splitComma(options.sdkBetas) as SdkBeta[];
+  if (options.sdkSystemPrompt !== undefined) config.systemPrompt = options.sdkSystemPrompt;
+  if (options.sdkAgent !== undefined) config.agent = options.sdkAgent;
+  if (options.sdkOutputFormat !== undefined) {
+    config.outputFormat = { type: 'json_schema', schema: { $ref: options.sdkOutputFormat } };
+  }
+}
+
+/** Apply boolean SDK options to the config. */
+function applyBooleanSdkOptions(config: SdkDirectoryConfig, options: SdkDirOptions): void {
+  if (options.sdkPersistSession !== undefined) config.persistSession = options.sdkPersistSession;
+  if (options.sdkFileCheckpointing === true) config.enableFileCheckpointing = true;
+  if (options.sdkStreamPartial === true) config.includePartialMessages = true;
+  if (options.sdkHookEvents === true) config.includeHookEvents = true;
+  if (options.sdkPromptSuggestions === true) config.promptSuggestions = true;
+  if (options.sdkProgressSummaries === true) config.agentProgressSummaries = true;
+  if (options.sdkSandbox === true) config.sandbox = { enabled: true };
+}
+
+/** Apply repeatable (array-based) SDK options to the config. */
+function applyRepeatableSdkOptions(config: SdkDirectoryConfig, options: SdkDirOptions): void {
+  if (options.sdkMcpServer && options.sdkMcpServer.length > 0) {
+    config.mcpServers = {};
+    for (const spec of options.sdkMcpServer) {
+      const parsed = parseMcpServer(spec);
+      config.mcpServers[parsed.name] = parsed.config;
+    }
+  }
+  if (options.sdkPlugin && options.sdkPlugin.length > 0) {
+    config.plugins = options.sdkPlugin.map((p) => ({ type: 'local' as const, path: p }));
+  }
+  if (options.sdkSubagent && options.sdkSubagent.length > 0) {
+    config.agents = parseSubagents(options.sdkSubagent);
+  }
+}
+
+/** Parse subagent specs into an agents record. */
+function parseSubagents(specs: string[]): Record<string, import('../lib/sdk-directory-types.js').SdkSubagentConfig> {
+  const agents: Record<string, import('../lib/sdk-directory-types.js').SdkSubagentConfig> = {};
+  for (const spec of specs) {
+    const colonIdx = spec.indexOf(':');
+    if (colonIdx === -1) {
+      throw new Error(`Invalid --sdk-subagent format: "${spec}". Expected "name:json".`);
+    }
+    const agentName = spec.slice(0, colonIdx);
+    const jsonStr = spec.slice(colonIdx + 1);
+    try {
+      agents[agentName] = JSON.parse(jsonStr);
+    } catch {
+      throw new Error(`Invalid JSON in --sdk-subagent "${agentName}": ${jsonStr}`);
+    }
+  }
+  return agents;
+}
+
+/**
+ * Parse a thinking config string into an SdkThinkingConfig object.
+ * Formats: "adaptive", "disabled", "enabled", "enabled:4000"
+ */
+function parseThinkingConfig(value: string): SdkThinkingConfig {
+  if (value === 'adaptive') return { type: 'adaptive' };
+  if (value === 'disabled') return { type: 'disabled' };
+  if (value === 'enabled') return { type: 'enabled' };
+  if (value.startsWith('enabled:')) {
+    const budget = Number(value.slice('enabled:'.length));
+    return { type: 'enabled', budgetTokens: budget };
+  }
+  throw new Error(`Invalid --sdk-thinking value: "${value}". Expected adaptive|disabled|enabled[:budgetTokens].`);
+}
+
+/**
+ * Parse an MCP server spec string: "name:command:arg1,arg2"
+ * Returns the server name and its stdio config.
+ */
+function parseMcpServer(spec: string): { name: string; config: { type: 'stdio'; command: string; args: string[] } } {
+  const firstColon = spec.indexOf(':');
+  if (firstColon === -1) {
+    throw new Error(`Invalid --sdk-mcp-server format: "${spec}". Expected "name:command:args".`);
+  }
+  const name = spec.slice(0, firstColon);
+  const rest = spec.slice(firstColon + 1);
+  const secondColon = rest.indexOf(':');
+  if (secondColon === -1) {
+    throw new Error(`Invalid --sdk-mcp-server format: "${spec}". Expected "name:command:args".`);
+  }
+  const command = rest.slice(0, secondColon);
+  const argsStr = rest.slice(secondColon + 1);
+  const args = argsStr
+    ? argsStr
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+  return { name, config: { type: 'stdio', command, args } };
+}
+
+/** Split a comma-separated string into a trimmed, non-empty array. */
+function splitComma(value: string): string[] {
+  return value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Print SDK configuration for display. */
+function printSdkConfig(sdk: SdkDirectoryConfig): void {
+  console.log('  SDK Config:');
+  const lines = collectSdkDisplayLines(sdk);
+  for (const line of lines) {
+    console.log(`    ${line}`);
+  }
+}
+
+/** Collect display lines for scalar/boolean SDK config fields. */
+function collectSdkDisplayLines(sdk: SdkDirectoryConfig): string[] {
+  const lines: string[] = [];
+  if (sdk.permissionMode) lines.push(`Permission Mode: ${sdk.permissionMode}`);
+  if (sdk.tools) {
+    lines.push(`Tools: ${Array.isArray(sdk.tools) ? sdk.tools.join(', ') : `preset:${sdk.tools.preset}`}`);
+  }
+  if (sdk.allowedTools?.length) lines.push(`Allowed Tools: ${sdk.allowedTools.join(', ')}`);
+  if (sdk.disallowedTools?.length) lines.push(`Disallowed Tools: ${sdk.disallowedTools.join(', ')}`);
+  if (sdk.maxTurns !== undefined) lines.push(`Max Turns: ${sdk.maxTurns}`);
+  if (sdk.maxBudgetUsd !== undefined) lines.push(`Max Budget: $${sdk.maxBudgetUsd.toFixed(2)}`);
+  if (sdk.effort) lines.push(`Effort: ${sdk.effort}`);
+  if (sdk.thinking) lines.push(`Thinking: ${formatThinking(sdk.thinking)}`);
+  if (sdk.agent) lines.push(`Agent: ${sdk.agent}`);
+  if (sdk.persistSession !== undefined) lines.push(`Persist Session: ${sdk.persistSession}`);
+  if (sdk.enableFileCheckpointing) lines.push('File Checkpointing: enabled');
+  if (sdk.outputFormat) lines.push(`Output Format: ${JSON.stringify(sdk.outputFormat.schema)}`);
+  collectSdkBooleanLines(sdk, lines);
+  collectSdkComplexLines(sdk, lines);
+  return lines;
+}
+
+/** Collect display lines for boolean SDK feature flags. */
+function collectSdkBooleanLines(sdk: SdkDirectoryConfig, lines: string[]): void {
+  if (sdk.includePartialMessages) lines.push('Stream Partial: enabled');
+  if (sdk.includeHookEvents) lines.push('Hook Events: enabled');
+  if (sdk.promptSuggestions) lines.push('Prompt Suggestions: enabled');
+  if (sdk.agentProgressSummaries) lines.push('Progress Summaries: enabled');
+  if (sdk.sandbox?.enabled) lines.push('Sandbox: enabled');
+  if (sdk.betas?.length) lines.push(`Betas: ${sdk.betas.join(', ')}`);
+}
+
+/** Collect display lines for complex SDK config fields (prompts, servers, plugins). */
+function collectSdkComplexLines(sdk: SdkDirectoryConfig, lines: string[]): void {
+  if (sdk.systemPrompt) {
+    const prompt = typeof sdk.systemPrompt === 'string' ? sdk.systemPrompt : `preset:${sdk.systemPrompt.preset}`;
+    lines.push(`System Prompt: ${prompt.length > 60 ? `${prompt.slice(0, 60)}...` : prompt}`);
+  }
+  if (sdk.mcpServers) lines.push(`MCP Servers: ${Object.keys(sdk.mcpServers).join(', ')}`);
+  if (sdk.plugins?.length) lines.push(`Plugins: ${sdk.plugins.map((p) => p.path).join(', ')}`);
+  if (sdk.agents) lines.push(`Subagents: ${Object.keys(sdk.agents).join(', ')}`);
+}
+
+/** Format a thinking config for display. */
+function formatThinking(thinking: SdkThinkingConfig): string {
+  if (thinking.type === 'enabled' && thinking.budgetTokens) return `enabled:${thinking.budgetTokens}`;
+  return thinking.type;
+}
+
+// ============================================================================
+// Permissions & Roles
+// ============================================================================
+
 /** Build permissions config from CLI flags. Returns undefined if no flags set. */
 function buildPermissions(
   permissionPreset?: string,
@@ -369,6 +638,10 @@ function normalizeRoles(roles?: string[]): string[] | undefined {
     .map((r) => r.trim())
     .filter(Boolean);
 }
+
+// ============================================================================
+// Table Printing
+// ============================================================================
 
 function printRegisteredTable(entries: directory.ScopedDirectoryEntry[]): void {
   const nameW = 22;
