@@ -13,6 +13,7 @@
 import { type NatsConnection, StringCodec, type Subscription, connect } from 'nats';
 import type { IExecutor, OmniMessage, OmniSession } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
+import { ClaudeSdkOmniExecutor } from './executors/claude-sdk.js';
 
 // ============================================================================
 // Configuration
@@ -32,6 +33,7 @@ interface BridgeConfig {
   natsUrl?: string;
   idleTimeoutMs?: number;
   maxConcurrent?: number;
+  executorType?: 'tmux' | 'sdk';
 }
 
 interface SessionEntry {
@@ -96,7 +98,13 @@ export class OmniBridge {
     this.maxConcurrent =
       config.maxConcurrent ??
       (process.env.GENIE_MAX_CONCURRENT ? Number(process.env.GENIE_MAX_CONCURRENT) : DEFAULT_MAX_CONCURRENT);
-    this.executor = new ClaudeCodeOmniExecutor();
+
+    const executorType = config.executorType ?? (process.env.GENIE_EXECUTOR_TYPE as 'tmux' | 'sdk') ?? 'tmux';
+    if (executorType === 'sdk') {
+      this.executor = new ClaudeSdkOmniExecutor();
+    } else {
+      this.executor = new ClaudeCodeOmniExecutor();
+    }
   }
 
   /**
@@ -119,6 +127,15 @@ export class OmniBridge {
     });
 
     console.log('[omni-bridge] Connected to NATS');
+
+    // Wire NATS publish into SDK executor for reply routing
+    if (this.executor instanceof ClaudeSdkOmniExecutor) {
+      const nc = this.nc;
+      const sc = this.sc;
+      this.executor.setNatsPublish((topic, payload) => {
+        nc.publish(topic, sc.encode(payload));
+      });
+    }
 
     // Subscribe to all omni messages
     this.sub = this.nc.subscribe('omni.message.>');

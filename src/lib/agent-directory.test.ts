@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as directory from './agent-directory.js';
 import { getConnection } from './db.js';
+import type { SdkDirectoryConfig } from './sdk-directory-types.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
@@ -249,6 +250,119 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(entry).not.toBeNull();
       expect(entry!.model).toBe('opus');
       expect(entry!.provider).toBe('codex');
+    });
+  });
+
+  // ============================================================================
+  // sdk round-trip
+  // ============================================================================
+
+  describe('sdk round-trip', () => {
+    test('add persists sdk config to PG metadata', async () => {
+      const sdkConfig: SdkDirectoryConfig = {
+        permissionMode: 'bypassPermissions',
+        maxTurns: 50,
+        thinking: { type: 'adaptive' },
+        agents: {
+          reviewer: {
+            description: 'Code reviewer',
+            prompt: 'You review code.',
+            model: 'sonnet',
+            maxTurns: 10,
+          },
+        },
+        mcpServers: {
+          'my-server': {
+            type: 'stdio',
+            command: 'node',
+            args: ['./server.js'],
+          },
+        },
+      };
+
+      await directory.add({
+        name: 'sdk-agent',
+        dir: agentDir,
+        promptMode: 'append',
+        sdk: sdkConfig,
+      });
+
+      const sql = await getConnection();
+      const rows = await sql`SELECT metadata FROM agents WHERE id = 'dir:sdk-agent'`;
+      expect(rows.length).toBe(1);
+      const metadata = rows[0].metadata as Record<string, unknown>;
+      expect(metadata.sdk).toEqual(sdkConfig);
+    });
+
+    test('get returns sdk config after PG round-trip', async () => {
+      const sdkConfig: SdkDirectoryConfig = {
+        effort: 'high',
+        maxBudgetUsd: 5.0,
+        allowedTools: ['Bash', 'Read'],
+        disallowedTools: ['Write'],
+        persistSession: false,
+        enableFileCheckpointing: true,
+        betas: ['context-1m-2025-08-07'],
+      };
+
+      await directory.add({
+        name: 'sdk-roundtrip',
+        dir: agentDir,
+        promptMode: 'append',
+        sdk: sdkConfig,
+      });
+
+      const entry = await directory.get('sdk-roundtrip');
+      expect(entry).not.toBeNull();
+      expect(entry!.sdk).toEqual(sdkConfig);
+    });
+
+    test('edit updates sdk config via PG', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:sdk-edit', 'sdk-edit', 'sdk-edit', now(), '{}')`;
+
+      const sdkConfig: SdkDirectoryConfig = {
+        permissionMode: 'dontAsk',
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Be concise.' },
+        sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
+      };
+
+      await directory.edit('sdk-edit', { sdk: sdkConfig });
+
+      const entry = await directory.get('sdk-edit');
+      expect(entry).not.toBeNull();
+      expect(entry!.sdk).toEqual(sdkConfig);
+    });
+
+    test('resolve returns sdk field from PG metadata', async () => {
+      const sdkConfig: SdkDirectoryConfig = {
+        thinking: { type: 'enabled', budgetTokens: 4096 },
+        plugins: [{ type: 'local', path: '/plugins/test' }],
+      };
+
+      const sql = await getConnection();
+      const metaJson = JSON.stringify({ sdk: sdkConfig });
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:sdk-resolve', 'sdk-resolve', 'sdk-resolve', now(), ${metaJson}::jsonb)`;
+
+      const resolved = await directory.resolve('sdk-resolve');
+      expect(resolved).not.toBeNull();
+      expect(resolved!.entry.sdk).toEqual(sdkConfig);
+    });
+
+    test('ls includes sdk field from PG metadata', async () => {
+      const sdkConfig: SdkDirectoryConfig = {
+        maxTurns: 100,
+        effort: 'max',
+      };
+
+      const sql = await getConnection();
+      const metaJson = JSON.stringify({ sdk: sdkConfig });
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:sdk-ls', 'sdk-ls', 'sdk-ls', now(), ${metaJson}::jsonb)`;
+
+      const entries = await directory.ls();
+      const entry = entries.find((e) => e.name === 'sdk-ls');
+      expect(entry).not.toBeNull();
+      expect(entry!.sdk).toEqual(sdkConfig);
     });
   });
 

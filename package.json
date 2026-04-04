@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "test \"$CI\" = true || husky",
     "version": "bun run scripts/version.ts",
-    "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun --external pgserve --external @automagik/genie-brain && chmod +x dist/*.js",
+    "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun --external pgserve --external @automagik/genie-brain --external @anthropic-ai/claude-agent-sdk && chmod +x dist/*.js",
     "build:app": "bun run scripts/build-app.ts",
     "build:plugin": "node scripts/build.js",
     "sync": "node scripts/sync.js",
@@ -25,6 +25,7 @@
     "check": "bun run typecheck && bun run lint && bun run dead-code && (bun test || bun test)"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.91",
     "@inquirer/prompts": "^7.0.0",
     "@opentui/core": "^0.1.91",
     "@opentui/react": "^0.1.91",

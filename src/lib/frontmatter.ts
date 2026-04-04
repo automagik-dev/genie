@@ -19,7 +19,7 @@ import { z } from 'zod';
 const promptModeValues = ['system', 'append'] as const;
 
 /** Known provider values for spawn resolution. */
-const providerValues = ['claude', 'codex'] as const;
+const providerValues = ['claude', 'codex', 'claude-sdk'] as const;
 
 /**
  * Zod schema for AGENTS.md frontmatter.
@@ -35,6 +35,8 @@ export const AgentFrontmatterSchema = z.object({
   provider: z.enum(providerValues).optional(),
   tools: z.array(z.string()).optional(),
   permissionMode: z.string().optional(),
+  /** SDK configuration block — permissive record so new SDK options don't require parser updates. */
+  sdk: z.record(z.unknown()).optional(),
 });
 
 type AgentFrontmatter = z.infer<typeof AgentFrontmatterSchema>;

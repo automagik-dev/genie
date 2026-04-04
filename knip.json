@@ -27,6 +27,7 @@
   "ignoreExportsUsedInFile": false,
   "ignoreDependencies": [
     "@automagik/genie-brain",
+    "esbuild",
     "@tauri-apps/cli",
     "@tauri-apps/api",
     "react-dom",
