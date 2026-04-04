@@ -169,10 +169,18 @@ export class OmniBridge {
       this.idleCheckTimer = null;
     }
 
-    // Clear all idle timers
-    for (const entry of this.sessions.values()) {
+    // Shut down all active executor sessions and clear idle timers
+    for (const [key, entry] of this.sessions) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
+      if (!entry.spawning && entry.session) {
+        try {
+          await this.executor.shutdown(entry.session);
+        } catch (err) {
+          console.warn(`[omni-bridge] Error shutting down session ${key}:`, err);
+        }
+      }
     }
+    this.sessions.clear();
 
     // Unsubscribe
     if (this.sub) {
@@ -264,6 +272,11 @@ export class OmniBridge {
         // Still spawning — buffer the message
         if (entry.buffer.length < MAX_BUFFER_PER_CHAT) {
           entry.buffer.push(message);
+        } else {
+          console.warn(
+            `[omni-bridge] Buffer full (${MAX_BUFFER_PER_CHAT}) for ${key}, dropping message from ${message.sender}`,
+          );
+          await this.publishBufferFullReply(message);
         }
         return;
       }
@@ -290,8 +303,8 @@ export class OmniBridge {
   private async spawnSession(message: OmniMessage): Promise<void> {
     const key = `${message.agent}:${message.chatId}`;
 
-    // Check concurrency limit
-    const activeCount = Array.from(this.sessions.values()).filter((e) => !e.spawning).length;
+    // Check concurrency limit (count spawning entries too to prevent oversubscription)
+    const activeCount = this.sessions.size;
     if (activeCount >= this.maxConcurrent) {
       // Queue the message and send auto-reply
       this.messageQueue.push(message);
@@ -336,6 +349,14 @@ export class OmniBridge {
       console.log(`[omni-bridge] Session active: ${key} (pane=${session.paneId})`);
     } catch (err) {
       console.error(`[omni-bridge] Failed to spawn session for ${key}:`, err);
+      // Re-queue buffered messages before deleting the placeholder
+      const lostMessages = placeholder.buffer;
+      if (lostMessages.length > 0) {
+        console.warn(
+          `[omni-bridge] Re-queuing ${lostMessages.length} buffered message(s) from failed spawn for ${key}`,
+        );
+        this.messageQueue.push(...lostMessages);
+      }
       this.sessions.delete(key);
     }
   }
@@ -407,12 +428,31 @@ export class OmniBridge {
    */
   private async drainQueue(): Promise<void> {
     while (this.messageQueue.length > 0) {
-      const activeCount = Array.from(this.sessions.values()).filter((e) => !e.spawning).length;
+      const activeCount = this.sessions.size;
       if (activeCount >= this.maxConcurrent) break;
 
       const message = this.messageQueue.shift();
       if (message) await this.spawnSession(message);
     }
+  }
+
+  /**
+   * Publish an auto-reply when the per-chat buffer is full.
+   */
+  private async publishBufferFullReply(message: OmniMessage): Promise<void> {
+    if (!this.nc) return;
+
+    const topic = `omni.reply.${message.instanceId}.${message.chatId}`;
+    const reply = {
+      content: 'Fila de mensagens cheia, por favor aguarde e tente novamente.',
+      agent: message.agent,
+      chat_id: message.chatId,
+      instance_id: message.instanceId,
+      timestamp: new Date().toISOString(),
+      auto_reply: true,
+    };
+
+    this.nc.publish(topic, this.sc.encode(JSON.stringify(reply)));
   }
 
   /**
