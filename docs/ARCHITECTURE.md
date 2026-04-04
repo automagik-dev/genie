@@ -251,6 +251,9 @@ src/
 │   ├── team-manager.ts         Team configuration management
 │   ├── mailbox.ts              Message delivery (disk + tmux injection)
 │   ├── tmux.ts                 tmux pane/session helpers
+│   ├── orchestrator/           Session monitoring + state detection
+│   ├── providers/              Provider implementations (claude, codex, sdk, pty)
+│   │   └── registry.ts         Auto-registering provider lookup
 │   └── ...                     Other modules
 ├── services/                   External service integrations
 │   ├── omni-bridge.ts          NATS → agent session routing (WhatsApp, etc.)
@@ -285,6 +288,41 @@ src/
 ├── chat/<team>.jsonl           Team chat logs
 └── wishes/                     Wish definitions
 ```
+
+## Provider System
+
+The provider system abstracts how agents are launched. Each provider implements the `ExecutorProvider` interface and is auto-registered at import time.
+
+```
+Provider Registry (src/lib/providers/registry.ts)
+│
+├── claude      ClaudeCodeProvider   — Claude Code CLI in a tmux pane
+├── claude-sdk  ClaudeSdkProvider    — Claude SDK (streaming API, no CLI)
+├── codex       CodexProvider        — OpenAI Codex CLI
+└── app-pty     AppPtyProvider       — Generic PTY process (any CLI tool)
+```
+
+| Provider | Source | Description |
+|----------|--------|-------------|
+| **claude** | `src/lib/providers/claude-code.ts` | Default. Builds a Claude Code command with flags (`--model`, `--allowedTools`, `--continue`, etc.), launches in tmux pane, injects system prompt. |
+| **claude-sdk** | `src/lib/providers/claude-sdk.ts` | Programmatic Claude API. Uses streaming with tool-use support. SDK events, permissions, and stream handling are split into dedicated modules (`claude-sdk-events.ts`, `claude-sdk-permissions.ts`, `claude-sdk-stream.ts`). |
+| **codex** | `src/lib/providers/codex.ts` | OpenAI Codex CLI. Builds command with Codex-specific flags. |
+| **app-pty** | `src/lib/providers/app-pty.ts` | Generic PTY wrapper for arbitrary CLI tools. Used for non-AI processes that need tmux pane management. |
+
+### Provider Selection
+
+Provider is determined by the `model` field in agent templates. The `executor-types.ts` module defines the `ExecutorProvider` interface that all providers implement: `name`, `buildCommand()`, `detectState()`, and lifecycle hooks.
+
+## Orchestrator
+
+The orchestrator module (`src/lib/orchestrator/`) monitors and controls Claude Code sessions running in tmux panes.
+
+| Module | Description |
+|--------|-------------|
+| `state-detector.ts` | Analyzes terminal output to determine agent state (`idle`, `working`, `permission`, `question`, `error`, `complete`, `tool_use`). Uses regex pattern matching with confidence scoring (0–1). |
+| `patterns.ts` | Pattern library for detecting permission prompts, errors, idle states, working indicators, and completion markers from Claude Code terminal output. |
+
+The state detector reads the last N lines of a pane's output (default 50) and matches against the pattern library. This is used by the auto-approve engine, idle timeout detection, and the `genie agent answer` command.
 
 ## Key Design Decisions
 
