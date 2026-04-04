@@ -9,6 +9,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUILTIN_COUNCIL_MEMBERS, BUILTIN_ROLES, type BuiltinAgent } from './builtin-agents.js';
+import { serializeSdkConfig, writeFrontmatter } from './frontmatter-writer.js';
+import type { SdkDirectoryConfig } from './sdk-directory-types.js';
 
 // ============================================================================
 // Types
@@ -37,8 +39,16 @@ export interface DirectoryEntry {
   description?: string;
   /** Display color for TUI/terminal output. */
   color?: string;
-  /** AI provider: 'claude' | 'codex'. Resolved at spawn time. */
+  /** AI provider: 'claude' | 'codex' | 'claude-sdk'. Resolved at spawn time. */
   provider?: string;
+  /** Permission config for SDK provider (allowlist-only). */
+  permissions?: {
+    preset?: string;
+    allow?: string[];
+    bashAllowPatterns?: string[];
+  };
+  /** Full SDK Options configuration for claude-sdk provider sessions. */
+  sdk?: SdkDirectoryConfig;
 }
 
 export type DirectoryScope = 'project' | 'global' | 'built-in' | 'archived';
@@ -258,7 +268,17 @@ export async function edit(
   updates: Partial<
     Pick<
       DirectoryEntry,
-      'dir' | 'repo' | 'promptMode' | 'model' | 'roles' | 'omniAgentId' | 'description' | 'color' | 'provider'
+      | 'dir'
+      | 'repo'
+      | 'promptMode'
+      | 'model'
+      | 'roles'
+      | 'omniAgentId'
+      | 'description'
+      | 'color'
+      | 'provider'
+      | 'permissions'
+      | 'sdk'
     >
   >,
   _options?: ScopeOptions,
@@ -358,6 +378,8 @@ function roleToEntry(role: string, team?: string, metadata?: Record<string, unkn
     description: metadata?.description as string | undefined,
     color: metadata?.color as string | undefined,
     provider: metadata?.provider as string | undefined,
+    permissions: metadata?.permissions as DirectoryEntry['permissions'],
+    sdk: metadata?.sdk as SdkDirectoryConfig | undefined,
     ...(metadata?.repo ? { repo: metadata.repo as string } : team ? { repo: team } : {}),
   };
 }
@@ -372,6 +394,8 @@ function buildMetadata(entry: DirectoryEntry): Record<string, unknown> {
   if (entry.description) meta.description = entry.description;
   if (entry.color) meta.color = entry.color;
   if (entry.provider) meta.provider = entry.provider;
+  if (entry.permissions) meta.permissions = entry.permissions;
+  if (entry.sdk) meta.sdk = entry.sdk;
   return meta;
 }
 
@@ -387,4 +411,44 @@ function parseMetadata(raw: unknown): Record<string, unknown> {
     }
   }
   return {};
+}
+
+/** Frontmatter-relevant keys that should be synced back to AGENTS.md on edit. */
+const FRONTMATTER_KEYS = new Set(['name', 'description', 'model', 'color', 'promptMode', 'provider', 'sdk']);
+
+/**
+ * Sync frontmatter-relevant fields back to the agent's AGENTS.md file.
+ * Only writes if the agent has a dir with AGENTS.md and the edit touched
+ * frontmatter-relevant fields. Best-effort — never throws.
+ */
+export function syncFrontmatterToDisk(
+  entry: DirectoryEntry,
+  updates: Partial<Pick<DirectoryEntry, 'dir' | 'model' | 'description' | 'color' | 'promptMode' | 'provider' | 'sdk'>>,
+): void {
+  try {
+    if (!entry.dir) return;
+    const agentsPath = join(entry.dir, 'AGENTS.md');
+    if (!existsSync(agentsPath)) return;
+
+    // Only write if the edit touched frontmatter-relevant fields
+    const touchedFrontmatter = Object.keys(updates).some((k) => FRONTMATTER_KEYS.has(k));
+    if (!touchedFrontmatter) return;
+
+    // Build the frontmatter update object from relevant fields
+    const fmUpdates: Record<string, unknown> = {};
+    if (updates.model !== undefined) fmUpdates.model = updates.model;
+    if (updates.description !== undefined) fmUpdates.description = updates.description;
+    if (updates.color !== undefined) fmUpdates.color = updates.color;
+    if (updates.promptMode !== undefined) fmUpdates.promptMode = updates.promptMode;
+    if (updates.provider !== undefined) fmUpdates.provider = updates.provider;
+    if (updates.sdk !== undefined) {
+      fmUpdates.sdk = serializeSdkConfig(updates.sdk);
+    }
+
+    if (Object.keys(fmUpdates).length === 0) return;
+
+    writeFrontmatter(agentsPath, fmUpdates);
+  } catch {
+    /* Best-effort — disk write failure should not break directory edit */
+  }
 }

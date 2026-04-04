@@ -438,6 +438,7 @@ async function capturePanePid(paneId: string): Promise<number | null> {
 /** Resolve the executor transport type from provider and spawn transport. */
 function resolveExecutorTransport(provider: ProviderName, spawnTransport: 'tmux' | 'inline'): ExecutorTransport {
   if (provider === 'codex') return 'api';
+  if (provider === 'claude-sdk') return 'process';
   return spawnTransport === 'inline' ? 'process' : 'tmux';
 }
 
@@ -756,6 +757,7 @@ async function autoConfirmTrustPrompt(paneId: string): Promise<void> {
  * First agent in a newly created team window reuses the blank pane via send-keys.
  * Subsequent agents split-window into the same team window.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing tmux pane routing logic, split targets and launch modes are interdependent
 function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow: TeamWindowInfo | null): string {
   const { execSync } = require('node:child_process');
   const useLaunchScript = ctx.validated.provider === 'claude' && Boolean(ctx.validated.nativeTeam?.enabled);
@@ -922,6 +924,127 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   return paneId;
 }
 
+// resolveSdkPermissions removed — use resolvePermissionConfig from claude-sdk-permissions
+
+async function runSdkQuery(
+  ctx: SpawnCtx,
+  permConfig: { allow: string[]; bashAllowPatterns?: string[] },
+  streamOpts?: { stream: boolean; streamFormat?: import('../lib/providers/claude-sdk-stream.js').StreamFormat },
+  sdkConfig?: import('../lib/sdk-directory-types.js').SdkDirectoryConfig,
+  runtimeExtraOptions?: Record<string, unknown>,
+): Promise<void> {
+  const { ClaudeSdkProvider } = await import('../lib/providers/claude-sdk.js');
+  const sdkProvider = new ClaudeSdkProvider();
+  const spawnContext = {
+    agentId: ctx.agentIdentityId ?? ctx.workerId,
+    executorId: ctx.executorId ?? crypto.randomUUID(),
+    team: ctx.validated.team,
+    role: ctx.validated.role,
+    skill: ctx.validated.skill,
+    cwd: ctx.cwd,
+    model: ctx.validated.model,
+    systemPrompt: ctx.validated.systemPrompt,
+    systemPromptFile: ctx.validated.systemPromptFile,
+    initialPrompt: ctx.validated.initialPrompt,
+    name: ctx.validated.name,
+  };
+
+  const prompt =
+    ctx.validated.initialPrompt ??
+    `You are ${ctx.validated.role ?? 'an agent'} on team "${ctx.validated.team}". Awaiting instructions.`;
+
+  const streaming = streamOpts?.stream ?? false;
+  // Runtime overrides: streaming + CLI --sdk-* flags (highest priority, over directory sdkConfig)
+  const extraOptions: Record<string, unknown> = {
+    ...(streaming && { includePartialMessages: true }),
+    ...runtimeExtraOptions,
+  };
+  const hasExtraOptions = Object.keys(extraOptions).length > 0;
+  const { messages } = sdkProvider.runQuery(
+    spawnContext,
+    prompt,
+    permConfig,
+    hasExtraOptions ? (extraOptions as Partial<import('@anthropic-ai/claude-agent-sdk').Options>) : undefined,
+    sdkConfig,
+  );
+
+  if (ctx.executorId) {
+    await executorRegistry.updateExecutorState(ctx.executorId, 'running').catch(() => {});
+  }
+
+  if (streaming) {
+    const { formatSdkMessage } = await import('../lib/providers/claude-sdk-stream.js');
+    const format = streamOpts?.streamFormat ?? 'text';
+    try {
+      for await (const message of messages) {
+        const formatted = formatSdkMessage(message, format);
+        if (formatted !== null) {
+          process.stdout.write(formatted);
+          // Add newline separator for json format (ndjson already single-line, text handles its own)
+          if (format === 'json') process.stdout.write('\n');
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof Error && err.name === 'AbortError')) {
+        console.error(`SDK query error: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    return;
+  }
+
+  // Default non-streaming behavior: only final text
+  try {
+    for await (const message of messages) {
+      if (message.type === 'assistant' && message.message) {
+        for (const block of message.message.content) {
+          if (block.type === 'text' && block.text) process.stdout.write(block.text);
+        }
+      }
+      if (message.type === 'result' && message.subtype === 'success' && message.result) {
+        console.log(message.result);
+      }
+    }
+  } catch (err) {
+    if (!(err instanceof Error && err.name === 'AbortError')) {
+      console.error(`SDK query error: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+}
+
+async function launchSdkSpawn(
+  ctx: SpawnCtx,
+  permissionsConfig?: directory.DirectoryEntry['permissions'],
+  streamOpts?: { stream: boolean; streamFormat?: import('../lib/providers/claude-sdk-stream.js').StreamFormat },
+  sdkConfig?: import('../lib/sdk-directory-types.js').SdkDirectoryConfig,
+  runtimeExtraOptions?: Record<string, unknown>,
+): Promise<string> {
+  if (ctx.agentIdentityId && ctx.executorId) {
+    await createAndLinkExecutor(ctx.agentIdentityId, 'claude-sdk' as ProviderName, 'process', {
+      id: ctx.executorId,
+      claudeSessionId: null,
+      state: 'spawning',
+      repoPath: ctx.cwd,
+    });
+  }
+
+  await registerSpawnWorker(ctx, 'sdk');
+
+  console.log(`Agent "${ctx.workerId}" starting via Claude Agent SDK...`);
+  console.log(`  Provider: claude-sdk | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
+  console.log('');
+
+  const { resolvePermissionConfig } = await import('../lib/providers/claude-sdk-permissions.js');
+  const permConfig = resolvePermissionConfig(permissionsConfig);
+  await runSdkQuery(ctx, permConfig, streamOpts, sdkConfig, runtimeExtraOptions);
+
+  if (ctx.executorId) {
+    await executorRegistry.updateExecutorState(ctx.executorId, 'done').catch(() => {});
+  }
+  await registry.unregister(ctx.workerId);
+  console.log(`\nAgent "${ctx.workerId}" SDK session ended.`);
+  return ctx.workerId;
+}
+
 async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
   const nt = ctx.validated.nativeTeam;
   const paneId = 'inline';
@@ -1076,8 +1199,10 @@ export interface SpawnOptions {
   permissionMode?: string;
   extraArgs?: string[];
   cwd?: string;
-  /** Initial prompt to send as the first user message (Claude Code positional [prompt] arg). */
+  /** Initial prompt to send as the first user message. */
   initialPrompt?: string;
+  /** CLI alias for initialPrompt (--prompt flag). */
+  prompt?: string;
   /** Override the role name for registration and duplicate-check (agent directory still resolves by `name`). */
   role?: string;
   /** Explicit tmux session name to spawn into (overrides auto-detection). */
@@ -1088,6 +1213,18 @@ export interface SpawnOptions {
   newWindow?: boolean;
   /** Tmux window target to spawn into (e.g., "genie:3"). Splits into this exact window. */
   window?: string;
+  /** Enable streaming output for SDK provider (--stream). */
+  stream?: boolean;
+  /** Streaming output format: text, json, ndjson (--stream-format). Default: text. */
+  streamFormat?: string;
+  /** SDK: maximum number of conversation turns (--sdk-max-turns). */
+  sdkMaxTurns?: number;
+  /** SDK: maximum budget in USD (--sdk-max-budget). */
+  sdkMaxBudget?: number;
+  /** SDK: enable streaming shortcut (--sdk-stream). */
+  sdkStream?: boolean;
+  /** SDK: reasoning effort level (--sdk-effort). */
+  sdkEffort?: string;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
@@ -1296,6 +1433,28 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     team: validated.team,
     provider: validated.provider,
   }).catch(() => {});
+
+  // SDK provider: in-process query, no tmux/shell needed
+  if (validated.provider === 'claude-sdk') {
+    type SdkStreamFormat = import('../lib/providers/claude-sdk-stream.js').StreamFormat;
+    const streamFormat = (options.streamFormat ?? 'text') as SdkStreamFormat;
+    const streamOpts = options.stream || options.sdkStream ? { stream: true as const, streamFormat } : undefined;
+
+    // Build runtime overrides from --sdk-* flags (highest priority, override directory config)
+    const runtimeExtra: Record<string, unknown> = {};
+    if (options.sdkMaxTurns != null) runtimeExtra.maxTurns = options.sdkMaxTurns;
+    if (options.sdkMaxBudget != null) runtimeExtra.maxBudgetUsd = options.sdkMaxBudget;
+    if (options.sdkEffort) runtimeExtra.effort = options.sdkEffort;
+    const hasRuntimeExtra = Object.keys(runtimeExtra).length > 0;
+
+    return await launchSdkSpawn(
+      ctx,
+      agent.entry.permissions,
+      streamOpts,
+      agent.entry.sdk,
+      hasRuntimeExtra ? runtimeExtra : undefined,
+    );
+  }
 
   if (insideTmux) {
     return await launchTmuxSpawn(ctx);

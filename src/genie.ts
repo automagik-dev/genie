@@ -58,6 +58,7 @@ import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerMetricsCommands } from './term-commands/metrics.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerNotifyCommands } from './term-commands/notify.js';
+import { registerOmniCommands } from './term-commands/omni.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import { registerProjectCommands } from './term-commands/project.js';
 import {
@@ -216,6 +217,7 @@ registerImportCommands(program);
 registerTemplateCommands(program);
 registerBrainCommands(program);
 registerBriefCommands(program);
+registerOmniCommands(program);
 
 // ============================================================================
 // CLI audit hooks — record every command execution to audit_events
@@ -276,6 +278,12 @@ program
   .option('--new-window', 'Create a new tmux window instead of splitting')
   .option('--window <target>', 'Tmux window to split into (e.g., genie:3)')
   .option('--no-auto-resume', 'Disable auto-resume on pane death')
+  .option('--stream', 'Stream SDK messages to stdout in real-time (claude-sdk provider)')
+  .option('--stream-format <format>', 'Streaming output format: text, json, ndjson (default: text)', 'text')
+  .option('--sdk-max-turns <n>', 'SDK: max conversation turns', Number)
+  .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', Number)
+  .option('--sdk-stream', 'SDK: enable streaming output (shortcut for --stream)')
+  .option('--sdk-effort <level>', 'SDK: reasoning effort level (low, medium, high, max)')
   .addHelpText(
     'after',
     `
