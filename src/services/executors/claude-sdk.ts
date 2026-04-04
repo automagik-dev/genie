@@ -179,6 +179,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       message.content,
       permissionConfig,
       extraOptions,
+      entry.sdk,
     );
 
     const result = await collectQueryResult(queryMessages);
