@@ -323,11 +323,15 @@ genie dir export my-agent
 genie spawn my-agent
 
 # Runtime overrides (highest priority — beats directory config)
+# Override directory maxTurns
+# Override directory maxBudgetUsd
+# Override directory effort
+# Enable streaming output
 genie spawn my-agent \
-  --sdk-max-turns 10 \       # Override directory maxTurns
-  --sdk-max-budget 2.0 \     # Override directory maxBudgetUsd
-  --sdk-effort medium \       # Override directory effort
-  --sdk-stream                # Enable streaming output
+  --sdk-max-turns 10 \
+  --sdk-max-budget 2.0 \
+  --sdk-effort medium \
+  --sdk-stream
 ```
 
 ---
@@ -511,7 +515,7 @@ genie events errors --type sdk_message
 ```
 AGENTS.md frontmatter (source of truth)
     │
-    ��� parseFrontmatter()
+    ▼ parseFrontmatter()
 AgentFrontmatter { sdk: Record<string, unknown> }
     │
     ▼ agent-sync.ts → directory.add()/edit()
