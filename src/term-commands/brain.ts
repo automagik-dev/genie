@@ -192,7 +192,7 @@ async function showVersion(): Promise<void> {
   if (check.updateAvailable && check.latestVersion) {
     console.log(`  Latest: ${check.latestVersion}`);
     console.log('');
-    console.log('  Update available. Run: genie brain update');
+    console.log('  Update available. Run: genie brain upgrade');
   } else {
     console.log('  Status: up to date');
   }
@@ -309,7 +309,7 @@ async function executeBrainCommand(args: string[]): Promise<void> {
       // Auto-check hint (cache-only, no network, sync)
       const check = checkForUpdates();
       if (check.updateAvailable && check.latestVersion) {
-        console.log(`\n  Update available (${check.latestVersion}). Run: genie brain update`);
+        console.log(`\n  Update available (${check.latestVersion}). Run: genie brain upgrade`);
       }
     } else {
       console.error('Brain module loaded but execute() not found.');
@@ -357,8 +357,8 @@ export function registerBrainCommands(program: Command): void {
     });
 
   brain
-    .command('update')
-    .description('Update genie-brain to latest version')
+    .command('upgrade')
+    .description('Upgrade genie-brain to latest version')
     .action(async () => {
       await updateBrain();
     });
