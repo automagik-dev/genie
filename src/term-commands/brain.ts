@@ -10,14 +10,33 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 
 const BRAIN_PKG = '@automagik/genie-brain';
 const BRAIN_REPO = 'github:automagik-dev/genie-brain';
-const BRAIN_DIR = 'node_modules/@automagik/genie-brain';
+
+/** Resolve genie's package root — works from both src/ (dev) and dist/ (compiled). */
+function resolveGenieRoot(): string {
+  try {
+    const scriptDir = dirname(realpathSync(process.argv[1]));
+    const candidates = [
+      resolve(scriptDir, '..'), // dist/ or src/ → project root
+      resolve(scriptDir, '..', '..'), // src/term-commands/ → project root
+    ];
+    for (const c of candidates) {
+      if (existsSync(join(c, 'package.json'))) return c;
+    }
+  } catch {
+    /* fallback below */
+  }
+  // Fallback: import.meta.dir (works in dev, unreliable in compiled)
+  return resolve(import.meta.dir, '..', '..');
+}
+
+const BRAIN_DIR = join(resolveGenieRoot(), 'node_modules', '@automagik', 'genie-brain');
 const CACHE_PATH = join(homedir(), '.genie', 'brain-version-check.json');
 
 /** Compare dot-separated version strings numerically (e.g., "260403.9" vs "260403.10"). */
@@ -220,7 +239,7 @@ async function installBrain(): Promise<boolean> {
 
     // Clone brain repo using gh CLI (handles private repos without exposing tokens in process list)
     execSync(`rm -rf "${BRAIN_DIR}"`, { stdio: 'pipe' });
-    execSync('mkdir -p node_modules/@automagik', { stdio: 'pipe' });
+    execSync(`mkdir -p "${dirname(BRAIN_DIR)}"`, { stdio: 'pipe' });
     execSync(`gh repo clone automagik-dev/genie-brain "${BRAIN_DIR}" -- --depth 1`, {
       stdio: 'inherit',
     });
