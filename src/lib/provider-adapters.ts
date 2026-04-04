@@ -115,7 +115,7 @@ interface LaunchCommand {
 // ============================================================================
 
 const spawnParamsSchema = z.object({
-  provider: z.enum(['claude', 'codex', 'claude-sdk']),
+  provider: z.enum(['claude', 'codex', 'claude-sdk', 'app-pty']),
   team: z.string().min(1, 'Team name is required'),
   role: z.string().optional(),
   skill: z.string().optional(),
