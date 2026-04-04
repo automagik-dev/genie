@@ -4,8 +4,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync, lstatSync, readlinkSync } from 'node:fs';
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { $ } from 'bun';
 import { getConnection } from './db.js';
@@ -149,6 +149,47 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       test('rejects invalid branch names', async () => {
         await expect(createTeam('spaces here', TEST_REPO, 'dev')).rejects.toThrow('must be a valid git branch name');
+      });
+
+      test('symlinks node_modules from parent repo into worktree', async () => {
+        // Create a fake node_modules in the test repo
+        const parentNodeModules = join(TEST_REPO, 'node_modules');
+        await mkdir(parentNodeModules, { recursive: true });
+        await writeFile(join(parentNodeModules, '.package-lock.json'), '{}');
+
+        const config = await createTeam('feat/symlink-nm', TEST_REPO, 'dev');
+        const worktreeNodeModules = join(config.worktreePath, 'node_modules');
+
+        expect(existsSync(worktreeNodeModules)).toBe(true);
+        expect(lstatSync(worktreeNodeModules).isSymbolicLink()).toBe(true);
+        expect(readlinkSync(worktreeNodeModules)).toBe(parentNodeModules);
+
+        // Clean up
+        await rm(parentNodeModules, { recursive: true, force: true });
+      });
+
+      test('skips node_modules symlink when parent has no node_modules', async () => {
+        const config = await createTeam('feat/no-nm', TEST_REPO, 'dev');
+        const worktreeNodeModules = join(config.worktreePath, 'node_modules');
+
+        expect(existsSync(worktreeNodeModules)).toBe(false);
+      });
+
+      test('runs .genie/init.sh in worktree after clone', async () => {
+        // Create a .genie/init.sh that writes a marker file
+        const genieDir = join(TEST_REPO, '.genie');
+        await mkdir(genieDir, { recursive: true });
+        await writeFile(join(genieDir, 'init.sh'), '#!/bin/bash\necho "init-ran" > .init-marker');
+        await chmod(join(genieDir, 'init.sh'), 0o755);
+
+        const config = await createTeam('feat/init-sh', TEST_REPO, 'dev');
+        const marker = join(config.worktreePath, '.init-marker');
+
+        expect(existsSync(marker)).toBe(true);
+
+        // Clean up
+        await rm(join(genieDir, 'init.sh'));
+        await rm(marker, { force: true });
       });
     });
 
