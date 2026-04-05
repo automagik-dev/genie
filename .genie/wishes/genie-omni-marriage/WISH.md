@@ -297,6 +297,10 @@ pm2 start ecosystem.config.cjs && pm2 ls | grep genie
 
 ---
 
+## Reconciliation Notes
+
+> **Omni-bridge is a message source, not a state owner.** The omni-bridge relay delivers inbound messages and publishes replies via NATS, but session lifecycle (spawn, resume, freeze, registry) is owned entirely by genie's executor layer. PR #1042 attempted to add a PG-backed session registry inside the bridge — this created a third source of truth alongside the executor table and the worker registry. The unified-executor-layer branch resolves this by keeping session persistence in the executors table and treating the bridge as a stateless message transport. Bridge restarts no longer require session recovery because the bridge holds no session state.
+
 ## Files to Create/Modify
 
 ```
