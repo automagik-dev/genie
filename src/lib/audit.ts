@@ -116,7 +116,7 @@ export async function queryAuditEvents(options: AuditQueryOptions = {}): Promise
  * Follow audit events in real-time via LISTEN/NOTIFY.
  * Falls back to polling every 2s for safety (missed notifications).
  */
-export interface FollowAuditEventsHandle {
+interface FollowAuditEventsHandle {
   stop: () => Promise<void>;
 }
 
