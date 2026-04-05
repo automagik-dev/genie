@@ -34,7 +34,7 @@
 | Avg merge time | 0.3h |
 | SHIP rate | 85% |
 
-*Last updated: 2026-04-04*
+*Last updated: 2026-04-05*
 </p>
 <!-- METRICS:END -->
 
