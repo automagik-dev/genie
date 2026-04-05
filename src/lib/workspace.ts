@@ -6,7 +6,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -62,15 +62,43 @@ export function findWorkspace(cwd?: string): WorkspaceInfo | null {
   return null;
 }
 
-const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+/** Resolved lazily so GENIE_HOME env overrides in tests take effect. */
+function genieHome(): string {
+  return process.env.GENIE_HOME ?? join(homedir(), '.genie');
+}
+
+/** True if `root` is under the OS temp directory (avoids persisting test workspaces). */
+function isTempPath(root: string): boolean {
+  const normalizedTmp = resolve(tmpdir());
+  const normalizedRoot = resolve(root);
+  return normalizedRoot === normalizedTmp || normalizedRoot.startsWith(normalizedTmp + sep);
+}
 
 function saveWorkspaceRoot(root: string): void {
+  // Never persist tmp paths — tests run from tmpdir() and would poison the
+  // global fallback, causing subsequent daemons to resolve a stale path.
+  if (isTempPath(root)) return;
   try {
-    const configPath = join(GENIE_HOME, 'config.json');
+    const home = genieHome();
+    const configPath = join(home, 'config.json');
     const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf-8')) : {};
     if (config.workspaceRoot === root) return;
     config.workspaceRoot = root;
-    mkdirSync(GENIE_HOME, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Clear the saved workspaceRoot from <GENIE_HOME>/config.json. */
+function clearWorkspaceRoot(): void {
+  try {
+    const configPath = join(genieHome(), 'config.json');
+    if (!existsSync(configPath)) return;
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    if (config.workspaceRoot === undefined) return;
+    config.workspaceRoot = undefined;
     writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
   } catch {
     /* best-effort */
@@ -79,10 +107,20 @@ function saveWorkspaceRoot(root: string): void {
 
 function loadWorkspaceRoot(): string | null {
   try {
-    const configPath = join(GENIE_HOME, 'config.json');
+    const configPath = join(genieHome(), 'config.json');
     if (!existsSync(configPath)) return null;
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-    return typeof config.workspaceRoot === 'string' ? config.workspaceRoot : null;
+    const saved = typeof config.workspaceRoot === 'string' ? config.workspaceRoot : null;
+    if (!saved) return null;
+
+    // Self-heal: if the saved path no longer has a workspace marker (e.g. a
+    // test cleanup removed it, or the workspace was moved), clear it rather
+    // than keep returning a broken fallback.
+    if (!existsSync(join(saved, WORKSPACE_MARKER))) {
+      clearWorkspaceRoot();
+      return null;
+    }
+    return saved;
   } catch {
     return null;
   }
