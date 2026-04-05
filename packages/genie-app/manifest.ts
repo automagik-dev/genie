@@ -1,6 +1,9 @@
-export default {
+import { defineManifest } from '@khal-os/sdk/app';
+
+export default defineManifest({
   id: 'genie-app',
   views: [
+    // ── Existing views ──
     {
       id: 'agents',
       label: 'Agents',
@@ -86,7 +89,116 @@ export default {
         comment: 'Real-time event feed',
       },
     },
+    // ── New views ──
+    {
+      id: 'sessions',
+      label: 'Sessions',
+      permission: 'sessions',
+      minRole: 'viewer' as const,
+      natsPrefix: 'session',
+      defaultSize: { width: 1200, height: 800 },
+      component: './views/sessions/ui/SessionsView',
+      desktop: {
+        icon: '/icons/dusk/chat.svg',
+        categories: ['Communication'],
+        comment: 'WhatsApp chat replay',
+      },
+    },
+    {
+      id: 'costs',
+      label: 'Costs',
+      permission: 'costs',
+      minRole: 'viewer' as const,
+      natsPrefix: 'cost',
+      defaultSize: { width: 1200, height: 800 },
+      component: './views/costs/ui/CostIntelligence',
+      desktop: {
+        icon: '/icons/dusk/dollar.svg',
+        categories: ['Analytics'],
+        comment: 'Cost Intelligence',
+      },
+    },
+    {
+      id: 'files',
+      label: 'Files',
+      permission: 'files',
+      minRole: 'viewer' as const,
+      natsPrefix: 'fs',
+      defaultSize: { width: 1200, height: 800 },
+      component: './views/files/ui/FilesView',
+      desktop: {
+        icon: '/icons/dusk/folder.svg',
+        categories: ['System'],
+        comment: 'Brain folder browser',
+      },
+    },
+    {
+      id: 'settings',
+      label: 'Settings',
+      permission: 'settings',
+      minRole: 'viewer' as const,
+      natsPrefix: 'settings',
+      defaultSize: { width: 900, height: 600 },
+      component: './views/settings/ui/SettingsView',
+      desktop: {
+        icon: '/icons/dusk/settings.svg',
+        categories: ['System'],
+        comment: 'Config management',
+      },
+    },
+    {
+      id: 'scheduler',
+      label: 'Scheduler',
+      permission: 'scheduler',
+      minRole: 'viewer' as const,
+      natsPrefix: 'schedule',
+      defaultSize: { width: 1200, height: 800 },
+      component: './views/scheduler/ui/SchedulerView',
+      desktop: {
+        icon: '/icons/dusk/clock.svg',
+        categories: ['System'],
+        comment: 'Cron jobs',
+      },
+    },
+    {
+      id: 'system',
+      label: 'System',
+      permission: 'system',
+      minRole: 'platform-dev' as const,
+      natsPrefix: 'system',
+      defaultSize: { width: 1200, height: 800 },
+      component: './views/system/ui/SystemView',
+      desktop: {
+        icon: '/icons/dusk/server.svg',
+        categories: ['System'],
+        comment: 'pgserve health',
+      },
+    },
   ],
+  services: [
+    {
+      name: 'sidecar',
+      entry: './src-backend/index.ts',
+      runtime: 'node',
+      health: {
+        type: 'tcp',
+        target: 3100,
+        interval: 30000,
+        timeout: 5000,
+      },
+      ports: [3100],
+    },
+  ],
+  desktop: {
+    icon: '/icons/dusk/genie.svg',
+    categories: ['AI & Automation'],
+    comment: 'AI agent orchestration cockpit',
+  },
+  tauri: {
+    exportable: true,
+    appName: 'Genie',
+    window: { width: 1200, height: 800, title: 'Genie' },
+  },
   store: {
     name: 'Genie',
     shortDescription: 'AI agent orchestration cockpit',
@@ -96,4 +208,4 @@ export default {
     tags: ['agents', 'ai', 'orchestration', 'terminal', 'kanban'],
     permissions: ['nats:os.genie.*'],
   },
-};
+});
