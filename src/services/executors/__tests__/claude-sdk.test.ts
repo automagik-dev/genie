@@ -39,18 +39,17 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   }),
 }));
 
-// Mock audit-events (Group 5 + 7 — writes audit via safePgCall)
-mock.module('../../../lib/audit-events.js', () => ({
-  recordAuditEvent: mock(async () => {}),
-}));
-
-// Mock sdk-session-capture (Group 5 — session content capture)
-mock.module('../sdk-session-capture.js', () => ({
-  startSession: mock(async () => null),
-  recordTurn: mock(async () => {}),
-  updateTurnCount: mock(async () => {}),
-  endSession: mock(async () => {}),
-}));
+// NOTE: audit-events.js and sdk-session-capture.js are intentionally NOT mocked
+// here. `mock.module` is process-global and persists across test files even
+// after `mock.restore()` — mocking them here breaks sdk-session-capture.test.ts
+// and claude-sdk-resume.test.ts when the full suite runs.
+//
+// Instead, every production call site in claude-sdk.ts guards these with
+// `if (this.safePgCall)`, and tests inject either:
+//   - `happySafePgCall` (invokes fn with a fake sql returning []), or
+//   - `degradedSafePgCall` (returns fallback without invoking fn), or
+//   - null (no bridge attached).
+// All three are safe — the real modules never touch real PG.
 
 // Mock agent-registry and executor-registry so spawn()/shutdown() never touch real PG.
 // The tests override these with fresh mocks per-test for call-count assertions.
