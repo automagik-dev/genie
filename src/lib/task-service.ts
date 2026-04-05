@@ -558,7 +558,7 @@ function buildTaskVals(input: TaskInput) {
   return {
     ...taskNullables(input),
     type: input.typeId ?? 'software',
-    stage: input.stage ?? 'draft',
+    stage: input.stage, // resolved in createTask via type lookup
     status: input.status ?? 'ready',
     priority: input.priority ?? 'normal',
   };
@@ -571,6 +571,13 @@ export async function createTask(input: TaskInput, repoPath?: string, projectId?
   // Auto-ensure project for this repo path (or use explicit projectId)
   const projId = projectId ?? (await ensureProject(repo));
   const vals = buildTaskVals(input);
+
+  // Resolve default stage from the task type when not explicitly provided
+  if (!vals.stage) {
+    const taskType = await getType(vals.type);
+    const stages = taskType?.stages as Array<{ name?: string }> | undefined;
+    vals.stage = stages?.[0]?.name ?? 'draft';
+  }
 
   // If boardId provided and stage given, resolve stage name -> column_id
   if (vals.boardId && !vals.columnId && vals.stage) {

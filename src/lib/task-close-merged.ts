@@ -6,6 +6,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { resolveRepoPath } from './wish-state.js';
 
 // ============================================================================
 // Types
@@ -209,7 +210,7 @@ async function findTasksByWishSlug(
   const { getConnection } = await import('./db.js');
   const sql = await getConnection();
 
-  const repo = repoPath ?? getRepoPathSafe();
+  const repo = repoPath ?? resolveRepoPath();
   const pattern = `%${slug}%`;
 
   const rows = await sql`
@@ -227,15 +228,4 @@ async function findTasksByWishSlug(
     stage: r.stage as string,
     repoPath: r.repo_path as string,
   }));
-}
-
-function getRepoPathSafe(): string {
-  try {
-    return execSync('git rev-parse --show-toplevel', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-  } catch {
-    return process.cwd();
-  }
 }
