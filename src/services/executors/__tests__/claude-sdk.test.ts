@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 // Mock agent directory
 mock.module('../../../lib/agent-directory.js', () => ({
@@ -30,6 +30,37 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
       throw: mock(async () => ({ value: undefined, done: true })),
     });
   }),
+}));
+
+// Mock agent-registry and executor-registry so spawn()/shutdown() never touch real PG.
+// The tests override these with fresh mocks per-test for call-count assertions.
+const findOrCreateAgentMock = mock(async (_name: string, _team: string, _role?: string) => ({
+  id: 'agent-id-fixture',
+  startedAt: new Date().toISOString(),
+  currentExecutorId: null,
+}));
+mock.module('../../../lib/agent-registry.js', () => ({
+  findOrCreateAgent: findOrCreateAgentMock,
+}));
+
+const createAndLinkExecutorMock = mock(
+  async (_agentId: string, _provider: string, _transport: string, _opts?: any) => ({
+    id: 'executor-id-fixture',
+    agentId: 'agent-id-fixture',
+    provider: 'claude',
+    transport: 'api',
+    state: 'spawning',
+    metadata: {},
+  }),
+);
+const updateExecutorStateMock = mock(async (_id: string, _state: string) => undefined);
+const terminateExecutorMock = mock(async (_id: string) => undefined);
+const findLatestByMetadataMock = mock(async (_filter: any) => null);
+mock.module('../../../lib/executor-registry.js', () => ({
+  createAndLinkExecutor: createAndLinkExecutorMock,
+  updateExecutorState: updateExecutorStateMock,
+  terminateExecutor: terminateExecutorMock,
+  findLatestByMetadata: findLatestByMetadataMock,
 }));
 
 const { ClaudeSdkOmniExecutor } = await import('../claude-sdk.js');
@@ -220,6 +251,23 @@ describe('ClaudeSdkOmniExecutor', () => {
   });
 
   describe('concurrent delivery', () => {
+    afterEach(async () => {
+      // Restore the default SDK query mock so later tests don't hang on unresolved barriers.
+      const sdk = await import('@anthropic-ai/claude-agent-sdk');
+      (sdk.query as ReturnType<typeof mock>).mockImplementation(() => {
+        const gen = (async function* () {
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'response text' }] } };
+        })();
+        return Object.assign(gen, {
+          interrupt: mock(),
+          setPermissionMode: mock(),
+          setModel: mock(),
+          return: mock(async () => ({ value: undefined, done: true })),
+          throw: mock(async () => ({ value: undefined, done: true })),
+        });
+      });
+    });
+
     it('3 concurrent sessions process independently without blocking each other', async () => {
       // Track the order of query starts and completions per session
       const events: string[] = [];
@@ -313,6 +361,170 @@ describe('ClaudeSdkOmniExecutor', () => {
       await executor.shutdown(s1);
       expect(await executor.isAlive(s1)).toBe(false);
       expect(await executor.isAlive(s2)).toBe(true);
+    });
+  });
+
+  // ==========================================================================
+  // World A registry wiring (Group 4 — Decision 1)
+  // ==========================================================================
+
+  describe('World A registry integration', () => {
+    /** Fake sql tagged-template that returns an empty array (no rows). */
+    const mockSql = ((_strings: TemplateStringsArray, ..._values: any[]) => Promise.resolve([])) as any;
+
+    /** Fake bridge.safePgCall that invokes fn directly — happy path. */
+    const happySafePgCall = async <T>(
+      _op: string,
+      fn: (_sql: any) => Promise<T>,
+      _fallback: T,
+      _ctx?: { executorId?: string; chatId?: string },
+    ): Promise<T> => fn(mockSql);
+
+    /** Fake bridge.safePgCall that never invokes fn — simulates pgAvailable=false. */
+    const degradedSafePgCall = async <T>(
+      _op: string,
+      _fn: (_sql: any) => Promise<T>,
+      fallback: T,
+      _ctx?: { executorId?: string; chatId?: string },
+    ): Promise<T> => fallback;
+
+    beforeEach(() => {
+      findOrCreateAgentMock.mockClear();
+      createAndLinkExecutorMock.mockClear();
+      updateExecutorStateMock.mockClear();
+      terminateExecutorMock.mockClear();
+    });
+
+    it('spawn(): calls findOrCreateAgent and createAndLinkExecutor with transport="api" and omni metadata', async () => {
+      executor.setSafePgCall(happySafePgCall);
+      const session = await executor.spawn('test-agent', 'chat-123', { OMNI_INSTANCE_ID: 'inst-abc' });
+
+      expect(findOrCreateAgentMock).toHaveBeenCalledWith('test-agent', 'omni', 'omni');
+      expect(createAndLinkExecutorMock).toHaveBeenCalledTimes(1);
+
+      const [agentId, provider, transport, opts] = createAndLinkExecutorMock.mock.calls[0];
+      expect(agentId).toBe('agent-id-fixture');
+      expect(provider).toBe('claude');
+      expect(transport).toBe('api');
+      expect(opts).toMatchObject({
+        claudeSessionId: undefined,
+        metadata: { source: 'omni', chat_id: 'chat-123', instance_id: 'inst-abc' },
+      });
+
+      // Session still built and returned as before.
+      expect(session.id).toBe('test-agent:chat-123');
+    });
+
+    it('spawn(): transitions state spawning → running after executor is linked', async () => {
+      executor.setSafePgCall(happySafePgCall);
+      await executor.spawn('test-agent', 'chat-1', { OMNI_INSTANCE_ID: 'inst-1' });
+
+      // updateExecutorState should have been called at least once with "running".
+      const runningCalls = updateExecutorStateMock.mock.calls.filter(([, state]) => state === 'running');
+      expect(runningCalls.length).toBeGreaterThanOrEqual(1);
+      expect(runningCalls[0][0]).toBe('executor-id-fixture');
+    });
+
+    it('deliver(): transitions state working → idle around the query', async () => {
+      executor.setSafePgCall(happySafePgCall);
+      executor.setNatsPublish(mock());
+
+      const session = await executor.spawn('test-agent', 'chat-deliver', { OMNI_INSTANCE_ID: 'inst-1' });
+      updateExecutorStateMock.mockClear(); // reset so we only see the deliver transitions
+
+      await executor.deliver(session, {
+        content: 'hi',
+        sender: 'user',
+        instanceId: 'inst-1',
+        chatId: 'chat-deliver',
+        agent: 'test-agent',
+      });
+      await executor.waitForDeliveries(session.id);
+
+      const states = updateExecutorStateMock.mock.calls.map(([, state]) => state);
+      expect(states).toContain('working');
+      expect(states).toContain('idle');
+      // Order matters: working must come before idle.
+      expect(states.indexOf('working')).toBeLessThan(states.indexOf('idle'));
+    });
+
+    it('shutdown(): calls terminateExecutor with the linked executor ID', async () => {
+      executor.setSafePgCall(happySafePgCall);
+      const session = await executor.spawn('test-agent', 'chat-shutdown', { OMNI_INSTANCE_ID: 'inst-1' });
+
+      await executor.shutdown(session);
+
+      expect(terminateExecutorMock).toHaveBeenCalledTimes(1);
+      expect(terminateExecutorMock.mock.calls[0][0]).toBe('executor-id-fixture');
+    });
+
+    it('safePgCall is the mechanism: mocked safePgCall sees all registry op names', async () => {
+      const safePgCallSpy = mock(
+        async <T>(_op: string, fn: (_sql: any) => Promise<T>, _fallback: T): Promise<T> => fn(mockSql),
+      );
+      executor.setSafePgCall(safePgCallSpy as never);
+      executor.setNatsPublish(mock());
+
+      const session = await executor.spawn('spy-agent', 'chat-spy', { OMNI_INSTANCE_ID: 'inst-1' });
+      await executor.deliver(session, {
+        content: 'hi',
+        sender: 'u',
+        instanceId: 'inst-1',
+        chatId: 'chat-spy',
+        agent: 'spy-agent',
+      });
+      await executor.waitForDeliveries(session.id);
+      await executor.shutdown(session);
+
+      const ops = safePgCallSpy.mock.calls.map((args) => args[0]);
+      expect(ops).toContain('sdk-find-or-create-agent');
+      expect(ops).toContain('sdk-create-executor');
+      expect(ops).toContain('sdk-update-executor-state');
+      expect(ops).toContain('sdk-terminate-executor');
+    });
+
+    it('degraded mode: safePgCall returning fallback immediately keeps spawn/deliver/shutdown working', async () => {
+      executor.setSafePgCall(degradedSafePgCall);
+      executor.setNatsPublish(mock());
+
+      // No PG work should happen because fn is never invoked.
+      const session = await executor.spawn('test-agent', 'chat-degraded', { OMNI_INSTANCE_ID: 'inst-1' });
+      expect(findOrCreateAgentMock).not.toHaveBeenCalled();
+      expect(createAndLinkExecutorMock).not.toHaveBeenCalled();
+      expect(updateExecutorStateMock).not.toHaveBeenCalled();
+
+      await executor.deliver(session, {
+        content: 'hi',
+        sender: 'user',
+        instanceId: 'inst-1',
+        chatId: 'chat-degraded',
+        agent: 'test-agent',
+      });
+      await executor.waitForDeliveries(session.id);
+
+      await executor.shutdown(session);
+      expect(terminateExecutorMock).not.toHaveBeenCalled();
+
+      // Session lifecycle still worked end-to-end.
+      expect(await executor.isAlive(session)).toBe(false);
+    });
+
+    it('no bridge attached: spawn/deliver/shutdown work without any registry calls', async () => {
+      // No setSafePgCall call — executor.safePgCall stays null.
+      executor.setNatsPublish(mock());
+      const session = await executor.spawn('test-agent', 'chat-solo', { OMNI_INSTANCE_ID: 'inst-1' });
+      await executor.deliver(session, {
+        content: 'hi',
+        sender: 'user',
+        instanceId: 'inst-1',
+        chatId: 'chat-solo',
+        agent: 'test-agent',
+      });
+      await executor.waitForDeliveries(session.id);
+      await executor.shutdown(session);
+
+      expect(findOrCreateAgentMock).not.toHaveBeenCalled();
+      expect(createAndLinkExecutorMock).not.toHaveBeenCalled();
     });
   });
 });
