@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findWorkspace, getWorkspaceConfig, scanAgents } from './workspace.js';
+import { findWorkspace, genieHome, getWorkspaceConfig, scanAgents } from './workspace.js';
 
 let testDir: string;
 let fakeGenieHome: string;
@@ -120,6 +120,41 @@ describe('workspaceRoot persistence', () => {
       expect(config.workspaceRoot).toBeUndefined();
     }
     // (if the file doesn't exist at all, that's also a pass — nothing was persisted)
+  });
+
+  test('canonicalizes symlinked tmp paths so the guard cannot be bypassed', () => {
+    // Regression guard for the macOS /tmp → /private/tmp case. path.resolve()
+    // does NOT follow symlinks, so a naive prefix check against a non-canonical
+    // path would miss. realpathSync() canonicalizes both sides.
+    const real = join(testDir, 'real-workspace');
+    const link = join(testDir, 'linked-workspace');
+    mkdirSync(real, { recursive: true });
+    makeWorkspace(real);
+    try {
+      symlinkSync(real, link, 'dir');
+    } catch {
+      // Some CI environments disallow symlink creation; skip gracefully.
+      return;
+    }
+
+    // findWorkspace called via the symlink path — without realpathSync the
+    // tmp-guard would fail to match, with realpathSync it matches correctly.
+    const result = findWorkspace(link);
+    expect(result).not.toBeNull();
+
+    // Either the config file doesn't exist at all, or it exists with no workspaceRoot.
+    // Both mean "nothing was persisted" — which is what we want.
+    const configPath = join(fakeGenieHome, 'config.json');
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(config.workspaceRoot).toBeUndefined();
+    }
+  });
+
+  test('genieHome() reflects GENIE_HOME env override', () => {
+    // Sanity check: the exported helper resolves dynamically so callers in other
+    // modules (e.g. serve.ts warning messages) see the same value as workspace.ts.
+    expect(genieHome()).toBe(fakeGenieHome);
   });
 
   test('clears stale workspaceRoot from config when the saved path is gone', () => {
