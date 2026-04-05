@@ -113,6 +113,88 @@ export async function queryAuditEvents(options: AuditQueryOptions = {}): Promise
 }
 
 /**
+ * Follow audit events in real-time via LISTEN/NOTIFY.
+ * Falls back to polling every 2s for safety (missed notifications).
+ */
+interface FollowAuditEventsHandle {
+  stop: () => Promise<void>;
+}
+
+export async function followAuditEvents(
+  options: AuditQueryOptions,
+  onEvent: (row: AuditEventRow) => void,
+): Promise<FollowAuditEventsHandle> {
+  const sql = await getConnection();
+  // Seed with latest id so we only see new events
+  const seed = await sql<{ max_id: number | null }[]>`
+    SELECT COALESCE(MAX(id), 0)::int AS max_id FROM audit_events
+  `;
+  let lastSeenId = Number(seed[0]?.max_id ?? 0);
+  let active = true;
+  let drainChain = Promise.resolve();
+
+  const drain = async () => {
+    if (!active) return;
+    const conditions: string[] = ['id > $1'];
+    const values: unknown[] = [lastSeenId];
+    let paramIdx = 2;
+
+    if (options.type) {
+      conditions.push(`event_type = $${paramIdx++}`);
+      values.push(options.type);
+    }
+    if (options.entity) {
+      conditions.push(`(entity_type = $${paramIdx} OR entity_id = $${paramIdx})`);
+      paramIdx++;
+      values.push(options.entity);
+    }
+    if (options.errorsOnly) {
+      conditions.push(`(event_type LIKE '%error%' OR details::text LIKE '%error%')`);
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const rows = (await sql.unsafe(
+      `SELECT id, entity_type, entity_id, event_type, actor, details, created_at
+       FROM audit_events ${where}
+       ORDER BY id ASC
+       LIMIT 200`,
+      values,
+    )) as unknown as AuditEventRow[];
+
+    for (const row of rows) {
+      lastSeenId = row.id;
+      onEvent(row);
+    }
+  };
+
+  const queueDrain = () => {
+    drainChain = drainChain.then(drain).catch(() => {
+      /* swallow transient errors */
+    });
+  };
+
+  // LISTEN on genie_audit_event channel (trigger in migration 027)
+  const listener = await sql.listen('genie_audit_event', () => {
+    queueDrain();
+  });
+
+  // Safety net: poll every 2s in case we miss a notification
+  const pollTimer = setInterval(queueDrain, 2000);
+
+  // Drain anything that arrived between seed and listen registration
+  await drain();
+
+  return {
+    stop: async () => {
+      active = false;
+      clearInterval(pollTimer);
+      await drainChain;
+      await listener.unlisten();
+    },
+  };
+}
+
+/**
  * Get aggregated error patterns from audit events.
  */
 export interface ErrorPattern {
