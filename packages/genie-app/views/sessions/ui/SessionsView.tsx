@@ -88,7 +88,7 @@ function formatTimestamp(iso: string): string {
 function truncate(text: string, max: number): string {
   if (!text) return '';
   if (text.length <= max) return text;
-  return text.slice(0, max) + '\u2026';
+  return `${text.slice(0, max)}\u2026`;
 }
 
 function formatCost(usd: number): string {
@@ -101,6 +101,7 @@ function formatCost(usd: number): string {
  * Consecutive tool calls (role=assistant + toolName) are nested under the
  * preceding assistant message.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: turn grouping state machine
 function groupTurns(turns: TurnRow[]): MessageGroup[] {
   const groups: MessageGroup[] = [];
   let currentGroup: MessageGroup | null = null;
@@ -131,6 +132,7 @@ function groupTurns(turns: TurnRow[]): MessageGroup[] {
 /**
  * Build timeline density segments from turns.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: timeline segmentation state machine
 function buildTimelineSegments(turns: TurnRow[]): TimelineSegment[] {
   if (turns.length === 0) return [];
   const segments: TimelineSegment[] = [];
@@ -162,12 +164,12 @@ function buildTimelineSegments(turns: TurnRow[]): TimelineSegment[] {
 // ============================================================================
 
 const ROLE_ICONS: Record<string, string> = {
-  engineer: '\u2699',    // gear
-  reviewer: '\u2713',    // check
-  qa: '\u2714',          // checkmark
+  engineer: '\u2699', // gear
+  reviewer: '\u2713', // check
+  qa: '\u2714', // checkmark
   'team-lead': '\u2691', // flag
-  fix: '\u2692',         // wrench
-  default: '\u2605',     // star
+  fix: '\u2692', // wrench
+  default: '\u2605', // star
 };
 
 function roleIcon(role: string | null): string {
@@ -567,11 +569,7 @@ function MessageGroupItem({ group, showTimeBlock }: MessageGroupItemProps) {
           </div>
         </div>
       ) : (
-        <ChatBubble
-          role={turn.role}
-          content={turn.content}
-          timestamp={turn.timestamp}
-        >
+        <ChatBubble role={turn.role} content={turn.content} timestamp={turn.timestamp}>
           {toolCalls.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '4px' }}>
               {toolCalls.map((tc, idx) => (
@@ -680,19 +678,13 @@ function ThreadPanel({
             <h2 style={styles.threadTitle}>{session.agentName}</h2>
             <p style={{ fontSize: '11px', color: theme.textMuted, margin: '2px 0 0' }}>
               {session.turnCount} turns {'\u00b7'} {formatCost(session.costUsd)}
-              {session.isActive && (
-                <span style={{ color: theme.emerald, marginLeft: '8px' }}>{'\u25cf'} Live</span>
-              )}
+              {session.isActive && <span style={{ color: theme.emerald, marginLeft: '8px' }}>{'\u25cf'} Live</span>}
             </p>
           </div>
         </div>
 
         {/* Timeline density bar */}
-        <TimelineDensity
-          segments={timelineSegments}
-          totalTurns={turns.length}
-          onJump={onJumpToTurn}
-        />
+        <TimelineDensity segments={timelineSegments} totalTurns={turns.length} onJump={onJumpToTurn} />
       </div>
 
       {/* Messages */}
@@ -736,10 +728,7 @@ function ThreadPanel({
             <span data-gutter="" style={styles.turnGutter}>
               #{group.turn.turnIndex}
             </span>
-            <MessageGroupItem
-              group={group}
-              showTimeBlock={idx === 0 || timeGaps.has(idx)}
-            />
+            <MessageGroupItem group={group} showTimeBlock={idx === 0 || timeGaps.has(idx)} />
           </div>
         ))}
 
@@ -875,7 +864,7 @@ export function SessionsView({ windowId, meta: _meta }: AppComponentProps) {
       setSelectedId(sessionId);
       // After loading, scroll to turn — we set a brief timeout to let content render
       setTimeout(() => {
-        const el = document.querySelector(`[data-gutter]`)?.closest(`[style*="position: relative"]`);
+        const el = document.querySelector('[data-gutter]')?.closest(`[style*="position: relative"]`);
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }, 500);
       // If not the same session, the useEffect for selectedId will reload turns
@@ -940,6 +929,7 @@ export function SessionsView({ windowId, meta: _meta }: AppComponentProps) {
 
   // ---- Keyboard navigation ----
   useEffect(() => {
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: multi-key keyboard handler dispatch
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;

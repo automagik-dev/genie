@@ -106,6 +106,12 @@
           },
           "correctness": {
             "noUnusedVariables": "warn"
+          },
+          "a11y": {
+            "useKeyWithClickEvents": "warn",
+            "useSemanticElements": "warn",
+            "noLabelWithoutControl": "warn",
+            "noSvgWithoutTitle": "warn"
           }
         }
       }

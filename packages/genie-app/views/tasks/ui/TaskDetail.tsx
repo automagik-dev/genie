@@ -384,6 +384,7 @@ function AcceptanceCriteriaList({ criteria }: { criteria: AcceptanceCriterion[] 
         {doneCount}/{criteria.length} complete
       </p>
       {criteria.map((criterion, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: criteria list is static and reordering is not supported
         <div key={i} style={styles.criterionRow}>
           <div
             style={{
@@ -462,6 +463,7 @@ function DependencyList({
         const dotColor = depStatusColor(dep.task_stage);
         const sColor = stageColor(dep.task_stage);
         return (
+          // biome-ignore lint/a11y/useKeyWithClickEvents: dependency row — keyboard nav via arrow keys in parent list
           <div
             key={dep.task_id}
             style={styles.depItem}

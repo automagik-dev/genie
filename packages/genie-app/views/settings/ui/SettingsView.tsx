@@ -1,6 +1,5 @@
-export function SettingsView({
-  windowId: _windowId,
-  meta: _meta,
-}: { windowId: string; meta?: Record<string, unknown> }) {
-  return <div>Coming soon</div>;
+import { Settings } from '../../genie/ui/Settings';
+
+export function SettingsView(props: { windowId: string; meta?: Record<string, unknown> }) {
+  return <Settings {...props} />;
 }

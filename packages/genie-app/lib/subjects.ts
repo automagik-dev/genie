@@ -59,12 +59,15 @@ export const GENIE_SUBJECTS = {
   // ---- Schedules ----
   schedules: {
     list: (orgId: string) => s(orgId, 'schedules.list'),
+    history: (orgId: string) => s(orgId, 'schedules.history'),
   },
 
   // ---- System ----
   system: {
     health: (orgId: string) => s(orgId, 'system.health'),
     snapshots: (orgId: string) => s(orgId, 'system.snapshots'),
+    tables: (orgId: string) => s(orgId, 'system.tables'),
+    channels: (orgId: string) => s(orgId, 'system.channels'),
   },
 
   // ---- Settings ----
@@ -72,8 +75,11 @@ export const GENIE_SUBJECTS = {
     get: (orgId: string) => s(orgId, 'settings.get'),
     set: (orgId: string) => s(orgId, 'settings.set'),
     templates: (orgId: string) => s(orgId, 'settings.templates'),
+    templateSave: (orgId: string) => s(orgId, 'settings.templates.save'),
     skills: (orgId: string) => s(orgId, 'settings.skills'),
     rules: (orgId: string) => s(orgId, 'settings.rules'),
+    workspace: (orgId: string) => s(orgId, 'settings.workspace'),
+    testPg: (orgId: string) => s(orgId, 'settings.test_pg'),
   },
 
   // ---- PTY (Terminal) ----

@@ -72,6 +72,7 @@ export function TimelineDensity({ segments, totalTurns, onJump, currentTurn }: T
         }}
       >
         {segmentWidths.map((seg, idx) => (
+          // biome-ignore lint/a11y/useKeyWithClickEvents: visual density bar — keyboard nav via parent turn list
           <div
             key={`${seg.startTurn}-${seg.endTurn}`}
             style={{
