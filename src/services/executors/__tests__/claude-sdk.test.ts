@@ -32,6 +32,19 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   }),
 }));
 
+// Mock audit-events (Group 5 + 7 — writes audit via safePgCall)
+mock.module('../../../lib/audit-events.js', () => ({
+  recordAuditEvent: mock(async () => {}),
+}));
+
+// Mock sdk-session-capture (Group 5 — session content capture)
+mock.module('../sdk-session-capture.js', () => ({
+  startSession: mock(async () => null),
+  recordTurn: mock(async () => {}),
+  updateTurnCount: mock(async () => {}),
+  endSession: mock(async () => {}),
+}));
+
 // Mock agent-registry and executor-registry so spawn()/shutdown() never touch real PG.
 // The tests override these with fresh mocks per-test for call-count assertions.
 const findOrCreateAgentMock = mock(async (_name: string, _team: string, _role?: string) => ({
@@ -56,11 +69,15 @@ const createAndLinkExecutorMock = mock(
 const updateExecutorStateMock = mock(async (_id: string, _state: string) => undefined);
 const terminateExecutorMock = mock(async (_id: string) => undefined);
 const findLatestByMetadataMock = mock(async (_filter: any) => null);
+const relinkExecutorToAgentMock = mock(async () => undefined);
+const updateClaudeSessionIdMock = mock(async () => undefined);
 mock.module('../../../lib/executor-registry.js', () => ({
   createAndLinkExecutor: createAndLinkExecutorMock,
   updateExecutorState: updateExecutorStateMock,
   terminateExecutor: terminateExecutorMock,
   findLatestByMetadata: findLatestByMetadataMock,
+  relinkExecutorToAgent: relinkExecutorToAgentMock,
+  updateClaudeSessionId: updateClaudeSessionIdMock,
 }));
 
 const { ClaudeSdkOmniExecutor } = await import('../claude-sdk.js');
