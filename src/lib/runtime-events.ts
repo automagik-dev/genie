@@ -1,5 +1,69 @@
 import { getConnection } from './db.js';
 
+// ---------------------------------------------------------------------------
+// Circuit breaker for PG event writes (Group 2 — #857)
+// ---------------------------------------------------------------------------
+class EventCircuitBreaker {
+  private failures = 0;
+  private lastFailure = 0;
+  private loggedOpen = false;
+  private readonly threshold = 5;
+  private readonly cooldown = 30_000;
+
+  isOpen(): boolean {
+    if (this.failures < this.threshold) return false;
+    if (Date.now() - this.lastFailure > this.cooldown) {
+      this.failures = 0;
+      return false;
+    }
+    return true;
+  }
+
+  recordSuccess(): void {
+    if (this.failures >= this.threshold) {
+      console.warn('[runtime-events] circuit breaker closed — PG writes resumed');
+    }
+    this.failures = 0;
+    this.loggedOpen = false;
+  }
+
+  recordFailure(): void {
+    this.failures++;
+    this.lastFailure = Date.now();
+    if (this.failures >= this.threshold && !this.loggedOpen) {
+      console.warn(
+        `[runtime-events] circuit breaker open — skipping PG writes for ${this.cooldown / 1000}s after ${this.threshold} consecutive failures`,
+      );
+      this.loggedOpen = true;
+    }
+  }
+
+  get state(): string {
+    if (this.failures < this.threshold) return 'closed';
+    if (Date.now() - this.lastFailure > this.cooldown) return 'half-open';
+    return 'open';
+  }
+}
+
+const circuitBreaker = new EventCircuitBreaker();
+
+// ---------------------------------------------------------------------------
+// Event throughput metrics (Group 3 — #858)
+// ---------------------------------------------------------------------------
+let eventsEmitted = 0;
+let eventsFailed = 0;
+let lastEmitDuration = 0;
+
+/** Returns in-process event throughput counters for the metrics CLI. */
+export function getEventMetrics(): {
+  eventsEmitted: number;
+  eventsFailed: number;
+  lastEmitDuration: number;
+  circuitState: string;
+} {
+  return { eventsEmitted, eventsFailed, lastEmitDuration, circuitState: circuitBreaker.state };
+}
+
 export type RuntimeEventKind =
   | 'user'
   | 'assistant'
@@ -26,6 +90,8 @@ export interface RuntimeEvent {
   source: RuntimeEventSource;
   subject?: string;
   threadId?: string;
+  traceId?: string;
+  parentEventId?: number;
 }
 
 export interface RuntimeEventInput {
@@ -41,6 +107,8 @@ export interface RuntimeEventInput {
   data?: Record<string, unknown>;
   subject?: string;
   threadId?: string;
+  traceId?: string;
+  parentEventId?: number;
 }
 
 interface RuntimeEventQuery {
@@ -51,6 +119,7 @@ interface RuntimeEventQuery {
   teamPrefix?: string;
   subject?: string;
   threadId?: string;
+  traceId?: string;
   kinds?: RuntimeEventKind[];
   since?: string;
   limit?: number;
@@ -81,6 +150,8 @@ interface RuntimeEventRow {
   text: string;
   data: Record<string, unknown> | null;
   thread_id: string | null;
+  trace_id: string | null;
+  parent_event_id: number | null;
   created_at: Date | string;
 }
 
@@ -99,6 +170,8 @@ function rowToRuntimeEvent(row: RuntimeEventRow): RuntimeEvent {
     source: row.source,
     subject: row.subject ?? undefined,
     threadId: row.thread_id ?? undefined,
+    traceId: row.trace_id ?? undefined,
+    parentEventId: row.parent_event_id != null ? Number(row.parent_event_id) : undefined,
   };
 }
 
@@ -148,6 +221,9 @@ function buildWhere(query: RuntimeEventQuery): { clause: string; values: unknown
   if (query.threadId) {
     clauses.push(`thread_id = ${nextParam(values, query.threadId)}`);
   }
+  if (query.traceId) {
+    clauses.push(`trace_id = ${nextParam(values, query.traceId)}`);
+  }
 
   const scopeClause = buildScopeClause(query, values);
   if (scopeClause) clauses.push(scopeClause);
@@ -159,30 +235,47 @@ function buildWhere(query: RuntimeEventQuery): { clause: string; values: unknown
 }
 
 export async function publishRuntimeEvent(input: RuntimeEventInput): Promise<RuntimeEvent> {
-  const sql = await getConnection();
-  const threadId = input.threadId ?? `agent:${input.agent}`;
-  const rows = await sql<RuntimeEventRow[]>`
-    INSERT INTO genie_runtime_events (
-      repo_path, subject, kind, source, agent, team, direction, peer, text, data, thread_id, created_at
-    )
-    VALUES (
-      ${input.repoPath},
-      ${input.subject ?? null},
-      ${input.kind},
-      ${input.source},
-      ${input.agent},
-      ${input.team ?? null},
-      ${input.direction ?? null},
-      ${input.peer ?? null},
-      ${input.text},
-      ${sql.json(input.data ?? {})},
-      ${threadId},
-      ${input.timestamp ?? new Date().toISOString()}
-    )
-    RETURNING id, repo_path, subject, kind, source, agent, team, direction, peer, text, data, thread_id, created_at
-  `;
+  if (circuitBreaker.isOpen()) {
+    eventsFailed++;
+    throw new Error('circuit breaker open — PG event write skipped');
+  }
 
-  return rowToRuntimeEvent(rows[0]);
+  const start = Date.now();
+  try {
+    const sql = await getConnection();
+    const threadId = input.threadId ?? `agent:${input.agent}`;
+    const rows = await sql<RuntimeEventRow[]>`
+      INSERT INTO genie_runtime_events (
+        repo_path, subject, kind, source, agent, team, direction, peer, text, data, thread_id, trace_id, parent_event_id, created_at
+      )
+      VALUES (
+        ${input.repoPath},
+        ${input.subject ?? null},
+        ${input.kind},
+        ${input.source},
+        ${input.agent},
+        ${input.team ?? null},
+        ${input.direction ?? null},
+        ${input.peer ?? null},
+        ${input.text},
+        ${sql.json(input.data ?? {})},
+        ${threadId},
+        ${input.traceId ?? null},
+        ${input.parentEventId ?? null},
+        ${input.timestamp ?? new Date().toISOString()}
+      )
+      RETURNING id, repo_path, subject, kind, source, agent, team, direction, peer, text, data, thread_id, trace_id, parent_event_id, created_at
+    `;
+
+    circuitBreaker.recordSuccess();
+    eventsEmitted++;
+    lastEmitDuration = Date.now() - start;
+    return rowToRuntimeEvent(rows[0]);
+  } catch (error) {
+    circuitBreaker.recordFailure();
+    eventsFailed++;
+    throw error;
+  }
 }
 
 export async function publishSubjectEvent(
@@ -199,7 +292,7 @@ export async function listRuntimeEvents(query: RuntimeEventQuery = {}): Promise<
   const limit = query.limit ?? 500;
   const rows = (await sql.unsafe(
     `
-      SELECT id, repo_path, subject, kind, source, agent, team, direction, peer, text, data, thread_id, created_at
+      SELECT id, repo_path, subject, kind, source, agent, team, direction, peer, text, data, thread_id, trace_id, parent_event_id, created_at
       FROM genie_runtime_events
       ${clause}
       ORDER BY id ASC

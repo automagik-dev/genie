@@ -9,6 +9,7 @@
 
 import { createInterface } from 'node:readline';
 import type { Command } from 'commander';
+import { parseDuration } from '../lib/cron.js';
 import { backup, getSnapshotPath, restore } from '../lib/db-backup.js';
 import { getMigrationStatus, runMigrations } from '../lib/db-migrations.js';
 import { getActivePort, getConnection, getDataDir, isAvailable, shutdown } from '../lib/db.js';
@@ -241,6 +242,47 @@ async function dbRestoreCommand(file: string | undefined, options: { yes?: boole
   }
 }
 
+/**
+ * `genie db prune-events` — delete old runtime events beyond retention period.
+ */
+async function dbPruneEventsCommand(options: { olderThan: string; dryRun?: boolean }): Promise<void> {
+  const ms = parseDuration(options.olderThan);
+  const intervalSec = Math.floor(ms / 1000);
+
+  const available = await isAvailable();
+  if (!available) {
+    console.error('Database is not running. Start it with: genie db status');
+    process.exit(1);
+  }
+
+  try {
+    const sql = await getConnection();
+
+    if (options.dryRun) {
+      const rows = await sql`
+        SELECT count(*) AS cnt
+        FROM genie_runtime_events
+        WHERE created_at < now() - make_interval(secs => ${intervalSec})
+      `;
+      const count = Number(rows[0].cnt);
+      console.log(`Would delete ${count} event${count === 1 ? '' : 's'} older than ${options.olderThan}.`);
+    } else {
+      const result = await sql`
+        DELETE FROM genie_runtime_events
+        WHERE created_at < now() - make_interval(secs => ${intervalSec})
+      `;
+      const count = Number(result.count);
+      console.log(`Deleted ${count} event${count === 1 ? '' : 's'} older than ${options.olderThan}.`);
+    }
+
+    await shutdown();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Prune failed: ${message}`);
+    process.exit(1);
+  }
+}
+
 // ============================================================================
 // Registration
 // ============================================================================
@@ -266,6 +308,12 @@ export function registerDbCommands(program: Command): void {
         console.log(url);
       }
     });
+
+  db.command('prune-events')
+    .description('Prune old runtime events beyond retention period')
+    .option('--older-than <duration>', 'Delete events older than (e.g., 30d, 7d)', '14d')
+    .option('--dry-run', 'Show count without deleting')
+    .action(dbPruneEventsCommand);
 
   db.command('backup').description('Dump database to .genie/snapshot.sql.gz').action(dbBackupCommand);
 
