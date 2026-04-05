@@ -145,6 +145,14 @@ export async function updateExecutorState(id: string, state: ExecutorState): Pro
   recordAuditEvent('executor', id, 'state_changed', process.env.GENIE_AGENT_NAME ?? 'cli', {
     state,
   }).catch(() => {});
+
+  // Emit a dedicated ready event when executor reaches 'running' state
+  if (state === 'running') {
+    recordAuditEvent('executor', id, 'executor.ready', process.env.GENIE_AGENT_NAME ?? 'cli', {
+      state,
+      readiness_source: 'state_transition',
+    }).catch(() => {});
+  }
 }
 
 /** Terminate an executor: set state='terminated', ended_at=now(). */

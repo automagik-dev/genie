@@ -8,8 +8,10 @@ import {
   DEFAULT_SPAWN_TIMEOUT_MS,
   READINESS_POLL_INTERVAL_MS,
   type WorkerProfile,
+  _pgDeps,
   buildSpawnCommand,
   waitForAgentReady,
+  waitForExecutorReady,
 } from './spawn-command.js';
 
 // ============================================================================
@@ -344,5 +346,86 @@ describe('waitForAgentReady', () => {
     await waitForAgentReady('%42', { timeoutMs: 500, pollIntervalMs: 50 });
 
     expect(mockCapturePaneContent).toHaveBeenCalledWith('%42', 50);
+  });
+});
+
+// ============================================================================
+// PG-Based Readiness Detection — waitForExecutorReady
+// ============================================================================
+
+describe('waitForExecutorReady', () => {
+  // Save original deps for restore
+  const origIsAvailable = _pgDeps.isAvailable;
+  const origGetConnection = _pgDeps.getConnection;
+  const origGetExecutor = _pgDeps.getExecutor;
+
+  afterEach(() => {
+    // Restore real deps
+    _pgDeps.isAvailable = origIsAvailable;
+    _pgDeps.getConnection = origGetConnection;
+    _pgDeps.getExecutor = origGetExecutor;
+  });
+
+  test('returns ready immediately if executor already in running state', async () => {
+    _pgDeps.isAvailable = async () => true;
+    _pgDeps.getExecutor = async () => ({ id: 'exec-1', state: 'running' });
+
+    const result = await waitForExecutorReady('exec-1', { timeoutMs: 500 });
+
+    expect(result.ready).toBe(true);
+    expect(result.elapsedMs).toBeLessThan(500);
+  });
+
+  test('returns ready immediately if executor already in idle state', async () => {
+    _pgDeps.isAvailable = async () => true;
+    _pgDeps.getExecutor = async () => ({ id: 'exec-1', state: 'idle' });
+
+    const result = await waitForExecutorReady('exec-1', { timeoutMs: 500 });
+
+    expect(result.ready).toBe(true);
+    expect(result.elapsedMs).toBeLessThan(500);
+  });
+
+  test('returns not ready if PG is unavailable (graceful degradation)', async () => {
+    _pgDeps.isAvailable = async () => false;
+
+    const result = await waitForExecutorReady('exec-1', { timeoutMs: 500 });
+
+    expect(result.ready).toBe(false);
+    expect(result.elapsedMs).toBe(0);
+  });
+
+  test('times out if executor stays in spawning state', async () => {
+    _pgDeps.isAvailable = async () => true;
+    _pgDeps.getExecutor = async () => ({ id: 'exec-1', state: 'spawning' });
+    _pgDeps.getConnection = async () => ({
+      listen: async () => ({ unlisten: async () => {} }),
+    });
+
+    const result = await waitForExecutorReady('exec-1', { timeoutMs: 300 });
+
+    expect(result.ready).toBe(false);
+    expect(result.elapsedMs).toBeGreaterThanOrEqual(300);
+  });
+
+  test('returns ready when executor transitions to running during poll', async () => {
+    _pgDeps.isAvailable = async () => true;
+
+    let callCount = 0;
+    _pgDeps.getExecutor = async () => {
+      callCount++;
+      // First call (initial check): spawning
+      // Second call (poll): running
+      if (callCount <= 1) return { id: 'exec-1', state: 'spawning' };
+      return { id: 'exec-1', state: 'running' };
+    };
+    _pgDeps.getConnection = async () => ({
+      listen: async () => ({ unlisten: async () => {} }),
+    });
+
+    const result = await waitForExecutorReady('exec-1', { timeoutMs: 5000 });
+
+    expect(result.ready).toBe(true);
+    expect(callCount).toBeGreaterThanOrEqual(2);
   });
 });
