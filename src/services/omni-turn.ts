@@ -6,7 +6,7 @@
  * session?") without hitting the database on every NATS event.
  */
 
-export interface Turn {
+interface Turn {
   turnId: string;
   sessionKey: string;
   messageId: string;
