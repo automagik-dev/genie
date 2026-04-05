@@ -568,12 +568,26 @@ export async function isPaneAlive(paneId: string): Promise<boolean> {
 }
 
 /**
+ * execSync signature for dependency injection in tests.
+ * Accepting execSync as a parameter lets tests stub it without
+ * `mock.module('node:child_process', ...)`, which is process-global
+ * and leaks across test files (breaks audit-context, freshness, pg tests).
+ */
+type ExecSyncFn = (cmd: string, opts: { encoding: 'utf-8'; timeout: number }) => string;
+
+/**
  * Check if a tmux pane has a running descendant process matching the given name.
  * Walks two levels of the process tree (shell -> process -> subprocess) to handle
  * cases where the target runs under a wrapper script.
  * Returns false if the pane doesn't exist or the process is not found.
+ *
+ * @param execSyncFn - injected for testing; defaults to node:child_process.execSync
  */
-export async function isPaneProcessRunning(paneId: string, processName: string): Promise<boolean> {
+export async function isPaneProcessRunning(
+  paneId: string,
+  processName: string,
+  execSyncFn?: ExecSyncFn,
+): Promise<boolean> {
   if (!paneId || paneId === 'inline') return false;
   if (!/^%\d+$/.test(paneId)) return false;
 
@@ -581,9 +595,9 @@ export async function isPaneProcessRunning(paneId: string, processName: string):
     const panePid = (await executeTmux(`display-message -t '${paneId}' -p '#{pane_pid}'`)).trim();
     if (!panePid || !/^\d+$/.test(panePid)) return false;
 
-    const { execSync } = await import('node:child_process');
+    const exec: ExecSyncFn = execSyncFn ?? ((await import('node:child_process')).execSync as ExecSyncFn);
     // Check direct children and grandchildren for the target process name
-    const output = execSync(
+    const output = exec(
       `pgrep -la -P ${panePid} 2>/dev/null; for cpid in $(pgrep -P ${panePid} 2>/dev/null); do pgrep -la -P "$cpid" 2>/dev/null; done; true`,
       { encoding: 'utf-8', timeout: 5000 },
     );
