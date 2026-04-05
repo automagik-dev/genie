@@ -49,7 +49,7 @@ export const createAndLinkExecutorMock = mock(
 export const updateExecutorStateMock = mock(async (_id: string, _state: string) => undefined);
 export const terminateExecutorMock = mock(async (_id: string) => undefined);
 
-export const directoryResolveMock = mock(async (name: string) => ({
+const directoryResolveMock = mock(async (name: string) => ({
   entry: {
     name,
     dir: '/tmp/test',
@@ -62,7 +62,7 @@ export const directoryResolveMock = mock(async (name: string) => ({
 }));
 
 /** Default SDK query implementation — yields one assistant reply + success result with session_id. */
-export const defaultQueryImpl = () => {
+const defaultQueryImpl = () => {
   const gen = (async function* () {
     yield { type: 'assistant', message: { content: [{ type: 'text', text: 'reply' }] } };
     yield { type: 'result', subtype: 'success', session_id: 'sdk-session-aaa' };
