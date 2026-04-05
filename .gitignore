@@ -58,7 +58,6 @@ yarn-error.log*
 .genie/agents.json
 .genie/teams/
 .genie/brainstorms/
-.genie/wishes/
 
 # Team runtime state
 .genie/mailbox/
