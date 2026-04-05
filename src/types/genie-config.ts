@@ -70,6 +70,8 @@ const OmniConfigSchema = z.object({
   apiUrl: z.string(),
   apiKey: z.string().optional(),
   defaultInstanceId: z.string().optional(),
+  /** Executor type for the omni bridge: 'tmux' (default) or 'sdk'. */
+  executor: z.enum(['tmux', 'sdk']).optional(),
 });
 
 // Council preset configuration

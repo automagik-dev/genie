@@ -1,6 +1,6 @@
 # Wish: Move worktrees out of repo to ~/.genie/worktrees/
 
-**Status:** DRAFT
+**Status:** SHIPPED
 **Slug:** `worktree-out-of-repo`
 **Created:** 2026-03-16
 

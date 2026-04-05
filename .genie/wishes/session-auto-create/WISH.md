@@ -1,5 +1,7 @@
 # Wish: --session flag auto-creates tmux session
 
+**Status:** SHIPPED
+
 Fixes: https://github.com/automagik-dev/genie/issues/691
 
 ## Problem

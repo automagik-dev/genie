@@ -1,18 +1,30 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findWorkspace, getWorkspaceConfig, scanAgents } from './workspace.js';
+import { findWorkspace, genieHome, getWorkspaceConfig, scanAgents } from './workspace.js';
 
 let testDir: string;
+let fakeGenieHome: string;
+const originalGenieHome = process.env.GENIE_HOME;
 
 beforeEach(() => {
   testDir = join(tmpdir(), `genie-workspace-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(testDir, { recursive: true });
+  // Isolate ~/.genie/config.json from the developer's real config for every test.
+  fakeGenieHome = join(testDir, '.fake-genie-home');
+  mkdirSync(fakeGenieHome, { recursive: true });
+  process.env.GENIE_HOME = fakeGenieHome;
 });
 
 afterEach(() => {
   rmSync(testDir, { recursive: true, force: true });
+  if (originalGenieHome === undefined) {
+    // biome-ignore lint/performance/noDelete: process.env assignment coerces undefined→"undefined"; delete is the only correct unset
+    delete process.env.GENIE_HOME;
+  } else {
+    process.env.GENIE_HOME = originalGenieHome;
+  }
 });
 
 function makeWorkspace(root: string, config: Record<string, unknown> = { name: 'test-ws' }) {
@@ -92,6 +104,74 @@ describe('getWorkspaceConfig', () => {
     const config = getWorkspaceConfig(testDir);
     expect(config.name).toBe('my-ws');
     expect(config.pgUrl).toBe('postgres://localhost:5432/genie');
+  });
+});
+
+describe('workspaceRoot persistence', () => {
+  test('does not persist workspaces under tmpdir() to GENIE_HOME config', () => {
+    // testDir is under tmpdir() by construction — walk-up will succeed, but
+    // saveWorkspaceRoot must refuse to write it, so the global config stays clean.
+    makeWorkspace(testDir);
+    findWorkspace(testDir);
+
+    const configPath = join(fakeGenieHome, 'config.json');
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(config.workspaceRoot).toBeUndefined();
+    }
+    // (if the file doesn't exist at all, that's also a pass — nothing was persisted)
+  });
+
+  test('canonicalizes symlinked tmp paths so the guard cannot be bypassed', () => {
+    // Regression guard for the macOS /tmp → /private/tmp case. path.resolve()
+    // does NOT follow symlinks, so a naive prefix check against a non-canonical
+    // path would miss. realpathSync() canonicalizes both sides.
+    const real = join(testDir, 'real-workspace');
+    const link = join(testDir, 'linked-workspace');
+    mkdirSync(real, { recursive: true });
+    makeWorkspace(real);
+    try {
+      symlinkSync(real, link, 'dir');
+    } catch {
+      // Some CI environments disallow symlink creation; skip gracefully.
+      return;
+    }
+
+    // findWorkspace called via the symlink path — without realpathSync the
+    // tmp-guard would fail to match, with realpathSync it matches correctly.
+    const result = findWorkspace(link);
+    expect(result).not.toBeNull();
+
+    // Either the config file doesn't exist at all, or it exists with no workspaceRoot.
+    // Both mean "nothing was persisted" — which is what we want.
+    const configPath = join(fakeGenieHome, 'config.json');
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(config.workspaceRoot).toBeUndefined();
+    }
+  });
+
+  test('genieHome() reflects GENIE_HOME env override', () => {
+    // Sanity check: the exported helper resolves dynamically so callers in other
+    // modules (e.g. serve.ts warning messages) see the same value as workspace.ts.
+    expect(genieHome()).toBe(fakeGenieHome);
+  });
+
+  test('clears stale workspaceRoot from config when the saved path is gone', () => {
+    // Simulate a prior run that persisted a path which has since vanished.
+    const vanished = join(testDir, 'was-here-now-gone');
+    const configPath = join(fakeGenieHome, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ workspaceRoot: vanished }));
+
+    // findWorkspace from an unrelated dir triggers the fallback → stale path detected → cleared.
+    const unrelated = join(testDir, 'unrelated');
+    mkdirSync(unrelated, { recursive: true });
+    const result = findWorkspace(unrelated);
+    expect(result).toBeNull();
+
+    // The poisoned entry should be scrubbed from the config so future calls don't keep hitting it.
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    expect(config.workspaceRoot).toBeUndefined();
   });
 });
 

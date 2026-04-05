@@ -1,7 +1,7 @@
 ---
 title: "Wish: Genie Hacks + Community-Driven Documentation"
 date: 2026-03-24
-status: APPROVED
+status: SHIPPED
 slug: genie-hacks-community-docs
 ---
 

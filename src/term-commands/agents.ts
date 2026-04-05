@@ -1915,13 +1915,24 @@ async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<Map<stri
   return statusMap;
 }
 
+/** Resolve agent names that have executors with the given metadata source. */
+async function resolveAgentNamesBySource(source: string): Promise<Set<string>> {
+  const executorRegistry = await import('../lib/executor-registry.js');
+  const agentRegistry = await import('../lib/agent-registry.js');
+  const executors = await executorRegistry.listExecutors(undefined, source);
+  const agentIds = new Set(executors.map((e) => e.agentId));
+  const agents = await agentRegistry.listAgents({});
+  return new Set(agents.filter((a) => agentIds.has(a.id)).map((a) => a.customName ?? a.role ?? a.id));
+}
+
 /**
  * genie ls — Smart view of registered agents with runtime status.
  */
-export async function handleLsCommand(options: { json?: boolean }): Promise<void> {
+export async function handleLsCommand(options: { json?: boolean; source?: string }): Promise<void> {
   const dirEntries = await directory.ls();
   const workers = await registry.list();
   const statusMap = await buildWorkerStatusMap(workers);
+  const sourceAgentNames = options.source ? await resolveAgentNamesBySource(options.source) : undefined;
 
   type LsEntry = {
     name: string;
@@ -1933,7 +1944,7 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
     maxResumeAttempts?: number;
     autoResume?: boolean;
   };
-  const entries: LsEntry[] = [];
+  let entries: LsEntry[] = [];
 
   // Add directory entries with runtime status
   for (const entry of dirEntries) {
@@ -1963,6 +1974,11 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
       maxResumeAttempts: info.maxResumeAttempts,
       autoResume: info.autoResume,
     });
+  }
+
+  // Apply source filter if provided
+  if (sourceAgentNames) {
+    entries = entries.filter((e) => sourceAgentNames.has(e.name));
   }
 
   if (options.json) {

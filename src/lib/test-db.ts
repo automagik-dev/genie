@@ -86,6 +86,13 @@ export async function setupTestSchema(): Promise<() => Promise<void>> {
     await adminSql.unsafe(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
     await adminSql.unsafe(`SET search_path TO "${schemaName}"`);
     await runMigrations(adminSql);
+
+    // Drop all NOTIFY triggers from the test schema.
+    // PG NOTIFY is instance-scoped (not schema-scoped), so triggers firing in
+    // test schemas leak events to the production event router. Dropping them
+    // after migration keeps test data isolated without modifying migration SQL.
+    await dropNotifyTriggers(adminSql, schemaName);
+
     await adminSql.end({ timeout: 5 });
   } catch {
     // Schema creation or migration race under concurrent test load — skip gracefully
@@ -129,6 +136,30 @@ export async function setupTestSchema(): Promise<() => Promise<void>> {
     // Clear env var
     process.env.GENIE_TEST_SCHEMA = undefined;
   };
+}
+
+/**
+ * Drop all NOTIFY triggers from a test schema.
+ *
+ * PG NOTIFY is instance-scoped — a trigger firing in schema "test_123_456"
+ * broadcasts to every listener on that channel, including the production
+ * event router. Dropping these triggers after migration prevents test
+ * state changes from leaking as real events.
+ */
+async function dropNotifyTriggers(sql: Sql, schemaName: string): Promise<void> {
+  try {
+    const triggers = await sql`
+      SELECT trigger_name, event_object_table
+      FROM information_schema.triggers
+      WHERE trigger_schema = ${schemaName}
+        AND trigger_name LIKE 'trg_notify_%'
+    `;
+    for (const { trigger_name, event_object_table } of triggers) {
+      await sql.unsafe(`DROP TRIGGER IF EXISTS "${trigger_name}" ON "${schemaName}"."${event_object_table}"`);
+    }
+  } catch {
+    // Best effort — don't block test setup if trigger cleanup fails
+  }
 }
 
 /**

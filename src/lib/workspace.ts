@@ -5,8 +5,8 @@
  * If the cwd passes through `agents/<name>/`, the agent name is extracted.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -62,15 +62,57 @@ export function findWorkspace(cwd?: string): WorkspaceInfo | null {
   return null;
 }
 
-const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+/** Resolved lazily so GENIE_HOME env overrides in tests take effect. */
+export function genieHome(): string {
+  return process.env.GENIE_HOME ?? join(homedir(), '.genie');
+}
+
+/**
+ * True if `root` is under the OS temp directory (avoids persisting test workspaces).
+ *
+ * Uses `realpathSync` to canonicalize both paths before comparing — on macOS
+ * `/tmp` is a symlink to `/private/tmp`, and `tmpdir()` returns `/var/folders/…`,
+ * so a plain string prefix check against non-canonical paths would bypass the guard.
+ *
+ * Fails CLOSED: if canonicalization fails (path doesn't exist, permission error),
+ * treat as temp and refuse to persist — the saveWorkspaceRoot caller's goal is
+ * to be conservative about what lands in the global config.
+ */
+function isTempPath(root: string): boolean {
+  try {
+    const canonicalTmp = realpathSync(tmpdir());
+    const canonicalRoot = realpathSync(root);
+    return canonicalRoot === canonicalTmp || canonicalRoot.startsWith(canonicalTmp + sep);
+  } catch {
+    return true;
+  }
+}
 
 function saveWorkspaceRoot(root: string): void {
+  // Never persist tmp paths — tests run from tmpdir() and would poison the
+  // global fallback, causing subsequent daemons to resolve a stale path.
+  if (isTempPath(root)) return;
   try {
-    const configPath = join(GENIE_HOME, 'config.json');
+    const home = genieHome();
+    const configPath = join(home, 'config.json');
     const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf-8')) : {};
     if (config.workspaceRoot === root) return;
     config.workspaceRoot = root;
-    mkdirSync(GENIE_HOME, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Clear the saved workspaceRoot from <GENIE_HOME>/config.json. */
+function clearWorkspaceRoot(): void {
+  try {
+    const configPath = join(genieHome(), 'config.json');
+    if (!existsSync(configPath)) return;
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    if (config.workspaceRoot === undefined) return;
+    config.workspaceRoot = undefined;
     writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
   } catch {
     /* best-effort */
@@ -79,10 +121,20 @@ function saveWorkspaceRoot(root: string): void {
 
 function loadWorkspaceRoot(): string | null {
   try {
-    const configPath = join(GENIE_HOME, 'config.json');
+    const configPath = join(genieHome(), 'config.json');
     if (!existsSync(configPath)) return null;
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-    return typeof config.workspaceRoot === 'string' ? config.workspaceRoot : null;
+    const saved = typeof config.workspaceRoot === 'string' ? config.workspaceRoot : null;
+    if (!saved) return null;
+
+    // Self-heal: if the saved path no longer has a workspace marker (e.g. a
+    // test cleanup removed it, or the workspace was moved), clear it rather
+    // than keep returning a broken fallback.
+    if (!existsSync(join(saved, WORKSPACE_MARKER))) {
+      clearWorkspaceRoot();
+      return null;
+    }
+    return saved;
   } catch {
     return null;
   }

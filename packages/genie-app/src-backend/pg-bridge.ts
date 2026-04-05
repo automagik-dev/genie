@@ -1,17 +1,41 @@
 /**
- * PG Bridge — Query functions + LISTEN/NOTIFY for real-time updates.
+ * PG Bridge — Query functions + LISTEN/NOTIFY bridged to NATS pub/sub.
  *
  * Reuses getConnection() from the CLI's db module.
- * Emits typed events for executor state, task stage, and runtime events.
+ * Bridges all 9 PG NOTIFY channels to corresponding NATS event subjects:
+ *
+ *   PG Channel                  NATS Subject
+ *   ─────────────────────────   ──────────────────────────────────────
+ *   genie_agent_state        →  events.agentState
+ *   genie_executor_state     →  events.executorState
+ *   genie_task_stage         →  events.taskStage
+ *   genie_runtime_event      →  events.runtime
+ *   genie_audit_event        →  events.audit
+ *   genie_message            →  events.message
+ *   genie_mailbox_delivery   →  events.mailbox
+ *   genie_task_dep           →  events.taskDep
+ *   genie_trigger_due        →  events.trigger
  */
 
+import type { NatsConnection } from 'nats';
+import { StringCodec } from 'nats';
 import { getConnection } from '../../../src/lib/db.js';
+import { GENIE_SUBJECTS } from '../lib/subjects.js';
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type BridgeEventType = 'executor-state-changed' | 'task-stage-changed' | 'runtime-event';
+export type BridgeEventType =
+  | 'agent-state-changed'
+  | 'executor-state-changed'
+  | 'task-stage-changed'
+  | 'runtime-event'
+  | 'audit-event'
+  | 'message'
+  | 'mailbox-delivery'
+  | 'task-dep-changed'
+  | 'trigger-due';
 
 export interface BridgeEvent {
   type: BridgeEventType;
@@ -98,7 +122,7 @@ export interface BoardColumnRow {
 }
 
 // ============================================================================
-// Event Emitter
+// Event Emitter (local fallback for non-NATS consumers)
 // ============================================================================
 
 const listeners: Set<BridgeEventHandler> = new Set();
@@ -334,47 +358,82 @@ export async function dashboardStats(): Promise<DashboardStats> {
 }
 
 // ============================================================================
-// PG LISTEN/NOTIFY
+// PG LISTEN/NOTIFY → NATS Bridge
 // ============================================================================
+
+/** NATS connection and orgId stored when startListening is called with NATS params. */
+let natsConn: NatsConnection | null = null;
+let natsOrgId = 'default';
+const sc = StringCodec();
+
+/**
+ * Mapping from PG NOTIFY channel to bridge event type and NATS subject builder.
+ */
+const CHANNEL_MAP: Array<{
+  channel: string;
+  eventType: BridgeEventType;
+  natsSubject: (orgId: string) => string;
+}> = [
+  { channel: 'genie_agent_state', eventType: 'agent-state-changed', natsSubject: GENIE_SUBJECTS.events.agentState },
+  {
+    channel: 'genie_executor_state',
+    eventType: 'executor-state-changed',
+    natsSubject: GENIE_SUBJECTS.events.executorState,
+  },
+  { channel: 'genie_task_stage', eventType: 'task-stage-changed', natsSubject: GENIE_SUBJECTS.events.taskStage },
+  { channel: 'genie_runtime_event', eventType: 'runtime-event', natsSubject: GENIE_SUBJECTS.events.runtime },
+  { channel: 'genie_audit_event', eventType: 'audit-event', natsSubject: GENIE_SUBJECTS.events.audit },
+  { channel: 'genie_message', eventType: 'message', natsSubject: GENIE_SUBJECTS.events.message },
+  { channel: 'genie_mailbox_delivery', eventType: 'mailbox-delivery', natsSubject: GENIE_SUBJECTS.events.mailbox },
+  { channel: 'genie_task_dep', eventType: 'task-dep-changed', natsSubject: GENIE_SUBJECTS.events.taskDep },
+  { channel: 'genie_trigger_due', eventType: 'trigger-due', natsSubject: GENIE_SUBJECTS.events.trigger },
+];
 
 let listenersActive = false;
 let stopFns: Array<() => Promise<void>> = [];
 
-export async function startListening(): Promise<void> {
+/**
+ * Start listening on all 9 PG NOTIFY channels.
+ * When called with a NatsConnection, bridges events to NATS pub/sub.
+ * When called without NATS, emits via the local BridgeEvent emitter.
+ */
+export async function startListening(nats?: NatsConnection, orgId?: string): Promise<void> {
   if (listenersActive) return;
   listenersActive = true;
 
+  if (nats) {
+    natsConn = nats;
+    natsOrgId = orgId ?? 'default';
+  }
+
   const sql = await getConnection();
 
-  const executorListener = await sql.listen('genie_executor_state', (payload: string) => {
-    try {
-      emit({ type: 'executor-state-changed', payload: JSON.parse(payload) });
-    } catch {
-      emit({ type: 'executor-state-changed', payload: { raw: payload } });
-    }
-  });
+  for (const mapping of CHANNEL_MAP) {
+    const listener = await sql.listen(mapping.channel, (payload: string) => {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        parsed = { raw: payload };
+      }
 
-  const taskListener = await sql.listen('genie_task_stage', (payload: string) => {
-    try {
-      emit({ type: 'task-stage-changed', payload: JSON.parse(payload) });
-    } catch {
-      emit({ type: 'task-stage-changed', payload: { raw: payload } });
-    }
-  });
+      // Emit locally
+      emit({ type: mapping.eventType, payload: parsed });
 
-  const eventListener = await sql.listen('genie_runtime_event', (payload: string) => {
-    try {
-      emit({ type: 'runtime-event', payload: JSON.parse(payload) });
-    } catch {
-      emit({ type: 'runtime-event', payload: { raw: payload } });
-    }
-  });
+      // Publish to NATS if connected
+      if (natsConn) {
+        const subject = mapping.natsSubject(natsOrgId);
+        natsConn.publish(subject, sc.encode(JSON.stringify(parsed)));
+      }
+    });
 
-  stopFns = [() => executorListener.unlisten(), () => taskListener.unlisten(), () => eventListener.unlisten()];
+    stopFns.push(() => listener.unlisten());
+  }
 }
 
 export async function stopListening(): Promise<void> {
   listenersActive = false;
+  natsConn = null;
   await Promise.allSettled(stopFns.map((fn) => fn()));
   stopFns = [];
 }
