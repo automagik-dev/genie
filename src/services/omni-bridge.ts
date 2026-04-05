@@ -324,10 +324,18 @@ export class OmniBridge {
   // ==========================================================================
 
   /**
-   * Probe PG at startup. Sets `pgAvailable=true` and caches the client on success.
-   * On any failure (connection refused, timeout, migration mismatch surfaced by
-   * the provider, etc.) logs at warn level and degrades to `pgAvailable=false`.
-   * Never throws — the bridge must start even without PG.
+   * Probe PG at startup. Classifies failures into two buckets:
+   *
+   *   - **Connection-level** (ECONNREFUSED, ETIMEDOUT, connection terminated, …):
+   *     degrade gracefully — set `pgAvailable=false`, log warn, let the bridge
+   *     keep running. Developers without PG must still be able to run omni.
+   *   - **Anything else** (schema mismatch, missing relation, permission denied,
+   *     migration not yet applied, …): fail-fast by rethrowing a clear error
+   *     that tells the operator which migration command to run. Silent data
+   *     corruption is worse than noisy startup failure — this matches the
+   *     wish's PG Error Handling Strategy table.
+   *
+   * On success: caches the client and sets `pgAvailable=true`.
    */
   private async probePg(): Promise<void> {
     try {
@@ -340,7 +348,17 @@ export class OmniBridge {
       this.sql = null;
       this.pgAvailable = false;
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[omni-bridge] PG unavailable — session recovery disabled (${msg})`);
+
+      if (isPgConnectionError(err)) {
+        // Expected degraded-mode path: PG is simply unreachable.
+        console.warn(`[omni-bridge] PG unavailable — session recovery disabled (${msg})`);
+        return;
+      }
+
+      // Non-connection failure at startup = schema mismatch, missing migration,
+      // permission denied, or similar. Fail-fast with an actionable message.
+      const hint = 'Run `bun run migrate` (or the equivalent migration command) and retry.';
+      throw new Error(`[omni-bridge] PG schema mismatch or setup error: ${msg}. ${hint}`);
     }
   }
 
@@ -358,8 +376,10 @@ export class OmniBridge {
    *   - Always returns `fallback` on error — the caller never sees the throw.
    *
    * Downstream groups (4, 5, 6, 7) wire their PG writes through this helper.
+   * Public by design (Decision 2 in WISH Post-Audit Decisions) — executors
+   * hold an `OmniBridge` reference and call `bridge.safePgCall(...)` directly.
    */
-  private async safePgCall<T>(
+  public async safePgCall<T>(
     op: string,
     fn: (sql: Sql) => Promise<T>,
     fallback: T,
