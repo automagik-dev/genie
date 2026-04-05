@@ -198,7 +198,8 @@ const DEFAULT_HIDDEN_EVENT_TYPES = new Set(['command_success']);
 async function eventsStreamCommand(options: StreamOptions): Promise<void> {
   const { followAuditEvents } = await import('../lib/audit.js');
   const { followRuntimeEvents } = await import('../lib/runtime-events.js');
-  const { StreamTable, color } = await import('../lib/term-format.js');
+  const { color } = await import('../lib/term-format.js');
+  const { renderAuditEvent, renderRuntimeEvent, formatEventLine } = await import('../lib/event-renderer.js');
 
   const handles: Array<{ stop: () => Promise<void> | void }> = [];
 
@@ -212,27 +213,9 @@ async function eventsStreamCommand(options: StreamOptions): Promise<void> {
     });
   };
 
-  const colorEvent = (eventType: string): string => {
-    if (/error|fail|denied/i.test(eventType)) return color('red', eventType);
-    if (/spawn|start|create/i.test(eventType)) return color('green', eventType);
-    if (/stop|end|terminate|delete/i.test(eventType)) return color('yellow', eventType);
-    if (/tool_call/i.test(eventType)) return color('cyan', eventType);
-    if (/message|assistant|user/i.test(eventType)) return color('brightCyan', eventType);
-    if (/state|system/i.test(eventType)) return color('gray', eventType);
-    return eventType;
-  };
-
-  const table = new StreamTable([
-    { label: 'TIME', width: 10 },
-    { label: 'EVENT', width: 22 },
-    { label: 'ENTITY', width: 26 },
-    { label: 'DETAILS', width: 'flex', wrap: true },
-  ]);
-
   if (!options.json) {
     const sources = options.auditOnly ? 'audit' : options.runtimeOnly ? 'runtime' : 'audit + runtime';
     console.log(color('dim', `Streaming ${sources} events (Ctrl+C to stop)...`));
-    console.log(color('bold', table.header()));
   }
 
   if (!options.runtimeOnly) {
@@ -247,10 +230,17 @@ async function eventsStreamCommand(options: StreamOptions): Promise<void> {
           console.log(JSON.stringify({ stream: 'audit', ...row }));
           return;
         }
-        const entity = `${row.entity_type}:${row.entity_id}`;
-        const text = JSON.stringify(row.details);
-        const timeTag = `${color('gray', clockTime(row.created_at))} ${color('blue', 'A')}`;
-        console.log(table.row([timeTag, colorEvent(row.event_type), color('dim', entity), text]));
+        console.log(
+          formatEventLine(
+            clockTime(row.created_at),
+            renderAuditEvent({
+              entity_type: row.entity_type,
+              entity_id: row.entity_id,
+              event_type: row.event_type,
+              details: row.details,
+            }),
+          ),
+        );
       },
     );
     handles.push(auditHandle);
@@ -271,9 +261,17 @@ async function eventsStreamCommand(options: StreamOptions): Promise<void> {
           console.log(JSON.stringify({ stream: 'runtime', ...event }));
           return;
         }
-        const entity = `${event.agent}${event.team ? `@${event.team}` : ''}`;
-        const timeTag = `${color('gray', clockTime(event.timestamp))} ${color('magenta', 'R')}`;
-        console.log(table.row([timeTag, colorEvent(event.kind), color('dim', entity), event.text]));
+        console.log(
+          formatEventLine(
+            clockTime(event.timestamp),
+            renderRuntimeEvent({
+              kind: event.kind,
+              agent: event.agent,
+              team: event.team,
+              text: event.text,
+            }),
+          ),
+        );
       },
       { pollIntervalMs: 2000 },
     );
