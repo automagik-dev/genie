@@ -49,7 +49,12 @@ function printExecutorDetail(executor: any): void {
   console.log('');
 }
 
-async function listExecutors(options: { agent?: string; state?: string; json?: boolean }): Promise<void> {
+async function listExecutors(options: {
+  agent?: string;
+  state?: string;
+  source?: string;
+  json?: boolean;
+}): Promise<void> {
   const executorRegistry = await import('../../lib/executor-registry.js');
   const agentRegistry = await import('../../lib/agent-registry.js');
 
@@ -66,7 +71,7 @@ async function listExecutors(options: { agent?: string; state?: string; json?: b
     }
   }
 
-  let executors = await executorRegistry.listExecutors(agentId);
+  let executors = await executorRegistry.listExecutors(agentId, options.source);
   if (options.state) {
     executors = executors.filter((e) => e.state === options.state);
   }
@@ -94,8 +99,9 @@ export function registerExecCommands(program: Command): void {
     .description('List all executors')
     .option('--agent <name>', 'Filter by agent name/ID')
     .option('--state <state>', 'Filter by state (running, idle, terminated, etc.)')
+    .option('--source <name>', 'Filter by metadata source (e.g. omni)')
     .option('--json', 'Output as JSON')
-    .action(async (options: { agent?: string; state?: string; json?: boolean }) => {
+    .action(async (options: { agent?: string; state?: string; source?: string; json?: boolean }) => {
       try {
         await listExecutors(options);
       } catch (error) {

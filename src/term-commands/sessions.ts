@@ -50,6 +50,7 @@ interface ListOptions {
   active?: boolean;
   orphaned?: boolean;
   agent?: string;
+  source?: string;
   limit?: string;
   json?: boolean;
 }
@@ -71,6 +72,9 @@ async function sessionsListCommand(options: ListOptions): Promise<void> {
   const sql = await getConnection();
   const limit = Number(options.limit) || 50;
 
+  // Build optional source filter fragment
+  const sourceFilter = options.source ? sql`AND e.metadata->>'source' = ${options.source}` : sql``;
+
   let rows: SessionRow[];
   if (options.active) {
     rows = await sql`
@@ -78,7 +82,7 @@ async function sessionsListCommand(options: ListOptions): Promise<void> {
       FROM sessions s
       LEFT JOIN executors e ON s.executor_id = e.id
       LEFT JOIN agents a ON e.agent_id = a.id
-      WHERE s.status = 'active'
+      WHERE s.status = 'active' ${sourceFilter}
       ORDER BY s.started_at DESC LIMIT ${limit}`;
   } else if (options.orphaned) {
     rows = await sql`
@@ -86,7 +90,7 @@ async function sessionsListCommand(options: ListOptions): Promise<void> {
       FROM sessions s
       LEFT JOIN executors e ON s.executor_id = e.id
       LEFT JOIN agents a ON e.agent_id = a.id
-      WHERE s.status = 'orphaned'
+      WHERE s.status = 'orphaned' ${sourceFilter}
       ORDER BY s.started_at DESC LIMIT ${limit}`;
   } else if (options.agent) {
     // Search by agent name/id via executor join, fall back to legacy agent_id
@@ -95,10 +99,18 @@ async function sessionsListCommand(options: ListOptions): Promise<void> {
       FROM sessions s
       LEFT JOIN executors e ON s.executor_id = e.id
       LEFT JOIN agents a ON e.agent_id = a.id
-      WHERE a.custom_name = ${options.agent}
+      WHERE (a.custom_name = ${options.agent}
         OR a.role = ${options.agent}
         OR s.agent_id = ${options.agent}
-        OR s.agent_id LIKE ${`%${options.agent}%`}
+        OR s.agent_id LIKE ${`%${options.agent}%`}) ${sourceFilter}
+      ORDER BY s.started_at DESC LIMIT ${limit}`;
+  } else if (options.source) {
+    rows = await sql`
+      SELECT s.*, a.custom_name as agent_name
+      FROM sessions s
+      LEFT JOIN executors e ON s.executor_id = e.id
+      LEFT JOIN agents a ON e.agent_id = a.id
+      WHERE e.metadata->>'source' = ${options.source}
       ORDER BY s.started_at DESC LIMIT ${limit}`;
   } else {
     rows = await sql`
@@ -292,6 +304,7 @@ export function registerSessionsCommands(program: Command): void {
     .option('--active', 'Show only active sessions')
     .option('--orphaned', 'Show only orphaned sessions')
     .option('--agent <name>', 'Filter by agent')
+    .option('--source <name>', 'Filter by executor metadata source (e.g. omni)')
     .option('--limit <n>', 'Max number of sessions to return (default: 50)')
     .option('--json', 'Output as JSON')
     .action(async (options: ListOptions) => {
