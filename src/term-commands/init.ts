@@ -175,6 +175,12 @@ function resolveAgentsDir(wsRoot: string, dirOption?: string): string {
 
 /** genie init agent <name> — scaffold agent directory */
 async function initAgent(name: string, options: { dir?: string }): Promise<void> {
+  // Guard against path traversal — name is CLI input and lands in join(baseDir, name)
+  if (!name || /[\/\\]/.test(name) || name === '.' || name === '..' || name.includes('..')) {
+    console.error('Error: Agent name must not contain path separators or traversal sequences.');
+    process.exit(1);
+  }
+
   const cwd = process.cwd();
   const ws = findWorkspace(cwd);
   if (!ws) {
