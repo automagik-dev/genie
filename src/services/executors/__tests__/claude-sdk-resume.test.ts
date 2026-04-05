@@ -54,6 +54,17 @@ const queryMock = mock(() => {
 });
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   query: queryMock,
+  createSdkMcpServer: mock((opts: any) => ({
+    type: 'sdk' as const,
+    name: opts.name,
+    instance: {},
+  })),
+  tool: mock((_name: string, _desc: string, _schema: any, handler: any) => ({
+    name: _name,
+    description: _desc,
+    inputSchema: _schema,
+    handler,
+  })),
 }));
 
 // Mock audit-events — capture calls for assertion.
