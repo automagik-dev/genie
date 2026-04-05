@@ -7,18 +7,18 @@
 import {
   createAndLinkExecutorMock,
   findOrCreateAgentMock,
+  queryMock,
+  resetAllMocks,
+  resetQueryMock,
   terminateExecutorMock,
   updateExecutorStateMock,
 } from './_sdk-mocks.js';
 
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
-// Clean up process-global mock.module registrations when this file finishes.
-// Without this, mocked modules leak into later test files (bun mock.module
-// is process-global and persists across file boundaries).
-afterAll(() => {
-  mock.restore();
-});
+// NOTE: mock.restore() is intentionally NOT called in afterAll here.
+// The shared _sdk-mocks.ts approach means both files use the same mock
+// instances; resetAllMocks() in each beforeEach prevents cross-test leaks.
 
 // NOTE: audit-events and sdk-session-capture are intentionally NOT mocked
 // via mock.module. Bun's mock.module is process-global and mock.restore()
@@ -194,21 +194,9 @@ describe('ClaudeSdkOmniExecutor', () => {
   });
 
   describe('concurrent delivery', () => {
-    afterEach(async () => {
+    afterEach(() => {
       // Restore the default SDK query mock so later tests don't hang on unresolved barriers.
-      const sdk = await import('@anthropic-ai/claude-agent-sdk');
-      (sdk.query as ReturnType<typeof mock>).mockImplementation(() => {
-        const gen = (async function* () {
-          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'response text' }] } };
-        })();
-        return Object.assign(gen, {
-          interrupt: mock(),
-          setPermissionMode: mock(),
-          setModel: mock(),
-          return: mock(async () => ({ value: undefined, done: true })),
-          throw: mock(async () => ({ value: undefined, done: true })),
-        });
-      });
+      resetQueryMock();
     });
 
     it('3 concurrent sessions process independently without blocking each other', async () => {
@@ -217,8 +205,7 @@ describe('ClaudeSdkOmniExecutor', () => {
       const resolvers: Record<string, () => void> = {};
 
       // Override the SDK mock to use per-session delays
-      const sdk = await import('@anthropic-ai/claude-agent-sdk');
-      (sdk.query as ReturnType<typeof mock>).mockImplementation(() => {
+      queryMock.mockImplementation(() => {
         // Each call gets a unique ID based on call count
         const callNum = events.length;
         const sessionTag = `call-${callNum}`;
@@ -326,10 +313,7 @@ describe('ClaudeSdkOmniExecutor', () => {
     ): Promise<T> => fallback;
 
     beforeEach(() => {
-      findOrCreateAgentMock.mockClear();
-      createAndLinkExecutorMock.mockClear();
-      updateExecutorStateMock.mockClear();
-      terminateExecutorMock.mockClear();
+      resetAllMocks();
     });
 
     it('spawn(): calls findOrCreateAgent and createAndLinkExecutor with transport="api" and omni metadata', async () => {
