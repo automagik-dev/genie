@@ -79,6 +79,22 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     test('returns null for unknown name', async () => {
       expect(await directory.resolve('nonexistent-xyz')).toBeNull();
     });
+
+    test('prefers dir: row over stale runtime rows with same role', async () => {
+      const sql = await getConnection();
+      // Insert stale runtime row (empty metadata, older started_at)
+      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change, metadata) VALUES ('stale-uuid', '%1', 's', '/tmp', 'done', 'my-dup', now() - interval '1 hour', now(), '{}')`;
+      // Insert another stale runtime row (empty metadata, recent started_at — would win ORDER BY started_at DESC)
+      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change, metadata) VALUES ('recent-uuid', '%2', 's', '/tmp', 'done', 'my-dup', now(), now(), '{}')`;
+      // Insert directory row (has real metadata — oldest started_at, but should still win via dir: prefix)
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:my-dup', 'my-dup', 'my-dup', now() - interval '2 hours', '{"dir":"/some/path","model":"opus","color":"teal","description":"The real entry"}')`;
+
+      const resolved = await directory.resolve('my-dup');
+      expect(resolved).not.toBeNull();
+      expect(resolved!.entry.model).toBe('opus');
+      expect(resolved!.entry.color).toBe('teal');
+      expect(resolved!.entry.description).toBe('The real entry');
+    });
   });
 
   // ============================================================================
@@ -99,6 +115,18 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
     test('returns empty array when no agents', async () => {
       expect(await directory.ls()).toEqual([]);
+    });
+
+    test('ls prefers dir: row over stale runtime rows', async () => {
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change, metadata) VALUES ('runtime-1', '%1', 's', '/tmp', 'done', 'ls-dup', now(), now(), '{}')`;
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:ls-dup', 'ls-dup', 'ls-dup', now() - interval '1 hour', '{"dir":"/real/dir","model":"sonnet","description":"Directory entry"}')`;
+
+      const entries = await directory.ls();
+      const entry = entries.find((e) => e.name === 'ls-dup');
+      expect(entry).not.toBeNull();
+      expect(entry!.model).toBe('sonnet');
+      expect(entry!.description).toBe('Directory entry');
     });
 
     test('ls includes metadata fields from PG', async () => {
