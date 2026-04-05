@@ -98,9 +98,17 @@ jobs:
             exit 0
           fi
           LOCAL=$(jq -r '.version' package.json)
-          PUBLISHED=$(npm view @automagik/genie@next version 2>/dev/null || echo "none")
-          if [ "$LOCAL" = "$PUBLISHED" ]; then
-            echo "Version $LOCAL already published to @next — skipping"
+          # Check whether the exact version exists in the registry under ANY
+          # tag, not just @next. After a dev→main merge, version.yml bumps dev
+          # to a new version, publishes it as @latest, and commits the bump
+          # back to dev. The next dev push then reads that already-published
+          # version from package.json. Querying only the @next tag misses this
+          # cross-tag collision and causes a 403 when bun publish runs.
+          # Query by exact version so collisions from any tag short-circuit
+          # this step; version.yml will derive a fresh version and publish it.
+          if [ -n "$(npm view "@automagik/genie@${LOCAL}" version 2>/dev/null)" ]; then
+            echo "Version ${LOCAL} already published to npm — skipping @next publish"
+            echo "(version.yml will bump to a new version and publish it as @next)"
             exit 0
           fi
           bun publish --tag next --access public
