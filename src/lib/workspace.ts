@@ -5,7 +5,7 @@
  * If the cwd passes through `agents/<name>/`, the agent name is extracted.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 
@@ -63,15 +63,29 @@ export function findWorkspace(cwd?: string): WorkspaceInfo | null {
 }
 
 /** Resolved lazily so GENIE_HOME env overrides in tests take effect. */
-function genieHome(): string {
+export function genieHome(): string {
   return process.env.GENIE_HOME ?? join(homedir(), '.genie');
 }
 
-/** True if `root` is under the OS temp directory (avoids persisting test workspaces). */
+/**
+ * True if `root` is under the OS temp directory (avoids persisting test workspaces).
+ *
+ * Uses `realpathSync` to canonicalize both paths before comparing — on macOS
+ * `/tmp` is a symlink to `/private/tmp`, and `tmpdir()` returns `/var/folders/…`,
+ * so a plain string prefix check against non-canonical paths would bypass the guard.
+ *
+ * Fails CLOSED: if canonicalization fails (path doesn't exist, permission error),
+ * treat as temp and refuse to persist — the saveWorkspaceRoot caller's goal is
+ * to be conservative about what lands in the global config.
+ */
 function isTempPath(root: string): boolean {
-  const normalizedTmp = resolve(tmpdir());
-  const normalizedRoot = resolve(root);
-  return normalizedRoot === normalizedTmp || normalizedRoot.startsWith(normalizedTmp + sep);
+  try {
+    const canonicalTmp = realpathSync(tmpdir());
+    const canonicalRoot = realpathSync(root);
+    return canonicalRoot === canonicalTmp || canonicalRoot.startsWith(canonicalTmp + sep);
+  } catch {
+    return true;
+  }
 }
 
 function saveWorkspaceRoot(root: string): void {

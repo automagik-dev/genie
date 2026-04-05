@@ -369,12 +369,14 @@ const handles: DaemonHandles = { schedulerHandle: null, agentWatcher: null };
 /** Sync agent directory from workspace and start file watcher. */
 async function startAgentSync(): Promise<{ close: () => void } | null> {
   try {
-    const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+    const { findWorkspace, genieHome } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
     const ws = findWorkspace();
     if (!ws) {
       // Loud failure — silent return used to hide the whole discovery subsystem
       // when serve booted from outside a workspace (or with a stale saved root).
-      console.warn('  Agent sync: DISABLED — no workspace found from cwd or ~/.genie/config.json');
+      const { join } = require('node:path') as typeof import('node:path');
+      const configPath = join(genieHome(), 'config.json');
+      console.warn(`  Agent sync: DISABLED — no workspace found from cwd or ${configPath}`);
       console.warn('    Fix: `cd <workspace> && genie serve restart`, or run `genie init` to bootstrap one');
       return null;
     }
