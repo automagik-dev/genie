@@ -1,4 +1,8 @@
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
+
+import { z } from 'zod';
 import * as directory from '../../lib/agent-directory.js';
 import * as agents from '../../lib/agent-registry.js';
 import { recordAuditEvent } from '../../lib/audit-events.js';
@@ -8,6 +12,8 @@ import { ClaudeSdkProvider } from '../../lib/providers/claude-sdk.js';
 import type { IExecutor, OmniMessage, OmniSession, SafePgCallFn } from '../executor.js';
 import { endSession, recordTurn, startSession, updateTurnCount } from './sdk-session-capture.js';
 
+const execFileAsync = promisify(execFileCb);
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -16,25 +22,17 @@ interface SdkSessionState {
   abortController: AbortController;
   running: boolean;
   provider: ClaudeSdkProvider;
-  /** Claude session ID for resume (set after first query completes). */
   claudeSessionId?: string;
-  /**
-   * World A executor row ID. Set after successful `createAndLinkExecutor` in
-   * spawn(). Null when PG was unavailable (degraded mode) — downstream state
-   * updates short-circuit via `bridge.safePgCall` in that case.
-   */
   executorId: string | null;
-  /** PG sessions row ID for session_content capture (Group 5). Null in degraded mode. */
   dbSessionId: string | null;
-  /** Running turn counter for session_content rows. */
   turnIndex: number;
+  env: Record<string, string>;
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-/** Load system prompt from AGENTS.md if available. */
 async function loadSystemPrompt(entry: directory.DirectoryEntry): Promise<string | undefined> {
   const identityPath = directory.loadIdentity(entry);
   if (!identityPath) return undefined;
@@ -46,19 +44,16 @@ async function loadSystemPrompt(entry: directory.DirectoryEntry): Promise<string
   }
 }
 
-/** Result from consuming an SDK query stream. */
 interface QueryResult {
   text: string;
   sessionId?: string;
 }
 
-/** Extract text blocks from an assistant message. */
 function extractTextFromAssistant(msg: { message?: { content: Array<{ type: string; text?: string }> } }): string[] {
   if (!msg.message) return [];
   return msg.message.content.filter((b) => b.type === 'text' && b.text).map((b) => b.text as string);
 }
 
-/** Collect assistant text and session ID from an SDK query message stream. */
 async function collectQueryResult(queryMessages: Query): Promise<QueryResult> {
   const textParts: string[] = [];
   let sessionId: string | undefined;
@@ -79,65 +74,79 @@ async function collectQueryResult(queryMessages: Query): Promise<QueryResult> {
 }
 
 // ============================================================================
+// Done tool
+// ============================================================================
+
+export async function handleDoneTool(params: Record<string, unknown>, env: Record<string, string>): Promise<string> {
+  const args = ['done'];
+  if (params.skip) {
+    args.push('--skip');
+    if (params.reason) args.push('--reason', String(params.reason));
+  } else if (params.react) {
+    args.push('--react', String(params.react));
+  } else if (params.media) {
+    args.push('--media', String(params.media));
+    if (params.caption) args.push('--caption', String(params.caption));
+    if (params.text) args.push(String(params.text));
+  } else if (params.text) {
+    args.push(String(params.text));
+  } else {
+    args.push('--skip');
+  }
+  try {
+    await execFileAsync('omni', args, { env: { ...process.env, ...env } });
+    return 'Turn closed. Message delivered.';
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[claude-sdk] omni done failed: ${msg}`);
+    return `Turn close attempted but omni done failed: ${msg}`;
+  }
+}
+
+async function createDoneMcpServer(env: Record<string, string>) {
+  const { createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');
+  return createSdkMcpServer({
+    name: 'genie-omni-tools',
+    tools: [
+      tool(
+        'done',
+        'Close this turn. REQUIRED after processing the user message. Sends a final response, reacts, or skips. Call exactly once per turn.',
+        {
+          text: z.string().optional().describe('Final message to the user'),
+          media: z.string().optional().describe('File path for media attachment'),
+          caption: z.string().optional().describe('Caption for media'),
+          react: z.string().optional().describe('Emoji reaction (instead of text)'),
+          skip: z.boolean().optional().describe('Close turn without sending anything'),
+          reason: z.string().optional().describe('Internal reason for skipping'),
+        },
+        async (args) => {
+          const result = await handleDoneTool(args as Record<string, unknown>, env);
+          return { content: [{ type: 'text' as const, text: result }] };
+        },
+      ),
+    ],
+  });
+}
+
+// ============================================================================
 // Implementation
 // ============================================================================
 
 export class ClaudeSdkOmniExecutor implements IExecutor {
   private sessions = new Map<string, SdkSessionState>();
-  private natsPublish: ((topic: string, payload: string) => void) | null = null;
-  /**
-   * Bridge-provided `safePgCall`. Null until the bridge wires it via
-   * `setSafePgCall()`. When null (no bridge attached, e.g. standalone tests),
-   * registry calls are skipped entirely — the executor falls through to the
-   * pre-World-A behavior.
-   */
   private safePgCall: SafePgCallFn | null = null;
-
-  /**
-   * Per-session delivery queues. Each session chains its deliveries so messages
-   * within a single session are processed in order, but different sessions
-   * proceed independently and concurrently.
-   */
   private deliveryQueues = new Map<string, Promise<void>>();
-
-  /** Pending nudge text to prepend on the next delivery. */
   private pendingNudges = new Map<string, string>();
 
-  /**
-   * Set the NATS publish function for reply routing.
-   * Called by the bridge after construction.
-   */
-  setNatsPublish(fn: (topic: string, payload: string) => void): void {
-    this.natsPublish = fn;
-  }
-
-  /**
-   * Inject the bridge's `safePgCall` helper so World A registry writes are
-   * guarded by the same pgAvailable / connection-loss logic as the rest of
-   * the bridge. Mirrors {@link setNatsPublish}.
-   */
   setSafePgCall(fn: SafePgCallFn): void {
     this.safePgCall = fn;
   }
 
-  /**
-   * Inject a nudge into the session. The nudge text is stored and prepended
-   * as context on the next SDK query delivery for this session.
-   */
   async injectNudge(session: OmniSession, text: string): Promise<void> {
     if (!this.sessions.has(session.id)) return;
     this.pendingNudges.set(session.id, text);
   }
 
-  /**
-   * Spawn an SDK-backed agent session for a chat.
-   *
-   * - Resolves the agent from the genie directory.
-   * - Registers the agent identity in World A via `findOrCreateAgent`.
-   * - Creates an `executors` row with `transport='api'` and omni metadata.
-   * - All PG writes go through `bridge.safePgCall` — degraded mode keeps
-   *   `executorId=null` and the session still works without persistence.
-   */
   async spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<OmniSession> {
     const resolved = await directory.resolve(agentName);
     if (!resolved) {
@@ -148,12 +157,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     const abortController = new AbortController();
     const sessionId = `${agentName}:${chatId}`;
 
-    // World A registration (Group 4 + Group 7 lazy resume).
-    // Returns null when PG is in degraded mode; downstream state transitions
-    // short-circuit via safePgCall's pgAvailable fast-path.
-    // When an existing executor is found (bridge restart), returns its
-    // claudeSessionId so the next query can resume the Claude session.
-    const registration = await this.registerInWorldA(agentName, chatId, env.OMNI_INSTANCE_ID ?? '');
+    const registration = await this.registerInWorldA(agentName, chatId, env.OMNI_INSTANCE ?? '');
 
     this.sessions.set(sessionId, {
       abortController,
@@ -163,9 +167,9 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       claudeSessionId: registration?.claudeSessionId,
       dbSessionId: null,
       turnIndex: 0,
+      env,
     });
 
-    // Transition spawning → running once the session is in the local map.
     if (registration?.executorId) {
       await this.updateState(registration.executorId, 'running', chatId);
     }
@@ -183,15 +187,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     };
   }
 
-  /**
-   * Register agent + executor in World A (Decision 1 from WISH Post-Audit).
-   * Returns the executor ID + optional Claude session ID on success, or null
-   * when PG is unavailable. All writes go through `bridge.safePgCall`.
-   *
-   * Group 7 — Lazy resume: before creating a fresh executor, look for an
-   * existing live executor for this agent + chat. If found, reuse it and
-   * recover the Claude session ID so the next query can resume.
-   */
   private async registerInWorldA(
     agentName: string,
     chatId: string,
@@ -207,7 +202,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     );
     if (!agent) return null;
 
-    // Lazy resume: look for an existing live executor for this chat.
     const existing = await this.safePgCall(
       'sdk-find-existing-executor',
       () => registry.findLatestByMetadata({ agentId: agent.id, source: 'omni', chatId }),
@@ -216,7 +210,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     );
 
     if (existing) {
-      // Reuse existing executor — relink to agent and recover session.
       await this.safePgCall(
         'sdk-relink-executor',
         () => registry.relinkExecutorToAgent(existing.id, agent.id),
@@ -235,7 +228,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       };
     }
 
-    // Fresh: create new executor and link to agent.
     const executor = await this.safePgCall(
       'sdk-create-executor',
       () =>
@@ -256,7 +248,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     return executor ? { executorId: executor.id } : null;
   }
 
-  /** Update executor state through safePgCall. No-op when PG is degraded. */
   private async updateState(executorId: string, state: 'running' | 'working' | 'idle', chatId: string): Promise<void> {
     if (!this.safePgCall) return;
     await this.safePgCall(
@@ -267,34 +258,21 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     );
   }
 
-  /**
-   * Deliver a message by enqueuing an async SDK query.
-   *
-   * Returns immediately after enqueuing. Within a session, deliveries are
-   * chained so ordering is preserved. Across sessions, deliveries run
-   * concurrently so one slow chat does not block others.
-   */
   async deliver(session: OmniSession, message: OmniMessage): Promise<void> {
     const state = this.sessions.get(session.id);
     if (!state) {
       throw new Error(`No SDK session found for ${session.id}`);
     }
 
-    // Chain onto the existing queue for this session (or start fresh)
     const previous = this.deliveryQueues.get(session.id) ?? Promise.resolve();
     const current = previous.then(() => this._processDelivery(session, state, message));
 
-    // Swallow errors at the queue level so one failure doesn't break the chain
     this.deliveryQueues.set(
       session.id,
       current.catch(() => {}),
     );
   }
 
-  /**
-   * Internal: run the SDK query for a single delivery.
-   * Called from the per-session queue — never directly from deliver().
-   */
   private async _processDelivery(session: OmniSession, state: SdkSessionState, message: OmniMessage): Promise<void> {
     const resolved = await directory.resolve(session.agentName);
     if (!resolved) {
@@ -305,10 +283,8 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     const permissionConfig = resolvePermissionConfig(entry.permissions);
     const systemPrompt = await loadSystemPrompt(entry);
 
-    // State: working (query in flight) — before the blocking operation starts.
     if (state.executorId) await this.updateState(state.executorId, 'working', session.chatId);
 
-    // Audit: deliver.start
     if (this.safePgCall) {
       await recordAuditEvent(this.safePgCall, 'deliver.start', {
         executor_id: state.executorId ?? session.id,
@@ -318,13 +294,15 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       });
     }
 
-    // Resume existing session or start fresh
-    const extraOptions: Record<string, unknown> = { abortController: state.abortController };
+    const doneMcp = await createDoneMcpServer(state.env);
+    const extraOptions: Record<string, unknown> = {
+      abortController: state.abortController,
+      mcpServers: { 'genie-omni-tools': doneMcp },
+    };
     if (state.claudeSessionId) {
       extraOptions.resume = state.claudeSessionId;
     }
 
-    // Prepend any pending nudge to the message content.
     let queryContent = message.content;
     const pendingNudge = this.pendingNudges.get(session.id);
     if (pendingNudge) {
@@ -348,33 +326,17 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       entry.sdk,
     );
 
-    // Record user turn (lazily creates PG session row on first delivery).
     await this.captureUserTurn(state, session.agentName, session.id, message.content);
 
     const result = await collectQueryResult(queryMessages);
     if (result.sessionId) {
       await this.reconcileSessionId(state, session, result.sessionId);
     }
-    const replyText = result.text;
 
-    // Record assistant turn and update turn count.
-    await this.captureAssistantTurn(state, session.id, result.sessionId, session.agentName, replyText);
-
-    if (replyText && this.natsPublish) {
-      const topic = `omni.reply.${message.instanceId}.${message.chatId}`;
-      const payload = JSON.stringify({
-        content: replyText,
-        agent: session.agentName,
-        chat_id: message.chatId,
-        instance_id: message.instanceId,
-        timestamp: new Date().toISOString(),
-      });
-      this.natsPublish(topic, payload);
-    }
+    await this.captureAssistantTurn(state, session.id, result.sessionId, session.agentName, result.text);
 
     session.lastActivityAt = Date.now();
 
-    // Audit: deliver.end
     if (this.safePgCall) {
       await recordAuditEvent(this.safePgCall, 'deliver.end', {
         executor_id: state.executorId ?? session.id,
@@ -385,15 +347,9 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       });
     }
 
-    // State: idle (query finished, waiting for next message).
     if (state.executorId) await this.updateState(state.executorId, 'idle', session.chatId);
   }
 
-  /**
-   * Group 7 — Reconcile the Claude session ID after a query completes.
-   * Detects resume rejection (SDK returned a different session), persists
-   * new/changed session IDs to the registry, and updates local state.
-   */
   private async reconcileSessionId(
     state: SdkSessionState,
     session: OmniSession,
@@ -410,7 +366,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       });
     }
 
-    // Persist session ID to registry if it changed (first query or resume rejection).
     const execId = state.executorId;
     if (execId && this.safePgCall && returnedSessionId !== state.claudeSessionId) {
       await this.safePgCall(
@@ -424,7 +379,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     state.claudeSessionId = returnedSessionId;
   }
 
-  /** Lazily create PG session row and record the user turn. */
   private async captureUserTurn(
     state: SdkSessionState,
     agentName: string,
@@ -440,7 +394,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     }
   }
 
-  /** Record the assistant turn, re-key session ID if needed, bump turn count. */
   private async captureAssistantTurn(
     state: SdkSessionState,
     sessionKey: string,
@@ -449,7 +402,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     replyText: string,
   ): Promise<void> {
     if (!this.safePgCall) return;
-    // Re-key the PG session row with the real Claude session ID once available.
     if (claudeSessionId && state.dbSessionId?.startsWith('sdk-')) {
       const newId = await startSession(this.safePgCall, state.executorId ?? sessionKey, claudeSessionId, agentName);
       if (newId) state.dbSessionId = newId;
@@ -460,10 +412,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     }
   }
 
-  /**
-   * Wait for all pending deliveries for a session (or all sessions) to complete.
-   * Useful for tests and graceful shutdown.
-   */
   async waitForDeliveries(sessionId?: string): Promise<void> {
     if (sessionId) {
       await this.deliveryQueues.get(sessionId);
@@ -472,10 +420,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     }
   }
 
-  /**
-   * Shut down a session by aborting any active query and terminating its
-   * World A executor row (if one was created).
-   */
   async shutdown(session: OmniSession): Promise<void> {
     const state = this.sessions.get(session.id);
     if (!state) return;
@@ -483,12 +427,10 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     state.abortController.abort();
     state.running = false;
 
-    // End the PG session row (Group 5) before terminating the executor.
     if (state.dbSessionId && this.safePgCall) {
       await endSession(this.safePgCall, state.dbSessionId, 'completed');
     }
 
-    // Terminate World A executor row — safePgCall short-circuits in degraded mode.
     if (state.executorId && this.safePgCall) {
       await this.safePgCall(
         'sdk-terminate-executor',
@@ -502,9 +444,6 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     this.deliveryQueues.delete(session.id);
   }
 
-  /**
-   * Check if a session is still alive (not aborted, not removed).
-   */
   async isAlive(session: OmniSession): Promise<boolean> {
     const state = this.sessions.get(session.id);
     if (!state) return false;

@@ -164,7 +164,6 @@ describe('ClaudeSdkOmniExecutor — lazy resume (Group 7)', () => {
   beforeEach(() => {
     executor = new ClaudeSdkOmniExecutor();
     executor.setSafePgCall(happySafePgCall);
-    executor.setNatsPublish(mock());
 
     // Reset all mocks
     findOrCreateAgentMock.mockClear();

@@ -245,15 +245,6 @@ export class OmniBridge {
     // Decision 2 in WISH Post-Audit).
     this.executor.setSafePgCall(this.safePgCall.bind(this));
 
-    // Wire NATS publish into SDK executor for reply routing
-    if (this.executor instanceof ClaudeSdkOmniExecutor) {
-      const nc = this.nc;
-      const sc = this.sc;
-      this.executor.setNatsPublish((topic, payload) => {
-        nc.publish(topic, sc.encode(payload));
-      });
-    }
-
     // Subscribe to all omni messages
     this.sub = this.nc.subscribe('omni.message.>');
     this.processSubscription();
@@ -653,15 +644,21 @@ export class OmniBridge {
     this.sessions.set(key, placeholder);
 
     try {
-      const env: Record<string, string> = {
-        OMNI_REPLY_TOPIC: `omni.reply.${message.instanceId}.${message.chatId}`,
-        OMNI_NATS_URL: this.natsUrl,
-        OMNI_INSTANCE_ID: message.instanceId,
-        OMNI_CHAT_ID: message.chatId,
+      // Extract env vars from NATS payload (turn-based dispatcher packs them under payload.env).
+      // Falls back to message fields for backwards compat with pre-turn-based dispatchers.
+      // biome-ignore lint/suspicious/noExplicitAny: NATS payload may have extra fields
+      const raw = message as any;
+      const payloadEnv = raw.env as Record<string, string> | undefined;
+      const spawnEnv: Record<string, string> = {
+        OMNI_API_KEY: payloadEnv?.OMNI_API_KEY ?? process.env.OMNI_API_KEY ?? '',
+        OMNI_INSTANCE: payloadEnv?.OMNI_INSTANCE ?? message.instanceId,
+        OMNI_CHAT: payloadEnv?.OMNI_CHAT ?? message.chatId,
+        OMNI_MESSAGE: payloadEnv?.OMNI_MESSAGE ?? (raw.messageId as string) ?? '',
+        OMNI_TURN_ID: payloadEnv?.OMNI_TURN_ID ?? '',
       };
 
       console.log(`[omni-bridge] Spawning session for ${key}...`);
-      const session = await this.executor.spawn(message.agent, message.chatId, env);
+      const session = await this.executor.spawn(message.agent, message.chatId, spawnEnv);
 
       placeholder.session = session;
       placeholder.spawning = false;

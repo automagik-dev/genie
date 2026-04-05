@@ -37,6 +37,17 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
       throw: mock(async () => ({ value: undefined, done: true })),
     });
   }),
+  createSdkMcpServer: mock((opts: any) => ({
+    type: 'sdk' as const,
+    name: opts.name,
+    instance: {},
+  })),
+  tool: mock((_name: string, _desc: string, _schema: any, handler: any) => ({
+    name: _name,
+    description: _desc,
+    inputSchema: _schema,
+    handler,
+  })),
 }));
 
 // Mock audit-events (Group 5 + 7 — writes audit via safePgCall)
@@ -172,9 +183,6 @@ describe('ClaudeSdkOmniExecutor', () => {
 
   describe('deliver', () => {
     it('calls runQuery with message content and publishes reply via NATS', async () => {
-      const natsPublish = mock();
-      executor.setNatsPublish(natsPublish);
-
       const session = await executor.spawn('test-agent', 'chat-1', {});
       const message = {
         content: 'Hello agent',
@@ -186,21 +194,9 @@ describe('ClaudeSdkOmniExecutor', () => {
 
       await executor.deliver(session, message);
       await executor.waitForDeliveries(session.id);
-
-      // Verify NATS publish was called with the reply
-      expect(natsPublish).toHaveBeenCalledTimes(1);
-      const [topic, payload] = natsPublish.mock.calls[0];
-      expect(topic).toBe('omni.reply.inst-1.chat-1');
-      const parsed = JSON.parse(payload);
-      expect(parsed.content).toBe('response text');
-      expect(parsed.agent).toBe('test-agent');
-      expect(parsed.chat_id).toBe('chat-1');
     });
 
     it('returns immediately without awaiting the query', async () => {
-      const natsPublish = mock();
-      executor.setNatsPublish(natsPublish);
-
       const session = await executor.spawn('test-agent', 'chat-imm', {});
       const message = {
         content: 'Hello',
@@ -216,7 +212,6 @@ describe('ClaudeSdkOmniExecutor', () => {
       // deliver() does not block on the SDK query.
       // After waiting, the publish should be done.
       await executor.waitForDeliveries(session.id);
-      expect(natsPublish).toHaveBeenCalledTimes(1);
     });
 
     it('throws if session not found', async () => {
@@ -236,7 +231,6 @@ describe('ClaudeSdkOmniExecutor', () => {
     });
 
     it('does not throw when NATS publish is not set', async () => {
-      // No setNatsPublish call — natsPublish is null
       const session = await executor.spawn('test-agent', 'chat-no-nats', {});
       const message = {
         content: 'Hello agent',
@@ -252,9 +246,6 @@ describe('ClaudeSdkOmniExecutor', () => {
     });
 
     it('updates lastActivityAt after delivery', async () => {
-      const natsPublish = mock();
-      executor.setNatsPublish(natsPublish);
-
       const session = await executor.spawn('test-agent', 'chat-ts', {});
       const before = session.lastActivityAt;
 
@@ -324,9 +315,6 @@ describe('ClaudeSdkOmniExecutor', () => {
         });
       });
 
-      const natsPublish = mock();
-      executor.setNatsPublish(natsPublish);
-
       // Spawn 3 independent sessions
       const s1 = await executor.spawn('agent-a', 'chat-1', {});
       const s2 = await executor.spawn('agent-b', 'chat-2', {});
@@ -367,9 +355,6 @@ describe('ClaudeSdkOmniExecutor', () => {
 
       // All 3 completed
       expect(events.filter((e) => e.startsWith('end:'))).toHaveLength(3);
-
-      // All 3 NATS publishes happened
-      expect(natsPublish).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -421,7 +406,7 @@ describe('ClaudeSdkOmniExecutor', () => {
 
     it('spawn(): calls findOrCreateAgent and createAndLinkExecutor with transport="api" and omni metadata', async () => {
       executor.setSafePgCall(happySafePgCall);
-      const session = await executor.spawn('test-agent', 'chat-123', { OMNI_INSTANCE_ID: 'inst-abc' });
+      const session = await executor.spawn('test-agent', 'chat-123', { OMNI_INSTANCE: 'inst-abc' });
 
       expect(findOrCreateAgentMock).toHaveBeenCalledWith('test-agent', 'omni', 'omni');
       expect(createAndLinkExecutorMock).toHaveBeenCalledTimes(1);
@@ -441,7 +426,7 @@ describe('ClaudeSdkOmniExecutor', () => {
 
     it('spawn(): transitions state spawning → running after executor is linked', async () => {
       executor.setSafePgCall(happySafePgCall);
-      await executor.spawn('test-agent', 'chat-1', { OMNI_INSTANCE_ID: 'inst-1' });
+      await executor.spawn('test-agent', 'chat-1', { OMNI_INSTANCE: 'inst-1' });
 
       // updateExecutorState should have been called at least once with "running".
       const runningCalls = updateExecutorStateMock.mock.calls.filter(([, state]) => state === 'running');
@@ -451,9 +436,8 @@ describe('ClaudeSdkOmniExecutor', () => {
 
     it('deliver(): transitions state working → idle around the query', async () => {
       executor.setSafePgCall(happySafePgCall);
-      executor.setNatsPublish(mock());
 
-      const session = await executor.spawn('test-agent', 'chat-deliver', { OMNI_INSTANCE_ID: 'inst-1' });
+      const session = await executor.spawn('test-agent', 'chat-deliver', { OMNI_INSTANCE: 'inst-1' });
       updateExecutorStateMock.mockClear(); // reset so we only see the deliver transitions
 
       await executor.deliver(session, {
@@ -474,7 +458,7 @@ describe('ClaudeSdkOmniExecutor', () => {
 
     it('shutdown(): calls terminateExecutor with the linked executor ID', async () => {
       executor.setSafePgCall(happySafePgCall);
-      const session = await executor.spawn('test-agent', 'chat-shutdown', { OMNI_INSTANCE_ID: 'inst-1' });
+      const session = await executor.spawn('test-agent', 'chat-shutdown', { OMNI_INSTANCE: 'inst-1' });
 
       await executor.shutdown(session);
 
@@ -487,9 +471,8 @@ describe('ClaudeSdkOmniExecutor', () => {
         async <T>(_op: string, fn: (_sql: any) => Promise<T>, _fallback: T): Promise<T> => fn(mockSql),
       );
       executor.setSafePgCall(safePgCallSpy as never);
-      executor.setNatsPublish(mock());
 
-      const session = await executor.spawn('spy-agent', 'chat-spy', { OMNI_INSTANCE_ID: 'inst-1' });
+      const session = await executor.spawn('spy-agent', 'chat-spy', { OMNI_INSTANCE: 'inst-1' });
       await executor.deliver(session, {
         content: 'hi',
         sender: 'u',
@@ -509,10 +492,9 @@ describe('ClaudeSdkOmniExecutor', () => {
 
     it('degraded mode: safePgCall returning fallback immediately keeps spawn/deliver/shutdown working', async () => {
       executor.setSafePgCall(degradedSafePgCall);
-      executor.setNatsPublish(mock());
 
       // No PG work should happen because fn is never invoked.
-      const session = await executor.spawn('test-agent', 'chat-degraded', { OMNI_INSTANCE_ID: 'inst-1' });
+      const session = await executor.spawn('test-agent', 'chat-degraded', { OMNI_INSTANCE: 'inst-1' });
       expect(findOrCreateAgentMock).not.toHaveBeenCalled();
       expect(createAndLinkExecutorMock).not.toHaveBeenCalled();
       expect(updateExecutorStateMock).not.toHaveBeenCalled();
@@ -535,8 +517,7 @@ describe('ClaudeSdkOmniExecutor', () => {
 
     it('no bridge attached: spawn/deliver/shutdown work without any registry calls', async () => {
       // No setSafePgCall call — executor.safePgCall stays null.
-      executor.setNatsPublish(mock());
-      const session = await executor.spawn('test-agent', 'chat-solo', { OMNI_INSTANCE_ID: 'inst-1' });
+      const session = await executor.spawn('test-agent', 'chat-solo', { OMNI_INSTANCE: 'inst-1' });
       await executor.deliver(session, {
         content: 'hi',
         sender: 'user',
