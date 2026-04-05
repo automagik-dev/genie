@@ -6,14 +6,14 @@ describe('resolveExecutorType', () => {
 
   beforeEach(() => {
     originalEnv = process.env.GENIE_EXECUTOR;
-    delete process.env.GENIE_EXECUTOR;
+    process.env.GENIE_EXECUTOR = undefined as unknown as string;
   });
 
   afterEach(() => {
     if (originalEnv !== undefined) {
       process.env.GENIE_EXECUTOR = originalEnv;
     } else {
-      delete process.env.GENIE_EXECUTOR;
+      process.env.GENIE_EXECUTOR = undefined as unknown as string;
     }
   });
 
