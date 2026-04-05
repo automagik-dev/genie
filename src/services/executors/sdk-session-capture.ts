@@ -11,7 +11,7 @@
  *   session_content — one row per turn (recordTurn)
  */
 
-import type { SafePgCallFn } from '../executor.js';
+import type { SafePgCallFn } from '../../lib/safe-pg-call.js';
 
 // ============================================================================
 // startSession — create a sessions row
