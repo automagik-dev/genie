@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | ready |
+| **Status** | SHIPPED |
 | **Slug** | `fix-omni-bridge-hardening` |
 | **Date** | 2026-04-04 |
 | **Priority** | P1 |

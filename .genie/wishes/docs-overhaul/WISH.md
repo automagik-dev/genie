@@ -1,6 +1,6 @@
 # Wish: Documentation & Prompt Overhaul
 
-**Status:** DRAFT
+**Status:** SHIPPED
 **Slug:** `docs-overhaul`
 **Created:** 2026-03-16
 

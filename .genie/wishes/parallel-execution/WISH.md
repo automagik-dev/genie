@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `parallel-execution` |
 | **Date** | 2026-03-17 |
 | **Design** | [DESIGN.md](../../brainstorms/parallel-execution/DESIGN.md) |
