@@ -16,23 +16,17 @@
 import {
   createAndLinkExecutorMock,
   findLatestByMetadataMock,
-  findOrCreateAgentMock,
   queryMock,
   relinkExecutorToAgentMock,
-  resetQueryMock,
-  terminateExecutorMock,
+  resetAllMocks,
   updateClaudeSessionIdMock,
-  updateExecutorStateMock,
 } from './_sdk-mocks.js';
 
-import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
-// Clean up process-global mock.module registrations when this file finishes.
-// Without this, mocked modules leak into later test files (bun mock.module
-// is process-global and persists across file boundaries).
-afterAll(() => {
-  mock.restore();
-});
+// NOTE: mock.restore() is intentionally NOT called in afterAll here.
+// The shared _sdk-mocks.ts approach means both files use the same mock
+// instances; resetAllMocks() in each beforeEach prevents cross-test leaks.
 
 // NOTE: audit-events and sdk-session-capture are intentionally NOT mocked.
 // The real modules route through safePgCall, which this file captures via
@@ -99,21 +93,9 @@ describe('ClaudeSdkOmniExecutor — lazy resume (Group 7)', () => {
     executor = new ClaudeSdkOmniExecutor();
     executor.setSafePgCall(happySafePgCall);
 
-    // Reset all shared mocks (instances from _sdk-mocks.ts shared with claude-sdk.test.ts).
-    // queryMock needs a full reset because claude-sdk.test.ts may have overridden it
-    // via mockImplementation() in earlier tests — mockClear alone doesn't undo that.
-    resetQueryMock();
-    findOrCreateAgentMock.mockClear();
-    findLatestByMetadataMock.mockClear();
-    relinkExecutorToAgentMock.mockClear();
-    updateClaudeSessionIdMock.mockClear();
-    createAndLinkExecutorMock.mockClear();
-    updateExecutorStateMock.mockClear();
-    terminateExecutorMock.mockClear();
+    // Full reset of all shared mocks to default implementations.
+    resetAllMocks();
     safePgCallLog.length = 0;
-
-    // Default: no existing executor (fresh creation path)
-    findLatestByMetadataMock.mockImplementation(async () => null);
   });
 
   // ==========================================================================
