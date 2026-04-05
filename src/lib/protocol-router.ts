@@ -16,9 +16,10 @@
 import * as registry from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
 import { getConnection } from './db.js';
-import { getCurrentExecutor } from './executor-registry.js';
+import { findExecutorByPane, getCurrentExecutor } from './executor-registry.js';
 import * as mailbox from './mailbox.js';
 import { detectState } from './orchestrator/index.js';
+import { waitForExecutorReady } from './spawn-command.js';
 import { capturePaneContent, executeTmux, isPaneAlive } from './tmux.js';
 
 // ============================================================================
@@ -52,6 +53,19 @@ const AUTO_SPAWN_READY_TIMEOUT_MS = 15000;
 const AUTO_SPAWN_POLL_INTERVAL_MS = 1000;
 
 async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_TIMEOUT_MS): Promise<boolean> {
+  // Try PG-based readiness detection first (faster, cross-process)
+  try {
+    const executor = await findExecutorByPane(paneId);
+    if (executor && executor.state !== 'terminated' && executor.state !== 'error') {
+      const result = await waitForExecutorReady(executor.id, { timeoutMs });
+      if (result.ready) return true;
+      // PG readiness timed out — fall through to tmux scraping as safety net
+    }
+  } catch {
+    // PG unavailable — fall through to tmux scraping
+  }
+
+  // Fallback: original tmux pane scraping
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
