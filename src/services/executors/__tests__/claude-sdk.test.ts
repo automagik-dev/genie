@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+
+// Clean up process-global mock.module registrations when this file finishes.
+// Without this, mocked modules leak into later test files (bun mock.module
+// is process-global and persists across file boundaries).
+afterAll(() => {
+  mock.restore();
+});
 
 // Mock agent directory
 mock.module('../../../lib/agent-directory.js', () => ({
