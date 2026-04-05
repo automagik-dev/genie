@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | OBSOLETE |
 | **Slug** | `fix-session-uuid-resume` |
 | **Date** | 2026-03-25 |
 | **Design** | N/A (trace-driven — root cause fully identified) |

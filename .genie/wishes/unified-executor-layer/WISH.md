@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `unified-executor-layer` |
 | **Date** | 2026-04-04 |
 | **Supersedes** | `automagik-dev/genie#1042` (close, do not merge) |

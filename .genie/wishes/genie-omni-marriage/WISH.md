@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | approved |
+| **Status** | OBSOLETE |
 | **Slug** | `genie-omni-marriage` |
 | **Date** | 2026-03-24 |
 | **Design** | Brainstorm session 2026-03-24 (see memory: project_genie_omni_architecture.md) |
