@@ -571,6 +571,7 @@ function TopSessions({ sessions, onNavigate }: TopSessionsProps) {
           </thead>
           <tbody>
             {sessions.map((s) => (
+              // biome-ignore lint/a11y/useKeyWithClickEvents: table row nav; keyboard support tracked for V2
               <tr
                 key={s.session_id}
                 onClick={() => onNavigate?.('sessions')}

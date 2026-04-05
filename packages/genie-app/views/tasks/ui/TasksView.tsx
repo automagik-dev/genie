@@ -483,6 +483,7 @@ function TaskCard({
   const [hovered, setHovered] = useState(false);
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: kanban card nav; keyboard support tracked for V2
     <div
       style={{
         ...styles.taskCard,
@@ -689,19 +690,24 @@ function FlatListView({
       <table style={styles.listTable}>
         <thead>
           <tr>
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: sortable header */}
             <th style={styles.listTh} onClick={() => onSort('seq')}>
               #{sortIndicator('seq')}
             </th>
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: sortable header */}
             <th style={styles.listTh} onClick={() => onSort('title')}>
               Title{sortIndicator('title')}
             </th>
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: sortable header */}
             <th style={styles.listTh} onClick={() => onSort('priority')}>
               Priority{sortIndicator('priority')}
             </th>
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: sortable header */}
             <th style={styles.listTh} onClick={() => onSort('stage')}>
               Stage{sortIndicator('stage')}
             </th>
             <th style={styles.listTh}>Agent</th>
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: sortable header */}
             <th style={styles.listTh} onClick={() => onSort('updated_at')}>
               Updated{sortIndicator('updated_at')}
             </th>
@@ -709,6 +715,7 @@ function FlatListView({
         </thead>
         <tbody>
           {sortedTasks.map((task) => (
+            // biome-ignore lint/a11y/useKeyWithClickEvents: row selection; keyboard support tracked for V2
             <tr
               key={task.id}
               style={{

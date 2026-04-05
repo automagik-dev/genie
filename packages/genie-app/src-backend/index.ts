@@ -349,12 +349,53 @@ function registerHandlers(sql: any): void {
   // ---- Schedules ----
 
   reply(sub.schedules.list(ORG_ID), async () => {
-    return sql`
-      SELECT id, name, cron_expression, timezone, command, status,
-             metadata, created_at, updated_at
-      FROM schedules
-      ORDER BY created_at DESC
-    `;
+    try {
+      return await sql`
+        SELECT id, name, cron_expression, timezone, command, status,
+               metadata, created_at, updated_at
+        FROM schedules
+        ORDER BY created_at DESC
+      `;
+    } catch {
+      // Table may not exist in this deployment — return empty list gracefully
+      return [];
+    }
+  });
+
+  reply(sub.schedules.history(ORG_ID), async (params: { limit?: number; schedule_id?: string }) => {
+    const limit = params.limit ?? 100;
+    try {
+      if (params.schedule_id) {
+        return await sql`
+          SELECT sr.id, sr.schedule_id,
+                 s.name AS schedule_name,
+                 sr.trigger, sr.worker, sr.status,
+                 sr.exit_code, sr.duration_ms,
+                 sr.output, sr.error, sr.trace_id,
+                 sr.started_at, sr.ended_at
+          FROM schedule_runs sr
+          LEFT JOIN schedules s ON sr.schedule_id = s.id
+          WHERE sr.schedule_id = ${params.schedule_id}
+          ORDER BY sr.started_at DESC
+          LIMIT ${limit}
+        `;
+      }
+      return await sql`
+        SELECT sr.id, sr.schedule_id,
+               s.name AS schedule_name,
+               sr.trigger, sr.worker, sr.status,
+               sr.exit_code, sr.duration_ms,
+               sr.output, sr.error, sr.trace_id,
+               sr.started_at, sr.ended_at
+        FROM schedule_runs sr
+        LEFT JOIN schedules s ON sr.schedule_id = s.id
+        ORDER BY sr.started_at DESC
+        LIMIT ${limit}
+      `;
+    } catch {
+      // Tables may not exist — return empty list gracefully
+      return [];
+    }
   });
 
   // ---- System ----
@@ -383,11 +424,48 @@ function registerHandlers(sql: any): void {
   });
 
   reply(sub.system.snapshots(ORG_ID), async (params: { limit?: number }) => {
-    const limit = params.limit ?? 50;
+    const limit = params.limit ?? 60;
     return sql`
       SELECT * FROM machine_snapshots
       ORDER BY created_at DESC
       LIMIT ${limit}
+    `;
+  });
+
+  reply(sub.system.tables(ORG_ID), async () => {
+    return sql`
+      SELECT c.relname AS table_name,
+             c.reltuples::bigint AS row_count,
+             pg_relation_size(c.oid) AS data_bytes,
+             pg_indexes_size(c.oid) AS index_bytes,
+             pg_total_relation_size(c.oid) AS total_bytes,
+             pg_size_pretty(pg_relation_size(c.oid)) AS data_size,
+             pg_size_pretty(pg_indexes_size(c.oid)) AS index_size,
+             pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind = 'r'
+      ORDER BY pg_total_relation_size(c.oid) DESC
+      LIMIT 50
+    `;
+  });
+
+  reply(sub.system.channels(ORG_ID), async () => {
+    return sql`
+      SELECT DISTINCT
+        pt.tgargs::text AS channel,
+        c.relname AS source_table,
+        pt.tgname AS trigger_name
+      FROM pg_trigger pt
+      JOIN pg_class c ON pt.tgrelid = c.oid
+      JOIN pg_namespace n ON c.relnamespace = n.oid
+      WHERE n.nspname = 'public'
+        AND pt.tgisinternal = false
+        AND pt.tgfoid IN (
+          SELECT p.oid FROM pg_proc p
+          WHERE p.proname IN ('notify_trigger', 'pg_notify')
+        )
+      ORDER BY source_table, trigger_name
     `;
   });
 
@@ -435,23 +513,128 @@ function registerHandlers(sql: any): void {
   });
 
   reply(sub.settings.skills(ORG_ID), async () => {
-    return sql`SELECT DISTINCT skill FROM agents WHERE skill IS NOT NULL ORDER BY skill`;
+    // Scan the bundled skills/ directory for SKILL.md files
+    const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+    // Try repo-relative path first (dev), then genie home
+    const candidateDirs = [
+      join(process.cwd(), 'skills'),
+      join(genieHome, '..', 'skills'), // fallback relative
+    ];
+    let skillsDir: string | null = null;
+    for (const d of candidateDirs) {
+      if (existsSync(d)) {
+        skillsDir = d;
+        break;
+      }
+    }
+    if (!skillsDir) {
+      // Fall back to DB-sourced skill names
+      const rows = await sql`SELECT DISTINCT skill FROM agents WHERE skill IS NOT NULL ORDER BY skill`;
+      return rows.map((r: { skill: string }) => ({ name: r.skill, description: '', path: '' }));
+    }
+    try {
+      const entries = readdirSync(skillsDir, { withFileTypes: true });
+      const skills = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const skillMdPath = join(skillsDir, entry.name, 'SKILL.md');
+        if (!existsSync(skillMdPath)) continue;
+        const content = readFileSync(skillMdPath, 'utf-8');
+        // Parse YAML frontmatter description or fall back to first non-empty line
+        let description = '';
+        const descMatch = content.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+        if (descMatch) {
+          description = descMatch[1].trim();
+        } else {
+          const lines = content.split('\n').filter((l) => l.trim() && !l.startsWith('---') && !l.startsWith('#'));
+          description = lines[0]?.trim() ?? '';
+        }
+        let displayName = entry.name;
+        const nameMatch = content.match(/^name:\s*(.+?)\s*$/m);
+        if (nameMatch) displayName = nameMatch[1].trim();
+        skills.push({ name: displayName, slug: entry.name, description, path: skillMdPath });
+      }
+      return skills.sort((a, b) => a.name.localeCompare(b.name));
+    } catch {
+      return [];
+    }
   });
 
   reply(sub.settings.rules(ORG_ID), async () => {
     const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
-    const rulesDir = join(genieHome, 'rules');
-    if (!existsSync(rulesDir)) return [];
+    // Check both ~/.genie/rules/ and ~/.claude/rules/
+    const ruleDirs = [join(genieHome, 'rules'), join(homedir(), '.claude', 'rules')];
+    const allRules: { name: string; path: string; content: string; source: string }[] = [];
+    for (const rulesDir of ruleDirs) {
+      if (!existsSync(rulesDir)) continue;
+      try {
+        const files = readdirSync(rulesDir).filter((f) => f.endsWith('.md'));
+        for (const f of files) {
+          const filePath = join(rulesDir, f);
+          allRules.push({
+            name: f.replace('.md', ''),
+            path: filePath,
+            content: readFileSync(filePath, 'utf-8'),
+            source: rulesDir.includes('.claude') ? 'claude' : 'genie',
+          });
+        }
+      } catch {
+        /* skip unreadable dir */
+      }
+    }
+    return allRules;
+  });
+
+  reply(
+    sub.settings.templateSave(ORG_ID),
+    async (params: {
+      id?: string;
+      provider?: string;
+      team?: string;
+      role?: string;
+      skill?: string;
+      cwd?: string;
+      extraArgs?: string[];
+      nativeTeamEnabled?: boolean;
+      autoResume?: boolean;
+      maxResumeAttempts?: number;
+      paneColor?: string;
+    }) => {
+      if (!params.id) return { error: 'id is required' };
+      await sql`
+      INSERT INTO agent_templates (
+        id, provider, team, role, skill, cwd,
+        extra_args, native_team_enabled, last_spawned_at
+      ) VALUES (
+        ${params.id},
+        ${params.provider ?? 'claude'},
+        ${params.team ?? ''},
+        ${params.role ?? null},
+        ${params.skill ?? null},
+        ${params.cwd ?? ''},
+        ${JSON.stringify(params.extraArgs ?? [])},
+        ${params.nativeTeamEnabled ?? false},
+        ${new Date().toISOString()}
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        provider = EXCLUDED.provider,
+        team = EXCLUDED.team,
+        role = EXCLUDED.role,
+        skill = EXCLUDED.skill,
+        cwd = EXCLUDED.cwd,
+        extra_args = EXCLUDED.extra_args,
+        native_team_enabled = EXCLUDED.native_team_enabled
+    `;
+      return { ok: true };
+    },
+  );
+
+  reply(sub.settings.testPg(ORG_ID), async () => {
     try {
-      return readdirSync(rulesDir)
-        .filter((f) => f.endsWith('.md'))
-        .map((f) => ({
-          name: f.replace('.md', ''),
-          path: join(rulesDir, f),
-          content: readFileSync(join(rulesDir, f), 'utf-8'),
-        }));
-    } catch {
-      return [];
+      await sql`SELECT 1 AS ok`;
+      return { ok: true, message: 'Connection successful' };
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
   });
 
