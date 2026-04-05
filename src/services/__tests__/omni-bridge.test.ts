@@ -427,6 +427,7 @@ function makeMockExecutor(overrides?: {
       return overrides?.isAliveResult ?? true;
     },
     setSafePgCall() {},
+    async injectNudge() {},
   };
 
   return { executor, calls, makeSession };
