@@ -7,7 +7,7 @@
  */
 
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, relative, resolve, sep } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import type { Command } from 'commander';
 import { type WorkspaceConfig, findWorkspace, scanAgents } from '../lib/workspace.js';
@@ -38,8 +38,9 @@ async function ensureSetupCompleteForInit(): Promise<void> {
   await setupCommand();
 }
 
-function scaffoldAgentInWorkspace(workspaceRoot: string, name: string): void {
-  const agentDir = join(workspaceRoot, 'agents', name);
+function scaffoldAgentInWorkspace(workspaceRoot: string, name: string, agentsDir?: string): void {
+  const baseDir = agentsDir ?? join(workspaceRoot, 'agents');
+  const agentDir = join(baseDir, name);
   if (existsSync(agentDir)) {
     throw new Error(`Agent directory already exists: ${agentDir}`);
   }
@@ -139,8 +140,41 @@ async function initWorkspace(): Promise<void> {
   await syncWorkspaceAgents(cwd);
 }
 
+/**
+ * Resolve the agents parent directory based on --dir option and CWD.
+ *
+ * Priority:
+ *   1. Explicit `--dir` option (resolved absolutely — use with care).
+ *   2. CWD is inside the workspace and contains an `agents` path segment:
+ *      return the path up to and including the first `agents` segment.
+ *      This prevents nesting inside an existing agent subdirectory
+ *      (e.g. CWD `<ws>/agents/foo` still scaffolds into `<ws>/agents`,
+ *      not `<ws>/agents/foo/<new>`).
+ *   3. Fall back to `<wsRoot>/agents`.
+ *
+ * Uses `path.sep` for Windows compatibility and exact segment matching
+ * (not substring) so paths like `/tmp/agents-backup` or `.../agentship`
+ * never false-match the `agents` segment.
+ */
+function resolveAgentsDir(wsRoot: string, dirOption?: string): string {
+  if (dirOption) return resolve(dirOption);
+
+  const cwd = process.cwd();
+  const rel = relative(wsRoot, cwd);
+
+  // CWD outside the workspace (relative path escapes with '..') — fall back.
+  if (rel.startsWith('..')) return join(wsRoot, 'agents');
+
+  // Walk workspace-relative segments and find the first exact `agents` match.
+  const segments = rel === '' ? [] : rel.split(sep);
+  const idx = segments.indexOf('agents');
+  if (idx === -1) return join(wsRoot, 'agents');
+
+  return join(wsRoot, ...segments.slice(0, idx + 1));
+}
+
 /** genie init agent <name> — scaffold agent directory */
-async function initAgent(name: string): Promise<void> {
+async function initAgent(name: string, options: { dir?: string }): Promise<void> {
   const cwd = process.cwd();
   const ws = findWorkspace(cwd);
   if (!ws) {
@@ -148,8 +182,10 @@ async function initAgent(name: string): Promise<void> {
     process.exit(1);
   }
 
+  const agentsDir = resolveAgentsDir(ws.root, options.dir);
+
   try {
-    scaffoldAgentInWorkspace(ws.root, name);
+    scaffoldAgentInWorkspace(ws.root, name, agentsDir);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
@@ -170,8 +206,9 @@ export function registerInitCommands(program: Command): void {
   init
     .command('agent <name>')
     .description('Scaffold a new agent in the workspace')
-    .action(async (name: string) => {
+    .option('--dir <path>', 'Target directory for agent (default: CWD if inside agents/, else workspace agents/)')
+    .action(async (name: string, options: { dir?: string }) => {
       await ensureSetupCompleteForInit();
-      await initAgent(name);
+      await initAgent(name, options);
     });
 }
