@@ -16,6 +16,7 @@ import { resolveExecutorType } from '../lib/executor-config.js';
 import type { IExecutor, OmniMessage, OmniSession } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
 import { ClaudeSdkOmniExecutor } from './executors/claude-sdk.js';
+import { TurnTracker } from './omni-turn.js';
 
 // ============================================================================
 // Configuration
@@ -154,6 +155,7 @@ export class OmniBridge {
   private nc: NatsConnection | null = null;
   private sub: Subscription | null = null;
   private executor: IExecutor;
+  private turnTracker = new TurnTracker();
 
   /**
    * Process-local runtime handles — NOT the source of truth for session identity.
@@ -243,18 +245,16 @@ export class OmniBridge {
     // Decision 2 in WISH Post-Audit).
     this.executor.setSafePgCall(this.safePgCall.bind(this));
 
-    // Wire NATS publish into SDK executor for reply routing
-    if (this.executor instanceof ClaudeSdkOmniExecutor) {
-      const nc = this.nc;
-      const sc = this.sc;
-      this.executor.setNatsPublish((topic, payload) => {
-        nc.publish(topic, sc.encode(payload));
-      });
-    }
-
     // Subscribe to all omni messages
     this.sub = this.nc.subscribe('omni.message.>');
     this.processSubscription();
+
+    // Turn lifecycle events from Omni
+    const turnSubs = ['omni.turn.open.>', 'omni.turn.done.>', 'omni.turn.nudge.>', 'omni.turn.timeout.>'];
+    for (const topic of turnSubs) {
+      const sub = this.nc.subscribe(topic);
+      this.processTurnEvents(sub);
+    }
 
     // Start idle session checker
     this.idleCheckTimer = setInterval(() => this.checkIdleSessions(), IDLE_CHECK_INTERVAL_MS);
@@ -495,6 +495,91 @@ export class OmniBridge {
   }
 
   /**
+   * Process turn lifecycle events from NATS subscriptions.
+   * Routes each event to the appropriate handler based on event type.
+   */
+  private async processTurnEvents(sub: Subscription): Promise<void> {
+    for await (const msg of sub) {
+      try {
+        const payload = JSON.parse(this.sc.decode(msg.data));
+        const parts = msg.subject.split('.');
+        const eventType = parts[2]; // 'open', 'done', 'nudge', 'timeout'
+        const instanceId = parts[3];
+        const chatId = parts.slice(4).join('.'); // chatId may contain dots
+
+        const sessionKey = this.findSessionKey(instanceId, chatId);
+        if (sessionKey) await this.routeTurnEvent(eventType, sessionKey, payload);
+      } catch (err) {
+        console.warn('[omni-bridge] Error processing turn event:', err);
+      }
+    }
+  }
+
+  /**
+   * Route a single turn event to the appropriate handler.
+   * Extracted from processTurnEvents to keep cognitive complexity manageable.
+   */
+  private async routeTurnEvent(eventType: string, sessionKey: string, payload: Record<string, string>): Promise<void> {
+    switch (eventType) {
+      case 'open':
+        this.turnTracker.open(sessionKey, payload.turnId, payload.messageId);
+        break;
+      case 'done':
+        this.turnTracker.close(sessionKey, payload.action);
+        break;
+      case 'nudge':
+        await this.handleTurnNudge(sessionKey, payload.message);
+        break;
+      case 'timeout':
+        await this.handleTurnTimeout(sessionKey);
+        break;
+    }
+  }
+
+  /**
+   * Find a session key by instanceId and chatId.
+   * Scans the sessions Map for a matching entry since the Map is keyed by
+   * `${agentName}:${chatId}` but we need to match by instanceId+chatId.
+   */
+  private findSessionKey(instanceId: string, chatId: string): string | undefined {
+    for (const [key, entry] of this.sessions) {
+      if (entry.instanceId === instanceId && entry.session?.chatId === chatId) {
+        return key;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Handle a turn nudge event — inject the nudge text into the executor.
+   */
+  private async handleTurnNudge(sessionKey: string, nudgeText: string): Promise<void> {
+    const entry = this.sessions.get(sessionKey);
+    if (!entry?.session) return;
+    try {
+      await this.executor.injectNudge(entry.session, nudgeText);
+    } catch (err) {
+      console.warn(`[omni-bridge] Failed to inject nudge for ${sessionKey}:`, err);
+    }
+  }
+
+  /**
+   * Handle a turn timeout event — evict the session and shut down the executor.
+   */
+  private async handleTurnTimeout(sessionKey: string): Promise<void> {
+    const entry = this.sessions.get(sessionKey);
+    if (!entry?.session) return;
+    console.warn(`[omni-bridge] Turn timed out for ${sessionKey}, evicting session`);
+    this.turnTracker.close(sessionKey, 'timeout');
+    try {
+      await this.executor.shutdown(entry.session);
+    } catch (err) {
+      console.warn(`[omni-bridge] Error shutting down timed-out session ${sessionKey}:`, err);
+    }
+    this.sessions.delete(sessionKey);
+  }
+
+  /**
    * Route a message to the appropriate session.
    */
   private async routeMessage(message: OmniMessage): Promise<void> {
@@ -559,15 +644,21 @@ export class OmniBridge {
     this.sessions.set(key, placeholder);
 
     try {
-      const env: Record<string, string> = {
-        OMNI_REPLY_TOPIC: `omni.reply.${message.instanceId}.${message.chatId}`,
-        OMNI_NATS_URL: this.natsUrl,
-        OMNI_INSTANCE_ID: message.instanceId,
-        OMNI_CHAT_ID: message.chatId,
+      // Extract env vars from NATS payload (turn-based dispatcher packs them under payload.env).
+      // Falls back to message fields for backwards compat with pre-turn-based dispatchers.
+      // biome-ignore lint/suspicious/noExplicitAny: NATS payload may have extra fields
+      const raw = message as any;
+      const payloadEnv = raw.env as Record<string, string> | undefined;
+      const spawnEnv: Record<string, string> = {
+        OMNI_API_KEY: payloadEnv?.OMNI_API_KEY ?? process.env.OMNI_API_KEY ?? '',
+        OMNI_INSTANCE: payloadEnv?.OMNI_INSTANCE ?? message.instanceId,
+        OMNI_CHAT: payloadEnv?.OMNI_CHAT ?? message.chatId,
+        OMNI_MESSAGE: payloadEnv?.OMNI_MESSAGE ?? (raw.messageId as string) ?? '',
+        OMNI_TURN_ID: payloadEnv?.OMNI_TURN_ID ?? '',
       };
 
       console.log(`[omni-bridge] Spawning session for ${key}...`);
-      const session = await this.executor.spawn(message.agent, message.chatId, env);
+      const session = await this.executor.spawn(message.agent, message.chatId, spawnEnv);
 
       placeholder.session = session;
       placeholder.spawning = false;
