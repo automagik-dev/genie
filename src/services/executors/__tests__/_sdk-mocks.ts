@@ -89,6 +89,50 @@ export function resetQueryMock(): void {
   queryMock.mockImplementation(defaultQueryImpl);
 }
 
+/**
+ * Reset ALL shared mocks to their default implementations and clear call
+ * counts. Call this in beforeEach to guarantee a clean slate regardless of
+ * which file or describe block ran previously. This is stronger than
+ * mockClear (which only clears call counts but leaves overridden
+ * implementations in place).
+ */
+export function resetAllMocks(): void {
+  findOrCreateAgentMock.mockReset();
+  findOrCreateAgentMock.mockImplementation(async () => ({
+    id: 'agent-id-fixture',
+    startedAt: new Date().toISOString(),
+    currentExecutorId: null,
+  }));
+
+  findLatestByMetadataMock.mockReset();
+  findLatestByMetadataMock.mockImplementation(async () => null);
+
+  relinkExecutorToAgentMock.mockReset();
+  relinkExecutorToAgentMock.mockImplementation(async () => undefined as any);
+
+  updateClaudeSessionIdMock.mockReset();
+  updateClaudeSessionIdMock.mockImplementation(async () => undefined as any);
+
+  createAndLinkExecutorMock.mockReset();
+  createAndLinkExecutorMock.mockImplementation(async () => ({
+    id: 'executor-id-fixture',
+    agentId: 'agent-id-fixture',
+    provider: 'claude',
+    transport: 'api',
+    state: 'spawning',
+    metadata: {},
+    claudeSessionId: null,
+  }));
+
+  updateExecutorStateMock.mockReset();
+  updateExecutorStateMock.mockImplementation(async () => undefined);
+
+  terminateExecutorMock.mockReset();
+  terminateExecutorMock.mockImplementation(async () => undefined);
+
+  resetQueryMock();
+}
+
 // ============================================================================
 // mock.module registrations — run once at module load
 // ============================================================================
