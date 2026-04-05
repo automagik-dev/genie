@@ -516,29 +516,32 @@ export class OmniBridge {
         const instanceId = parts[3];
         const chatId = parts.slice(4).join('.'); // chatId may contain dots
 
-        // Find session by instanceId+chatId
         const sessionKey = this.findSessionKey(instanceId, chatId);
-
-        switch (eventType) {
-          case 'open':
-            if (sessionKey) this.turnTracker.open(sessionKey, payload.turnId, payload.messageId);
-            break;
-          case 'done':
-            if (sessionKey) {
-              this.turnTracker.close(sessionKey, payload.action);
-              // Session goes idle — reset idle timer
-            }
-            break;
-          case 'nudge':
-            if (sessionKey) await this.handleTurnNudge(sessionKey, payload.message);
-            break;
-          case 'timeout':
-            if (sessionKey) await this.handleTurnTimeout(sessionKey);
-            break;
-        }
+        if (sessionKey) await this.routeTurnEvent(eventType, sessionKey, payload);
       } catch (err) {
         console.warn('[omni-bridge] Error processing turn event:', err);
       }
+    }
+  }
+
+  /**
+   * Route a single turn event to the appropriate handler.
+   * Extracted from processTurnEvents to keep cognitive complexity manageable.
+   */
+  private async routeTurnEvent(eventType: string, sessionKey: string, payload: Record<string, string>): Promise<void> {
+    switch (eventType) {
+      case 'open':
+        this.turnTracker.open(sessionKey, payload.turnId, payload.messageId);
+        break;
+      case 'done':
+        this.turnTracker.close(sessionKey, payload.action);
+        break;
+      case 'nudge':
+        await this.handleTurnNudge(sessionKey, payload.message);
+        break;
+      case 'timeout':
+        await this.handleTurnTimeout(sessionKey);
+        break;
     }
   }
 
