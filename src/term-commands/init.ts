@@ -7,7 +7,7 @@
  */
 
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, relative, resolve, sep } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import type { Command } from 'commander';
 import { type WorkspaceConfig, findWorkspace, scanAgents } from '../lib/workspace.js';
@@ -140,13 +140,37 @@ async function initWorkspace(): Promise<void> {
   await syncWorkspaceAgents(cwd);
 }
 
-/** Resolve the agents parent directory based on --dir option and CWD. */
+/**
+ * Resolve the agents parent directory based on --dir option and CWD.
+ *
+ * Priority:
+ *   1. Explicit `--dir` option (resolved absolutely — use with care).
+ *   2. CWD is inside the workspace and contains an `agents` path segment:
+ *      return the path up to and including the first `agents` segment.
+ *      This prevents nesting inside an existing agent subdirectory
+ *      (e.g. CWD `<ws>/agents/foo` still scaffolds into `<ws>/agents`,
+ *      not `<ws>/agents/foo/<new>`).
+ *   3. Fall back to `<wsRoot>/agents`.
+ *
+ * Uses `path.sep` for Windows compatibility and exact segment matching
+ * (not substring) so paths like `/tmp/agents-backup` or `.../agentship`
+ * never false-match the `agents` segment.
+ */
 function resolveAgentsDir(wsRoot: string, dirOption?: string): string {
   if (dirOption) return resolve(dirOption);
+
   const cwd = process.cwd();
-  // If CWD is inside an agents/ directory, use CWD directly
-  if (cwd.includes('/agents')) return cwd;
-  return join(wsRoot, 'agents');
+  const rel = relative(wsRoot, cwd);
+
+  // CWD outside the workspace (relative path escapes with '..') — fall back.
+  if (rel.startsWith('..')) return join(wsRoot, 'agents');
+
+  // Walk workspace-relative segments and find the first exact `agents` match.
+  const segments = rel === '' ? [] : rel.split(sep);
+  const idx = segments.indexOf('agents');
+  if (idx === -1) return join(wsRoot, 'agents');
+
+  return join(wsRoot, ...segments.slice(0, idx + 1));
 }
 
 /** genie init agent <name> — scaffold agent directory */
