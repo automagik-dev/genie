@@ -9,6 +9,22 @@
  *   - Audit events: session.resumed, session.created_fresh, session.resume_rejected
  */
 
+// IMPORTANT: _sdk-mocks.ts must be imported FIRST — it registers the
+// process-global mock.module entries shared with claude-sdk.test.ts. Both
+// files MUST share the same mock instances because bun's mock.module is
+// process-global and the first-loaded mock wins. See _sdk-mocks.ts header.
+import {
+  createAndLinkExecutorMock,
+  findLatestByMetadataMock,
+  findOrCreateAgentMock,
+  queryMock,
+  relinkExecutorToAgentMock,
+  resetQueryMock,
+  terminateExecutorMock,
+  updateClaudeSessionIdMock,
+  updateExecutorStateMock,
+} from './_sdk-mocks.js';
+
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 // Clean up process-global mock.module registrations when this file finishes.
@@ -18,103 +34,10 @@ afterAll(() => {
   mock.restore();
 });
 
-// ============================================================================
-// Mocks — must be registered before any import of the production module
-// ============================================================================
-
-// Mock agent directory
-mock.module('../../../lib/agent-directory.js', () => ({
-  resolve: mock(async (name: string) => ({
-    entry: {
-      name,
-      dir: '/tmp/test',
-      promptMode: 'system' as const,
-      model: 'sonnet',
-      registeredAt: new Date().toISOString(),
-      permissions: { preset: 'full' },
-    },
-    builtin: false,
-  })),
-  loadIdentity: mock(() => null),
-}));
-
-// Mock SDK query — default yields a result with session_id
-const queryMock = mock(() => {
-  const gen = (async function* () {
-    yield { type: 'assistant', message: { content: [{ type: 'text', text: 'reply' }] } };
-    yield { type: 'result', subtype: 'success', session_id: 'sdk-session-aaa' };
-  })();
-  return Object.assign(gen, {
-    interrupt: mock(),
-    setPermissionMode: mock(),
-    setModel: mock(),
-    return: mock(async () => ({ value: undefined, done: true })),
-    throw: mock(async () => ({ value: undefined, done: true })),
-  });
-});
-mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-  query: queryMock,
-  createSdkMcpServer: mock((opts: any) => ({
-    type: 'sdk' as const,
-    name: opts.name,
-    instance: {},
-  })),
-  tool: mock((_name: string, _desc: string, _schema: any, handler: any) => ({
-    name: _name,
-    description: _desc,
-    inputSchema: _schema,
-    handler,
-  })),
-}));
-
-// Mock audit-events — capture calls for assertion.
-// NOTE: audit-events is intentionally NOT mocked via mock.module here.
-// mock.module leaks across files and breaks sdk-session-capture.test.ts.
-// Instead, audit events are tracked via happySafePgCall's call log —
-// recordAuditEvent calls safePgCall('audit:<type>', ...) so we capture
-// the event type from the op string prefix.
-
-// Mock sdk-session-capture (Group 5)
-// NOTE: sdk-session-capture is intentionally NOT mocked here.
-// The real module is used — its PG writes go through safePgCall which is
-// wired to happySafePgCall (a no-op that invokes fn with a fake sql).
-// Previously this was mocked via mock.module, but that leaked across files
-// and broke sdk-session-capture.test.ts (bun mock.module is process-global).
-
-// Mock agent-registry
-const findOrCreateAgentMock = mock(async () => ({
-  id: 'agent-id-fixture',
-  startedAt: new Date().toISOString(),
-  currentExecutorId: null,
-}));
-mock.module('../../../lib/agent-registry.js', () => ({
-  findOrCreateAgent: findOrCreateAgentMock,
-}));
-
-// Mock executor-registry — Group 7 functions.
-// Use `as any` return types so mockImplementation can return richer objects.
-const findLatestByMetadataMock = mock((_filter: any): Promise<any> => Promise.resolve(null));
-const relinkExecutorToAgentMock = mock((..._args: any[]): Promise<void> => Promise.resolve());
-const updateClaudeSessionIdMock = mock((..._args: any[]): Promise<void> => Promise.resolve());
-const createAndLinkExecutorMock = mock(async () => ({
-  id: 'fresh-executor-id',
-  agentId: 'agent-id-fixture',
-  provider: 'claude',
-  transport: 'api',
-  state: 'spawning',
-  metadata: {},
-  claudeSessionId: null,
-}));
-const updateExecutorStateMock = mock(async () => undefined);
-const terminateExecutorMock = mock(async () => undefined);
-mock.module('../../../lib/executor-registry.js', () => ({
-  findLatestByMetadata: findLatestByMetadataMock,
-  relinkExecutorToAgent: relinkExecutorToAgentMock,
-  updateClaudeSessionId: updateClaudeSessionIdMock,
-  createAndLinkExecutor: createAndLinkExecutorMock,
-  updateExecutorState: updateExecutorStateMock,
-  terminateExecutor: terminateExecutorMock,
-}));
+// NOTE: audit-events and sdk-session-capture are intentionally NOT mocked.
+// The real modules route through safePgCall, which this file captures via
+// happySafePgCall (a tracking fake sql). Previously these were mocked via
+// mock.module but that leaked across files and broke sdk-session-capture.test.ts.
 
 // ============================================================================
 // Import production module (after all mocks)
@@ -176,7 +99,10 @@ describe('ClaudeSdkOmniExecutor — lazy resume (Group 7)', () => {
     executor = new ClaudeSdkOmniExecutor();
     executor.setSafePgCall(happySafePgCall);
 
-    // Reset all mocks
+    // Reset all shared mocks (instances from _sdk-mocks.ts shared with claude-sdk.test.ts).
+    // queryMock needs a full reset because claude-sdk.test.ts may have overridden it
+    // via mockImplementation() in earlier tests — mockClear alone doesn't undo that.
+    resetQueryMock();
     findOrCreateAgentMock.mockClear();
     findLatestByMetadataMock.mockClear();
     relinkExecutorToAgentMock.mockClear();

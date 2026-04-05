@@ -1,3 +1,16 @@
+// IMPORTANT: _sdk-mocks.ts must be imported FIRST — it registers the
+// process-global mock.module entries that both this file and
+// claude-sdk-resume.test.ts depend on. Bun's mock.module is process-global
+// and the first-loaded mock wins (subsequent registrations are dead weight),
+// so we share a single source of truth for mock instances across the two
+// files to prevent CI-only failures where one file's mocks get shadowed.
+import {
+  createAndLinkExecutorMock,
+  findOrCreateAgentMock,
+  terminateExecutorMock,
+  updateExecutorStateMock,
+} from './_sdk-mocks.js';
+
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 // Clean up process-global mock.module registrations when this file finishes.
@@ -7,97 +20,11 @@ afterAll(() => {
   mock.restore();
 });
 
-// Mock agent directory
-mock.module('../../../lib/agent-directory.js', () => ({
-  resolve: mock(async (name: string) => ({
-    entry: {
-      name,
-      dir: '/tmp/test',
-      promptMode: 'system' as const,
-      model: 'sonnet',
-      registeredAt: new Date().toISOString(),
-      permissions: { preset: 'full' },
-    },
-    builtin: false,
-  })),
-  loadIdentity: mock(() => null),
-}));
-
-// Mock the SDK query function
-mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-  query: mock(() => {
-    const gen = (async function* () {
-      yield { type: 'assistant', message: { content: [{ type: 'text', text: 'response text' }] } };
-    })();
-    return Object.assign(gen, {
-      interrupt: mock(),
-      setPermissionMode: mock(),
-      setModel: mock(),
-      return: mock(async () => ({ value: undefined, done: true })),
-      throw: mock(async () => ({ value: undefined, done: true })),
-    });
-  }),
-  createSdkMcpServer: mock((opts: any) => ({
-    type: 'sdk' as const,
-    name: opts.name,
-    instance: {},
-  })),
-  tool: mock((_name: string, _desc: string, _schema: any, handler: any) => ({
-    name: _name,
-    description: _desc,
-    inputSchema: _schema,
-    handler,
-  })),
-}));
-
-// NOTE: audit-events is intentionally NOT mocked via mock.module.
-// Bun's mock.module is process-global and mock.restore() does NOT
-// undo module-level registrations. Mocking audit-events here leaks
-// into claude-sdk-resume.test.ts (which captures audit events via
-// safePgCall) and breaks its audit assertions.
-//
-// Real audit-events is safe to use: recordAuditEvent() just calls
-// safePgCall('audit:<type>', ...), and safePgCall is already mocked
-// per-test via setSafePgCall() below (or guarded null for no-bridge tests).
-
-// NOTE: sdk-session-capture is intentionally NOT mocked via mock.module
-// for the same reason. The real module calls safePgCall which is mocked
-// per-test — safe.
-
-// Mock agent-registry and executor-registry so spawn()/shutdown() never touch real PG.
-// The tests override these with fresh mocks per-test for call-count assertions.
-const findOrCreateAgentMock = mock(async (_name: string, _team: string, _role?: string) => ({
-  id: 'agent-id-fixture',
-  startedAt: new Date().toISOString(),
-  currentExecutorId: null,
-}));
-mock.module('../../../lib/agent-registry.js', () => ({
-  findOrCreateAgent: findOrCreateAgentMock,
-}));
-
-const createAndLinkExecutorMock = mock(
-  async (_agentId: string, _provider: string, _transport: string, _opts?: any) => ({
-    id: 'executor-id-fixture',
-    agentId: 'agent-id-fixture',
-    provider: 'claude',
-    transport: 'api',
-    state: 'spawning',
-    metadata: {},
-  }),
-);
-const updateExecutorStateMock = mock(async (_id: string, _state: string) => undefined);
-const terminateExecutorMock = mock(async (_id: string) => undefined);
-const findLatestByMetadataMock = mock(async (_filter: any) => null);
-const relinkExecutorToAgentMock = mock(async () => undefined);
-const updateClaudeSessionIdMock = mock(async () => undefined);
-mock.module('../../../lib/executor-registry.js', () => ({
-  createAndLinkExecutor: createAndLinkExecutorMock,
-  updateExecutorState: updateExecutorStateMock,
-  terminateExecutor: terminateExecutorMock,
-  findLatestByMetadata: findLatestByMetadataMock,
-  relinkExecutorToAgent: relinkExecutorToAgentMock,
-  updateClaudeSessionId: updateClaudeSessionIdMock,
-}));
+// NOTE: audit-events and sdk-session-capture are intentionally NOT mocked
+// via mock.module. Bun's mock.module is process-global and mock.restore()
+// does NOT undo module-level registrations. Both files use the real modules
+// — recordAuditEvent / session-capture route through safePgCall, which is
+// mocked per-test via setSafePgCall() (or guarded null for no-bridge tests).
 
 const { ClaudeSdkOmniExecutor } = await import('../claude-sdk.js');
 const directory = await import('../../../lib/agent-directory.js');
