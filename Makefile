@@ -34,9 +34,13 @@ tauri: tauri-app tauri-dmg ## Build Tauri .app + .dmg
 tauri-app: ## Build Tauri .app only (skip DMG)
 	cd $(TAURI_APP_DIR) && cargo tauri build --bundles app
 
-tauri-dmg: ## Package .app into .dmg via hdiutil
+tauri-dmg: ## Package .app into .dmg with Applications symlink
 	@test -d "$(TAURI_BUNDLE)/macos/Genie.app" || (echo "Run 'make tauri-app' first" && exit 1)
-	hdiutil create -volname "Genie" -srcfolder "$(TAURI_BUNDLE)/macos/Genie.app" -ov -format UDZO "$(TAURI_DMG)"
+	@rm -rf /tmp/genie-dmg-stage && mkdir -p /tmp/genie-dmg-stage
+	cp -R "$(TAURI_BUNDLE)/macos/Genie.app" /tmp/genie-dmg-stage/
+	ln -s /Applications /tmp/genie-dmg-stage/Applications
+	hdiutil create -volname "Genie" -srcfolder /tmp/genie-dmg-stage -ov -format UDZO "$(TAURI_DMG)"
+	@rm -rf /tmp/genie-dmg-stage
 	@echo "✓ $(TAURI_DMG)"
 
 tauri-dev:
