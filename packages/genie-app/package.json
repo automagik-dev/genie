@@ -12,15 +12,23 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "genieOs": {
     "services": ["sidecar"]
   },
   "dependencies": {
+    "@khal-os/sdk": "^1.0.0",
+    "@khal-os/ui": "^1.0.0",
+    "@khal-os/types": "^1.0.0",
     "@tauri-apps/api": "^2.0.0",
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/addon-fit": "^0.10.0",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "zustand": "^4.5.0"
   },
   "devDependencies": {
     "typescript": "^5.8.0",
