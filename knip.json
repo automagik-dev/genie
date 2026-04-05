@@ -5,6 +5,7 @@
     "src/tui/render.tsx",
     "src/tui/tmux.ts",
     "src/lib/executor-types.ts",
+    "src/lib/safe-pg-call.ts",
     "src/lib/executor-registry.ts",
     "src/lib/assignment-registry.ts",
     "src/lib/providers/*.ts",
@@ -19,15 +20,16 @@
     "src/term-commands/team/index.ts",
     "src/term-commands/exec/index.ts",
     "src/term-commands/brief.ts",
-    "src/services/omni-reply.ts",
-    "src/services/omni-bridge.ts"
+    "src/services/executors/claude-sdk.ts",
+    "src/services/omni-bridge.ts",
+    "src/lib/audit-events.ts",
+    "src/lib/executor-config.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
-  "ignoreBinaries": ["tmux", "which"],
+  "ignoreBinaries": ["which"],
   "ignoreExportsUsedInFile": false,
   "ignoreDependencies": [
     "@automagik/genie-brain",
-    "esbuild",
     "@tauri-apps/cli",
     "@tauri-apps/api",
     "react-dom",

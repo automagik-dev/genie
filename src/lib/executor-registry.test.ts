@@ -236,6 +236,41 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
       expect(list[0].id).toBe(e2.id); // Newest first
       expect(list[1].id).toBe(e1.id);
     });
+
+    test('filters by metadata source', async () => {
+      const a1 = await seedAgent('omni-agent', 'team1');
+      const a2 = await seedAgent('cli-agent', 'team1');
+      await createExecutor(a1, 'claude', 'api', { metadata: { source: 'omni', chat_id: 'c1' } });
+      await createExecutor(a2, 'claude', 'tmux');
+      await createExecutor(a2, 'claude', 'tmux', { metadata: { source: 'cli' } });
+
+      const omniOnly = await listExecutors(undefined, 'omni');
+      expect(omniOnly.length).toBe(1);
+      expect(omniOnly[0].agentId).toBe(a1);
+      expect(omniOnly[0].metadata).toEqual({ source: 'omni', chat_id: 'c1' });
+
+      const cliOnly = await listExecutors(undefined, 'cli');
+      expect(cliOnly.length).toBe(1);
+      expect(cliOnly[0].agentId).toBe(a2);
+
+      // No source returns all
+      const all = await listExecutors();
+      expect(all.length).toBe(3);
+    });
+
+    test('filters by both agent ID and source', async () => {
+      const a1 = await seedAgent('multi-agent', 'team1');
+      await createExecutor(a1, 'claude', 'api', { metadata: { source: 'omni', chat_id: 'c1' } });
+      await createExecutor(a1, 'claude', 'tmux');
+
+      const filtered = await listExecutors(a1, 'omni');
+      expect(filtered.length).toBe(1);
+      expect(filtered[0].metadata).toEqual({ source: 'omni', chat_id: 'c1' });
+
+      // Agent filter alone returns both
+      const allForAgent = await listExecutors(a1);
+      expect(allForAgent.length).toBe(2);
+    });
   });
 
   // ==========================================================================

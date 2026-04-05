@@ -66,3 +66,41 @@ export function formatTime(iso: string, opts?: { seconds?: boolean; fallback?: s
     return opts?.fallback ?? '??:??';
   }
 }
+
+// ============================================================================
+// ANSI Colors — for colored terminal output
+// ============================================================================
+
+const ANSI = {
+  reset: '\x1b[0m',
+  dim: '\x1b[2m',
+  bold: '\x1b[1m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  gray: '\x1b[90m',
+  brightRed: '\x1b[91m',
+  brightGreen: '\x1b[92m',
+  brightYellow: '\x1b[93m',
+  brightCyan: '\x1b[96m',
+} as const;
+
+type ColorName = keyof typeof ANSI;
+
+const isTTY = process.stdout.isTTY && !process.env.NO_COLOR;
+
+/** Wrap text in ANSI color (no-op when not a TTY or NO_COLOR is set). */
+export function color(name: ColorName, text: string): string {
+  return isTTY ? `${ANSI[name]}${text}${ANSI.reset}` : text;
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: required to match ANSI escape sequences
+const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
+
+/** Strip ANSI escape sequences from a string. */
+export function stripAnsi(str: string): string {
+  return str.replace(ANSI_REGEX, '');
+}

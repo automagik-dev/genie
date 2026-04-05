@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | approved |
+| **Status** | OBSOLETE |
 | **Slug** | `genie-omni-marriage` |
 | **Date** | 2026-03-24 |
 | **Design** | Brainstorm session 2026-03-24 (see memory: project_genie_omni_architecture.md) |
@@ -296,6 +296,10 @@ pm2 start ecosystem.config.cjs && pm2 ls | grep genie
 | PM2 not installed on target machine | Low | `genie up` checks for PM2, falls back to foreground watcher |
 
 ---
+
+## Reconciliation Notes
+
+> **Omni-bridge is a message source, not a state owner.** The omni-bridge relay delivers inbound messages and publishes replies via NATS, but session lifecycle (spawn, resume, freeze, registry) is owned entirely by genie's executor layer. PR #1042 attempted to add a PG-backed session registry inside the bridge — this created a third source of truth alongside the executor table and the worker registry. The unified-executor-layer branch resolves this by keeping session persistence in the executors table and treating the bridge as a stateless message transport. Bridge restarts no longer require session recovery because the bridge holds no session state.
 
 ## Files to Create/Modify
 

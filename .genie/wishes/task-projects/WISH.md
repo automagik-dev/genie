@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `task-projects` |
 | **Date** | 2026-03-23 |
 
