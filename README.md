@@ -24,6 +24,20 @@
 </p>
 -->
 
+<!-- METRICS:START -->
+<p align="center">
+
+| Metric | Value |
+|--------|-------|
+| Releases (24h) | 2 |
+| Merged PRs (7d) | 35 |
+| Avg merge time | 0.3h |
+| SHIP rate | 85% |
+
+*Last updated: 2026-04-04*
+</p>
+<!-- METRICS:END -->
+
 Genie is a CLI that turns one sentence into a finished pull request. You describe what you want — Genie interviews you, writes a plan, spawns parallel agents in isolated worktrees, reviews the code, and opens a PR. You approve. You merge. That's it.
 
 ## Get started

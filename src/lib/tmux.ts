@@ -568,6 +568,32 @@ export async function isPaneAlive(paneId: string): Promise<boolean> {
 }
 
 /**
+ * Check if a tmux pane has a running descendant process matching the given name.
+ * Walks two levels of the process tree (shell -> process -> subprocess) to handle
+ * cases where the target runs under a wrapper script.
+ * Returns false if the pane doesn't exist or the process is not found.
+ */
+export async function isPaneProcessRunning(paneId: string, processName: string): Promise<boolean> {
+  if (!paneId || paneId === 'inline') return false;
+  if (!/^%\d+$/.test(paneId)) return false;
+
+  try {
+    const panePid = (await executeTmux(`display-message -t '${paneId}' -p '#{pane_pid}'`)).trim();
+    if (!panePid || !/^\d+$/.test(panePid)) return false;
+
+    const { execSync } = await import('node:child_process');
+    // Check direct children and grandchildren for the target process name
+    const output = execSync(
+      `pgrep -la -P ${panePid} 2>/dev/null; for cpid in $(pgrep -P ${panePid} 2>/dev/null); do pgrep -la -P "$cpid" 2>/dev/null; done; true`,
+      { encoding: 'utf-8', timeout: 5000 },
+    );
+    return output.toLowerCase().includes(processName.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Kill a tmux window by session:window target.
  * Returns true if the window was killed, false if it didn't exist or the kill failed.
  */

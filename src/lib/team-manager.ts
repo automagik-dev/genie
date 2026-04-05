@@ -11,7 +11,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path, { join } from 'node:path';
 import { $ } from 'bun';
@@ -214,6 +214,30 @@ async function killWorkersByName(agentName: string, teamName?: string): Promise<
 // API
 // ============================================================================
 
+/** Post-clone init: symlink node_modules and run .genie/init.sh if present. */
+async function postCloneInit(repoPath: string, worktreePath: string): Promise<void> {
+  // Symlink node_modules from parent repo so builds work immediately
+  const parentNodeModules = join(repoPath, 'node_modules');
+  const worktreeNodeModules = join(worktreePath, 'node_modules');
+  if (existsSync(parentNodeModules) && !existsSync(worktreeNodeModules)) {
+    try {
+      await symlink(parentNodeModules, worktreeNodeModules, 'dir');
+    } catch {
+      // Best-effort — may fail on filesystems that don't support symlinks
+    }
+  }
+
+  // Run .genie/init.sh if it exists in the repo (post-clone hook convention)
+  const initScript = join(repoPath, '.genie', 'init.sh');
+  if (existsSync(initScript)) {
+    try {
+      await $`bash ${initScript}`.cwd(worktreePath).quiet();
+    } catch {
+      // Best-effort — init script failure shouldn't block team creation
+    }
+  }
+}
+
 /** Ensure a shared clone exists for the given branch. */
 async function ensureWorktree(
   repoPath: string,
@@ -266,6 +290,8 @@ async function ensureWorktree(
   } catch {
     // Best-effort — global config may suffice
   }
+
+  await postCloneInit(repoPath, worktreePath);
 }
 
 /**

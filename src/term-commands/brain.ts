@@ -326,30 +326,47 @@ async function executeBrainCommand(args: string[]): Promise<void> {
 }
 
 export function registerBrainCommands(program: Command): void {
-  program
+  const brain = program
     .command('brain')
     .description('Knowledge graph engine (enterprise)')
     .allowUnknownOption()
     .allowExcessArguments()
     .action(async (_options: Record<string, unknown>, cmd: Command) => {
+      // Fallback: delegate unrecognized subcommands to the enterprise brain module
+      // (e.g. init, search, ingest, analyze, etc.)
       const args = cmd.args;
-
-      if (args[0] === 'install') {
-        await installBrain();
-        return;
-      }
-      if (args[0] === 'uninstall') {
-        uninstallBrain();
-        return;
-      }
-      if (args[0] === 'update') {
-        await updateBrain();
-        return;
-      }
-      if (args[0] === 'version') {
-        await showVersion();
+      if (args.length === 0) {
+        brain.help();
         return;
       }
       await executeBrainCommand(args);
+    });
+
+  brain
+    .command('install')
+    .description('Install genie-brain from GitHub')
+    .action(async () => {
+      await installBrain();
+    });
+
+  brain
+    .command('uninstall')
+    .description('Remove genie-brain installation')
+    .action(() => {
+      uninstallBrain();
+    });
+
+  brain
+    .command('update')
+    .description('Update genie-brain to latest version')
+    .action(async () => {
+      await updateBrain();
+    });
+
+  brain
+    .command('version')
+    .description('Show installed brain version')
+    .action(async () => {
+      await showVersion();
     });
 }
