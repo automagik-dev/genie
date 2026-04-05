@@ -71,6 +71,15 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
   }
 
   /**
+   * Inject a nudge into a running Claude Code session via tmux send-keys.
+   * Uses the same pane injection mechanism as deliver, prefixed with [system].
+   */
+  async injectNudge(session: OmniSession, text: string): Promise<void> {
+    const nudgeText = `[system] ${text}`;
+    await executeTmux(`send-keys -t '${session.paneId}' ${shellQuote(nudgeText)} Enter`);
+  }
+
+  /**
    * Spawn a Claude Code process in a tmux window for a specific chat.
    *
    * - Resolves agent from genie directory

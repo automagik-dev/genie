@@ -39,4 +39,6 @@ export interface IExecutor {
   shutdown(session: OmniSession): Promise<void>;
   isAlive(session: OmniSession): Promise<boolean>;
   setSafePgCall(fn: import('../lib/safe-pg-call.js').SafePgCallFn): void;
+  /** Inject a nudge message into an active session (for turn timeout warnings). */
+  injectNudge(session: OmniSession, text: string): Promise<void>;
 }
