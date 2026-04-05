@@ -100,6 +100,9 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
    */
   private deliveryQueues = new Map<string, Promise<void>>();
 
+  /** Pending nudge text to prepend on the next delivery. */
+  private pendingNudges = new Map<string, string>();
+
   /**
    * Set the NATS publish function for reply routing.
    * Called by the bridge after construction.
@@ -115,6 +118,15 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
    */
   setSafePgCall(fn: SafePgCallFn): void {
     this.safePgCall = fn;
+  }
+
+  /**
+   * Inject a nudge into the session. The nudge text is stored and prepended
+   * as context on the next SDK query delivery for this session.
+   */
+  async injectNudge(session: OmniSession, text: string): Promise<void> {
+    if (!this.sessions.has(session.id)) return;
+    this.pendingNudges.set(session.id, text);
   }
 
   /**
@@ -312,6 +324,14 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       extraOptions.resume = state.claudeSessionId;
     }
 
+    // Prepend any pending nudge to the message content.
+    let queryContent = message.content;
+    const pendingNudge = this.pendingNudges.get(session.id);
+    if (pendingNudge) {
+      queryContent = `[system] ${pendingNudge}\n\n${message.content}`;
+      this.pendingNudges.delete(session.id);
+    }
+
     const { messages: queryMessages } = state.provider.runQuery(
       {
         agentId: session.agentName,
@@ -322,7 +342,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
         model: entry.model,
         systemPrompt: state.claudeSessionId ? undefined : systemPrompt,
       },
-      message.content,
+      queryContent,
       permissionConfig,
       extraOptions,
       entry.sdk,

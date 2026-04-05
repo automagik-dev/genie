@@ -16,6 +16,7 @@ import { resolveExecutorType } from '../lib/executor-config.js';
 import type { IExecutor, OmniMessage, OmniSession } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
 import { ClaudeSdkOmniExecutor } from './executors/claude-sdk.js';
+import { TurnTracker } from './omni-turn.js';
 
 // ============================================================================
 // Configuration
@@ -154,6 +155,7 @@ export class OmniBridge {
   private nc: NatsConnection | null = null;
   private sub: Subscription | null = null;
   private executor: IExecutor;
+  private turnTracker = new TurnTracker();
 
   /**
    * Process-local runtime handles — NOT the source of truth for session identity.
@@ -255,6 +257,13 @@ export class OmniBridge {
     // Subscribe to all omni messages
     this.sub = this.nc.subscribe('omni.message.>');
     this.processSubscription();
+
+    // Turn lifecycle events from Omni
+    const turnSubs = ['omni.turn.open.>', 'omni.turn.done.>', 'omni.turn.nudge.>', 'omni.turn.timeout.>'];
+    for (const topic of turnSubs) {
+      const sub = this.nc.subscribe(topic);
+      this.processTurnEvents(sub);
+    }
 
     // Start idle session checker
     this.idleCheckTimer = setInterval(() => this.checkIdleSessions(), IDLE_CHECK_INTERVAL_MS);
@@ -492,6 +501,88 @@ export class OmniBridge {
         console.error('[omni-bridge] Error processing message:', err);
       }
     }
+  }
+
+  /**
+   * Process turn lifecycle events from NATS subscriptions.
+   * Routes each event to the appropriate handler based on event type.
+   */
+  private async processTurnEvents(sub: Subscription): Promise<void> {
+    for await (const msg of sub) {
+      try {
+        const payload = JSON.parse(this.sc.decode(msg.data));
+        const parts = msg.subject.split('.');
+        const eventType = parts[2]; // 'open', 'done', 'nudge', 'timeout'
+        const instanceId = parts[3];
+        const chatId = parts.slice(4).join('.'); // chatId may contain dots
+
+        // Find session by instanceId+chatId
+        const sessionKey = this.findSessionKey(instanceId, chatId);
+
+        switch (eventType) {
+          case 'open':
+            if (sessionKey) this.turnTracker.open(sessionKey, payload.turnId, payload.messageId);
+            break;
+          case 'done':
+            if (sessionKey) {
+              this.turnTracker.close(sessionKey, payload.action);
+              // Session goes idle — reset idle timer
+            }
+            break;
+          case 'nudge':
+            if (sessionKey) await this.handleTurnNudge(sessionKey, payload.message);
+            break;
+          case 'timeout':
+            if (sessionKey) await this.handleTurnTimeout(sessionKey);
+            break;
+        }
+      } catch (err) {
+        console.warn('[omni-bridge] Error processing turn event:', err);
+      }
+    }
+  }
+
+  /**
+   * Find a session key by instanceId and chatId.
+   * Scans the sessions Map for a matching entry since the Map is keyed by
+   * `${agentName}:${chatId}` but we need to match by instanceId+chatId.
+   */
+  private findSessionKey(instanceId: string, chatId: string): string | undefined {
+    for (const [key, entry] of this.sessions) {
+      if (entry.instanceId === instanceId && entry.session?.chatId === chatId) {
+        return key;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Handle a turn nudge event — inject the nudge text into the executor.
+   */
+  private async handleTurnNudge(sessionKey: string, nudgeText: string): Promise<void> {
+    const entry = this.sessions.get(sessionKey);
+    if (!entry?.session) return;
+    try {
+      await this.executor.injectNudge(entry.session, nudgeText);
+    } catch (err) {
+      console.warn(`[omni-bridge] Failed to inject nudge for ${sessionKey}:`, err);
+    }
+  }
+
+  /**
+   * Handle a turn timeout event — evict the session and shut down the executor.
+   */
+  private async handleTurnTimeout(sessionKey: string): Promise<void> {
+    const entry = this.sessions.get(sessionKey);
+    if (!entry?.session) return;
+    console.warn(`[omni-bridge] Turn timed out for ${sessionKey}, evicting session`);
+    this.turnTracker.close(sessionKey, 'timeout');
+    try {
+      await this.executor.shutdown(entry.session);
+    } catch (err) {
+      console.warn(`[omni-bridge] Error shutting down timed-out session ${sessionKey}:`, err);
+    }
+    this.sessions.delete(sessionKey);
   }
 
   /**
