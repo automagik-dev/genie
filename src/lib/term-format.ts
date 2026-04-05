@@ -88,7 +88,7 @@ const ANSI = {
   brightCyan: '\x1b[96m',
 } as const;
 
-export type ColorName = keyof typeof ANSI;
+type ColorName = keyof typeof ANSI;
 
 const isTTY = process.stdout.isTTY && !process.env.NO_COLOR;
 
