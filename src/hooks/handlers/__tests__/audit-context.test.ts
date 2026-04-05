@@ -9,20 +9,24 @@ import { auditContext } from '../audit-context.js';
 describe('audit-context handler', () => {
   let repoDir: string;
 
+  /** Git env that suppresses system/global config interference in CI. */
+  const gitEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+
   beforeEach(() => {
     // Create a temp git repo with a committed file
     repoDir = mkdtempSync(join(tmpdir(), 'audit-ctx-'));
-    execSync('git init', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git init', { cwd: repoDir, stdio: 'pipe', env: gitEnv });
     execSync('git config user.email "test@test.com"', { cwd: repoDir, stdio: 'pipe' });
     execSync('git config user.name "Test"', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git config init.defaultBranch main', { cwd: repoDir, stdio: 'pipe' });
 
     const testFile = join(repoDir, 'example.ts');
     writeFileSync(testFile, 'const x = 1;\n');
-    execSync('git add . && git commit -m "initial commit"', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git add . && git commit -m "initial commit"', { cwd: repoDir, stdio: 'pipe', env: gitEnv });
 
     // Add a second commit
     writeFileSync(testFile, 'const x = 2;\n');
-    execSync('git add . && git commit -m "update x to 2"', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git add . && git commit -m "update x to 2"', { cwd: repoDir, stdio: 'pipe', env: gitEnv });
   });
 
   afterEach(() => {
