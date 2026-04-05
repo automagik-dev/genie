@@ -1,371 +1,671 @@
+import { useNats, useNatsSubscription } from '@khal-os/sdk/app';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { invoke } from '../../../lib/ipc';
-import type { DashboardViewProps } from '../../../lib/types';
+import { GENIE_SUBJECTS } from '../../../lib/subjects';
+import { theme } from '../../../lib/theme';
+import type { AppComponentProps, RuntimeEvent } from '../../../lib/types';
+import { EmptyState } from '../../shared/EmptyState';
+import { ErrorState } from '../../shared/ErrorState';
+import { KpiCard } from '../../shared/KpiCard';
+import { LiveFeed } from '../../shared/LiveFeed';
+import { LoadingState } from '../../shared/LoadingState';
 
 // ============================================================================
 // Types
 // ============================================================================
 
 interface DashboardStats {
-  agents: { online: number; total: number };
+  agents: { online: number; errored: number; total: number };
   tasks: { active: number; backlog: number; done: number; total: number };
   teams: { active: number; total: number };
+  cost_usd: number;
+  snapshot: {
+    cpu_percent: number;
+    memory_used_mb: number;
+    memory_total_mb: number;
+    worker_count: number;
+  } | null;
+}
+
+interface CostSummary {
+  model: string;
+  total_cost: number;
+  usage_count: number;
 }
 
 type LoadState = 'loading' | 'ready' | 'error';
 
 // ============================================================================
-// Theme tokens (mirrors TUI palette)
+// Constants
 // ============================================================================
 
-const t = {
-  bg: '#1a1028',
-  bgCard: '#241838',
-  bgCardHover: '#2e2048',
-  border: '#414868',
-  borderAccent: '#7c3aed',
-  text: '#e2e8f0',
-  textDim: '#94a3b8',
-  textMuted: '#64748b',
-  purple: '#a855f7',
-  violet: '#7c3aed',
-  cyan: '#22d3ee',
-  emerald: '#34d399',
-  warning: '#fbbf24',
-  error: '#f87171',
-} as const;
+const ORG_ID = 'default';
 
 // ============================================================================
-// Styles
+// Section Header
 // ============================================================================
 
-const styles = {
-  root: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    height: '100%',
-    backgroundColor: t.bg,
-    color: t.text,
-    fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace",
-    padding: '24px',
-    gap: '24px',
-    overflow: 'auto',
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  title: {
-    fontSize: '20px',
-    fontWeight: 600,
-    color: t.text,
-    margin: 0,
-  },
-  subtitle: {
-    fontSize: '12px',
-    color: t.textMuted,
-    margin: 0,
-  },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-    gap: '16px',
-  },
-  card: {
-    backgroundColor: t.bgCard,
-    border: `1px solid ${t.border}`,
-    borderRadius: '8px',
-    padding: '20px',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '12px',
-    transition: 'border-color 0.15s ease, background-color 0.15s ease',
-  },
-  cardLabel: {
-    fontSize: '11px',
-    fontWeight: 500,
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.08em',
-    color: t.textMuted,
-    margin: 0,
-  },
-  cardValue: {
-    fontSize: '32px',
-    fontWeight: 700,
-    lineHeight: 1,
-    margin: 0,
-  },
-  cardDetail: {
-    fontSize: '12px',
-    color: t.textDim,
-    margin: 0,
-  },
-  indicator: {
-    display: 'inline-block',
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    marginRight: '6px',
-  },
-  section: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '12px',
-  },
-  sectionTitle: {
-    fontSize: '13px',
-    fontWeight: 600,
-    color: t.textDim,
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.06em',
-    margin: 0,
-  },
-  taskBar: {
-    display: 'flex',
-    height: '6px',
-    borderRadius: '3px',
-    overflow: 'hidden',
-    backgroundColor: t.border,
-  },
-  errorBox: {
-    backgroundColor: 'rgba(248, 113, 113, 0.1)',
-    border: `1px solid ${t.error}`,
-    borderRadius: '8px',
-    padding: '16px',
-    color: t.error,
-    fontSize: '13px',
-  },
-  loadingBox: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100%',
-    color: t.textMuted,
-    fontSize: '14px',
-  },
-} as const;
-
-// ============================================================================
-// KPI Card
-// ============================================================================
-
-interface KpiCardProps {
-  label: string;
-  value: string;
-  detail?: string;
-  accentColor: string;
-  indicatorColor?: string;
-}
-
-function KpiCard({ label, value, detail, accentColor, indicatorColor }: KpiCardProps) {
-  const [hovered, setHovered] = useState(false);
-
+function SectionHeader({ title }: { title: string }) {
   return (
-    <div
+    <h2
       style={{
-        ...styles.card,
-        borderColor: hovered ? accentColor : t.border,
-        backgroundColor: hovered ? t.bgCardHover : t.bgCard,
+        fontSize: '13px',
+        fontWeight: 600,
+        color: theme.textDim,
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+        margin: 0,
+        padding: '0 0 4px 0',
+        borderBottom: `1px solid ${theme.border}`,
       }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
-      <p style={styles.cardLabel}>{label}</p>
-      <p style={{ ...styles.cardValue, color: accentColor }}>
-        {indicatorColor && <span style={{ ...styles.indicator, backgroundColor: indicatorColor }} />}
-        {value}
-      </p>
-      {detail && <p style={styles.cardDetail}>{detail}</p>}
-    </div>
+      {title}
+    </h2>
   );
 }
 
 // ============================================================================
-// Task Progress Bar
+// Section 1: System Health
 // ============================================================================
 
-function TaskProgressBar({ tasks }: { tasks: DashboardStats['tasks'] }) {
-  if (tasks.total === 0) return null;
+interface SystemHealthProps {
+  stats: DashboardStats;
+}
 
-  const pct = (n: number) => `${((n / tasks.total) * 100).toFixed(1)}%`;
+function ProgressBar({ value, max, color, label }: { value: number; max: number; color: string; label: string }) {
+  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+        <span style={{ color: theme.textDim }}>{label}</span>
+        <span style={{ color: theme.text, fontWeight: 500 }}>{pct.toFixed(0)}%</span>
+      </div>
+      <div
+        style={{
+          height: '6px',
+          borderRadius: '3px',
+          backgroundColor: theme.border,
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            width: `${pct}%`,
+            height: '100%',
+            backgroundColor: color,
+            borderRadius: '3px',
+            transition: 'width 0.3s ease',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SystemHealth({ stats }: SystemHealthProps) {
+  const snap = stats.snapshot;
 
   return (
-    <div style={styles.section}>
-      <p style={styles.sectionTitle}>Task Distribution</p>
-      <div style={styles.taskBar}>
-        {tasks.done > 0 && (
-          <div
-            style={{
-              width: pct(tasks.done),
-              backgroundColor: t.emerald,
-              transition: 'width 0.3s ease',
-            }}
-            title={`Done: ${tasks.done}`}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <SectionHeader title="System Health" />
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gap: '16px',
+        }}
+      >
+        {/* pgserve status */}
+        <div
+          style={{
+            backgroundColor: theme.bgCard,
+            border: `1px solid ${theme.border}`,
+            borderRadius: theme.radiusMd,
+            padding: '16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: theme.emerald,
+              }}
+            />
+            <span style={{ fontSize: '12px', color: theme.text, fontWeight: 500 }}>pgserve connected</span>
+          </div>
+          <span style={{ fontSize: '11px', color: theme.textMuted }}>
+            {stats.agents.total} agents registered \u00b7 {stats.agents.errored} errored
+          </span>
+        </div>
+
+        {/* CPU */}
+        <div
+          style={{
+            backgroundColor: theme.bgCard,
+            border: `1px solid ${theme.border}`,
+            borderRadius: theme.radiusMd,
+            padding: '16px',
+          }}
+        >
+          <ProgressBar
+            label="CPU"
+            value={snap?.cpu_percent ?? 0}
+            max={100}
+            color={
+              (snap?.cpu_percent ?? 0) > 80 ? theme.error : (snap?.cpu_percent ?? 0) > 50 ? theme.warning : theme.cyan
+            }
           />
-        )}
-        {tasks.active > 0 && (
-          <div
-            style={{
-              width: pct(tasks.active),
-              backgroundColor: t.cyan,
-              transition: 'width 0.3s ease',
-            }}
-            title={`Active: ${tasks.active}`}
+        </div>
+
+        {/* Memory */}
+        <div
+          style={{
+            backgroundColor: theme.bgCard,
+            border: `1px solid ${theme.border}`,
+            borderRadius: theme.radiusMd,
+            padding: '16px',
+          }}
+        >
+          <ProgressBar
+            label="Memory"
+            value={snap?.memory_used_mb ?? 0}
+            max={snap?.memory_total_mb ?? 1}
+            color={
+              snap && snap.memory_total_mb > 0 && snap.memory_used_mb / snap.memory_total_mb > 0.8
+                ? theme.error
+                : theme.blue
+            }
           />
-        )}
-        {tasks.backlog > 0 && (
-          <div
-            style={{
-              width: pct(tasks.backlog),
-              backgroundColor: t.textMuted,
-              transition: 'width 0.3s ease',
-            }}
-            title={`Backlog: ${tasks.backlog}`}
-          />
-        )}
-      </div>
-      <div style={{ display: 'flex', gap: '16px', fontSize: '11px', color: t.textDim }}>
-        <span>
-          <span style={{ ...styles.indicator, backgroundColor: t.emerald }} />
-          Done {pct(tasks.done)}
-        </span>
-        <span>
-          <span style={{ ...styles.indicator, backgroundColor: t.cyan }} />
-          Active {pct(tasks.active)}
-        </span>
-        <span>
-          <span style={{ ...styles.indicator, backgroundColor: t.textMuted }} />
-          Backlog {pct(tasks.backlog)}
-        </span>
+        </div>
+
+        {/* Workers */}
+        <div
+          style={{
+            backgroundColor: theme.bgCard,
+            border: `1px solid ${theme.border}`,
+            borderRadius: theme.radiusMd,
+            padding: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <span style={{ fontSize: '24px', fontWeight: 700, color: theme.violet }}>{snap?.worker_count ?? 0}</span>
+          <span style={{ fontSize: '12px', color: theme.textDim }}>active workers</span>
+        </div>
       </div>
     </div>
   );
 }
 
 // ============================================================================
-// Dashboard View
+// Section 2: Live Activity Feed
 // ============================================================================
 
-const REFRESH_INTERVAL_MS = 5_000;
+interface LiveActivityProps {
+  events: RuntimeEvent[];
+}
 
-export function DashboardView({ windowId }: DashboardViewProps) {
+function LiveActivity({ events }: LiveActivityProps) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <SectionHeader title="Live Activity Feed" />
+      <LiveFeed events={events} maxItems={20} />
+    </div>
+  );
+}
+
+// ============================================================================
+// Section 3: KPI Cards
+// ============================================================================
+
+interface KpiSectionProps {
+  stats: DashboardStats;
+  onNavigate?: (view: string) => void;
+}
+
+function KpiSection({ stats, onNavigate }: KpiSectionProps) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <SectionHeader title="Key Metrics" />
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '12px',
+        }}
+      >
+        <KpiCard
+          title="Agents"
+          value={`${stats.agents.online}/${stats.agents.total}`}
+          breakdown={[
+            { label: 'online', value: stats.agents.online, color: theme.emerald },
+            { label: 'errored', value: stats.agents.errored, color: theme.error },
+            {
+              label: 'idle',
+              value: stats.agents.total - stats.agents.online - stats.agents.errored,
+              color: theme.textMuted,
+            },
+          ]}
+          accentColor={stats.agents.online > 0 ? theme.emerald : theme.textMuted}
+          onClick={() => onNavigate?.('agents')}
+        />
+
+        <KpiCard
+          title="Executors Running"
+          value={String(stats.agents.online)}
+          breakdown={[{ label: 'total registered', value: stats.agents.total, color: theme.textDim }]}
+          accentColor={theme.cyan}
+          onClick={() => onNavigate?.('agents')}
+        />
+
+        <KpiCard
+          title="Tasks Active"
+          value={String(stats.tasks.active)}
+          breakdown={[
+            { label: 'backlog', value: stats.tasks.backlog, color: theme.warning },
+            { label: 'done', value: stats.tasks.done, color: theme.emerald },
+          ]}
+          accentColor={theme.cyan}
+          onClick={() => onNavigate?.('tasks')}
+        />
+
+        <KpiCard
+          title="Sessions Total"
+          value={String(stats.tasks.total)}
+          breakdown={[
+            { label: 'active', value: stats.tasks.active, color: theme.cyan },
+            { label: 'complete', value: stats.tasks.done, color: theme.emerald },
+          ]}
+          accentColor={theme.violet}
+          onClick={() => onNavigate?.('sessions')}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Section 4: Cost Summary
+// ============================================================================
+
+interface CostSectionProps {
+  totalCost: number;
+  costBreakdown: CostSummary[];
+  onNavigate?: (view: string) => void;
+}
+
+function CostSection({ totalCost, costBreakdown, onNavigate }: CostSectionProps) {
+  // Calculate "today" approximation and burn rate
+  const burnRate = costBreakdown.length > 0 ? totalCost / Math.max(costBreakdown.length, 1) : 0;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <SectionHeader title="Cost Summary" />
+      <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+        {/* Total spend */}
+        <button
+          type="button"
+          onClick={() => onNavigate?.('costs')}
+          style={{
+            backgroundColor: theme.bgCard,
+            border: `1px solid ${theme.border}`,
+            borderRadius: theme.radiusMd,
+            padding: '20px',
+            minWidth: '180px',
+            cursor: 'pointer',
+            textAlign: 'left',
+            fontFamily: theme.fontFamily,
+          }}
+        >
+          <p
+            style={{
+              fontSize: '11px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: theme.textMuted,
+              margin: 0,
+            }}
+          >
+            Total Spend
+          </p>
+          <p style={{ fontSize: '28px', fontWeight: 700, color: theme.purple, margin: '8px 0 0' }}>
+            ${totalCost.toFixed(2)}
+          </p>
+        </button>
+
+        {/* Burn rate */}
+        <div
+          style={{
+            backgroundColor: theme.bgCard,
+            border: `1px solid ${theme.border}`,
+            borderRadius: theme.radiusMd,
+            padding: '20px',
+            minWidth: '180px',
+          }}
+        >
+          <p
+            style={{
+              fontSize: '11px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: theme.textMuted,
+              margin: 0,
+            }}
+          >
+            Avg per Model
+          </p>
+          <p style={{ fontSize: '28px', fontWeight: 700, color: theme.warning, margin: '8px 0 0' }}>
+            ${burnRate.toFixed(2)}
+          </p>
+        </div>
+
+        {/* Model breakdown mini-bar */}
+        {costBreakdown.length > 0 && (
+          <div
+            style={{
+              flex: 1,
+              minWidth: '240px',
+              backgroundColor: theme.bgCard,
+              border: `1px solid ${theme.border}`,
+              borderRadius: theme.radiusMd,
+              padding: '16px',
+            }}
+          >
+            <p
+              style={{
+                fontSize: '11px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                color: theme.textMuted,
+                margin: '0 0 12px',
+              }}
+            >
+              Model Breakdown
+            </p>
+            {/* Mini bar */}
+            <div
+              style={{
+                display: 'flex',
+                height: '8px',
+                borderRadius: '4px',
+                overflow: 'hidden',
+                backgroundColor: theme.border,
+                marginBottom: '8px',
+              }}
+            >
+              {costBreakdown.map((row, i) => {
+                const pct = totalCost > 0 ? (row.total_cost / totalCost) * 100 : 0;
+                const colors = [theme.purple, theme.cyan, theme.emerald, theme.warning, theme.blue];
+                return (
+                  <div
+                    key={row.model}
+                    style={{
+                      width: `${pct}%`,
+                      backgroundColor: colors[i % colors.length],
+                      transition: 'width 0.3s ease',
+                    }}
+                    title={`${row.model}: $${row.total_cost.toFixed(2)}`}
+                  />
+                );
+              })}
+            </div>
+            {/* Legend */}
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', fontSize: '10px', color: theme.textDim }}>
+              {costBreakdown.slice(0, 5).map((row, i) => {
+                const colors = [theme.purple, theme.cyan, theme.emerald, theme.warning, theme.blue];
+                return (
+                  <span key={row.model} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span
+                      style={{
+                        width: '6px',
+                        height: '6px',
+                        borderRadius: '50%',
+                        backgroundColor: colors[i % colors.length],
+                      }}
+                    />
+                    {row.model}: ${row.total_cost.toFixed(2)}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Section 5: Team Activity
+// ============================================================================
+
+interface TeamActivityProps {
+  stats: DashboardStats;
+  costBreakdown: CostSummary[];
+}
+
+function TeamActivity({ stats }: TeamActivityProps) {
+  // Team activity uses agent breakdown by team — for now show summary bars
+  const totalAgents = stats.agents.total;
+  const teamsActive = stats.teams.active;
+  const teamsTotal = stats.teams.total;
+
+  if (teamsTotal === 0) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <SectionHeader title="Team Activity" />
+        <EmptyState
+          icon={'\u2302'}
+          title="No teams created"
+          description="Teams will appear here once agents are organized into teams."
+        />
+      </div>
+    );
+  }
+
+  // Show horizontal bars for active vs total teams
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <SectionHeader title="Team Activity" />
+      <div
+        style={{
+          backgroundColor: theme.bgCard,
+          border: `1px solid ${theme.border}`,
+          borderRadius: theme.radiusMd,
+          padding: '16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+        }}
+      >
+        {/* Active teams bar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+            <span style={{ color: theme.textDim }}>Active Teams</span>
+            <span style={{ color: theme.text, fontWeight: 500 }}>
+              {teamsActive} / {teamsTotal}
+            </span>
+          </div>
+          <div style={{ height: '10px', borderRadius: '5px', backgroundColor: theme.border, overflow: 'hidden' }}>
+            <div
+              style={{
+                width: teamsTotal > 0 ? `${(teamsActive / teamsTotal) * 100}%` : '0%',
+                height: '100%',
+                backgroundColor: theme.violet,
+                borderRadius: '5px',
+                transition: 'width 0.3s ease',
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Agents per team approximation */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+            <span style={{ color: theme.textDim }}>Agents Online</span>
+            <span style={{ color: theme.text, fontWeight: 500 }}>
+              {stats.agents.online} / {totalAgents}
+            </span>
+          </div>
+          <div style={{ height: '10px', borderRadius: '5px', backgroundColor: theme.border, overflow: 'hidden' }}>
+            <div
+              style={{
+                width: totalAgents > 0 ? `${(stats.agents.online / totalAgents) * 100}%` : '0%',
+                height: '100%',
+                backgroundColor: theme.emerald,
+                borderRadius: '5px',
+                transition: 'width 0.3s ease',
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Cost per team placeholder */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
+            <span style={{ color: theme.textDim }}>Cost Allocation</span>
+            <span style={{ color: theme.text, fontWeight: 500 }}>${stats.cost_usd?.toFixed?.(2) ?? '0.00'}</span>
+          </div>
+          <div style={{ height: '10px', borderRadius: '5px', backgroundColor: theme.border, overflow: 'hidden' }}>
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                backgroundColor: theme.purple,
+                borderRadius: '5px',
+                opacity: 0.6,
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Command Center (DashboardView)
+// ============================================================================
+
+export function DashboardView({ windowId, meta }: AppComponentProps) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [costBreakdown, setCostBreakdown] = useState<CostSummary[]>([]);
+  const [events, setEvents] = useState<RuntimeEvent[]>([]);
   const [state, setState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const eventsRef = useRef<RuntimeEvent[]>([]);
 
-  const fetchStats = useCallback(async () => {
+  const nats = useNats();
+
+  // Navigate callback — extracts navigate fn from meta if passed by App shell
+  const navigate = useCallback(
+    (view: string) => {
+      if (meta && typeof (meta as Record<string, unknown>).navigate === 'function') {
+        (meta as Record<string, (v: string) => void>).navigate(view);
+      }
+    },
+    [meta],
+  );
+
+  // Fetch dashboard stats + cost summary
+  const fetchData = useCallback(async () => {
     try {
-      const data = await invoke<DashboardStats>('dashboard_stats');
-      setStats(data);
+      const [statsResult, costResult] = await Promise.all([
+        nats.request<DashboardStats>(GENIE_SUBJECTS.dashboard.stats(ORG_ID)),
+        nats.request<CostSummary[]>(GENIE_SUBJECTS.costs.summary(ORG_ID)),
+      ]);
+      setStats(statsResult);
+      setCostBreakdown(Array.isArray(costResult) ? costResult : []);
       setState('ready');
       setError(null);
-      setLastRefresh(new Date());
     } catch (err) {
-      // Keep showing stale data if we had a previous successful fetch
       if (!stats) setState('error');
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [stats]);
+  }, [nats, stats]);
 
+  // Initial fetch + polling
   useEffect(() => {
-    fetchStats();
-
-    timerRef.current = setInterval(fetchStats, REFRESH_INTERVAL_MS);
+    fetchData();
+    timerRef.current = setInterval(fetchData, 10_000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [fetchStats]);
+  }, [fetchData]);
+
+  // Live event stream via NATS subscription
+  useNatsSubscription<RuntimeEvent>(
+    GENIE_SUBJECTS.events.runtime(ORG_ID),
+    useCallback((event: RuntimeEvent) => {
+      eventsRef.current = [event, ...eventsRef.current].slice(0, 50);
+      setEvents([...eventsRef.current]);
+    }, []),
+  );
+
+  // ---- Render States ----
 
   if (state === 'loading') {
     return (
-      <div data-window-id={windowId} style={styles.root}>
-        <div style={styles.loadingBox}>Loading dashboard...</div>
+      <div data-window-id={windowId} style={{ height: '100%' }}>
+        <LoadingState message="Loading Command Center..." />
       </div>
     );
   }
 
   if (state === 'error' && !stats) {
     return (
-      <div data-window-id={windowId} style={styles.root}>
-        <div style={styles.errorBox}>Failed to load dashboard: {error}</div>
+      <div data-window-id={windowId} style={{ height: '100%' }}>
+        <ErrorState message={error ?? 'Failed to load dashboard'} service="dashboard.stats" onRetry={fetchData} />
       </div>
     );
   }
 
-  // stats is guaranteed non-null here (loading/error states handled above)
   const s = stats as DashboardStats;
 
   return (
-    <div data-window-id={windowId} style={styles.root}>
+    <div
+      data-window-id={windowId}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        backgroundColor: theme.bg,
+        color: theme.text,
+        fontFamily: theme.fontFamily,
+        padding: '24px',
+        gap: '28px',
+        overflow: 'auto',
+      }}
+    >
       {/* Header */}
-      <div style={styles.header}>
-        <div>
-          <h1 style={styles.title}>Dashboard</h1>
-          <p style={styles.subtitle}>
-            {lastRefresh ? `Updated ${lastRefresh.toLocaleTimeString()}` : 'Loading...'}
-            {error && <span style={{ color: t.warning, marginLeft: '8px' }}>(refresh failed)</span>}
-          </p>
-        </div>
+      <div>
+        <h1 style={{ fontSize: '20px', fontWeight: 600, color: theme.text, margin: 0 }}>Command Center</h1>
+        <p style={{ fontSize: '12px', color: theme.textMuted, margin: '4px 0 0' }}>
+          {nats.connected ? 'Live' : 'Reconnecting...'} \u00b7 {new Date().toLocaleDateString()}
+          {error && <span style={{ color: theme.warning, marginLeft: '8px' }}>(refresh failed)</span>}
+        </p>
       </div>
 
-      {/* KPI Cards */}
-      <div style={styles.grid}>
-        <KpiCard
-          label="Agents Online"
-          value={`${s.agents.online} / ${s.agents.total}`}
-          detail={
-            s.agents.total === 0
-              ? 'No agents registered'
-              : `${Math.round((s.agents.online / s.agents.total) * 100)}% utilization`
-          }
-          accentColor={s.agents.online > 0 ? t.emerald : t.textMuted}
-          indicatorColor={s.agents.online > 0 ? t.emerald : t.textMuted}
-        />
+      {/* Section 1: System Health */}
+      <SystemHealth stats={s} />
 
-        <KpiCard
-          label="Tasks Active"
-          value={String(s.tasks.active)}
-          detail={`${s.tasks.backlog} backlog \u00b7 ${s.tasks.done} done`}
-          accentColor={t.cyan}
-        />
+      {/* Section 2: Live Activity Feed */}
+      <LiveActivity events={events} />
 
-        <KpiCard
-          label="Tasks Completed"
-          value={String(s.tasks.done)}
-          detail={
-            s.tasks.total > 0 ? `${Math.round((s.tasks.done / s.tasks.total) * 100)}% completion rate` : 'No tasks yet'
-          }
-          accentColor={t.emerald}
-        />
+      {/* Section 3: KPI Cards */}
+      <KpiSection stats={s} onNavigate={navigate} />
 
-        <KpiCard
-          label="Teams Active"
-          value={`${s.teams.active} / ${s.teams.total}`}
-          detail={
-            s.teams.total === 0
-              ? 'No teams created'
-              : s.teams.active === s.teams.total
-                ? 'All teams active'
-                : `${s.teams.total - s.teams.active} idle`
-          }
-          accentColor={t.violet}
-        />
+      {/* Section 4: Cost Summary */}
+      <CostSection totalCost={s.cost_usd ?? 0} costBreakdown={costBreakdown} onNavigate={navigate} />
 
-        <KpiCard
-          label="Backlog"
-          value={String(s.tasks.backlog)}
-          detail={s.tasks.backlog > 10 ? 'Consider triaging' : 'Healthy backlog size'}
-          accentColor={s.tasks.backlog > 10 ? t.warning : t.textDim}
-        />
-
-        <KpiCard label="Spend" value="\u2014" detail="Tracking coming soon" accentColor={t.purple} />
-      </div>
-
-      {/* Task progress bar */}
-      <TaskProgressBar tasks={s.tasks} />
+      {/* Section 5: Team Activity */}
+      <TeamActivity stats={s} costBreakdown={costBreakdown} />
     </div>
   );
 }
