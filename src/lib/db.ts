@@ -198,6 +198,20 @@ async function runRetention(sql: any): Promise<void> {
  * Returns the port pgserve is listening on.
  */
 export async function ensurePgserve(): Promise<number> {
+  // Test mode short-circuit — src/lib/test-setup.ts (bun preload) starts a
+  // dedicated pgserve --ram on a non-production port and exports
+  // GENIE_TEST_PG_PORT. Honoring it here means tests never touch the
+  // production daemon or ~/.genie/data/pgserve. When the env var is unset,
+  // this returns null and production paths run unchanged.
+  if (activePort === null) {
+    const testPort = await resolveTestPort();
+    if (testPort !== null) {
+      activePort = testPort;
+      process.env.GENIE_PG_AVAILABLE = 'true';
+      return testPort;
+    }
+  }
+
   // Deduplicate concurrent calls
   if (ensurePromise) return ensurePromise;
 
@@ -240,6 +254,22 @@ async function autoStartDaemon(): Promise<void> {
     env: { ...process.env },
   });
   child.unref();
+}
+
+/**
+ * Test mode short-circuit — `src/lib/test-setup.ts` (bun preload) starts a
+ * dedicated `pgserve --ram` on a non-production port and exports
+ * `GENIE_TEST_PG_PORT`. Returns the port if set and reachable; returns null
+ * when the env var is unset so production paths run unchanged.
+ */
+async function resolveTestPort(): Promise<number | null> {
+  const raw = process.env.GENIE_TEST_PG_PORT;
+  if (!raw) return null;
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0 || parsed >= 65536 || !(await isPostgresHealthy(parsed))) {
+    throw new Error(`GENIE_TEST_PG_PORT=${raw} set but not reachable`);
+  }
+  return parsed;
 }
 
 async function _ensurePgserve(): Promise<number> {
