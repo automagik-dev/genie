@@ -212,8 +212,15 @@ export class OmniBridge {
     console.log('[omni-bridge] Connected to NATS');
 
     // PG probe: graceful degradation on failure — never block startup.
-    // Group 3 scaffolding only; downstream groups wire safePgCall into their call sites.
+    // Group 3 scaffolding; Group 4 consumers (SDK + tmux executors) receive a
+    // bound `safePgCall` reference below.
     await this.probePg();
+
+    // Inject the bridge's safePgCall into the executor so its World A registry
+    // writes are guarded by the same pgAvailable / connection-loss logic as
+    // the rest of the bridge. Both executors expose `setSafePgCall` (Group 4,
+    // Decision 2 in WISH Post-Audit).
+    this.executor.setSafePgCall(this.safePgCall.bind(this));
 
     // Wire NATS publish into SDK executor for reply routing
     if (this.executor instanceof ClaudeSdkOmniExecutor) {

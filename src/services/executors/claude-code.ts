@@ -11,9 +11,24 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as directory from '../../lib/agent-directory.js';
+import * as agents from '../../lib/agent-registry.js';
+import * as registry from '../../lib/executor-registry.js';
 import { shellQuote } from '../../lib/team-lead-command.js';
 import { ensureTeamWindow, executeTmux, isPaneAlive, isPaneProcessRunning, killWindow } from '../../lib/tmux.js';
-import type { IExecutor, OmniMessage, OmniSession } from '../executor.js';
+import type { IExecutor, OmniMessage, OmniSession, SafePgCallFn } from '../executor.js';
+
+/**
+ * Per-session state tracked locally by the tmux executor. Mirrors the SDK
+ * executor's `SdkSessionState` for the World A registry integration.
+ */
+interface TmuxSessionState {
+  /**
+   * World A executor row ID. Set after successful `createAndLinkExecutor`.
+   * Null when PG was unavailable (degraded mode); downstream state updates
+   * short-circuit via `bridge.safePgCall`.
+   */
+  executorId: string | null;
+}
 
 // ============================================================================
 // Constants
@@ -36,12 +51,35 @@ function getReplyScriptPath(): string {
 // ============================================================================
 
 export class ClaudeCodeOmniExecutor implements IExecutor {
+  /** Per-chat local state keyed by `${agentName}:${chatId}` — mirrors SDK executor. */
+  private sessions = new Map<string, TmuxSessionState>();
+  /**
+   * Bridge-provided `safePgCall`. Null until the bridge wires it via
+   * `setSafePgCall()`. When null (no bridge attached, e.g. standalone tests),
+   * registry calls are skipped entirely — the executor falls through to the
+   * pre-World-A behavior.
+   */
+  private safePgCall: SafePgCallFn | null = null;
+
+  /**
+   * Inject the bridge's `safePgCall` helper so World A registry writes are
+   * guarded by the same pgAvailable / connection-loss logic as the rest of
+   * the bridge. Mirrors the SDK executor's `setSafePgCall`.
+   */
+  setSafePgCall(fn: SafePgCallFn): void {
+    this.safePgCall = fn;
+  }
+
   /**
    * Spawn a Claude Code process in a tmux window for a specific chat.
    *
    * - Resolves agent from genie directory
    * - Creates tmux window in agent's session
    * - Starts Claude Code with env vars for NATS reply routing
+   * - Registers the agent + executor in World A via `findOrCreateAgent` +
+   *   `createAndLinkExecutor` with `transport='tmux'` and omni metadata.
+   *   All PG writes go through `bridge.safePgCall` — degraded mode keeps
+   *   `executorId=null` and the session still works without persistence.
    */
   async spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<OmniSession> {
     // Resolve agent from directory
@@ -95,9 +133,27 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
       await executeTmux(`send-keys -t '${paneId}' ${shellQuote(cmd)} Enter`);
     }
 
+    // World A registration (Group 4 — Decision 1, tmux path).
+    // Symmetric with the SDK executor: both transports go through the same
+    // findOrCreateAgent + createAndLinkExecutor pipeline, only `transport`
+    // and the tmux-specific fields differ.
+    const sessionKey = `${agentName}:${chatId}`;
+    const executorId = await this.registerInWorldA(
+      agentName,
+      chatId,
+      env.OMNI_INSTANCE_ID ?? '',
+      tmuxSession,
+      windowName,
+      paneId,
+    );
+    this.sessions.set(sessionKey, { executorId });
+    if (executorId) {
+      await this.updateState(executorId, 'running', chatId);
+    }
+
     const now = Date.now();
     return {
-      id: `${agentName}:${chatId}`,
+      id: sessionKey,
       agentName,
       chatId,
       tmuxSession,
@@ -109,12 +165,70 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
   }
 
   /**
+   * Register agent + tmux executor in World A (Decision 1 from WISH Post-Audit).
+   * Returns the created executor ID on success, or null when PG is unavailable.
+   * All writes are wrapped in `bridge.safePgCall` so degraded mode is silent.
+   */
+  private async registerInWorldA(
+    agentName: string,
+    chatId: string,
+    instanceId: string,
+    tmuxSession: string,
+    tmuxWindow: string,
+    tmuxPaneId: string,
+  ): Promise<string | null> {
+    if (!this.safePgCall) return null;
+
+    const agent = await this.safePgCall(
+      'tmux-find-or-create-agent',
+      () => agents.findOrCreateAgent(agentName, 'omni', 'omni'),
+      null,
+      { chatId },
+    );
+    if (!agent) return null;
+
+    const executor = await this.safePgCall(
+      'tmux-create-executor',
+      () =>
+        registry.createAndLinkExecutor(agent.id, 'claude', 'tmux', {
+          tmuxSession,
+          tmuxWindow,
+          tmuxPaneId,
+          tmuxWindowId: null, // tmux window IDs aren't surfaced by `ensureTeamWindow` — fill in a follow-up.
+          metadata: { source: 'omni', chat_id: chatId, instance_id: instanceId },
+        }),
+      null,
+      { chatId },
+    );
+    return executor?.id ?? null;
+  }
+
+  /** Update executor state through safePgCall. No-op when PG is degraded. */
+  private async updateState(executorId: string, state: 'running' | 'working' | 'idle', chatId: string): Promise<void> {
+    if (!this.safePgCall) return;
+    await this.safePgCall(
+      'tmux-update-executor-state',
+      () => registry.updateExecutorState(executorId, state),
+      undefined,
+      { executorId, chatId },
+    );
+  }
+
+  /**
    * Deliver a message to a running Claude Code session via native team inbox.
    *
    * Writes to ~/.claude/teams/<team>/inboxes/<agent>.json so Claude Code
-   * picks it up natively.
+   * picks it up natively. Also records a `working → idle` transition in the
+   * World A registry (wrapped in `safePgCall`, no-op in degraded mode).
    */
   async deliver(session: OmniSession, message: OmniMessage): Promise<void> {
+    const state = this.sessions.get(session.id);
+
+    // World A state transition: the inbox write itself is effectively instantaneous,
+    // but the transitions exist so observability consumers can tell whether a given
+    // tmux executor is currently processing a delivery or waiting.
+    if (state?.executorId) await this.updateState(state.executorId, 'working', session.chatId);
+
     const inboxDir = join(
       process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
       'teams',
@@ -145,13 +259,29 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
 
     writeFileSync(inboxFile, JSON.stringify(messages, null, 2));
     session.lastActivityAt = Date.now();
+
+    if (state?.executorId) await this.updateState(state.executorId, 'idle', session.chatId);
   }
 
   /**
-   * Shut down a session by killing its tmux window.
+   * Shut down a session by killing its tmux window and terminating the
+   * World A executor row (if one was created).
    */
   async shutdown(session: OmniSession): Promise<void> {
-    await killWindow(session.tmuxSession, session.tmuxWindow);
+    const state = this.sessions.get(session.id);
+    try {
+      await killWindow(session.tmuxSession, session.tmuxWindow);
+    } finally {
+      if (state?.executorId && this.safePgCall) {
+        await this.safePgCall(
+          'tmux-terminate-executor',
+          () => registry.terminateExecutor(state.executorId as string),
+          undefined,
+          { executorId: state.executorId, chatId: session.chatId },
+        );
+      }
+      this.sessions.delete(session.id);
+    }
   }
 
   /**
