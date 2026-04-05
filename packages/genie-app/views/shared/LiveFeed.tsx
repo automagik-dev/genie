@@ -134,13 +134,14 @@ export function LiveFeed({ events, maxItems = 20, autoScroll = true }: LiveFeedP
   const containerRef = useRef<HTMLDivElement>(null);
   const displayEvents = events.slice(0, maxItems);
 
-  const eventCount = events.length;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: eventCount triggers scroll on new events
+  // Scroll to top when a new event arrives
+  const prevCountRef = useRef(events.length);
   useEffect(() => {
-    if (autoScroll && containerRef.current) {
+    if (events.length !== prevCountRef.current && autoScroll && containerRef.current) {
       containerRef.current.scrollTop = 0;
     }
-  }, [eventCount, autoScroll]);
+    prevCountRef.current = events.length;
+  }, [events, autoScroll]);
 
   if (displayEvents.length === 0) {
     return (
