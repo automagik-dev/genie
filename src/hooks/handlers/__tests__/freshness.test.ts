@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
-// CI-tolerant: handler assertions are conditional — see inline comments
+// CI-tolerant: handler assertions are conditional (git log/status may return empty in CI)
 import { mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
