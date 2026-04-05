@@ -61,15 +61,15 @@ async function start(): Promise<void> {
   await pgBridge.startListening(nc, ORG_ID);
   console.log('[genie-app] PG LISTEN/NOTIFY active (9 channels)');
 
-  // 5. Wire PTY events to NATS publish
+  // 5. Wire PTY events to NATS publish (session-scoped subjects)
   pty.onPtyData((sessionId, data) => {
     if (!nc) return;
-    nc.publish(GENIE_SUBJECTS.pty.data(ORG_ID), sc.encode(JSON.stringify({ sessionId, data })));
+    nc.publish(GENIE_SUBJECTS.pty.data(ORG_ID, sessionId), sc.encode(JSON.stringify({ data })));
   });
 
   pty.onPtyExit((sessionId, code) => {
     if (!nc) return;
-    nc.publish(GENIE_SUBJECTS.pty.data(ORG_ID), sc.encode(JSON.stringify({ sessionId, code, type: 'exit' })));
+    nc.publish(GENIE_SUBJECTS.pty.data(ORG_ID, sessionId), sc.encode(JSON.stringify({ code, type: 'exit' })));
   });
 
   console.log('[genie-app] Backend ready');
@@ -470,16 +470,21 @@ function registerHandlers(sql: any): void {
     return { sessionId: session.id, agentId: null, executorId: null };
   });
 
-  reply(sub.pty.input(ORG_ID), async (params: { sessionId: string; data: string }) => {
-    return { ok: pty.writeTerminal(params.sessionId, params.data) };
+  // PTY input/resize/kill use session-scoped subjects with NATS wildcard subscription.
+  // Subject pattern: khal.{orgId}.genie.pty.{sessionId}.{action}
+  subscribePtyWildcard(`khal.${ORG_ID}.genie.pty.*.input`, async (sessionId, params: { data: string }) => {
+    pty.writeTerminal(sessionId, params.data);
   });
 
-  reply(sub.pty.resize(ORG_ID), async (params: { sessionId: string; cols: number; rows: number }) => {
-    return { ok: pty.resizeTerminal(params.sessionId, params.cols, params.rows) };
-  });
+  subscribePtyWildcard(
+    `khal.${ORG_ID}.genie.pty.*.resize`,
+    async (sessionId, params: { cols: number; rows: number }) => {
+      pty.resizeTerminal(sessionId, params.cols, params.rows);
+    },
+  );
 
-  reply(sub.pty.kill(ORG_ID), async (params: { sessionId: string }) => {
-    return { ok: await pty.killTerminal(params.sessionId) };
+  subscribePtyWildcard(`khal.${ORG_ID}.genie.pty.*.kill`, async (sessionId) => {
+    await pty.killTerminal(sessionId);
   });
 
   // ---- Filesystem ----
@@ -534,6 +539,39 @@ function decodeParams(data: Uint8Array): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+/**
+ * Subscribe to a NATS wildcard subject for session-scoped PTY operations.
+ * Extracts the sessionId from the subject path (token index 4: khal.org.genie.pty.SESSION.action).
+ */
+function subscribePtyWildcard(
+  subject: string,
+  // biome-ignore lint/suspicious/noExplicitAny: handler params vary per subject
+  handler: (sessionId: string, params: any) => Promise<void>,
+): void {
+  if (!nc) return;
+
+  const subscription = nc.subscribe(subject);
+
+  void (async () => {
+    for await (const msg of subscription) {
+      try {
+        const params = decodeParams(msg.data);
+        // Extract sessionId from subject: khal.<orgId>.genie.pty.<sessionId>.<action>
+        const parts = msg.subject.split('.');
+        const sessionId = parts[4]; // index 4 is the sessionId token
+        if (sessionId) {
+          await handler(sessionId, params);
+        }
+      } catch (err) {
+        console.error(
+          `[genie-app] PTY wildcard error on ${msg.subject}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  })();
 }
 
 /**

@@ -78,11 +78,16 @@ export const GENIE_SUBJECTS = {
 
   // ---- PTY (Terminal) ----
   pty: {
+    /** Request a new PTY session. Payload: { agentId? } → { sessionId } */
     create: (orgId: string) => s(orgId, 'pty.create'),
-    input: (orgId: string) => s(orgId, 'pty.input'),
-    data: (orgId: string) => s(orgId, 'pty.data'),
-    resize: (orgId: string) => s(orgId, 'pty.resize'),
-    kill: (orgId: string) => s(orgId, 'pty.kill'),
+    /** Publish keyboard input to a specific PTY session. */
+    input: (orgId: string, sessionId: string) => s(orgId, `pty.${sessionId}.input`),
+    /** Subscribe to data output from a specific PTY session. */
+    data: (orgId: string, sessionId: string) => s(orgId, `pty.${sessionId}.data`),
+    /** Publish resize event to a specific PTY session. */
+    resize: (orgId: string, sessionId: string) => s(orgId, `pty.${sessionId}.resize`),
+    /** Kill a specific PTY session. */
+    kill: (orgId: string, sessionId: string) => s(orgId, `pty.${sessionId}.kill`),
   },
 
   // ---- Filesystem ----
