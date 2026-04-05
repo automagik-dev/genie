@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | OBSOLETE |
 | **Slug** | `qa-dev-to-main` |
 | **Date** | 2026-03-20 |
 | **PRs Included** | #673 (pgserve-embed), #674 (fire-and-forget), #675 (genie-scheduler) |

@@ -1,7 +1,7 @@
 ---
 title: "Auto-advance tasks when PRs merge via wish slug matching"
 date: 2026-03-29
-status: APPROVED
+status: SHIPPED
 slug: task-auto-close-on-merge
 github_issue: 797
 priority: P1

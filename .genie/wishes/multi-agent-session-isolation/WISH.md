@@ -1,5 +1,7 @@
 # Multi-Agent Session Isolation — WhatsApp Multi-Agent Routing
 
+**Status:** SHIPPED
+
 ## Summary
 Enable clean multi-agent coexistence on a single WhatsApp number. When Omni routes different chats to different agents (Sofia vs Claudia), each agent's genie session must spawn in the correct tmux session. Currently all windows land in the wrong session because `genie spawn` ignores the `sessionName` from the provider config.
 
