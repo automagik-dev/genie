@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HookPayload } from '../../types.js';
@@ -8,14 +8,21 @@ import { freshness } from '../freshness.js';
 
 describe('freshness handler', () => {
   const originalEnv = { ...process.env };
+  /** Git env that suppresses system/global config interference in CI. */
+  const gitEnv: Record<string, string | undefined> = {
+    ...process.env,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+  };
   let repoDir: string;
 
   beforeEach(() => {
     process.env.GENIE_AGENT_NAME = 'test-agent';
+    gitEnv.GENIE_AGENT_NAME = 'test-agent';
 
     // Create a temp git repo with a committed file
     repoDir = mkdtempSync(join(tmpdir(), 'freshness-'));
-    execSync('git init', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git init', { cwd: repoDir, stdio: 'pipe', env: gitEnv });
     execSync('git config user.email "test@test.com"', { cwd: repoDir, stdio: 'pipe' });
     execSync('git config user.name "other-agent"', { cwd: repoDir, stdio: 'pipe' });
   });
@@ -59,14 +66,18 @@ describe('freshness handler', () => {
     // Create and commit a file with an old date so the commit itself doesn't trigger
     const testFile = join(repoDir, 'target.ts');
     writeFileSync(testFile, 'const x = 1;\n');
-    execSync('git add .', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git add .', { cwd: repoDir, stdio: 'pipe', env: gitEnv });
     execSync('GIT_COMMITTER_DATE="2020-01-01T00:00:00" git commit -m "old initial" --date="2020-01-01T00:00:00"', {
       cwd: repoDir,
       stdio: 'pipe',
+      env: gitEnv,
     });
 
     // Modify without committing (simulates another agent's uncommitted edit)
     writeFileSync(testFile, 'const x = 2;\n');
+    // Force mtime to now — CI filesystems may not update mtime reliably after writeFileSync
+    const now = new Date();
+    utimesSync(testFile, now, now);
 
     const payload: HookPayload = {
       hook_event_name: 'PreToolUse',
@@ -88,7 +99,7 @@ describe('freshness handler', () => {
     // Create and commit a file very recently (within threshold)
     const testFile = join(repoDir, 'recent.ts');
     writeFileSync(testFile, 'const y = 1;\n');
-    execSync('git add . && git commit -m "recent change"', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git add . && git commit -m "recent change"', { cwd: repoDir, stdio: 'pipe', env: gitEnv });
 
     const payload: HookPayload = {
       hook_event_name: 'PreToolUse',
@@ -111,10 +122,11 @@ describe('freshness handler', () => {
     // Create a file that was committed long ago — use GIT_COMMITTER_DATE
     const testFile = join(repoDir, 'old.ts');
     writeFileSync(testFile, 'const old = true;\n');
-    execSync('git add .', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git add .', { cwd: repoDir, stdio: 'pipe', env: gitEnv });
     execSync('GIT_COMMITTER_DATE="2020-01-01T00:00:00" git commit -m "old commit" --date="2020-01-01T00:00:00"', {
       cwd: repoDir,
       stdio: 'pipe',
+      env: gitEnv,
     });
 
     // Touch the file to set mtime to a distant past
@@ -137,7 +149,7 @@ describe('freshness handler', () => {
 
     const testFile = join(repoDir, 'mine.ts');
     writeFileSync(testFile, 'const mine = true;\n');
-    execSync('git add . && git commit -m "my change"', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git add . && git commit -m "my change"', { cwd: repoDir, stdio: 'pipe', env: gitEnv });
 
     const payload: HookPayload = {
       hook_event_name: 'PreToolUse',
