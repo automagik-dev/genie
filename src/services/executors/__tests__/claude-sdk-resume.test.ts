@@ -9,7 +9,14 @@
  *   - Audit events: session.resumed, session.created_fresh, session.resume_rejected
  */
 
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+
+// Clean up process-global mock.module registrations when this file finishes.
+// Without this, mocked modules leak into later test files (bun mock.module
+// is process-global and persists across file boundaries).
+afterAll(() => {
+  mock.restore();
+});
 
 // ============================================================================
 // Mocks — must be registered before any import of the production module
@@ -50,19 +57,18 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 // Mock audit-events — capture calls for assertion.
-// Typed as (...args: any[]) so .mock.calls entries have indexable elements.
-const recordAuditEventMock = mock((..._args: any[]): Promise<void> => Promise.resolve());
-mock.module('../../../lib/audit-events.js', () => ({
-  recordAuditEvent: recordAuditEventMock,
-}));
+// NOTE: audit-events is intentionally NOT mocked via mock.module here.
+// mock.module leaks across files and breaks sdk-session-capture.test.ts.
+// Instead, audit events are tracked via happySafePgCall's call log —
+// recordAuditEvent calls safePgCall('audit:<type>', ...) so we capture
+// the event type from the op string prefix.
 
 // Mock sdk-session-capture (Group 5)
-mock.module('../sdk-session-capture.js', () => ({
-  startSession: mock(async () => null),
-  recordTurn: mock(async () => {}),
-  updateTurnCount: mock(async () => {}),
-  endSession: mock(async () => {}),
-}));
+// NOTE: sdk-session-capture is intentionally NOT mocked here.
+// The real module is used — its PG writes go through safePgCall which is
+// wired to happySafePgCall (a no-op that invokes fn with a fake sql).
+// Previously this was mocked via mock.module, but that leaked across files
+// and broke sdk-session-capture.test.ts (bun mock.module is process-global).
 
 // Mock agent-registry
 const findOrCreateAgentMock = mock(async () => ({
@@ -109,13 +115,28 @@ const { ClaudeSdkOmniExecutor } = await import('../claude-sdk.js');
 // Helpers
 // ============================================================================
 
-/** Fake bridge.safePgCall that invokes fn directly — happy-path PG. */
+/** Log of safePgCall operations — tracks audit events without mock.module. */
+interface PgCallEntry {
+  op: string;
+  sqlValues: unknown[];
+}
+const safePgCallLog: PgCallEntry[] = [];
+
+/** Fake bridge.safePgCall that invokes fn with a tracking sql template. */
 const happySafePgCall = async <T>(
-  _op: string,
-  fn: (_sql: any) => Promise<T>,
+  op: string,
+  fn: (sql: any) => Promise<T>,
   _fallback: T,
   _ctx?: { executorId?: string; chatId?: string },
-): Promise<T> => (fn as () => Promise<T>)();
+): Promise<T> => {
+  const entry: PgCallEntry = { op, sqlValues: [] };
+  safePgCallLog.push(entry);
+  const trackingSql = (_strings: TemplateStringsArray, ...values: unknown[]) => {
+    entry.sqlValues = values;
+    return [{ id: values[0] ?? 'fake-id' }];
+  };
+  return fn(trackingSql);
+};
 
 /** Build a minimal OmniMessage. */
 function mkMsg(chatId: string, instanceId = 'inst-1') {
@@ -128,9 +149,9 @@ function mkMsg(chatId: string, instanceId = 'inst-1') {
   };
 }
 
-/** Extract audit event types recorded during a test. */
+/** Extract audit event types from safePgCall log (op = 'audit:<type>'). */
 function auditEventTypes(): string[] {
-  return recordAuditEventMock.mock.calls.map((args) => args[1] as string);
+  return safePgCallLog.filter((e) => e.op.startsWith('audit:')).map((e) => e.op.slice('audit:'.length));
 }
 
 // ============================================================================
@@ -153,7 +174,7 @@ describe('ClaudeSdkOmniExecutor — lazy resume (Group 7)', () => {
     createAndLinkExecutorMock.mockClear();
     updateExecutorStateMock.mockClear();
     terminateExecutorMock.mockClear();
-    recordAuditEventMock.mockClear();
+    safePgCallLog.length = 0;
 
     // Default: no existing executor (fresh creation path)
     findLatestByMetadataMock.mockImplementation(async () => null);
@@ -347,7 +368,7 @@ describe('ClaudeSdkOmniExecutor — lazy resume (Group 7)', () => {
 
     it('writes session.resume_rejected audit event', async () => {
       const session = await executor.spawn('test-agent', 'chat-reject', { OMNI_INSTANCE_ID: 'inst-1' });
-      recordAuditEventMock.mockClear();
+      safePgCallLog.length = 0;
 
       await executor.deliver(session, mkMsg('chat-reject'));
       await executor.waitForDeliveries(session.id);
@@ -357,16 +378,19 @@ describe('ClaudeSdkOmniExecutor — lazy resume (Group 7)', () => {
 
     it('includes old and new session IDs in the rejection audit event', async () => {
       const session = await executor.spawn('test-agent', 'chat-reject', { OMNI_INSTANCE_ID: 'inst-1' });
-      recordAuditEventMock.mockClear();
+      safePgCallLog.length = 0;
 
       await executor.deliver(session, mkMsg('chat-reject'));
       await executor.waitForDeliveries(session.id);
 
-      const rejectionCall = recordAuditEventMock.mock.calls.find((args) => args[1] === 'session.resume_rejected');
-      expect(rejectionCall).toBeDefined();
-      const attrs = rejectionCall![2] as Record<string, unknown>;
-      expect(attrs.old_session_id).toBe('old-session-id');
-      expect(attrs.new_session_id).toBe('new-session-after-reject');
+      const rejectionEntry = safePgCallLog.find((e) => e.op === 'audit:session.resume_rejected');
+      expect(rejectionEntry).toBeDefined();
+      // recordAuditEvent serializes attrs to JSON in the SQL values
+      const detailsJson = rejectionEntry!.sqlValues.find((v) => typeof v === 'string' && v.includes('old_session_id'));
+      expect(detailsJson).toBeDefined();
+      const details = JSON.parse(detailsJson as string);
+      expect(details.old_session_id).toBe('old-session-id');
+      expect(details.new_session_id).toBe('new-session-after-reject');
     });
 
     it('updates claude_session_id in registry with the new session ID', async () => {
@@ -429,7 +453,7 @@ describe('ClaudeSdkOmniExecutor — lazy resume (Group 7)', () => {
 
     it('does NOT write session.resume_rejected when session IDs match', async () => {
       const session = await executor.spawn('test-agent', 'chat-ok', { OMNI_INSTANCE_ID: 'inst-1' });
-      recordAuditEventMock.mockClear();
+      safePgCallLog.length = 0;
 
       await executor.deliver(session, mkMsg('chat-ok'));
       await executor.waitForDeliveries(session.id);
