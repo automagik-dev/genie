@@ -125,6 +125,7 @@ interface ListOptions {
   errorsOnly?: boolean;
   limit?: string;
   json?: boolean;
+  follow?: boolean;
 }
 
 async function eventsListCommand(options: ListOptions): Promise<void> {
@@ -136,6 +137,30 @@ async function eventsListCommand(options: ListOptions): Promise<void> {
       errorsOnly: options.errorsOnly,
       limit: options.limit ? Number.parseInt(options.limit, 10) : 50,
     };
+
+    if (options.follow) {
+      const { followAuditEvents } = await import('../lib/audit.js');
+      console.log('Following audit events (Ctrl+C to stop)...');
+      const handle = await followAuditEvents(queryOpts, (row) => {
+        if (options.json) {
+          console.log(JSON.stringify(row));
+        } else {
+          const time = formatTimestamp(row.created_at);
+          const entity = `${row.entity_type}:${row.entity_id}`.slice(0, 40);
+          const event = row.event_type.padEnd(24);
+          const details = summarizeDetails(row.details).slice(0, 60);
+          console.log(`${time}  ${event}  ${entity}  ${details}`);
+        }
+      });
+      const shutdown = () => {
+        handle.stop();
+        process.exit(0);
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+      await new Promise(() => {});
+      return;
+    }
 
     const rows = await queryAuditEvents(queryOpts);
 
@@ -149,6 +174,119 @@ async function eventsListCommand(options: ListOptions): Promise<void> {
     console.error(`Error querying events: ${msg}`);
     process.exit(1);
   }
+}
+
+// ============================================================================
+// Stream Command — unified audit + runtime event stream (LISTEN/NOTIFY)
+// ============================================================================
+
+interface StreamOptions {
+  type?: string;
+  entity?: string;
+  errorsOnly?: boolean;
+  kind?: string;
+  agent?: string;
+  auditOnly?: boolean;
+  runtimeOnly?: boolean;
+  json?: boolean;
+  all?: boolean;
+}
+
+// Noisy events hidden by default — show with --all
+const DEFAULT_HIDDEN_EVENT_TYPES = new Set(['command_success']);
+
+async function eventsStreamCommand(options: StreamOptions): Promise<void> {
+  const { followAuditEvents } = await import('../lib/audit.js');
+  const { followRuntimeEvents } = await import('../lib/runtime-events.js');
+  const { StreamTable, color } = await import('../lib/term-format.js');
+
+  const handles: Array<{ stop: () => Promise<void> | void }> = [];
+
+  const clockTime = (iso: string | Date): string => {
+    const d = iso instanceof Date ? iso : new Date(iso);
+    return d.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+  };
+
+  const colorEvent = (eventType: string): string => {
+    if (/error|fail|denied/i.test(eventType)) return color('red', eventType);
+    if (/spawn|start|create/i.test(eventType)) return color('green', eventType);
+    if (/stop|end|terminate|delete/i.test(eventType)) return color('yellow', eventType);
+    if (/tool_call/i.test(eventType)) return color('cyan', eventType);
+    if (/message|assistant|user/i.test(eventType)) return color('brightCyan', eventType);
+    if (/state|system/i.test(eventType)) return color('gray', eventType);
+    return eventType;
+  };
+
+  const table = new StreamTable([
+    { label: 'TIME', width: 10 },
+    { label: 'EVENT', width: 22 },
+    { label: 'ENTITY', width: 26 },
+    { label: 'DETAILS', width: 'flex', wrap: true },
+  ]);
+
+  if (!options.json) {
+    const sources = options.auditOnly ? 'audit' : options.runtimeOnly ? 'runtime' : 'audit + runtime';
+    console.log(color('dim', `Streaming ${sources} events (Ctrl+C to stop)...`));
+    console.log(color('bold', table.header()));
+  }
+
+  if (!options.runtimeOnly) {
+    const auditHandle = await followAuditEvents(
+      { type: options.type, entity: options.entity, errorsOnly: options.errorsOnly },
+      (row) => {
+        // Hide noisy events by default (unless --all or filters match)
+        if (!options.all && !options.type && DEFAULT_HIDDEN_EVENT_TYPES.has(row.event_type)) {
+          return;
+        }
+        if (options.json) {
+          console.log(JSON.stringify({ stream: 'audit', ...row }));
+          return;
+        }
+        const entity = `${row.entity_type}:${row.entity_id}`;
+        const text = JSON.stringify(row.details);
+        const timeTag = `${color('gray', clockTime(row.created_at))} ${color('blue', 'A')}`;
+        console.log(table.row([timeTag, colorEvent(row.event_type), color('dim', entity), text]));
+      },
+    );
+    handles.push(auditHandle);
+  }
+
+  if (!options.auditOnly) {
+    const validKinds = ['user', 'assistant', 'message', 'state', 'tool_call', 'tool_result', 'system', 'qa'] as const;
+    type RuntimeKind = (typeof validKinds)[number];
+    const kinds =
+      options.kind && (validKinds as readonly string[]).includes(options.kind)
+        ? ([options.kind] as RuntimeKind[])
+        : undefined;
+    const agentIds = options.agent ? [options.agent] : undefined;
+    const runtimeHandle = await followRuntimeEvents(
+      { kinds, agentIds, scopeMode: 'any' },
+      (event) => {
+        if (options.json) {
+          console.log(JSON.stringify({ stream: 'runtime', ...event }));
+          return;
+        }
+        const entity = `${event.agent}${event.team ? `@${event.team}` : ''}`;
+        const timeTag = `${color('gray', clockTime(event.timestamp))} ${color('magenta', 'R')}`;
+        console.log(table.row([timeTag, colorEvent(event.kind), color('dim', entity), event.text]));
+      },
+      { pollIntervalMs: 2000 },
+    );
+    handles.push(runtimeHandle);
+  }
+
+  const shutdown = async () => {
+    for (const h of handles) await h.stop();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+  await new Promise(() => {});
 }
 
 interface ErrorsOptions {
@@ -417,8 +555,25 @@ export function registerEventsCommands(program: Command): void {
     .option('--errors-only', 'Show only error events')
     .option('--limit <n>', 'Max rows to return', '50')
     .option('--json', 'Output as JSON')
+    .option('-f, --follow', 'Follow mode — real-time streaming (alias: genie events stream)')
     .action(async (options: ListOptions) => {
       await eventsListCommand(options);
+    });
+
+  events
+    .command('stream')
+    .description('Stream audit + runtime events in real-time (tail -f style)')
+    .option('--type <type>', 'Filter by event_type')
+    .option('--entity <entity>', 'Filter by entity_type or entity_id')
+    .option('--errors-only', 'Show only error events')
+    .option('--kind <kind>', 'Filter runtime events by kind (tool_call, message, prompt, etc)')
+    .option('--agent <agent>', 'Filter runtime events by agent')
+    .option('--audit-only', 'Stream only audit_events (skip runtime)')
+    .option('--runtime-only', 'Stream only runtime events (skip audit)')
+    .option('--all', 'Show all events including noisy ones (command_success, etc)')
+    .option('--json', 'Output as JSON')
+    .action(async (options: StreamOptions) => {
+      await eventsStreamCommand(options);
     });
 
   events
