@@ -11,6 +11,8 @@
  * just runs agents.
  */
 
+import type { Sql } from '../lib/db.js';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -49,6 +51,21 @@ export interface OmniMessage {
   timestamp?: string;
 }
 
+/**
+ * Bound `safePgCall` injected by the bridge into each executor after construction.
+ *
+ * Mirror of `OmniBridge#safePgCall` — declared here as a structural type so
+ * executors can call it without importing `OmniBridge` (avoids a circular
+ * dependency between the bridge and its own executors). Tests pass a plain
+ * function; production wires `bridge.safePgCall.bind(bridge)`.
+ */
+export type SafePgCallFn = <T>(
+  op: string,
+  fn: (sql: Sql) => Promise<T>,
+  fallback: T,
+  ctx?: { executorId?: string; chatId?: string },
+) => Promise<T>;
+
 // ============================================================================
 // Interface
 // ============================================================================
@@ -71,4 +88,11 @@ export interface IExecutor {
 
   /** Check if a session is still alive. */
   isAlive(session: OmniSession): Promise<boolean>;
+
+  /**
+   * Inject the bridge's `safePgCall` helper. Called by `OmniBridge#start()`
+   * after the PG probe so that World A registry writes are guarded by the
+   * same pgAvailable / connection-loss logic as the rest of the bridge.
+   */
+  setSafePgCall(fn: SafePgCallFn): void;
 }

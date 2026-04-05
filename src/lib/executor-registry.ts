@@ -180,12 +180,16 @@ export async function terminateActiveExecutor(agentId: string): Promise<void> {
   await sql`UPDATE agents SET current_executor_id = NULL WHERE id = ${agentId} AND current_executor_id = ${executorId}`;
 }
 
-/** List executors, optionally filtered by agent ID. */
-export async function listExecutors(agentId?: string): Promise<Executor[]> {
+/** List executors, optionally filtered by agent ID and/or metadata source. */
+export async function listExecutors(agentId?: string, source?: string): Promise<Executor[]> {
   const sql = await getConnection();
-  const rows = agentId
-    ? await sql<ExecutorRow[]>`SELECT * FROM executors WHERE agent_id = ${agentId} ORDER BY started_at DESC`
-    : await sql<ExecutorRow[]>`SELECT * FROM executors ORDER BY started_at DESC`;
+  const rows = await sql<ExecutorRow[]>`
+    SELECT * FROM executors
+    WHERE true
+    ${agentId ? sql`AND agent_id = ${agentId}` : sql``}
+    ${source ? sql`AND metadata->>'source' = ${source}` : sql``}
+    ORDER BY started_at DESC
+  `;
   return rows.map(rowToExecutor);
 }
 
