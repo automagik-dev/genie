@@ -6,7 +6,7 @@
  * (no PG) silently skips — no throw, no data loss risk.
  */
 
-import type { SafePgCallFn } from '../services/executor.js';
+import type { SafePgCallFn } from './safe-pg-call.js';
 
 // ============================================================================
 // Audit event type union

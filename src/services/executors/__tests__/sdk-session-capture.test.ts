@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { recordAuditEvent } from '../../../lib/audit-events.js';
-import type { SafePgCallFn } from '../../executor.js';
+import type { SafePgCallFn } from '../../../lib/safe-pg-call.js';
 import { endSession, recordTurn, startSession, updateTurnCount } from '../sdk-session-capture.js';
 
 // ============================================================================
