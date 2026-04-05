@@ -12,6 +12,7 @@
 
 import { type NatsConnection, StringCodec, type Subscription, connect } from 'nats';
 import type { Sql } from '../lib/db.js';
+import { resolveExecutorType } from '../lib/executor-config.js';
 import type { IExecutor, OmniMessage, OmniSession } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
 import { ClaudeSdkOmniExecutor } from './executors/claude-sdk.js';
@@ -72,6 +73,8 @@ export interface BridgeStatus {
   maxConcurrent: number;
   idleTimeoutMs: number;
   queueDepth: number;
+  /** Which executor backend is in use: tmux or sdk. */
+  executorType: 'tmux' | 'sdk';
   /** Executor IDs from PG (omni source, not ended). Empty in degraded mode. */
   executorIds: string[];
   sessions: Array<{
@@ -181,6 +184,7 @@ export class OmniBridge {
   readonly natsUrl: string;
   readonly idleTimeoutMs: number;
   readonly maxConcurrent: number;
+  readonly executorType: 'tmux' | 'sdk';
 
   constructor(config: BridgeConfig = {}) {
     this.natsUrl = config.natsUrl ?? process.env.GENIE_NATS_URL ?? DEFAULT_NATS_URL;
@@ -199,8 +203,8 @@ export class OmniBridge {
       });
     this.natsConnectFn = config.natsConnectFn ?? connect;
 
-    const executorType = config.executorType ?? (process.env.GENIE_EXECUTOR_TYPE as 'tmux' | 'sdk') ?? 'tmux';
-    if (executorType === 'sdk') {
+    this.executorType = resolveExecutorType(config.executorType);
+    if (this.executorType === 'sdk') {
       this.executor = new ClaudeSdkOmniExecutor();
     } else {
       this.executor = new ClaudeCodeOmniExecutor();
@@ -355,6 +359,7 @@ export class OmniBridge {
       maxConcurrent: this.maxConcurrent,
       idleTimeoutMs: this.idleTimeoutMs,
       queueDepth: this.messageQueue.length,
+      executorType: this.executorType,
       executorIds,
       sessions: Array.from(this.sessions.entries()).map(([key, entry]) => ({
         id: key,
