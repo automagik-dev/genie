@@ -24,10 +24,10 @@ test:
 check: lint typecheck test
 
 tauri:
-	cd packages/genie-app && bunx tauri build
+	cd packages/genie-app && cargo tauri build
 
 tauri-dev:
-	cd packages/genie-app && bunx tauri dev
+	cd packages/genie-app && cargo tauri dev
 
 clean:
 	rm -rf dist node_modules
