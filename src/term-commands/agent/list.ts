@@ -12,7 +12,8 @@ export function registerAgentList(parent: Command): void {
     .alias('ls')
     .description('List registered agents with runtime status')
     .option('--json', 'Output as JSON')
-    .action(async (options: { json?: boolean }) => {
+    .option('--source <name>', 'Filter by executor metadata source (e.g. omni)')
+    .action(async (options: { json?: boolean; source?: string }) => {
       try {
         await handleLsCommand(options);
       } catch (error) {

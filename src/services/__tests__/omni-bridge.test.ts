@@ -83,7 +83,7 @@ describe('OmniBridge — PG degraded mode', () => {
 
     await bridge.start();
     try {
-      const s = bridge.status();
+      const s = await bridge.status();
       expect(s.connected).toBe(true); // NATS connected via fake
       expect(s.pgAvailable).toBe(false); // PG degraded
       expect(s.natsUrl).toBe('test://fake-nats');
@@ -103,8 +103,8 @@ describe('OmniBridge — PG degraded mode', () => {
 
     await bridge.start();
     try {
-      expect(bridge.status().pgAvailable).toBe(false);
-      expect(bridge.status().connected).toBe(true);
+      expect((await bridge.status()).pgAvailable).toBe(false);
+      expect((await bridge.status()).connected).toBe(true);
     } finally {
       await bridge.stop();
     }
@@ -163,7 +163,7 @@ describe('OmniBridge — PG degraded mode', () => {
 
     try {
       // Startup probe succeeded — we begin in the healthy state.
-      expect(bridge.status().pgAvailable).toBe(true);
+      expect((await bridge.status()).pgAvailable).toBe(true);
 
       // Simulate a mid-run connection loss. safePgCall must:
       //   (a) return the fallback value
@@ -180,7 +180,7 @@ describe('OmniBridge — PG degraded mode', () => {
       );
 
       expect(result).toBe(fallback);
-      expect(bridge.status().pgAvailable).toBe(false);
+      expect((await bridge.status()).pgAvailable).toBe(false);
 
       // Delivery loop continuity proxy: further safePgCall invocations are
       // fast-pathed to fallback without invoking fn.
@@ -205,7 +205,7 @@ describe('OmniBridge — PG degraded mode', () => {
     await bridge.start();
 
     try {
-      expect(bridge.status().pgAvailable).toBe(true);
+      expect((await bridge.status()).pgAvailable).toBe(true);
 
       // A SQL-level error (e.g., constraint violation) must NOT degrade the bridge.
       const result = await bridge.safePgCall(
@@ -217,7 +217,7 @@ describe('OmniBridge — PG degraded mode', () => {
       );
       expect(result).toBeNull();
       // Still healthy — only connection-level errors flip the flag.
-      expect(bridge.status().pgAvailable).toBe(true);
+      expect((await bridge.status()).pgAvailable).toBe(true);
     } finally {
       await bridge.stop();
     }
@@ -230,7 +230,7 @@ describe('OmniBridge — PG degraded mode', () => {
     try {
       const result = await bridge.safePgCall('ping', async () => ({ value: 42 }), { value: -1 });
       expect(result).toEqual({ value: 42 });
-      expect(bridge.status().pgAvailable).toBe(true);
+      expect((await bridge.status()).pgAvailable).toBe(true);
     } finally {
       await bridge.stop();
     }
@@ -245,7 +245,7 @@ describe('OmniBridge — PG degraded mode', () => {
     await bridge.start();
 
     try {
-      expect(bridge.status().pgAvailable).toBe(false);
+      expect((await bridge.status()).pgAvailable).toBe(false);
 
       let invoked = false;
       const result = await bridge.safePgCall(
@@ -271,7 +271,7 @@ describe('OmniBridge — PG degraded mode', () => {
     await bridge.start();
 
     try {
-      expect(bridge.status().pgAvailable).toBe(true);
+      expect((await bridge.status()).pgAvailable).toBe(true);
 
       const started = Date.now();
       const result = await bridge.safePgCall(
@@ -292,11 +292,63 @@ describe('OmniBridge — PG degraded mode', () => {
       expect(elapsed).toBeGreaterThanOrEqual(1900);
       expect(elapsed).toBeLessThan(2400);
       // Critical: timeout != connection loss. Next call should still try fn.
-      expect(bridge.status().pgAvailable).toBe(true);
+      expect((await bridge.status()).pgAvailable).toBe(true);
 
       // Proves the flag really held: a fast follow-up call succeeds.
       const follow = await bridge.safePgCall('ping', async () => 'ok', 'fallback');
       expect(follow).toBe('ok');
+    } finally {
+      await bridge.stop();
+    }
+  });
+
+  it('status() queries PG for active executor count when pgAvailable=true', async () => {
+    // Build a fake SQL that returns 3 active omni executors when status() queries.
+    const fakeRows = [{ id: 'exec-aaa' }, { id: 'exec-bbb' }, { id: 'exec-ccc' }];
+    const fakeSql = (strings: TemplateStringsArray, ..._values: unknown[]) => {
+      const query = strings.join('');
+      // The status() query selects from executors with source='omni' and ended_at IS NULL.
+      if (query.includes('executors') && query.includes('source')) {
+        return Promise.resolve(fakeRows);
+      }
+      // Default: SELECT 1 probe
+      return Promise.resolve([{ one: 1 }]);
+    };
+
+    const bridge = makeBridge({ pgProvider: async () => fakeSql as any });
+    await bridge.start();
+
+    try {
+      expect((await bridge.status()).pgAvailable).toBe(true);
+
+      const s = await bridge.status();
+      // activeSessions should come from PG (3), not the local Map (0).
+      expect(s.activeSessions).toBe(3);
+      expect(s.executorIds).toEqual(['exec-aaa', 'exec-bbb', 'exec-ccc']);
+      // Local sessions Map is empty — no actual spawns happened.
+      expect(s.sessions).toHaveLength(0);
+    } finally {
+      await bridge.stop();
+    }
+  });
+
+  it('status() falls back to local Map size when pgAvailable=false', async () => {
+    const bridge = makeBridge({
+      pgProvider: async () => {
+        const err = new Error('connect ECONNREFUSED 127.0.0.1:5432');
+        (err as any).code = 'ECONNREFUSED';
+        throw err;
+      },
+    });
+    await bridge.start();
+
+    try {
+      expect((await bridge.status()).pgAvailable).toBe(false);
+
+      const s = await bridge.status();
+      // No PG → falls back to local Map size (0, since no sessions spawned).
+      expect(s.activeSessions).toBe(0);
+      expect(s.executorIds).toEqual([]);
     } finally {
       await bridge.stop();
     }

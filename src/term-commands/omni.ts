@@ -71,7 +71,7 @@ export function registerOmniCommands(program: Command): void {
         return;
       }
 
-      const s = bridge.status();
+      const s = await bridge.status();
 
       if (options.json) {
         console.log(JSON.stringify(s, null, 2));

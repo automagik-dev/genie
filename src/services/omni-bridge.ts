@@ -72,6 +72,8 @@ export interface BridgeStatus {
   maxConcurrent: number;
   idleTimeoutMs: number;
   queueDepth: number;
+  /** Executor IDs from PG (omni source, not ended). Empty in degraded mode. */
+  executorIds: string[];
   sessions: Array<{
     id: string;
     agentName: string;
@@ -149,6 +151,21 @@ export class OmniBridge {
   private nc: NatsConnection | null = null;
   private sub: Subscription | null = null;
   private executor: IExecutor;
+
+  /**
+   * Process-local runtime handles — NOT the source of truth for session identity.
+   *
+   * This Map holds per-process runtime handles (executor instances, idle timers,
+   * message buffers). Session identity and state live in PG via executor-registry.
+   * This Map exists because:
+   *   - executor instances are in-memory objects that can't be persisted
+   *   - idle timers (setTimeout handles) are per-process
+   *   - message buffers during spawn are ephemeral
+   *
+   * The Map does NOT define which sessions exist — PG does. The status() method
+   * queries PG for active session count when available, falling back to this
+   * Map's size only in degraded (no-PG) mode.
+   */
   private sessions = new Map<string, SessionEntry>();
   private messageQueue: OmniMessage[] = [];
   private idleCheckTimer: ReturnType<typeof setInterval> | null = null;
@@ -302,17 +319,43 @@ export class OmniBridge {
 
   /**
    * Get current bridge status for `genie omni status`.
+   *
+   * When PG is available, queries the executors table for the authoritative
+   * active session count and executor IDs. Falls back to the local sessions
+   * Map size in degraded (no-PG) mode.
    */
-  status(): BridgeStatus {
+  async status(): Promise<BridgeStatus> {
     const now = Date.now();
+
+    // PG-backed active session count + executor IDs when available.
+    let activeFromPg: number | null = null;
+    let executorIds: string[] = [];
+
+    if (this.pgAvailable && this.sql) {
+      const rows = await this.safePgCall(
+        'status_active_count',
+        async (sql) =>
+          sql<{ id: string }[]>`
+            SELECT id FROM executors
+            WHERE ended_at IS NULL AND metadata->>'source' = 'omni'
+          `,
+        null,
+      );
+      if (rows) {
+        activeFromPg = rows.length;
+        executorIds = rows.map((r) => r.id);
+      }
+    }
+
     return {
       connected: this.nc !== null,
       natsUrl: this.natsUrl,
       pgAvailable: this.pgAvailable,
-      activeSessions: this.sessions.size,
+      activeSessions: activeFromPg ?? this.sessions.size,
       maxConcurrent: this.maxConcurrent,
       idleTimeoutMs: this.idleTimeoutMs,
       queueDepth: this.messageQueue.length,
+      executorIds,
       sessions: Array.from(this.sessions.entries()).map(([key, entry]) => ({
         id: key,
         agentName: entry.session.agentName,
