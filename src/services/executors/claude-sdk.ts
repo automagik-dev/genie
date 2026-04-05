@@ -136,23 +136,26 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     const abortController = new AbortController();
     const sessionId = `${agentName}:${chatId}`;
 
-    // World A registration (Group 4 — Decision 1, SDK path).
+    // World A registration (Group 4 + Group 7 lazy resume).
     // Returns null when PG is in degraded mode; downstream state transitions
     // short-circuit via safePgCall's pgAvailable fast-path.
-    const executorId = await this.registerInWorldA(agentName, chatId, env.OMNI_INSTANCE_ID ?? '');
+    // When an existing executor is found (bridge restart), returns its
+    // claudeSessionId so the next query can resume the Claude session.
+    const registration = await this.registerInWorldA(agentName, chatId, env.OMNI_INSTANCE_ID ?? '');
 
     this.sessions.set(sessionId, {
       abortController,
       running: true,
       provider,
-      executorId,
+      executorId: registration?.executorId ?? null,
+      claudeSessionId: registration?.claudeSessionId,
       dbSessionId: null,
       turnIndex: 0,
     });
 
     // Transition spawning → running once the session is in the local map.
-    if (executorId) {
-      await this.updateState(executorId, 'running', chatId);
+    if (registration?.executorId) {
+      await this.updateState(registration.executorId, 'running', chatId);
     }
 
     const now = Date.now();
@@ -170,10 +173,18 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
 
   /**
    * Register agent + executor in World A (Decision 1 from WISH Post-Audit).
-   * Returns the created executor ID on success, or null when PG is unavailable.
-   * All writes are wrapped in `bridge.safePgCall` so degraded mode is silent.
+   * Returns the executor ID + optional Claude session ID on success, or null
+   * when PG is unavailable. All writes go through `bridge.safePgCall`.
+   *
+   * Group 7 — Lazy resume: before creating a fresh executor, look for an
+   * existing live executor for this agent + chat. If found, reuse it and
+   * recover the Claude session ID so the next query can resume.
    */
-  private async registerInWorldA(agentName: string, chatId: string, instanceId: string): Promise<string | null> {
+  private async registerInWorldA(
+    agentName: string,
+    chatId: string,
+    instanceId: string,
+  ): Promise<{ executorId: string; claudeSessionId?: string } | null> {
     if (!this.safePgCall) return null;
 
     const agent = await this.safePgCall(
@@ -184,6 +195,35 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     );
     if (!agent) return null;
 
+    // Lazy resume: look for an existing live executor for this chat.
+    const existing = await this.safePgCall(
+      'sdk-find-existing-executor',
+      () => registry.findLatestByMetadata({ agentId: agent.id, source: 'omni', chatId }),
+      null,
+      { chatId },
+    );
+
+    if (existing) {
+      // Reuse existing executor — relink to agent and recover session.
+      await this.safePgCall(
+        'sdk-relink-executor',
+        () => registry.relinkExecutorToAgent(existing.id, agent.id),
+        undefined,
+        { executorId: existing.id, chatId },
+      );
+      await recordAuditEvent(this.safePgCall, 'session.resumed', {
+        executor_id: existing.id,
+        agent_id: agentName,
+        chat_id: chatId,
+        claude_session_id: existing.claudeSessionId,
+      });
+      return {
+        executorId: existing.id,
+        claudeSessionId: existing.claudeSessionId ?? undefined,
+      };
+    }
+
+    // Fresh: create new executor and link to agent.
     const executor = await this.safePgCall(
       'sdk-create-executor',
       () =>
@@ -194,7 +234,14 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       null,
       { chatId },
     );
-    return executor?.id ?? null;
+    if (executor) {
+      await recordAuditEvent(this.safePgCall, 'session.created_fresh', {
+        executor_id: executor.id,
+        agent_id: agentName,
+        chat_id: chatId,
+      });
+    }
+    return executor ? { executorId: executor.id } : null;
   }
 
   /** Update executor state through safePgCall. No-op when PG is degraded. */
@@ -286,7 +333,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
 
     const result = await collectQueryResult(queryMessages);
     if (result.sessionId) {
-      state.claudeSessionId = result.sessionId;
+      await this.reconcileSessionId(state, session, result.sessionId);
     }
     const replyText = result.text;
 
@@ -320,6 +367,41 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
 
     // State: idle (query finished, waiting for next message).
     if (state.executorId) await this.updateState(state.executorId, 'idle', session.chatId);
+  }
+
+  /**
+   * Group 7 — Reconcile the Claude session ID after a query completes.
+   * Detects resume rejection (SDK returned a different session), persists
+   * new/changed session IDs to the registry, and updates local state.
+   */
+  private async reconcileSessionId(
+    state: SdkSessionState,
+    session: OmniSession,
+    returnedSessionId: string,
+  ): Promise<void> {
+    const isResumeRejected = state.claudeSessionId && returnedSessionId !== state.claudeSessionId;
+    if (isResumeRejected && this.safePgCall) {
+      await recordAuditEvent(this.safePgCall, 'session.resume_rejected', {
+        executor_id: state.executorId ?? session.id,
+        agent_id: session.agentName,
+        chat_id: session.chatId,
+        old_session_id: state.claudeSessionId,
+        new_session_id: returnedSessionId,
+      });
+    }
+
+    // Persist session ID to registry if it changed (first query or resume rejection).
+    const execId = state.executorId;
+    if (execId && this.safePgCall && returnedSessionId !== state.claudeSessionId) {
+      await this.safePgCall(
+        'sdk-update-claude-session',
+        () => registry.updateClaudeSessionId(execId, returnedSessionId),
+        undefined,
+        { executorId: execId, chatId: session.chatId },
+      );
+    }
+
+    state.claudeSessionId = returnedSessionId;
   }
 
   /** Lazily create PG session row and record the user turn. */

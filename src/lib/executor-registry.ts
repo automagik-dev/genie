@@ -205,3 +205,39 @@ export async function findExecutorBySession(claudeSessionId: string): Promise<Ex
   `;
   return rows.length > 0 ? rowToExecutor(rows[0]) : null;
 }
+
+/**
+ * Find the latest live executor matching omni metadata.
+ * Used for lazy resume: on bridge restart, look up an existing executor
+ * for this agent + chat combination so we can reuse its Claude session.
+ * Uses the `executors_omni_lookup` partial index (migration 026).
+ */
+export async function findLatestByMetadata(filter: {
+  agentId: string;
+  source: string;
+  chatId: string;
+}): Promise<Executor | null> {
+  const sql = await getConnection();
+  const rows = await sql<ExecutorRow[]>`
+    SELECT * FROM executors
+    WHERE agent_id = ${filter.agentId}
+      AND metadata->>'source' = ${filter.source}
+      AND metadata->>'chat_id' = ${filter.chatId}
+      AND ended_at IS NULL
+    ORDER BY started_at DESC
+    LIMIT 1
+  `;
+  return rows.length > 0 ? rowToExecutor(rows[0]) : null;
+}
+
+/** Relink an existing executor to an agent (set current_executor_id FK). */
+export async function relinkExecutorToAgent(executorId: string, agentId: string): Promise<void> {
+  const sql = await getConnection();
+  await sql`UPDATE agents SET current_executor_id = ${executorId} WHERE id = ${agentId}`;
+}
+
+/** Update the Claude session ID on an executor row. */
+export async function updateClaudeSessionId(executorId: string, sessionId: string): Promise<void> {
+  const sql = await getConnection();
+  await sql`UPDATE executors SET claude_session_id = ${sessionId} WHERE id = ${executorId}`;
+}
