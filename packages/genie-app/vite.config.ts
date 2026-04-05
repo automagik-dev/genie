@@ -10,5 +10,8 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      external: ['@workos-inc/authkit-nextjs', '@workos-inc/authkit-nextjs/components'],
+    },
   },
 });
