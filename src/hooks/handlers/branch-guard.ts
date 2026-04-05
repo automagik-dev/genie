@@ -26,16 +26,13 @@ const DENY_PATTERNS: DenyPattern[] = [
     test: (cmd) => /git\s+push\b/.test(cmd) && /:(main|master)\b/.test(cmd),
     reason: 'BLOCKED: Push refspec targeting main/master is FORBIDDEN.',
   },
+  // Agents CAN create PRs targeting any branch (including main/master).
+  // PRs are proposals for human review — the protection is on MERGING, not proposing.
   {
-    // gh pr create --base main, gh pr create -B master
-    test: (cmd) => /gh\s+pr\s+create\b/.test(cmd) && /(--base|-B)\s+(main|master)\b/.test(cmd),
-    reason: 'BLOCKED: PRs must target dev, not main/master. Use: gh pr create --base dev',
-  },
-  {
-    // gh pr create without --base (defaults to main)
+    // gh pr create without --base (defaults to main — require explicit intent)
     test: (cmd) => /gh\s+pr\s+create\b/.test(cmd) && !/(--base|-B)\s+\S/.test(cmd),
     reason:
-      'BLOCKED: gh pr create requires explicit --base flag. Without it, GitHub defaults to main. Use: gh pr create --base dev',
+      'BLOCKED: gh pr create requires explicit --base flag. Use: gh pr create --base dev (or --base main for releases)',
   },
   {
     // gh pr merge (agents cannot merge PRs at all)
