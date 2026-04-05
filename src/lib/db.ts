@@ -382,7 +382,8 @@ async function startPgserveOnPort(port: number): Promise<number> {
   child.unref();
   pgserveChild = child;
 
-  const deadline = Date.now() + 15000;
+  const timeout = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 30000;
+  const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (await isPostgresHealthy(port)) {
       activePort = port;
@@ -399,7 +400,7 @@ async function startPgserveOnPort(port: number): Promise<number> {
   } catch {
     /* dead */
   }
-  throw new Error(`pgserve failed to start on port ${port} (timeout after 15s)`);
+  throw new Error(`pgserve failed to start on port ${port} (timeout after ${timeout / 1000}s)`);
 }
 
 /** Register process exit handler to clean up lockfile (once). */

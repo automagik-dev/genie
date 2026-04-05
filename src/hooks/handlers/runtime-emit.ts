@@ -23,8 +23,9 @@ async function emit(subject: string, event: SubjectEventInput): Promise<void> {
   try {
     const { publishSubjectEvent } = await import('../../lib/runtime-events.js');
     await publishSubjectEvent(process.cwd(), subject, event);
-  } catch {
-    // Event log unavailable — never block the hook pipeline
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[runtime-emit] event log unavailable: ${msg}`);
   }
 }
 

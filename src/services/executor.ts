@@ -1,37 +1,24 @@
 /**
- * IExecutor — Executor interface for the Omni bridge.
+ * World B executor interface — TRANSITIONAL, targeted for removal.
  *
- * Simpler than the internal ExecutorProvider: this interface is what
- * the NATS bridge uses to spawn/manage agent sessions per chat.
- * Claude Code tmux is the first implementation. Claude SDK (1 process,
- * N chats) is the scaling path.
- *
- * The executor is stateless — Genie (omni-bridge) manages session
- * lifecycle, idle timeouts, and concurrency limits. The executor
- * just runs agents.
+ * TODO(unified-executor-layer): Replace OmniSession with World A's Executor
+ * type from lib/executor-types.ts. This requires the bridge's SessionEntry to
+ * store an Executor row instead of OmniSession, and spawn() to return Executor.
+ * Once done, IExecutor collapses into ExecutorProvider and this file is deleted.
  */
 
-// ============================================================================
-// Types
-// ============================================================================
+// SafePgCallFn relocated to lib/safe-pg-call.ts — re-export for back-compat.
+export type { SafePgCallFn } from '../lib/safe-pg-call.js';
 
-/** Opaque session handle returned by spawn(). */
+/** Opaque session handle returned by spawn(). TODO: replace with Executor from lib/executor-types. */
 export interface OmniSession {
-  /** Unique session key (typically `${agentName}:${chatId}`). */
   id: string;
-  /** Agent name (from genie directory). */
   agentName: string;
-  /** Chat ID from Omni (WhatsApp thread). */
   chatId: string;
-  /** Tmux session name hosting this window. */
   tmuxSession: string;
-  /** Tmux window name. */
   tmuxWindow: string;
-  /** Tmux pane ID (e.g., "%5"). */
   paneId: string;
-  /** Timestamp of session creation. */
   createdAt: number;
-  /** Timestamp of last message delivered. */
   lastActivityAt: number;
 }
 
@@ -39,36 +26,19 @@ export interface OmniSession {
 export interface OmniMessage {
   content: string;
   sender: string;
-  /** Omni instance ID. */
   instanceId: string;
-  /** Chat/thread ID. */
   chatId: string;
-  /** Agent role to route to. */
   agent: string;
-  /** ISO timestamp. */
   timestamp?: string;
 }
 
-// ============================================================================
-// Interface
-// ============================================================================
-
-/**
- * IExecutor — pluggable executor backend for the Omni bridge.
- *
- * Each executor type handles reply routing its own way but always
- * publishes to `omni.reply.{instance}.{chat_id}`.
- */
+/** Pluggable executor backend for the Omni bridge. TODO: merge into ExecutorProvider. */
 export interface IExecutor {
-  /** Spawn an agent session for a chat. */
   spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<OmniSession>;
-
-  /** Deliver a message to an already-running session. */
   deliver(session: OmniSession, message: OmniMessage): Promise<void>;
-
-  /** Shut down a session (kill tmux window). */
   shutdown(session: OmniSession): Promise<void>;
-
-  /** Check if a session is still alive. */
   isAlive(session: OmniSession): Promise<boolean>;
+  setSafePgCall(fn: import('../lib/safe-pg-call.js').SafePgCallFn): void;
+  /** Inject a nudge message into an active session (for turn timeout warnings). */
+  injectNudge(session: OmniSession, text: string): Promise<void>;
 }

@@ -369,15 +369,33 @@ const handles: DaemonHandles = { schedulerHandle: null, agentWatcher: null };
 /** Sync agent directory from workspace and start file watcher. */
 async function startAgentSync(): Promise<{ close: () => void } | null> {
   try {
-    const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+    const { findWorkspace, genieHome } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
     const ws = findWorkspace();
-    if (!ws) return null;
+    if (!ws) {
+      // Loud failure — silent return used to hide the whole discovery subsystem
+      // when serve booted from outside a workspace (or with a stale saved root).
+      const { join } = require('node:path') as typeof import('node:path');
+      const configPath = join(genieHome(), 'config.json');
+      console.warn(`  Agent sync: DISABLED — no workspace found from cwd or ${configPath}`);
+      console.warn('    Fix: `cd <workspace> && genie serve restart`, or run `genie init` to bootstrap one');
+      return null;
+    }
 
     const { syncAgentDirectory, watchAgentDirectory } = await import('../lib/agent-sync.js');
     const syncResult = await syncAgentDirectory(ws.root);
     const synced = syncResult.registered.length + syncResult.updated.length;
     if (synced > 0) {
-      console.log(`  Agent sync: ${syncResult.registered.length} registered, ${syncResult.updated.length} updated`);
+      console.log(
+        `  Agent sync: ${syncResult.registered.length} registered, ${syncResult.updated.length} updated (workspace: ${ws.root})`,
+      );
+    } else {
+      console.log(`  Agent sync: up to date (workspace: ${ws.root})`);
+    }
+    if (syncResult.errors.length > 0) {
+      console.warn(`  Agent sync: ${syncResult.errors.length} error(s) — these agents were NOT registered:`);
+      for (const e of syncResult.errors) {
+        console.warn(`    ${e.name}: ${e.error}`);
+      }
     }
 
     const watcher = watchAgentDirectory(ws.root, {
@@ -387,6 +405,8 @@ async function startAgentSync(): Promise<{ close: () => void } | null> {
     });
     if (watcher) {
       console.log('  Agent watcher started (watching agents/ directory)');
+    } else {
+      console.warn('  Agent watcher: FAILED to start — new agents will not be auto-registered');
     }
     return watcher;
   } catch (err) {

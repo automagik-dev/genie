@@ -6,6 +6,40 @@
  */
 
 import type { Command } from 'commander';
+import type { BridgeStatus } from '../services/omni-bridge.js';
+
+function printStatus(s: BridgeStatus): void {
+  const pgTag = s.pgAvailable ? '✓ connected' : '✗ degraded';
+  const connTag = s.connected ? '✓ connected' : '✗ disconnected';
+  const activeSource = s.pgAvailable ? ' (PG-backed)' : ' (in-memory)';
+
+  console.log('\nOmni Bridge Status');
+  console.log('─'.repeat(50));
+  console.log(`  Bridge:         ${connTag}`);
+  console.log(`  NATS URL:       ${s.natsUrl}`);
+  console.log(`  PG:             ${pgTag}`);
+  console.log(`  Executor type:  ${s.executorType}`);
+  console.log(`  Active:         ${s.activeSessions} / ${s.maxConcurrent}${activeSource}`);
+  console.log(`  Queue depth:    ${s.queueDepth}`);
+  console.log(`  Idle timeout:   ${Math.round(s.idleTimeoutMs / 1000)}s`);
+
+  if (s.executorIds.length > 0) {
+    console.log('\n  Executors (PG):');
+    for (const id of s.executorIds) {
+      console.log(`    ${id}`);
+    }
+  }
+
+  if (s.sessions.length > 0) {
+    console.log('\n  Sessions:');
+    for (const sess of s.sessions) {
+      const idleSec = Math.round(sess.idleMs / 1000);
+      const status = sess.spawning ? 'spawning' : `idle ${idleSec}s`;
+      console.log(`    ${sess.agentName}:${sess.chatId} — pane=${sess.paneId} (${status})`);
+    }
+  }
+  console.log('');
+}
 
 export function registerOmniCommands(program: Command): void {
   const omni = program.command('omni').description('Manage the Omni ↔ Genie NATS bridge');
@@ -16,7 +50,7 @@ export function registerOmniCommands(program: Command): void {
     .option('--nats-url <url>', 'NATS server URL', process.env.GENIE_NATS_URL ?? 'localhost:4222')
     .option('--max-concurrent <n>', 'Max concurrent agent sessions', process.env.GENIE_MAX_CONCURRENT ?? '20')
     .option('--idle-timeout <ms>', 'Idle timeout in ms', process.env.GENIE_IDLE_TIMEOUT_MS ?? '900000')
-    .option('--executor <type>', 'Executor type: tmux (default) or sdk', process.env.GENIE_EXECUTOR_TYPE ?? 'tmux')
+    .option('--executor <type>', 'Executor type: tmux (default) or sdk')
     .action(async (options) => {
       const { OmniBridge } = await import('../services/omni-bridge.js');
 
@@ -24,7 +58,7 @@ export function registerOmniCommands(program: Command): void {
         natsUrl: options.natsUrl,
         maxConcurrent: Number(options.maxConcurrent),
         idleTimeoutMs: Number(options.idleTimeout),
-        executorType: options.executor as 'tmux' | 'sdk',
+        executorType: options.executor,
       });
 
       await bridge.start();
@@ -71,29 +105,13 @@ export function registerOmniCommands(program: Command): void {
         return;
       }
 
-      const s = bridge.status();
+      const s = await bridge.status();
 
       if (options.json) {
         console.log(JSON.stringify(s, null, 2));
         return;
       }
 
-      console.log('\nOmni Bridge Status');
-      console.log('─'.repeat(50));
-      console.log(`  Connected:      ${s.connected ? '✓ yes' : '✗ no'}`);
-      console.log(`  NATS URL:       ${s.natsUrl}`);
-      console.log(`  Active:         ${s.activeSessions} / ${s.maxConcurrent}`);
-      console.log(`  Queue depth:    ${s.queueDepth}`);
-      console.log(`  Idle timeout:   ${Math.round(s.idleTimeoutMs / 1000)}s`);
-
-      if (s.sessions.length > 0) {
-        console.log('\n  Sessions:');
-        for (const sess of s.sessions) {
-          const idleSec = Math.round(sess.idleMs / 1000);
-          const status = sess.spawning ? 'spawning' : `idle ${idleSec}s`;
-          console.log(`    ${sess.agentName}:${sess.chatId} — pane=${sess.paneId} (${status})`);
-        }
-      }
-      console.log('');
+      printStatus(s);
     });
 }

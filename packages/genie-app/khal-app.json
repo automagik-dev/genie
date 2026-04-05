@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 2,
+  "id": "genie-app",
+  "name": "Genie",
+  "version": "0.1.0",
+  "description": "AI agent orchestration cockpit — manage agent teams, tasks, and terminal sessions.",
+  "author": "Namastex Labs",
+  "license": "Elastic-2.0",
+  "repository": "https://github.com/automagik-dev/genie",
+  "views": [
+    {
+      "id": "agents",
+      "label": "Agents",
+      "permission": "agents",
+      "minRole": "viewer",
+      "natsPrefix": "agent",
+      "defaultSize": { "width": 1200, "height": 800 },
+      "component": "./views/agents/ui/AgentsView"
+    },
+    {
+      "id": "tasks",
+      "label": "Tasks",
+      "permission": "tasks",
+      "minRole": "viewer",
+      "natsPrefix": "task",
+      "defaultSize": { "width": 1200, "height": 800 },
+      "component": "./views/tasks/ui/TasksView"
+    },
+    {
+      "id": "terminal",
+      "label": "Terminal",
+      "permission": "terminal",
+      "minRole": "platform-dev",
+      "natsPrefix": "pty",
+      "defaultSize": { "width": 900, "height": 600 },
+      "component": "./views/terminal/ui/TerminalView"
+    },
+    {
+      "id": "dashboard",
+      "label": "Dashboard",
+      "permission": "dashboard",
+      "minRole": "viewer",
+      "natsPrefix": "dashboard",
+      "defaultSize": { "width": 1200, "height": 800 },
+      "component": "./views/dashboard/ui/DashboardView"
+    },
+    {
+      "id": "wizard",
+      "label": "Setup",
+      "permission": "dashboard",
+      "minRole": "viewer",
+      "natsPrefix": "wizard",
+      "defaultSize": { "width": 600, "height": 500 },
+      "component": "./views/wizard/ui/WizardView"
+    },
+    {
+      "id": "activity",
+      "label": "Activity",
+      "permission": "activity",
+      "minRole": "viewer",
+      "natsPrefix": "event",
+      "defaultSize": { "width": 900, "height": 600 },
+      "component": "./views/activity/ui/ActivityView"
+    },
+    {
+      "id": "sessions",
+      "label": "Sessions",
+      "permission": "sessions",
+      "minRole": "viewer",
+      "natsPrefix": "session",
+      "defaultSize": { "width": 1200, "height": 800 },
+      "component": "./views/sessions/ui/SessionsView"
+    },
+    {
+      "id": "costs",
+      "label": "Costs",
+      "permission": "costs",
+      "minRole": "viewer",
+      "natsPrefix": "cost",
+      "defaultSize": { "width": 1200, "height": 800 },
+      "component": "./views/costs/ui/CostIntelligence"
+    },
+    {
+      "id": "files",
+      "label": "Files",
+      "permission": "files",
+      "minRole": "viewer",
+      "natsPrefix": "fs",
+      "defaultSize": { "width": 1200, "height": 800 },
+      "component": "./views/files/ui/FilesView"
+    },
+    {
+      "id": "settings",
+      "label": "Settings",
+      "permission": "settings",
+      "minRole": "viewer",
+      "natsPrefix": "settings",
+      "defaultSize": { "width": 900, "height": 600 },
+      "component": "./views/settings/ui/SettingsView"
+    },
+    {
+      "id": "scheduler",
+      "label": "Scheduler",
+      "permission": "scheduler",
+      "minRole": "viewer",
+      "natsPrefix": "schedule",
+      "defaultSize": { "width": 1200, "height": 800 },
+      "component": "./views/scheduler/ui/SchedulerView"
+    },
+    {
+      "id": "system",
+      "label": "System",
+      "permission": "system",
+      "minRole": "platform-dev",
+      "natsPrefix": "system",
+      "defaultSize": { "width": 1200, "height": 800 },
+      "component": "./views/system/ui/SystemView"
+    }
+  ],
+  "desktop": {
+    "icon": "/icons/dusk/genie.svg",
+    "categories": ["AI & Automation"],
+    "comment": "AI agent orchestration cockpit"
+  },
+  "services": [
+    {
+      "name": "sidecar",
+      "entry": "./src-backend/index.ts",
+      "runtime": "node",
+      "health": {
+        "type": "tcp",
+        "target": 3100,
+        "interval": 30000,
+        "timeout": 5000
+      },
+      "ports": [3100]
+    }
+  ],
+  "tauri": {
+    "exportable": true,
+    "appName": "Genie",
+    "window": { "width": 1200, "height": 800, "title": "Genie" }
+  }
+}
