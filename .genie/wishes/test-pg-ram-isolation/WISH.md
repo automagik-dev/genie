@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `test-pg-ram-isolation` |
 | **Date** | 2026-04-04 |
 | **Priority** | P1 |
