@@ -163,7 +163,12 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
-    const rows = await sql`SELECT role, metadata FROM agents WHERE role = ${name} LIMIT 1`;
+    const rows = await sql`
+      SELECT role, metadata FROM agents
+      WHERE role = ${name}
+      ORDER BY (CASE WHEN id LIKE 'dir:%' THEN 0 ELSE 1 END), started_at DESC
+      LIMIT 1
+    `;
     if (rows.length > 0) {
       const meta = parseMetadata(rows[0].metadata);
       return { entry: roleToEntry(name, undefined, meta), builtin: false };
@@ -228,7 +233,7 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
       FROM agents a
       LEFT JOIN executors e ON a.current_executor_id = e.id
       WHERE a.role IS NOT NULL
-      ORDER BY a.role, a.started_at DESC
+      ORDER BY a.role, (CASE WHEN a.id LIKE 'dir:%' THEN 0 ELSE 1 END), a.started_at DESC
     `;
     for (const row of rows) {
       const name = row.role as string;
