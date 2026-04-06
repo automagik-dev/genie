@@ -16,8 +16,8 @@ import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { HandlerResult, HookPayload } from '../types.js';
 
-const BRAIN_PKG = '@automagik/genie-brain';
-const BRAIN_DIR = 'node_modules/@automagik/genie-brain';
+const BRAIN_PKG = '@khal-os/brain';
+const BRAIN_DIR = 'node_modules/@khal-os/brain';
 
 /** Track which sessions have already been enriched. */
 const enrichedSessions = new Set<string>();
