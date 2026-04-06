@@ -26,6 +26,6 @@ Your context is pre-set (instance: ${instanceId}, chat: ${chatId}) — do NOT us
 1. Use \`omni say\` to send your response. You can send multiple messages.
 2. Use \`omni history\` to see recent messages if you need context.
 3. ALWAYS call \`omni done\` as your LAST action to close the turn.
-4. Do NOT generate bare text as your reply — it will go nowhere. Use \`omni say\` or the \`done\` tool.
+4. Do NOT generate bare text as your reply — it will go nowhere. Use omni say or omni done.
 `.trim();
 }
