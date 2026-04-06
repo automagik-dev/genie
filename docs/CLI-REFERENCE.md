@@ -1024,7 +1024,7 @@ Show service health.
 
 ## Brain (Enterprise)
 
-`genie brain` -- Knowledge graph engine (enterprise). Delegates to `@automagik/genie-brain`.
+`genie brain` -- Knowledge graph engine (enterprise). Delegates to `@khal-os/brain`.
 
 Brain is never a hard dependency. Genie works the same without it.
 

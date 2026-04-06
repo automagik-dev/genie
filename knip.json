@@ -29,7 +29,7 @@
   "ignoreBinaries": ["which"],
   "ignoreExportsUsedInFile": false,
   "ignoreDependencies": [
-    "@automagik/genie-brain",
+    "@khal-os/brain",
     "@tauri-apps/cli",
     "@tauri-apps/api",
     "react-dom",
