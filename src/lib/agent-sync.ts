@@ -19,7 +19,6 @@
 import { execSync } from 'node:child_process';
 import { existsSync, watch as fsWatch, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import * as directory from './agent-directory.js';
 import { BUILTIN_DEFAULTS, type DefaultField, type ResolveContext, resolveFieldWithSource } from './defaults.js';
 import { parseFrontmatter } from './frontmatter.js';
@@ -365,10 +364,10 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRo
   const fm = parseFrontmatter(content);
 
   // Compute resolved metadata if workspace root is available
-  let resolvedMeta: { declared: Record<string, unknown>; resolved: Record<string, unknown> } | undefined;
+  let _resolvedMeta: { declared: Record<string, unknown>; resolved: Record<string, unknown> } | undefined;
   if (workspaceRoot) {
     const ctx = buildResolveContext(workspaceRoot, agent.name);
-    resolvedMeta = computeResolvedMetadata(fm as Record<string, unknown>, ctx);
+    _resolvedMeta = computeResolvedMetadata(fm as Record<string, unknown>, ctx);
   }
 
   // Use resolve() to distinguish PG entries from built-ins.
@@ -441,7 +440,15 @@ async function syncSingleAgentByName(workspaceRoot: string, agentName: string): 
   const agent = discoverSingleAgent(workspaceRoot, agentName);
   if (!agent) return 'not-found';
 
-  const result: SyncResult = { registered: [], updated: [], unchanged: [], archived: [], reactivated: [], healed: [], errors: [] };
+  const result: SyncResult = {
+    registered: [],
+    updated: [],
+    unchanged: [],
+    archived: [],
+    reactivated: [],
+    healed: [],
+    errors: [],
+  };
   await syncSingleAgent(agent, result, workspaceRoot);
 
   if (result.registered.length > 0) return 'registered';
