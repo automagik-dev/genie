@@ -13,6 +13,8 @@ import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
+import { type ResolveContext, resolveField } from '../lib/defaults.js';
+import { getWorkspaceConfig, findWorkspace } from '../lib/workspace.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
@@ -1257,12 +1259,58 @@ async function resolveAgentForSpawn(
 
   const repoPath = resolveAgentWorkingDir(entry, options.cwd);
 
+  // Resolve model via cascading defaults (live from disk, not cached PG metadata).
+  // CLI --model flag always wins; otherwise walk the 4-step chain.
+  let model: string | undefined = options.model;
+  if (!model) {
+    const ctx = buildSpawnResolveContext(name, entry);
+    model = resolveField(entry as unknown as Record<string, unknown>, 'model', ctx);
+  }
+
   return {
     entry,
     repoPath,
     identityPath,
-    model: options.model ?? entry.model,
+    model,
   };
+}
+
+/** Build a ResolveContext for spawn-time resolution (reads workspace.json fresh from disk). */
+function buildSpawnResolveContext(agentName: string, entry: directory.DirectoryEntry): ResolveContext {
+  const ctx: ResolveContext = {};
+
+  // Read workspace defaults fresh from disk
+  try {
+    const ws = findWorkspace();
+    if (ws) {
+      const wsConfig = getWorkspaceConfig(ws.root);
+      ctx.workspaceDefaults = wsConfig.agents?.defaults as ResolveContext['workspaceDefaults'];
+    }
+  } catch {
+    // workspace.json may not exist
+  }
+
+  // Detect parent for sub-agents (name contains '/')
+  if (agentName.includes('/')) {
+    const parentName = agentName.split('/')[0];
+    try {
+      const { readFileSync, existsSync } = require('node:fs') as typeof import('node:fs');
+      const { join } = require('node:path') as typeof import('node:path');
+      const ws = findWorkspace();
+      if (ws) {
+        const parentAgentsMd = join(ws.root, 'agents', parentName, 'AGENTS.md');
+        if (existsSync(parentAgentsMd)) {
+          const { parseFrontmatter } = require('../lib/frontmatter.js');
+          const parentFm = parseFrontmatter(readFileSync(parentAgentsMd, 'utf-8'));
+          ctx.parent = { name: parentName, fields: parentFm as Record<string, unknown> };
+        }
+      }
+    } catch {
+      // Best-effort parent resolution
+    }
+  }
+
+  return ctx;
 }
 
 export function resolveAgentWorkingDir(entry: directory.DirectoryEntry, explicitCwd?: string): string {

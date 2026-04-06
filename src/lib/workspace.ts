@@ -8,14 +8,41 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
+import { z } from 'zod';
+import type { AgentDefaults } from './defaults.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+/** Tmux transport configuration. */
+export interface TmuxConfig {
+  socket?: string;
+  defaultWindow?: string;
+  execTimeout?: number;
+  readLines?: number;
+}
+
+/** SDK transport configuration. */
+export interface SdkConfig {
+  maxTurns?: number;
+  persistSession?: boolean;
+  includePartialMessages?: boolean;
+  includeHookEvents?: boolean;
+}
 
 export interface WorkspaceConfig {
   name: string;
   pgUrl?: string;
   daemonPid?: number;
+  /** @deprecated Use tmux.socket instead. Kept for migration compatibility. */
   tmuxSocket?: string;
+  /** Cross-transport agent defaults. */
+  agents?: {
+    defaults?: Partial<AgentDefaults>;
+  };
+  /** Tmux transport settings. */
+  tmux?: TmuxConfig;
+  /** SDK transport settings. */
+  sdk?: SdkConfig;
 }
 
 interface WorkspaceInfo {
@@ -166,11 +193,83 @@ function detectAgent(startDir: string, workspaceRoot: string): string | null {
 
 // ─── Config Reading ───────────────────────────────────────────────────────────
 
-/** Read and parse workspace.json from a workspace root. */
+/** Read and parse workspace.json from a workspace root. Migrates flat shape on read. */
 export function getWorkspaceConfig(root: string): WorkspaceConfig {
   const configPath = join(root, WORKSPACE_MARKER);
   const raw = readFileSync(configPath, 'utf-8');
-  return JSON.parse(raw) as WorkspaceConfig;
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  return migrateWorkspaceConfig(parsed);
+}
+
+// ─── Zod Validation ──────────────────────────────────────────────────────────
+
+/** Zod schema for agents.defaults — validates against the same constraints as agent frontmatter. */
+export const AgentDefaultsSchema = z
+  .object({
+    model: z.string().optional(),
+    promptMode: z.enum(['system', 'append']).optional(),
+    color: z.string().optional(),
+    effort: z.string().optional(),
+    thinking: z.string().optional(),
+    permissionMode: z.string().optional(),
+  })
+  .strict();
+
+const TmuxConfigSchema = z
+  .object({
+    socket: z.string().optional(),
+    defaultWindow: z.string().optional(),
+    execTimeout: z.number().optional(),
+    readLines: z.number().optional(),
+  })
+  .strict();
+
+const SdkConfigSchema = z
+  .object({
+    maxTurns: z.number().optional(),
+    persistSession: z.boolean().optional(),
+    includePartialMessages: z.boolean().optional(),
+    includeHookEvents: z.boolean().optional(),
+  })
+  .strict();
+
+/**
+ * Validate the agents.defaults section on load.
+ * Throws with a descriptive error on invalid values.
+ */
+export function validateWorkspaceDefaults(config: WorkspaceConfig): void {
+  if (!config.agents?.defaults) return;
+  const result = AgentDefaultsSchema.safeParse(config.agents.defaults);
+  if (!result.success) {
+    const issues = result.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n');
+    throw new Error(`Invalid agents.defaults in workspace.json:\n${issues}`);
+  }
+}
+
+// ─── Migration ───────────────────────────────────────────────────────────────
+
+/**
+ * Migrate a flat-shape workspace.json to the sectioned shape.
+ *
+ * Detects the old flat shape (has `tmuxSocket` at top level, no `tmux` section)
+ * and moves `tmuxSocket` into `tmux.socket`. Adds missing sections with empty
+ * objects. Idempotent on already-sectioned input.
+ */
+export function migrateWorkspaceConfig(raw: Record<string, unknown>): WorkspaceConfig {
+  const config = { ...raw } as WorkspaceConfig & Record<string, unknown>;
+
+  // Migrate flat tmuxSocket → tmux.socket
+  if ('tmuxSocket' in config && typeof config.tmuxSocket === 'string' && !config.tmux) {
+    config.tmux = { socket: config.tmuxSocket };
+  }
+
+  // Ensure sections exist (empty objects, not built-in values — resolver handles fallback)
+  if (!config.agents) config.agents = {};
+  if (!config.agents.defaults) config.agents.defaults = {};
+  if (!config.tmux) config.tmux = {};
+  if (!config.sdk) config.sdk = {};
+
+  return config;
 }
 
 // ─── Agent Scanning ───────────────────────────────────────────────────────────
