@@ -36,7 +36,7 @@ function resolveGenieRoot(): string {
   return resolve(import.meta.dir, '..', '..');
 }
 
-const BRAIN_DIR = join(resolveGenieRoot(), 'node_modules', '@automagik', 'genie-brain');
+const BRAIN_DIR = join(resolveGenieRoot(), 'node_modules', '@khal-os', 'brain');
 const CACHE_PATH = join(homedir(), '.genie', 'brain-version-check.json');
 
 /** Compare dot-separated version strings numerically (e.g., "260403.9" vs "260403.10"). */
@@ -87,20 +87,15 @@ export function checkForUpdates(cachePath?: string): UpdateCheck {
 
 function refreshVersionCache(localVersion?: string): void {
   try {
-    if (!existsSync(join(BRAIN_DIR, '.git'))) return;
-
     // Resolve local version from param or package.json
     const version = localVersion ?? readLocalBrainVersion();
     if (!version) return;
 
-    // Fetch latest tags from remote
-    execSync(`git -C "${BRAIN_DIR}" fetch origin --tags`, { stdio: 'pipe' });
-
-    // Find latest v0.* tag via version sort
-    const tagsOutput = execSync(`git -C "${BRAIN_DIR}" tag -l "v0.*" --sort=-version:refname`, {
+    // Query latest release from GitHub via gh CLI (works for private repos)
+    const latestTag = execSync(`gh release view --repo ${BRAIN_REPO} --json tagName -q .tagName`, {
+      stdio: 'pipe',
       encoding: 'utf-8',
-    });
-    const latestTag = tagsOutput.trim().split('\n')[0] ?? '';
+    }).trim();
     const latestVersion = latestTag.replace(/^v/, '');
 
     // Compare: strip prefix digit for comparison (dev uses 1.x, main uses 0.x)
@@ -133,40 +128,55 @@ function refreshVersionCache(localVersion?: string): void {
 // ── Update brain from GitHub ───────────────────────────────────────────────
 
 async function updateBrain(): Promise<boolean> {
-  // Check brain is installed (has .git dir from clone)
-  if (!existsSync(join(BRAIN_DIR, '.git'))) {
+  // Check brain is installed (has package.json from tarball extract)
+  if (!existsSync(join(BRAIN_DIR, 'package.json'))) {
     console.log('  Brain is not installed. Run: genie brain install');
     return false;
   }
 
-  // Get old version before pull
-  let oldVersion = 'unknown';
+  // Get old version before update
+  const oldVersion = readLocalBrainVersion() ?? 'unknown';
+
+  console.log('  Checking for updates...');
+
+  // Query latest release from GitHub
+  let tag: string;
   try {
-    const brain = await import(BRAIN_PKG);
-    oldVersion = brain.getVersion?.() ?? 'unknown';
+    tag = execSync(`gh release view --repo ${BRAIN_REPO} --json tagName -q .tagName`, {
+      stdio: 'pipe',
+      encoding: 'utf-8',
+    }).trim();
   } catch {
-    /* ok */
+    console.error('  Failed to check latest release. Ensure: gh auth login');
+    return false;
   }
 
-  console.log('  Updating brain from GitHub...');
+  const newVersion = tag.replace(/^v/, '');
+  if (compareVersions(newVersion, oldVersion) <= 0) {
+    console.log(`  Already at latest version (${oldVersion}).`);
+    return true;
+  }
 
-  // Ensure we're on main before pulling — if the clone is on dev,
-  // `git pull origin main` merges main INTO dev, keeping the dev version.
-  execSync(`git -C "${BRAIN_DIR}" checkout main`, { stdio: 'pipe' });
-  execSync(`git -C "${BRAIN_DIR}" pull origin main`, { stdio: 'inherit' });
+  console.log(`  Upgrading: ${oldVersion} → ${newVersion}`);
+  console.log('');
 
-  // Rebuild
+  // Download and extract new tarball (same flow as install)
+  const tmpDir = join(homedir(), '.cache', 'genie-brain');
+  mkdirSync(tmpDir, { recursive: true });
+
+  execSync(`gh release download ${tag} --repo ${BRAIN_REPO} --pattern '*.tgz' --dir "${tmpDir}" --clobber`, {
+    stdio: 'inherit',
+  });
+
+  // Replace existing install
+  execSync(`rm -rf "${BRAIN_DIR}"`, { stdio: 'pipe' });
+  mkdirSync(BRAIN_DIR, { recursive: true });
+  execSync(`tar xzf "${tmpDir}/khal-os-brain-${newVersion}.tgz" -C "${BRAIN_DIR}" --strip-components=1`, {
+    stdio: 'inherit',
+  });
+
+  // Install runtime deps
   execSync('bun install', { cwd: BRAIN_DIR, stdio: 'inherit' });
-  execSync('bun run build', { cwd: BRAIN_DIR, stdio: 'inherit' });
-
-  // Get new version (read from package.json since module cache won't refresh)
-  let newVersion = 'unknown';
-  try {
-    const pkg = JSON.parse(readFileSync(join(BRAIN_DIR, 'package.json'), 'utf-8'));
-    newVersion = pkg.version ?? 'unknown';
-  } catch {
-    /* ok */
-  }
 
   console.log(`\n  Updated: ${oldVersion} → ${newVersion}`);
 
@@ -302,17 +312,15 @@ async function installBrain(): Promise<boolean> {
       console.log('    2. GitHub CLI authenticated: gh auth login');
       console.log('');
       console.log('  Manual install:');
-      console.log(
-        `    gh release download --repo ${BRAIN_REPO} --pattern '*.tgz' && bun add ${BRAIN_PKG}@./khal-os-brain-*.tgz`,
-      );
+      console.log(`    gh release download --repo ${BRAIN_REPO} --pattern '*.tgz'`);
+      console.log('    tar xzf khal-os-brain-*.tgz -C node_modules/@khal-os/brain --strip-components=1');
       console.log('');
     } else {
       console.error(`  Install failed: ${msg}`);
       console.log('');
       console.log('  Manual install:');
-      console.log(
-        `    gh release download --repo ${BRAIN_REPO} --pattern '*.tgz' && bun add ${BRAIN_PKG}@./khal-os-brain-*.tgz`,
-      );
+      console.log(`    gh release download --repo ${BRAIN_REPO} --pattern '*.tgz'`);
+      console.log('    tar xzf khal-os-brain-*.tgz -C node_modules/@khal-os/brain --strip-components=1');
       console.log('');
     }
     return false;
@@ -321,8 +329,11 @@ async function installBrain(): Promise<boolean> {
 
 function uninstallBrain(): void {
   try {
-    const root = resolveGenieRoot();
-    execSync(`bun remove ${BRAIN_PKG}`, { cwd: root, stdio: 'pipe' });
+    if (!existsSync(BRAIN_DIR)) {
+      console.log('  Brain is not installed.');
+      return;
+    }
+    execSync(`rm -rf "${BRAIN_DIR}"`, { stdio: 'pipe' });
     console.log('  Brain uninstalled.');
   } catch {
     console.error(`  Uninstall failed. Manual: rm -rf ${BRAIN_DIR}`);
@@ -342,7 +353,7 @@ function printNotInstalledMessage(): void {
   console.log('');
   console.log('    genie brain install');
   console.log('');
-  console.log('  Requires GitHub org membership (automagik-dev).');
+  console.log('  Requires GitHub org membership (khal-os).');
   console.log('');
 }
 
