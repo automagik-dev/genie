@@ -47,9 +47,9 @@ export const RESOLVED_FIELDS: readonly DefaultField[] = ['model'] as const;
 // Source taxonomy for dir ls / dir export
 // ============================================================================
 
-export type ResolvedSource = 'explicit' | `parent:${string}` | 'workspace' | 'built-in';
+type ResolvedSource = 'explicit' | `parent:${string}` | 'workspace' | 'built-in';
 
-export interface ResolvedValue<T = string> {
+interface ResolvedValue<T = string> {
   value: T;
   source: ResolvedSource;
 }
@@ -70,7 +70,7 @@ export interface ResolveContext {
 }
 
 /** Minimal agent shape needed by the resolver — avoids coupling to full DirectoryEntry. */
-export interface AgentFields {
+interface AgentFields {
   [key: string]: unknown;
 }
 
