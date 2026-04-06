@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import type { Command } from 'commander';
-import { type WorkspaceConfig, findWorkspace, scanAgents } from '../lib/workspace.js';
+import { type WorkspaceConfig, findWorkspace, getWorkspaceConfig, scanAgents } from '../lib/workspace.js';
 import { scaffoldAgentFiles } from '../templates/index.js';
 
 /** Auto-detect pgUrl from environment or running pgserve. */
@@ -49,7 +49,16 @@ function scaffoldAgentInWorkspace(workspaceRoot: string, name: string, agentsDir
   mkdirSync(join(agentDir, 'brain', 'memory'), { recursive: true });
   mkdirSync(join(agentDir, '.claude'), { recursive: true });
 
-  scaffoldAgentFiles(agentDir, name);
+  // Read workspace defaults so scaffold renders effective values in comments
+  let workspaceDefaults: Record<string, string> | undefined;
+  try {
+    const wsConfig = getWorkspaceConfig(workspaceRoot);
+    workspaceDefaults = wsConfig.agents?.defaults as Record<string, string> | undefined;
+  } catch {
+    // workspace.json may not exist yet during initial init — fall through to built-in defaults
+  }
+
+  scaffoldAgentFiles(agentDir, name, workspaceDefaults);
   writeFileSync(join(agentDir, '.claude', 'settings.local.json'), `${JSON.stringify({ agentName: name }, null, 2)}\n`);
 
   const reposTarget = join(workspaceRoot, 'repos');
@@ -129,7 +138,9 @@ async function initWorkspace(): Promise<void> {
   const config: WorkspaceConfig = {
     name: basename(cwd),
     pgUrl,
-    tmuxSocket: 'genie',
+    agents: { defaults: {} },
+    tmux: { socket: 'genie' },
+    sdk: {},
   };
 
   writeFileSync(join(genieDir, 'workspace.json'), `${JSON.stringify(config, null, 2)}\n`);

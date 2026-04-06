@@ -17,10 +17,13 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, watch as fsWatch, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, watch as fsWatch, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import * as directory from './agent-directory.js';
+import { BUILTIN_DEFAULTS, type DefaultField, type ResolveContext, resolveFieldWithSource } from './defaults.js';
 import { parseFrontmatter } from './frontmatter.js';
+import { getWorkspaceConfig } from './workspace.js';
 
 // ============================================================================
 // Types
@@ -32,6 +35,7 @@ interface SyncResult {
   unchanged: string[];
   archived: string[];
   reactivated: string[];
+  healed: Array<{ agent: string; field: string; value: string }>;
   errors: Array<{ name: string; error: string }>;
 }
 
@@ -153,6 +157,114 @@ function discoverSingleAgent(workspaceRoot: string, agentName: string): AgentInf
 }
 
 // ============================================================================
+// Heal — auto-fix invalid frontmatter literals
+// ============================================================================
+
+/** Invalid literals to scan for and delete. Additive — future additions need only extend this list. */
+const INVALID_LITERALS: Array<{ field: string; value: string }> = [{ field: 'model', value: 'inherit' }];
+
+export interface HealResult {
+  healed: Array<{ agent: string; field: string; value: string }>;
+}
+
+/**
+ * Scan an AGENTS.md file for invalid frontmatter literals and remove them.
+ * Uses atomic write-rename to prevent partial writes.
+ * Returns true if the file was modified.
+ */
+export function healAgentFile(agentsMdPath: string, agentName: string, healResult: HealResult): boolean {
+  const content = readFileSync(agentsMdPath, 'utf-8');
+
+  // Only process frontmatter block (between --- delimiters)
+  const fmMatch = content.match(/^(---\n)([\s\S]*?)(\n---)/);
+  if (!fmMatch) return false;
+
+  const prefix = fmMatch[1];
+  const fmBlock = fmMatch[2];
+  const suffix = fmMatch[3];
+  const rest = content.slice(fmMatch[0].length);
+
+  let modified = false;
+  let healedBlock = fmBlock;
+
+  for (const { field, value } of INVALID_LITERALS) {
+    // Match the exact line: `field: value` (with optional whitespace)
+    const lineRegex = new RegExp(`^${field}:\\s*${value}\\s*$`, 'm');
+    if (lineRegex.test(healedBlock)) {
+      // Remove the entire line (including the trailing newline)
+      healedBlock = healedBlock.replace(new RegExp(`${field}:\\s*${value}\\s*\\n?`, 'm'), '');
+      healResult.healed.push({ agent: agentName, field, value });
+      modified = true;
+    }
+  }
+
+  if (!modified) return false;
+
+  // Atomic write: temp file + rename
+  const newContent = prefix + healedBlock + suffix + rest;
+  const tmpPath = `${agentsMdPath}.tmp.${Date.now()}`;
+  writeFileSync(tmpPath, newContent, 'utf-8');
+  const { renameSync } = require('node:fs') as typeof import('node:fs');
+  renameSync(tmpPath, agentsMdPath);
+
+  return true;
+}
+
+// ============================================================================
+// Resolved metadata helpers
+// ============================================================================
+
+/**
+ * Build a ResolveContext for an agent, reading workspace defaults and optionally parent fields.
+ */
+function buildResolveContext(workspaceRoot: string, agentName: string): ResolveContext {
+  let workspaceDefaults: ResolveContext['workspaceDefaults'];
+  try {
+    const wsConfig = getWorkspaceConfig(workspaceRoot);
+    workspaceDefaults = wsConfig.agents?.defaults as ResolveContext['workspaceDefaults'];
+  } catch {
+    // workspace.json may be unreadable
+  }
+
+  // Detect parent for sub-agents (name contains '/')
+  let parent: ResolveContext['parent'];
+  if (agentName.includes('/')) {
+    const parentName = agentName.split('/')[0];
+    const parentAgentsMd = join(workspaceRoot, 'agents', parentName, 'AGENTS.md');
+    if (existsSync(parentAgentsMd)) {
+      const parentContent = readFileSync(parentAgentsMd, 'utf-8');
+      const parentFm = parseFrontmatter(parentContent);
+      parent = { name: parentName, fields: parentFm as Record<string, unknown> };
+    }
+  }
+
+  return { workspaceDefaults, parent };
+}
+
+/**
+ * Compute declared + resolved metadata for an agent's default fields.
+ * Returns { declared: {...}, resolved: {...} } sub-objects for PG metadata.
+ */
+function computeResolvedMetadata(
+  fm: Record<string, unknown>,
+  ctx: ResolveContext,
+): { declared: Record<string, unknown>; resolved: Record<string, unknown> } {
+  const declared: Record<string, unknown> = {};
+  const resolved: Record<string, unknown> = {};
+
+  for (const field of Object.keys(BUILTIN_DEFAULTS) as DefaultField[]) {
+    const fmValue = fm[field];
+    if (fmValue !== undefined && fmValue !== null && fmValue !== '' && fmValue !== 'inherit') {
+      declared[field] = fmValue;
+    }
+    const result = resolveFieldWithSource(fm, field, ctx);
+    resolved[field] = { value: result.value, source: result.source };
+  }
+
+  return { declared, resolved };
+}
+
+// ============================================================================
 // Sync
 // ============================================================================
 
@@ -165,13 +277,37 @@ function discoverSingleAgent(workspaceRoot: string, agentName: string): AgentInf
  * Idempotent — safe to run repeatedly.
  */
 export async function syncAgentDirectory(workspaceRoot: string): Promise<SyncResult> {
-  const result: SyncResult = { registered: [], updated: [], unchanged: [], archived: [], reactivated: [], errors: [] };
+  const result: SyncResult = {
+    registered: [],
+    updated: [],
+    unchanged: [],
+    archived: [],
+    reactivated: [],
+    healed: [],
+    errors: [],
+  };
   const agents = discoverAgents(workspaceRoot);
   const discoveredNames = new Set(agents.map((a) => a.name));
 
+  // Phase 1: Heal invalid frontmatter literals before sync
+  const healResult: HealResult = { healed: [] };
+  for (const agent of agents) {
+    const agentsMdPath = join(agent.dir, 'AGENTS.md');
+    try {
+      healAgentFile(agentsMdPath, agent.name, healResult);
+    } catch {
+      // Heal is best-effort — don't block sync
+    }
+  }
+  result.healed = healResult.healed;
+  for (const h of healResult.healed) {
+    console.log(`[sync] healed ${h.agent}/AGENTS.md: removed invalid '${h.field}: ${h.value}' line`);
+  }
+
+  // Phase 2: Sync agents with resolved metadata
   for (const agent of agents) {
     try {
-      await syncSingleAgent(agent, result);
+      await syncSingleAgent(agent, result, workspaceRoot);
     } catch (err) {
       result.errors.push({
         name: agent.name,
@@ -188,6 +324,7 @@ export async function syncAgentDirectory(workspaceRoot: string): Promise<SyncRes
 
 /** Print sync result summary to console. Shared by dir sync and agent dir sync. */
 export function printSyncResult(result: SyncResult): void {
+  if (result.healed.length > 0) console.log(`  Healed: ${result.healed.length} invalid literal(s) removed`);
   if (result.registered.length > 0) console.log(`  Registered: ${result.registered.join(', ')}`);
   if (result.updated.length > 0) console.log(`  Updated: ${result.updated.join(', ')}`);
   if (result.reactivated.length > 0) console.log(`  Reactivated: ${result.reactivated.join(', ')}`);
@@ -218,14 +355,21 @@ async function removeMissingAgents(discoveredNames: Set<string>, result: SyncRes
 }
 
 /** Core sync logic for a single agent. */
-async function syncSingleAgent(agent: AgentInfo, result: SyncResult): Promise<void> {
+async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRoot?: string): Promise<void> {
   const orgRepo = agent.repoUrl ? extractOrgRepo(agent.repoUrl) : null;
   const repoPath = orgRepo ?? agent.repoUrl ?? agent.dir;
 
-  // Read and parse AGENTS.md frontmatter for identity fields
+  // Read and parse AGENTS.md frontmatter for identity fields (post-heal — file is now clean)
   const agentsMdPath = join(agent.dir, 'AGENTS.md');
   const content = readFileSync(agentsMdPath, 'utf-8');
   const fm = parseFrontmatter(content);
+
+  // Compute resolved metadata if workspace root is available
+  let resolvedMeta: { declared: Record<string, unknown>; resolved: Record<string, unknown> } | undefined;
+  if (workspaceRoot) {
+    const ctx = buildResolveContext(workspaceRoot, agent.name);
+    resolvedMeta = computeResolvedMetadata(fm as Record<string, unknown>, ctx);
+  }
 
   // Use resolve() to distinguish PG entries from built-ins.
   // get() returns built-in entries too, which would skip the add() path
@@ -297,8 +441,8 @@ async function syncSingleAgentByName(workspaceRoot: string, agentName: string): 
   const agent = discoverSingleAgent(workspaceRoot, agentName);
   if (!agent) return 'not-found';
 
-  const result: SyncResult = { registered: [], updated: [], unchanged: [], archived: [], reactivated: [], errors: [] };
-  await syncSingleAgent(agent, result);
+  const result: SyncResult = { registered: [], updated: [], unchanged: [], archived: [], reactivated: [], healed: [], errors: [] };
+  await syncSingleAgent(agent, result, workspaceRoot);
 
   if (result.registered.length > 0) return 'registered';
   if (result.updated.length > 0) return 'updated';
