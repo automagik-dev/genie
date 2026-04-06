@@ -269,6 +269,9 @@ export async function routeSdkMessage(msg: SDKMessage, executorId: string, agent
   const eventType = getEventType(msg);
   if (!eventType) return null;
 
+  // Skip stream partials — high volume noise with no audit value
+  if (eventType === 'sdk.stream.partial') return eventType;
+
   const details = buildEventDetails(msg);
   details.executorId = executorId;
 
