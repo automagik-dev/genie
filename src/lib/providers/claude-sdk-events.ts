@@ -83,6 +83,22 @@ function assistantDetails(msg: SDKMessage & { type: 'assistant' }): Record<strin
   if (Array.isArray(content)) {
     const textBlock = content.find((b: { type: string }) => b.type === 'text') as { text?: string } | undefined;
     if (textBlock?.text) details.textPreview = truncate(textBlock.text);
+
+    // Extract tool_use blocks — name + input summary
+    const toolBlocks = content.filter((b: { type: string }) => b.type === 'tool_use') as Array<{ name?: string; input?: Record<string, unknown> }>;
+    if (toolBlocks.length > 0) {
+      details.toolCalls = toolBlocks.map((t) => {
+        const call: Record<string, unknown> = { name: t.name };
+        // For Bash, include the command
+        if (t.name === 'Bash' && t.input && typeof t.input.command === 'string') {
+          call.command = truncate(t.input.command as string, 150);
+        }
+        if (t.name === 'Read' && t.input && typeof t.input.file_path === 'string') {
+          call.path = t.input.file_path;
+        }
+        return call;
+      });
+    }
   }
   if (msg.error) details.error = msg.error;
   if (msg.parent_tool_use_id) details.parentToolUseId = msg.parent_tool_use_id;
