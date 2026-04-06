@@ -1,5 +1,3 @@
-import { execFile as execFileCb } from 'node:child_process';
-import { promisify } from 'node:util';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 
 import { z } from 'zod';
@@ -9,10 +7,8 @@ import { recordAuditEvent } from '../../lib/audit-events.js';
 import * as registry from '../../lib/executor-registry.js';
 import { resolvePermissionConfig } from '../../lib/providers/claude-sdk-permissions.js';
 import { ClaudeSdkProvider } from '../../lib/providers/claude-sdk.js';
-import type { IExecutor, OmniMessage, OmniSession, SafePgCallFn } from '../executor.js';
+import type { IExecutor, NatsPublishFn, OmniMessage, OmniSession, SafePgCallFn } from '../executor.js';
 import { endSession, recordTurn, startSession, updateTurnCount } from './sdk-session-capture.js';
-
-const execFileAsync = promisify(execFileCb);
 
 // ============================================================================
 // Types
@@ -74,36 +70,67 @@ async function collectQueryResult(queryMessages: Query): Promise<QueryResult> {
 }
 
 // ============================================================================
-// Done tool
+// Done tool — NATS reply (in-process, no subprocess fork)
 // ============================================================================
 
-export async function handleDoneTool(params: Record<string, unknown>, env: Record<string, string>): Promise<string> {
-  const args = ['done'];
-  if (params.skip) {
-    args.push('--skip');
-    if (params.reason) args.push('--reason', String(params.reason));
-  } else if (params.react) {
-    args.push('--react', String(params.react));
-  } else if (params.media) {
-    args.push('--media', String(params.media));
-    if (params.caption) args.push('--caption', String(params.caption));
-    if (params.text) args.push(String(params.text));
-  } else if (params.text) {
-    args.push(String(params.text));
-  } else {
-    args.push('--skip');
-  }
-  try {
-    await execFileAsync('omni', args, { env: { ...process.env, ...env } });
-    return 'Turn closed. Message delivered.';
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[claude-sdk] omni done failed: ${msg}`);
-    return `Turn close attempted but omni done failed: ${msg}`;
-  }
+function buildReplyPayload(agent: string, chatId: string, instanceId: string, extra: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    content: '',
+    agent,
+    chat_id: chatId,
+    instance_id: instanceId,
+    timestamp: new Date().toISOString(),
+    ...extra,
+  });
 }
 
-async function createDoneMcpServer(env: Record<string, string>) {
+function resolveAction(
+  params: Record<string, unknown>,
+  env: Record<string, string>,
+): { type: 'skip' | 'react' | 'media' | 'text'; extra: Record<string, unknown>; label: string } {
+  if (params.skip) return { type: 'skip', extra: { reason: params.reason }, label: 'Turn closed (skip).' };
+  if (params.react)
+    return {
+      type: 'react',
+      extra: { react: String(params.react), message_id: env.OMNI_MESSAGE ?? '' },
+      label: `Reacted ${params.react} + turn closed.`,
+    };
+  if (params.media) {
+    const text = params.caption ? String(params.caption) : params.text ? String(params.text) : '';
+    return { type: 'media', extra: { content: text, media: String(params.media) }, label: 'Media sent + turn closed.' };
+  }
+  if (params.text)
+    return { type: 'text', extra: { content: String(params.text) }, label: 'Turn closed. Message delivered.' };
+  return { type: 'skip', extra: {}, label: 'Turn closed (skip).' };
+}
+
+export function handleDoneTool(
+  params: Record<string, unknown>,
+  env: Record<string, string>,
+  natsPublish: NatsPublishFn | null,
+): string {
+  const instanceId = env.OMNI_INSTANCE ?? '';
+  const chatId = env.OMNI_CHAT ?? '';
+  const agent = env.OMNI_AGENT ?? '';
+  const action = resolveAction(params, env);
+
+  if (action.type === 'skip') {
+    if (natsPublish && instanceId && chatId) {
+      natsPublish(`omni.turn.done.${instanceId}.${chatId}`, JSON.stringify({ action: 'skip', ...action.extra }));
+    }
+    return action.label;
+  }
+
+  if (!natsPublish || !instanceId || !chatId) {
+    console.warn('[claude-sdk] No NATS publish available — reply dropped');
+    return 'Turn close attempted but NATS publish not available.';
+  }
+
+  natsPublish(`omni.reply.${instanceId}.${chatId}`, buildReplyPayload(agent, chatId, instanceId, action.extra));
+  return action.label;
+}
+
+async function createDoneMcpServer(env: Record<string, string>, natsPublish: NatsPublishFn | null) {
   const { createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk');
   return createSdkMcpServer({
     name: 'genie-omni-tools',
@@ -120,7 +147,7 @@ async function createDoneMcpServer(env: Record<string, string>) {
           reason: z.string().optional().describe('Internal reason for skipping'),
         },
         async (args) => {
-          const result = await handleDoneTool(args as Record<string, unknown>, env);
+          const result = handleDoneTool(args as Record<string, unknown>, env, natsPublish);
           return { content: [{ type: 'text' as const, text: result }] };
         },
       ),
@@ -135,11 +162,16 @@ async function createDoneMcpServer(env: Record<string, string>) {
 export class ClaudeSdkOmniExecutor implements IExecutor {
   private sessions = new Map<string, SdkSessionState>();
   private safePgCall: SafePgCallFn | null = null;
+  private natsPublish: NatsPublishFn | null = null;
   private deliveryQueues = new Map<string, Promise<void>>();
   private pendingNudges = new Map<string, string>();
 
   setSafePgCall(fn: SafePgCallFn): void {
     this.safePgCall = fn;
+  }
+
+  setNatsPublish(fn: NatsPublishFn): void {
+    this.natsPublish = fn;
   }
 
   async injectNudge(session: OmniSession, text: string): Promise<void> {
@@ -294,7 +326,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       });
     }
 
-    const doneMcp = await createDoneMcpServer(state.env);
+    const doneMcp = await createDoneMcpServer(state.env, this.natsPublish);
     const extraOptions: Record<string, unknown> = {
       abortController: state.abortController,
       mcpServers: { 'genie-omni-tools': doneMcp },

@@ -35,6 +35,10 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     this.safePgCall = fn;
   }
 
+  setNatsPublish(_fn: import('../executor.js').NatsPublishFn): void {
+    // No-op: tmux executor replies via tmux pane, not NATS
+  }
+
   async injectNudge(session: OmniSession, text: string): Promise<void> {
     const nudgeText = `[system] ${text}`;
     await executeTmux(`send-keys -t '${session.paneId}' ${shellQuote(nudgeText)} Enter`);

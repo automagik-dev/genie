@@ -32,6 +32,9 @@ export interface OmniMessage {
   timestamp?: string;
 }
 
+/** Callback for publishing NATS reply messages in-process (replaces subprocess fork). */
+export type NatsPublishFn = (topic: string, payload: string) => void;
+
 /** Pluggable executor backend for the Omni bridge. TODO: merge into ExecutorProvider. */
 export interface IExecutor {
   spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<OmniSession>;
@@ -39,6 +42,8 @@ export interface IExecutor {
   shutdown(session: OmniSession): Promise<void>;
   isAlive(session: OmniSession): Promise<boolean>;
   setSafePgCall(fn: import('../lib/safe-pg-call.js').SafePgCallFn): void;
+  /** Inject NATS publish function for in-process reply delivery. */
+  setNatsPublish(fn: NatsPublishFn): void;
   /** Inject a nudge message into an active session (for turn timeout warnings). */
   injectNudge(session: OmniSession, text: string): Promise<void>;
 }
