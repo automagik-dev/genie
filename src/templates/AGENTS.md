@@ -1,9 +1,14 @@
 ---
-name: my-agent
-description: "Describe what this agent does."
-model: inherit
-color: blue
-promptMode: system
+# ── Freeform (no default, fill in as needed) ──
+# description: Describe what this agent does.
+
+# ── Inherited defaults (effective values shown, uncomment to override) ──
+# model: opus
+# promptMode: append
+# color: blue
+# effort: high
+# thinking: enabled
+# permissionMode: default
 ---
 
 @HEARTBEAT.md

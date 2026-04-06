@@ -30,9 +30,10 @@ describe('scaffoldAgentFiles', () => {
     expect(content).not.toContain('name: my-agent');
   });
 
-  test('uses default name when no agent name provided', () => {
+  test('no active name field when no agent name provided', () => {
     scaffoldAgentFiles(testDir);
     const content = readFileSync(join(testDir, 'AGENTS.md'), 'utf-8');
-    expect(content).toContain('name: my-agent');
+    // With the new template, name derives from directory — no active name: field
+    expect(content).not.toMatch(/^name:/m);
   });
 });
