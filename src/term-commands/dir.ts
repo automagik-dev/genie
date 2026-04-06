@@ -444,7 +444,8 @@ function listEntriesJson(entries: directory.ScopedDirectoryEntry[], includeBuilt
       });
     }
   }
-  console.log(JSON.stringify(result, null, 2));
+  const { writeStdout } = require('../lib/term-format.js') as typeof import('../lib/term-format.js');
+  writeStdout(JSON.stringify(result, null, 2));
 }
 
 // ============================================================================

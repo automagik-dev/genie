@@ -37,6 +37,16 @@ const auditRenderers: Record<string, (e: AuditInput) => RenderedEvent> = {
   }),
   'sdk.user.message': (e) => {
     const d = e.details;
+    const text = d.textPreview;
+    if (typeof text === 'string' && text.length > 0) {
+      const tag = d.isReplay ? color('dim', ' (replay)') : d.isSynthetic ? color('dim', ' (synthetic)') : '';
+      return {
+        indicator: color('cyan', '👤'),
+        content: `${color('cyan', `"${text}"`)}${tag}`,
+        context: shortEntity(e.entity_id),
+      };
+    }
+    // No text — tool result or system turn
     const kind = d.isReplay ? 'replay' : d.isSynthetic ? 'synthetic' : 'turn';
     return {
       indicator: color('cyan', '👤'),
@@ -51,18 +61,20 @@ const auditRenderers: Record<string, (e: AuditInput) => RenderedEvent> = {
   }),
   'sdk.hook.response': (e) => {
     const outcome = e.details.outcome === 'success' ? color('green', '✓') : color('red', '✗');
+    const hookId = e.details.hookId ? color('dim', ` ${String(e.details.hookId).slice(0, 8)}`) : '';
     return {
       indicator: color('yellow', '🪝'),
-      content: `${e.details.hookName ?? '?'} ${outcome}`,
+      content: `${e.details.hookName ?? '?'} ${outcome}${hookId}`,
       context: shortEntity(e.entity_id),
     };
   },
   'sdk.system': (e) => {
     const model = String(e.details.model ?? '?').replace(/^claude-/, '');
     const tools = e.details.tools ?? 0;
+    const session = e.details.sessionId ? ` · ${color('dim', String(e.details.sessionId).slice(0, 8))}` : '';
     return {
       indicator: color('gray', '⚙'),
-      content: `init ${color('cyan', model)} · ${tools} tools`,
+      content: `init ${color('cyan', model)} · ${tools} tools${session}`,
       context: shortEntity(e.entity_id),
     };
   },
@@ -93,6 +105,34 @@ const auditRenderers: Record<string, (e: AuditInput) => RenderedEvent> = {
       context: shortEntity(e.entity_id),
     };
   },
+  'session.created_fresh': (e) => ({
+    indicator: color('green', '✦'),
+    content: color('green', `session created · ${e.details.agent_id ?? '?'}`),
+    context: shortEntity(e.entity_id),
+  }),
+  'session.resumed': (e) => ({
+    indicator: color('cyan', '↻'),
+    content: color('cyan', `session resumed · ${e.details.agent_id ?? '?'}`),
+    context: shortEntity(e.entity_id),
+  }),
+  'deliver.start': (e) => ({
+    indicator: color('blue', '▸'),
+    content: color('dim', `deliver → ${e.details.agent_id ?? '?'}`),
+    context: shortEntity(e.entity_id),
+  }),
+  'deliver.end': (e) => {
+    const turns = e.details.turn_count ? ` · turn ${e.details.turn_count}` : '';
+    return {
+      indicator: color('blue', '◂'),
+      content: color('dim', `deliver done${turns}`),
+      context: shortEntity(e.entity_id),
+    };
+  },
+  state_changed: (e) => ({
+    indicator: color('gray', '◉'),
+    content: color('dim', `state → ${e.details.state ?? '?'}`),
+    context: shortEntity(e.entity_id),
+  }),
   'executor.spawn': (e) => ({
     indicator: color('green', '▶'),
     content: color('green', `spawn ${e.details.source ?? ''}`),
@@ -129,8 +169,19 @@ const auditRenderers: Record<string, (e: AuditInput) => RenderedEvent> = {
 
 /** Render an audit event into a formatted line. */
 export function renderAuditEvent(input: AuditInput): RenderedEvent {
+  // Normalize details — some callers store it as a JSON string (double-encoded).
+  let details = input.details;
+  if (typeof details === 'string') {
+    try {
+      details = JSON.parse(details);
+    } catch {
+      details = {};
+    }
+  }
+  const normalized = { ...input, details: details ?? {} };
   const renderer = auditRenderers[input.event_type];
-  if (renderer) return renderer(input);
+  if (renderer) return renderer(normalized);
+  input = normalized;
 
   // Fallback: generic format with compact JSON
   const json = JSON.stringify(input.details);
