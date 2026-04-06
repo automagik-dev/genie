@@ -552,8 +552,8 @@ function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, wi
     const spawnOpts = { detached: true, stdio: 'ignore' as const, cwd, env: cleanEnv };
     const child =
       genieBin && genieBin !== 'genie'
-        ? spawn(bunPath, [genieBin, 'spawn', name, '--session', sessionName], spawnOpts)
-        : spawn('genie', ['spawn', name, '--session', sessionName], spawnOpts);
+        ? spawn(bunPath, [genieBin, 'spawn', name, '--session', sessionName, '--new-window'], spawnOpts)
+        : spawn('genie', ['spawn', name, '--session', sessionName, '--new-window'], spawnOpts);
     child.unref();
     if (onTmuxSessionSelect) {
       attachSpawnedAgentWhenReady(sessionName, onTmuxSessionSelect);
