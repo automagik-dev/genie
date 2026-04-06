@@ -619,6 +619,7 @@ function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Age
   console.log(`  Team:     ${ctx.validated.team}`);
   console.log(`  Pane:     ${paneId}`);
   if (ctx.validated.role) console.log(`  Role:     ${ctx.validated.role}`);
+  if (ctx.executorId) console.log(`  Executor: ${ctx.executorId}`);
   if (ctx.validated.skill) console.log(`  Skill:    ${ctx.validated.skill}`);
   if (workerEntry.claudeSessionId) {
     console.log(`  Session:  ${workerEntry.claudeSessionId}`);
@@ -1031,8 +1032,12 @@ async function launchSdkSpawn(
 
   await registerSpawnWorker(ctx, 'sdk');
 
+  // Expose executor ID to child processes and agent tools
+  if (ctx.executorId) process.env.GENIE_EXECUTOR_ID = ctx.executorId;
+
   console.log(`Agent "${ctx.workerId}" starting via Claude Agent SDK...`);
   console.log(`  Provider: claude-sdk | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
+  if (ctx.executorId) console.log(`  Executor: ${ctx.executorId}`);
   console.log('');
 
   const { resolvePermissionConfig } = await import('../lib/providers/claude-sdk-permissions.js');
