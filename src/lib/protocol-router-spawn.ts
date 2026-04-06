@@ -299,7 +299,7 @@ export async function spawnWorkerFromTemplate(
   // Auto-brain: discover brain/ dir → register in knowledge graph
   try {
     // @ts-expect-error — brain is enterprise-only, not in genie's deps
-    const brain = await import('@automagik/genie-brain');
+    const brain = await import('@khal-os/brain');
     if (brain.autoBrain) {
       await brain.autoBrain({ agentId: workerId, workdir: repoPath });
     }

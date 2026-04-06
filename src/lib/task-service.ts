@@ -624,7 +624,7 @@ export async function createTask(input: TaskInput, repoPath?: string, projectId?
   if (input.metadata?.brain) {
     try {
       // @ts-expect-error — brain is enterprise-only, not in genie's deps
-      const brain = await import('@automagik/genie-brain');
+      const brain = await import('@khal-os/brain');
       if (brain.taskBrain) {
         await brain.taskBrain({ taskId: String(task.id), workdir: repo });
       }
