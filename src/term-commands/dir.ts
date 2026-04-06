@@ -22,8 +22,16 @@ import * as directory from '../lib/agent-directory.js';
 import { printSyncResult, syncAgentDirectory } from '../lib/agent-sync.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { ALL_BUILTINS } from '../lib/builtin-agents.js';
+import {
+  RESOLVED_FIELDS,
+  type ResolveContext,
+  type ResolvedSource,
+  resolveFieldWithSource,
+} from '../lib/defaults.js';
+import { parseFrontmatter } from '../lib/frontmatter.js';
 import { contractPath } from '../lib/genie-config.js';
 import type { SdkBeta, SdkDirectoryConfig, SdkThinkingConfig } from '../lib/sdk-directory-types.js';
+import { findWorkspace, getWorkspaceConfig } from '../lib/workspace.js';
 
 export function registerDirNamespace(program: Command): void {
   const dir = program.command('dir').description('Agent directory management');
@@ -143,9 +151,10 @@ export function registerDirNamespace(program: Command): void {
     .command('export <name>')
     .description('Print full AGENTS.md frontmatter for an agent from PG state')
     .option('--stdout', 'Print to stdout as raw YAML (default)')
-    .action(async (name: string) => {
+    .option('--json', 'Print resolved fields as nested JSON with declared/resolved/source')
+    .action(async (name: string, options: { json?: boolean }) => {
       try {
-        await handleDirExport(name);
+        await handleDirExport(name, options);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
@@ -257,14 +266,31 @@ async function handleDirSync(): Promise<void> {
   printSyncResult(result);
 }
 
-async function handleDirExport(name: string): Promise<void> {
+async function handleDirExport(name: string, options: { json?: boolean }): Promise<void> {
   const entry = await directory.get(name);
   if (!entry) {
     console.error(`Agent "${name}" not found in directory.`);
     process.exit(1);
   }
 
-  // Build frontmatter object from directory entry
+  if (options.json) {
+    // Nested JSON with resolved fields: each key has {declared, resolved, source}
+    const ctx = buildDirResolveContext(name);
+    const output: Record<string, unknown> = { name: entry.name };
+    for (const field of RESOLVED_FIELDS) {
+      const declared = entry[field as keyof typeof entry] ?? null;
+      const result = resolveFieldWithSource(entry as unknown as Record<string, unknown>, field, ctx);
+      output[field] = {
+        declared: declared ?? null,
+        resolved: result.value,
+        source: result.source,
+      };
+    }
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
+
+  // Default: YAML frontmatter export (existing behavior)
   const fm: Record<string, unknown> = {};
   if (entry.name) fm.name = entry.name;
   if (entry.description) fm.description = entry.description;
@@ -286,6 +312,33 @@ async function handleDirExport(name: string): Promise<void> {
   });
 
   console.log(`---\n${yamlStr}---`);
+}
+
+/** Build a ResolveContext for dir commands (reads workspace.json). */
+function buildDirResolveContext(agentName: string): ResolveContext {
+  const ctx: ResolveContext = {};
+  try {
+    const ws = findWorkspace();
+    if (ws) {
+      const wsConfig = getWorkspaceConfig(ws.root);
+      ctx.workspaceDefaults = wsConfig.agents?.defaults as ResolveContext['workspaceDefaults'];
+
+      // Detect parent for sub-agents
+      if (agentName.includes('/')) {
+        const parentName = agentName.split('/')[0];
+        const { existsSync, readFileSync } = require('node:fs') as typeof import('node:fs');
+        const { join } = require('node:path') as typeof import('node:path');
+        const parentAgentsMd = join(ws.root, 'agents', parentName, 'AGENTS.md');
+        if (existsSync(parentAgentsMd)) {
+          const parentFm = parseFrontmatter(readFileSync(parentAgentsMd, 'utf-8'));
+          ctx.parent = { name: parentName, fields: parentFm as Record<string, unknown> };
+        }
+      }
+    }
+  } catch {
+    // Best-effort
+  }
+  return ctx;
 }
 
 // ============================================================================
@@ -371,6 +424,7 @@ async function listEntries(json?: boolean, includeBuiltins?: boolean, _includeAr
 
   if (entries.length > 0) {
     printRegisteredTable(entries);
+    printResolvedTable(entries);
   }
 
   if (includeBuiltins) {
@@ -739,6 +793,38 @@ function printRegisteredTable(entries: directory.ScopedDirectoryEntry[]): void {
     console.log(
       `  ${entry.name.padEnd(nameW)}${entry.scope.padEnd(scopeW)}${repo.padEnd(repoW)}${(entry.model || '-').padEnd(modelW)}${(entry.provider || '-').padEnd(providerW)}${roles}`,
     );
+  }
+  console.log('');
+}
+
+function printResolvedTable(entries: directory.ScopedDirectoryEntry[]): void {
+  if (entries.length === 0) return;
+
+  const nameW = 22;
+  const declW = 14;
+  const resolvedW = 14;
+
+  console.log('RESOLVED DEFAULTS');
+  console.log('-'.repeat(70));
+
+  // Print header per resolved field
+  for (const field of RESOLVED_FIELDS) {
+    const fieldUpper = field.toUpperCase();
+    console.log(
+      `  ${'AGENT'.padEnd(nameW)}${`${fieldUpper} (declared)`.padEnd(declW)}${`${fieldUpper} (resolved)`.padEnd(resolvedW)}SOURCE`,
+    );
+    console.log(
+      `  ${'-'.repeat(nameW - 2)}  ${'-'.repeat(declW - 2)}  ${'-'.repeat(resolvedW - 2)}  ${'-'.repeat(16)}`,
+    );
+
+    for (const entry of entries) {
+      const ctx = buildDirResolveContext(entry.name);
+      const result = resolveFieldWithSource(entry as unknown as Record<string, unknown>, field, ctx);
+      const declared = (entry[field as keyof typeof entry] as string) || '-';
+      console.log(
+        `  ${entry.name.padEnd(nameW)}${declared.padEnd(declW)}${result.value.padEnd(resolvedW)}${result.source}`,
+      );
+    }
   }
   console.log('');
 }

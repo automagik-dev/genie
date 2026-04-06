@@ -12,6 +12,7 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { PromptMode } from './agent-directory.js';
+import { normalizeValue } from './defaults.js';
 import { parseFrontmatter } from './frontmatter.js';
 
 // ============================================================================
@@ -98,7 +99,7 @@ function scanAgents(agentsDir: string): BuiltinAgent[] {
       name,
       description: fm.description || '',
       agentPath: agentsPath,
-      model: fm.model === 'inherit' ? undefined : fm.model,
+      model: normalizeValue(fm.model),
       promptMode: fm.promptMode || undefined,
       category: isCouncil ? 'council' : 'role',
       color: fm.color,
