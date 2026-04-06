@@ -326,10 +326,11 @@ export async function queryTimeline(entityId: string): Promise<AuditEventRow[]> 
   const rows = await sql.unsafe(
     `SELECT id, entity_type, entity_id, event_type, actor, details, created_at
      FROM audit_events
-     WHERE entity_id = $1
+     WHERE (entity_id = $1
         OR actor = $1
         OR details->>'traceId' = $1
-        OR details->>'session_id' = $1
+        OR details->>'session_id' = $1)
+       AND event_type != 'sdk.stream.partial'
      ORDER BY created_at ASC
      LIMIT 500`,
     [entityId],
