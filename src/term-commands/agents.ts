@@ -1344,7 +1344,7 @@ async function buildSpawnParams(
     model: agent.model,
     systemPromptFile: agent.identityPath ?? undefined,
     promptMode: agent.entry.promptMode,
-    initialPrompt: options.initialPrompt,
+    initialPrompt: options.prompt ?? options.initialPrompt,
     newWindow: options.newWindow,
     windowTarget: options.window,
   };

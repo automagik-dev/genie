@@ -118,6 +118,7 @@ function systemDetails(msg: Record<string, unknown>): Record<string, unknown> {
       details.cwd = msg.cwd;
       details.version = msg.claude_code_version;
       details.tools = Array.isArray(msg.tools) ? (msg.tools as string[]).length : 0;
+      if (msg.session_id) details.sessionId = msg.session_id;
     },
     api_retry: () => {
       details.attempt = msg.attempt;
@@ -242,6 +243,14 @@ const DETAIL_BUILDERS: Record<string, DetailBuilder> = {
       isSynthetic: msg.isSynthetic === true,
     };
     if (msg.parent_tool_use_id) d.parentToolUseId = msg.parent_tool_use_id;
+    // Extract text content — user messages can be string or array of content blocks
+    const content = msg.message?.content;
+    if (typeof content === 'string') {
+      d.textPreview = truncate(content);
+    } else if (Array.isArray(content)) {
+      const textBlock = content.find((b: { type: string }) => b.type === 'text') as { text?: string } | undefined;
+      if (textBlock?.text) d.textPreview = truncate(textBlock.text);
+    }
     return d;
   },
 };
