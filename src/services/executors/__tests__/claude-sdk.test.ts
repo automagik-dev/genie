@@ -444,4 +444,60 @@ describe('ClaudeSdkOmniExecutor', () => {
       expect(createAndLinkExecutorMock).not.toHaveBeenCalled();
     });
   });
+
+  // ==========================================================================
+  // Turn-based prompt injection (Group 4 — omni-turn-based-dx)
+  // ==========================================================================
+
+  describe('turn-based prompt injection', () => {
+    beforeEach(() => {
+      resetAllMocks();
+    });
+
+    it('includes turn-based instructions in system prompt when OMNI_INSTANCE is set', async () => {
+      const env = { OMNI_INSTANCE: 'inst-wb', OMNI_CHAT: 'chat-wb', OMNI_AGENT: 'bot' };
+      const session = await executor.spawn('test-agent', 'chat-wb', env);
+
+      await executor.deliver(session, {
+        content: 'Hello from WhatsApp',
+        sender: 'Alice',
+        instanceId: 'inst-wb',
+        chatId: 'chat-wb',
+        agent: 'test-agent',
+      });
+      await executor.waitForDeliveries(session.id);
+
+      expect(queryMock).toHaveBeenCalledTimes(1);
+      const callArgs = (queryMock.mock.calls[0] as unknown as [{ options?: { systemPrompt?: string } }])[0];
+      const systemPrompt = callArgs.options?.systemPrompt ?? '';
+
+      // Verify turn-based prompt content
+      expect(systemPrompt).toContain('WhatsApp');
+      expect(systemPrompt).toContain('Alice');
+      expect(systemPrompt).toContain('omni say');
+      expect(systemPrompt).toContain('omni done');
+      expect(systemPrompt).toContain('inst-wb');
+    });
+
+    it('does NOT include turn-based instructions when OMNI_INSTANCE is absent', async () => {
+      const session = await executor.spawn('test-agent', 'chat-plain', {});
+
+      await executor.deliver(session, {
+        content: 'Hello from CLI',
+        sender: 'bob',
+        instanceId: 'inst-1',
+        chatId: 'chat-plain',
+        agent: 'test-agent',
+      });
+      await executor.waitForDeliveries(session.id);
+
+      expect(queryMock).toHaveBeenCalledTimes(1);
+      const callArgs = (queryMock.mock.calls[0] as unknown as [{ options?: { systemPrompt?: string } }])[0];
+      const systemPrompt = callArgs.options?.systemPrompt ?? '';
+
+      expect(systemPrompt).not.toContain('WhatsApp');
+      expect(systemPrompt).not.toContain('omni say');
+      expect(systemPrompt).not.toContain('omni done');
+    });
+  });
 });
