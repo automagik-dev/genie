@@ -41,6 +41,28 @@ async function loadSystemPrompt(entry: directory.DirectoryEntry): Promise<string
   }
 }
 
+/**
+ * Resolve the system prompt for a delivery, optionally prepending turn-based
+ * WhatsApp instructions when the session is running via the Omni bridge.
+ *
+ * Returns `{ prompt, isTurnBased }` so the caller can decide whether to
+ * send the prompt on resume deliveries.
+ */
+async function resolveSystemPrompt(
+  entry: directory.DirectoryEntry,
+  state: SdkSessionState,
+  message: OmniMessage,
+  chatId: string,
+): Promise<{ prompt: string | undefined; isTurnBased: boolean }> {
+  let prompt = await loadSystemPrompt(entry);
+  const isTurnBased = Boolean(state.env.OMNI_INSTANCE);
+  if (isTurnBased) {
+    const turnPrompt = buildTurnBasedPrompt(message.sender, state.env.OMNI_INSTANCE, state.env.OMNI_CHAT ?? chatId);
+    prompt = prompt ? `${turnPrompt}\n\n${prompt}` : turnPrompt;
+  }
+  return { prompt, isTurnBased };
+}
+
 interface QueryResult {
   text: string;
   sessionId?: string;
@@ -314,20 +336,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
 
     const entry = resolved.entry;
     const permissionConfig = resolvePermissionConfig(entry.permissions);
-    let systemPrompt = await loadSystemPrompt(entry);
-
-    // Inject turn-based WhatsApp instructions when running via Omni bridge.
-    // Prepended on every delivery because the system prompt may not persist
-    // across SDK resume calls.
-    const isTurnBased = Boolean(state.env.OMNI_INSTANCE);
-    if (isTurnBased) {
-      const turnPrompt = buildTurnBasedPrompt(
-        message.sender,
-        state.env.OMNI_INSTANCE,
-        state.env.OMNI_CHAT ?? session.chatId,
-      );
-      systemPrompt = systemPrompt ? `${turnPrompt}\n\n${systemPrompt}` : turnPrompt;
-    }
+    const { prompt: systemPrompt, isTurnBased } = await resolveSystemPrompt(entry, state, message, session.chatId);
 
     if (state.executorId) await this.updateState(state.executorId, 'working', session.chatId);
 
