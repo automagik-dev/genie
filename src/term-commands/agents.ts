@@ -13,10 +13,9 @@ import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
-import { type ResolveContext, resolveField } from '../lib/defaults.js';
-import { getWorkspaceConfig, findWorkspace } from '../lib/workspace.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
+import { type ResolveContext, resolveField } from '../lib/defaults.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import * as executorRegistry from '../lib/executor-registry.js';
 import type { TransportType as ExecutorTransport } from '../lib/executor-types.js';
@@ -36,6 +35,7 @@ import * as teamManager from '../lib/team-manager.js';
 import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
 import * as tmux from '../lib/tmux.js';
 import { executeTmux, isPaneAlive } from '../lib/tmux.js';
+import { findWorkspace, getWorkspaceConfig } from '../lib/workspace.js';
 
 // ============================================================================
 // Helper Functions
@@ -1276,7 +1276,7 @@ async function resolveAgentForSpawn(
 }
 
 /** Build a ResolveContext for spawn-time resolution (reads workspace.json fresh from disk). */
-function buildSpawnResolveContext(agentName: string, entry: directory.DirectoryEntry): ResolveContext {
+function buildSpawnResolveContext(agentName: string, _entry: directory.DirectoryEntry): ResolveContext {
   const ctx: ResolveContext = {};
 
   // Read workspace defaults fresh from disk

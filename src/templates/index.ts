@@ -7,7 +7,7 @@
 
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { BUILTIN_DEFAULTS, type AgentDefaults, computeEffectiveDefaults } from '../lib/defaults.js';
+import { type AgentDefaults, BUILTIN_DEFAULTS, computeEffectiveDefaults } from '../lib/defaults.js';
 
 export const SOUL_TEMPLATE = `# Soul
 
@@ -78,10 +78,7 @@ Define your agent's mission here. What is their primary goal? What do they own?
  * Render the AGENTS_TEMPLATE with effective default values substituted into
  * the comment placeholders. Optionally prepends an active `name:` field.
  */
-function renderAgentsTemplate(
-  agentName?: string,
-  workspaceDefaults?: Partial<AgentDefaults>,
-): string {
+function renderAgentsTemplate(agentName?: string, workspaceDefaults?: Partial<AgentDefaults>): string {
   const effective = computeEffectiveDefaults(workspaceDefaults);
 
   let rendered = AGENTS_TEMPLATE;
