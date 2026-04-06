@@ -9,6 +9,7 @@ import { resolvePermissionConfig } from '../../lib/providers/claude-sdk-permissi
 import { ClaudeSdkProvider } from '../../lib/providers/claude-sdk.js';
 import type { IExecutor, NatsPublishFn, OmniMessage, OmniSession, SafePgCallFn } from '../executor.js';
 import { endSession, recordTurn, startSession, updateTurnCount } from './sdk-session-capture.js';
+import { buildTurnBasedPrompt } from './turn-based-prompt.js';
 
 // ============================================================================
 // Types
@@ -313,7 +314,20 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
 
     const entry = resolved.entry;
     const permissionConfig = resolvePermissionConfig(entry.permissions);
-    const systemPrompt = await loadSystemPrompt(entry);
+    let systemPrompt = await loadSystemPrompt(entry);
+
+    // Inject turn-based WhatsApp instructions when running via Omni bridge.
+    // Prepended on every delivery because the system prompt may not persist
+    // across SDK resume calls.
+    const isTurnBased = Boolean(state.env.OMNI_INSTANCE);
+    if (isTurnBased) {
+      const turnPrompt = buildTurnBasedPrompt(
+        message.sender,
+        state.env.OMNI_INSTANCE,
+        state.env.OMNI_CHAT ?? session.chatId,
+      );
+      systemPrompt = systemPrompt ? `${turnPrompt}\n\n${systemPrompt}` : turnPrompt;
+    }
 
     if (state.executorId) await this.updateState(state.executorId, 'working', session.chatId);
 
@@ -350,7 +364,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
         role: session.agentName,
         cwd: entry.dir || process.cwd(),
         model: entry.model,
-        systemPrompt: state.claudeSessionId ? undefined : systemPrompt,
+        systemPrompt: state.claudeSessionId && !isTurnBased ? undefined : systemPrompt,
       },
       queryContent,
       permissionConfig,
