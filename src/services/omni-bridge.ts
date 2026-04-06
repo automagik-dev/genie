@@ -245,6 +245,13 @@ export class OmniBridge {
     // Decision 2 in WISH Post-Audit).
     this.executor.setSafePgCall(this.safePgCall.bind(this));
 
+    // Inject NATS publish for in-process reply delivery (replaces subprocess fork).
+    const sc = this.sc;
+    const nc = this.nc;
+    this.executor.setNatsPublish((topic: string, payload: string) => {
+      nc.publish(topic, sc.encode(payload));
+    });
+
     // Subscribe to all omni messages
     this.sub = this.nc.subscribe('omni.message.>');
     this.processSubscription();
