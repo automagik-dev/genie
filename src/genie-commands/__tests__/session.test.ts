@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { AGENTS_TEMPLATE, HEARTBEAT_TEMPLATE, SOUL_TEMPLATE, scaffoldAgentFiles } from '../../templates/index.js';
+import { HEARTBEAT_TEMPLATE, SOUL_TEMPLATE, scaffoldAgentFiles } from '../../templates/index.js';
 import { buildClaudeCommand, getAgentsFilePath, sanitizeWindowName } from '../session.js';
 
 // ============================================================================
@@ -231,7 +231,8 @@ describe('scaffoldAgentFiles', () => {
     expect(heartbeat).toContain('## Checklist');
 
     const agents = readFileSync(join(TEST_DIR, 'AGENTS.md'), 'utf-8');
-    expect(agents).toContain('name: my-agent');
+    // New template: no active name field when no agent name given
+    expect(agents).toContain('# model:');
     expect(agents).toContain('@HEARTBEAT.md');
     expect(agents).toContain('<mission>');
   });
@@ -240,7 +241,10 @@ describe('scaffoldAgentFiles', () => {
     scaffoldAgentFiles(TEST_DIR);
     expect(readFileSync(join(TEST_DIR, 'SOUL.md'), 'utf-8')).toBe(SOUL_TEMPLATE);
     expect(readFileSync(join(TEST_DIR, 'HEARTBEAT.md'), 'utf-8')).toBe(HEARTBEAT_TEMPLATE);
-    expect(readFileSync(join(TEST_DIR, 'AGENTS.md'), 'utf-8')).toBe(AGENTS_TEMPLATE);
+    // AGENTS.md is rendered with effective defaults (placeholders resolved)
+    const agents = readFileSync(join(TEST_DIR, 'AGENTS.md'), 'utf-8');
+    expect(agents).toContain('# model: opus');
+    expect(agents).not.toContain('{{');
   });
 
   test('AGENTS.md has valid YAML frontmatter', () => {
