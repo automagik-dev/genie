@@ -22,12 +22,7 @@ import * as directory from '../lib/agent-directory.js';
 import { printSyncResult, syncAgentDirectory } from '../lib/agent-sync.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { ALL_BUILTINS } from '../lib/builtin-agents.js';
-import {
-  RESOLVED_FIELDS,
-  type ResolveContext,
-  type ResolvedSource,
-  resolveFieldWithSource,
-} from '../lib/defaults.js';
+import { RESOLVED_FIELDS, type ResolveContext, resolveFieldWithSource } from '../lib/defaults.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
 import { contractPath } from '../lib/genie-config.js';
 import type { SdkBeta, SdkDirectoryConfig, SdkThinkingConfig } from '../lib/sdk-directory-types.js';
