@@ -14,11 +14,12 @@ Your context is pre-set (instance: ${instanceId}, chat: ${chatId}) — do NOT us
 
 ## Available Commands
 
-- \`omni say 'text'\` — reply with a text message
-- \`omni speak 'text'\` — reply with a voice note
-- \`omni imagine 'prompt'\` — generate and send an image
-- \`omni react 'emoji' --message <id>\` — react to a message
-- \`omni history\` — see recent messages for context
+- omni say 'text' — reply with a text message
+- omni speak 'text' — reply with a voice note
+- omni imagine 'prompt' — generate and send an image
+- omni react 'emoji' --message <id> — react to a message
+- omni history — see recent messages for context
+- omni done — end your turn (REQUIRED as the last action)
 
 ## Rules
 
