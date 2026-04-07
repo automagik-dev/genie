@@ -23,27 +23,41 @@ END_MARKER = '<!-- METRICS:END \u2014 \U0001f9de automagik/genie -->'
 def build_metrics_table(metrics: dict) -> str:
     """Build the markdown metrics table with signature markers."""
     timestamp = metrics.get('updated', datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
-    releases = metrics.get('releases_per_day', 0)
-    avg_time = metrics.get('avg_bugfix_time_hours', 0)
-    ship_rate = metrics.get('ship_rate_pct', 0)
-    loc_changed = metrics.get('loc_changed_24h', 0)
-    commits = metrics.get('commits_24h', 0)
-    prs = metrics.get('prs_24h', 0)
-    agents = metrics.get('parallel_agents', 0)
+    date_str = timestamp[:10] if 'T' in timestamp else timestamp
+
+    # 7-day metrics
+    commits_7d = metrics.get('commits_7d', 0)
+    loc_7d = metrics.get('loc_changed_7d', 0)
+    files_7d = metrics.get('files_changed_7d', 0)
+    prs_7d = metrics.get('prs_7d', 0)
+    releases_7d = metrics.get('releases_7d', 0)
+    avg_merge_7d = metrics.get('avg_merge_time_7d', 0)
+
+    # 24h metrics
+    commits_24h = metrics.get('commits_24h', 0)
+    loc_24h = metrics.get('loc_changed_24h', 0)
+    files_24h = metrics.get('files_changed_24h', 0)
+    prs_24h = metrics.get('prs_24h', 0)
+    releases_24h = metrics.get('releases_24h', metrics.get('releases_per_day', 0))
+    avg_merge_24h = metrics.get('avg_merge_time_24h', metrics.get('avg_bugfix_time_hours', 0))
 
     start_marker = f'<!-- METRICS:START \u2014 Updated by Genie Metrics Agent at {timestamp} -->'
 
     lines = [
         start_marker,
-        '| Metric | Value |',
-        '|--------|-------|',
-        f'| Releases/day | {releases} |',
-        f'| Avg bug-fix time | {avg_time}h |',
-        f'| SHIP rate | {ship_rate}% |',
-        f'| Lines changed (24h) | {loc_changed:,} |',
-        f'| Commits (24h) | {commits} |',
-        f'| Pull requests (24h) | {prs} |',
-        f'| Parallel agents | {agents} |',
+        '<p align="center">',
+        '',
+        '| Metric | 7 days | 24h |',
+        '|--------|--------|-----|',
+        f'| Commits | {commits_7d:,} | {commits_24h} |',
+        f'| Lines changed | {loc_7d:,} | {loc_24h:,} |',
+        f'| Files touched | {files_7d:,} | {files_24h} |',
+        f'| Merged PRs | {prs_7d} | {prs_24h} |',
+        f'| npm releases | {releases_7d} | {releases_24h} |',
+        f'| Avg merge time | {avg_merge_7d}h | {avg_merge_24h}h |',
+        '',
+        f'*Last updated: {date_str}*',
+        '</p>',
         END_MARKER,
     ]
     return '\n'.join(lines)
