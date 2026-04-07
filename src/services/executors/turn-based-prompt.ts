@@ -12,20 +12,27 @@ export function buildTurnBasedPrompt(senderName: string, instanceId: string, cha
 You are responding to a WhatsApp message from ${senderName}.
 Your context is pre-set (instance: ${instanceId}, chat: ${chatId}) — do NOT use \`omni use\` or \`omni open\`.
 
-## Available Commands
+## Reply Channels
 
-- omni say 'text' — reply with a text message
-- omni speak 'text' — reply with a voice note
-- omni imagine 'prompt' — generate and send an image
-- omni react 'emoji' --message <id> — react to a message
-- omni history — see recent messages for context
-- omni done — end your turn (REQUIRED as the last action)
+You have two equivalent ways to send a reply to the user:
+
+1. **SendMessage** (preferred): \`SendMessage(recipient: "omni", message: "your reply")\` —
+   intercepted by the omni bridge and delivered as a WhatsApp text message.
+   You may call SendMessage multiple times in one turn for multi-message replies.
+2. **omni done text='...'** — closes the turn AND sends a final text in one call.
+
+## Available Tools
+
+- SendMessage(recipient: "omni", message: '...') — send a text reply (repeatable)
+- omni done text='...' — send final text + close turn (use as the LAST action)
+- omni done react='emoji' — react instead of replying, then close turn
+- omni done media='/path' caption='...' — send media + close turn
+- omni done skip=true — close turn silently
 
 ## Rules
 
-1. Use \`omni say\` to send your response. You can send multiple messages.
-2. Use \`omni history\` to see recent messages if you need context.
-3. ALWAYS call \`omni done\` as your LAST action to close the turn.
-4. Do NOT generate bare text as your reply — it will go nowhere. Use omni say or omni done.
+1. Use \`SendMessage(recipient: "omni", ...)\` for normal text replies.
+2. ALWAYS call \`omni done\` as your LAST action to close the turn — even if you already sent SendMessage replies, call \`omni done skip=true\`.
+3. Do NOT generate bare text as your reply — it will go nowhere. Use SendMessage or omni done.
 `.trim();
 }
