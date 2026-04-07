@@ -1,30 +1,25 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+// IMPORTANT: Import _sdk-mocks FIRST — it registers the process-global
+// mock.module for @anthropic-ai/claude-agent-sdk. Bun's mock.module is
+// process-global; the first file to register wins. Without this import,
+// this file's own mock registration races with _sdk-mocks.ts and whichever
+// loads first in CI (alphabetical order) determines which queryMock is live.
+// Sharing one registration eliminates the 9 CI-only flaky failures.
+import { queryMock, resetQueryMock } from '../../../services/executors/__tests__/_sdk-mocks.js';
+
+import { beforeEach, describe, expect, it, type mock } from 'bun:test';
 import type { SpawnContext } from '../../executor-types.js';
 
-// Mock the SDK query function before importing provider
-mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-  query: mock(() => {
-    const gen = (async function* () {
-      yield { type: 'assistant', message: { content: [{ type: 'text', text: 'hello' }] } };
-    })();
-    return Object.assign(gen, {
-      interrupt: mock(),
-      setPermissionMode: mock(),
-      setModel: mock(),
-      return: mock(async () => ({ value: undefined, done: true })),
-      throw: mock(async () => ({ value: undefined, done: true })),
-    });
-  }),
-}));
-
 const { ClaudeSdkProvider } = await import('../claude-sdk.js');
-const sdk = await import('@anthropic-ai/claude-agent-sdk');
+
+// Alias for backward compat with assertions that used `sdk.query`
+const sdk = { query: queryMock } as { query: ReturnType<typeof mock> };
 
 describe('ClaudeSdkProvider', () => {
   let provider: InstanceType<typeof ClaudeSdkProvider>;
   let ctx: SpawnContext;
 
   beforeEach(() => {
+    resetQueryMock();
     provider = new ClaudeSdkProvider();
     ctx = {
       agentId: 'test-agent',
