@@ -23,7 +23,11 @@
     "src/services/executors/claude-sdk.ts",
     "src/services/omni-bridge.ts",
     "src/lib/audit-events.ts",
-    "src/lib/executor-config.ts"
+    "src/lib/executor-config.ts",
+    "src/lib/tree-scanner.ts",
+    "src/lib/discovery.ts",
+    "src/lib/pending-agents.ts",
+    "src/lib/mini-wizard.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["which"],

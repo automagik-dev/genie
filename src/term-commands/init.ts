@@ -10,6 +10,11 @@ import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import type { Command } from 'commander';
+import { discoverExternalAgents, importAgents } from '../lib/discovery.js';
+import { isInteractive } from '../lib/interactivity.js';
+import { type WizardContext, runMiniWizard } from '../lib/mini-wizard.js';
+import { type PendingAgent, listPending, refreshPending, removePending } from '../lib/pending-agents.js';
+import { GENIEIGNORE_DEFAULTS } from '../lib/tree-scanner.js';
 import { type WorkspaceConfig, findWorkspace, getWorkspaceConfig, scanAgents } from '../lib/workspace.js';
 import { scaffoldAgentFiles } from '../templates/index.js';
 
@@ -144,11 +149,75 @@ async function initWorkspace(): Promise<void> {
   };
 
   writeFileSync(join(genieDir, 'workspace.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+  // Create .genieignore with comprehensive defaults if it doesn't already exist
+  const genieignorePath = join(cwd, '.genieignore');
+  if (!existsSync(genieignorePath)) {
+    writeFileSync(genieignorePath, GENIEIGNORE_DEFAULTS, 'utf-8');
+    console.log('  Created .genieignore');
+  }
+
   console.log(`Workspace created: ${cwd}`);
   if (pgUrl) console.log(`  pgUrl: ${pgUrl}`);
 
   await maybeBootstrapDefaultAgent(cwd);
   await syncWorkspaceAgents(cwd);
+  await runPostInitFlow(cwd, config);
+}
+
+/**
+ * Post-init flow: discovery scan → pending queue → mini-wizard.
+ *
+ * Only runs in interactive mode. In CI/piped mode, the workspace is created
+ * silently without prompts.
+ */
+async function runPostInitFlow(workspaceRoot: string, config: WorkspaceConfig): Promise<void> {
+  if (!isInteractive()) return;
+
+  // 1. Discovery: scan for external agents
+  const discovered = await discoverExternalAgents(workspaceRoot);
+
+  // 2. Pending queue: refresh from discovery results
+  refreshPending(workspaceRoot, discovered);
+  const pending = listPending(workspaceRoot);
+
+  // 3. Mini-wizard: show defaults, offer customization, handle imports
+  const ctx: WizardContext = {
+    workspaceRoot,
+    workspaceName: basename(workspaceRoot),
+    config,
+    discovered,
+    pending,
+    canonicalAgentCount: scanAgents(workspaceRoot).length,
+  };
+
+  const result = await runMiniWizard(ctx);
+
+  // 4. Import agents the user accepted
+  if (result.importedAgents.length > 0) {
+    const toImport = pending.filter((p: PendingAgent) => result.importedAgents.includes(p.name));
+    const discoveredToImport = toImport.map((p: PendingAgent) => ({
+      name: p.name,
+      path: p.path,
+      relativePath: p.relativePath,
+      isSubAgent: p.isSubAgent,
+      parentName: p.parentName,
+    }));
+
+    const importResult = importAgents(workspaceRoot, discoveredToImport);
+
+    for (const name of importResult.imported) {
+      const agent = toImport.find((a: PendingAgent) => a.name === name);
+      if (agent) removePending(workspaceRoot, agent.path);
+      console.log(`  Imported: ${name}`);
+    }
+    for (const err of importResult.errors) {
+      console.error(`  Import failed (${err.name}): ${err.error}`);
+    }
+
+    // Re-sync after imports
+    await syncWorkspaceAgents(workspaceRoot);
+  }
 }
 
 /**
