@@ -32,7 +32,7 @@ export function isInteractive(): boolean {
  * Commands that do NOT require a workspace.
  * These are matched against the root-level command name (first subcommand under `genie`).
  */
-const WORKSPACE_EXEMPT = new Set(['init', 'setup', 'doctor', 'update', 'uninstall', 'shortcuts']);
+const WORKSPACE_EXEMPT = new Set(['init', 'setup', 'doctor', 'update', 'uninstall', 'shortcuts', 'team', 'version', 'help']);
 
 /**
  * Get the root command name (the first subcommand under the program).
