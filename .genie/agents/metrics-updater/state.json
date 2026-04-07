@@ -1,6 +1,6 @@
 {
-  "last_run": "2026-04-06T12:29:47.000Z",
-  "last_run_status": "success",
+  "last_run": "2026-04-07T12:04:30Z",
+  "last_run_status": "failed",
   "last_metrics": {
     "releases_24h": 2,
     "merged_prs_7d": 35,
