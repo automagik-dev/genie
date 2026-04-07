@@ -69,14 +69,14 @@ def calc_ship_rate(prs_json: list, days: int = 7) -> float:
     return round((shipped_first / total) * 100, 0)
 
 
-def calc_loc_changed(repo_root: str, branches: list[str] | None = None) -> int:
-    """Calculate total lines changed (additions + deletions) in last 24 hours.
+def calc_loc_changed(repo_root: str, branches: list[str] | None = None, hours: int = 24) -> int:
+    """Calculate total lines changed (additions + deletions) in last N hours.
 
     When branches is provided, counts changes across all listed branches
     (e.g. ['main', 'dev']) to capture work that hasn't been promoted yet.
     """
     try:
-        cmd = ['git', 'log', '--since=24 hours ago', '--stat', '--format=']
+        cmd = ['git', 'log', f'--since={hours} hours ago', '--stat', '--format=']
         if branches:
             cmd.extend(branches)
         else:
@@ -99,14 +99,14 @@ def calc_loc_changed(repo_root: str, branches: list[str] | None = None) -> int:
         return 0
 
 
-def calc_commits_24h(repo_root: str, branches: list[str] | None = None) -> int:
-    """Count commits in the last 24 hours.
+def calc_commits_24h(repo_root: str, branches: list[str] | None = None, hours: int = 24) -> int:
+    """Count commits in the last N hours.
 
     When branches is provided, counts across all listed branches
     (e.g. ['main', 'dev']) to capture work not yet promoted to main.
     """
     try:
-        cmd = ['git', 'log', '--since=24 hours ago', '--oneline']
+        cmd = ['git', 'log', f'--since={hours} hours ago', '--oneline']
         if branches:
             cmd.extend(branches)
         else:
@@ -120,32 +120,98 @@ def calc_commits_24h(repo_root: str, branches: list[str] | None = None) -> int:
         return 0
 
 
-def calc_prs_24h(owner: str, repo: str) -> int:
-    """Count PRs created in the last 24 hours using gh API."""
+def calc_files_changed(repo_root: str, hours: int = 24, branches: list[str] | None = None) -> int:
+    """Count files changed in the last N hours."""
     try:
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        cmd = ['git', 'log', f'--since={hours} hours ago', '--stat', '--format=']
+        if branches:
+            cmd.extend(branches)
+        else:
+            cmd.append('--all')
         result = subprocess.run(
-            ['gh', 'api', f'search/issues?q=repo:{owner}/{repo}+type:pr+created:>={since}',
-             '--jq', '.total_count'],
-            capture_output=True, text=True
+            cmd, capture_output=True, text=True, cwd=repo_root
         )
-        return int(result.stdout.strip()) if result.stdout.strip() else 0
+        total = 0
+        for line in result.stdout.splitlines():
+            if 'file' in line and 'changed' in line:
+                total += int(line.strip().split()[0])
+        return total
     except Exception:
         return 0
 
 
-def format_metrics(releases_per_day: int, avg_merge_hours: float,
-                   ship_rate: float, parallel_agents: int,
-                   loc_changed_24h: int = 0, commits_24h: int = 0,
-                   prs_24h: int = 0) -> dict:
+def calc_npm_releases(package: str, hours: int = 24) -> int:
+    """Count npm releases in the last N hours."""
+    try:
+        result = subprocess.run(
+            ['npm', 'view', package, 'time', '--json'],
+            capture_output=True, text=True
+        )
+        if not result.stdout.strip():
+            return 0
+        data = json.loads(result.stdout)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        count = 0
+        for ver, ts in data.items():
+            if ver in ('created', 'modified'):
+                continue
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+            if dt >= cutoff:
+                count += 1
+        return count
+    except Exception:
+        return 0
+
+
+def calc_merged_prs(prs_json: list, hours: int = 24) -> int:
+    """Count merged PRs within the last N hours."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    count = 0
+    for pr in prs_json:
+        if not pr.get('merged_at'):
+            continue
+        merged = datetime.fromisoformat(pr['merged_at'].replace('Z', '+00:00'))
+        if merged >= cutoff:
+            count += 1
+    return count
+
+
+def calc_avg_merge_time_window(prs_json: list, hours: int = 24) -> float:
+    """Calculate average merge time in hours for PRs merged in the last N hours."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    durations = []
+    for pr in prs_json:
+        if not pr.get('merged_at'):
+            continue
+        merged = datetime.fromisoformat(pr['merged_at'].replace('Z', '+00:00'))
+        if merged < cutoff:
+            continue
+        created = datetime.fromisoformat(pr['created_at'].replace('Z', '+00:00'))
+        durations.append((merged - created).total_seconds() / 3600)
+    if not durations:
+        return 0.0
+    return round(sum(durations) / len(durations), 1)
+
+
+def format_metrics(*, commits_7d: int = 0, loc_7d: int = 0, files_7d: int = 0,
+                   prs_7d: int = 0, releases_7d: int = 0, avg_merge_7d: float = 0,
+                   commits_24h: int = 0, loc_24h: int = 0, files_24h: int = 0,
+                   prs_24h: int = 0, releases_24h: int = 0, avg_merge_24h: float = 0,
+                   parallel_agents: int = 0) -> dict:
     """Format metrics into the standard output structure."""
     return {
-        'releases_per_day': releases_per_day,
-        'avg_bugfix_time_hours': avg_merge_hours,
-        'ship_rate_pct': ship_rate,
-        'loc_changed_24h': loc_changed_24h,
+        'commits_7d': commits_7d,
+        'loc_changed_7d': loc_7d,
+        'files_changed_7d': files_7d,
+        'prs_7d': prs_7d,
+        'releases_7d': releases_7d,
+        'avg_merge_time_7d': avg_merge_7d,
         'commits_24h': commits_24h,
+        'loc_changed_24h': loc_24h,
+        'files_changed_24h': files_24h,
         'prs_24h': prs_24h,
+        'releases_24h': releases_24h,
+        'avg_merge_time_24h': avg_merge_24h,
         'parallel_agents': parallel_agents,
         'updated': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }
@@ -184,21 +250,24 @@ def main():
         with open(args.prs_json) as f:
             prs = json.load(f)
 
-        releases_count = parse_releases_count(releases)
-        avg_merge = calc_avg_merge_time_hours(prs)
-        ship_rate = calc_ship_rate(prs)
-        loc_changed = calc_loc_changed(args.repo_root, args.branches)
-        commits = calc_commits_24h(args.repo_root, args.branches)
-        prs_count = calc_prs_24h(args.owner, args.repo)
+        pkg = f'@{args.owner}/{args.repo}'
 
         metrics = format_metrics(
-            releases_per_day=releases_count,
-            avg_merge_hours=avg_merge,
-            ship_rate=ship_rate,
+            # 7-day metrics
+            commits_7d=calc_commits_24h(args.repo_root, args.branches, hours=168),
+            loc_7d=calc_loc_changed(args.repo_root, args.branches, hours=168),
+            files_7d=calc_files_changed(args.repo_root, hours=168, branches=args.branches),
+            prs_7d=calc_merged_prs(prs, hours=168),
+            releases_7d=calc_npm_releases(pkg, hours=168),
+            avg_merge_7d=calc_avg_merge_time_window(prs, hours=168),
+            # 24h metrics
+            commits_24h=calc_commits_24h(args.repo_root, args.branches),
+            loc_24h=calc_loc_changed(args.repo_root, args.branches),
+            files_24h=calc_files_changed(args.repo_root, branches=args.branches),
+            prs_24h=calc_merged_prs(prs),
+            releases_24h=calc_npm_releases(pkg),
+            avg_merge_24h=calc_avg_merge_time_window(prs),
             parallel_agents=args.parallel_agents,
-            loc_changed_24h=loc_changed,
-            commits_24h=commits,
-            prs_24h=prs_count,
         )
 
     output = json.dumps(metrics, indent=2)
