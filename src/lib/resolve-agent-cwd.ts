@@ -12,9 +12,9 @@
 import { existsSync } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
 
-export type ResolvedSource = 'exact' | 'parent' | 'default';
+type ResolvedSource = 'exact' | 'parent' | 'default';
 
-export interface ResolvedAgent {
+interface ResolvedAgent {
   /** Agent name (directory name under agents/) */
   agent: string;
   /** How the agent was resolved */
