@@ -705,3 +705,226 @@ describe('OmniBridge — session lifecycle (Group 2)', () => {
     }
   });
 });
+
+// ============================================================================
+// Session reset subscription — issue #1089
+// ============================================================================
+
+describe('OmniBridge — session reset (#1089)', () => {
+  /** Pre-populate a live session entry on the bridge for reset tests. */
+  function injectSession(
+    bridge: OmniBridge,
+    key: string,
+    instanceId: string,
+    session: OmniSession,
+  ): { entry: { idleTimer: ReturnType<typeof setTimeout> | null } } {
+    const idleTimer = setTimeout(() => {}, 60_000);
+    const entry = {
+      session,
+      instanceId,
+      spawning: false,
+      buffer: [],
+      idleTimer,
+    };
+    (bridge as any).sessions.set(key, entry);
+    return { entry };
+  }
+
+  it('shuts down the executor and removes the session on reset for a hot chat', async () => {
+    const { executor, calls, makeSession } = makeMockExecutor();
+    const bridge = new OmniBridge({
+      natsUrl: 'test://fake',
+      pgProvider: degradedPgProvider,
+      natsConnectFn: (async () => makeFakeNats()) as any,
+    });
+    (bridge as any).executor = executor;
+    await bridge.start();
+
+    try {
+      const session = makeSession('test-agent', 'chat-1');
+      injectSession(bridge, 'test-agent:chat-1', 'inst-1', session);
+
+      await (bridge as any).handleSessionReset('inst-1', 'chat-1', 'kill');
+
+      expect(calls.shutdown.length).toBe(1);
+      expect(calls.shutdown[0].chatId).toBe('chat-1');
+      expect((bridge as any).sessions.size).toBe(0);
+    } finally {
+      await bridge.stop();
+    }
+  });
+
+  it('no-ops on reset for a cold chat (no live session)', async () => {
+    const { executor, calls } = makeMockExecutor();
+    const bridge = new OmniBridge({
+      natsUrl: 'test://fake',
+      pgProvider: degradedPgProvider,
+      natsConnectFn: (async () => makeFakeNats()) as any,
+    });
+    (bridge as any).executor = executor;
+    await bridge.start();
+
+    try {
+      // Sessions map is empty — reset must not throw and must not call shutdown.
+      await (bridge as any).handleSessionReset('inst-1', 'chat-cold');
+
+      expect(calls.shutdown.length).toBe(0);
+      expect((bridge as any).sessions.size).toBe(0);
+    } finally {
+      await bridge.stop();
+    }
+  });
+
+  it('clears the idle timer when evicting a reset session', async () => {
+    const { executor, makeSession } = makeMockExecutor();
+    const bridge = new OmniBridge({
+      natsUrl: 'test://fake',
+      pgProvider: degradedPgProvider,
+      natsConnectFn: (async () => makeFakeNats()) as any,
+    });
+    (bridge as any).executor = executor;
+    await bridge.start();
+
+    try {
+      const session = makeSession('test-agent', 'chat-1');
+      const { entry } = injectSession(bridge, 'test-agent:chat-1', 'inst-1', session);
+      const timerBefore = entry.idleTimer;
+      expect(timerBefore).not.toBeNull();
+
+      await (bridge as any).handleSessionReset('inst-1', 'chat-1');
+
+      // Session removed → idle timer no longer reachable from sessions map
+      expect((bridge as any).sessions.has('test-agent:chat-1')).toBe(false);
+    } finally {
+      await bridge.stop();
+    }
+  });
+
+  it('parses subject with dotted chatId (e.g. WhatsApp +5511...@s.whatsapp.net)', async () => {
+    const { executor, calls, makeSession } = makeMockExecutor();
+    const bridge = new OmniBridge({
+      natsUrl: 'test://fake',
+      pgProvider: degradedPgProvider,
+      natsConnectFn: (async () => makeFakeNats()) as any,
+    });
+    (bridge as any).executor = executor;
+    await bridge.start();
+
+    try {
+      const dottedChat = '+5511999999999@s.whatsapp.net';
+      const session = makeSession('test-agent', dottedChat);
+      injectSession(bridge, `test-agent:${dottedChat}`, 'inst-x', session);
+
+      // Build a fake NATS message and feed it through the dispatch path the way
+      // processSessionResetEvents would: subject + JSON-encoded payload bytes.
+      const fakeMsg = {
+        subject: `omni.session.reset.inst-x.${dottedChat}`,
+        data: new TextEncoder().encode(JSON.stringify({ action: 'kill' })),
+      };
+      // Drive a single iteration through processSessionResetEvents using a one-shot iterator.
+      const oneShot = {
+        [Symbol.asyncIterator]: async function* () {
+          yield fakeMsg;
+        },
+      } as any;
+      await (bridge as any).processSessionResetEvents(oneShot);
+
+      expect(calls.shutdown.length).toBe(1);
+      expect(calls.shutdown[0].chatId).toBe(dottedChat);
+    } finally {
+      await bridge.stop();
+    }
+  });
+
+  it('tolerates malformed JSON payload by routing on subject alone', async () => {
+    const { executor, calls, makeSession } = makeMockExecutor();
+    const bridge = new OmniBridge({
+      natsUrl: 'test://fake',
+      pgProvider: degradedPgProvider,
+      natsConnectFn: (async () => makeFakeNats()) as any,
+    });
+    (bridge as any).executor = executor;
+    await bridge.start();
+
+    try {
+      const session = makeSession('test-agent', 'chat-1');
+      injectSession(bridge, 'test-agent:chat-1', 'inst-1', session);
+
+      const fakeMsg = {
+        subject: 'omni.session.reset.inst-1.chat-1',
+        data: new TextEncoder().encode('not-json-at-all'),
+      };
+      const oneShot = {
+        [Symbol.asyncIterator]: async function* () {
+          yield fakeMsg;
+        },
+      } as any;
+      await (bridge as any).processSessionResetEvents(oneShot);
+
+      // Subject-only routing still kills the session.
+      expect(calls.shutdown.length).toBe(1);
+    } finally {
+      await bridge.stop();
+    }
+  });
+
+  it('warns and skips on malformed subject with too few segments', async () => {
+    const { executor, calls } = makeMockExecutor();
+    const bridge = new OmniBridge({
+      natsUrl: 'test://fake',
+      pgProvider: degradedPgProvider,
+      natsConnectFn: (async () => makeFakeNats()) as any,
+    });
+    (bridge as any).executor = executor;
+    await bridge.start();
+
+    try {
+      const fakeMsg = {
+        subject: 'omni.session.reset',
+        data: new TextEncoder().encode('{}'),
+      };
+      const oneShot = {
+        [Symbol.asyncIterator]: async function* () {
+          yield fakeMsg;
+        },
+      } as any;
+      await (bridge as any).processSessionResetEvents(oneShot);
+
+      expect(calls.shutdown.length).toBe(0);
+    } finally {
+      await bridge.stop();
+    }
+  });
+
+  it('subscribes to omni.session.reset.> on start()', async () => {
+    const subscribeCalls: string[] = [];
+    const fakeSub: Partial<Subscription> & AsyncIterable<never> = {
+      unsubscribe: () => {},
+      [Symbol.asyncIterator]: async function* () {},
+    };
+    const nc: Partial<NatsConnection> = {
+      info: undefined,
+      closed: async () => undefined,
+      close: async () => undefined,
+      drain: async () => undefined,
+      publish: () => {},
+      subscribe: (subject: string) => {
+        subscribeCalls.push(subject);
+        return fakeSub as Subscription;
+      },
+    };
+
+    const bridge = new OmniBridge({
+      natsUrl: 'test://fake',
+      pgProvider: degradedPgProvider,
+      natsConnectFn: (async () => nc as NatsConnection) as any,
+    });
+
+    try {
+      await bridge.start();
+      expect(subscribeCalls).toContain('omni.session.reset.>');
+    } finally {
+      await bridge.stop();
+    }
+  });
+});
