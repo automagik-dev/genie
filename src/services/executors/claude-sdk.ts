@@ -1,4 +1,10 @@
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  HookCallback,
+  HookCallbackMatcher,
+  PreToolUseHookInput,
+  Query,
+  SyncHookJSONOutput,
+} from '@anthropic-ai/claude-agent-sdk';
 
 import { z } from 'zod';
 import * as directory from '../../lib/agent-directory.js';
@@ -151,6 +157,95 @@ export function handleDoneTool(
 
   natsPublish(`omni.reply.${instanceId}.${chatId}`, buildReplyPayload(agent, chatId, instanceId, action.extra));
   return action.label;
+}
+
+// ============================================================================
+// SendMessage interception — route SendMessage(to: "omni") to NATS reply path
+// ============================================================================
+
+/**
+ * Extract `recipient` and `message content` from a SendMessage tool input.
+ *
+ * Both field name variants are supported defensively:
+ * - recipient: `recipient` (CC native) or `to` (genie internal)
+ * - body:      `message`   (CC native) or `content` (genie internal)
+ *
+ * Returns `{ recipient: undefined }` when the input is not parseable.
+ */
+function parseSendMessageInput(input: unknown): { recipient?: string; body?: string } {
+  if (!input || typeof input !== 'object') return {};
+  const obj = input as Record<string, unknown>;
+  const recipient = typeof obj.recipient === 'string' ? obj.recipient : typeof obj.to === 'string' ? obj.to : undefined;
+  const body =
+    typeof obj.message === 'string' ? obj.message : typeof obj.content === 'string' ? obj.content : undefined;
+  return { recipient, body };
+}
+
+/**
+ * Build a PreToolUse hook that intercepts `SendMessage` to recipient "omni"
+ * and routes the message through NATS to the omni reply path.
+ *
+ * Mirrors `handleDoneTool`'s text-action publish so agents can use a single
+ * messaging interface (`SendMessage`) regardless of executor transport.
+ *
+ * Behavior:
+ * - tool_name !== 'SendMessage' → no decision (handler chain continues)
+ * - recipient !== 'omni'         → no decision (native delivery proceeds)
+ * - OMNI_INSTANCE missing in env → no decision (not bridge mode)
+ * - matched                      → publish + deny with success-equivalent reason
+ */
+export function createSendMessageOmniHook(
+  env: Record<string, string>,
+  natsPublish: NatsPublishFn | null,
+): HookCallback {
+  return async (input): Promise<SyncHookJSONOutput> => {
+    const hookInput = input as PreToolUseHookInput;
+    if (hookInput.tool_name !== 'SendMessage') return {};
+
+    const { recipient, body } = parseSendMessageInput(hookInput.tool_input);
+    if (recipient !== 'omni') return {};
+
+    const instanceId = env.OMNI_INSTANCE ?? '';
+    const chatId = env.OMNI_CHAT ?? '';
+    const agent = env.OMNI_AGENT ?? '';
+
+    if (!instanceId || !chatId) return {};
+
+    // Reject empty/missing message bodies with an explicit error so the agent
+    // retries with a real payload — otherwise we'd publish an empty reply and
+    // the model would believe delivery succeeded.
+    if (!body || body.trim() === '') {
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason:
+            'SendMessage(recipient: "omni") requires a non-empty `message` field. Retry with the reply text.',
+        },
+      };
+    }
+
+    if (!natsPublish) {
+      console.warn('[claude-sdk] SendMessage(to: omni) intercepted but NATS publish unavailable — message dropped');
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: 'Omni bridge unavailable — message could not be delivered.',
+        },
+      };
+    }
+
+    natsPublish(`omni.reply.${instanceId}.${chatId}`, buildReplyPayload(agent, chatId, instanceId, { content: body }));
+
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'Message delivered to user via omni bridge.',
+      },
+    };
+  };
 }
 
 async function createDoneMcpServer(env: Record<string, string>, natsPublish: NatsPublishFn | null) {
@@ -350,9 +445,20 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     }
 
     const doneMcp = await createDoneMcpServer(state.env, this.natsPublish);
+    const sendMessageHooks: Partial<Record<string, HookCallbackMatcher[]>> | undefined = isTurnBased
+      ? {
+          PreToolUse: [
+            {
+              matcher: 'SendMessage',
+              hooks: [createSendMessageOmniHook(state.env, this.natsPublish)],
+            },
+          ],
+        }
+      : undefined;
     const extraOptions: Record<string, unknown> = {
       abortController: state.abortController,
       mcpServers: { 'genie-omni-tools': doneMcp },
+      ...(sendMessageHooks && { hooks: sendMessageHooks }),
     };
     if (state.claudeSessionId) {
       extraOptions.resume = state.claudeSessionId;
