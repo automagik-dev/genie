@@ -63,6 +63,12 @@ interface SessionEntry {
   spawning: boolean;
   buffer: OmniMessage[];
   idleTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * Set when a reset arrives while the entry is still in the spawning state.
+   * `spawnSession` checks this flag after `executor.spawn` resolves and tears
+   * down the freshly-created session instead of putting it into rotation.
+   */
+  cancelled?: boolean;
 }
 
 export interface BridgeStatus {
@@ -557,9 +563,14 @@ export class OmniBridge {
    */
   private findSessionKey(instanceId: string, chatId: string): string | undefined {
     for (const [key, entry] of this.sessions) {
-      if (entry.instanceId === instanceId && entry.session?.chatId === chatId) {
-        return key;
-      }
+      if (entry.instanceId !== instanceId) continue;
+      // Live entry — match against the spawned session's chatId.
+      if (entry.session?.chatId === chatId) return key;
+      // Spawning entry — session is null, so match against the map key suffix
+      // (`${agent}:${chatId}`). Without this fallback, a reset arriving in the
+      // narrow window between placeholder insertion and spawn completion would
+      // be misclassified as a cold chat and ignored.
+      if (entry.spawning && key.endsWith(`:${chatId}`)) return key;
     }
     return undefined;
   }
@@ -633,17 +644,35 @@ export class OmniBridge {
     }
 
     const entry = this.sessions.get(sessionKey);
-    if (!entry?.session) return;
+    if (!entry) return;
 
-    console.log(`[omni-bridge] Session reset for ${sessionKey}${action ? ` (action=${action})` : ''}, evicting`);
-    if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    const actionTag = action ? ` (action=${action})` : '';
+
+    // Spawning sessions: we cannot interrupt the in-flight executor.spawn call,
+    // but we can flag the entry so spawnSession tears down the freshly-created
+    // session as soon as the await resolves. The placeholder is removed from
+    // the map immediately so subsequent messages spawn a fresh session.
+    if (entry.spawning) {
+      console.log(`[omni-bridge] Session reset for spawning ${sessionKey}${actionTag}, marking cancelled`);
+      entry.cancelled = true;
+      entry.buffer = []; // Drop buffered messages — user explicitly reset.
+      this.turnTracker.close(sessionKey, 'reset');
+      this.removeSession(sessionKey);
+      await this.drainQueue();
+      return;
+    }
+
+    if (!entry.session) return;
+
+    console.log(`[omni-bridge] Session reset for ${sessionKey}${actionTag}, evicting`);
     this.turnTracker.close(sessionKey, 'reset');
     try {
       await this.executor.shutdown(entry.session);
     } catch (err) {
       console.warn(`[omni-bridge] Error shutting down reset session ${sessionKey}:`, err);
     }
-    this.sessions.delete(sessionKey);
+    this.removeSession(sessionKey);
+    await this.drainQueue();
   }
 
   /**
@@ -742,6 +771,19 @@ export class OmniBridge {
 
       console.log(`[omni-bridge] Spawning session for ${key}...`);
       const session = await this.executor.spawn(message.agent, message.chatId, spawnEnv);
+
+      // Reset arrived while spawn was in flight — tear down the freshly-created
+      // session and bail. The placeholder was already removed from the map by
+      // handleSessionReset, so we don't need to clean it up here.
+      if (placeholder.cancelled) {
+        console.log(`[omni-bridge] Spawn for ${key} completed but was cancelled by reset, shutting down`);
+        try {
+          await this.executor.shutdown(session);
+        } catch (err) {
+          console.warn(`[omni-bridge] Error shutting down cancelled spawn for ${key}:`, err);
+        }
+        return;
+      }
 
       placeholder.session = session;
       placeholder.spawning = false;
