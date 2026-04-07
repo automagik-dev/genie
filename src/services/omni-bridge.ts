@@ -263,6 +263,13 @@ export class OmniBridge {
       this.processTurnEvents(sub);
     }
 
+    // Session reset events from Omni — kill the agent's executor session when the user
+    // sends a reset token (e.g. 🗑️). Paired with omni-side publisher in
+    // automagik-dev/omni#361. Subject hierarchy: omni.session.reset.{instance}.{chat}
+    // (recursive `>` because WhatsApp chat ids contain dots).
+    const sessionResetSub = this.nc.subscribe('omni.session.reset.>');
+    this.processSessionResetEvents(sessionResetSub);
+
     // Start idle session checker
     this.idleCheckTimer = setInterval(() => this.checkIdleSessions(), IDLE_CHECK_INTERVAL_MS);
 
@@ -568,6 +575,75 @@ export class OmniBridge {
     } catch (err) {
       console.warn(`[omni-bridge] Failed to inject nudge for ${sessionKey}:`, err);
     }
+  }
+
+  /**
+   * Process incoming session reset events from NATS.
+   *
+   * Subject shape: `omni.session.reset.{instanceId}.{chatId}` — chatId may
+   * contain dots (WhatsApp ids look like `+5511...@s.whatsapp.net`), so we
+   * splice from index 4 onward.
+   *
+   * Payload is best-effort: malformed JSON is tolerated and treated as `{}`,
+   * because the routing decision lives in the subject, not the body. The
+   * `action` field is read for observability only — the only behavior today
+   * is "kill the session".
+   */
+  private async processSessionResetEvents(sub: Subscription): Promise<void> {
+    for await (const msg of sub) {
+      try {
+        const parts = msg.subject.split('.');
+        if (parts.length < 5) {
+          console.warn(`[omni-bridge] Malformed session-reset subject: ${msg.subject}`);
+          continue;
+        }
+        const instanceId = parts[3];
+        const chatId = parts.slice(4).join('.');
+
+        let action: string | undefined;
+        try {
+          const payload = JSON.parse(this.sc.decode(msg.data)) as { action?: string };
+          action = payload.action;
+        } catch {
+          // Malformed/empty payload — proceed with subject-only routing.
+        }
+
+        await this.handleSessionReset(instanceId, chatId, action);
+      } catch (err) {
+        console.warn('[omni-bridge] Error processing session reset event:', err);
+      }
+    }
+  }
+
+  /**
+   * Handle a session reset request — evict the session and shut down the executor.
+   *
+   * Defensive: no-op when the session is unknown (cold chat), so a user can
+   * tap reset on a chat that has no live agent without producing an error.
+   *
+   * Mirrors `handleTurnTimeout`'s cleanup so the session map, idle timer, and
+   * executor stay coherent.
+   */
+  private async handleSessionReset(instanceId: string, chatId: string, action?: string): Promise<void> {
+    const sessionKey = this.findSessionKey(instanceId, chatId);
+    if (!sessionKey) {
+      // Cold chat — nothing to reset, but acknowledge in logs for traceability.
+      console.log(`[omni-bridge] Session reset for cold chat ${instanceId}/${chatId} — no-op`);
+      return;
+    }
+
+    const entry = this.sessions.get(sessionKey);
+    if (!entry?.session) return;
+
+    console.log(`[omni-bridge] Session reset for ${sessionKey}${action ? ` (action=${action})` : ''}, evicting`);
+    if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    this.turnTracker.close(sessionKey, 'reset');
+    try {
+      await this.executor.shutdown(entry.session);
+    } catch (err) {
+      console.warn(`[omni-bridge] Error shutting down reset session ${sessionKey}:`, err);
+    }
+    this.sessions.delete(sessionKey);
   }
 
   /**
