@@ -63,6 +63,12 @@ interface SessionEntry {
   spawning: boolean;
   buffer: OmniMessage[];
   idleTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * Set when a reset arrives while the entry is still in the spawning state.
+   * `spawnSession` checks this flag after `executor.spawn` resolves and tears
+   * down the freshly-created session instead of putting it into rotation.
+   */
+  cancelled?: boolean;
 }
 
 export interface BridgeStatus {
@@ -262,6 +268,13 @@ export class OmniBridge {
       const sub = this.nc.subscribe(topic);
       this.processTurnEvents(sub);
     }
+
+    // Session reset events from Omni — kill the agent's executor session when the user
+    // sends a reset token (e.g. 🗑️). Paired with omni-side publisher in
+    // automagik-dev/omni#361. Subject hierarchy: omni.session.reset.{instance}.{chat}
+    // (recursive `>` because WhatsApp chat ids contain dots).
+    const sessionResetSub = this.nc.subscribe('omni.session.reset.>');
+    this.processSessionResetEvents(sessionResetSub);
 
     // Start idle session checker
     this.idleCheckTimer = setInterval(() => this.checkIdleSessions(), IDLE_CHECK_INTERVAL_MS);
@@ -550,9 +563,14 @@ export class OmniBridge {
    */
   private findSessionKey(instanceId: string, chatId: string): string | undefined {
     for (const [key, entry] of this.sessions) {
-      if (entry.instanceId === instanceId && entry.session?.chatId === chatId) {
-        return key;
-      }
+      if (entry.instanceId !== instanceId) continue;
+      // Live entry — match against the spawned session's chatId.
+      if (entry.session?.chatId === chatId) return key;
+      // Spawning entry — session is null, so match against the map key suffix
+      // (`${agent}:${chatId}`). Without this fallback, a reset arriving in the
+      // narrow window between placeholder insertion and spawn completion would
+      // be misclassified as a cold chat and ignored.
+      if (entry.spawning && key.endsWith(`:${chatId}`)) return key;
     }
     return undefined;
   }
@@ -568,6 +586,93 @@ export class OmniBridge {
     } catch (err) {
       console.warn(`[omni-bridge] Failed to inject nudge for ${sessionKey}:`, err);
     }
+  }
+
+  /**
+   * Process incoming session reset events from NATS.
+   *
+   * Subject shape: `omni.session.reset.{instanceId}.{chatId}` — chatId may
+   * contain dots (WhatsApp ids look like `+5511...@s.whatsapp.net`), so we
+   * splice from index 4 onward.
+   *
+   * Payload is best-effort: malformed JSON is tolerated and treated as `{}`,
+   * because the routing decision lives in the subject, not the body. The
+   * `action` field is read for observability only — the only behavior today
+   * is "kill the session".
+   */
+  private async processSessionResetEvents(sub: Subscription): Promise<void> {
+    for await (const msg of sub) {
+      try {
+        const parts = msg.subject.split('.');
+        if (parts.length < 5) {
+          console.warn(`[omni-bridge] Malformed session-reset subject: ${msg.subject}`);
+          continue;
+        }
+        const instanceId = parts[3];
+        const chatId = parts.slice(4).join('.');
+
+        let action: string | undefined;
+        try {
+          const payload = JSON.parse(this.sc.decode(msg.data)) as { action?: string };
+          action = payload.action;
+        } catch {
+          // Malformed/empty payload — proceed with subject-only routing.
+        }
+
+        await this.handleSessionReset(instanceId, chatId, action);
+      } catch (err) {
+        console.warn('[omni-bridge] Error processing session reset event:', err);
+      }
+    }
+  }
+
+  /**
+   * Handle a session reset request — evict the session and shut down the executor.
+   *
+   * Defensive: no-op when the session is unknown (cold chat), so a user can
+   * tap reset on a chat that has no live agent without producing an error.
+   *
+   * Mirrors `handleTurnTimeout`'s cleanup so the session map, idle timer, and
+   * executor stay coherent.
+   */
+  private async handleSessionReset(instanceId: string, chatId: string, action?: string): Promise<void> {
+    const sessionKey = this.findSessionKey(instanceId, chatId);
+    if (!sessionKey) {
+      // Cold chat — nothing to reset, but acknowledge in logs for traceability.
+      console.log(`[omni-bridge] Session reset for cold chat ${instanceId}/${chatId} — no-op`);
+      return;
+    }
+
+    const entry = this.sessions.get(sessionKey);
+    if (!entry) return;
+
+    const actionTag = action ? ` (action=${action})` : '';
+
+    // Spawning sessions: we cannot interrupt the in-flight executor.spawn call,
+    // but we can flag the entry so spawnSession tears down the freshly-created
+    // session as soon as the await resolves. The placeholder is removed from
+    // the map immediately so subsequent messages spawn a fresh session.
+    if (entry.spawning) {
+      console.log(`[omni-bridge] Session reset for spawning ${sessionKey}${actionTag}, marking cancelled`);
+      entry.cancelled = true;
+      entry.buffer = []; // Drop buffered messages — user explicitly reset.
+      this.turnTracker.close(sessionKey, 'reset');
+      this.removeSession(sessionKey);
+      await this.drainQueue();
+      return;
+    }
+
+    if (!entry.session) return;
+
+    console.log(`[omni-bridge] Session reset for ${sessionKey}${actionTag}, evicting`);
+    this.turnTracker.close(sessionKey, 'reset');
+    try {
+      await this.executor.shutdown(entry.session);
+    } catch (err) {
+      console.warn(`[omni-bridge] Error shutting down reset session ${sessionKey}:`, err);
+    }
+    this.removeSession(sessionKey);
+    await this.drainQueue();
   }
 
   /**
@@ -666,6 +771,19 @@ export class OmniBridge {
 
       console.log(`[omni-bridge] Spawning session for ${key}...`);
       const session = await this.executor.spawn(message.agent, message.chatId, spawnEnv);
+
+      // Reset arrived while spawn was in flight — tear down the freshly-created
+      // session and bail. The placeholder was already removed from the map by
+      // handleSessionReset, so we don't need to clean it up here.
+      if (placeholder.cancelled) {
+        console.log(`[omni-bridge] Spawn for ${key} completed but was cancelled by reset, shutting down`);
+        try {
+          await this.executor.shutdown(session);
+        } catch (err) {
+          console.warn(`[omni-bridge] Error shutting down cancelled spawn for ${key}:`, err);
+        }
+        return;
+      }
 
       placeholder.session = session;
       placeholder.spawning = false;
