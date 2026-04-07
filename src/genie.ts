@@ -31,6 +31,7 @@ import { VERSION } from './lib/version.js';
 import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { getActor, recordAuditEvent } from './lib/audit.js';
 import { shutdown as shutdownDb } from './lib/db.js';
+import { installWorkspaceCheck } from './lib/interactivity.js';
 import { stopOtelReceiver } from './lib/otel-receiver.js';
 import { registerAgentCommands } from './term-commands/agent/index.js';
 import {
@@ -107,6 +108,9 @@ function parseNumericFlag(flagName: string): (value: string) => number {
 const program = new Command();
 
 program.name('genie').description('Genie CLI - AI-assisted development').version(VERSION);
+
+// Global --no-interactive flag: disables all interactive prompts (scripting safety)
+program.option('--no-interactive', 'Disable interactive prompts (exit 2 instead of prompting)');
 
 program.configureHelp({
   sortSubcommands: true,
@@ -227,6 +231,12 @@ registerTemplateCommands(program);
 registerBrainCommands(program);
 registerBriefCommands(program);
 registerOmniCommands(program);
+
+// ============================================================================
+// Universal workspace check — ensures workspace exists before commands that need it
+// ============================================================================
+
+installWorkspaceCheck(program);
 
 // ============================================================================
 // CLI audit hooks — record every command execution to audit_events
