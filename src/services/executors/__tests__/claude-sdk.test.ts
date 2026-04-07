@@ -623,6 +623,53 @@ describe('ClaudeSdkOmniExecutor', () => {
       expect(out.hookSpecificOutput?.permissionDecisionReason).toMatch(/bridge unavailable/i);
     });
 
+    it('denies with retry-prompting reason when message body is missing', async () => {
+      const publishCalls: Array<[string, string]> = [];
+      const hook = createSendMessageOmniHook(omniEnv, (s, p) => {
+        publishCalls.push([s, p]);
+      });
+
+      // Model emits the wrong field name (e.g. `text` instead of `message`/`content`)
+      const result = await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'SendMessage',
+          tool_input: { recipient: 'omni', text: 'wrong field' },
+          tool_use_id: 'tu-empty-1',
+        } as never,
+        'tu-empty-1',
+        dummyMeta,
+      );
+
+      expect(publishCalls).toHaveLength(0);
+      const out = result as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } };
+      expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
+      expect(out.hookSpecificOutput?.permissionDecisionReason).toMatch(/non-empty.*message/i);
+    });
+
+    it('denies with retry-prompting reason when message body is whitespace-only', async () => {
+      const publishCalls: Array<[string, string]> = [];
+      const hook = createSendMessageOmniHook(omniEnv, (s, p) => {
+        publishCalls.push([s, p]);
+      });
+
+      const result = await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'SendMessage',
+          tool_input: { recipient: 'omni', message: '   \n\t  ' },
+          tool_use_id: 'tu-empty-2',
+        } as never,
+        'tu-empty-2',
+        dummyMeta,
+      );
+
+      expect(publishCalls).toHaveLength(0);
+      const out = result as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } };
+      expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
+      expect(out.hookSpecificOutput?.permissionDecisionReason).toMatch(/non-empty.*message/i);
+    });
+
     it('passes through when OMNI_INSTANCE is missing (non-bridge SDK session)', async () => {
       const publishCalls: Array<[string, string]> = [];
       const hook = createSendMessageOmniHook({}, (s, p) => {
