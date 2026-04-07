@@ -211,6 +211,20 @@ export function createSendMessageOmniHook(
 
     if (!instanceId || !chatId) return {};
 
+    // Reject empty/missing message bodies with an explicit error so the agent
+    // retries with a real payload — otherwise we'd publish an empty reply and
+    // the model would believe delivery succeeded.
+    if (!body || body.trim() === '') {
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason:
+            'SendMessage(recipient: "omni") requires a non-empty `message` field. Retry with the reply text.',
+        },
+      };
+    }
+
     if (!natsPublish) {
       console.warn('[claude-sdk] SendMessage(to: omni) intercepted but NATS publish unavailable — message dropped');
       return {
@@ -222,10 +236,7 @@ export function createSendMessageOmniHook(
       };
     }
 
-    natsPublish(
-      `omni.reply.${instanceId}.${chatId}`,
-      buildReplyPayload(agent, chatId, instanceId, { content: body ?? '' }),
-    );
+    natsPublish(`omni.reply.${instanceId}.${chatId}`, buildReplyPayload(agent, chatId, instanceId, { content: body }));
 
     return {
       hookSpecificOutput: {
