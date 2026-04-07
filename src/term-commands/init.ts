@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import type { Command } from 'commander';
+import { GENIEIGNORE_DEFAULTS } from '../lib/tree-scanner.js';
 import { type WorkspaceConfig, findWorkspace, getWorkspaceConfig, scanAgents } from '../lib/workspace.js';
 import { scaffoldAgentFiles } from '../templates/index.js';
 
@@ -144,6 +145,14 @@ async function initWorkspace(): Promise<void> {
   };
 
   writeFileSync(join(genieDir, 'workspace.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+  // Create .genieignore with comprehensive defaults if it doesn't already exist
+  const genieignorePath = join(cwd, '.genieignore');
+  if (!existsSync(genieignorePath)) {
+    writeFileSync(genieignorePath, GENIEIGNORE_DEFAULTS, 'utf-8');
+    console.log('  Created .genieignore');
+  }
+
   console.log(`Workspace created: ${cwd}`);
   if (pgUrl) console.log(`  pgUrl: ${pgUrl}`);
 
