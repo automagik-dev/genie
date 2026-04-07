@@ -13,7 +13,7 @@ import type { Command } from 'commander';
 import { discoverExternalAgents, importAgents } from '../lib/discovery.js';
 import { isInteractive } from '../lib/interactivity.js';
 import { type WizardContext, runMiniWizard } from '../lib/mini-wizard.js';
-import { listPending, refreshPending, removePending } from '../lib/pending-agents.js';
+import { type PendingAgent, listPending, refreshPending, removePending } from '../lib/pending-agents.js';
 import { GENIEIGNORE_DEFAULTS } from '../lib/tree-scanner.js';
 import { type WorkspaceConfig, findWorkspace, getWorkspaceConfig, scanAgents } from '../lib/workspace.js';
 import { scaffoldAgentFiles } from '../templates/index.js';
@@ -195,8 +195,8 @@ async function runPostInitFlow(workspaceRoot: string, config: WorkspaceConfig): 
 
   // 4. Import agents the user accepted
   if (result.importedAgents.length > 0) {
-    const toImport = pending.filter((p) => result.importedAgents.includes(p.name));
-    const discoveredToImport = toImport.map((p) => ({
+    const toImport = pending.filter((p: PendingAgent) => result.importedAgents.includes(p.name));
+    const discoveredToImport = toImport.map((p: PendingAgent) => ({
       name: p.name,
       path: p.path,
       relativePath: p.relativePath,
@@ -207,7 +207,7 @@ async function runPostInitFlow(workspaceRoot: string, config: WorkspaceConfig): 
     const importResult = importAgents(workspaceRoot, discoveredToImport);
 
     for (const name of importResult.imported) {
-      const agent = toImport.find((a) => a.name === name);
+      const agent = toImport.find((a: PendingAgent) => a.name === name);
       if (agent) removePending(workspaceRoot, agent.path);
       console.log(`  Imported: ${name}`);
     }
