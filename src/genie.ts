@@ -537,7 +537,7 @@ if (isTuiPane) {
   process.exit(0);
 }
 
-// Default command: genie (no args) → thin TUI client (attach to serve).
+// Default command: genie (no args) → TUI + agent routing based on cwd.
 if (args.length === 0) {
   // Guard against nested tmux cascade — running `genie` inside the TUI right pane
   if (process.env.TMUX?.includes('genie-tui')) {
@@ -548,13 +548,49 @@ if (args.length === 0) {
     console.warn('Note: switching to genie TUI from within another tmux session.');
   }
 
-  const { findWorkspace, scanAgents } = await import('./lib/workspace.js');
-  const ws = findWorkspace();
+  const { findWorkspace } = await import('./lib/workspace.js');
+  let ws = findWorkspace();
 
+  // No workspace → trigger init flow, then re-resolve
   if (!ws) {
-    console.error('Not in a genie workspace. Run `genie init` to create one.');
-    process.exit(1);
+    const { isInteractive } = await import('./lib/interactivity.js');
+    if (!isInteractive()) {
+      console.error('No workspace found. Run `genie init` to set up.');
+      process.exit(2);
+    }
+
+    const { confirm } = await import('@inquirer/prompts');
+    const shouldInit = await confirm({
+      message: 'No workspace found. Initialize? [Y/n]',
+      default: true,
+    });
+
+    if (!shouldInit) {
+      console.error('No workspace found. Run `genie init` to set up.');
+      process.exit(2);
+    }
+
+    // Run init inline
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    const { basename, join } = await import('node:path');
+    const cwd = process.cwd();
+    const genieDir = join(cwd, '.genie');
+    mkdirSync(genieDir, { recursive: true });
+    const config = { name: basename(cwd), agents: { defaults: {} }, tmux: { socket: 'genie' }, sdk: {} };
+    writeFileSync(join(genieDir, 'workspace.json'), `${JSON.stringify(config, null, 2)}\n`);
+    console.log(`Workspace initialized: ${cwd}`);
+
+    ws = findWorkspace();
+    if (!ws) {
+      console.error('Failed to initialize workspace.');
+      process.exit(1);
+    }
   }
+
+  // Resolve agent from cwd using walk-up algorithm
+  const { resolveAgentFromCwd } = await import('./lib/resolve-agent-cwd.js');
+  const resolved = resolveAgentFromCwd(process.cwd(), ws.root);
+  const initialAgent = resolved.agent;
 
   const { isServeRunning, autoStartServe, isTuiSessionReady, ensureTuiSession } = await import(
     './term-commands/serve.js'
@@ -569,23 +605,21 @@ if (args.length === 0) {
     ensureTuiSession(ws.root);
   }
 
-  const initialAgent = ws.agent ?? scanAgents(ws.root)[0];
-
   // Set env vars for TUI (workspace root + agent) before attach
   if (ws.root) process.env.GENIE_TUI_WORKSPACE = ws.root;
   if (initialAgent) process.env.GENIE_TUI_AGENT = initialAgent;
 
-  // If invoked from an agent folder, spawn the agent if not already running
-  if (ws.agent) {
+  // If resolved to a specific agent (not default), spawn it if not already running
+  if (resolved.source !== 'default') {
     const { execSync } = await import('node:child_process');
     try {
       // Check if agent has a running tmux session
-      execSync(`tmux has-session -t ${ws.agent} 2>/dev/null`, { stdio: 'pipe' });
+      execSync(`tmux has-session -t ${initialAgent} 2>/dev/null`, { stdio: 'pipe' });
     } catch {
       // Agent session doesn't exist — spawn it
-      console.log(`Spawning ${ws.agent}...`);
+      console.log(`Spawning ${initialAgent}...`);
       try {
-        execSync(`genie spawn ${ws.agent}`, { stdio: 'inherit', timeout: 15000 });
+        execSync(`genie spawn ${initialAgent}`, { stdio: 'inherit', timeout: 15000 });
       } catch {
         // Spawn may fail but TUI should still open
       }
