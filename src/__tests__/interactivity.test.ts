@@ -183,11 +183,11 @@ describe('commandRequiresWorkspace()', () => {
     expect(commandRequiresWorkspace(ls)).toBe(true);
   });
 
-  test('returns true for team create subcommand', () => {
+  test('returns false for team create subcommand (team is workspace-exempt)', () => {
     const program = new Command();
     const team = program.command('team');
     const create = team.command('create');
-    expect(commandRequiresWorkspace(create)).toBe(true);
+    expect(commandRequiresWorkspace(create)).toBe(false);
   });
 });
 
