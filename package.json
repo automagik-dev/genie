@@ -31,6 +31,7 @@
     "@opentui/react": "^0.1.91",
     "@tauri-apps/api": "^2.5.0",
     "commander": "^12.1.0",
+    "ignore": "^7.0.5",
     "js-yaml": "^4.1.1",
     "nats": "^2.29.3",
     "pgserve": "^1.1.6",
