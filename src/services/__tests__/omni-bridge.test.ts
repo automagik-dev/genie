@@ -896,6 +896,89 @@ describe('OmniBridge — session reset (#1089)', () => {
     }
   });
 
+  it('cancels a spawning session on reset and tears down the freshly-spawned executor', async () => {
+    // Hold the spawn promise open so we can fire reset mid-spawn.
+    let releaseSpawn!: (s: OmniSession) => void;
+    const spawnGate = new Promise<OmniSession>((resolve) => {
+      releaseSpawn = resolve;
+    });
+
+    const { executor, calls, makeSession } = makeMockExecutor({
+      spawnFn: async (agentName, chatId) => {
+        // Block until the test releases the spawn.
+        const session = await spawnGate;
+        return session ?? makeSession(agentName, chatId);
+      },
+    });
+    const bridge = new OmniBridge({
+      natsUrl: 'test://fake',
+      pgProvider: degradedPgProvider,
+      natsConnectFn: (async () => makeFakeNats()) as any,
+    });
+    (bridge as any).executor = executor;
+    await bridge.start();
+
+    try {
+      // Kick off the spawn — routeMessage will block on spawnGate.
+      const routePromise = (bridge as any).routeMessage(makeMsg({ content: 'first' }));
+
+      // Yield so spawnSession installs the placeholder before we reset.
+      await new Promise((r) => setTimeout(r, 5));
+      expect((bridge as any).sessions.has('test-agent:chat-1')).toBe(true);
+      expect((bridge as any).sessions.get('test-agent:chat-1').spawning).toBe(true);
+
+      // Fire the reset while spawn is still in flight.
+      await (bridge as any).handleSessionReset('inst-1', 'chat-1', 'kill');
+
+      // Placeholder is gone — the spawn-in-flight has been logically cancelled.
+      expect((bridge as any).sessions.has('test-agent:chat-1')).toBe(false);
+
+      // Now release the spawn — spawnSession should detect cancelled and tear it down.
+      releaseSpawn(makeSession('test-agent', 'chat-1'));
+      await routePromise;
+
+      // executor.shutdown was called for the freshly-spawned (cancelled) session.
+      expect(calls.shutdown.length).toBe(1);
+      expect(calls.shutdown[0].chatId).toBe('chat-1');
+
+      // Buffered triggering message must NOT be delivered to the killed session.
+      expect(calls.deliver.length).toBe(0);
+    } finally {
+      await bridge.stop();
+    }
+  });
+
+  it('drains the message queue after evicting a reset session', async () => {
+    const { executor, calls, makeSession } = makeMockExecutor();
+    const bridge = new OmniBridge({
+      natsUrl: 'test://fake',
+      pgProvider: degradedPgProvider,
+      natsConnectFn: (async () => makeFakeNats()) as any,
+    });
+    (bridge as any).executor = executor;
+    // Force the bridge to look fully saturated so a reset opens a slot.
+    (bridge as any).maxConcurrent = 1;
+    await bridge.start();
+
+    try {
+      const session = makeSession('test-agent', 'chat-1');
+      injectSession(bridge, 'test-agent:chat-1', 'inst-1', session);
+
+      // Park a queued message that's waiting for a free slot.
+      (bridge as any).messageQueue.push(makeMsg({ chatId: 'chat-2', agent: 'agent-b' }));
+
+      await (bridge as any).handleSessionReset('inst-1', 'chat-1', 'kill');
+
+      // Original session is gone, queued message picked up its slot, drainQueue spawned it.
+      expect((bridge as any).sessions.has('test-agent:chat-1')).toBe(false);
+      expect((bridge as any).messageQueue.length).toBe(0);
+      expect(calls.spawn.length).toBe(1);
+      expect(calls.spawn[0].chatId).toBe('chat-2');
+    } finally {
+      await bridge.stop();
+    }
+  });
+
   it('subscribes to omni.session.reset.> on start()', async () => {
     const subscribeCalls: string[] = [];
     const fakeSub: Partial<Subscription> & AsyncIterable<never> = {
