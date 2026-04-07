@@ -62,6 +62,120 @@ function readLocalBrainVersion(): string | undefined {
   }
 }
 
+// ── Daemon lifecycle helpers ────────────────────────────────────────────────
+
+/** Resolve the brain CLI binary. Prefers .bin symlink, falls back to dist/cli.js. */
+function resolveBrainBin(): string | undefined {
+  const candidates = [join(resolveGenieRoot(), 'node_modules', '.bin', 'brain'), join(BRAIN_DIR, 'dist', 'cli.js')];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return undefined;
+}
+
+/** Search for a brain vault (brain.json) in common locations. Returns path or null. */
+function findBrainVault(): string | null {
+  const candidates = [process.cwd(), join(process.cwd(), 'brain'), join(homedir(), 'brain')];
+  for (const dir of candidates) {
+    if (existsSync(join(dir, 'brain.json'))) return dir;
+  }
+  return null;
+}
+
+interface ActiveBrainConfig {
+  pid: number;
+  pgPort?: number;
+  brainPath?: string;
+}
+
+/** Read ~/.brain/config.json for running server PID + brainPath. Returns null on failure. */
+function readActiveBrainConfig(): ActiveBrainConfig | null {
+  try {
+    const configPath = join(homedir(), '.brain', 'config.json');
+    if (!existsSync(configPath)) return null;
+    const data = JSON.parse(readFileSync(configPath, 'utf-8'));
+    if (!data.pid) return null;
+    return { pid: data.pid, pgPort: data.pgPort, brainPath: data.brainPath };
+  } catch {
+    return null;
+  }
+}
+
+/** Check if a process is alive by signaling 0. */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stop a running brain daemon gracefully.
+ * Calls `brain serve stop --brain-path`, polls PID 200ms × 25 (5s), SIGKILL fallback.
+ * Returns true if a daemon was running and stopped.
+ */
+async function stopBrainDaemon(): Promise<boolean> {
+  const config = readActiveBrainConfig();
+  if (!config?.pid || !isProcessAlive(config.pid)) return false;
+
+  const brainBin = resolveBrainBin();
+  const brainPath = config.brainPath;
+
+  // Use brain's own stop command
+  if (brainBin) {
+    try {
+      const pathArg = brainPath ? ` --brain-path "${brainPath}"` : '';
+      execSync(`"${brainBin}" serve stop${pathArg}`, { stdio: 'pipe', timeout: 10000 });
+    } catch {
+      // Fall through to PID polling — stop command may not be available in older versions
+    }
+  }
+
+  // Poll PID for up to 5s (25 × 200ms)
+  for (let i = 0; i < 25; i++) {
+    if (!isProcessAlive(config.pid)) return true;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  // SIGKILL fallback
+  try {
+    process.kill(config.pid, 'SIGKILL');
+  } catch {
+    // Already gone
+  }
+
+  return true;
+}
+
+/** Start brain daemon for a vault. Logs result. Never throws. */
+function startBrainDaemon(vaultPath: string, extraArgs?: string[]): void {
+  const bin = resolveBrainBin();
+  if (!bin) return;
+  try {
+    const argsStr = extraArgs?.length ? ` ${extraArgs.join(' ')}` : '';
+    execSync(`"${bin}" serve --daemon --brain-path "${vaultPath}"${argsStr}`, {
+      stdio: 'inherit',
+      timeout: 15000,
+    });
+    console.log('  Brain daemon started.');
+  } catch {
+    console.log('  Daemon failed to start. Run: brain serve --daemon');
+  }
+}
+
+/** Read saved daemon args from .brain-server.json in a vault. */
+function readSavedDaemonArgs(brainPath: string): string[] | undefined {
+  try {
+    const serverJsonPath = join(brainPath, '.brain-server.json');
+    const serverInfo = JSON.parse(readFileSync(serverJsonPath, 'utf-8'));
+    return serverInfo.args;
+  } catch {
+    return undefined;
+  }
+}
+
 // ── Cache-only update check (no network, sync, never throws) ──────────────
 
 interface UpdateCheck {
@@ -160,6 +274,11 @@ async function updateBrain(): Promise<boolean> {
   console.log(`  Upgrading: ${oldVersion} → ${newVersion}`);
   console.log('');
 
+  // Stop running daemon before upgrade (read saved args for restart)
+  const activeConfig = readActiveBrainConfig();
+  const savedArgs = activeConfig?.brainPath ? readSavedDaemonArgs(activeConfig.brainPath) : undefined;
+  const wasRunning = activeConfig ? await stopBrainDaemon() : false;
+
   // Download and extract new tarball (same flow as install)
   const tmpDir = join(homedir(), '.cache', 'genie-brain');
   mkdirSync(tmpDir, { recursive: true });
@@ -193,6 +312,11 @@ async function updateBrain(): Promise<boolean> {
 
   // Refresh version cache
   refreshVersionCache(newVersion);
+
+  // Restart daemon if it was running before upgrade
+  if (wasRunning && activeConfig?.brainPath) {
+    startBrainDaemon(activeConfig.brainPath, savedArgs);
+  }
 
   return true;
 }
@@ -296,6 +420,14 @@ async function installBrain(): Promise<boolean> {
       console.log('  Auto-migration skipped. Run: genie brain migrate');
     }
 
+    // Auto-start daemon if a vault is found
+    const vaultPath = findBrainVault();
+    if (vaultPath) {
+      startBrainDaemon(vaultPath);
+    } else {
+      console.log('  No brain vault found. Create one with: brain init --name <name> --path <path>');
+    }
+
     console.log('');
     console.log('  Get started:');
     console.log('    genie brain init --name my-brain --path ./brain');
@@ -327,12 +459,16 @@ async function installBrain(): Promise<boolean> {
   }
 }
 
-function uninstallBrain(): void {
+async function uninstallBrain(): Promise<void> {
   try {
     if (!existsSync(BRAIN_DIR)) {
       console.log('  Brain is not installed.');
       return;
     }
+
+    // Stop running daemon before removing files
+    await stopBrainDaemon();
+
     execSync(`rm -rf "${BRAIN_DIR}"`, { stdio: 'pipe' });
     console.log('  Brain uninstalled.');
   } catch {
@@ -409,8 +545,8 @@ export function registerBrainCommands(program: Command): void {
   brain
     .command('uninstall')
     .description('Remove genie-brain installation')
-    .action(() => {
-      uninstallBrain();
+    .action(async () => {
+      await uninstallBrain();
     });
 
   brain
