@@ -26,7 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 // — recordAuditEvent / session-capture route through safePgCall, which is
 // mocked per-test via setSafePgCall() (or guarded null for no-bridge tests).
 
-const { ClaudeSdkOmniExecutor } = await import('../claude-sdk.js');
+const { ClaudeSdkOmniExecutor, createSendMessageOmniHook } = await import('../claude-sdk.js');
 const directory = await import('../../../lib/agent-directory.js');
 
 describe('ClaudeSdkOmniExecutor', () => {
@@ -474,7 +474,7 @@ describe('ClaudeSdkOmniExecutor', () => {
       // Verify turn-based prompt content
       expect(systemPrompt).toContain('WhatsApp');
       expect(systemPrompt).toContain('Alice');
-      expect(systemPrompt).toContain('omni say');
+      expect(systemPrompt).toContain('SendMessage');
       expect(systemPrompt).toContain('omni done');
       expect(systemPrompt).toContain('inst-wb');
     });
@@ -496,8 +496,201 @@ describe('ClaudeSdkOmniExecutor', () => {
       const systemPrompt = callArgs.options?.systemPrompt ?? '';
 
       expect(systemPrompt).not.toContain('WhatsApp');
-      expect(systemPrompt).not.toContain('omni say');
-      expect(systemPrompt).not.toContain('omni done');
+      expect(systemPrompt).not.toContain('SendMessage');
+    });
+  });
+
+  // ==========================================================================
+  // SendMessage(to: omni) NATS routing — issue #1088
+  // ==========================================================================
+
+  describe('SendMessage omni interception', () => {
+    const omniEnv = { OMNI_INSTANCE: 'inst-x', OMNI_CHAT: 'chat-x', OMNI_AGENT: 'eugenia' };
+    const dummyMeta = { signal: new AbortController().signal };
+
+    it('publishes to omni.reply.{instance}.{chat} and denies the tool when recipient is "omni"', async () => {
+      const publishCalls: Array<[string, string]> = [];
+      const natsPublish = (subject: string, payload: string) => {
+        publishCalls.push([subject, payload]);
+      };
+      const hook = createSendMessageOmniHook(omniEnv, natsPublish);
+
+      const result = await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'SendMessage',
+          tool_input: { recipient: 'omni', message: 'Olá Cezar!' },
+          tool_use_id: 'tu-1',
+        } as never,
+        'tu-1',
+        dummyMeta,
+      );
+
+      expect(publishCalls).toHaveLength(1);
+      expect(publishCalls[0][0]).toBe('omni.reply.inst-x.chat-x');
+      const payload = JSON.parse(publishCalls[0][1]);
+      expect(payload).toMatchObject({
+        agent: 'eugenia',
+        chat_id: 'chat-x',
+        instance_id: 'inst-x',
+        content: 'Olá Cezar!',
+      });
+      expect(result).not.toBeNull();
+      const out = result as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } };
+      expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
+      expect(out.hookSpecificOutput?.permissionDecisionReason).toMatch(/delivered.*omni bridge/i);
+    });
+
+    it('accepts the alternate "to" + "content" field shape', async () => {
+      const publishCalls: Array<[string, string]> = [];
+      const hook = createSendMessageOmniHook(omniEnv, (s, p) => {
+        publishCalls.push([s, p]);
+      });
+
+      await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'SendMessage',
+          tool_input: { to: 'omni', content: 'second shape' },
+          tool_use_id: 'tu-2',
+        } as never,
+        'tu-2',
+        dummyMeta,
+      );
+
+      expect(publishCalls).toHaveLength(1);
+      expect(JSON.parse(publishCalls[0][1]).content).toBe('second shape');
+    });
+
+    it('passes through (no decision) when recipient is not "omni"', async () => {
+      const publishCalls: Array<[string, string]> = [];
+      const hook = createSendMessageOmniHook(omniEnv, (s, p) => {
+        publishCalls.push([s, p]);
+      });
+
+      const result = await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'SendMessage',
+          tool_input: { recipient: 'reviewer', message: 'peer ping' },
+          tool_use_id: 'tu-3',
+        } as never,
+        'tu-3',
+        dummyMeta,
+      );
+
+      expect(publishCalls).toHaveLength(0);
+      expect((result as Record<string, unknown>).hookSpecificOutput).toBeUndefined();
+    });
+
+    it('passes through for non-SendMessage tool calls', async () => {
+      const publishCalls: Array<[string, string]> = [];
+      const hook = createSendMessageOmniHook(omniEnv, (s, p) => {
+        publishCalls.push([s, p]);
+      });
+
+      const result = await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Read',
+          tool_input: { file_path: '/tmp/x' },
+          tool_use_id: 'tu-4',
+        } as never,
+        'tu-4',
+        dummyMeta,
+      );
+
+      expect(publishCalls).toHaveLength(0);
+      expect((result as Record<string, unknown>).hookSpecificOutput).toBeUndefined();
+    });
+
+    it('denies with bridge-unavailable reason when natsPublish is null but env is set', async () => {
+      const hook = createSendMessageOmniHook(omniEnv, null);
+
+      const result = await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'SendMessage',
+          tool_input: { recipient: 'omni', message: 'oops' },
+          tool_use_id: 'tu-5',
+        } as never,
+        'tu-5',
+        dummyMeta,
+      );
+
+      const out = result as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } };
+      expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
+      expect(out.hookSpecificOutput?.permissionDecisionReason).toMatch(/bridge unavailable/i);
+    });
+
+    it('passes through when OMNI_INSTANCE is missing (non-bridge SDK session)', async () => {
+      const publishCalls: Array<[string, string]> = [];
+      const hook = createSendMessageOmniHook({}, (s, p) => {
+        publishCalls.push([s, p]);
+      });
+
+      const result = await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'SendMessage',
+          tool_input: { recipient: 'omni', message: 'no bridge' },
+          tool_use_id: 'tu-6',
+        } as never,
+        'tu-6',
+        dummyMeta,
+      );
+
+      expect(publishCalls).toHaveLength(0);
+      expect((result as Record<string, unknown>).hookSpecificOutput).toBeUndefined();
+    });
+
+    it('wires the SendMessage hook into runQuery options when OMNI_INSTANCE is set', async () => {
+      const session = await executor.spawn('test-agent', 'chat-wire', {
+        OMNI_INSTANCE: 'inst-wire',
+        OMNI_CHAT: 'chat-wire',
+        OMNI_AGENT: 'wirebot',
+      });
+
+      await executor.deliver(session, {
+        content: 'Hi',
+        sender: 'Alice',
+        instanceId: 'inst-wire',
+        chatId: 'chat-wire',
+        agent: 'test-agent',
+      });
+      await executor.waitForDeliveries(session.id);
+
+      expect(queryMock).toHaveBeenCalled();
+      const callArgs = (
+        queryMock.mock.calls.at(-1) as unknown as [{ options?: { hooks?: Record<string, unknown[]> } }]
+      )[0];
+      const preToolUseHooks = callArgs.options?.hooks?.PreToolUse;
+      expect(Array.isArray(preToolUseHooks)).toBe(true);
+      // permission gate matcher (*) + SendMessage matcher
+      const matchers = (preToolUseHooks as Array<{ matcher?: string }>).map((h) => h.matcher);
+      expect(matchers).toContain('SendMessage');
+    });
+
+    it('does NOT wire the SendMessage hook when OMNI_INSTANCE is absent', async () => {
+      const session = await executor.spawn('test-agent', 'chat-nowire', {});
+
+      await executor.deliver(session, {
+        content: 'Hi',
+        sender: 'bob',
+        instanceId: 'inst-1',
+        chatId: 'chat-nowire',
+        agent: 'test-agent',
+      });
+      await executor.waitForDeliveries(session.id);
+
+      const callArgs = (
+        queryMock.mock.calls.at(-1) as unknown as [
+          { options?: { hooks?: Record<string, Array<{ matcher?: string }>> } },
+        ]
+      )[0];
+      const preToolUseHooks = callArgs.options?.hooks?.PreToolUse ?? [];
+      const matchers = preToolUseHooks.map((h) => h.matcher);
+      expect(matchers).not.toContain('SendMessage');
     });
   });
 });
