@@ -116,7 +116,7 @@ describe('importAgents()', () => {
     const linkPath = join(testDir, 'agents', 'auth');
     expect(existsSync(linkPath)).toBe(true);
     expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(linkPath)).toBe(join(testDir, 'services', 'auth'));
+    expect(readlinkSync(linkPath)).toBe('../services/auth');
   });
 
   test('resolves name collisions with numeric suffix', () => {
