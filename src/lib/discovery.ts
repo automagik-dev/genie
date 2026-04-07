@@ -11,7 +11,7 @@
  */
 
 import { existsSync, mkdirSync, symlinkSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { scanForAgentsAll } from './tree-scanner.js';
 import { scanAgents } from './workspace.js';
 
@@ -102,7 +102,7 @@ export function importAgents(workspaceRoot: string, agents: DiscoveredAgent[]): 
     }
 
     try {
-      symlinkSync(agent.path, linkPath);
+      symlinkSync(relative(dirname(linkPath), agent.path), linkPath);
       result.imported.push(linkName);
     } catch (err) {
       result.errors.push({

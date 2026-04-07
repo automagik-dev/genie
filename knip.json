@@ -27,7 +27,8 @@
     "src/lib/tree-scanner.ts",
     "src/lib/discovery.ts",
     "src/lib/pending-agents.ts",
-    "src/lib/mini-wizard.ts"
+    "src/lib/mini-wizard.ts",
+    "src/lib/migrate.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["which"],
