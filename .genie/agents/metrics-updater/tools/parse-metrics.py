@@ -69,12 +69,20 @@ def calc_ship_rate(prs_json: list, days: int = 7) -> float:
     return round((shipped_first / total) * 100, 0)
 
 
-def calc_loc_changed(repo_root: str) -> int:
-    """Calculate total lines changed (additions + deletions) in last 24 hours."""
+def calc_loc_changed(repo_root: str, branches: list[str] | None = None) -> int:
+    """Calculate total lines changed (additions + deletions) in last 24 hours.
+
+    When branches is provided, counts changes across all listed branches
+    (e.g. ['main', 'dev']) to capture work that hasn't been promoted yet.
+    """
     try:
+        cmd = ['git', 'log', '--since=24 hours ago', '--stat', '--format=']
+        if branches:
+            cmd.extend(branches)
+        else:
+            cmd.append('--all')
         result = subprocess.run(
-            ['git', 'log', '--since=24 hours ago', '--stat', '--format='],
-            capture_output=True, text=True, cwd=repo_root
+            cmd, capture_output=True, text=True, cwd=repo_root
         )
         total = 0
         for line in result.stdout.splitlines():
@@ -91,12 +99,20 @@ def calc_loc_changed(repo_root: str) -> int:
         return 0
 
 
-def calc_commits_24h(repo_root: str) -> int:
-    """Count commits in the last 24 hours."""
+def calc_commits_24h(repo_root: str, branches: list[str] | None = None) -> int:
+    """Count commits in the last 24 hours.
+
+    When branches is provided, counts across all listed branches
+    (e.g. ['main', 'dev']) to capture work not yet promoted to main.
+    """
     try:
+        cmd = ['git', 'log', '--since=24 hours ago', '--oneline']
+        if branches:
+            cmd.extend(branches)
+        else:
+            cmd.append('--all')
         result = subprocess.run(
-            ['git', 'log', '--since=24 hours ago', '--oneline'],
-            capture_output=True, text=True, cwd=repo_root
+            cmd, capture_output=True, text=True, cwd=repo_root
         )
         lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
         return len(lines)
@@ -142,6 +158,8 @@ def main():
     parser.add_argument('--parallel-agents', type=int, default=0,
                         help='Number of parallel agents active')
     parser.add_argument('--repo-root', default='.', help='Path to repo root for git log commands')
+    parser.add_argument('--branches', nargs='+', default=['main', 'dev'],
+                        help='Branches to include in git metrics (default: main dev)')
     parser.add_argument('--owner', default='automagik-dev', help='GitHub owner')
     parser.add_argument('--repo', default='genie', help='GitHub repo name')
     parser.add_argument('--from-state', help='Fallback: read last_metrics from state.json')
@@ -169,8 +187,8 @@ def main():
         releases_count = parse_releases_count(releases)
         avg_merge = calc_avg_merge_time_hours(prs)
         ship_rate = calc_ship_rate(prs)
-        loc_changed = calc_loc_changed(args.repo_root)
-        commits = calc_commits_24h(args.repo_root)
+        loc_changed = calc_loc_changed(args.repo_root, args.branches)
+        commits = calc_commits_24h(args.repo_root, args.branches)
         prs_count = calc_prs_24h(args.owner, args.repo)
 
         metrics = format_metrics(
