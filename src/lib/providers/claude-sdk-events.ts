@@ -83,6 +83,22 @@ function assistantDetails(msg: SDKMessage & { type: 'assistant' }): Record<strin
   if (Array.isArray(content)) {
     const textBlock = content.find((b: { type: string }) => b.type === 'text') as { text?: string } | undefined;
     if (textBlock?.text) details.textPreview = truncate(textBlock.text);
+
+    // Extract tool_use blocks — name + input summary
+    const toolBlocks = content.filter((b: { type: string }) => b.type === 'tool_use') as Array<{ name?: string; input?: Record<string, unknown> }>;
+    if (toolBlocks.length > 0) {
+      details.toolCalls = toolBlocks.map((t) => {
+        const call: Record<string, unknown> = { name: t.name };
+        // For Bash, include the command
+        if (t.name === 'Bash' && t.input && typeof t.input.command === 'string') {
+          call.command = truncate(t.input.command as string, 150);
+        }
+        if (t.name === 'Read' && t.input && typeof t.input.file_path === 'string') {
+          call.path = t.input.file_path;
+        }
+        return call;
+      });
+    }
   }
   if (msg.error) details.error = msg.error;
   if (msg.parent_tool_use_id) details.parentToolUseId = msg.parent_tool_use_id;
@@ -118,6 +134,7 @@ function systemDetails(msg: Record<string, unknown>): Record<string, unknown> {
       details.cwd = msg.cwd;
       details.version = msg.claude_code_version;
       details.tools = Array.isArray(msg.tools) ? (msg.tools as string[]).length : 0;
+      if (msg.session_id) details.sessionId = msg.session_id;
     },
     api_retry: () => {
       details.attempt = msg.attempt;
@@ -242,6 +259,14 @@ const DETAIL_BUILDERS: Record<string, DetailBuilder> = {
       isSynthetic: msg.isSynthetic === true,
     };
     if (msg.parent_tool_use_id) d.parentToolUseId = msg.parent_tool_use_id;
+    // Extract text content — user messages can be string or array of content blocks
+    const content = msg.message?.content;
+    if (typeof content === 'string') {
+      d.textPreview = truncate(content);
+    } else if (Array.isArray(content)) {
+      const textBlock = content.find((b: { type: string }) => b.type === 'text') as { text?: string } | undefined;
+      if (textBlock?.text) d.textPreview = truncate(textBlock.text);
+    }
     return d;
   },
 };
@@ -259,6 +284,9 @@ const DETAIL_BUILDERS: Record<string, DetailBuilder> = {
 export async function routeSdkMessage(msg: SDKMessage, executorId: string, agentId: string): Promise<string | null> {
   const eventType = getEventType(msg);
   if (!eventType) return null;
+
+  // Skip stream partials — high volume noise with no audit value
+  if (eventType === 'sdk.stream.partial') return eventType;
 
   const details = buildEventDetails(msg);
   details.executorId = executorId;

@@ -193,7 +193,7 @@ interface StreamOptions {
 }
 
 // Noisy events hidden by default — show with --all
-const DEFAULT_HIDDEN_EVENT_TYPES = new Set(['command_success']);
+const DEFAULT_HIDDEN_EVENT_TYPES = new Set(['command_success', 'sdk.hook.started']);
 
 async function eventsStreamCommand(options: StreamOptions): Promise<void> {
   const { followAuditEvents } = await import('../lib/audit.js');

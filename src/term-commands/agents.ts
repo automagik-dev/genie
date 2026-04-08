@@ -619,6 +619,7 @@ function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Age
   console.log(`  Team:     ${ctx.validated.team}`);
   console.log(`  Pane:     ${paneId}`);
   if (ctx.validated.role) console.log(`  Role:     ${ctx.validated.role}`);
+  if (ctx.executorId) console.log(`  Executor: ${ctx.executorId}`);
   if (ctx.validated.skill) console.log(`  Skill:    ${ctx.validated.skill}`);
   if (workerEntry.claudeSessionId) {
     console.log(`  Session:  ${workerEntry.claudeSessionId}`);
@@ -936,6 +937,8 @@ async function runSdkQuery(
   runtimeExtraOptions?: Record<string, unknown>,
 ): Promise<void> {
   const { ClaudeSdkProvider } = await import('../lib/providers/claude-sdk.js');
+  const { startSession, recordTurn, updateTurnCount, endSession } = await import('../services/executors/sdk-session-capture.js');
+  const { getConnection } = await import('../lib/db.js');
   const sdkProvider = new ClaudeSdkProvider();
   const spawnContext = {
     agentId: ctx.agentIdentityId ?? ctx.workerId,
@@ -951,9 +954,76 @@ async function runSdkQuery(
     name: ctx.validated.name,
   };
 
+  // Create a safePgCall for session capture
+  const safePgCall: import('../lib/safe-pg-call.js').SafePgCallFn = async (op, fn, fallback) => {
+    try {
+      const sql = await getConnection();
+      return await fn(sql);
+    } catch {
+      return fallback;
+    }
+  };
+
   const prompt =
     ctx.validated.initialPrompt ??
     `You are ${ctx.validated.role ?? 'an agent'} on team "${ctx.validated.team}". Awaiting instructions.`;
+
+  // Session capture — resume existing session or start new
+  const resumeSessionId = typeof runtimeExtraOptions?.resume === 'string' ? runtimeExtraOptions.resume : undefined;
+  let dbSessionId: string | null = null;
+  let turnIndex = 0;
+
+  if (resumeSessionId) {
+    // Resolve the resume target. The value can be either:
+    // 1. A genie PG session ID (e.g. "sdk-abc123-...") — look up its claude_session_id
+    // 2. A Claude SDK session ID (UUID) — use directly
+    // The genie handles this transparently so callers don't need to know the provider.
+    let resolvedClaudeSessionId = resumeSessionId;
+
+    const byPgId = await safePgCall(
+      'resolve-session-resume',
+      (sql) => sql`
+        SELECT s.id, s.total_turns, COALESCE(s.claude_session_id, e.claude_session_id) as csid
+        FROM sessions s
+        LEFT JOIN executors e ON e.id = s.executor_id
+        WHERE s.id = ${resumeSessionId} OR s.claude_session_id = ${resumeSessionId}
+        ORDER BY s.started_at DESC LIMIT 1
+      `,
+      [] as Array<{ id: string; total_turns: number; csid: string | null }>,
+    );
+
+    if (byPgId && byPgId.length > 0) {
+      dbSessionId = byPgId[0].id;
+      turnIndex = byPgId[0].total_turns ?? 0;
+      if (byPgId[0].csid) resolvedClaudeSessionId = byPgId[0].csid;
+      // Reopen session
+      await safePgCall(
+        'reopen-session',
+        (sql) => sql`UPDATE sessions SET status = 'active', updated_at = now() WHERE id = ${dbSessionId}`,
+        undefined,
+      );
+    }
+
+    // Override the resume value with the resolved Claude session ID
+    if (runtimeExtraOptions) runtimeExtraOptions.resume = resolvedClaudeSessionId;
+  }
+
+  if (!dbSessionId) {
+    // New session
+    dbSessionId = await startSession(
+      safePgCall,
+      spawnContext.executorId,
+      undefined,
+      ctx.agentIdentityId ?? null,
+      ctx.validated.team,
+      ctx.validated.role,
+    );
+  }
+
+  // Record user prompt
+  if (dbSessionId) {
+    await recordTurn(safePgCall, dbSessionId, turnIndex++, 'user', prompt);
+  }
 
   const streaming = streamOpts?.stream ?? false;
   // Runtime overrides: streaming + CLI --sdk-* flags (highest priority, over directory sdkConfig)
@@ -974,6 +1044,9 @@ async function runSdkQuery(
     await executorRegistry.updateExecutorState(ctx.executorId, 'running').catch(() => {});
   }
 
+  let resultText = '';
+  let claudeSessionId: string | undefined;
+
   if (streaming) {
     const { formatSdkMessage } = await import('../lib/providers/claude-sdk-stream.js');
     const format = streamOpts?.streamFormat ?? 'text';
@@ -982,8 +1055,21 @@ async function runSdkQuery(
         const formatted = formatSdkMessage(message, format);
         if (formatted !== null) {
           process.stdout.write(formatted);
-          // Add newline separator for json format (ndjson already single-line, text handles its own)
           if (format === 'json') process.stdout.write('\n');
+        }
+        // Capture claude session ID for resume
+        if (message.type === 'system' && (message as Record<string, unknown>).session_id) {
+          claudeSessionId = (message as Record<string, unknown>).session_id as string;
+        }
+        // Capture assistant text for session recording
+        if (message.type === 'assistant' && message.message) {
+          for (const block of message.message.content) {
+            if (block.type === 'text' && block.text) resultText += block.text;
+          }
+        }
+        if (message.type === 'result' && message.subtype === 'success') {
+          if (message.result && !resultText) resultText = message.result;
+          if (message.session_id) claudeSessionId = message.session_id;
         }
       }
     } catch (err) {
@@ -991,25 +1077,53 @@ async function runSdkQuery(
         console.error(`SDK query error: ${err instanceof Error ? err.message : err}`);
       }
     }
-    return;
-  }
-
-  // Default non-streaming behavior: only final text
-  try {
-    for await (const message of messages) {
-      if (message.type === 'assistant' && message.message) {
-        for (const block of message.message.content) {
-          if (block.type === 'text' && block.text) process.stdout.write(block.text);
+  } else {
+    // Default non-streaming behavior: only final text
+    try {
+      for await (const message of messages) {
+        if (message.type === 'assistant' && message.message) {
+          for (const block of message.message.content) {
+            if (block.type === 'text' && block.text) {
+              process.stdout.write(block.text);
+              resultText += block.text;
+            }
+          }
+        }
+        if (message.type === 'result' && message.subtype === 'success') {
+          if (message.result) { console.log(message.result); if (!resultText) resultText = message.result; }
+          if (message.session_id) claudeSessionId = message.session_id;
         }
       }
-      if (message.type === 'result' && message.subtype === 'success' && message.result) {
-        console.log(message.result);
+    } catch (err) {
+      if (!(err instanceof Error && err.name === 'AbortError')) {
+        console.error(`SDK query error: ${err instanceof Error ? err.message : err}`);
       }
     }
-  } catch (err) {
-    if (!(err instanceof Error && err.name === 'AbortError')) {
-      console.error(`SDK query error: ${err instanceof Error ? err.message : err}`);
+  }
+
+  // Record assistant response and end session
+  if (dbSessionId) {
+    if (resultText) {
+      await recordTurn(safePgCall, dbSessionId, turnIndex++, 'assistant', resultText);
     }
+    await updateTurnCount(safePgCall, dbSessionId, turnIndex);
+    await endSession(safePgCall, dbSessionId, 'completed');
+  }
+
+  // Persist Claude SDK session ID on executor AND session for resume lookup
+  if (claudeSessionId && spawnContext.executorId) {
+    await safePgCall(
+      'update-claude-session-id',
+      (sql) => sql`UPDATE executors SET claude_session_id = ${claudeSessionId} WHERE id = ${spawnContext.executorId}`,
+      undefined,
+    );
+  }
+  if (claudeSessionId && dbSessionId) {
+    await safePgCall(
+      'update-session-claude-id',
+      (sql) => sql`UPDATE sessions SET claude_session_id = ${claudeSessionId} WHERE id = ${dbSessionId}`,
+      undefined,
+    );
   }
 }
 
@@ -1031,8 +1145,12 @@ async function launchSdkSpawn(
 
   await registerSpawnWorker(ctx, 'sdk');
 
+  // Expose executor ID to child processes and agent tools
+  if (ctx.executorId) process.env.GENIE_EXECUTOR_ID = ctx.executorId;
+
   console.log(`Agent "${ctx.workerId}" starting via Claude Agent SDK...`);
   console.log(`  Provider: claude-sdk | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
+  if (ctx.executorId) console.log(`  Executor: ${ctx.executorId}`);
   console.log('');
 
   const { resolvePermissionConfig } = await import('../lib/providers/claude-sdk-permissions.js');
@@ -1227,6 +1345,8 @@ export interface SpawnOptions {
   sdkStream?: boolean;
   /** SDK: reasoning effort level (--sdk-effort). */
   sdkEffort?: string;
+  /** SDK: resume a previous session by ID (--sdk-resume). */
+  sdkResume?: string;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
@@ -1344,7 +1464,7 @@ async function buildSpawnParams(
     model: agent.model,
     systemPromptFile: agent.identityPath ?? undefined,
     promptMode: agent.entry.promptMode,
-    initialPrompt: options.initialPrompt,
+    initialPrompt: options.prompt ?? options.initialPrompt,
     newWindow: options.newWindow,
     windowTarget: options.window,
   };
@@ -1493,6 +1613,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     if (options.sdkMaxTurns != null) runtimeExtra.maxTurns = options.sdkMaxTurns;
     if (options.sdkMaxBudget != null) runtimeExtra.maxBudgetUsd = options.sdkMaxBudget;
     if (options.sdkEffort) runtimeExtra.effort = options.sdkEffort;
+    if (options.sdkResume) runtimeExtra.resume = options.sdkResume;
     const hasRuntimeExtra = Object.keys(runtimeExtra).length > 0;
 
     return await launchSdkSpawn(
