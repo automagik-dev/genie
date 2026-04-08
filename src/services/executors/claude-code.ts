@@ -9,7 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import * as directory from '../../lib/agent-directory.js';
 import type { DirectoryEntry } from '../../lib/agent-directory.js';
 import * as agents from '../../lib/agent-registry.js';
@@ -26,30 +26,33 @@ interface TmuxSessionState {
 }
 
 /**
- * Convert a chat JID into a human-readable tmux window name.
+ * Convert a chat JID into a human-readable, path-safe tmux window name.
+ *
+ * Uses `-` separator (not `/`) so the name is safe as both a tmux window
+ * name AND a filename component in the Claude Code team inbox path.
  *
  * Formats:
- *   5512982298888@s.whatsapp.net  → whatsapp/5512982298888
- *   120363422699972298@g.us       → group/120363422699972298
- *   54958418317348@lid            → lid/54958418317348
- *   other                         → chat/<sanitized prefix>
+ *   5512982298888@s.whatsapp.net  → wa-5512982298888
+ *   120363422699972298@g.us       → group-120363422699972298
+ *   54958418317348@lid            → lid-54958418317348
+ *   other                         → chat-<sanitized prefix>
  */
 export function sanitizeWindowName(chatId: string): string {
   // WhatsApp DM: number@s.whatsapp.net
   const whatsappDm = chatId.match(/^(\d+)@s\.whatsapp\.net$/);
-  if (whatsappDm) return `whatsapp/${whatsappDm[1]}`;
+  if (whatsappDm) return `wa-${whatsappDm[1]}`;
 
   // WhatsApp group: id@g.us
   const whatsappGroup = chatId.match(/^(\d+)@g\.us$/);
-  if (whatsappGroup) return `group/${whatsappGroup[1]}`;
+  if (whatsappGroup) return `group-${whatsappGroup[1]}`;
 
   // LID format: id@lid
   const lid = chatId.match(/^(\d+)@lid$/);
-  if (lid) return `lid/${lid[1]}`;
+  if (lid) return `lid-${lid[1]}`;
 
-  // Fallback: sanitize for tmux (no special chars)
+  // Fallback: sanitize for tmux and file paths (no special chars)
   const clean = chatId.replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 30);
-  return `chat/${clean || 'unknown'}`;
+  return `chat-${clean || 'unknown'}`;
 }
 
 /**
@@ -202,8 +205,8 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
       tmuxSessionName,
       'inboxes',
     );
-    mkdirSync(inboxDir, { recursive: true });
     const inboxFile = join(inboxDir, `${sanitizeWindowName(session.chatId)}.json`);
+    mkdirSync(dirname(inboxFile), { recursive: true });
     let messages: { from: string; text: string; summary: string; timestamp: string; read: boolean }[] = [];
     try {
       const { readFileSync } = await import('node:fs');
