@@ -11,11 +11,15 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as directory from '../../lib/agent-directory.js';
+import type { DirectoryEntry } from '../../lib/agent-directory.js';
 import * as agents from '../../lib/agent-registry.js';
 import * as registry from '../../lib/executor-registry.js';
+import { buildLaunchCommand } from '../../lib/provider-adapters.js';
+import type { SpawnParams } from '../../lib/provider-adapters.js';
 import { shellQuote } from '../../lib/team-lead-command.js';
 import { ensureTeamWindow, executeTmux, isPaneAlive, isPaneProcessRunning, killWindow } from '../../lib/tmux.js';
 import type { IExecutor, OmniMessage, OmniSession, SafePgCallFn } from '../executor.js';
+import { buildTurnBasedPrompt } from './turn-based-prompt.js';
 
 interface TmuxSessionState {
   executorId: string | null;
@@ -25,6 +29,38 @@ export function sanitizeWindowName(chatId: string): string {
   const hash = createHash('md5').update(chatId).digest('hex').slice(0, 12);
   const prefix = chatId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
   return `${prefix}-${hash}` || 'chat';
+}
+
+/**
+ * Build SpawnParams from omni bridge context so we can delegate to buildLaunchCommand().
+ */
+export function buildOmniSpawnParams(
+  agentName: string,
+  chatId: string,
+  entry: DirectoryEntry,
+  env: Record<string, string>,
+  initialMessage?: string,
+): SpawnParams {
+  const instanceId = env.OMNI_INSTANCE ?? '';
+  const senderName = env.OMNI_SENDER_NAME ?? 'whatsapp-user';
+  const turnPrompt = buildTurnBasedPrompt(senderName, instanceId, chatId);
+
+  return {
+    provider: (entry.provider as SpawnParams['provider']) ?? 'claude',
+    team: agentName,
+    role: agentName,
+    sessionId: randomUUID(),
+    model: entry.model,
+    promptMode: entry.promptMode,
+    systemPromptFile: join(entry.dir, 'AGENTS.md'),
+    systemPrompt: turnPrompt,
+    initialPrompt: initialMessage,
+    nativeTeam: {
+      enabled: true,
+      agentName,
+      color: (entry.color as 'blue' | undefined) ?? undefined,
+    },
+  };
 }
 
 export class ClaudeCodeOmniExecutor implements IExecutor {
@@ -54,26 +90,16 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     const { paneId, created } = await ensureTeamWindow(tmuxSession, windowName, entry.dir);
 
     if (created) {
-      const envVars = { ...env, GENIE_OMNI_CHAT_ID: chatId, GENIE_OMNI_AGENT: agentName };
-      const envPrefix = Object.entries(envVars)
+      const omniEnv: Record<string, string> = { ...env, GENIE_OMNI_CHAT_ID: chatId, GENIE_OMNI_AGENT: agentName };
+      const params = buildOmniSpawnParams(agentName, chatId, entry, omniEnv);
+      const launch = buildLaunchCommand(params);
+
+      // Merge omni-specific env vars with those produced by buildLaunchCommand
+      const allEnv = { ...omniEnv, ...launch.env };
+      const envPrefix = Object.entries(allEnv)
         .map(([k, v]) => `${k}=${shellQuote(v)}`)
         .join(' ');
-      const systemPromptFile = join(entry.dir, 'AGENTS.md');
-      const promptFlag = entry.promptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
-      const modelFlag = entry.model ? `--model ${shellQuote(entry.model)}` : '';
-      const sessionId = randomUUID();
-      const cmd = [
-        envPrefix,
-        'claude',
-        promptFlag,
-        shellQuote(systemPromptFile),
-        modelFlag,
-        '--session-id',
-        shellQuote(sessionId),
-        '--dangerously-skip-permissions',
-      ]
-        .filter(Boolean)
-        .join(' ');
+      const cmd = envPrefix ? `${envPrefix} ${launch.command}` : launch.command;
       await executeTmux(`send-keys -t '${paneId}' ${shellQuote(cmd)} Enter`);
     }
 

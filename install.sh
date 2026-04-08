@@ -724,7 +724,7 @@ install_tmux_if_needed() {
 }
 
 configure_tmux_defaults() {
-    local tmux_conf="$HOME/.tmux.conf"
+    local tmux_conf="$GENIE_HOME/tmux.conf"
     local scripts_dir="$GENIE_HOME/scripts"
     local tmux_scripts_src=""
 
