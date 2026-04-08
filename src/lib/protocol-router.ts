@@ -165,6 +165,7 @@ async function lockedSpawnWorker(
   const lockResult = await sql.begin(async (tx: typeof sql) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${recipientId}))`;
 
+    // Double-check: another process may have spawned while we waited for the lock
     const postLockLive = await findLiveWorkerFuzzy(recipientId);
     if (postLockLive) return { type: 'existing' as const, worker: postLockLive };
 

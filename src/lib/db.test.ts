@@ -378,8 +378,8 @@ describe('retention cleanup', () => {
 describe('pool error recovery', () => {
   test('migration failure resets both sqlClient and activePort', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    // Find the migration/seed catch block
-    const catchIdx = source.indexOf('Migration/seed failure');
+    // Find the post-connect setup call in getConnection()
+    const catchIdx = source.indexOf('await runPostConnectSetup(');
     expect(catchIdx).toBeGreaterThan(-1);
     const catchBlock = source.slice(catchIdx, catchIdx + 300);
     // Both must be null'd to force full reconnect
@@ -389,10 +389,10 @@ describe('pool error recovery', () => {
 
   test('health-check failure in cached client resets both sqlClient and activePort', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    // Find the cached client health check catch block
-    const healthCheckIdx = source.indexOf('Connection is broken');
+    // Find the cached client health check function
+    const healthCheckIdx = source.indexOf('healthCheckCachedClient');
     expect(healthCheckIdx).toBeGreaterThan(-1);
-    const block = source.slice(healthCheckIdx, healthCheckIdx + 200);
+    const block = source.slice(healthCheckIdx, healthCheckIdx + 400);
     expect(block).toContain('sqlClient = null');
     expect(block).toContain('activePort = null');
   });

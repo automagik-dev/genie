@@ -65,12 +65,12 @@ describe('7.1 Concurrent Operations', () => {
   test('getConnection health-checks cached client before returning (code review)', () => {
     const source = readFileSync(join(__dirname, '..', 'db.ts'), 'utf-8');
 
-    // Health check pattern: SELECT 1 on cached client
-    const healthIdx = source.indexOf('Connection is broken');
+    // Health check pattern: SELECT 1 on cached client (extracted to healthCheckCachedClient)
+    const healthIdx = source.indexOf('healthCheckCachedClient');
     expect(healthIdx).toBeGreaterThan(-1);
 
     // On failure, both sqlClient and activePort are nulled for full reconnect
-    const block = source.slice(healthIdx, healthIdx + 200);
+    const block = source.slice(healthIdx, healthIdx + 400);
     expect(block).toContain('sqlClient = null');
     expect(block).toContain('activePort = null');
   });
