@@ -309,6 +309,7 @@ program
   .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', parseNumericFlag('--sdk-max-budget'))
   .option('--sdk-stream', 'SDK: enable streaming output (shortcut for --stream)')
   .option('--sdk-effort <level>', 'SDK: reasoning effort level (low, medium, high, max)')
+  .option('--sdk-resume <session-id>', 'SDK: resume a previous session by ID')
   .option('--prompt <text>', 'Initial prompt to send as the first user message')
   .addHelpText(
     'after',

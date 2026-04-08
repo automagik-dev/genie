@@ -39,6 +39,7 @@ export function registerAgentSpawn(parent: Command): void {
     .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', parseNumericFlag('--sdk-max-budget'))
     .option('--sdk-stream', 'SDK: enable streaming output (shortcut for --stream)')
     .option('--sdk-effort <level>', 'SDK: reasoning effort level (low, medium, high, max)')
+    .option('--sdk-resume <session-id>', 'SDK: resume a previous session by ID')
     .action(async (name: string, options: SpawnOptions) => {
       if (options.prompt) options.initialPrompt = options.prompt;
       try {
