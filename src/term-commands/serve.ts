@@ -23,6 +23,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { ensureTmux, tmuxBin } from '../lib/ensure-tmux.js';
+import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
 
 // ============================================================================
 // Paths
@@ -34,11 +35,6 @@ function genieHome(): string {
 
 function servePidPath(): string {
   return join(genieHome(), 'serve.pid');
-}
-
-function genieTmuxConf(): string {
-  const candidates = [join(genieHome(), 'tmux.conf')];
-  return candidates.find((p) => existsSync(p)) ?? '/dev/null';
 }
 
 // TUI uses default tmux server (no separate socket or config)
@@ -83,12 +79,7 @@ function isProcessAlive(pid: number): boolean {
 // tmux helpers
 // ============================================================================
 
-const GENIE_SOCKET = 'genie';
 const TUI_SESSION = 'genie-tui';
-
-function genieTmux(subcmd: string): string {
-  return `${tmuxBin()} -L ${GENIE_SOCKET} -f ${genieTmuxConf()} ${subcmd}`;
-}
 
 /** TUI tmux config — minimal, no shell probes, no prefix key interference */
 function tuiTmuxConf(): string {
@@ -104,7 +95,7 @@ function tuiTmux(subcmd: string): string {
 /** Check if a tmux server is running on a socket */
 function isGenieTmuxRunning(): boolean {
   try {
-    execSync(genieTmux('list-sessions'), { stdio: 'ignore' });
+    execSync(genieTmuxCmd('list-sessions'), { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -284,7 +275,7 @@ function killTuiSession(): void {
 /** List sessions on the genie agent socket */
 function listAgentSessions(): string[] {
   try {
-    const out = execSync(genieTmux("list-sessions -F '#{session_name}'"), { encoding: 'utf-8' });
+    const out = execSync(genieTmuxCmd("list-sessions -F '#{session_name}'"), { encoding: 'utf-8' });
     return out.trim().split('\n').filter(Boolean);
   } catch {
     return [];
@@ -464,9 +455,9 @@ async function startForeground(headless?: boolean): Promise<void> {
   if (!headless) {
     const sessions = listAgentSessions();
     if (sessions.length > 0) {
-      console.log(`  Agent server (-L ${GENIE_SOCKET}): ${sessions.length} sessions`);
+      console.log(`  Agent server (-L genie): ${sessions.length} sessions`);
     } else {
-      console.log(`  Agent server (-L ${GENIE_SOCKET}): no sessions yet (created on first spawn)`);
+      console.log('  Agent server (-L genie): no sessions yet (created on first spawn)');
     }
   }
 
@@ -706,7 +697,7 @@ async function printPgserveStatus(): Promise<void> {
 function printTmuxStatus(): void {
   const agentRunning = isGenieTmuxRunning();
   const sessions = agentRunning ? listAgentSessions() : [];
-  console.log(`  tmux -L ${GENIE_SOCKET}: ${agentRunning ? `running (${sessions.length} sessions)` : 'stopped'}`);
+  console.log(`  tmux -L genie: ${agentRunning ? `running (${sessions.length} sessions)` : 'stopped'}`);
   if (sessions.length > 0) {
     console.log(`              ${sessions.join(', ')}`);
   }
