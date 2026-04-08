@@ -112,7 +112,7 @@ export function stripAnsi(str: string): string {
  */
 export function writeStdout(text: string): void {
   const { writeSync } = require('node:fs') as typeof import('node:fs');
-  const data = text + '\n';
+  const data = `${text}\n`;
   const CHUNK = 4096;
   for (let i = 0; i < data.length; i += CHUNK) {
     writeSync(1, data.slice(i, i + CHUNK));

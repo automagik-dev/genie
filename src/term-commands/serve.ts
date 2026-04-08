@@ -407,6 +407,44 @@ async function startAgentSync(): Promise<{ close: () => void } | null> {
   }
 }
 
+/** Start pgserve and register it in the service registry. */
+async function startPgserve(): Promise<void> {
+  console.log('  Starting pgserve...');
+  try {
+    const { ensurePgserve } = await import('../lib/db.js');
+    const port = await ensurePgserve();
+    console.log(`  pgserve ready on port ${port}`);
+    try {
+      const { registerService } = await import('../lib/service-registry.js');
+      registerService('pgserve-owner', process.pid);
+    } catch {
+      // Registry not available — non-fatal
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  pgserve failed: ${msg}`);
+  }
+}
+
+/** Start the scheduler daemon and register it. */
+async function startScheduler(): Promise<void> {
+  console.log('  Starting scheduler daemon...');
+  try {
+    const { startDaemon } = await import('../lib/scheduler-daemon.js');
+    handles.schedulerHandle = startDaemon();
+    console.log('  Scheduler started (includes event-router + inbox-watcher)');
+    try {
+      const { registerService } = await import('../lib/service-registry.js');
+      registerService('scheduler', process.pid);
+    } catch {
+      // Registry not available — non-fatal
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  Scheduler failed: ${msg}`);
+  }
+}
+
 /** Start all services in foreground mode.
  *  @param headless If true, skip TUI setup (services only: pgserve, scheduler, inbox-watcher).
  */
@@ -430,25 +468,7 @@ async function startForeground(headless?: boolean): Promise<void> {
   }
 
   // 1. Start pgserve
-  console.log('  Starting pgserve...');
-  try {
-    const { ensurePgserve } = await import('../lib/db.js');
-    const port = await ensurePgserve();
-    console.log(`  pgserve ready on port ${port}`);
-
-    // Register pgserve PID in service registry
-    try {
-      const { registerService } = await import('../lib/service-registry.js');
-      // pgserve child PID is internal to db.ts — register our own process
-      // as the owner; db.ts exit handler cleans up pgserve child
-      registerService('pgserve-owner', process.pid);
-    } catch {
-      // Registry not available — non-fatal
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`  pgserve failed: ${msg}`);
-  }
+  await startPgserve();
 
   // 2. Report agent tmux server state (don't create empty sessions —
   // sessions are created on-demand by `genie spawn`).
@@ -483,23 +503,7 @@ async function startForeground(headless?: boolean): Promise<void> {
   }
 
   // 4. Start scheduler + event-router + inbox-watcher
-  console.log('  Starting scheduler daemon...');
-  try {
-    const { startDaemon } = await import('../lib/scheduler-daemon.js');
-    handles.schedulerHandle = startDaemon();
-    console.log('  Scheduler started (includes event-router + inbox-watcher)');
-
-    // Register scheduler in service registry
-    try {
-      const { registerService } = await import('../lib/service-registry.js');
-      registerService('scheduler', process.pid);
-    } catch {
-      // Registry not available — non-fatal
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`  Scheduler failed: ${msg}`);
-  }
+  await startScheduler();
 
   const stopMsg = headless ? 'Send SIGTERM to stop.' : 'Press Ctrl+C to stop.';
   console.log(`\ngenie serve is running (${mode}). ${stopMsg}`);

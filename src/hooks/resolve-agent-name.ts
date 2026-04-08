@@ -14,42 +14,35 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { HookPayload } from './types.js';
 
+/** Try to read agentName from .claude/settings.local.json in the given directory. */
+function readAgentNameFromSettings(cwd: string): string | undefined {
+  const localSettings = join(cwd, '.claude', 'settings.local.json');
+  if (!existsSync(localSettings)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(localSettings, 'utf-8'));
+    return parsed.agentName || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Derive a name from the cwd basename, if it looks like a project name. */
+function nameFromCwd(cwd: string): string | undefined {
+  const name = basename(cwd);
+  return name && name !== '/' && name !== '.' ? name : undefined;
+}
+
 /** Resolve agent name from available context. */
 export function resolveAgentName(payload: HookPayload): string {
-  // 1. Env var (genie spawn sets this)
-  const envName = process.env.GENIE_AGENT_NAME;
-  if (envName) return envName;
-
-  // 2. CC native team teammate name
-  const teammate = payload.teammate_name;
-  if (teammate) return teammate;
-
-  // 3. .claude/settings.local.json agentName
   const cwd = payload.cwd;
-  if (cwd) {
-    const localSettings = join(cwd, '.claude', 'settings.local.json');
-    if (existsSync(localSettings)) {
-      try {
-        const parsed = JSON.parse(readFileSync(localSettings, 'utf-8'));
-        if (parsed.agentName) return parsed.agentName;
-      } catch {
-        // ignore parse errors
-      }
-    }
-  }
-
-  // 4. Basename of cwd
-  if (cwd) {
-    const name = basename(cwd);
-    if (name && name !== '/' && name !== '.') return name;
-  }
-
-  // 5. Session ID prefix
-  const sessionId = payload.session_id;
-  if (sessionId) return `session-${sessionId.slice(0, 8)}`;
-
-  // 6. Fallback
-  return 'unknown';
+  return (
+    process.env.GENIE_AGENT_NAME ||
+    payload.teammate_name ||
+    (cwd && readAgentNameFromSettings(cwd)) ||
+    (cwd && nameFromCwd(cwd)) ||
+    (payload.session_id && `session-${payload.session_id.slice(0, 8)}`) ||
+    'unknown'
+  );
 }
 
 /** Resolve team name from available context. */

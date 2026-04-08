@@ -152,6 +152,27 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
 // Template Edit Form
 // ============================================================================
 
+function getExtraArgsStr(extra_args: AgentTemplate['extra_args']): string {
+  return Array.isArray(extra_args) ? extra_args.join(' ') : (extra_args ?? '');
+}
+
+function TemplateFormEmpty() {
+  return (
+    <div
+      style={{
+        ...s.formPanel,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: theme.textMuted,
+        fontSize: '13px',
+      }}
+    >
+      Select a template to edit
+    </div>
+  );
+}
+
 function TemplateForm({
   template,
   onSave,
@@ -185,23 +206,11 @@ function TemplateForm({
   }, [draft, onSave]);
 
   if (!draft) {
-    return (
-      <div
-        style={{
-          ...s.formPanel,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: theme.textMuted,
-          fontSize: '13px',
-        }}
-      >
-        Select a template to edit
-      </div>
-    );
+    return <TemplateFormEmpty />;
   }
 
-  const extraArgsStr = Array.isArray(draft.extra_args) ? draft.extra_args.join(' ') : (draft.extra_args ?? '');
+  const extraArgsStr = getExtraArgsStr(draft.extra_args);
+  const saveLabel = saving ? 'Saving...' : saved ? 'Saved \u2713' : 'Save Template';
 
   return (
     <div style={s.formPanel}>
@@ -337,7 +346,7 @@ function TemplateForm({
             cursor: saving ? 'default' : 'pointer',
           }}
         >
-          {saving ? 'Saving...' : saved ? 'Saved \u2713' : 'Save Template'}
+          {saveLabel}
         </button>
       </div>
     </div>
@@ -388,19 +397,24 @@ export function AgentsTab({ templates, onSave, onCreate }: AgentsTabProps) {
             <div style={{ padding: '16px', fontSize: '12px', color: theme.textMuted }}>No templates found</div>
           ) : (
             templates.map((tpl) => (
-              <div
+              <button
+                type="button"
                 key={tpl.id}
-                style={s.row(selected?.id === tpl.id)}
+                style={{
+                  ...s.row(selected?.id === tpl.id),
+                  border: 'none',
+                  background: 'none',
+                  textAlign: 'left' as const,
+                  width: '100%',
+                  font: 'inherit',
+                }}
                 onClick={() => setSelected(tpl)}
-                onKeyDown={(e) => e.key === 'Enter' && setSelected(tpl)}
-                role="button"
-                tabIndex={0}
               >
                 <div style={s.rowName}>{tpl.id}</div>
                 <div style={s.rowMeta}>
                   {[tpl.provider ?? 'claude', tpl.role, tpl.skill].filter(Boolean).join(' \u00b7 ')}
                 </div>
-              </div>
+              </button>
             ))
           )}
         </div>

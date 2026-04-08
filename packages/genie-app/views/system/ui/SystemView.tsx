@@ -631,10 +631,55 @@ function ExtensionsCard({ extensions }: { extensions: ExtensionRow[] }) {
 }
 
 // ============================================================================
+// Data helpers (reduce cognitive complexity in SystemView)
+// ============================================================================
+
+function applyHealthData(
+  healthData: SystemHealth | null,
+  tableData: unknown,
+  channelData: unknown,
+  setters: {
+    setHealth: (h: SystemHealth) => void;
+    setTables: (t: TableSizeRow[]) => void;
+    setChannels: (c: ChannelRow[]) => void;
+    setExtensions: (e: ExtensionRow[]) => void;
+  },
+) {
+  if (!healthData) return;
+  setters.setHealth(healthData);
+
+  const hasDirectTables = Array.isArray(tableData) && (tableData as TableSizeRow[]).length > 0;
+  if (healthData.tables && Array.isArray(healthData.tables) && !hasDirectTables) {
+    setters.setTables(healthData.tables as TableSizeRow[]);
+  }
+
+  const hasDirectChannels = Array.isArray(channelData) && (channelData as ChannelRow[]).length > 0;
+  if (healthData.channels && Array.isArray(healthData.channels) && !hasDirectChannels) {
+    setters.setChannels(healthData.channels as ChannelRow[]);
+  }
+
+  if (healthData.extensions && Array.isArray(healthData.extensions)) {
+    setters.setExtensions(healthData.extensions as ExtensionRow[]);
+  }
+}
+
+function applyDirectData(
+  tableData: unknown,
+  channelData: unknown,
+  setters: { setTables: (t: TableSizeRow[]) => void; setChannels: (c: ChannelRow[]) => void },
+) {
+  if (Array.isArray(tableData) && (tableData as TableSizeRow[]).length > 0) {
+    setters.setTables(tableData as TableSizeRow[]);
+  }
+  if (Array.isArray(channelData) && (channelData as ChannelRow[]).length > 0) {
+    setters.setChannels(channelData as ChannelRow[]);
+  }
+}
+
+// ============================================================================
 // SystemView (Main Export)
 // ============================================================================
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: main view orchestrates 5 data fetches + rendering
 export function SystemView({ windowId, meta: _meta }: AppComponentProps) {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [snapshots, setSnapshots] = useState<MachineSnapshot[]>([]);
@@ -655,32 +700,9 @@ export function SystemView({ windowId, meta: _meta }: AppComponentProps) {
         nats.request<ChannelRow[]>(GENIE_SUBJECTS.system.channels(ORG_ID)).catch(() => []),
       ]);
 
-      if (healthData) {
-        setHealth(healthData);
-        // Extract tables/channels/extensions from health if available
-        if (healthData.tables && Array.isArray(healthData.tables)) {
-          // Only use embedded tables if tableData is empty
-          if (!Array.isArray(tableData) || (tableData as TableSizeRow[]).length === 0) {
-            setTables(healthData.tables as TableSizeRow[]);
-          }
-        }
-        if (healthData.channels && Array.isArray(healthData.channels)) {
-          if (!Array.isArray(channelData) || (channelData as ChannelRow[]).length === 0) {
-            setChannels(healthData.channels as ChannelRow[]);
-          }
-        }
-        if (healthData.extensions && Array.isArray(healthData.extensions)) {
-          setExtensions(healthData.extensions as ExtensionRow[]);
-        }
-      }
-
+      applyHealthData(healthData, tableData, channelData, { setHealth, setTables, setChannels, setExtensions });
       if (Array.isArray(snapshotData)) setSnapshots(snapshotData as MachineSnapshot[]);
-      if (Array.isArray(tableData) && (tableData as TableSizeRow[]).length > 0) {
-        setTables(tableData as TableSizeRow[]);
-      }
-      if (Array.isArray(channelData) && (channelData as ChannelRow[]).length > 0) {
-        setChannels(channelData as ChannelRow[]);
-      }
+      applyDirectData(tableData, channelData, { setTables, setChannels });
 
       setLoadState('ready');
       setError(null);

@@ -160,6 +160,146 @@ const s = {
 } as const;
 
 // ============================================================================
+// FileContentPane — extracted to reduce cognitive complexity
+// ============================================================================
+
+function FileContentPane({
+  selectedAgentName,
+  dirState,
+  dirError,
+  sorted,
+  viewMode,
+  selectedNames,
+  renamingName,
+  sortCol,
+  sortDir,
+  onSort,
+  onSelect,
+  onNavigate,
+  onPreview,
+  onRenameSubmit,
+  onRenameCancel,
+  onRetry,
+}: {
+  selectedAgentName: string | null;
+  dirState: LoadState;
+  dirError: string | null;
+  sorted: FsEntry[];
+  viewMode: ViewMode;
+  selectedNames: Set<string>;
+  renamingName: string | null;
+  sortCol: SortCol;
+  sortDir: 'asc' | 'desc';
+  onSort: (col: SortCol) => void;
+  onSelect: (name: string, e: React.MouseEvent) => void;
+  onNavigate: (entry: FsEntry) => void;
+  onPreview: (entry: FsEntry) => void;
+  onRenameSubmit: (entry: FsEntry, newName: string) => void;
+  onRenameCancel: () => void;
+  onRetry: () => void;
+}) {
+  if (!selectedAgentName) {
+    return (
+      <EmptyState
+        icon="\ud83e\udde0"
+        title="No agent selected"
+        description="Select an agent from the left to browse their brain folder."
+      />
+    );
+  }
+  if (dirState === 'loading') return <LoadingState message="Loading files..." />;
+  if (dirState === 'error') {
+    return <ErrorState message={dirError ?? 'Failed to load directory'} service="genie.fs.list" onRetry={onRetry} />;
+  }
+  if (sorted.length === 0) {
+    return <EmptyState icon="\ud83d\udcc2" title="Empty folder" description="No files here yet." />;
+  }
+  if (viewMode === 'list') {
+    return (
+      <FileListView
+        entries={sorted}
+        selectedNames={selectedNames}
+        renamingName={renamingName}
+        sortCol={sortCol}
+        sortDir={sortDir}
+        onSort={onSort}
+        onSelect={onSelect}
+        onNavigate={onNavigate}
+        onPreview={onPreview}
+        onRenameSubmit={onRenameSubmit}
+        onRenameCancel={onRenameCancel}
+      />
+    );
+  }
+  return (
+    <FileGridView
+      entries={sorted}
+      selectedNames={selectedNames}
+      onSelect={onSelect}
+      onNavigate={onNavigate}
+      onPreview={onPreview}
+    />
+  );
+}
+
+// ============================================================================
+// Keyboard handler — extracted to reduce cognitive complexity
+// ============================================================================
+
+interface KeyboardContext {
+  renamingName: string | null;
+  selectedNames: Set<string>;
+  entries: FsEntry[];
+  handleClearSelection: () => void;
+  setPendingDelete: (names: string[] | null) => void;
+  setRenamingName: (name: string | null) => void;
+  setSelectedNames: (names: Set<string>) => void;
+  handleNavigate: (entry: FsEntry) => void;
+  handlePreview: (entry: FsEntry) => void;
+}
+
+function handleDeleteKey(e: React.KeyboardEvent, ctx: KeyboardContext) {
+  e.preventDefault();
+  const names = ctx.entries.filter((en) => ctx.selectedNames.has(en.name)).map((en) => en.name);
+  if (names.length) ctx.setPendingDelete(names);
+}
+
+function handleEnterKey(e: React.KeyboardEvent, ctx: KeyboardContext) {
+  e.preventDefault();
+  const entry = ctx.entries.find((en) => en.name === [...ctx.selectedNames][0]);
+  if (!entry) return;
+  if (entry.isDirectory) ctx.handleNavigate(entry);
+  else ctx.handlePreview(entry);
+}
+
+function handleFilesKeyDown(e: React.KeyboardEvent, ctx: KeyboardContext) {
+  if (ctx.renamingName) return;
+
+  if (e.key === 'Escape') {
+    ctx.handleClearSelection();
+    return;
+  }
+  const isDeleteKey = e.key === 'Delete' || e.key === 'Backspace';
+  if (isDeleteKey && ctx.selectedNames.size > 0) {
+    handleDeleteKey(e, ctx);
+    return;
+  }
+  if (e.key === 'F2' && ctx.selectedNames.size === 1) {
+    e.preventDefault();
+    ctx.setRenamingName([...ctx.selectedNames][0]);
+    return;
+  }
+  if (e.key === 'Enter' && ctx.selectedNames.size === 1) {
+    handleEnterKey(e, ctx);
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+    e.preventDefault();
+    ctx.setSelectedNames(new Set(ctx.entries.map((en) => en.name)));
+  }
+}
+
+// ============================================================================
 // FilesView — Main Export
 // ============================================================================
 
@@ -409,35 +549,17 @@ export function FilesView({ windowId }: AppComponentProps) {
   // ---- Keyboard ----
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (renamingName) return;
-      if (e.key === 'Escape') {
-        handleClearSelection();
-        return;
-      }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNames.size > 0) {
-        e.preventDefault();
-        const names = entries.filter((en) => selectedNames.has(en.name)).map((en) => en.name);
-        if (names.length) setPendingDelete(names);
-        return;
-      }
-      if (e.key === 'F2' && selectedNames.size === 1) {
-        e.preventDefault();
-        setRenamingName([...selectedNames][0]);
-        return;
-      }
-      if (e.key === 'Enter' && selectedNames.size === 1) {
-        e.preventDefault();
-        const entry = entries.find((en) => en.name === [...selectedNames][0]);
-        if (entry) {
-          if (entry.isDirectory) handleNavigate(entry);
-          else handlePreview(entry);
-        }
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
-        e.preventDefault();
-        setSelectedNames(new Set(entries.map((en) => en.name)));
-      }
+      handleFilesKeyDown(e, {
+        renamingName,
+        selectedNames,
+        entries,
+        handleClearSelection,
+        setPendingDelete,
+        setRenamingName,
+        setSelectedNames,
+        handleNavigate,
+        handlePreview,
+      });
     },
     [renamingName, selectedNames, entries, handleClearSelection, handleNavigate, handlePreview],
   );
@@ -574,45 +696,24 @@ export function FilesView({ windowId }: AppComponentProps) {
             onClick={handleClearSelection}
             role="toolbar"
           >
-            {!selectedAgentName ? (
-              <EmptyState
-                icon="\ud83e\udde0"
-                title="No agent selected"
-                description="Select an agent from the left to browse their brain folder."
-              />
-            ) : dirState === 'loading' ? (
-              <LoadingState message="Loading files..." />
-            ) : dirState === 'error' ? (
-              <ErrorState
-                message={dirError ?? 'Failed to load directory'}
-                service="genie.fs.list"
-                onRetry={() => loadDirectory(currentPath)}
-              />
-            ) : sorted.length === 0 ? (
-              <EmptyState icon="\ud83d\udcc2" title="Empty folder" description="No files here yet." />
-            ) : viewMode === 'list' ? (
-              <FileListView
-                entries={sorted}
-                selectedNames={selectedNames}
-                renamingName={renamingName}
-                sortCol={sortCol}
-                sortDir={sortDir}
-                onSort={handleSort}
-                onSelect={handleSelect}
-                onNavigate={handleNavigate}
-                onPreview={handlePreview}
-                onRenameSubmit={handleRenameSubmit}
-                onRenameCancel={() => setRenamingName(null)}
-              />
-            ) : (
-              <FileGridView
-                entries={sorted}
-                selectedNames={selectedNames}
-                onSelect={handleSelect}
-                onNavigate={handleNavigate}
-                onPreview={handlePreview}
-              />
-            )}
+            <FileContentPane
+              selectedAgentName={selectedAgentName}
+              dirState={dirState}
+              dirError={dirError}
+              sorted={sorted}
+              viewMode={viewMode}
+              selectedNames={selectedNames}
+              renamingName={renamingName}
+              sortCol={sortCol}
+              sortDir={sortDir}
+              onSort={handleSort}
+              onSelect={handleSelect}
+              onNavigate={handleNavigate}
+              onPreview={handlePreview}
+              onRenameSubmit={handleRenameSubmit}
+              onRenameCancel={() => setRenamingName(null)}
+              onRetry={() => loadDirectory(currentPath)}
+            />
           </div>
 
           {previewEntry && <FilePreviewPanel entry={previewEntry} content={previewContent} loading={previewLoading} />}

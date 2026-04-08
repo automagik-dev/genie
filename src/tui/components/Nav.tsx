@@ -192,14 +192,7 @@ export function Nav({
     if (!node) return;
 
     if (node.type === 'agent') {
-      // No session → spawn the agent (creates session + window 0 with Claude)
-      if (node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
-        spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
-      } else if (node.wsAgentState === 'running') {
-        // Attach right pane to the agent's session when already running
-        const target = getSessionTarget(node);
-        if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
-      }
+      handleEnterAgent(node, onTmuxSessionSelect);
       return;
     }
 
@@ -239,167 +232,12 @@ export function Nav({
     (action: string, payload?: string) => {
       const node = flatNodes.find((n) => n.node.id === contextMenuNodeId)?.node;
       if (!node) return;
-      const name = node.label;
       setContextMenuNodeId(null);
-
-      // Shared: attach right pane
-      if (action === 'attach') {
-        const target = getSessionTarget(node);
-        if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
-        return;
-      }
-
-      // Agent: retry stuck spawn
-      if (action === 'retry') {
-        void (async () => {
-          try {
-            const { reconcileStaleSpawns } = await import('../../lib/agent-registry.js');
-            await reconcileStaleSpawns();
-          } catch {
-            // best-effort
-          }
-          spawnAgent(name, onTmuxSessionSelect);
-        })();
-        return;
-      }
-
-      // Agent: genie CLI commands
-      const genieCommands: Record<string, string[]> = {
-        spawn: ['spawn', name],
-        'spawn-plan': ['spawn', name, '--plan-mode'],
-        stop: ['agent', 'stop', name],
-        kill: ['agent', 'kill', name],
-        log: ['agent', 'log', name],
-        show: ['agent', 'show', name],
-        read: ['read', name],
-        'answer-yes': ['agent', 'answer', name, 'yes'],
-        'answer-no': ['agent', 'answer', name, 'no'],
-      };
-
-      if (action === 'send' && payload) {
-        executeGenie(['agent', 'send', payload, '--to', name]);
-        return;
-      }
-      if (action === 'answer-text' && payload) {
-        executeGenie(['agent', 'answer', name, `text:${payload}`]);
-        return;
-      }
-
-      const genieArgs = genieCommands[action];
-      if (genieArgs) {
-        executeGenie(genieArgs);
-        return;
-      }
-
-      // Tmux actions — extract identifiers from node ID
-      const tmuxServer = process.env.GENIE_TMUX_SERVER || 'genie';
-
-      // Rename: works for agent (session) and session nodes
-      if (action === 'rename-session' && payload) {
-        const sess =
-          node.type === 'agent' ? (node.data.sessionName as string) || name : node.id.split(':').slice(1).join(':');
-        executeTmux(['-L', tmuxServer, 'rename-session', '-t', sess, payload]);
-        return;
-      }
-      if (action === 'rename-window' && payload) {
-        const idParts = node.id.split(':');
-        const windowTarget = `${idParts[1]}:${idParts[2]}`;
-        executeTmux(['-L', tmuxServer, 'rename-window', '-t', windowTarget, payload]);
-        return;
-      }
-      if (action === 'rename-pane' && payload && node.type === 'pane') {
-        const paneId = node.data.paneId as string;
-        executeTmux(['-L', tmuxServer, 'select-pane', '-t', `${paneId}`, '-T', payload]);
-        return;
-      }
-
-      // Agent: spawn a new parallel worker via genie spawn (with identity, hooks, team)
-      if (action === 'agent-new-window' && node.type === 'agent') {
-        if (onNewAgentWindow) onNewAgentWindow(agentNameFromNode(node));
-        return;
-      }
-
-      // Agent: new empty window (shell)
-      if (action === 'new-empty-window' && node.type === 'agent') {
-        const sessionName = (node.data.sessionName as string) || name;
-        executeTmux(['-L', tmuxServer, 'new-window', '-a', '-t', sessionName]);
-        return;
-      }
-
-      const idParts = node.id.split(':');
-
-      // session:<name>
-      if (node.type === 'session') {
-        const sess = idParts.slice(1).join(':');
-        if (action === 'kill-session') {
-          executeTmux(['-L', tmuxServer, 'kill-session', '-t', sess]);
-          return;
-        }
-        if (action === 'new-window') {
-          executeTmux(['-L', tmuxServer, 'new-window', '-a', '-t', sess]);
-          return;
-        }
-        if (action === 'clone-session') {
-          executeTmux(['-L', tmuxServer, 'new-session', '-d', '-s', `${sess}-clone`, '-t', sess]);
-          return;
-        }
-        if (action === 'spawn-in-session' && payload) {
-          executeGenie(['spawn', payload, '--session', sess]);
-          return;
-        }
-      }
-
-      // window:<session>:<index>
-      if (node.type === 'window') {
-        const windowTarget = `${idParts[1]}:${idParts[2]}`;
-        if (action === 'kill-window') {
-          executeTmux(['-L', tmuxServer, 'kill-window', '-t', windowTarget]);
-          return;
-        }
-        if (action === 'window-new-agent') {
-          const parentAgent = findParentAgent(sessionTree, node.id);
-          if (parentAgent) {
-            const agentFullName = agentNameFromNode(parentAgent);
-            const suffix = Date.now() % 10000;
-            const role = `${agentFullName}-${suffix}`;
-            executeGenie(['spawn', agentFullName, '--role', role, '--window', windowTarget]);
-          }
-          return;
-        }
-        if (action === 'split-pane') {
-          executeTmux(['-L', tmuxServer, 'split-window', '-t', windowTarget]);
-          return;
-        }
-        if (action === 'spawn-in-window' && payload) {
-          executeGenie(['spawn', payload, '--session', idParts[1]]);
-          return;
-        }
-      }
-
-      // pane:<paneId>
-      if (node.type === 'pane') {
-        const paneId = node.data.paneId as string;
-        if (action === 'clone-agent') {
-          // Find parent agent and spawn a parallel worker via genie spawn
-          const parentAgent = findParentAgent(sessionTree, node.id);
-          if (parentAgent && onNewAgentWindow) {
-            onNewAgentWindow(agentNameFromNode(parentAgent));
-          }
-          return;
-        }
-        if (action === 'kill-pane') {
-          executeTmux(['-L', tmuxServer, 'kill-pane', '-t', `${paneId}`]);
-          return;
-        }
-        if (action === 'split-h') {
-          executeTmux(['-L', tmuxServer, 'split-window', '-h', '-t', `${paneId}`]);
-          return;
-        }
-        if (action === 'split-v') {
-          executeTmux(['-L', tmuxServer, 'split-window', '-v', '-t', `${paneId}`]);
-          return;
-        }
-      }
+      dispatchContextMenuAction(action, node, payload, {
+        sessionTree,
+        onTmuxSessionSelect,
+        onNewAgentWindow,
+      });
     },
     [flatNodes, contextMenuNodeId, sessionTree, onTmuxSessionSelect, onNewAgentWindow],
   );
@@ -408,30 +246,17 @@ export function Nav({
 
   useKeyboard((key) => {
     if (keyboardDisabled) return;
-    // '.' opens context menu for selected node
-    if (key.name === '.' && !contextMenuNodeId) {
-      const node = flatNodes[selectedIndex]?.node;
-      if (node && buildMenuItems(node).length > 0) {
-        setContextMenuNodeId(node.id);
-        return;
-      }
-    }
-    if (contextMenuNodeId) return;
-    if (key.name === 'up' || key.name === 'k' || key.name === 'down' || key.name === 'j') {
-      handleVerticalNav(key.name);
-    } else if (key.name === 'right' || key.name === 'l' || key.name === 'left' || key.name === 'h') {
-      handleExpandCollapse(key.name);
-    } else if (key.name === 'enter' || key.name === 'return') {
-      handleEnter();
-    } else if (key.name === 'r') {
-      handleRetry();
-    } else if (key.ctrl && key.name === 't') {
-      // Ctrl+T: spawn a parallel worker of the selected agent
-      const node = flatNodes[selectedIndex]?.node;
-      if (node?.type === 'agent' && node.wsAgentState === 'running' && onNewAgentWindow) {
-        onNewAgentWindow(agentNameFromNode(node));
-      }
-    }
+    handleKeyboardInput(key, {
+      contextMenuNodeId,
+      flatNodes,
+      selectedIndex,
+      setContextMenuNodeId,
+      handleVerticalNav,
+      handleExpandCollapse,
+      handleEnter,
+      handleRetry,
+      onNewAgentWindow,
+    });
   });
 
   // Summary counts
@@ -515,6 +340,308 @@ export function Nav({
       </box>
     </box>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Extracted helpers to keep cognitive complexity low
+// ---------------------------------------------------------------------------
+
+/** Handle Enter key for agent nodes: spawn if stopped, attach if running. */
+function handleEnterAgent(
+  node: TreeNode,
+  onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void,
+): void {
+  if (node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
+    spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
+  } else if (node.wsAgentState === 'running') {
+    const target = getSessionTarget(node);
+    if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
+  }
+}
+
+/** Top-level context menu dispatcher — delegates to focused helpers. */
+function dispatchContextMenuAction(
+  action: string,
+  node: TreeNode,
+  payload: string | undefined,
+  deps: {
+    sessionTree: TreeNode[];
+    onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void;
+    onNewAgentWindow?: (agentName: string) => void;
+  },
+): void {
+  const name = node.label;
+  if (handleAttachAction(action, node, deps.onTmuxSessionSelect)) return;
+  if (handleRetryAction(action, name, deps.onTmuxSessionSelect)) return;
+  if (handleGenieAction(action, name, payload)) return;
+  const tmuxServer = process.env.GENIE_TMUX_SERVER || 'genie';
+  if (handleRenameAction(action, node, tmuxServer, payload)) return;
+  if (handleAgentWindowActions(action, node, name, tmuxServer, deps.onNewAgentWindow)) return;
+  if (handleSessionNodeActions(action, node, tmuxServer, payload)) return;
+  if (handleWindowNodeActions(action, node, deps.sessionTree, tmuxServer, payload)) return;
+  handlePaneNodeActions(action, node, deps.sessionTree, tmuxServer, deps.onNewAgentWindow);
+}
+
+/** Context-menu: 'attach' action — returns true if handled. */
+function handleAttachAction(
+  action: string,
+  node: TreeNode,
+  onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void,
+): boolean {
+  if (action !== 'attach') return false;
+  const target = getSessionTarget(node);
+  if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);
+  return true;
+}
+
+/** Context-menu: 'retry' action — returns true if handled. */
+function handleRetryAction(
+  action: string,
+  name: string,
+  onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void,
+): boolean {
+  if (action !== 'retry') return false;
+  void (async () => {
+    try {
+      const { reconcileStaleSpawns } = await import('../../lib/agent-registry.js');
+      await reconcileStaleSpawns();
+    } catch {
+      // best-effort
+    }
+    spawnAgent(name, onTmuxSessionSelect);
+  })();
+  return true;
+}
+
+/** Context-menu: genie CLI commands (spawn, stop, kill, log, show, read, answer-*, send). Returns true if handled. */
+function handleGenieAction(action: string, name: string, payload?: string): boolean {
+  if (action === 'send' && payload) {
+    executeGenie(['agent', 'send', payload, '--to', name]);
+    return true;
+  }
+  if (action === 'answer-text' && payload) {
+    executeGenie(['agent', 'answer', name, `text:${payload}`]);
+    return true;
+  }
+
+  const genieCommands: Record<string, string[]> = {
+    spawn: ['spawn', name],
+    'spawn-plan': ['spawn', name, '--plan-mode'],
+    stop: ['agent', 'stop', name],
+    kill: ['agent', 'kill', name],
+    log: ['agent', 'log', name],
+    show: ['agent', 'show', name],
+    read: ['read', name],
+    'answer-yes': ['agent', 'answer', name, 'yes'],
+    'answer-no': ['agent', 'answer', name, 'no'],
+  };
+
+  const genieArgs = genieCommands[action];
+  if (genieArgs) {
+    executeGenie(genieArgs);
+    return true;
+  }
+  return false;
+}
+
+/** Context-menu: rename-session, rename-window, rename-pane. Returns true if handled. */
+function handleRenameAction(action: string, node: TreeNode, tmuxServer: string, payload?: string): boolean {
+  if (action === 'rename-session' && payload) {
+    const sess =
+      node.type === 'agent' ? (node.data.sessionName as string) || node.label : node.id.split(':').slice(1).join(':');
+    executeTmux(['-L', tmuxServer, 'rename-session', '-t', sess, payload]);
+    return true;
+  }
+  if (action === 'rename-window' && payload) {
+    const idParts = node.id.split(':');
+    const windowTarget = `${idParts[1]}:${idParts[2]}`;
+    executeTmux(['-L', tmuxServer, 'rename-window', '-t', windowTarget, payload]);
+    return true;
+  }
+  if (action === 'rename-pane' && payload && node.type === 'pane') {
+    const paneId = node.data.paneId as string;
+    executeTmux(['-L', tmuxServer, 'select-pane', '-t', `${paneId}`, '-T', payload]);
+    return true;
+  }
+  return false;
+}
+
+/** Context-menu: agent-new-window, new-empty-window. Returns true if handled. */
+function handleAgentWindowActions(
+  action: string,
+  node: TreeNode,
+  name: string,
+  tmuxServer: string,
+  onNewAgentWindow?: (agentName: string) => void,
+): boolean {
+  if (action === 'agent-new-window' && node.type === 'agent') {
+    if (onNewAgentWindow) onNewAgentWindow(agentNameFromNode(node));
+    return true;
+  }
+  if (action === 'new-empty-window' && node.type === 'agent') {
+    const sessionName = (node.data.sessionName as string) || name;
+    executeTmux(['-L', tmuxServer, 'new-window', '-a', '-t', sessionName]);
+    return true;
+  }
+  return false;
+}
+
+/** Context-menu: session-level actions (kill-session, new-window, clone-session, spawn-in-session). Returns true if handled. */
+function handleSessionNodeActions(action: string, node: TreeNode, tmuxServer: string, payload?: string): boolean {
+  if (node.type !== 'session') return false;
+  const sess = node.id.split(':').slice(1).join(':');
+  if (action === 'kill-session') {
+    executeTmux(['-L', tmuxServer, 'kill-session', '-t', sess]);
+    return true;
+  }
+  if (action === 'new-window') {
+    executeTmux(['-L', tmuxServer, 'new-window', '-a', '-t', sess]);
+    return true;
+  }
+  if (action === 'clone-session') {
+    executeTmux(['-L', tmuxServer, 'new-session', '-d', '-s', `${sess}-clone`, '-t', sess]);
+    return true;
+  }
+  if (action === 'spawn-in-session' && payload) {
+    executeGenie(['spawn', payload, '--session', sess]);
+    return true;
+  }
+  return false;
+}
+
+/** Context-menu: window-level actions (kill-window, window-new-agent, split-pane, spawn-in-window). Returns true if handled. */
+function handleWindowNodeActions(
+  action: string,
+  node: TreeNode,
+  sessionTree: TreeNode[],
+  tmuxServer: string,
+  payload?: string,
+): boolean {
+  if (node.type !== 'window') return false;
+  const idParts = node.id.split(':');
+  const windowTarget = `${idParts[1]}:${idParts[2]}`;
+  if (action === 'kill-window') {
+    executeTmux(['-L', tmuxServer, 'kill-window', '-t', windowTarget]);
+    return true;
+  }
+  if (action === 'window-new-agent') {
+    const parentAgent = findParentAgent(sessionTree, node.id);
+    if (parentAgent) {
+      const agentFullName = agentNameFromNode(parentAgent);
+      const suffix = Date.now() % 10000;
+      const role = `${agentFullName}-${suffix}`;
+      executeGenie(['spawn', agentFullName, '--role', role, '--window', windowTarget]);
+    }
+    return true;
+  }
+  if (action === 'split-pane') {
+    executeTmux(['-L', tmuxServer, 'split-window', '-t', windowTarget]);
+    return true;
+  }
+  if (action === 'spawn-in-window' && payload) {
+    executeGenie(['spawn', payload, '--session', idParts[1]]);
+    return true;
+  }
+  return false;
+}
+
+/** Context-menu: pane-level actions (clone-agent, kill-pane, split-h, split-v). Returns true if handled. */
+function handlePaneNodeActions(
+  action: string,
+  node: TreeNode,
+  sessionTree: TreeNode[],
+  tmuxServer: string,
+  onNewAgentWindow?: (agentName: string) => void,
+): boolean {
+  if (node.type !== 'pane') return false;
+  const paneId = node.data.paneId as string;
+  if (action === 'clone-agent') {
+    const parentAgent = findParentAgent(sessionTree, node.id);
+    if (parentAgent && onNewAgentWindow) {
+      onNewAgentWindow(agentNameFromNode(parentAgent));
+    }
+    return true;
+  }
+  if (action === 'kill-pane') {
+    executeTmux(['-L', tmuxServer, 'kill-pane', '-t', `${paneId}`]);
+    return true;
+  }
+  if (action === 'split-h') {
+    executeTmux(['-L', tmuxServer, 'split-window', '-h', '-t', `${paneId}`]);
+    return true;
+  }
+  if (action === 'split-v') {
+    executeTmux(['-L', tmuxServer, 'split-window', '-v', '-t', `${paneId}`]);
+    return true;
+  }
+  return false;
+}
+
+/** Try to open context menu for selected node. Returns true if opened. */
+function tryOpenContextMenu(
+  flatNodes: { node: TreeNode }[],
+  selectedIndex: number,
+  setContextMenuNodeId: (id: string | null) => void,
+): boolean {
+  const node = flatNodes[selectedIndex]?.node;
+  if (node && buildMenuItems(node).length > 0) {
+    setContextMenuNodeId(node.id);
+    return true;
+  }
+  return false;
+}
+
+/** Dispatch navigation key to the appropriate handler. */
+function dispatchNavKey(
+  key: { name?: string; ctrl?: boolean },
+  handlers: {
+    handleVerticalNav: (keyName: string) => void;
+    handleExpandCollapse: (keyName: string) => void;
+    handleEnter: () => void;
+    handleRetry: () => void;
+  },
+  agentAction: () => void,
+): void {
+  const n = key.name;
+  if (n === 'up' || n === 'k' || n === 'down' || n === 'j') {
+    handlers.handleVerticalNav(n);
+  } else if (n === 'right' || n === 'l' || n === 'left' || n === 'h') {
+    handlers.handleExpandCollapse(n);
+  } else if (n === 'enter' || n === 'return') {
+    handlers.handleEnter();
+  } else if (n === 'r') {
+    handlers.handleRetry();
+  } else if (key.ctrl && n === 't') {
+    agentAction();
+  }
+}
+
+/** Handle keyboard input — extracted from useKeyboard to reduce complexity. */
+function handleKeyboardInput(
+  key: { name?: string; ctrl?: boolean },
+  opts: {
+    contextMenuNodeId: string | null;
+    flatNodes: { node: TreeNode }[];
+    selectedIndex: number;
+    setContextMenuNodeId: (id: string | null) => void;
+    handleVerticalNav: (keyName: string) => void;
+    handleExpandCollapse: (keyName: string) => void;
+    handleEnter: () => void;
+    handleRetry: () => void;
+    onNewAgentWindow?: (agentName: string) => void;
+  },
+): void {
+  if (key.name === '.' && !opts.contextMenuNodeId) {
+    if (tryOpenContextMenu(opts.flatNodes, opts.selectedIndex, opts.setContextMenuNodeId)) return;
+  }
+  if (opts.contextMenuNodeId) return;
+
+  dispatchNavKey(key, opts, () => {
+    const node = opts.flatNodes[opts.selectedIndex]?.node;
+    if (node?.type === 'agent' && node.wsAgentState === 'running' && opts.onNewAgentWindow) {
+      opts.onNewAgentWindow(agentNameFromNode(node));
+    }
+  });
 }
 
 /** Extract the full agent name from a TreeNode (node.id = "agent:<full-name>"). */

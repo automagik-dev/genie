@@ -128,19 +128,15 @@ function Toggle({
 }
 
 // ============================================================================
-// WorkspaceTab
+// DatabaseSection — extracted to reduce cognitive complexity
 // ============================================================================
 
-export function WorkspaceTab({ workspace, otel, pgservePort, dataDir, onSave, onTestPg }: WorkspaceTabProps) {
-  const [otelDraft, setOtelDraft] = useState<OtelConfig>(otel);
+function DatabaseSection({
+  pgUrl,
+  onTestPg,
+}: { pgUrl?: string; onTestPg: () => Promise<{ ok: boolean; message: string }> }) {
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [testMsg, setTestMsg] = useState('');
-  const [otelDirty, setOtelDirty] = useState(false);
-
-  useEffect(() => {
-    setOtelDraft(otel);
-    setOtelDirty(false);
-  }, [otel]);
 
   const handleTestPg = useCallback(async () => {
     setTestStatus('testing');
@@ -154,6 +150,60 @@ export function WorkspaceTab({ workspace, otel, pgservePort, dataDir, onSave, on
     }
   }, [onTestPg]);
 
+  const testColor = testStatus === 'ok' ? theme.success : testStatus === 'error' ? theme.error : theme.textMuted;
+
+  return (
+    <div style={s.section}>
+      <div style={s.sectionTitle}>Database</div>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+        <div style={{ ...s.field, flex: 1 }}>
+          <label style={s.label} htmlFor="pg-url">
+            PG URL
+          </label>
+          <div style={s.roInput}>{pgUrl ?? '--'}</div>
+        </div>
+        <button
+          type="button"
+          disabled={testStatus === 'testing'}
+          onClick={handleTestPg}
+          style={{
+            padding: '6px 14px',
+            fontSize: '11px',
+            fontFamily: theme.fontFamily,
+            backgroundColor: theme.bgCard,
+            color: theme.textDim,
+            border: `1px solid ${theme.border}`,
+            borderRadius: theme.radiusSm,
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+        >
+          {testStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+        </button>
+      </div>
+      {testStatus !== 'idle' && (
+        <div style={{ marginTop: '6px', fontSize: '11px', color: testColor }}>
+          {testStatus === 'ok' ? '\u2713 ' : '\u2717 '}
+          {testMsg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// OtelSection — extracted to reduce cognitive complexity
+// ============================================================================
+
+function OtelSection({ otel, onSave }: { otel: OtelConfig; onSave: (key: string, value: unknown) => Promise<void> }) {
+  const [otelDraft, setOtelDraft] = useState<OtelConfig>(otel);
+  const [otelDirty, setOtelDirty] = useState(false);
+
+  useEffect(() => {
+    setOtelDraft(otel);
+    setOtelDirty(false);
+  }, [otel]);
+
   const updateOtel = useCallback((key: keyof OtelConfig, value: unknown) => {
     setOtelDraft((prev) => ({ ...prev, [key]: value }));
     setOtelDirty(true);
@@ -164,8 +214,63 @@ export function WorkspaceTab({ workspace, otel, pgservePort, dataDir, onSave, on
     setOtelDirty(false);
   }, [onSave, otelDraft]);
 
-  const testColor = testStatus === 'ok' ? theme.success : testStatus === 'error' ? theme.error : theme.textMuted;
+  return (
+    <div style={s.section}>
+      <div style={s.sectionTitle}>Observability (OTel)</div>
+      <Toggle
+        label="OTel Enabled"
+        desc="Inject OpenTelemetry for spawned agents"
+        value={otelDraft.enabled ?? true}
+        onChange={(v) => updateOtel('enabled', v)}
+      />
+      <Toggle
+        label="Log Prompts"
+        desc="Log user prompts via OTel (internal agents)"
+        value={otelDraft.logPrompts ?? true}
+        onChange={(v) => updateOtel('logPrompts', v)}
+      />
+      <div style={{ marginTop: '12px', ...s.field, maxWidth: '200px' }}>
+        <label style={s.label} htmlFor="otel-port">
+          OTel Port
+        </label>
+        <input
+          id="otel-port"
+          type="number"
+          style={s.input}
+          value={otelDraft.port ?? ''}
+          placeholder="auto (pgserve+1)"
+          onChange={(e) => updateOtel('port', e.target.value ? Number(e.target.value) : undefined)}
+        />
+      </div>
+      {otelDirty && (
+        <div style={{ marginTop: '12px' }}>
+          <button
+            type="button"
+            onClick={saveOtel}
+            style={{
+              padding: '8px 20px',
+              fontSize: '12px',
+              fontFamily: theme.fontFamily,
+              backgroundColor: theme.violet,
+              color: '#fff',
+              border: 'none',
+              borderRadius: theme.radiusSm,
+              cursor: 'pointer',
+            }}
+          >
+            Save OTel Settings
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
+// ============================================================================
+// WorkspaceTab
+// ============================================================================
+
+export function WorkspaceTab({ workspace, otel, pgservePort, dataDir, onSave, onTestPg }: WorkspaceTabProps) {
   return (
     <div>
       {/* Workspace Info */}
@@ -173,125 +278,42 @@ export function WorkspaceTab({ workspace, otel, pgservePort, dataDir, onSave, on
         <div style={s.sectionTitle}>Workspace</div>
         <div style={s.grid}>
           <div style={s.field}>
-            <label style={s.label}>Name</label>
+            <span style={s.label}>Name</span>
             <div style={s.roInput}>{workspace.name ?? '--'}</div>
           </div>
           <div style={s.field}>
-            <label style={s.label}>Path</label>
+            <span style={s.label}>Path</span>
             <div style={s.roInput}>{workspace.path ?? '--'}</div>
           </div>
         </div>
       </div>
 
-      {/* Database */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Database</div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-          <div style={{ ...s.field, flex: 1 }}>
-            <label style={s.label} htmlFor="pg-url">
-              PG URL
-            </label>
-            <div style={s.roInput}>{workspace.pgUrl ?? '--'}</div>
-          </div>
-          <button
-            type="button"
-            disabled={testStatus === 'testing'}
-            onClick={handleTestPg}
-            style={{
-              padding: '6px 14px',
-              fontSize: '11px',
-              fontFamily: theme.fontFamily,
-              backgroundColor: theme.bgCard,
-              color: theme.textDim,
-              border: `1px solid ${theme.border}`,
-              borderRadius: theme.radiusSm,
-              cursor: 'pointer',
-              flexShrink: 0,
-            }}
-          >
-            {testStatus === 'testing' ? 'Testing...' : 'Test Connection'}
-          </button>
-        </div>
-        {testStatus !== 'idle' && (
-          <div style={{ marginTop: '6px', fontSize: '11px', color: testColor }}>
-            {testStatus === 'ok' ? '\u2713 ' : '\u2717 '}
-            {testMsg}
-          </div>
-        )}
-      </div>
+      <DatabaseSection pgUrl={workspace.pgUrl} onTestPg={onTestPg} />
 
       {/* Daemon */}
       <div style={s.section}>
         <div style={s.sectionTitle}>Daemon</div>
         <div style={s.grid}>
           <div style={s.field}>
-            <label style={s.label}>Daemon PID</label>
+            <span style={s.label}>Daemon PID</span>
             <div style={s.roInput}>{workspace.daemonPid ?? '--'}</div>
           </div>
           <div style={s.field}>
-            <label style={s.label}>Tmux Socket</label>
+            <span style={s.label}>Tmux Socket</span>
             <div style={s.roInput}>{workspace.tmuxSocket ?? '--'}</div>
           </div>
           <div style={s.field}>
-            <label style={s.label}>Pgserve Port</label>
+            <span style={s.label}>Pgserve Port</span>
             <div style={s.roInput}>{pgservePort ?? '--'}</div>
           </div>
           <div style={s.field}>
-            <label style={s.label}>Data Directory</label>
+            <span style={s.label}>Data Directory</span>
             <div style={s.roInput}>{dataDir ?? '--'}</div>
           </div>
         </div>
       </div>
 
-      {/* OTel */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Observability (OTel)</div>
-        <Toggle
-          label="OTel Enabled"
-          desc="Inject OpenTelemetry for spawned agents"
-          value={otelDraft.enabled ?? true}
-          onChange={(v) => updateOtel('enabled', v)}
-        />
-        <Toggle
-          label="Log Prompts"
-          desc="Log user prompts via OTel (internal agents)"
-          value={otelDraft.logPrompts ?? true}
-          onChange={(v) => updateOtel('logPrompts', v)}
-        />
-        <div style={{ marginTop: '12px', ...s.field, maxWidth: '200px' }}>
-          <label style={s.label} htmlFor="otel-port">
-            OTel Port
-          </label>
-          <input
-            id="otel-port"
-            type="number"
-            style={s.input}
-            value={otelDraft.port ?? ''}
-            placeholder="auto (pgserve+1)"
-            onChange={(e) => updateOtel('port', e.target.value ? Number(e.target.value) : undefined)}
-          />
-        </div>
-        {otelDirty && (
-          <div style={{ marginTop: '12px' }}>
-            <button
-              type="button"
-              onClick={saveOtel}
-              style={{
-                padding: '8px 20px',
-                fontSize: '12px',
-                fontFamily: theme.fontFamily,
-                backgroundColor: theme.violet,
-                color: '#fff',
-                border: 'none',
-                borderRadius: theme.radiusSm,
-                cursor: 'pointer',
-              }}
-            >
-              Save OTel Settings
-            </button>
-          </div>
-        )}
-      </div>
+      <OtelSection otel={otel} onSave={onSave} />
     </div>
   );
 }

@@ -174,7 +174,7 @@ let exitHandlerRegistered = false;
 let retentionRan = false;
 
 /** Prune old rows from unbounded tables. Runs once per process, non-fatal. */
-async function runRetention(sql: any): Promise<void> {
+async function runRetention(sql: postgres.Sql): Promise<void> {
   try {
     await sql.unsafe(`
       DELETE FROM heartbeats WHERE created_at < now() - interval '7 days';
@@ -444,31 +444,58 @@ function registerExitHandler(): void {
  * When GENIE_TEST_SCHEMA is set, all connections use that schema in their search_path.
  * This isolates test data from production tables.
  */
-export async function getConnection() {
-  // If we have a cached client, health-check it before returning
-  if (sqlClient) {
+/** Health-check the cached client. Returns it if alive, or resets and returns null. */
+async function healthCheckCachedClient() {
+  if (!sqlClient) return null;
+  try {
+    await sqlClient`SELECT 1`;
+    return sqlClient;
+  } catch {
     try {
-      await sqlClient`SELECT 1`;
-      return sqlClient;
+      await sqlClient.end({ timeout: 2 });
     } catch {
-      // Connection is broken — reset and retry once
-      try {
-        await sqlClient.end({ timeout: 2 });
-      } catch {
-        /* ignore */
-      }
-      sqlClient = null;
-      activePort = null;
+      /* ignore */
     }
+    sqlClient = null;
+    activePort = null;
+    return null;
   }
+}
+
+/** Run post-connect setup (migrations, seed, retention). Skipped in test mode. */
+async function runPostConnectSetup(
+  client: postgres.Sql,
+  testSchema: string | undefined,
+  timings: { t0: number; t1: number },
+) {
+  const _t2 = Date.now();
+  if (!testSchema) await runMigrations(client);
+  const _t3 = Date.now();
+
+  if (!testSchema && needsSeed()) await runSeed(client);
+  const _t4 = Date.now();
+
+  if (!testSchema && !retentionRan) await runRetention(client);
+  const _t5 = Date.now();
+
+  if (process.env.GENIE_PROFILE_DB) {
+    console.error(
+      `[db-profile] pgserve=${timings.t1 - timings.t0}ms migrate=${_t3 - _t2}ms seed=${_t4 - _t3}ms retention=${_t5 - _t4}ms total=${_t5 - timings.t0}ms`,
+    );
+  }
+}
+
+export async function getConnection() {
+  const cached = await healthCheckCachedClient();
+  if (cached) return cached;
 
   const _t0 = Date.now();
   const port = await ensurePgserve();
   const _t1 = Date.now();
-  const postgres = (await import('postgres')).default;
+  const pgModule = (await import('postgres')).default;
 
   const testSchema = process.env.GENIE_TEST_SCHEMA;
-  sqlClient = postgres({
+  sqlClient = pgModule({
     host: DEFAULT_HOST,
     port,
     database: DB_NAME,
@@ -485,30 +512,8 @@ export async function getConnection() {
   });
 
   try {
-    // Skip migrations in test mode — setupTestSchema() already ran them in the isolated schema.
-    // Running them again here races with other test workers on public._genie_migrations.
-    const _t2 = Date.now();
-    if (!testSchema) {
-      await runMigrations(sqlClient);
-    }
-    const _t3 = Date.now();
-
-    // Run idempotent JSON → PG seed if source files exist
-    if (!testSchema && needsSeed()) {
-      await runSeed(sqlClient);
-    }
-    const _t4 = Date.now();
-
-    // Run retention cleanup once per process (non-fatal).
-    if (!testSchema && !retentionRan) {
-      await runRetention(sqlClient);
-    }
-    const _t5 = Date.now();
-    if (process.env.GENIE_PROFILE_DB) {
-      console.error(`[db-profile] pgserve=${_t1 - _t0}ms migrate=${_t3 - _t2}ms seed=${_t4 - _t3}ms retention=${_t5 - _t4}ms total=${_t5 - _t0}ms`);
-    }
+    await runPostConnectSetup(sqlClient, testSchema, { t0: _t0, t1: _t1 });
   } catch (err) {
-    // Migration/seed failure — reset client AND port so next call fully reconnects
     try {
       await sqlClient.end({ timeout: 2 });
     } catch {

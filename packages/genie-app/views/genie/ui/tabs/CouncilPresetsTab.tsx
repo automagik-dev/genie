@@ -117,17 +117,20 @@ export function CouncilPresetsTab({ presets, defaultPreset, onSave }: CouncilPre
             <div style={{ padding: '12px', fontSize: '11px', color: theme.textMuted }}>No presets</div>
           ) : (
             Object.keys(localPresets).map((key) => (
-              <div
+              <button
+                type="button"
                 key={key}
                 onClick={() => setSelectedKey(key)}
-                onKeyDown={(e) => e.key === 'Enter' && setSelectedKey(key)}
-                role="button"
-                tabIndex={0}
                 style={{
                   padding: '10px 12px',
                   cursor: 'pointer',
+                  background: selectedKey === key ? theme.bgCardHover : 'transparent',
+                  border: 'none',
                   borderLeft: `3px solid ${selectedKey === key ? theme.violet : 'transparent'}`,
-                  backgroundColor: selectedKey === key ? theme.bgCardHover : 'transparent',
+                  textAlign: 'left',
+                  width: '100%',
+                  font: 'inherit',
+                  color: 'inherit',
                 }}
               >
                 <div
@@ -143,7 +146,7 @@ export function CouncilPresetsTab({ presets, defaultPreset, onSave }: CouncilPre
                 <div style={{ fontSize: '10px', color: theme.textMuted, marginTop: '2px' }}>
                   {localPresets[key].left} \u00b7 {localPresets[key].right}
                 </div>
-              </div>
+              </button>
             ))
           )}
         </div>

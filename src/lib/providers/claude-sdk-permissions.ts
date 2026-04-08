@@ -80,23 +80,21 @@ export function resolvePermissionConfig(permissions?: {
 // Bash Pattern Matching
 // ============================================================================
 
-function matchesBashAllow(command: string, patterns: string[]): boolean {
-  const normalized = normalizeCommand(command);
-
-  // Compound commands (&&, ||, |, ;) require full match
-  if (hasShellMetacharacters(normalized)) {
-    for (const pattern of patterns) {
-      try {
-        const match = normalized.match(new RegExp(pattern));
-        if (match && match[0] === normalized) return true;
-      } catch {
-        /* invalid regex — skip */
-      }
+/** Check if a compound command (with shell metacharacters) fully matches any pattern. */
+function matchesCompoundPattern(normalized: string, patterns: string[]): boolean {
+  for (const pattern of patterns) {
+    try {
+      const match = normalized.match(new RegExp(pattern));
+      if (match && match[0] === normalized) return true;
+    } catch {
+      /* invalid regex — skip */
     }
-    return false;
   }
+  return false;
+}
 
-  // Simple commands — substring regex match
+/** Check if a simple command matches any pattern via substring regex. */
+function matchesSimplePattern(normalized: string, patterns: string[]): boolean {
   for (const pattern of patterns) {
     try {
       if (new RegExp(pattern).test(normalized)) return true;
@@ -105,6 +103,12 @@ function matchesBashAllow(command: string, patterns: string[]): boolean {
     }
   }
   return false;
+}
+
+function matchesBashAllow(command: string, patterns: string[]): boolean {
+  const normalized = normalizeCommand(command);
+  if (hasShellMetacharacters(normalized)) return matchesCompoundPattern(normalized, patterns);
+  return matchesSimplePattern(normalized, patterns);
 }
 
 // ============================================================================

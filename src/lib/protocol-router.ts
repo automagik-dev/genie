@@ -135,6 +135,62 @@ async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Agent 
  * Ensure a worker is alive, auto-spawning from template if needed.
  * Handles suspended workers by resuming with --resume <session-id>.
  */
+/** Find a matching spawn template for the worker/recipient. */
+async function findSpawnTemplate(
+  worker: registry.Agent | null,
+  recipientId: string,
+): Promise<registry.WorkerTemplate | null> {
+  const templates = await registry.listTemplates();
+  const candidates = [worker?.role, worker?.id, recipientId].filter((v): v is string => Boolean(v));
+  const uniqueCandidates = [...new Set(candidates)];
+  const workerTeam = worker?.team;
+  return (
+    templates.find((t) => {
+      if (workerTeam && t.team !== workerTeam) return false;
+      return uniqueCandidates.some((q) => t.id === q || t.role === q || `${t.team}:${t.role}` === q);
+    }) ?? null
+  );
+}
+
+/** Attempt to spawn a worker from template inside an advisory-locked transaction. */
+async function lockedSpawnWorker(
+  recipientId: string,
+  worker: registry.Agent | null,
+  template: registry.WorkerTemplate,
+  resumeSessionId: string | undefined,
+): Promise<{ worker: registry.Agent; respawned: boolean } | null> {
+  const sql = await getConnection();
+  const workerTeam = worker?.team;
+
+  const lockResult = await sql.begin(async (tx: typeof sql) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${recipientId}))`;
+
+    const postLockLive = await findLiveWorkerFuzzy(recipientId);
+    if (postLockLive) return { type: 'existing' as const, worker: postLockLive };
+
+    await cleanupDeadWorkers(recipientId, workerTeam);
+    if (worker) await registry.unregister(worker.id);
+
+    const { spawnWorkerFromTemplate } = await import('./protocol-router-spawn.js');
+    const spawnResult = await spawnWorkerFromTemplate(template, resumeSessionId);
+    return { type: 'spawned' as const, ...spawnResult };
+  });
+
+  if (lockResult.type === 'existing') return { worker: lockResult.worker, respawned: false };
+
+  await registry.saveTemplate({ ...template, lastSpawnedAt: new Date().toISOString() });
+
+  const readyCheck = _deps.waitForWorkerReady ?? waitForWorkerReady;
+  await readyCheck(lockResult.paneId);
+
+  if (!(await _deps.isPaneAlive(lockResult.paneId))) {
+    await registry.unregister(lockResult.worker.id);
+    return null;
+  }
+
+  return { worker: lockResult.worker, respawned: true };
+}
+
 async function ensureWorkerAlive(
   worker: registry.Agent | null,
   recipientId: string,
@@ -143,80 +199,20 @@ async function ensureWorkerAlive(
     return { worker, respawned: false };
   }
 
-  // Always check for a live worker before attempting to spawn — prevents
-  // duplicate spawns when the registry entry is stale/dead but another
-  // instance with the same role is already alive.
   const live = await findLiveWorkerFuzzy(recipientId);
   if (live) return { worker: live, respawned: false };
 
-  // Completion guard: don't auto-spawn agents whose last executor finished
-  // intentionally. An agent that reached 'done' or 'terminated' shouldn't be
-  // auto-resurrected by stale messages — explicit dispatch handles re-spawn.
   if (await isExecutorCompleted(worker)) return null;
-
   if (!process.env.TMUX) return null;
 
-  const templates = await registry.listTemplates();
-  const candidates = [worker?.role, worker?.id, recipientId].filter((v): v is string => Boolean(v));
-  const uniqueCandidates = [...new Set(candidates)];
-  const workerTeam = worker?.team;
-  const template = templates.find((t) => {
-    // Only match templates from the same team to prevent cross-team contamination
-    if (workerTeam && t.team !== workerTeam) return false;
-    return uniqueCandidates.some((q) => t.id === q || t.role === q || `${t.team}:${t.role}` === q);
-  });
+  const template = await findSpawnTemplate(worker, recipientId);
   if (!template) return null;
 
-  // Use stored Claude session ID for --resume (session-id based, not name-based).
-  // Falls back to undefined (fresh session) if no prior session ID exists.
   const resumeSessionId =
     template.provider === 'claude' && worker?.claudeSessionId ? worker.claudeSessionId : undefined;
 
   try {
-    const sql = await getConnection();
-
-    // Advisory lock keyed on recipient — prevents concurrent cleanup+respawn
-    // for the same agent. Lock is held from cleanup through spawn return,
-    // released automatically on transaction commit/rollback.
-    const lockResult = await sql.begin(async (tx: typeof sql) => {
-      await tx`SELECT pg_advisory_xact_lock(hashtext(${recipientId}))`;
-
-      // Double-check: another process may have spawned while we waited for the lock
-      const postLockLive = await findLiveWorkerFuzzy(recipientId);
-      if (postLockLive) return { type: 'existing' as const, worker: postLockLive };
-
-      // Clean up ghost worker entries (dead panes) for this role before spawning
-      await cleanupDeadWorkers(recipientId, workerTeam);
-
-      if (worker) {
-        await registry.unregister(worker.id);
-      }
-
-      const { spawnWorkerFromTemplate } = await import('./protocol-router-spawn.js');
-      const spawnResult = await spawnWorkerFromTemplate(template, resumeSessionId);
-      return { type: 'spawned' as const, ...spawnResult };
-    });
-
-    if (lockResult.type === 'existing') {
-      return { worker: lockResult.worker, respawned: false };
-    }
-
-    await registry.saveTemplate({
-      ...template,
-      lastSpawnedAt: new Date().toISOString(),
-    });
-
-    const readyCheck = _deps.waitForWorkerReady ?? waitForWorkerReady;
-    await readyCheck(lockResult.paneId);
-
-    // Verify the pane survived startup — if Claude exited (e.g. stale resume
-    // or startup error), the pane is dead and delivery would silently fail.
-    if (!(await _deps.isPaneAlive(lockResult.paneId))) {
-      await registry.unregister(lockResult.worker.id);
-      return null;
-    }
-
-    return { worker: lockResult.worker, respawned: true };
+    return await lockedSpawnWorker(recipientId, worker, template, resumeSessionId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[protocol-router] Spawn failed for "${recipientId}": ${msg}`);

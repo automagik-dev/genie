@@ -430,31 +430,18 @@ export async function getTeamLeadEntry(teamName: string, session?: string, repoP
   return sr.length > 0 ? rowToAgent(sr[0]) : null;
 }
 
-async function findTeamLeadBySession(
-  sql: Sql,
-  teamName: string,
-  session: string,
-  repoPath?: string,
-): Promise<Agent | null> {
-  if (repoPath) {
-    const rows = await sql<
-      AgentRow[]
-    >`SELECT * FROM agents WHERE id = ${buildProjectTeamLeadEntryId(teamName, session, repoPath)}`;
-    if (rows.length > 0) return rowToAgent(rows[0]);
-  }
-  const sessRows = await sql<
-    AgentRow[]
-  >`SELECT * FROM agents WHERE id = ${buildSessionTeamLeadEntryId(teamName, session)}`;
-  if (sessRows.length > 0) {
-    const a = rowToAgent(sessRows[0]);
-    if (!repoPath || a.repoPath === repoPath) return a;
-  }
-  const legRows = await sql<AgentRow[]>`SELECT * FROM agents WHERE id = ${buildLegacyTeamLeadEntryId(teamName)}`;
-  if (legRows.length > 0) {
-    const a = rowToAgent(legRows[0]);
-    if (a.session === session && (!repoPath || a.repoPath === repoPath)) return a;
-  }
+/** Try to find a team lead by exact ID lookup. Returns the agent if found and repo matches. */
+async function findLeadById(sql: Sql, id: string, repoPath?: string, matchSession?: string): Promise<Agent | null> {
+  const rows = await sql<AgentRow[]>`SELECT * FROM agents WHERE id = ${id}`;
+  if (rows.length === 0) return null;
+  const a = rowToAgent(rows[0]);
+  if (matchSession && a.session !== matchSession) return null;
+  if (repoPath && a.repoPath !== repoPath) return null;
+  return a;
+}
 
+/** Scan for a team lead by role + team + session, with optional leader name and repo filter. */
+async function scanForTeamLead(sql: Sql, teamName: string, session: string, repoPath?: string): Promise<Agent | null> {
   const leaderName = await resolveDynamicLeaderName(teamName);
   const scanRows = leaderName
     ? await sql<
@@ -464,6 +451,27 @@ async function findTeamLeadBySession(
         AgentRow[]
       >`SELECT * FROM agents WHERE role = 'team-lead' AND team = ${teamName} AND session = ${session} ${repoPath ? sql`AND repo_path = ${repoPath}` : sql``} LIMIT 1`;
   return scanRows.length > 0 ? rowToAgent(scanRows[0]) : null;
+}
+
+async function findTeamLeadBySession(
+  sql: Sql,
+  teamName: string,
+  session: string,
+  repoPath?: string,
+): Promise<Agent | null> {
+  // 1. Project-scoped ID (most specific)
+  if (repoPath) {
+    const byProject = await findLeadById(sql, buildProjectTeamLeadEntryId(teamName, session, repoPath));
+    if (byProject) return byProject;
+  }
+  // 2. Session-scoped ID
+  const bySession = await findLeadById(sql, buildSessionTeamLeadEntryId(teamName, session), repoPath);
+  if (bySession) return bySession;
+  // 3. Legacy ID (requires session + repo match)
+  const byLegacy = await findLeadById(sql, buildLegacyTeamLeadEntryId(teamName), repoPath, session);
+  if (byLegacy) return byLegacy;
+  // 4. Role-based scan
+  return scanForTeamLead(sql, teamName, session, repoPath);
 }
 
 export async function saveTemplate(template: WorkerTemplate): Promise<void> {

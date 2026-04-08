@@ -29,6 +29,79 @@ const _PG_URL = process.env.GENIE_PG_URL ?? 'postgresql://localhost:19642/genie'
 const sc = StringCodec();
 
 // ============================================================================
+// Settings helpers (extracted for cognitive complexity)
+// ============================================================================
+
+/** Find the first existing skills directory from candidate paths. */
+function findSkillsDir(): string | null {
+  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+  const candidateDirs = [join(process.cwd(), 'skills'), join(genieHome, '..', 'skills')];
+  for (const d of candidateDirs) {
+    if (existsSync(d)) return d;
+  }
+  return null;
+}
+
+/** Parse a SKILL.md file to extract name and description. */
+function parseSkillMd(content: string, fallbackName: string): { name: string; description: string } {
+  const descMatch = content.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+  let description = '';
+  if (descMatch) {
+    description = descMatch[1].trim();
+  } else {
+    const lines = content.split('\n').filter((l) => l.trim() && !l.startsWith('---') && !l.startsWith('#'));
+    description = lines[0]?.trim() ?? '';
+  }
+  const nameMatch = content.match(/^name:\s*(.+?)\s*$/m);
+  const name = nameMatch ? nameMatch[1].trim() : fallbackName;
+  return { name, description };
+}
+
+/** Scan a skills directory and return parsed skill entries. */
+function scanSkillsDirectory(skillsDir: string): { name: string; slug: string; description: string; path: string }[] {
+  try {
+    const entries = readdirSync(skillsDir, { withFileTypes: true });
+    const skills: { name: string; slug: string; description: string; path: string }[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillMdPath = join(skillsDir, entry.name, 'SKILL.md');
+      if (!existsSync(skillMdPath)) continue;
+      const content = readFileSync(skillMdPath, 'utf-8');
+      const { name, description } = parseSkillMd(content, entry.name);
+      skills.push({ name, slug: entry.name, description, path: skillMdPath });
+    }
+    return skills.sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+}
+
+/** Scan rule directories and return all .md rule files. */
+function scanRuleDirs(): { name: string; path: string; content: string; source: string }[] {
+  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+  const ruleDirs = [join(genieHome, 'rules'), join(homedir(), '.claude', 'rules')];
+  const allRules: { name: string; path: string; content: string; source: string }[] = [];
+  for (const rulesDir of ruleDirs) {
+    if (!existsSync(rulesDir)) continue;
+    try {
+      const files = readdirSync(rulesDir).filter((f) => f.endsWith('.md'));
+      for (const f of files) {
+        const filePath = join(rulesDir, f);
+        allRules.push({
+          name: f.replace('.md', ''),
+          path: filePath,
+          content: readFileSync(filePath, 'utf-8'),
+          source: rulesDir.includes('.claude') ? 'claude' : 'genie',
+        });
+      }
+    } catch {
+      /* skip unreadable dir */
+    }
+  }
+  return allRules;
+}
+
+// ============================================================================
 // Lifecycle
 // ============================================================================
 
@@ -513,76 +586,16 @@ function registerHandlers(sql: any): void {
   });
 
   reply(sub.settings.skills(ORG_ID), async () => {
-    // Scan the bundled skills/ directory for SKILL.md files
-    const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
-    // Try repo-relative path first (dev), then genie home
-    const candidateDirs = [
-      join(process.cwd(), 'skills'),
-      join(genieHome, '..', 'skills'), // fallback relative
-    ];
-    let skillsDir: string | null = null;
-    for (const d of candidateDirs) {
-      if (existsSync(d)) {
-        skillsDir = d;
-        break;
-      }
-    }
+    const skillsDir = findSkillsDir();
     if (!skillsDir) {
-      // Fall back to DB-sourced skill names
       const rows = await sql`SELECT DISTINCT skill FROM agents WHERE skill IS NOT NULL ORDER BY skill`;
       return rows.map((r: { skill: string }) => ({ name: r.skill, description: '', path: '' }));
     }
-    try {
-      const entries = readdirSync(skillsDir, { withFileTypes: true });
-      const skills = [];
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const skillMdPath = join(skillsDir, entry.name, 'SKILL.md');
-        if (!existsSync(skillMdPath)) continue;
-        const content = readFileSync(skillMdPath, 'utf-8');
-        // Parse YAML frontmatter description or fall back to first non-empty line
-        let description = '';
-        const descMatch = content.match(/^description:\s*["']?(.+?)["']?\s*$/m);
-        if (descMatch) {
-          description = descMatch[1].trim();
-        } else {
-          const lines = content.split('\n').filter((l) => l.trim() && !l.startsWith('---') && !l.startsWith('#'));
-          description = lines[0]?.trim() ?? '';
-        }
-        let displayName = entry.name;
-        const nameMatch = content.match(/^name:\s*(.+?)\s*$/m);
-        if (nameMatch) displayName = nameMatch[1].trim();
-        skills.push({ name: displayName, slug: entry.name, description, path: skillMdPath });
-      }
-      return skills.sort((a, b) => a.name.localeCompare(b.name));
-    } catch {
-      return [];
-    }
+    return scanSkillsDirectory(skillsDir);
   });
 
   reply(sub.settings.rules(ORG_ID), async () => {
-    const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
-    // Check both ~/.genie/rules/ and ~/.claude/rules/
-    const ruleDirs = [join(genieHome, 'rules'), join(homedir(), '.claude', 'rules')];
-    const allRules: { name: string; path: string; content: string; source: string }[] = [];
-    for (const rulesDir of ruleDirs) {
-      if (!existsSync(rulesDir)) continue;
-      try {
-        const files = readdirSync(rulesDir).filter((f) => f.endsWith('.md'));
-        for (const f of files) {
-          const filePath = join(rulesDir, f);
-          allRules.push({
-            name: f.replace('.md', ''),
-            path: filePath,
-            content: readFileSync(filePath, 'utf-8'),
-            source: rulesDir.includes('.claude') ? 'claude' : 'genie',
-          });
-        }
-      } catch {
-        /* skip unreadable dir */
-      }
-    }
-    return allRules;
+    return scanRuleDirs();
   });
 
   reply(

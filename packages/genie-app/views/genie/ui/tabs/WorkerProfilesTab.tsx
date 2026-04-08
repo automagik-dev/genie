@@ -131,17 +131,23 @@ export function WorkerProfilesTab({ profiles, defaultProfile, onSave }: WorkerPr
             <div style={{ padding: '12px', fontSize: '11px', color: theme.textMuted }}>No profiles</div>
           ) : (
             Object.keys(localProfiles).map((key) => (
-              <div
+              <button
+                type="button"
                 key={key}
-                style={s.row(selectedKey === key)}
+                style={{
+                  ...s.row(selectedKey === key),
+                  border: 'none',
+                  background: s.row(selectedKey === key).backgroundColor,
+                  textAlign: 'left',
+                  width: '100%',
+                  font: 'inherit',
+                  color: 'inherit',
+                }}
                 onClick={() => setSelectedKey(key)}
-                onKeyDown={(e) => e.key === 'Enter' && setSelectedKey(key)}
-                role="button"
-                tabIndex={0}
               >
                 <div style={s.rowName(key === localDefault)}>{key}</div>
                 {key === localDefault && <div style={{ fontSize: '10px', color: theme.purple }}>default</div>}
-              </div>
+              </button>
             ))
           )}
         </div>
