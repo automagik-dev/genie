@@ -444,8 +444,12 @@ function listEntriesJson(entries: directory.ScopedDirectoryEntry[], includeBuilt
       });
     }
   }
-  const { writeStdout } = require('../lib/term-format.js') as typeof import('../lib/term-format.js');
-  writeStdout(JSON.stringify(result, null, 2));
+  const { writeSync } = require('node:fs') as typeof import('node:fs');
+  const data = `${JSON.stringify(result, null, 2)}\n`;
+  const CHUNK = 4096;
+  for (let i = 0; i < data.length; i += CHUNK) {
+    writeSync(1, data.slice(i, i + CHUNK));
+  }
 }
 
 // ============================================================================

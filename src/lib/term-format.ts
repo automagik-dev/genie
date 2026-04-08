@@ -104,17 +104,3 @@ const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
 export function stripAnsi(str: string): string {
   return str.replace(ANSI_REGEX, '');
 }
-
-/**
- * Write text to stdout synchronously in chunks. Prevents pipe truncation
- * when stdout is piped (ssh, |, subprocess). Bun's writeSync has an 8KB
- * limit on pipes, so we chunk the output.
- */
-export function writeStdout(text: string): void {
-  const { writeSync } = require('node:fs') as typeof import('node:fs');
-  const data = `${text}\n`;
-  const CHUNK = 4096;
-  for (let i = 0; i < data.length; i += CHUNK) {
-    writeSync(1, data.slice(i, i + CHUNK));
-  }
-}
