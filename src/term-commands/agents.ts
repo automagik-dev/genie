@@ -969,27 +969,33 @@ async function runSdkQuery(
     `You are ${ctx.validated.role ?? 'an agent'} on team "${ctx.validated.team}". Awaiting instructions.`;
 
   // Session capture — resume existing session or start new
-  const resumeSessionId = runtimeExtraOptions?.resume as string | undefined;
+  const resumeSessionId = typeof runtimeExtraOptions?.resume === 'string' ? runtimeExtraOptions.resume : undefined;
   let dbSessionId: string | null = null;
   let turnIndex = 0;
 
   if (resumeSessionId) {
-    // Resuming: find the original session by looking up the executor that has this
-    // claude_session_id, then finding its session. Also try matching the session's
-    // jsonl_path field where we store the claude session ID as a fallback.
-    const existing = await safePgCall(
-      'find-session-by-claude-id',
+    // Resolve the resume target. The value can be either:
+    // 1. A genie PG session ID (e.g. "sdk-abc123-...") — look up its claude_session_id
+    // 2. A Claude SDK session ID (UUID) — use directly
+    // The genie handles this transparently so callers don't need to know the provider.
+    let resolvedClaudeSessionId = resumeSessionId;
+
+    const byPgId = await safePgCall(
+      'resolve-session-resume',
       (sql) => sql`
-        SELECT s.id, s.total_turns FROM sessions s
-        WHERE s.executor_id IN (SELECT id FROM executors WHERE claude_session_id = ${resumeSessionId})
-           OR s.jsonl_path = ${resumeSessionId}
+        SELECT s.id, s.total_turns, COALESCE(s.claude_session_id, e.claude_session_id) as csid
+        FROM sessions s
+        LEFT JOIN executors e ON e.id = s.executor_id
+        WHERE s.id = ${resumeSessionId} OR s.claude_session_id = ${resumeSessionId}
         ORDER BY s.started_at DESC LIMIT 1
       `,
-      [] as Array<{ id: string; total_turns: number }>,
+      [] as Array<{ id: string; total_turns: number; csid: string | null }>,
     );
-    if (existing && existing.length > 0) {
-      dbSessionId = existing[0].id;
-      turnIndex = existing[0].total_turns ?? 0;
+
+    if (byPgId && byPgId.length > 0) {
+      dbSessionId = byPgId[0].id;
+      turnIndex = byPgId[0].total_turns ?? 0;
+      if (byPgId[0].csid) resolvedClaudeSessionId = byPgId[0].csid;
       // Reopen session
       await safePgCall(
         'reopen-session',
@@ -997,6 +1003,9 @@ async function runSdkQuery(
         undefined,
       );
     }
+
+    // Override the resume value with the resolved Claude session ID
+    if (runtimeExtraOptions) runtimeExtraOptions.resume = resolvedClaudeSessionId;
   }
 
   if (!dbSessionId) {
@@ -1112,7 +1121,7 @@ async function runSdkQuery(
   if (claudeSessionId && dbSessionId) {
     await safePgCall(
       'update-session-claude-id',
-      (sql) => sql`UPDATE sessions SET jsonl_path = ${claudeSessionId} WHERE id = ${dbSessionId}`,
+      (sql) => sql`UPDATE sessions SET claude_session_id = ${claudeSessionId} WHERE id = ${dbSessionId}`,
       undefined,
     );
   }
