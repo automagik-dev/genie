@@ -8,6 +8,7 @@
  * Termination: AbortController signal
  */
 
+import { readFileSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { HookCallbackMatcher, Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type {
@@ -180,13 +181,23 @@ export class ClaudeSdkProvider implements ExecutorProvider {
     const mergedHooks = mergeHooks(permHooks, translatedSdk?.hooks, extraOptions?.hooks);
     const hasHooks = Object.keys(mergedHooks).length > 0;
 
+    // Resolve system prompt: inline text takes priority, then file (AGENTS.md)
+    let resolvedSystemPrompt = ctx.systemPrompt;
+    if (!resolvedSystemPrompt && ctx.systemPromptFile) {
+      try {
+        resolvedSystemPrompt = readFileSync(ctx.systemPromptFile, 'utf-8');
+      } catch {
+        // File not found or unreadable — proceed without system prompt
+      }
+    }
+
     const options: Options = {
       cwd: ctx.cwd,
       abortController,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       ...(ctx.model && { model: ctx.model }),
-      ...(ctx.systemPrompt && { systemPrompt: ctx.systemPrompt }),
+      ...(resolvedSystemPrompt && { systemPrompt: resolvedSystemPrompt }),
       // Layer 1: directory-level SDK config (lowest priority)
       ...translatedSdk,
       // Layer 2: runtime overrides (highest priority)

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+const _T_BOOT = Date.now();
 
 /**
  * genie — Single entrypoint CLI.
@@ -105,6 +106,7 @@ function parseNumericFlag(flagName: string): (value: string) => number {
   };
 }
 
+if (process.env.GENIE_PROFILE_DB) console.error(`[profile] imports=${Date.now() - _T_BOOT}ms`);
 const program = new Command();
 
 program.name('genie').description('Genie CLI - AI-assisted development').version(VERSION);
@@ -258,20 +260,24 @@ program.hook('preAction', (_thisCommand, actionCommand) => {
     .catch(() => {});
 });
 
-program.hook('postAction', (_thisCommand, actionCommand) => {
+// postAction audit is a blocking hook so the audit write completes before
+// shutdownDb destroys the connection. Without await, the fire-and-forget
+// promise creates a new connection AFTER shutdown, adding 1s idle_timeout.
+program.hook('postAction', async (_thisCommand, actionCommand) => {
   const name = actionCommand.name();
   const startMs = auditTimers.get(name);
   const durationMs = startMs ? Date.now() - startMs : undefined;
   auditTimers.delete(name);
-  import('./lib/db.js')
-    .then(({ isConnected }) => {
-      if (!isConnected()) return;
-      recordAuditEvent('command', name, 'command_success', getActor(), {
-        args: actionCommand.args,
-        duration_ms: durationMs,
-      }).catch(() => {});
-    })
-    .catch(() => {});
+  try {
+    const { isConnected } = await import('./lib/db.js');
+    if (!isConnected()) return;
+    await recordAuditEvent('command', name, 'command_success', getActor(), {
+      args: actionCommand.args,
+      duration_ms: durationMs,
+    });
+  } catch {
+    /* best effort */
+  }
 });
 
 // ============================================================================
@@ -303,6 +309,8 @@ program
   .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', parseNumericFlag('--sdk-max-budget'))
   .option('--sdk-stream', 'SDK: enable streaming output (shortcut for --stream)')
   .option('--sdk-effort <level>', 'SDK: reasoning effort level (low, medium, high, max)')
+  .option('--sdk-resume <session-id>', 'SDK: resume a previous session by ID')
+  .option('--prompt <text>', 'Initial prompt to send as the first user message')
   .addHelpText(
     'after',
     `
@@ -674,9 +682,13 @@ if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
   }
 } else {
   try {
+    const _cmdStart = Date.now();
     await program.parseAsync(process.argv);
+    if (process.env.GENIE_PROFILE_DB) console.error(`[profile] parseAsync=${Date.now() - _cmdStart}ms`);
   } finally {
+    const _shutStart = Date.now();
     stopOtelReceiver();
     await shutdownDb().catch(() => {});
+    if (process.env.GENIE_PROFILE_DB) console.error(`[profile] shutdown=${Date.now() - _shutStart}ms`);
   }
 }
