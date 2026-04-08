@@ -567,7 +567,9 @@ async function startForeground(headless?: boolean): Promise<void> {
     // 2. Stop scheduler (drains in-flight)
     handles.schedulerHandle?.stop();
 
-    // 2.5. Stop brain server (graceful — closes HTTP + PG pool)
+    // 2.5. Stop brain server (best-effort — signal handlers call process.exit()
+    // immediately after shutdown(), so this is fire-and-forget like all other
+    // services. The OS reclaims sockets/connections on process exit.)
     if (handles.brainHandle) {
       handles.brainHandle.stop().catch(() => {});
       handles.brainHandle = null;
@@ -747,12 +749,38 @@ async function printPgserveStatus(): Promise<void> {
     console.log('  pgserve:    unavailable');
   }
 
-  // Brain server status
+  // Brain server status — probe via HTTP healthz (works cross-process)
   try {
     // @ts-expect-error — brain is enterprise-only, not in genie's deps
-    await import('@khal-os/brain');
-    if (handles.brainHandle) {
-      console.log(`  brain:      running (port ${handles.brainHandle.port})`);
+    const brain = await import('@khal-os/brain');
+    // Try readServerInfo first (reads .brain-server.json from workspace)
+    let brainPort: number | null = null;
+    try {
+      const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+      const ws = findWorkspace();
+      if (ws?.root && brain.readServerInfo) {
+        const info = brain.readServerInfo(join(ws.root, 'brain'));
+        if (info?.port) brainPort = info.port;
+      }
+    } catch {
+      // No workspace — fall back to handle
+    }
+    // Fall back to in-memory handle (same process only)
+    if (!brainPort && handles.brainHandle) {
+      brainPort = handles.brainHandle.port;
+    }
+    if (brainPort) {
+      // Probe the actual port to verify it's alive
+      try {
+        const resp = await fetch(`http://127.0.0.1:${brainPort}/healthz`);
+        if (resp.ok) {
+          console.log(`  brain:      running (port ${brainPort})`);
+        } else {
+          console.log(`  brain:      unhealthy (port ${brainPort}, status ${resp.status})`);
+        }
+      } catch {
+        console.log(`  brain:      stopped (port ${brainPort} unreachable)`);
+      }
     } else {
       console.log('  brain:      stopped');
     }
