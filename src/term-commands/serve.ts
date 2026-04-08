@@ -750,7 +750,7 @@ async function printPgserveStatus(): Promise<void> {
   // Brain server status
   try {
     // @ts-expect-error — brain is enterprise-only, not in genie's deps
-    const brain = await import('@khal-os/brain');
+    await import('@khal-os/brain');
     if (handles.brainHandle) {
       console.log(`  brain:      running (port ${handles.brainHandle.port})`);
     } else {
