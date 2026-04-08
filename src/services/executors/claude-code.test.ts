@@ -2,24 +2,24 @@ import { describe, expect, test } from 'bun:test';
 import { buildOmniSpawnParams, sanitizeWindowName } from './claude-code.js';
 
 describe('sanitizeWindowName', () => {
-  test('WhatsApp DM: number@s.whatsapp.net → whatsapp/number', () => {
-    expect(sanitizeWindowName('5512982298888@s.whatsapp.net')).toBe('whatsapp/5512982298888');
+  test('WhatsApp DM: number@s.whatsapp.net → wa-number', () => {
+    expect(sanitizeWindowName('5512982298888@s.whatsapp.net')).toBe('wa-5512982298888');
   });
 
-  test('WhatsApp group: id@g.us → group/id', () => {
-    expect(sanitizeWindowName('120363422699972298@g.us')).toBe('group/120363422699972298');
+  test('WhatsApp group: id@g.us → group-id', () => {
+    expect(sanitizeWindowName('120363422699972298@g.us')).toBe('group-120363422699972298');
   });
 
-  test('LID format: id@lid → lid/id', () => {
-    expect(sanitizeWindowName('54958418317348@lid')).toBe('lid/54958418317348');
+  test('LID format: id@lid → lid-id', () => {
+    expect(sanitizeWindowName('54958418317348@lid')).toBe('lid-54958418317348');
   });
 
   test('different DM numbers produce different names', () => {
     const a = sanitizeWindowName('5511999999999@s.whatsapp.net');
     const b = sanitizeWindowName('5511888888888@s.whatsapp.net');
     expect(a).not.toBe(b);
-    expect(a).toBe('whatsapp/5511999999999');
-    expect(b).toBe('whatsapp/5511888888888');
+    expect(a).toBe('wa-5511999999999');
+    expect(b).toBe('wa-5511888888888');
   });
 
   test('identical inputs produce identical output', () => {
@@ -27,12 +27,12 @@ describe('sanitizeWindowName', () => {
     expect(sanitizeWindowName(id)).toBe(sanitizeWindowName(id));
   });
 
-  test('fallback: unknown format uses chat/ prefix', () => {
-    expect(sanitizeWindowName('user@domain.com/resource')).toBe('chat/userdomain.comresource');
+  test('fallback: unknown format uses chat- prefix', () => {
+    expect(sanitizeWindowName('user@domain.com/resource')).toBe('chat-userdomain.comresource');
   });
 
-  test('empty string returns chat/unknown', () => {
-    expect(sanitizeWindowName('')).toBe('chat/unknown');
+  test('empty string returns chat-unknown', () => {
+    expect(sanitizeWindowName('')).toBe('chat-unknown');
   });
 
   test('similar JIDs with different numbers do not collide', () => {
@@ -44,7 +44,7 @@ describe('sanitizeWindowName', () => {
     expect(names.size).toBe(100);
   });
 
-  test('no special characters break tmux window naming', () => {
+  test('output is path-safe — no slashes, dots, or colons', () => {
     const names = [
       sanitizeWindowName('5512982298888@s.whatsapp.net'),
       sanitizeWindowName('120363422699972298@g.us'),
@@ -52,8 +52,8 @@ describe('sanitizeWindowName', () => {
       sanitizeWindowName('some-weird-id'),
     ];
     for (const name of names) {
-      // tmux window names must not contain dots or colons
-      expect(name).not.toMatch(/[.:]/);
+      // Must be safe as both tmux window name and filename component
+      expect(name).not.toMatch(/[\/.:]/);
     }
   });
 });
