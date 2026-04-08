@@ -18,7 +18,7 @@ import { buildLaunchCommand } from '../../lib/provider-adapters.js';
 import type { SpawnParams } from '../../lib/provider-adapters.js';
 import { shellQuote } from '../../lib/team-lead-command.js';
 import { ensureTeamWindow, executeTmux, isPaneAlive, isPaneProcessRunning, killWindow } from '../../lib/tmux.js';
-import type { IExecutor, OmniMessage, OmniSession, SafePgCallFn } from '../executor.js';
+import type { ExecutorSession, IExecutor, OmniMessage, SafePgCallFn } from '../executor.js';
 import { buildTurnBasedPrompt } from './turn-based-prompt.js';
 
 interface TmuxSessionState {
@@ -75,12 +75,14 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     // No-op: tmux executor replies via tmux pane, not NATS
   }
 
-  async injectNudge(session: OmniSession, text: string): Promise<void> {
+  async injectNudge(session: ExecutorSession, text: string): Promise<void> {
+    const paneId = session.tmux?.paneId;
+    if (!paneId) return;
     const nudgeText = `[system] ${text}`;
-    await executeTmux(`send-keys -t '${session.paneId}' ${shellQuote(nudgeText)} Enter`);
+    await executeTmux(`send-keys -t '${paneId}' ${shellQuote(nudgeText)} Enter`);
   }
 
-  async spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<OmniSession> {
+  async spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<ExecutorSession> {
     const resolved = await directory.resolve(agentName);
     if (!resolved) throw new Error(`Agent "${agentName}" not found in genie directory`);
 
@@ -120,11 +122,10 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
       id: sessionKey,
       agentName,
       chatId,
-      tmuxSession,
-      tmuxWindow: windowName,
-      paneId,
+      executorType: 'tmux' as const,
       createdAt: now,
       lastActivityAt: now,
+      tmux: { session: tmuxSession, window: windowName, paneId },
     };
   }
 
@@ -170,13 +171,14 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     );
   }
 
-  async deliver(session: OmniSession, message: OmniMessage): Promise<void> {
+  async deliver(session: ExecutorSession, message: OmniMessage): Promise<void> {
     const state = this.sessions.get(session.id);
     if (state?.executorId) await this.updateState(state.executorId, 'working', session.chatId);
+    const tmuxSessionName = session.tmux?.session ?? session.agentName;
     const inboxDir = join(
       process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
       'teams',
-      session.tmuxSession,
+      tmuxSessionName,
       'inboxes',
     );
     mkdirSync(inboxDir, { recursive: true });
@@ -200,10 +202,10 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     if (state?.executorId) await this.updateState(state.executorId, 'idle', session.chatId);
   }
 
-  async shutdown(session: OmniSession): Promise<void> {
+  async shutdown(session: ExecutorSession): Promise<void> {
     const state = this.sessions.get(session.id);
     try {
-      await killWindow(session.tmuxSession, session.tmuxWindow);
+      if (session.tmux) await killWindow(session.tmux.session, session.tmux.window);
     } finally {
       if (state?.executorId && this.safePgCall) {
         await this.safePgCall(
@@ -217,11 +219,13 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     }
   }
 
-  async isAlive(session: OmniSession): Promise<boolean> {
+  async isAlive(session: ExecutorSession): Promise<boolean> {
+    const paneId = session.tmux?.paneId;
+    if (!paneId) return false;
     try {
-      const paneAlive = await isPaneAlive(session.paneId);
+      const paneAlive = await isPaneAlive(paneId);
       if (!paneAlive) return false;
-      return await isPaneProcessRunning(session.paneId, 'claude');
+      return await isPaneProcessRunning(paneId, 'claude');
     } catch {
       return false;
     }

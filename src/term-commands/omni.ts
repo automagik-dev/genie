@@ -35,7 +35,8 @@ function printStatus(s: BridgeStatus): void {
     for (const sess of s.sessions) {
       const idleSec = Math.round(sess.idleMs / 1000);
       const status = sess.spawning ? 'spawning' : `idle ${idleSec}s`;
-      console.log(`    ${sess.agentName}:${sess.chatId} — pane=${sess.paneId} (${status})`);
+      const tag = sess.executorType === 'tmux' ? 'tmux' : 'sdk';
+      console.log(`    ${sess.agentName}:${sess.chatId} — executor=${tag} (${status})`);
     }
   }
   console.log('');

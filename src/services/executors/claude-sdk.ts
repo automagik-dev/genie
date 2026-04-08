@@ -13,7 +13,7 @@ import { recordAuditEvent } from '../../lib/audit-events.js';
 import * as registry from '../../lib/executor-registry.js';
 import { resolvePermissionConfig } from '../../lib/providers/claude-sdk-permissions.js';
 import { ClaudeSdkProvider } from '../../lib/providers/claude-sdk.js';
-import type { IExecutor, NatsPublishFn, OmniMessage, OmniSession, SafePgCallFn } from '../executor.js';
+import type { ExecutorSession, IExecutor, NatsPublishFn, OmniMessage, SafePgCallFn } from '../executor.js';
 import { endSession, recordTurn, startSession, updateTurnCount } from './sdk-session-capture.js';
 import { buildTurnBasedPrompt } from './turn-based-prompt.js';
 
@@ -292,12 +292,12 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     this.natsPublish = fn;
   }
 
-  async injectNudge(session: OmniSession, text: string): Promise<void> {
+  async injectNudge(session: ExecutorSession, text: string): Promise<void> {
     if (!this.sessions.has(session.id)) return;
     this.pendingNudges.set(session.id, text);
   }
 
-  async spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<OmniSession> {
+  async spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<ExecutorSession> {
     const resolved = await directory.resolve(agentName);
     if (!resolved) {
       throw new Error(`Agent "${agentName}" not found in genie directory`);
@@ -329,11 +329,13 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       id: sessionId,
       agentName,
       chatId,
-      tmuxSession: '',
-      tmuxWindow: '',
-      paneId: `sdk-${chatId}`,
+      executorType: 'sdk' as const,
       createdAt: now,
       lastActivityAt: now,
+      sdk: {
+        claudeSessionId: registration?.claudeSessionId,
+        executorId: registration?.executorId,
+      },
     };
   }
 
@@ -408,7 +410,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     );
   }
 
-  async deliver(session: OmniSession, message: OmniMessage): Promise<void> {
+  async deliver(session: ExecutorSession, message: OmniMessage): Promise<void> {
     const state = this.sessions.get(session.id);
     if (!state) {
       throw new Error(`No SDK session found for ${session.id}`);
@@ -423,7 +425,11 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     );
   }
 
-  private async _processDelivery(session: OmniSession, state: SdkSessionState, message: OmniMessage): Promise<void> {
+  private async _processDelivery(
+    session: ExecutorSession,
+    state: SdkSessionState,
+    message: OmniMessage,
+  ): Promise<void> {
     const resolved = await directory.resolve(session.agentName);
     if (!resolved) {
       throw new Error(`Agent "${session.agentName}" not found in genie directory`);
@@ -513,7 +519,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
 
   private async reconcileSessionId(
     state: SdkSessionState,
-    session: OmniSession,
+    session: ExecutorSession,
     returnedSessionId: string,
   ): Promise<void> {
     const isResumeRejected = state.claudeSessionId && returnedSessionId !== state.claudeSessionId;
@@ -581,7 +587,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     }
   }
 
-  async shutdown(session: OmniSession): Promise<void> {
+  async shutdown(session: ExecutorSession): Promise<void> {
     const state = this.sessions.get(session.id);
     if (!state) return;
 
@@ -605,7 +611,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     this.deliveryQueues.delete(session.id);
   }
 
-  async isAlive(session: OmniSession): Promise<boolean> {
+  async isAlive(session: ExecutorSession): Promise<boolean> {
     const state = this.sessions.get(session.id);
     if (!state) return false;
     return state.running && !state.abortController.signal.aborted;

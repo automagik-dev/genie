@@ -42,9 +42,9 @@ describe('ClaudeSdkOmniExecutor', () => {
       expect(session.id).toBe('test-agent:chat-123');
       expect(session.agentName).toBe('test-agent');
       expect(session.chatId).toBe('chat-123');
-      expect(session.paneId).toBe('sdk-chat-123');
-      expect(session.tmuxSession).toBe('');
-      expect(session.tmuxWindow).toBe('');
+      expect(session.executorType).toBe('sdk');
+      expect(session.sdk).toBeDefined();
+      expect(session.tmux).toBeUndefined();
     });
 
     it('resolves agent from directory', async () => {
@@ -75,9 +75,7 @@ describe('ClaudeSdkOmniExecutor', () => {
         id: 'nonexistent',
         agentName: 'x',
         chatId: 'y',
-        tmuxSession: '',
-        tmuxWindow: '',
-        paneId: '',
+        executorType: 'sdk' as const,
         createdAt: 0,
         lastActivityAt: 0,
       };
@@ -98,9 +96,7 @@ describe('ClaudeSdkOmniExecutor', () => {
         id: 'nonexistent',
         agentName: 'x',
         chatId: 'y',
-        tmuxSession: '',
-        tmuxWindow: '',
-        paneId: '',
+        executorType: 'sdk' as const,
         createdAt: 0,
         lastActivityAt: 0,
       };
@@ -147,9 +143,7 @@ describe('ClaudeSdkOmniExecutor', () => {
         id: 'nonexistent',
         agentName: 'x',
         chatId: 'y',
-        tmuxSession: '',
-        tmuxWindow: '',
-        paneId: '',
+        executorType: 'sdk' as const,
         createdAt: 0,
         lastActivityAt: 0,
       };

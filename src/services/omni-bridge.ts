@@ -13,7 +13,7 @@
 import { type NatsConnection, StringCodec, type Subscription, connect } from 'nats';
 import type { Sql } from '../lib/db.js';
 import { resolveExecutorType } from '../lib/executor-config.js';
-import type { IExecutor, OmniMessage, OmniSession } from './executor.js';
+import type { ExecutorSession, IExecutor, OmniMessage } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
 import { ClaudeSdkOmniExecutor } from './executors/claude-sdk.js';
 import { TurnTracker } from './omni-turn.js';
@@ -58,7 +58,7 @@ interface BridgeConfig {
 }
 
 interface SessionEntry {
-  session: OmniSession;
+  session: ExecutorSession;
   instanceId: string;
   spawning: boolean;
   buffer: OmniMessage[];
@@ -89,7 +89,7 @@ export interface BridgeStatus {
     agentName: string;
     chatId: string;
     instanceId: string;
-    paneId: string;
+    executorType: 'tmux' | 'sdk';
     spawning: boolean;
     idleMs: number;
     bufferSize: number;
@@ -386,7 +386,7 @@ export class OmniBridge {
         agentName: entry.session.agentName,
         chatId: entry.session.chatId,
         instanceId: entry.instanceId,
-        paneId: entry.session.paneId,
+        executorType: entry.session.executorType,
         spawning: entry.spawning,
         idleMs: now - entry.session.lastActivityAt,
         bufferSize: entry.buffer.length,
@@ -747,7 +747,7 @@ export class OmniBridge {
 
     // Create placeholder entry (spawning state)
     const placeholder: SessionEntry = {
-      session: null as unknown as OmniSession, // Will be set after spawn
+      session: null as unknown as ExecutorSession, // Will be set after spawn
       instanceId: message.instanceId,
       spawning: true,
       buffer: [message], // Buffer the triggering message too
@@ -797,7 +797,8 @@ export class OmniBridge {
       // Start idle timer
       this.resetIdleTimer(key);
 
-      console.log(`[omni-bridge] Session active: ${key} (pane=${session.paneId})`);
+      const sessionTag = session.executorType === 'tmux' ? `(tmux pane=${session.tmux?.paneId})` : '(executor=sdk)';
+      console.log(`[omni-bridge] Session active: ${key} ${sessionTag}`);
     } catch (err) {
       console.error(`[omni-bridge] Failed to spawn session for ${key}:`, err);
       // Re-queue buffered messages before deleting the placeholder
