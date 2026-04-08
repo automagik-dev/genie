@@ -49,7 +49,7 @@ export interface QueuedRequest {
   maxAttempts: number;
 }
 
-/** Callback invoked for each claimed request. */
+/** Callback invoked for each claimed request. @public */
 export type RequestHandler = (request: QueuedRequest, message: OmniMessage) => Promise<void>;
 
 // ============================================================================
