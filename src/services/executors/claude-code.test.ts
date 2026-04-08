@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { sanitizeWindowName } from './claude-code.js';
+import { buildOmniSpawnParams, sanitizeWindowName } from './claude-code.js';
 
 describe('sanitizeWindowName', () => {
   test('different JIDs produce different window names', () => {
@@ -44,5 +44,72 @@ describe('sanitizeWindowName', () => {
       names.add(sanitizeWindowName(jid));
     }
     expect(names.size).toBe(100);
+  });
+});
+
+describe('buildOmniSpawnParams', () => {
+  const fakeEntry = {
+    name: 'simone',
+    dir: '/home/genie/agents/simone',
+    promptMode: 'append' as const,
+    model: 'opus',
+    color: 'pink',
+    registeredAt: '2026-01-01T00:00:00Z',
+  };
+
+  test('returns provider claude by default', () => {
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
+    expect(params.provider).toBe('claude');
+  });
+
+  test('sets team and role to agentName', () => {
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
+    expect(params.team).toBe('simone');
+    expect(params.role).toBe('simone');
+  });
+
+  test('includes systemPromptFile pointing to AGENTS.md', () => {
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
+    expect(params.systemPromptFile).toBe('/home/genie/agents/simone/AGENTS.md');
+  });
+
+  test('injects turn-based prompt as systemPrompt', () => {
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {
+      OMNI_INSTANCE: 'inst-1',
+      OMNI_SENDER_NAME: 'Stefani',
+    });
+    expect(params.systemPrompt).toContain('WhatsApp Turn-Based Conversation');
+    expect(params.systemPrompt).toContain('Stefani');
+    expect(params.systemPrompt).toContain('inst-1');
+    expect(params.systemPrompt).toContain('chat123');
+  });
+
+  test('enables nativeTeam with agent name and color', () => {
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
+    expect(params.nativeTeam?.enabled).toBe(true);
+    expect(params.nativeTeam?.agentName).toBe('simone');
+    expect(params.nativeTeam?.color).toBe('pink');
+  });
+
+  test('passes model from directory entry', () => {
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
+    expect(params.model).toBe('opus');
+  });
+
+  test('passes initialMessage as initialPrompt', () => {
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {}, 'Hello!');
+    expect(params.initialPrompt).toBe('Hello!');
+  });
+
+  test('generates a sessionId', () => {
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
+    expect(params.sessionId).toBeDefined();
+    expect(params.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  test('uses entry.provider when set', () => {
+    const entryWithProvider = { ...fakeEntry, provider: 'codex' };
+    const params = buildOmniSpawnParams('simone', 'chat123', entryWithProvider, {});
+    expect(params.provider).toBe('codex');
   });
 });
