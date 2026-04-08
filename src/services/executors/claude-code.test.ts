@@ -2,10 +2,24 @@ import { describe, expect, test } from 'bun:test';
 import { buildOmniSpawnParams, sanitizeWindowName } from './claude-code.js';
 
 describe('sanitizeWindowName', () => {
-  test('different JIDs produce different window names', () => {
+  test('WhatsApp DM: number@s.whatsapp.net → whatsapp/number', () => {
+    expect(sanitizeWindowName('5512982298888@s.whatsapp.net')).toBe('whatsapp/5512982298888');
+  });
+
+  test('WhatsApp group: id@g.us → group/id', () => {
+    expect(sanitizeWindowName('120363422699972298@g.us')).toBe('group/120363422699972298');
+  });
+
+  test('LID format: id@lid → lid/id', () => {
+    expect(sanitizeWindowName('54958418317348@lid')).toBe('lid/54958418317348');
+  });
+
+  test('different DM numbers produce different names', () => {
     const a = sanitizeWindowName('5511999999999@s.whatsapp.net');
     const b = sanitizeWindowName('5511888888888@s.whatsapp.net');
     expect(a).not.toBe(b);
+    expect(a).toBe('whatsapp/5511999999999');
+    expect(b).toBe('whatsapp/5511888888888');
   });
 
   test('identical inputs produce identical output', () => {
@@ -13,28 +27,12 @@ describe('sanitizeWindowName', () => {
     expect(sanitizeWindowName(id)).toBe(sanitizeWindowName(id));
   });
 
-  test('output contains alphanumeric prefix and hash suffix', () => {
-    const result = sanitizeWindowName('5511999999999@s.whatsapp.net');
-    expect(result).toMatch(/^[a-zA-Z0-9]+-[a-f0-9]{12}$/);
+  test('fallback: unknown format uses chat/ prefix', () => {
+    expect(sanitizeWindowName('user@domain.com/resource')).toBe('chat/userdomain.comresource');
   });
 
-  test('prefix is truncated to 24 chars', () => {
-    const longId = 'a'.repeat(100);
-    const result = sanitizeWindowName(longId);
-    const [prefix] = result.split('-');
-    expect(prefix.length).toBeLessThanOrEqual(24);
-  });
-
-  test('empty string returns hash-only name (not "chat")', () => {
-    const result = sanitizeWindowName('');
-    // Empty prefix but hash is always non-empty, so fallback to 'chat' never triggers
-    expect(result).toMatch(/^-[a-f0-9]{12}$/);
-  });
-
-  test('special characters are stripped from prefix', () => {
-    const result = sanitizeWindowName('user@domain.com/resource');
-    const [prefix] = result.split('-');
-    expect(prefix).toMatch(/^[a-zA-Z0-9]+$/);
+  test('empty string returns chat/unknown', () => {
+    expect(sanitizeWindowName('')).toBe('chat/unknown');
   });
 
   test('similar JIDs with different numbers do not collide', () => {
@@ -44,6 +42,19 @@ describe('sanitizeWindowName', () => {
       names.add(sanitizeWindowName(jid));
     }
     expect(names.size).toBe(100);
+  });
+
+  test('no special characters break tmux window naming', () => {
+    const names = [
+      sanitizeWindowName('5512982298888@s.whatsapp.net'),
+      sanitizeWindowName('120363422699972298@g.us'),
+      sanitizeWindowName('54958418317348@lid'),
+      sanitizeWindowName('some-weird-id'),
+    ];
+    for (const name of names) {
+      // tmux window names must not contain dots or colons
+      expect(name).not.toMatch(/[.:]/);
+    }
   });
 });
 

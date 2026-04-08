@@ -6,7 +6,7 @@
  * injects env vars so agents can call `omni say/done` directly.
  */
 
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -25,10 +25,31 @@ interface TmuxSessionState {
   executorId: string | null;
 }
 
+/**
+ * Convert a chat JID into a human-readable tmux window name.
+ *
+ * Formats:
+ *   5512982298888@s.whatsapp.net  → whatsapp/5512982298888
+ *   120363422699972298@g.us       → group/120363422699972298
+ *   54958418317348@lid            → lid/54958418317348
+ *   other                         → chat/<sanitized prefix>
+ */
 export function sanitizeWindowName(chatId: string): string {
-  const hash = createHash('md5').update(chatId).digest('hex').slice(0, 12);
-  const prefix = chatId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
-  return `${prefix}-${hash}` || 'chat';
+  // WhatsApp DM: number@s.whatsapp.net
+  const whatsappDm = chatId.match(/^(\d+)@s\.whatsapp\.net$/);
+  if (whatsappDm) return `whatsapp/${whatsappDm[1]}`;
+
+  // WhatsApp group: id@g.us
+  const whatsappGroup = chatId.match(/^(\d+)@g\.us$/);
+  if (whatsappGroup) return `group/${whatsappGroup[1]}`;
+
+  // LID format: id@lid
+  const lid = chatId.match(/^(\d+)@lid$/);
+  if (lid) return `lid/${lid[1]}`;
+
+  // Fallback: sanitize for tmux (no special chars)
+  const clean = chatId.replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 30);
+  return `chat/${clean || 'unknown'}`;
 }
 
 /**
