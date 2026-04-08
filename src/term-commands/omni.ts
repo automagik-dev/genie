@@ -8,20 +8,14 @@
 import type { Command } from 'commander';
 import type { BridgeStatus } from '../services/omni-bridge.js';
 
-function printStatus(s: BridgeStatus): void {
-  const pgTag = s.pgAvailable ? '✓ connected' : '✗ degraded';
-  const connTag = s.connected ? '✓ connected' : '✗ disconnected';
-  const activeSource = s.pgAvailable ? ' (PG-backed)' : ' (in-memory)';
-
-  console.log('\nOmni Bridge Status');
-  console.log('─'.repeat(50));
-  console.log(`  Bridge:         ${connTag}`);
-  console.log(`  NATS URL:       ${s.natsUrl}`);
-  console.log(`  PG:             ${pgTag}`);
-  console.log(`  Executor type:  ${s.executorType}`);
-  console.log(`  Active:         ${s.activeSessions} / ${s.maxConcurrent}${activeSource}`);
-  console.log(`  Queue depth:    ${s.queueDepth}`);
-  console.log(`  Idle timeout:   ${Math.round(s.idleTimeoutMs / 1000)}s`);
+function printStatusDetails(s: BridgeStatus): void {
+  if (s.pgQueue) {
+    console.log('\n  PG Queue:');
+    console.log(`    Pending:      ${s.pgQueue.pending}`);
+    console.log(`    Processing:   ${s.pgQueue.processing}`);
+    console.log(`    Done:         ${s.pgQueue.done}`);
+    console.log(`    Failed:       ${s.pgQueue.failed}`);
+  }
 
   if (s.executorIds.length > 0) {
     console.log('\n  Executors (PG):');
@@ -39,6 +33,24 @@ function printStatus(s: BridgeStatus): void {
       console.log(`    ${sess.agentName}:${sess.chatId} — executor=${tag} (${status})`);
     }
   }
+}
+
+function printStatus(s: BridgeStatus): void {
+  const pgTag = s.pgAvailable ? '✓ connected' : '✗ degraded';
+  const connTag = s.connected ? '✓ connected' : '✗ disconnected';
+  const activeSource = s.pgAvailable ? ' (PG-backed)' : ' (in-memory)';
+
+  console.log('\nOmni Bridge Status');
+  console.log('─'.repeat(50));
+  console.log(`  Bridge:         ${connTag}`);
+  console.log(`  NATS URL:       ${s.natsUrl}`);
+  console.log(`  PG:             ${pgTag}`);
+  console.log(`  Executor type:  ${s.executorType}`);
+  console.log(`  Active:         ${s.activeSessions} / ${s.maxConcurrent}${activeSource}`);
+  console.log(`  Queue depth:    ${s.queueDepth}`);
+  console.log(`  Idle timeout:   ${Math.round(s.idleTimeoutMs / 1000)}s`);
+
+  printStatusDetails(s);
   console.log('');
 }
 

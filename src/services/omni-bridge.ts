@@ -16,6 +16,7 @@ import { resolveExecutorType } from '../lib/executor-config.js';
 import type { ExecutorSession, IExecutor, OmniMessage } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
 import { ClaudeSdkOmniExecutor } from './executors/claude-sdk.js';
+import { OmniQueue, type QueueConfig, type QueueStats } from './omni-queue.js';
 import { TurnTracker } from './omni-turn.js';
 
 // ============================================================================
@@ -55,6 +56,8 @@ interface BridgeConfig {
   pgProvider?: PgProvider;
   /** Test/DI hook: override the NATS connect function. Defaults to the real `connect` from the nats package. */
   natsConnectFn?: NatsConnectFn;
+  /** Queue config for SDK executor. Only used when executorType is 'sdk' and PG is available. */
+  queue?: QueueConfig;
 }
 
 interface SessionEntry {
@@ -84,6 +87,8 @@ export interface BridgeStatus {
   executorType: 'tmux' | 'sdk';
   /** Executor IDs from PG (omni source, not ended). Empty in degraded mode. */
   executorIds: string[];
+  /** PG-backed queue stats (SDK executor only). Null when queue is not active. */
+  pgQueue: QueueStats | null;
   sessions: Array<{
     id: string;
     agentName: string;
@@ -188,6 +193,10 @@ export class OmniBridge {
   private pgAvailable = false;
   private readonly pgProvider: PgProvider;
   private readonly natsConnectFn: NatsConnectFn;
+  private readonly queueConfig: QueueConfig;
+
+  /** PG-backed request queue for SDK executor. Null when PG unavailable or executor is tmux. */
+  private queue: OmniQueue | null = null;
 
   readonly natsUrl: string;
   readonly idleTimeoutMs: number;
@@ -210,6 +219,7 @@ export class OmniBridge {
         return (await getConnection()) as Sql;
       });
     this.natsConnectFn = config.natsConnectFn ?? connect;
+    this.queueConfig = config.queue ?? {};
 
     this.executorType = resolveExecutorType(config.executorType);
     if (this.executorType === 'sdk') {
@@ -244,6 +254,13 @@ export class OmniBridge {
     // Group 3 scaffolding; Group 4 consumers (SDK + tmux executors) receive a
     // bound `safePgCall` reference below.
     await this.probePg();
+
+    // Initialize PG-backed queue for SDK executor when PG is available.
+    if (this.executorType === 'sdk' && this.pgAvailable && this.sql) {
+      this.queue = new OmniQueue(this.sql, (_req, msg) => this.routeMessage(msg), this.queueConfig);
+      await this.queue.recoverStale();
+      this.queue.start();
+    }
 
     // Inject the bridge's safePgCall into the executor so its World A registry
     // writes are guarded by the same pgAvailable / connection-loss logic as
@@ -297,6 +314,12 @@ export class OmniBridge {
     }
 
     console.log('[omni-bridge] Shutting down...');
+
+    // Stop queue worker
+    if (this.queue) {
+      this.queue.stop();
+      this.queue = null;
+    }
 
     // Stop idle checker
     if (this.idleCheckTimer) {
@@ -371,6 +394,16 @@ export class OmniBridge {
       }
     }
 
+    // PG queue stats when available.
+    let pgQueue: QueueStats | null = null;
+    if (this.queue) {
+      pgQueue = await this.safePgCall(
+        'status_queue_stats',
+        (_sql) => this.queue?.stats() ?? Promise.resolve(null),
+        null,
+      );
+    }
+
     return {
       connected: this.nc !== null,
       natsUrl: this.natsUrl,
@@ -378,9 +411,10 @@ export class OmniBridge {
       activeSessions: activeFromPg ?? this.sessions.size,
       maxConcurrent: this.maxConcurrent,
       idleTimeoutMs: this.idleTimeoutMs,
-      queueDepth: this.messageQueue.length,
+      queueDepth: pgQueue ? pgQueue.pending + pgQueue.processing : this.messageQueue.length,
       executorType: this.executorType,
       executorIds,
+      pgQueue,
       sessions: Array.from(this.sessions.entries()).map(([key, entry]) => ({
         id: key,
         agentName: entry.session.agentName,
@@ -507,7 +541,16 @@ export class OmniBridge {
           continue;
         }
 
-        await this.routeMessage(parsed);
+        // SDK executor with PG queue: persist to queue for durable processing.
+        // Tmux executor or degraded mode: route directly (fire-and-forget).
+        if (this.queue) {
+          // biome-ignore lint/suspicious/noExplicitAny: NATS payload may have extra fields
+          const raw = parsed as any;
+          const env = (raw.env as Record<string, string>) ?? {};
+          await this.queue.enqueue(parsed, env);
+        } else {
+          await this.routeMessage(parsed);
+        }
       } catch (err) {
         console.error('[omni-bridge] Error processing message:', err);
       }
