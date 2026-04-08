@@ -929,6 +929,7 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
 
 // resolveSdkPermissions removed — use resolvePermissionConfig from claude-sdk-permissions
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: SDK query orchestrates session capture, streaming, tool collection — splitting would obscure the linear flow
 async function runSdkQuery(
   ctx: SpawnCtx,
   permConfig: { allow: string[]; bashAllowPatterns?: string[] },
@@ -937,7 +938,9 @@ async function runSdkQuery(
   runtimeExtraOptions?: Record<string, unknown>,
 ): Promise<void> {
   const { ClaudeSdkProvider } = await import('../lib/providers/claude-sdk.js');
-  const { startSession, recordTurn, updateTurnCount, endSession } = await import('../services/executors/sdk-session-capture.js');
+  const { startSession, recordTurn, updateTurnCount, endSession } = await import(
+    '../services/executors/sdk-session-capture.js'
+  );
   const { getConnection } = await import('../lib/db.js');
   const sdkProvider = new ClaudeSdkProvider();
   const spawnContext = {
@@ -955,7 +958,7 @@ async function runSdkQuery(
   };
 
   // Create a safePgCall for session capture
-  const safePgCall: import('../lib/safe-pg-call.js').SafePgCallFn = async (op, fn, fallback) => {
+  const safePgCall: import('../lib/safe-pg-call.js').SafePgCallFn = async (_op, fn, fallback) => {
     try {
       const sql = await getConnection();
       return await fn(sql);
@@ -1046,6 +1049,9 @@ async function runSdkQuery(
 
   let resultText = '';
   let claudeSessionId: string | undefined;
+  const toolCalls: Array<{ name: string; input: unknown; output?: string; is_error?: boolean }> = [];
+  let pendingToolName = '';
+  let pendingToolInput: unknown = null;
 
   if (streaming) {
     const { formatSdkMessage } = await import('../lib/providers/claude-sdk-stream.js');
@@ -1057,15 +1063,29 @@ async function runSdkQuery(
           process.stdout.write(formatted);
           if (format === 'json') process.stdout.write('\n');
         }
-        // Capture claude session ID for resume
         if (message.type === 'system' && (message as Record<string, unknown>).session_id) {
           claudeSessionId = (message as Record<string, unknown>).session_id as string;
         }
-        // Capture assistant text for session recording
+        // Collect tool calls
         if (message.type === 'assistant' && message.message) {
           for (const block of message.message.content) {
+            if (block.type === 'tool_use') {
+              pendingToolName = ((block as unknown as Record<string, unknown>).name as string) ?? '';
+              pendingToolInput = (block as unknown as Record<string, unknown>).input;
+            }
             if (block.type === 'text' && block.text) resultText += block.text;
           }
+        }
+        if ((message as unknown as Record<string, unknown>).type === 'tool_result') {
+          const msg = message as Record<string, unknown>;
+          toolCalls.push({
+            name: pendingToolName,
+            input: pendingToolInput,
+            output: typeof msg.content === 'string' ? msg.content.slice(0, 500) : '',
+            is_error: !!msg.is_error,
+          });
+          pendingToolName = '';
+          pendingToolInput = null;
         }
         if (message.type === 'result' && message.subtype === 'success') {
           if (message.result && !resultText) resultText = message.result;
@@ -1078,19 +1098,36 @@ async function runSdkQuery(
       }
     }
   } else {
-    // Default non-streaming behavior: only final text
     try {
       for await (const message of messages) {
         if (message.type === 'assistant' && message.message) {
           for (const block of message.message.content) {
+            if (block.type === 'tool_use') {
+              pendingToolName = ((block as unknown as Record<string, unknown>).name as string) ?? '';
+              pendingToolInput = (block as unknown as Record<string, unknown>).input;
+            }
             if (block.type === 'text' && block.text) {
               process.stdout.write(block.text);
               resultText += block.text;
             }
           }
         }
+        if ((message as unknown as Record<string, unknown>).type === 'tool_result') {
+          const msg = message as Record<string, unknown>;
+          toolCalls.push({
+            name: pendingToolName,
+            input: pendingToolInput,
+            output: typeof msg.content === 'string' ? msg.content.slice(0, 500) : '',
+            is_error: !!msg.is_error,
+          });
+          pendingToolName = '';
+          pendingToolInput = null;
+        }
         if (message.type === 'result' && message.subtype === 'success') {
-          if (message.result) { console.log(message.result); if (!resultText) resultText = message.result; }
+          if (message.result) {
+            console.log(message.result);
+            if (!resultText) resultText = message.result;
+          }
           if (message.session_id) claudeSessionId = message.session_id;
         }
       }
@@ -1101,10 +1138,11 @@ async function runSdkQuery(
     }
   }
 
-  // Record assistant response and end session
+  // Record assistant response (with tools embedded) and end session
   if (dbSessionId) {
-    if (resultText) {
-      await recordTurn(safePgCall, dbSessionId, turnIndex++, 'assistant', resultText);
+    if (resultText || toolCalls.length > 0) {
+      const content = toolCalls.length > 0 ? JSON.stringify({ text: resultText, tools: toolCalls }) : resultText;
+      await recordTurn(safePgCall, dbSessionId, turnIndex++, 'assistant', content);
     }
     await updateTurnCount(safePgCall, dbSessionId, turnIndex);
     await endSession(safePgCall, dbSessionId, 'completed');
@@ -1505,6 +1543,79 @@ async function buildSpawnParams(
   return { params, parentSessionId, spawnColor };
 }
 
+/** Start OTel relay for Codex agents if needed. */
+async function maybeStartOtelRelay(
+  nt: ReturnType<typeof validateSpawnParams>['nativeTeam'],
+  validated: ReturnType<typeof validateSpawnParams>,
+  insideTmux: boolean,
+): Promise<boolean> {
+  if (!nt?.enabled && validated.provider === 'codex' && insideTmux) {
+    ensureCodexOtelConfig();
+    return await ensureOtelRelay(validated.team);
+  }
+  return false;
+}
+
+/** Build SDK runtime overrides from CLI --sdk-* flags. */
+function buildSdkRuntimeExtra(options: SpawnOptions): Record<string, unknown> | undefined {
+  const extra: Record<string, unknown> = {};
+  if (options.sdkMaxTurns != null) extra.maxTurns = options.sdkMaxTurns;
+  if (options.sdkMaxBudget != null) extra.maxBudgetUsd = options.sdkMaxBudget;
+  if (options.sdkEffort) extra.effort = options.sdkEffort;
+  if (options.sdkResume) extra.resume = options.sdkResume;
+  return Object.keys(extra).length > 0 ? extra : undefined;
+}
+
+/** Dispatch spawn to the appropriate transport: SDK, tmux, or inline. */
+async function dispatchSpawn(
+  ctx: SpawnCtx,
+  validated: ReturnType<typeof validateSpawnParams>,
+  options: SpawnOptions,
+  agent: { entry: { permissions?: unknown; sdk?: unknown } },
+  insideTmux: boolean,
+): Promise<string> {
+  if (validated.provider === 'claude-sdk') {
+    type SdkStreamFormat = import('../lib/providers/claude-sdk-stream.js').StreamFormat;
+    const streamFormat = (options.streamFormat ?? 'text') as SdkStreamFormat;
+    const streamOpts = options.stream || options.sdkStream ? { stream: true as const, streamFormat } : undefined;
+
+    return await launchSdkSpawn(
+      ctx,
+      agent.entry.permissions as import('../lib/agent-directory.js').DirectoryEntry['permissions'],
+      streamOpts,
+      agent.entry.sdk as import('../lib/sdk-directory-types.js').SdkDirectoryConfig | undefined,
+      buildSdkRuntimeExtra(options),
+    );
+  }
+  if (insideTmux) {
+    return await launchTmuxSpawn(ctx);
+  }
+  return await launchInlineSpawn(ctx);
+}
+
+/** Resolve team name, auto-resume dead workers, and reject duplicates. */
+async function resolveTeamAndResume(
+  effectiveRole: string,
+  options: SpawnOptions,
+): Promise<{ team: string; teamWasExplicit: boolean; resumed?: string }> {
+  const teamWasExplicit = Boolean(options.team);
+  const team = options.team || (await nativeTeams.discoverTeamName());
+  if (!team) {
+    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
+    return process.exit(1) as never;
+  }
+  const deadResumable = await findDeadResumable(team, effectiveRole);
+  if (deadResumable) {
+    console.log(
+      `Resuming existing session for "${effectiveRole}" (session: ${deadResumable.claudeSessionId?.slice(0, 8)}...)`,
+    );
+    await resumeAgent(deadResumable);
+    return { team, teamWasExplicit, resumed: deadResumable.id };
+  }
+  await rejectDuplicateRole(team, effectiveRole);
+  return { team, teamWasExplicit };
+}
+
 export async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<string> {
   // Effective role: suffixed name for registration/duplicate-check, original name for directory lookup
   const effectiveRole = options.role ?? name;
@@ -1512,24 +1623,9 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   // 1. Resolve agent from directory or built-ins (uses original name)
   let agent = await resolveAgentForSpawn(name, options);
 
-  // 2. Resolve team (track whether it was explicitly provided via --team)
-  const teamWasExplicit = Boolean(options.team);
-  const team = options.team || (await nativeTeams.discoverTeamName());
-  if (!team) {
-    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
-    return process.exit(1) as never;
-  }
-  // Auto-resume: if a dead worker exists with a Claude session, resume instead of fresh spawn.
-  const deadResumable = await findDeadResumable(team, effectiveRole);
-  if (deadResumable) {
-    console.log(
-      `Resuming existing session for "${effectiveRole}" (session: ${deadResumable.claudeSessionId?.slice(0, 8)}...)`,
-    );
-    await resumeAgent(deadResumable);
-    return deadResumable.id;
-  }
-
-  await rejectDuplicateRole(team, effectiveRole);
+  // 2. Resolve team, auto-resume dead workers, reject duplicates
+  const { team, teamWasExplicit, resumed } = await resolveTeamAndResume(effectiveRole, options);
+  if (resumed) return resumed;
 
   // 2b. Override CWD with team worktree path if available.
   // Only override for agents without their own registered directory — sub-agents
@@ -1564,12 +1660,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   await terminateActiveExecutorWithCleanup(agentIdentity.id);
   const executorId = crypto.randomUUID();
 
-  // OTel relay for non-native workers (Codex)
-  let otelRelayActive = false;
-  if (!nt?.enabled && validated.provider === 'codex' && insideTmux) {
-    ensureCodexOtelConfig();
-    otelRelayActive = await ensureOtelRelay(validated.team);
-  }
+  const otelRelayActive = await maybeStartOtelRelay(nt, validated, insideTmux);
 
   const fullCommand = prependEnvVars(launch.command, launch.env);
 
@@ -1602,33 +1693,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     provider: validated.provider,
   }).catch(() => {});
 
-  // SDK provider: in-process query, no tmux/shell needed
-  if (validated.provider === 'claude-sdk') {
-    type SdkStreamFormat = import('../lib/providers/claude-sdk-stream.js').StreamFormat;
-    const streamFormat = (options.streamFormat ?? 'text') as SdkStreamFormat;
-    const streamOpts = options.stream || options.sdkStream ? { stream: true as const, streamFormat } : undefined;
-
-    // Build runtime overrides from --sdk-* flags (highest priority, override directory config)
-    const runtimeExtra: Record<string, unknown> = {};
-    if (options.sdkMaxTurns != null) runtimeExtra.maxTurns = options.sdkMaxTurns;
-    if (options.sdkMaxBudget != null) runtimeExtra.maxBudgetUsd = options.sdkMaxBudget;
-    if (options.sdkEffort) runtimeExtra.effort = options.sdkEffort;
-    if (options.sdkResume) runtimeExtra.resume = options.sdkResume;
-    const hasRuntimeExtra = Object.keys(runtimeExtra).length > 0;
-
-    return await launchSdkSpawn(
-      ctx,
-      agent.entry.permissions,
-      streamOpts,
-      agent.entry.sdk,
-      hasRuntimeExtra ? runtimeExtra : undefined,
-    );
-  }
-
-  if (insideTmux) {
-    return await launchTmuxSpawn(ctx);
-  }
-  return await launchInlineSpawn(ctx);
+  return await dispatchSpawn(ctx, validated, options, agent, insideTmux);
 }
 
 // ============================================================================

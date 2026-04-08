@@ -60,59 +60,66 @@ async function isRecipientLeader(recipient: string, teamName: string): Promise<b
   }
 }
 
-export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
-  // Skip in test environment — PG/tmux queries cause timeouts under full suite load
-  if (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test') return;
-
+/** Extract the message recipient and team name, or null if auto-spawn should be skipped. */
+function extractAutoSpawnTarget(payload: HookPayload): { recipient: string; teamName: string } | null {
+  if (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test') return null;
   const input = payload.tool_input;
-  if (!input || input.type !== 'message') return;
-
+  if (!input || input.type !== 'message') return null;
   const recipient = input.recipient as string | undefined;
-  if (!recipient) return;
-
+  if (!recipient) return null;
   const teamName = process.env.GENIE_TEAM ?? payload.team_name;
-  if (!teamName) return;
+  if (!teamName) return null;
+  if (recipient === 'team-lead') return null;
+  return { recipient, teamName };
+}
 
-  // Skip auto-spawn for the team's leader — check the well-known alias first,
-  // then resolve dynamically for custom leader names.
-  if (recipient === 'team-lead') return;
+/** Find and execute a spawn template for the recipient. */
+async function executeAutoSpawn(recipient: string, teamName: string): Promise<void> {
+  const registryMod = await import('../../lib/agent-registry.js');
+  const tmuxMod = await import('../../lib/tmux.js');
+  const directoryMod = await import('../../lib/agent-directory.js');
+
+  const agents = await registryMod.list();
+  const existing = agents.find((a) => (a.role === recipient || a.id === recipient) && a.team === teamName);
+  if (existing && (await tmuxMod.isPaneAlive(existing.paneId))) return;
+
+  const dirEntry = await directoryMod.resolve(recipient);
+  const templates = await registryMod.listTemplates();
+  const searchNames = buildSearchNames(recipient, dirEntry);
+
+  const template = templates.find((t) => {
+    if (t.team !== teamName) return false;
+    return [...searchNames].some((q) => t.id === q || t.role === q);
+  });
+
+  if (!template) {
+    if (dirEntry) {
+      console.error(
+        `[genie-hook] Agent "${recipient}" is registered in directory but has no spawn template in team "${teamName}".`,
+      );
+    }
+    return;
+  }
+
+  const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
+  spawnSync('genie', buildSpawnArgs(template), {
+    timeout: 10_000,
+    stdio: 'ignore',
+    env: { ...process.env, GENIE_TEAM: teamName },
+  });
+
+  console.error(`[genie-hook] Auto-spawned "${recipient}" in team "${teamName}"`);
+}
+
+export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
+  const target = extractAutoSpawnTarget(payload);
+  if (!target) return;
+
+  const { recipient, teamName } = target;
   if (await isRecipientLeader(recipient, teamName)) return;
 
   try {
-    const registryMod = await import('../../lib/agent-registry.js');
-    const tmuxMod = await import('../../lib/tmux.js');
-    const directoryMod = await import('../../lib/agent-directory.js');
-
-    const agents = await registryMod.list();
-    const existing = agents.find((a) => (a.role === recipient || a.id === recipient) && a.team === teamName);
-    if (existing && (await tmuxMod.isPaneAlive(existing.paneId))) return;
-
-    const dirEntry = await directoryMod.resolve(recipient);
-    const templates = await registryMod.listTemplates();
-    const searchNames = buildSearchNames(recipient, dirEntry);
-
-    const template = templates.find((t) => {
-      if (t.team !== teamName) return false;
-      return [...searchNames].some((q) => t.id === q || t.role === q);
-    });
-
-    if (!template) {
-      if (dirEntry) {
-        console.error(
-          `[genie-hook] Agent "${recipient}" is registered in directory but has no spawn template in team "${teamName}".`,
-        );
-      }
-      return;
-    }
-
-    const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
-    spawnSync('genie', buildSpawnArgs(template), {
-      timeout: 10_000,
-      stdio: 'ignore',
-      env: { ...process.env, GENIE_TEAM: teamName },
-    });
-
-    console.error(`[genie-hook] Auto-spawned "${recipient}" in team "${teamName}"`);
+    await executeAutoSpawn(recipient, teamName);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[genie-hook] Auto-spawn failed for "${recipient}": ${msg}`);

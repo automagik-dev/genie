@@ -98,6 +98,39 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
  * Create executor record for an auto-spawned worker.
  * Best-effort: don't block auto-spawn if executor tracking fails.
  */
+/** Terminate the current active executor for an agent if it's still running. */
+async function terminateActiveExecutorIfRunning(agentId: string): Promise<void> {
+  const currentExec = await executorRegistry.getCurrentExecutor(agentId);
+  if (!currentExec || currentExec.state === 'terminated' || currentExec.state === 'done') return;
+  const providerImpl = getProvider(currentExec.provider);
+  if (providerImpl) {
+    try {
+      await providerImpl.terminate(currentExec);
+    } catch {
+      /* best-effort */
+    }
+  }
+  await executorRegistry.terminateActiveExecutor(agentId);
+}
+
+/** Capture the PID of a tmux pane. Returns null on failure. */
+async function capturePanePid(paneId: string): Promise<number | null> {
+  try {
+    const { stdout: pidOut } = await execAsync(genieTmuxCmd(`display -t '${paneId}' -p '#{pane_pid}'`));
+    const parsed = Number.parseInt(pidOut.trim(), 10);
+    return parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve executor transport type from provider name. */
+function resolveExecutorTransport(provider: string): 'api' | 'process' | 'tmux' {
+  if (provider === 'codex') return 'api';
+  if (provider === 'claude-sdk') return 'process';
+  return 'tmux';
+}
+
 async function createExecutorForAutoSpawn(
   template: WorkerTemplate,
   paneId: string,
@@ -112,50 +145,26 @@ async function createExecutorForAutoSpawn(
 
   const sql = await getConnection();
   await sql.begin(async (tx: typeof sql) => {
-    // Advisory lock on agent ID — prevents concurrent executor guard for same agent
     await tx`SELECT pg_advisory_xact_lock(hashtext(${agentIdentity.id}))`;
+    await terminateActiveExecutorIfRunning(agentIdentity.id);
 
-    // Concurrent guard: terminate active executor before creating new one
-    const currentExec = await executorRegistry.getCurrentExecutor(agentIdentity.id);
-    if (currentExec && currentExec.state !== 'terminated' && currentExec.state !== 'done') {
-      const providerImpl = getProvider(currentExec.provider);
-      if (providerImpl) {
-        try {
-          await providerImpl.terminate(currentExec);
-        } catch {
-          /* best-effort */
-        }
-      }
-      await executorRegistry.terminateActiveExecutor(agentIdentity.id);
-    }
-
-    // Capture PID from tmux pane
-    let pid: number | null = null;
-    try {
-      const { stdout: pidOut } = await execAsync(genieTmuxCmd(`display -t '${paneId}' -p '#{pane_pid}'`));
-      const parsed = Number.parseInt(pidOut.trim(), 10);
-      if (parsed > 0) pid = parsed;
-    } catch {
-      /* best-effort */
-    }
-
-    const executorTransport =
-      template.provider === 'codex'
-        ? ('api' as const)
-        : template.provider === 'claude-sdk'
-          ? ('process' as const)
-          : ('tmux' as const);
-    const executor = await executorRegistry.createExecutor(agentIdentity.id, template.provider, executorTransport, {
-      pid,
-      tmuxSession: session,
-      tmuxPaneId: paneId,
-      tmuxWindow: teamWindow?.windowName ?? null,
-      tmuxWindowId: teamWindow?.windowId ?? null,
-      claudeSessionId: effectiveSessionId ?? null,
-      state: 'spawning',
-      repoPath,
-      paneColor: spawnColor ?? null,
-    });
+    const pid = await capturePanePid(paneId);
+    const executor = await executorRegistry.createExecutor(
+      agentIdentity.id,
+      template.provider,
+      resolveExecutorTransport(template.provider),
+      {
+        pid,
+        tmuxSession: session,
+        tmuxPaneId: paneId,
+        tmuxWindow: teamWindow?.windowName ?? null,
+        tmuxWindowId: teamWindow?.windowId ?? null,
+        claudeSessionId: effectiveSessionId ?? null,
+        state: 'spawning',
+        repoPath,
+        paneColor: spawnColor ?? null,
+      },
+    );
     await registry.setCurrentExecutor(agentIdentity.id, executor.id);
   });
 }
@@ -194,6 +203,62 @@ async function spawnPaneInSession(
   return { paneId, teamWindow };
 }
 
+/** Register a Claude agent as a native team member and notify the leader inbox. */
+async function registerNativeTeamMember(
+  team: string,
+  agentName: string,
+  template: WorkerTemplate,
+  paneId: string,
+  repoPath: string,
+  spawnColor: ClaudeTeamColor | undefined,
+  resumeSessionId?: string,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await nativeTeams.registerNativeMember(team, {
+    agentName,
+    agentType: template.role ?? 'general-purpose',
+    color: spawnColor ?? 'blue',
+    tmuxPaneId: paneId,
+    cwd: repoPath,
+  });
+
+  let leaderInboxTarget: string;
+  try {
+    const { resolveLeaderName } = await import('./team-manager.js');
+    leaderInboxTarget = await resolveLeaderName(team);
+  } catch {
+    leaderInboxTarget = team;
+  }
+  try {
+    await _deps.writeNativeInbox(team, leaderInboxTarget, {
+      from: agentName,
+      text: `Worker ${agentName} (${template.provider}) auto-spawned${resumeSessionId ? ' with --resume' : ''}. Ready for tasks.`,
+      summary: `${agentName} auto-spawned`,
+      timestamp: now,
+      color: spawnColor ?? 'blue',
+      read: false,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[protocol-router] Native inbox write failed for team="${team}" target="${leaderInboxTarget}": ${msg}`,
+    );
+  }
+}
+
+/** Try to register with the enterprise brain module. Best-effort. */
+async function tryAutoBrain(workerId: string, repoPath: string): Promise<void> {
+  try {
+    // @ts-expect-error — brain is enterprise-only, not in genie's deps
+    const brain = await import('@khal-os/brain');
+    if (brain.autoBrain) {
+      await brain.autoBrain({ agentId: workerId, workdir: repoPath });
+    }
+  } catch {
+    /* brain not installed — fine, no behavior change */
+  }
+}
+
 export async function spawnWorkerFromTemplate(
   template: WorkerTemplate,
   resumeSessionId?: string,
@@ -210,7 +275,6 @@ export async function spawnWorkerFromTemplate(
   const fullCommand = buildFullCommand(launch);
   const workerId = await generateWorkerId(team, template.role);
 
-  // Session resolution: team config → repo path mapping → current session → team name
   const teamConfig = await teamManager.getTeam(team);
   const session =
     teamConfig?.tmuxSessionName ?? (await resolveRepoSession(repoPath)) ?? (await getCurrentSessionName()) ?? team;
@@ -247,65 +311,22 @@ export async function spawnWorkerFromTemplate(
 
   await registry.register(workerEntry);
 
-  // Executor model: create agent identity + executor record for auto-spawned workers
   try {
     await createExecutorForAutoSpawn(template, paneId, session, repoPath, effectiveSessionId, spawnColor, teamWindow);
   } catch {
     /* best-effort: executor tracking is additive, don't block auto-spawn */
   }
 
-  // Only register native-team-enabled agents (Claude) as SendMessage recipients.
-  // Non-native agents (Codex) can't read the Claude Code inbox (#777).
   if (isClaude) {
-    await nativeTeams.registerNativeMember(team, {
-      agentName,
-      agentType: template.role ?? 'general-purpose',
-      color: spawnColor ?? 'blue',
-      tmuxPaneId: paneId,
-      cwd: repoPath,
-    });
-    // Resolve the actual leader name for inbox notification
-    let leaderInboxTarget: string;
-    try {
-      const { resolveLeaderName } = await import('./team-manager.js');
-      leaderInboxTarget = await resolveLeaderName(team);
-    } catch {
-      leaderInboxTarget = team; // Fallback to team name, never 'team-lead'
-    }
-    try {
-      await _deps.writeNativeInbox(team, leaderInboxTarget, {
-        from: agentName,
-        text: `Worker ${agentName} (${template.provider}) auto-spawned${resumeSessionId ? ' with --resume' : ''}. Ready for tasks.`,
-        summary: `${agentName} auto-spawned`,
-        timestamp: now,
-        color: spawnColor ?? 'blue',
-        read: false,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[protocol-router] Native inbox write failed for team="${team}" target="${leaderInboxTarget}": ${msg}`,
-      );
-    }
+    await registerNativeTeamMember(team, agentName, template, paneId, repoPath, spawnColor, resumeSessionId);
   }
 
   if (spawnColor) {
     await applyPaneColor(paneId, spawnColor, teamWindow?.windowId);
   }
 
-  // Inject resume context if agent was working on a wish group
   await injectResumeContext(repoPath, workerId, agentName, team);
-
-  // Auto-brain: discover brain/ dir → register in knowledge graph
-  try {
-    // @ts-expect-error — brain is enterprise-only, not in genie's deps
-    const brain = await import('@khal-os/brain');
-    if (brain.autoBrain) {
-      await brain.autoBrain({ agentId: workerId, workdir: repoPath });
-    }
-  } catch {
-    /* brain not installed — fine, no behavior change */
-  }
+  await tryAutoBrain(workerId, repoPath);
 
   return { worker: workerEntry, paneId, workerId };
 }

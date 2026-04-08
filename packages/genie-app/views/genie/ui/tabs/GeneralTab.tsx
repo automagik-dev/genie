@@ -26,6 +26,11 @@ interface GeneralTabProps {
   saved: boolean;
 }
 
+interface SectionProps {
+  draft: GenieSettings;
+  update: (path: string, value: unknown) => void;
+}
+
 // ============================================================================
 // Styles
 // ============================================================================
@@ -156,6 +161,262 @@ function Toggle({
 }
 
 // ============================================================================
+// Section Components
+// ============================================================================
+
+function SessionSection({ draft, update }: SectionProps) {
+  return (
+    <div style={s.section}>
+      <div style={s.sectionTitle}>Session</div>
+      <div style={s.grid}>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="session-name">
+            Session Name
+          </label>
+          <input
+            id="session-name"
+            style={s.input}
+            value={draft.session?.name ?? 'genie'}
+            onChange={(e) => update('session.name', e.target.value)}
+          />
+        </div>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="session-window">
+            Default Window
+          </label>
+          <input
+            id="session-window"
+            style={s.input}
+            value={draft.session?.defaultWindow ?? 'shell'}
+            onChange={(e) => update('session.defaultWindow', e.target.value)}
+          />
+        </div>
+      </div>
+      <div style={{ marginTop: '8px' }}>
+        <Toggle
+          label="Auto Create"
+          desc="Automatically create session on startup"
+          value={draft.session?.autoCreate ?? true}
+          onChange={(v) => update('session.autoCreate', v)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TerminalSection({ draft, update }: SectionProps) {
+  return (
+    <div style={s.section}>
+      <div style={s.sectionTitle}>Terminal</div>
+      <div style={s.grid}>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="exec-timeout">
+            Exec Timeout (ms)
+          </label>
+          <input
+            id="exec-timeout"
+            type="number"
+            style={s.input}
+            value={draft.terminal?.execTimeout ?? 120000}
+            onChange={(e) => update('terminal.execTimeout', Number(e.target.value))}
+          />
+        </div>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="read-lines">
+            Read Lines
+          </label>
+          <input
+            id="read-lines"
+            type="number"
+            style={s.input}
+            value={draft.terminal?.readLines ?? 100}
+            onChange={(e) => update('terminal.readLines', Number(e.target.value))}
+          />
+        </div>
+        <div style={{ ...s.field, gridColumn: '1 / -1' }}>
+          <label style={s.label} htmlFor="worktree-base">
+            Worktree Base
+          </label>
+          <input
+            id="worktree-base"
+            style={s.input}
+            value={draft.terminal?.worktreeBase ?? ''}
+            placeholder="e.g. ~/worktrees"
+            onChange={(e) => update('terminal.worktreeBase', e.target.value || undefined)}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShellSection({ draft, update }: SectionProps) {
+  return (
+    <div style={s.section}>
+      <div style={s.sectionTitle}>Shell</div>
+      <div style={{ maxWidth: '240px' }}>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="shell-pref">
+            Shell Preference
+          </label>
+          <select
+            id="shell-pref"
+            style={s.select}
+            value={draft.shell?.preference ?? 'auto'}
+            onChange={(e) => update('shell.preference', e.target.value)}
+          >
+            <option value="auto">Auto-detect</option>
+            <option value="zsh">zsh</option>
+            <option value="bash">bash</option>
+            <option value="fish">fish</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoggingSection({ draft, update }: SectionProps) {
+  return (
+    <div style={s.section}>
+      <div style={s.sectionTitle}>Logging</div>
+      <Toggle
+        label="Tmux Debug"
+        desc="Enable verbose tmux command logging"
+        value={draft.logging?.tmuxDebug ?? false}
+        onChange={(v) => update('logging.tmuxDebug', v)}
+      />
+      <Toggle
+        label="Verbose"
+        desc="Enable verbose CLI output"
+        value={draft.logging?.verbose ?? false}
+        onChange={(v) => update('logging.verbose', v)}
+      />
+    </div>
+  );
+}
+
+function UpdatesSection({ draft, update }: SectionProps) {
+  return (
+    <div style={s.section}>
+      <div style={s.sectionTitle}>Updates</div>
+      <div style={s.grid}>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="update-channel">
+            Update Channel
+          </label>
+          <select
+            id="update-channel"
+            style={s.select}
+            value={draft.updateChannel ?? 'latest'}
+            onChange={(e) => update('updateChannel', e.target.value)}
+          >
+            <option value="latest">latest (stable)</option>
+            <option value="next">next (dev builds)</option>
+          </select>
+        </div>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="install-method">
+            Install Method
+          </label>
+          <select
+            id="install-method"
+            style={s.select}
+            value={draft.installMethod ?? ''}
+            onChange={(e) => update('installMethod', e.target.value || undefined)}
+          >
+            <option value="">-- unset --</option>
+            <option value="source">source</option>
+            <option value="npm">npm</option>
+            <option value="bun">bun</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PromptsSection({ draft, update }: SectionProps) {
+  return (
+    <div style={s.section}>
+      <div style={s.sectionTitle}>Prompts</div>
+      <div style={{ maxWidth: '240px' }}>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="prompt-mode">
+            Prompt Mode
+          </label>
+          <select
+            id="prompt-mode"
+            style={s.select}
+            value={draft.promptMode ?? 'append'}
+            onChange={(e) => update('promptMode', e.target.value)}
+          >
+            <option value="append">append (preserve CC default)</option>
+            <option value="system">system (replace CC default)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectSection({ draft, update }: SectionProps) {
+  return (
+    <div style={s.section}>
+      <div style={s.sectionTitle}>Project</div>
+      <Toggle
+        label="Auto-merge to Dev"
+        desc="Task leaders auto-merge approved PRs to dev branch"
+        value={draft.autoMergeDev ?? false}
+        onChange={(v) => update('autoMergeDev', v)}
+      />
+      <div style={{ marginTop: '12px', ...s.field }}>
+        <label style={s.label} htmlFor="default-project">
+          Default Project
+        </label>
+        <input
+          id="default-project"
+          style={s.input}
+          value={draft.defaultProject ?? ''}
+          placeholder="e.g. my-project"
+          onChange={(e) => update('defaultProject', e.target.value || undefined)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SaveButton({
+  dirty,
+  saving,
+  saved,
+  onSave,
+}: { dirty: boolean; saving: boolean; saved: boolean; onSave: () => void }) {
+  return (
+    <div style={{ paddingTop: '8px' }}>
+      <button
+        type="button"
+        disabled={!dirty || saving}
+        onClick={onSave}
+        style={{
+          padding: '8px 20px',
+          fontSize: '12px',
+          fontFamily: theme.fontFamily,
+          backgroundColor: dirty ? theme.violet : theme.bgCard,
+          color: dirty ? '#fff' : theme.textMuted,
+          border: `1px solid ${dirty ? theme.violet : theme.border}`,
+          borderRadius: theme.radiusSm,
+          cursor: dirty ? 'pointer' : 'default',
+          transition: 'all 0.2s ease',
+        }}
+      >
+        {saving ? 'Saving...' : saved && !dirty ? 'Saved' : 'Save Changes'}
+      </button>
+    </div>
+  );
+}
+
+// ============================================================================
 // GeneralTab
 // ============================================================================
 
@@ -187,7 +448,6 @@ export function GeneralTab({ config, onChange, onSave, saving, saved }: GeneralT
   );
 
   const handleSaveAll = useCallback(async () => {
-    // Save each top-level key that has changed
     const keys: (keyof GenieSettings)[] = [
       'session',
       'terminal',
@@ -209,228 +469,14 @@ export function GeneralTab({ config, onChange, onSave, saving, saved }: GeneralT
 
   return (
     <div>
-      {/* Session */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Session</div>
-        <div style={s.grid}>
-          <div style={s.field}>
-            <label style={s.label} htmlFor="session-name">
-              Session Name
-            </label>
-            <input
-              id="session-name"
-              style={s.input}
-              value={draft.session?.name ?? 'genie'}
-              onChange={(e) => update('session.name', e.target.value)}
-            />
-          </div>
-          <div style={s.field}>
-            <label style={s.label} htmlFor="session-window">
-              Default Window
-            </label>
-            <input
-              id="session-window"
-              style={s.input}
-              value={draft.session?.defaultWindow ?? 'shell'}
-              onChange={(e) => update('session.defaultWindow', e.target.value)}
-            />
-          </div>
-        </div>
-        <div style={{ marginTop: '8px' }}>
-          <Toggle
-            label="Auto Create"
-            desc="Automatically create session on startup"
-            value={draft.session?.autoCreate ?? true}
-            onChange={(v) => update('session.autoCreate', v)}
-          />
-        </div>
-      </div>
-
-      {/* Terminal */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Terminal</div>
-        <div style={s.grid}>
-          <div style={s.field}>
-            <label style={s.label} htmlFor="exec-timeout">
-              Exec Timeout (ms)
-            </label>
-            <input
-              id="exec-timeout"
-              type="number"
-              style={s.input}
-              value={draft.terminal?.execTimeout ?? 120000}
-              onChange={(e) => update('terminal.execTimeout', Number(e.target.value))}
-            />
-          </div>
-          <div style={s.field}>
-            <label style={s.label} htmlFor="read-lines">
-              Read Lines
-            </label>
-            <input
-              id="read-lines"
-              type="number"
-              style={s.input}
-              value={draft.terminal?.readLines ?? 100}
-              onChange={(e) => update('terminal.readLines', Number(e.target.value))}
-            />
-          </div>
-          <div style={{ ...s.field, gridColumn: '1 / -1' }}>
-            <label style={s.label} htmlFor="worktree-base">
-              Worktree Base
-            </label>
-            <input
-              id="worktree-base"
-              style={s.input}
-              value={draft.terminal?.worktreeBase ?? ''}
-              placeholder="e.g. ~/worktrees"
-              onChange={(e) => update('terminal.worktreeBase', e.target.value || undefined)}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Shell */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Shell</div>
-        <div style={{ maxWidth: '240px' }}>
-          <div style={s.field}>
-            <label style={s.label} htmlFor="shell-pref">
-              Shell Preference
-            </label>
-            <select
-              id="shell-pref"
-              style={s.select}
-              value={draft.shell?.preference ?? 'auto'}
-              onChange={(e) => update('shell.preference', e.target.value)}
-            >
-              <option value="auto">Auto-detect</option>
-              <option value="zsh">zsh</option>
-              <option value="bash">bash</option>
-              <option value="fish">fish</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Logging */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Logging</div>
-        <Toggle
-          label="Tmux Debug"
-          desc="Enable verbose tmux command logging"
-          value={draft.logging?.tmuxDebug ?? false}
-          onChange={(v) => update('logging.tmuxDebug', v)}
-        />
-        <Toggle
-          label="Verbose"
-          desc="Enable verbose CLI output"
-          value={draft.logging?.verbose ?? false}
-          onChange={(v) => update('logging.verbose', v)}
-        />
-      </div>
-
-      {/* Updates */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Updates</div>
-        <div style={s.grid}>
-          <div style={s.field}>
-            <label style={s.label} htmlFor="update-channel">
-              Update Channel
-            </label>
-            <select
-              id="update-channel"
-              style={s.select}
-              value={draft.updateChannel ?? 'latest'}
-              onChange={(e) => update('updateChannel', e.target.value)}
-            >
-              <option value="latest">latest (stable)</option>
-              <option value="next">next (dev builds)</option>
-            </select>
-          </div>
-          <div style={s.field}>
-            <label style={s.label} htmlFor="install-method">
-              Install Method
-            </label>
-            <select
-              id="install-method"
-              style={s.select}
-              value={draft.installMethod ?? ''}
-              onChange={(e) => update('installMethod', e.target.value || undefined)}
-            >
-              <option value="">-- unset --</option>
-              <option value="source">source</option>
-              <option value="npm">npm</option>
-              <option value="bun">bun</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Prompts */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Prompts</div>
-        <div style={{ maxWidth: '240px' }}>
-          <div style={s.field}>
-            <label style={s.label} htmlFor="prompt-mode">
-              Prompt Mode
-            </label>
-            <select
-              id="prompt-mode"
-              style={s.select}
-              value={draft.promptMode ?? 'append'}
-              onChange={(e) => update('promptMode', e.target.value)}
-            >
-              <option value="append">append (preserve CC default)</option>
-              <option value="system">system (replace CC default)</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Auto-merge & Default Project */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Project</div>
-        <Toggle
-          label="Auto-merge to Dev"
-          desc="Task leaders auto-merge approved PRs to dev branch"
-          value={draft.autoMergeDev ?? false}
-          onChange={(v) => update('autoMergeDev', v)}
-        />
-        <div style={{ marginTop: '12px', ...s.field }}>
-          <label style={s.label} htmlFor="default-project">
-            Default Project
-          </label>
-          <input
-            id="default-project"
-            style={s.input}
-            value={draft.defaultProject ?? ''}
-            placeholder="e.g. my-project"
-            onChange={(e) => update('defaultProject', e.target.value || undefined)}
-          />
-        </div>
-      </div>
-
-      {/* Save Button */}
-      <div style={{ paddingTop: '8px' }}>
-        <button
-          type="button"
-          disabled={!dirty || saving}
-          onClick={handleSaveAll}
-          style={{
-            padding: '8px 20px',
-            fontSize: '12px',
-            fontFamily: theme.fontFamily,
-            backgroundColor: dirty ? theme.violet : theme.bgCard,
-            color: dirty ? '#fff' : theme.textMuted,
-            border: `1px solid ${dirty ? theme.violet : theme.border}`,
-            borderRadius: theme.radiusSm,
-            cursor: dirty ? 'pointer' : 'default',
-            transition: 'all 0.2s ease',
-          }}
-        >
-          {saving ? 'Saving...' : saved && !dirty ? 'Saved' : 'Save Changes'}
-        </button>
-      </div>
+      <SessionSection draft={draft} update={update} />
+      <TerminalSection draft={draft} update={update} />
+      <ShellSection draft={draft} update={update} />
+      <LoggingSection draft={draft} update={update} />
+      <UpdatesSection draft={draft} update={update} />
+      <PromptsSection draft={draft} update={update} />
+      <ProjectSection draft={draft} update={update} />
+      <SaveButton dirty={dirty} saving={saving} saved={saved} onSave={handleSaveAll} />
     </div>
   );
 }

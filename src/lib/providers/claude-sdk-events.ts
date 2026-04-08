@@ -85,7 +85,10 @@ function assistantDetails(msg: SDKMessage & { type: 'assistant' }): Record<strin
     if (textBlock?.text) details.textPreview = truncate(textBlock.text);
 
     // Extract tool_use blocks — name + input summary
-    const toolBlocks = content.filter((b: { type: string }) => b.type === 'tool_use') as Array<{ name?: string; input?: Record<string, unknown> }>;
+    const toolBlocks = content.filter((b: { type: string }) => b.type === 'tool_use') as Array<{
+      name?: string;
+      input?: Record<string, unknown>;
+    }>;
     if (toolBlocks.length > 0) {
       details.toolCalls = toolBlocks.map((t) => {
         const call: Record<string, unknown> = { name: t.name };
@@ -221,6 +224,7 @@ export function buildEventDetails(msg: SDKMessage): Record<string, unknown> {
   return { ...base, ...extra };
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: SDK message types vary by event type
 type DetailBuilder = (msg: any) => Record<string, unknown>;
 
 const DETAIL_BUILDERS: Record<string, DetailBuilder> = {

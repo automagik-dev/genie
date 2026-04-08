@@ -118,8 +118,8 @@ interface DeleteDialogProps {
 export function DeleteDialog({ names, onConfirm, onCancel }: DeleteDialogProps) {
   const label = names.length === 1 ? `"${names[0]}"` : `${names.length} items`;
   return (
-    <div style={dialogOverlay} onClick={onCancel}>
-      <div style={dialog} onClick={(e) => e.stopPropagation()}>
+    <div style={dialogOverlay} onClick={onCancel} onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
+      <div style={dialog} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
         <p style={{ fontSize: '14px', fontWeight: 600, color: theme.text, margin: 0 }}>Delete {label}?</p>
         <p style={{ fontSize: '12px', color: theme.textDim, margin: 0, lineHeight: 1.5 }}>
           This action cannot be undone.
@@ -164,8 +164,8 @@ export function CreateFolderDialog({ onConfirm, onCancel }: CreateFolderDialogPr
   }, [name, onConfirm]);
 
   return (
-    <div style={dialogOverlay} onClick={onCancel}>
-      <div style={dialog} onClick={(e) => e.stopPropagation()}>
+    <div style={dialogOverlay} onClick={onCancel} onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
+      <div style={dialog} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
         <p style={{ fontSize: '14px', fontWeight: 600, color: theme.text, margin: 0 }}>New Folder</p>
         <input
           ref={inputRef}

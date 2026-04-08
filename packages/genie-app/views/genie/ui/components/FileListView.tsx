@@ -113,11 +113,19 @@ export function FileListView({
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
       <thead style={{ position: 'sticky', top: 0, backgroundColor: theme.bg, zIndex: 2 }}>
         <tr>
-          <th style={th} onClick={() => onSort('name')}>
+          <th
+            style={th}
+            onClick={() => onSort('name')}
+            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onSort('name')}
+          >
             Name{sortArrow('name')}
           </th>
           <th style={{ ...th, width: '80px', textAlign: 'right' }}>Size</th>
-          <th style={{ ...th, width: '80px' }} onClick={() => onSort('type')}>
+          <th
+            style={{ ...th, width: '80px' }}
+            onClick={() => onSort('type')}
+            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onSort('type')}
+          >
             Type{sortArrow('type')}
           </th>
         </tr>
@@ -141,6 +149,12 @@ export function FileListView({
               onClick={(e) => {
                 e.stopPropagation();
                 onSelect(entry.name, e);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (entry.isDirectory) onNavigate(entry);
+                  else onPreview(entry);
+                }
               }}
               onDoubleClick={() => {
                 if (entry.isDirectory) onNavigate(entry);

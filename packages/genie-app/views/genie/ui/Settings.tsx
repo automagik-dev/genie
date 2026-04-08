@@ -36,6 +36,8 @@ interface FullConfig extends GenieSettings {
 
 type TabKey = 'general' | 'workspace' | 'agents' | 'skills' | 'rules' | 'workerProfiles' | 'councilPresets' | 'omni';
 
+const FULL_HEIGHT_TABS = new Set<TabKey>(['agents', 'rules', 'workerProfiles', 'councilPresets']);
+
 interface TabDef {
   key: TabKey;
   label: string;
@@ -108,6 +110,98 @@ function Toast({ message, type, onDismiss }: ToastProps) {
       </button>
     </div>
   );
+}
+
+// ============================================================================
+// SettingsTabContent — extracted to reduce cognitive complexity
+// ============================================================================
+
+interface TabContentProps {
+  activeTab: TabKey;
+  config: FullConfig;
+  workspace: WorkspaceConfig & { path?: string; pgservePort?: number; dataDir?: string };
+  templates: AgentTemplate[];
+  skills: SkillEntry[];
+  rules: RuleEntry[];
+  saving: boolean;
+  saved: boolean;
+  setConfig: React.Dispatch<React.SetStateAction<FullConfig>>;
+  saveKey: (key: string, value: unknown) => Promise<void>;
+  saveTemplate: (tpl: AgentTemplate) => Promise<void>;
+  createTemplate: () => void;
+  testPg: () => Promise<{ ok: boolean; message: string }>;
+  saveWorkerProfiles: (profiles: Record<string, WorkerProfile>, defaultProfile?: string) => Promise<void>;
+  saveCouncilPresets: (presets: Record<string, CouncilPreset>, defaultPreset?: string) => Promise<void>;
+  saveOmni: (omni: OmniConfig) => Promise<void>;
+}
+
+function SettingsTabContent({
+  activeTab,
+  config,
+  workspace,
+  templates,
+  skills,
+  rules,
+  saving,
+  saved,
+  setConfig,
+  saveKey,
+  saveTemplate,
+  createTemplate,
+  testPg,
+  saveWorkerProfiles,
+  saveCouncilPresets,
+  saveOmni,
+}: TabContentProps) {
+  switch (activeTab) {
+    case 'general':
+      return (
+        <GeneralTab
+          config={config}
+          onChange={(patch) => setConfig((prev) => ({ ...prev, ...patch }))}
+          onSave={saveKey}
+          saving={saving}
+          saved={saved}
+        />
+      );
+    case 'workspace':
+      return (
+        <WorkspaceTab
+          workspace={workspace}
+          otel={config.otel ?? {}}
+          pgservePort={workspace.pgservePort}
+          dataDir={workspace.dataDir}
+          onSave={saveKey}
+          onTestPg={testPg}
+        />
+      );
+    case 'agents':
+      return <AgentsTab templates={templates} onSave={saveTemplate} onCreate={createTemplate} />;
+    case 'skills':
+      return <SkillsTab skills={skills} />;
+    case 'rules':
+      return <RulesTab rules={rules} />;
+    case 'workerProfiles':
+      return (
+        <WorkerProfilesTab
+          profiles={config.workerProfiles ?? {}}
+          defaultProfile={config.defaultWorkerProfile}
+          onSave={saveWorkerProfiles}
+        />
+      );
+    case 'councilPresets':
+      return (
+        <CouncilPresetsTab
+          presets={config.councilPresets ?? {}}
+          defaultPreset={config.defaultCouncilPreset}
+          onSave={saveCouncilPresets}
+        />
+      );
+    case 'omni':
+      return <OmniTab omni={config.omni ?? null} onSave={saveOmni} />;
+    default:
+      return null;
+  }
 }
 
 // ============================================================================
@@ -285,23 +379,12 @@ export function Settings({ windowId }: AppComponentProps) {
     );
   }
 
+  const isFullHeight = FULL_HEIGHT_TABS.has(activeTab);
   const tabContentStyle: React.CSSProperties = {
     flex: 1,
     overflowY: 'auto',
-    padding:
-      activeTab === 'agents' ||
-      activeTab === 'rules' ||
-      activeTab === 'workerProfiles' ||
-      activeTab === 'councilPresets'
-        ? '0'
-        : '20px',
-    height:
-      activeTab === 'agents' ||
-      activeTab === 'rules' ||
-      activeTab === 'workerProfiles' ||
-      activeTab === 'councilPresets'
-        ? '100%'
-        : undefined,
+    padding: isFullHeight ? '0' : '20px',
+    height: isFullHeight ? '100%' : undefined,
   };
 
   return (
@@ -369,50 +452,24 @@ export function Settings({ windowId }: AppComponentProps) {
 
       {/* Tab Content */}
       <div style={tabContentStyle}>
-        {activeTab === 'general' && (
-          <GeneralTab
-            config={config}
-            onChange={(patch) => setConfig((prev) => ({ ...prev, ...patch }))}
-            onSave={saveKey}
-            saving={saving}
-            saved={saved}
-          />
-        )}
-
-        {activeTab === 'workspace' && (
-          <WorkspaceTab
-            workspace={workspace}
-            otel={config.otel ?? {}}
-            pgservePort={workspace.pgservePort}
-            dataDir={workspace.dataDir}
-            onSave={saveKey}
-            onTestPg={testPg}
-          />
-        )}
-
-        {activeTab === 'agents' && <AgentsTab templates={templates} onSave={saveTemplate} onCreate={createTemplate} />}
-
-        {activeTab === 'skills' && <SkillsTab skills={skills} />}
-
-        {activeTab === 'rules' && <RulesTab rules={rules} />}
-
-        {activeTab === 'workerProfiles' && (
-          <WorkerProfilesTab
-            profiles={config.workerProfiles ?? {}}
-            defaultProfile={config.defaultWorkerProfile}
-            onSave={saveWorkerProfiles}
-          />
-        )}
-
-        {activeTab === 'councilPresets' && (
-          <CouncilPresetsTab
-            presets={config.councilPresets ?? {}}
-            defaultPreset={config.defaultCouncilPreset}
-            onSave={saveCouncilPresets}
-          />
-        )}
-
-        {activeTab === 'omni' && <OmniTab omni={config.omni ?? null} onSave={saveOmni} />}
+        <SettingsTabContent
+          activeTab={activeTab}
+          config={config}
+          workspace={workspace}
+          templates={templates}
+          skills={skills}
+          rules={rules}
+          saving={saving}
+          saved={saved}
+          setConfig={setConfig}
+          saveKey={saveKey}
+          saveTemplate={saveTemplate}
+          createTemplate={createTemplate}
+          testPg={testPg}
+          saveWorkerProfiles={saveWorkerProfiles}
+          saveCouncilPresets={saveCouncilPresets}
+          saveOmni={saveOmni}
+        />
       </div>
 
       {/* Toast */}

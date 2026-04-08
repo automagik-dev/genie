@@ -157,8 +157,8 @@ export async function waitForAgentReady(
 /** Overridable deps for PG-based readiness — avoids mock.module leaking across test files in bun. */
 export const _pgDeps = {
   isAvailable: isAvailable as () => Promise<boolean>,
-  getConnection: getConnection as () => Promise<any>,
-  getExecutor: getExecutor as (id: string) => Promise<any>,
+  getConnection: getConnection as () => Promise<unknown>,
+  getExecutor: getExecutor as (id: string) => Promise<{ state?: string } | null>,
 };
 
 /**

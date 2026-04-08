@@ -181,14 +181,14 @@ export function renderAuditEvent(input: AuditInput): RenderedEvent {
   const normalized = { ...input, details: details ?? {} };
   const renderer = auditRenderers[input.event_type];
   if (renderer) return renderer(normalized);
-  input = normalized;
+  const event = normalized;
 
   // Fallback: generic format with compact JSON
-  const json = JSON.stringify(input.details);
+  const json = JSON.stringify(event.details);
   return {
     indicator: color('dim', '○'),
-    content: `${color('gray', input.event_type)} ${json === '{}' ? '' : color('dim', json)}`,
-    context: `${input.entity_type}:${input.entity_id}`,
+    content: `${color('gray', event.event_type)} ${json === '{}' ? '' : color('dim', json)}`,
+    context: `${event.entity_type}:${event.entity_id}`,
   };
 }
 

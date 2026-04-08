@@ -215,23 +215,8 @@ export const AgentDefaultsSchema = z
   })
   .strict();
 
-const TmuxConfigSchema = z
-  .object({
-    socket: z.string().optional(),
-    defaultWindow: z.string().optional(),
-    execTimeout: z.number().optional(),
-    readLines: z.number().optional(),
-  })
-  .strict();
-
-const SdkConfigSchema = z
-  .object({
-    maxTurns: z.number().optional(),
-    persistSession: z.boolean().optional(),
-    includePartialMessages: z.boolean().optional(),
-    includeHookEvents: z.boolean().optional(),
-  })
-  .strict();
+// TmuxConfigSchema and SdkConfigSchema removed — were defined but unused.
+// Re-add from git history if validation of these sections is needed.
 
 /**
  * Validate the agents.defaults section on load.

@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { recordAuditEvent } from './audit.js';
-import { getConnection } from './db.js';
+import { type Sql, getConnection } from './db.js';
 import {
   type Executor,
   type ExecutorRow,
@@ -91,7 +91,7 @@ export async function createAndLinkExecutor(
   const id = opts.id ?? randomUUID();
   const now = new Date().toISOString();
 
-  return sql.begin(async (tx: any) => {
+  return sql.begin(async (tx: Sql) => {
     const rows = await tx<ExecutorRow[]>`
       INSERT INTO executors (
         id, agent_id, provider, transport, pid,
@@ -103,7 +103,7 @@ export async function createAndLinkExecutor(
         ${opts.tmuxSession ?? null}, ${opts.tmuxPaneId ?? null},
         ${opts.tmuxWindow ?? null}, ${opts.tmuxWindowId ?? null},
         ${opts.claudeSessionId ?? null}, ${opts.state ?? 'spawning'},
-        ${tx.json(opts.metadata ?? {})}, ${opts.worktree ?? null},
+        ${tx.json((opts.metadata ?? {}) as import('postgres').JSONValue)}, ${opts.worktree ?? null},
         ${opts.repoPath ?? null}, ${opts.paneColor ?? null},
         ${now}
       ) RETURNING *

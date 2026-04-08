@@ -72,13 +72,16 @@ export function RulesTab({ rules }: RulesTabProps) {
             </div>
           ) : (
             rules.map((rule) => (
-              <div
+              <button
+                type="button"
                 key={rule.path}
                 onClick={() => setSelected(rule)}
-                onKeyDown={(e) => e.key === 'Enter' && setSelected(rule)}
-                role="button"
-                tabIndex={0}
                 style={{
+                  border: 'none',
+                  background: 'none',
+                  textAlign: 'left' as const,
+                  width: '100%',
+                  font: 'inherit',
                   padding: '10px 12px',
                   cursor: 'pointer',
                   borderLeft: `3px solid ${selected?.path === rule.path ? theme.violet : 'transparent'}`,
@@ -123,7 +126,7 @@ export function RulesTab({ rules }: RulesTabProps) {
                 >
                   {getFirstHeading(rule.content)}
                 </div>
-              </div>
+              </button>
             ))
           )}
         </div>

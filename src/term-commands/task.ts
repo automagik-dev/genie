@@ -477,9 +477,8 @@ export function registerTaskCommands(program: Command): void {
     });
 
   // biome-ignore lint/suspicious/noExplicitAny: options from commander
-  async function handleTaskList(options: any): Promise<void> {
-    const ts = await getTaskService();
-    const filters: taskServiceTypes.TaskFilters = {
+  function buildTaskFilters(options: any): taskServiceTypes.TaskFilters {
+    return {
       stage: options.stage,
       typeId: options.type,
       status: options.status,
@@ -495,6 +494,12 @@ export function registerTaskCommands(program: Command): void {
       offset: Number(options.offset) || 0,
       ...(options.all ? { limit: 10000 } : {}),
     };
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: options from commander
+  async function handleTaskList(options: any): Promise<void> {
+    const ts = await getTaskService();
+    const filters = buildTaskFilters(options);
 
     let tasks: taskServiceTypes.TaskRow[];
     if (options.mine) {

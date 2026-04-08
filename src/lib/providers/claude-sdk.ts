@@ -35,55 +35,47 @@ import { createPermissionGate } from './claude-sdk-permissions.js';
  * can be safely spread into the final Options without overwriting defaults
  * with undefined.
  */
+/** Fields that can be copied directly when truthy (non-null, non-undefined). */
+const SDK_TRUTHY_FIELDS = [
+  'permissionMode',
+  'tools',
+  'allowedTools',
+  'disallowedTools',
+  'plugins',
+  'systemPrompt',
+  'betas',
+  'settingSources',
+] as const;
+
+/** Fields that need != null check (booleans and numbers that can be 0/false). */
+const SDK_NULLABLE_FIELDS = [
+  'maxTurns',
+  'maxBudgetUsd',
+  'persistSession',
+  'enableFileCheckpointing',
+  'includePartialMessages',
+  'includeHookEvents',
+  'promptSuggestions',
+  'agentProgressSummaries',
+] as const;
+
+/** Fields that require type casting to Options subtypes. */
+const SDK_CAST_FIELDS = ['effort', 'thinking', 'agents', 'mcpServers', 'outputFormat', 'sandbox', 'settings'] as const;
+
 export function translateSdkConfig(sdkConfig: SdkDirectoryConfig): Partial<Options> {
-  const opts: Partial<Options> = {};
+  const opts: Record<string, unknown> = {};
 
-  // Permission & effort
-  if (sdkConfig.permissionMode) opts.permissionMode = sdkConfig.permissionMode;
-  if (sdkConfig.effort) opts.effort = sdkConfig.effort as Options['effort'];
+  for (const key of SDK_TRUTHY_FIELDS) {
+    if (sdkConfig[key]) opts[key] = sdkConfig[key];
+  }
+  for (const key of SDK_NULLABLE_FIELDS) {
+    if (sdkConfig[key] != null) opts[key] = sdkConfig[key];
+  }
+  for (const key of SDK_CAST_FIELDS) {
+    if (sdkConfig[key]) opts[key] = sdkConfig[key];
+  }
 
-  // Tool configuration
-  if (sdkConfig.tools) opts.tools = sdkConfig.tools;
-  if (sdkConfig.allowedTools) opts.allowedTools = sdkConfig.allowedTools;
-  if (sdkConfig.disallowedTools) opts.disallowedTools = sdkConfig.disallowedTools;
-
-  // Limits
-  if (sdkConfig.maxTurns != null) opts.maxTurns = sdkConfig.maxTurns;
-  if (sdkConfig.maxBudgetUsd != null) opts.maxBudgetUsd = sdkConfig.maxBudgetUsd;
-
-  // Thinking & reasoning
-  if (sdkConfig.thinking) opts.thinking = sdkConfig.thinking as Options['thinking'];
-
-  // Agents & MCP
-  if (sdkConfig.agents) opts.agents = sdkConfig.agents as Options['agents'];
-  if (sdkConfig.mcpServers) opts.mcpServers = sdkConfig.mcpServers as Options['mcpServers'];
-
-  // Plugins
-  if (sdkConfig.plugins) opts.plugins = sdkConfig.plugins;
-
-  // Session & checkpointing
-  if (sdkConfig.persistSession != null) opts.persistSession = sdkConfig.persistSession;
-  if (sdkConfig.enableFileCheckpointing != null) opts.enableFileCheckpointing = sdkConfig.enableFileCheckpointing;
-
-  // Output & streaming
-  if (sdkConfig.outputFormat) opts.outputFormat = sdkConfig.outputFormat as Options['outputFormat'];
-  if (sdkConfig.includePartialMessages != null) opts.includePartialMessages = sdkConfig.includePartialMessages;
-  if (sdkConfig.includeHookEvents != null) opts.includeHookEvents = sdkConfig.includeHookEvents;
-  if (sdkConfig.promptSuggestions != null) opts.promptSuggestions = sdkConfig.promptSuggestions;
-  if (sdkConfig.agentProgressSummaries != null) opts.agentProgressSummaries = sdkConfig.agentProgressSummaries;
-
-  // System prompt
-  if (sdkConfig.systemPrompt) opts.systemPrompt = sdkConfig.systemPrompt;
-
-  // Sandbox
-  if (sdkConfig.sandbox) opts.sandbox = sdkConfig.sandbox as Options['sandbox'];
-
-  // Betas & settings
-  if (sdkConfig.betas) opts.betas = sdkConfig.betas;
-  if (sdkConfig.settingSources) opts.settingSources = sdkConfig.settingSources;
-  if (sdkConfig.settings) opts.settings = sdkConfig.settings as Options['settings'];
-
-  return opts;
+  return opts as Partial<Options>;
 }
 
 /**
