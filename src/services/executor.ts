@@ -10,17 +10,22 @@
 // SafePgCallFn relocated to lib/safe-pg-call.ts — re-export for back-compat.
 export type { SafePgCallFn } from '../lib/safe-pg-call.js';
 
-/** Opaque session handle returned by spawn(). TODO: replace with Executor from lib/executor-types. */
-export interface OmniSession {
+/** Transport-agnostic session handle returned by spawn(). */
+export interface ExecutorSession {
   id: string;
   agentName: string;
   chatId: string;
-  tmuxSession: string;
-  tmuxWindow: string;
-  paneId: string;
+  executorType: 'tmux' | 'sdk';
   createdAt: number;
   lastActivityAt: number;
+  tmux?: { session: string; window: string; paneId: string };
+  sdk?: { claudeSessionId?: string; executorId?: string };
 }
+
+/**
+ * @deprecated Use `ExecutorSession` instead. Will be removed in a future release.
+ */
+export type OmniSession = ExecutorSession;
 
 /** Inbound message from Omni via NATS. */
 export interface OmniMessage {
@@ -37,13 +42,13 @@ export type NatsPublishFn = (topic: string, payload: string) => void;
 
 /** Pluggable executor backend for the Omni bridge. TODO: merge into ExecutorProvider. */
 export interface IExecutor {
-  spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<OmniSession>;
-  deliver(session: OmniSession, message: OmniMessage): Promise<void>;
-  shutdown(session: OmniSession): Promise<void>;
-  isAlive(session: OmniSession): Promise<boolean>;
+  spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<ExecutorSession>;
+  deliver(session: ExecutorSession, message: OmniMessage): Promise<void>;
+  shutdown(session: ExecutorSession): Promise<void>;
+  isAlive(session: ExecutorSession): Promise<boolean>;
   setSafePgCall(fn: import('../lib/safe-pg-call.js').SafePgCallFn): void;
   /** Inject NATS publish function for in-process reply delivery. */
   setNatsPublish(fn: NatsPublishFn): void;
   /** Inject a nudge message into an active session (for turn timeout warnings). */
-  injectNudge(session: OmniSession, text: string): Promise<void>;
+  injectNudge(session: ExecutorSession, text: string): Promise<void>;
 }

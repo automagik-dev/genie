@@ -22,7 +22,7 @@
 
 import { describe, expect, it } from 'bun:test';
 import type { NatsConnection, Subscription } from 'nats';
-import type { IExecutor, OmniMessage, OmniSession } from '../executor.js';
+import type { ExecutorSession, IExecutor, OmniMessage } from '../executor.js';
 
 import { OmniBridge } from '../omni-bridge.js';
 
@@ -391,24 +391,23 @@ function makeFakeNatsWithPublish() {
 
 /** Mock executor that tracks all calls. */
 function makeMockExecutor(overrides?: {
-  spawnFn?: (agentName: string, chatId: string, env: Record<string, string>) => Promise<OmniSession>;
+  spawnFn?: (agentName: string, chatId: string, env: Record<string, string>) => Promise<ExecutorSession>;
   isAliveResult?: boolean;
 }) {
   const calls = {
     spawn: [] as Array<{ agentName: string; chatId: string }>,
-    deliver: [] as Array<{ session: OmniSession; message: OmniMessage }>,
-    shutdown: [] as OmniSession[],
+    deliver: [] as Array<{ session: ExecutorSession; message: OmniMessage }>,
+    shutdown: [] as ExecutorSession[],
   };
 
-  const makeSession = (agentName: string, chatId: string): OmniSession => ({
+  const makeSession = (agentName: string, chatId: string): ExecutorSession => ({
     id: `session-${chatId}`,
     agentName,
     chatId,
-    tmuxSession: 'test',
-    tmuxWindow: `win-${chatId}`,
-    paneId: `%${chatId}`,
+    executorType: 'tmux',
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
+    tmux: { session: 'test', window: `win-${chatId}`, paneId: `%${chatId}` },
   });
 
   const executor: IExecutor = {
@@ -716,7 +715,7 @@ describe('OmniBridge — session reset (#1089)', () => {
     bridge: OmniBridge,
     key: string,
     instanceId: string,
-    session: OmniSession,
+    session: ExecutorSession,
   ): { entry: { idleTimer: ReturnType<typeof setTimeout> | null } } {
     const idleTimer = setTimeout(() => {}, 60_000);
     const entry = {
@@ -898,8 +897,8 @@ describe('OmniBridge — session reset (#1089)', () => {
 
   it('cancels a spawning session on reset and tears down the freshly-spawned executor', async () => {
     // Hold the spawn promise open so we can fire reset mid-spawn.
-    let releaseSpawn!: (s: OmniSession) => void;
-    const spawnGate = new Promise<OmniSession>((resolve) => {
+    let releaseSpawn!: (s: ExecutorSession) => void;
+    const spawnGate = new Promise<ExecutorSession>((resolve) => {
       releaseSpawn = resolve;
     });
 
