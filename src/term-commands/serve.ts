@@ -353,9 +353,10 @@ export function ensureTuiSession(workspaceRoot?: string): void {
 interface DaemonHandles {
   schedulerHandle: { stop: () => void; done: Promise<void> } | null;
   agentWatcher: { close: () => void } | null;
+  brainHandle: { stop: () => Promise<void>; port: number } | null;
 }
 
-const handles: DaemonHandles = { schedulerHandle: null, agentWatcher: null };
+const handles: DaemonHandles = { schedulerHandle: null, agentWatcher: null, brainHandle: null };
 
 /** Sync agent directory from workspace and start file watcher. */
 async function startAgentSync(): Promise<{ close: () => void } | null> {
@@ -470,6 +471,50 @@ async function startForeground(headless?: boolean): Promise<void> {
   // 1. Start pgserve
   await startPgserve();
 
+  // 1.5. Start brain server (if @automagik/genie-brain is installed)
+  try {
+    // Dynamic import — brain is optional. If not installed, this throws
+    // and we silently skip. Zero behavior change for users without brain.
+    // @ts-expect-error — brain is enterprise-only, not in genie's deps
+    const brain = await import('@khal-os/brain');
+    if (brain.startEmbeddedBrainServer) {
+      const { getActivePort } = await import('../lib/db.js');
+      const pgPort = getActivePort();
+      if (pgPort) {
+        console.log('  Starting brain server...');
+        // Find brain path — check workspace for a brain/ dir
+        let brainPath: string | undefined;
+        try {
+          const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+          const ws = findWorkspace();
+          if (ws?.root) {
+            const bp = join(ws.root, 'brain');
+            if (existsSync(bp) && existsSync(join(bp, 'brain.json'))) {
+              brainPath = bp;
+            }
+          }
+        } catch {
+          // No workspace — skip
+        }
+
+        if (brainPath) {
+          const handle = await brain.startEmbeddedBrainServer({
+            brainPath,
+            geniePgPort: pgPort,
+          });
+          handles.brainHandle = { stop: handle.stop, port: handle.port };
+          console.log(`  Brain server ready on port ${handle.port}`);
+        } else {
+          console.log('  Brain server: no brain/ found in workspace (skipped)');
+        }
+      } else {
+        console.log('  Brain server: pgserve not available (skipped)');
+      }
+    }
+  } catch {
+    // Brain not installed — fine, skip silently
+  }
+
   // 2. Report agent tmux server state (don't create empty sessions —
   // sessions are created on-demand by `genie spawn`).
   if (!headless) {
@@ -521,6 +566,14 @@ async function startForeground(headless?: boolean): Promise<void> {
 
     // 2. Stop scheduler (drains in-flight)
     handles.schedulerHandle?.stop();
+
+    // 2.5. Stop brain server (best-effort — signal handlers call process.exit()
+    // immediately after shutdown(), so this is fire-and-forget like all other
+    // services. The OS reclaims sockets/connections on process exit.)
+    if (handles.brainHandle) {
+      handles.brainHandle.stop().catch(() => {});
+      handles.brainHandle = null;
+    }
 
     // 3. Kill registered services via registry
     try {
@@ -694,6 +747,45 @@ async function printPgserveStatus(): Promise<void> {
     console.log(`  pgserve:    ${dbOk ? `healthy (port ${getActivePort()})` : 'unreachable'}`);
   } catch {
     console.log('  pgserve:    unavailable');
+  }
+
+  // Brain server status — probe via HTTP healthz (works cross-process)
+  try {
+    // @ts-expect-error — brain is enterprise-only, not in genie's deps
+    const brain = await import('@khal-os/brain');
+    // Try readServerInfo first (reads .brain-server.json from workspace)
+    let brainPort: number | null = null;
+    try {
+      const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+      const ws = findWorkspace();
+      if (ws?.root && brain.readServerInfo) {
+        const info = brain.readServerInfo(join(ws.root, 'brain'));
+        if (info?.port) brainPort = info.port;
+      }
+    } catch {
+      // No workspace — fall back to handle
+    }
+    // Fall back to in-memory handle (same process only)
+    if (!brainPort && handles.brainHandle) {
+      brainPort = handles.brainHandle.port;
+    }
+    if (brainPort) {
+      // Probe the actual port to verify it's alive
+      try {
+        const resp = await fetch(`http://127.0.0.1:${brainPort}/healthz`);
+        if (resp.ok) {
+          console.log(`  brain:      running (port ${brainPort})`);
+        } else {
+          console.log(`  brain:      unhealthy (port ${brainPort}, status ${resp.status})`);
+        }
+      } catch {
+        console.log(`  brain:      stopped (port ${brainPort} unreachable)`);
+      }
+    } else {
+      console.log('  brain:      stopped');
+    }
+  } catch {
+    console.log('  brain:      not installed');
   }
 }
 
