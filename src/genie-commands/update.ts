@@ -440,9 +440,9 @@ function syncTmuxConf(tmuxScriptsSrc: string): void {
     }
   }
 
-  // Install osc52-copy.sh → ~/.genie/osc52-copy.sh (clipboard helper for nested tmux)
+  // Install osc52-copy.sh → ~/.genie/scripts/osc52-copy.sh (clipboard helper for nested tmux)
   const osc52Src = join(tmuxScriptsSrc, 'osc52-copy.sh');
-  const osc52Dest = join(GENIE_HOME, 'osc52-copy.sh');
+  const osc52Dest = join(GENIE_HOME, 'scripts', 'osc52-copy.sh');
   if (existsSync(osc52Src)) {
     try {
       copyFileSync(osc52Src, osc52Dest);

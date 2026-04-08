@@ -12,12 +12,31 @@ const GENIE_TMUX_SOCKET = process.env.GENIE_TMUX_SOCKET || 'genie';
 
 /**
  * Resolve the genie tmux config path.
- * Priority: ~/.genie/tmux.conf → shipped scripts/tmux/genie.tmux.conf → /dev/null
+ * Priority: ~/.genie/tmux.conf → npm package scripts/tmux/genie.tmux.conf → /dev/null
+ *
+ * Note: __dirname is unreliable in single-file bundles (dist/genie.js) since
+ * scripts/tmux/ doesn't exist next to the bundle. The npm global install path
+ * is used as a reliable fallback for the shipped config template.
  */
 function resolveGenieTmuxConf(): string {
   const home = homedir();
   const genieHome = process.env.GENIE_HOME ?? join(home, '.genie');
-  const candidates = [join(genieHome, 'tmux.conf'), join(__dirname, '..', '..', 'scripts', 'tmux', 'genie.tmux.conf')];
+  const candidates = [
+    join(genieHome, 'tmux.conf'),
+    join(__dirname, '..', '..', 'scripts', 'tmux', 'genie.tmux.conf'),
+    join(
+      home,
+      '.bun',
+      'install',
+      'global',
+      'node_modules',
+      '@automagik',
+      'genie',
+      'scripts',
+      'tmux',
+      'genie.tmux.conf',
+    ),
+  ];
   return candidates.find((p) => existsSync(p)) ?? '/dev/null';
 }
 
