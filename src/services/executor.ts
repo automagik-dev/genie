@@ -24,6 +24,7 @@ export interface ExecutorSession {
 
 /**
  * @deprecated Use `ExecutorSession` instead. Will be removed in a future release.
+ * @public
  */
 export type OmniSession = ExecutorSession;
 
