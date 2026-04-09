@@ -139,7 +139,7 @@ class OmniApprovalHandler {
       try {
         const data: ReactionEvent = JSON.parse(this.sc.decode(msg.data));
         if (data.type !== 'reaction') continue;
-        if (data.chatId !== this.permissions.omniChat && data.instanceId !== this.permissions.omniInstance) continue;
+        if (data.chatId !== this.permissions.omniChat || data.instanceId !== this.permissions.omniInstance) continue;
 
         if (data.emoji && data.messageId) {
           await this.handleReaction(data.emoji, data.messageId, data.sender ?? 'whatsapp-user');
