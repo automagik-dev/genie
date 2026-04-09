@@ -9,6 +9,7 @@ import { existsSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { $ } from 'bun';
+import type { BridgeStatusResult, PingOptions } from '../lib/bridge-status.js';
 import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-settings.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
@@ -307,65 +308,87 @@ async function checkWorkerProfiles(): Promise<CheckResult[]> {
 }
 
 /**
- * Check Omni bridge health via IPC
- * Bridge is managed by genie serve; status is queried via pidfile + NATS ping.
+ * Check Omni bridge health via cross-process IPC (pidfile + NATS ping).
+ *
+ * This used to reach for the in-process bridge singleton which only
+ * ever returned a bridge when doctor ran inside the same process as serve.
+ * Now doctor is authoritative across processes: it reads the pidfile written
+ * by the bridge, validates the owning PID, and issues a `omni.bridge.ping`
+ * request with a 2s timeout. The result includes pid, uptime, subjects, and
+ * the ping round-trip latency.
  */
 async function checkBridge(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
   try {
-    const { getBridgeStatus } = await import('../lib/bridge-status.js');
-    const status = await getBridgeStatus();
+    const { getBridgeStatus, removeBridgePidfile } = await import('../lib/bridge-status.js');
+    // Explicit PingOptions — doctor uses the default 2s timeout, but we
+    // annotate the type so this call site stays self-documenting and so
+    // the PingOptions export has a concrete consumer.
+    const pingOpts: PingOptions = {};
+    const res: BridgeStatusResult = await getBridgeStatus(undefined, pingOpts);
 
-    if (status.state === 'stopped') {
+    if (res.state === 'stopped') {
       results.push({
-        name: 'Bridge',
+        name: 'Bridge running',
         status: 'warn',
-        message: 'not running',
-        suggestion: 'Start with: genie serve',
+        message: 'bridge is stopped (no pidfile)',
+        suggestion: 'Start the bridge with: genie serve',
       });
       return results;
     }
 
-    if (status.state === 'stale') {
+    if (res.state === 'stale') {
+      // Stale pidfile = owning process is dead or ping timed out. Clean up
+      // the pidfile so the next `genie serve` start can retake cleanly.
+      if (res.pidfile) {
+        removeBridgePidfile();
+      }
       results.push({
-        name: 'Bridge',
-        status: 'warn',
-        message: 'stale pidfile (PID not responding)',
-        suggestion: 'Clean up and restart: genie serve',
+        name: 'Bridge running',
+        status: 'fail',
+        message: `stale: ${res.detail}`,
+        suggestion: 'Restart the bridge with: genie serve restart',
       });
       return results;
     }
 
     // state === 'running'
-    const pong = status.pong;
+    const pong = res.pong;
+    const pidfile = res.pidfile;
+    if (!pong || !pidfile) {
+      results.push({
+        name: 'Bridge running',
+        status: 'warn',
+        message: 'running state missing pong/pidfile metadata',
+      });
+      return results;
+    }
+
+    const uptimeSec = Math.round(pong.uptimeMs / 1000);
     results.push({
-      name: 'Bridge',
+      name: 'Bridge running',
       status: 'pass',
-      message: `running (PID ${pong?.pid}, uptime ${Math.round((pong?.uptimeMs ?? 0) / 1000)}s)`,
+      message: `pid ${pong.pid}, uptime ${uptimeSec}s`,
     });
 
-    if (status.latencyMs !== undefined) {
-      results.push({
-        name: 'NATS ping',
-        status: 'pass',
-        message: `${status.latencyMs}ms latency`,
-      });
-    }
-
-    if (pong?.subjects && pong.subjects.length > 0) {
-      results.push({
-        name: 'Subjects',
-        status: 'pass',
-        message: `${pong.subjects.length} subjects`,
-      });
-    }
-  } catch (err) {
     results.push({
-      name: 'Bridge status',
+      name: 'NATS ping',
+      status: 'pass',
+      message: `pong in ${res.latencyMs ?? 0}ms (${pidfile.natsUrl})`,
+    });
+
+    results.push({
+      name: 'Subjects',
+      status: 'pass',
+      message: pong.subjects.join(', '),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    results.push({
+      name: 'Bridge module',
       status: 'warn',
-      message: 'could not check',
-      suggestion: `Error: ${err instanceof Error ? err.message : String(err)}`,
+      message: `could not probe bridge: ${detail}`,
     });
   }
 

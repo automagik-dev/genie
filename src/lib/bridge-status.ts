@@ -6,7 +6,7 @@
  *
  * Used by both `genie doctor` and any other out-of-process caller that needs
  * an authoritative bridge health answer. Replaces the old module-scoped
- * `getBridge()` singleton which only worked inside the serve process itself.
+ * in-process singleton which only worked inside the serve process itself.
  */
 
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
