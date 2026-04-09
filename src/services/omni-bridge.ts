@@ -13,6 +13,7 @@
 import { type NatsConnection, StringCodec, type Subscription, connect } from 'nats';
 import type { Sql } from '../lib/db.js';
 import { resolveExecutorType } from '../lib/executor-config.js';
+import { isPaneAlive } from '../lib/tmux.js';
 import { BridgeSessionStore } from './bridge-session-store.js';
 import type { ExecutorSession, IExecutor, OmniMessage } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
@@ -260,17 +261,10 @@ export class OmniBridge {
     // bound `safePgCall` reference below.
     await this.probePg();
 
-    // Initialize PG-backed session store and mark stale sessions as orphaned.
+    // Initialize PG-backed session store and recover surviving sessions.
     if (this.pgAvailable && this.sql) {
       this.sessionStore = new BridgeSessionStore(this.sql);
-      const orphaned = await this.safePgCall(
-        'mark_all_orphaned',
-        (sql) => new BridgeSessionStore(sql).markAllOrphaned(),
-        0,
-      );
-      if (orphaned > 0) {
-        console.log(`[omni-bridge] Marked ${orphaned} stale session(s) as orphaned`);
-      }
+      await this.recoverSessions();
     }
 
     // Initialize PG-backed queue for SDK executor when PG is available.
@@ -324,6 +318,10 @@ export class OmniBridge {
 
   /**
    * Stop the bridge: unsubscribe, drain, and disconnect.
+   *
+   * Tmux sessions are left running (graceful detach) so they survive a bridge
+   * restart. On next start(), recoverSessions() re-attaches to live panes.
+   * SDK sessions are shut down normally since they can't outlive the process.
    */
   async stop(): Promise<void> {
     if (!this.nc) {
@@ -345,14 +343,25 @@ export class OmniBridge {
       this.idleCheckTimer = null;
     }
 
-    // Shut down all active executor sessions and clear idle timers
+    // Clear idle timers and shut down non-tmux sessions.
+    // Tmux sessions are left running — their PG rows stay 'active' so
+    // recoverSessions() can re-attach after restart.
     for (const [key, entry] of this.sessions) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
       if (!entry.spawning && entry.session) {
-        try {
-          await this.executor.shutdown(entry.session);
-        } catch (err) {
-          console.warn(`[omni-bridge] Error shutting down session ${key}:`, err);
+        if (entry.session.executorType === 'tmux') {
+          console.log(`[omni-bridge] Detaching from tmux session ${key} (pane stays alive)`);
+        } else {
+          try {
+            await this.executor.shutdown(entry.session);
+          } catch (err) {
+            console.warn(`[omni-bridge] Error shutting down session ${key}:`, err);
+          }
+          // Close SDK sessions in PG since they can't survive restart
+          const closeId = entry.pgBridgeSessionId;
+          if (closeId && this.sessionStore) {
+            await this.safePgCall('session_close_sdk', (sql) => new BridgeSessionStore(sql).close(closeId), undefined);
+          }
         }
       }
     }
@@ -487,6 +496,98 @@ export class OmniBridge {
       // permission denied, or similar. Fail-fast with an actionable message.
       const hint = 'Run `bun run migrate` (or the equivalent migration command) and retry.';
       throw new Error(`[omni-bridge] PG schema mismatch or setup error: ${msg}. ${hint}`);
+    }
+  }
+
+  /**
+   * Recover sessions that survived a bridge restart.
+   *
+   * Queries PG for active sessions, checks whether their tmux panes are still
+   * alive, and re-populates the in-memory sessions Map for live ones. Dead
+   * panes and SDK sessions (which can't survive a process restart) are marked
+   * orphaned. This runs once during start(), after sessionStore is initialized.
+   */
+  private async recoverSessions(): Promise<void> {
+    if (!this.sessionStore) return;
+
+    const activeSessions = await this.safePgCall(
+      'recover_list_active',
+      (sql) => new BridgeSessionStore(sql).list('active'),
+      [],
+    );
+
+    if (activeSessions.length === 0) return;
+
+    console.log(`[omni-bridge] Found ${activeSessions.length} active session(s) from previous run, recovering...`);
+
+    const orphanIds: string[] = [];
+
+    for (const row of activeSessions) {
+      const key = `${row.agent_name}:${row.chat_id}`;
+
+      // SDK sessions can't survive a process restart — always orphan them.
+      if (!row.tmux_pane_id) {
+        orphanIds.push(row.id);
+        continue;
+      }
+
+      // Duplicate guard: if another row already recovered this chat, orphan the older one.
+      if (this.sessions.has(key)) {
+        orphanIds.push(row.id);
+        continue;
+      }
+
+      // Check if the tmux pane is still alive.
+      let alive = false;
+      try {
+        alive = await isPaneAlive(row.tmux_pane_id);
+      } catch {
+        // tmux not available or pane check failed — treat as dead.
+      }
+
+      if (!alive) {
+        orphanIds.push(row.id);
+        continue;
+      }
+
+      // Pane is alive — reconstruct the in-memory session entry.
+      const session: ExecutorSession = {
+        id: row.executor_id ?? row.id,
+        agentName: row.agent_name,
+        chatId: row.chat_id,
+        executorType: 'tmux',
+        createdAt: new Date(row.started_at).getTime(),
+        lastActivityAt: new Date(row.last_activity_at).getTime(),
+        tmux: { session: '', window: '', paneId: row.tmux_pane_id },
+      };
+
+      const entry: SessionEntry = {
+        session,
+        instanceId: row.instance_id,
+        spawning: false,
+        buffer: [],
+        idleTimer: null,
+        pgBridgeSessionId: row.id,
+      };
+
+      this.sessions.set(key, entry);
+      this.resetIdleTimer(key);
+
+      console.log(`[omni-bridge] Recovered session ${key} (pane=${row.tmux_pane_id})`);
+    }
+
+    // Mark dead/SDK sessions as orphaned in one batch.
+    if (orphanIds.length > 0) {
+      await this.safePgCall(
+        'recover_mark_orphaned',
+        (sql) => new BridgeSessionStore(sql).markOrphaned(orphanIds),
+        undefined,
+      );
+      console.log(`[omni-bridge] Marked ${orphanIds.length} stale session(s) as orphaned`);
+    }
+
+    if (this.sessions.size > 0) {
+      console.log(`[omni-bridge] Recovered ${this.sessions.size} live session(s)`);
     }
   }
 
