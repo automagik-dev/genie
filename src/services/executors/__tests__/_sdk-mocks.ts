@@ -61,33 +61,16 @@ const directoryResolveMock = mock(async (name: string) => ({
   builtin: false,
 }));
 
-/** Default SDK query implementation — yields one assistant reply + success result with session_id. */
-const defaultQueryImpl = () => {
-  const gen = (async function* () {
-    yield { type: 'assistant', message: { content: [{ type: 'text', text: 'reply' }] } };
-    yield { type: 'result', subtype: 'success', session_id: 'sdk-session-aaa' };
-  })();
-  return Object.assign(gen, {
-    interrupt: mock(),
-    setPermissionMode: mock(),
-    setModel: mock(),
-    return: mock(async () => ({ value: undefined, done: true })),
-    throw: mock(async () => ({ value: undefined, done: true })),
-  });
-};
+// SDK query mock is defined in a shared file so that sdk-integration.test.ts
+// (which only needs the SDK mock, not directory/registry mocks) can import the
+// same instance without triggering the registry mocks below.
+import {
+  queryMock as _queryMock,
+  resetQueryMock as _resetQueryMock,
+} from '../../../__tests__/_shared-sdk-query-mock.js';
 
-export const queryMock = mock(defaultQueryImpl);
-
-/**
- * Reset queryMock to its default implementation. Use in beforeEach for tests
- * that care about the default behavior — some tests override via
- * mockImplementation() and that override persists across files because
- * queryMock is shared.
- */
-export function resetQueryMock(): void {
-  queryMock.mockReset();
-  queryMock.mockImplementation(defaultQueryImpl);
-}
+export const queryMock = _queryMock;
+export const resetQueryMock = _resetQueryMock;
 
 /**
  * Reset ALL shared mocks to their default implementations and clear call
@@ -155,17 +138,5 @@ mock.module('../../../lib/executor-registry.js', () => ({
   terminateExecutor: terminateExecutorMock,
 }));
 
-mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-  query: queryMock,
-  createSdkMcpServer: mock((opts: any) => ({
-    type: 'sdk' as const,
-    name: opts.name,
-    instance: {},
-  })),
-  tool: mock((_name: string, _desc: string, _schema: any, handler: any) => ({
-    name: _name,
-    description: _desc,
-    inputSchema: _schema,
-    handler,
-  })),
-}));
+// SDK mock.module registration is handled by _shared-sdk-query-mock.ts
+// (imported above via re-export). No need to register again here.
