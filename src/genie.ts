@@ -61,7 +61,6 @@ import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerMetricsCommands } from './term-commands/metrics.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerNotifyCommands } from './term-commands/notify.js';
-import { registerOmniCommands } from './term-commands/omni.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import { registerProjectCommands } from './term-commands/project.js';
 import {
@@ -234,7 +233,6 @@ registerTemplateCommands(program);
 registerBrainCommands(program);
 registerBriefCommands(program);
 registerApprovalCommands(program);
-registerOmniCommands(program);
 
 // ============================================================================
 // Universal workspace check — ensures workspace exists before commands that need it
