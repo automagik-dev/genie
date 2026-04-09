@@ -241,7 +241,8 @@ describe('translateSdkConfig', () => {
       settings: '/path/to/settings.json',
     });
 
-    expect(result.permissionMode).toBe('acceptEdits');
+    // permissionMode must NOT be copied — SDK executor always bypasses
+    expect(result.permissionMode).toBeUndefined();
     expect(result.tools).toEqual(['Bash', 'Read']);
     expect(result.allowedTools).toEqual(['Bash']);
     expect(result.disallowedTools).toEqual(['Write']);

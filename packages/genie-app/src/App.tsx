@@ -1,7 +1,9 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { components } from '../components';
+import { onEvent } from '../lib/ipc';
 import { theme } from '../lib/theme';
 import type { AppComponentProps } from '../lib/types';
+import { ApprovalToastContainer, type ApprovalToastData } from '../views/shared/ApprovalToast';
 import { LoadingState } from '../views/shared/LoadingState';
 
 // ============================================================================
@@ -160,6 +162,25 @@ export function App() {
   const [collapsed, setCollapsed] = useState(window.innerWidth < COLLAPSE_BREAKPOINT);
   const [agentCount, setAgentCount] = useState<number | null>(null);
   const [connected, setConnected] = useState(true);
+  const [approvalToasts, setApprovalToasts] = useState<ApprovalToastData[]>([]);
+
+  // Subscribe to approval request events (PG LISTEN → bridge → Tauri event)
+  useEffect(() => {
+    return onEvent('approval-request', (payload) => {
+      const toast = payload as unknown as ApprovalToastData;
+      if (toast.id) {
+        setApprovalToasts((prev) => {
+          // Deduplicate by id
+          if (prev.some((t) => t.id === toast.id)) return prev;
+          return [...prev, toast];
+        });
+      }
+    });
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setApprovalToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   // Responsive collapse
   useEffect(() => {
@@ -275,6 +296,9 @@ export function App() {
 
       {/* Status Bar */}
       <AppStatusBar activeView={activeLabel} agentCount={agentCount} connected={connected} />
+
+      {/* Approval Toast Overlay */}
+      <ApprovalToastContainer toasts={approvalToasts} onDismiss={dismissToast} />
     </div>
   );
 }

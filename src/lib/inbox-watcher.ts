@@ -8,7 +8,7 @@
 
 import { listTeamsWithUnreadInbox } from './claude-native-teams.js';
 import { parseRoutingHeader, resolveSessionKey } from './routing-header.js';
-import { ensureTeamLead, isTeamActive } from './team-auto-spawn.js';
+import { ensureTeamLead, isAgentAlive, isTeamActive } from './team-auto-spawn.js';
 
 // ============================================================================
 // Dependency injection (testability without real filesystem/tmux)
@@ -18,6 +18,7 @@ import { ensureTeamLead, isTeamActive } from './team-auto-spawn.js';
 export interface InboxWatcherDeps {
   listTeamsWithUnreadInbox: typeof listTeamsWithUnreadInbox;
   isTeamActive: (teamName: string) => Promise<boolean>;
+  isAgentAlive: (agentName: string) => Promise<boolean>;
   ensureTeamLead: (teamName: string, workingDir: string) => Promise<{ created: boolean }>;
   warn: (msg: string) => void;
 }
@@ -26,6 +27,7 @@ export interface InboxWatcherDeps {
 const defaultDeps: InboxWatcherDeps = {
   listTeamsWithUnreadInbox,
   isTeamActive: (teamName) => isTeamActive(teamName),
+  isAgentAlive: (agentName) => isAgentAlive(agentName),
   ensureTeamLead: (teamName, workingDir) => ensureTeamLead(teamName, workingDir),
   warn: (msg) => console.warn(msg),
 };
