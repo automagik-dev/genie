@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test';
-import type { PreToolUseHookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import {
   PRESET_CHAT_ONLY,
   PRESET_FULL,
@@ -10,8 +9,27 @@ import {
   translateClaudeCodePermissions,
 } from '../claude-sdk-permissions.js';
 
+// NOTE: We intentionally avoid `import type` from @anthropic-ai/claude-agent-sdk here.
+// Bun's test runner may resolve the real module even for type-only imports, poisoning the
+// process-global mock.module cache used by claude-sdk.test.ts and claude-sdk-resume.test.ts.
+// Instead we use inline structural types that match the SDK's shapes.
+
+type HookInput = {
+  hook_event_name: string;
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_use_id: string;
+  session_id: string;
+  transcript_path: string;
+  cwd: string;
+};
+
+type HookOutput = {
+  hookSpecificOutput?: Record<string, unknown>;
+};
+
 /** Build a minimal PreToolUseHookInput for testing. */
-function hookInput(toolName: string, toolInput: Record<string, unknown> = {}): PreToolUseHookInput {
+function hookInput(toolName: string, toolInput: Record<string, unknown> = {}): HookInput {
   return {
     hook_event_name: 'PreToolUse',
     tool_name: toolName,
@@ -20,7 +38,7 @@ function hookInput(toolName: string, toolInput: Record<string, unknown> = {}): P
     session_id: 'test',
     transcript_path: '',
     cwd: '',
-  } as PreToolUseHookInput;
+  };
 }
 
 /** Call the gate with standard test args and return the result. */
@@ -28,19 +46,19 @@ async function callGate(
   gate: ReturnType<typeof createPermissionGate>,
   toolName: string,
   toolInput: Record<string, unknown> = {},
-): Promise<SyncHookJSONOutput> {
-  return gate(hookInput(toolName, toolInput), 'test', {
+): Promise<HookOutput> {
+  return gate(hookInput(toolName, toolInput) as any, 'test', {
     signal: new AbortController().signal,
-  }) as Promise<SyncHookJSONOutput>;
+  }) as Promise<HookOutput>;
 }
 
 /** Extract permissionDecision from gate result. */
-function decision(result: SyncHookJSONOutput): string {
+function decision(result: HookOutput): string {
   return (result.hookSpecificOutput as any).permissionDecision;
 }
 
 /** Extract permissionDecisionReason from gate result. */
-function reason(result: SyncHookJSONOutput): string | undefined {
+function reason(result: HookOutput): string | undefined {
   return (result.hookSpecificOutput as any).permissionDecisionReason;
 }
 
