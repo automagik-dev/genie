@@ -330,9 +330,9 @@ async function checkBridge(): Promise<CheckResult[]> {
 
     if (res.state === 'stopped') {
       results.push({
-        name: 'Bridge running',
+        name: 'Bridge',
         status: 'warn',
-        message: 'bridge is stopped (no pidfile)',
+        message: 'stopped (no pidfile)',
         suggestion: 'Start the bridge with: genie serve',
       });
       return results;
@@ -345,7 +345,7 @@ async function checkBridge(): Promise<CheckResult[]> {
         removeBridgePidfile();
       }
       results.push({
-        name: 'Bridge running',
+        name: 'Bridge',
         status: 'fail',
         message: `stale: ${res.detail}`,
         suggestion: 'Restart the bridge with: genie serve restart',
@@ -358,7 +358,7 @@ async function checkBridge(): Promise<CheckResult[]> {
     const pidfile = res.pidfile;
     if (!pong || !pidfile) {
       results.push({
-        name: 'Bridge running',
+        name: 'Bridge',
         status: 'warn',
         message: 'running state missing pong/pidfile metadata',
       });
@@ -369,7 +369,7 @@ async function checkBridge(): Promise<CheckResult[]> {
     results.push({
       name: 'Bridge running',
       status: 'pass',
-      message: `pid ${pong.pid}, uptime ${uptimeSec}s`,
+      message: `running (pid ${pong.pid}, uptime ${uptimeSec}s)`,
     });
 
     results.push({
