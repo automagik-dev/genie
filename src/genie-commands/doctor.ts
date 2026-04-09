@@ -307,6 +307,57 @@ async function checkWorkerProfiles(): Promise<CheckResult[]> {
 }
 
 /**
+ * Check Omni bridge health
+ */
+async function checkBridge(): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+
+  try {
+    const { getBridge } = await import('../services/omni-bridge.js');
+    const bridge = getBridge();
+
+    if (!bridge) {
+      results.push({
+        name: 'Bridge running',
+        status: 'warn',
+        message: 'not running in this process',
+        suggestion: 'Bridge starts automatically with: genie serve',
+      });
+      return results;
+    }
+
+    const s = await bridge.status();
+
+    results.push({
+      name: 'NATS connection',
+      status: s.connected ? 'pass' : 'fail',
+      message: s.connected ? `connected (${s.natsUrl})` : `disconnected (${s.natsUrl})`,
+      suggestion: s.connected ? undefined : 'Check NATS server: nats-server or omni start',
+    });
+
+    results.push({
+      name: 'Active sessions',
+      status: 'pass',
+      message: `${s.activeSessions} / ${s.maxConcurrent} (queue: ${s.queueDepth})`,
+    });
+
+    results.push({
+      name: 'PG backing',
+      status: s.pgAvailable ? 'pass' : 'warn',
+      message: s.pgAvailable ? 'connected' : 'degraded (in-memory)',
+    });
+  } catch {
+    results.push({
+      name: 'Bridge module',
+      status: 'warn',
+      message: 'could not load omni-bridge',
+    });
+  }
+
+  return results;
+}
+
+/**
  * Main doctor command
  */
 function runCheckSection(label: string, results: CheckResult[], counts: { errors: boolean; warnings: boolean }): void {
@@ -334,6 +385,7 @@ export async function doctorCommand(options?: { fix?: boolean }): Promise<void> 
   runCheckSection('Configuration', await checkConfiguration(), counts);
   runCheckSection('Tmux', await checkTmux(), counts);
   runCheckSection('Worker Profiles', await checkWorkerProfiles(), counts);
+  runCheckSection('Omni Bridge', await checkBridge(), counts);
 
   // Summary
   console.log();

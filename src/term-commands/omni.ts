@@ -59,12 +59,21 @@ export function registerOmniCommands(program: Command): void {
 
   omni
     .command('start')
-    .description('Start the NATS bridge (subscribe to omni.message.>)')
+    .description('Start the NATS bridge (prefer genie serve for managed lifecycle)')
     .option('--nats-url <url>', 'NATS server URL', process.env.GENIE_NATS_URL ?? 'localhost:4222')
     .option('--max-concurrent <n>', 'Max concurrent agent sessions', process.env.GENIE_MAX_CONCURRENT ?? '20')
     .option('--idle-timeout <ms>', 'Idle timeout in ms', process.env.GENIE_IDLE_TIMEOUT_MS ?? '900000')
     .option('--executor <type>', 'Executor type: tmux (default) or sdk')
+    .option('--standalone', 'Force standalone mode (skip serve check)')
     .action(async (options) => {
+      // Check if serve is already managing a bridge
+      const { getBridge } = await import('../services/omni-bridge.js');
+      if (!options.standalone && getBridge()) {
+        console.log('[genie omni] Bridge is already managed by genie serve.');
+        console.log('  Use `genie omni status` to check, or `genie omni start --standalone` to force.');
+        return;
+      }
+
       const { OmniBridge } = await import('../services/omni-bridge.js');
 
       const bridge = new OmniBridge({
@@ -77,7 +86,8 @@ export function registerOmniCommands(program: Command): void {
       await bridge.start();
 
       // Keep the process alive
-      console.log('[genie omni] Bridge running. Press Ctrl+C to stop.');
+      console.log('[genie omni] Bridge running (standalone). Press Ctrl+C to stop.');
+      console.log('  Tip: Use `genie serve` to auto-manage the bridge lifecycle.');
 
       const shutdown = async () => {
         await bridge.stop();

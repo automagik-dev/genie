@@ -355,6 +355,7 @@ interface DaemonHandles {
   agentWatcher: { close: () => void } | null;
   brainHandle: { stop: () => Promise<void>; port: number } | null;
   omniApprovalHandler: { stop: () => Promise<void> } | null;
+  omniBridge: { stop: () => Promise<void> } | null;
 }
 
 const handles: DaemonHandles = {
@@ -362,6 +363,7 @@ const handles: DaemonHandles = {
   agentWatcher: null,
   brainHandle: null,
   omniApprovalHandler: null,
+  omniBridge: null,
 };
 
 /** Sync agent directory from workspace and start file watcher. */
@@ -568,6 +570,24 @@ async function startForeground(headless?: boolean): Promise<void> {
     // NATS or workspace not configured — non-fatal
   }
 
+  // 6. Start Omni bridge (NATS → agent session router)
+  try {
+    const { OmniBridge } = await import('../services/omni-bridge.js');
+    const bridge = new OmniBridge({
+      natsUrl: process.env.GENIE_NATS_URL ?? 'localhost:4222',
+      maxConcurrent: Number(process.env.GENIE_MAX_CONCURRENT ?? '20'),
+      idleTimeoutMs: Number(process.env.GENIE_IDLE_TIMEOUT_MS ?? '900000'),
+      executorType: (process.env.GENIE_EXECUTOR_TYPE as 'tmux' | 'sdk') ?? undefined,
+    });
+    await bridge.start();
+    handles.omniBridge = bridge;
+    console.log('  Omni bridge started');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`  Omni bridge: FAILED — ${msg}`);
+    // Non-fatal: bridge failure should not block serve startup
+  }
+
   const stopMsg = headless ? 'Send SIGTERM to stop.' : 'Press Ctrl+C to stop.';
   console.log(`\ngenie serve is running (${mode}). ${stopMsg}`);
 
@@ -589,6 +609,12 @@ async function startForeground(headless?: boolean): Promise<void> {
     if (handles.omniApprovalHandler) {
       handles.omniApprovalHandler.stop().catch(() => {});
       handles.omniApprovalHandler = null;
+    }
+
+    // 2.55. Stop Omni bridge (graceful: detach sessions, don't kill them)
+    if (handles.omniBridge) {
+      handles.omniBridge.stop().catch(() => {});
+      handles.omniBridge = null;
     }
 
     // 2.6. Stop brain server (best-effort — signal handlers call process.exit()
@@ -856,6 +882,23 @@ async function printDaemonStatus(serveRunning: boolean): Promise<void> {
   }
 }
 
+/** Print Omni bridge status */
+async function printBridgeStatus(): Promise<void> {
+  try {
+    const { getBridge } = await import('../services/omni-bridge.js');
+    const bridge = getBridge();
+    if (bridge) {
+      const s = await bridge.status();
+      const tag = s.connected ? 'connected' : 'disconnected';
+      console.log(`  omni-bridge: ${tag} (${s.activeSessions} sessions, queue: ${s.queueDepth})`);
+    } else {
+      console.log('  omni-bridge: stopped');
+    }
+  } catch {
+    console.log('  omni-bridge: unavailable');
+  }
+}
+
 /** Show service health */
 async function statusServe(): Promise<void> {
   const pid = readServePid();
@@ -872,6 +915,7 @@ async function statusServe(): Promise<void> {
   await printPgserveStatus();
   printTmuxStatus();
   await printDaemonStatus(running);
+  await printBridgeStatus();
 
   console.log(`  PID file:   ${servePidPath()}`);
   console.log('');
