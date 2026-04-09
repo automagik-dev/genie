@@ -15,6 +15,7 @@
     "src/lib/task-service.ts",
     "src/lib/team-manager.ts",
     "src/lib/log-reader.ts",
+    "src/lib/bridge-status.ts",
     "src/term-commands/agent/index.ts",
     "src/term-commands/task/index.ts",
     "src/term-commands/team/index.ts",
