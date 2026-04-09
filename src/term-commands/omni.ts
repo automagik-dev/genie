@@ -7,7 +7,7 @@
 
 import type { Command } from 'commander';
 
-export function registerOmniCommands(program: Command): void {
+export function registerOmniCommands(_program: Command): void {
   // Omni commands are deprecated and no longer registered.
   // Bridge is managed exclusively by genie serve.
 }
