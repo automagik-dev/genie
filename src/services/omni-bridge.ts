@@ -857,7 +857,7 @@ export class OmniBridge {
       entry.cancelled = true;
       entry.buffer = []; // Drop buffered messages — user explicitly reset.
       this.turnTracker.close(sessionKey, 'reset');
-      this.removeSession(sessionKey);
+      await this.removeSession(sessionKey);
       await this.drainQueue();
       return;
     }
@@ -871,7 +871,7 @@ export class OmniBridge {
     } catch (err) {
       console.warn(`[omni-bridge] Error shutting down reset session ${sessionKey}:`, err);
     }
-    this.removeSession(sessionKey);
+    await this.removeSession(sessionKey);
     await this.drainQueue();
   }
 
@@ -943,7 +943,7 @@ export class OmniBridge {
       }
 
       // Session dead — remove and respawn
-      this.removeSession(key);
+      await this.removeSession(key);
     }
 
     // Need to spawn a new session
@@ -1082,7 +1082,7 @@ export class OmniBridge {
       } catch {
         // Already dead — that's fine
       }
-      this.removeSession(key);
+      await this.removeSession(key);
 
       // Process queued messages now that a slot is free
       await this.drainQueue();
@@ -1101,7 +1101,7 @@ export class OmniBridge {
       const alive = await this.executor.isAlive(entry.session);
       if (!alive) {
         console.log(`[omni-bridge] Dead session detected: ${key}`);
-        this.removeSession(key);
+        await this.removeSession(key);
         continue;
       }
 
@@ -1114,21 +1114,23 @@ export class OmniBridge {
         } catch {
           /* already dead */
         }
-        this.removeSession(key);
+        await this.removeSession(key);
       }
     }
   }
 
   /**
    * Remove a session and clean up its idle timer.
+   * Awaits PG close before deleting the in-memory entry to prevent
+   * a replacement session from being created while the old row is still active.
    */
-  private removeSession(key: string): void {
+  private async removeSession(key: string): Promise<void> {
     const entry = this.sessions.get(key);
     if (entry?.idleTimer) clearTimeout(entry.idleTimer);
-    // Close session in PG
+    // Close session in PG — await to prevent duplicate active rows
     const closeId = entry?.pgBridgeSessionId;
     if (closeId && this.sessionStore) {
-      this.safePgCall('session_close', (sql) => new BridgeSessionStore(sql).close(closeId), undefined);
+      await this.safePgCall('session_close', (sql) => new BridgeSessionStore(sql).close(closeId), undefined);
     }
     this.sessions.delete(key);
   }

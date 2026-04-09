@@ -25,3 +25,9 @@ CREATE INDEX IF NOT EXISTS idx_bridge_sessions_instance_chat
 CREATE INDEX IF NOT EXISTS idx_bridge_sessions_active
   ON genie_bridge_sessions(status, last_activity_at)
   WHERE status = 'active';
+
+-- Prevent duplicate active sessions for the same logical key.
+-- Recovery code assumes at most one active row per instance+agent+chat.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_bridge_sessions_active_key
+  ON genie_bridge_sessions(instance_id, agent_name, chat_id)
+  WHERE status = 'active';
