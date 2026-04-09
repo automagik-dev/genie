@@ -13,6 +13,7 @@
 import { type NatsConnection, StringCodec, type Subscription, connect } from 'nats';
 import type { Sql } from '../lib/db.js';
 import { resolveExecutorType } from '../lib/executor-config.js';
+import { BridgeSessionStore } from './bridge-session-store.js';
 import type { ExecutorSession, IExecutor, OmniMessage } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
 import { ClaudeSdkOmniExecutor } from './executors/claude-sdk.js';
@@ -72,6 +73,8 @@ interface SessionEntry {
    * down the freshly-created session instead of putting it into rotation.
    */
   cancelled?: boolean;
+  /** PG bridge session row ID, set after store.create() succeeds. */
+  pgBridgeSessionId?: string;
 }
 
 export interface BridgeStatus {
@@ -197,6 +200,8 @@ export class OmniBridge {
 
   /** PG-backed request queue for SDK executor. Null when PG unavailable or executor is tmux. */
   private queue: OmniQueue | null = null;
+  /** PG-backed session persistence. Null when PG unavailable. */
+  private sessionStore: BridgeSessionStore | null = null;
 
   readonly natsUrl: string;
   readonly idleTimeoutMs: number;
@@ -254,6 +259,19 @@ export class OmniBridge {
     // Group 3 scaffolding; Group 4 consumers (SDK + tmux executors) receive a
     // bound `safePgCall` reference below.
     await this.probePg();
+
+    // Initialize PG-backed session store and mark stale sessions as orphaned.
+    if (this.pgAvailable && this.sql) {
+      this.sessionStore = new BridgeSessionStore(this.sql);
+      const orphaned = await this.safePgCall(
+        'mark_all_orphaned',
+        (sql) => new BridgeSessionStore(sql).markAllOrphaned(),
+        0,
+      );
+      if (orphaned > 0) {
+        console.log(`[omni-bridge] Marked ${orphaned} stale session(s) as orphaned`);
+      }
+    }
 
     // Initialize PG-backed queue for SDK executor when PG is available.
     if (this.executorType === 'sdk' && this.pgAvailable && this.sql) {
@@ -358,6 +376,7 @@ export class OmniBridge {
     // the actual client lifecycle, so we only clear our local references.
     this.sql = null;
     this.pgAvailable = false;
+    this.sessionStore = null;
 
     bridgeInstance = null;
 
@@ -812,6 +831,13 @@ export class OmniBridge {
         // Deliver to running session
         await this.executor.deliver(entry.session, message);
         this.resetIdleTimer(key);
+        // Update last_activity_at in PG
+        const bsId = entry.pgBridgeSessionId;
+        if (bsId && this.sessionStore) {
+          this.safePgCall('session_activity', (sql) => new BridgeSessionStore(sql).recordActivity(bsId), undefined, {
+            chatId: message.chatId,
+          });
+        }
         return;
       }
 
@@ -893,6 +919,25 @@ export class OmniBridge {
 
       placeholder.session = session;
       placeholder.spawning = false;
+
+      // Record session in PG for crash recovery
+      if (this.sessionStore) {
+        const pgId = await this.safePgCall(
+          'session_create',
+          (sql) =>
+            new BridgeSessionStore(sql).create({
+              instanceId: message.instanceId,
+              chatId: message.chatId,
+              agentName: message.agent,
+              executorId: session.sdk?.executorId,
+              tmuxPaneId: session.tmux?.paneId,
+              claudeSessionId: session.sdk?.claudeSessionId,
+            }),
+          undefined,
+          { chatId: message.chatId },
+        );
+        if (pgId) placeholder.pgBridgeSessionId = pgId;
+      }
 
       // Deliver buffered messages
       for (const buffered of placeholder.buffer) {
@@ -978,6 +1023,11 @@ export class OmniBridge {
   private removeSession(key: string): void {
     const entry = this.sessions.get(key);
     if (entry?.idleTimer) clearTimeout(entry.idleTimer);
+    // Close session in PG
+    const closeId = entry?.pgBridgeSessionId;
+    if (closeId && this.sessionStore) {
+      this.safePgCall('session_close', (sql) => new BridgeSessionStore(sql).close(closeId), undefined);
+    }
     this.sessions.delete(key);
   }
 
