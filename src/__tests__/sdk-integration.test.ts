@@ -6,33 +6,15 @@
  * permission gate, frontmatter parsing, and config priority layering.
  */
 
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, type mock } from 'bun:test';
 import type { SpawnContext } from '../lib/executor-types.js';
 
 // ============================================================================
-// Mock the SDK module before any provider imports
+// Use the shared SDK mock — eliminates process-global mock.module() race with
+// executor tests. See _shared-sdk-query-mock.ts for details.
 // ============================================================================
 
-const mockQuery = mock(() => {
-  const gen = (async function* () {
-    yield { type: 'assistant', message: { content: [{ type: 'text', text: 'hello' }] } };
-  })();
-  return Object.assign(gen, {
-    interrupt: mock(),
-    setPermissionMode: mock(),
-    setModel: mock(),
-    return: mock(async () => ({ value: undefined, done: true })),
-    throw: mock(async () => ({ value: undefined, done: true })),
-  });
-});
-
-mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-  query: mockQuery,
-}));
-
-// No audit mocking — routeSdkMessage is fire-and-forget (.catch(() => {}))
-// and these tests never iterate the message stream, so audit is never invoked.
-// Removing audit mocks prevents spyOn leaks that corrupt audit.test.ts in the same bun process.
+import { queryMock as mockQuery } from './_shared-sdk-query-mock.js';
 
 // ============================================================================
 // Dynamic imports (must come after mock.module)
