@@ -435,6 +435,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     );
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: delivery pipeline with prompt assembly, MCP setup, and session capture
   private async _processDelivery(
     session: ExecutorSession,
     state: SdkSessionState,
