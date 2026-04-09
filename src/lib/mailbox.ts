@@ -243,6 +243,52 @@ export function toNativeInboxMessage(msg: MailboxMessage, color = 'blue'): Nativ
 }
 
 /**
+ * Increment delivery attempts and set status to 'failed'.
+ * Called when pane injection fails during instant delivery.
+ */
+export async function markFailed(messageId: string): Promise<boolean> {
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE mailbox
+    SET delivery_status = 'failed',
+        delivery_attempts = delivery_attempts + 1
+    WHERE id = ${messageId}
+    RETURNING id
+  `;
+  return result.length > 0;
+}
+
+/**
+ * Get failed messages that haven't exceeded max retry attempts.
+ * Used by the scheduler daemon's retry loop.
+ */
+export async function getRetryable(maxAttempts: number): Promise<MailboxMessage[]> {
+  const sql = await getConnection();
+  const rows = await sql`
+    SELECT * FROM mailbox
+    WHERE delivery_status = 'failed'
+      AND delivery_attempts < ${maxAttempts}
+    ORDER BY created_at ASC
+    LIMIT 50
+  `;
+  return rows.map(rowToMessage);
+}
+
+/**
+ * Mark a message as escalated (delivery exhausted all retries).
+ */
+export async function markEscalated(messageId: string): Promise<boolean> {
+  const sql = await getConnection();
+  const result = await sql`
+    UPDATE mailbox
+    SET delivery_status = 'escalated'
+    WHERE id = ${messageId}
+    RETURNING id
+  `;
+  return result.length > 0;
+}
+
+/**
  * Subscribe to mailbox delivery notifications via PG LISTEN/NOTIFY.
  * Calls the callback with (toWorker, messageId) on each new insert.
  * Returns an unsubscribe function.

@@ -13,6 +13,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { type NatsConnection, StringCodec, connect } from 'nats';
 import { getConnection } from '../../../src/lib/db.js';
+import { listPendingApprovals, resolveApproval } from '../../../src/lib/providers/claude-sdk-remote-approval.js';
 import { GENIE_SUBJECTS } from '../lib/subjects.js';
 import * as pgBridge from './pg-bridge.js';
 import * as pty from './pty.js';
@@ -132,7 +133,7 @@ async function start(): Promise<void> {
 
   // 4. Set up PG LISTEN/NOTIFY bridging to NATS
   await pgBridge.startListening(nc, ORG_ID);
-  console.log('[genie-app] PG LISTEN/NOTIFY active (9 channels)');
+  console.log('[genie-app] PG LISTEN/NOTIFY active (11 channels)');
 
   // 5. Wire PTY events to NATS publish (session-scoped subjects)
   pty.onPtyData((sessionId, data) => {
@@ -718,6 +719,20 @@ function registerHandlers(sql: any): void {
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  // ---- Approval (remote human-in-the-loop) ----
+
+  reply(
+    sub.approval.resolve(ORG_ID),
+    async (params: { id: string; decision: 'allow' | 'deny'; decided_by: string }) => {
+      const updated = await resolveApproval(params.id, params.decision, params.decided_by);
+      return { ok: updated };
+    },
+  );
+
+  reply(sub.approval.list(ORG_ID), async (params: { agent_name?: string }) => {
+    return listPendingApprovals(params.agent_name);
   });
 
   console.log('[genie-app] All request/reply handlers registered');

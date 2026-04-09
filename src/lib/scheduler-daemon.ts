@@ -24,7 +24,7 @@ import type { Agent } from './agent-registry.js';
 import { computeNextCronDue, parseDuration } from './cron.js';
 import { type EventRouterHandle, startEventRouter } from './event-router.js';
 import { getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
-import { subscribeDelivery } from './mailbox.js';
+import { getRetryable, markEscalated, subscribeDelivery } from './mailbox.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
 
 // ============================================================================
@@ -1238,6 +1238,7 @@ export function startDaemon(
   let captureFallbackTimer: ReturnType<typeof setInterval> | null = null;
   let eventRouterHandle: EventRouterHandle | null = null;
   let deliveryUnsub: (() => Promise<void>) | null = null;
+  let deliveryRetryTimer: ReturnType<typeof setInterval> | null = null;
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: stop() is a flat cleanup sequence for all daemon resources
   const stop = () => {
@@ -1277,6 +1278,10 @@ export function startDaemon(
     }
     eventRouterHandle?.stop().catch(() => {});
     eventRouterHandle = null;
+    if (deliveryRetryTimer) {
+      clearInterval(deliveryRetryTimer);
+      deliveryRetryTimer = null;
+    }
     if (deliveryUnsub) {
       deliveryUnsub().catch(() => {});
       deliveryUnsub = null;
@@ -1512,6 +1517,60 @@ export function startDaemon(
     } catch {
       // PG LISTEN not available — inbox-watcher polling remains the fallback
     }
+
+    // Mailbox delivery retry loop: retry failed deliveries every 60s
+    const MAX_DELIVERY_ATTEMPTS = 3;
+    deliveryRetryTimer = setInterval(async () => {
+      try {
+        const retryable = await getRetryable(MAX_DELIVERY_ATTEMPTS);
+        for (const msg of retryable) {
+          try {
+            const { deliverToPane } = await import('./protocol-router.js');
+            const delivered = await deliverToPane(msg.to, msg.id);
+            if (delivered) {
+              deps.log({
+                timestamp: deps.now().toISOString(),
+                level: 'info',
+                event: 'mailbox_delivery_retried',
+                messageId: msg.id,
+                to: msg.to,
+              });
+              continue;
+            }
+            // deliverToPane already called markFailed — check if max attempts reached
+            const sql = await deps.getConnection();
+            const rows = await sql`SELECT delivery_attempts, repo_path FROM mailbox WHERE id = ${msg.id} LIMIT 1`;
+            const attempts = rows[0]?.delivery_attempts ?? 0;
+            if (attempts >= MAX_DELIVERY_ATTEMPTS) {
+              await markEscalated(msg.id);
+              const repoPath = rows[0]?.repo_path;
+              if (repoPath) {
+                const { send } = await import('./mailbox.js');
+                await send(
+                  repoPath,
+                  'scheduler',
+                  'team-lead',
+                  `[escalation] Message ${msg.id} from "${msg.from}" to "${msg.to}" failed delivery after ${MAX_DELIVERY_ATTEMPTS} attempts. Body: "${msg.body.slice(0, 200)}"`,
+                );
+              }
+              deps.log({
+                timestamp: deps.now().toISOString(),
+                level: 'warn',
+                event: 'mailbox_delivery_escalated',
+                messageId: msg.id,
+                to: msg.to,
+                attempts,
+              });
+            }
+          } catch {
+            // Individual message retry failed — will be retried next cycle
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        deps.log({ timestamp: deps.now().toISOString(), level: 'error', event: 'mailbox_retry_error', error: message });
+      }
+    }, 60_000);
 
     captureFallbackTimer = await initSessionCapture(deps, config);
 
