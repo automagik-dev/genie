@@ -114,17 +114,19 @@ export class BridgeSessionStore {
    */
   async list(status?: 'active' | 'closed' | 'orphaned'): Promise<BridgeSessionRow[]> {
     if (status) {
+      // No LIMIT for status-filtered queries — recoverSessions() needs ALL active rows.
+      // A hard limit here would silently abandon older sessions on crash recovery.
       return this.sql<BridgeSessionRow[]>`
         SELECT * FROM genie_bridge_sessions
         WHERE status = ${status}
         ORDER BY started_at DESC
-        LIMIT 100
       `;
     }
+    // Unfiltered list (CLI display) keeps a reasonable cap
     return this.sql<BridgeSessionRow[]>`
       SELECT * FROM genie_bridge_sessions
       ORDER BY started_at DESC
-      LIMIT 100
+      LIMIT 500
     `;
   }
 
