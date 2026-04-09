@@ -14,7 +14,7 @@
  *   - Future: automated layout migration on `genie init`
  */
 
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   copyFileSync,
   existsSync,
@@ -102,16 +102,12 @@ function findGitRoot(dir: string): string | null {
  * Runs `git status --porcelain` in the directory.
  */
 export function hasDirtyWorkingTree(agentDir: string): boolean {
-  try {
-    const output = execSync(`git -C "${agentDir}" status --porcelain`, {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return output.trim().length > 0;
-  } catch {
-    // Not a git repo or git not available — not dirty
-    return false;
-  }
+  const result = spawnSync('git', ['-C', agentDir, 'status', '--porcelain'], {
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  if (result.status !== 0 || result.error) return false;
+  return result.stdout.trim().length > 0;
 }
 
 // ============================================================================
@@ -255,16 +251,12 @@ function appendJournalEntry(workspaceRoot: string, entry: MigrationJournalEntry)
 
 /** Check if a file/directory is tracked by git. */
 function isGitTracked(path: string): boolean {
-  try {
-    execSync(`git ls-files --error-unmatch "${path}"`, {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: dirname(path),
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  const result = spawnSync('git', ['ls-files', '--error-unmatch', path], {
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    cwd: dirname(path),
+  });
+  return result.status === 0 && !result.error;
 }
 
 // ============================================================================
@@ -402,16 +394,13 @@ function migrateOneAgent(
 /** Move agent files via git-mv or copy, depending on method and options. */
 function moveAgentFiles(workspaceRoot: string, entry: MigrationPlan, opts: { noGit?: boolean }): void {
   if (entry.method === 'git-mv' && !opts.noGit) {
-    try {
-      execSync(`git mv "${entry.from}" "${entry.to}"`, {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        cwd: workspaceRoot,
-      });
-      return;
-    } catch {
-      // git mv failed — fall back to copy
-    }
+    const result = spawnSync('git', ['mv', entry.from, entry.to], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: workspaceRoot,
+    });
+    if (result.status === 0 && !result.error) return;
+    // git mv failed — fall back to copy
   }
   copyDirPreservingSymlinks(entry.from, entry.to);
   rmSync(entry.from, { recursive: true, force: true });
@@ -452,12 +441,16 @@ export function rollbackMigration(workspaceRoot: string): RollbackResult {
   const batchEntries = entries.filter((e) => e.batchId === latestBatchId);
 
   // Process in reverse order
+  const rolledBackAgents = new Set<string>();
   for (const entry of [...batchEntries].reverse()) {
     rollbackOneEntry(entry, result);
+    if (result.rolledBack.includes(entry.agent)) {
+      rolledBackAgents.add(entry.agent);
+    }
   }
 
-  // Remove rolled-back entries from journal
-  const remaining = entries.filter((e) => e.batchId !== latestBatchId);
+  // Only remove successfully rolled-back entries from journal (failed ones stay for retry)
+  const remaining = entries.filter((e) => e.batchId !== latestBatchId || !rolledBackAgents.has(e.agent));
   writeJournal(workspaceRoot, remaining);
 
   return result;
