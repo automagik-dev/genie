@@ -97,6 +97,8 @@ export interface SpawnParams {
   newWindow?: boolean;
   /** Tmux window target to split into (e.g., "genie:3"). */
   windowTarget?: string;
+  /** Skip genie hook dispatch injection (e.g., omni-originated sessions that shouldn't trigger orchestration hooks). */
+  skipHooks?: boolean;
 }
 
 /** Result of a successful launch-command build. */
@@ -353,17 +355,20 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 
   appendSystemPromptFlags(parts, params);
 
-  // Inject hook dispatch + permissions via --settings (deep-merges with existing settings)
-  const dispatchCmd = buildDispatchCommand();
-  const hookEntry = { type: 'command', command: dispatchCmd, timeout: 15 };
-  const settingsObj: Record<string, unknown> = {
-    hooks: {
+  // Inject hook dispatch + permissions via --settings (deep-merges with existing settings).
+  // Skip hooks for omni-originated sessions to prevent orchestration side-effects
+  // (e.g., auto-spawning qa/configure agents from seller sessions).
+  const settingsObj: Record<string, unknown> = {};
+  if (!params.skipHooks) {
+    const dispatchCmd = buildDispatchCommand();
+    const hookEntry = { type: 'command', command: dispatchCmd, timeout: 15 };
+    settingsObj.hooks = {
       PreToolUse: [{ matcher: '*', hooks: [hookEntry] }],
       PostToolUse: [{ matcher: '*', hooks: [hookEntry] }],
       UserPromptSubmit: [{ hooks: [hookEntry] }],
       Stop: [{ hooks: [hookEntry] }],
-    },
-  };
+    };
+  }
   // Merge permissions into settings when provided
   if (params.permissions) {
     const perms: Record<string, string[]> = {};
@@ -371,7 +376,9 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
     if (params.permissions.deny?.length) perms.deny = params.permissions.deny;
     if (Object.keys(perms).length > 0) settingsObj.permissions = perms;
   }
-  parts.push('--settings', escapeShellArg(JSON.stringify(settingsObj)));
+  if (Object.keys(settingsObj).length > 0) {
+    parts.push('--settings', escapeShellArg(JSON.stringify(settingsObj)));
+  }
 
   // Emit --disallowedTools when the agent declares tool restrictions
   if (params.disallowedTools?.length) {
