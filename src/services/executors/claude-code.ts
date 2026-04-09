@@ -129,6 +129,7 @@ export function buildOmniSpawnParams(
     promptMode: entry.promptMode,
     systemPromptFile: join(entry.dir, 'AGENTS.md'),
     initialPrompt: fullInitialPrompt,
+    skipHooks: true,
     nativeTeam: {
       enabled: true,
       agentName,
@@ -226,7 +227,7 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     if (!this.safePgCall) return null;
     const agent = await this.safePgCall(
       'tmux-find-or-create-agent',
-      () => agents.findOrCreateAgent(agentName, 'omni', 'omni'),
+      () => agents.findOrCreateAgent(`${agentName}:${chatId}`, 'omni', 'omni'),
       null,
       { chatId },
     );
