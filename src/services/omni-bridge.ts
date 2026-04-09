@@ -13,7 +13,6 @@
 import { type NatsConnection, StringCodec, type Subscription, connect } from 'nats';
 import type { Sql } from '../lib/db.js';
 import { resolveExecutorType } from '../lib/executor-config.js';
-import { isPaneAlive } from '../lib/tmux.js';
 import { BridgeSessionStore } from './bridge-session-store.js';
 import type { ExecutorSession, IExecutor, OmniMessage } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
@@ -188,6 +187,8 @@ export class OmniBridge {
    */
   private sessions = new Map<string, SessionEntry>();
   private messageQueue: OmniMessage[] = [];
+  /** Dedup cache: messageId → receive timestamp. Prevents JetStream redelivery duplicates. */
+  private recentMessageIds = new Map<string, number>();
   private idleCheckTimer: ReturnType<typeof setInterval> | null = null;
   private sc = StringCodec();
 
@@ -288,13 +289,13 @@ export class OmniBridge {
     });
 
     // Subscribe to all omni messages
-    this.sub = this.nc.subscribe('omni.message.>');
+    this.sub = this.nc.subscribe('omni.message.>', { queue: 'genie-bridge' });
     this.processSubscription();
 
     // Turn lifecycle events from Omni
     const turnSubs = ['omni.turn.open.>', 'omni.turn.done.>', 'omni.turn.nudge.>', 'omni.turn.timeout.>'];
     for (const topic of turnSubs) {
-      const sub = this.nc.subscribe(topic);
+      const sub = this.nc.subscribe(topic, { queue: 'genie-bridge' });
       this.processTurnEvents(sub);
     }
 
@@ -302,7 +303,7 @@ export class OmniBridge {
     // sends a reset token (e.g. 🗑️). Paired with omni-side publisher in
     // automagik-dev/omni#361. Subject hierarchy: omni.session.reset.{instance}.{chat}
     // (recursive `>` because WhatsApp chat ids contain dots).
-    const sessionResetSub = this.nc.subscribe('omni.session.reset.>');
+    const sessionResetSub = this.nc.subscribe('omni.session.reset.>', { queue: 'genie-bridge' });
     this.processSessionResetEvents(sessionResetSub);
 
     // Start idle session checker
@@ -500,94 +501,23 @@ export class OmniBridge {
   }
 
   /**
-   * Recover sessions that survived a bridge restart.
+   * Clean up stale sessions from previous bridge runs.
    *
-   * Queries PG for active sessions, checks whether their tmux panes are still
-   * alive, and re-populates the in-memory sessions Map for live ones. Dead
-   * panes and SDK sessions (which can't survive a process restart) are marked
-   * orphaned. This runs once during start(), after sessionStore is initialized.
+   * Orphans ALL active sessions on startup. Live panes will be re-created
+   * on demand when the next message arrives. This prevents duplicate key
+   * errors and misrouting from stale session state.
    */
   private async recoverSessions(): Promise<void> {
     if (!this.sessionStore) return;
 
-    const activeSessions = await this.safePgCall(
-      'recover_list_active',
-      (sql) => new BridgeSessionStore(sql).list('active'),
-      [],
+    const orphanedCount = await this.safePgCall(
+      'recover_orphan_all',
+      (sql) => new BridgeSessionStore(sql).markAllOrphaned(),
+      0,
     );
 
-    if (activeSessions.length === 0) return;
-
-    console.log(`[omni-bridge] Found ${activeSessions.length} active session(s) from previous run, recovering...`);
-
-    const orphanIds: string[] = [];
-
-    for (const row of activeSessions) {
-      const key = `${row.agent_name}:${row.chat_id}`;
-
-      // SDK sessions can't survive a process restart — always orphan them.
-      if (!row.tmux_pane_id) {
-        orphanIds.push(row.id);
-        continue;
-      }
-
-      // Duplicate guard: if another row already recovered this chat, orphan the older one.
-      if (this.sessions.has(key)) {
-        orphanIds.push(row.id);
-        continue;
-      }
-
-      // Check if the tmux pane is still alive.
-      let alive = false;
-      try {
-        alive = await isPaneAlive(row.tmux_pane_id);
-      } catch {
-        // tmux not available or pane check failed — treat as dead.
-      }
-
-      if (!alive) {
-        orphanIds.push(row.id);
-        continue;
-      }
-
-      // Pane is alive — reconstruct the in-memory session entry.
-      const session: ExecutorSession = {
-        id: row.executor_id ?? row.id,
-        agentName: row.agent_name,
-        chatId: row.chat_id,
-        executorType: 'tmux',
-        createdAt: new Date(row.started_at).getTime(),
-        lastActivityAt: new Date(row.last_activity_at).getTime(),
-        tmux: { session: '', window: '', paneId: row.tmux_pane_id },
-      };
-
-      const entry: SessionEntry = {
-        session,
-        instanceId: row.instance_id,
-        spawning: false,
-        buffer: [],
-        idleTimer: null,
-        pgBridgeSessionId: row.id,
-      };
-
-      this.sessions.set(key, entry);
-      this.resetIdleTimer(key);
-
-      console.log(`[omni-bridge] Recovered session ${key} (pane=${row.tmux_pane_id})`);
-    }
-
-    // Mark dead/SDK sessions as orphaned in one batch.
-    if (orphanIds.length > 0) {
-      await this.safePgCall(
-        'recover_mark_orphaned',
-        (sql) => new BridgeSessionStore(sql).markOrphaned(orphanIds),
-        undefined,
-      );
-      console.log(`[omni-bridge] Marked ${orphanIds.length} stale session(s) as orphaned`);
-    }
-
-    if (this.sessions.size > 0) {
-      console.log(`[omni-bridge] Recovered ${this.sessions.size} live session(s)`);
+    if (orphanedCount > 0) {
+      console.log(`[omni-bridge] Startup cleanup: orphaned ${orphanedCount} stale session(s) from previous run`);
     }
   }
 
@@ -657,6 +587,24 @@ export class OmniBridge {
         }
 
         console.log(`[omni-bridge] NATS message received: ${msg.subject} agent=${parsed.agent} chat=${parsed.chatId}`);
+
+        // Dedup: skip messages already processed (JetStream redelivery protection)
+        // biome-ignore lint/suspicious/noExplicitAny: NATS payload has extra fields beyond OmniMessage
+        const messageId = (parsed as any).messageId as string | undefined;
+        if (messageId && this.recentMessageIds.has(messageId)) {
+          console.log(`[omni-bridge] Dedup: skipping duplicate messageId=${messageId}`);
+          continue;
+        }
+        if (messageId) {
+          this.recentMessageIds.set(messageId, Date.now());
+          // Prune stale entries when cache grows large (TTL 60s)
+          if (this.recentMessageIds.size > 1000) {
+            const cutoff = Date.now() - 60_000;
+            for (const [id, ts] of this.recentMessageIds) {
+              if (ts < cutoff) this.recentMessageIds.delete(id);
+            }
+          }
+        }
 
         if (!parsed.chatId || !parsed.agent) {
           console.warn('[omni-bridge] Dropping message: missing chatId or agent', msg.subject);
@@ -999,7 +947,7 @@ export class OmniBridge {
         OMNI_INSTANCE: payloadEnv?.OMNI_INSTANCE ?? message.instanceId,
         OMNI_CHAT: payloadEnv?.OMNI_CHAT ?? message.chatId,
         OMNI_MESSAGE: payloadEnv?.OMNI_MESSAGE ?? (raw.messageId as string) ?? '',
-        OMNI_TURN_ID: payloadEnv?.OMNI_TURN_ID ?? '',
+        OMNI_TURN_ID: payloadEnv?.OMNI_TURN_ID || '',
         OMNI_SENDER_NAME: payloadEnv?.OMNI_SENDER_NAME ?? message.sender ?? '',
       };
 
