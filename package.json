@@ -22,6 +22,8 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "dead-code": "bunx knip",
+    "skills:lint": "bun run scripts/skills-lint.ts",
+    "skills:audit": "bun run scripts/skills-audit.ts",
     "check": "bun run typecheck && bun run lint && bun run dead-code && (bun test || bun test)"
   },
   "dependencies": {

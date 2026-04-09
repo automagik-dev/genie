@@ -307,50 +307,65 @@ async function checkWorkerProfiles(): Promise<CheckResult[]> {
 }
 
 /**
- * Check Omni bridge health
+ * Check Omni bridge health via IPC
+ * Bridge is managed by genie serve; status is queried via pidfile + NATS ping.
  */
 async function checkBridge(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
   try {
-    const { getBridge } = await import('../services/omni-bridge.js');
-    const bridge = getBridge();
+    const { getBridgeStatus } = await import('../lib/bridge-status.js');
+    const status = await getBridgeStatus();
 
-    if (!bridge) {
+    if (status.state === 'stopped') {
       results.push({
-        name: 'Bridge running',
+        name: 'Bridge',
         status: 'warn',
-        message: 'not running in this process',
-        suggestion: 'Bridge starts automatically with: genie serve',
+        message: 'not running',
+        suggestion: 'Start with: genie serve',
       });
       return results;
     }
 
-    const s = await bridge.status();
+    if (status.state === 'stale') {
+      results.push({
+        name: 'Bridge',
+        status: 'warn',
+        message: 'stale pidfile (PID not responding)',
+        suggestion: 'Clean up and restart: genie serve',
+      });
+      return results;
+    }
 
+    // state === 'running'
+    const pong = status.pong;
     results.push({
-      name: 'NATS connection',
-      status: s.connected ? 'pass' : 'fail',
-      message: s.connected ? `connected (${s.natsUrl})` : `disconnected (${s.natsUrl})`,
-      suggestion: s.connected ? undefined : 'Check NATS server: nats-server or omni start',
-    });
-
-    results.push({
-      name: 'Active sessions',
+      name: 'Bridge',
       status: 'pass',
-      message: `${s.activeSessions} / ${s.maxConcurrent} (queue: ${s.queueDepth})`,
+      message: `running (PID ${pong?.pid}, uptime ${Math.round((pong?.uptimeMs ?? 0) / 1000)}s)`,
     });
 
+    if (status.latencyMs !== undefined) {
+      results.push({
+        name: 'NATS ping',
+        status: 'pass',
+        message: `${status.latencyMs}ms latency`,
+      });
+    }
+
+    if (pong?.subjects && pong.subjects.length > 0) {
+      results.push({
+        name: 'Subjects',
+        status: 'pass',
+        message: `${pong.subjects.length} subjects`,
+      });
+    }
+  } catch (err) {
     results.push({
-      name: 'PG backing',
-      status: s.pgAvailable ? 'pass' : 'warn',
-      message: s.pgAvailable ? 'connected' : 'degraded (in-memory)',
-    });
-  } catch {
-    results.push({
-      name: 'Bridge module',
+      name: 'Bridge status',
       status: 'warn',
-      message: 'could not load omni-bridge',
+      message: 'could not check',
+      suggestion: `Error: ${err instanceof Error ? err.message : String(err)}`,
     });
   }
 
