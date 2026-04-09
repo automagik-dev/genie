@@ -12,7 +12,7 @@ import type { Sql } from '../lib/db.js';
 // Types
 // ============================================================================
 
-export interface BridgeSessionRow {
+interface BridgeSessionRow {
   id: string;
   executor_id: string | null;
   instance_id: string;
@@ -27,7 +27,7 @@ export interface BridgeSessionRow {
   metadata: Record<string, unknown>;
 }
 
-export interface CreateSessionOpts {
+interface CreateSessionOpts {
   instanceId: string;
   chatId: string;
   agentName: string;
