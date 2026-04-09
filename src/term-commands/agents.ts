@@ -1029,6 +1029,15 @@ async function runSdkQuery(
   }
 
   const streaming = streamOpts?.stream ?? false;
+
+  // Emit session ID for streaming JSON consumers (ndjson/json)
+  if (dbSessionId && streaming) {
+    const fmt = streamOpts?.streamFormat ?? 'text';
+    if (fmt === 'ndjson' || fmt === 'json') {
+      process.stdout.write(`${JSON.stringify({ type: 'genie_session', session_id: dbSessionId })}\n`);
+    }
+  }
+
   // Runtime overrides: streaming + CLI --sdk-* flags (highest priority, over directory sdkConfig)
   const extraOptions: Record<string, unknown> = {
     ...(streaming && { includePartialMessages: true }),
@@ -1047,11 +1056,51 @@ async function runSdkQuery(
     await executorRegistry.updateExecutorState(ctx.executorId, 'running').catch(() => {});
   }
 
-  let resultText = '';
   let claudeSessionId: string | undefined;
-  const toolCalls: Array<{ name: string; input: unknown; output?: string; is_error?: boolean }> = [];
-  let pendingToolName = '';
-  let pendingToolInput: unknown = null;
+  // Map tool_use IDs to tool names for correlating tool_result rows
+  const toolNameById = new Map<string, string>();
+
+  type SessionRole = 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'tool_input' | 'tool_output';
+  const record = async (role: SessionRole, content: string, toolName?: string) => {
+    if (!dbSessionId) return;
+    await recordTurn(safePgCall, dbSessionId, turnIndex++, role, content, toolName);
+  };
+
+  // Process SDK messages — same logic for streaming and non-streaming
+  const processMessage = async (message: import('@anthropic-ai/claude-agent-sdk').SDKMessage) => {
+    if (message.type === 'system' && (message as Record<string, unknown>).session_id) {
+      claudeSessionId = (message as Record<string, unknown>).session_id as string;
+    }
+    if (message.type === 'assistant' && message.message) {
+      for (const block of message.message.content) {
+        if (block.type === 'tool_use') {
+          const b = block as unknown as Record<string, unknown>;
+          const name = String(b.name ?? '');
+          const id = String(b.id ?? '');
+          if (id) toolNameById.set(id, name);
+          await record('tool_call', JSON.stringify(b.input ?? {}).slice(0, 500), name);
+        }
+        if (block.type === 'text' && block.text) {
+          await record('assistant', block.text);
+        }
+      }
+    }
+    // Tool results come as user messages with tool_result content blocks
+    if (message.type === 'user' && message.message?.content && Array.isArray(message.message.content)) {
+      for (const block of message.message.content) {
+        const b = block as unknown as Record<string, unknown>;
+        if (b.type === 'tool_result') {
+          const toolId = String(b.tool_use_id ?? '');
+          const toolName = toolNameById.get(toolId) ?? '';
+          const output = typeof b.content === 'string' ? b.content.slice(0, 500) : '';
+          await record('tool_result', output, toolName);
+        }
+      }
+    }
+    if (message.type === 'result' && message.subtype === 'success') {
+      if (message.session_id) claudeSessionId = message.session_id;
+    }
+  };
 
   if (streaming) {
     const { formatSdkMessage } = await import('../lib/providers/claude-sdk-stream.js');
@@ -1063,34 +1112,7 @@ async function runSdkQuery(
           process.stdout.write(formatted);
           if (format === 'json') process.stdout.write('\n');
         }
-        if (message.type === 'system' && (message as Record<string, unknown>).session_id) {
-          claudeSessionId = (message as Record<string, unknown>).session_id as string;
-        }
-        // Collect tool calls
-        if (message.type === 'assistant' && message.message) {
-          for (const block of message.message.content) {
-            if (block.type === 'tool_use') {
-              pendingToolName = ((block as unknown as Record<string, unknown>).name as string) ?? '';
-              pendingToolInput = (block as unknown as Record<string, unknown>).input;
-            }
-            if (block.type === 'text' && block.text) resultText += block.text;
-          }
-        }
-        if ((message as unknown as Record<string, unknown>).type === 'tool_result') {
-          const msg = message as Record<string, unknown>;
-          toolCalls.push({
-            name: pendingToolName,
-            input: pendingToolInput,
-            output: typeof msg.content === 'string' ? msg.content.slice(0, 500) : '',
-            is_error: !!msg.is_error,
-          });
-          pendingToolName = '';
-          pendingToolInput = null;
-        }
-        if (message.type === 'result' && message.subtype === 'success') {
-          if (message.result && !resultText) resultText = message.result;
-          if (message.session_id) claudeSessionId = message.session_id;
-        }
+        await processMessage(message);
       }
     } catch (err) {
       if (!(err instanceof Error && err.name === 'AbortError')) {
@@ -1100,36 +1122,16 @@ async function runSdkQuery(
   } else {
     try {
       for await (const message of messages) {
+        // Print text to stdout
         if (message.type === 'assistant' && message.message) {
           for (const block of message.message.content) {
-            if (block.type === 'tool_use') {
-              pendingToolName = ((block as unknown as Record<string, unknown>).name as string) ?? '';
-              pendingToolInput = (block as unknown as Record<string, unknown>).input;
-            }
-            if (block.type === 'text' && block.text) {
-              process.stdout.write(block.text);
-              resultText += block.text;
-            }
+            if (block.type === 'text' && block.text) process.stdout.write(block.text);
           }
         }
-        if ((message as unknown as Record<string, unknown>).type === 'tool_result') {
-          const msg = message as Record<string, unknown>;
-          toolCalls.push({
-            name: pendingToolName,
-            input: pendingToolInput,
-            output: typeof msg.content === 'string' ? msg.content.slice(0, 500) : '',
-            is_error: !!msg.is_error,
-          });
-          pendingToolName = '';
-          pendingToolInput = null;
+        if (message.type === 'result' && message.subtype === 'success' && message.result) {
+          console.log(message.result);
         }
-        if (message.type === 'result' && message.subtype === 'success') {
-          if (message.result) {
-            console.log(message.result);
-            if (!resultText) resultText = message.result;
-          }
-          if (message.session_id) claudeSessionId = message.session_id;
-        }
+        await processMessage(message);
       }
     } catch (err) {
       if (!(err instanceof Error && err.name === 'AbortError')) {
@@ -1138,12 +1140,8 @@ async function runSdkQuery(
     }
   }
 
-  // Record assistant response (with tools embedded) and end session
+  // End session
   if (dbSessionId) {
-    if (resultText || toolCalls.length > 0) {
-      const content = toolCalls.length > 0 ? JSON.stringify({ text: resultText, tools: toolCalls }) : resultText;
-      await recordTurn(safePgCall, dbSessionId, turnIndex++, 'assistant', content);
-    }
     await updateTurnCount(safePgCall, dbSessionId, turnIndex);
     await endSession(safePgCall, dbSessionId, 'completed');
   }
@@ -1152,14 +1150,14 @@ async function runSdkQuery(
   if (claudeSessionId && spawnContext.executorId) {
     await safePgCall(
       'update-claude-session-id',
-      (sql) => sql`UPDATE executors SET claude_session_id = ${claudeSessionId} WHERE id = ${spawnContext.executorId}`,
+      (sql) => sql`UPDATE executors SET claude_session_id = ${claudeSessionId!} WHERE id = ${spawnContext.executorId}`,
       undefined,
     );
   }
   if (claudeSessionId && dbSessionId) {
     await safePgCall(
       'update-session-claude-id',
-      (sql) => sql`UPDATE sessions SET claude_session_id = ${claudeSessionId} WHERE id = ${dbSessionId}`,
+      (sql) => sql`UPDATE sessions SET claude_session_id = ${claudeSessionId!} WHERE id = ${dbSessionId!}`,
       undefined,
     );
   }
