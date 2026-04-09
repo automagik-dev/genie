@@ -20,10 +20,11 @@ function makeDeps(overrides: Partial<InboxWatcherDeps> = {}): InboxWatcherDeps {
   return {
     listTeamsWithUnreadInbox: async () => [],
     isTeamActive: async () => false,
+    isAgentAlive: async () => false,
     ensureTeamLead: async () => ({ created: true }),
     warn: () => {},
     ...overrides,
-  };
+  } as InboxWatcherDeps;
 }
 
 // ============================================================================

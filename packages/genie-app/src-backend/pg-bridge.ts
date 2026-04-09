@@ -35,7 +35,9 @@ export type BridgeEventType =
   | 'message'
   | 'mailbox-delivery'
   | 'task-dep-changed'
-  | 'trigger-due';
+  | 'trigger-due'
+  | 'approval-request'
+  | 'approval-resolved';
 
 export interface BridgeEvent {
   type: BridgeEventType;
@@ -387,6 +389,16 @@ const CHANNEL_MAP: Array<{
   { channel: 'genie_mailbox_delivery', eventType: 'mailbox-delivery', natsSubject: GENIE_SUBJECTS.events.mailbox },
   { channel: 'genie_task_dep', eventType: 'task-dep-changed', natsSubject: GENIE_SUBJECTS.events.taskDep },
   { channel: 'genie_trigger_due', eventType: 'trigger-due', natsSubject: GENIE_SUBJECTS.events.trigger },
+  {
+    channel: 'genie_approval_request',
+    eventType: 'approval-request',
+    natsSubject: GENIE_SUBJECTS.events.approvalRequest,
+  },
+  {
+    channel: 'genie_approval_resolved',
+    eventType: 'approval-resolved',
+    natsSubject: GENIE_SUBJECTS.events.approvalResolved,
+  },
 ];
 
 let listenersActive = false;

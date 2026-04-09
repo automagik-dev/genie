@@ -13,7 +13,14 @@
 // ============================================================================
 
 /** Permission mode controlling how tool executions are handled. */
-export type SdkPermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
+export type SdkPermissionMode =
+  | 'default'
+  | 'acceptEdits'
+  | 'bypassPermissions'
+  | 'plan'
+  | 'dontAsk'
+  | 'auto'
+  | 'remoteApproval';
 
 /** Reasoning effort level. Named level or an integer 0-100. */
 export type SdkEffortLevel = ('low' | 'medium' | 'high' | 'max') | number;

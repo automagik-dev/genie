@@ -642,6 +642,10 @@ Examples:
           const { isTeamActive } = await import('../lib/team-auto-spawn.js');
           return isTeamActive(teamName);
         },
+        isAgentAlive: async (agentName) => {
+          const { isAgentAlive } = await import('../lib/team-auto-spawn.js');
+          return isAgentAlive(agentName);
+        },
         ensureTeamLead: async (teamName, workingDir) => {
           const { ensureTeamLead } = await import('../lib/team-auto-spawn.js');
           const result = await ensureTeamLead(teamName, workingDir);

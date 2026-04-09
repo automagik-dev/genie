@@ -103,6 +103,14 @@ export const GENIE_SUBJECTS = {
     write: (orgId: string) => s(orgId, 'fs.write'),
   },
 
+  // ---- Approval (remote human-in-the-loop) ----
+  approval: {
+    /** Resolve a pending approval (req/reply). Payload: { id, decision, decided_by } */
+    resolve: (orgId: string) => s(orgId, 'approval.resolve'),
+    /** List pending approvals (req/reply). Payload: { agent_name? } */
+    list: (orgId: string) => s(orgId, 'approval.list'),
+  },
+
   // ---- Events (PG LISTEN/NOTIFY bridged to NATS pub/sub) ----
   events: {
     agentState: (orgId: string) => s(orgId, 'events.agent_state'),
@@ -114,6 +122,8 @@ export const GENIE_SUBJECTS = {
     mailbox: (orgId: string) => s(orgId, 'events.mailbox'),
     taskDep: (orgId: string) => s(orgId, 'events.task_dep'),
     trigger: (orgId: string) => s(orgId, 'events.trigger'),
+    approvalRequest: (orgId: string) => s(orgId, 'events.approval_request'),
+    approvalResolved: (orgId: string) => s(orgId, 'events.approval_resolved'),
   },
 } as const;
 
