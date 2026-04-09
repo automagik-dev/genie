@@ -98,6 +98,28 @@ export async function isTeamActive(teamName: string): Promise<boolean> {
 }
 
 /**
+ * Check if a specific agent's tmux pane is alive.
+ *
+ * Unlike `isTeamActive` which checks for the team window, this checks
+ * whether a specific agent's pane exists and is responsive.
+ * Used by inbox-watcher for per-recipient liveness checks.
+ *
+ * @param agentName - Agent name or ID to look up in the registry
+ * @returns true if the agent has a live pane
+ */
+export async function isAgentAlive(agentName: string): Promise<boolean> {
+  try {
+    const { list } = await import('./agent-registry.js');
+    const agents = await list();
+    const match = agents.find((a) => a.id === agentName || a.role === agentName);
+    if (!match?.paneId) return false;
+    return tmux.isPaneAlive(match.paneId);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Ensure a team has an active Claude Code team-lead.
  *
  * 1. If team is already active (config + tmux window exist), returns immediately.

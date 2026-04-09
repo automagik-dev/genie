@@ -11,6 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { HookCallbackMatcher, Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { ensureTeammateBypassPermissions } from '../claude-settings.js';
 import type {
   Executor,
   ExecutorProvider,
@@ -20,9 +21,11 @@ import type {
   TransportType,
 } from '../executor-types.js';
 import type { SdkDirectoryConfig } from '../sdk-directory-types.js';
+import { findWorkspace, getWorkspaceConfig } from '../workspace.js';
 import { routeSdkMessage } from './claude-sdk-events.js';
 import type { PermissionConfig } from './claude-sdk-permissions.js';
 import { createPermissionGate } from './claude-sdk-permissions.js';
+import { createRemoteApprovalGate } from './claude-sdk-remote-approval.js';
 
 // ============================================================================
 // SdkDirectoryConfig -> SDK Options translation
@@ -37,7 +40,6 @@ import { createPermissionGate } from './claude-sdk-permissions.js';
  */
 /** Fields that can be copied directly when truthy (non-null, non-undefined). */
 const SDK_TRUTHY_FIELDS = [
-  'permissionMode',
   'tools',
   'allowedTools',
   'disallowedTools',
@@ -148,6 +150,9 @@ export class ClaudeSdkProvider implements ExecutorProvider {
     extraOptions?: Partial<Options>,
     sdkConfig?: SdkDirectoryConfig,
   ): { messages: Query; abortController: AbortController } {
+    // Defense-in-depth: ensure Claude Code global settings allow bypass
+    ensureTeammateBypassPermissions();
+
     const abortController = new AbortController();
 
     // Track this query
@@ -155,16 +160,36 @@ export class ClaudeSdkProvider implements ExecutorProvider {
     this.activeQueries.set(ctx.executorId, tracker);
 
     // Build permission gate hooks
-    const permHooks: Partial<Record<string, HookCallbackMatcher[]>> | undefined = permissionConfig
-      ? {
-          PreToolUse: [
-            {
-              matcher: '*',
-              hooks: [createPermissionGate(permissionConfig)],
-            },
-          ],
-        }
-      : undefined;
+    let permHooks: Partial<Record<string, HookCallbackMatcher[]>> | undefined;
+
+    if (sdkConfig?.permissionMode === 'remoteApproval') {
+      // Remote approval: block on every tool use until a human decides
+      const ws = findWorkspace(ctx.cwd);
+      const permissions = ws ? getWorkspaceConfig(ws.root).permissions : undefined;
+      permHooks = {
+        PreToolUse: [
+          {
+            matcher: '*',
+            hooks: [
+              createRemoteApprovalGate({
+                executorId: ctx.executorId,
+                agentName: ctx.agentId ?? ctx.role ?? 'unknown',
+                permissions,
+              }),
+            ],
+          },
+        ],
+      };
+    } else if (permissionConfig) {
+      permHooks = {
+        PreToolUse: [
+          {
+            matcher: '*',
+            hooks: [createPermissionGate(permissionConfig)],
+          },
+        ],
+      };
+    }
 
     // Translate directory-level SDK config
     const translatedSdk = sdkConfig ? translateSdkConfig(sdkConfig) : undefined;
@@ -186,8 +211,6 @@ export class ClaudeSdkProvider implements ExecutorProvider {
     const options: Options = {
       cwd: ctx.cwd,
       abortController,
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
       ...(ctx.model && { model: ctx.model }),
       ...(resolvedSystemPrompt && { systemPrompt: resolvedSystemPrompt }),
       // Layer 1: directory-level SDK config (lowest priority)
@@ -196,6 +219,10 @@ export class ClaudeSdkProvider implements ExecutorProvider {
       ...extraOptions,
       // Hooks are always merged, never overwritten
       ...(hasHooks && { hooks: mergedHooks }),
+      // MUST come last — SDK executor always bypasses permissions.
+      // No spread above may override these.
+      permissionMode: 'bypassPermissions',
+      allowDangerouslySkipPermissions: true,
     };
 
     const messages = query({ prompt, options });
