@@ -1,15 +1,35 @@
 import { describe, expect, it } from 'bun:test';
-import type { PreToolUseHookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import {
   PRESET_CHAT_ONLY,
   PRESET_FULL,
   PRESET_READ_ONLY,
   createPermissionGate,
+  resolvePermissionConfig,
   resolvePreset,
+  translateClaudeCodePermissions,
 } from '../claude-sdk-permissions.js';
 
+// NOTE: We intentionally avoid `import type` from @anthropic-ai/claude-agent-sdk here.
+// Bun's test runner may resolve the real module even for type-only imports, poisoning the
+// process-global mock.module cache used by claude-sdk.test.ts and claude-sdk-resume.test.ts.
+// Instead we use inline structural types that match the SDK's shapes.
+
+type HookInput = {
+  hook_event_name: string;
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_use_id: string;
+  session_id: string;
+  transcript_path: string;
+  cwd: string;
+};
+
+type HookOutput = {
+  hookSpecificOutput?: Record<string, unknown>;
+};
+
 /** Build a minimal PreToolUseHookInput for testing. */
-function hookInput(toolName: string, toolInput: Record<string, unknown> = {}): PreToolUseHookInput {
+function hookInput(toolName: string, toolInput: Record<string, unknown> = {}): HookInput {
   return {
     hook_event_name: 'PreToolUse',
     tool_name: toolName,
@@ -18,7 +38,7 @@ function hookInput(toolName: string, toolInput: Record<string, unknown> = {}): P
     session_id: 'test',
     transcript_path: '',
     cwd: '',
-  } as PreToolUseHookInput;
+  };
 }
 
 /** Call the gate with standard test args and return the result. */
@@ -26,19 +46,19 @@ async function callGate(
   gate: ReturnType<typeof createPermissionGate>,
   toolName: string,
   toolInput: Record<string, unknown> = {},
-): Promise<SyncHookJSONOutput> {
-  return gate(hookInput(toolName, toolInput), 'test', {
+): Promise<HookOutput> {
+  return gate(hookInput(toolName, toolInput) as any, 'test', {
     signal: new AbortController().signal,
-  }) as Promise<SyncHookJSONOutput>;
+  }) as Promise<HookOutput>;
 }
 
 /** Extract permissionDecision from gate result. */
-function decision(result: SyncHookJSONOutput): string {
+function decision(result: HookOutput): string {
   return (result.hookSpecificOutput as any).permissionDecision;
 }
 
 /** Extract permissionDecisionReason from gate result. */
-function reason(result: SyncHookJSONOutput): string | undefined {
+function reason(result: HookOutput): string | undefined {
   return (result.hookSpecificOutput as any).permissionDecisionReason;
 }
 
@@ -247,5 +267,101 @@ describe('createPermissionGate', () => {
       expect(decision(result)).toBe('deny');
       expect(reason(result)).toContain('curl');
     });
+  });
+});
+
+describe('translateClaudeCodePermissions', () => {
+  it('extracts Bash() patterns into bashAllowPatterns as regex', () => {
+    const result = translateClaudeCodePermissions({
+      allow: ['Read', 'Grep', 'Bash(omni say *)'],
+    });
+    expect(result.allow).toContain('Read');
+    expect(result.allow).toContain('Grep');
+    expect(result.allow).toContain('Bash');
+    expect(result.bashAllowPatterns).toBeDefined();
+    expect(result.bashAllowPatterns!.length).toBe(1);
+    // Should match "omni say hello"
+    expect('omni say hello').toMatch(new RegExp(result.bashAllowPatterns![0]));
+    // Should not match "rm -rf /"
+    expect('rm -rf /').not.toMatch(new RegExp(result.bashAllowPatterns![0]));
+  });
+
+  it('handles multiple Bash() patterns', () => {
+    const result = translateClaudeCodePermissions({
+      allow: ['Bash(git *)', 'Bash(omni *)'],
+    });
+    expect(result.allow).toEqual(['Bash']);
+    expect(result.bashAllowPatterns!.length).toBe(2);
+    expect('git status').toMatch(new RegExp(result.bashAllowPatterns![0]));
+    expect('omni send hi').toMatch(new RegExp(result.bashAllowPatterns![1]));
+  });
+
+  it('handles bare tool names without Bash() patterns', () => {
+    const result = translateClaudeCodePermissions({
+      allow: ['Read', 'Glob', 'Grep'],
+    });
+    expect(result.allow).toEqual(['Read', 'Glob', 'Grep']);
+    expect(result.bashAllowPatterns).toBeUndefined();
+  });
+
+  it('handles bare Bash (no parentheses) as unrestricted', () => {
+    const result = translateClaudeCodePermissions({
+      allow: ['Read', 'Bash'],
+    });
+    expect(result.allow).toEqual(['Read', 'Bash']);
+    expect(result.bashAllowPatterns).toBeUndefined();
+  });
+
+  it('defaults to wildcard allow when allow list is empty', () => {
+    const result = translateClaudeCodePermissions({ allow: [] });
+    expect(result.allow).toEqual(['*']);
+  });
+
+  it('defaults to wildcard allow when no allow provided', () => {
+    const result = translateClaudeCodePermissions({});
+    expect(result.allow).toEqual(['*']);
+  });
+});
+
+describe('resolvePermissionConfig — Claude Code format detection', () => {
+  it('detects Claude Code format with Bash() patterns and translates', () => {
+    const result = resolvePermissionConfig({
+      allow: ['Read', 'Bash(omni say *)'],
+    });
+    expect(result.allow).toContain('Read');
+    expect(result.allow).toContain('Bash');
+    expect(result.bashAllowPatterns).toBeDefined();
+  });
+
+  it('passes through legacy SDK format (with bashAllowPatterns) unchanged', () => {
+    const result = resolvePermissionConfig({
+      allow: ['Read', 'Bash'],
+      bashAllowPatterns: ['^git\\s'],
+    });
+    expect(result.allow).toEqual(['Read', 'Bash']);
+    expect(result.bashAllowPatterns).toEqual(['^git\\s']);
+  });
+
+  it('resolves preset even when other fields present', () => {
+    const result = resolvePermissionConfig({
+      preset: 'read-only',
+      allow: ['Bash'],
+    });
+    expect(result).toBe(PRESET_READ_ONLY);
+  });
+
+  it('falls back to PRESET_FULL when no permissions', () => {
+    expect(resolvePermissionConfig()).toBe(PRESET_FULL);
+    expect(resolvePermissionConfig(undefined)).toBe(PRESET_FULL);
+  });
+
+  it('detects Claude Code format with deny field', () => {
+    const result = resolvePermissionConfig({
+      allow: ['Read', 'Glob'],
+      deny: ['Write'],
+    });
+    // deny triggers CC format detection → translateClaudeCodePermissions
+    expect(result.allow).toContain('Read');
+    expect(result.allow).toContain('Glob');
   });
 });

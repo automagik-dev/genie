@@ -378,6 +378,10 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRo
 
   // Cast fm.sdk to the directory config type for passthrough storage
   const sdkConfig = fm.sdk as Record<string, unknown> | undefined;
+  const permissions = fm.permissions as { allow?: string[]; deny?: string[] } | undefined;
+  const disallowedTools = fm.disallowedTools as string[] | undefined;
+  const omniScopes = fm.omniScopes as string[] | undefined;
+  const hooks = fm.hooks as Record<string, unknown> | undefined;
 
   if (!existing) {
     await directory.add({
@@ -389,6 +393,10 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRo
       description: fm.description,
       color: fm.color,
       provider: fm.provider,
+      permissions,
+      disallowedTools,
+      omniScopes,
+      hooks,
       sdk: sdkConfig,
     });
     result.registered.push(agent.name);
@@ -404,13 +412,25 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRo
     description: fm.description,
     color: fm.color,
     provider: fm.provider,
+    permissions,
+    disallowedTools,
+    omniScopes,
+    hooks,
     sdk: sdkConfig,
   };
 
-  // Check if any field actually changed (deep compare sdk via JSON serialization)
+  // Check if any field actually changed (deep compare via JSON serialization)
   const sdkChanged = JSON.stringify(existing.sdk) !== JSON.stringify(sdkConfig);
+  const permissionsChanged = JSON.stringify(existing.permissions) !== JSON.stringify(permissions);
+  const disallowedToolsChanged = JSON.stringify(existing.disallowedTools) !== JSON.stringify(disallowedTools);
+  const omniScopesChanged = JSON.stringify(existing.omniScopes) !== JSON.stringify(omniScopes);
+  const hooksChanged = JSON.stringify(existing.hooks) !== JSON.stringify(hooks);
   const needsUpdate =
     sdkChanged ||
+    permissionsChanged ||
+    disallowedToolsChanged ||
+    omniScopesChanged ||
+    hooksChanged ||
     existing.repo !== repoPath ||
     existing.dir !== agent.dir ||
     existing.promptMode !== (fm.promptMode ?? 'append') ||

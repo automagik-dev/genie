@@ -536,6 +536,8 @@ export class OmniBridge {
           parsed.chatId = parsed.chatId || parts[3];
         }
 
+        console.log(`[omni-bridge] NATS message received: ${msg.subject} agent=${parsed.agent} chat=${parsed.chatId}`);
+
         if (!parsed.chatId || !parsed.agent) {
           console.warn('[omni-bridge] Dropping message: missing chatId or agent', msg.subject);
           continue;
@@ -549,7 +551,11 @@ export class OmniBridge {
           const env = (raw.env as Record<string, string>) ?? {};
           await this.queue.enqueue(parsed, env);
         } else {
+          const key = `${parsed.agent}:${parsed.chatId}`;
+          const hasSession = this.sessions.has(key);
+          console.log(`[omni-bridge] Routing message for ${key} (hasSession=${hasSession}, queue=${!!this.queue})`);
           await this.routeMessage(parsed);
+          console.log(`[omni-bridge] routeMessage done for ${key}`);
         }
       } catch (err) {
         console.error('[omni-bridge] Error processing message:', err);
@@ -570,8 +576,23 @@ export class OmniBridge {
         const instanceId = parts[3];
         const chatId = parts.slice(4).join('.'); // chatId may contain dots
 
-        const sessionKey = this.findSessionKey(instanceId, chatId);
-        if (sessionKey) await this.routeTurnEvent(eventType, sessionKey, payload);
+        console.log(`[omni-bridge] Turn event: ${eventType} instance=${instanceId} chat=${chatId}`);
+        let sessionKey = this.findSessionKey(instanceId, chatId);
+
+        // Fallback: if chatId didn't match (e.g. LID vs phone mismatch),
+        // try finding the session by turnId from the payload.
+        if (!sessionKey && payload.turnId) {
+          sessionKey = this.findSessionKeyByTurnId(payload.turnId);
+          if (sessionKey) {
+            console.log(`[omni-bridge] Matched session via turnId fallback: ${sessionKey}`);
+          }
+        }
+
+        if (sessionKey) {
+          await this.routeTurnEvent(eventType, sessionKey, payload);
+        } else {
+          console.log(`[omni-bridge] No session found for turn.${eventType} (instance=${instanceId}, chat=${chatId})`);
+        }
       } catch (err) {
         console.warn('[omni-bridge] Error processing turn event:', err);
       }
@@ -589,6 +610,7 @@ export class OmniBridge {
         break;
       case 'done':
         this.turnTracker.close(sessionKey, payload.action);
+        await this.handleTurnDone(sessionKey);
         break;
       case 'nudge':
         await this.handleTurnNudge(sessionKey, payload.message);
@@ -604,16 +626,31 @@ export class OmniBridge {
    * Scans the sessions Map for a matching entry since the Map is keyed by
    * `${agentName}:${chatId}` but we need to match by instanceId+chatId.
    */
+  private findSessionKeyByTurnId(turnId: string): string | undefined {
+    for (const [key] of this.sessions) {
+      if (this.turnTracker.getTurnId(key) === turnId) return key;
+    }
+    return undefined;
+  }
+
+  /** Map internal chat UUID → external chatId, populated on turn.open events. */
+  private chatIdMap = new Map<string, string>();
+
   private findSessionKey(instanceId: string, chatId: string): string | undefined {
+    // If chatId is an internal UUID, try resolving to external via the map
+    const resolvedChatId = this.chatIdMap.get(chatId);
+
     for (const [key, entry] of this.sessions) {
       if (entry.instanceId !== instanceId) continue;
       // Live entry — match against the spawned session's chatId.
       if (entry.session?.chatId === chatId) return key;
+      if (resolvedChatId && entry.session?.chatId === resolvedChatId) return key;
       // Spawning entry — session is null, so match against the map key suffix
       // (`${agent}:${chatId}`). Without this fallback, a reset arriving in the
       // narrow window between placeholder insertion and spawn completion would
       // be misclassified as a cold chat and ignored.
       if (entry.spawning && key.endsWith(`:${chatId}`)) return key;
+      if (resolvedChatId && entry.spawning && key.endsWith(`:${resolvedChatId}`)) return key;
     }
     return undefined;
   }
@@ -719,6 +756,20 @@ export class OmniBridge {
   }
 
   /**
+   * Handle a turn.done event — the agent called `omni done`.
+   * The turn is closed but the SESSION stays alive. The next inbound message
+   * will be delivered to the same session (same tmux pane / SDK conversation).
+   * Session teardown only happens on idle timeout or explicit reset.
+   */
+  private async handleTurnDone(sessionKey: string): Promise<void> {
+    const entry = this.sessions.get(sessionKey);
+    if (!entry?.session) return;
+    console.log(`[omni-bridge] Turn done for ${sessionKey}, session stays alive for next message`);
+    // Reset the idle timer — the session is idle until the next message arrives
+    this.resetIdleTimer(sessionKey);
+  }
+
+  /**
    * Handle a turn timeout event — evict the session and shut down the executor.
    */
   private async handleTurnTimeout(sessionKey: string): Promise<void> {
@@ -778,6 +829,17 @@ export class OmniBridge {
   private async spawnSession(message: OmniMessage): Promise<void> {
     const key = `${message.agent}:${message.chatId}`;
 
+    // Guard: if a session or spawning placeholder already exists, buffer instead of double-spawning.
+    // This prevents the race where two concurrent messages for the same chatId both call spawnSession.
+    const existing = this.sessions.get(key);
+    if (existing) {
+      if (existing.buffer.length < MAX_BUFFER_PER_CHAT) {
+        existing.buffer.push(message);
+        console.log(`[omni-bridge] Buffered message for existing session ${key} (buffer=${existing.buffer.length})`);
+      }
+      return;
+    }
+
     // Check concurrency limit (count spawning entries too to prevent oversubscription)
     const activeCount = this.sessions.size;
     if (activeCount >= this.maxConcurrent) {
@@ -810,10 +872,11 @@ export class OmniBridge {
         OMNI_CHAT: payloadEnv?.OMNI_CHAT ?? message.chatId,
         OMNI_MESSAGE: payloadEnv?.OMNI_MESSAGE ?? (raw.messageId as string) ?? '',
         OMNI_TURN_ID: payloadEnv?.OMNI_TURN_ID ?? '',
+        OMNI_SENDER_NAME: payloadEnv?.OMNI_SENDER_NAME ?? message.sender ?? '',
       };
 
       console.log(`[omni-bridge] Spawning session for ${key}...`);
-      const session = await this.executor.spawn(message.agent, message.chatId, spawnEnv);
+      const session = await this.executor.spawn(message.agent, message.chatId, spawnEnv, message.content);
 
       // Reset arrived while spawn was in flight — tear down the freshly-created
       // session and bail. The placeholder was already removed from the map by
