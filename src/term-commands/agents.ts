@@ -1060,8 +1060,11 @@ async function runSdkQuery(
   // Map tool_use IDs to tool names for correlating tool_result rows
   const toolNameById = new Map<string, string>();
 
-  type SessionRole = 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'tool_input' | 'tool_output';
-  const record = async (role: SessionRole, content: string, toolName?: string) => {
+  const record = async (
+    role: 'user' | 'assistant' | 'tool_input' | 'tool_output',
+    content: string,
+    toolName?: string,
+  ) => {
     if (!dbSessionId) return;
     await recordTurn(safePgCall, dbSessionId, turnIndex++, role, content, toolName);
   };
@@ -1078,7 +1081,7 @@ async function runSdkQuery(
           const name = String(b.name ?? '');
           const id = String(b.id ?? '');
           if (id) toolNameById.set(id, name);
-          await record('tool_call', JSON.stringify(b.input ?? {}).slice(0, 500), name);
+          await record('tool_input', JSON.stringify(b.input ?? {}).slice(0, 500), name);
         }
         if (block.type === 'text' && block.text) {
           await record('assistant', block.text);
@@ -1093,7 +1096,7 @@ async function runSdkQuery(
           const toolId = String(b.tool_use_id ?? '');
           const toolName = toolNameById.get(toolId) ?? '';
           const output = typeof b.content === 'string' ? b.content.slice(0, 500) : '';
-          await record('tool_result', output, toolName);
+          await record('tool_output', output, toolName);
         }
       }
     }
@@ -1148,16 +1151,19 @@ async function runSdkQuery(
 
   // Persist Claude SDK session ID on executor AND session for resume lookup
   if (claudeSessionId && spawnContext.executorId) {
+    const csId = claudeSessionId;
     await safePgCall(
       'update-claude-session-id',
-      (sql) => sql`UPDATE executors SET claude_session_id = ${claudeSessionId!} WHERE id = ${spawnContext.executorId}`,
+      (sql) => sql`UPDATE executors SET claude_session_id = ${csId} WHERE id = ${spawnContext.executorId}`,
       undefined,
     );
   }
   if (claudeSessionId && dbSessionId) {
+    const csId = claudeSessionId;
+    const sessId = dbSessionId;
     await safePgCall(
       'update-session-claude-id',
-      (sql) => sql`UPDATE sessions SET claude_session_id = ${claudeSessionId!} WHERE id = ${dbSessionId!}`,
+      (sql) => sql`UPDATE sessions SET claude_session_id = ${csId} WHERE id = ${sessId}`,
       undefined,
     );
   }

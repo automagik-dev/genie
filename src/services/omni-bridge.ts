@@ -826,6 +826,7 @@ export class OmniBridge {
   /**
    * Spawn a new agent session for a chat.
    */
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: spawn orchestration with concurrent guard, env resolution, and error recovery
   private async spawnSession(message: OmniMessage): Promise<void> {
     const key = `${message.agent}:${message.chatId}`;
 
