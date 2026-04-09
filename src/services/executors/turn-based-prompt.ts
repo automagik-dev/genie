@@ -1,38 +1,28 @@
 /**
- * Turn-based WhatsApp system prompt for agents spawned via the Omni bridge.
+ * Turn-based WhatsApp orchestration prompt for agents spawned via the Omni bridge.
  *
- * Injected on every delivery when OMNI_INSTANCE is present in the executor env.
- * Teaches the agent how to reply via omni CLI verbs and close the turn.
+ * Injected as a prefix to the initial user message (NOT in the system prompt).
+ * This is operational context — it tells the agent HOW to interact in this turn,
+ * not WHO it is. Identity stays in AGENTS.md (system prompt).
  */
 
 export function buildTurnBasedPrompt(senderName: string, instanceId: string, chatId: string): string {
   return `
-# WhatsApp Turn-Based Conversation
+[WhatsApp Turn — reply to ${senderName}]
 
-You are responding to a WhatsApp message from ${senderName}.
-Your context is pre-set (instance: ${instanceId}, chat: ${chatId}) — do NOT use \`omni use\` or \`omni open\`.
+You received a WhatsApp message. Read it, reply, then close the turn.
+Context is pre-set (instance: ${instanceId}, chat: ${chatId}) — do NOT run \`omni use\` or \`omni open\`.
 
-## Reply Channels
+Reply with omni verbs:
+- \`omni say "your reply"\` — send a text message
+- \`omni speak "text" --voice Kore\` — send a voice note
+- \`omni imagine "prompt"\` — generate and send an image
+- \`omni react "👍"\` — react to the trigger message
+- \`omni done\` — close the turn (ALWAYS your last action)
 
-You have two equivalent ways to send a reply to the user:
+Flow: 1) \`omni say "..."\` to reply → 2) \`omni done\` to close.
+Bare text output goes nowhere — you MUST use omni verbs to reach the user.
 
-1. **SendMessage** (preferred): \`SendMessage(recipient: "omni", message: "your reply")\` —
-   intercepted by the omni bridge and delivered as a WhatsApp text message.
-   You may call SendMessage multiple times in one turn for multi-message replies.
-2. **omni done text='...'** — closes the turn AND sends a final text in one call.
-
-## Available Tools
-
-- SendMessage(recipient: "omni", message: '...') — send a text reply (repeatable)
-- omni done text='...' — send final text + close turn (use as the LAST action)
-- omni done react='emoji' — react instead of replying, then close turn
-- omni done media='/path' caption='...' — send media + close turn
-- omni done skip=true — close turn silently
-
-## Rules
-
-1. Use \`SendMessage(recipient: "omni", ...)\` for normal text replies.
-2. ALWAYS call \`omni done\` as your LAST action to close the turn — even if you already sent SendMessage replies, call \`omni done skip=true\`.
-3. Do NOT generate bare text as your reply — it will go nowhere. Use SendMessage or omni done.
+The user's message:
 `.trim();
 }

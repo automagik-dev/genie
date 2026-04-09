@@ -35,6 +35,19 @@ export const AgentFrontmatterSchema = z.object({
   provider: z.enum(providerValues).optional(),
   tools: z.array(z.string()).optional(),
   permissionMode: z.string().optional(),
+  /** Tools the agent is NOT allowed to use (Claude Code --disallowedTools). */
+  disallowedTools: z.array(z.string()).optional(),
+  /** Claude Code permission rules — allow/deny lists with Bash() patterns. */
+  permissions: z
+    .object({
+      allow: z.array(z.string()).optional(),
+      deny: z.array(z.string()).optional(),
+    })
+    .optional(),
+  /** Omni API scopes the agent is restricted to (e.g., 'say', 'react'). */
+  omniScopes: z.array(z.string()).optional(),
+  /** Claude Code hooks configuration — permissive record for forward compatibility. */
+  hooks: z.record(z.unknown()).optional(),
   /** SDK configuration block — permissive record so new SDK options don't require parser updates. */
   sdk: z.record(z.unknown()).optional(),
 });

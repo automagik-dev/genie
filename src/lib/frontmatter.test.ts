@@ -402,3 +402,123 @@ model: opus
     expect(result.sdk).toBeUndefined();
   });
 });
+
+// ============================================================================
+// Permissions, disallowedTools, omniScopes, hooks frontmatter
+// ============================================================================
+
+describe('parseFrontmatter — permissions and sandbox fields', () => {
+  test('parses permissions with allow and deny lists', () => {
+    const content = `---
+name: sandboxed-agent
+permissions:
+  allow:
+    - Read
+    - Grep
+    - "Bash(omni say *)"
+    - "Bash(git *)"
+  deny:
+    - Write
+    - Edit
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.permissions).toBeDefined();
+    expect(result.permissions!.allow).toEqual(['Read', 'Grep', 'Bash(omni say *)', 'Bash(git *)']);
+    expect(result.permissions!.deny).toEqual(['Write', 'Edit']);
+  });
+
+  test('parses disallowedTools array', () => {
+    const content = `---
+name: restricted
+disallowedTools:
+  - Agent
+  - NotebookEdit
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.disallowedTools).toEqual(['Agent', 'NotebookEdit']);
+  });
+
+  test('parses omniScopes array', () => {
+    const content = `---
+name: omni-agent
+omniScopes:
+  - say
+  - react
+  - history
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.omniScopes).toEqual(['say', 'react', 'history']);
+  });
+
+  test('parses hooks as permissive record', () => {
+    const content = `---
+name: hooked
+hooks:
+  PreToolUse:
+    - matcher: "*"
+      hooks:
+        - type: command
+          command: echo test
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.hooks).toBeDefined();
+    expect(result.hooks!.PreToolUse).toBeDefined();
+  });
+
+  test('missing sandbox fields result in undefined', () => {
+    const content = `---
+name: basic
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.permissions).toBeUndefined();
+    expect(result.disallowedTools).toBeUndefined();
+    expect(result.omniScopes).toBeUndefined();
+    expect(result.hooks).toBeUndefined();
+  });
+
+  test('permissions with only allow (no deny) is valid', () => {
+    const content = `---
+permissions:
+  allow:
+    - Read
+    - Glob
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.permissions).toBeDefined();
+    expect(result.permissions!.allow).toEqual(['Read', 'Glob']);
+    expect(result.permissions!.deny).toBeUndefined();
+  });
+
+  test('all sandbox fields together parse correctly', () => {
+    const content = `---
+name: full-sandbox
+provider: claude-sdk
+permissionMode: dontAsk
+disallowedTools:
+  - Agent
+permissions:
+  allow:
+    - Read
+    - "Bash(omni *)"
+omniScopes:
+  - say
+hooks:
+  PreToolUse:
+    - matcher: Bash
+---
+`;
+    const result = parseFrontmatter(content);
+    expect(result.name).toBe('full-sandbox');
+    expect(result.provider).toBe('claude-sdk');
+    expect(result.disallowedTools).toEqual(['Agent']);
+    expect(result.permissions!.allow).toEqual(['Read', 'Bash(omni *)']);
+    expect(result.omniScopes).toEqual(['say']);
+    expect(result.hooks).toBeDefined();
+  });
+});

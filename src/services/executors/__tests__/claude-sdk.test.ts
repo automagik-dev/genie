@@ -448,7 +448,7 @@ describe('ClaudeSdkOmniExecutor', () => {
       resetAllMocks();
     });
 
-    it('includes turn-based instructions in system prompt when OMNI_INSTANCE is set', async () => {
+    it('injects turn-based instructions into user message (not system prompt) when OMNI_INSTANCE is set', async () => {
       const env = { OMNI_INSTANCE: 'inst-wb', OMNI_CHAT: 'chat-wb', OMNI_AGENT: 'bot' };
       const session = await executor.spawn('test-agent', 'chat-wb', env);
 
@@ -462,15 +462,22 @@ describe('ClaudeSdkOmniExecutor', () => {
       await executor.waitForDeliveries(session.id);
 
       expect(queryMock).toHaveBeenCalledTimes(1);
-      const callArgs = (queryMock.mock.calls[0] as unknown as [{ options?: { systemPrompt?: string } }])[0];
+      const callArgs = (
+        queryMock.mock.calls[0] as unknown as [{ prompt?: string; options?: { systemPrompt?: string } }]
+      )[0];
+      const userPrompt = callArgs.prompt ?? '';
       const systemPrompt = callArgs.options?.systemPrompt ?? '';
 
-      // Verify turn-based prompt content
-      expect(systemPrompt).toContain('WhatsApp');
-      expect(systemPrompt).toContain('Alice');
-      expect(systemPrompt).toContain('SendMessage');
-      expect(systemPrompt).toContain('omni done');
-      expect(systemPrompt).toContain('inst-wb');
+      // Turn context goes in the user message, NOT the system prompt
+      expect(userPrompt).toContain('WhatsApp Turn');
+      expect(userPrompt).toContain('Alice');
+      expect(userPrompt).toContain('omni say');
+      expect(userPrompt).toContain('omni done');
+      expect(userPrompt).toContain('inst-wb');
+      expect(userPrompt).toContain('Hello from WhatsApp');
+      // System prompt should NOT contain turn instructions
+      expect(systemPrompt).not.toContain('WhatsApp Turn');
+      expect(systemPrompt).not.toContain('omni done');
     });
 
     it('does NOT include turn-based instructions when OMNI_INSTANCE is absent', async () => {
@@ -486,11 +493,13 @@ describe('ClaudeSdkOmniExecutor', () => {
       await executor.waitForDeliveries(session.id);
 
       expect(queryMock).toHaveBeenCalledTimes(1);
-      const callArgs = (queryMock.mock.calls[0] as unknown as [{ options?: { systemPrompt?: string } }])[0];
-      const systemPrompt = callArgs.options?.systemPrompt ?? '';
+      const callArgs = (queryMock.mock.calls[0] as unknown as [{ prompt?: string }])[0];
+      const userPrompt = callArgs.prompt ?? '';
 
-      expect(systemPrompt).not.toContain('WhatsApp');
-      expect(systemPrompt).not.toContain('SendMessage');
+      expect(userPrompt).not.toContain('WhatsApp Turn');
+      expect(userPrompt).not.toContain('omni say');
+      // User message is passed through as-is
+      expect(userPrompt).toBe('Hello from CLI');
     });
   });
 
