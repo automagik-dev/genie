@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { discoverExternalAgents, importAgents } from '../lib/discovery.js';
@@ -94,9 +94,12 @@ describe('discoverExternalAgents()', () => {
 // ─── importAgents ────────────────────────────────────────────────────────────
 
 describe('importAgents()', () => {
-  test('creates symlinks in agents/ directory', () => {
+  test('moves agent into agents/ directory (physical, not symlink)', () => {
     mkWorkspace(testDir);
     mkAgent(testDir, 'services/auth');
+    // Add a hidden folder to verify dotfiles are preserved
+    mkdirSync(join(testDir, 'services', 'auth', '.claude'), { recursive: true });
+    writeFileSync(join(testDir, 'services', 'auth', '.claude', 'settings.json'), '{}');
 
     const agents = [
       {
@@ -113,10 +116,16 @@ describe('importAgents()', () => {
     expect(result.skipped).toEqual([]);
     expect(result.errors).toEqual([]);
 
-    const linkPath = join(testDir, 'agents', 'auth');
-    expect(existsSync(linkPath)).toBe(true);
-    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(linkPath)).toBe(join(testDir, 'services', 'auth'));
+    const destPath = join(testDir, 'agents', 'auth');
+    expect(existsSync(destPath)).toBe(true);
+    expect(lstatSync(destPath).isDirectory()).toBe(true);
+    expect(lstatSync(destPath).isSymbolicLink()).toBe(false);
+    // Files were moved
+    expect(readFileSync(join(destPath, 'AGENTS.md'), 'utf-8')).toContain('# Agent');
+    // Hidden folders preserved
+    expect(existsSync(join(destPath, '.claude', 'settings.json'))).toBe(true);
+    // Source removed
+    expect(existsSync(join(testDir, 'services', 'auth'))).toBe(false);
   });
 
   test('resolves name collisions with numeric suffix', () => {
@@ -139,9 +148,10 @@ describe('importAgents()', () => {
     expect(result.imported).toEqual(['auth-2']);
     expect(result.errors).toEqual([]);
 
-    const linkPath = join(testDir, 'agents', 'auth-2');
-    expect(existsSync(linkPath)).toBe(true);
-    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    const destPath = join(testDir, 'agents', 'auth-2');
+    expect(existsSync(destPath)).toBe(true);
+    expect(lstatSync(destPath).isDirectory()).toBe(true);
+    expect(lstatSync(destPath).isSymbolicLink()).toBe(false);
   });
 
   test('creates agents/ directory if it does not exist', () => {

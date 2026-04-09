@@ -10,7 +10,7 @@
  *   - Pending queue (feeds discovered agents into the pending list)
  */
 
-import { existsSync, mkdirSync, symlinkSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { scanForAgentsAll } from './tree-scanner.js';
 import { scanAgents } from './workspace.js';
@@ -81,9 +81,10 @@ export async function discoverExternalAgents(workspaceRoot: string): Promise<Dis
 // ============================================================================
 
 /**
- * Import discovered agents into the canonical agents/ directory via symlink.
+ * Import discovered agents into the canonical agents/ directory by moving them.
  *
- * For each agent, creates a symlink: {root}/agents/{name} -> {agent.path}
+ * For each agent, physically moves the directory: {agent.path} -> {root}/agents/{name}
+ * Preserves all contents including hidden folders (.claude, .genie, .git).
  * If the name collides, appends a suffix derived from the relative path.
  */
 export function importAgents(workspaceRoot: string, agents: DiscoveredAgent[]): ImportResult {
@@ -93,17 +94,17 @@ export function importAgents(workspaceRoot: string, agents: DiscoveredAgent[]): 
   const result: ImportResult = { imported: [], skipped: [], errors: [] };
 
   for (const agent of agents) {
-    const linkName = resolveUniqueName(agentsDir, agent.name);
-    const linkPath = join(agentsDir, linkName);
+    const destName = resolveUniqueName(agentsDir, agent.name);
+    const destPath = join(agentsDir, destName);
 
-    if (existsSync(linkPath)) {
+    if (existsSync(destPath)) {
       result.skipped.push(agent.name);
       continue;
     }
 
     try {
-      symlinkSync(agent.path, linkPath);
-      result.imported.push(linkName);
+      moveDirectory(agent.path, destPath);
+      result.imported.push(destName);
     } catch (err) {
       result.errors.push({
         name: agent.name,
@@ -113,6 +114,20 @@ export function importAgents(workspaceRoot: string, agents: DiscoveredAgent[]): 
   }
 
   return result;
+}
+
+/**
+ * Move a directory, trying atomic rename first, falling back to copy+remove
+ * for cross-filesystem moves. Preserves all contents including dotfiles.
+ */
+function moveDirectory(src: string, dest: string): void {
+  try {
+    renameSync(src, dest);
+  } catch {
+    // Cross-filesystem — copy then remove
+    cpSync(src, dest, { recursive: true });
+    rmSync(src, { recursive: true, force: true });
+  }
 }
 
 /**
