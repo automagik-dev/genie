@@ -150,7 +150,7 @@ function applyTuiStyle(): void {
   const cmds = [
     `set-option -t ${TUI_SESSION} pane-border-style 'fg=${TUI_STYLE.inactiveBorder}'`,
     `set-option -t ${TUI_SESSION} pane-active-border-style 'fg=${TUI_STYLE.activeBorder}'`,
-    `set-option -t ${TUI_SESSION} mouse on`,
+    ...(process.env.GENIE_TMUX_MOUSE !== 'off' ? [`set-option -t ${TUI_SESSION} mouse on`] : []),
     `set-option -t ${TUI_SESSION} status off`,
     `set-option -t ${TUI_SESSION} pane-border-status off`,
   ];
@@ -354,9 +354,15 @@ interface DaemonHandles {
   schedulerHandle: { stop: () => void; done: Promise<void> } | null;
   agentWatcher: { close: () => void } | null;
   brainHandle: { stop: () => Promise<void>; port: number } | null;
+  omniApprovalHandler: { stop: () => Promise<void> } | null;
 }
 
-const handles: DaemonHandles = { schedulerHandle: null, agentWatcher: null, brainHandle: null };
+const handles: DaemonHandles = {
+  schedulerHandle: null,
+  agentWatcher: null,
+  brainHandle: null,
+  omniApprovalHandler: null,
+};
 
 /** Sync agent directory from workspace and start file watcher. */
 async function startAgentSync(): Promise<{ close: () => void } | null> {
@@ -550,6 +556,18 @@ async function startForeground(headless?: boolean): Promise<void> {
   // 4. Start scheduler + event-router + inbox-watcher
   await startScheduler();
 
+  // 5. Start Omni approval handler (if workspace has approval config)
+  try {
+    const { startOmniApprovalHandler } = await import('../lib/omni-approval-handler.js');
+    const handler = await startOmniApprovalHandler();
+    if (handler) {
+      handles.omniApprovalHandler = handler;
+      console.log('  Omni approval handler started');
+    }
+  } catch {
+    // NATS or workspace not configured — non-fatal
+  }
+
   const stopMsg = headless ? 'Send SIGTERM to stop.' : 'Press Ctrl+C to stop.';
   console.log(`\ngenie serve is running (${mode}). ${stopMsg}`);
 
@@ -567,7 +585,13 @@ async function startForeground(headless?: boolean): Promise<void> {
     // 2. Stop scheduler (drains in-flight)
     handles.schedulerHandle?.stop();
 
-    // 2.5. Stop brain server (best-effort — signal handlers call process.exit()
+    // 2.5. Stop Omni approval handler
+    if (handles.omniApprovalHandler) {
+      handles.omniApprovalHandler.stop().catch(() => {});
+      handles.omniApprovalHandler = null;
+    }
+
+    // 2.6. Stop brain server (best-effort — signal handlers call process.exit()
     // immediately after shutdown(), so this is fire-and-forget like all other
     // services. The OS reclaims sockets/connections on process exit.)
     if (handles.brainHandle) {
