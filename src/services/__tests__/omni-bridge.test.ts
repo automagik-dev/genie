@@ -530,10 +530,9 @@ describe('OmniBridge — session lifecycle (Group 2)', () => {
 
     await bridge.stop();
 
-    // Both sessions must have been shut down
-    expect(calls.shutdown.length).toBe(2);
-    const shutdownIds = calls.shutdown.map((s) => s.chatId).sort();
-    expect(shutdownIds).toEqual(['chat-1', 'chat-2']);
+    // Tmux sessions are detached (not shut down) during graceful stop
+    // so they can be recovered on restart. Shutdown is NOT called for tmux sessions.
+    expect(calls.shutdown.length).toBe(0);
     // Sessions map must be cleared
     expect((bridge as any).sessions.size).toBe(0);
   });
