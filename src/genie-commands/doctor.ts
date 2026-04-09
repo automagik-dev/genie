@@ -319,7 +319,7 @@ async function checkBridge(): Promise<CheckResult[]> {
 
     if (status.state === 'stopped') {
       results.push({
-        name: 'Bridge running',
+        name: 'Bridge',
         status: 'warn',
         message: 'not running',
         suggestion: 'Start with: genie serve',
@@ -329,7 +329,7 @@ async function checkBridge(): Promise<CheckResult[]> {
 
     if (status.state === 'stale') {
       results.push({
-        name: 'Bridge running',
+        name: 'Bridge',
         status: 'warn',
         message: 'stale pidfile (PID not responding)',
         suggestion: 'Clean up and restart: genie serve',
@@ -340,9 +340,9 @@ async function checkBridge(): Promise<CheckResult[]> {
     // state === 'running'
     const pong = status.pong;
     results.push({
-      name: 'Bridge running',
+      name: 'Bridge',
       status: 'pass',
-      message: `PID ${pong?.pid}, uptime ${Math.round((pong?.uptimeMs ?? 0) / 1000)}s`,
+      message: `running (PID ${pong?.pid}, uptime ${Math.round((pong?.uptimeMs ?? 0) / 1000)}s)`,
     });
 
     if (status.latencyMs !== undefined) {
