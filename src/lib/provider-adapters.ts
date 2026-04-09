@@ -83,6 +83,10 @@ export interface SpawnParams {
   initialPrompt?: string;
   /** Display name for the CC session (emits --name). Used in /resume and terminal title. */
   name?: string;
+  /** Claude Code permissions (allow/deny lists with Bash() patterns). Merged into --settings. */
+  permissions?: { allow?: string[]; deny?: string[] };
+  /** Tools the agent is NOT allowed to use (emits --disallowedTools). */
+  disallowedTools?: string[];
   /** OTel receiver port to inject as OTEL_EXPORTER_OTLP_ENDPOINT. Undefined = skip injection. */
   otelPort?: number;
   /** Whether to log user prompts via OTel (default: true). */
@@ -349,18 +353,32 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 
   appendSystemPromptFlags(parts, params);
 
-  // Inject hook dispatch via --settings (deep-merges with existing settings)
+  // Inject hook dispatch + permissions via --settings (deep-merges with existing settings)
   const dispatchCmd = buildDispatchCommand();
   const hookEntry = { type: 'command', command: dispatchCmd, timeout: 15 };
-  const hooksSettings = JSON.stringify({
+  const settingsObj: Record<string, unknown> = {
     hooks: {
       PreToolUse: [{ matcher: '*', hooks: [hookEntry] }],
       PostToolUse: [{ matcher: '*', hooks: [hookEntry] }],
       UserPromptSubmit: [{ hooks: [hookEntry] }],
       Stop: [{ hooks: [hookEntry] }],
     },
-  });
-  parts.push('--settings', escapeShellArg(hooksSettings));
+  };
+  // Merge permissions into settings when provided
+  if (params.permissions) {
+    const perms: Record<string, string[]> = {};
+    if (params.permissions.allow?.length) perms.allow = params.permissions.allow;
+    if (params.permissions.deny?.length) perms.deny = params.permissions.deny;
+    if (Object.keys(perms).length > 0) settingsObj.permissions = perms;
+  }
+  parts.push('--settings', escapeShellArg(JSON.stringify(settingsObj)));
+
+  // Emit --disallowedTools when the agent declares tool restrictions
+  if (params.disallowedTools?.length) {
+    for (const tool of params.disallowedTools) {
+      parts.push('--disallowedTools', escapeShellArg(tool));
+    }
+  }
 
   if (params.extraArgs) {
     for (const arg of params.extraArgs) parts.push(escapeShellArg(arg));

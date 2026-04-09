@@ -43,7 +43,12 @@ export type NatsPublishFn = (topic: string, payload: string) => void;
 
 /** Pluggable executor backend for the Omni bridge. TODO: merge into ExecutorProvider. */
 export interface IExecutor {
-  spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<ExecutorSession>;
+  spawn(
+    agentName: string,
+    chatId: string,
+    env: Record<string, string>,
+    initialMessage?: string,
+  ): Promise<ExecutorSession>;
   deliver(session: ExecutorSession, message: OmniMessage): Promise<void>;
   shutdown(session: ExecutorSession): Promise<void>;
   isAlive(session: ExecutorSession): Promise<boolean>;

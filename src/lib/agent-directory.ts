@@ -45,8 +45,15 @@ export interface DirectoryEntry {
   permissions?: {
     preset?: string;
     allow?: string[];
+    deny?: string[];
     bashAllowPatterns?: string[];
   };
+  /** Tools the agent is NOT allowed to use (Claude Code --disallowedTools). */
+  disallowedTools?: string[];
+  /** Omni API scopes the agent is restricted to (e.g., 'say', 'react'). */
+  omniScopes?: string[];
+  /** Claude Code hooks configuration. */
+  hooks?: Record<string, unknown>;
   /** Full SDK Options configuration for claude-sdk provider sessions. */
   sdk?: SdkDirectoryConfig;
 }
@@ -283,6 +290,9 @@ export async function edit(
       | 'color'
       | 'provider'
       | 'permissions'
+      | 'disallowedTools'
+      | 'omniScopes'
+      | 'hooks'
       | 'sdk'
     >
   >,
@@ -384,6 +394,9 @@ function roleToEntry(role: string, team?: string, metadata?: Record<string, unkn
     color: metadata?.color as string | undefined,
     provider: metadata?.provider as string | undefined,
     permissions: metadata?.permissions as DirectoryEntry['permissions'],
+    disallowedTools: metadata?.disallowedTools as string[] | undefined,
+    omniScopes: metadata?.omniScopes as string[] | undefined,
+    hooks: metadata?.hooks as Record<string, unknown> | undefined,
     sdk: metadata?.sdk as SdkDirectoryConfig | undefined,
     ...(metadata?.repo ? { repo: metadata.repo as string } : team ? { repo: team } : {}),
   };
@@ -400,6 +413,9 @@ function buildMetadata(entry: DirectoryEntry): Record<string, unknown> {
   if (entry.color) meta.color = entry.color;
   if (entry.provider) meta.provider = entry.provider;
   if (entry.permissions) meta.permissions = entry.permissions;
+  if (entry.disallowedTools) meta.disallowedTools = entry.disallowedTools;
+  if (entry.omniScopes) meta.omniScopes = entry.omniScopes;
+  if (entry.hooks) meta.hooks = entry.hooks;
   if (entry.sdk) meta.sdk = entry.sdk;
   return meta;
 }

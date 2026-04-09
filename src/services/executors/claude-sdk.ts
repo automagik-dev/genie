@@ -57,16 +57,21 @@ async function loadSystemPrompt(entry: directory.DirectoryEntry): Promise<string
 async function resolveSystemPrompt(
   entry: directory.DirectoryEntry,
   state: SdkSessionState,
-  message: OmniMessage,
-  chatId: string,
 ): Promise<{ prompt: string | undefined; isTurnBased: boolean }> {
-  let prompt = await loadSystemPrompt(entry);
+  const prompt = await loadSystemPrompt(entry);
   const isTurnBased = Boolean(state.env.OMNI_INSTANCE);
-  if (isTurnBased) {
-    const turnPrompt = buildTurnBasedPrompt(message.sender, state.env.OMNI_INSTANCE, state.env.OMNI_CHAT ?? chatId);
-    prompt = prompt ? `${turnPrompt}\n\n${prompt}` : turnPrompt;
-  }
+  // Turn-based instructions are injected into the user message (initialPrompt),
+  // NOT into the system prompt. System prompt = agent identity only.
   return { prompt, isTurnBased };
+}
+
+/**
+ * Build the turn context prefix for the user message.
+ * Returns empty string if not in a turn-based session.
+ */
+function buildTurnContextPrefix(state: SdkSessionState, message: OmniMessage, chatId: string): string {
+  if (!state.env.OMNI_INSTANCE) return '';
+  return buildTurnBasedPrompt(message.sender, state.env.OMNI_INSTANCE, state.env.OMNI_CHAT ?? chatId);
 }
 
 interface QueryResult {
@@ -297,7 +302,12 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     this.pendingNudges.set(session.id, text);
   }
 
-  async spawn(agentName: string, chatId: string, env: Record<string, string>): Promise<ExecutorSession> {
+  async spawn(
+    agentName: string,
+    chatId: string,
+    env: Record<string, string>,
+    _initialMessage?: string,
+  ): Promise<ExecutorSession> {
     const resolved = await directory.resolve(agentName);
     if (!resolved) {
       throw new Error(`Agent "${agentName}" not found in genie directory`);
@@ -437,7 +447,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
 
     const entry = resolved.entry;
     const permissionConfig = resolvePermissionConfig(entry.permissions);
-    const { prompt: systemPrompt, isTurnBased } = await resolveSystemPrompt(entry, state, message, session.chatId);
+    const { prompt: systemPrompt, isTurnBased } = await resolveSystemPrompt(entry, state);
 
     if (state.executorId) await this.updateState(state.executorId, 'working', session.chatId);
 
@@ -470,11 +480,16 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       extraOptions.resume = state.claudeSessionId;
     }
 
+    // Build query content: turn context (if turn-based) + nudge (if pending) + user message
+    const turnPrefix = buildTurnContextPrefix(state, message, session.chatId);
     let queryContent = message.content;
     const pendingNudge = this.pendingNudges.get(session.id);
     if (pendingNudge) {
       queryContent = `[system] ${pendingNudge}\n\n${message.content}`;
       this.pendingNudges.delete(session.id);
+    }
+    if (turnPrefix) {
+      queryContent = `${turnPrefix}\n\n---\n\n${queryContent}`;
     }
 
     const { messages: queryMessages } = state.provider.runQuery(

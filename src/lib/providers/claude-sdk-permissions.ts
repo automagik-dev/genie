@@ -52,20 +52,73 @@ export function resolvePreset(name: string): PermissionConfig {
 }
 
 /**
+ * Translate Claude Code format permissions (Bash() patterns) to SDK PermissionConfig.
+ *
+ * Claude Code format uses `allow: ["Read", "Bash(git *)"]` where `Bash(...)` patterns
+ * define allowed bash commands. The SDK uses separate `allow` (tool names) and
+ * `bashAllowPatterns` (regex) fields.
+ *
+ * Translation rules:
+ * - `Bash(pattern)` → extract pattern, convert glob-style `*` to regex `.*`, add to bashAllowPatterns
+ * - `Bash` (bare) → add "Bash" to allow list (unrestricted bash)
+ * - Other strings → add to allow list as tool names
+ */
+export function translateClaudeCodePermissions(ccPerms: {
+  allow?: string[];
+  deny?: string[];
+}): PermissionConfig {
+  const toolAllow: string[] = [];
+  const bashPatterns: string[] = [];
+
+  for (const entry of ccPerms.allow ?? []) {
+    const bashMatch = entry.match(/^Bash\((.+)\)$/);
+    if (bashMatch) {
+      // Bash(pattern) → convert to regex: escape regex chars except *, then replace * with .*
+      const glob = bashMatch[1];
+      const regex = `^${glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`;
+      bashPatterns.push(regex);
+      // Ensure Bash is in the allow list so the gate checks patterns
+      if (!toolAllow.includes('Bash')) toolAllow.push('Bash');
+    } else {
+      toolAllow.push(entry);
+    }
+  }
+
+  return {
+    allow: toolAllow.length > 0 ? toolAllow : ['*'],
+    bashAllowPatterns: bashPatterns.length > 0 ? bashPatterns : undefined,
+  };
+}
+
+/** Detect whether a permissions object uses Claude Code format (has Bash() patterns in allow). */
+function isClaudeCodeFormat(permissions: Record<string, unknown>): boolean {
+  if (Array.isArray(permissions.allow)) {
+    return permissions.allow.some((entry: unknown) => typeof entry === 'string' && /^Bash\(.+\)$/.test(entry));
+  }
+  // Claude Code format also uses deny (not present in legacy SDK format)
+  return 'deny' in permissions && !('preset' in permissions) && !('bashAllowPatterns' in permissions);
+}
+
+/**
  * Resolve a PermissionConfig from an agent entry's optional permissions field.
  *
  * Resolution order:
  * 1. If a preset name is specified, resolve it.
- * 2. If an explicit allow list is given, use it (with optional bashAllowPatterns).
- * 3. Fall back to PRESET_FULL (allow everything).
+ * 2. If Claude Code format (has Bash() patterns or deny), translate to SDK format.
+ * 3. If an explicit allow list is given, use it (with optional bashAllowPatterns).
+ * 4. Fall back to PRESET_FULL (allow everything).
  */
 export function resolvePermissionConfig(permissions?: {
   preset?: string;
   allow?: string[];
+  deny?: string[];
   bashAllowPatterns?: string[];
 }): PermissionConfig {
   if (permissions?.preset) {
     return resolvePreset(permissions.preset);
+  }
+  if (permissions && isClaudeCodeFormat(permissions)) {
+    return translateClaudeCodePermissions(permissions);
   }
   if (permissions?.allow) {
     return {
