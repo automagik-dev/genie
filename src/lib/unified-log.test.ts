@@ -8,6 +8,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Agent } from './agent-registry.js';
+import { recordAuditEvent } from './audit.js';
 import { readOutbox, send } from './mailbox.js';
 import { publishRuntimeEvent } from './runtime-events.js';
 import { postMessage } from './team-chat.js';
@@ -23,6 +24,7 @@ import {
   outboxMessageToLogEvent,
   readAgentLog,
   readTeamLog,
+  sdkAuditRowToLogEvent,
   sortByTimestamp,
   transcriptToLogEvent,
 } from './unified-log.js';
@@ -591,5 +593,227 @@ describe.skipIf(!DB_AVAILABLE)('mailbox outbox', () => {
     expect(outbox[0].body).toBe('hello');
     expect(outbox[1].to).toBe('qa');
     expect(outbox[1].body).toBe('world');
+  });
+});
+
+// ============================================================================
+// SDK audit event tests
+// ============================================================================
+
+describe('sdkAuditRowToLogEvent', () => {
+  test('maps sdk.assistant.message to assistant kind with sdk source', () => {
+    const event = sdkAuditRowToLogEvent({
+      id: 1,
+      entity_type: 'sdk_message',
+      entity_id: 'executor-123',
+      event_type: 'sdk.assistant.message',
+      actor: 'my-agent',
+      details: { textPreview: 'Hello from SDK agent' },
+      created_at: '2026-04-09T10:00:00.000Z',
+    });
+
+    expect(event.kind).toBe('assistant');
+    expect(event.agent).toBe('my-agent');
+    expect(event.text).toBe('Hello from SDK agent');
+    expect(event.source).toBe('sdk');
+  });
+
+  test('maps sdk.user.message to user kind', () => {
+    const event = sdkAuditRowToLogEvent({
+      id: 2,
+      entity_type: 'sdk_message',
+      entity_id: 'executor-123',
+      event_type: 'sdk.user.message',
+      actor: 'my-agent',
+      details: { textPreview: 'User said hello' },
+      created_at: '2026-04-09T10:01:00.000Z',
+    });
+
+    expect(event.kind).toBe('user');
+    expect(event.text).toBe('User said hello');
+  });
+
+  test('maps sdk.tool.summary to tool_call kind', () => {
+    const event = sdkAuditRowToLogEvent({
+      id: 3,
+      entity_type: 'sdk_message',
+      entity_id: 'executor-123',
+      event_type: 'sdk.tool.summary',
+      actor: 'my-agent',
+      details: { textPreview: 'Read /tmp/file.ts' },
+      created_at: '2026-04-09T10:02:00.000Z',
+    });
+
+    expect(event.kind).toBe('tool_call');
+  });
+
+  test('maps sdk.system to system kind', () => {
+    const event = sdkAuditRowToLogEvent({
+      id: 4,
+      entity_type: 'sdk_message',
+      entity_id: 'executor-123',
+      event_type: 'sdk.system',
+      actor: 'my-agent',
+      details: { textPreview: 'Session initialized' },
+      created_at: '2026-04-09T10:03:00.000Z',
+    });
+
+    expect(event.kind).toBe('system');
+  });
+
+  test('maps sdk.result.success to system kind', () => {
+    const event = sdkAuditRowToLogEvent({
+      id: 5,
+      entity_type: 'sdk_message',
+      entity_id: 'executor-123',
+      event_type: 'sdk.result.success',
+      actor: 'my-agent',
+      details: { textPreview: 'Task completed' },
+      created_at: '2026-04-09T10:04:00.000Z',
+    });
+
+    expect(event.kind).toBe('system');
+  });
+
+  test('maps sdk.rate_limit to system kind', () => {
+    const event = sdkAuditRowToLogEvent({
+      id: 6,
+      entity_type: 'sdk_message',
+      entity_id: 'executor-123',
+      event_type: 'sdk.rate_limit',
+      actor: 'my-agent',
+      details: {},
+      created_at: '2026-04-09T10:05:00.000Z',
+    });
+
+    expect(event.kind).toBe('system');
+    expect(event.text).toBe('sdk.rate_limit');
+  });
+
+  test('falls back to event_type as text when no textPreview', () => {
+    const event = sdkAuditRowToLogEvent({
+      id: 7,
+      entity_type: 'sdk_message',
+      entity_id: 'executor-123',
+      event_type: 'sdk.hook.started',
+      actor: 'my-agent',
+      details: {},
+      created_at: '2026-04-09T10:06:00.000Z',
+    });
+
+    expect(event.kind).toBe('system');
+    expect(event.text).toBe('sdk.hook.started');
+  });
+
+  test('unmapped event types default to system kind', () => {
+    const event = sdkAuditRowToLogEvent({
+      id: 8,
+      entity_type: 'sdk_message',
+      entity_id: 'executor-123',
+      event_type: 'sdk.unknown.future',
+      actor: 'my-agent',
+      details: { textPreview: 'something new' },
+      created_at: '2026-04-09T10:07:00.000Z',
+    });
+
+    expect(event.kind).toBe('system');
+    expect(event.text).toBe('something new');
+  });
+
+  test('handles null actor gracefully', () => {
+    const event = sdkAuditRowToLogEvent({
+      id: 9,
+      entity_type: 'sdk_message',
+      entity_id: 'executor-123',
+      event_type: 'sdk.assistant.message',
+      actor: null,
+      details: { textPreview: 'hello' },
+      created_at: '2026-04-09T10:08:00.000Z',
+    });
+
+    expect(event.agent).toBe('unknown');
+  });
+});
+
+describe.skipIf(!DB_AVAILABLE)('SDK events in readAgentLog', () => {
+  test('includes SDK audit events in agent log', async () => {
+    const repo = '/tmp/ulog-sdk-agent';
+    const agent = makeAgent('sdk-test-agent', 'sdk-team', repo);
+
+    // Insert SDK audit events
+    await recordAuditEvent('sdk_message', 'executor-1', 'sdk.assistant.message', 'sdk-test-agent', {
+      textPreview: 'SDK assistant response',
+    });
+    await recordAuditEvent('sdk_message', 'executor-1', 'sdk.user.message', 'sdk-test-agent', {
+      textPreview: 'SDK user input',
+    });
+
+    const events = await readAgentLog(agent, repo);
+    const sdkEvents = events.filter((e) => e.source === 'sdk');
+
+    expect(sdkEvents.length).toBeGreaterThanOrEqual(2);
+    expect(sdkEvents.some((e) => e.kind === 'assistant' && e.text === 'SDK assistant response')).toBe(true);
+    expect(sdkEvents.some((e) => e.kind === 'user' && e.text === 'SDK user input')).toBe(true);
+  });
+
+  test('SDK events are sorted with other sources by timestamp', async () => {
+    const repo = '/tmp/ulog-sdk-sorted';
+    const agent = makeAgent('sdk-sort-agent', undefined, repo);
+
+    // Insert an SDK event
+    await recordAuditEvent('sdk_message', 'executor-2', 'sdk.assistant.message', 'sdk-sort-agent', {
+      textPreview: 'SDK msg',
+    });
+    // Insert a mailbox event
+    await send(repo, 'reviewer', 'sdk-sort-agent', 'mailbox msg');
+
+    const events = await readAgentLog(agent, repo);
+
+    // Verify chronological order is maintained across sources
+    for (let i = 1; i < events.length; i++) {
+      expect(new Date(events[i].timestamp).getTime()).toBeGreaterThanOrEqual(
+        new Date(events[i - 1].timestamp).getTime(),
+      );
+    }
+  });
+
+  test('--type filter works with SDK event kinds', async () => {
+    const repo = '/tmp/ulog-sdk-filter';
+    const agent = makeAgent('sdk-filter-agent', undefined, repo);
+
+    await recordAuditEvent('sdk_message', 'executor-3', 'sdk.assistant.message', 'sdk-filter-agent', {
+      textPreview: 'assistant msg',
+    });
+    await recordAuditEvent('sdk_message', 'executor-3', 'sdk.system', 'sdk-filter-agent', {
+      textPreview: 'system msg',
+    });
+
+    const events = await readAgentLog(agent, repo, { kinds: ['assistant'] });
+    const sdkEvents = events.filter((e) => e.source === 'sdk');
+
+    for (const e of sdkEvents) {
+      expect(e.kind).toBe('assistant');
+    }
+  });
+});
+
+describe.skipIf(!DB_AVAILABLE)('SDK events in readTeamLog', () => {
+  test('includes SDK events from multiple agents interleaved', async () => {
+    const repo = '/tmp/ulog-sdk-team';
+    const eng = makeAgent('sdk-team-eng', 'sdk-log-team', repo);
+    const rev = makeAgent('sdk-team-rev', 'sdk-log-team', repo);
+
+    await recordAuditEvent('sdk_message', 'executor-4', 'sdk.assistant.message', 'sdk-team-eng', {
+      textPreview: 'eng SDK response',
+    });
+    await recordAuditEvent('sdk_message', 'executor-5', 'sdk.assistant.message', 'sdk-team-rev', {
+      textPreview: 'rev SDK response',
+    });
+
+    const events = await readTeamLog([eng, rev], repo, 'sdk-log-team');
+    const sdkEvents = events.filter((e) => e.source === 'sdk');
+
+    expect(sdkEvents.some((e) => e.agent === 'sdk-team-eng')).toBe(true);
+    expect(sdkEvents.some((e) => e.agent === 'sdk-team-rev')).toBe(true);
   });
 });

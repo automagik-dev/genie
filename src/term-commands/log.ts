@@ -137,7 +137,8 @@ function formatEventBlock(event: LogEvent): string {
   if (event.direction === 'in') agent = `${event.peer} → ${event.agent}`;
   else if (event.direction === 'out') agent = `${event.agent} → ${event.peer}`;
 
-  const header = `${DIM}${time}${RESET} ${color}[${icon}]${RESET} ${BOLD}${agent}${RESET}`;
+  const sdkTag = event.source === 'sdk' ? ` ${DIM}[SDK]${RESET}` : '';
+  const header = `${DIM}${time}${RESET} ${color}[${icon}]${RESET} ${BOLD}${agent}${RESET}${sdkTag}`;
 
   // Tool calls: one-line summary
   if (event.kind === 'tool_call') {
