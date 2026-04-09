@@ -73,7 +73,7 @@ export type RuntimeEventKind =
   | 'tool_result'
   | 'system'
   | 'qa';
-export type RuntimeEventSource = 'provider' | 'mailbox' | 'chat' | 'registry' | 'hook';
+export type RuntimeEventSource = 'provider' | 'mailbox' | 'chat' | 'registry' | 'hook' | 'sdk';
 export type RuntimeEventDirection = 'in' | 'out';
 
 export interface RuntimeEvent {
