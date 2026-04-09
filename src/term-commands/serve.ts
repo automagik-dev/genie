@@ -570,22 +570,26 @@ async function startForeground(headless?: boolean): Promise<void> {
     // NATS or workspace not configured — non-fatal
   }
 
-  // 6. Start Omni bridge (NATS → agent session router)
-  try {
+  // 6. Start Omni bridge (NATS → agent session router).
+  // Bridge is mandatory: any failure here is fatal and exits non-zero. The
+  // old GENIE_EXECUTOR_TYPE env-var gate is removed — executor type is
+  // resolved internally by the bridge.
+  {
     const { OmniBridge } = await import('../services/omni-bridge.js');
     const bridge = new OmniBridge({
       natsUrl: process.env.GENIE_NATS_URL ?? 'localhost:4222',
       maxConcurrent: Number(process.env.GENIE_MAX_CONCURRENT ?? '20'),
       idleTimeoutMs: Number(process.env.GENIE_IDLE_TIMEOUT_MS ?? '900000'),
-      executorType: (process.env.GENIE_EXECUTOR_TYPE as 'tmux' | 'sdk') ?? undefined,
     });
-    await bridge.start();
+    try {
+      await bridge.start();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`  Omni bridge: FAILED — ${msg}`);
+      process.exit(1);
+    }
     handles.omniBridge = bridge;
     console.log('  Omni bridge started');
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`  Omni bridge: FAILED — ${msg}`);
-    // Non-fatal: bridge failure should not block serve startup
   }
 
   const stopMsg = headless ? 'Send SIGTERM to stop.' : 'Press Ctrl+C to stop.';

@@ -10,7 +10,10 @@
  *   - Auto-respawn on window death
  */
 
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { type NatsConnection, StringCodec, type Subscription, connect } from 'nats';
+import { BRIDGE_PING_SUBJECT, type BridgePong, getBridgePidfilePath } from '../lib/bridge-status.js';
 import type { Sql } from '../lib/db.js';
 import { resolveExecutorType } from '../lib/executor-config.js';
 import { BridgeSessionStore } from './bridge-session-store.js';
@@ -210,6 +213,15 @@ export class OmniBridge {
   readonly maxConcurrent: number;
   readonly executorType: 'tmux' | 'sdk';
 
+  /** Pidfile path (set once start() succeeds; cleared on stop()). */
+  private pidfilePath: string | null = null;
+  /** Wall-clock start time (ms since epoch) — reported in ping replies. */
+  private startedAtMs = 0;
+  /** Subscription handle for the omni.bridge.ping IPC channel. */
+  private pingSub: Subscription | null = null;
+  /** Signal handlers registered on start(), removed on stop() so tests don't leak. */
+  private signalCleanup: (() => void) | null = null;
+
   constructor(config: BridgeConfig = {}) {
     this.natsUrl = config.natsUrl ?? process.env.GENIE_NATS_URL ?? DEFAULT_NATS_URL;
     this.idleTimeoutMs =
@@ -312,6 +324,127 @@ export class OmniBridge {
     // Register singleton
     bridgeInstance = this;
 
+    // Set uptime anchor before subscribing the ping handler so the first pong
+    // reports a non-negative value.
+    this.startedAtMs = Date.now();
+
+    // Subscribe to the omni.bridge.ping IPC channel used by `genie doctor`.
+    // Handler replies with {ok,pid,uptimeMs,subjects} so out-of-process
+    // callers can prove the bridge is actually responsive, not just alive.
+    this.pingSub = this.nc.subscribe(BRIDGE_PING_SUBJECT);
+    const pingSub = this.pingSub;
+    const pingSc = this.sc;
+    const pingStart = this.startedAtMs;
+    (async () => {
+      for await (const m of pingSub) {
+        const pong: BridgePong = {
+          ok: true,
+          pid: process.pid,
+          uptimeMs: Date.now() - pingStart,
+          subjects: ['omni.message.>', 'omni.turn.open.>', 'omni.session.reset.>', BRIDGE_PING_SUBJECT],
+        };
+        try {
+          m.respond(pingSc.encode(JSON.stringify(pong)));
+        } catch {
+          // Request may have expired — drop.
+        }
+      }
+    })().catch(() => {
+      // subscription closed on shutdown — fine
+    });
+
+    // Write the pidfile AFTER NATS is live and the ping handler is armed so
+    // any reader who sees the file can trust the IPC channel to answer.
+    // Uses O_EXCL so two concurrent `genie serve` starts cannot both claim it.
+    this.pidfilePath = getBridgePidfilePath();
+    try {
+      mkdirSync(dirname(this.pidfilePath), { recursive: true });
+      // Stale-pidfile recovery: if a pidfile exists whose owning process is
+      // gone, the previous holder crashed. Unlink it and retake. If the PID
+      // is alive, fail fast — another bridge is legitimately holding the lock.
+      if (existsSync(this.pidfilePath)) {
+        let stalePid: number | null = null;
+        try {
+          const raw = readFileSync(this.pidfilePath, 'utf8');
+          const parsed = JSON.parse(raw) as { pid?: unknown };
+          if (typeof parsed.pid === 'number' && Number.isFinite(parsed.pid)) {
+            stalePid = parsed.pid;
+          }
+        } catch {
+          // Unreadable/corrupt pidfile — treat as stale and unlink below.
+        }
+        if (stalePid !== null) {
+          let alive = false;
+          try {
+            process.kill(stalePid, 0);
+            alive = true;
+          } catch (probeErr) {
+            // ESRCH = no such process → stale. Any other errno (e.g. EPERM)
+            // means the process exists and we must not steal the lock.
+            const code = (probeErr as NodeJS.ErrnoException).code;
+            alive = code !== 'ESRCH';
+          }
+          if (alive) {
+            throw new Error(`pidfile locked by PID ${stalePid}`);
+          }
+        }
+        try {
+          unlinkSync(this.pidfilePath);
+        } catch {
+          // Another process may have cleaned it up already — openSync wx below
+          // will still arbitrate the race atomically.
+        }
+      }
+      const fd = openSync(this.pidfilePath, 'wx');
+      const payload = JSON.stringify({
+        pid: process.pid,
+        startedAt: this.startedAtMs,
+        subjects: ['omni.message.>', 'omni.turn.open.>', 'omni.session.reset.>', BRIDGE_PING_SUBJECT],
+        natsUrl: this.natsUrl,
+      });
+      writeSync(fd, payload);
+      closeSync(fd);
+    } catch (err) {
+      // Roll back the NATS connection so a locked pidfile causes a clean,
+      // non-zero exit in serve instead of a half-initialized bridge.
+      this.pidfilePath = null;
+      const detail = err instanceof Error ? err.message : String(err);
+      try {
+        if (this.pingSub) this.pingSub.unsubscribe();
+      } catch {
+        // ignore
+      }
+      this.pingSub = null;
+      try {
+        await this.nc?.drain();
+      } catch {
+        // ignore
+      }
+      this.nc = null;
+      bridgeInstance = null;
+      throw new Error(`[omni-bridge] pidfile locked at ${getBridgePidfilePath()}: ${detail}`);
+    }
+
+    // Best-effort pidfile cleanup on fatal signals. stop() removes it on
+    // graceful shutdown; these handlers cover SIGTERM/SIGINT paths where
+    // stop() may race the process exit.
+    const onSignal = () => {
+      if (this.pidfilePath) {
+        try {
+          unlinkSync(this.pidfilePath);
+        } catch {
+          // already gone
+        }
+        this.pidfilePath = null;
+      }
+    };
+    process.once('SIGTERM', onSignal);
+    process.once('SIGINT', onSignal);
+    this.signalCleanup = () => {
+      process.removeListener('SIGTERM', onSignal);
+      process.removeListener('SIGINT', onSignal);
+    };
+
     console.log(
       `[omni-bridge] Listening on omni.message.> (max_concurrent=${this.maxConcurrent}, idle_timeout=${this.idleTimeoutMs}ms)`,
     );
@@ -372,6 +505,32 @@ export class OmniBridge {
     if (this.sub) {
       this.sub.unsubscribe();
       this.sub = null;
+    }
+
+    // Tear down the ping IPC channel.
+    if (this.pingSub) {
+      try {
+        this.pingSub.unsubscribe();
+      } catch {
+        // ignore
+      }
+      this.pingSub = null;
+    }
+
+    // Remove the pidfile deterministically on clean stop.
+    if (this.pidfilePath) {
+      try {
+        unlinkSync(this.pidfilePath);
+      } catch {
+        // already gone — fine
+      }
+      this.pidfilePath = null;
+    }
+
+    // Remove signal handlers so tests can start/stop repeatedly without leaks.
+    if (this.signalCleanup) {
+      this.signalCleanup();
+      this.signalCleanup = null;
     }
 
     // Drain and close
