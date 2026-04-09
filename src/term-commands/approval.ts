@@ -58,7 +58,9 @@ async function handleResolve(id: string, options: ResolveOptions): Promise<void>
     process.exit(1);
   }
 
-  const updated = await resolveApproval(id, options.decision as 'allow' | 'deny', options.by);
+  // Use actual agent identity or system user — --by is a display label, not an auth claim
+  const actor = process.env.GENIE_AGENT_NAME || options.by;
+  const updated = await resolveApproval(id, options.decision as 'allow' | 'deny', actor);
   if (updated) {
     console.log(`Approval ${id} resolved: ${options.decision} by ${options.by}`);
   } else {
@@ -124,7 +126,7 @@ export function registerApprovalCommands(program: Command): void {
     .command('resolve <id>')
     .description('Resolve a pending approval')
     .requiredOption('--decision <decision>', 'Decision: allow or deny')
-    .requiredOption('--by <actor>', 'Who made the decision')
+    .option('--by <actor>', 'Display label for decision maker (defaults to GENIE_AGENT_NAME or "cli")', 'cli')
     .action(async (id: string, options: ResolveOptions) => {
       try {
         await handleResolve(id, options);
