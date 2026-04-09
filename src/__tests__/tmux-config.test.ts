@@ -53,8 +53,8 @@ describe('tmux config — status bar click handling', () => {
     expect(hits.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('mouse is enabled globally', () => {
-    const hits = activeLines(/set\s+-g\s+mouse\s+on/);
+  test('mouse is conditionally enabled (GENIE_TMUX_MOUSE opt-out)', () => {
+    const hits = activeLines(/GENIE_TMUX_MOUSE.*set\s+-g\s+mouse\s+on/);
     expect(hits.length).toBeGreaterThanOrEqual(1);
   });
 

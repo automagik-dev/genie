@@ -5,6 +5,7 @@
  * Returns JSON-serializable results for the webview frontend.
  */
 
+import { listPendingApprovals, resolveApproval } from '../../../src/lib/providers/claude-sdk-remote-approval.js';
 import * as pgBridge from './pg-bridge.js';
 import * as pty from './pty.js';
 import * as workspace from './workspace.js';
@@ -129,6 +130,19 @@ export async function remove_workspace(params: { path: string }) {
 }
 
 // ============================================================================
+// Approval Commands
+// ============================================================================
+
+export async function resolve_approval(params: { id: string; decision: 'allow' | 'deny'; decided_by: string }) {
+  const updated = await resolveApproval(params.id, params.decision, params.decided_by);
+  return { ok: updated };
+}
+
+export async function list_approvals(params: { agent_name?: string }) {
+  return listPendingApprovals(params.agent_name);
+}
+
+// ============================================================================
 // Command Map
 // ============================================================================
 
@@ -150,4 +164,6 @@ export const commands: Record<string, (params: never) => unknown> = {
   open_workspace,
   init_workspace,
   remove_workspace,
+  resolve_approval,
+  list_approvals,
 };

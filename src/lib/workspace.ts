@@ -29,6 +29,22 @@ export interface SdkConfig {
   includeHookEvents?: boolean;
 }
 
+/** Remote approval permission configuration. */
+export interface PermissionsConfig {
+  /** Tokens that resolve an approval as allow (default: ['y', 'yes', 'approve', 'sim']). */
+  approveTokens?: string[];
+  /** Tokens that resolve an approval as deny (default: ['n', 'no', 'deny', 'nao']). */
+  denyTokens?: string[];
+  /** Timeout in seconds before auto-resolving (default: 300). */
+  timeout?: number;
+  /** Action taken on timeout (default: 'deny'). */
+  defaultAction?: 'allow' | 'deny';
+  /** Omni chat JID for WhatsApp approval delivery. */
+  omniChat?: string;
+  /** Omni instance ID for WhatsApp approval delivery. */
+  omniInstance?: string;
+}
+
 export interface WorkspaceConfig {
   name: string;
   pgUrl?: string;
@@ -43,6 +59,8 @@ export interface WorkspaceConfig {
   tmux?: TmuxConfig;
   /** SDK transport settings. */
   sdk?: SdkConfig;
+  /** Remote approval settings for permissionMode: remoteApproval. */
+  permissions?: PermissionsConfig;
 }
 
 interface WorkspaceInfo {

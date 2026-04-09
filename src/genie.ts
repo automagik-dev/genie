@@ -44,6 +44,7 @@ import {
   handleWorkerStop,
 } from './term-commands/agents.js';
 import { registerAppCommand } from './term-commands/app.js';
+import { registerApprovalCommands } from './term-commands/approval.js';
 import { registerEventsCommands } from './term-commands/audit-events.js';
 import { registerBoardCommands } from './term-commands/board.js';
 import { registerBrainCommands } from './term-commands/brain.js';
@@ -232,6 +233,7 @@ registerImportCommands(program);
 registerTemplateCommands(program);
 registerBrainCommands(program);
 registerBriefCommands(program);
+registerApprovalCommands(program);
 registerOmniCommands(program);
 
 // ============================================================================

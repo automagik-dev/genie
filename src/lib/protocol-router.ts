@@ -490,8 +490,14 @@ async function injectToTmuxPane(worker: registry.Agent, message: mailbox.Mailbox
  */
 export async function deliverToPane(toWorker: string, messageId: string): Promise<boolean> {
   const worker = await registry.get(toWorker);
-  if (!worker || !worker.paneId) return false;
-  if (!(await _deps.isPaneAlive(worker.paneId))) return false;
+  if (!worker || !worker.paneId) {
+    await mailbox.markFailed(messageId);
+    return false;
+  }
+  if (!(await _deps.isPaneAlive(worker.paneId))) {
+    await mailbox.markFailed(messageId);
+    return false;
+  }
 
   const message = await mailbox.getById(messageId);
   if (!message || message.deliveredAt) return false;
@@ -499,6 +505,8 @@ export async function deliverToPane(toWorker: string, messageId: string): Promis
   const injected = await injectToTmuxPane(worker, message);
   if (injected && worker.repoPath) {
     await mailbox.markDelivered(worker.repoPath, worker.id, messageId);
+  } else {
+    await mailbox.markFailed(messageId);
   }
   return injected;
 }

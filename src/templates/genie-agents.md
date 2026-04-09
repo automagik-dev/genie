@@ -6,7 +6,7 @@ promptMode: append
 color: cyan
 effort: high
 thinking: enabled
-permissionMode: default
+permissionMode: bypassPermissions
 ---
 
 @HEARTBEAT.md

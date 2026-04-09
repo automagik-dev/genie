@@ -91,7 +91,7 @@ describe('Full config roundtrip', () => {
         autoAllowBashIfSandboxed: true,
         network: { allowLocalBinding: true },
       },
-      permissionMode: 'acceptEdits' as const,
+      permissionMode: 'acceptEdits' as const, // translateSdkConfig should strip this
       tools: ['Bash', 'Read'] as string[],
       allowedTools: ['Bash'] as string[],
       disallowedTools: ['Write'] as string[],
@@ -134,7 +134,8 @@ describe('Full config roundtrip', () => {
       autoAllowBashIfSandboxed: true,
       network: { allowLocalBinding: true },
     });
-    expect(result.permissionMode).toBe('acceptEdits');
+    // permissionMode must NOT be copied — SDK executor always bypasses
+    expect(result.permissionMode).toBeUndefined();
     expect(result.tools).toEqual(['Bash', 'Read']);
     expect(result.allowedTools).toEqual(['Bash']);
     expect(result.disallowedTools).toEqual(['Write']);
