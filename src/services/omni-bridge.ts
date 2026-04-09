@@ -108,16 +108,6 @@ export interface BridgeStatus {
 }
 
 // ============================================================================
-// Singleton Bridge
-// ============================================================================
-
-let bridgeInstance: OmniBridge | null = null;
-
-export function getBridge(): OmniBridge | null {
-  return bridgeInstance;
-}
-
-// ============================================================================
 // PG helpers (Group 3 — scaffolding for degraded-mode PG access)
 // ============================================================================
 
@@ -321,9 +311,6 @@ export class OmniBridge {
     // Start idle session checker
     this.idleCheckTimer = setInterval(() => this.checkIdleSessions(), IDLE_CHECK_INTERVAL_MS);
 
-    // Register singleton
-    bridgeInstance = this;
-
     // Set uptime anchor before subscribing the ping handler so the first pong
     // reports a non-negative value.
     this.startedAtMs = Date.now();
@@ -421,7 +408,6 @@ export class OmniBridge {
         // ignore
       }
       this.nc = null;
-      bridgeInstance = null;
       throw new Error(`[omni-bridge] pidfile locked at ${getBridgePidfilePath()}: ${detail}`);
     }
 
@@ -547,13 +533,11 @@ export class OmniBridge {
     this.pgAvailable = false;
     this.sessionStore = null;
 
-    bridgeInstance = null;
-
     console.log('[omni-bridge] Stopped');
   }
 
   /**
-   * Get current bridge status for `genie omni status`.
+   * Get current bridge status (in-process snapshot).
    *
    * When PG is available, queries the executors table for the authoritative
    * active session count and executor IDs. Falls back to the local sessions
