@@ -261,14 +261,14 @@ describe.skipIf(!DB_AVAILABLE)('buildTeamLeadCommand (shared module)', () => {
 
   test('includes --append-system-prompt-file when systemPromptFile provided (default promptMode)', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
-    const cmd = buildTeamLeadCommand('genie', { systemPromptFile: '/tmp/test-agents.md' });
+    const cmd = buildTeamLeadCommand('genie', { systemPromptFile: '/tmp/test-agents.md', promptMode: 'append' });
     expect(cmd).toContain('--append-system-prompt-file');
     expect(cmd).toContain('/tmp/test-agents.md');
   });
 
   test('file path is passed directly, not copied', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
-    const cmd = buildTeamLeadCommand('genie', { systemPromptFile: '/path/to/AGENTS.md' });
+    const cmd = buildTeamLeadCommand('genie', { systemPromptFile: '/path/to/AGENTS.md', promptMode: 'append' });
     expect(cmd).toContain('--append-system-prompt-file');
     expect(cmd).toContain('/path/to/AGENTS.md');
   });
