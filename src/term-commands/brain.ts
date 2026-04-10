@@ -521,7 +521,7 @@ async function executeBrainCommand(args: string[]): Promise<void> {
 export function registerBrainCommands(program: Command): void {
   const brain = program
     .command('brain')
-    .description('Knowledge graph engine (enterprise)')
+    .description('Knowledge graph engine (enterprise) — forwards unknown subcommands to @khal-os/brain')
     .allowUnknownOption()
     .allowExcessArguments()
     .action(async (_options: Record<string, unknown>, cmd: Command) => {
@@ -533,7 +533,29 @@ export function registerBrainCommands(program: Command): void {
         return;
       }
       await executeBrainCommand(args);
-    });
+    })
+    .addHelpText(
+      'after',
+      `
+Forwarded commands (require @khal-os/brain installed):
+  status              Show running brain server status
+  health              Show brain health score
+  init                Initialize a new brain vault
+  search <query>      Search the brain knowledge graph
+  ingest <path>       Ingest files into the brain
+  analyze <path>      Analyze a file against the brain
+  config              Manage brain configuration
+  mount/unmount       Mount brains
+  graph               Explore the knowledge graph
+  traces              View reasoning traces
+
+Examples:
+  $ genie brain status
+  $ genie brain search "how does login work"
+  $ genie brain init --name my-brain --path ./brain
+
+Install brain: genie brain install`,
+    );
 
   brain
     .command('install')
