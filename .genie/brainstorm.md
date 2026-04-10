@@ -16,7 +16,7 @@
 - **rlmx-ship-polish** — Merge rlmx-integration + rlmx-readme. `/review` then `/brainstorm`. Live API tests, version fix, README.
 - **genie-studio** — `/review` genie repo app code → compare with genie-app-v1 wish → consolidate/rename.
 - [sdk-executor-full](wishes/sdk-executor-full/WISH.md) — APPROVED. `/review` current 132 executor matches → `/brainstorm` gaps.
-- [agent-stability-hardening](wishes/agent-stability-hardening/WISH.md) — SHIPPED (PR #1112). Verify on dev.
+- [agent-stability-hardening](wishes/_archive/agent-stability-hardening/WISH.md) — SHIPPED (PR #1112). Verify on dev.
 - [brain-benchmark-loop](wishes/brain-benchmark-loop/WISH.md) — IN_PROGRESS. `/review` progress → decide next step.
 
 ## Deferred
@@ -33,27 +33,30 @@
 - Viralizador — Recurring DevRel content loop, not a shippable feature.
 
 ## Poured (shipped)
-- [Agent Stability Hardening](wishes/agent-stability-hardening/WISH.md) — SHIPPED (PR #1112, 2026-04-09). Permission spread + remoteApproval + tmux mouse + inbox retry.
-- [Session Capture v2](wishes/session-capture-v2/WISH.md) — SHIPPED (PR #825, 2026-04-09). Filewatch + lazy backfill + tool event extraction.
-- [pgserve Daemon Ownership](wishes/pgserve-daemon-ownership/WISH.md) — SHIPPED (PR #827, 2026-04-09). Daemon owns PG, self-heal, doctor --fix.
-- [os-services Orphan Leak](wishes/os-services-orphan-leak/WISH.md) — SHIPPED (PR #272 + #274, 2026-04-09). Layer 1+2 signal fix + orphan reaper + migration matchAll.
-- [env-defaults-local-mode](wishes/env-defaults-local-mode/WISH.md) — SHIPPED (incremental, 2026-04-09). All 6 criteria met across multiple PRs.
+
+All shipped wishes live in [`wishes/_archive/`](wishes/_archive/). Listed here for reference.
+
+- [Agent Stability Hardening](wishes/_archive/agent-stability-hardening/WISH.md) — SHIPPED (PR #1112, 2026-04-09). Permission spread + remoteApproval + tmux mouse + inbox retry.
+- [Session Capture v2](wishes/_archive/session-capture-v2/WISH.md) — SHIPPED (PR #825, 2026-04-09). Filewatch + lazy backfill + tool event extraction.
+- [pgserve Daemon Ownership](wishes/_archive/pgserve-daemon-ownership/WISH.md) — SHIPPED (PR #827, 2026-04-09). Daemon owns PG, self-heal, doctor --fix.
+- [os-services Orphan Leak](wishes/_archive/os-services-orphan-leak/WISH.md) — SHIPPED (PR #272 + #274, 2026-04-09). Layer 1+2 signal fix + orphan reaper + migration matchAll.
+- [env-defaults-local-mode](wishes/_archive/env-defaults-local-mode/WISH.md) — SHIPPED (incremental, 2026-04-09). All 6 criteria met across multiple PRs.
 - [Onboarding Overhaul](brainstorms/onboarding-overhaul/DRAFT.md) — ALL 3 SUB-WISHES SHIPPED:
-  - **1.** [genie-model-resolution](wishes/genie-model-resolution/WISH.md) — SHIPPED (QA 2026-04-08)
-  - **2.** [genie-onboarding-flow](wishes/genie-onboarding-flow/WISH.md) — SHIPPED (all 7 groups on dev)
-  - **3.** [genie-layout-migration](wishes/genie-layout-migration/WISH.md) — SHIPPED (in binary)
-- [Brain Obsidian](wishes/brain-obsidian/WISH.md) — ALL 6 SUB-WISHES SHIPPED in @khal-os/brain v1.22.0:
+  - **1.** [genie-model-resolution](wishes/_archive/genie-model-resolution/WISH.md) — SHIPPED (QA 2026-04-08)
+  - **2.** [genie-onboarding-flow](wishes/_archive/genie-onboarding-flow/WISH.md) — SHIPPED (all 7 groups on dev)
+  - **3.** [genie-layout-migration](wishes/_archive/genie-layout-migration/WISH.md) — SHIPPED (in binary)
+- [Brain Obsidian](wishes/_archive/brain-obsidian/WISH.md) — ALL 6 SUB-WISHES SHIPPED in @khal-os/brain v1.22.0:
   - brain-foundation, brain-embeddings, brain-intelligence, brain-observability, brain-identity-impl, brain-init-skill
-- [rlmx](wishes/rlmx-v04-gemini3/WISH.md) — v0.2 + v0.3 + v0.4 ALL SHIPPED (npm v0.260331.5)
-- [Omni Lifecycle Hardening](wishes/omni-lifecycle-hardening/WISH.md) — SHIPPED (PR #359)
+- [rlmx](wishes/_archive/rlmx-v04-gemini3/WISH.md) — v0.2 + v0.3 + v0.4 ALL SHIPPED (npm v0.260331.5)
+- [Omni Lifecycle Hardening](wishes/_archive/omni-lifecycle-hardening/WISH.md) — SHIPPED (PR #359)
 - [Omni Version Unify](brainstorms/omni-version-unify/DESIGN.md) — SHIPPED (PR #356)
-- [Omni Skill Upgrade](wishes/omni-skill-upgrade/WISH.md) — SHIPPED (3-tier skills live)
-- [remove-openclaw](wishes/remove-openclaw/WISH.md) — SHIPPED (absent from binary)
-- **v4 Stability Sprint** — COMPLETE (2026-04-02). All 6 wishes merged.
+- [Omni Skill Upgrade](wishes/_archive/omni-skill-upgrade/WISH.md) — SHIPPED (3-tier skills live)
+- [remove-openclaw](wishes/_archive/remove-openclaw/WISH.md) — SHIPPED (absent from binary)
+- **v4 Stability Sprint** — COMPLETE (2026-04-02). All 6 wishes merged: [v4-database-layer](wishes/_archive/v4-database-layer/WISH.md), [v4-hook-cli-safety](wishes/_archive/v4-hook-cli-safety/WISH.md), [v4-message-routing](wishes/_archive/v4-message-routing/WISH.md), [v4-session-executor](wishes/_archive/v4-session-executor/WISH.md), [v4-spawn-resilience](wishes/_archive/v4-spawn-resilience/WISH.md), [v4-team-lifecycle](wishes/_archive/v4-team-lifecycle/WISH.md).
 - [Session Observability](brainstorms/session-observability/DESIGN.md) — CRYSTALLIZED → folds into session-capture-v2
 - [X Tool](brainstorms/x-tool/DESIGN.md) — CRYSTALLIZED (WRS 100/100). Parked.
 
 ## Killed
-- genie-app — superseded by genie-app-v1 / genie-studio
-- session-ingester-perf — superseded by session-capture-v2
-- brain-obsidian (parent spec) — all children shipped, reference only
+- [genie-app](wishes/_archive/genie-app/WISH.md) — superseded by genie-app-v1 / genie-studio
+- [session-ingester-perf](wishes/_archive/session-ingester-perf/WISH.md) — superseded by session-capture-v2
+- [brain-obsidian](wishes/_archive/brain-obsidian/WISH.md) (parent spec) — all children shipped, reference only
