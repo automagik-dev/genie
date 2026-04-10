@@ -6,7 +6,7 @@
 | **Slug** | `omni-turn-based-dx` |
 | **Date** | 2026-04-06 |
 | **Repo** | `automagik-dev/omni` (primary), `automagik-dev/genie` (bridge-side) |
-| **Learnings** | [QA session 2026-04-05](../../brainstorms/omni-turn-based-dx/SESSION-LEARNINGS.md) |
+| **Learnings** | [QA session 2026-04-05](SESSION-LEARNINGS.md) |
 
 ## Summary
 
