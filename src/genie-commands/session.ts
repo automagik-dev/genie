@@ -12,7 +12,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
@@ -20,12 +20,13 @@ import * as registry from '../lib/agent-registry.js';
 import { reconcileStaleSpawns } from '../lib/agent-registry.js';
 import {
   deleteNativeTeam,
-  ensureNativeTeam,
+  ensureNativeTeamWithSessionId,
   registerNativeMember,
+  resolveOrMintLeadSessionId,
   sanitizeTeamName,
 } from '../lib/claude-native-teams.js';
 import * as executorRegistry from '../lib/executor-registry.js';
-import { buildTeamLeadCommand, sessionExists, shellQuote } from '../lib/team-lead-command.js';
+import { buildTeamLeadCommand, shellQuote } from '../lib/team-lead-command.js';
 import * as tmux from '../lib/tmux.js';
 import { scaffoldAgentFiles } from '../templates/index.js';
 
@@ -60,8 +61,17 @@ interface SessionOptions {
  * Pre-create the native team directory so CC starts as team-lead.
  *
  * Creates ~/.claude/teams/<name>/ with config.json + inboxes/team-lead.json.
- * The leadSessionId is a placeholder -- CC updates it internally once started.
+ * The `leadSessionId` passed in is either (a) a UUID read from an existing
+ * JSONL for this team name (resume path) or (b) a freshly-minted UUID that
+ * will also be passed to CC via `--session-id` (new-session path). Either
+ * way, the team config and the launched CC process reference the same
+ * session ID from the first moment.
+ *
  * CC recognizes itself as leader because --team-name is passed without --agent-id.
+ *
+ * See `.genie/wishes/fix-ghost-approval-p0/WISH.md` for the full story —
+ * the predecessor of this function hardcoded `leadSessionId: "pending"`
+ * with a comment falsely claiming "CC updates it internally once started".
  */
 async function resolveSessionLeaderName(teamName: string): Promise<string> {
   try {
@@ -72,9 +82,10 @@ async function resolveSessionLeaderName(teamName: string): Promise<string> {
   }
 }
 
-async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise<void> {
+async function ensureNativeTeamForLeader(teamName: string, cwd: string, sessionId: string): Promise<void> {
   const leaderName = await resolveSessionLeaderName(teamName);
-  await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending', leaderName);
+  // Upserts a stale leadSessionId (e.g. legacy "pending" literal) in place.
+  await ensureNativeTeamWithSessionId(teamName, `Genie team: ${teamName}`, sessionId, leaderName);
 
   await registerNativeMember(teamName, {
     agentName: basename(cwd),
@@ -87,14 +98,19 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
 /**
  * Build the claude launch command with native team flags.
  * Delegates to the shared buildTeamLeadCommand (single source of truth).
+ *
+ * Exactly one of `continueName` or `sessionId` should be set by the caller —
+ * `continueName` for the resume-by-name path, `sessionId` for the new-session
+ * path (forces CC to use a pre-assigned UUID via `--session-id`).
  */
 export function buildClaudeCommand(
   teamName: string,
   systemPromptFile?: string,
   continueName?: string,
   leaderName?: string,
+  sessionId?: string,
 ): string {
-  return buildTeamLeadCommand(teamName, { systemPromptFile, continueName, leaderName });
+  return buildTeamLeadCommand(teamName, { systemPromptFile, continueName, leaderName, sessionId });
 }
 
 /**
@@ -198,7 +214,13 @@ async function createSession(
   systemPromptFile: string | null,
   leaderName?: string,
 ): Promise<void> {
-  await ensureNativeTeamForLeader(windowName, workspaceDir);
+  // Resolve a real Claude Code session UUID BEFORE the team config is written.
+  // If a prior JSONL for this team exists we reuse its UUID (and will launch
+  // via --resume); otherwise we mint a fresh UUID (and will launch via
+  // --session-id). Either way, the team config and the launched CC process
+  // reference the same session ID from the first moment.
+  const { sessionId, shouldResume } = await resolveOrMintLeadSessionId(windowName, workspaceDir);
+  await ensureNativeTeamForLeader(windowName, workspaceDir, sessionId);
   console.log(`Native team "${windowName}" ready at ~/.claude/teams/${sanitizeTeamName(windowName)}/`);
 
   console.log(`Creating session "${sessionName}"...`);
@@ -228,14 +250,13 @@ async function createSession(
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
   const agentName = basename(workspaceDir);
-  // Check for prior CC session to resume, start fresh only if none found
   const continueName = sanitizeTeamName(windowName);
-  const hasPriorSession = sessionExists(continueName);
   const cmd = buildClaudeCommand(
     windowName,
     systemPromptFile || undefined,
-    hasPriorSession ? continueName : undefined,
+    shouldResume ? continueName : undefined,
     leaderName,
+    shouldResume ? undefined : sessionId,
   );
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   console.log(`Started Claude Code as ${agentName} in ${workspaceDir}`);
@@ -257,35 +278,46 @@ async function createSession(
 /**
  * Launch Claude Code in a tmux pane, resuming only if a prior session exists.
  *
- * Primary path: checks CC session storage via `sessionExists()` to decide
- * whether to pass `--resume`. Falls back to a tmux pane-command check as a
- * safety net if `--resume` fails despite the existence check.
+ * Primary path: the caller has already computed `sessionId` + `shouldResume`
+ * via `resolveOrMintLeadSessionId`. This function launches CC with either
+ * `--resume <name>` (resume) or `--session-id <uuid>` (new session), and
+ * retains a safety net: if `--resume` leaves the pane at a shell prompt
+ * (resume silently failed), it mints a fresh UUID, upserts the team config,
+ * and re-launches with `--session-id`.
  */
 async function launchWithContinueFallback(
   target: string,
   windowName: string,
+  workspaceDir: string,
   systemPromptFile: string | null,
-  leaderName?: string,
+  leaderName: string | undefined,
+  sessionId: string,
+  shouldResume: boolean,
 ): Promise<void> {
   const continueName = sanitizeTeamName(windowName);
-  const hasPriorSession = sessionExists(continueName);
   const cmd = buildClaudeCommand(
     windowName,
     systemPromptFile || undefined,
-    hasPriorSession ? continueName : undefined,
+    shouldResume ? continueName : undefined,
     leaderName,
+    shouldResume ? undefined : sessionId,
   );
 
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
 
-  // Safety net: if --resume was attempted, verify CC actually started
-  if (hasPriorSession) {
+  // Safety net: if --resume was attempted, verify CC actually started.
+  if (shouldResume) {
     await new Promise((r) => setTimeout(r, 3000));
     const afterCmd = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_current_command}'`)).trim();
 
     if (['bash', 'zsh', 'sh', 'fish'].includes(afterCmd)) {
       console.log('Resume failed unexpectedly, starting fresh session...');
-      const freshCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined, leaderName);
+      // Mint a guaranteed-fresh UUID and force-upsert the team config so it
+      // matches the new CC process. We deliberately bypass the resolver here
+      // because the resolver would re-find the same (failed-to-resume) JSONL.
+      const freshId = randomUUID();
+      await ensureNativeTeamForLeader(windowName, workspaceDir, freshId);
+      const freshCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined, leaderName, freshId);
       await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(freshCmd)} Enter`);
     }
   }
@@ -306,13 +338,22 @@ async function focusTeamWindow(
     // Store cwd as env var on the window
     await tmux.setWindowEnv(`${sessionName}:${windowName}`, 'GENIE_CWD', workingDir);
 
-    // Bootstrap native team and launch Claude Code in the new window
-    await ensureNativeTeamForLeader(windowName, workingDir);
+    // Resolve a real session ID before writing the team config.
+    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId(windowName, workingDir);
+    await ensureNativeTeamForLeader(windowName, workingDir, sessionId);
     const target = `${sessionName}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
-    await launchWithContinueFallback(target, windowName, systemPromptFile, leaderName);
+    await launchWithContinueFallback(
+      target,
+      windowName,
+      workingDir,
+      systemPromptFile,
+      leaderName,
+      sessionId,
+      shouldResume,
+    );
     console.log(`Started Claude Code as ${basename(workingDir)}@${sanitizeTeamName(windowName)} in ${workingDir}`);
 
     // Guard: terminate old executor before registering new one
@@ -336,12 +377,21 @@ async function focusTeamWindow(
     if (isShell) {
       // Claude Code has exited — relaunch
       console.log(`Claude Code not running in "${windowName}", relaunching...`);
-      await ensureNativeTeamForLeader(windowName, workingDir);
+      const { sessionId, shouldResume } = await resolveOrMintLeadSessionId(windowName, workingDir);
+      await ensureNativeTeamForLeader(windowName, workingDir, sessionId);
 
       const cdCmd = `cd ${shellQuote(workingDir)}`;
       await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
-      await launchWithContinueFallback(target, windowName, systemPromptFile, leaderName);
+      await launchWithContinueFallback(
+        target,
+        windowName,
+        workingDir,
+        systemPromptFile,
+        leaderName,
+        sessionId,
+        shouldResume,
+      );
 
       // Guard: terminate old executor before registering new one
       try {
@@ -443,21 +493,27 @@ async function launchInsideTmux(
   systemPromptFile: string | null,
   leaderName?: string,
 ): Promise<void> {
-  const continueName = sanitizeTeamName(windowName);
-  const hasPriorSession = sessionExists(continueName);
-  if (hasPriorSession) {
+  // Resolve the session UUID upfront. If a prior JSONL for this team exists
+  // we'll resume via --resume (and shouldResume === true); otherwise we mint
+  // a fresh UUID and launch via --session-id.
+  const { sessionId, shouldResume } = await resolveOrMintLeadSessionId(windowName, workspaceDir);
+
+  if (shouldResume) {
     // Resume existing session — don't create a new suffixed window
-    await ensureNativeTeamForLeader(windowName, workspaceDir);
-    const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName, leaderName);
+    const continueName = sanitizeTeamName(windowName);
+    await ensureNativeTeamForLeader(windowName, workspaceDir, sessionId);
+    const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName, leaderName, undefined);
     const { execSync: execSyncCmd } = require('node:child_process');
     execSyncCmd(cmd, { stdio: 'inherit', cwd: workspaceDir });
   } else {
-    // No prior session — create fresh with suffix for uniqueness
+    // No prior session — create fresh with suffix for uniqueness. We still
+    // pass the pre-minted sessionId via --session-id so the team config and
+    // the launched CC process agree from the first moment.
     const suffix = Date.now().toString(36).slice(-4);
     const currentWindowName = `${windowName}-${suffix}`;
     await tmux.executeTmux(`rename-window ${shellQuote(currentWindowName)}`);
-    await ensureNativeTeamForLeader(currentWindowName, workspaceDir);
-    const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, undefined, leaderName);
+    await ensureNativeTeamForLeader(currentWindowName, workspaceDir, sessionId);
+    const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, undefined, leaderName, sessionId);
     const { execSync: execSyncCmd } = require('node:child_process');
     execSyncCmd(cmd, { stdio: 'inherit', cwd: workspaceDir });
   }
