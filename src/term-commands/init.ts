@@ -43,7 +43,7 @@ async function ensureSetupCompleteForInit(): Promise<void> {
   await setupCommand();
 }
 
-function scaffoldAgentInWorkspace(workspaceRoot: string, name: string, agentsDir?: string): void {
+export function scaffoldAgentInWorkspace(workspaceRoot: string, name: string, agentsDir?: string): void {
   const baseDir = agentsDir ?? join(workspaceRoot, 'agents');
   const agentDir = join(baseDir, name);
   if (existsSync(agentDir)) {
@@ -64,7 +64,18 @@ function scaffoldAgentInWorkspace(workspaceRoot: string, name: string, agentsDir
   }
 
   scaffoldAgentFiles(agentDir, name, workspaceDefaults);
-  writeFileSync(join(agentDir, '.claude', 'settings.local.json'), `${JSON.stringify({ agentName: name }, null, 2)}\n`);
+
+  const settings = {
+    agentName: name,
+    autoMemoryEnabled: true,
+    autoMemoryDirectory: './brain/memory',
+  };
+  writeFileSync(join(agentDir, '.claude', 'settings.local.json'), `${JSON.stringify(settings, null, 2)}\n`);
+
+  writeFileSync(
+    join(agentDir, 'brain', 'memory', 'MEMORY.md'),
+    '# Memory Index\n\n_This file is maintained by the auto-memory system. New memories are added automatically._\n',
+  );
 
   const reposTarget = join(workspaceRoot, 'repos');
   if (existsSync(reposTarget)) {
@@ -77,8 +88,8 @@ function scaffoldAgentInWorkspace(workspaceRoot: string, name: string, agentsDir
 
   console.log(`Agent scaffolded: agents/${name}/`);
   console.log('  AGENTS.md, SOUL.md, HEARTBEAT.md');
-  console.log('  brain/memory/');
-  console.log('  .claude/settings.local.json');
+  console.log('  brain/memory/MEMORY.md (seeded)');
+  console.log('  .claude/settings.local.json (auto-memory enabled)');
   if (existsSync(join(agentDir, 'repos'))) {
     console.log('  repos -> ../repos (symlink)');
   }
