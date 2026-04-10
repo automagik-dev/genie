@@ -12,8 +12,14 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { sanitizeWindowName } from '../genie-commands/session.js';
-import { ensureNativeTeam, loadConfig, registerNativeMember, sanitizeTeamName } from './claude-native-teams.js';
-import { buildTeamLeadCommand, sessionExists, shellQuote } from './team-lead-command.js';
+import {
+  ensureNativeTeamWithSessionId,
+  loadConfig,
+  registerNativeMember,
+  resolveOrMintLeadSessionId,
+  sanitizeTeamName,
+} from './claude-native-teams.js';
+import { buildTeamLeadCommand, shellQuote } from './team-lead-command.js';
 import * as tmux from './tmux.js';
 
 interface EnsureTeamLeadResult {
@@ -140,8 +146,18 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
   const { resolveLeaderName } = await import('./team-manager.js');
   const leaderName = await resolveLeaderName(teamName);
 
-  // Create native team structure
-  await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending', leaderName);
+  // Resolve a REAL Claude Code session UUID before we write the team config.
+  //
+  // If a prior JSONL for this team exists, we reuse its UUID and launch CC
+  // via `--resume`. Otherwise we mint a fresh UUID and launch CC via
+  // `--session-id` so the config and the CC process agree from the start.
+  //
+  // Fixes the ghost-approval deadlock (wish: fix-ghost-approval-p0).
+  const { sessionId, shouldResume } = await resolveOrMintLeadSessionId(teamName, workingDir);
+
+  // Create or heal native team structure. Upserts stale leadSessionId
+  // (e.g. legacy "pending" literal) in place — no migration script needed.
+  await ensureNativeTeamWithSessionId(teamName, `Genie team: ${teamName}`, sessionId, leaderName);
   await registerNativeMember(teamName, {
     agentName: leaderName,
     agentType: 'general-purpose',
@@ -162,12 +178,10 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     const target = `${session}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const continueName = sanitizeTeamName(teamName);
-    const hasPriorSession = sessionExists(continueName, workingDir);
     const cmd = buildTeamLeadCommand(teamName, {
       systemPromptFile: systemPromptFile ?? undefined,
       leaderName,
-      continueName: hasPriorSession ? continueName : undefined,
+      ...(shouldResume ? { continueName: sanitizeTeamName(teamName) } : { sessionId }),
     });
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   }
