@@ -571,9 +571,8 @@ async function startForeground(headless?: boolean): Promise<void> {
   }
 
   // 6. Start Omni bridge (NATS → agent session router).
-  // Bridge is mandatory: any failure here is fatal and exits non-zero. The
-  // old GENIE_EXECUTOR_TYPE env-var gate is removed — executor type is
-  // resolved internally by the bridge.
+  // Bridge is mandatory: any failure here is fatal and exits non-zero.
+  // Executor type is resolved internally by the bridge.
   {
     const { OmniBridge } = await import('../services/omni-bridge.js');
     const bridge = new OmniBridge({
@@ -886,15 +885,17 @@ async function printDaemonStatus(serveRunning: boolean): Promise<void> {
   }
 }
 
-/** Print Omni bridge status */
+/** Print Omni bridge status via IPC (cross-process — no in-process singleton). */
 async function printBridgeStatus(): Promise<void> {
   try {
-    const { getBridge } = await import('../services/omni-bridge.js');
-    const bridge = getBridge();
-    if (bridge) {
-      const s = await bridge.status();
-      const tag = s.connected ? 'connected' : 'disconnected';
-      console.log(`  omni-bridge: ${tag} (${s.activeSessions} sessions, queue: ${s.queueDepth})`);
+    const { getBridgeStatus } = await import('../lib/bridge-status.js');
+    const res = await getBridgeStatus();
+    if (res.state === 'running' && res.pong) {
+      const uptimeSec = Math.round(res.pong.uptimeMs / 1000);
+      const latency = res.latencyMs ?? 0;
+      console.log(`  omni-bridge: running (pid ${res.pong.pid}, uptime ${uptimeSec}s, ping ${latency}ms)`);
+    } else if (res.state === 'stale') {
+      console.log(`  omni-bridge: stale — ${res.detail}`);
     } else {
       console.log('  omni-bridge: stopped');
     }
