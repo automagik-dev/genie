@@ -17,8 +17,10 @@ import { join } from 'node:path';
 import {
   type NativeInboxMessage,
   discoverClaudeParentSessionId,
+  ensureNativeTeamWithSessionId,
   loadConfig,
   resolveNativeMemberName,
+  resolveOrMintLeadSessionId,
   sanitizeTeamName,
   writeNativeInbox,
 } from './claude-native-teams.js';
@@ -389,6 +391,142 @@ describe('writeNativeInbox', () => {
 // ---------------------------------------------------------------------------
 // loadConfig tests
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// resolveOrMintLeadSessionId tests (fix-ghost-approval-p0)
+// ---------------------------------------------------------------------------
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+describe('resolveOrMintLeadSessionId', () => {
+  test('mints a fresh UUID when no prior JSONL exists', async () => {
+    const cwd = '/tmp/fresh-team-cwd';
+    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('fresh-team', cwd);
+
+    expect(shouldResume).toBe(false);
+    expect(sessionId).toMatch(UUID_RE);
+  });
+
+  test('returns the UUID from a matching prior JSONL with shouldResume: true', async () => {
+    const cwd = '/tmp/resume-team-cwd';
+    const priorUuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+
+    await createSessionJsonl(
+      cwd,
+      priorUuid,
+      [
+        { type: 'custom-title', customTitle: 'resume-team' },
+        { type: 'user', cwd, sessionId: priorUuid },
+      ],
+      5_000,
+    );
+
+    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('resume-team', cwd);
+    expect(shouldResume).toBe(true);
+    expect(sessionId).toBe(priorUuid);
+  });
+
+  test('returns the newest JSONL when multiple match the team title', async () => {
+    const cwd = '/tmp/multi-team-cwd';
+    const olderUuid = '11111111-2222-3333-4444-555555555555';
+    const newerUuid = '99999999-8888-7777-6666-555555555555';
+
+    await createSessionJsonl(cwd, olderUuid, [{ type: 'custom-title', customTitle: 'multi-team' }], 1_000);
+    await createSessionJsonl(cwd, newerUuid, [{ type: 'custom-title', customTitle: 'multi-team' }], 9_000);
+
+    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('multi-team', cwd);
+    expect(shouldResume).toBe(true);
+    expect(sessionId).toBe(newerUuid);
+  });
+
+  test('also matches the {team}-{team} custom-title form CC sometimes writes', async () => {
+    const cwd = '/tmp/doubled-team-cwd';
+    const priorUuid = 'cafebabe-dead-beef-cafe-babedeadbeef';
+
+    await createSessionJsonl(
+      cwd,
+      priorUuid,
+      [{ type: 'custom-title', customTitle: 'doubled-team-doubled-team' }],
+      5_000,
+    );
+
+    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('doubled-team', cwd);
+    expect(shouldResume).toBe(true);
+    expect(sessionId).toBe(priorUuid);
+  });
+
+  test('ignores JSONL without a custom-title matching the team', async () => {
+    const cwd = '/tmp/unrelated-cwd';
+    const unrelatedUuid = '12345678-1234-1234-1234-123456789012';
+
+    await createSessionJsonl(cwd, unrelatedUuid, [{ type: 'custom-title', customTitle: 'some-other-team' }], 5_000);
+
+    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('fresh-team', cwd);
+    expect(shouldResume).toBe(false);
+    expect(sessionId).toMatch(UUID_RE);
+    expect(sessionId).not.toBe(unrelatedUuid);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ensureNativeTeamWithSessionId tests (fix-ghost-approval-p0)
+// ---------------------------------------------------------------------------
+
+describe('ensureNativeTeamWithSessionId', () => {
+  const FRESH_UUID = 'abcd1234-abcd-1234-abcd-1234abcd1234';
+
+  test('creates a new team with the provided session UUID', async () => {
+    const config = await ensureNativeTeamWithSessionId('new-team', 'Test', FRESH_UUID, 'new-team');
+    expect(config.leadSessionId).toBe(FRESH_UUID);
+
+    const loaded = await loadConfig('new-team');
+    expect(loaded?.leadSessionId).toBe(FRESH_UUID);
+  });
+
+  test('leaves a healthy UUID alone on an existing config', async () => {
+    const existingUuid = 'deadbeef-dead-beef-dead-beefdeadbeef';
+    await createTestTeamConfig('healthy-team', [{ agentId: 'engineer@healthy-team', name: 'engineer' }], {
+      leadSessionId: existingUuid,
+    });
+
+    const config = await ensureNativeTeamWithSessionId('healthy-team', 'Test', FRESH_UUID);
+    expect(config.leadSessionId).toBe(existingUuid);
+
+    const loaded = await loadConfig('healthy-team');
+    expect(loaded?.leadSessionId).toBe(existingUuid);
+  });
+
+  test('upserts a stale "pending" literal in place', async () => {
+    await createTestTeamConfig('stale-team', [{ agentId: 'engineer@stale-team', name: 'engineer' }], {
+      leadSessionId: 'pending',
+    });
+
+    const config = await ensureNativeTeamWithSessionId('stale-team', 'Test', FRESH_UUID);
+    expect(config.leadSessionId).toBe(FRESH_UUID);
+
+    // Verify persisted to disk — this is the healing path for existing machines.
+    const loaded = await loadConfig('stale-team');
+    expect(loaded?.leadSessionId).toBe(FRESH_UUID);
+  });
+
+  test('upserts an empty-string leadSessionId in place', async () => {
+    await createTestTeamConfig('empty-team', [{ agentId: 'engineer@empty-team', name: 'engineer' }], {
+      leadSessionId: '',
+    });
+
+    const config = await ensureNativeTeamWithSessionId('empty-team', 'Test', FRESH_UUID);
+    expect(config.leadSessionId).toBe(FRESH_UUID);
+  });
+
+  test('upserts a synthetic "genie-<team>" fallback in place', async () => {
+    await createTestTeamConfig('synthetic-team', [{ agentId: 'engineer@synthetic-team', name: 'engineer' }], {
+      leadSessionId: 'genie-synthetic-team',
+    });
+
+    const config = await ensureNativeTeamWithSessionId('synthetic-team', 'Test', FRESH_UUID);
+    expect(config.leadSessionId).toBe(FRESH_UUID);
+  });
+});
 
 describe('loadConfig', () => {
   test('returns null for non-existent team', async () => {

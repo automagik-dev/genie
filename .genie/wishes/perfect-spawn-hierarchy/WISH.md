@@ -2,14 +2,19 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DEFERRED — reevaluate after `fix-ghost-approval-p0` lands and the reproducer passes |
 | **Slug** | `perfect-spawn-hierarchy` |
 | **Date** | 2026-04-10 |
-| **Priority** | P0 — worst active bug in the product |
+| **Priority** | P1 — architectural hardening (the P0 root-cause surgery was split out) |
 | **Trace** | See Context section below |
 | **Related** | Commit `7c21301a6` (2026-04-02 partial fix), Issue #1094 (2026-04-09 SDK-path fix) |
+| **Split** | The P0 surgical fix (kill the `'pending'` literal, mint a real session ID at spawn time) was split into `.genie/wishes/fix-ghost-approval-p0/WISH.md` on 2026-04-10. That wish must ship and pass its reproducer before this one is resumed — and this wish will be re-scoped at that point, because the rest of the plan may change based on what we learn from the P0. |
 
 ## Summary
+
+> **2026-04-10 update:** This wish's P0 surgical bite — "eliminate the `'pending'` literal and put a real session ID in the team config at spawn time" — has been split into `.genie/wishes/fix-ghost-approval-p0/WISH.md` so it can ship TODAY and be proven against the 2026-04-10 reproducer. The sections below are preserved as the architectural context and the residual backlog (three-layer hierarchy, auto-approver, `genie doctor` Team Health, migration script, comprehensive regression suite, docs). **Do not execute this wish until the P0 fix lands.** After the P0 lands we reevaluate: some groups here may become unnecessary, others may need re-scoping based on what we learned in production.
+
+---
 
 Every time a teammate in a native team tries to write a new file at its project cwd root, Claude Code's permission gate routes the request to `~/.claude/teams/<team>/inboxes/team-lead.json` — and because two of the three team-spawn paths create the team with `leadSessionId: "pending"` (a literal placeholder that nothing ever reconciles), the request lands on a ghost leader and never gets a response. The teammate sees `"The user doesn't want to proceed with this tool use"` and silently gives up. 44 unanswered requests have piled up in a single inbox since 2026-03-26. This wish kills the class of bug by making **every spawn establish a real parent session at the moment of spawn**, enforcing a three-layer hierarchy (master → task-lead → underlings) so approval requests always route to a live ancestor, and teaching `genie doctor` to catch the next variant before users do.
 
@@ -40,10 +45,13 @@ No corresponding `permission_response` exists. Inbox-wide: **44 permission_reque
 
 ## Scope
 
-### IN
+> **Scope will be re-cut when this wish is resumed.** The P0 surgery (kill the `'pending'` literal at the two spawn sites) is handled by `fix-ghost-approval-p0`. Everything below is the residual architectural work that may need re-scoping after the P0 lands.
 
-- Eliminate every `'pending'` literal passed to `ensureNativeTeam()` in the production spawn paths.
-- Establish a single helper — `resolveSpawnerSessionId(cwd)` — that every spawn path uses to get a real Claude Code session ID for the CURRENT caller. Strategy: `CLAUDE_CODE_SESSION_ID` env var → newest JSONL in `~/.claude/projects/<sanitized-cwd>/` → **fail loud** (do not silently fall back to fake strings).
+### IN (subject to re-scope post-P0)
+
+- ~~Eliminate every `'pending'` literal passed to `ensureNativeTeam()` in the production spawn paths.~~ **Moved to `fix-ghost-approval-p0`.**
+- ~~Establish a single helper — `resolveSpawnerSessionId(cwd)` — that every spawn path uses to get a real Claude Code session ID for the CURRENT caller.~~ **Partially moved to `fix-ghost-approval-p0` as `resolveOrMintLeadSessionId` — the broader "every spawn path" sweep (including `protocol-router-spawn.ts`) stays here.**
+- Harden `resolveParentSession()` in `src/lib/protocol-router-spawn.ts` to never return `"genie-<team>"` — throw on miss instead of silently falling back to a synthetic string.
 - `genie spawn` (CLI and internal callers) always registers the caller's session ID as the spawnee's `parentSessionId`. If the caller is running inside Claude Code, the spawner becomes the team-lead for the spawnee **at the moment of spawn**.
 - Three-layer hierarchy enforcement: every spawn uses the NEAREST live ancestor as `parentSessionId`, not the root. When a task-lead (a worker that was itself spawned) spawns its own underlings, those underlings route to the task-lead — not to the master. The master session only receives permission requests from its direct children.
 - Auto-approver daemon: the inbox watcher gains a "permission responder" component that, when the team-lead is an automated (non-TUI) Claude session, auto-emits `permission_response {subtype: "success"}` for any `permission_request` whose `agent_id` is a known member of the team. Trust-on-team-membership.
@@ -98,6 +106,8 @@ No corresponding `permission_response` exists. Inbox-wide: **44 permission_reque
 - [ ] **Docs updated.** A troubleshooting section exists in the README or docs/ that explains the bug, the fix, and cross-references `7c21301a6` and #1094.
 
 ## Execution Strategy
+
+> **Execution is on hold.** Do not dispatch any group until `fix-ghost-approval-p0` lands, its reproducer passes on a `@next` build, and this wish has been re-scoped with any learnings. Group 1 in particular has been partially subsumed by the P0 fix.
 
 Three waves. Wave 1 is parallel foundation work. Wave 2 builds on Wave 1. Wave 3 is the daemon + tests + migration. Review gates between waves.
 
