@@ -27,16 +27,14 @@
 <!-- METRICS:START -->
 <p align="center">
 
-| Metric | 7 days | 24h |
-|--------|--------|-----|
-| Commits | 445 | 38 |
-| Lines changed | 57,462 | 3,917 |
-| Files touched | 1,062 | 80 |
-| Merged PRs | 87 | 10 |
-| npm releases | 68 | 7 |
-| Avg merge time | 3.3h | 5.4h |
+| Metric | Value |
+|--------|-------|
+| Releases / day | 2 |
+| Merged PRs (7d) | 35 |
+| Avg merge time | 0.3h |
+| SHIP rate (7d) | 85% |
 
-*Last updated: 2026-04-07*
+*Last updated: 2026-04-11*
 </p>
 <!-- METRICS:END -->
 
