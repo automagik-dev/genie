@@ -308,9 +308,6 @@ export class OmniBridge {
     const sessionResetSub = this.nc.subscribe('omni.session.reset.>', { queue: 'genie-bridge' });
     this.processSessionResetEvents(sessionResetSub);
 
-    // Start idle session checker
-    this.idleCheckTimer = setInterval(() => this.checkIdleSessions(), IDLE_CHECK_INTERVAL_MS);
-
     // Set uptime anchor before subscribing the ping handler so the first pong
     // reports a non-negative value.
     this.startedAtMs = Date.now();
@@ -430,6 +427,13 @@ export class OmniBridge {
       process.removeListener('SIGTERM', onSignal);
       process.removeListener('SIGINT', onSignal);
     };
+
+    // Arm the idle session checker LAST — after the pidfile write has
+    // succeeded and all prior rollback paths are past. This guarantees
+    // that if any earlier step throws, no timer handle has been created
+    // and there is nothing for the caller (or test harness) to leak.
+    // See issue #1137 for the bun-test-hang this ordering prevents.
+    this.idleCheckTimer = setInterval(() => this.checkIdleSessions(), IDLE_CHECK_INTERVAL_MS);
 
     console.log(
       `[omni-bridge] Listening on omni.message.> (max_concurrent=${this.maxConcurrent}, idle_timeout=${this.idleTimeoutMs}ms)`,
