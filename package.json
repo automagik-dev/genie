@@ -36,7 +36,7 @@
     "ignore": "^7.0.5",
     "js-yaml": "^4.1.1",
     "nats": "^2.29.3",
-    "pgserve": "^1.1.6",
+    "pgserve": "^1.1.8",
     "postgres": "^3.4.8",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
