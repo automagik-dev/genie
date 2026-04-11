@@ -20,11 +20,44 @@
  * pgserve, but this file deliberately avoids it to exercise the error paths).
  */
 
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { NatsConnection, Subscription } from 'nats';
 import type { ExecutorSession, IExecutor, OmniMessage } from '../executor.js';
 
 import { OmniBridge } from '../omni-bridge.js';
+
+// ----------------------------------------------------------------------------
+// Test hygiene — isolate GENIE_HOME per test
+// ----------------------------------------------------------------------------
+// OmniBridge.start() writes a pidfile to `${GENIE_HOME}/state/omni-bridge.json`
+// (via getBridgePidfilePath()). Without per-test isolation the tests collide
+// with any live `genie serve` on the host, triggering deterministic
+// "pidfile locked" failures. Mirrors the pattern used in
+// omni-bridge-pidfile.test.ts. See issue #1137.
+let __tmpGenieHome: string;
+let __origGenieHome: string | undefined;
+
+beforeEach(() => {
+  __tmpGenieHome = mkdtempSync(join(tmpdir(), 'omni-bridge-test-'));
+  __origGenieHome = process.env.GENIE_HOME;
+  process.env.GENIE_HOME = __tmpGenieHome;
+});
+
+afterEach(() => {
+  if (__origGenieHome === undefined) {
+    process.env.GENIE_HOME = undefined;
+  } else {
+    process.env.GENIE_HOME = __origGenieHome;
+  }
+  try {
+    rmSync(__tmpGenieHome, { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
+});
 
 // ----------------------------------------------------------------------------
 // Fakes
