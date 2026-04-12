@@ -69,11 +69,36 @@ fi
 AFTER="${TARGET_DATE} 00:00:00"
 BEFORE="${TARGET_DATE} 23:59:59"
 
+# Pathspec exclusions — keep LoC focused on real source code.
+# Drops vendored deps, build outputs, lockfiles, minified bundles,
+# orphaned worktree artifacts, and the agent's own generated assets.
+# Without these, a single cleanup commit (e.g. 9bf66347 on 2026-03-14
+# which deleted 524k lines of claude worktree artifacts) can dominate
+# an entire 30d window and destroy the signal.
+EXCLUDE_PATHS=(
+  ':(exclude,glob)node_modules/**'
+  ':(exclude,glob)**/node_modules/**'
+  ':(exclude,glob).claude/worktrees/**'
+  ':(exclude,glob).genie/worktrees/**'
+  ':(exclude,glob).worktrees/**'
+  ':(exclude,glob)dist/**'
+  ':(exclude,glob)**/dist/**'
+  ':(exclude,glob)build/**'
+  ':(exclude,glob)**/build/**'
+  ':(exclude,glob).cache/**'
+  ':(exclude,glob)**/*.lock'
+  ':(exclude,glob)**/*.lockb'
+  ':(exclude,glob)**/package-lock.json'
+  ':(exclude,glob)**/*.min.js'
+  ':(exclude,glob)**/*.min.css'
+  ':(exclude,glob).genie/assets/**'
+)
+
 # Commits count (all branches, deduplicated)
 commits=$(git log --all --after="$AFTER" --before="$BEFORE" --oneline | wc -l)
 
-# LoC added/removed via shortstat
-loc_stats=$(git log --all --after="$AFTER" --before="$BEFORE" --shortstat --format="" | \
+# LoC added/removed via shortstat (source files only — see EXCLUDE_PATHS)
+loc_stats=$(git log --all --after="$AFTER" --before="$BEFORE" --shortstat --format="" -- . "${EXCLUDE_PATHS[@]}" | \
   awk '
     /insertion/ {
       for (i=1; i<=NF; i++) {

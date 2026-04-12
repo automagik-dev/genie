@@ -25,7 +25,7 @@
 -->
 
 <!-- METRICS:START -->
-**🚀 230 commits** this week · **40 releases** · **+51.6K LoC** · **7 contributors**
+**🚀 234 commits** this week · **40 releases** · **+49.3K LoC** · **7 contributors**
 <!-- METRICS:END --> · [Full dashboard](VELOCITY.md)
 
 Genie is a CLI that turns one sentence into a finished pull request. You describe what you want — Genie interviews you, writes a plan, spawns parallel agents in isolated worktrees, reviews the code, and opens a PR. You approve. You merge. That's it.

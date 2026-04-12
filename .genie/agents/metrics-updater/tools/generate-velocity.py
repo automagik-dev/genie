@@ -96,6 +96,130 @@ def compute_leaderboard(entries, aliases, days=30):
     return ranked[:15]
 
 
+def compute_version_journey(from_ref, to_ref, label):
+    """Compute stats for a major version milestone (e.g. first commit → v4.260323.1).
+
+    Uses the same pathspec exclusions as collect-stats.sh so LoC isn't
+    dominated by vendored deps / build output / worktree cleanups.
+    """
+    import subprocess
+
+    exclude_paths = [
+        ":(exclude,glob)node_modules/**",
+        ":(exclude,glob)**/node_modules/**",
+        ":(exclude,glob).claude/worktrees/**",
+        ":(exclude,glob).genie/worktrees/**",
+        ":(exclude,glob).worktrees/**",
+        ":(exclude,glob)dist/**",
+        ":(exclude,glob)**/dist/**",
+        ":(exclude,glob)build/**",
+        ":(exclude,glob)**/build/**",
+        ":(exclude,glob).cache/**",
+        ":(exclude,glob)**/*.lock",
+        ":(exclude,glob)**/*.lockb",
+        ":(exclude,glob)**/package-lock.json",
+        ":(exclude,glob)**/*.min.js",
+        ":(exclude,glob)**/*.min.css",
+        ":(exclude,glob).genie/assets/**",
+    ]
+
+    def git(args):
+        try:
+            return subprocess.check_output(["git"] + args, text=True, stderr=subprocess.DEVNULL).strip()
+        except subprocess.CalledProcessError:
+            return ""
+
+    rev_range = f"{from_ref}..{to_ref}" if from_ref else to_ref
+
+    # Use first-parent of to_ref for linear (dev/main) commit count.
+    commits_linear = git(["rev-list", "--count", "--first-parent", rev_range])
+    commits_all = git(["rev-list", "--count", "--all", rev_range])
+    prs_merged = git(["rev-list", "--count", "--merges", "--first-parent", rev_range])
+
+    # LoC with exclusions — use --shortstat then sum manually.
+    shortstat_out = git(["log", rev_range, "--shortstat", "--format="] + ["--"] + ["."] + exclude_paths)
+    added = removed = 0
+    for line in shortstat_out.splitlines():
+        # e.g.  "12 files changed, 123 insertions(+), 45 deletions(-)"
+        tokens = line.split()
+        for i, tok in enumerate(tokens):
+            if "insertion" in tok and i > 0:
+                try:
+                    added += int(tokens[i - 1])
+                except ValueError:
+                    pass
+            if "deletion" in tok and i > 0:
+                try:
+                    removed += int(tokens[i - 1])
+                except ValueError:
+                    pass
+
+    contributors = git(["log", rev_range, "--format=%aN"])
+    contrib_count = len({c for c in contributors.splitlines() if c})
+
+    from_date = git(["log", "-1", "--format=%ai", from_ref]) if from_ref else ""
+    to_date = git(["log", "-1", "--format=%ai", to_ref])
+
+    def _parse_date(s):
+        return s.split(" ")[0] if s else ""
+
+    from_date_short = _parse_date(from_date)
+    to_date_short = _parse_date(to_date)
+
+    days = ""
+    if from_date_short and to_date_short:
+        try:
+            d1 = datetime.strptime(from_date_short, "%Y-%m-%d")
+            d2 = datetime.strptime(to_date_short, "%Y-%m-%d")
+            days = str((d2 - d1).days)
+        except ValueError:
+            days = ""
+
+    return {
+        "label": label,
+        "from": from_ref or "genesis",
+        "to": to_ref,
+        "from_date": from_date_short,
+        "to_date": to_date_short,
+        "days": days,
+        "commits_linear": int(commits_linear) if commits_linear.isdigit() else 0,
+        "commits_all": int(commits_all) if commits_all.isdigit() else 0,
+        "prs_merged": int(prs_merged) if prs_merged.isdigit() else 0,
+        "loc_added": added,
+        "loc_removed": removed,
+        "loc_net": added - removed,
+        "contributors": contrib_count,
+    }
+
+
+def find_first_ref():
+    """Return the first commit SHA in the repo (the genesis)."""
+    import subprocess
+
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-list", "--max-parents=0", "HEAD"], text=True, stderr=subprocess.DEVNULL
+        ).strip().splitlines()
+        return out[0] if out else ""
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def find_first_major_tag(major):
+    """Return the first tag matching vMAJOR.YYMMDD.N pattern, or empty string."""
+    import subprocess
+
+    try:
+        out = subprocess.check_output(
+            ["git", "tag", "--list", f"v{major}.*", "--sort=creatordate"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip().splitlines()
+        return out[0] if out else ""
+    except subprocess.CalledProcessError:
+        return ""
+
+
 def fmt_num(n):
     if abs(n) >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"
@@ -109,7 +233,34 @@ def fmt_signed(n):
     return f"{prefix}{fmt_num(n)}"
 
 
-def generate_velocity_md(summary, cumulative, leaderboard, assets_dir, entries):
+def generate_milestones_section(milestones):
+    """Render the Major Version Milestones table."""
+    if not milestones:
+        return []
+
+    lines = [
+        "---",
+        "",
+        "## Major Version Milestones",
+        "",
+        "> How long did it take to build each major version, from where we were to where we landed.",
+        "",
+        "| Milestone | Period | Days | Commits (linear) | Commits (all) | PRs merged | LoC (net) | Contributors |",
+        "|-----------|--------|-----:|-----------------:|--------------:|-----------:|----------:|-------------:|",
+    ]
+    for m in milestones:
+        period = f"{m['from_date'] or '—'} → {m['to_date'] or '—'}"
+        loc_net = f"{'+' if m['loc_net'] >= 0 else ''}{fmt_num(m['loc_net'])}"
+        lines.append(
+            f"| {m['label']} | {period} | {m['days'] or '—'} | "
+            f"{fmt_num(m['commits_linear'])} | {fmt_num(m['commits_all'])} | "
+            f"{fmt_num(m['prs_merged'])} | {loc_net} | {m['contributors']} |"
+        )
+    lines.append("")
+    return lines
+
+
+def generate_velocity_md(summary, cumulative, leaderboard, assets_dir, entries, milestones=None):
     date_range_start = entries[0]["date"] if entries else "N/A"
     date_range_end = entries[-1]["date"] if entries else "N/A"
     now = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
@@ -161,6 +312,9 @@ def generate_velocity_md(summary, cumulative, leaderboard, assets_dir, entries):
     lines.append(f"*{cumulative['total_contributors']} contributors since {cumulative['first_commit_date']}*")
     lines.append("")
 
+    # Major version milestones (optional)
+    lines.extend(generate_milestones_section(milestones or []))
+
     return "\n".join(lines)
 
 
@@ -197,7 +351,22 @@ def main():
     cumulative = get_cumulative(collect_script)
     leaderboard = compute_leaderboard(entries, aliases)
 
-    md = generate_velocity_md(summary, cumulative, leaderboard, args.assets_dir, entries)
+    # Compute major version milestones. Currently the repo only has
+    # a v3→v4 transition; extend this list when v5 ships.
+    milestones = []
+    first_commit = find_first_ref()
+    first_v4 = find_first_major_tag(4)
+    if first_commit and first_v4:
+        milestones.append(
+            compute_version_journey(first_commit, first_v4, "Genesis → v4 stable")
+        )
+    first_v3 = find_first_major_tag(3)
+    if first_v3 and first_v4:
+        milestones.append(
+            compute_version_journey(first_v3, first_v4, "v3 → v4 (version sprint)")
+        )
+
+    md = generate_velocity_md(summary, cumulative, leaderboard, args.assets_dir, entries, milestones)
 
     with open(args.output, "w") as f:
         f.write(md)
