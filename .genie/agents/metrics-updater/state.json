@@ -1,10 +1,14 @@
 {
-  "last_run": "2026-04-12T00:00:00.000Z",
+  "last_run": "2026-04-12T18:38:51Z",
   "last_run_status": "success",
   "last_metrics": {
     "releases_24h": 0,
     "merged_prs_7d": 5,
     "avg_merge_time_h": 2.5,
     "ship_rate_pct": 100
-  }
+  },
+  "daily_stats_count": 31,
+  "charts_generated": 3,
+  "velocity_md_updated": true,
+  "duration_ms": 732
 }

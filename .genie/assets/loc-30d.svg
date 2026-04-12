@@ -72,6 +72,6 @@
 <rect x="736.3" y="170.0" width="22.3" height="0.0" fill="#f85149" rx="1.5" opacity="0.9"/>
 <rect x="736.3" y="170.0" width="22.3" height="0.0" fill="#3fb950" rx="1.5" opacity="0.9"/>
 <rect x="760.7" y="170.0" width="22.3" height="0.0" fill="#f85149" rx="1.5" opacity="0.9"/>
-<rect x="760.7" y="169.8" width="22.3" height="0.1" fill="#3fb950" rx="1.5" opacity="0.9"/>
+<rect x="760.7" y="169.6" width="22.3" height="0.4" fill="#3fb950" rx="1.5" opacity="0.9"/>
 <text x="771.8" y="195" text-anchor="middle" font-size="10">04-12</text>
 </svg>
