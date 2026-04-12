@@ -229,6 +229,22 @@ export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
 
   const gaps = detectGaps(executors, sessions);
 
+  // Auto-terminate dead-PID executors so stale rows don't block re-spawning.
+  if (gaps.deadPidExecutors.length > 0) {
+    const { terminateExecutor } = await import('../lib/executor-registry.js');
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    await Promise.allSettled(
+      gaps.deadPidExecutors.map(async (exec) => {
+        await terminateExecutor(exec.id);
+        // Clear the agent FK so the duplicate guard won't block new spawns
+        if (exec.agentId) {
+          await sql`UPDATE agents SET current_executor_id = NULL WHERE current_executor_id = ${exec.id}`;
+        }
+      }),
+    );
+  }
+
   return {
     sessions,
     executors,
