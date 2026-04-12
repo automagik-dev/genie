@@ -29,12 +29,12 @@
 
 | Metric | Value |
 |--------|-------|
-| Releases / day | 2 |
-| Merged PRs (7d) | 35 |
-| Avg merge time | 0.3h |
-| SHIP rate (7d) | 85% |
+| Releases / day | 0 |
+| Merged PRs (7d) | 5 |
+| Avg merge time | 2.5h |
+| SHIP rate (7d) | 100% |
 
-*Last updated: 2026-04-11*
+*Last updated: 2026-04-12*
 </p>
 <!-- METRICS:END -->
 
