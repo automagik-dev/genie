@@ -101,16 +101,26 @@ def main():
         f"**{contributors} contributors**"
     )
 
+    # Full block lives INSIDE the markers — nothing after END so GitHub
+    # markdown renders cleanly. Includes the commits chart as a visual
+    # showpiece and a clean "full dashboard" link on its own line.
     replacement = (
         "<!-- METRICS:START -->\n"
         f"{hero_line}\n"
-        "<!-- METRICS:END --> · [Full dashboard](VELOCITY.md)"
+        "\n"
+        "![Commits per day (30d, all branches)](.genie/assets/commits-30d.svg)\n"
+        "\n"
+        "[📊 Full velocity dashboard →](VELOCITY.md)\n"
+        "<!-- METRICS:END -->"
     )
 
     with open(args.readme, "r") as f:
         content = f.read()
 
-    pattern = r"<!-- METRICS:START -->.*?<!-- METRICS:END -->(?:\s*·\s*\[Full dashboard\]\(VELOCITY\.md\))?"
+    # Match the full block including any trailing stray text that previous
+    # broken versions may have placed after the END marker on the same
+    # line (self-healing from the earlier "END --> · [Full dashboard]" bug).
+    pattern = r"<!-- METRICS:START -->.*?<!-- METRICS:END -->[^\n]*"
     new_content, count = re.subn(pattern, replacement, content, flags=re.DOTALL)
 
     if count == 0:
