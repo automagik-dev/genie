@@ -1,34 +1,40 @@
 #!/usr/bin/env bash
-# run-metrics.sh — Main orchestrator for daily metrics update
-# Fetches GitHub metrics, updates README.md, commits, and logs the run.
-# Includes granular step timing for performance analysis and self-refinement.
+# run-metrics.sh — Orchestrator for velocity dashboard metrics pipeline.
 #
-# Usage: bash run-metrics.sh [--dry-run] [--repo-root <path>]
+# Collects git-based metrics, generates SVG charts, builds VELOCITY.md
+# and README hero, then commits and pushes.
+#
+# Usage: bash run-metrics.sh [--dry-run]
+#
+# Steps:
+#   1. collect-stats.sh --date today  → append to daily-stats.jsonl
+#   2. If daily-stats.jsonl has <30 entries → run backfill.sh
+#   3. generate-charts.py             → .genie/assets/*.svg
+#   4. generate-velocity.py           → VELOCITY.md
+#   5. generate-readme-hero.py        → README.md
+#   6. git add + commit + push        (skipped with --dry-run)
+#   7. Update state.json + append to runs.jsonl
 #
 # Exit codes:
-#   0 — Success (README updated and committed)
+#   0 — Success
 #   1 — Fatal error
-#   2 — No changes (metrics unchanged or fallback used with no diff)
 
 set -euo pipefail
 
 # --- Configuration ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_DIR="$(dirname "$SCRIPT_DIR")"
-REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-OWNER="automagik-dev"
-REPO="genie"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
 DRY_RUN=false
-API_CALLS=0
 ERRORS=()
 
-# --- Step Timing Infrastructure ---
+# --- Step Timing ---
 declare -a STEP_NAMES=()
 declare -a STEP_DURATIONS=()
 STEP_START=0
 
 now_ms() {
-  date +%s%3N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1000))'
+  python3 -c 'import time; print(int(time.time()*1000))'
 }
 
 step_start() {
@@ -42,285 +48,197 @@ step_end() {
   local duration=$((end_ms - STEP_START))
   STEP_NAMES+=("$name")
   STEP_DURATIONS+=("$duration")
+  log "  $name: ${duration}ms"
 }
 
 RUN_START=$(now_ms)
 
-# Parse args
+# --- Parse args ---
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=true; shift ;;
-    --repo-root) REPO_ROOT="$2"; shift 2 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
 
 STATE_FILE="$AGENT_DIR/state.json"
 RUNS_FILE="$AGENT_DIR/runs.jsonl"
-README_FILE="$REPO_ROOT/README.md"
-TMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_DIR"' EXIT
+STATS_FILE="$AGENT_DIR/daily-stats.jsonl"
+ASSETS_DIR="$REPO_ROOT/.genie/assets"
 
 log() { echo "[metrics-updater] $*" >&2; }
 log_error() { ERRORS+=("$1"); log "ERROR: $1"; }
 
-# --- Helper: safe gh API call with counting ---
-gh_api() {
-  local endpoint="$1"
-  shift
-  API_CALLS=$((API_CALLS + 1))
-  gh api "$endpoint" "$@"
+# --- Step 1: Collect today's stats ---
+step_start
+log "Step 1: Collecting stats for today..."
+TODAY=$(date +%Y-%m-%d)
+TODAY_STATS=$(bash "$SCRIPT_DIR/collect-stats.sh" --date "$TODAY") || {
+  log_error "collect-stats.sh failed"
+  exit 1
 }
 
-# --- Step 1: Load previous state for fallback ---
+# Remove existing entry for today (idempotent), then append
+if [[ -f "$STATS_FILE" ]]; then
+  tmp=$(mktemp)
+  grep -v "\"date\":\"$TODAY\"" "$STATS_FILE" > "$tmp" || true
+  mv "$tmp" "$STATS_FILE"
+fi
+echo "$TODAY_STATS" >> "$STATS_FILE"
+log "  Today's stats: $TODAY_STATS"
+step_end "collect_stats"
+
+# --- Step 2: Backfill if <30 entries ---
 step_start
-log "Loading state from $STATE_FILE"
-LAST_METRICS=""
-if [[ -f "$STATE_FILE" ]]; then
-  LAST_METRICS=$(python3 -c "
-import json, sys
-with open('$STATE_FILE') as f:
-    s = json.load(f)
-m = s.get('last_metrics')
-if m:
-    print(json.dumps(m))
-" 2>/dev/null || true)
-fi
-step_end "load_state"
-
-# --- Step 2: Fetch metrics from GitHub API ---
-FETCH_OK=true
-
-# 2a: Releases in last 24h
-step_start
-log "Fetching releases..."
-RELEASES_JSON="$TMP_DIR/releases.json"
-if gh_api "repos/$OWNER/$REPO/releases" --paginate > "$RELEASES_JSON" 2>&1; then
-  log "Releases fetched OK"
-else
-  log_error "Failed to fetch releases"
-  FETCH_OK=false
-fi
-step_end "fetch_releases"
-
-# 2b: Closed/merged PRs in last 7 days
-step_start
-log "Fetching merged PRs..."
-PRS_JSON="$TMP_DIR/prs.json"
-if gh_api "repos/$OWNER/$REPO/pulls?state=closed&sort=updated&direction=desc&per_page=100" \
-    > "$PRS_JSON" 2>&1; then
-  log "PRs fetched OK"
-else
-  log_error "Failed to fetch PRs"
-  FETCH_OK=false
-fi
-step_end "fetch_prs"
-
-# 2c: Parallel agents (count active genie workers or tmux sessions)
-step_start
-log "Counting parallel agents..."
-PARALLEL_AGENTS=0
-if command -v genie &>/dev/null; then
-  # Count active workers from the worker registry
-  WORKERS_FILE="${GENIE_HOME:-$HOME/.genie}/workers.json"
-  if [[ -f "$WORKERS_FILE" ]]; then
-    PARALLEL_AGENTS=$(python3 -c "
-import json
-with open('$WORKERS_FILE') as f:
-    workers = json.load(f)
-active = [w for w in workers if w.get('status') in ('running', 'active', 'idle')]
-print(len(active))
-" 2>/dev/null || echo 0)
-  fi
-fi
-# Fallback: count tmux sessions with genie prefix
-if [[ "$PARALLEL_AGENTS" == "0" ]] && command -v tmux &>/dev/null; then
-  PARALLEL_AGENTS=$(tmux list-sessions 2>/dev/null | grep -c 'genie' || echo 0)
-fi
-log "Parallel agents: $PARALLEL_AGENTS"
-step_end "count_agents"
-
-# --- Step 3: Parse and calculate metrics ---
-METRICS_JSON="$TMP_DIR/metrics.json"
-step_start
-if [[ "$FETCH_OK" == "true" ]]; then
-  log "Calculating metrics..."
-  if python3 "$SCRIPT_DIR/parse-metrics.py" \
-      --releases-json "$RELEASES_JSON" \
-      --prs-json "$PRS_JSON" \
-      --parallel-agents "$PARALLEL_AGENTS" \
-      --repo-root "$REPO_ROOT" \
-      --owner "$OWNER" \
-      --repo "$REPO" \
-      -o "$METRICS_JSON"; then
-    log "Metrics calculated OK"
-  else
-    log_error "Metrics calculation failed"
-    FETCH_OK=false
-  fi
-fi
-step_end "parse_metrics"
-
-# --- Step 3b: Fallback to last known metrics ---
-if [[ "$FETCH_OK" != "true" ]]; then
-  step_start
-  log "Falling back to cached metrics..."
-  if [[ -n "$LAST_METRICS" ]]; then
-    echo "$LAST_METRICS" > "$METRICS_JSON"
-    log "Using cached metrics from state.json"
-  else
-    log_error "No cached metrics available — cannot update README"
-    # Log the failed run with step data
-    RUN_END=$(now_ms)
-    DURATION=$((RUN_END - RUN_START))
-    STEPS_JSON=$(python3 -c "
-import json
-names = $(printf '%s\n' "${STEP_NAMES[@]}" | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin]))")
-durs = $(printf '%s\n' "${STEP_DURATIONS[@]}" | python3 -c "import sys,json; print(json.dumps([int(l.strip()) for l in sys.stdin]))")
-print(json.dumps([{'name':n,'duration_ms':d} for n,d in zip(names,durs)]))
-")
-    ERRORS_JSON=$(printf '%s\n' "${ERRORS[@]}" | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin]))")
-    echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"duration_ms\":$DURATION,\"api_calls\":$API_CALLS,\"tools_generated\":0,\"errors\":$ERRORS_JSON,\"status\":\"failed\",\"fallback\":true,\"steps\":$STEPS_JSON}" >> "$RUNS_FILE"
+ENTRY_COUNT=$(wc -l < "$STATS_FILE" | tr -d ' ')
+log "Step 2: daily-stats.jsonl has $ENTRY_COUNT entries"
+if [[ "$ENTRY_COUNT" -lt 30 ]]; then
+  log "  Running backfill (need 30, have $ENTRY_COUNT)..."
+  bash "$SCRIPT_DIR/backfill.sh" || {
+    log_error "backfill.sh failed"
     exit 1
-  fi
-  step_end "fallback_load"
+  }
+  ENTRY_COUNT=$(wc -l < "$STATS_FILE" | tr -d ' ')
+  log "  After backfill: $ENTRY_COUNT entries"
 fi
+step_end "backfill_check"
 
-# --- Step 4: Update README ---
+# --- Step 3: Generate SVG charts ---
 step_start
-log "Updating README at $README_FILE..."
-README_CHANGED=false
-if python3 "$SCRIPT_DIR/update-readme.py" --metrics "$METRICS_JSON" --readme "$README_FILE"; then
-  README_CHANGED=true
-fi
-step_end "update_readme"
+log "Step 3: Generating SVG charts..."
+mkdir -p "$ASSETS_DIR"
+python3 "$SCRIPT_DIR/generate-charts.py" \
+  --input "$STATS_FILE" \
+  --output-dir "$ASSETS_DIR" || {
+  log_error "generate-charts.py failed"
+  exit 1
+}
+CHARTS_COUNT=$(find "$ASSETS_DIR" -name '*.svg' | wc -l | tr -d ' ')
+log "  Generated $CHARTS_COUNT charts in $ASSETS_DIR"
+step_end "generate_charts"
 
-# --- Step 5: Update state.json ---
+# --- Step 4: Generate VELOCITY.md ---
 step_start
-log "Updating state.json..."
-METRICS_CONTENT=$(cat "$METRICS_JSON")
-python3 -c "
-import json
-from datetime import datetime, timezone
-with open('$STATE_FILE') as f:
-    state = json.load(f)
-state['last_metrics'] = json.loads('''$METRICS_CONTENT''')
-state['last_run_at'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-state['run_count'] = state.get('run_count', 0) + 1
-with open('$STATE_FILE', 'w') as f:
-    json.dump(state, f, indent=2)
-    f.write('\n')
-"
-log "State updated"
-step_end "update_state"
+log "Step 4: Generating VELOCITY.md..."
+python3 "$SCRIPT_DIR/generate-velocity.py" \
+  --stats-dir "$AGENT_DIR" \
+  --assets-dir ".genie/assets" \
+  --output "$REPO_ROOT/VELOCITY.md" || {
+  log_error "generate-velocity.py failed"
+  exit 1
+}
+step_end "generate_velocity"
 
-# --- Step 6: Commit (if not dry-run and README changed) ---
+# --- Step 5: Generate README hero ---
+step_start
+log "Step 5: Updating README.md hero..."
+python3 "$SCRIPT_DIR/generate-readme-hero.py" \
+  --stats-dir "$AGENT_DIR" \
+  --readme "$REPO_ROOT/README.md" || {
+  log_error "generate-readme-hero.py failed"
+  exit 1
+}
+step_end "generate_readme"
+
+# --- Step 6: Git commit + push ---
 step_start
 if [[ "$DRY_RUN" == "true" ]]; then
-  log "DRY RUN — skipping commit"
-  cat "$METRICS_JSON"
-elif [[ "$README_CHANGED" == "true" ]]; then
-  log "Generating commit message..."
-  COMMIT_MSG=$(bash "$SCRIPT_DIR/commit-formatter.sh" "$METRICS_JSON")
-  log "Committing: $COMMIT_MSG"
-
-  cd "$REPO_ROOT"
-  git add README.md
-  git add .genie/agents/metrics-updater/state.json
-  git commit -m "$COMMIT_MSG"
-  log "Committed successfully"
+  log "Step 6: DRY RUN — skipping commit/push"
 else
-  log "No README changes — skipping commit"
-fi
-step_end "commit"
+  log "Step 6: Committing and pushing..."
+  cd "$REPO_ROOT"
 
-# --- Step 7: Build step timing JSON and find slowest step ---
+  # Build compact commit summary from today's stats
+  COMMITS=$(echo "$TODAY_STATS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['commits'])")
+  RELEASES=$(echo "$TODAY_STATS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['releases'])")
+  LOC_ADDED=$(echo "$TODAY_STATS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['loc_added'])")
+  LOC_REMOVED=$(echo "$TODAY_STATS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['loc_removed'])")
+
+  COMMIT_MSG="chore: update live metrics (${COMMITS} commits, ${RELEASES} releases, +${LOC_ADDED}/-${LOC_REMOVED} LoC)"
+
+  git add README.md VELOCITY.md .genie/assets/ .genie/agents/metrics-updater/daily-stats.jsonl .genie/agents/metrics-updater/state.json
+  git commit -m "$COMMIT_MSG" || log "No changes to commit"
+  git push || log_error "git push failed"
+fi
+step_end "commit_push"
+
+# --- Step 7: Update state.json + runs.jsonl ---
+step_start
+log "Step 7: Updating state.json and runs.jsonl..."
+
 RUN_END=$(now_ms)
 DURATION=$((RUN_END - RUN_START))
 
-# Build CSV env vars for step timing
-STEP_NAMES_CSV=""
-STEP_DURS_CSV=""
-for i in "${!STEP_NAMES[@]}"; do
-  [[ -n "$STEP_NAMES_CSV" ]] && STEP_NAMES_CSV+=","
-  STEP_NAMES_CSV+="${STEP_NAMES[$i]}"
-  [[ -n "$STEP_DURS_CSV" ]] && STEP_DURS_CSV+=","
-  STEP_DURS_CSV+="${STEP_DURATIONS[$i]}"
-done
+# Build steps JSON
+STEPS_JSON=$(python3 -c "
+import json
+names = $(printf '%s\n' "${STEP_NAMES[@]}" | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
+durs = $(printf '%s\n' "${STEP_DURATIONS[@]}" | python3 -c "import sys,json; print(json.dumps([int(l.strip()) for l in sys.stdin if l.strip()]))")
+print(json.dumps([{'name':n,'duration_ms':d} for n,d in zip(names,durs)]))
+")
 
-# Re-run with actual data
-STEPS_JSON=$(STEP_NAMES_CSV="$STEP_NAMES_CSV" STEP_DURS_CSV="$STEP_DURS_CSV" python3 << 'PYEOF'
-import json, os
-
-names_raw = os.environ.get('STEP_NAMES_CSV', '')
-durs_raw = os.environ.get('STEP_DURS_CSV', '')
-
-names = [n for n in names_raw.split(',') if n]
-durs = [int(d) for d in durs_raw.split(',') if d]
-
-steps = [{'name': n, 'duration_ms': d} for n, d in zip(names, durs)]
-print(json.dumps(steps))
-PYEOF
-)
-
-# Find slowest step
-SLOWEST_STEP=$(STEP_NAMES_CSV="$STEP_NAMES_CSV" STEP_DURS_CSV="$STEP_DURS_CSV" python3 << 'PYEOF'
-import os
-
-names = [n for n in os.environ.get('STEP_NAMES_CSV', '').split(',') if n]
-durs = [int(d) for d in os.environ.get('STEP_DURS_CSV', '').split(',') if d]
-
-if names and durs:
-    max_idx = durs.index(max(durs))
-    print(names[max_idx])
-else:
-    print("unknown")
-PYEOF
-)
-
-# --- Step 8: Log run with full performance data ---
 ERRORS_JSON="[]"
 if [[ ${#ERRORS[@]} -gt 0 ]]; then
-  ERRORS_JSON=$(printf '%s\n' "${ERRORS[@]}" | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin]))")
+  ERRORS_JSON=$(printf '%s\n' "${ERRORS[@]}" | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
 fi
+
 RUN_STATUS="success"
-[[ "$README_CHANGED" != "true" ]] && RUN_STATUS="no_changes"
-FALLBACK_USED="False"
-[[ "$FETCH_OK" != "true" ]] && FALLBACK_USED="True"
-
-# Count tools in the tools directory (excluding run-metrics.sh itself)
-TOOLS_COUNT=$(find "$SCRIPT_DIR" -type f \( -name '*.sh' -o -name '*.py' \) ! -name 'run-metrics.sh' | wc -l | tr -d ' ')
-
-METRICS_CONTENT=$(cat "$METRICS_JSON")
+[[ ${#ERRORS[@]} -gt 0 ]] && RUN_STATUS="partial"
 
 python3 << PYEOF
 import json
 from datetime import datetime, timezone
 
-entry = {
-    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+entry_count = 0
+with open("$STATS_FILE") as f:
+    entry_count = sum(1 for line in f if line.strip())
+
+# Update state.json
+state = {}
+try:
+    with open("$STATE_FILE") as f:
+        state = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    pass
+
+state["last_run"] = now
+state["last_run_status"] = "$RUN_STATUS"
+state["daily_stats_count"] = entry_count
+state["charts_generated"] = $CHARTS_COUNT
+state["velocity_md_updated"] = True
+state["duration_ms"] = $DURATION
+
+with open("$STATE_FILE", "w") as f:
+    json.dump(state, f, indent=2)
+    f.write("\n")
+
+# Append to runs.jsonl
+run_entry = {
+    "timestamp": now,
     "duration_ms": $DURATION,
-    "api_calls": $API_CALLS,
-    "tools_generated": 0,
-    "tools_available": $TOOLS_COUNT,
-    "errors": json.loads('$ERRORS_JSON'),
     "status": "$RUN_STATUS",
-    "fallback": $FALLBACK_USED,
-    "slowest_step": "$SLOWEST_STEP",
+    "dry_run": $( [[ "$DRY_RUN" == "true" ]] && echo "True" || echo "False" ),
+    "daily_stats_count": entry_count,
+    "charts_generated": $CHARTS_COUNT,
+    "velocity_md_updated": True,
+    "errors": json.loads('$ERRORS_JSON'),
     "steps": json.loads('$STEPS_JSON'),
-    "metrics": json.loads('''$METRICS_CONTENT''')
 }
 
 with open("$RUNS_FILE", "a") as f:
-    f.write(json.dumps(entry) + "\n")
+    f.write(json.dumps(run_entry) + "\n")
+
+print(f"[metrics-updater] State updated: {entry_count} stats, {$CHARTS_COUNT} charts", file=__import__('sys').stderr)
 PYEOF
 
-log "Run complete: ${DURATION}ms, ${API_CALLS} API calls, status=$RUN_STATUS, slowest=$SLOWEST_STEP"
+step_end "update_state"
 
-# Print step breakdown
+# --- Summary ---
+RUN_END=$(now_ms)
+TOTAL=$((RUN_END - RUN_START))
+log "Run complete: ${TOTAL}ms total, status=$RUN_STATUS"
 log "Step breakdown:"
 for i in "${!STEP_NAMES[@]}"; do
   log "  ${STEP_NAMES[$i]}: ${STEP_DURATIONS[$i]}ms"
 done
-
-cat "$METRICS_JSON"
