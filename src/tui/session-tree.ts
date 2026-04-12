@@ -217,6 +217,10 @@ function deriveWsAgentState(session: TmuxSession | undefined, agentExecutors: Tu
     if (exec.state === 'spawning') return 'spawning';
   }
 
+  // Session exists but no live Claude panes and no active executors — agent is stopped.
+  // This catches stale shell-only sessions left after Claude exits.
+  if (agentExecutors.length === 0) return 'stopped';
+
   return 'running';
 }
 

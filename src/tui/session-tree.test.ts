@@ -87,7 +87,7 @@ describe('buildWorkspaceTree', () => {
       sessionName: 'sofia',
       index: 1,
       name: 'work',
-      panes: [makePane({ sessionName: 'sofia', windowIndex: 1, paneId: '%1' })],
+      panes: [makePane({ sessionName: 'sofia', windowIndex: 1, paneId: '%1', command: 'claude', title: 'claude' })],
     });
     const sofiaSession = makeSession('sofia', [win0, win1]);
 
@@ -108,6 +108,26 @@ describe('buildWorkspaceTree', () => {
     const vegapunk = tree.find((n) => n.label === 'vegapunk')!;
     expect(vegapunk.wsAgentState).toBe('stopped');
     expect(vegapunk.children).toHaveLength(0);
+  });
+
+  test('session with only shell panes and no executors shows as stopped', () => {
+    const win0 = makeWindow({ sessionName: 'sofia', index: 0, name: 'home' });
+    const win1 = makeWindow({
+      sessionName: 'sofia',
+      index: 1,
+      name: 'work',
+      panes: [makePane({ sessionName: 'sofia', windowIndex: 1, paneId: '%1' })],
+    });
+    const sofiaSession = makeSession('sofia', [win0, win1]);
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['sofia'],
+      sessions: [sofiaSession],
+      executors: [],
+    });
+
+    const sofia = tree.find((n) => n.label === 'sofia')!;
+    expect(sofia.wsAgentState).toBe('stopped');
   });
 
   test('executor state reflected on agent nodes', () => {

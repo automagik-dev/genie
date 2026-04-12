@@ -685,8 +685,8 @@ function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, wi
     if (onTmuxSessionSelect) {
       attachSpawnedAgentWhenReady(sessionName, onTmuxSessionSelect);
     }
-  } catch {
-    // best-effort spawn
+  } catch (err) {
+    console.error(`TUI: spawn failed for ${name}:`, err instanceof Error ? err.message : err);
   }
 }
 

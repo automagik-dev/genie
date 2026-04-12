@@ -547,9 +547,30 @@ if (isTuiPane) {
 
 // Default command: genie (no args) → TUI + agent routing based on cwd.
 if (args.length === 0) {
-  // Guard against nested tmux cascade — running `genie` inside the TUI right pane
+  // Already inside the TUI — resolve agent from cwd and signal navigation instead of erroring.
   if (process.env.TMUX?.includes('genie-tui')) {
-    console.log('Already inside the genie TUI. Use Ctrl-b d to detach, or run genie commands directly.');
+    const { findWorkspace } = await import('./lib/workspace.js');
+    const ws = findWorkspace();
+    if (ws) {
+      const { resolveAgentFromCwd } = await import('./lib/resolve-agent-cwd.js');
+      const resolved = resolveAgentFromCwd(process.cwd(), ws.root);
+      if (resolved.source !== 'default') {
+        // Write signal file so the running TUI navigates to this agent
+        const { writeFileSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const home = process.env.GENIE_HOME ?? join((await import('node:os')).homedir(), '.genie');
+        try {
+          writeFileSync(join(home, 'tui-initial-agent'), resolved.agent, 'utf-8');
+        } catch {
+          // best-effort
+        }
+        console.log(`Navigating to ${resolved.agent}...`);
+      } else {
+        console.log('Already inside the genie TUI. Use Ctrl-b d to detach, or run genie commands directly.');
+      }
+    } else {
+      console.log('Already inside the genie TUI. Use Ctrl-b d to detach, or run genie commands directly.');
+    }
     process.exit(0);
   }
   if (process.env.TMUX) {
