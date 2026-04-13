@@ -5,7 +5,7 @@
 | **Status** | SHIPPED — PR #957 (v4 Stability Sprint, 2026-04-02) |
 | **Slug** | `v4-hook-cli-safety` |
 | **Date** | 2026-03-31 |
-| **Design** | [audit-db-cli.md](../../brainstorms/sprint-next/audit-db-cli.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 
 ## Summary
 Fix 1 P0 security issue and 3 P1 reliability issues in the hook system and CLI dispatch. Hook handler errors silently return `undefined` (allow), which means a crashed `branch-guard` bypasses protection. Wish/brainstorm slugs accept path traversal. Auto-spawn handler has no error boundaries.

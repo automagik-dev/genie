@@ -5,7 +5,7 @@
 | **Status** | SHIPPED — PR #956 (v4 Stability Sprint, 2026-04-02) |
 | **Slug** | `v4-session-executor` |
 | **Date** | 2026-03-31 |
-| **Design** | [audit-tui.md](../../brainstorms/sprint-next/audit-tui.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 
 ## Summary
 Fix 4 P0 and 6 P1 bugs in session creation, executor lifecycle, and tmux state management. These cause running agents to be killed on session attach, orphaned executor records, and DB-tmux state desynchronization. This is the most critical stability surface — every agent reboot triggers these code paths.

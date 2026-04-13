@@ -5,7 +5,7 @@
 | **Status** | SHIPPED (verified 2026-04-08) |
 | **Slug** | `omni-skill-upgrade` |
 | **Date** | 2026-04-06 |
-| **Design** | [DESIGN.md](../../brainstorms/omni-skill-upgrade/DESIGN.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 | **Repo** | `automagik-dev/omni` |
 | **PR** | automagik-dev/omni#356 |
 | **Depends-on** | `omni-turn-based-dx` (PRs #353-355 for CLI verbs) |

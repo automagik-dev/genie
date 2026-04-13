@@ -5,7 +5,7 @@
 | **Status** | DRAFT |
 | **Slug** | `velocity-dashboard` |
 | **Date** | 2026-04-12 |
-| **Design** | [DESIGN.md](../../brainstorms/velocity-dashboard/DESIGN.md) |
+| **Design** | [DESIGN.md](../../../brainstorms/velocity-dashboard/DESIGN.md) |
 
 ## Summary
 

@@ -5,7 +5,7 @@
 | **Status** | SHIPPED (verified 2026-04-08) |
 | **Slug** | `genie-layout-migration` |
 | **Date** | 2026-04-07 |
-| **Design** | [DESIGN.md](../../brainstorms/genie-layout-migration/DESIGN.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 
 ## Summary
 
