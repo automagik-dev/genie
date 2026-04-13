@@ -114,8 +114,13 @@ Triggered automatically when WRS = 100.
    3. **Scope check** — focused enough for a single wish? If it spans multiple independent subsystems, split before proceeding.
    4. **Ambiguity check** — could any requirement be interpreted two different ways? Tighten the language.
    Fix issues inline in the DESIGN.md, then continue.
-3. Update `.genie/brainstorm.md` — move item to Poured with wish link.
-4. Auto-invoke `/review` (plan review) on the `DESIGN.md`.
+3. **Stage both files for commit:**
+   ```bash
+   git add .genie/brainstorms/<slug>/DESIGN.md .genie/brainstorms/<slug>/DRAFT.md
+   ```
+   Per `.gitignore`, only `DESIGN.md` and `DRAFT.md` are trackable under `.genie/brainstorms/*/` — no force-add needed. Other brainstorm artifacts (session notes, transcripts, scratchpads) remain workspace-local.
+4. Update `.genie/brainstorm.md` — move item to Poured with wish link.
+5. Auto-invoke `/review` (plan review) on the `DESIGN.md`.
 
 ## Output Options
 
@@ -212,3 +217,4 @@ genie task comment #<seq> "Draft: .genie/brainstorms/<slug>/DRAFT.md"
 - Never assume requirements without confirmation.
 - No implementation during brainstorm.
 - Persist early and often — do not wait until the end.
+- Always `git add` both `DESIGN.md` and `DRAFT.md` on crystallize — the `wishes-lint` linter will fail CI on any wish that links to an uncommitted brainstorm.

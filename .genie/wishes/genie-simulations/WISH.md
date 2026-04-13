@@ -5,7 +5,7 @@
 | **Status** | DRAFT |
 | **Slug** | `genie-simulations` |
 | **Date** | 2026-04-09 |
-| **Design** | [DESIGN.md](../../brainstorms/genie-simulations/DRAFT.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 
 ## Summary
 

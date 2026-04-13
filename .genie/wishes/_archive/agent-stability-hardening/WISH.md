@@ -5,7 +5,7 @@
 | **Status** | SHIPPED |
 | **Slug** | `agent-stability-hardening` |
 | **Date** | 2026-04-08 |
-| **Design** | [DESIGN.md](../../brainstorms/agent-stability-hardening/DESIGN.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 | **GitHub Issues** | #1094, #1093, #1064 |
 | **Repo** | automagik-dev/genie |
 

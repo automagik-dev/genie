@@ -5,7 +5,7 @@
 | **Status** | DRAFT |
 | **Slug** | `x-tool` |
 | **Date** | 2026-03-26 |
-| **Design** | [DESIGN.md](../../brainstorms/x-tool/DESIGN.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 | **Omni Issue** | automagik-dev/omni#306 |
 | **Blocks** | Viralizador wish (needs `xt post` for content loop) |
 
