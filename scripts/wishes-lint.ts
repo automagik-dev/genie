@@ -13,10 +13,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const WISHES_DIR = join(ROOT, '.genie/wishes');
 
-const STUB_MARKERS = [
-  '_No brainstorm — direct wish_',
-  '_Design not recovered',
-];
+const STUB_MARKERS = ['_No brainstorm — direct wish_', '_Design not recovered'];
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -73,7 +70,7 @@ function lintFile(file: string): BrokenLink[] {
     while (m !== null) {
       const linkText = m[1];
       const target = m[2].split('#')[0].split(' ')[0];
-      if (target && target.includes('brainstorms/')) {
+      if (target?.includes('brainstorms/')) {
         if (/^https?:\/\//i.test(target)) {
           m = linkRe.exec(line);
           continue;
@@ -109,9 +106,7 @@ function main() {
     for (const b of allBroken) {
       console.error(`${relative(ROOT, b.file)}:${b.line}: ${b.text} → ${b.target}`);
     }
-    console.error(
-      `\nwishes-lint: ${allBroken.length} broken brainstorm link(s) across ${files.length} wish file(s)`,
-    );
+    console.error(`\nwishes-lint: ${allBroken.length} broken brainstorm link(s) across ${files.length} wish file(s)`);
     process.exit(1);
   }
 
