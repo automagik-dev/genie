@@ -5,7 +5,7 @@
 | **Status** | DRAFT |
 | **Slug** | `crew-simplification` |
 | **Date** | 2025-03-25 |
-| **Design** | [DESIGN.md](../../brainstorms/crew-simplification/DESIGN.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 
 ## Summary
 

@@ -5,7 +5,7 @@
 | **Status** | DRAFT |
 | **Slug** | `genie-app` |
 | **Date** | 2026-03-29 |
-| **Design** | [DRAFT.md](../../brainstorms/genie-cockpit-app/DRAFT.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 | **depends-on** | `genie-executor-model` (DONE), `genie-comms-protocol` (DONE) |
 | **Repo** | `automagik-dev/genie` (lives in the genie CLI repo, khal-os app pattern) |
 | **Replaces** | `genie-tui-v1` (OpenTUI+tmux — deprecated), all TUI v2 screen wishes |

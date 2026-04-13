@@ -5,7 +5,7 @@
 | **Status** | SHIPPED — PR #962 (v4 Stability Sprint, 2026-04-02) |
 | **Slug** | `v4-team-lifecycle` |
 | **Date** | 2026-03-31 |
-| **Design** | [audit-orchestration.md](../../brainstorms/sprint-next/audit-orchestration.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 
 ## Summary
 Fix 3 P0 and 4 P1 bugs in team management, worktree handling, and the scheduler daemon. These cause repository corruption from unsafe worktree removal, zombie workers writing to archived teams, permanently deadlocked scheduler triggers, and orphaned wish state on team disband.

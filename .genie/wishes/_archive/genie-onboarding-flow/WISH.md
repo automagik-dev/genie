@@ -5,8 +5,8 @@
 | **Status** | SHIPPED |
 | **Slug** | `genie-onboarding-flow` |
 | **Date** | 2026-04-06 |
-| **Design** | [DESIGN.md](../../brainstorms/genie-onboarding-flow/DESIGN.md) |
-| **Parent** | [onboarding-overhaul](../../brainstorms/onboarding-overhaul/DRAFT.md) (sub-wish 2 of 3) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
+| **Parent** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ (sub-wish 2 of 3) |
 | **Depends-on** | `genie-model-resolution` (must ship first — provides `BUILTIN_DEFAULTS`, `resolveField`, `computeEffectiveDefaults`, sectioned `workspace.json`) |
 | **Blocks** | `genie-layout-migration` |
 | **Repo** | `@automagik/genie` at `/home/genie/workspace/repos/genie` |
@@ -40,7 +40,7 @@ Make genie self-bootstrapping: every `genie` command detects missing workspaces 
 
 ## Decisions
 
-All 14 decisions from [DESIGN.md](../../brainstorms/genie-onboarding-flow/DESIGN.md) — see D1–D14 there.
+All 14 decisions from _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ — see D1–D14 there.
 
 | # | Decision | Summary |
 |---|----------|---------|

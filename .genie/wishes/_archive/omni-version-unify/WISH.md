@@ -5,7 +5,7 @@
 | **Status** | SHIPPED — PR #356 merged to main (2026-04-06) |
 | **Slug** | `omni-version-unify` |
 | **Date** | 2026-04-06 |
-| **Design** | [DESIGN.md](../../brainstorms/omni-version-unify/DESIGN.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 | **Repo** | `automagik-dev/omni` |
 | **Bundles into** | automagik-dev/omni#356 (in review) |
 | **Depends-on** | none |

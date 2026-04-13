@@ -5,7 +5,7 @@
 | **Status** | SHIPPED — PR #954 (v4 Stability Sprint, 2026-04-02) |
 | **Slug** | `v4-database-layer` |
 | **Date** | 2026-03-31 |
-| **Design** | [audit-db-cli.md](../../brainstorms/sprint-next/audit-db-cli.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 
 ## Summary
 Fix 2 P0 SQL injection vulnerabilities and 3 P1 database reliability issues. The import command accepts user-supplied JSON with unvalidated table names passed directly to `sql.unsafe()`. The connection pool can exhaust under load. Data tables grow unbounded with no retention. Database restore is non-atomic.
