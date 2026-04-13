@@ -218,7 +218,9 @@ grep -q 'wishes-lint\|linter will fail\|CI on any wish' skills/brainstorm/SKILL.
 bun run skills:lint 2>&1 | tail -5
 ```
 
-**depends-on:** Group 2 (needs the `.gitignore` rule to exist so `git add` works without force)
+**depends-on:** Group 2
+
+**Dependency rationale:** needs the `.gitignore` rule to exist so `git add` works without force.
 
 ---
 
@@ -273,7 +275,9 @@ bun run skills:lint || (echo "FAIL: skills-lint regressed" && exit 1)
 echo "Group 4 validation: PASS"
 ```
 
-**depends-on:** Group 1 (needs the linter to identify broken links), Group 2 (needs gitignore narrow so backfilled files can be committed). **NOT dependent on G3** — G3 and G4 are independent skill edits and can run in parallel in Wave 2.
+**depends-on:** Group 1, Group 2
+
+**Parallelism note:** G4 is NOT dependent on G3 — they're independent skill edits in separate files (`skills/wish/SKILL.md` vs `skills/brainstorm/SKILL.md`) and can run concurrently in Wave 2.
 
 ---
 
@@ -310,7 +314,9 @@ mv .genie/brainstorms/brainstorm-links-convention/DESIGN.md{.bak,}
 echo "Group 5 validation: PASS"
 ```
 
-**depends-on:** Group 4 (needs backfill complete so the linter passes on dev)
+**depends-on:** Group 4
+
+**Dependency rationale:** needs backfill complete so the linter passes on dev before CI enforcement turns on.
 
 ---
 
