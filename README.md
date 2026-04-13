@@ -25,11 +25,20 @@
 -->
 
 <!-- METRICS:START -->
-**🚀 234 commits** this week · **40 releases** · **+49.3K LoC** · **7 contributors**
+**🚀 9 merged PRs (7d)** · **0 releases (24h)** · **1.4h avg merge time** · **100% SHIP rate**
+
+| Metric | Value |
+|--------|-------|
+| Merged PRs (7d) | 9 |
+| Releases (24h) | 0 |
+| Avg merge time | 1.4h |
+| SHIP rate | 100% |
 
 ![Commits per day (30d, all branches)](.genie/assets/commits-30d.svg)
 
 [📊 Full velocity dashboard →](VELOCITY.md)
+
+*Last updated: 2026-04-13*
 <!-- METRICS:END -->
 
 Genie is a CLI that turns one sentence into a finished pull request. You describe what you want — Genie interviews you, writes a plan, spawns parallel agents in isolated worktrees, reviews the code, and opens a PR. You approve. You merge. That's it.
