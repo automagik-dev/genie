@@ -5,7 +5,7 @@
 | **Status** | SHIPPED — PR #958 + #994 (v4 Stability Sprint, 2026-04-02) |
 | **Slug** | `v4-spawn-resilience` |
 | **Date** | 2026-03-31 |
-| **Design** | [audit-tui.md](../../brainstorms/sprint-next/audit-tui.md), [DRAFT.md](../../brainstorms/sprint-next/DRAFT.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._, _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 
 ## Summary
 Fix two related problems: (1) agents getting permanently stuck in `spawning` state with no pane/session — caused by spawn failures that leave zombie DB rows with no recovery path, and (2) leader identity hardcoded as `'team-lead'` across 27 references in 13 files — causing permission requests to route to a nonexistent agent when the actual leader has a different name (khal-os, sofia, etc.). Both produce the same symptom: agents stuck, unable to interact.

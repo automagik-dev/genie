@@ -57,7 +57,11 @@ yarn-error.log*
 # Local genie state (not part of the package)
 .genie/agents.json
 .genie/teams/
-.genie/brainstorms/
+.genie/brainstorms/**
+!.genie/brainstorms/*/
+!.genie/brainstorms/*/DESIGN.md
+!.genie/brainstorms/*/DRAFT.md
+!.genie/brainstorms/README.md
 
 # Team runtime state
 .genie/mailbox/

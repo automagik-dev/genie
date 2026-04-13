@@ -77,12 +77,13 @@ Every wish on dev carries a `[DESIGN.md](../../brainstorms/<slug>/DESIGN.md)` li
 | 3 | engineer | **`/brainstorm` skill update** — crystallize step stages `DESIGN.md` + `DRAFT.md` via `git add` |
 | 4 | engineer | **`/wish` skill update + backfill pass** — pre-flight verify, stub fallback, manual triage of broken links, backfill Category A, stub Category B |
 
-### Wave 3 (sequential — final wiring and review)
+### Wave 3 (sequential — final wiring)
 
 | Group | Agent | Description |
 |-------|-------|-------------|
 | 5 | engineer | **Wire `wishes:lint` into `bun run check`** — only safe after G4 backfill makes the linter pass |
-| review | reviewer | Review all 5 groups against success criteria |
+
+After Group 5, a reviewer agent reviews all 5 groups against success criteria.
 
 **Why G1 does not wire into `check` immediately:** if the linter runs as part of `bun run check` before G4's backfill resolves the existing broken links, every subsequent step in the same PR (including G3/G4 implementation commits and their own local pre-push hooks) would fail. Split enforces safe ordering: linter exists → backfill resolves existing breakage → wiring turns on enforcement.
 

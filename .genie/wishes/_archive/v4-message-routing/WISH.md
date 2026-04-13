@@ -5,7 +5,7 @@
 | **Status** | SHIPPED — PR #966 (v4 Stability Sprint, 2026-04-02) |
 | **Slug** | `v4-message-routing` |
 | **Date** | 2026-03-31 |
-| **Design** | [audit-orchestration.md](../../brainstorms/sprint-next/audit-orchestration.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 
 ## Summary
 Fix 3 P0 and 4 P1 bugs in the protocol router that cause silent agent death on spawn failure, duplicate workers from cleanup races, and messages marked as delivered when delivery actually failed. These are the root cause of "messages disappearing" and "agents not responding" reports.

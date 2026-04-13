@@ -5,7 +5,7 @@
 | **Status** | DRAFT |
 | **Slug** | `sac-agent` |
 | **Date** | 2026-03-26 |
-| **Design** | [DESIGN.md](../../brainstorms/sac-agent/DESIGN.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 
 ## Summary
 

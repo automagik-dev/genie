@@ -5,8 +5,8 @@
 | **Status** | SHIPPED — verified in production `@automagik/genie` binary (2026-04-08) |
 | **Slug** | `genie-model-resolution` |
 | **Date** | 2026-04-06 |
-| **Design** | [DESIGN.md](../../brainstorms/genie-model-resolution/DESIGN.md) |
-| **Parent** | [onboarding-overhaul](../../brainstorms/onboarding-overhaul/DRAFT.md) (sub-wish 1 of 3) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
+| **Parent** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ (sub-wish 1 of 3) |
 | **Depends-on** | none |
 | **Blocks** | `genie-onboarding-flow`, `genie-layout-migration` |
 | **Repo target** | `@automagik/genie` (global install at `/home/genie/.bun/install/global/node_modules/@automagik/genie` for reference; actual source repo per orchestrator) |
@@ -49,7 +49,7 @@ Fix the invalid `model: inherit` literal hardcoded into every scaffolded `AGENTS
 
 ## Decisions
 
-All 11 decisions locked in the [DESIGN.md](../../brainstorms/genie-model-resolution/DESIGN.md) — replayed here for quick reference.
+All 11 decisions locked in the _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ — replayed here for quick reference.
 
 | # | Decision | Rationale |
 |---|----------|-----------|

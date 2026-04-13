@@ -5,7 +5,7 @@
 | **Status** | APPROVED |
 | **Slug** | `brain-cag-v2-polish` |
 | **Date** | 2026-04-09 |
-| **Design** | [DESIGN.md](../../brainstorms/brain-cag-v2-polish/DESIGN.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 | **Repo** | /home/genie/workspace/repos/genie-brain |
 
 ## Summary

@@ -19,6 +19,19 @@ This skill is collaborative and operates on the shared worktree:
 - State group definitions are written to the shared worktree so other agents and skills can read them
 - When invoked via dispatch, acknowledges injected context (brainstorm design, file path + extracted section)
 
+## Pre-flight check
+
+Before writing the wish, verify the Design file exists:
+
+```bash
+test -f .genie/brainstorms/<slug>/DESIGN.md
+```
+
+- **If present:** emit `| **Design** | [DESIGN.md](../../brainstorms/<slug>/DESIGN.md) |` as normal.
+- **If absent:** emit `| **Design** | _No brainstorm — direct wish_ |` (no link). This is valid for hotfixes, trivial changes, or cases where the plan is obvious enough that a brainstorm adds no value.
+
+The linter (`scripts/wishes-lint.ts`) treats the literal stub text as valid and skips it. Never emit a bracket-link to a non-existent brainstorm file.
+
 ## Flow
 1. **Gate check:** if the request is fuzzy (no prior design, unclear scope, vague requirements), auto-trigger `/brainstorm` first. If a brainstorm/design exists, proceed. Otherwise ask: "This needs more clarity. Running `/brainstorm` to refine the idea first."
 2. **Align intent:** ask one question at a time until success criteria are clear.
@@ -172,6 +185,7 @@ genie task dep #<child-seq> --depends-on #<dep-seq>
 **Graceful degradation:** If PG is unavailable or `genie task` commands fail, warn but do not block the wish flow. The WISH.md file is the source of truth — PG tasks are an optional tracking enhancement. The wish must still be usable by `/work` even if no PG tasks were created.
 
 ## Rules
+- Pre-flight the Design link — never emit a bracket-link to a non-existent brainstorm file. Fall back to the `_No brainstorm — direct wish_` stub text.
 - No implementation during `/wish` — planning only.
 - No vague tasks ("improve everything"). Every task must be testable.
 - Keep tasks bite-sized and independently shippable.

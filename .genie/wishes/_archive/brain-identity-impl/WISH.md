@@ -6,7 +6,7 @@
 | **Slug** | `brain-identity-impl` |
 | **Date** | 2026-03-27 |
 | **Parent** | [brain-obsidian](../brain-obsidian/WISH.md) |
-| **Design** | [brain-identity DESIGN.md](../../brainstorms/brain-identity/DESIGN.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 | **depends-on** | `brain-foundation` |
 
 ## Summary

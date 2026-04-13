@@ -5,7 +5,7 @@
 | **Status** | SHIPPED (verified 2026-04-08) |
 | **Slug** | `rlmx-v04-gemini3` |
 | **Date** | 2026-03-26 |
-| **Design** | [DESIGN.md](../../brainstorms/rlmx-gemini3/DESIGN.md) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 | **Repo** | `/home/genie/research/rlmx/` (github: `namastex888/rlmx`) |
 
 ## Prerequisites

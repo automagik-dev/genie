@@ -5,7 +5,7 @@
 | **Status** | SHIPPED (verified 2026-04-08) |
 | **Slug** | `rlmx-v03-cag` |
 | **Date** | 2026-03-26 |
-| **Design** | [DESIGN.md](../../brainstorms/rlmx-v02/DESIGN.md#v03-vision-cag--rlm-cache-augmented-generation) |
+| **Design** | _Design not recovered — this wish pre-dates the brainstorm-commit convention (see #1132)._ |
 | **Repo** | `/home/genie/research/rlmx/` (github: `namastex888/rlmx`) |
 | **Paper** | [arxiv:2412.15605](https://arxiv.org/abs/2412.15605) — "Don't Do RAG: When Cache-Augmented Generation is All You Need" |
 
