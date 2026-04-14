@@ -1,0 +1,57 @@
+# Belt-and-braces to the `files` allow-list in package.json.
+# If `files` is ever removed by accident, these patterns still block the most dangerous leaks.
+# 2026-04-14 incident reference: .genie/snapshot.sql.gz shipped via missing allow-list.
+
+# DB dumps — never ship
+*.sql
+*.sql.gz
+*.dump
+*.pgdump
+
+# Env + secret material
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+.genie/incidents/
+
+# Internal dev state
+.genie/
+!.genie/qa/
+.claude/
+.claude-plugin/
+.husky/
+.github/
+.coderabbit.yaml
+.vscode/
+.idea/
+.worktrees/
+
+# Source and tests (built artifact in dist/ is what ships)
+src/
+!src/db/migrations/
+*.test.ts
+*.spec.ts
+__tests__/
+coverage/
+tsconfig*.json
+biome.json*
+knip.json*
+commitlint.config.*
+
+# Build tooling and docs
+docs/
+examples/
+scripts/
+!scripts/postinstall-tmux.js
+!scripts/tmux/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~

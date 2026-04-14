@@ -6,6 +6,17 @@
   "bin": {
     "genie": "./dist/genie.js"
   },
+  "files": [
+    "dist/",
+    "skills/",
+    "plugins/genie/",
+    "scripts/postinstall-tmux.js",
+    "scripts/tmux/",
+    "src/db/migrations/",
+    "templates/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "prepare": "test \"$CI\" = true || husky",
     "version": "bun run scripts/version.ts",
