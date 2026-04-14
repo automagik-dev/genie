@@ -141,17 +141,25 @@ if [[ "$MODE" != "email-only" && ${#WITHIN_ARR[@]} -gt 0 ]]; then
     printf '  %s\n' "${WITHIN_ARR[@]}"
     say "Re-run with --execute to actually unpublish."
   else
-    say "Unpublishing ${#WITHIN_ARR[@]} versions (npm will prompt for OTP)"
+    say "Unpublishing ${#WITHIN_ARR[@]} versions"
+    say "If npm prompts for OTP or a web-auth URL, follow it — do not suppress."
+    say "Tip: request a long-lived OTP token first with: npm token create --read-only=false"
     failed=()
     for v in "${WITHIN_ARR[@]}"; do
-      printf '  → %s@%s ... ' "$PKG" "$v"
-      npm unpublish "$PKG@$v" >/dev/null 2>&1 || true
-      # npm unpublish exits 0 even on auth failure, so verify by re-querying the registry
+      echo
+      echo "→ unpublishing $PKG@$v"
+      # Pass through stdin/stdout/stderr so OTP prompts and web-auth URLs reach the user.
+      # Use --otp env var if provided for headless batches.
+      if [[ -n "${NPM_OTP:-}" ]]; then
+        npm unpublish "$PKG@$v" --otp="$NPM_OTP" || true
+      else
+        npm unpublish "$PKG@$v" || true
+      fi
       if npm view "$PKG@$v" version >/dev/null 2>&1; then
-        printf 'FAILED (still present)\n'
+        warn "$v still present — unpublish did not take effect"
         failed+=("$v")
       else
-        printf 'removed\n'
+        printf '   ✓ removed\n'
       fi
     done
     if [[ ${#failed[@]} -gt 0 ]]; then
