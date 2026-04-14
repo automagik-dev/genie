@@ -1,6 +1,5 @@
 # Belt-and-braces to the `files` allow-list in package.json.
 # If `files` is ever removed by accident, these patterns still block the most dangerous leaks.
-# 2026-04-14 incident reference: .genie/snapshot.sql.gz shipped via missing allow-list.
 
 # DB dumps — never ship
 *.sql

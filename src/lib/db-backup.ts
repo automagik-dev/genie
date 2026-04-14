@@ -20,8 +20,7 @@ const SNAPSHOT_FILE = 'snapshot.sql.gz';
 
 /**
  * Resolve the snapshot path under GENIE_HOME (default ~/.genie/backups/<repo>/),
- * never inside the repo tree. Prior versions wrote to <repo>/.genie/snapshot.sql.gz,
- * which caused the 2026-04-14 incident when the dump was committed and shipped to npm.
+ * never inside the repo tree — keeps DB dumps out of source control.
  */
 export function getSnapshotPath(cwd?: string): string {
   const repoRoot = resolveRepoPath(cwd);

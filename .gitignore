@@ -70,10 +70,10 @@ yarn-error.log*
 .genie/state/
 .genie/chat/
 
-# Incident reports — contain masked credential fragments; never commit
+# Local notes / scratch
 .genie/incidents/
 
-# DB dumps must never land in git or npm (2026-04-14 incident)
+# DB dumps and secret-shaped files must never land in source control
 .genie/snapshot.sql*
 *.sql.gz
 *.dump
