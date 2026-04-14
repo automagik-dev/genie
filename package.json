@@ -1,11 +1,22 @@
 {
   "name": "@automagik/genie",
-  "version": "4.260414.1",
+  "version": "4.260414.6",
   "description": "Collaborative terminal toolkit for human + AI workflows",
   "type": "module",
   "bin": {
     "genie": "./dist/genie.js"
   },
+  "files": [
+    "dist/",
+    "skills/",
+    "plugins/genie/",
+    "scripts/postinstall-tmux.js",
+    "scripts/tmux/",
+    "src/db/migrations/",
+    "templates/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "prepare": "test \"$CI\" = true || husky",
     "version": "bun run scripts/version.ts",

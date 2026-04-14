@@ -11,21 +11,28 @@ import { gzipSync } from 'node:zlib';
 
 describe('getSnapshotPath', () => {
   let tmpDir: string;
+  let genieHome: string;
+  const originalGenieHome = process.env.GENIE_HOME;
 
   beforeEach(() => {
     tmpDir = join(tmpdir(), `genie-backup-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    genieHome = join(tmpdir(), `genie-home-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(tmpDir, { recursive: true });
     spawnSync('git', ['init'], { cwd: tmpDir, stdio: 'ignore' });
+    process.env.GENIE_HOME = genieHome;
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(genieHome, { recursive: true, force: true });
+    process.env.GENIE_HOME = originalGenieHome;
   });
 
-  test('returns path inside .genie/ at repo root', async () => {
+  test('resolves outside repo tree (under GENIE_HOME/backups/<repo>/)', async () => {
     const { getSnapshotPath } = await import('./db-backup.js');
     const path = getSnapshotPath(tmpDir);
-    expect(path).toBe(join(tmpDir, '.genie', 'snapshot.sql.gz'));
+    expect(path.startsWith(genieHome)).toBe(true);
+    expect(path.startsWith(tmpDir)).toBe(false);
   });
 
   test('path ends with snapshot.sql.gz', async () => {
@@ -75,18 +82,25 @@ describe('backup error handling', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('creates .genie directory if it does not exist', async () => {
-    const genieDir = join(tmpDir, '.genie');
-    expect(existsSync(genieDir)).toBe(false);
-
-    const { backup } = await import('./db-backup.js');
-    // backup calls pg_dump which needs pgserve — will fail but should create dir first
+  test('creates snapshot directory outside repo if it does not exist', async () => {
+    const genieHome = join(tmpdir(), `genie-home-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const originalGenieHome = process.env.GENIE_HOME;
+    process.env.GENIE_HOME = genieHome;
     try {
-      backup(tmpDir);
-    } catch {
-      // Expected — pg_dump will fail without a running DB on this port
+      expect(existsSync(genieHome)).toBe(false);
+      const { backup, getSnapshotPath } = await import('./db-backup.js');
+      const snapshotDir = getSnapshotPath(tmpDir).slice(0, getSnapshotPath(tmpDir).lastIndexOf('/'));
+      try {
+        backup(tmpDir);
+      } catch {
+        // Expected — pg_dump will fail without a running DB on this port
+      }
+      expect(existsSync(snapshotDir)).toBe(true);
+      expect(existsSync(join(tmpDir, '.genie', 'snapshot.sql.gz'))).toBe(false);
+    } finally {
+      rmSync(genieHome, { recursive: true, force: true });
+      process.env.GENIE_HOME = originalGenieHome;
     }
-    expect(existsSync(genieDir)).toBe(true);
   }, 30_000);
 });
 

@@ -70,6 +70,15 @@ yarn-error.log*
 .genie/state/
 .genie/chat/
 
+# Local notes / scratch
+.genie/incidents/
+
+# DB dumps and secret-shaped files must never land in source control
+.genie/snapshot.sql*
+*.sql.gz
+*.dump
+*.pgdump
+
 # QA specs in .genie/qa/ are tracked (they are code)
 # QA results live in ~/.genie/qa/ (global, not per-repo)
 
