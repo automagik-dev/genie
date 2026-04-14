@@ -7,7 +7,8 @@
 
 import { type SpawnSyncReturns, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, join, relative, resolve } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { getActivePort } from './db.js';
 import { resolveRepoPath } from './wish-state.js';
@@ -17,10 +18,29 @@ const DB_USER = 'postgres';
 const DB_HOST = '127.0.0.1';
 const SNAPSHOT_FILE = 'snapshot.sql.gz';
 
-/** Resolve the snapshot path inside .genie/ at the repo root. */
+/**
+ * Resolve the snapshot path under GENIE_HOME (default ~/.genie/backups/<repo>/),
+ * never inside the repo tree. Prior versions wrote to <repo>/.genie/snapshot.sql.gz,
+ * which caused the 2026-04-14 incident when the dump was committed and shipped to npm.
+ */
 export function getSnapshotPath(cwd?: string): string {
   const repoRoot = resolveRepoPath(cwd);
-  return join(repoRoot, '.genie', SNAPSHOT_FILE);
+  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+  return join(genieHome, 'backups', basename(repoRoot), SNAPSHOT_FILE);
+}
+
+/**
+ * Refuse to write a dump inside the repo tree. Second line of defense after getSnapshotPath.
+ */
+function assertOutsideRepo(snapshotPath: string, cwd?: string): void {
+  const repoRoot = resolveRepoPath(cwd);
+  const rel = relative(repoRoot, resolve(snapshotPath));
+  const insideRepo = !rel.startsWith('..') && rel !== '' && !rel.startsWith('/');
+  if (insideRepo) {
+    throw new Error(
+      `Refusing to write snapshot inside repo tree: ${snapshotPath}. Snapshots must live outside the repo (default: ~/.genie/backups/<repo>/).`,
+    );
+  }
 }
 
 function pgEnv(port: number): Record<string, string | undefined> {
@@ -48,10 +68,11 @@ interface BackupResult {
 export function backup(cwd?: string): BackupResult {
   const port = getActivePort();
   const snapshotPath = getSnapshotPath(cwd);
-  const genieDir = join(resolveRepoPath(cwd), '.genie');
+  assertOutsideRepo(snapshotPath, cwd);
+  const snapshotDir = snapshotPath.slice(0, snapshotPath.lastIndexOf('/'));
   const tmpPath = `${snapshotPath}.tmp`;
 
-  mkdirSync(genieDir, { recursive: true });
+  mkdirSync(snapshotDir, { recursive: true });
 
   // pg_dump → stdout buffer, exit code checked directly
   const result: SpawnSyncReturns<Buffer> = spawnSync('pg_dump', ['--no-owner', '--no-acl'], {

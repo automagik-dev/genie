@@ -70,6 +70,15 @@ yarn-error.log*
 .genie/state/
 .genie/chat/
 
+# Incident reports — contain masked credential fragments; never commit
+.genie/incidents/
+
+# DB dumps must never land in git or npm (2026-04-14 incident)
+.genie/snapshot.sql*
+*.sql.gz
+*.dump
+*.pgdump
+
 # QA specs in .genie/qa/ are tracked (they are code)
 # QA results live in ~/.genie/qa/ (global, not per-repo)
 
