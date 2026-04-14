@@ -49,6 +49,13 @@ command -v python3 >/dev/null || die 'python3 not found on PATH'
 command -v curl >/dev/null    || die 'curl not found on PATH'
 command -v tar >/dev/null     || die 'tar not found on PATH'
 
+if [[ "$MODE" == "execute" ]]; then
+  if ! npm whoami >/dev/null 2>&1; then
+    die 'not logged into npm — run `npm login` first, then retry'
+  fi
+  say "logged in as: $(npm whoami)"
+fi
+
 # ---------- Phase 1: scan every tarball ----------
 if [[ $FORCE_RESCAN -eq 1 || ! -s "$SCAN_FILE" ]]; then
   say "Fetching version + time metadata for $PKG"
@@ -138,7 +145,14 @@ if [[ "$MODE" != "email-only" && ${#WITHIN_ARR[@]} -gt 0 ]]; then
     failed=()
     for v in "${WITHIN_ARR[@]}"; do
       printf '  → %s@%s ... ' "$PKG" "$v"
-      if npm unpublish "$PKG@$v"; then :; else failed+=("$v"); warn "failed: $v"; fi
+      npm unpublish "$PKG@$v" >/dev/null 2>&1 || true
+      # npm unpublish exits 0 even on auth failure, so verify by re-querying the registry
+      if npm view "$PKG@$v" version >/dev/null 2>&1; then
+        printf 'FAILED (still present)\n'
+        failed+=("$v")
+      else
+        printf 'removed\n'
+      fi
     done
     if [[ ${#failed[@]} -gt 0 ]]; then
       warn "${#failed[@]} failed — add them to the support email:"
