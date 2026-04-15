@@ -12,6 +12,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
@@ -47,6 +48,80 @@ type WishState = z.infer<typeof WishStateSchema>;
 export interface GroupDefinition {
   name: string;
   dependsOn?: string[];
+}
+
+// ============================================================================
+// Group-structure signature (drift detection)
+// ============================================================================
+
+/**
+ * Compute a deterministic signature of a wish's group structure.
+ *
+ * Captures group names + sorted `dependsOn` per group. Order of groups in the
+ * input array does not affect the result (groups are sorted by name first), and
+ * dep order within a group does not matter either. Prose changes to WISH.md
+ * (Summary, Decisions, etc.) leave the signature untouched — only structural
+ * changes that affect dispatch flip it.
+ */
+export function computeGroupsSignature(groups: GroupDefinition[]): string {
+  const canonical = groups
+    .map((g) => ({ name: g.name, dependsOn: [...(g.dependsOn ?? [])].sort() }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+/**
+ * Thrown by `getOrCreateState` when the WISH.md group structure has drifted
+ * from the cached signature. Callers can pattern-match on this type to render
+ * remediation UI; the `.message` already contains a human-readable diff and the
+ * remediation command.
+ */
+export class WishStateMismatchError extends Error {
+  readonly slug: string;
+  readonly added: string[];
+  readonly removed: string[];
+  readonly changed: string[];
+
+  constructor(slug: string, added: string[], removed: string[], changed: string[]) {
+    const lines: string[] = [`Wish "${slug}" group structure has changed since state was created.`];
+    if (added.length > 0) lines.push(`  + added: ${added.join(', ')}`);
+    if (removed.length > 0) lines.push(`  - removed: ${removed.join(', ')}`);
+    if (changed.length > 0) lines.push(`  ~ changed deps: ${changed.join(', ')}`);
+    lines.push('');
+    lines.push(`Run \`genie reset ${slug}\` to recreate state from the current WISH.md.`);
+    super(lines.join('\n'));
+    this.name = 'WishStateMismatchError';
+    this.slug = slug;
+    this.added = added;
+    this.removed = removed;
+    this.changed = changed;
+  }
+}
+
+/** Diff two group-definition arrays into added/removed/changed names. */
+function diffGroups(
+  prev: GroupDefinition[],
+  next: GroupDefinition[],
+): { added: string[]; removed: string[]; changed: string[] } {
+  const prevMap = new Map(prev.map((g) => [g.name, [...(g.dependsOn ?? [])].sort()]));
+  const nextMap = new Map(next.map((g) => [g.name, [...(g.dependsOn ?? [])].sort()]));
+
+  const added: string[] = [];
+  const removed: string[] = [];
+  const changed: string[] = [];
+
+  for (const [name, deps] of nextMap) {
+    if (!prevMap.has(name)) {
+      added.push(name);
+    } else if (JSON.stringify(prevMap.get(name)) !== JSON.stringify(deps)) {
+      changed.push(name);
+    }
+  }
+  for (const name of prevMap.keys()) {
+    if (!nextMap.has(name)) removed.push(name);
+  }
+
+  return { added: added.sort(), removed: removed.sort(), changed: changed.sort() };
 }
 
 // ============================================================================
@@ -211,10 +286,16 @@ export async function createState(slug: string, groups: GroupDefinition[], cwd?:
     await sql`DELETE FROM tasks WHERE id = ${existingParent.id as string}`;
   }
 
-  // Create parent task (the wish itself)
+  // Create parent task (the wish itself).
+  // Stash the group-structure signature so getOrCreateState can detect drift
+  // when WISH.md gets edited after state was first created.
+  const groupsSignature = computeGroupsSignature(groups);
   const [parent] = await sql`
-    INSERT INTO tasks (repo_path, title, wish_file, type_id, stage, status)
-    VALUES (${repoPath}, ${slug}, ${wishFile}, 'software', 'draft', 'ready')
+    INSERT INTO tasks (repo_path, title, wish_file, type_id, stage, status, metadata)
+    VALUES (
+      ${repoPath}, ${slug}, ${wishFile}, 'software', 'draft', 'ready',
+      ${sql.json({ groupsSignature })}
+    )
     RETURNING *
   `;
 
@@ -499,11 +580,85 @@ export async function findAnyGroupByAssignee(
 /**
  * Get existing state or create it from group definitions.
  * Avoids the "no state file" gap that causes polling loops.
+ *
+ * If state already exists and the parent task carries a `groupsSignature` in
+ * `metadata`, we recompute the signature from the supplied `groups` and throw
+ * `WishStateMismatchError` if they don't match — protects against silently
+ * dispatching against a stale plan after WISH.md was edited.
+ *
+ * Pre-existing state without a `groupsSignature` is treated as "valid, never
+ * validated" (backfill-free path) — first successful invalidation requires a
+ * `genie reset <slug>`.
  */
 export async function getOrCreateState(slug: string, groups: GroupDefinition[], cwd?: string): Promise<WishState> {
   const existing = await getState(slug, cwd);
-  if (existing) return existing;
+  if (existing) {
+    await validateSignatureOrThrow(slug, groups, cwd);
+    return existing;
+  }
   return createState(slug, groups, cwd);
+}
+
+/**
+ * Read the parent task's stored signature and compare to a fresh one.
+ * Throws `WishStateMismatchError` on mismatch; no-op if the parent has no
+ * stored signature (pre-existing state from before this feature landed).
+ */
+async function validateSignatureOrThrow(slug: string, groups: GroupDefinition[], cwd?: string): Promise<void> {
+  const sql = await getConnection();
+  const repoPath = resolveRepoPath(cwd);
+  const parent = await findParent(sql, slug, repoPath);
+  if (!parent) return;
+
+  const stored = readStoredSignature(parent.metadata);
+  if (!stored) return; // backfill-free: no signature → no validation
+
+  const fresh = computeGroupsSignature(groups);
+  if (stored === fresh) return;
+
+  // Reconstruct previous group definitions from existing child tasks for diffing.
+  const prevGroups = await readGroupDefinitions(sql, parent.id as string);
+  const { added, removed, changed } = diffGroups(prevGroups, groups);
+  throw new WishStateMismatchError(slug, added, removed, changed);
+}
+
+/** Extract `groupsSignature` from a parent's metadata column (string or object). */
+function readStoredSignature(metadata: unknown): string | null {
+  if (metadata == null) return null;
+  let parsed: unknown = metadata;
+  if (typeof metadata === 'string') {
+    try {
+      parsed = JSON.parse(metadata);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const sig = (parsed as Record<string, unknown>).groupsSignature;
+  return typeof sig === 'string' ? sig : null;
+}
+
+/** Reconstruct the GroupDefinition[] for an existing parent (for diff messages). */
+async function readGroupDefinitions(sql: Sql, parentId: string): Promise<GroupDefinition[]> {
+  const children = await sql`SELECT id, group_name FROM tasks WHERE parent_id = ${parentId} ORDER BY created_at`;
+  if (children.length === 0) return [];
+  const childIds = children.map((c: Record<string, unknown>) => c.id as string);
+  const deps = await sql`
+    SELECT td.task_id, t.group_name AS dep_group
+    FROM task_dependencies td
+    JOIN tasks t ON t.id = td.depends_on_id
+    WHERE td.task_id = ANY(${childIds})
+  `;
+  const depsByTask: Record<string, string[]> = {};
+  for (const dep of deps) {
+    const taskId = dep.task_id as string;
+    if (!depsByTask[taskId]) depsByTask[taskId] = [];
+    depsByTask[taskId].push(dep.dep_group as string);
+  }
+  return children.map((c: Record<string, unknown>) => ({
+    name: c.group_name as string,
+    dependsOn: depsByTask[c.id as string] ?? [],
+  }));
 }
 
 /** Read current state. Returns null if no state exists for this wish. */
@@ -584,6 +739,22 @@ export async function isWishComplete(slug: string, cwd?: string): Promise<boolea
   if (!state) return false;
   const groups = Object.values(state.groups);
   return groups.length > 0 && groups.every((g) => g.status === 'done');
+}
+
+/**
+ * Wipe all wish state for a slug — deletes the parent task (FK cascade
+ * removes children + dependencies + actors). Returns true if anything was
+ * deleted, false if no state existed.
+ *
+ * Used by `genie reset <slug>` to recover from a `WishStateMismatchError`.
+ */
+export async function wipeState(slug: string, cwd?: string): Promise<boolean> {
+  const sql = await getConnection();
+  const repoPath = resolveRepoPath(cwd);
+  const parent = await findParent(sql, slug, repoPath);
+  if (!parent) return false;
+  await sql`DELETE FROM tasks WHERE id = ${parent.id as string}`;
+  return true;
 }
 
 /**
