@@ -18,7 +18,13 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { getConnection } from '../lib/db.js';
 import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
-import { checkSendScope, detectSenderIdentity, registerSendInboxCommands, resolveSenderTeams } from './msg.js';
+import {
+  checkSendScope,
+  detectSenderIdentity,
+  registerSendInboxCommands,
+  resolveSenderTeams,
+  suggestRelayLeader,
+} from './msg.js';
 
 // ---------------------------------------------------------------------------
 // PG test schema (required since team-manager now reads from PG)
@@ -374,6 +380,63 @@ describe.skipIf(!DB_AVAILABLE)('send command registration', () => {
     const sendCmd = program.commands.find((cmd) => cmd.name() === 'send');
     expect(sendCmd).toBeDefined();
     expect(sendCmd?.options.some((option) => option.long === '--team')).toBe(true);
+  });
+
+  test('send command exposes --bridge escape hatch', () => {
+    const program = new Command();
+    registerSendInboxCommands(program);
+
+    const sendCmd = program.commands.find((cmd) => cmd.name() === 'send');
+    expect(sendCmd?.options.some((option) => option.long === '--bridge')).toBe(true);
+  });
+});
+
+describe.skipIf(!DB_AVAILABLE)('suggestRelayLeader', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'bridge-test-'));
+  });
+
+  afterEach(async () => {
+    const sql = await getConnection();
+    await sql`DELETE FROM teams WHERE name LIKE 'bridge-test-%' OR name LIKE 'council-bridge-test-%'`;
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  async function seed(name: string, members: string[], leader?: string, parentTeam?: string): Promise<void> {
+    const sql = await getConnection();
+    await sql`
+      INSERT INTO teams (name, repo, base_branch, worktree_path, leader, members, status, parent_team, created_at)
+      VALUES (
+        ${name}, ${tempDir}, 'dev', ${join(tempDir, '.worktrees', name)},
+        ${leader ?? null}, ${JSON.stringify(members)}, 'in_progress',
+        ${parentTeam ?? null}, now()
+      )
+      ON CONFLICT (name) DO UPDATE SET members = ${JSON.stringify(members)}, leader = ${leader ?? null}, parent_team = ${parentTeam ?? null}
+    `;
+  }
+
+  test('returns null for cli sender', async () => {
+    const result = await suggestRelayLeader('cli');
+    expect(result).toBeNull();
+  });
+
+  test('returns null when sender belongs to no team', async () => {
+    const result = await suggestRelayLeader('unknown-agent');
+    expect(result).toBeNull();
+  });
+
+  test('names the direct team leader for a team member', async () => {
+    await seed('bridge-test-team', ['worker-one'], 'my-boss');
+    const result = await suggestRelayLeader('worker-one');
+    expect(result).toEqual({ leader: 'my-boss', team: 'bridge-test-team' });
+  });
+
+  test('falls back to team name when no leader is set', async () => {
+    await seed('bridge-test-leaderless', ['solo']);
+    const result = await suggestRelayLeader('solo');
+    expect(result).toEqual({ leader: 'bridge-test-leaderless', team: 'bridge-test-leaderless' });
   });
 });
 

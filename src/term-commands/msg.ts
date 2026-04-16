@@ -230,6 +230,22 @@ export function resolveSenderTeams(
   return result;
 }
 
+/**
+ * Resolve the nearest leader the sender can legitimately reach, used by the
+ * `--bridge` escape hatch to print a manual-relay hint after a scope violation.
+ * Prefers the sender's first direct team, falling back to the first reachable
+ * ancestor in the chain. Returns null when the sender belongs to no team.
+ */
+export async function suggestRelayLeader(sender: string): Promise<{ leader: string; team: string } | null> {
+  if (sender === 'cli') return null;
+  const teamManager = await getTeamManager();
+  const teams = await teamManager.listTeams();
+  const reachable = resolveSenderTeams(teams, sender);
+  if (reachable.length === 0) return null;
+  const target = reachable[0];
+  return { leader: target.leader ?? target.name, team: target.name };
+}
+
 /** Check whether a recipient is reachable within a given team (direct member, leader, or prefixed name). */
 function isRecipientInTeam(team: teamManagerTypes.TeamConfig, recipient: string): boolean {
   // Direct member, actual leader name, or legacy 'team-lead' alias (backwards compat)
@@ -515,10 +531,47 @@ async function bridgeToNativeInbox(
 }
 
 // ============================================================================
+// Bridge Suggestion (--bridge escape hatch)
+// ============================================================================
+
+/** Shell-quote a single argument for a copy-paste-friendly command hint. */
+function quoteForShell(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Print an informational advisory when `--bridge` is used against a scope
+ * violation: explains the violation, names the nearest reachable leader, and
+ * emits a ready-to-run relay command. Exits 0 (informational) rather than 1
+ * so scripts can keep going.
+ */
+async function printBridgeSuggestion(
+  sender: string,
+  recipient: string,
+  body: string,
+  scopeError: string,
+): Promise<void> {
+  const suggestion = await suggestRelayLeader(sender);
+  console.error(`Scope violation: ${scopeError}`);
+  if (suggestion) {
+    console.error(`Nearest reachable leader: ${suggestion.leader}@${suggestion.team}`);
+    console.error('Relay manually via:');
+    console.error(
+      `  genie send ${quoteForShell(`[relay to ${recipient}] ${body}`)} --to ${suggestion.leader} --team ${suggestion.team}`,
+    );
+  } else {
+    console.error('No reachable leader found — sender is not bound to any team.');
+  }
+}
+
+// ============================================================================
 // Send Handler
 // ============================================================================
 
-async function handleSend(body: string, options: { to: string; from?: string; team?: string }): Promise<void> {
+async function handleSend(
+  body: string,
+  options: { to: string; from?: string; team?: string; bridge?: boolean },
+): Promise<void> {
   const ts = await getTaskService();
   const mailbox = await getMailbox();
   const repoPath = process.cwd();
@@ -529,6 +582,10 @@ async function handleSend(body: string, options: { to: string; from?: string; te
 
   const scopeError = await checkSendScope(repoPath, from, to);
   if (scopeError) {
+    if (options.bridge) {
+      await printBridgeSuggestion(from, to, body, scopeError);
+      return;
+    }
     console.error(`Error: ${scopeError}`);
     process.exit(1);
   }
@@ -591,15 +648,17 @@ export function registerSendInboxCommands(program: Command): void {
     .option('--to <agent>', 'Recipient agent name (default: team leader)', 'team-lead')
     .option('--from <sender>', 'Sender ID (auto-detected from context)')
     .option('--team <name>', 'Explicit team context for sender/recipient resolution')
+    .option('--bridge', 'On scope violation, print an advisory + relay command instead of failing (exit 0)')
     .addHelpText(
       'after',
       `
 Examples:
   genie send 'start task #3' --to engineer         # Message a specific agent
   genie send 'status update' --to team-lead         # Report to team lead
-  genie send 'deploy ready' --team my-feature       # Message within team context`,
+  genie send 'deploy ready' --team my-feature       # Message within team context
+  genie send 'hi felipe' --to felipe-3 --bridge    # Scope violation → print relay hint instead of erroring`,
     )
-    .action(async (body: string, options: { to: string; from?: string; team?: string }) => {
+    .action(async (body: string, options: { to: string; from?: string; team?: string; bridge?: boolean }) => {
       try {
         await handleSend(body, options);
       } catch (error) {
