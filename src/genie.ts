@@ -289,7 +289,7 @@ program
   .command('spawn <name>')
   .description('Spawn a new agent by name (resolves from directory or built-ins)')
   .option('--provider <provider>', 'Provider: claude or codex', 'claude')
-  .option('--team <team>', 'Team name', process.env.GENIE_TEAM ?? 'genie')
+  .option('--team <team>', 'Team name')
   .option('--model <model>', 'Model override (e.g., sonnet, opus)')
   .option('--skill <skill>', 'Skill to load (optional)')
   .option('--layout <layout>', 'Layout mode: mosaic (default) or vertical')
