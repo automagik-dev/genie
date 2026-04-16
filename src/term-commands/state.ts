@@ -466,10 +466,11 @@ export function registerStateCommands(program: Command): void {
 
   program
     .command('reset <ref>')
+    .option('-y, --yes', 'Skip confirmation prompt (required in non-interactive mode)')
     .description(
       'Reset wish state. <slug>#<group> resets one in-progress group; bare <slug> wipes the wish and recreates from current WISH.md',
     )
-    .action(async (ref: string) => {
+    .action(async (ref: string, options: { yes?: boolean }) => {
       try {
         if (ref.includes('#')) {
           const { slug, group } = parseRef(ref);
@@ -480,7 +481,7 @@ export function registerStateCommands(program: Command): void {
           }
           return;
         }
-        await resetWishCommand(ref);
+        await resetWishCommand(ref, options?.yes ?? false);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`❌ ${message}`);
@@ -494,7 +495,7 @@ export function registerStateCommands(program: Command): void {
  * recreate it from the current WISH.md. Use to recover from
  * `WishStateMismatchError` after the wish's group structure was edited.
  */
-async function resetWishCommand(slug: string): Promise<void> {
+async function resetWishCommand(slug: string, confirmed: boolean): Promise<void> {
   const wishPath = resolveWishPath(slug);
   if (!wishPath) {
     throw new Error(`No WISH.md found for "${slug}" — searched cwd and repo root`);
@@ -513,7 +514,7 @@ async function resetWishCommand(slug: string): Promise<void> {
     const summary = `Wipe all state for "${slug}" (${groupCount} groups, ${inProgress} in-progress)?`;
 
     if (!isInteractive()) {
-      if (!process.argv.includes('--yes') && !process.argv.includes('-y')) {
+      if (!confirmed) {
         console.error(`❌ ${summary}`);
         console.error('   Refusing to wipe in non-interactive mode. Pass --yes to confirm.');
         process.exit(2);
