@@ -124,7 +124,22 @@ async function resolveLeaderAlias(recipient: string, teamContext?: string): Prom
 // ============================================================================
 
 /**
- * Enforce team scope: if sender is in a team, recipient must be in the same team.
+ * Max depth of the parentTeam chain walk — defends against accidental cycles
+ * and unbounded ancestor traversal.
+ */
+const PARENT_CHAIN_MAX_DEPTH = 3;
+
+/**
+ * Child-team-name prefixes that have cross-team reachback enabled by default
+ * (without requiring the parent to explicitly list them in allowChildReachback).
+ * Reflects the canonical use case: `/council` spawns ephemeral `council-<ts>`
+ * sub-teams that need to reply to the caller's home team.
+ */
+const DEFAULT_REACHBACK_PREFIXES = ['council-'];
+
+/**
+ * Enforce team scope: if sender is in a team, recipient must be in the same team
+ * (or in a transitively reachable parent team, subject to the ALLOWLIST).
  * Returns an error message if scope is violated, null if OK.
  */
 export async function checkSendScope(_repoPath: string, sender: string, recipient: string): Promise<string | null> {
@@ -144,23 +159,75 @@ export async function checkSendScope(_repoPath: string, sender: string, recipien
   return `Scope violation: "${recipient}" is not in sender's team(s): ${teamNames}`;
 }
 
-/** Build the list of teams the sender belongs to, including env-based leader membership. */
-function resolveSenderTeams(teams: teamManagerTypes.TeamConfig[], sender: string): teamManagerTypes.TeamConfig[] {
-  let senderTeams = teams.filter((t) => t.members.includes(sender));
+/**
+ * Decide whether a child team is allowed to walk up into its declared parent.
+ * A child may reach back when either:
+ *   (a) the parent's `allowChildReachback` ALLOWLIST contains a prefix that
+ *       matches the child team's name, OR
+ *   (b) the child team's name starts with a DEFAULT_REACHBACK_PREFIXES entry
+ *       (currently only `council-*`) — the zero-config path for ephemeral
+ *       council sub-teams.
+ */
+function childReachbackAllowed(child: teamManagerTypes.TeamConfig, parent: teamManagerTypes.TeamConfig): boolean {
+  const allowList = parent.allowChildReachback;
+  if (allowList?.some((prefix) => child.name.startsWith(prefix))) return true;
+  return DEFAULT_REACHBACK_PREFIXES.some((prefix) => child.name.startsWith(prefix));
+}
 
-  // If sender is the leader (by name or legacy 'team-lead' alias during transition), include the leader's team
+/** Walk the parentTeam chain from a child team, appending reachable ancestors. */
+function walkParentChain(
+  teams: teamManagerTypes.TeamConfig[],
+  start: teamManagerTypes.TeamConfig,
+  visited: Set<string>,
+  out: teamManagerTypes.TeamConfig[],
+): void {
+  let current = start;
+  let depth = 0;
+  while (current.parentTeam && depth < PARENT_CHAIN_MAX_DEPTH) {
+    if (visited.has(current.parentTeam)) return;
+    const parent = teams.find((t) => t.name === current.parentTeam);
+    if (!parent) return;
+    if (!childReachbackAllowed(current, parent)) return;
+    out.push(parent);
+    visited.add(parent.name);
+    current = parent;
+    depth++;
+  }
+}
+
+/** Build the list of teams the sender belongs to, including env-based leader membership. */
+export function resolveSenderTeams(
+  teams: teamManagerTypes.TeamConfig[],
+  sender: string,
+): teamManagerTypes.TeamConfig[] {
+  const direct = teams.filter((t) => t.members.includes(sender));
+  const visited = new Set<string>(direct.map((t) => t.name));
+  const result: teamManagerTypes.TeamConfig[] = [...direct];
+
+  // Walk the parentTeam chain from each direct team — a sender in an
+  // ephemeral sub-team (e.g. council-<ts>) transitively reaches the parent
+  // team's members if the parent's ALLOWLIST (or the default council prefix)
+  // permits it.
+  for (const team of direct) {
+    walkParentChain(teams, team, visited, result);
+  }
+
+  // Leader fallback: if sender is the leader (by name or legacy 'team-lead'
+  // alias), include the leader's team resolved from the ambient GENIE_TEAM.
   const isLeader = teams.some((t) => t.leader === sender) || sender === 'team-lead';
   if (isLeader) {
     const envTeam = process.env.GENIE_TEAM;
     if (envTeam) {
       const leaderTeam = teams.find((t) => t.name === envTeam);
-      if (leaderTeam && !senderTeams.some((t) => t.name === leaderTeam.name)) {
-        senderTeams = [...senderTeams, leaderTeam];
+      if (leaderTeam && !visited.has(leaderTeam.name)) {
+        result.push(leaderTeam);
+        visited.add(leaderTeam.name);
+        walkParentChain(teams, leaderTeam, visited, result);
       }
     }
   }
 
-  return senderTeams;
+  return result;
 }
 
 /** Check whether a recipient is reachable within a given team (direct member, leader, or prefixed name). */
