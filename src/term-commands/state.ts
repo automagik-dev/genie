@@ -529,9 +529,8 @@ async function resetWishCommand(slug: string, confirmed: boolean): Promise<void>
     }
   }
 
-  const wiped = await wishState.wipeState(slug);
-  if (wiped) {
-    console.log(`🗑️  Wiped existing state for wish "${slug}"`);
+  if (existing) {
+    console.log(`🗑️  Replacing existing state for wish "${slug}"`);
   } else {
     console.log(`ℹ️  No existing state for wish "${slug}" — creating fresh`);
   }
