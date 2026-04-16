@@ -10,10 +10,13 @@ import { execSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { getConnection } from './db.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 import {
   type GroupDefinition,
+  WishStateMismatchError,
   completeGroup,
+  computeGroupsSignature,
   createState,
   findAnyGroupByAssignee,
   findGroupByAssignee,
@@ -25,6 +28,7 @@ import {
   resetInProgressGroups,
   resolveRepoPath,
   startGroup,
+  wipeState,
 } from './wish-state.js';
 
 let cwd: string;
@@ -658,6 +662,174 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await createState('reset-none', [{ name: '1' }], cwd);
       const count = await resetInProgressGroups('reset-none', cwd);
       expect(count).toBe(0);
+    });
+  });
+
+  // ============================================================================
+  // computeGroupsSignature + getOrCreateState invalidation
+  // ============================================================================
+
+  describe('computeGroupsSignature', () => {
+    test('is stable across calls for the same input', () => {
+      const sig1 = computeGroupsSignature(sampleGroups);
+      const sig2 = computeGroupsSignature(sampleGroups);
+      expect(sig1).toBe(sig2);
+      expect(sig1).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    test('is order-insensitive on dependsOn', () => {
+      const a: GroupDefinition[] = [{ name: '4', dependsOn: ['2', '3'] }, { name: '2' }, { name: '3' }];
+      const b: GroupDefinition[] = [{ name: '2' }, { name: '3' }, { name: '4', dependsOn: ['3', '2'] }];
+      expect(computeGroupsSignature(a)).toBe(computeGroupsSignature(b));
+    });
+
+    test('changes when a group is added', () => {
+      const before: GroupDefinition[] = [{ name: '1' }];
+      const after: GroupDefinition[] = [{ name: '1' }, { name: '2', dependsOn: ['1'] }];
+      expect(computeGroupsSignature(before)).not.toBe(computeGroupsSignature(after));
+    });
+
+    test('changes when a dep is changed', () => {
+      const before: GroupDefinition[] = [{ name: '1' }, { name: '2', dependsOn: ['1'] }];
+      const after: GroupDefinition[] = [{ name: '1' }, { name: '2', dependsOn: [] }];
+      expect(computeGroupsSignature(before)).not.toBe(computeGroupsSignature(after));
+    });
+  });
+
+  describe('getOrCreateState invalidation', () => {
+    test('writes groupsSignature to parent metadata on createState', async () => {
+      await createState('sig-write', sampleGroups, cwd);
+      const sql = await getConnection();
+      const rows = await sql`
+        SELECT metadata FROM tasks
+        WHERE wish_file = ${'.genie/wishes/sig-write/WISH.md'} AND repo_path = ${cwd} AND parent_id IS NULL
+      `;
+      expect(rows.length).toBe(1);
+      const metadata = typeof rows[0].metadata === 'string' ? JSON.parse(rows[0].metadata) : rows[0].metadata;
+      expect(metadata.groupsSignature).toBe(computeGroupsSignature(sampleGroups));
+    });
+
+    test('returns existing state when signature matches', async () => {
+      await createState('sig-match', sampleGroups, cwd);
+      const state = await getOrCreateState('sig-match', sampleGroups, cwd);
+      expect(state.wish).toBe('sig-match');
+      expect(Object.keys(state.groups)).toEqual(['1', '2', '3', '4']);
+    });
+
+    test('throws WishStateMismatchError when a group is added', async () => {
+      await createState('sig-add', sampleGroups, cwd);
+      const edited: GroupDefinition[] = [...sampleGroups, { name: '5', dependsOn: ['4'] }];
+
+      let caught: unknown;
+      try {
+        await getOrCreateState('sig-add', edited, cwd);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(WishStateMismatchError);
+      const err = caught as WishStateMismatchError;
+      expect(err.added).toEqual(['5']);
+      expect(err.removed).toEqual([]);
+      expect(err.changed).toEqual([]);
+      expect(err.message).toContain('genie reset sig-add');
+    });
+
+    test('throws WishStateMismatchError when a group is removed', async () => {
+      await createState('sig-remove', sampleGroups, cwd);
+      const edited: GroupDefinition[] = [
+        { name: '1' },
+        { name: '2', dependsOn: ['1'] },
+        { name: '3', dependsOn: ['1'] },
+      ];
+
+      let caught: unknown;
+      try {
+        await getOrCreateState('sig-remove', edited, cwd);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(WishStateMismatchError);
+      expect((caught as WishStateMismatchError).removed).toEqual(['4']);
+    });
+
+    test('throws WishStateMismatchError when a dep changes', async () => {
+      await createState('sig-change', sampleGroups, cwd);
+      const edited: GroupDefinition[] = [
+        { name: '1' },
+        { name: '2', dependsOn: ['1'] },
+        { name: '3', dependsOn: ['1'] },
+        { name: '4', dependsOn: ['2'] }, // dropped '3'
+      ];
+
+      let caught: unknown;
+      try {
+        await getOrCreateState('sig-change', edited, cwd);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(WishStateMismatchError);
+      expect((caught as WishStateMismatchError).changed).toEqual(['4']);
+    });
+
+    test('does NOT throw when group structure is unchanged (prose-only edit)', async () => {
+      await createState('sig-prose', sampleGroups, cwd);
+      // Same group definitions — represents WISH.md prose edits that don't touch
+      // group structure (Summary, Decisions, etc.).
+      const state = await getOrCreateState('sig-prose', sampleGroups, cwd);
+      expect(state.wish).toBe('sig-prose');
+    });
+
+    test('does NOT throw when state exists without signature (backfill-free)', async () => {
+      // Simulate pre-existing state from before this feature landed
+      await createState('sig-backfill', sampleGroups, cwd);
+      const sql = await getConnection();
+      await sql`
+        UPDATE tasks
+        SET metadata = '{}'::jsonb
+        WHERE wish_file = ${'.genie/wishes/sig-backfill/WISH.md'} AND parent_id IS NULL
+      `;
+
+      // Even with structurally different groups, no throw — we treat absent
+      // signature as "valid, never validated".
+      const edited: GroupDefinition[] = [{ name: 'totally-different' }];
+      const state = await getOrCreateState('sig-backfill', edited, cwd);
+      expect(state.wish).toBe('sig-backfill');
+      // Returns the existing (stale) state — backfill-free path
+      expect(Object.keys(state.groups)).toEqual(['1', '2', '3', '4']);
+    });
+  });
+
+  describe('wipeState + reset recovery', () => {
+    test('wipeState returns false when no state exists', async () => {
+      expect(await wipeState('never-existed', cwd)).toBe(false);
+    });
+
+    test('wipeState deletes parent and cascades to children', async () => {
+      await createState('wipe-me', sampleGroups, cwd);
+      expect(await getState('wipe-me', cwd)).not.toBeNull();
+
+      const wiped = await wipeState('wipe-me', cwd);
+      expect(wiped).toBe(true);
+      expect(await getState('wipe-me', cwd)).toBeNull();
+    });
+
+    test('reset flow: invalidation → wipe → recreate produces fresh state', async () => {
+      await createState('reset-flow', sampleGroups, cwd);
+
+      const edited: GroupDefinition[] = [...sampleGroups, { name: '5', dependsOn: ['4'] }];
+
+      // 1. Invalidation fires
+      await expect(getOrCreateState('reset-flow', edited, cwd)).rejects.toBeInstanceOf(WishStateMismatchError);
+
+      // 2. Wipe + recreate (what `genie reset <slug>` does)
+      await wipeState('reset-flow', cwd);
+      const recreated = await createState('reset-flow', edited, cwd);
+
+      expect(Object.keys(recreated.groups)).toEqual(['1', '2', '3', '4', '5']);
+
+      // 3. getOrCreateState now succeeds against the new structure
+      const state = await getOrCreateState('reset-flow', edited, cwd);
+      expect(state.groups['5'].status).toBe('blocked');
     });
   });
 

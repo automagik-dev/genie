@@ -475,7 +475,6 @@ async function brainstormCommand(agentName: string, slug: string): Promise<void>
   const brainstormPrompt = `Brainstorm "${slug}". Your context is in the system prompt. Explore the idea, ask clarifying questions, and build toward a design.`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
-    team: process.env.GENIE_TEAM ?? 'genie',
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: brainstormPrompt,
   });
@@ -516,7 +515,6 @@ async function wishCommand(agentName: string, slug: string): Promise<void> {
   const wishPrompt = `Create a wish from the design for "${slug}". Your context is in the system prompt. Write the WISH.md with execution groups, acceptance criteria, and validation commands.`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
-    team: process.env.GENIE_TEAM ?? 'genie',
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: wishPrompt,
   });
@@ -610,7 +608,6 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
   const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to ${leaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
-    team: process.env.GENIE_TEAM ?? 'genie',
     role: effectiveRole,
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: workPrompt,
@@ -687,7 +684,6 @@ async function reviewCommand(agentName: string, ref: string): Promise<void> {
   const reviewPrompt = `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to ${reviewLeaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
-    team: process.env.GENIE_TEAM ?? 'genie',
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: reviewPrompt,
   });

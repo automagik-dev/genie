@@ -1352,7 +1352,7 @@ async function resolveNativeTeam(
 
 export interface SpawnOptions {
   provider?: string;
-  team: string;
+  team?: string;
   model?: string;
   skill?: string;
   layout?: string;
