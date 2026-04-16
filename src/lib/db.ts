@@ -540,8 +540,9 @@ export function isConnected(): boolean {
  */
 export async function resetConnection(): Promise<void> {
   if (sqlClient) {
-    await sqlClient.end({ timeout: 5 });
+    const dying = sqlClient;
     sqlClient = null;
+    await dying.end({ timeout: 5 });
   }
 }
 
