@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
+import { isInteractive } from '../lib/interactivity.js';
 import { formatTimestamp, padRight } from '../lib/term-format.js';
 import * as wishState from '../lib/wish-state.js';
 import { parseExecutionStrategy, parseWishGroups } from './dispatch.js';
@@ -465,19 +466,82 @@ export function registerStateCommands(program: Command): void {
 
   program
     .command('reset <ref>')
-    .description('Reset an in-progress group back to ready (format: <slug>#<group>)')
+    .description(
+      'Reset wish state. <slug>#<group> resets one in-progress group; bare <slug> wipes the wish and recreates from current WISH.md',
+    )
     .action(async (ref: string) => {
       try {
-        const { slug, group } = parseRef(ref);
-        const result = await wishState.resetGroup(slug, group);
-        console.log(`🔄 Group "${group}" reset to ready in wish "${slug}"`);
-        if (result.status === 'ready') {
-          console.log('   Status: ready (assignee cleared)');
+        if (ref.includes('#')) {
+          const { slug, group } = parseRef(ref);
+          const result = await wishState.resetGroup(slug, group);
+          console.log(`🔄 Group "${group}" reset to ready in wish "${slug}"`);
+          if (result.status === 'ready') {
+            console.log('   Status: ready (assignee cleared)');
+          }
+          return;
         }
+        await resetWishCommand(ref);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`❌ ${message}`);
         process.exit(1);
       }
     });
+}
+
+/**
+ * `genie reset <slug>` (bare slug, no `#group`) — wipe all wish state and
+ * recreate it from the current WISH.md. Use to recover from
+ * `WishStateMismatchError` after the wish's group structure was edited.
+ */
+async function resetWishCommand(slug: string): Promise<void> {
+  const wishPath = resolveWishPath(slug);
+  if (!wishPath) {
+    throw new Error(`No WISH.md found for "${slug}" — searched cwd and repo root`);
+  }
+
+  const content = await readFile(wishPath, 'utf-8');
+  const groups = parseWishGroups(content);
+  if (groups.length === 0) {
+    throw new Error(`No execution groups found in ${wishPath}`);
+  }
+
+  const existing = await wishState.getState(slug);
+  if (existing) {
+    const groupCount = Object.keys(existing.groups).length;
+    const inProgress = Object.values(existing.groups).filter((g) => g.status === 'in_progress').length;
+    const summary = `Wipe all state for "${slug}" (${groupCount} groups, ${inProgress} in-progress)?`;
+
+    if (!isInteractive()) {
+      if (!process.argv.includes('--yes') && !process.argv.includes('-y')) {
+        console.error(`❌ ${summary}`);
+        console.error('   Refusing to wipe in non-interactive mode. Pass --yes to confirm.');
+        process.exit(2);
+      }
+    } else {
+      const { confirm } = await import('@inquirer/prompts');
+      const ok = await confirm({ message: summary, default: false });
+      if (!ok) {
+        console.log('Aborted.');
+        return;
+      }
+    }
+  }
+
+  const wiped = await wishState.wipeState(slug);
+  if (wiped) {
+    console.log(`🗑️  Wiped existing state for wish "${slug}"`);
+  } else {
+    console.log(`ℹ️  No existing state for wish "${slug}" — creating fresh`);
+  }
+
+  const state = await wishState.createState(slug, groups);
+  console.log(`📝 Recreated state from ${wishPath} (${groups.length} groups)`);
+  console.log('');
+  console.log(`Wish: ${state.wish}`);
+  console.log('─'.repeat(60));
+  for (const [name, group] of Object.entries(state.groups)) {
+    const icon = STATUS_ICONS[group.status] ?? '❓';
+    console.log(`  ${name}  ${icon} ${group.status}`);
+  }
 }
