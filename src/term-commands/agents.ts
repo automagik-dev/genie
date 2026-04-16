@@ -1898,7 +1898,12 @@ async function buildResumeParams(
 ): Promise<SpawnParams> {
   const agentName = agent.role ?? agent.id;
   const provider = (template?.provider ?? agent.provider ?? 'claude') as ProviderName;
-  const team = template?.team ?? agent.team ?? 'genie';
+  const team = template?.team ?? agent.team ?? (await nativeTeams.discoverTeamName());
+  if (!team) {
+    throw new Error(
+      `Cannot resume agent "${agent.id}": no team context (template, agent record, env, or session). Pass --team or set GENIE_TEAM, or run inside a registered tmux session.`,
+    );
+  }
 
   // Restore identity file on resume so the agent keeps its AGENTS.md identity
   // instead of falling back to CWD-based discovery (which walks up and may find
