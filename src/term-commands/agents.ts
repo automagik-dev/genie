@@ -777,11 +777,24 @@ function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow
     return execSync(cmd, { encoding: 'utf-8' }).trim();
   }
 
-  // --new-window: create a dedicated window instead of splitting
+  // --new-window: create a dedicated window instead of splitting.
+  // When the target session doesn't exist yet (e.g. cold-start spawn from the TUI
+  // for an offline agent), `new-window -t <session>:` would fail with "can't find
+  // session". Bootstrap with `new-session` in that case — it creates both the
+  // session and its first pane in one call.
   if (ctx.validated.newWindow) {
     const session = ctx.sessionOverride ?? teamWindow?.windowId?.split(':')[0] ?? ctx.validated.team;
     const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
-    const cmd = `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
+    let sessionExists = false;
+    try {
+      execSync(`${tmuxPrefix}has-session -t ${shellQuote(`=${session}`)}`, { stdio: 'ignore' });
+      sessionExists = true;
+    } catch {
+      sessionExists = false;
+    }
+    const cmd = sessionExists
+      ? `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`
+      : `${tmuxPrefix}new-session -d -s ${shellQuote(session)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
     return execSync(cmd, { encoding: 'utf-8' }).trim();
   }
 
