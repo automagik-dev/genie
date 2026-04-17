@@ -25,12 +25,16 @@ function buildAgentItems(node: TreeNode): MenuItem[] {
     return [
       { label: 'Clone', shortcut: 'N', action: 'agent-new-window' },
       { label: 'New window', shortcut: 'W', action: 'new-empty-window' },
+      { label: 'Spawn into\u2026', shortcut: 'I', action: 'spawn-into' },
       { label: 'Rename...', shortcut: 'R', action: 'rename-session', needsInput: true, separator: true },
       { label: 'Remove', shortcut: 'K', action: 'kill' },
     ];
   }
 
-  return [{ label: 'Start', shortcut: 'S', action: 'spawn' }];
+  return [
+    { label: 'Start', shortcut: 'S', action: 'spawn' },
+    { label: 'Spawn into\u2026', shortcut: 'I', action: 'spawn-into' },
+  ];
 }
 
 function buildSessionItems(): MenuItem[] {
