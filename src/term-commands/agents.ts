@@ -1703,13 +1703,19 @@ export async function pickParallelShortId(baseName: string, team: string, uuid: 
   if (!UUID_REGEX.test(uuid)) {
     throw new Error(`pickParallelShortId: expected a well-formed UUID (8-4-4-4-12 hex), got ${JSON.stringify(uuid)}`);
   }
+  // `team` is retained in the signature for symmetry with resolveSpawnIdentity
+  // but NOT used in the uniqueness filter: `agents.id` is the PRIMARY KEY on
+  // the `agents` table (see migrations/005_pg_state.sql), so any
+  // `<baseName>-<slice>` that already exists anywhere would violate the PK at
+  // insert time regardless of team. Filter globally — PR #1172 review (gemini).
+  void team;
   const { getConnection } = await import('../lib/db.js');
   const sql = await getConnection();
   for (let k = 4; k <= uuid.length; k++) {
     const slice = uuid.slice(0, k);
     const id = `${baseName}-${slice}`;
     const rows = await sql<{ id: string }[]>`
-      SELECT id FROM agents WHERE id = ${id} AND team = ${team} LIMIT 1
+      SELECT id FROM agents WHERE id = ${id} LIMIT 1
     `;
     if (rows.length === 0) return slice;
   }
@@ -1755,13 +1761,37 @@ export async function resolveSpawnIdentity(
 ): Promise<SpawnIdentity> {
   const { getConnection } = await import('../lib/db.js');
   const sql = await getConnection();
-  const rows = await sql<{ id: string; pane_id: string | null }[]>`
-    SELECT id, pane_id FROM agents WHERE id = ${name} AND team = ${team} LIMIT 1
+  // `agents.id` is the PRIMARY KEY (migrations/005_pg_state.sql), so the
+  // existence check is global, not team-scoped — PR #1172 review (gemini).
+  // We still read `team` from the returned row so we can distinguish
+  // "canonical lives in THIS team" from "canonical lives in ANOTHER team"
+  // (see cross-team branch below).
+  const rows = await sql<{ id: string; pane_id: string | null; team: string | null }[]>`
+    SELECT id, pane_id, team FROM agents WHERE id = ${name} LIMIT 1
   `;
   if (rows.length === 0) {
     return { kind: 'canonical', workerId: name, sessionUuid: uuidFactory() };
   }
   const existing = rows[0];
+  const crossTeam = existing.team !== null && existing.team !== team;
+
+  if (crossTeam) {
+    // Canonical `name` already lives in a different team. We cannot
+    // re-canonicalize in the requested team — that would violate the PK on
+    // `agents.id`. Force a parallel in the requested team: `<name>-<s4>`
+    // sidesteps the PK AND keeps team isolation intact. This mirrors the
+    // alive-canonical behavior and is safe regardless of the existing row's
+    // pane liveness.
+    const sessionUuid = uuidFactory();
+    const shortId = await pickParallelShortId(name, team, sessionUuid);
+    return {
+      kind: 'parallel',
+      workerId: `${name}-${shortId}`,
+      sessionUuid,
+      canonicalId: name,
+    };
+  }
+
   const alive = existing.pane_id ? await isAliveFn(existing.pane_id) : false;
   if (!alive) {
     // findDeadResumable is the canonical resume path. If it didn't fire, the
@@ -1769,8 +1799,9 @@ export async function resolveSpawnIdentity(
     // fresh canonical via ON CONFLICT UPDATE is the safest recovery.
     return { kind: 'canonical', workerId: name, sessionUuid: uuidFactory() };
   }
-  // Alive canonical — branch to parallel creation. Mint the parallel's own
-  // fresh UUID and derive its short-id deterministically from that UUID.
+  // Same-team alive canonical — branch to parallel creation. Mint the
+  // parallel's own fresh UUID and derive its short-id deterministically from
+  // that UUID.
   const sessionUuid = uuidFactory();
   const shortId = await pickParallelShortId(name, team, sessionUuid);
   return {
@@ -1902,8 +1933,17 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   const validated = validateSpawnParams(params);
   const launch = buildLaunchCommand(validated);
   const layoutMode = resolveLayoutMode(options.layout);
-  // workerId: state machine wins when it fired; otherwise fall back to the
-  // legacy <team>-<role> scheme used by explicit --role spawns.
+  // workerId derivation — two intentionally distinct schemes:
+  //   • State-machine path (no explicit --role): `identity.workerId` is either
+  //     `<name>` (canonical) or `<name>-<s4>` (parallel). Short, team-agnostic,
+  //     globally unique per `agents.id` PK. Matches the perfect-spawn-hierarchy
+  //     canonical-UUID-per-name invariant.
+  //   • Legacy explicit-role path (`--role` passed and ≠ name): `<team>-<role>`
+  //     via `generateWorkerId`. Preserves the pre-wish convention for explicit
+  //     multi-worker deployments (e.g. `--role worker-1`, `--role worker-2`)
+  //     where team namespacing matters because the role itself isn't unique.
+  // The split is deliberate; any future unification is a separate wish. See
+  // PR #1172 review (gemini medium) for the full rationale.
   const workerId = identity?.workerId ?? (await generateWorkerId(validated.team, effectiveRole));
 
   // An explicit session target means "spawn in tmux" even when the caller is outside tmux.

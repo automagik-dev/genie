@@ -952,6 +952,32 @@ function executeGenie(args: string[]): void {
 }
 
 /**
+ * Execute a genie CLI command and resolve when the child process exits.
+ *
+ * Unlike `executeGenie`, this variant waits for the child's exit event so
+ * callers can serialize dependent invocations (e.g. `team hire` AFTER `team
+ * create` has committed its PG row). Resolves with the exit code; rejects
+ * only if `spawn` itself throws.
+ */
+function executeGenieAwaited(args: string[]): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    try {
+      const { spawn } = require('node:child_process') as typeof import('node:child_process');
+      const bunPath = process.execPath || 'bun';
+      const genieBin = process.argv[1];
+      const child =
+        genieBin && genieBin !== 'genie'
+          ? spawn(bunPath, [genieBin, ...args], { stdio: 'ignore' })
+          : spawn('genie', args, { stdio: 'ignore' });
+      child.on('exit', (code) => resolve(code));
+      child.on('error', reject);
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
+/**
  * Resolve a Nav tree node into an AgentPickerTarget — the (session, window?)
  * pair that "Spawn here…" should populate into the intent. Returns null if
  * the node isn't spawn-here eligible.
@@ -987,29 +1013,58 @@ function executeSpawnIntent(intent: SpawnIntent): void {
 }
 
 /**
- * Kick off a `genie team create` followed by `genie team hire <member>` per
- * picked member. Everything detached and fire-and-forget — the TUI polls
- * diagnostics for the resulting tmux session and navigates there once it
- * appears. Uses `buildSpawnInvocation` to derive the argv so the preview
- * shown in TeamCreate and the command actually run can never drift.
+ * Kick off a `genie team create` followed by serial `genie team hire <member>`
+ * per picked member. Uses `buildSpawnInvocation` to derive the argv so the
+ * preview shown in TeamCreate and the command actually run can never drift.
+ *
+ * Serialization matters: `team hire` reads the `teams` row created by `team
+ * create`. Firing hires as parallel detached processes (the prior behavior)
+ * raced against the create commit — hires could run before the row existed,
+ * silently losing membership writes. We now await `team create` exit before
+ * the first `team hire`, and await each hire before the next, so PG writes
+ * order deterministically. PR #1172 review (chatgpt-codex-connector P1).
+ *
+ * Returns a promise so the TUI can schedule post-create navigation/polling
+ * without blocking its render loop (callers kick this off via `void …`).
  */
-function runTeamCreation(result: { teamName: string; members: string[] }, workspaceRoot: string | undefined): void {
+async function runTeamCreation(
+  result: { teamName: string; members: string[] },
+  workspaceRoot: string | undefined,
+): Promise<void> {
+  let argv: string[];
   try {
-    const { argv } = buildSpawnInvocation({
+    ({ argv } = buildSpawnInvocation({
       kind: 'create-team',
       name: result.teamName,
       repo: workspaceRoot,
-    });
-    executeGenie(argv);
+    }));
   } catch (err) {
-    console.error('TUI: team create failed:', err instanceof Error ? err.message : err);
+    console.error('TUI: team create intent build failed:', err instanceof Error ? err.message : err);
     return;
   }
-  // Hire members — each as an independent detached spawn so a single
-  // slow hire does not block the next. Kicked off immediately; the
-  // `team hire` CLI enforces its own ordering once `team create` completes.
+  let createExit: number | null = null;
+  try {
+    createExit = await executeGenieAwaited(argv);
+  } catch (err) {
+    console.error('TUI: team create spawn failed:', err instanceof Error ? err.message : err);
+    return;
+  }
+  if (createExit !== 0) {
+    console.error(`TUI: team create exited ${createExit} — skipping member hires for "${result.teamName}"`);
+    return;
+  }
+  // Serialize hires: each must wait for the previous to complete so PG writes
+  // order deterministically on top of the freshly-committed `teams` row.
   for (const member of result.members) {
-    executeGenie(['team', 'hire', member, '--team', result.teamName]);
+    try {
+      const code = await executeGenieAwaited(['team', 'hire', member, '--team', result.teamName]);
+      if (code !== 0) {
+        console.error(`TUI: team hire "${member}" exited ${code} — continuing with remaining members`);
+      }
+    } catch (err) {
+      console.error(`TUI: team hire "${member}" failed:`, err instanceof Error ? err.message : err);
+      // Don't abort — other members can still land.
+    }
   }
 }
 

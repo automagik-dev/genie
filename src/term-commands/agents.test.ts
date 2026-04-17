@@ -465,6 +465,39 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       }
     });
 
+    test('branch: cross-team canonical → create parallel in requested team (PK-safe)', async () => {
+      // Regression for PR #1172 review (gemini HIGH at agents.ts:1750).
+      // `agents.id` is PRIMARY KEY. If `alice` already lives in a different
+      // team, re-canonicalizing in the requested team would violate the PK.
+      // The state machine must route to parallel creation instead, regardless
+      // of the existing row's pane liveness.
+      const homeTeam = `team-home-${Date.now()}`;
+      const requestedTeam = `team-other-${Date.now()}`;
+      // Seed the canonical in its HOME team (dead pane — would otherwise trigger
+      // the same-team canonical-recovery branch in the state machine).
+      await seedCanonical('alice', homeTeam, {
+        paneId: '%cross-team',
+        claudeSessionId: 'home-team-canonical-uuid-000000000000',
+      });
+
+      const parallelUuid = 'feedface-1234-5678-9abc-abcdef012345';
+      const identity = await resolveSpawnIdentity('alice', requestedTeam, () => parallelUuid, alwaysDead);
+
+      // Must be a parallel — same-team canonical-recovery is NOT valid across
+      // teams because it would PK-conflict at insert time.
+      expect(identity.kind).toBe('parallel');
+      expect(identity.workerId).toBe('alice-feed');
+      expect(identity.sessionUuid).toBe(parallelUuid);
+      if (identity.kind === 'parallel') {
+        expect(identity.canonicalId).toBe('alice');
+      }
+
+      // Home-team canonical row must NOT have been touched.
+      const homeRow = await registry.get('alice');
+      expect(homeRow?.team).toBe(homeTeam);
+      expect(homeRow?.claudeSessionId).toBe('home-team-canonical-uuid-000000000000');
+    });
+
     test('invariant: parallel creation does NOT clobber canonical row', async () => {
       const team = `team-no-clobber-${Date.now()}`;
       const canonicalUuid = 'c0c0c0c0-b2c3-d4e5-f6a7-b8c9d0e1f2a3';
@@ -554,13 +587,16 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       expect(shortId).toBe('deadbe');
     });
 
-    test('collision in a DIFFERENT team does not extend', async () => {
+    test('collision in a DIFFERENT team DOES extend (global PK)', async () => {
+      // Regression for PR #1172 review (gemini HIGH): `agents.id` is PRIMARY
+      // KEY in the `agents` table, so uniqueness is global, not per-team.
+      // A collision on `<baseName>-<slice>` in any team forces the slice to
+      // extend — otherwise the INSERT would fail with a PK violation.
       const otherTeam = `team-pick-other-${Date.now()}`;
       const team = `team-pick-same-${Date.now()}`;
       await seedCanonical('alice-dead', otherTeam, { paneId: '%80', role: 'alice-dead' });
-      // Same baseName+slice but different team — should not collide.
       const shortId = await pickParallelShortId('alice', team, 'deadbeef-1234-5678-9abc-def012345678');
-      expect(shortId).toBe('dead');
+      expect(shortId).toBe('deadb');
     });
 
     test('rejects non-UUID input: "not-a-uuid"', async () => {
