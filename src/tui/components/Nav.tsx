@@ -3,6 +3,7 @@
 
 import { useKeyboard } from '@opentui/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { buildSpawnInvocation } from '../../lib/spawn-invocation.js';
 import { scanAgents } from '../../lib/workspace.js';
 import { buildMenuItems } from '../context-menu-items.js';
 import { type DiagnosticSnapshot, collectDiagnostics } from '../diagnostics.js';
@@ -18,6 +19,7 @@ import { flattenTree, toggleNode } from '../tree.js';
 import type { TreeNode } from '../types.js';
 import { ContextMenu } from './ContextMenu.js';
 import { SystemStats } from './SystemStats.js';
+import { TeamCreate } from './TeamCreate.js';
 import { TreeNodeRow } from './TreeNode.js';
 
 interface NavProps {
@@ -244,8 +246,22 @@ export function Nav({
 
   const _menuDisabled = keyboardDisabled || contextMenuNodeId !== null;
 
+  // "New team" workspace-root action — opens the TeamCreate modal. Only
+  // available in workspace mode; the open/confirm/cancel handlers, the
+  // modal-visibility state, and the post-create navigation watcher are
+  // encapsulated in a small hook so the top-level Nav function stays within
+  // the cognitive-complexity budget.
+  const { showTeamCreate, handleOpenTeamCreate, handleTeamCreateConfirm, handleTeamCreateCancel } =
+    useTeamCreateControls({
+      workspaceRoot,
+      diagnostics,
+      onTmuxSessionSelect,
+    });
+
   useKeyboard((key) => {
     if (keyboardDisabled) return;
+    if (tryOpenTeamCreate(key, { workspaceRoot, showTeamCreate, contextMenuNodeId, handleOpenTeamCreate })) return;
+    if (showTeamCreate) return; // modal owns input
     handleKeyboardInput(key, {
       contextMenuNodeId,
       flatNodes,
@@ -326,16 +342,23 @@ export function Nav({
         />
       ) : null}
 
+      {/* New team modal — workspace-root action. */}
+      {showTeamCreate ? (
+        <TeamCreate
+          availableAgents={workspaceRoot ? scanAgents(workspaceRoot) : []}
+          workspaceRoot={workspaceRoot}
+          onConfirm={handleTeamCreateConfirm}
+          onCancel={handleTeamCreateCancel}
+        />
+      ) : null}
+
       {/* System stats */}
       <SystemStats />
 
       {/* Footer */}
       <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
         <text>
-          <span fg={palette.textMuted}>
-            {'\u2191\u2193'}:nav {'\u2190\u2192'}:expand Enter:{workspaceRoot ? 'spawn/attach' : 'attach'} ^T:new
-            R:retry .:menu
-          </span>
+          <span fg={palette.textMuted}>{buildFooterHint(workspaceRoot)}</span>
         </text>
       </box>
     </box>
@@ -345,6 +368,64 @@ export function Nav({
 // ---------------------------------------------------------------------------
 // Extracted helpers to keep cognitive complexity low
 // ---------------------------------------------------------------------------
+
+interface TeamCreateHookOptions {
+  workspaceRoot?: string;
+  diagnostics: DiagnosticSnapshot | null;
+  onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void;
+}
+
+/**
+ * Encapsulate everything the "New team" modal needs from Nav: the visibility
+ * state, the open/confirm/cancel callbacks, and the post-create navigation
+ * watcher. Extracted into a hook so `Nav` stays within the cognitive-
+ * complexity budget; behaviour is identical to inlining the useState /
+ * useCallback / useEffect blocks at the call site.
+ */
+function useTeamCreateControls(opts: TeamCreateHookOptions): {
+  showTeamCreate: boolean;
+  handleOpenTeamCreate: () => void;
+  handleTeamCreateConfirm: (result: { teamName: string; members: string[] }) => void;
+  handleTeamCreateCancel: () => void;
+} {
+  const { workspaceRoot, diagnostics, onTmuxSessionSelect } = opts;
+  const [showTeamCreate, setShowTeamCreate] = useState(false);
+  // When a team-create confirms, we wait for the `teams` row + tmux session
+  // to appear. This ref holds the pending team name so the diagnostics refresh
+  // can navigate into it on the next tick after success.
+  const pendingTeamNameRef = useRef<string | null>(null);
+
+  const handleOpenTeamCreate = useCallback(() => {
+    if (!workspaceRoot) return;
+    setShowTeamCreate(true);
+  }, [workspaceRoot]);
+
+  const handleTeamCreateConfirm = useCallback(
+    (result: { teamName: string; members: string[] }) => {
+      setShowTeamCreate(false);
+      runTeamCreation(result, workspaceRoot);
+      pendingTeamNameRef.current = result.teamName;
+    },
+    [workspaceRoot],
+  );
+
+  const handleTeamCreateCancel = useCallback(() => {
+    setShowTeamCreate(false);
+  }, []);
+
+  // Watch for the new tmux session to appear (piggybacking on the 2 s
+  // diagnostics refresh) and navigate into it once present.
+  useEffect(() => {
+    const pending = pendingTeamNameRef.current;
+    if (!pending || !diagnostics) return;
+    const session = diagnostics.sessions.find((s) => s.name === pending);
+    if (!session) return;
+    pendingTeamNameRef.current = null;
+    onTmuxSessionSelect(session.name, resolvePreferredWindowIndex(session, pending));
+  }, [diagnostics, onTmuxSessionSelect]);
+
+  return { showTeamCreate, handleOpenTeamCreate, handleTeamCreateConfirm, handleTeamCreateCancel };
+}
 
 /** Handle Enter key for agent nodes: spawn if stopped, attach if running. */
 function handleEnterAgent(
@@ -577,6 +658,33 @@ function handlePaneNodeActions(
   return false;
 }
 
+/** Build the footer shortcut hint. Extracted so Nav stays simple. */
+function buildFooterHint(workspaceRoot: string | undefined): string {
+  const enterLabel = workspaceRoot ? 'spawn/attach' : 'attach';
+  const teamShortcut = workspaceRoot ? ' ^N:team' : '';
+  return `\u2191\u2193:nav \u2190\u2192:expand Enter:${enterLabel} ^T:new${teamShortcut} R:retry .:menu`;
+}
+
+/**
+ * Ctrl+N in workspace mode opens the "New team" modal. Returns true if the
+ * key was consumed by this action — callers must bail out to avoid double-
+ * dispatching the same key.
+ */
+function tryOpenTeamCreate(
+  key: { name?: string; ctrl?: boolean },
+  opts: {
+    workspaceRoot?: string;
+    showTeamCreate: boolean;
+    contextMenuNodeId: string | null;
+    handleOpenTeamCreate: () => void;
+  },
+): boolean {
+  if (!key.ctrl || key.name !== 'n') return false;
+  if (!opts.workspaceRoot || opts.showTeamCreate || opts.contextMenuNodeId) return false;
+  opts.handleOpenTeamCreate();
+  return true;
+}
+
 /** Try to open context menu for selected node. Returns true if opened. */
 function tryOpenContextMenu(
   flatNodes: { node: TreeNode }[],
@@ -748,6 +856,33 @@ function executeGenie(args: string[]): void {
     child.unref();
   } catch {
     // best-effort
+  }
+}
+
+/**
+ * Kick off a `genie team create` followed by `genie team hire <member>` per
+ * picked member. Everything detached and fire-and-forget — the TUI polls
+ * diagnostics for the resulting tmux session and navigates there once it
+ * appears. Uses `buildSpawnInvocation` to derive the argv so the preview
+ * shown in TeamCreate and the command actually run can never drift.
+ */
+function runTeamCreation(result: { teamName: string; members: string[] }, workspaceRoot: string | undefined): void {
+  try {
+    const { argv } = buildSpawnInvocation({
+      kind: 'create-team',
+      name: result.teamName,
+      repo: workspaceRoot,
+    });
+    executeGenie(argv);
+  } catch (err) {
+    console.error('TUI: team create failed:', err instanceof Error ? err.message : err);
+    return;
+  }
+  // Hire members — each as an independent detached spawn so a single
+  // slow hire does not block the next. Kicked off immediately; the
+  // `team hire` CLI enforces its own ordering once `team create` completes.
+  for (const member of result.members) {
+    executeGenie(['team', 'hire', member, '--team', result.teamName]);
   }
 }
 
