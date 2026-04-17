@@ -3,21 +3,17 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-// Import the real workspace module so we can spyOn individual exports.
-// Using spyOn instead of mock.module avoids leaking an incomplete mock to
-// other test files (bun 1.3.x leaks mock.module across parallel workers).
+// Import the real workspace + genie-config modules so we can spyOn individual
+// exports. Using spyOn instead of mock.module avoids leaking an incomplete
+// mock to other test files (bun 1.3.x leaks mock.module across parallel
+// workers — see https://github.com/oven-sh/bun/issues bun-test-mock-leak).
+import * as genieConfig from '../lib/genie-config.js';
 import * as workspace from '../lib/workspace.js';
 
 const mockConfirm = mock<(options: { message: string; default?: boolean }) => Promise<boolean>>(async () => true);
-const mockIsSetupComplete = mock(() => true);
 
 mock.module('@inquirer/prompts', () => ({
   confirm: (options: { message: string; default?: boolean }) => mockConfirm(options),
-}));
-
-mock.module('../lib/genie-config.js', () => ({
-  isSetupComplete: () => mockIsSetupComplete(),
-  loadGenieConfigSync: () => ({ promptMode: 'append' }),
 }));
 
 const { registerInitCommands } = await import('./init.js');
@@ -27,6 +23,8 @@ let testDir: string;
 let cwdSpy: ReturnType<typeof spyOn>;
 let findWorkspaceSpy: ReturnType<typeof spyOn>;
 let scanAgentsSpy: ReturnType<typeof spyOn>;
+let isSetupCompleteSpy: ReturnType<typeof spyOn>;
+let loadGenieConfigSyncSpy: ReturnType<typeof spyOn>;
 
 beforeEach(() => {
   originalCwd = process.cwd();
@@ -43,16 +41,22 @@ beforeEach(() => {
   findWorkspaceSpy = spyOn(workspace, 'findWorkspace').mockReturnValue(null);
   scanAgentsSpy = spyOn(workspace, 'scanAgents').mockReturnValue([]);
 
+  // Spy on genie-config exports (avoids mock.module cross-file leak).
+  isSetupCompleteSpy = spyOn(genieConfig, 'isSetupComplete').mockReturnValue(true);
+  loadGenieConfigSyncSpy = spyOn(genieConfig, 'loadGenieConfigSync').mockReturnValue({
+    promptMode: 'append',
+  } as ReturnType<typeof genieConfig.loadGenieConfigSync>);
+
   mockConfirm.mockReset();
-  mockIsSetupComplete.mockReset();
   mockConfirm.mockResolvedValue(true);
-  mockIsSetupComplete.mockReturnValue(true);
 });
 
 afterEach(() => {
   findWorkspaceSpy.mockRestore();
   scanAgentsSpy.mockRestore();
   cwdSpy.mockRestore();
+  isSetupCompleteSpy.mockRestore();
+  loadGenieConfigSyncSpy.mockRestore();
   process.chdir(originalCwd);
   rmSync(testDir, { recursive: true, force: true });
 });
