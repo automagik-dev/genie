@@ -253,3 +253,34 @@ export async function updateClaudeSessionId(executorId: string, sessionId: strin
   const sql = await getConnection();
   await sql`UPDATE executors SET claude_session_id = ${sessionId} WHERE id = ${executorId}`;
 }
+
+/**
+ * Return an agent's current executor state iff it is live, else null.
+ *
+ * Used by `genie ls` to determine liveness for non-tmux transports (SDK, omni,
+ * process) where `isPaneAlive` cannot apply — these agents carry synthetic pane
+ * IDs like 'sdk' or '' that do not match tmux's `%N` format. The `executors.state`
+ * column is the authoritative signal, updated by each transport's own heartbeat
+ * (e.g., claude-sdk updates it on every message). Returning the state — not just
+ * a boolean — lets the caller display it directly without a second query; the
+ * cached `agents.state` column is stale for non-tmux transports.
+ *
+ * Treats `spawning|running|working|idle|permission|question` as live;
+ * `done|error|terminated` and missing rows return null.
+ */
+export async function getLiveExecutorState(agentId: string): Promise<ExecutorState | null> {
+  const sql = await getConnection();
+  const rows = await sql<{ state: ExecutorState }[]>`
+    SELECT e.state FROM executors e
+    JOIN agents a ON a.current_executor_id = e.id
+    WHERE a.id = ${agentId}
+      AND e.state IN ('spawning', 'running', 'working', 'idle', 'permission', 'question')
+    LIMIT 1
+  `;
+  return rows.length > 0 ? rows[0].state : null;
+}
+
+/** Boolean convenience wrapper around {@link getLiveExecutorState}. */
+export async function isExecutorAlive(agentId: string): Promise<boolean> {
+  return (await getLiveExecutorState(agentId)) !== null;
+}
