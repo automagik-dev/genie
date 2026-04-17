@@ -907,13 +907,15 @@ async function awaitAgentReadiness(paneId: string): Promise<void> {
 
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   // Skip team-window creation for isolated-session spawns. When the caller asks
-  // for `--new-window` with an explicit `--session <name>` that differs from
-  // the team name (the TUI's per-agent spawn path), the team window has no
-  // purpose — the agent runs in its own window in its own session. Creating
-  // one anyway leaves behind an empty bash pane and a ghost team-named window
-  // beside the real agent window.
-  const isolatedSessionSpawn =
-    ctx.validated.newWindow === true && Boolean(ctx.sessionOverride) && ctx.sessionOverride !== ctx.validated.team;
+  // for `--new-window` with an explicit `--session <name>`, the agent runs in
+  // its own window in that session — the team window has no purpose.
+  //
+  // The original heuristic required `sessionOverride !== team` as a proxy for
+  // "TUI per-agent spawn", but auto-team-of-one (see resolveTeamAndResume) now
+  // makes them equal for globally-registered teamless agents. Honoring the
+  // explicit `--session` flag unconditionally covers both cases and avoids
+  // the 3-window (bash + team-named + claude) cruft topology.
+  const isolatedSessionSpawn = ctx.validated.newWindow === true && Boolean(ctx.sessionOverride);
   const teamWindow =
     ctx.spawnIntoCurrentWindow || isolatedSessionSpawn
       ? null
