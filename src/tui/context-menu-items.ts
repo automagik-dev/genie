@@ -40,6 +40,7 @@ function buildAgentItems(node: TreeNode): MenuItem[] {
 function buildSessionItems(): MenuItem[] {
   return [
     { label: 'New window', shortcut: 'N', action: 'new-window' },
+    { label: 'Spawn here\u2026', shortcut: 'H', action: 'spawn-here' },
     { label: 'Rename...', shortcut: 'R', action: 'rename-session', needsInput: true, separator: true },
     { label: 'Kill session', shortcut: 'K', action: 'kill-session' },
   ];
@@ -48,6 +49,7 @@ function buildSessionItems(): MenuItem[] {
 function buildWindowItems(): MenuItem[] {
   return [
     { label: 'New agent', shortcut: 'N', action: 'window-new-agent' },
+    { label: 'Spawn here\u2026', shortcut: 'H', action: 'spawn-here' },
     { label: 'New pane', shortcut: 'P', action: 'split-pane' },
     { label: 'Rename...', shortcut: 'R', action: 'rename-window', needsInput: true, separator: true },
     { label: 'Close window', shortcut: 'K', action: 'kill-window' },

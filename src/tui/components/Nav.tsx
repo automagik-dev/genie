@@ -17,6 +17,7 @@ import {
 import { palette } from '../theme.js';
 import { flattenTree, toggleNode } from '../tree.js';
 import type { TreeNode } from '../types.js';
+import { AgentPicker, type AgentPickerTarget } from './AgentPicker.js';
 import { ContextMenu } from './ContextMenu.js';
 import { SpawnTargetPicker } from './SpawnTargetPicker.js';
 import { SystemStats } from './SystemStats.js';
@@ -48,6 +49,8 @@ export function Nav({
   const [contextMenuNodeId, setContextMenuNodeId] = useState<string | null>(null);
   /** Name of the agent whose spawn-into picker is open (null = picker closed). */
   const [spawnIntoAgent, setSpawnIntoAgent] = useState<string | null>(null);
+  /** Target for the spawn-here agent picker (null = picker closed). */
+  const [spawnPickerTarget, setSpawnPickerTarget] = useState<AgentPickerTarget | null>(null);
   const lastTarget = useRef<string | null>(null);
   const selectedNodeId = useRef<string | null>(null);
 
@@ -237,6 +240,11 @@ export function Nav({
       const node = flatNodes.find((n) => n.node.id === contextMenuNodeId)?.node;
       if (!node) return;
       setContextMenuNodeId(null);
+      if (action === 'spawn-here') {
+        const target = resolveSpawnHereTarget(node);
+        if (target) setSpawnPickerTarget(target);
+        return;
+      }
       dispatchContextMenuAction(action, node, payload, {
         sessionTree,
         onTmuxSessionSelect,
@@ -256,13 +264,22 @@ export function Nav({
     setSpawnIntoAgent(null);
   }, []);
 
+  const handleSpawnPickerConfirm = useCallback((intent: SpawnIntent) => {
+    setSpawnPickerTarget(null);
+    executeSpawnIntent(intent);
+  }, []);
+
+  const handleSpawnPickerCancel = useCallback(() => {
+    setSpawnPickerTarget(null);
+  }, []);
+
   const _menuDisabled = keyboardDisabled || contextMenuNodeId !== null;
 
   useKeyboard((key) => {
     if (keyboardDisabled) return;
-    // Spawn-into picker owns the keyboard while open — the picker is rendered
-    // later in this component and registers its own useKeyboard handler.
-    if (spawnIntoAgent !== null) return;
+    // Spawn-into/spawn-here pickers own the keyboard while open — they
+    // register their own useKeyboard handlers.
+    if (spawnIntoAgent !== null || spawnPickerTarget !== null) return;
     handleKeyboardInput(key, {
       contextMenuNodeId,
       flatNodes,
@@ -350,6 +367,15 @@ export function Nav({
           sessions={diagnostics?.sessions ?? []}
           onConfirm={handleSpawnIntoConfirm}
           onCancel={handleSpawnIntoCancel}
+        />
+      ) : null}
+
+      {/* Spawn-here agent picker (opened from session/window context menu) */}
+      {spawnPickerTarget !== null ? (
+        <AgentPicker
+          target={spawnPickerTarget}
+          onConfirm={handleSpawnPickerConfirm}
+          onCancel={handleSpawnPickerCancel}
         />
       ) : null}
 
@@ -783,6 +809,25 @@ function executeGenie(args: string[]): void {
   } catch {
     // best-effort
   }
+}
+
+/**
+ * Resolve a Nav tree node into an AgentPickerTarget — the (session, window?)
+ * pair that "Spawn here…" should populate into the intent. Returns null if
+ * the node isn't spawn-here eligible.
+ */
+function resolveSpawnHereTarget(node: TreeNode): AgentPickerTarget | null {
+  if (node.type === 'session') {
+    const sess = node.id.split(':').slice(1).join(':');
+    if (sess.length === 0) return null;
+    return { session: sess };
+  }
+  if (node.type === 'window') {
+    const idParts = node.id.split(':');
+    if (idParts.length < 3) return null;
+    return { session: idParts[1], window: `${idParts[1]}:${idParts[2]}` };
+  }
+  return null;
 }
 
 /**
