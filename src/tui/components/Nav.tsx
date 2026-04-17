@@ -3,6 +3,7 @@
 
 import { useKeyboard } from '@opentui/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type SpawnIntent, buildSpawnInvocation } from '../../lib/spawn-invocation.js';
 import { scanAgents } from '../../lib/workspace.js';
 import { buildMenuItems } from '../context-menu-items.js';
 import { type DiagnosticSnapshot, collectDiagnostics } from '../diagnostics.js';
@@ -16,6 +17,7 @@ import {
 import { palette } from '../theme.js';
 import { flattenTree, toggleNode } from '../tree.js';
 import type { TreeNode } from '../types.js';
+import { AgentPicker, type AgentPickerTarget } from './AgentPicker.js';
 import { ContextMenu } from './ContextMenu.js';
 import { SystemStats } from './SystemStats.js';
 import { TreeNodeRow } from './TreeNode.js';
@@ -44,6 +46,7 @@ export function Nav({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [requestedInitialAgent, setRequestedInitialAgent] = useState<string | undefined>(initialAgent);
   const [contextMenuNodeId, setContextMenuNodeId] = useState<string | null>(null);
+  const [spawnPickerTarget, setSpawnPickerTarget] = useState<AgentPickerTarget | null>(null);
   const lastTarget = useRef<string | null>(null);
   const selectedNodeId = useRef<string | null>(null);
 
@@ -233,6 +236,11 @@ export function Nav({
       const node = flatNodes.find((n) => n.node.id === contextMenuNodeId)?.node;
       if (!node) return;
       setContextMenuNodeId(null);
+      if (action === 'spawn-here') {
+        const target = resolveSpawnHereTarget(node);
+        if (target) setSpawnPickerTarget(target);
+        return;
+      }
       dispatchContextMenuAction(action, node, payload, {
         sessionTree,
         onTmuxSessionSelect,
@@ -242,10 +250,22 @@ export function Nav({
     [flatNodes, contextMenuNodeId, sessionTree, onTmuxSessionSelect, onNewAgentWindow],
   );
 
+  const handleSpawnPickerConfirm = useCallback((intent: SpawnIntent) => {
+    setSpawnPickerTarget(null);
+    executeSpawnIntent(intent);
+  }, []);
+
+  const handleSpawnPickerCancel = useCallback(() => {
+    setSpawnPickerTarget(null);
+  }, []);
+
   const _menuDisabled = keyboardDisabled || contextMenuNodeId !== null;
 
   useKeyboard((key) => {
     if (keyboardDisabled) return;
+    // When the spawn picker is open it owns keyboard input — don't also
+    // navigate the tree underneath.
+    if (spawnPickerTarget !== null) return;
     handleKeyboardInput(key, {
       contextMenuNodeId,
       flatNodes,
@@ -323,6 +343,15 @@ export function Nav({
           onAction={handleContextMenuAction}
           onClose={() => setContextMenuNodeId(null)}
           positionY={flatNodes.findIndex((n) => n.node.id === contextMenuNodeId) + 1}
+        />
+      ) : null}
+
+      {/* Spawn-here agent picker (opened from session/window context menu) */}
+      {spawnPickerTarget !== null ? (
+        <AgentPicker
+          target={spawnPickerTarget}
+          onConfirm={handleSpawnPickerConfirm}
+          onCancel={handleSpawnPickerCancel}
         />
       ) : null}
 
@@ -748,6 +777,47 @@ function executeGenie(args: string[]): void {
     child.unref();
   } catch {
     // best-effort
+  }
+}
+
+/**
+ * Resolve a Nav tree node into an AgentPickerTarget — the (session, window?)
+ * pair that "Spawn here…" should populate into the intent. Returns null if
+ * the node isn't spawn-here eligible.
+ */
+function resolveSpawnHereTarget(node: TreeNode): AgentPickerTarget | null {
+  if (node.type === 'session') {
+    const sess = node.id.split(':').slice(1).join(':');
+    if (sess.length === 0) return null;
+    return { session: sess };
+  }
+  if (node.type === 'window') {
+    const idParts = node.id.split(':');
+    if (idParts.length < 3) return null;
+    return { session: idParts[1], window: `${idParts[1]}:${idParts[2]}` };
+  }
+  return null;
+}
+
+/**
+ * Execute a SpawnIntent via the same `child_process.spawn` path that
+ * `spawnAgent` uses. The argv comes from `buildSpawnInvocation` — preview
+ * and execution stay in lockstep because they share this single source.
+ */
+function executeSpawnIntent(intent: SpawnIntent): void {
+  try {
+    const { argv } = buildSpawnInvocation(intent);
+    const { spawn } = require('node:child_process') as typeof import('node:child_process');
+    const bunPath = process.execPath || 'bun';
+    const genieBin = process.argv[1];
+    const spawnOpts = { detached: true, stdio: 'ignore' as const };
+    const child =
+      genieBin && genieBin !== 'genie'
+        ? spawn(bunPath, [genieBin, ...argv], spawnOpts)
+        : spawn('genie', argv, spawnOpts);
+    child.unref();
+  } catch (err) {
+    console.error('TUI: spawn-here failed:', err instanceof Error ? err.message : err);
   }
 }
 
