@@ -3,6 +3,7 @@
 
 import { useKeyboard } from '@opentui/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type SpawnIntent, buildSpawnInvocation } from '../../lib/spawn-invocation.js';
 import { scanAgents } from '../../lib/workspace.js';
 import { buildMenuItems } from '../context-menu-items.js';
 import { type DiagnosticSnapshot, collectDiagnostics } from '../diagnostics.js';
@@ -17,6 +18,7 @@ import { palette } from '../theme.js';
 import { flattenTree, toggleNode } from '../tree.js';
 import type { TreeNode } from '../types.js';
 import { ContextMenu } from './ContextMenu.js';
+import { SpawnTargetPicker } from './SpawnTargetPicker.js';
 import { SystemStats } from './SystemStats.js';
 import { TreeNodeRow } from './TreeNode.js';
 
@@ -44,6 +46,8 @@ export function Nav({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [requestedInitialAgent, setRequestedInitialAgent] = useState<string | undefined>(initialAgent);
   const [contextMenuNodeId, setContextMenuNodeId] = useState<string | null>(null);
+  /** Name of the agent whose spawn-into picker is open (null = picker closed). */
+  const [spawnIntoAgent, setSpawnIntoAgent] = useState<string | null>(null);
   const lastTarget = useRef<string | null>(null);
   const selectedNodeId = useRef<string | null>(null);
 
@@ -237,15 +241,28 @@ export function Nav({
         sessionTree,
         onTmuxSessionSelect,
         onNewAgentWindow,
+        openSpawnInto: setSpawnIntoAgent,
       });
     },
     [flatNodes, contextMenuNodeId, sessionTree, onTmuxSessionSelect, onNewAgentWindow],
   );
 
+  const handleSpawnIntoConfirm = useCallback((intent: SpawnIntent) => {
+    executeSpawnIntent(intent);
+    setSpawnIntoAgent(null);
+  }, []);
+
+  const handleSpawnIntoCancel = useCallback(() => {
+    setSpawnIntoAgent(null);
+  }, []);
+
   const _menuDisabled = keyboardDisabled || contextMenuNodeId !== null;
 
   useKeyboard((key) => {
     if (keyboardDisabled) return;
+    // Spawn-into picker owns the keyboard while open — the picker is rendered
+    // later in this component and registers its own useKeyboard handler.
+    if (spawnIntoAgent !== null) return;
     handleKeyboardInput(key, {
       contextMenuNodeId,
       flatNodes,
@@ -326,6 +343,16 @@ export function Nav({
         />
       ) : null}
 
+      {/* Spawn-into target picker — live tmux topology + CliPreviewLine */}
+      {spawnIntoAgent !== null ? (
+        <SpawnTargetPicker
+          agentName={spawnIntoAgent}
+          sessions={diagnostics?.sessions ?? []}
+          onConfirm={handleSpawnIntoConfirm}
+          onCancel={handleSpawnIntoCancel}
+        />
+      ) : null}
+
       {/* System stats */}
       <SystemStats />
 
@@ -368,9 +395,16 @@ function dispatchContextMenuAction(
     sessionTree: TreeNode[];
     onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void;
     onNewAgentWindow?: (agentName: string) => void;
+    openSpawnInto?: (agentName: string) => void;
   },
 ): void {
   const name = node.label;
+  // Agent-node "Spawn into…" — open the target picker modal; actual spawn
+  // happens on picker confirm in the Nav render scope.
+  if (action === 'spawn-into' && node.type === 'agent' && deps.openSpawnInto) {
+    deps.openSpawnInto(agentNameFromNode(node));
+    return;
+  }
   if (handleAttachAction(action, node, deps.onTmuxSessionSelect)) return;
   if (handleRetryAction(action, name, deps.onTmuxSessionSelect)) return;
   if (handleGenieAction(action, name, payload)) return;
@@ -748,6 +782,22 @@ function executeGenie(args: string[]): void {
     child.unref();
   } catch {
     // best-effort
+  }
+}
+
+/**
+ * Execute a SpawnIntent via the genie CLI (fire-and-forget).
+ *
+ * Uses the argv returned by `buildSpawnInvocation` as the single source of
+ * truth — the same intent that powered the CliPreviewLine is handed to the
+ * child process, so the previewed and executed commands cannot drift.
+ */
+function executeSpawnIntent(intent: SpawnIntent): void {
+  try {
+    const { argv } = buildSpawnInvocation(intent);
+    executeGenie(argv);
+  } catch (err) {
+    console.error('TUI: spawn-intent execution failed:', err instanceof Error ? err.message : err);
   }
 }
 
