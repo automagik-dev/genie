@@ -47,7 +47,12 @@ type PickerRow =
  */
 type Pick = { kind: 'session'; sessionName: string } | { kind: 'window'; sessionName: string; windowIndex: number };
 
-export interface SpawnTargetPickerProps {
+/**
+ * Props for the picker. Intentionally NOT exported — knip flagged it as
+ * unused public surface. Callers infer the shape from the component
+ * signature (see `SpawnTargetPicker` below).
+ */
+interface SpawnTargetPickerProps {
   /** Agent name to spawn (will become `genie spawn <name> …`). */
   agentName: string;
   /** Live tmux topology sourced from the parent's diagnostics poll. */
