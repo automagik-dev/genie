@@ -642,8 +642,20 @@ export async function reconcileOrphanedRuns(deps: SchedulerDeps, daemonId: strin
 }
 
 /**
+ * Delay before a one-shot retry of the agent recovery pass when the initial
+ * pass had any per-worker failures (e.g. tmux socket not reachable yet).
+ */
+const RECOVERY_RETRY_DELAY_MS = 60_000;
+
+/**
  * Run full startup recovery: reclaim expired leases, reconcile orphaned runs,
  * then auto-resume agents whose panes died while the daemon was down.
+ *
+ * Resilience: if the initial agent recovery pass hits any per-worker failure
+ * (for example, the tmux socket is not yet ready when the daemon boots after
+ * a server reboot), a single retry pass is scheduled {@link RECOVERY_RETRY_DELAY_MS}
+ * later. Per-worker failures never abort the outer loop — each worker is
+ * isolated so one bad pane does not poison recovery for the rest.
  */
 export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, config?: SchedulerConfig): Promise<void> {
   const now = deps.now();
@@ -657,19 +669,7 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
   const reclaimed = await reclaimExpiredLeases(deps, daemonId);
   const orphans = await reconcileOrphanedRuns(deps, daemonId);
 
-  // Auto-resume agents whose panes died while daemon was down
-  let resumed = 0;
-  const resolvedConfig = config ?? resolveConfig();
-  const workers = await deps.listWorkers();
-  const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done' && w.claudeSessionId);
-
-  for (const worker of resumable) {
-    const alive = await deps.isPaneAlive(worker.paneId);
-    if (!alive) {
-      const result = await attemptAgentResume(deps, resolvedConfig, worker);
-      if (result === 'resumed') resumed++;
-    }
-  }
+  const { resumed, failed } = await runAgentRecoveryPass(deps, daemonId, config);
 
   deps.log({
     timestamp: deps.now().toISOString(),
@@ -678,8 +678,93 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
     reclaimed_leases: reclaimed,
     orphaned_runs: orphans,
     resumed_agents: resumed,
+    failed_agents: failed,
     daemon_id: daemonId,
   });
+
+  if (failed > 0) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'info',
+      event: 'recovery_retry_scheduled',
+      daemon_id: daemonId,
+      failed_agents: failed,
+      delay_ms: RECOVERY_RETRY_DELAY_MS,
+    });
+    scheduleRecoveryRetry(deps, daemonId, config);
+  }
+}
+
+/**
+ * Schedule a single delayed retry pass. Extracted for test injection and to
+ * keep the happy-path in {@link recoverOnStartup} readable.
+ */
+function scheduleRecoveryRetry(deps: SchedulerDeps, daemonId: string, config?: SchedulerConfig): void {
+  setTimeout(async () => {
+    try {
+      const retry = await runAgentRecoveryPass(deps, daemonId, config);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'info',
+        event: 'recovery_retry_completed',
+        daemon_id: daemonId,
+        resumed_agents: retry.resumed,
+        failed_agents: retry.failed,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'error',
+        event: 'recovery_retry_error',
+        daemon_id: daemonId,
+        error: message,
+      });
+    }
+  }, RECOVERY_RETRY_DELAY_MS).unref?.();
+}
+
+/**
+ * Run a single pass over resumable agents with per-worker fault isolation.
+ *
+ * Each worker's `isPaneAlive` + `attemptAgentResume` is wrapped in try/catch,
+ * so a single failure (for example, an unreachable tmux socket during early
+ * boot) does not abort the recovery loop for the remaining workers.
+ */
+async function runAgentRecoveryPass(
+  deps: SchedulerDeps,
+  daemonId: string,
+  config?: SchedulerConfig,
+): Promise<{ resumed: number; failed: number }> {
+  const resolvedConfig = config ?? resolveConfig();
+  const workers = await deps.listWorkers();
+  const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done' && w.claudeSessionId);
+
+  let resumed = 0;
+  let failed = 0;
+
+  for (const worker of resumable) {
+    try {
+      const alive = await deps.isPaneAlive(worker.paneId);
+      if (!alive) {
+        const result = await attemptAgentResume(deps, resolvedConfig, worker);
+        if (result === 'resumed') resumed++;
+      }
+    } catch (err) {
+      failed++;
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'warn',
+        event: 'recovery_worker_failed',
+        daemon_id: daemonId,
+        worker_id: worker.id,
+        error: message,
+      });
+    }
+  }
+
+  return { resumed, failed };
 }
 
 // ============================================================================

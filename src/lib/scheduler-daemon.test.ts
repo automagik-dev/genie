@@ -1429,6 +1429,120 @@ describe('scheduler-daemon', () => {
 
       expect(resumedAgents).toHaveLength(0);
     });
+
+    test('per-worker isPaneAlive failure does not abort recovery for remaining workers', async () => {
+      // Regression: prior to fault isolation, a single isPaneAlive throw
+      // (typically "error connecting to /tmp/tmux-.../genie" when the tmux
+      // socket is not ready yet after a reboot) aborted the entire recovery
+      // loop, leaving every subsequent worker stranded with resume_attempts=0.
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-first-fails',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 0,
+        },
+        {
+          id: 'agent-second-ok',
+          paneId: '%43',
+          state: 'idle',
+          autoResume: true,
+          claudeSessionId: 'sess-2',
+          resumeAttempts: 0,
+        },
+      ];
+
+      const resumedAgents: string[] = [];
+      const { deps, logs } = createMockDeps(
+        { triggers: [], runs: [] },
+        {
+          listWorkers: async () => workers,
+          isPaneAlive: async (paneId) => {
+            if (paneId === '%42') {
+              throw new Error(
+                'Failed to execute tmux command: error connecting to /tmp/tmux-1000/genie (No such file or directory)',
+              );
+            }
+            return false;
+          },
+          resumeAgent: async (id) => {
+            resumedAgents.push(id);
+            return true;
+          },
+          updateAgent: async () => {},
+        },
+      );
+
+      await recoverOnStartup(deps, 'daemon-1', defaultConfig);
+
+      expect(resumedAgents).toEqual(['agent-second-ok']);
+      const failureLog = logs.find((l) => l.event === 'recovery_worker_failed' && l.worker_id === 'agent-first-fails');
+      expect(failureLog).toBeDefined();
+      const completed = logs.find((l) => l.event === 'recovery_completed');
+      expect(completed?.resumed_agents).toBe(1);
+      expect(completed?.failed_agents).toBe(1);
+    });
+
+    test('schedules a retry when the initial pass has per-worker failures', async () => {
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-flaky',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 0,
+        },
+      ];
+
+      const { deps, logs } = createMockDeps(
+        { triggers: [], runs: [] },
+        {
+          listWorkers: async () => workers,
+          isPaneAlive: async () => {
+            throw new Error('tmux socket not ready');
+          },
+          resumeAgent: async () => true,
+          updateAgent: async () => {},
+        },
+      );
+
+      await recoverOnStartup(deps, 'daemon-1', defaultConfig);
+
+      const retryScheduled = logs.find((l) => l.event === 'recovery_retry_scheduled');
+      expect(retryScheduled).toBeDefined();
+      expect(retryScheduled?.failed_agents).toBe(1);
+    });
+
+    test('does not schedule a retry when every worker recovers cleanly', async () => {
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-ok',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 0,
+        },
+      ];
+
+      const { deps, logs } = createMockDeps(
+        { triggers: [], runs: [] },
+        {
+          listWorkers: async () => workers,
+          isPaneAlive: async () => false,
+          resumeAgent: async () => true,
+          updateAgent: async () => {},
+        },
+      );
+
+      await recoverOnStartup(deps, 'daemon-1', defaultConfig);
+
+      const retryScheduled = logs.find((l) => l.event === 'recovery_retry_scheduled');
+      expect(retryScheduled).toBeUndefined();
+    });
   });
 
   // ==========================================================================
