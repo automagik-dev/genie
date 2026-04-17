@@ -2134,14 +2134,32 @@ type WorkerStatus = {
   autoResume?: boolean;
 };
 
+/**
+ * Resolve liveness + display state for a worker.
+ *
+ * - Tmux transport: `isPaneAlive(%N)` is authoritative and `agents.state` is
+ *   kept in sync, so we preserve the legacy behavior exactly.
+ * - Non-tmux transports (SDK, omni, inline): pane IDs are synthetic ('sdk', '',
+ *   'inline') and fail tmux's regex, so we query `executors.state` directly.
+ *   The cached `agents.state` is stale for these transports — we use the live
+ *   executor state for display as well.
+ */
+async function resolveWorkerLiveness(w: registry.Agent): Promise<{ alive: boolean; state: string }> {
+  if (/^%\d+$/.test(w.paneId)) {
+    return { alive: await isPaneAlive(w.paneId), state: w.state };
+  }
+  const execState = await executorRegistry.getLiveExecutorState(w.id);
+  return { alive: execState !== null, state: execState ?? w.state };
+}
+
 /** Build a name → status map from registry workers, including resume info for dead agents. */
 async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<Map<string, WorkerStatus>> {
   const statusMap = new Map<string, WorkerStatus>();
   for (const w of workers) {
     const name = w.role || w.id;
-    const alive = await isPaneAlive(w.paneId);
+    const { alive, state } = await resolveWorkerLiveness(w);
     if (alive) {
-      statusMap.set(name, { state: w.state, team: w.team || '-' });
+      statusMap.set(name, { state, team: w.team || '-' });
     } else if (w.state === 'suspended' || w.state === 'error') {
       const attempts = w.resumeAttempts ?? 0;
       const max = w.maxResumeAttempts ?? 3;
