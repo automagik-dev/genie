@@ -777,11 +777,24 @@ function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow
     return execSync(cmd, { encoding: 'utf-8' }).trim();
   }
 
-  // --new-window: create a dedicated window instead of splitting
+  // --new-window: create a dedicated window instead of splitting.
+  // When the target session doesn't exist yet (e.g. cold-start spawn from the TUI
+  // for an offline agent), `new-window -t <session>:` would fail with "can't find
+  // session". Bootstrap with `new-session` in that case — it creates both the
+  // session and its first pane in one call.
   if (ctx.validated.newWindow) {
     const session = ctx.sessionOverride ?? teamWindow?.windowId?.split(':')[0] ?? ctx.validated.team;
     const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
-    const cmd = `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
+    let sessionExists = false;
+    try {
+      execSync(`${tmuxPrefix}has-session -t ${shellQuote(`=${session}`)}`, { stdio: 'ignore' });
+      sessionExists = true;
+    } catch {
+      sessionExists = false;
+    }
+    const cmd = sessionExists
+      ? `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`
+      : `${tmuxPrefix}new-session -d -s ${shellQuote(session)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
     return execSync(cmd, { encoding: 'utf-8' }).trim();
   }
 
@@ -2344,14 +2357,32 @@ type WorkerStatus = {
   autoResume?: boolean;
 };
 
+/**
+ * Resolve liveness + display state for a worker.
+ *
+ * - Tmux transport: `isPaneAlive(%N)` is authoritative and `agents.state` is
+ *   kept in sync, so we preserve the legacy behavior exactly.
+ * - Non-tmux transports (SDK, omni, inline): pane IDs are synthetic ('sdk', '',
+ *   'inline') and fail tmux's regex, so we query `executors.state` directly.
+ *   The cached `agents.state` is stale for these transports — we use the live
+ *   executor state for display as well.
+ */
+async function resolveWorkerLiveness(w: registry.Agent): Promise<{ alive: boolean; state: string }> {
+  if (/^%\d+$/.test(w.paneId)) {
+    return { alive: await isPaneAlive(w.paneId), state: w.state };
+  }
+  const execState = await executorRegistry.getLiveExecutorState(w.id);
+  return { alive: execState !== null, state: execState ?? w.state };
+}
+
 /** Build a name → status map from registry workers, including resume info for dead agents. */
 async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<Map<string, WorkerStatus>> {
   const statusMap = new Map<string, WorkerStatus>();
   for (const w of workers) {
     const name = w.role || w.id;
-    const alive = await isPaneAlive(w.paneId);
+    const { alive, state } = await resolveWorkerLiveness(w);
     if (alive) {
-      statusMap.set(name, { state: w.state, team: w.team || '-' });
+      statusMap.set(name, { state, team: w.team || '-' });
     } else if (w.state === 'suspended' || w.state === 'error') {
       const attempts = w.resumeAttempts ?? 0;
       const max = w.maxResumeAttempts ?? 3;
