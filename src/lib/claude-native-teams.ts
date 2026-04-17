@@ -826,28 +826,61 @@ export async function discoverTeamName(cwd?: string): Promise<string | null> {
   const envTeam = process.env.GENIE_TEAM;
   if (envTeam) return envTeam;
 
+  const base = teamsBaseDir();
+
   // 2. Match session ID against team configs
   const sessionId = await discoverClaudeSessionId(cwd);
-  if (!sessionId) return null;
-
-  const base = teamsBaseDir();
-  try {
-    const teams = await readdir(base);
-    for (const name of teams) {
-      const cfgPath = join(base, name, 'config.json');
-      try {
-        const content = await readFile(cfgPath, 'utf-8');
-        const config: NativeTeamConfig = JSON.parse(content);
-        if (config.leadSessionId === sessionId) return config.name;
-      } catch {
-        // skip invalid configs
+  if (sessionId) {
+    try {
+      const teams = await readdir(base);
+      for (const name of teams) {
+        const cfgPath = join(base, name, 'config.json');
+        try {
+          const content = await readFile(cfgPath, 'utf-8');
+          const config: NativeTeamConfig = JSON.parse(content);
+          if (config.leadSessionId === sessionId) return config.name;
+        } catch {
+          // skip invalid configs
+        }
       }
+    } catch {
+      // no teams dir
     }
-  } catch {
-    // no teams dir
+  }
+
+  // 3. Fallback: if we're inside a tmux session whose name matches an
+  // existing team config, trust that mapping. Handles the post-reboot /
+  // post-claude-restart case where the stored leadSessionId is stale but
+  // the tmux session (and thus team identity) is stable.
+  const tmuxSessionName = await currentTmuxSessionName();
+  if (tmuxSessionName) {
+    const cfgPath = join(base, tmuxSessionName, 'config.json');
+    try {
+      const content = await readFile(cfgPath, 'utf-8');
+      const config: NativeTeamConfig = JSON.parse(content);
+      return config.name;
+    } catch {
+      // no matching team on disk
+    }
   }
 
   return null;
+}
+
+/**
+ * Read the current tmux session name via `tmux display-message -p '#S'`.
+ * Returns null if not inside tmux, if the tmux binary is missing, or if
+ * the command fails for any reason. Kept local to this module to avoid a
+ * circular import with {@link ./tmux.ts} (which imports this module).
+ */
+async function currentTmuxSessionName(): Promise<string | null> {
+  if (!process.env.TMUX) return null;
+  try {
+    const { getCurrentSessionName } = await import('./tmux.js');
+    return await getCurrentSessionName();
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================

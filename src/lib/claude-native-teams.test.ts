@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import {
   type NativeInboxMessage,
   discoverClaudeParentSessionId,
+  discoverTeamName,
   ensureNativeTeamWithSessionId,
   loadConfig,
   resolveNativeMemberName,
@@ -552,5 +553,59 @@ describe('loadConfig', () => {
 
     const config = await loadConfig('bad-team');
     expect(config).toBeNull();
+  });
+});
+
+describe('discoverTeamName', () => {
+  let savedTmux: string | undefined;
+  let savedGenieTeam: string | undefined;
+
+  beforeEach(() => {
+    savedTmux = process.env.TMUX;
+    savedGenieTeam = process.env.GENIE_TEAM;
+    process.env.TMUX = undefined;
+    process.env.GENIE_TEAM = undefined;
+  });
+
+  afterEach(() => {
+    if (savedTmux === undefined) process.env.TMUX = undefined;
+    else process.env.TMUX = savedTmux;
+    if (savedGenieTeam === undefined) process.env.GENIE_TEAM = undefined;
+    else process.env.GENIE_TEAM = savedGenieTeam;
+  });
+
+  test('returns GENIE_TEAM env var when set', async () => {
+    process.env.GENIE_TEAM = 'explicit-team';
+    const result = await discoverTeamName('/repo');
+    expect(result).toBe('explicit-team');
+  });
+
+  test('matches team by leadSessionId', async () => {
+    const cwd = '/repo/x';
+    await createTestTeamConfig('match-team', [{ agentId: 'a@match-team', name: 'a' }], {
+      leadSessionId: 'session-xyz',
+    });
+    await createSessionJsonl(cwd, 'session-xyz', [{ type: 'user', cwd }], 1_000);
+
+    const result = await discoverTeamName(cwd);
+    expect(result).toBe('match-team');
+  });
+
+  test('returns null when no session and TMUX unset', async () => {
+    // No matching JSONL, no TMUX — both discovery paths yield null.
+    const result = await discoverTeamName('/repo/nonexistent');
+    expect(result).toBeNull();
+  });
+
+  test('tmux fallback is skipped when TMUX env is absent', async () => {
+    // Team config exists on disk with matching NAME, but there's no
+    // leadSessionId match AND no TMUX env → fallback must not run,
+    // so result stays null. Regression guard against spuriously
+    // matching by name when not inside a tmux session.
+    await createTestTeamConfig('standalone-team', [{ agentId: 'a@standalone-team', name: 'a' }], {
+      leadSessionId: 'some-other-session',
+    });
+    const result = await discoverTeamName('/repo/no-jsonl-here');
+    expect(result).toBeNull();
   });
 });
