@@ -1701,7 +1701,9 @@ export async function pickParallelShortId(baseName: string, team: string, uuid: 
  * `sessionUuid` is a freshly-minted UUID that the caller threads into the
  * Claude `--session-id` flag and records as the row's `claude_session_id`.
  */
-export type SpawnIdentity =
+// Internal type; not exported. Knip flagged the prior `export` as unused. The
+// public surface is the function signature — callers infer the type from it.
+type SpawnIdentity =
   | { kind: 'canonical'; workerId: string; sessionUuid: string }
   | { kind: 'parallel'; workerId: string; sessionUuid: string; canonicalId: string };
 
