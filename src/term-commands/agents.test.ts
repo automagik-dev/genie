@@ -6,11 +6,17 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import * as directory from '../lib/agent-directory.js';
 import type { DirectoryEntry } from '../lib/agent-directory.js';
 import type { Agent } from '../lib/agent-registry.js';
 import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
-import { buildInitialSplitWindowCommand, buildResumeContext, resolveAgentWorkingDir } from './agents.js';
+import {
+  buildInitialSplitWindowCommand,
+  buildResumeContext,
+  resolveAgentWorkingDir,
+  resolveTeamName,
+} from './agents.js';
 
 let cwd: string;
 
@@ -179,5 +185,165 @@ describe('resolveAgentWorkingDir', () => {
     };
 
     expect(resolveAgentWorkingDir(entry)).toBe('/tmp/agents/genie');
+  });
+});
+
+// ============================================================================
+// resolveTeamName — four-tier precedence
+//
+// Authority: perfect-spawn-hierarchy wish (PR #1133 merge 8a783460,
+//   PR #1134 merge 69215743), tui-spawn-dx Group 1.
+//
+// Precedence, highest wins:
+//   1. options.team (the --team flag).
+//   2. agent.entry.team (template-pinned row in agent_templates PG table).
+//   3. process.env.GENIE_TEAM.
+//   4. discoverTeamName() — retained PR #1164 fallback (tmux-session-name +
+//      Claude Code JSONL leadSessionId match). Fires only when nothing else
+//      resolves.
+// ============================================================================
+describe('resolveTeamName', () => {
+  const noEnv = { GENIE_TEAM: undefined };
+  const neverDiscover = async () => null;
+
+  test('tier 1: options.team wins over entry.team, env, and discover', async () => {
+    const team = await resolveTeamName({
+      explicitTeam: 'cli-flag',
+      entryTeam: 'template-team',
+      env: { GENIE_TEAM: 'env-team' },
+      discover: async () => 'discover-team',
+    });
+    expect(team).toBe('cli-flag');
+  });
+
+  test('tier 2: entry.team wins over GENIE_TEAM and discover', async () => {
+    const team = await resolveTeamName({
+      entryTeam: 'template-team',
+      env: { GENIE_TEAM: 'env-team' },
+      discover: async () => 'discover-team',
+    });
+    expect(team).toBe('template-team');
+  });
+
+  test('tier 3: GENIE_TEAM wins over discover', async () => {
+    const team = await resolveTeamName({
+      env: { GENIE_TEAM: 'env-team' },
+      discover: async () => 'discover-team',
+    });
+    expect(team).toBe('env-team');
+  });
+
+  test('tier 4: discoverTeamName fires only when every earlier tier is empty', async () => {
+    const team = await resolveTeamName({
+      env: noEnv,
+      discover: async () => 'discover-team',
+    });
+    expect(team).toBe('discover-team');
+  });
+
+  test('returns null when every tier is empty', async () => {
+    const team = await resolveTeamName({
+      env: noEnv,
+      discover: neverDiscover,
+    });
+    expect(team).toBeNull();
+  });
+
+  test('empty-string explicitTeam falls through to entry.team (treated as absent)', async () => {
+    const team = await resolveTeamName({
+      explicitTeam: '',
+      entryTeam: 'template-team',
+      env: noEnv,
+      discover: neverDiscover,
+    });
+    expect(team).toBe('template-team');
+  });
+
+  // Regression for the reproducer from the wish: spawning `simone` from inside
+  // the `genie` tmux session (where discoverTeamName would return 'genie' via
+  // PR #1164's tmux fallback) MUST resolve to 'simone' because the template
+  // pins it. This asserts that tier 2 is consulted BEFORE tier 4 — the exact
+  // bug the four-tier precedence fixes.
+  test('regression: template-pinned simone resolves to simone even when tmux fallback would say genie', async () => {
+    const team = await resolveTeamName({
+      entryTeam: 'simone',
+      env: noEnv,
+      discover: async () => 'genie', // simulates PR #1164 tmux-session-name fallback in the `genie` tmux session
+    });
+    expect(team).toBe('simone');
+  });
+});
+
+// ============================================================================
+// directory.resolve populates entry.team from agent_templates
+// ============================================================================
+describe.skipIf(!DB_AVAILABLE)('directory.resolve team population', () => {
+  let cleanupSchema: () => Promise<void>;
+
+  beforeAll(async () => {
+    cleanupSchema = await setupTestSchema();
+  });
+
+  afterAll(async () => {
+    await cleanupSchema();
+  });
+
+  async function seedDirectoryAgent(name: string): Promise<void> {
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    // Mirror what `genie dir add` does — minimal metadata so roleToEntry has something to hydrate.
+    await sql`
+      INSERT INTO agents (id, role, custom_name, started_at, metadata, repo_path)
+      VALUES (${`dir:${name}`}, ${name}, ${name}, now(), ${sql.json({ dir: `/tmp/agents/${name}` })}, ${`/tmp/agents/${name}`})
+      ON CONFLICT (id) DO UPDATE SET metadata = EXCLUDED.metadata
+    `;
+  }
+
+  async function seedTemplate(id: string, team: string): Promise<void> {
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    await sql`
+      INSERT INTO agent_templates (id, provider, team, cwd, last_spawned_at)
+      VALUES (${id}, 'claude', ${team}, '/tmp/seed', now())
+      ON CONFLICT (id) DO UPDATE SET team = EXCLUDED.team
+    `;
+  }
+
+  test('reproducer: resolve("simone") exposes entry.team="simone" from agent_templates row', async () => {
+    await seedDirectoryAgent('simone');
+    await seedTemplate('simone', 'simone');
+
+    const resolved = await directory.resolve('simone');
+    expect(resolved).not.toBeNull();
+    expect(resolved?.entry.team).toBe('simone');
+  });
+
+  test('resolve returns entry.team=undefined when no template row exists', async () => {
+    // Use a built-in role (engineer) with no seeded agent_templates row.
+    const resolved = await directory.resolve('engineer');
+    expect(resolved).not.toBeNull();
+    expect(resolved?.entry.team).toBeUndefined();
+  });
+
+  test('end-to-end: simone from a "genie" tmux context still resolves to team=simone', async () => {
+    // Seed both rows the way production carries them — a `dir:simone` agents
+    // row (from `genie dir add`) and a matching `agent_templates` row (from
+    // the first spawn).
+    await seedDirectoryAgent('simone');
+    await seedTemplate('simone', 'simone');
+
+    // Fetch the entry the way handleWorkerSpawn does.
+    const resolved = await directory.resolve('simone');
+    expect(resolved?.entry.team).toBe('simone');
+
+    // Feed into the real resolver with env + discover simulating "inside the
+    // genie tmux session" — pre-PR-#1134 this resolved to 'genie'.
+    const team = await resolveTeamName({
+      entryTeam: resolved?.entry.team,
+      env: { GENIE_TEAM: undefined },
+      discover: async () => 'genie',
+    });
+
+    expect(team).toBe('simone');
   });
 });

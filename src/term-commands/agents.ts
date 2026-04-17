@@ -1597,13 +1597,56 @@ async function dispatchSpawn(
   return await launchInlineSpawn(ctx);
 }
 
+/**
+ * Resolve the team name for a spawn using a four-tier precedence.
+ *
+ * Precedence (highest wins):
+ *   1. `explicitTeam` — the caller's `--team` flag (`options.team`).
+ *   2. `entryTeam` — template-pinned team from `agent_templates` PG row
+ *      (`agent.entry?.team`). Authoritative PG lookup, NOT a synthetic
+ *      fallback. Restores the canonical-UUID-per-agent invariant
+ *      established by PR #1133 (`8a783460`) / PR #1134 (`69215743`).
+ *   3. `process.env.GENIE_TEAM` — session-scoped env var.
+ *   4. `discoverTeamName()` — the PR #1164 tmux-session-name fallback,
+ *      which itself also consults `GENIE_TEAM` first and then the tmux
+ *      session name / Claude JSONL heuristic. Kept so the resolver still
+ *      works post-reboot when every higher-priority signal is stale.
+ *
+ * Returns null when every tier yields nothing — callers turn that into
+ * the canonical "--team is required" error.
+ *
+ * Exported for unit testing; the runtime call site is `resolveTeamAndResume`.
+ */
+export async function resolveTeamName(opts: {
+  explicitTeam?: string;
+  entryTeam?: string;
+  env?: Pick<NodeJS.ProcessEnv, 'GENIE_TEAM'>;
+  discover?: () => Promise<string | null>;
+}): Promise<string | null> {
+  // Tier 1: explicit --team flag (only tier that flips teamWasExplicit).
+  if (opts.explicitTeam) return opts.explicitTeam;
+  // Tier 2: template-pinned team from agent_templates.
+  if (opts.entryTeam) return opts.entryTeam;
+  // Tier 3: GENIE_TEAM env var (short-circuit before the heavy discovery path).
+  const env = opts.env ?? process.env;
+  if (env.GENIE_TEAM) return env.GENIE_TEAM;
+  // Tier 4: full discovery (JSONL leadSessionId match → tmux session name).
+  const discover = opts.discover ?? nativeTeams.discoverTeamName;
+  return (await discover()) ?? null;
+}
+
 /** Resolve team name, auto-resume dead workers, and reject duplicates. */
 async function resolveTeamAndResume(
   effectiveRole: string,
   options: SpawnOptions,
+  agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
 ): Promise<{ team: string; teamWasExplicit: boolean; resumed?: string }> {
+  // teamWasExplicit stays strictly tier-1 — template/env/discover do NOT flip it.
   const teamWasExplicit = Boolean(options.team);
-  const team = options.team || (await nativeTeams.discoverTeamName());
+  const team = await resolveTeamName({
+    explicitTeam: options.team,
+    entryTeam: agent.entry?.team,
+  });
   if (!team) {
     console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
     return process.exit(1) as never;
@@ -1627,8 +1670,11 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   // 1. Resolve agent from directory or built-ins (uses original name)
   let agent = await resolveAgentForSpawn(name, options);
 
-  // 2. Resolve team, auto-resume dead workers, reject duplicates
-  const { team, teamWasExplicit, resumed } = await resolveTeamAndResume(effectiveRole, options);
+  // 2. Resolve team, auto-resume dead workers, reject duplicates.
+  // `agent` is passed through so template-pinned teams (agent.entry.team) take
+  // precedence over GENIE_TEAM / discoverTeamName — preserves canonical-UUID invariant
+  // when spawning from a tmux session that does not match the agent's home team.
+  const { team, teamWasExplicit, resumed } = await resolveTeamAndResume(effectiveRole, options, agent);
   if (resumed) return resumed;
 
   // 2b. Override CWD with team worktree path if available.
