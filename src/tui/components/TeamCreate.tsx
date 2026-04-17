@@ -23,7 +23,11 @@ import { validateBranchName } from '../../lib/team-manager.js';
 import { palette } from '../theme.js';
 import { CliPreviewLine } from './CliPreviewLine.js';
 
-export interface TeamCreateProps {
+/**
+ * @internal - consumed only by Nav.tsx in the workspace-root "New team" action.
+ *             Not re-exported; we never publish this type outside the package.
+ */
+interface TeamCreateProps {
   /** Candidate member agent names, rendered as a tick list in step 2. */
   availableAgents: string[];
   /** Default workspace repo — flows into `buildSpawnInvocation` as `--repo`. */
