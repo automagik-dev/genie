@@ -227,7 +227,13 @@ export async function ensureNativeTeam(
   ensureTeammateBypassPermissions();
 
   const existing = await loadConfig(teamName);
-  if (existing) return existing;
+  if (existing) {
+    // Back-fill the PG teams row if it's missing (e.g. after a pgserve reset
+    // where the on-disk native team survived but the `teams` row did not).
+    // Best-effort — never block the native team code path on PG failures.
+    await backfillTeamRow(sanitizeTeamName(teamName));
+    return existing;
+  }
 
   const sanitized = sanitizeTeamName(teamName);
   const resolvedLeader = sanitizeTeamName(leaderName ?? teamName);
@@ -241,7 +247,26 @@ export async function ensureNativeTeam(
   };
 
   await saveConfig(teamName, config);
+  // Mirror the newly created native team into the PG `teams` registry so
+  // `genie team ls` reflects reality. Idempotent and best-effort.
+  await backfillTeamRow(sanitized);
   return config;
+}
+
+/**
+ * Best-effort mirror of a native team into the PG `teams` registry.
+ *
+ * Loaded via dynamic import to avoid a circular dependency with
+ * `./team-manager.ts` (which imports this module). Failures are swallowed:
+ * the native team code path must not be blocked by PG issues.
+ */
+async function backfillTeamRow(name: string): Promise<void> {
+  try {
+    const { ensureTeamRow } = await import('./team-manager.js');
+    await ensureTeamRow(name);
+  } catch {
+    // best-effort — PG unavailable, circular-import edge case, etc.
+  }
 }
 
 /**
