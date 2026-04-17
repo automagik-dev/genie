@@ -161,4 +161,26 @@ describe('buildTeamLeadCommand resume behavior', () => {
     expect(cmd).toContain("--session-id 'uuid-123'");
     expect(cmd).not.toContain('--resume');
   });
+
+  test('sessionId + resume:true emits --resume <uuid> (Gap B)', () => {
+    // Gap B from trace-stale-resume (task #6): resuming must pass the UUID,
+    // not a name, so CC cannot fuzzy-match to a different JSONL.
+    const cmd = buildTeamLeadCommand('team', {
+      sessionId: 'uuid-123',
+      resume: true,
+      promptMode: 'append',
+    });
+    expect(cmd).toContain("--resume 'uuid-123'");
+    expect(cmd).not.toContain('--session-id');
+  });
+
+  test('sessionId + resume:false emits --session-id <uuid>', () => {
+    const cmd = buildTeamLeadCommand('team', {
+      sessionId: 'uuid-123',
+      resume: false,
+      promptMode: 'append',
+    });
+    expect(cmd).toContain("--session-id 'uuid-123'");
+    expect(cmd).not.toContain('--resume');
+  });
 });

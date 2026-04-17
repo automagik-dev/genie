@@ -439,7 +439,11 @@ describe('resolveOrMintLeadSessionId', () => {
     expect(sessionId).toBe(newerUuid);
   });
 
-  test('also matches the {team}-{team} custom-title form CC sometimes writes', async () => {
+  test('does NOT match {team}-{team} form — prevents alpha from picking up alpha-alpha sessions', async () => {
+    // Gap B from trace-stale-resume (task #6): we used to also accept the
+    // `{team}-{team}` prefixed form, but that let team "alpha" resume a
+    // JSONL written by team "alpha-alpha" under the same worktree. Strict
+    // match only — if the exact title isn't present, mint fresh.
     const cwd = '/tmp/doubled-team-cwd';
     const priorUuid = 'cafebabe-dead-beef-cafe-babedeadbeef';
 
@@ -451,8 +455,9 @@ describe('resolveOrMintLeadSessionId', () => {
     );
 
     const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('doubled-team', cwd);
-    expect(shouldResume).toBe(true);
-    expect(sessionId).toBe(priorUuid);
+    expect(shouldResume).toBe(false);
+    expect(sessionId).not.toBe(priorUuid);
+    expect(sessionId).toMatch(UUID_RE);
   });
 
   test('ignores JSONL without a custom-title matching the team', async () => {
