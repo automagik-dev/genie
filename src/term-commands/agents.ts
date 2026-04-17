@@ -1644,6 +1644,17 @@ async function resolveTeamAndResume(
     }
   }
 
+  // Auto-create team-of-one for globally registered agents with no team.
+  // Lets the TUI (and other detached spawns) start a standalone agent like
+  // `khal-os` without requiring Felipe to hand-wire a team name. The team
+  // config is materialized downstream by `resolveNativeTeam` → `ensureNativeTeam`.
+  if (!team) {
+    const directoryEntry = await directory.get(effectiveRole);
+    if (directoryEntry) {
+      team = nativeTeams.sanitizeTeamName(effectiveRole);
+    }
+  }
+
   if (!team) {
     console.error(
       `Error: --team is required for agent "${effectiveRole}" (or set GENIE_TEAM, run inside a genie session, or register the agent in a team config).`,
