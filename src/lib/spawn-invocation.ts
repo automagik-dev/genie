@@ -43,12 +43,6 @@ export type SpawnIntent =
       baseBranch?: string;
     };
 
-/** Result shape: argv for execution, cli for preview display. */
-export interface SpawnInvocation {
-  cli: string;
-  argv: string[];
-}
-
 /**
  * Branch-safe name regex.
  *
@@ -131,7 +125,7 @@ function buildCreateTeamArgv(intent: Extract<SpawnIntent, { kind: 'create-team' 
  * @throws Error if the intent is malformed (empty name, unsafe branch chars,
  *   unknown kind). The error message names the offending field.
  */
-export function buildSpawnInvocation(intent: SpawnIntent): SpawnInvocation {
+export function buildSpawnInvocation(intent: SpawnIntent): { cli: string; argv: string[] } {
   let argv: string[];
   switch (intent.kind) {
     case 'spawn-agent':
