@@ -36,7 +36,7 @@ export interface AgentPickerEntry {
   name: string;
 }
 
-export interface AgentPickerProps {
+interface AgentPickerProps {
   target: AgentPickerTarget;
   onConfirm: (intent: SpawnIntent) => void;
   onCancel: () => void;
