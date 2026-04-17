@@ -781,7 +781,8 @@ function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow
   // When the target session doesn't exist yet (e.g. cold-start spawn from the TUI
   // for an offline agent), `new-window -t <session>:` would fail with "can't find
   // session". Bootstrap with `new-session` in that case — it creates both the
-  // session and its first pane in one call.
+  // session and its first pane in one call. Pass `-n claude` so that first
+  // window has a meaningful name instead of tmux's default `bash`.
   if (ctx.validated.newWindow) {
     const session = ctx.sessionOverride ?? teamWindow?.windowId?.split(':')[0] ?? ctx.validated.team;
     const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
@@ -793,8 +794,8 @@ function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow
       sessionExists = false;
     }
     const cmd = sessionExists
-      ? `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`
-      : `${tmuxPrefix}new-session -d -s ${shellQuote(session)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
+      ? `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)} -n claude${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`
+      : `${tmuxPrefix}new-session -d -s ${shellQuote(session)} -n claude${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
     return execSync(cmd, { encoding: 'utf-8' }).trim();
   }
 
@@ -905,9 +906,18 @@ async function awaitAgentReadiness(paneId: string): Promise<void> {
 }
 
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
-  const teamWindow = ctx.spawnIntoCurrentWindow
-    ? null
-    : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.sessionOverride);
+  // Skip team-window creation for isolated-session spawns. When the caller asks
+  // for `--new-window` with an explicit `--session <name>` that differs from
+  // the team name (the TUI's per-agent spawn path), the team window has no
+  // purpose — the agent runs in its own window in its own session. Creating
+  // one anyway leaves behind an empty bash pane and a ghost team-named window
+  // beside the real agent window.
+  const isolatedSessionSpawn =
+    ctx.validated.newWindow === true && Boolean(ctx.sessionOverride) && ctx.sessionOverride !== ctx.validated.team;
+  const teamWindow =
+    ctx.spawnIntoCurrentWindow || isolatedSessionSpawn
+      ? null
+      : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.sessionOverride);
 
   let paneId: string;
   try {
@@ -1779,12 +1789,33 @@ async function resolveTeamAndResume(
 ): Promise<{ team: string; teamWasExplicit: boolean; resumed?: string }> {
   // teamWasExplicit stays strictly tier-1 — template/env/discover do NOT flip it.
   const teamWasExplicit = Boolean(options.team);
-  const team = await resolveTeamName({
+  let team = await resolveTeamName({
     explicitTeam: options.team,
     entryTeam: agent.entry?.team,
   });
+
+  // Tier 5 (last-resort): scan on-disk team configs for one that lists this
+  // agent as a member. Unblocks detached spawns (e.g. from the TUI after a DB
+  // reset) that can't inherit GENIE_TEAM or a parent session context but where
+  // the agent is unambiguously registered to a team on disk. Sits below the
+  // four-tier resolveTeamName chain so an authoritative match (PG, env, or
+  // JSONL session-id) always wins over a member-list heuristic.
   if (!team) {
-    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
+    const candidates = await nativeTeams.findTeamsContainingAgent(effectiveRole);
+    if (candidates.length === 1) {
+      team = candidates[0];
+    } else if (candidates.length > 1) {
+      console.error(
+        `Error: agent "${effectiveRole}" is a member of multiple teams (${candidates.join(', ')}). Pass --team <name> to disambiguate.`,
+      );
+      return process.exit(1) as never;
+    }
+  }
+
+  if (!team) {
+    console.error(
+      `Error: --team is required for agent "${effectiveRole}" (or set GENIE_TEAM, run inside a genie session, or register the agent in a team config).`,
+    );
     return process.exit(1) as never;
   }
   const deadResumable = await findDeadResumable(team, effectiveRole);

@@ -821,7 +821,8 @@ function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, wi
   try {
     const { spawn } = require('node:child_process') as typeof import('node:child_process');
     const { join, resolve } = require('node:path') as typeof import('node:path');
-    const { existsSync } = require('node:fs') as typeof import('node:fs');
+    const { existsSync, mkdirSync, openSync } = require('node:fs') as typeof import('node:fs');
+    const { homedir } = require('node:os') as typeof import('node:os');
     const bunPath = process.execPath || 'bun';
     const genieBin = process.argv[1];
     const wsRoot = process.env.GENIE_TUI_WORKSPACE;
@@ -843,11 +844,43 @@ function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, wi
       GENIE_IS_DAEMON: _d,
       ...cleanEnv
     } = process.env;
-    const spawnOpts = { detached: true, stdio: 'ignore' as const, cwd, env: cleanEnv };
+    // Route stdout/stderr to a per-spawn log file instead of /dev/null so that
+    // silent failures (e.g. team resolution errors) become discoverable. The
+    // detached child still survives the TUI process exiting.
+    const logDir = join(homedir(), '.genie', 'logs', 'tui-spawn');
+    try {
+      mkdirSync(logDir, { recursive: true });
+    } catch {
+      // best-effort — fall back to ignore if we can't create the dir
+    }
+    const logPath = join(logDir, `${sessionName}-${Date.now()}.log`);
+    let logFd: number | undefined;
+    try {
+      logFd = openSync(logPath, 'a');
+    } catch {
+      logFd = undefined;
+    }
+    const spawnOpts =
+      logFd !== undefined
+        ? ({
+            detached: true,
+            stdio: ['ignore', logFd, logFd] as ['ignore', number, number],
+            cwd,
+            env: cleanEnv,
+          } as const)
+        : ({ detached: true, stdio: 'ignore' as const, cwd, env: cleanEnv } as const);
     const child =
       genieBin && genieBin !== 'genie'
         ? spawn(bunPath, [genieBin, 'spawn', name, '--session', sessionName, '--new-window'], spawnOpts)
         : spawn('genie', ['spawn', name, '--session', sessionName, '--new-window'], spawnOpts);
+    child.on('exit', (code) => {
+      if (code && code !== 0) {
+        console.error(`TUI: spawn "${name}" exited ${code}. See ${logPath}`);
+      }
+    });
+    child.on('error', (err) => {
+      console.error(`TUI: spawn "${name}" error: ${err.message}. See ${logPath}`);
+    });
     child.unref();
     if (onTmuxSessionSelect) {
       attachSpawnedAgentWhenReady(sessionName, onTmuxSessionSelect);
