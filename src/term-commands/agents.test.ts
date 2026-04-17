@@ -9,12 +9,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import * as directory from '../lib/agent-directory.js';
 import type { DirectoryEntry } from '../lib/agent-directory.js';
 import type { Agent } from '../lib/agent-registry.js';
+import * as registry from '../lib/agent-registry.js';
 import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
   buildInitialSplitWindowCommand,
   buildResumeContext,
+  findDeadResumable,
+  pickParallelShortId,
   resolveAgentWorkingDir,
+  resolveSpawnIdentity,
   resolveTeamName,
 } from './agents.js';
 
@@ -345,5 +349,270 @@ describe.skipIf(!DB_AVAILABLE)('directory.resolve team population', () => {
     });
 
     expect(team).toBe('simone');
+  });
+});
+
+// ============================================================================
+// Spawn state machine — `genie spawn <name>` branches on canonical liveness.
+//
+// Authority: tui-spawn-dx wish, Group 2. Builds on Wave 1
+// (feat/tui-spawn-dx merge 9321dd65; commits 79cbe066, 898c219d).
+// Upholds the perfect-spawn-hierarchy canonical-UUID invariant
+// (PR #1133/#1134 merge 69215743).
+//
+// Branches:
+//   1. No row             → canonical (id=<name>, fresh UUID)
+//   2. Canonical dead     → canonical (auto-resume path already handled it)
+//   3. Canonical alive    → parallel (id=<name>-<sN>, fresh UUID starting with <sN>)
+//
+// Invariants:
+//   - Canonical's UUID is NEVER clobbered by parallel creation.
+//   - Parallel's <sN> is a prefix of the parallel's OWN fresh UUID
+//     (deterministic slice, never a random mint).
+//   - On <sN> collision, extend to s5/s6/... of the SAME UUID until unique.
+//   - findDeadResumable(<name>) never matches a parallel row (parallels only
+//     resumable via their full id).
+// ============================================================================
+describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
+  let cleanupSchema: () => Promise<void>;
+
+  beforeAll(async () => {
+    cleanupSchema = await setupTestSchema();
+  });
+
+  afterAll(async () => {
+    await cleanupSchema();
+  });
+
+  // Each test gets a clean agents table — registry.register's ON CONFLICT DO UPDATE
+  // only rewrites a subset of columns (pane_id, session, state, last_state_change),
+  // so leftover rows from prior tests carry stale claude_session_id/role/team into
+  // new tests and break id-based probes. TRUNCATE keeps each test hermetic.
+  beforeEach(async () => {
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    await sql`TRUNCATE TABLE agents CASCADE`;
+  });
+
+  /** Seed a canonical-shaped agents row. */
+  async function seedCanonical(id: string, team: string, overrides: Partial<registry.Agent> = {}): Promise<void> {
+    await registry.register({
+      id,
+      paneId: overrides.paneId ?? 'inline',
+      session: overrides.session ?? team,
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: overrides.state ?? 'idle',
+      lastStateChange: new Date().toISOString(),
+      repoPath: overrides.repoPath ?? `/tmp/spawn-state-${id}-${Date.now()}`,
+      claudeSessionId: overrides.claudeSessionId,
+      role: overrides.role ?? id,
+      team,
+      provider: overrides.provider ?? 'claude',
+      ...overrides,
+    });
+  }
+
+  /** Stub isPaneAlive — always-alive / always-dead. */
+  const alwaysAlive = async () => true;
+  const alwaysDead = async () => false;
+
+  describe('resolveSpawnIdentity', () => {
+    test('branch: no row → create canonical (id=<name>, fresh UUID)', async () => {
+      const team = `team-no-row-${Date.now()}`;
+      const uuids = ['11111111-2222-3333-4444-555555555555'];
+      const identity = await resolveSpawnIdentity('alice', team, () => uuids.shift() ?? 'fallback', alwaysDead);
+      expect(identity.kind).toBe('canonical');
+      expect(identity.workerId).toBe('alice');
+      expect(identity.sessionUuid).toBe('11111111-2222-3333-4444-555555555555');
+    });
+
+    test('branch: dead canonical → canonical (auto-resume handled upstream)', async () => {
+      const team = `team-dead-${Date.now()}`;
+      await seedCanonical('alice', team, {
+        paneId: 'inline', // isPaneAlive('inline') → false
+        claudeSessionId: 'old-canonical-uuid-aaaa-bbbb-cccccccccccc',
+      });
+
+      const identity = await resolveSpawnIdentity(
+        'alice',
+        team,
+        () => 'fresh-uuid-1111-2222-3333-444444444444',
+        alwaysDead,
+      );
+      // State machine signals canonical (the upstream findDeadResumable path
+      // would have resumed if it could; if we're here, treat as canonical).
+      expect(identity.kind).toBe('canonical');
+      expect(identity.workerId).toBe('alice');
+    });
+
+    test('branch: alive canonical → create parallel (id=<name>-<s4>, UUID prefix matches)', async () => {
+      const team = `team-alive-${Date.now()}`;
+      await seedCanonical('alice', team, {
+        paneId: '%99',
+        claudeSessionId: 'canonical-uuid-dead-beef-000000000000',
+      });
+
+      const uuid = 'abcd1234-ef01-2345-6789-abcdef012345';
+      const identity = await resolveSpawnIdentity('alice', team, () => uuid, alwaysAlive);
+
+      expect(identity.kind).toBe('parallel');
+      expect(identity.workerId).toBe('alice-abcd');
+      expect(identity.sessionUuid).toBe(uuid);
+      expect(identity.sessionUuid.startsWith('abcd')).toBe(true);
+      if (identity.kind === 'parallel') {
+        expect(identity.canonicalId).toBe('alice');
+      }
+    });
+
+    test('invariant: parallel creation does NOT clobber canonical row', async () => {
+      const team = `team-no-clobber-${Date.now()}`;
+      const canonicalUuid = 'c0c0c0c0-b2c3-d4e5-f6a7-b8c9d0e1f2a3';
+      await seedCanonical('alice', team, {
+        paneId: '%42',
+        claudeSessionId: canonicalUuid,
+      });
+
+      // Snapshot canonical before parallel resolution.
+      const before = await registry.get('alice');
+      expect(before?.claudeSessionId).toBe(canonicalUuid);
+
+      // Resolve spawn identity (alive canonical → parallel).
+      const parallelUuid = 'ba110000-aaaa-bbbb-cccc-dddddddddddd';
+      const identity = await resolveSpawnIdentity('alice', team, () => parallelUuid, alwaysAlive);
+      expect(identity.kind).toBe('parallel');
+
+      // Canonical row untouched — resolveSpawnIdentity is read-only. Persist
+      // the parallel row manually (as handleWorkerSpawn would) and verify the
+      // canonical still carries its original UUID.
+      await seedCanonical(identity.workerId, team, {
+        paneId: '%100',
+        claudeSessionId: identity.sessionUuid,
+        role: identity.workerId,
+      });
+
+      const after = await registry.get('alice');
+      expect(after?.claudeSessionId).toBe(canonicalUuid);
+      expect(after?.id).toBe('alice');
+
+      const parallel = await registry.get(identity.workerId);
+      expect(parallel?.claudeSessionId).toBe(parallelUuid);
+    });
+
+    test('invariant: <sN> collision extends to s5 of the SAME UUID', async () => {
+      const team = `team-collision-${Date.now()}`;
+      // Seed alive canonical + a pre-existing parallel at s4.
+      await seedCanonical('alice', team, { paneId: '%50' });
+      await seedCanonical('alice-a3f7', team, {
+        paneId: '%51',
+        role: 'alice-a3f7',
+        claudeSessionId: 'preexisting-parallel-uuid-0000000000',
+      });
+
+      // Stub UUID factory to return a UUID starting with "a3f7" (collides at s4).
+      const forcedUuid = 'a3f7abcd-ef01-2345-6789-abcdef012345';
+      const identity = await resolveSpawnIdentity('alice', team, () => forcedUuid, alwaysAlive);
+
+      expect(identity.kind).toBe('parallel');
+      expect(identity.workerId).toBe('alice-a3f7a'); // extended to s5
+      expect(identity.sessionUuid).toBe(forcedUuid);
+      // Parallel's UUID starts with <s5> — deterministic slice contract.
+      expect(identity.sessionUuid.startsWith('a3f7a')).toBe(true);
+
+      // Both parallels coexist — persist the new one and verify.
+      await seedCanonical(identity.workerId, team, {
+        paneId: '%52',
+        claudeSessionId: identity.sessionUuid,
+        role: identity.workerId,
+      });
+      const s4 = await registry.get('alice-a3f7');
+      const s5 = await registry.get('alice-a3f7a');
+      expect(s4?.id).toBe('alice-a3f7');
+      expect(s5?.id).toBe('alice-a3f7a');
+    });
+  });
+
+  describe('pickParallelShortId', () => {
+    test('returns s4 when no collision', async () => {
+      const team = `team-pick-s4-${Date.now()}`;
+      const shortId = await pickParallelShortId('alice', team, 'deadbeef-1234-5678-9abc-def012345678');
+      expect(shortId).toBe('dead');
+    });
+
+    test('extends to s5 when s4 collides', async () => {
+      const team = `team-pick-s5-${Date.now()}`;
+      await seedCanonical('alice-dead', team, { paneId: '%60', role: 'alice-dead' });
+      const shortId = await pickParallelShortId('alice', team, 'deadbeef-1234-5678-9abc-def012345678');
+      expect(shortId).toBe('deadb');
+    });
+
+    test('extends to s6 when s4 AND s5 collide', async () => {
+      const team = `team-pick-s6-${Date.now()}`;
+      await seedCanonical('alice-dead', team, { paneId: '%70', role: 'alice-dead' });
+      await seedCanonical('alice-deadb', team, { paneId: '%71', role: 'alice-deadb' });
+      const shortId = await pickParallelShortId('alice', team, 'deadbeef-1234-5678-9abc-def012345678');
+      expect(shortId).toBe('deadbe');
+    });
+
+    test('collision in a DIFFERENT team does not extend', async () => {
+      const otherTeam = `team-pick-other-${Date.now()}`;
+      const team = `team-pick-same-${Date.now()}`;
+      await seedCanonical('alice-dead', otherTeam, { paneId: '%80', role: 'alice-dead' });
+      // Same baseName+slice but different team — should not collide.
+      const shortId = await pickParallelShortId('alice', team, 'deadbeef-1234-5678-9abc-def012345678');
+      expect(shortId).toBe('dead');
+    });
+
+    test('rejects non-UUID input: "not-a-uuid"', async () => {
+      await expect(pickParallelShortId('alice', 'team', 'not-a-uuid')).rejects.toThrow(/well-formed UUID/);
+    });
+
+    test('rejects non-UUID input: empty string', async () => {
+      await expect(pickParallelShortId('alice', 'team', '')).rejects.toThrow(/well-formed UUID/);
+    });
+
+    test('rejects non-UUID input: hex-only no dashes', async () => {
+      // Matches hex chars but wrong format (no dashes) — must be rejected.
+      await expect(pickParallelShortId('alice', 'team', 'abc12345678901234567890123456789ab')).rejects.toThrow(
+        /well-formed UUID/,
+      );
+    });
+
+    test('rejects non-UUID input: too short', async () => {
+      await expect(pickParallelShortId('alice', 'team', 'abc')).rejects.toThrow(/well-formed UUID/);
+    });
+  });
+
+  describe('findDeadResumable: parallels off auto-resume path', () => {
+    test('findDeadResumable(<name>) does NOT match a parallel row', async () => {
+      const team = `team-parallels-off-${Date.now()}`;
+      // Seed a dead parallel row (role=<name>-<sN>, not <name>).
+      await seedCanonical('alice-a3f7', team, {
+        paneId: 'inline', // dead
+        role: 'alice-a3f7',
+        claudeSessionId: 'parallel-uuid-a3f7abcd-0000-0000-000000000000',
+        provider: 'claude',
+      });
+
+      // findDeadResumable('alice') must NOT return the parallel — the parallel's
+      // role is 'alice-a3f7', not 'alice'.
+      const found = await findDeadResumable(team, 'alice');
+      expect(found).toBeNull();
+    });
+
+    test('findDeadResumable(<name>-<sN>) DOES match the parallel row (resume by full id works)', async () => {
+      const team = `team-parallel-resume-${Date.now()}`;
+      await seedCanonical('alice-b1c2', team, {
+        paneId: 'inline', // dead
+        role: 'alice-b1c2',
+        claudeSessionId: 'parallel-uuid-b1c2abcd-0000-0000-000000000000',
+        provider: 'claude',
+      });
+
+      const found = await findDeadResumable(team, 'alice-b1c2');
+      expect(found).not.toBeNull();
+      expect(found?.id).toBe('alice-b1c2');
+      expect(found?.claudeSessionId).toBe('parallel-uuid-b1c2abcd-0000-0000-000000000000');
+    });
   });
 });
