@@ -1616,9 +1616,28 @@ async function resolveTeamAndResume(
   options: SpawnOptions,
 ): Promise<{ team: string; teamWasExplicit: boolean; resumed?: string }> {
   const teamWasExplicit = Boolean(options.team);
-  const team = options.team || (await nativeTeams.discoverTeamName());
+  let team = options.team || (await nativeTeams.discoverTeamName());
+
+  // Fallback: scan on-disk team configs for one that lists this agent as a
+  // member. Unblocks detached spawns (e.g. from the TUI after a DB reset) that
+  // can't inherit GENIE_TEAM or a parent session context but where the agent
+  // is unambiguously registered to a team on disk.
   if (!team) {
-    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
+    const candidates = await nativeTeams.findTeamsContainingAgent(effectiveRole);
+    if (candidates.length === 1) {
+      team = candidates[0];
+    } else if (candidates.length > 1) {
+      console.error(
+        `Error: agent "${effectiveRole}" is a member of multiple teams (${candidates.join(', ')}). Pass --team <name> to disambiguate.`,
+      );
+      return process.exit(1) as never;
+    }
+  }
+
+  if (!team) {
+    console.error(
+      `Error: --team is required for agent "${effectiveRole}" (or set GENIE_TEAM, run inside a genie session, or register the agent in a team config).`,
+    );
     return process.exit(1) as never;
   }
   const deadResumable = await findDeadResumable(team, effectiveRole);

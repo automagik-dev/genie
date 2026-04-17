@@ -184,6 +184,26 @@ export async function loadConfig(teamName: string): Promise<NativeTeamConfig | n
   }
 }
 
+/**
+ * Find all teams whose config.json lists the given agent name as a member.
+ *
+ * Used by the spawn path as a last-resort fallback to resolve `--team` when
+ * neither an explicit flag nor `GENIE_TEAM` nor a parent session is available
+ * (e.g. detached spawns from the TUI after a DB reset). Returns team names
+ * sanitized exactly as they appear on disk.
+ */
+export async function findTeamsContainingAgent(agentName: string): Promise<string[]> {
+  const teams = await listTeams();
+  const matches: string[] = [];
+  for (const teamName of teams) {
+    const config = await loadConfig(teamName);
+    if (!config) continue;
+    const hit = config.members.some((m) => m.name === agentName || m.agentType === agentName);
+    if (hit) matches.push(teamName);
+  }
+  return matches;
+}
+
 async function saveConfig(teamName: string, config: NativeTeamConfig): Promise<void> {
   await writeFile(configPath(teamName), JSON.stringify(config, null, 2));
 }
