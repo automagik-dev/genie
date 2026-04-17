@@ -18,7 +18,13 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { getConnection } from '../lib/db.js';
 import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
-import { checkSendScope, detectSenderIdentity, registerSendInboxCommands } from './msg.js';
+import {
+  checkSendScope,
+  detectSenderIdentity,
+  registerSendInboxCommands,
+  resolveSenderTeams,
+  suggestRelayLeader,
+} from './msg.js';
 
 // ---------------------------------------------------------------------------
 // PG test schema (required since team-manager now reads from PG)
@@ -158,7 +164,7 @@ describe.skipIf(!DB_AVAILABLE)('checkSendScope', () => {
   afterEach(async () => {
     // Clean up test teams from PG
     const sql = await getConnection();
-    await sql`DELETE FROM teams WHERE name LIKE 'scope-test-%' OR name = 'leader-team' OR name = 'my-team'`;
+    await sql`DELETE FROM teams WHERE name LIKE 'scope-test-%' OR name LIKE 'council-scope-test-%' OR name = 'leader-team' OR name = 'my-team'`;
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -215,6 +221,155 @@ describe.skipIf(!DB_AVAILABLE)('checkSendScope', () => {
     expect(error).not.toBeNull();
     expect(error).toContain('Scope violation');
   });
+
+  // ---- parentTeam chain walk ----
+
+  async function insertTeamWithParent(
+    name: string,
+    repo: string,
+    members: string[],
+    parentTeam?: string,
+    allowChildReachback?: string[],
+  ): Promise<void> {
+    const sql = await getConnection();
+    await sql`
+      INSERT INTO teams (
+        name, repo, base_branch, worktree_path, leader, members, status,
+        parent_team, allow_child_reachback, created_at
+      ) VALUES (
+        ${name}, ${repo}, 'dev', ${join(repo, '.worktrees', name)}, null,
+        ${JSON.stringify(members)}, 'in_progress',
+        ${parentTeam ?? null},
+        ${allowChildReachback ? JSON.stringify(allowChildReachback) : null},
+        now()
+      )
+      ON CONFLICT (name) DO UPDATE SET
+        members = ${JSON.stringify(members)},
+        parent_team = ${parentTeam ?? null},
+        allow_child_reachback = ${allowChildReachback ? JSON.stringify(allowChildReachback) : null}
+    `;
+  }
+
+  test('council-* child reachback to parent is allowed by default', async () => {
+    await insertTeam('scope-test-parent-home', tempDir, ['felipe-3']);
+    await insertTeamWithParent('council-scope-test-999', tempDir, ['council--architect'], 'scope-test-parent-home');
+
+    const error = await checkSendScope(tempDir, 'council--architect', 'felipe-3');
+    expect(error).toBeNull();
+  });
+
+  test('non-council child is blocked unless parent ALLOWLISTs its prefix', async () => {
+    await insertTeam('scope-test-parent-closed', tempDir, ['felipe-3']);
+    await insertTeamWithParent('scope-test-sub-1', tempDir, ['sub-agent'], 'scope-test-parent-closed');
+
+    const error = await checkSendScope(tempDir, 'sub-agent', 'felipe-3');
+    expect(error).not.toBeNull();
+    expect(error).toContain('Scope violation');
+  });
+
+  test('ALLOWLIST on parent permits an arbitrary child prefix', async () => {
+    await insertTeamWithParent('scope-test-parent-allow', tempDir, ['felipe-3'], undefined, ['scope-test-sub-']);
+    await insertTeamWithParent('scope-test-sub-2', tempDir, ['sub-agent'], 'scope-test-parent-allow');
+
+    const error = await checkSendScope(tempDir, 'sub-agent', 'felipe-3');
+    expect(error).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveSenderTeams — pure-function chain-walk tests (no PG required)
+// ---------------------------------------------------------------------------
+
+type TeamFixture = {
+  name: string;
+  members: string[];
+  parentTeam?: string;
+  allowChildReachback?: string[];
+  leader?: string;
+};
+
+function mkTeams(fixtures: TeamFixture[]): Parameters<typeof resolveSenderTeams>[0] {
+  return fixtures.map((f) => ({
+    name: f.name,
+    repo: '/tmp/test-repo',
+    baseBranch: 'dev',
+    worktreePath: `/tmp/test-repo/.wt/${f.name}`,
+    members: f.members,
+    status: 'in_progress' as const,
+    createdAt: '2026-04-16T00:00:00.000Z',
+    leader: f.leader,
+    parentTeam: f.parentTeam,
+    allowChildReachback: f.allowChildReachback,
+  }));
+}
+
+describe('resolveSenderTeams', () => {
+  test('direct membership returns just the direct team', () => {
+    const teams = mkTeams([{ name: 'team-a', members: ['alice'] }]);
+    const result = resolveSenderTeams(teams, 'alice');
+    expect(result.map((t) => t.name)).toEqual(['team-a']);
+  });
+
+  test('council-* child walks to parent by default (council reachback ON)', () => {
+    const teams = mkTeams([
+      { name: 'home', members: ['felipe-3'] },
+      { name: 'council-1', members: ['council--architect'], parentTeam: 'home' },
+    ]);
+    const result = resolveSenderTeams(teams, 'council--architect');
+    expect(result.map((t) => t.name).sort()).toEqual(['council-1', 'home']);
+  });
+
+  test('non-matching child prefix without ALLOWLIST stops at the child', () => {
+    const teams = mkTeams([
+      { name: 'home', members: ['felipe-3'] },
+      { name: 'sprint-42', members: ['sub-worker'], parentTeam: 'home' },
+    ]);
+    const result = resolveSenderTeams(teams, 'sub-worker');
+    expect(result.map((t) => t.name)).toEqual(['sprint-42']);
+  });
+
+  test('ALLOWLIST on parent enables arbitrary child prefix', () => {
+    const teams = mkTeams([
+      { name: 'home', members: ['felipe-3'], allowChildReachback: ['sprint-'] },
+      { name: 'sprint-42', members: ['sub-worker'], parentTeam: 'home' },
+    ]);
+    const result = resolveSenderTeams(teams, 'sub-worker');
+    expect(result.map((t) => t.name).sort()).toEqual(['home', 'sprint-42']);
+  });
+
+  test('chain walk is depth-bounded (max 3 ancestors)', () => {
+    const teams = mkTeams([
+      { name: 'root', members: ['root-user'] },
+      { name: 'council-l1', members: [], parentTeam: 'root' },
+      { name: 'council-l2', members: [], parentTeam: 'council-l1' },
+      { name: 'council-l3', members: [], parentTeam: 'council-l2' },
+      { name: 'council-l4', members: ['deep-worker'], parentTeam: 'council-l3' },
+    ]);
+    const result = resolveSenderTeams(teams, 'deep-worker');
+    // deep-worker + 3 ancestors, NOT the 4th ancestor (root)
+    const names = result.map((t) => t.name);
+    expect(names).toContain('council-l4');
+    expect(names).toContain('council-l3');
+    expect(names).toContain('council-l2');
+    expect(names).toContain('council-l1');
+    expect(names).not.toContain('root');
+  });
+
+  test('cycle detection via visited set (self-pointing parent does not infinite-loop)', () => {
+    const teams = mkTeams([
+      { name: 'council-a', members: ['a-worker'], parentTeam: 'council-b' },
+      { name: 'council-b', members: [], parentTeam: 'council-a' },
+    ]);
+    const result = resolveSenderTeams(teams, 'a-worker');
+    const names = result.map((t) => t.name).sort();
+    expect(names).toEqual(['council-a', 'council-b']);
+  });
+
+  test('missing parent stops the walk gracefully', () => {
+    const teams = mkTeams([{ name: 'council-1', members: ['m'], parentTeam: 'nonexistent' }]);
+    const result = resolveSenderTeams(teams, 'm');
+    expect(result.map((t) => t.name)).toEqual(['council-1']);
+  });
 });
 
 describe.skipIf(!DB_AVAILABLE)('send command registration', () => {
@@ -225,6 +380,63 @@ describe.skipIf(!DB_AVAILABLE)('send command registration', () => {
     const sendCmd = program.commands.find((cmd) => cmd.name() === 'send');
     expect(sendCmd).toBeDefined();
     expect(sendCmd?.options.some((option) => option.long === '--team')).toBe(true);
+  });
+
+  test('send command exposes --bridge escape hatch', () => {
+    const program = new Command();
+    registerSendInboxCommands(program);
+
+    const sendCmd = program.commands.find((cmd) => cmd.name() === 'send');
+    expect(sendCmd?.options.some((option) => option.long === '--bridge')).toBe(true);
+  });
+});
+
+describe.skipIf(!DB_AVAILABLE)('suggestRelayLeader', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'bridge-test-'));
+  });
+
+  afterEach(async () => {
+    const sql = await getConnection();
+    await sql`DELETE FROM teams WHERE name LIKE 'bridge-test-%' OR name LIKE 'council-bridge-test-%'`;
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  async function seed(name: string, members: string[], leader?: string, parentTeam?: string): Promise<void> {
+    const sql = await getConnection();
+    await sql`
+      INSERT INTO teams (name, repo, base_branch, worktree_path, leader, members, status, parent_team, created_at)
+      VALUES (
+        ${name}, ${tempDir}, 'dev', ${join(tempDir, '.worktrees', name)},
+        ${leader ?? null}, ${JSON.stringify(members)}, 'in_progress',
+        ${parentTeam ?? null}, now()
+      )
+      ON CONFLICT (name) DO UPDATE SET members = ${JSON.stringify(members)}, leader = ${leader ?? null}, parent_team = ${parentTeam ?? null}
+    `;
+  }
+
+  test('returns null for cli sender', async () => {
+    const result = await suggestRelayLeader('cli');
+    expect(result).toBeNull();
+  });
+
+  test('returns null when sender belongs to no team', async () => {
+    const result = await suggestRelayLeader('unknown-agent');
+    expect(result).toBeNull();
+  });
+
+  test('names the direct team leader for a team member', async () => {
+    await seed('bridge-test-team', ['worker-one'], 'my-boss');
+    const result = await suggestRelayLeader('worker-one');
+    expect(result).toEqual({ leader: 'my-boss', team: 'bridge-test-team' });
+  });
+
+  test('falls back to team name when no leader is set', async () => {
+    await seed('bridge-test-leaderless', ['solo']);
+    const result = await suggestRelayLeader('solo');
+    expect(result).toEqual({ leader: 'bridge-test-leaderless', team: 'bridge-test-leaderless' });
   });
 });
 

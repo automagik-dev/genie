@@ -61,6 +61,21 @@ export interface TeamConfig {
   spawner?: string;
   /** ISO timestamp when the team was archived (null if not archived). */
   archivedAt?: string;
+  /**
+   * Optional parent team for cross-team reachback.
+   * When set, senders inside this team can message members of the parent
+   * team (subject to the parent's `allowChildReachback` ALLOWLIST).
+   * Max depth 3 to prevent cycles.
+   */
+  parentTeam?: string;
+  /**
+   * ALLOWLIST of child-team-name prefixes that are allowed to reach back
+   * into this team via the `parentTeam` chain. For example, `["council-"]`
+   * lets `council-<timestamp>` ephemeral teams message this team's members.
+   * Default behavior: reachback is OFF for unknown prefixes and ON for
+   * `council-*` (the canonical ephemeral sub-team use case).
+   */
+  allowChildReachback?: string[];
 }
 
 // ============================================================================
@@ -96,6 +111,8 @@ interface TeamConfigRow {
   wish_slug?: string;
   spawner?: string;
   archived_at?: Date | string | null;
+  parent_team?: string | null;
+  allow_child_reachback?: unknown;
 }
 
 /** Map a PG row to a TeamConfig object. */
@@ -118,7 +135,24 @@ function rowToTeamConfig(row: TeamConfigRow): TeamConfig {
   if (row.archived_at) {
     config.archivedAt = row.archived_at instanceof Date ? row.archived_at.toISOString() : String(row.archived_at);
   }
+  if (row.parent_team) config.parentTeam = row.parent_team;
+  const allow = parseAllowChildReachback(row.allow_child_reachback);
+  if (allow.length > 0) config.allowChildReachback = allow;
   return config;
+}
+
+/** Parse JSONB/text[] allow_child_reachback — handles parsed arrays, JSON strings, and nulls. */
+function parseAllowChildReachback(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.filter((x): x is string => typeof x === 'string');
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 // ============================================================================
@@ -295,6 +329,28 @@ async function ensureWorktree(
 }
 
 /**
+ * Detect the spawner's parent team from the ambient environment.
+ *
+ * Returns the team name to record as `parentTeam` on a newly-created team,
+ * or null when auto-promotion should not apply. Auto-promotion fires when
+ * an identified agent (GENIE_AGENT_NAME set, not "cli") is creating a team
+ * from inside another existing team (GENIE_TEAM resolvable in PG).
+ */
+async function detectSpawnerParentTeam(newTeamName: string): Promise<string | null> {
+  const envTeam = process.env.GENIE_TEAM;
+  const spawnerName = process.env.GENIE_AGENT_NAME;
+  if (!envTeam || !spawnerName) return null;
+  if (spawnerName === 'cli') return null;
+  if (envTeam === newTeamName) return null;
+  try {
+    const parent = await getTeam(envTeam);
+    return parent ? envTeam : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Create a new team with a shared clone.
  *
  * Idempotent — if the team already exists, returns existing config.
@@ -325,6 +381,9 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
     createdAt: now,
   };
 
+  const promoted = await detectSpawnerParentTeam(name);
+  if (promoted) config.parentTeam = promoted;
+
   // Auto-enable native teams when running inside Claude Code
   if (nativeTeamsManager.isInsideClaudeCode()) {
     config.nativeTeamsEnabled = true;
@@ -341,7 +400,8 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
     INSERT INTO teams (
       name, repo, base_branch, worktree_path, leader,
       members, status, native_team_parent_session_id,
-      native_teams_enabled, tmux_session_name, wish_slug, spawner, created_at
+      native_teams_enabled, tmux_session_name, wish_slug, spawner, created_at,
+      parent_team, allow_child_reachback
     ) VALUES (
       ${config.name}, ${config.repo}, ${config.baseBranch},
       ${config.worktreePath}, ${config.leader ?? null},
@@ -349,7 +409,9 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
       ${config.nativeTeamParentSessionId ?? null},
       ${config.nativeTeamsEnabled ?? false},
       ${config.tmuxSessionName ?? null}, ${config.wishSlug ?? null},
-      ${config.spawner ?? null}, ${config.createdAt}
+      ${config.spawner ?? null}, ${config.createdAt},
+      ${config.parentTeam ?? null},
+      ${config.allowChildReachback ? JSON.stringify(config.allowChildReachback) : null}
     ) ON CONFLICT (name) DO NOTHING
   `;
 
@@ -627,7 +689,9 @@ export async function updateTeamConfig(name: string, config: TeamConfig): Promis
       native_teams_enabled = ${config.nativeTeamsEnabled ?? false},
       tmux_session_name = ${config.tmuxSessionName ?? null},
       wish_slug = ${config.wishSlug ?? null},
-      spawner = ${config.spawner ?? null}
+      spawner = ${config.spawner ?? null},
+      parent_team = ${config.parentTeam ?? null},
+      allow_child_reachback = ${config.allowChildReachback ? JSON.stringify(config.allowChildReachback) : null}
     WHERE name = ${name}
   `;
 }

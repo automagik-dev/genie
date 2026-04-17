@@ -124,7 +124,22 @@ async function resolveLeaderAlias(recipient: string, teamContext?: string): Prom
 // ============================================================================
 
 /**
- * Enforce team scope: if sender is in a team, recipient must be in the same team.
+ * Max depth of the parentTeam chain walk — defends against accidental cycles
+ * and unbounded ancestor traversal.
+ */
+const PARENT_CHAIN_MAX_DEPTH = 3;
+
+/**
+ * Child-team-name prefixes that have cross-team reachback enabled by default
+ * (without requiring the parent to explicitly list them in allowChildReachback).
+ * Reflects the canonical use case: `/council` spawns ephemeral `council-<ts>`
+ * sub-teams that need to reply to the caller's home team.
+ */
+const DEFAULT_REACHBACK_PREFIXES = ['council-'];
+
+/**
+ * Enforce team scope: if sender is in a team, recipient must be in the same team
+ * (or in a transitively reachable parent team, subject to the ALLOWLIST).
  * Returns an error message if scope is violated, null if OK.
  */
 export async function checkSendScope(_repoPath: string, sender: string, recipient: string): Promise<string | null> {
@@ -144,23 +159,91 @@ export async function checkSendScope(_repoPath: string, sender: string, recipien
   return `Scope violation: "${recipient}" is not in sender's team(s): ${teamNames}`;
 }
 
-/** Build the list of teams the sender belongs to, including env-based leader membership. */
-function resolveSenderTeams(teams: teamManagerTypes.TeamConfig[], sender: string): teamManagerTypes.TeamConfig[] {
-  let senderTeams = teams.filter((t) => t.members.includes(sender));
+/**
+ * Decide whether a child team is allowed to walk up into its declared parent.
+ * A child may reach back when either:
+ *   (a) the parent's `allowChildReachback` ALLOWLIST contains a prefix that
+ *       matches the child team's name, OR
+ *   (b) the child team's name starts with a DEFAULT_REACHBACK_PREFIXES entry
+ *       (currently only `council-*`) — the zero-config path for ephemeral
+ *       council sub-teams.
+ */
+function childReachbackAllowed(child: teamManagerTypes.TeamConfig, parent: teamManagerTypes.TeamConfig): boolean {
+  const allowList = parent.allowChildReachback;
+  if (allowList?.some((prefix) => child.name.startsWith(prefix))) return true;
+  return DEFAULT_REACHBACK_PREFIXES.some((prefix) => child.name.startsWith(prefix));
+}
 
-  // If sender is the leader (by name or legacy 'team-lead' alias during transition), include the leader's team
+/** Walk the parentTeam chain from a child team, appending reachable ancestors. */
+function walkParentChain(
+  teams: teamManagerTypes.TeamConfig[],
+  start: teamManagerTypes.TeamConfig,
+  visited: Set<string>,
+  out: teamManagerTypes.TeamConfig[],
+): void {
+  let current = start;
+  let depth = 0;
+  while (current.parentTeam && depth < PARENT_CHAIN_MAX_DEPTH) {
+    if (visited.has(current.parentTeam)) return;
+    const parent = teams.find((t) => t.name === current.parentTeam);
+    if (!parent) return;
+    if (!childReachbackAllowed(current, parent)) return;
+    out.push(parent);
+    visited.add(parent.name);
+    current = parent;
+    depth++;
+  }
+}
+
+/** Build the list of teams the sender belongs to, including env-based leader membership. */
+export function resolveSenderTeams(
+  teams: teamManagerTypes.TeamConfig[],
+  sender: string,
+): teamManagerTypes.TeamConfig[] {
+  const direct = teams.filter((t) => t.members.includes(sender));
+  const visited = new Set<string>(direct.map((t) => t.name));
+  const result: teamManagerTypes.TeamConfig[] = [...direct];
+
+  // Walk the parentTeam chain from each direct team — a sender in an
+  // ephemeral sub-team (e.g. council-<ts>) transitively reaches the parent
+  // team's members if the parent's ALLOWLIST (or the default council prefix)
+  // permits it.
+  for (const team of direct) {
+    walkParentChain(teams, team, visited, result);
+  }
+
+  // Leader fallback: if sender is the leader (by name or legacy 'team-lead'
+  // alias), include the leader's team resolved from the ambient GENIE_TEAM.
   const isLeader = teams.some((t) => t.leader === sender) || sender === 'team-lead';
   if (isLeader) {
     const envTeam = process.env.GENIE_TEAM;
     if (envTeam) {
       const leaderTeam = teams.find((t) => t.name === envTeam);
-      if (leaderTeam && !senderTeams.some((t) => t.name === leaderTeam.name)) {
-        senderTeams = [...senderTeams, leaderTeam];
+      if (leaderTeam && !visited.has(leaderTeam.name)) {
+        result.push(leaderTeam);
+        visited.add(leaderTeam.name);
+        walkParentChain(teams, leaderTeam, visited, result);
       }
     }
   }
 
-  return senderTeams;
+  return result;
+}
+
+/**
+ * Resolve the nearest leader the sender can legitimately reach, used by the
+ * `--bridge` escape hatch to print a manual-relay hint after a scope violation.
+ * Prefers the sender's first direct team, falling back to the first reachable
+ * ancestor in the chain. Returns null when the sender belongs to no team.
+ */
+export async function suggestRelayLeader(sender: string): Promise<{ leader: string; team: string } | null> {
+  if (sender === 'cli') return null;
+  const teamManager = await getTeamManager();
+  const teams = await teamManager.listTeams();
+  const reachable = resolveSenderTeams(teams, sender);
+  if (reachable.length === 0) return null;
+  const target = reachable[0];
+  return { leader: target.leader ?? target.name, team: target.name };
 }
 
 /** Check whether a recipient is reachable within a given team (direct member, leader, or prefixed name). */
@@ -448,10 +531,47 @@ async function bridgeToNativeInbox(
 }
 
 // ============================================================================
+// Bridge Suggestion (--bridge escape hatch)
+// ============================================================================
+
+/** Shell-quote a single argument for a copy-paste-friendly command hint. */
+function quoteForShell(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Print an informational advisory when `--bridge` is used against a scope
+ * violation: explains the violation, names the nearest reachable leader, and
+ * emits a ready-to-run relay command. Exits 0 (informational) rather than 1
+ * so scripts can keep going.
+ */
+async function printBridgeSuggestion(
+  sender: string,
+  recipient: string,
+  body: string,
+  scopeError: string,
+): Promise<void> {
+  const suggestion = await suggestRelayLeader(sender);
+  console.error(`Scope violation: ${scopeError}`);
+  if (suggestion) {
+    console.error(`Nearest reachable leader: ${suggestion.leader}@${suggestion.team}`);
+    console.error('Relay manually via:');
+    console.error(
+      `  genie send ${quoteForShell(`[relay to ${recipient}] ${body}`)} --to ${suggestion.leader} --team ${suggestion.team}`,
+    );
+  } else {
+    console.error('No reachable leader found — sender is not bound to any team.');
+  }
+}
+
+// ============================================================================
 // Send Handler
 // ============================================================================
 
-async function handleSend(body: string, options: { to: string; from?: string; team?: string }): Promise<void> {
+async function handleSend(
+  body: string,
+  options: { to: string; from?: string; team?: string; bridge?: boolean },
+): Promise<void> {
   const ts = await getTaskService();
   const mailbox = await getMailbox();
   const repoPath = process.cwd();
@@ -462,6 +582,10 @@ async function handleSend(body: string, options: { to: string; from?: string; te
 
   const scopeError = await checkSendScope(repoPath, from, to);
   if (scopeError) {
+    if (options.bridge) {
+      await printBridgeSuggestion(from, to, body, scopeError);
+      return;
+    }
     console.error(`Error: ${scopeError}`);
     process.exit(1);
   }
@@ -524,15 +648,17 @@ export function registerSendInboxCommands(program: Command): void {
     .option('--to <agent>', 'Recipient agent name (default: team leader)', 'team-lead')
     .option('--from <sender>', 'Sender ID (auto-detected from context)')
     .option('--team <name>', 'Explicit team context for sender/recipient resolution')
+    .option('--bridge', 'On scope violation, print an advisory + relay command instead of failing (exit 0)')
     .addHelpText(
       'after',
       `
 Examples:
   genie send 'start task #3' --to engineer         # Message a specific agent
   genie send 'status update' --to team-lead         # Report to team lead
-  genie send 'deploy ready' --team my-feature       # Message within team context`,
+  genie send 'deploy ready' --team my-feature       # Message within team context
+  genie send 'hi felipe' --to felipe-3 --bridge    # Scope violation → print relay hint instead of erroring`,
     )
-    .action(async (body: string, options: { to: string; from?: string; team?: string }) => {
+    .action(async (body: string, options: { to: string; from?: string; team?: string; bridge?: boolean }) => {
       try {
         await handleSend(body, options);
       } catch (error) {

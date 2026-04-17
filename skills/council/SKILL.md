@@ -64,6 +64,30 @@ Execute all phases sequentially. YOU run every command, read every output, and m
    If this fails, stop and report the error to the user. Council cannot run without a team.
 3. Record the team name -- you will need it for every subsequent command.
 
+> **Cross-team reachback.** When `genie team create` runs from inside an
+> existing team session (with `GENIE_TEAM` and a non-`cli` `GENIE_AGENT_NAME`
+> in the environment), the new team automatically records the caller's team
+> as its `parentTeam`. Because the team name starts with `council-`, the
+> default reachback ALLOWLIST lets council members message the parent team's
+> members directly -- no extra configuration required.
+>
+> To refuse cross-team reachback for a specific parent, explicitly set that
+> team's `allowChildReachback = []` (empty array). To allow reachback for
+> other child-team prefixes (e.g. ephemeral sprint teams), set
+> `allowChildReachback = ["sprint-"]`. The chain walk is bounded to 3
+> ancestors and cycle-safe.
+>
+> When you genuinely need to message out of scope (e.g. the parent chain is
+> missing or the ALLOWLIST excludes you), use the escape hatch:
+>
+> ```bash
+> genie send '<message>' --to <recipient> --bridge
+> ```
+>
+> `--bridge` prints an advisory naming the nearest reachable leader plus a
+> ready-to-run relay command, and exits 0 instead of failing. The leader
+> can then relay the message manually.
+
 ### Phase 2: Spawn Members
 
 Spawn each selected member. Use the double-dash naming convention (`council--<member>`):
