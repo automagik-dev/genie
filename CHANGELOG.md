@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Testing
+
+- Added end-to-end integration coverage for the `tui-spawn-dx` wish
+  (`src/__tests__/tui-spawn-dx.integration.test.ts`) and a shell reproducer
+  (`scripts/tests/repro-canonical-uuid.sh`) that locks the three
+  perfect-spawn-hierarchy invariants: canonical UUID stable across
+  dead/alive cycles, canonical never clobbered by parallel creation, and
+  parallels off the auto-resume path.
+
 ### Breaking
 
 - Removed `genie omni bridge`, `genie omni start`, `genie omni stop`, and
