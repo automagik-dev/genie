@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-04-15 12:06 UTC | Data range: 2026-03-13 to 2026-04-15
+> Last updated: 2026-04-17 12:17 UTC | Data range: 2026-03-13 to 2026-04-17
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 150 | 1.4K | 670 |
-| Releases | 23 | 251 | 0 |
-| LoC (net) | +43.0K | +159.3K | — |
-| Contributors | 6 | 8 | 14 |
+| Commits | 44 | 1.3K | 4.2K |
+| Releases | 6 | 253 | 271 |
+| LoC (net) | -258 | +158.1K | — |
+| Contributors | 5 | 8 | 26 |
 
 ---
 
@@ -31,13 +31,24 @@
 
 | Rank | Contributor | Commits (approx) |
 |-----:|-------------|------------------:|
-| 1 | Felipe Rosa | 323 |
-| 2 | Genie | 321 |
-| 3 | github-actions[bot] | 270 |
+| 1 | Felipe Rosa | 295 |
+| 2 | Genie | 291 |
+| 3 | github-actions[bot] | 242 |
 | 4 | Claude | 182 |
-| 5 | Test User | 132 |
+| 5 | Test User | 98 |
 | 6 | Luís Sousa | 83 |
 | 7 | Cezar Vasconcelos | 15 |
 | 8 | Zakir Jiwani | 6 |
 
-*14 contributors since 2026-03-14*
+*26 contributors since 2025-09-27*
+
+---
+
+## Major Version Milestones
+
+> How long did it take to build each major version, from where we were to where we landed.
+
+| Milestone | Period | Days | Commits (linear) | Commits (all) | PRs merged | LoC (net) | Contributors |
+|-----------|--------|-----:|-----------------:|--------------:|-----------:|----------:|-------------:|
+| Genesis → v4 stable | 2026-04-09 → 2026-03-23 | -17 | 1.3K | 4.2K | 110 | +60.2K | 22 |
+| v3 → v4 (version sprint) | 2026-03-08 → 2026-03-23 | 15 | 189 | 2.2K | 65 | +22.2K | 11 |
