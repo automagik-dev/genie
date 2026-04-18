@@ -45,11 +45,12 @@ interface DeliveryResult {
  */
 export class MissingResumeSessionError extends Error {
   readonly workerId: string;
-  readonly recipientId: string;
+  readonly recipientId?: string;
 
-  constructor(workerId: string, recipientId: string) {
+  constructor(workerId: string, recipientId?: string) {
+    const suffix = recipientId ? ` (recipient "${recipientId}")` : '';
     super(
-      `Cannot resume worker "${workerId}" (recipient "${recipientId}"): executor has no claude_session_id recorded. This usually means the worker predates the session-sync hook. Run \`genie reset ${workerId}\` or re-spawn the worker to recover.`,
+      `Cannot resume worker "${workerId}"${suffix}: executor has no claude_session_id recorded. This usually means the worker predates the session-sync hook. Run \`genie reset ${workerId}\` or re-spawn the worker to recover.`,
     );
     this.name = 'MissingResumeSessionError';
     this.workerId = workerId;
