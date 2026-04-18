@@ -78,14 +78,23 @@ ok "seeded agents/alice/AGENTS.md with frontmatter"
 # ---------------------------------------------------------------------------
 # 2. Create the test schema + run migrations
 # ---------------------------------------------------------------------------
+# Export TEST_SCHEMA before any `bun -e` invocation — trailing
+# `KEY=VALUE` after `bun -e "..."` does NOT get passed through to the
+# child process's env (bash treats it as a positional arg). Exporting
+# up front is the only form that actually makes it into the script.
+export TEST_SCHEMA="$SCHEMA"
+# WORK is referenced inside the `syncAgentDirectory` bun invocations below;
+# export it up front for the same reason (trailing KEY=VAL after `bun -e`
+# is not inherited).
+export WORK
+
 bun --cwd "$REPO_ROOT" -e "
   const postgres = (await import('postgres')).default;
   const port = Number.parseInt(process.env.GENIE_PG_PORT || '19642', 10);
   const sql = postgres({ host: '127.0.0.1', port, database: 'postgres', user: 'postgres' });
   try { await sql\`CREATE SCHEMA \${sql(process.env.TEST_SCHEMA)}\`; }
   finally { await sql.end({ timeout: 1 }); }
-" TEST_SCHEMA="$SCHEMA" >/dev/null
-export TEST_SCHEMA="$SCHEMA"
+" >/dev/null
 
 bun --cwd "$REPO_ROOT" -e "
   const { runMigrations } = await import('./src/lib/db-migrations.js');
@@ -114,7 +123,7 @@ bun --cwd "$REPO_ROOT" -e "
   const result = await syncAgentDirectory(process.env.WORK);
   printSyncResult(result);
   console.log('__MIGRATED__:' + JSON.stringify(result.migrated));
-" WORK="$WORK" 2>&1 | tee "$FIRST_OUT"
+" 2>&1 | tee "$FIRST_OUT"
 
 grep -q '"alice"' "$FIRST_OUT" || fail "first sync did not report alice as migrated"
 grep -q 'Unchanged' "$FIRST_OUT" && fail "first sync output contains banned 'Unchanged' literal"
@@ -147,7 +156,7 @@ bun --cwd "$REPO_ROOT" -e "
   printSyncResult(result);
   const entry = await get('alice');
   console.log('__MODEL__:' + (entry?.model || 'null'));
-" WORK="$WORK" 2>&1 | tee "$SECOND_OUT"
+" 2>&1 | tee "$SECOND_OUT"
 
 grep -q 'Unchanged' "$SECOND_OUT" && fail "second sync output contains banned 'Unchanged' literal"
 grep -q '__MODEL__:opus' "$SECOND_OUT" || fail "DB model did not update to 'opus' after yaml edit"
