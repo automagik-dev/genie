@@ -24,8 +24,28 @@ import type { Agent } from './agent-registry.js';
 import { computeNextCronDue, parseDuration } from './cron.js';
 import { type EventRouterHandle, startEventRouter } from './event-router.js';
 import { getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
-import { getRetryable, markEscalated, subscribeDelivery } from './mailbox.js';
+import { type MailboxMessage, getRetryable, markEscalated, subscribeDelivery } from './mailbox.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Recipient used when the mailbox retry loop escalates a permanently-failed
+ * message. Extracted as a constant so the escalation writer and the guard
+ * that prevents re-escalation reference the same literal.
+ *
+ * NOTE: This is a bare string today; there is no resolver that maps it to an
+ * actual worker ID like `team-lead:<session>:<team>`. Delivering to this
+ * bare string fails and, without the guards in `processMailboxRetryMessage`,
+ * recursively produces more escalation messages. A follow-up wish will
+ * replace this with a resolver that locates the real team-lead agent.
+ */
+export const ESCALATION_RECIPIENT = 'team-lead';
+
+/** Maximum delivery attempts before the mailbox retry loop escalates a message. */
+export const MAX_DELIVERY_ATTEMPTS = 3;
 
 // ============================================================================
 // Types
@@ -1367,6 +1387,149 @@ interface DaemonHandle {
 }
 
 /**
+ * Dependency overrides for `processMailboxRetryMessage`. The retry loop uses
+ * dynamic imports for `deliverToPane` and `send` to avoid circular-import
+ * risk; tests can inject mocks here instead of going through the real
+ * protocol-router / mailbox modules.
+ */
+interface MailboxRetryOverrides {
+  /** Pane delivery function. Defaults to `protocol-router.deliverToPane`. */
+  deliverFn?: (toWorker: string, messageId: string) => Promise<boolean>;
+  /** Mailbox writer used to post the escalation row. Defaults to `mailbox.send`. */
+  sendFn?: (repoPath: string, from: string, to: string, body: string) => Promise<unknown>;
+}
+
+/**
+ * Process a single retryable mailbox message. Extracted from the scheduler
+ * daemon's 60s retry loop so guards and edge cases can be unit-tested.
+ *
+ * Attempts instant pane delivery via `deliverFn`. If delivery fails and the
+ * message has now hit `MAX_DELIVERY_ATTEMPTS`, escalate it — BUT only if
+ * none of the three recursion guards match. The guards exist because the
+ * escalation row (`from=scheduler`, `to=ESCALATION_RECIPIENT`) is itself
+ * subject to the same retry+escalate cycle; without them, a single
+ * unresolvable escalation spawns an infinite chain (observed: 181K rows
+ * over 8 days before the guards shipped).
+ *
+ * Guards (in order, any match short-circuits before `sendFn` is called):
+ *   1. `msg.from === 'scheduler'` — message was ALREADY authored by the
+ *      escalation path. Re-escalating it would grow the chain by one each
+ *      retry cycle. Mandatory guard.
+ *   2. `msg.body.startsWith('[escalation] ')` — body-prefix defense for any
+ *      escalation message that somehow lost the scheduler authorship (e.g.
+ *      manual replay, future sender rename).
+ *   3. `msg.to === ESCALATION_RECIPIENT` — same-recipient defense. The bare
+ *      `'team-lead'` recipient is unresolvable; escalating to it cannot
+ *      ever succeed, so re-escalating it only amplifies the problem.
+ *
+ * All three guards log `mailbox_delivery_escalation_dropped` with a
+ * `reason` field so ops can distinguish dropped-by-guard from
+ * delivered-successfully in the scheduler log.
+ */
+export async function processMailboxRetryMessage(
+  deps: SchedulerDeps,
+  msg: MailboxMessage,
+  overrides: MailboxRetryOverrides = {},
+): Promise<void> {
+  const deliverFn =
+    overrides.deliverFn ??
+    (async (toWorker: string, messageId: string) => {
+      const { deliverToPane } = await import('./protocol-router.js');
+      return deliverToPane(toWorker, messageId);
+    });
+  const sendFn =
+    overrides.sendFn ??
+    (async (repoPath: string, from: string, to: string, body: string) => {
+      const { send } = await import('./mailbox.js');
+      return send(repoPath, from, to, body);
+    });
+
+  const delivered = await deliverFn(msg.to, msg.id);
+  if (delivered) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'info',
+      event: 'mailbox_delivery_retried',
+      messageId: msg.id,
+      to: msg.to,
+    });
+    return;
+  }
+
+  // deliverToPane already called markFailed — check if max attempts reached.
+  const sql = await deps.getConnection();
+  const rows = await sql`SELECT delivery_attempts, repo_path FROM mailbox WHERE id = ${msg.id} LIMIT 1`;
+  const attempts = rows[0]?.delivery_attempts ?? 0;
+  if (attempts < MAX_DELIVERY_ATTEMPTS) return;
+
+  await markEscalated(msg.id);
+
+  // Guard 1 (MANDATORY): message already authored by the scheduler means it
+  // IS an escalation; re-escalating it is the exact loop we saw in prod.
+  if (msg.from === 'scheduler') {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'warn',
+      event: 'mailbox_delivery_escalation_dropped',
+      reason: 'already_escalated_by_scheduler',
+      messageId: msg.id,
+      to: msg.to,
+      attempts,
+    });
+    return;
+  }
+
+  // Guard 2 (defense-in-depth): body-prefix check catches any escalation row
+  // that arrives without scheduler authorship (manual replay, sender rename).
+  if (msg.body.startsWith('[escalation] ')) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'warn',
+      event: 'mailbox_delivery_escalation_dropped',
+      reason: 'body_prefix',
+      messageId: msg.id,
+      to: msg.to,
+      attempts,
+    });
+    return;
+  }
+
+  // Guard 3 (defense-in-depth): the bare escalation recipient is
+  // unresolvable today, so escalating to it can never succeed. Drop and
+  // log rather than append another doomed row.
+  if (msg.to === ESCALATION_RECIPIENT) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'warn',
+      event: 'mailbox_delivery_escalation_dropped',
+      reason: 'same_recipient',
+      messageId: msg.id,
+      to: msg.to,
+      attempts,
+    });
+    return;
+  }
+
+  const repoPath = rows[0]?.repo_path;
+  if (repoPath) {
+    await sendFn(
+      repoPath,
+      'scheduler',
+      ESCALATION_RECIPIENT,
+      `[escalation] Message ${msg.id} from "${msg.from}" to "${msg.to}" failed delivery after ${MAX_DELIVERY_ATTEMPTS} attempts. Body: "${msg.body.slice(0, 200)}"`,
+    );
+  }
+  deps.log({
+    timestamp: deps.now().toISOString(),
+    level: 'warn',
+    event: 'mailbox_delivery_escalated',
+    messageId: msg.id,
+    to: msg.to,
+    attempts,
+  });
+}
+
+/**
  * Start the scheduler daemon.
  *
  * Flow:
@@ -1736,50 +1899,15 @@ export function startDaemon(
       // PG LISTEN not available — inbox-watcher polling remains the fallback
     }
 
-    // Mailbox delivery retry loop: retry failed deliveries every 60s
-    const MAX_DELIVERY_ATTEMPTS = 3;
+    // Mailbox delivery retry loop: retry failed deliveries every 60s.
+    // Per-message logic lives in `processMailboxRetryMessage` so guards
+    // against escalation recursion are unit-testable.
     deliveryRetryTimer = setInterval(async () => {
       try {
         const retryable = await getRetryable(MAX_DELIVERY_ATTEMPTS);
         for (const msg of retryable) {
           try {
-            const { deliverToPane } = await import('./protocol-router.js');
-            const delivered = await deliverToPane(msg.to, msg.id);
-            if (delivered) {
-              deps.log({
-                timestamp: deps.now().toISOString(),
-                level: 'info',
-                event: 'mailbox_delivery_retried',
-                messageId: msg.id,
-                to: msg.to,
-              });
-              continue;
-            }
-            // deliverToPane already called markFailed — check if max attempts reached
-            const sql = await deps.getConnection();
-            const rows = await sql`SELECT delivery_attempts, repo_path FROM mailbox WHERE id = ${msg.id} LIMIT 1`;
-            const attempts = rows[0]?.delivery_attempts ?? 0;
-            if (attempts >= MAX_DELIVERY_ATTEMPTS) {
-              await markEscalated(msg.id);
-              const repoPath = rows[0]?.repo_path;
-              if (repoPath) {
-                const { send } = await import('./mailbox.js');
-                await send(
-                  repoPath,
-                  'scheduler',
-                  'team-lead',
-                  `[escalation] Message ${msg.id} from "${msg.from}" to "${msg.to}" failed delivery after ${MAX_DELIVERY_ATTEMPTS} attempts. Body: "${msg.body.slice(0, 200)}"`,
-                );
-              }
-              deps.log({
-                timestamp: deps.now().toISOString(),
-                level: 'warn',
-                event: 'mailbox_delivery_escalated',
-                messageId: msg.id,
-                to: msg.to,
-                attempts,
-              });
-            }
+            await processMailboxRetryMessage(deps, msg);
           } catch {
             // Individual message retry failed — will be retried next cycle
           }

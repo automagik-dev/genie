@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { AgentState } from './agent-registry.js';
+import type { MailboxMessage } from './mailbox.js';
 import {
+  ESCALATION_RECIPIENT,
   type LogEntry,
+  MAX_DELIVERY_ATTEMPTS,
   type SchedulerConfig,
   type SchedulerDeps,
   type WorkerInfo,
@@ -13,6 +16,7 @@ import {
   emitWorkerEvents,
   fireTrigger,
   logToFile,
+  processMailboxRetryMessage,
   reclaimExpiredLeases,
   reconcileOrphanedRuns,
   reconcileOrphans,
@@ -1842,6 +1846,160 @@ describe('scheduler-daemon', () => {
         );
         expect(leaseUntilValue).toBeDefined();
       }
+    });
+  });
+
+  // ============================================================================
+  // Mailbox delivery retry — escalation recursion guards
+  // ============================================================================
+  //
+  // Regression coverage for the 181K-event escalation loop observed on
+  // felipe's machine over 8 days (2026-04-10 → 2026-04-17). The daemon's
+  // retry loop escalated failed-delivery messages by posting a new mailbox
+  // row `from='scheduler'`, `to='team-lead'`. Because `'team-lead'` is a
+  // bare, unresolvable recipient, that escalation row itself hit
+  // MAX_DELIVERY_ATTEMPTS and was escalated again → infinite chain.
+  // `processMailboxRetryMessage` now applies 3 guards to break the loop.
+  describe('processMailboxRetryMessage — escalation recursion guards', () => {
+    function createRetryableMsg(overrides: Partial<MailboxMessage> = {}): MailboxMessage {
+      return {
+        id: 'msg-1',
+        from: 'genie-configure',
+        to: 'genie-reviewer',
+        body: 'please review the draft',
+        createdAt: '2026-04-17T12:00:00Z',
+        read: false,
+        deliveredAt: null,
+        ...overrides,
+      };
+    }
+
+    /**
+     * Mock connection whose mailbox SELECT returns `delivery_attempts ===
+     * MAX_DELIVERY_ATTEMPTS` so the retry logic hits the escalation branch.
+     */
+    function createExhaustedDeps(repoPath: string | null = '/tmp/repo') {
+      const logs: LogEntry[] = [];
+      const sentRows: { repoPath: string; from: string; to: string; body: string }[] = [];
+
+      const sql: any = (strings: TemplateStringsArray, ..._values: unknown[]) => {
+        const query = strings.join('?');
+        if (query.includes('SELECT delivery_attempts, repo_path FROM mailbox')) {
+          return [{ delivery_attempts: MAX_DELIVERY_ATTEMPTS, repo_path: repoPath }];
+        }
+        return [];
+      };
+      sql.begin = async (fn: (tx: typeof sql) => Promise<unknown>) => fn(sql);
+      sql.listen = async () => {};
+      sql.end = async () => {};
+
+      const deps: SchedulerDeps = {
+        getConnection: async () => sql,
+        spawnCommand: async () => ({ pid: 0 }),
+        log: (entry) => logs.push(entry),
+        generateId: () => 'test-id',
+        now: () => new Date('2026-04-17T12:00:00Z'),
+        sleep: async () => {},
+        jitter: (maxMs) => Math.floor(maxMs / 2),
+        isPaneAlive: async () => true,
+        listWorkers: async () => [],
+        countTmuxSessions: async () => 0,
+        publishEvent: async () => {},
+        resumeAgent: async () => true,
+        updateAgent: async () => {},
+      };
+
+      const deliverFn = async () => false; // delivery always fails — forces escalation branch
+      const sendFn = async (repoArg: string, from: string, to: string, body: string) => {
+        sentRows.push({ repoPath: repoArg, from, to, body });
+        return { id: `msg-sent-${sentRows.length}`, from, to, body, createdAt: '', read: false, deliveredAt: null };
+      };
+
+      return { deps, logs, sentRows, deliverFn, sendFn };
+    }
+
+    test('Guard 1: scheduler-authored message does not produce a new escalation row', async () => {
+      const { deps, logs, sentRows, deliverFn, sendFn } = createExhaustedDeps();
+      const msg = createRetryableMsg({ from: 'scheduler', to: 'team-lead', body: '[escalation] older failure' });
+
+      await processMailboxRetryMessage(deps, msg, { deliverFn, sendFn });
+
+      expect(sentRows).toHaveLength(0);
+      const dropped = logs.find((l) => l.event === 'mailbox_delivery_escalation_dropped');
+      expect(dropped).toBeDefined();
+      expect(dropped?.reason).toBe('already_escalated_by_scheduler');
+      expect(dropped?.messageId).toBe('msg-1');
+      expect(logs.find((l) => l.event === 'mailbox_delivery_escalated')).toBeUndefined();
+    });
+
+    test('Guard 2: [escalation]-prefixed body is dropped even without scheduler authorship', async () => {
+      const { deps, logs, sentRows, deliverFn, sendFn } = createExhaustedDeps();
+      const msg = createRetryableMsg({
+        from: 'genie-configure',
+        to: 'some-other-worker',
+        body: '[escalation] replayed escalation from another sender',
+      });
+
+      await processMailboxRetryMessage(deps, msg, { deliverFn, sendFn });
+
+      expect(sentRows).toHaveLength(0);
+      const dropped = logs.find((l) => l.event === 'mailbox_delivery_escalation_dropped');
+      expect(dropped).toBeDefined();
+      expect(dropped?.reason).toBe('body_prefix');
+    });
+
+    test('Guard 3: message addressed to ESCALATION_RECIPIENT from a non-scheduler sender is dropped', async () => {
+      const { deps, logs, sentRows, deliverFn, sendFn } = createExhaustedDeps();
+      const msg = createRetryableMsg({
+        from: 'genie-configure',
+        to: ESCALATION_RECIPIENT,
+        body: 'direct message to team-lead that exhausted retries',
+      });
+
+      await processMailboxRetryMessage(deps, msg, { deliverFn, sendFn });
+
+      expect(sentRows).toHaveLength(0);
+      const dropped = logs.find((l) => l.event === 'mailbox_delivery_escalation_dropped');
+      expect(dropped).toBeDefined();
+      expect(dropped?.reason).toBe('same_recipient');
+    });
+
+    test('positive path: legitimate worker→worker failure still produces an escalation row', async () => {
+      const { deps, logs, sentRows, deliverFn, sendFn } = createExhaustedDeps();
+      const msg = createRetryableMsg({
+        from: 'genie-configure',
+        to: 'genie-reviewer',
+        body: 'please review this draft',
+      });
+
+      await processMailboxRetryMessage(deps, msg, { deliverFn, sendFn });
+
+      expect(sentRows).toHaveLength(1);
+      expect(sentRows[0].from).toBe('scheduler');
+      expect(sentRows[0].to).toBe(ESCALATION_RECIPIENT);
+      expect(sentRows[0].body.startsWith('[escalation] ')).toBe(true);
+      expect(logs.find((l) => l.event === 'mailbox_delivery_escalated')).toBeDefined();
+      expect(logs.find((l) => l.event === 'mailbox_delivery_escalation_dropped')).toBeUndefined();
+    });
+
+    test('regression: 10 consecutive 3-fail cycles on scheduler-authored team-lead row produce 0 new rows', async () => {
+      const { deps, logs, sentRows, deliverFn, sendFn } = createExhaustedDeps();
+      const msg = createRetryableMsg({
+        from: 'scheduler',
+        to: 'team-lead',
+        body: '[escalation] Message msg-orig from "x" to "y" failed delivery',
+      });
+
+      for (let i = 0; i < 10; i++) {
+        await processMailboxRetryMessage(deps, msg, { deliverFn, sendFn });
+      }
+
+      // Zero new mailbox rows from 10 cycles — this is the property that keeps
+      // the mailbox table from growing by 1500/h indefinitely.
+      expect(sentRows).toHaveLength(0);
+      const dropped = logs.filter((l) => l.event === 'mailbox_delivery_escalation_dropped');
+      expect(dropped).toHaveLength(10);
+      expect(dropped.every((l) => l.reason === 'already_escalated_by_scheduler')).toBe(true);
     });
   });
 });
