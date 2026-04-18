@@ -20,7 +20,9 @@ import {
   reclaimExpiredLeases,
   reconcileOrphanedRuns,
   reconcileOrphans,
+  reconcileUnresumable,
   recoverOnStartup,
+  runAgentRecoveryPass,
   startDaemon,
 } from './scheduler-daemon.js';
 
@@ -1324,6 +1326,10 @@ describe('scheduler-daemon', () => {
       // Pre-fix this path was unreachable because the counter was always 0 on
       // re-entry. Post-fix the increment persists, so after 3 attempts the
       // next tick hits the early-exit `attempts >= maxAttempts` branch.
+      //
+      // Post-fix/wedged-terminal-state: the early-exit branch also persists
+      // `autoResume=false` so the next cycle's resumable filter excludes the
+      // agent (prevents `agent_resume_exhausted` re-logging every 60s).
       const agent = makeWorker({ resumeAttempts: 3, maxResumeAttempts: 3 });
       const updates: { id: string; updates: Record<string, unknown> }[] = [];
       const { deps, logs } = createMockDeps(
@@ -1342,9 +1348,13 @@ describe('scheduler-daemon', () => {
       const exhausted = logs.find((l) => l.event === 'agent_resume_exhausted');
       expect(exhausted).toBeDefined();
       expect(exhausted?.resume_attempts).toBe(3);
-      // No updateAgent calls on early-exit exhaustion — we do NOT re-increment
-      // or reset when the budget is already depleted.
-      expect(updates).toHaveLength(0);
+      // Exactly one updateAgent call on early-exit exhaustion: the terminal
+      // `autoResume=false` flip. We do NOT re-increment or reset counters
+      // when the budget is already depleted.
+      expect(updates).toHaveLength(1);
+      expect(updates[0].updates.autoResume).toBe(false);
+      // Critical invariant: no counter mutation on the early-exit branch.
+      expect(updates[0].updates.resumeAttempts).toBeUndefined();
     });
 
     test('success path explicitly resets counter to 0', async () => {
@@ -1412,6 +1422,202 @@ describe('scheduler-daemon', () => {
       // counter mid-flight, lastResumeAttempt would also be absent).
       expect(row.resumeAttempts).toBe(0);
       expect(row.lastResumeAttempt).toBeDefined();
+    });
+  });
+
+  // ==========================================================================
+  // Regression: fix/wedged-terminal-state
+  //
+  // Two bugs, same architectural shape — terminal-state agents that the
+  // scheduler kept re-processing every cycle.
+  //
+  //  - Bug A: Rows in `state='error', auto_resume=true, claude_session_id=null`
+  //    were dropped by the resumable filter (no session id), but stayed in
+  //    `auto_resume=true` forever, misleading `genie ls` ("auto-resume: on")
+  //    and polluting the worker list. The `reconcileUnresumable` pass flips
+  //    those rows to `auto_resume=false`.
+  //
+  //  - Bug B: The `attempts >= maxAttempts` early-exit in `attemptAgentResume`
+  //    logged `agent_resume_exhausted` and returned, but did NOT set
+  //    `auto_resume=false`. Next scheduler tick (60s later) re-entered the
+  //    same branch and re-logged the same exhaustion event — 9 agents on
+  //    felipe's machine produced ~12K redundant events over a day. The fix
+  //    persists `auto_resume=false` at the terminal boundary.
+  //
+  // Prior art: PR #1181 (zombie concurrency cap) + PR #1187 (counter
+  // persistence). This is the final cleanup pass closing the
+  // "terminal states should be terminal" theme.
+  // ==========================================================================
+
+  describe('reconcileUnresumable — Bug A: mark null-session error rows unresumable', () => {
+    test('flips auto_resume to false for error-state agent with null session id', async () => {
+      const workers: WorkerInfo[] = [
+        {
+          id: 'wedged-agent',
+          paneId: '',
+          state: 'error',
+          autoResume: true,
+          // claudeSessionId intentionally undefined — simulates the DB NULL
+          // observed on felipe's machine (genie-docs directory placeholders
+          // + omni workers that died before capturing a Claude session).
+          claudeSessionId: undefined,
+        },
+      ];
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          listWorkers: async () => workers,
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const flipped = await reconcileUnresumable(deps);
+
+      expect(flipped).toBe(1);
+      expect(updates).toHaveLength(1);
+      expect(updates[0].id).toBe('wedged-agent');
+      expect(updates[0].updates.autoResume).toBe(false);
+
+      const marked = logs.find((l) => l.event === 'agent_marked_unresumable');
+      expect(marked).toBeDefined();
+      expect(marked?.agent_id).toBe('wedged-agent');
+      expect(marked?.reason).toBe('no_session_id');
+    });
+
+    test('leaves error-state agents with a valid claude_session_id untouched', async () => {
+      const workers: WorkerInfo[] = [
+        {
+          id: 'resumable-agent',
+          paneId: '%42',
+          state: 'error',
+          autoResume: true,
+          // Valid session id — the scheduler CAN still retry this agent.
+          // The reconciler must NOT flip auto_resume here.
+          claudeSessionId: 'abcd-1234-valid-uuid',
+        },
+        {
+          id: 'already-disabled',
+          paneId: '%43',
+          state: 'error',
+          autoResume: false,
+          claudeSessionId: undefined,
+        },
+        {
+          id: 'healthy-working',
+          paneId: '%44',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: undefined,
+        },
+      ];
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          listWorkers: async () => workers,
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const flipped = await reconcileUnresumable(deps);
+
+      // None of the three rows match the (error + auto_resume=true + null-session) triple.
+      expect(flipped).toBe(0);
+      expect(updates).toHaveLength(0);
+      const marked = logs.find((l) => l.event === 'agent_marked_unresumable');
+      expect(marked).toBeUndefined();
+    });
+  });
+
+  describe('attemptAgentResume exhaustion — Bug B: persist auto_resume=false', () => {
+    function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
+      return {
+        id: 'test-agent',
+        paneId: '%42',
+        state: 'error',
+        claudeSessionId: 'session-abc',
+        autoResume: true,
+        resumeAttempts: 0,
+        maxResumeAttempts: 3,
+        ...overrides,
+      };
+    }
+
+    test('exhaustion branch persists auto_resume=false alongside the log event', async () => {
+      // Direct reproduction of the Bug B observation: an already-exhausted
+      // agent (attempts==max) re-entering attemptAgentResume must (1) still
+      // fire `agent_resume_exhausted` for backward compat, AND (2) write
+      // `auto_resume=false` so the next cycle's resumable filter excludes it.
+      const agent = makeWorker({ resumeAttempts: 3, maxResumeAttempts: 3 });
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('exhausted');
+      // Backward compat: exhaustion event still fires.
+      const exhausted = logs.find((l) => l.event === 'agent_resume_exhausted');
+      expect(exhausted).toBeDefined();
+      expect(exhausted?.resume_attempts).toBe(3);
+      // New invariant: auto_resume=false was persisted.
+      const flip = updates.find((u) => u.updates.autoResume === false);
+      expect(flip).toBeDefined();
+      expect(flip?.id).toBe('test-agent');
+    });
+
+    test('subsequent recovery cycle excludes the now-unresumable agent (no new event)', async () => {
+      // Simulate two consecutive scheduler ticks. On tick 1 the agent is
+      // exhausted → auto_resume flipped to false. On tick 2 runAgentRecoveryPass
+      // must exclude the agent entirely (the resumable filter already drops
+      // `autoResume=false` implicitly via attemptAgentResume's early-skip,
+      // but we test the end-to-end exclusion: no new `agent_resume_exhausted`
+      // fires).
+      let row: WorkerInfo = {
+        id: 'exhausted-agent',
+        paneId: '%99',
+        state: 'error',
+        claudeSessionId: 'sess-valid',
+        autoResume: true,
+        resumeAttempts: 3,
+        maxResumeAttempts: 3,
+      };
+
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          listWorkers: async () => [row],
+          isPaneAlive: async () => false,
+          updateAgent: async (_id, u) => {
+            row = { ...row, ...u } as WorkerInfo;
+          },
+        },
+      );
+
+      // Tick 1: runs the full recovery pass. Agent is exhausted → flipped.
+      await runAgentRecoveryPass(deps, 'daemon-t1', defaultConfig);
+      const exhaustedCountAfterT1 = logs.filter((l) => l.event === 'agent_resume_exhausted').length;
+      expect(exhaustedCountAfterT1).toBe(1);
+      expect(row.autoResume).toBe(false);
+
+      // Tick 2: same agent, now with auto_resume=false from tick 1. The
+      // recovery pass must NOT re-log `agent_resume_exhausted` — the agent
+      // is filtered out before reaching the exhaustion check. Before the
+      // Bug B fix, this count would grow by 1 on every 60s tick forever.
+      await runAgentRecoveryPass(deps, 'daemon-t2', defaultConfig);
+      const exhaustedCountAfterT2 = logs.filter((l) => l.event === 'agent_resume_exhausted').length;
+      expect(exhaustedCountAfterT2).toBe(1);
     });
   });
 

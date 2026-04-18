@@ -813,6 +813,64 @@ export async function runAgentRecoveryPass(
   return { resumed, failed };
 }
 
+/**
+ * Reconcile agents that can never be auto-resumed.
+ *
+ * Rows in `state='error'` with `autoResume=true` but no `claudeSessionId` are
+ * permanently wedged: the resume filter in {@link runAgentRecoveryPass} drops
+ * them (no session id to resume from), so they are never attempted, their
+ * counter never advances, and `genie ls` keeps displaying `auto-resume: on`
+ * — a lie to the operator since the scheduler cannot possibly try.
+ *
+ * Observed live on felipe's machine: 9 such rows (8 `genie-docs` directory
+ * placeholders + 2 omni workers that died before capturing a Claude session
+ * id). Root cause for why those rows end up in `error` state without a
+ * session id is tracked as a separate investigation (dir:-row state
+ * mutation + omni session capture).
+ *
+ * The fix here is the terminal-boundary invariant: mark them `auto_resume=false`
+ * so subsequent scheduler ticks ignore them and the UI reflects reality.
+ * Each flipped row logs `agent_marked_unresumable` for observability.
+ *
+ * Exported so the periodic timer can invoke it alongside the existing
+ * `reconcileDeadPaneZombies` + `runAgentRecoveryPass` pair.
+ */
+export async function reconcileUnresumable(deps: SchedulerDeps): Promise<number> {
+  const workers = await deps.listWorkers();
+  let flipped = 0;
+  for (const worker of workers) {
+    // Terminal boundary condition: error-state, auto-resume on, no session id.
+    // `!worker.claudeSessionId` matches both `null` (DB) and `undefined`
+    // (listWorkers mapping for missing column).
+    if (worker.state !== 'error') continue;
+    if (worker.autoResume === false) continue;
+    if (worker.claudeSessionId) continue;
+
+    try {
+      await deps.updateAgent(worker.id, { autoResume: false });
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'warn',
+        event: 'agent_marked_unresumable',
+        agent_id: worker.id,
+        reason: 'no_session_id',
+        state: worker.state,
+      });
+      flipped++;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'warn',
+        event: 'agent_marked_unresumable_failed',
+        agent_id: worker.id,
+        error: message,
+      });
+    }
+  }
+  return flipped;
+}
+
 // ============================================================================
 // Agent auto-resume
 // ============================================================================
@@ -911,8 +969,16 @@ export async function attemptAgentResume(
   const maxAttempts = agent.maxResumeAttempts ?? DEFAULT_MAX_RESUME_ATTEMPTS;
   const attempts = agent.resumeAttempts ?? 0;
 
-  // Retry budget exhausted
+  // Retry budget exhausted — mark terminal so the scheduler filter excludes
+  // the agent next cycle. Prior to this write, `attempts >= maxAttempts` rows
+  // kept passing the resumable filter, so `agent_resume_exhausted` fired on
+  // every tick (60s) for the same agent without any new delivery attempt. The
+  // log-once invariant requires `auto_resume=false` to persist at the terminal
+  // boundary (mirrors the Bug A unresumable reconciler below). We only reach
+  // this branch when `autoResume !== false` (the earlier early-skip handles
+  // the disabled case), so the write is unconditional here.
   if (attempts >= maxAttempts) {
+    await deps.updateAgent(agentId, { autoResume: false });
     deps.log({
       timestamp: now.toISOString(),
       level: 'warn',
@@ -1002,8 +1068,13 @@ export async function attemptAgentResume(
     max_resume_attempts: maxAttempts,
   });
 
-  // If this was the last attempt, mark exhausted
+  // If this was the last attempt, mark exhausted AND persist
+  // `auto_resume=false` so the next scheduler tick's resumable filter excludes
+  // this agent. Without the flip, subsequent cycles would hit the early-exit
+  // `attempts >= maxAttempts` branch and re-log `agent_resume_exhausted` every
+  // 60s forever.
   if (newAttempts >= maxAttempts) {
+    await deps.updateAgent(agentId, { autoResume: false });
     deps.log({
       timestamp: now.toISOString(),
       level: 'warn',
@@ -1756,7 +1827,14 @@ export function startDaemon(
     return setInterval(async () => {
       if (!running) return;
       try {
+        // Order matters: (1) GC dead-pane zombies so activeCount is accurate;
+        // (2) flip unresumable rows to `auto_resume=false` so they are
+        // excluded from the resumable filter in this same tick; (3) run the
+        // resume pass. Step 2 is the Bug A fix — without it, error rows with
+        // null session ids stayed in `auto_resume=true` forever, misleading
+        // `genie ls` and cluttering the worker list.
         await reconcileDeadPaneZombies(d);
+        await reconcileUnresumable(d);
         await runAgentRecoveryPass(d, dId, cfg);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
