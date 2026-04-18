@@ -40,12 +40,34 @@ Top-level shortcuts for common operations. These are aliases for commands in the
 
 ### `genie spawn <name>`
 
-Spawn a new agent by name (resolves from directory or built-ins).
+Spawn a new agent by name (resolves from directory or built-ins). Single verb, state-gated by the canonical row's liveness — see [**SPAWN-TEAM-RESOLUTION.md**](SPAWN-TEAM-RESOLUTION.md) for the full model.
+
+**State-gated outcome:**
+
+| Canonical row `<name>` | Result |
+|------------------------|--------|
+| missing | create canonical with a fresh UUID |
+| present, pane **dead** | resume canonical (same UUID) |
+| present, pane **alive** | create a **parallel** `<name>-<s4>` (s4 = first 4 hex chars of the parallel's fresh UUID) |
+
+Parallels are off the bare-name auto-resume path — revive a specific parallel with `genie spawn <name>-<s4>`.
+
+**Team-resolution precedence** (first non-null wins — see `resolveTeamName` at `src/term-commands/agents.ts:1675`):
+
+| Tier | Source |
+|------|--------|
+| 1 | `--team` flag |
+| 2 | `agent.entry?.team` (PG `agent_templates`) |
+| 3 | `$GENIE_TEAM` env var |
+| 4 | `discoverTeamName()` — JSONL `leadSessionId` match → tmux session name |
+| 5 | `findTeamsContainingAgent(name)` — on-disk native team config member scan (heuristic, last-resort) |
+
+If every tier yields nothing AND the agent is globally registered, `ensureNativeTeam` auto-creates a team-of-one named after the agent.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--provider <provider>` | string | `claude` | Provider: claude or codex |
-| `--team <team>` | string | `$GENIE_TEAM` or `genie` | Team name |
+| `--team <team>` | string | precedence chain above | Team name (tier 1) |
 | `--model <model>` | string | | Model override (e.g., sonnet, opus) |
 | `--skill <skill>` | string | | Skill to load |
 | `--layout <layout>` | string | `mosaic` | Layout mode: mosaic or vertical |
@@ -67,11 +89,15 @@ Spawn a new agent by name (resolves from directory or built-ins).
 | `--sdk-effort <level>` | string | | SDK: reasoning effort level (low, medium, high, max) |
 
 ```bash
+genie spawn simone                                # Canonical resume (or create if missing)
+genie spawn simone                                # 2nd invocation while alive → parallel simone-<s4>
+genie spawn simone-a3f7                           # Revive a specific parallel by full id
 genie spawn engineer                              # Spawn built-in engineer role
-genie spawn researcher --model sonnet             # Spawn with model override
-genie spawn my-agent --team my-feature            # Spawn into a specific team
+genie spawn my-agent --team my-feature            # Tier 1 override (explicit)
 genie spawn council--questioner --provider codex  # Use Codex provider
 ```
+
+Short-id collisions (two parallels minting the same 4-hex prefix) are resolved by extending the slice one char at a time until unique — see `pickParallelShortId` at `src/term-commands/agents.ts:1725`. Killed parallels free their id back to the pool.
 
 ### `genie kill <name>`
 
