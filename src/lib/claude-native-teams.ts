@@ -488,7 +488,19 @@ export async function registerNativeMember(
 
 /**
  * Unregister a member from the native team config.json.
- * Marks them as inactive rather than removing (preserves history).
+ *
+ * Removes the member entry from the `members` array. The prior implementation
+ * marked `isActive: false` "to preserve history", but no call site ever
+ * consults inactive members for history — meanwhile two active readers
+ * (`resolveNativeMemberName`'s active→inactive fallback and
+ * `findTeamsContainingAgent`'s team-resolver tier 5) silently pick up stale
+ * entries, routing messages and spawn-team resolution to the wrong worker.
+ *
+ * The per-member inbox at `~/.claude/teams/<team>/inboxes/<name>.json` is
+ * cleared by `clearNativeInbox` (called alongside this function in the kill
+ * path), so there's no residual state worth preserving.
+ *
+ * See automagik-dev/genie#1179.
  */
 export async function unregisterNativeMember(teamName: string, agentName: string): Promise<void> {
   const config = await loadConfig(teamName);
@@ -497,10 +509,9 @@ export async function unregisterNativeMember(teamName: string, agentName: string
   const sanitized = sanitizeTeamName(teamName);
   const agentId = `${sanitizeTeamName(agentName)}@${sanitized}`;
 
-  const member = config.members.find((m) => m.agentId === agentId);
-  if (member) {
-    member.isActive = false;
-  }
+  const before = config.members.length;
+  config.members = config.members.filter((m) => m.agentId !== agentId);
+  if (config.members.length === before) return; // no-op: no entry matched
 
   await saveConfig(teamName, config);
 }
