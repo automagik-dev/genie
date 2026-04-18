@@ -157,4 +157,57 @@ describe('buildOmniSpawnParams', () => {
     const params = buildOmniSpawnParams('simone', 'chat123', entryWithProvider, {});
     expect(params.provider).toBe('codex');
   });
+
+  test('propagates entry.permissions.allow/deny for turn-sandbox enforcement', () => {
+    const entryWithPermissions = {
+      ...fakeEntry,
+      permissions: {
+        allow: ['Bash(omni say *)', 'Bash(omni done)'],
+        deny: ['Bash(omni chats *)', 'Bash(rm *)'],
+      },
+    };
+    const params = buildOmniSpawnParams('simone', 'chat123', entryWithPermissions, {});
+    expect(params.permissions?.allow).toEqual(['Bash(omni say *)', 'Bash(omni done)']);
+    expect(params.permissions?.deny).toEqual(['Bash(omni chats *)', 'Bash(rm *)']);
+  });
+
+  test('propagates entry.disallowedTools', () => {
+    const entryWithTools = {
+      ...fakeEntry,
+      disallowedTools: ['Edit', 'Write', 'Agent'],
+    };
+    const params = buildOmniSpawnParams('simone', 'chat123', entryWithTools, {});
+    expect(params.disallowedTools).toEqual(['Edit', 'Write', 'Agent']);
+  });
+
+  test('omits permissions when entry has none (no false sense of security)', () => {
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
+    expect(params.permissions).toBeUndefined();
+    expect(params.disallowedTools).toBeUndefined();
+  });
+
+  test('omits permissions when allow/deny are empty arrays', () => {
+    const entryWithEmpty = {
+      ...fakeEntry,
+      permissions: { allow: [], deny: [] },
+    };
+    const params = buildOmniSpawnParams('simone', 'chat123', entryWithEmpty, {});
+    expect(params.permissions).toBeUndefined();
+  });
+
+  test('ignores SDK-only preset/bashAllowPatterns (CLI path uses allow/deny only)', () => {
+    const entryWithSdkFields = {
+      ...fakeEntry,
+      permissions: {
+        preset: 'turn-sandbox',
+        allow: ['Bash(omni say *)'],
+        bashAllowPatterns: ['^omni say .*$'],
+      },
+    };
+    const params = buildOmniSpawnParams('simone', 'chat123', entryWithSdkFields, {});
+    // SpawnParams.permissions only carries allow/deny — preset and bashAllowPatterns
+    // are SDK-specific and handled in claude-sdk-permissions.ts, not here.
+    expect(params.permissions?.allow).toEqual(['Bash(omni say *)']);
+    expect(params.permissions?.deny).toBeUndefined();
+  });
 });
