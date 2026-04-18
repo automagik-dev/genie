@@ -16,7 +16,7 @@
  * Storage: agent-directory.json is the source of truth for registered agents.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import type { Command } from 'commander';
 import * as directory from '../lib/agent-directory.js';
@@ -183,30 +183,85 @@ interface DirAddOptions extends SdkDirOptions {
 }
 
 async function handleDirAdd(name: string, options: DirAddOptions): Promise<void> {
+  // dir-sync-frontmatter-refresh (Group 5): `dir add` scaffolds BOTH files on
+  // disk — `agent.yaml` (CLI flags → config) and a frontmatter-less AGENTS.md
+  // body template — then triggers sync to upsert the DB row. The yaml is the
+  // canonical source of every runtime-consumed field; AGENTS.md holds pure
+  // prompt content from line 1.
+
   const promptMode = validatePromptMode(options.promptMode);
   const resolvedDir = resolvePath(options.dir);
   if (options.repo) validateRepoPath(options.repo);
   const permissions = buildPermissions(options.permissionPreset, options.allow, options.bashAllow);
   const sdk = buildSdkConfig(options);
-  const entry = await directory.add(
-    {
-      name,
-      dir: resolvedDir,
-      repo: options.repo ? resolvePath(options.repo) : undefined,
-      promptMode,
-      model: options.model,
-      roles: normalizeRoles(options.roles),
-      ...(permissions && { permissions }),
-      ...(sdk && { sdk }),
-    },
-    { global: options.global },
-  );
+
+  // Build the on-disk AgentConfig. Derived fields (name/dir/registeredAt) are
+  // stripped by writeAgentYaml before serialization.
+  const config: AgentConfig = {
+    promptMode,
+    ...(options.model !== undefined && { model: options.model }),
+    ...(options.repo !== undefined && { repo: resolvePath(options.repo) }),
+    ...(options.roles !== undefined && { roles: normalizeRoles(options.roles) }),
+    ...(permissions && { permissions }),
+    ...(sdk && { sdk: sdk as AgentConfig['sdk'] }),
+  };
+
+  // Ensure the agent directory exists.
+  mkdirSync(resolvedDir, { recursive: true });
+
+  // Scaffold AGENTS.md without a frontmatter block. Users edit this for prompt
+  // content; runtime config lives in agent.yaml.
+  const agentsMdPath = join(resolvedDir, 'AGENTS.md');
+  if (!existsSync(agentsMdPath)) {
+    writeFileSync(agentsMdPath, scaffoldAgentsMdBody(name));
+  }
+
+  // Write agent.yaml atomically (locked).
+  await writeAgentYaml(join(resolvedDir, 'agent.yaml'), config);
+
+  // Propagate to the DB via the same single-agent sync path used by `dir edit`.
+  const ws = findWorkspace();
+  if (ws) {
+    await syncSingleAgentByName(ws.root, name);
+  } else {
+    // Not in a workspace — register a stub in the directory table so the
+    // agent is reachable even before the user runs `genie init`.
+    await directory.add(
+      {
+        name,
+        dir: resolvedDir,
+        repo: options.repo ? resolvePath(options.repo) : undefined,
+        promptMode,
+        model: options.model,
+        roles: normalizeRoles(options.roles),
+        ...(permissions && { permissions }),
+        ...(sdk && { sdk }),
+      },
+      { global: options.global },
+    );
+    console.warn('Not in a genie workspace — directory row created; run `genie dir sync` in a workspace to re-sync.');
+  }
 
   recordAuditEvent('item', name, 'item_registered', getActor(), { type: 'agent', source: 'dir_add' }).catch(() => {});
 
   const scope = options.global ? 'global' : 'project';
-  console.log(`Agent "${entry.name}" registered (${scope}).`);
-  printEntry(entry);
+  console.log(`Agent "${name}" registered (${scope}).`);
+  const entry = await directory.get(name);
+  if (entry) printEntry(entry);
+}
+
+/** AGENTS.md body template for a fresh agent — no YAML fence. */
+function scaffoldAgentsMdBody(name: string): string {
+  return `# Agent: ${name}
+
+Describe what this agent does, how it behaves, and what it owns.
+Runtime config (team, model, permissions, etc.) lives in \`agent.yaml\` —
+this file is pure prompt content.
+
+<mission>
+TBD — single sentence stating the agent's primary goal.
+</mission>
+`;
 }
 
 interface EditOptions extends SdkDirOptions {
