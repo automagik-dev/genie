@@ -413,7 +413,7 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
     });
   }
 
-  /** Stub isPaneAlive — always-alive / always-dead. */
+  /** Stub transport-aware liveness — always-alive / always-dead. */
   const alwaysAlive = async () => true;
   const alwaysDead = async () => false;
 

@@ -107,9 +107,9 @@ async function killPane(id: string): Promise<void> {
 }
 
 /** Controllable isAliveFn — returns true for any paneId seeded in the alive set. */
-function alivePanes(...alive: string[]): (paneId: string) => Promise<boolean> {
+function alivePanes(...alive: string[]): (agent: { id: string; paneId: string }) => Promise<boolean> {
   const set = new Set(alive);
-  return async (paneId: string) => set.has(paneId);
+  return async (agent: { id: string; paneId: string }) => set.has(agent.paneId);
 }
 
 /** Stub crypto.randomUUID in a scoped fashion — restore after each test. */

@@ -1308,6 +1308,10 @@ export async function findDeadResumable(team: string, role: string): Promise<reg
     (w) => w.role === role && w.team === team && w.claudeSessionId && w.provider === 'claude',
   );
   if (!candidate) return null;
+  // Safe for SDK/non-tmux transports: the `provider === 'claude'` filter above
+  // excludes them by construction (SDK uses provider='claude-sdk'). Only
+  // tmux-resumable Claude-CLI agents reach `isPaneAlive`, so a plain paneId
+  // check is correct here — no transport dispatch needed.
   const alive = await isPaneAlive(candidate.paneId);
   return alive ? null : candidate;
 }
@@ -1315,22 +1319,38 @@ export async function findDeadResumable(team: string, role: string): Promise<reg
 /**
  * Reject spawn if a live worker with the same role already exists in the team.
  * Dead/suspended workers (pane gone) are auto-cleaned from registry — only live panes block.
+ *
+ * Transport-aware liveness (see `resolveWorkerLivenessByTransport`): for
+ * non-tmux transports (SDK, omni, inline) the paneId is synthetic and
+ * `isPaneAlive` would wrongly report "dead", letting a duplicate spawn clobber
+ * a live SDK agent. Dispatches by paneId shape so SDK/omni/inline rows are
+ * checked via `executors.state` instead.
  */
 async function rejectDuplicateRole(team: string, role: string): Promise<void> {
   const existing = await registry.list();
   for (const w of existing) {
     if (w.role === role && w.team === team) {
-      const alive = await isPaneAlive(w.paneId);
+      const alive = await executorRegistry.resolveWorkerLivenessByTransport(w);
       // tmux recycles pane IDs — a pane may be "alive" but belong to a
-      // completely different session now.  Verify the pane is still in the
-      // expected session before blocking.
-      if (alive && w.session) {
+      // completely different session now. Verify the pane is still in the
+      // expected session before blocking. Only applies to real tmux panes;
+      // synthetic paneIds (sdk/inline/'') never collide with a recycled pane.
+      if (alive && w.session && /^%\d+$/.test(w.paneId)) {
         const paneSession = await getPaneSession(w.paneId);
         if (paneSession !== w.session) {
           // Pane was recycled — treat as dead
           await registry.unregister(w.id);
           continue;
         }
+        console.error(
+          `Error: Worker with role "${role}" already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
+            `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
+        );
+        process.exit(1);
+      }
+      // Live SDK/omni/inline row — block the duplicate without a session-recycle
+      // check, since synthetic paneIds cannot be recycled by tmux.
+      if (alive) {
         console.error(
           `Error: Worker with role "${role}" already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
             `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
@@ -1754,13 +1774,18 @@ type SpawnIdentity =
  *                      registerable as Claude sessions.
  *
  * The `uuidFactory` and `isAliveFn` injection points exist for deterministic
- * tests — production callers use `crypto.randomUUID` and `isPaneAlive`.
+ * tests — production callers use `crypto.randomUUID` and the shared
+ * `resolveWorkerLivenessByTransport` helper. `isAliveFn` receives the agent's
+ * id + paneId so it can dispatch by transport (tmux vs SDK/omni/inline) — a
+ * one-arg paneId-only check would misreport live SDK agents as dead and
+ * re-canonicalize them, clobbering the live row via ON CONFLICT UPDATE.
  */
 export async function resolveSpawnIdentity(
   name: string,
   team: string,
   uuidFactory: () => string = () => crypto.randomUUID(),
-  isAliveFn: (paneId: string) => Promise<boolean> = isPaneAlive,
+  isAliveFn: (agent: { id: string; paneId: string }) => Promise<boolean> = (agent) =>
+    executorRegistry.resolveWorkerLivenessByTransport(agent),
 ): Promise<SpawnIdentity> {
   const { getConnection } = await import('../lib/db.js');
   const sql = await getConnection();
@@ -1795,7 +1820,7 @@ export async function resolveSpawnIdentity(
     };
   }
 
-  const alive = existing.pane_id ? await isAliveFn(existing.pane_id) : false;
+  const alive = existing.pane_id ? await isAliveFn({ id: existing.id, paneId: existing.pane_id }) : false;
   if (!alive) {
     // findDeadResumable is the canonical resume path. If it didn't fire, the
     // existing row lacks a claudeSessionId or isn't a Claude row; creating a
