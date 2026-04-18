@@ -730,8 +730,12 @@ function scheduleRecoveryRetry(deps: SchedulerDeps, daemonId: string, config?: S
  * Each worker's `isPaneAlive` + `attemptAgentResume` is wrapped in try/catch,
  * so a single failure (for example, an unreachable tmux socket during early
  * boot) does not abort the recovery loop for the remaining workers.
+ *
+ * Exported so the periodic auto-resume timer can invoke the same pass mid-run
+ * (startAgentResumeTimer) — without it, agents that hit `error` while the
+ * daemon is up never retry until the next process restart.
  */
-async function runAgentRecoveryPass(
+export async function runAgentRecoveryPass(
   deps: SchedulerDeps,
   daemonId: string,
   config?: SchedulerConfig,
@@ -776,6 +780,45 @@ const RESUME_COOLDOWN_MS = 60_000;
 
 /** Default max auto-resume attempts. */
 const DEFAULT_MAX_RESUME_ATTEMPTS = 3;
+
+/** States that never consume a concurrency-cap slot (terminal or pre-active). */
+const INACTIVE_WORKER_STATES = new Set(['done', 'error', 'suspended', 'spawning']);
+
+/**
+ * Count workers genuinely consuming a concurrency-cap slot.
+ *
+ * Excludes rows that only appear active on paper:
+ *   1. `state == null` — identity records created by `findOrCreateAgent`
+ *      (see `agent-registry.ts:548-550`). They track liveness via the
+ *      `executors` table, not the legacy `state` column.
+ *   2. States in INACTIVE_WORKER_STATES (done/error/suspended/spawning).
+ *   3. tmux-pane rows whose pane is dead — zombie rows whose pane died
+ *      without a state update. Mirrors `term-commands/agents.ts:2475
+ *      resolveWorkerLiveness`. Synthetic paneIds (sdk, inline, empty) are
+ *      skipped because they have their own non-tmux liveness source.
+ *
+ * When `isPaneAlive` throws (tmux unreachable) we conservatively count the
+ * row — better to briefly over-count than to silently under-count during a
+ * tmux blip and over-spawn past the configured cap.
+ */
+async function countActiveWorkers(
+  workers: WorkerInfo[],
+  isPaneAlive: (paneId: string) => Promise<boolean>,
+): Promise<number> {
+  let count = 0;
+  for (const w of workers) {
+    if (w.state == null || INACTIVE_WORKER_STATES.has(w.state)) continue;
+    if (/^%\d+$/.test(w.paneId)) {
+      try {
+        if (!(await isPaneAlive(w.paneId))) continue;
+      } catch {
+        // Tmux unreachable — be conservative, count this row
+      }
+    }
+    count++;
+  }
+  return count;
+}
 
 /**
  * Result of an auto-resume attempt.
@@ -855,9 +898,12 @@ export async function attemptAgentResume(
     }
   }
 
-  // Concurrency cap: count active workers
+  // Concurrency cap: count active workers (see `countActiveWorkers` above).
+  // Without NULL-filter + dead-pane filter, accumulated identity rows and
+  // dead-pane zombies inflated activeCount to 142 on one observed machine,
+  // permanently blocking every auto-resume attempt (`active=142, max=5`).
   const workers = await deps.listWorkers();
-  const activeCount = workers.filter((w) => !['done', 'error', 'suspended', 'spawning'].includes(w.state)).length;
+  const activeCount = await countActiveWorkers(workers, deps.isPaneAlive);
   if (activeCount >= config.maxConcurrent) {
     deps.log({
       timestamp: now.toISOString(),
@@ -1319,6 +1365,7 @@ export function startDaemon(
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let orphanTimer: ReturnType<typeof setInterval> | null = null;
   let leaseRecoveryTimer: ReturnType<typeof setInterval> | null = null;
+  let agentResumeTimer: ReturnType<typeof setInterval> | null = null;
   let inboxWatcherHandle: NodeJS.Timeout | null = null;
   let captureFallbackTimer: ReturnType<typeof setInterval> | null = null;
   let eventRouterHandle: EventRouterHandle | null = null;
@@ -1348,6 +1395,10 @@ export function startDaemon(
     if (leaseRecoveryTimer) {
       clearInterval(leaseRecoveryTimer);
       leaseRecoveryTimer = null;
+    }
+    if (agentResumeTimer) {
+      clearInterval(agentResumeTimer);
+      agentResumeTimer = null;
     }
     if (inboxWatcherHandle) {
       stopInboxWatcher(inboxWatcherHandle);
@@ -1475,6 +1526,61 @@ export function startDaemon(
     }, cfg.orphanCheckIntervalMs);
   }
 
+  /**
+   * GC dead-pane zombies via `reconcileStaleSpawns`. Runs before the resume
+   * pass each tick so the concurrency cap sees an accurate active set.
+   */
+  async function reconcileDeadPaneZombies(d: SchedulerDeps): Promise<void> {
+    try {
+      const { reconcileStaleSpawns } = await import('./agent-registry.js');
+      await reconcileStaleSpawns();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      d.log({
+        timestamp: d.now().toISOString(),
+        level: 'warn',
+        event: 'reconcile_stale_spawns_error',
+        error: message,
+      });
+    }
+  }
+
+  /**
+   * Periodic auto-resume sweep for error-state agents.
+   *
+   * Before this timer existed, `runAgentRecoveryPass` only ran at daemon
+   * startup (`recoverOnStartup`) plus one delayed retry. Agents that hit
+   * `error` state mid-run — the very failure mode auto-resume is designed
+   * to handle — never retried until the daemon process restarted.
+   *
+   * Interval reuses `leaseRecoveryIntervalMs` (60s default): same cadence as
+   * lease recovery, gentle enough not to thrash tmux on large worker sets,
+   * tight enough that a user sees the 1/3, 2/3, 3/3 resume progression
+   * within a few minutes rather than waiting for a daemon restart.
+   *
+   * Each tick first reconciles dead-pane zombies (idle/working/permission/
+   * question rows whose tmux pane is dead → error) via
+   * `reconcileDeadPaneZombies`, so the subsequent resume pass sees an
+   * accurate activeCount instead of the inflated zombie count.
+   */
+  function startAgentResumeTimer(d: SchedulerDeps, cfg: SchedulerConfig, dId: string): ReturnType<typeof setInterval> {
+    return setInterval(async () => {
+      if (!running) return;
+      try {
+        await reconcileDeadPaneZombies(d);
+        await runAgentRecoveryPass(d, dId, cfg);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        d.log({
+          timestamp: d.now().toISOString(),
+          level: 'error',
+          event: 'agent_resume_timer_error',
+          error: message,
+        });
+      }
+    }, cfg.leaseRecoveryIntervalMs);
+  }
+
   async function startEventRouterSafe(d: SchedulerDeps): Promise<ReturnType<typeof startEventRouter> | null> {
     try {
       const handle = await startEventRouter();
@@ -1585,6 +1691,7 @@ export function startDaemon(
     heartbeatTimer = setInterval(() => runHeartbeat(deps), config.heartbeatIntervalMs);
     orphanTimer = startOrphanTimer(deps, config);
     leaseRecoveryTimer = startLeaseRecoveryTimer(deps, config, daemonId);
+    agentResumeTimer = startAgentResumeTimer(deps, config, daemonId);
     inboxWatcherHandle = startInboxWatcherIfEnabled(deps);
     eventRouterHandle = await startEventRouterSafe(deps);
 
