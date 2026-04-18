@@ -576,6 +576,15 @@ export async function reclaimExpiredLeases(deps: SchedulerDeps, daemonId: string
 /**
  * Check if a worker is alive by PID or tmux pane.
  * Returns { alive, isPid } for the given worker_id.
+ *
+ * Safe today for SDK/non-tmux transports: `runs.worker_id` is only ever
+ * populated by the scheduler at {@link handleTrigger} from `result.pid` (a
+ * real OS PID) or `daemonId` (a UUID fallback). It never stores a tmux pane
+ * id or a synthetic id like 'sdk'/'inline' (see `INSERT INTO runs` +
+ * `UPDATE runs SET worker_id` — the only two write sites). SDK-backed agents
+ * live in `agents`/`executors`, not `runs`, so no transport dispatch is
+ * needed here. If `runs.worker_id` ever starts carrying synthetic ids, add
+ * an `isExecutorAlive` branch below.
  */
 async function checkWorkerAlive(
   deps: SchedulerDeps,
@@ -742,6 +751,11 @@ export async function runAgentRecoveryPass(
 ): Promise<{ resumed: number; failed: number }> {
   const resolvedConfig = config ?? resolveConfig();
   const workers = await deps.listWorkers();
+  // Safe for SDK/non-tmux transports: the `claudeSessionId` filter below
+  // excludes them (SDK agents don't own a Claude-CLI JSONL session id).
+  // Only tmux-resumable Claude-CLI agents reach `isPaneAlive`, so a plain
+  // paneId check is correct here — no transport dispatch needed. If SDK
+  // ever gains resume support, gate on paneId shape like countActiveWorkers.
   const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done' && w.claudeSessionId);
 
   let resumed = 0;

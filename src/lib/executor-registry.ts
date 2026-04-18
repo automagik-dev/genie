@@ -284,3 +284,39 @@ export async function getLiveExecutorState(agentId: string): Promise<ExecutorSta
 export async function isExecutorAlive(agentId: string): Promise<boolean> {
   return (await getLiveExecutorState(agentId)) !== null;
 }
+
+/**
+ * Transport-aware liveness check for a worker row.
+ *
+ * Dispatches on paneId shape:
+ *   - tmux pane (`%N`) → `isPaneAliveFn(paneId)` (authoritative for tmux)
+ *   - synthetic id (`sdk`, `inline`, `''`, etc.) → `isExecutorAliveFn(agentId)`
+ *     which consults `executors.state` — the live signal for non-tmux transports.
+ *
+ * Unifies the five parallel call-sites that previously called `isPaneAlive`
+ * blindly (PR #1167 + this sweep). Mirrors the `%\d+` regex-guard pattern from
+ * `scheduler-daemon.ts:countActiveWorkers` and
+ * `term-commands/agents.ts:resolveWorkerLiveness`.
+ *
+ * Test injection: both `isPaneAliveFn` and `isExecutorAliveFn` are overridable
+ * so unit tests can exercise the branch logic without real tmux or PG.
+ */
+export async function resolveWorkerLivenessByTransport(
+  worker: { id: string; paneId: string },
+  opts?: {
+    isPaneAliveFn?: (paneId: string) => Promise<boolean>;
+    isExecutorAliveFn?: (agentId: string) => Promise<boolean>;
+  },
+): Promise<boolean> {
+  if (/^%\d+$/.test(worker.paneId)) {
+    const fn =
+      opts?.isPaneAliveFn ??
+      (async (pane: string) => {
+        const { isPaneAlive } = await import('./tmux.js');
+        return isPaneAlive(pane);
+      });
+    return fn(worker.paneId);
+  }
+  const fn = opts?.isExecutorAliveFn ?? isExecutorAlive;
+  return fn(worker.id);
+}

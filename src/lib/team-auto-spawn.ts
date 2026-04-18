@@ -106,14 +106,15 @@ export async function isTeamActive(teamName: string): Promise<boolean> {
 }
 
 /**
- * Check if a specific agent's tmux pane is alive.
+ * Check if a specific agent is alive (transport-aware).
  *
- * Unlike `isTeamActive` which checks for the team window, this checks
- * whether a specific agent's pane exists and is responsive.
- * Used by inbox-watcher for per-recipient liveness checks.
+ * Used by inbox-watcher for per-recipient liveness checks. For tmux agents
+ * we ask tmux directly; for SDK/omni/inline agents (synthetic paneId), we
+ * consult `executors.state`. A plain `isPaneAlive` check misreports live
+ * SDK recipients as dead — causing the watcher to misroute messages.
  *
  * @param agentName - Agent name or ID to look up in the registry
- * @returns true if the agent has a live pane
+ * @returns true if the agent has a live pane or a live executor
  */
 export async function isAgentAlive(agentName: string): Promise<boolean> {
   try {
@@ -121,7 +122,7 @@ export async function isAgentAlive(agentName: string): Promise<boolean> {
     const agents = await list();
     const match = agents.find((a) => a.id === agentName || a.role === agentName);
     if (!match?.paneId) return false;
-    return tmux.isPaneAlive(match.paneId);
+    return executorRegistry.resolveWorkerLivenessByTransport(match);
   } catch {
     return false;
   }
