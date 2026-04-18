@@ -1294,8 +1294,14 @@ function prependEnvVars(command: string, env?: Record<string, string>): string {
  * Find a dead worker with a resumable Claude session for the given role/team.
  * Must run BEFORE rejectDuplicateRole which would unregister the dead worker
  * and lose the claudeSessionId needed for resume.
+ *
+ * Parallels (id=`<name>-<sN>`) register with role=`<name>-<sN>` (matching
+ * their id), so `findDeadResumable(team, name)` filters them out — parallels
+ * are resumable only by their full id (`genie spawn <name>-<sN>`).
+ *
+ * Exported for unit testing the "parallels off auto-resume path" invariant.
  */
-async function findDeadResumable(team: string, role: string): Promise<registry.Agent | null> {
+export async function findDeadResumable(team: string, role: string): Promise<registry.Agent | null> {
   const existing = await registry.list();
   const candidate = existing.find(
     (w) => w.role === role && w.team === team && w.claudeSessionId && w.provider === 'claude',
@@ -1518,6 +1524,7 @@ async function buildSpawnParams(
   team: string,
   options: SpawnOptions,
   agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
+  preassignedSessionId?: string,
 ): Promise<{ params: SpawnParams; parentSessionId: string; spawnColor: ClaudeTeamColor }> {
   // Provider resolution chain: CLI --provider > directory entry > default 'claude'
   const resolvedProvider = (options.provider ?? agent.entry.provider ?? 'claude') as ProviderName;
@@ -1554,8 +1561,10 @@ async function buildSpawnParams(
 
   // Generate a session ID for Claude workers so we can resume by ID later.
   // Stored in the agent registry on spawn for --resume on respawn.
+  // The state machine in handleWorkerSpawn pre-mints the UUID for parallels so
+  // the row id (<name>-<sN>) is derived from the SAME UUID as params.sessionId.
   if (params.provider === 'claude') {
-    params.sessionId = crypto.randomUUID();
+    params.sessionId = preassignedSessionId ?? crypto.randomUUID();
   }
 
   // OTel telemetry injection for Claude workers.
@@ -1622,18 +1631,208 @@ async function dispatchSpawn(
   return await launchInlineSpawn(ctx);
 }
 
-/** Resolve team name, auto-resume dead workers, and reject duplicates. */
+/**
+ * Resolve the team name for a spawn using a four-tier precedence.
+ *
+ * Precedence (highest wins):
+ *   1. `explicitTeam` — the caller's `--team` flag (`options.team`).
+ *   2. `entryTeam` — template-pinned team from `agent_templates` PG row
+ *      (`agent.entry?.team`). Authoritative PG lookup, NOT a synthetic
+ *      fallback. Restores the canonical-UUID-per-agent invariant
+ *      established by PR #1133 (`8a783460`) / PR #1134 (`69215743`).
+ *   3. `process.env.GENIE_TEAM` — session-scoped env var.
+ *   4. `discoverTeamName()` — the PR #1164 tmux-session-name fallback,
+ *      which itself also consults `GENIE_TEAM` first and then the tmux
+ *      session name / Claude JSONL heuristic. Kept so the resolver still
+ *      works post-reboot when every higher-priority signal is stale.
+ *
+ * Returns null when every tier yields nothing — callers turn that into
+ * the canonical "--team is required" error.
+ *
+ * Exported for unit testing; the runtime call site is `resolveTeamAndResume`.
+ */
+export async function resolveTeamName(opts: {
+  explicitTeam?: string;
+  entryTeam?: string;
+  env?: Pick<NodeJS.ProcessEnv, 'GENIE_TEAM'>;
+  discover?: () => Promise<string | null>;
+}): Promise<string | null> {
+  // Tier 1: explicit --team flag (only tier that flips teamWasExplicit).
+  if (opts.explicitTeam) return opts.explicitTeam;
+  // Tier 2: template-pinned team from agent_templates.
+  if (opts.entryTeam) return opts.entryTeam;
+  // Tier 3: GENIE_TEAM env var (short-circuit before the heavy discovery path).
+  const env = opts.env ?? process.env;
+  if (env.GENIE_TEAM) return env.GENIE_TEAM;
+  // Tier 4: full discovery (JSONL leadSessionId match → tmux session name).
+  const discover = opts.discover ?? nativeTeams.discoverTeamName;
+  return (await discover()) ?? null;
+}
+
+// ============================================================================
+// Spawn state machine — single-verb `genie spawn <name>` resolution.
+//
+// Branches on the canonical row's liveness:
+//   1. No row with id=<name> in team        → create canonical (workerId=<name>)
+//   2. Canonical alive                      → create parallel (workerId=<name>-<sN>)
+//   3. Canonical dead (with claudeSessionId)→ handled upstream by findDeadResumable
+//
+// Parallels are semi-ephemeral rows persisted in `agents`: they get their own
+// fresh Claude session UUID (never shared with canonical) and a deterministic
+// short-id derived from that UUID's own hex prefix. Canonical rows are NEVER
+// clobbered by parallel creation — their UUID stays stable for the agent's
+// "one true session" lifetime (authority: perfect-spawn-hierarchy PR #1133/
+// #1134 merge 69215743).
+//
+// Exported for unit testing.
+// ============================================================================
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Pick a unique short-id suffix for a parallel, derived from the parallel's
+ * own fresh Claude session UUID.
+ *
+ * Contract: the returned id is a prefix-extending slice of `uuid` —
+ * `uuid.slice(0, k)` for `k >= 4`. Starts at k=4 and extends by one character
+ * at a time until `<baseName>-<slice>` is unique within the team. In the
+ * astronomically improbable case that the full UUID is taken, returns the
+ * full UUID.
+ *
+ * Throws if `uuid` is not a well-formed UUID (hex-only, length 36 with dashes).
+ */
+export async function pickParallelShortId(baseName: string, team: string, uuid: string): Promise<string> {
+  if (!UUID_REGEX.test(uuid)) {
+    throw new Error(`pickParallelShortId: expected a well-formed UUID (8-4-4-4-12 hex), got ${JSON.stringify(uuid)}`);
+  }
+  // `team` is retained in the signature for symmetry with resolveSpawnIdentity
+  // but NOT used in the uniqueness filter: `agents.id` is the PRIMARY KEY on
+  // the `agents` table (see migrations/005_pg_state.sql), so any
+  // `<baseName>-<slice>` that already exists anywhere would violate the PK at
+  // insert time regardless of team. Filter globally — PR #1172 review (gemini).
+  void team;
+  const { getConnection } = await import('../lib/db.js');
+  const sql = await getConnection();
+  for (let k = 4; k <= uuid.length; k++) {
+    const slice = uuid.slice(0, k);
+    const id = `${baseName}-${slice}`;
+    const rows = await sql<{ id: string }[]>`
+      SELECT id FROM agents WHERE id = ${id} LIMIT 1
+    `;
+    if (rows.length === 0) return slice;
+  }
+  // Full UUID was also taken (1-in-10^38). Return it anyway — correctness over
+  // aesthetics in this corner case. No infinite loop.
+  return uuid;
+}
+
+/**
+ * Spawn identity resolved by the state machine: either a fresh canonical row
+ * (id=<name>) or a new parallel row (id=<name>-<sN>). In both cases the
+ * `sessionUuid` is a freshly-minted UUID that the caller threads into the
+ * Claude `--session-id` flag and records as the row's `claude_session_id`.
+ */
+// Internal type; not exported. Knip flagged the prior `export` as unused. The
+// public surface is the function signature — callers infer the type from it.
+type SpawnIdentity =
+  | { kind: 'canonical'; workerId: string; sessionUuid: string }
+  | { kind: 'parallel'; workerId: string; sessionUuid: string; canonicalId: string };
+
+/**
+ * Probe the `agents` table for a row with `id=name AND team=team`, then
+ * branch on the canonical's pane liveness.
+ *
+ * - No row           → `{ kind: 'canonical', workerId: name, sessionUuid: <fresh> }`
+ * - Canonical alive  → `{ kind: 'parallel',  workerId: '<name>-<sN>', sessionUuid: <fresh> }`
+ * - Canonical dead   → treat as canonical (caller already gave findDeadResumable
+ *                      a chance to fire). A dead canonical without a recoverable
+ *                      session gets its row rewritten via ON CONFLICT UPDATE,
+ *                      but the fresh UUID minted here becomes the new truth —
+ *                      acceptable because findDeadResumable is the canonical
+ *                      resume path and only misses rows that were never
+ *                      registerable as Claude sessions.
+ *
+ * The `uuidFactory` and `isAliveFn` injection points exist for deterministic
+ * tests — production callers use `crypto.randomUUID` and `isPaneAlive`.
+ */
+export async function resolveSpawnIdentity(
+  name: string,
+  team: string,
+  uuidFactory: () => string = () => crypto.randomUUID(),
+  isAliveFn: (paneId: string) => Promise<boolean> = isPaneAlive,
+): Promise<SpawnIdentity> {
+  const { getConnection } = await import('../lib/db.js');
+  const sql = await getConnection();
+  // `agents.id` is the PRIMARY KEY (migrations/005_pg_state.sql), so the
+  // existence check is global, not team-scoped — PR #1172 review (gemini).
+  // We still read `team` from the returned row so we can distinguish
+  // "canonical lives in THIS team" from "canonical lives in ANOTHER team"
+  // (see cross-team branch below).
+  const rows = await sql<{ id: string; pane_id: string | null; team: string | null }[]>`
+    SELECT id, pane_id, team FROM agents WHERE id = ${name} LIMIT 1
+  `;
+  if (rows.length === 0) {
+    return { kind: 'canonical', workerId: name, sessionUuid: uuidFactory() };
+  }
+  const existing = rows[0];
+  const crossTeam = existing.team !== null && existing.team !== team;
+
+  if (crossTeam) {
+    // Canonical `name` already lives in a different team. We cannot
+    // re-canonicalize in the requested team — that would violate the PK on
+    // `agents.id`. Force a parallel in the requested team: `<name>-<s4>`
+    // sidesteps the PK AND keeps team isolation intact. This mirrors the
+    // alive-canonical behavior and is safe regardless of the existing row's
+    // pane liveness.
+    const sessionUuid = uuidFactory();
+    const shortId = await pickParallelShortId(name, team, sessionUuid);
+    return {
+      kind: 'parallel',
+      workerId: `${name}-${shortId}`,
+      sessionUuid,
+      canonicalId: name,
+    };
+  }
+
+  const alive = existing.pane_id ? await isAliveFn(existing.pane_id) : false;
+  if (!alive) {
+    // findDeadResumable is the canonical resume path. If it didn't fire, the
+    // existing row lacks a claudeSessionId or isn't a Claude row; creating a
+    // fresh canonical via ON CONFLICT UPDATE is the safest recovery.
+    return { kind: 'canonical', workerId: name, sessionUuid: uuidFactory() };
+  }
+  // Same-team alive canonical — branch to parallel creation. Mint the
+  // parallel's own fresh UUID and derive its short-id deterministically from
+  // that UUID.
+  const sessionUuid = uuidFactory();
+  const shortId = await pickParallelShortId(name, team, sessionUuid);
+  return {
+    kind: 'parallel',
+    workerId: `${name}-${shortId}`,
+    sessionUuid,
+    canonicalId: name,
+  };
+}
+
+/** Resolve team name and auto-resume dead workers. Duplicate rejection moved to the state machine. */
 async function resolveTeamAndResume(
   effectiveRole: string,
   options: SpawnOptions,
+  agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
 ): Promise<{ team: string; teamWasExplicit: boolean; resumed?: string }> {
+  // teamWasExplicit stays strictly tier-1 — template/env/discover do NOT flip it.
   const teamWasExplicit = Boolean(options.team);
-  let team = options.team || (await nativeTeams.discoverTeamName());
+  let team = await resolveTeamName({
+    explicitTeam: options.team,
+    entryTeam: agent.entry?.team,
+  });
 
-  // Fallback: scan on-disk team configs for one that lists this agent as a
-  // member. Unblocks detached spawns (e.g. from the TUI after a DB reset) that
-  // can't inherit GENIE_TEAM or a parent session context but where the agent
-  // is unambiguously registered to a team on disk.
+  // Tier 5 (last-resort): scan on-disk team configs for one that lists this
+  // agent as a member. Unblocks detached spawns (e.g. from the TUI after a DB
+  // reset) that can't inherit GENIE_TEAM or a parent session context but where
+  // the agent is unambiguously registered to a team on disk. Sits below the
+  // four-tier resolveTeamName chain so an authoritative match (PG, env, or
+  // JSONL session-id) always wins over a member-list heuristic.
   if (!team) {
     const candidates = await nativeTeams.findTeamsContainingAgent(effectiveRole);
     if (candidates.length === 1) {
@@ -1671,22 +1870,57 @@ async function resolveTeamAndResume(
     await resumeAgent(deadResumable);
     return { team, teamWasExplicit, resumed: deadResumable.id };
   }
-  await rejectDuplicateRole(team, effectiveRole);
+  // NOTE: rejectDuplicateRole is no longer called here. In the new state-machine
+  // model, a live row with id=name IS the parallel-creation signal — handled by
+  // resolveSpawnIdentity in handleWorkerSpawn.
   return { team, teamWasExplicit };
 }
 
 export async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<string> {
   // Effective role: suffixed name for registration/duplicate-check, original name for directory lookup
-  const effectiveRole = options.role ?? name;
+  let effectiveRole = options.role ?? name;
 
   // 1. Resolve agent from directory or built-ins (uses original name)
   let agent = await resolveAgentForSpawn(name, options);
 
-  // 2. Resolve team, auto-resume dead workers, reject duplicates
-  const { team, teamWasExplicit, resumed } = await resolveTeamAndResume(effectiveRole, options);
+  // 2. Resolve team and auto-resume dead workers.
+  // `agent` is passed through so template-pinned teams (agent.entry.team) take
+  // precedence over GENIE_TEAM / discoverTeamName — preserves canonical-UUID invariant
+  // when spawning from a tmux session that does not match the agent's home team.
+  const { team, teamWasExplicit, resumed } = await resolveTeamAndResume(effectiveRole, options, agent);
   if (resumed) return resumed;
 
-  // 2b. Override CWD with team worktree path if available.
+  // 2b. Spawn state machine — branch on canonical liveness (authority: wish
+  // tui-spawn-dx, Group 2; perfect-spawn-hierarchy PR #1134 merge 69215743).
+  //
+  //   - No row with id=<name> in team  → create canonical (id = <name>)
+  //   - Alive canonical                → create parallel (id = <name>-<sN>);
+  //     short-id is a prefix of the parallel's OWN fresh Claude session UUID
+  //   - Dead canonical                 → already handled by findDeadResumable above
+  //
+  // The canonical row's UUID is NEVER clobbered by parallel creation — parallels
+  // mint their own UUID and get their own row. Parallels are off the auto-resume
+  // path (findDeadResumable matches by role, parallel.role=<name>-<sN> ≠ <name>).
+  // Parallels are resumable only by their full id (`genie spawn <name>-<sN>`).
+  //
+  // Only apply the state machine when the caller didn't pass an explicit --role.
+  // The --role override is a distinct legacy feature for explicit multi-worker
+  // deployments (e.g. `--role worker-1 --role worker-2`) that retains the
+  // <team>-<role> id scheme and the duplicate-role guard.
+  const explicitRole = options.role !== undefined && options.role !== name;
+  let identity: SpawnIdentity | null = null;
+  if (!explicitRole) {
+    identity = await resolveSpawnIdentity(name, team);
+    // For parallels, the role becomes the parallel's full id (<name>-<sN>) so
+    // findDeadResumable(<name>) never matches a parallel — parallels are
+    // resumable only by their full id.
+    effectiveRole = identity.workerId;
+  } else {
+    // Legacy explicit-role path: preserve the prior duplicate-role guard.
+    await rejectDuplicateRole(team, effectiveRole);
+  }
+
+  // 2c. Override CWD with team worktree path if available.
   // Only override for agents without their own registered directory — sub-agents
   // (e.g. genie/brain-engineer at .genie/agents/brain-engineer/) need their own
   // CWD to avoid loading a parent agent's AGENTS.md via directory-tree walk.
@@ -1695,8 +1929,15 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     agent = { ...agent, repoPath: teamConfig.worktreePath };
   }
 
-  // 3. Build params
-  const { params, parentSessionId, spawnColor } = await buildSpawnParams(effectiveRole, team, options, agent);
+  // 3. Build params (pre-mint session UUID for state-machine paths so the row
+  // id and the Claude session UUID stay in lockstep).
+  const { params, parentSessionId, spawnColor } = await buildSpawnParams(
+    effectiveRole,
+    team,
+    options,
+    agent,
+    identity?.sessionUuid,
+  );
 
   // Set CC session display name if not already set
   if (!params.name) {
@@ -1705,7 +1946,18 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   const validated = validateSpawnParams(params);
   const launch = buildLaunchCommand(validated);
   const layoutMode = resolveLayoutMode(options.layout);
-  const workerId = await generateWorkerId(validated.team, effectiveRole);
+  // workerId derivation — two intentionally distinct schemes:
+  //   • State-machine path (no explicit --role): `identity.workerId` is either
+  //     `<name>` (canonical) or `<name>-<s4>` (parallel). Short, team-agnostic,
+  //     globally unique per `agents.id` PK. Matches the perfect-spawn-hierarchy
+  //     canonical-UUID-per-name invariant.
+  //   • Legacy explicit-role path (`--role` passed and ≠ name): `<team>-<role>`
+  //     via `generateWorkerId`. Preserves the pre-wish convention for explicit
+  //     multi-worker deployments (e.g. `--role worker-1`, `--role worker-2`)
+  //     where team namespacing matters because the role itself isn't unique.
+  // The split is deliberate; any future unification is a separate wish. See
+  // PR #1172 review (gemini medium) for the full rationale.
+  const workerId = identity?.workerId ?? (await generateWorkerId(validated.team, effectiveRole));
 
   // An explicit session target means "spawn in tmux" even when the caller is outside tmux.
   // This matters for orchestrators like QA, which need detached workers instead of a blocking inline session.

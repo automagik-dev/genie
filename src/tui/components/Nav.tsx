@@ -3,6 +3,7 @@
 
 import { useKeyboard } from '@opentui/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type SpawnIntent, buildSpawnInvocation } from '../../lib/spawn-invocation.js';
 import { scanAgents } from '../../lib/workspace.js';
 import { buildMenuItems } from '../context-menu-items.js';
 import { type DiagnosticSnapshot, collectDiagnostics } from '../diagnostics.js';
@@ -16,8 +17,11 @@ import {
 import { palette } from '../theme.js';
 import { flattenTree, toggleNode } from '../tree.js';
 import type { TreeNode } from '../types.js';
+import { AgentPicker, type AgentPickerTarget } from './AgentPicker.js';
 import { ContextMenu } from './ContextMenu.js';
+import { SpawnTargetPicker } from './SpawnTargetPicker.js';
 import { SystemStats } from './SystemStats.js';
+import { TeamCreate } from './TeamCreate.js';
 import { TreeNodeRow } from './TreeNode.js';
 
 interface NavProps {
@@ -44,6 +48,10 @@ export function Nav({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [requestedInitialAgent, setRequestedInitialAgent] = useState<string | undefined>(initialAgent);
   const [contextMenuNodeId, setContextMenuNodeId] = useState<string | null>(null);
+  /** Name of the agent whose spawn-into picker is open (null = picker closed). */
+  const [spawnIntoAgent, setSpawnIntoAgent] = useState<string | null>(null);
+  /** Target for the spawn-here agent picker (null = picker closed). */
+  const [spawnPickerTarget, setSpawnPickerTarget] = useState<AgentPickerTarget | null>(null);
   const lastTarget = useRef<string | null>(null);
   const selectedNodeId = useRef<string | null>(null);
 
@@ -233,19 +241,60 @@ export function Nav({
       const node = flatNodes.find((n) => n.node.id === contextMenuNodeId)?.node;
       if (!node) return;
       setContextMenuNodeId(null);
+      if (action === 'spawn-here') {
+        const target = resolveSpawnHereTarget(node);
+        if (target) setSpawnPickerTarget(target);
+        return;
+      }
       dispatchContextMenuAction(action, node, payload, {
         sessionTree,
         onTmuxSessionSelect,
         onNewAgentWindow,
+        openSpawnInto: setSpawnIntoAgent,
       });
     },
     [flatNodes, contextMenuNodeId, sessionTree, onTmuxSessionSelect, onNewAgentWindow],
   );
 
+  const handleSpawnIntoConfirm = useCallback((intent: SpawnIntent) => {
+    executeSpawnIntent(intent);
+    setSpawnIntoAgent(null);
+  }, []);
+
+  const handleSpawnIntoCancel = useCallback(() => {
+    setSpawnIntoAgent(null);
+  }, []);
+
+  const handleSpawnPickerConfirm = useCallback((intent: SpawnIntent) => {
+    setSpawnPickerTarget(null);
+    executeSpawnIntent(intent);
+  }, []);
+
+  const handleSpawnPickerCancel = useCallback(() => {
+    setSpawnPickerTarget(null);
+  }, []);
+
   const _menuDisabled = keyboardDisabled || contextMenuNodeId !== null;
+
+  // "New team" workspace-root action — opens the TeamCreate modal. Only
+  // available in workspace mode; the open/confirm/cancel handlers, the
+  // modal-visibility state, and the post-create navigation watcher are
+  // encapsulated in a small hook so the top-level Nav function stays within
+  // the cognitive-complexity budget.
+  const { showTeamCreate, handleOpenTeamCreate, handleTeamCreateConfirm, handleTeamCreateCancel } =
+    useTeamCreateControls({
+      workspaceRoot,
+      diagnostics,
+      onTmuxSessionSelect,
+    });
 
   useKeyboard((key) => {
     if (keyboardDisabled) return;
+    // Spawn-into/spawn-here pickers own the keyboard while open — they
+    // register their own useKeyboard handlers.
+    if (spawnIntoAgent !== null || spawnPickerTarget !== null) return;
+    if (tryOpenTeamCreate(key, { workspaceRoot, showTeamCreate, contextMenuNodeId, handleOpenTeamCreate })) return;
+    if (showTeamCreate) return; // team-create modal owns input
     handleKeyboardInput(key, {
       contextMenuNodeId,
       flatNodes,
@@ -326,16 +375,42 @@ export function Nav({
         />
       ) : null}
 
+      {/* Spawn-into target picker — live tmux topology + CliPreviewLine */}
+      {spawnIntoAgent !== null ? (
+        <SpawnTargetPicker
+          agentName={spawnIntoAgent}
+          sessions={diagnostics?.sessions ?? []}
+          onConfirm={handleSpawnIntoConfirm}
+          onCancel={handleSpawnIntoCancel}
+        />
+      ) : null}
+
+      {/* Spawn-here agent picker (opened from session/window context menu) */}
+      {spawnPickerTarget !== null ? (
+        <AgentPicker
+          target={spawnPickerTarget}
+          onConfirm={handleSpawnPickerConfirm}
+          onCancel={handleSpawnPickerCancel}
+        />
+      ) : null}
+
+      {/* New team modal — workspace-root action. */}
+      {showTeamCreate ? (
+        <TeamCreate
+          availableAgents={workspaceRoot ? scanAgents(workspaceRoot) : []}
+          workspaceRoot={workspaceRoot}
+          onConfirm={handleTeamCreateConfirm}
+          onCancel={handleTeamCreateCancel}
+        />
+      ) : null}
+
       {/* System stats */}
       <SystemStats />
 
       {/* Footer */}
       <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
         <text>
-          <span fg={palette.textMuted}>
-            {'\u2191\u2193'}:nav {'\u2190\u2192'}:expand Enter:{workspaceRoot ? 'spawn/attach' : 'attach'} ^T:new
-            R:retry .:menu
-          </span>
+          <span fg={palette.textMuted}>{buildFooterHint(workspaceRoot)}</span>
         </text>
       </box>
     </box>
@@ -345,6 +420,64 @@ export function Nav({
 // ---------------------------------------------------------------------------
 // Extracted helpers to keep cognitive complexity low
 // ---------------------------------------------------------------------------
+
+interface TeamCreateHookOptions {
+  workspaceRoot?: string;
+  diagnostics: DiagnosticSnapshot | null;
+  onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void;
+}
+
+/**
+ * Encapsulate everything the "New team" modal needs from Nav: the visibility
+ * state, the open/confirm/cancel callbacks, and the post-create navigation
+ * watcher. Extracted into a hook so `Nav` stays within the cognitive-
+ * complexity budget; behaviour is identical to inlining the useState /
+ * useCallback / useEffect blocks at the call site.
+ */
+function useTeamCreateControls(opts: TeamCreateHookOptions): {
+  showTeamCreate: boolean;
+  handleOpenTeamCreate: () => void;
+  handleTeamCreateConfirm: (result: { teamName: string; members: string[] }) => void;
+  handleTeamCreateCancel: () => void;
+} {
+  const { workspaceRoot, diagnostics, onTmuxSessionSelect } = opts;
+  const [showTeamCreate, setShowTeamCreate] = useState(false);
+  // When a team-create confirms, we wait for the `teams` row + tmux session
+  // to appear. This ref holds the pending team name so the diagnostics refresh
+  // can navigate into it on the next tick after success.
+  const pendingTeamNameRef = useRef<string | null>(null);
+
+  const handleOpenTeamCreate = useCallback(() => {
+    if (!workspaceRoot) return;
+    setShowTeamCreate(true);
+  }, [workspaceRoot]);
+
+  const handleTeamCreateConfirm = useCallback(
+    (result: { teamName: string; members: string[] }) => {
+      setShowTeamCreate(false);
+      runTeamCreation(result, workspaceRoot);
+      pendingTeamNameRef.current = result.teamName;
+    },
+    [workspaceRoot],
+  );
+
+  const handleTeamCreateCancel = useCallback(() => {
+    setShowTeamCreate(false);
+  }, []);
+
+  // Watch for the new tmux session to appear (piggybacking on the 2 s
+  // diagnostics refresh) and navigate into it once present.
+  useEffect(() => {
+    const pending = pendingTeamNameRef.current;
+    if (!pending || !diagnostics) return;
+    const session = diagnostics.sessions.find((s) => s.name === pending);
+    if (!session) return;
+    pendingTeamNameRef.current = null;
+    onTmuxSessionSelect(session.name, resolvePreferredWindowIndex(session, pending));
+  }, [diagnostics, onTmuxSessionSelect]);
+
+  return { showTeamCreate, handleOpenTeamCreate, handleTeamCreateConfirm, handleTeamCreateCancel };
+}
 
 /** Handle Enter key for agent nodes: spawn if stopped, attach if running. */
 function handleEnterAgent(
@@ -368,9 +501,16 @@ function dispatchContextMenuAction(
     sessionTree: TreeNode[];
     onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void;
     onNewAgentWindow?: (agentName: string) => void;
+    openSpawnInto?: (agentName: string) => void;
   },
 ): void {
   const name = node.label;
+  // Agent-node "Spawn into…" — open the target picker modal; actual spawn
+  // happens on picker confirm in the Nav render scope.
+  if (action === 'spawn-into' && node.type === 'agent' && deps.openSpawnInto) {
+    deps.openSpawnInto(agentNameFromNode(node));
+    return;
+  }
   if (handleAttachAction(action, node, deps.onTmuxSessionSelect)) return;
   if (handleRetryAction(action, name, deps.onTmuxSessionSelect)) return;
   if (handleGenieAction(action, name, payload)) return;
@@ -577,6 +717,33 @@ function handlePaneNodeActions(
   return false;
 }
 
+/** Build the footer shortcut hint. Extracted so Nav stays simple. */
+function buildFooterHint(workspaceRoot: string | undefined): string {
+  const enterLabel = workspaceRoot ? 'spawn/attach' : 'attach';
+  const teamShortcut = workspaceRoot ? ' ^N:team' : '';
+  return `\u2191\u2193:nav \u2190\u2192:expand Enter:${enterLabel} ^T:new${teamShortcut} R:retry .:menu`;
+}
+
+/**
+ * Ctrl+N in workspace mode opens the "New team" modal. Returns true if the
+ * key was consumed by this action — callers must bail out to avoid double-
+ * dispatching the same key.
+ */
+function tryOpenTeamCreate(
+  key: { name?: string; ctrl?: boolean },
+  opts: {
+    workspaceRoot?: string;
+    showTeamCreate: boolean;
+    contextMenuNodeId: string | null;
+    handleOpenTeamCreate: () => void;
+  },
+): boolean {
+  if (!key.ctrl || key.name !== 'n') return false;
+  if (!opts.workspaceRoot || opts.showTeamCreate || opts.contextMenuNodeId) return false;
+  opts.handleOpenTeamCreate();
+  return true;
+}
+
 /** Try to open context menu for selected node. Returns true if opened. */
 function tryOpenContextMenu(
   flatNodes: { node: TreeNode }[],
@@ -781,6 +948,123 @@ function executeGenie(args: string[]): void {
     child.unref();
   } catch {
     // best-effort
+  }
+}
+
+/**
+ * Execute a genie CLI command and resolve when the child process exits.
+ *
+ * Unlike `executeGenie`, this variant waits for the child's exit event so
+ * callers can serialize dependent invocations (e.g. `team hire` AFTER `team
+ * create` has committed its PG row). Resolves with the exit code; rejects
+ * only if `spawn` itself throws.
+ */
+function executeGenieAwaited(args: string[]): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    try {
+      const { spawn } = require('node:child_process') as typeof import('node:child_process');
+      const bunPath = process.execPath || 'bun';
+      const genieBin = process.argv[1];
+      const child =
+        genieBin && genieBin !== 'genie'
+          ? spawn(bunPath, [genieBin, ...args], { stdio: 'ignore' })
+          : spawn('genie', args, { stdio: 'ignore' });
+      child.on('exit', (code) => resolve(code));
+      child.on('error', reject);
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
+/**
+ * Resolve a Nav tree node into an AgentPickerTarget — the (session, window?)
+ * pair that "Spawn here…" should populate into the intent. Returns null if
+ * the node isn't spawn-here eligible.
+ */
+function resolveSpawnHereTarget(node: TreeNode): AgentPickerTarget | null {
+  if (node.type === 'session') {
+    const sess = node.id.split(':').slice(1).join(':');
+    if (sess.length === 0) return null;
+    return { session: sess };
+  }
+  if (node.type === 'window') {
+    const idParts = node.id.split(':');
+    if (idParts.length < 3) return null;
+    return { session: idParts[1], window: `${idParts[1]}:${idParts[2]}` };
+  }
+  return null;
+}
+
+/**
+ * Execute a SpawnIntent via the genie CLI (fire-and-forget).
+ *
+ * Uses the argv returned by `buildSpawnInvocation` as the single source of
+ * truth — the same intent that powered the CliPreviewLine is handed to the
+ * child process, so the previewed and executed commands cannot drift.
+ */
+function executeSpawnIntent(intent: SpawnIntent): void {
+  try {
+    const { argv } = buildSpawnInvocation(intent);
+    executeGenie(argv);
+  } catch (err) {
+    console.error('TUI: spawn-intent execution failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * Kick off a `genie team create` followed by serial `genie team hire <member>`
+ * per picked member. Uses `buildSpawnInvocation` to derive the argv so the
+ * preview shown in TeamCreate and the command actually run can never drift.
+ *
+ * Serialization matters: `team hire` reads the `teams` row created by `team
+ * create`. Firing hires as parallel detached processes (the prior behavior)
+ * raced against the create commit — hires could run before the row existed,
+ * silently losing membership writes. We now await `team create` exit before
+ * the first `team hire`, and await each hire before the next, so PG writes
+ * order deterministically. PR #1172 review (chatgpt-codex-connector P1).
+ *
+ * Returns a promise so the TUI can schedule post-create navigation/polling
+ * without blocking its render loop (callers kick this off via `void …`).
+ */
+async function runTeamCreation(
+  result: { teamName: string; members: string[] },
+  workspaceRoot: string | undefined,
+): Promise<void> {
+  let argv: string[];
+  try {
+    ({ argv } = buildSpawnInvocation({
+      kind: 'create-team',
+      name: result.teamName,
+      repo: workspaceRoot,
+    }));
+  } catch (err) {
+    console.error('TUI: team create intent build failed:', err instanceof Error ? err.message : err);
+    return;
+  }
+  let createExit: number | null = null;
+  try {
+    createExit = await executeGenieAwaited(argv);
+  } catch (err) {
+    console.error('TUI: team create spawn failed:', err instanceof Error ? err.message : err);
+    return;
+  }
+  if (createExit !== 0) {
+    console.error(`TUI: team create exited ${createExit} — skipping member hires for "${result.teamName}"`);
+    return;
+  }
+  // Serialize hires: each must wait for the previous to complete so PG writes
+  // order deterministically on top of the freshly-committed `teams` row.
+  for (const member of result.members) {
+    try {
+      const code = await executeGenieAwaited(['team', 'hire', member, '--team', result.teamName]);
+      if (code !== 0) {
+        console.error(`TUI: team hire "${member}" exited ${code} — continuing with remaining members`);
+      }
+    } catch (err) {
+      console.error(`TUI: team hire "${member}" failed:`, err instanceof Error ? err.message : err);
+      // Don't abort — other members can still land.
+    }
   }
 }
 

@@ -25,6 +25,13 @@ export interface DirectoryEntry {
   dir: string;
   /** Optional default git repo (overridden by team). */
   repo?: string;
+  /**
+   * Template-pinned team from the `agent_templates` PG row (authoritative).
+   * When present, this is the canonical team for the agent, regardless of
+   * which tmux session or workspace the caller is sitting in. Consumed by
+   * `resolveTeamName` as tier 2 of the team-resolution precedence.
+   */
+  team?: string;
   /** Prompt injection mode: 'system' replaces CC default, 'append' adds to it. */
   promptMode: PromptMode;
   /** Default model (e.g., 'sonnet', 'opus', 'codex'). */
@@ -166,6 +173,10 @@ export async function rm(name: string, _options?: ScopeOptions): Promise<boolean
  * Resolution order: PG agents (by role) → built-in roles → built-in council.
  */
 export async function resolve(name: string): Promise<ResolvedAgent | null> {
+  // Template-pinned team from agent_templates (authoritative for canonical spawns).
+  // Looked up once and attached to whatever entry we return below.
+  const templateTeam = await lookupTemplateTeam(name);
+
   // 1. Check PG agents table — look for agents with matching role, include metadata
   try {
     const { getConnection } = await import('./db.js');
@@ -178,7 +189,9 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
     `;
     if (rows.length > 0) {
       const meta = parseMetadata(rows[0].metadata);
-      return { entry: roleToEntry(name, undefined, meta), builtin: false };
+      const entry = roleToEntry(name, undefined, meta);
+      if (templateTeam) entry.team = templateTeam;
+      return { entry, builtin: false };
     }
   } catch {
     /* PG unavailable — fall through to built-ins */
@@ -187,16 +200,39 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
   // 3. Check built-in roles
   const builtinRole = BUILTIN_ROLES.find((r: BuiltinAgent) => r.name === name);
   if (builtinRole) {
-    return { entry: builtinToEntry(builtinRole), builtin: true };
+    const entry = builtinToEntry(builtinRole);
+    if (templateTeam) entry.team = templateTeam;
+    return { entry, builtin: true };
   }
 
   // 4. Check built-in council members
   const councilMember = BUILTIN_COUNCIL_MEMBERS.find((m: BuiltinAgent) => m.name === name);
   if (councilMember) {
-    return { entry: builtinToEntry(councilMember), builtin: true };
+    const entry = builtinToEntry(councilMember);
+    if (templateTeam) entry.team = templateTeam;
+    return { entry, builtin: true };
   }
 
   return null;
+}
+
+/**
+ * Look up the template-pinned team for an agent name from `agent_templates`.
+ * Returns null when PG is unavailable, the row does not exist, or the team
+ * column is empty. This is an authoritative PG lookup — NOT a synthetic
+ * tmux/env fallback — and powers tier 2 of the team-resolution precedence.
+ */
+async function lookupTemplateTeam(name: string): Promise<string | null> {
+  try {
+    const { getConnection } = await import('./db.js');
+    const sql = await getConnection();
+    const rows = await sql`SELECT team FROM agent_templates WHERE id = ${name} LIMIT 1`;
+    if (rows.length === 0) return null;
+    const team = rows[0].team;
+    return typeof team === 'string' && team.length > 0 ? team : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
