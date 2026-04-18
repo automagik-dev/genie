@@ -24,6 +24,7 @@ import {
   resolveNativeMemberName,
   resolveOrMintLeadSessionId,
   sanitizeTeamName,
+  unregisterNativeMember,
   writeNativeInbox,
 } from './claude-native-teams.js';
 
@@ -294,6 +295,75 @@ describe('discoverClaudeParentSessionId', () => {
 
     const result = await discoverClaudeParentSessionId(cwd);
     expect(result).toBe('historical-lead');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// unregisterNativeMember — removes entry from members array
+// See automagik-dev/genie#1179: prior impl marked isActive=false and left
+// stale entries in the config, which silently routed new spawns and messages
+// to dead workers via resolveNativeMemberName and findTeamsContainingAgent.
+// ---------------------------------------------------------------------------
+
+describe('unregisterNativeMember', () => {
+  test('removes the member entry entirely (not just isActive flip)', async () => {
+    await createTestTeamConfig('my-team', [
+      { agentId: 'engineer@my-team', name: 'engineer' },
+      { agentId: 'reviewer@my-team', name: 'reviewer' },
+    ]);
+
+    await unregisterNativeMember('my-team', 'engineer');
+
+    const config = await loadConfig('my-team');
+    expect(config).not.toBeNull();
+    expect(config!.members).toHaveLength(1);
+    expect(config!.members[0].name).toBe('reviewer');
+    expect(config!.members.some((m) => m.name === 'engineer')).toBe(false);
+  });
+
+  test('is a no-op when the member does not exist', async () => {
+    await createTestTeamConfig('my-team', [{ agentId: 'engineer@my-team', name: 'engineer' }]);
+
+    await unregisterNativeMember('my-team', 'nonexistent');
+
+    const config = await loadConfig('my-team');
+    expect(config!.members).toHaveLength(1);
+    expect(config!.members[0].name).toBe('engineer');
+  });
+
+  test('is a no-op when the team does not exist', async () => {
+    // Should not throw; should not create the config.
+    await expect(unregisterNativeMember('nonexistent-team', 'engineer')).resolves.toBeUndefined();
+    const config = await loadConfig('nonexistent-team');
+    expect(config).toBeNull();
+  });
+
+  test('findTeamsContainingAgent stops matching after unregister (regression)', async () => {
+    // Reproducer for #1179: before the fix, an unregistered member still
+    // matched `findTeamsContainingAgent`, routing spawn-team resolution to
+    // the wrong team.
+    await createTestTeamConfig('team-a', [{ agentId: 'simone@team-a', name: 'simone' }]);
+    await createTestTeamConfig('team-b', [{ agentId: 'simone@team-b', name: 'simone' }]);
+
+    expect(await findTeamsContainingAgent('simone')).toEqual(expect.arrayContaining(['team-a', 'team-b']));
+
+    await unregisterNativeMember('team-a', 'simone');
+
+    const matches = await findTeamsContainingAgent('simone');
+    expect(matches).toEqual(['team-b']);
+  });
+
+  test('resolveNativeMemberName stops resolving after unregister (regression)', async () => {
+    // Before the fix, the active→inactive fallback in resolveNativeMemberName
+    // would still return the unregistered member's name, causing messages
+    // addressed to that name to be silently delivered to a dead worker.
+    await createTestTeamConfig('my-team', [{ agentId: 'engineer@my-team', name: 'engineer' }]);
+
+    expect(await resolveNativeMemberName('my-team', 'engineer')).toBe('engineer');
+
+    await unregisterNativeMember('my-team', 'engineer');
+
+    expect(await resolveNativeMemberName('my-team', 'engineer')).toBeNull();
   });
 });
 
