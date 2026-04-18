@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { InboxWatcherDeps } from './inbox-watcher.js';
-import { checkInboxes, resetSpawnFailures } from './inbox-watcher.js';
+import { checkInboxes, resetNoWorkingDirWarned, resetSpawnFailures } from './inbox-watcher.js';
 
 // ============================================================================
 // Test helpers
@@ -34,6 +34,7 @@ function makeDeps(overrides: Partial<InboxWatcherDeps> = {}): InboxWatcherDeps {
 describe('checkInboxes', () => {
   beforeEach(() => {
     resetSpawnFailures();
+    resetNoWorkingDirWarned();
     process.env.GENIE_INBOX_POLL_MS = undefined;
   });
 
@@ -133,7 +134,7 @@ describe('checkInboxes', () => {
     expect(spawnCalled).toBe(false);
   });
 
-  test('team with no workingDir → skipped with warning', async () => {
+  test('team with no workingDir, first call → warns once and caches', async () => {
     const warnings: string[] = [];
     const deps = makeDeps({
       listTeamsWithUnreadInbox: async () => [
@@ -144,7 +145,30 @@ describe('checkInboxes', () => {
     });
     const result = await checkInboxes(deps);
     expect(result).toEqual([]);
-    expect(warnings.some((w) => w.includes('no workingDir'))).toBe(true);
+    expect(warnings.filter((w) => w.includes('no workingDir')).length).toBe(1);
+  });
+
+  test('team with no workingDir, immediate second call → silenced by cache', async () => {
+    const warnings: string[] = [];
+    const deps = makeDeps({
+      listTeamsWithUnreadInbox: async () => [
+        { teamName: 'no-cwd-silent', unreadCount: 1, workingDir: null, firstUnreadText: null },
+      ],
+      isTeamActive: async () => false,
+      warn: (msg) => warnings.push(msg),
+    });
+
+    // First call warns
+    await checkInboxes(deps);
+    expect(warnings.filter((w) => w.includes('no workingDir')).length).toBe(1);
+
+    // Second immediate call — silenced by cache (rate-limited)
+    await checkInboxes(deps);
+    expect(warnings.filter((w) => w.includes('no workingDir')).length).toBe(1);
+
+    // Third call — still silenced
+    await checkInboxes(deps);
+    expect(warnings.filter((w) => w.includes('no workingDir')).length).toBe(1);
   });
 
   test('multiple teams — spawns only inactive ones', async () => {
