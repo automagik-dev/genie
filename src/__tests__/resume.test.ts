@@ -211,9 +211,13 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
     const result = await attemptAgentResume(deps, defaultConfig, agent);
 
     expect(result).toBe('resumed');
-    expect(agentUpdates).toHaveLength(1);
+    // Two writes: (1) pre-spawn increment, (2) post-success explicit reset.
+    // Post-fix/auto-resume-counter-persistence — scheduler owns the counter
+    // end-to-end (the CLI shell-out is invoked with --no-reset-attempts).
+    expect(agentUpdates).toHaveLength(2);
     expect(agentUpdates[0].updates.resumeAttempts).toBe(1);
     expect(agentUpdates[0].updates.lastResumeAttempt).toBeDefined();
+    expect(agentUpdates[1].updates.resumeAttempts).toBe(0);
     expect(logs.some((l) => l.event === 'agent_resume_attempted')).toBe(true);
     expect(logs.some((l) => l.event === 'agent_resume_succeeded')).toBe(true);
   });

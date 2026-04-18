@@ -222,7 +222,15 @@ async function defaultCountTmuxSessions(): Promise<number> {
 async function defaultResumeAgent(agentId: string): Promise<boolean> {
   try {
     const { execSync } = await import('node:child_process');
-    execSync(`genie agent resume ${agentId}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    // `--no-reset-attempts` prevents the resume handler from wiping
+    // `resumeAttempts` — `attemptAgentResume` increments that counter *before*
+    // invoking us, and needs the increment to persist so the exhaustion check
+    // can eventually fire. Without this flag, the counter was stuck at 0 and
+    // dead agents were retried every ~60s forever (fix/auto-resume-counter-persistence).
+    execSync(`genie agent resume ${agentId} --no-reset-attempts`, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     return true;
   } catch {
     return false;
@@ -951,6 +959,10 @@ export async function attemptAgentResume(
   const success = await deps.resumeAgent(agentId);
 
   if (success) {
+    // Reset the counter on success so a healthy agent doesn't carry stale
+    // "2/3 resumes" state into the next failure. We own the counter now that
+    // `defaultResumeAgent` passes `--no-reset-attempts` to the CLI.
+    await deps.updateAgent(agentId, { resumeAttempts: 0 });
     deps.log({
       timestamp: now.toISOString(),
       level: 'info',

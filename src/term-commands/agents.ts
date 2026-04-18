@@ -2174,7 +2174,7 @@ async function isResumeEligible(w: registry.Agent): Promise<boolean> {
 }
 
 /** Resume all eligible agents (--all mode). */
-async function resumeAllAgents(): Promise<void> {
+async function resumeAllAgents(opts: { resetAttempts?: boolean } = {}): Promise<void> {
   const workers = await registry.list();
   const toResume: registry.Agent[] = [];
   for (const w of workers) {
@@ -2189,7 +2189,7 @@ async function resumeAllAgents(): Promise<void> {
   console.log(`Resuming ${toResume.length} agent(s)...`);
   for (const w of toResume) {
     try {
-      await resumeAgent(w);
+      await resumeAgent(w, opts);
     } catch (err) {
       console.error(`  Failed to resume "${w.id}": ${err instanceof Error ? err.message : err}`);
     }
@@ -2199,9 +2199,18 @@ async function resumeAllAgents(): Promise<void> {
 /**
  * genie resume <name> — Resume a suspended/failed agent with its Claude session.
  * genie resume --all  — Resume all eligible agents.
+ *
+ * `options.noResetAttempts` (from `--no-reset-attempts`) is intended for the
+ * scheduler auto-resume path, which manages the `resumeAttempts` counter itself
+ * and must not have it wiped inside `resumeAgent`. Human/manual invocations omit
+ * this flag and keep the default fresh-retry-budget behavior.
  */
-export async function handleWorkerResume(name: string | undefined, options: { all?: boolean }): Promise<void> {
-  if (options.all) return resumeAllAgents();
+export async function handleWorkerResume(
+  name: string | undefined,
+  options: { all?: boolean; noResetAttempts?: boolean },
+): Promise<void> {
+  const resumeOpts = { resetAttempts: !options.noResetAttempts };
+  if (options.all) return resumeAllAgents(resumeOpts);
 
   if (!name) {
     console.error('Error: provide an agent name, or use --all to resume all eligible agents.');
@@ -2221,7 +2230,7 @@ export async function handleWorkerResume(name: string | undefined, options: { al
     return;
   }
 
-  await resumeAgent(w);
+  await resumeAgent(w, resumeOpts);
 }
 
 /**
@@ -2393,12 +2402,23 @@ async function createResumeExecutor(
 
 /**
  * Resume a single agent by rebuilding spawn params with --resume <sessionId>.
- * Resets resumeAttempts to 0 (manual resume = fresh retry budget).
+ *
+ * `opts.resetAttempts` controls whether the retry budget is cleared:
+ *   - `true` (default) — manual/human resume, fresh retry budget. Preserves the
+ *     original CLI UX: `genie agent resume <id>` gives the operator a clean slate.
+ *   - `false` — scheduler auto-resume path. The scheduler increments
+ *     `resumeAttempts` *before* calling into this code path (scheduler-daemon.ts
+ *     `attemptAgentResume`), so wiping the counter here would erase that
+ *     increment and prevent the exhaustion check from ever firing. See
+ *     fix/auto-resume-counter-persistence.
  */
-async function resumeAgent(agent: registry.Agent): Promise<void> {
+async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolean } = {}): Promise<void> {
+  const resetAttempts = opts.resetAttempts !== false;
   const template = (await registry.listTemplates()).find((t) => t.id === (agent.role ?? agent.id));
 
-  await registry.update(agent.id, { resumeAttempts: 0 });
+  if (resetAttempts) {
+    await registry.update(agent.id, { resumeAttempts: 0 });
+  }
 
   const params = await buildFullResumeParams(agent, template);
 
