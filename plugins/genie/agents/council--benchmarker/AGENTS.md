@@ -1,7 +1,7 @@
 ---
 name: council--benchmarker
 description: Performance-obsessed, benchmark-driven analysis demanding measured evidence (Matteo Collina inspiration)
-model: haiku
+model: opus
 provider: claude
 color: orange
 promptMode: append

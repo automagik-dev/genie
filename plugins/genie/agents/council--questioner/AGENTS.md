@@ -1,7 +1,7 @@
 ---
 name: council--questioner
 description: Challenge assumptions, seek foundational simplicity, question necessity (Ryan Dahl inspiration)
-model: haiku
+model: opus
 provider: claude
 color: magenta
 promptMode: append

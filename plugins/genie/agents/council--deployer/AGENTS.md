@@ -1,7 +1,7 @@
 ---
 name: council--deployer
 description: Zero-config deployment, CI/CD optimization, and preview environment review (Guillermo Rauch inspiration)
-model: haiku
+model: opus
 provider: claude
 color: green
 promptMode: append

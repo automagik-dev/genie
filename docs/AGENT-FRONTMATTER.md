@@ -71,7 +71,7 @@ tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 ---
 name: council--architect
 description: "Systems thinking, backwards compatibility, and long-term stability review."
-model: haiku
+model: opus
 color: yellow
 promptMode: append
 provider: claude

@@ -1,7 +1,7 @@
 ---
 name: council--simplifier
 description: Complexity reduction and minimalist philosophy demanding deletion over addition (TJ Holowaychuk inspiration)
-model: haiku
+model: opus
 provider: claude
 color: green
 promptMode: append

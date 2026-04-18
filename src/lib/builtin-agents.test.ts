@@ -96,9 +96,9 @@ describe('BUILTIN_COUNCIL_MEMBERS', () => {
     expect(names).toContain('council--tracer');
   });
 
-  test('council members have haiku model', () => {
+  test('council members have opus model', () => {
     for (const member of BUILTIN_COUNCIL_MEMBERS) {
-      expect(member.model).toBe('haiku');
+      expect(member.model).toBe('opus');
     }
   });
 });

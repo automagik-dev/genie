@@ -1,7 +1,7 @@
 ---
 name: council--ergonomist
 description: Developer experience, API usability, and error clarity review (Sindre Sorhus inspiration)
-model: haiku
+model: opus
 provider: claude
 color: cyan
 promptMode: append
