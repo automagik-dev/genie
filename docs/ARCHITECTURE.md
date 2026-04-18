@@ -265,7 +265,7 @@ src/
 │   ├── inject.ts               Hook installation into Claude Code settings
 │   ├── dispatch-command.ts     `genie hook dispatch` CLI command
 │   └── resolve-agent-name.ts   Agent name resolution from env
-├── tui/                        Terminal UI (OpenTUI-based)
+├── tui/                        Terminal UI (OpenTUI-based) — a skin over the CLI, not an alternate control plane. Every action shows its `genie …` command before executing. See [`SPAWN-TEAM-RESOLUTION.md`](SPAWN-TEAM-RESOLUTION.md).
 │   ├── app.tsx                 TUI application root
 │   └── ...                     TUI components
 ├── types/                      Shared types (genie-config Zod schema)
