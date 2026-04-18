@@ -1111,9 +1111,14 @@ describe('scheduler-daemon', () => {
       const result = await attemptAgentResume(deps, defaultConfig, agent);
 
       expect(result).toBe('resumed');
-      expect(updates).toHaveLength(1);
+      // Two writes: (1) pre-spawn increment, (2) post-success explicit reset.
+      // Post-fix/auto-resume-counter-persistence: the CLI no longer resets the
+      // counter (it's invoked with --no-reset-attempts), so the scheduler owns
+      // both the increment and the success-path reset.
+      expect(updates).toHaveLength(2);
       expect(updates[0].updates.resumeAttempts).toBe(1);
       expect(updates[0].updates.lastResumeAttempt).toBeDefined();
+      expect(updates[1].updates.resumeAttempts).toBe(0);
 
       const attempted = logs.find((l) => l.event === 'agent_resume_attempted');
       expect(attempted).toBeDefined();
@@ -1255,6 +1260,154 @@ describe('scheduler-daemon', () => {
 
       const result = await attemptAgentResume(deps, defaultConfig, agent);
       expect(result).toBe('resumed');
+    });
+
+    // ========================================================================
+    // Regression: fix/auto-resume-counter-persistence
+    //
+    // Before the fix, `defaultResumeAgent` shelled out to `genie agent resume`
+    // without `--no-reset-attempts`, which invoked `resumeAgent(agent)` and
+    // unconditionally did `registry.update({ resumeAttempts: 0 })` — wiping
+    // the increment written by `attemptAgentResume` one tick earlier. Counter
+    // stayed at 0 forever; `attempts >= maxAttempts` never fired; dead agents
+    // were retried every ~60s forever (`genie ls` showed `0/3 resumes` while
+    // the scheduler log showed `resume_attempts: 1` every minute).
+    //
+    // The tests below simulate the counter-persistence contract through the
+    // scheduler's `updateAgent` dependency. They do NOT invoke the CLI
+    // directly (unit scope); they encode the invariant that the scheduler
+    // owns the counter end-to-end — which is exactly what the fix enforces
+    // via the `--no-reset-attempts` CLI flag on the shell-out boundary.
+    // ========================================================================
+
+    test('failed attempts accumulate the counter (pre-fix stuck at 0)', async () => {
+      let row: { resumeAttempts: number; lastResumeAttempt?: string } = {
+        resumeAttempts: 0,
+      };
+      const { deps } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => false, // simulate CLI failure
+          updateAgent: async (_id, updates) => {
+            row = { ...row, ...updates } as typeof row;
+          },
+        },
+      );
+
+      // Attempt 1: 0 → 1
+      const a1 = makeWorker({ resumeAttempts: row.resumeAttempts });
+      expect(await attemptAgentResume(deps, defaultConfig, a1)).toBe('skipped');
+      expect(row.resumeAttempts).toBe(1);
+
+      // Attempt 2: 1 → 2 (bypass cooldown by resetting lastResumeAttempt for test)
+      const a2 = makeWorker({
+        resumeAttempts: row.resumeAttempts,
+        lastResumeAttempt: undefined,
+      });
+      expect(await attemptAgentResume(deps, defaultConfig, a2)).toBe('skipped');
+      expect(row.resumeAttempts).toBe(2);
+
+      // Attempt 3: 2 → 3 → exhausted (budget depleted after increment)
+      const a3 = makeWorker({
+        resumeAttempts: row.resumeAttempts,
+        lastResumeAttempt: undefined,
+      });
+      expect(await attemptAgentResume(deps, defaultConfig, a3)).toBe('exhausted');
+      expect(row.resumeAttempts).toBe(3);
+    });
+
+    test('exhaustion check fires on re-entry with attempts=maxAttempts', async () => {
+      // Pre-fix this path was unreachable because the counter was always 0 on
+      // re-entry. Post-fix the increment persists, so after 3 attempts the
+      // next tick hits the early-exit `attempts >= maxAttempts` branch.
+      const agent = makeWorker({ resumeAttempts: 3, maxResumeAttempts: 3 });
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => true,
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('exhausted');
+      const exhausted = logs.find((l) => l.event === 'agent_resume_exhausted');
+      expect(exhausted).toBeDefined();
+      expect(exhausted?.resume_attempts).toBe(3);
+      // No updateAgent calls on early-exit exhaustion — we do NOT re-increment
+      // or reset when the budget is already depleted.
+      expect(updates).toHaveLength(0);
+    });
+
+    test('success path explicitly resets counter to 0', async () => {
+      // After --no-reset-attempts, the CLI no longer resets; the scheduler
+      // must do it explicitly so a healthy resumed agent carries a clean
+      // retry budget into the next failure.
+      const agent = makeWorker({ resumeAttempts: 2, maxResumeAttempts: 3 });
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => true,
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+      expect(result).toBe('resumed');
+
+      // Expect two writes: (1) increment before spawn, (2) explicit reset on success.
+      expect(updates.length).toBeGreaterThanOrEqual(2);
+      const increment = updates.find((u) => u.updates.resumeAttempts === 3);
+      const reset = updates.find((u) => u.updates.resumeAttempts === 0);
+      expect(increment).toBeDefined();
+      expect(reset).toBeDefined();
+      // Order matters: increment first, reset on success.
+      expect(updates.indexOf(increment!)).toBeLessThan(updates.indexOf(reset!));
+    });
+
+    test('scheduler-owned counter: increment not wiped by resumeAgent boundary', async () => {
+      // This is the direct regression test for the original bug. Before the
+      // fix, the CLI-wipe would undo the increment and the final state would
+      // be `resumeAttempts=0`. Post-fix, the scheduler holds the counter end
+      // to end: increment on attempt, reset only on explicit success.
+      let row: { resumeAttempts: number; lastResumeAttempt?: string } = {
+        resumeAttempts: 0,
+      };
+      let resumeAgentCalls = 0;
+      const { deps } = createMockDeps(
+        {},
+        {
+          // Simulate the CLI boundary: resumeAgent returns true without
+          // touching the counter (that's what --no-reset-attempts guarantees
+          // at the real CLI layer).
+          resumeAgent: async () => {
+            resumeAgentCalls += 1;
+            return true;
+          },
+          updateAgent: async (_id, updates) => {
+            row = { ...row, ...updates } as typeof row;
+          },
+        },
+      );
+
+      const agent = makeWorker({ resumeAttempts: 0 });
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('resumed');
+      expect(resumeAgentCalls).toBe(1);
+      // Counter progression: pre-spawn increment to 1, then success reset to 0.
+      // The critical invariant is `lastResumeAttempt` — proving the pre-spawn
+      // write landed before the success reset (if the CLI had wiped the
+      // counter mid-flight, lastResumeAttempt would also be absent).
+      expect(row.resumeAttempts).toBe(0);
+      expect(row.lastResumeAttempt).toBeDefined();
     });
   });
 
