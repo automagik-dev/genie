@@ -781,9 +781,16 @@ function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow
   // --new-window: create a dedicated window instead of splitting.
   // When the target session doesn't exist yet (e.g. cold-start spawn from the TUI
   // for an offline agent), `new-window -t <session>:` would fail with "can't find
-  // session". Bootstrap with `new-session` in that case — it creates both the
-  // session and its first pane in one call. Pass `-n claude` so that first
-  // window has a meaningful name instead of tmux's default `bash`.
+  // session". Bootstrap with `new-session` in that case — but create a persistent
+  // `home` keeper window first, so the session survives after the agent window
+  // is closed. Without this keeper, tmux tears down the session when its sole
+  // window (claude) exits, breaking subsequent resume/respawn attempts which
+  // fall through to the caller's current TMUX session (see the khal-os bug:
+  // resume inherited `genie-configure` as the target session after the original
+  // dedicated session died). The keeper is cheap (one bash shell) and restores
+  // the invariant that a team's session is a persistent home for its members.
+  // The claude window is created with `-n claude`; navigation-wise `home` is
+  // window 0 and `claude` is window 1, matching the multi-member team layout.
   if (ctx.validated.newWindow) {
     const session = ctx.sessionOverride ?? teamWindow?.windowId?.split(':')[0] ?? ctx.validated.team;
     const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
@@ -794,9 +801,14 @@ function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow
     } catch {
       sessionExists = false;
     }
-    const cmd = sessionExists
-      ? `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)} -n claude${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`
-      : `${tmuxPrefix}new-session -d -s ${shellQuote(session)} -n claude${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
+    if (!sessionExists) {
+      // Bootstrap session with a `home` keeper window (bash shell). `-d` keeps
+      // the new session detached. No command → default shell. stdio:'ignore'
+      // because we don't need the session name back (we already have it).
+      execSync(`${tmuxPrefix}new-session -d -s ${shellQuote(session)} -n home${cwdFlag}`, { stdio: 'ignore' });
+    }
+    // Add the claude window (either to the just-bootstrapped or pre-existing session).
+    const cmd = `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)} -n claude${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
     return execSync(cmd, { encoding: 'utf-8' }).trim();
   }
 
