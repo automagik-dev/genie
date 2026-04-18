@@ -538,8 +538,14 @@ interface AgentWatcher {
   close: () => void;
 }
 
-/** Sync a single agent by name from the workspace (used by file watcher). */
-async function syncSingleAgentByName(workspaceRoot: string, agentName: string): Promise<string> {
+/**
+ * Sync a single agent by name from the workspace (used by file watcher and
+ * the `dir-sync-frontmatter-refresh` wish's Group 4 edit flow).
+ *
+ * Returns the action label: `registered` | `migrated` | `updated` | `synced`
+ * | `not-found`.
+ */
+export async function syncSingleAgentByName(workspaceRoot: string, agentName: string): Promise<string> {
   const agent = discoverSingleAgent(workspaceRoot, agentName);
   if (!agent) return 'not-found';
 
