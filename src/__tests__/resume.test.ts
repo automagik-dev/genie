@@ -254,11 +254,17 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
   });
 
   test('concurrency cap: blocks resume when at max workers', async () => {
+    // NOTE (auto-resume-zombie-cap fix): cap filter now verifies pane
+    // liveness — "active workers" semantically require live panes, so we
+    // override the shared mock (isPaneAlive=false) to reflect that.
     const agent = makeWorker();
     const activeWorkers: WorkerInfo[] = Array.from({ length: 5 }, (_, i) =>
       makeWorker({ id: `active-${i}`, state: 'working' }),
     );
-    const { deps, logs } = createMockDeps({ listWorkers: async () => activeWorkers });
+    const { deps, logs } = createMockDeps({
+      listWorkers: async () => activeWorkers,
+      isPaneAlive: async () => true,
+    });
 
     const result = await attemptAgentResume(deps, defaultConfig, agent);
 

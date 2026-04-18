@@ -239,6 +239,13 @@ export async function list(): Promise<Agent[]> {
 /**
  * Reconcile stale spawns: reset agents stuck in 'spawning' state
  * with no pane_id for longer than the threshold back to 'error'.
+ *
+ * Also reconciles dead-pane zombies — rows in active states (`idle`,
+ * `working`, `permission`, `question`) whose tmux pane no longer exists.
+ * Those rows otherwise accumulate forever and inflate the scheduler's
+ * concurrency cap (tracer observed activeCount=142 on one machine),
+ * silently blocking every auto-resume attempt.
+ *
  * Returns the IDs of agents that were reset.
  *
  * @param thresholdSeconds - How long an agent must be stuck before reset (default: 60)
@@ -287,6 +294,49 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
             reason: 'stale_spawn_dead_pane',
           }).catch(() => {});
           resetIds.push(row.id);
+        }
+      } catch {
+        // TmuxUnreachableError or other — skip this agent, don't mark as dead
+        // when we can't verify pane status
+      }
+    }
+
+    // Third pass: dead-pane zombies in active (non-spawning) states.
+    // Rows whose state is idle/working/permission/question but whose tmux
+    // pane no longer exists (e.g. user killed the session, machine rebooted,
+    // process crashed without state update). These count toward the resume
+    // concurrency cap and permanently block auto-resume once accumulated.
+    // Only rows matching the tmux pane pattern `%\d+` are candidates —
+    // synthetic paneIds ('sdk', 'inline', etc.) are non-tmux transports
+    // with their own liveness source and must not be touched here.
+    const activeDeadCandidates = await sql<{ id: string; pane_id: string; state: string }[]>`
+      SELECT id, pane_id, state FROM agents
+      WHERE state IN ('idle', 'working', 'permission', 'question')
+        AND pane_id ~ '^%[0-9]+$'
+        AND last_state_change < now() - interval '1 second' * ${thresholdSeconds}
+    `;
+    for (const row of activeDeadCandidates) {
+      try {
+        const alive = await isPaneAlive(row.pane_id);
+        if (!alive) {
+          const prevState = row.state;
+          const updated = await sql<{ id: string }[]>`
+            UPDATE agents
+            SET state = 'error', last_state_change = now()
+            WHERE id = ${row.id} AND state = ${prevState}
+            RETURNING id
+          `;
+          if (updated.length > 0) {
+            console.error(
+              `[reconcile] Reset zombie agent ${row.id} (dead pane ${row.pane_id}) from ${prevState} → error`,
+            );
+            recordAuditEvent('worker', row.id, 'state_changed', 'reconciler', {
+              state: 'error',
+              reason: 'dead_pane_zombie',
+              previous_state: prevState,
+            }).catch(() => {});
+            resetIds.push(row.id);
+          }
         }
       } catch {
         // TmuxUnreachableError or other — skip this agent, don't mark as dead
