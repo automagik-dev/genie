@@ -9,7 +9,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUILTIN_COUNCIL_MEMBERS, BUILTIN_ROLES, type BuiltinAgent } from './builtin-agents.js';
-import { serializeSdkConfig, writeFrontmatter } from './frontmatter-writer.js';
 import type { SdkDirectoryConfig } from './sdk-directory-types.js';
 
 // ============================================================================
@@ -547,42 +546,8 @@ function parseMetadata(raw: unknown): Record<string, unknown> {
   return {};
 }
 
-/** Frontmatter-relevant keys that should be synced back to AGENTS.md on edit. */
-const FRONTMATTER_KEYS = new Set(['name', 'description', 'model', 'color', 'promptMode', 'provider', 'sdk']);
-
-/**
- * Sync frontmatter-relevant fields back to the agent's AGENTS.md file.
- * Only writes if the agent has a dir with AGENTS.md and the edit touched
- * frontmatter-relevant fields. Best-effort — never throws.
- */
-export function syncFrontmatterToDisk(
-  entry: DirectoryEntry,
-  updates: Partial<Pick<DirectoryEntry, 'dir' | 'model' | 'description' | 'color' | 'promptMode' | 'provider' | 'sdk'>>,
-): void {
-  try {
-    if (!entry.dir) return;
-    const agentsPath = join(entry.dir, 'AGENTS.md');
-    if (!existsSync(agentsPath)) return;
-
-    // Only write if the edit touched frontmatter-relevant fields
-    const touchedFrontmatter = Object.keys(updates).some((k) => FRONTMATTER_KEYS.has(k));
-    if (!touchedFrontmatter) return;
-
-    // Build the frontmatter update object from relevant fields
-    const fmUpdates: Record<string, unknown> = {};
-    if (updates.model !== undefined) fmUpdates.model = updates.model;
-    if (updates.description !== undefined) fmUpdates.description = updates.description;
-    if (updates.color !== undefined) fmUpdates.color = updates.color;
-    if (updates.promptMode !== undefined) fmUpdates.promptMode = updates.promptMode;
-    if (updates.provider !== undefined) fmUpdates.provider = updates.provider;
-    if (updates.sdk !== undefined) {
-      fmUpdates.sdk = serializeSdkConfig(updates.sdk);
-    }
-
-    if (Object.keys(fmUpdates).length === 0) return;
-
-    writeFrontmatter(agentsPath, fmUpdates);
-  } catch {
-    /* Best-effort — disk write failure should not break directory edit */
-  }
-}
+// `syncFrontmatterToDisk` was removed by wish `dir-sync-frontmatter-refresh`
+// Group 4 (PR feat/dir-sync-frontmatter-refresh-group4). Its purpose was to
+// mirror DB edits back into AGENTS.md frontmatter, but AGENTS.md is now
+// body-only post-migration — the canonical file is `agents/<name>/agent.yaml`,
+// written directly by the `dir edit` handler. No replacement is needed.
