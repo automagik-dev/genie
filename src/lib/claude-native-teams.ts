@@ -13,10 +13,11 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, open, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ensureTeammateBypassPermissions } from './claude-settings.js';
+import { acquireLock, releaseLock } from './lockfile.js';
 import type { ClaudeTeamColor } from './provider-adapters.js';
 import { CLAUDE_TEAM_COLORS } from './provider-adapters.js';
 
@@ -99,73 +100,6 @@ function inboxesDir(teamName: string): string {
 
 function inboxPath(teamName: string, agentName: string): string {
   return join(inboxesDir(teamName), `${sanitizeTeamName(agentName)}.json`);
-}
-
-function lockPath(filePath: string): string {
-  return `${filePath}.lock`;
-}
-
-// ============================================================================
-// Lockfile (simple polling lock for concurrent inbox writes)
-// ============================================================================
-
-const LOCK_TIMEOUT_MS = 5000;
-const LOCK_POLL_MS = 50;
-
-/** Check if a PID is still alive using kill -0 (signal 0 = existence check). */
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function acquireLock(path: string): Promise<void> {
-  const lock = lockPath(path);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
-    try {
-      await writeFile(lock, String(process.pid), { flag: 'wx' });
-      return; // acquired
-    } catch {
-      // Lock exists — check if holder PID is still alive
-      try {
-        const content = await readFile(lock, 'utf-8');
-        const holderPid = Number.parseInt(content.trim(), 10);
-        if (!Number.isNaN(holderPid) && !isPidAlive(holderPid)) {
-          // Holder is dead — remove stale lock and retry immediately
-          try {
-            await unlink(lock);
-          } catch {
-            // Another process may have already cleaned it up
-          }
-          continue;
-        }
-      } catch {
-        // Lock file disappeared between check and read — retry
-        continue;
-      }
-
-      // Lock holder is alive — wait with jitter and retry
-      const jitter = Math.floor(Math.random() * LOCK_POLL_MS);
-      await new Promise((r) => setTimeout(r, LOCK_POLL_MS + jitter));
-    }
-  }
-
-  // Timeout — force acquire (likely stale lock)
-  console.warn(`[claude-native-teams] Force-acquiring stale lock: ${lock}`);
-  await writeFile(lock, String(process.pid));
-}
-
-async function releaseLock(path: string): Promise<void> {
-  try {
-    await unlink(lockPath(path));
-  } catch {
-    // Already released
-  }
 }
 
 // ============================================================================
