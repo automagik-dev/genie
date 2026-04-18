@@ -33,6 +33,30 @@ interface DeliveryResult {
   reason?: string;
 }
 
+/**
+ * Raised when resume was explicitly requested (a prior Claude worker is on
+ * record) but the executor row has no `claudeSessionId`. Historically this
+ * was silently substituted for `undefined`, which caused a fresh CC session
+ * to spawn and lose the worker's conversation history. Gap C from
+ * trace-stale-resume (task #6).
+ *
+ * Callers that catch this should surface the error to the operator instead
+ * of quietly proceeding with a fresh spawn.
+ */
+export class MissingResumeSessionError extends Error {
+  readonly workerId: string;
+  readonly recipientId: string;
+
+  constructor(workerId: string, recipientId: string) {
+    super(
+      `Cannot resume worker "${workerId}" (recipient "${recipientId}"): executor has no claude_session_id recorded. This usually means the worker predates the session-sync hook. Run \`genie reset ${workerId}\` or re-spawn the worker to recover.`,
+    );
+    this.name = 'MissingResumeSessionError';
+    this.workerId = workerId;
+    this.recipientId = recipientId;
+  }
+}
+
 // ============================================================================
 // Dependency injection (testability without mock.module)
 // ============================================================================
@@ -85,6 +109,21 @@ async function isExecutorCompleted(worker: registry.Agent | null): Promise<boole
   if (!worker?.currentExecutorId) return false;
   const executor = await getCurrentExecutor(worker.id);
   return executor != null && (executor.state === 'done' || executor.state === 'terminated');
+}
+
+/**
+ * Check if a worker's last executor is in a state that implies the session is
+ * still supposed to be alive (i.e., the pane dying was transient, not
+ * logical completion). Used to detect explicit resume intent for Gap C.
+ */
+async function isExecutorResumable(worker: registry.Agent): Promise<boolean> {
+  if (!worker.currentExecutorId) return false;
+  const executor = await getCurrentExecutor(worker.id);
+  if (!executor) return false;
+  // Terminal states (done / error / terminated) mean resume is not expected —
+  // fresh spawn is fine. Any other state (spawning, running, idle, working,
+  // permission, question) implies the worker was mid-task.
+  return !['done', 'error', 'terminated'].includes(executor.state);
 }
 
 /** Check if a worker is in a dead state (suspended/terminated/offline). */
@@ -209,12 +248,30 @@ async function ensureWorkerAlive(
   const template = await findSpawnTemplate(worker, recipientId);
   if (!template) return null;
 
-  const resumeSessionId =
-    template.provider === 'claude' && worker?.claudeSessionId ? worker.claudeSessionId : undefined;
+  // Decide whether this call is an explicit resume request. Claude workers
+  // whose last executor is in a non-terminal state (spawning/running/idle/
+  // working/permission/question) are mid-task — we MUST resume them with
+  // their session id. Silently spawning fresh would drop the conversation
+  // history. First-time spawns (no executor) and completed/errored workers
+  // fall through to the normal fresh-spawn path. Gap C from
+  // trace-stale-resume (task #6).
+  let resumeSessionId: string | undefined;
+  if (template.provider === 'claude' && worker) {
+    if (await isExecutorResumable(worker)) {
+      if (!worker.claudeSessionId) {
+        throw new MissingResumeSessionError(worker.id, recipientId);
+      }
+      resumeSessionId = worker.claudeSessionId;
+    } else if (worker.claudeSessionId) {
+      resumeSessionId = worker.claudeSessionId;
+    }
+  }
 
   try {
     return await lockedSpawnWorker(recipientId, worker, template, resumeSessionId);
   } catch (err) {
+    // Resume errors must bubble — the operator needs to see them.
+    if (err instanceof MissingResumeSessionError) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[protocol-router] Spawn failed for "${recipientId}": ${msg}`);
     if (worker) {
@@ -409,7 +466,24 @@ export async function sendMessage(
 
   // Try auto-spawn if agent is known via directory OR registry
   if (dirResolved || worker) {
-    const alive = await ensureWorkerAlive(worker, to);
+    let alive: { worker: registry.Agent; respawned: boolean } | null;
+    try {
+      alive = await ensureWorkerAlive(worker, to);
+    } catch (err) {
+      // Resume was explicitly requested but the session id is missing.
+      // Surface the error loudly so the operator can recover (genie reset /
+      // re-spawn). Gap C from trace-stale-resume (task #6).
+      if (err instanceof MissingResumeSessionError) {
+        console.error(`[protocol-router] ${err.message}`);
+        return {
+          messageId: '',
+          workerId: worker?.id ?? to,
+          delivered: false,
+          reason: err.message,
+        };
+      }
+      throw err;
+    }
     if (alive) {
       // Re-verify pane alive right before delivery — catches race where
       // the pane dies between ensureWorkerAlive and actual injection.

@@ -349,6 +349,86 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       errorSpy.mockRestore();
     });
+
+    test('missing claudeSessionId on mid-task claude worker surfaces MissingResumeSessionError (Gap C)', async () => {
+      // Gap C from trace-stale-resume (task #6): previously the router
+      // silently substituted undefined for a null claudeSessionId and spawned
+      // a FRESH session, losing the worker's conversation history. Now the
+      // operator sees a clear error and the delivery returns undelivered with
+      // a human-readable reason.
+      //
+      // Scenario: a mid-task Claude worker (executor state = 'idle', i.e.
+      // still alive, not completed) whose claudeSessionId was never synced
+      // back — the exact shape of the pre-Gap-A PTY bug.
+      const registry = await import('./agent-registry.js');
+      const executorReg = await import('./executor-registry.js');
+      const router = await import('./protocol-router.js');
+
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+      router._deps.waitForWorkerReady = async () => true;
+      process.env.TMUX = '/tmp/tmux-test/default,123,0';
+
+      const errorCalls: string[] = [];
+      const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        errorCalls.push(args.map(String).join(' '));
+      });
+
+      const now = new Date().toISOString();
+
+      await registry.register({
+        id: 'ghost-worker',
+        paneId: '%0',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'ghost-role',
+        team: 'ghost-team',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+      });
+
+      // Executor is still in a resumable state (not terminal). Crucially we
+      // do NOT pass claudeSessionId to simulate the pre-Gap-A defect.
+      const executor = await executorReg.createAndLinkExecutor('ghost-worker', 'claude', 'tmux');
+      await executorReg.updateExecutorState(executor.id, 'idle');
+
+      await registry.saveTemplate({
+        id: 'ghost-team-ghost-role',
+        team: 'ghost-team',
+        role: 'ghost-role',
+        provider: 'claude',
+        cwd: tempDir,
+        lastSpawnedAt: now,
+      });
+
+      const spawnCountBefore = spawnCallCount;
+      const result = await router.sendMessage(tempDir, 'alice', 'ghost-role', 'hello', 'ghost-team');
+
+      // Must NOT fall back to a fresh spawn silently.
+      expect(spawnCallCount).toBe(spawnCountBefore);
+      expect(result.delivered).toBe(false);
+      expect(result.reason).toMatch(/claude_session_id/);
+
+      // Error must be logged so operators notice.
+      const resumeErrorLog = errorCalls.find((c) => c.includes('claude_session_id'));
+      expect(resumeErrorLog).toBeTruthy();
+
+      errorSpy.mockRestore();
+    });
+
+    test('MissingResumeSessionError class carries workerId and recipientId', async () => {
+      const { MissingResumeSessionError } = await import('./protocol-router.js');
+      const err = new MissingResumeSessionError('w1', 'role-x');
+      expect(err).toBeInstanceOf(Error);
+      expect(err.name).toBe('MissingResumeSessionError');
+      expect(err.workerId).toBe('w1');
+      expect(err.recipientId).toBe('role-x');
+      expect(err.message).toContain('w1');
+      expect(err.message).toContain('genie reset');
+    });
   });
 
   // ---------------------------------------------------------------------------
