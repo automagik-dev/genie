@@ -5,7 +5,7 @@
  * Checks prerequisites, configuration, and tmux connectivity.
  */
 
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { $ } from 'bun';
@@ -14,6 +14,7 @@ import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-setting
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
 import { checkCommand } from '../lib/system-detect.js';
+import { findWorkspace } from '../lib/workspace.js';
 
 interface CheckResult {
   name: string;
@@ -396,6 +397,73 @@ async function checkBridge(): Promise<CheckResult[]> {
 }
 
 /**
+ * Check that no agent has leftover `---` frontmatter in its `AGENTS.md`
+ * when `agent.yaml` is also present. Wish `dir-sync-frontmatter-refresh`
+ * (Group 6) eliminates frontmatter entirely post-migration — if a user
+ * pastes config back into AGENTS.md, sync silently ignores it, which is
+ * confusing. This check surfaces the drift loudly.
+ *
+ * Exported for unit tests and for callers that want to run this check
+ * outside `genie doctor` (e.g. a pre-sync lint).
+ */
+export function checkLegacyAgentFrontmatter(workspaceRoot?: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  const root = workspaceRoot ?? findWorkspace()?.root;
+  if (!root) return [];
+
+  const agentsDir = join(root, 'agents');
+  if (!existsSync(agentsDir)) return [];
+
+  let entries: string[];
+  try {
+    entries = readdirSync(agentsDir);
+  } catch {
+    return [];
+  }
+
+  for (const name of entries) {
+    const agentDir = join(agentsDir, name);
+    try {
+      if (!statSync(agentDir).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    const yamlPath = join(agentDir, 'agent.yaml');
+    const agentsMdPath = join(agentDir, 'AGENTS.md');
+
+    // Only flag when both files exist AND AGENTS.md starts with a fence.
+    // Pre-migration state (no yaml, frontmatter present) is NOT a warning —
+    // sync will migrate it on the next run.
+    if (!existsSync(yamlPath) || !existsSync(agentsMdPath)) continue;
+
+    let headContent: string;
+    try {
+      // Read only the first handful of bytes to cheaply detect the fence.
+      headContent = readFileSync(agentsMdPath, 'utf-8').slice(0, 4);
+    } catch {
+      continue;
+    }
+
+    if (!headContent.startsWith('---')) continue;
+
+    results.push({
+      name: `agents/${name}/AGENTS.md`,
+      status: 'warn',
+      message: 'legacy frontmatter detected (ignored by sync)',
+      suggestion: `Move config into agents/${name}/agent.yaml — AGENTS.md is prompt-only post-migration.`,
+    });
+  }
+
+  // Single positive result when nothing drifted, so the section prints a
+  // clean "✓" row.
+  if (results.length === 0) {
+    results.push({ name: 'No legacy frontmatter in agents/*/AGENTS.md', status: 'pass' });
+  }
+  return results;
+}
+
+/**
  * Main doctor command
  */
 function runCheckSection(label: string, results: CheckResult[], counts: { errors: boolean; warnings: boolean }): void {
@@ -424,6 +492,7 @@ export async function doctorCommand(options?: { fix?: boolean }): Promise<void> 
   runCheckSection('Tmux', await checkTmux(), counts);
   runCheckSection('Worker Profiles', await checkWorkerProfiles(), counts);
   runCheckSection('Omni Bridge', await checkBridge(), counts);
+  runCheckSection('Agent Config', checkLegacyAgentFrontmatter(), counts);
 
   // Summary
   console.log();
