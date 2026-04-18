@@ -22,6 +22,7 @@ import type { TransportType as ExecutorTransport } from '../lib/executor-types.j
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
 import { getOtelPort, startOtelReceiver } from '../lib/otel-receiver.js';
 import { injectResumeContext } from '../lib/protocol-router-spawn.js';
+import { MissingResumeSessionError } from '../lib/protocol-router.js';
 import {
   type ClaudeTeamColor,
   type ProviderName,
@@ -2198,10 +2199,20 @@ export async function handleWorkerResume(name: string | undefined, options: { al
   await resumeAgent(w);
 }
 
-/** Build SpawnParams for a resume operation from agent + template. */
+/**
+ * Build SpawnParams for a resume operation from agent + template.
+ *
+ * `resumeSessionId` is required — nullability is the caller's problem. This
+ * closes Gap 1 of the loop-2 review: the prior `agent.claudeSessionId!`
+ * force-unwrap silently turned null into undefined, reproducing the original
+ * stale-resume bug. Every caller MUST validate the session before invoking
+ * this function, typically via `buildFullResumeParams` which raises
+ * `MissingResumeSessionError` when the session is absent.
+ */
 async function buildResumeParams(
   agent: registry.Agent,
   template: registry.WorkerTemplate | undefined,
+  resumeSessionId: string,
 ): Promise<SpawnParams> {
   const agentName = agent.role ?? agent.id;
   const provider = (template?.provider ?? agent.provider ?? 'claude') as ProviderName;
@@ -2229,8 +2240,7 @@ async function buildResumeParams(
     role: agentName,
     skill: template?.skill ?? agent.skill,
     extraArgs: template?.extraArgs,
-    // biome-ignore lint/style/noNonNullAssertion: caller guarantees claudeSessionId exists
-    resume: agent.claudeSessionId!,
+    resume: resumeSessionId,
     name: `${team}-${agentName}`,
     model: dirEntry?.model,
     systemPromptFile,
@@ -2293,12 +2303,23 @@ export async function buildResumeContext(agent: registry.Agent): Promise<string 
   return undefined;
 }
 
-/** Build full spawn params for resume, including initial prompt and native team config. */
-async function buildFullResumeParams(
+/**
+ * Build full spawn params for resume, including initial prompt and native team config.
+ *
+ * Throws `MissingResumeSessionError` if the agent has no `claudeSessionId` —
+ * the resume path is genuinely broken in that case, and returning partial
+ * params would silently fall back to a fresh session (the exact stale-resume
+ * regression Gap C exists to prevent). Callers reach this function only with
+ * explicit resume intent (`resumeAgent`), so the failure mode is loud-by-design.
+ */
+export async function buildFullResumeParams(
   agent: registry.Agent,
   template: registry.WorkerTemplate | undefined,
 ): Promise<SpawnParams> {
-  const params = await buildResumeParams(agent, template);
+  if (!agent.claudeSessionId) {
+    throw new MissingResumeSessionError(agent.id);
+  }
+  const params = await buildResumeParams(agent, template, agent.claudeSessionId);
 
   const resumeContext = await buildResumeContext(agent);
   if (resumeContext) {

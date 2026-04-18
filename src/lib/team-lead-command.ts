@@ -22,10 +22,20 @@ export function shellQuote(s: string): string {
 interface BuildTeamLeadCommandOptions {
   /** Path to AGENTS.md or system prompt file (passed directly, no copy). */
   systemPromptFile?: string;
-  /** Session ID to resume (emits --resume). Mutually exclusive with sessionId. */
+  /**
+   * @deprecated Pass `sessionId` + `resume: true` instead. `continueName` passes
+   * a fuzzy name to `--resume`, letting CC re-do its own JSONL title match
+   * (which may pick a different session than the caller intended). The UUID
+   * form is unambiguous.
+   */
   continueName?: string;
-  /** Set session ID for a new session (mutually exclusive with continueName) */
+  /**
+   * Claude Code session UUID. Emitted as `--session-id <uuid>` for new sessions
+   * or `--resume <uuid>` when `resume` is true.
+   */
   sessionId?: string;
+  /** When true with `sessionId`: emit `--resume <sessionId>` instead of `--session-id`. */
+  resume?: boolean;
   /** Override promptMode instead of reading from config (useful for testing) */
   promptMode?: 'append' | 'system';
   /** Actual leader name — used for --agent-id and --agent-name instead of 'team-lead'. Falls back to teamName. */
@@ -65,10 +75,11 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
   // Session name for CC's /resume and terminal title
   parts.push(`--name ${shellQuote(sanitized)}`);
 
-  if (options?.continueName) {
+  if (options?.sessionId) {
+    const flag = options.resume ? '--resume' : '--session-id';
+    parts.push(`${flag} ${shellQuote(options.sessionId)}`);
+  } else if (options?.continueName) {
     parts.push(`--resume ${shellQuote(options.continueName)}`);
-  } else if (options?.sessionId) {
-    parts.push(`--session-id ${shellQuote(options.sessionId)}`);
   }
 
   // Pass file path directly — no copy step

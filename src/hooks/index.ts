@@ -34,6 +34,7 @@ import {
   emitToolCallEvent,
   emitUserPromptEvent,
 } from './handlers/runtime-emit.js';
+import { sessionSync } from './handlers/session-sync.js';
 import type { Handler, HandlerResult, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
@@ -116,6 +117,19 @@ const handlers: Handler[] = [
     event: 'Stop',
     priority: 30,
     fn: emitAssistantResponseEvent,
+  },
+  {
+    name: 'session-sync-tool',
+    event: 'PreToolUse',
+    matcher: /.*/,
+    priority: 35,
+    fn: sessionSync,
+  },
+  {
+    name: 'session-sync-prompt',
+    event: 'UserPromptSubmit',
+    priority: 35,
+    fn: sessionSync,
   },
 ];
 

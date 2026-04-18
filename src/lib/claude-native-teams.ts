@@ -406,11 +406,14 @@ async function findNewestSessionIdForTeam(teamName: string, cwd: string): Promis
 
 /**
  * Best-effort scan of the first 8KB of a JSONL file for a `custom-title`
- * entry whose value matches the needle (case-insensitive).
+ * entry whose value matches the needle (case-insensitive, exact match).
  *
- * Claude Code writes the `custom-title` as either the exact team name or a
- * `{team}-{team}` prefixed form depending on how the session was launched;
- * both are treated as matches. Any I/O or parse failure returns false.
+ * Historical note: we used to also accept `{team}-{team}` as a match for
+ * legacy CC-prefixed sessions, but that let team "alpha" pick up JSONLs
+ * written by team "alpha-alpha" under the same worktree. Gap B from
+ * trace-stale-resume (task #6) — strict match only.
+ *
+ * Any I/O or parse failure returns false.
  */
 async function jsonlMatchesTitle(filePath: string, needle: string): Promise<boolean> {
   let handle: Awaited<ReturnType<typeof open>> | null = null;
@@ -425,8 +428,7 @@ async function jsonlMatchesTitle(filePath: string, needle: string): Promise<bool
       try {
         const entry = JSON.parse(trimmed) as { type?: string; customTitle?: string };
         if (entry.type !== 'custom-title' || typeof entry.customTitle !== 'string') continue;
-        const ct = entry.customTitle.toLowerCase();
-        if (ct === needle || ct === `${needle}-${needle}`) return true;
+        if (entry.customTitle.toLowerCase() === needle) return true;
       } catch {
         /* malformed line — keep scanning */
       }
