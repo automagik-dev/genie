@@ -3,6 +3,13 @@ node_modules/
 .pnp
 .pnp.js
 
+# AGENTS.md.bak produced by migrateAgentToYaml (wish
+# dir-sync-frontmatter-refresh Group 2). Preserves pre-migration
+# frontmatter byte-for-byte as a safety net; useful locally, noise
+# in history.
+agents/*/AGENTS.md.bak
+**/agents/*/AGENTS.md.bak
+
 # Build output
 dist/
 build/
