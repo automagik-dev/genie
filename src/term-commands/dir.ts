@@ -60,14 +60,23 @@ export function registerDirNamespace(program: Command): void {
     .command('rm <name>')
     .description('Remove an agent from the directory')
     .option('--global', 'Remove from global directory instead of project')
-    .action(async (name: string, options: { global?: boolean }) => {
+    .option('--force', 'Also remove runtime/spawn rows sharing this role (id shapes: <team>-<role>, UUID)')
+    .action(async (name: string, options: { global?: boolean; force?: boolean }) => {
       try {
-        const removed = await directory.rm(name, { global: options.global });
-        recordAuditEvent('item', name, 'item_removed', getActor(), { type: 'agent', source: 'dir_rm' }).catch(() => {});
+        const result = await directory.rm(name, { global: options.global, force: options.force });
 
-        if (removed) {
+        if (result.removed) {
           const scope = options.global ? 'global' : 'project';
           console.log(`Agent "${name}" removed from ${scope} directory.`);
+          // Only emit the audit event on actual removal — previously we logged
+          // "item_removed" even when the DELETE matched zero rows.
+          recordAuditEvent('item', name, 'item_removed', getActor(), { type: 'agent', source: 'dir_rm' }).catch(
+            () => {},
+          );
+        } else if (result.message) {
+          // Runtime rows exist but no directory entry — surface guidance.
+          console.error(result.message);
+          process.exit(1);
         } else {
           console.error(`Agent "${name}" not found in directory.`);
           process.exit(1);

@@ -345,7 +345,7 @@ async function removeMissingAgents(discoveredNames: Set<string>, result: SyncRes
       if (entry.scope === 'built-in') continue;
       if (!entry.dir || !entry.dir.includes('/agents/')) continue; // only remove auto-synced
 
-      const removed = await directory.rm(entry.name);
+      const { removed } = await directory.rm(entry.name);
       if (removed) result.archived.push(entry.name);
     }
   } catch {
@@ -533,7 +533,7 @@ async function processWatchedAgent(workspaceRoot: string, agentsDir: string, nam
     return action !== 'unchanged' && action !== 'not-found' ? action : null;
   }
   if (!existsSync(agentDir)) {
-    const removed = await directory.rm(name);
+    const { removed } = await directory.rm(name);
     if (removed) return 'removed';
   }
   return null;

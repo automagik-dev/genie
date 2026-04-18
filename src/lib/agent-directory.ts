@@ -75,6 +75,30 @@ interface ScopeOptions {
   global?: boolean;
 }
 
+/**
+ * Options for {@link rm}.
+ *
+ * `force`: when true, also delete non-`dir:` agent rows (spawn/runtime rows
+ * with id shapes like `<team>-<role>` or UUID) whose `role` matches `name`.
+ * Without this flag, `rm` only removes the `dir:<name>` row and returns a
+ * warning message listing the live instance ids if any exist.
+ */
+interface RmOptions extends ScopeOptions {
+  force?: boolean;
+}
+
+/**
+ * Result of {@link rm}.
+ *
+ * `message`: human-readable explanation when `removed=false` and live runtime
+ * rows exist for the same role (so the caller can print guidance instead of a
+ * generic "not found" message).
+ */
+interface RmResult {
+  removed: boolean;
+  message?: string;
+}
+
 /** Resolved agent — either a user directory entry or a built-in. */
 interface ResolvedAgent {
   /** The agent entry (user or synthetic built-in). */
@@ -160,12 +184,46 @@ export async function add(
 
 /**
  * Remove an agent from the directory.
+ *
+ * Storage symmetry with {@link ls}:
+ *   - `ls()` surfaces rows by `role`, regardless of id shape (dir:, team-role, UUID).
+ *   - `rm()` first tries the canonical `dir:<name>` row. If that row exists, it is
+ *     deleted and we are done.
+ *   - If no `dir:` row exists but runtime rows with matching `role` do, we return
+ *     `removed: false` plus a `message` naming the live instance ids and pointing
+ *     the user at `genie kill <id>` or `--force`. Without this, `rm` used to
+ *     report "not found" on agents that `ls` was happily displaying.
+ *   - With `force: true`, we additionally wipe every row whose `role = name`,
+ *     which is how users can reclaim a name whose directory entry was lost but
+ *     whose runtime/spawn rows linger.
  */
-export async function rm(name: string, _options?: ScopeOptions): Promise<boolean> {
+export async function rm(name: string, options?: RmOptions): Promise<RmResult> {
   const { getConnection } = await import('./db.js');
   const sql = await getConnection();
-  const result = await sql`DELETE FROM agents WHERE id = ${`dir:${name}`}`;
-  return result.count > 0;
+
+  // 1. Canonical directory row: id = 'dir:<name>'
+  const dirDelete = await sql`DELETE FROM agents WHERE id = ${`dir:${name}`}`;
+  const dirRemoved = dirDelete.count > 0;
+
+  if (options?.force) {
+    // --force: also purge any runtime/spawn rows sharing this role.
+    const roleDelete = await sql`DELETE FROM agents WHERE role = ${name}`;
+    return { removed: dirRemoved || roleDelete.count > 0 };
+  }
+
+  if (dirRemoved) return { removed: true };
+
+  // 2. No dir: row — check for runtime rows that `ls()` would surface.
+  const instances = await sql`SELECT id FROM agents WHERE role = ${name}`;
+  if (instances.length === 0) {
+    return { removed: false };
+  }
+
+  const idList = instances.map((r: { id: string }) => r.id).join(', ');
+  return {
+    removed: false,
+    message: `No directory entry for "${name}". Active instances: ${idList}. Use 'genie kill <id>' to terminate, or re-run with --force to remove all.`,
+  };
 }
 
 /**
@@ -182,14 +240,18 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
     const rows = await sql`
-      SELECT role, metadata FROM agents
+      SELECT role, metadata, created_at FROM agents
       WHERE role = ${name}
       ORDER BY (CASE WHEN id LIKE 'dir:%' THEN 0 ELSE 1 END), started_at DESC
       LIMIT 1
     `;
     if (rows.length > 0) {
       const meta = parseMetadata(rows[0].metadata);
-      const entry = roleToEntry(name, undefined, meta);
+      const createdAt =
+        rows[0].created_at instanceof Date
+          ? rows[0].created_at.toISOString()
+          : (rows[0].created_at as string | undefined);
+      const entry = roleToEntry(name, undefined, meta, createdAt);
       if (templateTeam) entry.team = templateTeam;
       return { entry, builtin: false };
     }
@@ -272,7 +334,7 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
     const rows = await sql`
-      SELECT DISTINCT ON (a.role) a.role, a.team, a.metadata, e.repo_path, e.provider
+      SELECT DISTINCT ON (a.role) a.role, a.team, a.metadata, a.created_at, e.repo_path, e.provider
       FROM agents a
       LEFT JOIN executors e ON a.current_executor_id = e.id
       WHERE a.role IS NOT NULL
@@ -282,7 +344,9 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
       const name = row.role as string;
       if (!seen.has(name)) {
         const meta = parseMetadata(row.metadata);
-        const entry = roleToEntry(name, row.team as string, meta);
+        const createdAt =
+          row.created_at instanceof Date ? row.created_at.toISOString() : (row.created_at as string | undefined);
+        const entry = roleToEntry(name, row.team as string, meta, createdAt);
         const repoPath = row.repo_path as string;
         if (repoPath) {
           entry.dir = repoPath;
@@ -409,8 +473,18 @@ function builtinToEntry(agent: BuiltinAgent): DirectoryEntry {
 
 /** Convert a PG agent role to a synthetic DirectoryEntry, enriched with metadata.
  *  When metadata is present, it takes priority over built-in defaults
- *  (PG entries represent user overrides or directory-synced agents). */
-function roleToEntry(role: string, team?: string, metadata?: Record<string, unknown>): DirectoryEntry {
+ *  (PG entries represent user overrides or directory-synced agents).
+ *
+ *  `registeredAt` is sourced from the caller-provided `createdAt` (PG
+ *  `agents.created_at`) or `metadata.registeredAt` if present — never
+ *  fabricated at read time. Two reads of the same row must produce the
+ *  same `registeredAt`, otherwise the UI implies a phantom re-registration. */
+function roleToEntry(
+  role: string,
+  team?: string,
+  metadata?: Record<string, unknown>,
+  createdAt?: string,
+): DirectoryEntry {
   const hasMetadata = metadata && Object.keys(metadata).length > 0;
 
   // Only fall back to built-in when there's no PG metadata to use
@@ -419,13 +493,16 @@ function roleToEntry(role: string, team?: string, metadata?: Record<string, unkn
     if (builtin) return builtinToEntry(builtin);
   }
 
+  const registeredAt =
+    (typeof metadata?.registeredAt === 'string' ? (metadata.registeredAt as string) : undefined) ?? createdAt ?? '';
+
   return {
     name: role,
     dir: (metadata?.dir as string) || '',
     promptMode: (metadata?.promptMode as PromptMode) || 'append',
     model: metadata?.model as string | undefined,
     roles: [],
-    registeredAt: new Date().toISOString(),
+    registeredAt,
     description: metadata?.description as string | undefined,
     color: metadata?.color as string | undefined,
     provider: metadata?.provider as string | undefined,
