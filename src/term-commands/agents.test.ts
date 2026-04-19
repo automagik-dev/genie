@@ -651,4 +651,66 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       expect(found?.claudeSessionId).toBe('parallel-uuid-b1c2abcd-0000-0000-000000000000');
     });
   });
+
+  // Regression for cross-team resurrection (2026-04-19):
+  // Team A has a dead engineer-2 anchor. Team B spawns engineer-2. The spawn
+  // must NOT resume team A's anchor and must NOT silently adopt team A's row.
+  describe('cross-team resume isolation', () => {
+    test('findDeadResumable in team B does not match a dead anchor in team A', async () => {
+      const teamA = `docs-drift-omni-v2-${Date.now()}`;
+      const teamB = `genie-serve-obs-${Date.now()}`;
+
+      // Seed a dead Claude anchor for engineer-2 in team A.
+      await seedCanonical('engineer-2', teamA, {
+        paneId: 'inline', // dead
+        role: 'engineer-2',
+        claudeSessionId: 'teamA-session-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        provider: 'claude',
+      });
+
+      // Team B asking for its own engineer-2 must see "no resumable in my
+      // team" — the team A row is out of scope.
+      const found = await findDeadResumable(teamB, 'engineer-2');
+      expect(found).toBeNull();
+    });
+
+    test('register rejects a team B spawn that would clobber a team A anchor', async () => {
+      const teamA = `docs-drift-omni-v2-${Date.now()}`;
+      const teamB = `genie-serve-obs-${Date.now()}`;
+
+      await seedCanonical('engineer-2', teamA, {
+        paneId: '%67', // pretend-live pane from team A
+        role: 'engineer-2',
+        claudeSessionId: 'teamA-session-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        provider: 'claude',
+      });
+
+      let threw = false;
+      try {
+        await registry.register({
+          id: 'engineer-2',
+          paneId: '%99',
+          session: teamB,
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'spawning',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/genie-serve-obs-wt',
+          role: 'engineer-2',
+          team: teamB,
+          provider: 'claude',
+        });
+      } catch (err) {
+        threw = true;
+        const msg = err instanceof Error ? err.message : String(err);
+        expect(msg).toMatch(/cross-team|already exists/i);
+      }
+      expect(threw).toBe(true);
+
+      // Team A's row must be untouched.
+      const a = await registry.get('engineer-2');
+      expect(a?.team).toBe(teamA);
+      expect(a?.paneId).toBe('%67');
+    });
+  });
 });
