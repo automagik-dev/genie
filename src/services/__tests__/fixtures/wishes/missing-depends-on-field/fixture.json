@@ -1,0 +1,6 @@
+{
+  "category": "fixable",
+  "rules": ["missing-depends-on-field"],
+  "description": "Group has every other field but no `**depends-on:**` label line. `--fix` inserts a TODO stub.",
+  "expectFixChanges": true
+}

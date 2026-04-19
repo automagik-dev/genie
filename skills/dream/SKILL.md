@@ -93,7 +93,7 @@ genie team hire qa             # for QA loop on dev
    genie task move #<wish-seq> --to build --comment "Execution started"
    ```
 5. Workers signal completion via `genie agent send`.
-6. If a group gets stuck, use `genie reset <ref>` to retry.
+6. If a group gets stuck, use `genie wish reset <ref>` to retry.
 
 ### Worker Contract
 

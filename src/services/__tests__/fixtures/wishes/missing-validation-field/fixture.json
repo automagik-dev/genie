@@ -1,0 +1,6 @@
+{
+  "category": "fixable",
+  "rules": ["missing-validation-field"],
+  "description": "Group has acceptance criteria but no `**Validation:**` label line. `--fix` inserts a TODO stub.",
+  "expectFixChanges": true
+}

@@ -344,7 +344,7 @@ genie agent spawn <role>
 genie work <slug>
 genie task status <slug>
 genie task done <slug>#<group>
-genie reset <slug>#<group>
+genie wish reset <slug>#<group>
 ```
 
 ## PM Workflow Example

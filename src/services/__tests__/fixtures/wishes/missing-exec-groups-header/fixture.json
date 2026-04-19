@@ -1,0 +1,6 @@
+{
+  "category": "parse-error-fixable",
+  "rules": ["missing-execution-groups-header"],
+  "description": "Group subsection exists but the `## Execution Groups` parent header is absent. Parser throws; `--fix` inserts the missing header.",
+  "expectFixChanges": true
+}

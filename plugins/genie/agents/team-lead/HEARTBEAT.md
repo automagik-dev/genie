@@ -12,11 +12,11 @@ Read messages from workers. Prioritize: errors > completions > status updates.
 
 ### 2. Check Wish Status
 ```bash
-genie status <slug>
+genie wish status <slug>
 ```
 Which groups are done? Which are in progress? Which are blocked?
 
-If `genie status` returns "No state found", work was never dispatched.
+If `genie wish status` returns "No state found", work was never dispatched.
 Run `genie work <slug>` to initialize and dispatch — do NOT poll.
 
 ### 3. Check Workers

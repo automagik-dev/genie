@@ -37,10 +37,10 @@ The linter (`scripts/wishes-lint.ts`) treats the literal stub text as valid and 
 2. **Align intent:** ask one question at a time until success criteria are clear.
 3. **Define scope:** explicit IN and OUT lists. OUT scope cannot be empty.
 4. **Decompose into groups:** split into small, loosely coupled execution groups.
-5. **Write wish:** create `.genie/wishes/<slug>/WISH.md` using the Wish Template below.
-6. **Add verification:** every group gets acceptance criteria + a validation command.
+5. **Scaffold the wish:** run `genie wish new <slug>` to create `.genie/wishes/<slug>/WISH.md` from `templates/wish-template.md`. Never hand-write the file — the scaffold guarantees the structural skeleton the parser and linter expect.
+6. **Fill the scaffold:** replace every `<TODO: …>` marker with real content. Add verification to each group: acceptance criteria + a validation command.
 7. **Declare dependencies:** declare `depends-on` between execution groups and cross-wish dependencies.
-8. **Handoff:** auto-invoke `/review` (plan review) on the WISH.md. Do not suggest `/work` directly — the review gate must pass first.
+8. **Handoff:** run `genie wish lint <slug>` first. If the linter reports any error violations (fixable or not), surface them to the user and stop — do **not** hand off to `/review` with a structurally broken wish. Only after lint passes, auto-invoke `/review` (plan review) on the WISH.md. Do not suggest `/work` directly — the review gate must pass first.
 
 ## Wish Document Sections
 
@@ -57,103 +57,13 @@ The linter (`scripts/wishes-lint.ts`) treats the literal stub text as valid and 
 | QA Criteria | No | What must be verified on dev after merge |
 | Assumptions / Risks | No | Flag what could invalidate the plan |
 
-## Wish Template
+## Scaffold
 
-Use this structure when writing `WISH.md`:
+The wish scaffold lives at `templates/wish-template.md` in the genie repo — a single source of truth shared by `genie wish new` and `genie wish lint`.
 
-```markdown
-# Wish: <Title>
+Run `genie wish new <slug>` to materialize `.genie/wishes/<slug>/WISH.md`. The command substitutes `{{slug}}` and `{{date}}` tokens and leaves every other field as a `<TODO: …>` placeholder for you to fill in.
 
-| Field | Value |
-|-------|-------|
-| **Status** | DRAFT |
-| **Slug** | `<slug>` |
-| **Date** | YYYY-MM-DD |
-| **Design** | [DESIGN.md](../../brainstorms/<slug>/DESIGN.md) |
-
-## Summary
-2-3 sentences: what this wish delivers and why it matters.
-
-## Scope
-### IN
-- Concrete deliverable 1
-- Concrete deliverable 2
-
-### OUT
-- Explicit exclusion 1 (OUT cannot be empty)
-
-## Decisions
-| Decision | Rationale |
-|----------|-----------|
-| Choice 1 | Why this over alternatives |
-
-## Success Criteria
-- [ ] Testable criterion 1
-- [ ] Testable criterion 2
-
-## Execution Strategy
-
-### Wave 1 (parallel)
-| Group | Agent | Description |
-|-------|-------|-------------|
-| 1 | engineer | <task description> |
-| 2 | engineer | <task description> |
-
-### Wave 2 (after Wave 1)
-| Group | Agent | Description |
-|-------|-------|-------------|
-| 3 | engineer | <task description> |
-| review | reviewer | Review Groups 1+2 |
-
-## Execution Groups
-
-### Group 1: <Name>
-**Goal:** One sentence.
-**Deliverables:**
-1. Deliverable with acceptance criteria
-2. Deliverable with acceptance criteria
-
-**Acceptance Criteria:**
-- [ ] Testable criterion
-
-**Validation:**
-```bash
-# Command that exits 0 on success
-```
-
-**depends-on:** none | Group N
-
----
-
-## QA Criteria
-
-_What must be verified on dev after merge. The QA agent tests each criterion._
-
-- [ ] <functional criterion — user-facing behavior works>
-- [ ] <integration criterion — system works end-to-end>
-- [ ] <regression criterion — existing behavior not broken>
-
----
-
-## Assumptions / Risks
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| Risk 1 | Low/Medium/High | How to handle |
-
----
-
-## Review Results
-
-_Populated by `/review` after execution completes._
-
----
-
-## Files to Create/Modify
-
-```
-<list of files this wish will touch>
-```
-```
+Never write WISH.md by hand. The scaffold guarantees structural correctness by construction; handwritten wishes regularly fail `genie wish lint`.
 
 ## Task Lifecycle Integration (v4)
 
@@ -185,6 +95,8 @@ genie task dep #<child-seq> --depends-on #<dep-seq>
 **Graceful degradation:** If PG is unavailable or `genie task` commands fail, warn but do not block the wish flow. The WISH.md file is the source of truth — PG tasks are an optional tracking enhancement. The wish must still be usable by `/work` even if no PG tasks were created.
 
 ## Rules
+- Never write WISH.md by hand — always `genie wish new <slug>` then edit. The scaffold guarantees structural correctness by construction; handwritten wishes regularly fail `genie wish lint`.
+- Always run `genie wish lint <slug>` before handing off to `/review`. If lint reports errors, fix them (or run `--fix` for deterministic violations) before the handoff — never hand a structurally broken wish to `/review`.
 - Pre-flight the Design link — never emit a bracket-link to a non-existent brainstorm file. Fall back to the `_No brainstorm — direct wish_` stub text.
 - No implementation during `/wish` — planning only.
 - No vague tasks ("improve everything"). Every task must be testable.

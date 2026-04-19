@@ -1,0 +1,6 @@
+{
+  "category": "fixable",
+  "rules": ["group-header-format"],
+  "description": "Mixed canonical + Portuguese group headers. `--fix` rewrites `### Grupo N —` to `### Group N:`.",
+  "expectFixChanges": true
+}

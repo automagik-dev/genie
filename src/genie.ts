@@ -52,6 +52,7 @@ import { registerBriefCommands } from './term-commands/brief.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
 import { registerDirNamespace } from './term-commands/dir.js';
+import { registerDispatchGroupCommands } from './term-commands/dispatch-group.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import { registerExportCommands } from './term-commands/export.js';
 import * as historyCmd from './term-commands/history.js';
@@ -82,6 +83,7 @@ import { registerTaskCommands } from './term-commands/task.js';
 import { registerTeamNamespace } from './term-commands/team.js';
 import { registerTemplateCommands } from './term-commands/template.js';
 import { registerTypeCommands } from './term-commands/type.js';
+import { registerWishCommands } from './term-commands/wish.js';
 
 // Safety net: ensure git repo is never in bare mode.
 // This should no longer trigger now that we use `git clone --shared` instead of
@@ -213,6 +215,8 @@ registerAgentCommands(program);
 registerSendInboxCommands(program);
 registerStateCommands(program);
 registerDispatchCommands(program);
+registerDispatchGroupCommands(program);
+registerWishCommands(program);
 registerHookNamespace(program);
 registerDbCommands(program);
 registerScheduleCommands(program);

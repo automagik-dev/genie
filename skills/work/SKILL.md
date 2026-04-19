@@ -114,7 +114,7 @@ Depends-on: <group refs or "none">
 - **Workers signal** completion via `genie agent send` to the leader when a group is done.
 - **Leader tracks** state via `genie task status <slug>` and marks groups complete via `genie task done <ref>`.
 - Workers do NOT call `genie task done` — that is the leader's responsibility after verifying the work.
-- If a group gets stuck, the leader can use `genie reset <ref>` to retry.
+- If a group gets stuck, the leader can use `genie wish reset <ref>` to retry.
 
 ## Escalation
 
