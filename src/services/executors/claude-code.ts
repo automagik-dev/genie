@@ -1,10 +1,10 @@
 /**
  * ClaudeCodeOmniExecutor -- tmux-based IExecutor implementation.
  *
- * Spawns Claude Code processes in tmux windows (one per chat),
- * delivers follow-up messages via genie's PG mailbox pipeline
- * (mailbox.send → PG LISTEN/NOTIFY → scheduler → deliverToPane),
- * and injects env vars so agents can call `omni say/done` directly.
+ * Spawns Claude Code processes in tmux windows (one per chat) and delivers
+ * follow-up messages directly via tmux send-keys — the same injection path
+ * that delivers the spawn's initial prompt. Injects env vars so agents can
+ * call `omni say/done` directly.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -14,7 +14,6 @@ import * as directory from '../../lib/agent-directory.js';
 import type { DirectoryEntry } from '../../lib/agent-directory.js';
 import * as agents from '../../lib/agent-registry.js';
 import * as registry from '../../lib/executor-registry.js';
-import * as mailbox from '../../lib/mailbox.js';
 import { buildLaunchCommand } from '../../lib/provider-adapters.js';
 import type { SpawnParams } from '../../lib/provider-adapters.js';
 import { shellQuote } from '../../lib/team-lead-command.js';
@@ -24,9 +23,7 @@ import { buildTurnBasedPrompt } from './turn-based-prompt.js';
 
 interface TmuxSessionState {
   executorId: string | null;
-  /** Agent ID in genie's agents table (for mailbox delivery). */
   agentId: string | null;
-  /** Agent repo/working directory (for mailbox repoPath). */
   repoPath: string | null;
 }
 
@@ -244,8 +241,9 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     );
     if (!agent) return null;
 
-    // Update agent record with pane_id and repo_path so the scheduler daemon's
-    // deliverToPane() (via PG LISTEN/NOTIFY) can resolve this agent for mailbox delivery.
+    // Update agent record with pane_id and repo_path. Used by inter-agent
+    // SendMessage (protocol-router) and observability — not by omni-turn
+    // delivery, which now injects directly via tmux send-keys.
     await this.safePgCall(
       'tmux-update-agent-pane',
       async () => {
@@ -295,26 +293,31 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     const state = this.sessions.get(session.id);
     if (state?.executorId) await this.updateState(state.executorId, 'working', session.chatId);
 
-    // Build turn context + user message for the follow-up turn
     const senderName = message.sender || 'whatsapp-user';
     const turnContext = buildTurnBasedPrompt(senderName, message.instanceId, session.chatId);
     const body = `${turnContext}\n\n---\n\n[${senderName}]: ${message.content}`;
 
-    // Deliver via genie's PG mailbox pipeline:
-    //   mailbox.send() → PG INSERT + NOTIFY → scheduler daemon → deliverToPane() → tmux send-keys
-    // This provides: durability, observability (runtime_events), retry on missed NOTIFY (30s poll),
-    // and delivery confirmation (delivered_at timestamp).
-    const agentId = state?.agentId;
-    const repoPath = state?.repoPath;
-
-    if (agentId && repoPath) {
+    // Inject directly into the tmux pane — same path spawn() uses for the
+    // initial prompt (see line 197) and injectNudge() uses for system nudges.
+    // Two-phase send-keys with a 200ms settle between body and Enter: Claude's
+    // TUI input buffer can drop the newline if it arrives in the same tmux
+    // batch as the text. Matches injectToTmuxPane in protocol-router.ts.
+    const paneId = session.tmux?.paneId;
+    if (paneId && /^%\d+$/.test(paneId) && (await isPaneAlive(paneId))) {
       try {
-        await mailbox.send(repoPath, `omni:${senderName}`, agentId, body);
+        await executeTmux(`send-keys -t '${paneId}' ${shellQuote(body)}`);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        await executeTmux(`send-keys -t '${paneId}' Enter`);
       } catch (err) {
-        console.error(`[claude-code] mailbox.send failed for ${session.id}:`, err instanceof Error ? err.message : err);
+        console.error(
+          `[claude-code] deliver: send-keys failed for ${session.id} (pane ${paneId}):`,
+          err instanceof Error ? err.message : err,
+        );
       }
     } else {
-      console.error(`[claude-code] deliver: no agentId/repoPath for session ${session.id}, message lost`);
+      console.error(
+        `[claude-code] deliver: pane unavailable for ${session.id} (paneId=${paneId ?? 'null'}), message lost`,
+      );
     }
 
     session.lastActivityAt = Date.now();
