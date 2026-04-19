@@ -94,6 +94,96 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await register(makeAgent({ paneColor: '#ff0000' }));
       expect((await get('bd-42'))!.paneColor).toBe('#ff0000');
     });
+
+    // Regression: cross-team id collision must not silently adopt the stale
+    // row. Pre-fix behaviour was `ON CONFLICT (id) DO UPDATE` leaving `team`
+    // untouched, so a new spawn in team B re-using an id that still lived in
+    // team A silently inherited team=A. Effect in prod: engineer anchors from
+    // a dead team resumed into a new team's worktree while their PG `team`
+    // field stayed stale, team-lead messaging went to the wrong leader, and
+    // wish_groups never transitioned from ready→in_progress.
+    test('register rejects cross-team id collision', async () => {
+      // Seed: id=engineer-2 lives in team docs-drift-omni-v2.
+      await register(
+        makeAgent({
+          id: 'engineer-2',
+          paneId: '%67',
+          team: 'docs-drift-omni-v2',
+          role: 'engineer-2',
+          customName: 'engineer-2',
+        }),
+      );
+
+      // A different team (genie-serve-obs) must NOT be able to re-register
+      // the same id without a team override — that would silently inherit
+      // team=docs-drift-omni-v2 via the ON CONFLICT clause.
+      let threw = false;
+      try {
+        await register(
+          makeAgent({
+            id: 'engineer-2',
+            paneId: '%99',
+            team: 'genie-serve-obs',
+            role: 'engineer-2',
+            customName: 'engineer-2',
+          }),
+        );
+      } catch (err) {
+        threw = true;
+        const msg = err instanceof Error ? err.message : String(err);
+        expect(msg).toMatch(/team|cross-team|collision/i);
+      }
+      expect(threw).toBe(true);
+
+      // And crucially the stale row's team stays intact — the aborted
+      // re-register must not have partially mutated the row.
+      const existing = (await get('engineer-2'))!;
+      expect(existing.team).toBe('docs-drift-omni-v2');
+    });
+
+    test('register allows same-team re-register (pane/session refresh)', async () => {
+      // Same team, same id: this is the legitimate "resume in place" pattern
+      // (e.g. engineer-2 crashed, pane %99 is dead, new pane %100 reclaims
+      // the same id under the same team). Must still work post-fix.
+      await register(
+        makeAgent({
+          id: 'engineer-2',
+          paneId: '%99',
+          team: 'genie-serve-obs',
+          role: 'engineer-2',
+        }),
+      );
+      await register(
+        makeAgent({
+          id: 'engineer-2',
+          paneId: '%100',
+          team: 'genie-serve-obs',
+          role: 'engineer-2',
+          state: 'idle',
+        }),
+      );
+      const row = (await get('engineer-2'))!;
+      expect(row.team).toBe('genie-serve-obs');
+      expect(row.paneId).toBe('%100');
+      expect(row.state).toBe('idle');
+    });
+
+    test('register allows team=null → set team (legacy upgrade path)', async () => {
+      // Pre-team-aware rows exist with team=null. First register that sets
+      // a team must succeed, not be rejected as "cross-team" (null is not a
+      // team).
+      await register(makeAgent({ id: 'legacy-1', team: undefined }));
+      await register(
+        makeAgent({
+          id: 'legacy-1',
+          paneId: '%17',
+          team: 'alpha',
+          role: 'engineer',
+        }),
+      );
+      const row = (await get('legacy-1'))!;
+      expect(row.team).toBe('alpha');
+    });
   });
 
   describe('list', () => {
