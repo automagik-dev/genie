@@ -45,7 +45,24 @@ function runCli(args: string[], cwd: string): CliResult {
   };
 }
 
+/**
+ * Mark the tempdir as a genie workspace so `findWorkspace()` resolves in-tree
+ * and the CLI doesn't abort with "No workspace found" before reaching the
+ * wish handler. Locally this is masked by the globally-registered workspace
+ * root in ~/.genie/config.json; in CI that fallback is absent, so tests must
+ * be self-sufficient.
+ */
+function markWorkspace(tempRoot: string): void {
+  const genieDir = join(tempRoot, '.genie');
+  mkdirSync(genieDir, { recursive: true });
+  const wsMarker = join(genieDir, 'workspace.json');
+  if (!existsSync(wsMarker)) {
+    writeFileSync(wsMarker, JSON.stringify({ name: 'wish-cli-int' }), 'utf8');
+  }
+}
+
 function scaffoldWorktree(tempRoot: string, slug: string, inputMd: string): string {
+  markWorkspace(tempRoot);
   const wishDir = join(tempRoot, '.genie', 'wishes', slug);
   mkdirSync(wishDir, { recursive: true });
   writeFileSync(join(wishDir, 'WISH.md'), inputMd, 'utf8');
@@ -57,12 +74,14 @@ function copyTemplate(tempRoot: string): void {
   const destDir = join(tempRoot, 'templates');
   mkdirSync(destDir, { recursive: true });
   cpSync(TEMPLATE_PATH, join(destDir, 'wish-template.md'));
+  markWorkspace(tempRoot);
 }
 
 let TEMP_ROOT: string;
 
 beforeEach(() => {
   TEMP_ROOT = mkdtempSync(join(tmpdir(), 'wish-cli-int-'));
+  markWorkspace(TEMP_ROOT);
 });
 
 afterEach(() => {
