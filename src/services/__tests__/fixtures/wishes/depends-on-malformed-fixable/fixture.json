@@ -1,0 +1,6 @@
+{
+  "category": "fixable",
+  "rules": ["depends-on-malformed"],
+  "description": "`depends-on: Groups 1 and 2` — wrong format, but both referenced groups exist. `--fix` rewrites to canonical `Group 1, Group 2`.",
+  "expectFixChanges": true
+}

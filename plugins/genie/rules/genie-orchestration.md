@@ -8,7 +8,7 @@ Automagik Genie is installed. Load `/genie` to activate full orchestration guida
 genie team create <name> --repo <path> --wish <slug>  # Launch autonomous team
 genie spawn <role>                                     # Spawn agent (engineer, reviewer, qa, fix)
 genie send '<msg>' --to <agent>                        # Message cross-session agent
-genie status <slug>                                    # Check wish progress
+genie wish status <slug>                               # Check wish progress
 genie events list --since 5m                           # Recent structured events
 genie events timeline <entity-id>                      # Full entity event history
 genie ls --json                                        # Agent state from PG
@@ -40,7 +40,7 @@ After `genie team create` or `genie spawn`, use ONLY structured primitives. A ho
 ### DO — Structured monitoring
 | Need | Command |
 |------|---------|
-| Wish progress | `genie status <slug>` |
+| Wish progress | `genie wish status <slug>` |
 | Worker state | `genie ls --json` |
 | Send instructions | `genie send '<msg>' --to <agent>` |
 | Event timeline | `genie events timeline <id>` |
@@ -54,6 +54,6 @@ After `genie team create` or `genie spawn`, use ONLY structured primitives. A ho
 ### Post-dispatch flow
 1. **Dispatch** — `genie team create` or `genie spawn`
 2. **Trust** — workers execute autonomously, report via PG events
-3. **Check** — `genie status <slug>` for progress
+3. **Check** — `genie wish status <slug>` for progress
 4. **Communicate** — `genie send` for instructions
 5. **Review** — when workers report done, review output

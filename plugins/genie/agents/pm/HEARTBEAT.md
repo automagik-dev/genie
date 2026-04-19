@@ -11,7 +11,7 @@ Review your task queue. What's assigned to you? Prioritize by urgency and impact
 For each active team-lead or worker under your coordination:
 ```bash
 genie ls
-genie status <slug>
+genie wish status <slug>
 ```
 Are they making progress? Are they blocked? Do they need decisions?
 

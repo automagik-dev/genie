@@ -300,7 +300,7 @@ async function notifyWaveCompletion(
  * `genie done <slug>#<group>` — complete a group, push work, notify team-lead
  * on wave completion, and auto-kill the calling agent's tmux pane.
  */
-async function doneCommand(ref: string): Promise<void> {
+export async function doneCommand(ref: string): Promise<void> {
   try {
     const { slug, group } = parseRef(ref);
     const result = await wishState.completeGroup(slug, group);
@@ -402,7 +402,7 @@ async function printWishExecutors(slug: string): Promise<void> {
   }
 }
 
-async function statusCommand(slug: string): Promise<void> {
+export async function statusCommand(slug: string): Promise<void> {
   try {
     const state = (await wishState.getState(slug)) ?? (await autoInitWishState(slug));
 
@@ -449,45 +449,35 @@ async function statusCommand(slug: string): Promise<void> {
 // Registration
 // ============================================================================
 
-export function registerStateCommands(program: Command): void {
-  program
-    .command('done <ref>')
-    .description('Mark a wish group as done (format: <slug>#<group>)')
-    .action(async (ref: string) => {
-      await doneCommand(ref);
-    });
-
-  program
-    .command('status <slug>')
-    .description('Show wish state overview for all groups')
-    .action(async (slug: string) => {
-      await statusCommand(slug);
-    });
-
-  program
-    .command('reset <ref>')
-    .option('-y, --yes', 'Skip confirmation prompt (required in non-interactive mode)')
-    .description(
-      'Reset wish state. <slug>#<group> resets one in-progress group; bare <slug> wipes the wish and recreates from current WISH.md',
-    )
-    .action(async (ref: string, options: { yes?: boolean }) => {
-      try {
-        if (ref.includes('#')) {
-          const { slug, group } = parseRef(ref);
-          const result = await wishState.resetGroup(slug, group);
-          console.log(`🔄 Group "${group}" reset to ready in wish "${slug}"`);
-          if (result.status === 'ready') {
-            console.log('   Status: ready (assignee cleared)');
-          }
-          return;
-        }
-        await resetWishCommand(ref, options?.yes ?? false);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`❌ ${message}`);
-        process.exit(1);
+/**
+ * Reset action: dispatches to resetGroup (when ref has `#`) or resetWishCommand (bare slug).
+ */
+export async function resetAction(ref: string, options: { yes?: boolean }): Promise<void> {
+  try {
+    if (ref.includes('#')) {
+      const { slug, group } = parseRef(ref);
+      const result = await wishState.resetGroup(slug, group);
+      console.log(`🔄 Group "${group}" reset to ready in wish "${slug}"`);
+      if (result.status === 'ready') {
+        console.log('   Status: ready (assignee cleared)');
       }
-    });
+      return;
+    }
+    await resetWishCommand(ref, options?.yes ?? false);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ ${message}`);
+    process.exit(1);
+  }
+}
+
+export function registerStateCommands(_program: Command): void {
+  // Flat `done`, `status`, `reset` registrations removed in Group 2 of
+  // wish-command-group-restructure. These verbs now live under `genie wish`:
+  //   genie wish done <ref>
+  //   genie wish status <slug>
+  //   genie wish reset <ref>
+  // Handler bodies are exported from this file and invoked by wish.ts.
 }
 
 /**

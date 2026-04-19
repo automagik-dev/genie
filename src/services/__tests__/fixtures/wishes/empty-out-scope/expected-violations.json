@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "total": 1,
+    "fixable": 0,
+    "unfixable": 1
+  },
+  "violations": [
+    {
+      "rule": "empty-out-scope",
+      "severity": "error",
+      "line": 22,
+      "column": 1,
+      "fixable": false
+    }
+  ]
+}

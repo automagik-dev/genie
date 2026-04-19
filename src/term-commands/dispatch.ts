@@ -479,7 +479,7 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
 /**
  * `genie brainstorm <agent> <slug>` — Read DRAFT.md, spawn agent with content.
  */
-async function brainstormCommand(agentName: string, slug: string): Promise<void> {
+export async function brainstormCommand(agentName: string, slug: string): Promise<void> {
   validateSlug(slug);
   const draftPath = join(process.cwd(), '.genie', 'brainstorms', slug, 'DRAFT.md');
 
@@ -521,7 +521,7 @@ async function brainstormCommand(agentName: string, slug: string): Promise<void>
 /**
  * `genie wish <agent> <slug>` — Read DESIGN.md, spawn agent with content.
  */
-async function wishCommand(agentName: string, slug: string): Promise<void> {
+export async function wishCommand(agentName: string, slug: string): Promise<void> {
   validateSlug(slug);
   const designPath = join(process.cwd(), '.genie', 'brainstorms', slug, 'DESIGN.md');
 
@@ -655,7 +655,7 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
 /**
  * `genie review <agent> <slug>#<group>` — Spawn with group + git diff context.
  */
-async function reviewCommand(agentName: string, ref: string): Promise<void> {
+export async function reviewCommand(agentName: string, ref: string): Promise<void> {
   const { slug, group } = parseRef(ref);
   validateSlug(slug);
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
@@ -732,19 +732,13 @@ async function reviewCommand(agentName: string, ref: string): Promise<void> {
 // ============================================================================
 
 export function registerDispatchCommands(program: Command): void {
-  program
-    .command('brainstorm <agent> <slug>')
-    .description('Spawn agent with brainstorm DRAFT.md context')
-    .action(async (agent: string, slug: string) => {
-      await brainstormCommand(agent, slug);
-    });
-
-  program
-    .command('wish <agent> <slug>')
-    .description('Spawn agent with wish DESIGN.md context')
-    .action(async (agent: string, slug: string) => {
-      await wishCommand(agent, slug);
-    });
+  // Flat `brainstorm`, `wish`, `review` registrations were removed in Group 2
+  // of wish-command-group-restructure. They now live under `genie dispatch`:
+  //   genie dispatch brainstorm <agent> <slug>
+  //   genie dispatch wish <agent> <slug>
+  //   genie dispatch review <agent> <ref>
+  // Handler functions are exported and wired by dispatch-group.ts.
+  // `work` stays flat — hot path, by decision #2.
 
   program
     .command('work <ref> [agent]')
@@ -761,12 +755,5 @@ export function registerDispatchCommands(program: Command): void {
         console.error(`❌ ${error instanceof Error ? error.message : error}`);
         process.exit(1);
       }
-    });
-
-  program
-    .command('review <agent> <ref>')
-    .description('Spawn agent with review scope for a wish group (format: <slug>#<group>)')
-    .action(async (agent: string, ref: string) => {
-      await reviewCommand(agent, ref);
     });
 }

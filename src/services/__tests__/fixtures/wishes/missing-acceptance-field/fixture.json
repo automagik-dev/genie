@@ -1,0 +1,6 @@
+{
+  "category": "fixable",
+  "rules": ["missing-acceptance-field"],
+  "description": "Group has deliverables but no `**Acceptance Criteria:**` label line. `--fix` inserts a TODO stub.",
+  "expectFixChanges": true
+}

@@ -61,11 +61,11 @@ After completing all deliverables and validation:
 1. Run validation commands from the wish
 2. Commit and push your work
 3. Determine your **Implementer Status** (see below)
-4. **If DONE or DONE_WITH_CONCERNS:** Call `genie done <slug>#<group>` — marks the group complete in state
-5. **If NEEDS_CONTEXT or BLOCKED:** Do NOT call `genie done` — the group is not complete. Escalate to team-lead only.
+4. **If DONE or DONE_WITH_CONCERNS:** Call `genie wish done <slug>#<group>` — marks the group complete in state
+5. **If NEEDS_CONTEXT or BLOCKED:** Do NOT call `genie wish done` — the group is not complete. Escalate to team-lead only.
 6. Call: `genie send 'Group <N> <STATUS>. <summary>' --to team-lead` — sends durable notification
 
-The slug and group are in your initial prompt. `genie done` is only for successful completion — calling it on a blocked group falsely advances orchestration state.
+The slug and group are in your initial prompt. `genie wish done` is only for successful completion — calling it on a blocked group falsely advances orchestration state.
 </process>
 
 <success_criteria>
