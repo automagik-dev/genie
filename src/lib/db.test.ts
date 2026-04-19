@@ -392,9 +392,82 @@ describe('pool error recovery', () => {
     // Find the cached client health check function
     const healthCheckIdx = source.indexOf('healthCheckCachedClient');
     expect(healthCheckIdx).toBeGreaterThan(-1);
-    const block = source.slice(healthCheckIdx, healthCheckIdx + 400);
+    const block = source.slice(healthCheckIdx, healthCheckIdx + 600);
     expect(block).toContain('sqlClient = null');
     expect(block).toContain('activePort = null');
+  });
+});
+
+describe('parallel dispatch race (issue #1207)', () => {
+  test('healthCheckCachedClient nulls sqlClient BEFORE calling .end()', () => {
+    // Regression guard: inverting these lines (or re-introducing `await
+    // sqlClient.end(...)` before the null assignment) resurrects the
+    // CONNECTION_ENDED race fixed by 74aaa022 + issue #1207.
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function healthCheckCachedClient');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    const nullIdx = body.indexOf('sqlClient = null');
+    const endCallIdx = body.indexOf('.end(');
+    expect(nullIdx).toBeGreaterThan(-1);
+    expect(endCallIdx).toBeGreaterThan(-1);
+    // Null must come BEFORE the .end() call
+    expect(nullIdx).toBeLessThan(endCallIdx);
+  });
+
+  test('healthCheckCachedClient does not await .end() — fire-and-forget teardown', () => {
+    // If the teardown is awaited synchronously, concurrent in-flight queries
+    // on the shared pool get killed with CONNECTION_ENDED (issue #1207).
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function healthCheckCachedClient');
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    // Should not have `await ... .end(` anywhere in the catch branch
+    const catchIdx = body.indexOf('catch');
+    expect(catchIdx).toBeGreaterThan(-1);
+    const catchBody = body.slice(catchIdx);
+    // Match `await <identifier>.end(` or `await this.end(` patterns
+    expect(catchBody).not.toMatch(/await\s+\w+\.end\(/);
+    // Should call .end() with a .catch(...) attached (fire-and-forget)
+    expect(catchBody).toMatch(/\.end\([^)]*\)\.catch\(/);
+  });
+
+  test('getConnection dedups concurrent rebuilds via buildPromise', () => {
+    // Without dedup, N parallel callers each race pgModule(...) and overwrite
+    // the singleton, leaking pools and triggering CONNECTION_ENDED on the
+    // orphaned ones. See issue #1207.
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    expect(source).toContain('let buildPromise');
+    // getConnection must check buildPromise before rebuilding
+    const getConnIdx = source.indexOf('export async function getConnection');
+    const nextFnIdx = source.indexOf('async function _buildConnection');
+    expect(getConnIdx).toBeGreaterThan(-1);
+    expect(nextFnIdx).toBeGreaterThan(getConnIdx);
+    const body = source.slice(getConnIdx, nextFnIdx);
+    expect(body).toContain('if (buildPromise) return buildPromise');
+    // Must reset buildPromise on both success and failure
+    expect(body).toMatch(/finally\s*\{[^}]*buildPromise\s*=\s*null/);
+  });
+
+  test('_buildConnection fire-and-forget teardown on post-connect failure', () => {
+    // Same pattern as healthCheckCachedClient — if runPostConnectSetup fails,
+    // tear down the doomed client without blocking concurrent work.
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function _buildConnection');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    const catchIdx = body.indexOf('catch (err)');
+    expect(catchIdx).toBeGreaterThan(-1);
+    const catchBody = body.slice(catchIdx);
+    // Null before end, fire-and-forget teardown
+    expect(catchBody.indexOf('sqlClient = null')).toBeLessThan(catchBody.indexOf('.end('));
+    expect(catchBody).not.toMatch(/await\s+\w+\.end\(/);
+    expect(catchBody).toMatch(/\.end\([^)]*\)\.catch\(/);
   });
 });
 

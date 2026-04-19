@@ -12,6 +12,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { sanitizeWindowName } from '../genie-commands/session.js';
+import * as registry from './agent-registry.js';
 import {
   ensureNativeTeamWithSessionId,
   loadConfig,
@@ -19,6 +20,7 @@ import {
   resolveOrMintLeadSessionId,
   sanitizeTeamName,
 } from './claude-native-teams.js';
+import * as executorRegistry from './executor-registry.js';
 import { buildTeamLeadCommand, shellQuote } from './team-lead-command.js';
 import * as tmux from './tmux.js';
 
@@ -104,14 +106,15 @@ export async function isTeamActive(teamName: string): Promise<boolean> {
 }
 
 /**
- * Check if a specific agent's tmux pane is alive.
+ * Check if a specific agent is alive (transport-aware).
  *
- * Unlike `isTeamActive` which checks for the team window, this checks
- * whether a specific agent's pane exists and is responsive.
- * Used by inbox-watcher for per-recipient liveness checks.
+ * Used by inbox-watcher for per-recipient liveness checks. For tmux agents
+ * we ask tmux directly; for SDK/omni/inline agents (synthetic paneId), we
+ * consult `executors.state`. A plain `isPaneAlive` check misreports live
+ * SDK recipients as dead — causing the watcher to misroute messages.
  *
  * @param agentName - Agent name or ID to look up in the registry
- * @returns true if the agent has a live pane
+ * @returns true if the agent has a live pane or a live executor
  */
 export async function isAgentAlive(agentName: string): Promise<boolean> {
   try {
@@ -119,7 +122,7 @@ export async function isAgentAlive(agentName: string): Promise<boolean> {
     const agents = await list();
     const match = agents.find((a) => a.id === agentName || a.role === agentName);
     if (!match?.paneId) return false;
-    return tmux.isPaneAlive(match.paneId);
+    return executorRegistry.resolveWorkerLivenessByTransport(match);
   } catch {
     return false;
   }
@@ -173,7 +176,12 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
   const teamWindow = await tmux.ensureTeamWindow(session, windowName, workingDir);
 
   if (teamWindow.created) {
-    // Launch Claude Code in the new window
+    // Launch Claude Code in the new window.
+    //
+    // Always pass the resolved UUID. When `shouldResume` is true we emit
+    // `--resume <uuid>` (NOT `--resume <teamName>`), which prevents CC from
+    // re-running its own fuzzy JSONL title match and picking an unrelated
+    // session. Gap B from trace-stale-resume (task #6).
     const systemPromptFile = getSystemPromptFile(workingDir);
     const target = `${session}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
@@ -181,10 +189,69 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     const cmd = buildTeamLeadCommand(teamName, {
       systemPromptFile: systemPromptFile ?? undefined,
       leaderName,
-      ...(shouldResume ? { continueName: sanitizeTeamName(teamName) } : { sessionId }),
+      sessionId,
+      resume: shouldResume,
     });
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
+
+    // Create an executor row so downstream tooling (resume, session-sync,
+    // observability) can track this team-lead the same way it tracks spawned
+    // workers. Best-effort — lifecycle should not break if PG is unavailable.
+    await recordTeamLeadExecutor({
+      teamName,
+      leaderName,
+      session,
+      windowName,
+      windowId: teamWindow.windowId,
+      paneId: teamWindow.paneId,
+      sessionId,
+      workingDir,
+    }).catch(() => {
+      /* best-effort */
+    });
   }
 
   return { created: teamWindow.created, session, window: windowName };
+}
+
+/**
+ * Create (or replace) the executor row tracking this team-lead.
+ *
+ * Terminates any prior active executor for the same agent identity first to
+ * prevent stale rows from accumulating on repeated ensure calls.
+ */
+async function recordTeamLeadExecutor(opts: {
+  teamName: string;
+  leaderName: string;
+  session: string;
+  windowName: string;
+  windowId?: string;
+  paneId: string;
+  sessionId: string;
+  workingDir: string;
+}): Promise<void> {
+  const sanitizedTeam = sanitizeTeamName(opts.teamName);
+  const agentIdentity = await registry.findOrCreateAgent(opts.leaderName, sanitizedTeam, opts.leaderName);
+  await executorRegistry.terminateActiveExecutor(agentIdentity.id);
+
+  let pid: number | null = null;
+  try {
+    const target = `${opts.session}:${opts.windowName}`;
+    const pidStr = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_pid}'`)).trim();
+    const parsed = Number.parseInt(pidStr, 10);
+    if (parsed > 0) pid = parsed;
+  } catch {
+    /* best-effort */
+  }
+
+  await executorRegistry.createAndLinkExecutor(agentIdentity.id, 'claude', 'tmux', {
+    pid,
+    tmuxSession: opts.session,
+    tmuxPaneId: opts.paneId,
+    tmuxWindow: opts.windowName,
+    tmuxWindowId: opts.windowId ?? null,
+    claudeSessionId: opts.sessionId,
+    state: 'spawning',
+    repoPath: opts.workingDir,
+  });
 }

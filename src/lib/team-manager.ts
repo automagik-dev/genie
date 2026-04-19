@@ -421,6 +421,75 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
 }
 
 /**
+ * Ensure a PG row exists for a team that was created via the native
+ * `~/.claude/teams/<name>/config.json` path (e.g. the implicit team created
+ * by {@link ./claude-native-teams#ensureNativeTeam} during a spawn flow).
+ *
+ * This is the back-fill that rescues the PG registry after a reboot where
+ * the pgserve data dir was reset (or any scenario that leaves the native
+ * team file in place but the `teams` row absent). Without it,
+ * {@link listTeams} returns an empty list even though the team is fully
+ * functional on disk.
+ *
+ * Intentionally lightweight:
+ *   - Idempotent via `ON CONFLICT (name) DO NOTHING` — never overwrites an
+ *     explicit `createTeam` row.
+ *   - Does NOT create a git worktree; `worktreePath` defaults to `repo`.
+ *     If the user later runs `genie team create <name>`, that command's
+ *     own `getTeam` check returns this bootstrap row and skips worktree
+ *     creation — callers who need a real worktree should run `createTeam`
+ *     explicitly BEFORE spawning.
+ *   - Best-effort: SQL errors are caught and returned as null so a bad
+ *     PG session never blocks the native-team code path.
+ *
+ * @param name         Team name (must pass `validateBranchName`).
+ * @param opts.repo    Absolute path to the repo. Defaults to `process.cwd()`.
+ * @returns The resulting TeamConfig, or null if the insert failed.
+ */
+export async function ensureTeamRow(name: string, opts?: { repo?: string }): Promise<TeamConfig | null> {
+  try {
+    validateBranchName(name);
+  } catch {
+    return null;
+  }
+
+  const existing = await getTeam(name);
+  if (existing) return existing;
+
+  const repoPath = path.resolve(opts?.repo ?? process.cwd());
+  const now = new Date().toISOString();
+  const config: TeamConfig = {
+    name,
+    repo: repoPath,
+    baseBranch: 'dev',
+    worktreePath: repoPath,
+    members: [],
+    status: 'in_progress',
+    createdAt: now,
+    nativeTeamsEnabled: true,
+  };
+
+  try {
+    const sql = await getConnection();
+    await sql`
+      INSERT INTO teams (
+        name, repo, base_branch, worktree_path, leader,
+        members, status, native_teams_enabled, created_at
+      ) VALUES (
+        ${config.name}, ${config.repo}, ${config.baseBranch},
+        ${config.worktreePath}, ${null},
+        ${JSON.stringify(config.members)}, ${config.status},
+        ${config.nativeTeamsEnabled ?? false}, ${config.createdAt}
+      ) ON CONFLICT (name) DO NOTHING
+    `;
+    recordAuditEvent('team', name, 'backfilled', getActor(), { repo: repoPath, source: 'native-team' }).catch(() => {});
+    return (await getTeam(name)) ?? config;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Add an agent to a team's members list.
  *
  * Special case: if agentName is "council", hires all 10 built-in council members.

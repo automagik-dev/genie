@@ -11,8 +11,8 @@ describe('otel-receiver', () => {
     process.env.GENIE_OTEL_PORT = String(57000 + Math.floor(Math.random() * 7000));
   });
 
-  afterEach(() => {
-    stopOtelReceiver();
+  afterEach(async () => {
+    await stopOtelReceiver();
     if (origPort !== undefined) process.env.GENIE_OTEL_PORT = origPort;
     else process.env.GENIE_OTEL_PORT = undefined;
   });
@@ -41,15 +41,17 @@ describe('otel-receiver', () => {
   });
 
   test('stopOtelReceiver stops the server', async () => {
-    await startOtelReceiver();
+    const started = await startOtelReceiver();
+    expect(started).toBe(true);
     expect(isOtelReceiverRunning()).toBe(true);
 
-    stopOtelReceiver();
+    await stopOtelReceiver();
     expect(isOtelReceiverRunning()).toBe(false);
   });
 
   test('POST /v1/logs returns 200', async () => {
-    await startOtelReceiver();
+    const started = await startOtelReceiver();
+    expect(started).toBe(true);
     const port = getOtelPort();
 
     const res = await fetch(`http://127.0.0.1:${port}/v1/logs`, {
@@ -83,7 +85,8 @@ describe('otel-receiver', () => {
   });
 
   test('POST /v1/metrics returns 200', async () => {
-    await startOtelReceiver();
+    const started = await startOtelReceiver();
+    expect(started).toBe(true);
     const port = getOtelPort();
 
     const res = await fetch(`http://127.0.0.1:${port}/v1/metrics`, {
@@ -116,7 +119,8 @@ describe('otel-receiver', () => {
   });
 
   test('POST /v1/logs handles empty payload', async () => {
-    await startOtelReceiver();
+    const started = await startOtelReceiver();
+    expect(started).toBe(true);
     const port = getOtelPort();
 
     const res = await fetch(`http://127.0.0.1:${port}/v1/logs`, {
@@ -129,7 +133,8 @@ describe('otel-receiver', () => {
   });
 
   test('GET /health returns ok', async () => {
-    await startOtelReceiver();
+    const started = await startOtelReceiver();
+    expect(started).toBe(true);
     const port = getOtelPort();
 
     const res = await fetch(`http://127.0.0.1:${port}/health`);
@@ -139,7 +144,8 @@ describe('otel-receiver', () => {
   });
 
   test('unknown route returns 404', async () => {
-    await startOtelReceiver();
+    const started = await startOtelReceiver();
+    expect(started).toBe(true);
     const port = getOtelPort();
 
     const res = await fetch(`http://127.0.0.1:${port}/v1/unknown`, {

@@ -43,6 +43,13 @@ const INBOX_POLL_INTERVAL_MS = 30_000;
 const MAX_SPAWN_FAILURES = 3;
 
 /**
+ * Re-warn interval for teams missing workingDir (1 hour).
+ * After this interval, the warning re-fires — so if workingDir gets populated,
+ * the next poll cycle will naturally attempt the spawn again.
+ */
+const NO_WORKING_DIR_RECHECK_MS = 60 * 60 * 1000;
+
+/**
  * Get the inbox poll interval from env or default.
  * Set GENIE_INBOX_POLL_MS to override (0 = disabled).
  */
@@ -63,9 +70,21 @@ export function getInboxPollIntervalMs(): number {
 /** Consecutive spawn failure counts per team. */
 const spawnFailures = new Map<string, number>();
 
+/**
+ * Last timestamp (ms) a "missing workingDir" warning was emitted per team.
+ * Prevents logging the same warning every poll cycle (every 30s by default);
+ * re-fires after NO_WORKING_DIR_RECHECK_MS so populated configs recover.
+ */
+const noWorkingDirWarned = new Map<string, number>();
+
 /** Reset all failure counts (exposed for testing). */
 export function resetSpawnFailures(): void {
   spawnFailures.clear();
+}
+
+/** Reset missing-workingDir warning cache (exposed for testing). */
+export function resetNoWorkingDirWarned(): void {
+  noWorkingDirWarned.clear();
 }
 
 // ============================================================================
@@ -77,6 +96,46 @@ function resolveSessionKeyFromMessage(teamName: string, firstUnreadText: string 
   if (!firstUnreadText) return teamName;
   const header = parseRoutingHeader(firstUnreadText);
   return header ? resolveSessionKey(teamName, header) : teamName;
+}
+
+/**
+ * Rate-limit the "no workingDir" warning per team. Returns true if the
+ * caller should emit a warning now; false if it was recently emitted.
+ * The cache re-opens after NO_WORKING_DIR_RECHECK_MS so populated configs
+ * naturally re-warn if they regress.
+ */
+function shouldWarnMissingWorkingDir(teamName: string): boolean {
+  const now = Date.now();
+  const lastWarned = noWorkingDirWarned.get(teamName) ?? 0;
+  if (now - lastWarned < NO_WORKING_DIR_RECHECK_MS) return false;
+  noWorkingDirWarned.set(teamName, now);
+  return true;
+}
+
+/**
+ * Attempt to spawn a team-lead; track failures in `spawnFailures`.
+ * Returns true on success (caller adds team to `spawned` list).
+ */
+async function attemptSpawn(
+  deps: InboxWatcherDeps,
+  teamName: string,
+  workingDir: string,
+  sessionKey: string,
+  currentFailures: number,
+): Promise<boolean> {
+  try {
+    await deps.ensureTeamLead(teamName, workingDir);
+    spawnFailures.set(sessionKey, 0); // Reset on success
+    return true;
+  } catch (err) {
+    const newCount = currentFailures + 1;
+    spawnFailures.set(sessionKey, newCount);
+    const message = err instanceof Error ? err.message : String(err);
+    deps.warn(
+      `[inbox-watcher] Failed to spawn team-lead for "${teamName}" (attempt ${newCount}/${MAX_SPAWN_FAILURES}): ${message}`,
+    );
+    return false;
+  }
 }
 
 // ============================================================================
@@ -110,25 +169,19 @@ export async function checkInboxes(deps: InboxWatcherDeps = defaultDeps): Promis
     const active = await deps.isTeamActive(teamName);
     if (active) continue;
 
-    // No working dir means we can't spawn
+    // No working dir means we can't spawn — warn once per team, then silence
+    // until NO_WORKING_DIR_RECHECK_MS elapses (lets populated configs recover).
     if (!workingDir) {
-      deps.warn(`[inbox-watcher] Cannot spawn team-lead for "${teamName}" — no workingDir in config`);
+      if (shouldWarnMissingWorkingDir(teamName)) {
+        deps.warn(`[inbox-watcher] Cannot spawn team-lead for "${teamName}" — no workingDir in config`);
+      }
       continue;
     }
+    // Config recovered — clear cache so any future regression re-warns immediately.
+    noWorkingDirWarned.delete(teamName);
 
-    // Attempt to spawn team-lead
-    try {
-      await deps.ensureTeamLead(teamName, workingDir);
-      spawnFailures.set(sessionKey, 0); // Reset on success
-      spawned.push(teamName);
-    } catch (err) {
-      const newCount = failures + 1;
-      spawnFailures.set(sessionKey, newCount);
-      const message = err instanceof Error ? err.message : String(err);
-      deps.warn(
-        `[inbox-watcher] Failed to spawn team-lead for "${teamName}" (attempt ${newCount}/${MAX_SPAWN_FAILURES}): ${message}`,
-      );
-    }
+    const ok = await attemptSpawn(deps, teamName, workingDir, sessionKey, failures);
+    if (ok) spawned.push(teamName);
   }
 
   return spawned;

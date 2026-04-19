@@ -353,8 +353,16 @@ export async function followRuntimeEvents(
     stop: async () => {
       active = false;
       clearInterval(pollTimer);
-      await drainChain;
-      await listener.unlisten();
+      try {
+        await drainChain;
+      } catch {
+        /* swallow — connection may already be torn down */
+      }
+      try {
+        await listener.unlisten();
+      } catch {
+        /* swallow — connection may already be torn down */
+      }
     },
   };
 }
@@ -366,7 +374,7 @@ export async function waitForRuntimeEvent(
 ): Promise<RuntimeEvent | null> {
   const afterId = query.afterId ?? 0;
 
-  return new Promise<RuntimeEvent | null>((resolve) => {
+  return new Promise<RuntimeEvent | null>((resolve, reject) => {
     let settled = false;
     let handle: FollowRuntimeEventsHandle | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -375,23 +383,42 @@ export async function waitForRuntimeEvent(
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      if (handle) await handle.stop();
+      try {
+        if (handle) await handle.stop();
+      } catch {
+        /* swallow — connection may already be torn down */
+      }
       resolve(event);
     };
 
     void (async () => {
-      handle = await followRuntimeEvents(
-        { ...query, afterId },
-        (event) => {
-          if (predicate && !predicate(event)) return;
-          void finish(event);
-        },
-        { pollIntervalMs: 250 },
-      );
-
-      timer = setTimeout(() => {
-        void finish(null);
-      }, timeoutMs);
+      try {
+        handle = await followRuntimeEvents(
+          { ...query, afterId },
+          (event) => {
+            if (predicate && !predicate(event)) return;
+            void finish(event);
+          },
+          { pollIntervalMs: 250 },
+        );
+        if (settled) {
+          // initial drain already resolved us — stop the late-arriving handle
+          try {
+            await handle.stop();
+          } catch {
+            /* swallow — connection may already be torn down */
+          }
+          return;
+        }
+        timer = setTimeout(() => {
+          void finish(null);
+        }, timeoutMs);
+      } catch (err) {
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+      }
     })();
   });
 }

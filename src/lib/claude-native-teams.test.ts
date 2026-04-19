@@ -17,11 +17,14 @@ import { join } from 'node:path';
 import {
   type NativeInboxMessage,
   discoverClaudeParentSessionId,
+  discoverTeamName,
   ensureNativeTeamWithSessionId,
+  findTeamsContainingAgent,
   loadConfig,
   resolveNativeMemberName,
   resolveOrMintLeadSessionId,
   sanitizeTeamName,
+  unregisterNativeMember,
   writeNativeInbox,
 } from './claude-native-teams.js';
 
@@ -296,6 +299,75 @@ describe('discoverClaudeParentSessionId', () => {
 });
 
 // ---------------------------------------------------------------------------
+// unregisterNativeMember — removes entry from members array
+// See automagik-dev/genie#1179: prior impl marked isActive=false and left
+// stale entries in the config, which silently routed new spawns and messages
+// to dead workers via resolveNativeMemberName and findTeamsContainingAgent.
+// ---------------------------------------------------------------------------
+
+describe('unregisterNativeMember', () => {
+  test('removes the member entry entirely (not just isActive flip)', async () => {
+    await createTestTeamConfig('my-team', [
+      { agentId: 'engineer@my-team', name: 'engineer' },
+      { agentId: 'reviewer@my-team', name: 'reviewer' },
+    ]);
+
+    await unregisterNativeMember('my-team', 'engineer');
+
+    const config = await loadConfig('my-team');
+    expect(config).not.toBeNull();
+    expect(config!.members).toHaveLength(1);
+    expect(config!.members[0].name).toBe('reviewer');
+    expect(config!.members.some((m) => m.name === 'engineer')).toBe(false);
+  });
+
+  test('is a no-op when the member does not exist', async () => {
+    await createTestTeamConfig('my-team', [{ agentId: 'engineer@my-team', name: 'engineer' }]);
+
+    await unregisterNativeMember('my-team', 'nonexistent');
+
+    const config = await loadConfig('my-team');
+    expect(config!.members).toHaveLength(1);
+    expect(config!.members[0].name).toBe('engineer');
+  });
+
+  test('is a no-op when the team does not exist', async () => {
+    // Should not throw; should not create the config.
+    await expect(unregisterNativeMember('nonexistent-team', 'engineer')).resolves.toBeUndefined();
+    const config = await loadConfig('nonexistent-team');
+    expect(config).toBeNull();
+  });
+
+  test('findTeamsContainingAgent stops matching after unregister (regression)', async () => {
+    // Reproducer for #1179: before the fix, an unregistered member still
+    // matched `findTeamsContainingAgent`, routing spawn-team resolution to
+    // the wrong team.
+    await createTestTeamConfig('team-a', [{ agentId: 'simone@team-a', name: 'simone' }]);
+    await createTestTeamConfig('team-b', [{ agentId: 'simone@team-b', name: 'simone' }]);
+
+    expect(await findTeamsContainingAgent('simone')).toEqual(expect.arrayContaining(['team-a', 'team-b']));
+
+    await unregisterNativeMember('team-a', 'simone');
+
+    const matches = await findTeamsContainingAgent('simone');
+    expect(matches).toEqual(['team-b']);
+  });
+
+  test('resolveNativeMemberName stops resolving after unregister (regression)', async () => {
+    // Before the fix, the active→inactive fallback in resolveNativeMemberName
+    // would still return the unregistered member's name, causing messages
+    // addressed to that name to be silently delivered to a dead worker.
+    await createTestTeamConfig('my-team', [{ agentId: 'engineer@my-team', name: 'engineer' }]);
+
+    expect(await resolveNativeMemberName('my-team', 'engineer')).toBe('engineer');
+
+    await unregisterNativeMember('my-team', 'engineer');
+
+    expect(await resolveNativeMemberName('my-team', 'engineer')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // writeNativeInbox format tests
 // ---------------------------------------------------------------------------
 
@@ -439,7 +511,11 @@ describe('resolveOrMintLeadSessionId', () => {
     expect(sessionId).toBe(newerUuid);
   });
 
-  test('also matches the {team}-{team} custom-title form CC sometimes writes', async () => {
+  test('does NOT match {team}-{team} form — prevents alpha from picking up alpha-alpha sessions', async () => {
+    // Gap B from trace-stale-resume (task #6): we used to also accept the
+    // `{team}-{team}` prefixed form, but that let team "alpha" resume a
+    // JSONL written by team "alpha-alpha" under the same worktree. Strict
+    // match only — if the exact title isn't present, mint fresh.
     const cwd = '/tmp/doubled-team-cwd';
     const priorUuid = 'cafebabe-dead-beef-cafe-babedeadbeef';
 
@@ -451,8 +527,9 @@ describe('resolveOrMintLeadSessionId', () => {
     );
 
     const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('doubled-team', cwd);
-    expect(shouldResume).toBe(true);
-    expect(sessionId).toBe(priorUuid);
+    expect(shouldResume).toBe(false);
+    expect(sessionId).not.toBe(priorUuid);
+    expect(sessionId).toMatch(UUID_RE);
   });
 
   test('ignores JSONL without a custom-title matching the team', async () => {
@@ -552,5 +629,95 @@ describe('loadConfig', () => {
 
     const config = await loadConfig('bad-team');
     expect(config).toBeNull();
+  });
+});
+
+describe('discoverTeamName', () => {
+  let savedTmux: string | undefined;
+  let savedGenieTeam: string | undefined;
+
+  beforeEach(() => {
+    savedTmux = process.env.TMUX;
+    savedGenieTeam = process.env.GENIE_TEAM;
+    process.env.TMUX = undefined;
+    process.env.GENIE_TEAM = undefined;
+  });
+
+  afterEach(() => {
+    if (savedTmux === undefined) process.env.TMUX = undefined;
+    else process.env.TMUX = savedTmux;
+    if (savedGenieTeam === undefined) process.env.GENIE_TEAM = undefined;
+    else process.env.GENIE_TEAM = savedGenieTeam;
+  });
+
+  test('returns GENIE_TEAM env var when set', async () => {
+    process.env.GENIE_TEAM = 'explicit-team';
+    const result = await discoverTeamName('/repo');
+    expect(result).toBe('explicit-team');
+  });
+
+  test('matches team by leadSessionId', async () => {
+    const cwd = '/repo/x';
+    await createTestTeamConfig('match-team', [{ agentId: 'a@match-team', name: 'a' }], {
+      leadSessionId: 'session-xyz',
+    });
+    await createSessionJsonl(cwd, 'session-xyz', [{ type: 'user', cwd }], 1_000);
+
+    const result = await discoverTeamName(cwd);
+    expect(result).toBe('match-team');
+  });
+
+  test('returns null when no session and TMUX unset', async () => {
+    // No matching JSONL, no TMUX — both discovery paths yield null.
+    const result = await discoverTeamName('/repo/nonexistent');
+    expect(result).toBeNull();
+  });
+
+  test('tmux fallback is skipped when TMUX env is absent', async () => {
+    // Team config exists on disk with matching NAME, but there's no
+    // leadSessionId match AND no TMUX env → fallback must not run,
+    // so result stays null. Regression guard against spuriously
+    // matching by name when not inside a tmux session.
+    await createTestTeamConfig('standalone-team', [{ agentId: 'a@standalone-team', name: 'a' }], {
+      leadSessionId: 'some-other-session',
+    });
+    const result = await discoverTeamName('/repo/no-jsonl-here');
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findTeamsContainingAgent tests — the spawn-fallback scan relied on by
+// `resolveTeamAndResume` when GENIE_TEAM and parent-session context are both
+// missing. Guards against regressions in the agent-name vs agent-type match
+// and the no-match path that must fail closed (so callers can decide whether
+// to auto-create a team-of-one or surface the --team-is-required error).
+// ---------------------------------------------------------------------------
+
+describe('findTeamsContainingAgent', () => {
+  test('returns an empty array when no team lists the agent', async () => {
+    await createTestTeamConfig('team-alpha', [{ agentId: 'other@team-alpha', name: 'other' }]);
+    const result = await findTeamsContainingAgent('khal-os');
+    expect(result).toEqual([]);
+  });
+
+  test('returns the team when the agent is a member by name', async () => {
+    await createTestTeamConfig('team-bravo', [{ agentId: 'khal-os@team-bravo', name: 'khal-os' }]);
+    const result = await findTeamsContainingAgent('khal-os');
+    expect(result).toEqual(['team-bravo']);
+  });
+
+  test('returns every team listing the agent when multiple ghost teams exist', async () => {
+    await createTestTeamConfig('team-gamma', [{ agentId: 'khal-os@team-gamma', name: 'khal-os' }]);
+    await createTestTeamConfig('team-delta', [{ agentId: 'khal-os@team-delta', name: 'khal-os' }]);
+    const result = (await findTeamsContainingAgent('khal-os')).sort();
+    expect(result).toEqual(['team-delta', 'team-gamma']);
+  });
+
+  test('returns empty array when teams dir does not exist', async () => {
+    // Fresh tempDir with no teams/ subdir — mirrors a pristine server where
+    // no team config has ever been written.
+    const result = await findTeamsContainingAgent('khal-os');
+    expect(result).toEqual([]);
   });
 });

@@ -420,6 +420,8 @@ async function installBrain(): Promise<boolean> {
       console.log('  Auto-migration skipped. Run: genie brain migrate');
     }
 
+    await runBrainInstallWizard();
+
     // Auto-start daemon if a vault is found
     const vaultPath = findBrainVault();
     if (vaultPath) {
@@ -456,6 +458,33 @@ async function installBrain(): Promise<boolean> {
       console.log('');
     }
     return false;
+  }
+}
+
+/**
+ * Closes khal-os/brain wish brain-v2-onboarding-overhaul Grupo G:
+ * chain the brain-side install wizard after the binary is installed
+ * + migrations have run. The wizard does:
+ *   - diagnose (wraps `brain doctor`)
+ *   - auto-install rlmx if missing (`bun install -g @automagik/rlmx`)
+ *   - run a smoke test (`brain doctor --json` parse)
+ *
+ * Idempotent: re-run on a healthy env is a no-op. Best-effort: any
+ * failure here is non-fatal because the binary itself is already
+ * installed and usable. Operator can re-run manually with
+ * `brain install --apply --yes`.
+ */
+async function runBrainInstallWizard(): Promise<void> {
+  try {
+    const brain = await import(BRAIN_PKG);
+    if (brain.execute) {
+      console.log('');
+      console.log('  Running brain install wizard (rlmx + smoke test)...');
+      await brain.execute(['install', '--apply', '--yes']);
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`  Install wizard skipped (${msg.split('\n')[0]}). Run manually: brain install --apply --yes`);
   }
 }
 

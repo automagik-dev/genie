@@ -3,21 +3,18 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-// Import the real workspace module so we can spyOn individual exports.
-// Using spyOn instead of mock.module avoids leaking an incomplete mock to
-// other test files (bun 1.3.x leaks mock.module across parallel workers).
+// Import the real workspace + genie-config modules so we can spyOn individual
+// exports. Using spyOn instead of mock.module avoids leaking an incomplete
+// mock to other test files (bun 1.3.x leaks mock.module across parallel
+// workers — see https://github.com/oven-sh/bun/issues bun-test-mock-leak).
+import * as genieConfig from '../lib/genie-config.js';
 import * as workspace from '../lib/workspace.js';
 
 const mockConfirm = mock<(options: { message: string; default?: boolean }) => Promise<boolean>>(async () => false);
-const mockIsSetupComplete = mock<() => boolean>(() => true);
 const mockSetupCommand = mock(async () => {});
 
 mock.module('@inquirer/prompts', () => ({
   confirm: (options: { message: string; default?: boolean }) => mockConfirm(options),
-}));
-
-mock.module('../lib/genie-config.js', () => ({
-  isSetupComplete: () => mockIsSetupComplete(),
 }));
 
 mock.module('../genie-commands/setup.js', () => ({
@@ -30,6 +27,7 @@ let originalCwd: string;
 let testDir: string;
 let findWorkspaceSpy: ReturnType<typeof spyOn>;
 let scanAgentsSpy: ReturnType<typeof spyOn>;
+let isSetupCompleteSpy: ReturnType<typeof spyOn>;
 
 describe('genie init setup gating', () => {
   beforeEach(() => {
@@ -42,23 +40,25 @@ describe('genie init setup gating', () => {
     findWorkspaceSpy = spyOn(workspace, 'findWorkspace').mockReturnValue(null);
     scanAgentsSpy = spyOn(workspace, 'scanAgents').mockReturnValue([]);
 
+    // Spy on genie-config.isSetupComplete (avoids mock.module cross-file leak)
+    isSetupCompleteSpy = spyOn(genieConfig, 'isSetupComplete').mockReturnValue(true);
+
     mockConfirm.mockReset();
-    mockIsSetupComplete.mockReset();
     mockSetupCommand.mockReset();
 
     mockConfirm.mockResolvedValue(false);
-    mockIsSetupComplete.mockReturnValue(true);
   });
 
   afterEach(() => {
     findWorkspaceSpy.mockRestore();
     scanAgentsSpy.mockRestore();
+    isSetupCompleteSpy.mockRestore();
     process.chdir(originalCwd);
     rmSync(testDir, { recursive: true, force: true });
   });
 
   test('runs setup flow before init when setup is incomplete', async () => {
-    mockIsSetupComplete.mockReturnValue(false);
+    isSetupCompleteSpy.mockReturnValue(false);
 
     const program = new Command();
     registerInitCommands(program);

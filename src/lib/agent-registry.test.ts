@@ -338,6 +338,94 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       const reset = await reconcileStaleSpawns(2);
       expect(reset).not.toContain(agent.id);
     });
+
+    test('flips idle+dead-pane rows to error (auto-resume-zombie-cap fix)', async () => {
+      // This is Change #3 of the auto-resume-zombie-cap fix: idle/working
+      // rows whose tmux pane is dead must be flipped to 'error' so they
+      // stop inflating the scheduler concurrency cap.
+      const { isPaneAlive } = await import('./tmux.js');
+      try {
+        await isPaneAlive('%1');
+      } catch {
+        return; // tmux server unreachable — nothing to assert
+      }
+
+      const oldChange = new Date(Date.now() - 5_000).toISOString();
+      // pane %42 does not exist → isPaneAlive returns false
+      await register(
+        makeAgent({
+          id: 'zombie-idle',
+          paneId: '%42',
+          state: 'idle',
+          startedAt: oldChange,
+          lastStateChange: oldChange,
+        }),
+      );
+      await register(
+        makeAgent({
+          id: 'zombie-working',
+          paneId: '%43',
+          state: 'working',
+          startedAt: oldChange,
+          lastStateChange: oldChange,
+        }),
+      );
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).toContain('zombie-idle');
+      expect(reset).toContain('zombie-working');
+
+      const a1 = await get('zombie-idle');
+      expect(a1!.state).toBe('error');
+      const a2 = await get('zombie-working');
+      expect(a2!.state).toBe('error');
+    });
+
+    test('does not touch idle rows whose pane is still alive', async () => {
+      // Only dead-pane rows should be GC'd. Live-pane idle rows are
+      // genuinely idle (e.g. between tasks) and must not be touched.
+      // Since we can't easily mock a live pane in this DB test, we use
+      // a recent last_state_change (under the threshold) as a proxy —
+      // the reconciler must also respect the time threshold.
+      const recent = new Date().toISOString();
+      await register(
+        makeAgent({
+          id: 'fresh-idle',
+          paneId: '%99',
+          state: 'idle',
+          startedAt: recent,
+          lastStateChange: recent,
+        }),
+      );
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).not.toContain('fresh-idle');
+
+      const a = await get('fresh-idle');
+      expect(a!.state).toBe('idle');
+    });
+
+    test('skips non-tmux (synthetic) paneIds in dead-pane pass', async () => {
+      // SDK/inline transports have paneIds like 'sdk', 'inline', '' — the
+      // regex `^%[0-9]+$` must NOT match those, so they are skipped here
+      // (their liveness is tracked by executor state, not tmux).
+      const oldChange = new Date(Date.now() - 5_000).toISOString();
+      await register(
+        makeAgent({
+          id: 'sdk-worker',
+          paneId: 'sdk',
+          state: 'working',
+          startedAt: oldChange,
+          lastStateChange: oldChange,
+        }),
+      );
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).not.toContain('sdk-worker');
+
+      const a = await get('sdk-worker');
+      expect(a!.state).toBe('working');
+    });
   });
 
   describe('templates', () => {

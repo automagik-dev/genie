@@ -17,6 +17,8 @@ import {
   findExecutorBySession,
   getCurrentExecutor,
   getExecutor,
+  getLiveExecutorState,
+  isExecutorAlive,
   listExecutors,
   terminateActiveExecutor,
   terminateExecutor,
@@ -997,6 +999,135 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
       // FK points to the last executor
       const agent = await getAgent(agentId);
       expect(agent!.currentExecutorId).toBe(active[0].id);
+    });
+  });
+
+  // ==========================================================================
+  // getLiveExecutorState / isExecutorAlive — liveness + display state for
+  // non-tmux transports (SDK, omni, process).
+  //
+  // Regression for `genie ls` showing SDK/omni-bridge agents as 'offline' while
+  // actively running. Tmux liveness (isPaneAlive) stays authoritative for tmux
+  // agents; `executors.state` is the authoritative source for everything else,
+  // and is returned directly so the display doesn't fall back to the stale
+  // `agents.state` column.
+  // ==========================================================================
+
+  describe('getLiveExecutorState', () => {
+    test('returns the executor state for each live state', async () => {
+      const liveStates: ExecutorState[] = ['spawning', 'running', 'working', 'idle', 'permission', 'question'];
+      for (const state of liveStates) {
+        const agentId = await seedAgent(`state-${state}`, 'live-team');
+        await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state });
+        expect(await getLiveExecutorState(agentId)).toBe(state);
+      }
+    });
+
+    test('returns null for terminal states (done / error / terminated)', async () => {
+      const terminalStates: ExecutorState[] = ['done', 'error', 'terminated'];
+      for (const terminal of terminalStates) {
+        const agentId = await seedAgent(`terminal-${terminal}`, 'terminal-team');
+        const exec = await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state: 'running' });
+        await updateExecutorState(exec.id, terminal);
+        expect(await getLiveExecutorState(agentId)).toBeNull();
+      }
+    });
+
+    test('returns null when agent has no current executor', async () => {
+      const agentId = await seedAgent();
+      expect(await getLiveExecutorState(agentId)).toBeNull();
+    });
+
+    test('returns null for nonexistent agent', async () => {
+      expect(await getLiveExecutorState('ghost-agent')).toBeNull();
+    });
+
+    test('tracks live → terminated transition', async () => {
+      const agentId = await seedAgent();
+      const exec = await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state: 'working' });
+      expect(await getLiveExecutorState(agentId)).toBe('working');
+
+      await updateExecutorState(exec.id, 'done');
+      expect(await getLiveExecutorState(agentId)).toBeNull();
+    });
+
+    test('works for process transport (SDK) with null pane id', async () => {
+      // Simulates the real bug: SDK agents register with paneId='sdk',
+      // omni auto-spawn with paneId=''. Neither matches /^%\d+$/ so
+      // isPaneAlive falsely reports offline. getLiveExecutorState bypasses that
+      // and returns the authoritative executor state.
+      const agentId = await seedAgent();
+      await createAndLinkExecutor(agentId, 'claude-sdk', 'process', {
+        state: 'working',
+        tmuxPaneId: null,
+      });
+      expect(await getLiveExecutorState(agentId)).toBe('working');
+    });
+  });
+
+  describe('isExecutorAlive', () => {
+    test('returns true when current executor is running', async () => {
+      const agentId = await seedAgent();
+      await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state: 'running' });
+      expect(await isExecutorAlive(agentId)).toBe(true);
+    });
+
+    test('returns true for each live state (working/idle/permission/question/spawning)', async () => {
+      const liveStates: ExecutorState[] = ['spawning', 'running', 'working', 'idle', 'permission', 'question'];
+      for (const state of liveStates) {
+        const agentId = await seedAgent(`agent-${state}`, 'live-team');
+        await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state });
+        expect(await isExecutorAlive(agentId)).toBe(true);
+      }
+    });
+
+    test('returns false when current executor is terminated', async () => {
+      const agentId = await seedAgent();
+      const exec = await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state: 'running' });
+      await updateExecutorState(exec.id, 'terminated');
+      expect(await isExecutorAlive(agentId)).toBe(false);
+    });
+
+    test('returns false for done / error terminal states', async () => {
+      const agent1 = await seedAgent('done-agent', 'terminal-team');
+      const e1 = await createAndLinkExecutor(agent1, 'claude-sdk', 'process', { state: 'running' });
+      await updateExecutorState(e1.id, 'done');
+      expect(await isExecutorAlive(agent1)).toBe(false);
+
+      const agent2 = await seedAgent('error-agent', 'terminal-team');
+      const e2 = await createAndLinkExecutor(agent2, 'claude-sdk', 'process', { state: 'running' });
+      await updateExecutorState(e2.id, 'error');
+      expect(await isExecutorAlive(agent2)).toBe(false);
+    });
+
+    test('returns false when agent has no current executor', async () => {
+      const agentId = await seedAgent();
+      expect(await isExecutorAlive(agentId)).toBe(false);
+    });
+
+    test('returns false for nonexistent agent', async () => {
+      expect(await isExecutorAlive('ghost-agent')).toBe(false);
+    });
+
+    test('tracks live → terminated transition', async () => {
+      const agentId = await seedAgent();
+      const exec = await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state: 'working' });
+      expect(await isExecutorAlive(agentId)).toBe(true);
+
+      await updateExecutorState(exec.id, 'done');
+      expect(await isExecutorAlive(agentId)).toBe(false);
+    });
+
+    test('works for process transport (SDK) with empty/synthetic pane ids', async () => {
+      // Simulates the real bug: SDK agents register with paneId='sdk',
+      // omni auto-spawn with paneId=''. Neither matches /^%\d+$/ so
+      // isPaneAlive falsely reports offline. isExecutorAlive bypasses that.
+      const agentId = await seedAgent();
+      await createAndLinkExecutor(agentId, 'claude-sdk', 'process', {
+        state: 'working',
+        tmuxPaneId: null,
+      });
+      expect(await isExecutorAlive(agentId)).toBe(true);
     });
   });
 });

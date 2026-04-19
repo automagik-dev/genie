@@ -120,6 +120,15 @@ export function buildOmniSpawnParams(
   // Turn context = operational instructions for this specific interaction.
   const fullInitialPrompt = initialMessage ? `${turnContext}\n\n---\n\n${initialMessage}` : turnContext;
 
+  // Pass agent permissions through to Claude Code via --settings so the tmux
+  // executor honors AGENTS.md frontmatter permissions. Without this, WhatsApp
+  // turn agents run under bypassPermissions with zero Bash-level enforcement,
+  // defeating the unified per-agent permission system.
+  const permissions =
+    entry.permissions?.allow?.length || entry.permissions?.deny?.length
+      ? { allow: entry.permissions.allow, deny: entry.permissions.deny }
+      : undefined;
+
   return {
     provider: (entry.provider as SpawnParams['provider']) ?? 'claude',
     team: agentName,
@@ -130,6 +139,8 @@ export function buildOmniSpawnParams(
     systemPromptFile: join(entry.dir, 'AGENTS.md'),
     initialPrompt: fullInitialPrompt,
     skipHooks: true,
+    permissions,
+    disallowedTools: entry.disallowedTools,
     nativeTeam: {
       enabled: true,
       agentName,

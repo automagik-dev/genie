@@ -428,17 +428,48 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
 
   // Dispatch all groups in this wave concurrently.
   // workDispatchCommand spawns a tmux pane and returns immediately.
-  await Promise.all(
+  //
+  // Use Promise.allSettled so a single group's post-dispatch failure doesn't
+  // abort reporting for siblings whose state mutations already landed.
+  // See issue #1207 — CONNECTION_ENDED on one dispatch was rejecting the
+  // whole batch and suppressing the success print even when all groups
+  // transitioned to in_progress.
+  const results = await Promise.allSettled(
     nextWave.groups.map(({ group, agent }) => {
       const ref = `${slug}#${group}`;
       return workDispatchCommand(agent, ref);
     }),
   );
 
-  const groupList = nextWave.groups.map((g) => g.group).join(', ');
-  console.log(`\n✅ Agents dispatched for ${nextWave.name} (groups: ${groupList})`);
+  const succeeded: string[] = [];
+  const failed: { group: string; reason: string }[] = [];
+  results.forEach((r, i) => {
+    const groupName = nextWave.groups[i].group;
+    if (r.status === 'fulfilled') {
+      succeeded.push(groupName);
+    } else {
+      const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      failed.push({ group: groupName, reason });
+    }
+  });
+
+  if (succeeded.length > 0) {
+    console.log(`\n✅ Agents dispatched for ${nextWave.name} (groups: ${succeeded.join(', ')})`);
+  }
+  if (failed.length > 0) {
+    console.error(`\n❌ ${failed.length} group(s) failed to dispatch in ${nextWave.name}:`);
+    for (const { group, reason } of failed) {
+      console.error(`   • Group ${group}: ${reason}`);
+    }
+    console.error(`   Check state with: genie status ${slug}`);
+    console.error('   Some groups may have mutated state before failing — rerun genie work to retry.');
+  }
   console.log(`   Monitor: genie status ${slug}`);
   console.log('   Logs:    genie read <agent>');
+
+  if (failed.length > 0) {
+    process.exitCode = 1;
+  }
 }
 
 // ============================================================================
@@ -608,6 +639,14 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
   const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to ${leaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
+    // P1 hotfix: forward the team context so spawn lands in the team's
+    // tmux window, not in the operator's "current window". When this
+    // option is omitted, agents.ts:1862 sets teamWasExplicit=false →
+    // spawnIntoCurrentWindow=true → tmux split-window with no -t target,
+    // which tmux resolves to the most-recently-active client (usually
+    // the operator's pane). Authority:
+    // ~/.genie/reports/trace-genie-spawn-wrong-window.md
+    team: process.env.GENIE_TEAM,
     role: effectiveRole,
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: workPrompt,
@@ -684,6 +723,10 @@ async function reviewCommand(agentName: string, ref: string): Promise<void> {
   const reviewPrompt = `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to ${reviewLeaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
+    // P1 hotfix: forward team context (same root cause as workDispatchCommand
+    // above). Review dispatch is also team-context — must not fall back to
+    // operator's "current window".
+    team: process.env.GENIE_TEAM,
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: reviewPrompt,
   });

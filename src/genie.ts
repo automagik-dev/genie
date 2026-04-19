@@ -697,7 +697,7 @@ if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
     try {
       await program.parseAsync(process.argv);
     } finally {
-      stopOtelReceiver();
+      await stopOtelReceiver().catch(() => {});
       await shutdownDb().catch(() => {});
     }
   }
@@ -708,7 +708,7 @@ if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
     if (process.env.GENIE_PROFILE_DB) console.error(`[profile] parseAsync=${Date.now() - _cmdStart}ms`);
   } finally {
     const _shutStart = Date.now();
-    stopOtelReceiver();
+    await stopOtelReceiver().catch(() => {});
     await shutdownDb().catch(() => {});
     if (process.env.GENIE_PROFILE_DB) console.error(`[profile] shutdown=${Date.now() - _shutStart}ms`);
   }

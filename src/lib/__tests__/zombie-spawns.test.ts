@@ -134,12 +134,18 @@ describe('concurrency cap excludes spawning agents', () => {
   });
 
   test('actually-working agents still enforce the concurrency cap', async () => {
-    // 5 genuinely working agents should still block resume
+    // 5 genuinely working agents should still block resume.
+    // NOTE (auto-resume-zombie-cap fix): the cap filter now also verifies
+    // tmux pane liveness — "actually working" semantically requires a live
+    // pane, so we override the shared mock default (isPaneAlive=false) to
+    // reflect reality. Without this override the test would false-negative
+    // by treating 5 state='working' rows as dead-pane zombies.
     const working: WorkerInfo[] = Array.from({ length: 5 }, (_, i) =>
       makeWorker({ id: `worker-${i}`, state: 'working' }),
     );
     const { deps, logs } = createMockDeps({
       listWorkers: async () => working,
+      isPaneAlive: async () => true,
     });
 
     const agent = makeWorker({ id: 'overflow-agent', state: 'error' });

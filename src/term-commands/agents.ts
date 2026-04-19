@@ -22,6 +22,7 @@ import type { TransportType as ExecutorTransport } from '../lib/executor-types.j
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
 import { getOtelPort, startOtelReceiver } from '../lib/otel-receiver.js';
 import { injectResumeContext } from '../lib/protocol-router-spawn.js';
+import { MissingResumeSessionError } from '../lib/protocol-router.js';
 import {
   type ClaudeTeamColor,
   type ProviderName,
@@ -777,11 +778,37 @@ function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow
     return execSync(cmd, { encoding: 'utf-8' }).trim();
   }
 
-  // --new-window: create a dedicated window instead of splitting
+  // --new-window: create a dedicated window instead of splitting.
+  // When the target session doesn't exist yet (e.g. cold-start spawn from the TUI
+  // for an offline agent), `new-window -t <session>:` would fail with "can't find
+  // session". Bootstrap with `new-session` in that case — but create a persistent
+  // `home` keeper window first, so the session survives after the agent window
+  // is closed. Without this keeper, tmux tears down the session when its sole
+  // window (claude) exits, breaking subsequent resume/respawn attempts which
+  // fall through to the caller's current TMUX session (see the khal-os bug:
+  // resume inherited `genie-configure` as the target session after the original
+  // dedicated session died). The keeper is cheap (one bash shell) and restores
+  // the invariant that a team's session is a persistent home for its members.
+  // The claude window is created with `-n claude`; navigation-wise `home` is
+  // window 0 and `claude` is window 1, matching the multi-member team layout.
   if (ctx.validated.newWindow) {
     const session = ctx.sessionOverride ?? teamWindow?.windowId?.split(':')[0] ?? ctx.validated.team;
     const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
-    const cmd = `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)}${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
+    let sessionExists = false;
+    try {
+      execSync(`${tmuxPrefix}has-session -t ${shellQuote(`=${session}`)}`, { stdio: 'ignore' });
+      sessionExists = true;
+    } catch {
+      sessionExists = false;
+    }
+    if (!sessionExists) {
+      // Bootstrap session with a `home` keeper window (bash shell). `-d` keeps
+      // the new session detached. No command → default shell. stdio:'ignore'
+      // because we don't need the session name back (we already have it).
+      execSync(`${tmuxPrefix}new-session -d -s ${shellQuote(session)} -n home${cwdFlag}`, { stdio: 'ignore' });
+    }
+    // Add the claude window (either to the just-bootstrapped or pre-existing session).
+    const cmd = `${tmuxPrefix}new-window -a -d -t ${shellQuote(`${session}:`)} -n claude${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
     return execSync(cmd, { encoding: 'utf-8' }).trim();
   }
 
@@ -801,7 +828,21 @@ function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow
     return paneId;
   }
 
-  const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
+  // P1 hotfix: never run `split-window` without `-t` — tmux falls back to
+  // the most-recently-active client (operator's pane) and silently misroutes
+  // the new pane. When `teamWindow` is null but the caller is inside tmux,
+  // explicitly target the caller's pane via `TMUX_PANE`. If neither is set
+  // we'd rather fail loudly than misroute. Authority:
+  // ~/.genie/reports/trace-genie-spawn-wrong-window.md
+  const callerPane = process.env.TMUX_PANE;
+  if (!teamWindow && !callerPane) {
+    throw new Error(
+      'createTmuxPane: refusing to split with no target — neither teamWindow nor TMUX_PANE is set. ' +
+        'This indicates a missing --team or --window flag, or a caller outside tmux. ' +
+        'See ~/.genie/reports/trace-genie-spawn-wrong-window.md',
+    );
+  }
+  const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : `-t '${callerPane}'`;
   const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
   if (useLaunchScript) {
     const splitCmd = `${tmuxPrefix}split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
@@ -892,9 +933,20 @@ async function awaitAgentReadiness(paneId: string): Promise<void> {
 }
 
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
-  const teamWindow = ctx.spawnIntoCurrentWindow
-    ? null
-    : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.sessionOverride);
+  // Skip team-window creation for isolated-session spawns. When the caller asks
+  // for `--new-window` with an explicit `--session <name>`, the agent runs in
+  // its own window in that session — the team window has no purpose.
+  //
+  // The original heuristic required `sessionOverride !== team` as a proxy for
+  // "TUI per-agent spawn", but auto-team-of-one (see resolveTeamAndResume) now
+  // makes them equal for globally-registered teamless agents. Honoring the
+  // explicit `--session` flag unconditionally covers both cases and avoids
+  // the 3-window (bash + team-named + claude) cruft topology.
+  const isolatedSessionSpawn = ctx.validated.newWindow === true && Boolean(ctx.sessionOverride);
+  const teamWindow =
+    ctx.spawnIntoCurrentWindow || isolatedSessionSpawn
+      ? null
+      : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.sessionOverride);
 
   let paneId: string;
   try {
@@ -1269,13 +1321,23 @@ function prependEnvVars(command: string, env?: Record<string, string>): string {
  * Find a dead worker with a resumable Claude session for the given role/team.
  * Must run BEFORE rejectDuplicateRole which would unregister the dead worker
  * and lose the claudeSessionId needed for resume.
+ *
+ * Parallels (id=`<name>-<sN>`) register with role=`<name>-<sN>` (matching
+ * their id), so `findDeadResumable(team, name)` filters them out — parallels
+ * are resumable only by their full id (`genie spawn <name>-<sN>`).
+ *
+ * Exported for unit testing the "parallels off auto-resume path" invariant.
  */
-async function findDeadResumable(team: string, role: string): Promise<registry.Agent | null> {
+export async function findDeadResumable(team: string, role: string): Promise<registry.Agent | null> {
   const existing = await registry.list();
   const candidate = existing.find(
     (w) => w.role === role && w.team === team && w.claudeSessionId && w.provider === 'claude',
   );
   if (!candidate) return null;
+  // Safe for SDK/non-tmux transports: the `provider === 'claude'` filter above
+  // excludes them by construction (SDK uses provider='claude-sdk'). Only
+  // tmux-resumable Claude-CLI agents reach `isPaneAlive`, so a plain paneId
+  // check is correct here — no transport dispatch needed.
   const alive = await isPaneAlive(candidate.paneId);
   return alive ? null : candidate;
 }
@@ -1283,22 +1345,38 @@ async function findDeadResumable(team: string, role: string): Promise<registry.A
 /**
  * Reject spawn if a live worker with the same role already exists in the team.
  * Dead/suspended workers (pane gone) are auto-cleaned from registry — only live panes block.
+ *
+ * Transport-aware liveness (see `resolveWorkerLivenessByTransport`): for
+ * non-tmux transports (SDK, omni, inline) the paneId is synthetic and
+ * `isPaneAlive` would wrongly report "dead", letting a duplicate spawn clobber
+ * a live SDK agent. Dispatches by paneId shape so SDK/omni/inline rows are
+ * checked via `executors.state` instead.
  */
 async function rejectDuplicateRole(team: string, role: string): Promise<void> {
   const existing = await registry.list();
   for (const w of existing) {
     if (w.role === role && w.team === team) {
-      const alive = await isPaneAlive(w.paneId);
+      const alive = await executorRegistry.resolveWorkerLivenessByTransport(w);
       // tmux recycles pane IDs — a pane may be "alive" but belong to a
-      // completely different session now.  Verify the pane is still in the
-      // expected session before blocking.
-      if (alive && w.session) {
+      // completely different session now. Verify the pane is still in the
+      // expected session before blocking. Only applies to real tmux panes;
+      // synthetic paneIds (sdk/inline/'') never collide with a recycled pane.
+      if (alive && w.session && /^%\d+$/.test(w.paneId)) {
         const paneSession = await getPaneSession(w.paneId);
         if (paneSession !== w.session) {
           // Pane was recycled — treat as dead
           await registry.unregister(w.id);
           continue;
         }
+        console.error(
+          `Error: Worker with role "${role}" already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
+            `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
+        );
+        process.exit(1);
+      }
+      // Live SDK/omni/inline row — block the duplicate without a session-recycle
+      // check, since synthetic paneIds cannot be recycled by tmux.
+      if (alive) {
         console.error(
           `Error: Worker with role "${role}" already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
             `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
@@ -1493,6 +1571,7 @@ async function buildSpawnParams(
   team: string,
   options: SpawnOptions,
   agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
+  preassignedSessionId?: string,
 ): Promise<{ params: SpawnParams; parentSessionId: string; spawnColor: ClaudeTeamColor }> {
   // Provider resolution chain: CLI --provider > directory entry > default 'claude'
   const resolvedProvider = (options.provider ?? agent.entry.provider ?? 'claude') as ProviderName;
@@ -1529,8 +1608,10 @@ async function buildSpawnParams(
 
   // Generate a session ID for Claude workers so we can resume by ID later.
   // Stored in the agent registry on spawn for --resume on respawn.
+  // The state machine in handleWorkerSpawn pre-mints the UUID for parallels so
+  // the row id (<name>-<sN>) is derived from the SAME UUID as params.sessionId.
   if (params.provider === 'claude') {
-    params.sessionId = crypto.randomUUID();
+    params.sessionId = preassignedSessionId ?? crypto.randomUUID();
   }
 
   // OTel telemetry injection for Claude workers.
@@ -1597,15 +1678,240 @@ async function dispatchSpawn(
   return await launchInlineSpawn(ctx);
 }
 
-/** Resolve team name, auto-resume dead workers, and reject duplicates. */
+/**
+ * Resolve the team name for a spawn using a four-tier precedence.
+ *
+ * Precedence (highest wins):
+ *   1. `explicitTeam` — the caller's `--team` flag (`options.team`).
+ *   2. `entryTeam` — template-pinned team from `agent_templates` PG row
+ *      (`agent.entry?.team`). Authoritative PG lookup, NOT a synthetic
+ *      fallback. Restores the canonical-UUID-per-agent invariant
+ *      established by PR #1133 (`8a783460`) / PR #1134 (`69215743`).
+ *   3. `process.env.GENIE_TEAM` — session-scoped env var.
+ *   4. `discoverTeamName()` — the PR #1164 tmux-session-name fallback,
+ *      which itself also consults `GENIE_TEAM` first and then the tmux
+ *      session name / Claude JSONL heuristic. Kept so the resolver still
+ *      works post-reboot when every higher-priority signal is stale.
+ *
+ * Returns null when every tier yields nothing — callers turn that into
+ * the canonical "--team is required" error.
+ *
+ * Exported for unit testing; the runtime call site is `resolveTeamAndResume`.
+ */
+export async function resolveTeamName(opts: {
+  explicitTeam?: string;
+  entryTeam?: string;
+  env?: Pick<NodeJS.ProcessEnv, 'GENIE_TEAM'>;
+  discover?: () => Promise<string | null>;
+}): Promise<string | null> {
+  // Tier 1: explicit --team flag (only tier that flips teamWasExplicit).
+  if (opts.explicitTeam) return opts.explicitTeam;
+  // Tier 2: template-pinned team from agent_templates.
+  if (opts.entryTeam) return opts.entryTeam;
+  // Tier 3: GENIE_TEAM env var (short-circuit before the heavy discovery path).
+  const env = opts.env ?? process.env;
+  if (env.GENIE_TEAM) return env.GENIE_TEAM;
+  // Tier 4: full discovery (JSONL leadSessionId match → tmux session name).
+  const discover = opts.discover ?? nativeTeams.discoverTeamName;
+  return (await discover()) ?? null;
+}
+
+// ============================================================================
+// Spawn state machine — single-verb `genie spawn <name>` resolution.
+//
+// Branches on the canonical row's liveness:
+//   1. No row with id=<name> in team        → create canonical (workerId=<name>)
+//   2. Canonical alive                      → create parallel (workerId=<name>-<sN>)
+//   3. Canonical dead (with claudeSessionId)→ handled upstream by findDeadResumable
+//
+// Parallels are semi-ephemeral rows persisted in `agents`: they get their own
+// fresh Claude session UUID (never shared with canonical) and a deterministic
+// short-id derived from that UUID's own hex prefix. Canonical rows are NEVER
+// clobbered by parallel creation — their UUID stays stable for the agent's
+// "one true session" lifetime (authority: perfect-spawn-hierarchy PR #1133/
+// #1134 merge 69215743).
+//
+// Exported for unit testing.
+// ============================================================================
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Pick a unique short-id suffix for a parallel, derived from the parallel's
+ * own fresh Claude session UUID.
+ *
+ * Contract: the returned id is a prefix-extending slice of `uuid` —
+ * `uuid.slice(0, k)` for `k >= 4`. Starts at k=4 and extends by one character
+ * at a time until `<baseName>-<slice>` is unique within the team. In the
+ * astronomically improbable case that the full UUID is taken, returns the
+ * full UUID.
+ *
+ * Throws if `uuid` is not a well-formed UUID (hex-only, length 36 with dashes).
+ */
+export async function pickParallelShortId(baseName: string, team: string, uuid: string): Promise<string> {
+  if (!UUID_REGEX.test(uuid)) {
+    throw new Error(`pickParallelShortId: expected a well-formed UUID (8-4-4-4-12 hex), got ${JSON.stringify(uuid)}`);
+  }
+  // `team` is retained in the signature for symmetry with resolveSpawnIdentity
+  // but NOT used in the uniqueness filter: `agents.id` is the PRIMARY KEY on
+  // the `agents` table (see migrations/005_pg_state.sql), so any
+  // `<baseName>-<slice>` that already exists anywhere would violate the PK at
+  // insert time regardless of team. Filter globally — PR #1172 review (gemini).
+  void team;
+  const { getConnection } = await import('../lib/db.js');
+  const sql = await getConnection();
+  for (let k = 4; k <= uuid.length; k++) {
+    const slice = uuid.slice(0, k);
+    const id = `${baseName}-${slice}`;
+    const rows = await sql<{ id: string }[]>`
+      SELECT id FROM agents WHERE id = ${id} LIMIT 1
+    `;
+    if (rows.length === 0) return slice;
+  }
+  // Full UUID was also taken (1-in-10^38). Return it anyway — correctness over
+  // aesthetics in this corner case. No infinite loop.
+  return uuid;
+}
+
+/**
+ * Spawn identity resolved by the state machine: either a fresh canonical row
+ * (id=<name>) or a new parallel row (id=<name>-<sN>). In both cases the
+ * `sessionUuid` is a freshly-minted UUID that the caller threads into the
+ * Claude `--session-id` flag and records as the row's `claude_session_id`.
+ */
+// Internal type; not exported. Knip flagged the prior `export` as unused. The
+// public surface is the function signature — callers infer the type from it.
+type SpawnIdentity =
+  | { kind: 'canonical'; workerId: string; sessionUuid: string }
+  | { kind: 'parallel'; workerId: string; sessionUuid: string; canonicalId: string };
+
+/**
+ * Probe the `agents` table for a row with `id=name AND team=team`, then
+ * branch on the canonical's pane liveness.
+ *
+ * - No row           → `{ kind: 'canonical', workerId: name, sessionUuid: <fresh> }`
+ * - Canonical alive  → `{ kind: 'parallel',  workerId: '<name>-<sN>', sessionUuid: <fresh> }`
+ * - Canonical dead   → treat as canonical (caller already gave findDeadResumable
+ *                      a chance to fire). A dead canonical without a recoverable
+ *                      session gets its row rewritten via ON CONFLICT UPDATE,
+ *                      but the fresh UUID minted here becomes the new truth —
+ *                      acceptable because findDeadResumable is the canonical
+ *                      resume path and only misses rows that were never
+ *                      registerable as Claude sessions.
+ *
+ * The `uuidFactory` and `isAliveFn` injection points exist for deterministic
+ * tests — production callers use `crypto.randomUUID` and the shared
+ * `resolveWorkerLivenessByTransport` helper. `isAliveFn` receives the agent's
+ * id + paneId so it can dispatch by transport (tmux vs SDK/omni/inline) — a
+ * one-arg paneId-only check would misreport live SDK agents as dead and
+ * re-canonicalize them, clobbering the live row via ON CONFLICT UPDATE.
+ */
+export async function resolveSpawnIdentity(
+  name: string,
+  team: string,
+  uuidFactory: () => string = () => crypto.randomUUID(),
+  isAliveFn: (agent: { id: string; paneId: string }) => Promise<boolean> = (agent) =>
+    executorRegistry.resolveWorkerLivenessByTransport(agent),
+): Promise<SpawnIdentity> {
+  const { getConnection } = await import('../lib/db.js');
+  const sql = await getConnection();
+  // `agents.id` is the PRIMARY KEY (migrations/005_pg_state.sql), so the
+  // existence check is global, not team-scoped — PR #1172 review (gemini).
+  // We still read `team` from the returned row so we can distinguish
+  // "canonical lives in THIS team" from "canonical lives in ANOTHER team"
+  // (see cross-team branch below).
+  const rows = await sql<{ id: string; pane_id: string | null; team: string | null }[]>`
+    SELECT id, pane_id, team FROM agents WHERE id = ${name} LIMIT 1
+  `;
+  if (rows.length === 0) {
+    return { kind: 'canonical', workerId: name, sessionUuid: uuidFactory() };
+  }
+  const existing = rows[0];
+  const crossTeam = existing.team !== null && existing.team !== team;
+
+  if (crossTeam) {
+    // Canonical `name` already lives in a different team. We cannot
+    // re-canonicalize in the requested team — that would violate the PK on
+    // `agents.id`. Force a parallel in the requested team: `<name>-<s4>`
+    // sidesteps the PK AND keeps team isolation intact. This mirrors the
+    // alive-canonical behavior and is safe regardless of the existing row's
+    // pane liveness.
+    const sessionUuid = uuidFactory();
+    const shortId = await pickParallelShortId(name, team, sessionUuid);
+    return {
+      kind: 'parallel',
+      workerId: `${name}-${shortId}`,
+      sessionUuid,
+      canonicalId: name,
+    };
+  }
+
+  const alive = existing.pane_id ? await isAliveFn({ id: existing.id, paneId: existing.pane_id }) : false;
+  if (!alive) {
+    // findDeadResumable is the canonical resume path. If it didn't fire, the
+    // existing row lacks a claudeSessionId or isn't a Claude row; creating a
+    // fresh canonical via ON CONFLICT UPDATE is the safest recovery.
+    return { kind: 'canonical', workerId: name, sessionUuid: uuidFactory() };
+  }
+  // Same-team alive canonical — branch to parallel creation. Mint the
+  // parallel's own fresh UUID and derive its short-id deterministically from
+  // that UUID.
+  const sessionUuid = uuidFactory();
+  const shortId = await pickParallelShortId(name, team, sessionUuid);
+  return {
+    kind: 'parallel',
+    workerId: `${name}-${shortId}`,
+    sessionUuid,
+    canonicalId: name,
+  };
+}
+
+/** Resolve team name and auto-resume dead workers. Duplicate rejection moved to the state machine. */
 async function resolveTeamAndResume(
   effectiveRole: string,
   options: SpawnOptions,
+  agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
 ): Promise<{ team: string; teamWasExplicit: boolean; resumed?: string }> {
+  // teamWasExplicit stays strictly tier-1 — template/env/discover do NOT flip it.
   const teamWasExplicit = Boolean(options.team);
-  const team = options.team || (await nativeTeams.discoverTeamName());
+  let team = await resolveTeamName({
+    explicitTeam: options.team,
+    entryTeam: agent.entry?.team,
+  });
+
+  // Tier 5 (last-resort): scan on-disk team configs for one that lists this
+  // agent as a member. Unblocks detached spawns (e.g. from the TUI after a DB
+  // reset) that can't inherit GENIE_TEAM or a parent session context but where
+  // the agent is unambiguously registered to a team on disk. Sits below the
+  // four-tier resolveTeamName chain so an authoritative match (PG, env, or
+  // JSONL session-id) always wins over a member-list heuristic.
   if (!team) {
-    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
+    const candidates = await nativeTeams.findTeamsContainingAgent(effectiveRole);
+    if (candidates.length === 1) {
+      team = candidates[0];
+    } else if (candidates.length > 1) {
+      console.error(
+        `Error: agent "${effectiveRole}" is a member of multiple teams (${candidates.join(', ')}). Pass --team <name> to disambiguate.`,
+      );
+      return process.exit(1) as never;
+    }
+  }
+
+  // Auto-create team-of-one for globally registered agents with no team.
+  // Lets the TUI (and other detached spawns) start a standalone agent like
+  // `khal-os` without requiring Felipe to hand-wire a team name. The team
+  // config is materialized downstream by `resolveNativeTeam` → `ensureNativeTeam`.
+  if (!team) {
+    const directoryEntry = await directory.get(effectiveRole);
+    if (directoryEntry) {
+      team = nativeTeams.sanitizeTeamName(effectiveRole);
+    }
+  }
+
+  if (!team) {
+    console.error(
+      `Error: --team is required for agent "${effectiveRole}" (or set GENIE_TEAM, run inside a genie session, or register the agent in a team config).`,
+    );
     return process.exit(1) as never;
   }
   const deadResumable = await findDeadResumable(team, effectiveRole);
@@ -1616,22 +1922,57 @@ async function resolveTeamAndResume(
     await resumeAgent(deadResumable);
     return { team, teamWasExplicit, resumed: deadResumable.id };
   }
-  await rejectDuplicateRole(team, effectiveRole);
+  // NOTE: rejectDuplicateRole is no longer called here. In the new state-machine
+  // model, a live row with id=name IS the parallel-creation signal — handled by
+  // resolveSpawnIdentity in handleWorkerSpawn.
   return { team, teamWasExplicit };
 }
 
 export async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<string> {
   // Effective role: suffixed name for registration/duplicate-check, original name for directory lookup
-  const effectiveRole = options.role ?? name;
+  let effectiveRole = options.role ?? name;
 
   // 1. Resolve agent from directory or built-ins (uses original name)
   let agent = await resolveAgentForSpawn(name, options);
 
-  // 2. Resolve team, auto-resume dead workers, reject duplicates
-  const { team, teamWasExplicit, resumed } = await resolveTeamAndResume(effectiveRole, options);
+  // 2. Resolve team and auto-resume dead workers.
+  // `agent` is passed through so template-pinned teams (agent.entry.team) take
+  // precedence over GENIE_TEAM / discoverTeamName — preserves canonical-UUID invariant
+  // when spawning from a tmux session that does not match the agent's home team.
+  const { team, teamWasExplicit, resumed } = await resolveTeamAndResume(effectiveRole, options, agent);
   if (resumed) return resumed;
 
-  // 2b. Override CWD with team worktree path if available.
+  // 2b. Spawn state machine — branch on canonical liveness (authority: wish
+  // tui-spawn-dx, Group 2; perfect-spawn-hierarchy PR #1134 merge 69215743).
+  //
+  //   - No row with id=<name> in team  → create canonical (id = <name>)
+  //   - Alive canonical                → create parallel (id = <name>-<sN>);
+  //     short-id is a prefix of the parallel's OWN fresh Claude session UUID
+  //   - Dead canonical                 → already handled by findDeadResumable above
+  //
+  // The canonical row's UUID is NEVER clobbered by parallel creation — parallels
+  // mint their own UUID and get their own row. Parallels are off the auto-resume
+  // path (findDeadResumable matches by role, parallel.role=<name>-<sN> ≠ <name>).
+  // Parallels are resumable only by their full id (`genie spawn <name>-<sN>`).
+  //
+  // Only apply the state machine when the caller didn't pass an explicit --role.
+  // The --role override is a distinct legacy feature for explicit multi-worker
+  // deployments (e.g. `--role worker-1 --role worker-2`) that retains the
+  // <team>-<role> id scheme and the duplicate-role guard.
+  const explicitRole = options.role !== undefined && options.role !== name;
+  let identity: SpawnIdentity | null = null;
+  if (!explicitRole) {
+    identity = await resolveSpawnIdentity(name, team);
+    // For parallels, the role becomes the parallel's full id (<name>-<sN>) so
+    // findDeadResumable(<name>) never matches a parallel — parallels are
+    // resumable only by their full id.
+    effectiveRole = identity.workerId;
+  } else {
+    // Legacy explicit-role path: preserve the prior duplicate-role guard.
+    await rejectDuplicateRole(team, effectiveRole);
+  }
+
+  // 2c. Override CWD with team worktree path if available.
   // Only override for agents without their own registered directory — sub-agents
   // (e.g. genie/brain-engineer at .genie/agents/brain-engineer/) need their own
   // CWD to avoid loading a parent agent's AGENTS.md via directory-tree walk.
@@ -1640,8 +1981,15 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     agent = { ...agent, repoPath: teamConfig.worktreePath };
   }
 
-  // 3. Build params
-  const { params, parentSessionId, spawnColor } = await buildSpawnParams(effectiveRole, team, options, agent);
+  // 3. Build params (pre-mint session UUID for state-machine paths so the row
+  // id and the Claude session UUID stay in lockstep).
+  const { params, parentSessionId, spawnColor } = await buildSpawnParams(
+    effectiveRole,
+    team,
+    options,
+    agent,
+    identity?.sessionUuid,
+  );
 
   // Set CC session display name if not already set
   if (!params.name) {
@@ -1650,7 +1998,18 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   const validated = validateSpawnParams(params);
   const launch = buildLaunchCommand(validated);
   const layoutMode = resolveLayoutMode(options.layout);
-  const workerId = await generateWorkerId(validated.team, effectiveRole);
+  // workerId derivation — two intentionally distinct schemes:
+  //   • State-machine path (no explicit --role): `identity.workerId` is either
+  //     `<name>` (canonical) or `<name>-<s4>` (parallel). Short, team-agnostic,
+  //     globally unique per `agents.id` PK. Matches the perfect-spawn-hierarchy
+  //     canonical-UUID-per-name invariant.
+  //   • Legacy explicit-role path (`--role` passed and ≠ name): `<team>-<role>`
+  //     via `generateWorkerId`. Preserves the pre-wish convention for explicit
+  //     multi-worker deployments (e.g. `--role worker-1`, `--role worker-2`)
+  //     where team namespacing matters because the role itself isn't unique.
+  // The split is deliberate; any future unification is a separate wish. See
+  // PR #1172 review (gemini medium) for the full rationale.
+  const workerId = identity?.workerId ?? (await generateWorkerId(validated.team, effectiveRole));
 
   // An explicit session target means "spawn in tmux" even when the caller is outside tmux.
   // This matters for orchestrators like QA, which need detached workers instead of a blocking inline session.
@@ -1683,7 +2042,13 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     transport: insideTmux ? 'tmux' : 'inline',
     extraArgs: options.extraArgs,
     cwd: agent.repoPath,
-    spawnIntoCurrentWindow: !teamWasExplicit && insideTmux && !options.session,
+    // P1 hotfix: a caller running inside a team context (GENIE_TEAM env set
+    // by the team-lead's spawn shell) is NOT a TUI free-form spawn — never
+    // spawn into "current window". tmux's "current window" resolves to the
+    // most-recently-active client (usually the operator's pane), silently
+    // misrouting the new agent. Authority:
+    // ~/.genie/reports/trace-genie-spawn-wrong-window.md
+    spawnIntoCurrentWindow: !teamWasExplicit && !process.env.GENIE_TEAM && insideTmux && !options.session,
     sessionOverride: options.session,
     autoResume: options.autoResume,
     agentIdentityId: agentIdentity.id,
@@ -1841,7 +2206,7 @@ async function isResumeEligible(w: registry.Agent): Promise<boolean> {
 }
 
 /** Resume all eligible agents (--all mode). */
-async function resumeAllAgents(): Promise<void> {
+async function resumeAllAgents(opts: { resetAttempts?: boolean } = {}): Promise<void> {
   const workers = await registry.list();
   const toResume: registry.Agent[] = [];
   for (const w of workers) {
@@ -1856,7 +2221,7 @@ async function resumeAllAgents(): Promise<void> {
   console.log(`Resuming ${toResume.length} agent(s)...`);
   for (const w of toResume) {
     try {
-      await resumeAgent(w);
+      await resumeAgent(w, opts);
     } catch (err) {
       console.error(`  Failed to resume "${w.id}": ${err instanceof Error ? err.message : err}`);
     }
@@ -1866,9 +2231,18 @@ async function resumeAllAgents(): Promise<void> {
 /**
  * genie resume <name> — Resume a suspended/failed agent with its Claude session.
  * genie resume --all  — Resume all eligible agents.
+ *
+ * `options.noResetAttempts` (from `--no-reset-attempts`) is intended for the
+ * scheduler auto-resume path, which manages the `resumeAttempts` counter itself
+ * and must not have it wiped inside `resumeAgent`. Human/manual invocations omit
+ * this flag and keep the default fresh-retry-budget behavior.
  */
-export async function handleWorkerResume(name: string | undefined, options: { all?: boolean }): Promise<void> {
-  if (options.all) return resumeAllAgents();
+export async function handleWorkerResume(
+  name: string | undefined,
+  options: { all?: boolean; noResetAttempts?: boolean },
+): Promise<void> {
+  const resumeOpts = { resetAttempts: !options.noResetAttempts };
+  if (options.all) return resumeAllAgents(resumeOpts);
 
   if (!name) {
     console.error('Error: provide an agent name, or use --all to resume all eligible agents.');
@@ -1888,13 +2262,23 @@ export async function handleWorkerResume(name: string | undefined, options: { al
     return;
   }
 
-  await resumeAgent(w);
+  await resumeAgent(w, resumeOpts);
 }
 
-/** Build SpawnParams for a resume operation from agent + template. */
+/**
+ * Build SpawnParams for a resume operation from agent + template.
+ *
+ * `resumeSessionId` is required — nullability is the caller's problem. This
+ * closes Gap 1 of the loop-2 review: the prior `agent.claudeSessionId!`
+ * force-unwrap silently turned null into undefined, reproducing the original
+ * stale-resume bug. Every caller MUST validate the session before invoking
+ * this function, typically via `buildFullResumeParams` which raises
+ * `MissingResumeSessionError` when the session is absent.
+ */
 async function buildResumeParams(
   agent: registry.Agent,
   template: registry.WorkerTemplate | undefined,
+  resumeSessionId: string,
 ): Promise<SpawnParams> {
   const agentName = agent.role ?? agent.id;
   const provider = (template?.provider ?? agent.provider ?? 'claude') as ProviderName;
@@ -1922,8 +2306,7 @@ async function buildResumeParams(
     role: agentName,
     skill: template?.skill ?? agent.skill,
     extraArgs: template?.extraArgs,
-    // biome-ignore lint/style/noNonNullAssertion: caller guarantees claudeSessionId exists
-    resume: agent.claudeSessionId!,
+    resume: resumeSessionId,
     name: `${team}-${agentName}`,
     model: dirEntry?.model,
     systemPromptFile,
@@ -1986,12 +2369,23 @@ export async function buildResumeContext(agent: registry.Agent): Promise<string 
   return undefined;
 }
 
-/** Build full spawn params for resume, including initial prompt and native team config. */
-async function buildFullResumeParams(
+/**
+ * Build full spawn params for resume, including initial prompt and native team config.
+ *
+ * Throws `MissingResumeSessionError` if the agent has no `claudeSessionId` —
+ * the resume path is genuinely broken in that case, and returning partial
+ * params would silently fall back to a fresh session (the exact stale-resume
+ * regression Gap C exists to prevent). Callers reach this function only with
+ * explicit resume intent (`resumeAgent`), so the failure mode is loud-by-design.
+ */
+export async function buildFullResumeParams(
   agent: registry.Agent,
   template: registry.WorkerTemplate | undefined,
 ): Promise<SpawnParams> {
-  const params = await buildResumeParams(agent, template);
+  if (!agent.claudeSessionId) {
+    throw new MissingResumeSessionError(agent.id);
+  }
+  const params = await buildResumeParams(agent, template, agent.claudeSessionId);
 
   const resumeContext = await buildResumeContext(agent);
   if (resumeContext) {
@@ -2040,12 +2434,23 @@ async function createResumeExecutor(
 
 /**
  * Resume a single agent by rebuilding spawn params with --resume <sessionId>.
- * Resets resumeAttempts to 0 (manual resume = fresh retry budget).
+ *
+ * `opts.resetAttempts` controls whether the retry budget is cleared:
+ *   - `true` (default) — manual/human resume, fresh retry budget. Preserves the
+ *     original CLI UX: `genie agent resume <id>` gives the operator a clean slate.
+ *   - `false` — scheduler auto-resume path. The scheduler increments
+ *     `resumeAttempts` *before* calling into this code path (scheduler-daemon.ts
+ *     `attemptAgentResume`), so wiping the counter here would erase that
+ *     increment and prevent the exhaustion check from ever firing. See
+ *     fix/auto-resume-counter-persistence.
  */
-async function resumeAgent(agent: registry.Agent): Promise<void> {
+async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolean } = {}): Promise<void> {
+  const resetAttempts = opts.resetAttempts !== false;
   const template = (await registry.listTemplates()).find((t) => t.id === (agent.role ?? agent.id));
 
-  await registry.update(agent.id, { resumeAttempts: 0 });
+  if (resetAttempts) {
+    await registry.update(agent.id, { resumeAttempts: 0 });
+  }
 
   const params = await buildFullResumeParams(agent, template);
 
@@ -2134,14 +2539,32 @@ type WorkerStatus = {
   autoResume?: boolean;
 };
 
+/**
+ * Resolve liveness + display state for a worker.
+ *
+ * - Tmux transport: `isPaneAlive(%N)` is authoritative and `agents.state` is
+ *   kept in sync, so we preserve the legacy behavior exactly.
+ * - Non-tmux transports (SDK, omni, inline): pane IDs are synthetic ('sdk', '',
+ *   'inline') and fail tmux's regex, so we query `executors.state` directly.
+ *   The cached `agents.state` is stale for these transports — we use the live
+ *   executor state for display as well.
+ */
+async function resolveWorkerLiveness(w: registry.Agent): Promise<{ alive: boolean; state: string }> {
+  if (/^%\d+$/.test(w.paneId)) {
+    return { alive: await isPaneAlive(w.paneId), state: w.state };
+  }
+  const execState = await executorRegistry.getLiveExecutorState(w.id);
+  return { alive: execState !== null, state: execState ?? w.state };
+}
+
 /** Build a name → status map from registry workers, including resume info for dead agents. */
 async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<Map<string, WorkerStatus>> {
   const statusMap = new Map<string, WorkerStatus>();
   for (const w of workers) {
     const name = w.role || w.id;
-    const alive = await isPaneAlive(w.paneId);
+    const { alive, state } = await resolveWorkerLiveness(w);
     if (alive) {
-      statusMap.set(name, { state: w.state, team: w.team || '-' });
+      statusMap.set(name, { state, team: w.team || '-' });
     } else if (w.state === 'suspended' || w.state === 'error') {
       const attempts = w.resumeAttempts ?? 0;
       const max = w.maxResumeAttempts ?? 3;

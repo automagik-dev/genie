@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { AgentState } from './agent-registry.js';
+import type { MailboxMessage } from './mailbox.js';
 import {
+  ESCALATION_RECIPIENT,
   type LogEntry,
+  MAX_DELIVERY_ATTEMPTS,
   type SchedulerConfig,
   type SchedulerDeps,
   type WorkerInfo,
@@ -13,10 +16,13 @@ import {
   emitWorkerEvents,
   fireTrigger,
   logToFile,
+  processMailboxRetryMessage,
   reclaimExpiredLeases,
   reconcileOrphanedRuns,
   reconcileOrphans,
+  reconcileUnresumable,
   recoverOnStartup,
+  runAgentRecoveryPass,
   startDaemon,
 } from './scheduler-daemon.js';
 
@@ -1111,9 +1117,14 @@ describe('scheduler-daemon', () => {
       const result = await attemptAgentResume(deps, defaultConfig, agent);
 
       expect(result).toBe('resumed');
-      expect(updates).toHaveLength(1);
+      // Two writes: (1) pre-spawn increment, (2) post-success explicit reset.
+      // Post-fix/auto-resume-counter-persistence: the CLI no longer resets the
+      // counter (it's invoked with --no-reset-attempts), so the scheduler owns
+      // both the increment and the success-path reset.
+      expect(updates).toHaveLength(2);
       expect(updates[0].updates.resumeAttempts).toBe(1);
       expect(updates[0].updates.lastResumeAttempt).toBeDefined();
+      expect(updates[1].updates.resumeAttempts).toBe(0);
 
       const attempted = logs.find((l) => l.event === 'agent_resume_attempted');
       expect(attempted).toBeDefined();
@@ -1255,6 +1266,358 @@ describe('scheduler-daemon', () => {
 
       const result = await attemptAgentResume(deps, defaultConfig, agent);
       expect(result).toBe('resumed');
+    });
+
+    // ========================================================================
+    // Regression: fix/auto-resume-counter-persistence
+    //
+    // Before the fix, `defaultResumeAgent` shelled out to `genie agent resume`
+    // without `--no-reset-attempts`, which invoked `resumeAgent(agent)` and
+    // unconditionally did `registry.update({ resumeAttempts: 0 })` — wiping
+    // the increment written by `attemptAgentResume` one tick earlier. Counter
+    // stayed at 0 forever; `attempts >= maxAttempts` never fired; dead agents
+    // were retried every ~60s forever (`genie ls` showed `0/3 resumes` while
+    // the scheduler log showed `resume_attempts: 1` every minute).
+    //
+    // The tests below simulate the counter-persistence contract through the
+    // scheduler's `updateAgent` dependency. They do NOT invoke the CLI
+    // directly (unit scope); they encode the invariant that the scheduler
+    // owns the counter end-to-end — which is exactly what the fix enforces
+    // via the `--no-reset-attempts` CLI flag on the shell-out boundary.
+    // ========================================================================
+
+    test('failed attempts accumulate the counter (pre-fix stuck at 0)', async () => {
+      let row: { resumeAttempts: number; lastResumeAttempt?: string } = {
+        resumeAttempts: 0,
+      };
+      const { deps } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => false, // simulate CLI failure
+          updateAgent: async (_id, updates) => {
+            row = { ...row, ...updates } as typeof row;
+          },
+        },
+      );
+
+      // Attempt 1: 0 → 1
+      const a1 = makeWorker({ resumeAttempts: row.resumeAttempts });
+      expect(await attemptAgentResume(deps, defaultConfig, a1)).toBe('skipped');
+      expect(row.resumeAttempts).toBe(1);
+
+      // Attempt 2: 1 → 2 (bypass cooldown by resetting lastResumeAttempt for test)
+      const a2 = makeWorker({
+        resumeAttempts: row.resumeAttempts,
+        lastResumeAttempt: undefined,
+      });
+      expect(await attemptAgentResume(deps, defaultConfig, a2)).toBe('skipped');
+      expect(row.resumeAttempts).toBe(2);
+
+      // Attempt 3: 2 → 3 → exhausted (budget depleted after increment)
+      const a3 = makeWorker({
+        resumeAttempts: row.resumeAttempts,
+        lastResumeAttempt: undefined,
+      });
+      expect(await attemptAgentResume(deps, defaultConfig, a3)).toBe('exhausted');
+      expect(row.resumeAttempts).toBe(3);
+    });
+
+    test('exhaustion check fires on re-entry with attempts=maxAttempts', async () => {
+      // Pre-fix this path was unreachable because the counter was always 0 on
+      // re-entry. Post-fix the increment persists, so after 3 attempts the
+      // next tick hits the early-exit `attempts >= maxAttempts` branch.
+      //
+      // Post-fix/wedged-terminal-state: the early-exit branch also persists
+      // `autoResume=false` so the next cycle's resumable filter excludes the
+      // agent (prevents `agent_resume_exhausted` re-logging every 60s).
+      const agent = makeWorker({ resumeAttempts: 3, maxResumeAttempts: 3 });
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => true,
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('exhausted');
+      const exhausted = logs.find((l) => l.event === 'agent_resume_exhausted');
+      expect(exhausted).toBeDefined();
+      expect(exhausted?.resume_attempts).toBe(3);
+      // Exactly one updateAgent call on early-exit exhaustion: the terminal
+      // `autoResume=false` flip. We do NOT re-increment or reset counters
+      // when the budget is already depleted.
+      expect(updates).toHaveLength(1);
+      expect(updates[0].updates.autoResume).toBe(false);
+      // Critical invariant: no counter mutation on the early-exit branch.
+      expect(updates[0].updates.resumeAttempts).toBeUndefined();
+    });
+
+    test('success path explicitly resets counter to 0', async () => {
+      // After --no-reset-attempts, the CLI no longer resets; the scheduler
+      // must do it explicitly so a healthy resumed agent carries a clean
+      // retry budget into the next failure.
+      const agent = makeWorker({ resumeAttempts: 2, maxResumeAttempts: 3 });
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => true,
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+      expect(result).toBe('resumed');
+
+      // Expect two writes: (1) increment before spawn, (2) explicit reset on success.
+      expect(updates.length).toBeGreaterThanOrEqual(2);
+      const increment = updates.find((u) => u.updates.resumeAttempts === 3);
+      const reset = updates.find((u) => u.updates.resumeAttempts === 0);
+      expect(increment).toBeDefined();
+      expect(reset).toBeDefined();
+      // Order matters: increment first, reset on success.
+      expect(updates.indexOf(increment!)).toBeLessThan(updates.indexOf(reset!));
+    });
+
+    test('scheduler-owned counter: increment not wiped by resumeAgent boundary', async () => {
+      // This is the direct regression test for the original bug. Before the
+      // fix, the CLI-wipe would undo the increment and the final state would
+      // be `resumeAttempts=0`. Post-fix, the scheduler holds the counter end
+      // to end: increment on attempt, reset only on explicit success.
+      let row: { resumeAttempts: number; lastResumeAttempt?: string } = {
+        resumeAttempts: 0,
+      };
+      let resumeAgentCalls = 0;
+      const { deps } = createMockDeps(
+        {},
+        {
+          // Simulate the CLI boundary: resumeAgent returns true without
+          // touching the counter (that's what --no-reset-attempts guarantees
+          // at the real CLI layer).
+          resumeAgent: async () => {
+            resumeAgentCalls += 1;
+            return true;
+          },
+          updateAgent: async (_id, updates) => {
+            row = { ...row, ...updates } as typeof row;
+          },
+        },
+      );
+
+      const agent = makeWorker({ resumeAttempts: 0 });
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('resumed');
+      expect(resumeAgentCalls).toBe(1);
+      // Counter progression: pre-spawn increment to 1, then success reset to 0.
+      // The critical invariant is `lastResumeAttempt` — proving the pre-spawn
+      // write landed before the success reset (if the CLI had wiped the
+      // counter mid-flight, lastResumeAttempt would also be absent).
+      expect(row.resumeAttempts).toBe(0);
+      expect(row.lastResumeAttempt).toBeDefined();
+    });
+  });
+
+  // ==========================================================================
+  // Regression: fix/wedged-terminal-state
+  //
+  // Two bugs, same architectural shape — terminal-state agents that the
+  // scheduler kept re-processing every cycle.
+  //
+  //  - Bug A: Rows in `state='error', auto_resume=true, claude_session_id=null`
+  //    were dropped by the resumable filter (no session id), but stayed in
+  //    `auto_resume=true` forever, misleading `genie ls` ("auto-resume: on")
+  //    and polluting the worker list. The `reconcileUnresumable` pass flips
+  //    those rows to `auto_resume=false`.
+  //
+  //  - Bug B: The `attempts >= maxAttempts` early-exit in `attemptAgentResume`
+  //    logged `agent_resume_exhausted` and returned, but did NOT set
+  //    `auto_resume=false`. Next scheduler tick (60s later) re-entered the
+  //    same branch and re-logged the same exhaustion event — 9 agents on
+  //    felipe's machine produced ~12K redundant events over a day. The fix
+  //    persists `auto_resume=false` at the terminal boundary.
+  //
+  // Prior art: PR #1181 (zombie concurrency cap) + PR #1187 (counter
+  // persistence). This is the final cleanup pass closing the
+  // "terminal states should be terminal" theme.
+  // ==========================================================================
+
+  describe('reconcileUnresumable — Bug A: mark null-session error rows unresumable', () => {
+    test('flips auto_resume to false for error-state agent with null session id', async () => {
+      const workers: WorkerInfo[] = [
+        {
+          id: 'wedged-agent',
+          paneId: '',
+          state: 'error',
+          autoResume: true,
+          // claudeSessionId intentionally undefined — simulates the DB NULL
+          // observed on felipe's machine (genie-docs directory placeholders
+          // + omni workers that died before capturing a Claude session).
+          claudeSessionId: undefined,
+        },
+      ];
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          listWorkers: async () => workers,
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const flipped = await reconcileUnresumable(deps);
+
+      expect(flipped).toBe(1);
+      expect(updates).toHaveLength(1);
+      expect(updates[0].id).toBe('wedged-agent');
+      expect(updates[0].updates.autoResume).toBe(false);
+
+      const marked = logs.find((l) => l.event === 'agent_marked_unresumable');
+      expect(marked).toBeDefined();
+      expect(marked?.agent_id).toBe('wedged-agent');
+      expect(marked?.reason).toBe('no_session_id');
+    });
+
+    test('leaves error-state agents with a valid claude_session_id untouched', async () => {
+      const workers: WorkerInfo[] = [
+        {
+          id: 'resumable-agent',
+          paneId: '%42',
+          state: 'error',
+          autoResume: true,
+          // Valid session id — the scheduler CAN still retry this agent.
+          // The reconciler must NOT flip auto_resume here.
+          claudeSessionId: 'abcd-1234-valid-uuid',
+        },
+        {
+          id: 'already-disabled',
+          paneId: '%43',
+          state: 'error',
+          autoResume: false,
+          claudeSessionId: undefined,
+        },
+        {
+          id: 'healthy-working',
+          paneId: '%44',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: undefined,
+        },
+      ];
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          listWorkers: async () => workers,
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const flipped = await reconcileUnresumable(deps);
+
+      // None of the three rows match the (error + auto_resume=true + null-session) triple.
+      expect(flipped).toBe(0);
+      expect(updates).toHaveLength(0);
+      const marked = logs.find((l) => l.event === 'agent_marked_unresumable');
+      expect(marked).toBeUndefined();
+    });
+  });
+
+  describe('attemptAgentResume exhaustion — Bug B: persist auto_resume=false', () => {
+    function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
+      return {
+        id: 'test-agent',
+        paneId: '%42',
+        state: 'error',
+        claudeSessionId: 'session-abc',
+        autoResume: true,
+        resumeAttempts: 0,
+        maxResumeAttempts: 3,
+        ...overrides,
+      };
+    }
+
+    test('exhaustion branch persists auto_resume=false alongside the log event', async () => {
+      // Direct reproduction of the Bug B observation: an already-exhausted
+      // agent (attempts==max) re-entering attemptAgentResume must (1) still
+      // fire `agent_resume_exhausted` for backward compat, AND (2) write
+      // `auto_resume=false` so the next cycle's resumable filter excludes it.
+      const agent = makeWorker({ resumeAttempts: 3, maxResumeAttempts: 3 });
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('exhausted');
+      // Backward compat: exhaustion event still fires.
+      const exhausted = logs.find((l) => l.event === 'agent_resume_exhausted');
+      expect(exhausted).toBeDefined();
+      expect(exhausted?.resume_attempts).toBe(3);
+      // New invariant: auto_resume=false was persisted.
+      const flip = updates.find((u) => u.updates.autoResume === false);
+      expect(flip).toBeDefined();
+      expect(flip?.id).toBe('test-agent');
+    });
+
+    test('subsequent recovery cycle excludes the now-unresumable agent (no new event)', async () => {
+      // Simulate two consecutive scheduler ticks. On tick 1 the agent is
+      // exhausted → auto_resume flipped to false. On tick 2 runAgentRecoveryPass
+      // must exclude the agent entirely (the resumable filter already drops
+      // `autoResume=false` implicitly via attemptAgentResume's early-skip,
+      // but we test the end-to-end exclusion: no new `agent_resume_exhausted`
+      // fires).
+      let row: WorkerInfo = {
+        id: 'exhausted-agent',
+        paneId: '%99',
+        state: 'error',
+        claudeSessionId: 'sess-valid',
+        autoResume: true,
+        resumeAttempts: 3,
+        maxResumeAttempts: 3,
+      };
+
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          listWorkers: async () => [row],
+          isPaneAlive: async () => false,
+          updateAgent: async (_id, u) => {
+            row = { ...row, ...u } as WorkerInfo;
+          },
+        },
+      );
+
+      // Tick 1: runs the full recovery pass. Agent is exhausted → flipped.
+      await runAgentRecoveryPass(deps, 'daemon-t1', defaultConfig);
+      const exhaustedCountAfterT1 = logs.filter((l) => l.event === 'agent_resume_exhausted').length;
+      expect(exhaustedCountAfterT1).toBe(1);
+      expect(row.autoResume).toBe(false);
+
+      // Tick 2: same agent, now with auto_resume=false from tick 1. The
+      // recovery pass must NOT re-log `agent_resume_exhausted` — the agent
+      // is filtered out before reaching the exhaustion check. Before the
+      // Bug B fix, this count would grow by 1 on every 60s tick forever.
+      await runAgentRecoveryPass(deps, 'daemon-t2', defaultConfig);
+      const exhaustedCountAfterT2 = logs.filter((l) => l.event === 'agent_resume_exhausted').length;
+      expect(exhaustedCountAfterT2).toBe(1);
     });
   });
 
@@ -1429,6 +1792,120 @@ describe('scheduler-daemon', () => {
 
       expect(resumedAgents).toHaveLength(0);
     });
+
+    test('per-worker isPaneAlive failure does not abort recovery for remaining workers', async () => {
+      // Regression: prior to fault isolation, a single isPaneAlive throw
+      // (typically "error connecting to /tmp/tmux-.../genie" when the tmux
+      // socket is not ready yet after a reboot) aborted the entire recovery
+      // loop, leaving every subsequent worker stranded with resume_attempts=0.
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-first-fails',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 0,
+        },
+        {
+          id: 'agent-second-ok',
+          paneId: '%43',
+          state: 'idle',
+          autoResume: true,
+          claudeSessionId: 'sess-2',
+          resumeAttempts: 0,
+        },
+      ];
+
+      const resumedAgents: string[] = [];
+      const { deps, logs } = createMockDeps(
+        { triggers: [], runs: [] },
+        {
+          listWorkers: async () => workers,
+          isPaneAlive: async (paneId) => {
+            if (paneId === '%42') {
+              throw new Error(
+                'Failed to execute tmux command: error connecting to /tmp/tmux-1000/genie (No such file or directory)',
+              );
+            }
+            return false;
+          },
+          resumeAgent: async (id) => {
+            resumedAgents.push(id);
+            return true;
+          },
+          updateAgent: async () => {},
+        },
+      );
+
+      await recoverOnStartup(deps, 'daemon-1', defaultConfig);
+
+      expect(resumedAgents).toEqual(['agent-second-ok']);
+      const failureLog = logs.find((l) => l.event === 'recovery_worker_failed' && l.worker_id === 'agent-first-fails');
+      expect(failureLog).toBeDefined();
+      const completed = logs.find((l) => l.event === 'recovery_completed');
+      expect(completed?.resumed_agents).toBe(1);
+      expect(completed?.failed_agents).toBe(1);
+    });
+
+    test('schedules a retry when the initial pass has per-worker failures', async () => {
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-flaky',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 0,
+        },
+      ];
+
+      const { deps, logs } = createMockDeps(
+        { triggers: [], runs: [] },
+        {
+          listWorkers: async () => workers,
+          isPaneAlive: async () => {
+            throw new Error('tmux socket not ready');
+          },
+          resumeAgent: async () => true,
+          updateAgent: async () => {},
+        },
+      );
+
+      await recoverOnStartup(deps, 'daemon-1', defaultConfig);
+
+      const retryScheduled = logs.find((l) => l.event === 'recovery_retry_scheduled');
+      expect(retryScheduled).toBeDefined();
+      expect(retryScheduled?.failed_agents).toBe(1);
+    });
+
+    test('does not schedule a retry when every worker recovers cleanly', async () => {
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-ok',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 0,
+        },
+      ];
+
+      const { deps, logs } = createMockDeps(
+        { triggers: [], runs: [] },
+        {
+          listWorkers: async () => workers,
+          isPaneAlive: async () => false,
+          resumeAgent: async () => true,
+          updateAgent: async () => {},
+        },
+      );
+
+      await recoverOnStartup(deps, 'daemon-1', defaultConfig);
+
+      const retryScheduled = logs.find((l) => l.event === 'recovery_retry_scheduled');
+      expect(retryScheduled).toBeUndefined();
+    });
   });
 
   // ==========================================================================
@@ -1575,6 +2052,160 @@ describe('scheduler-daemon', () => {
         );
         expect(leaseUntilValue).toBeDefined();
       }
+    });
+  });
+
+  // ============================================================================
+  // Mailbox delivery retry — escalation recursion guards
+  // ============================================================================
+  //
+  // Regression coverage for the 181K-event escalation loop observed on
+  // felipe's machine over 8 days (2026-04-10 → 2026-04-17). The daemon's
+  // retry loop escalated failed-delivery messages by posting a new mailbox
+  // row `from='scheduler'`, `to='team-lead'`. Because `'team-lead'` is a
+  // bare, unresolvable recipient, that escalation row itself hit
+  // MAX_DELIVERY_ATTEMPTS and was escalated again → infinite chain.
+  // `processMailboxRetryMessage` now applies 3 guards to break the loop.
+  describe('processMailboxRetryMessage — escalation recursion guards', () => {
+    function createRetryableMsg(overrides: Partial<MailboxMessage> = {}): MailboxMessage {
+      return {
+        id: 'msg-1',
+        from: 'genie-configure',
+        to: 'genie-reviewer',
+        body: 'please review the draft',
+        createdAt: '2026-04-17T12:00:00Z',
+        read: false,
+        deliveredAt: null,
+        ...overrides,
+      };
+    }
+
+    /**
+     * Mock connection whose mailbox SELECT returns `delivery_attempts ===
+     * MAX_DELIVERY_ATTEMPTS` so the retry logic hits the escalation branch.
+     */
+    function createExhaustedDeps(repoPath: string | null = '/tmp/repo') {
+      const logs: LogEntry[] = [];
+      const sentRows: { repoPath: string; from: string; to: string; body: string }[] = [];
+
+      const sql: any = (strings: TemplateStringsArray, ..._values: unknown[]) => {
+        const query = strings.join('?');
+        if (query.includes('SELECT delivery_attempts, repo_path FROM mailbox')) {
+          return [{ delivery_attempts: MAX_DELIVERY_ATTEMPTS, repo_path: repoPath }];
+        }
+        return [];
+      };
+      sql.begin = async (fn: (tx: typeof sql) => Promise<unknown>) => fn(sql);
+      sql.listen = async () => {};
+      sql.end = async () => {};
+
+      const deps: SchedulerDeps = {
+        getConnection: async () => sql,
+        spawnCommand: async () => ({ pid: 0 }),
+        log: (entry) => logs.push(entry),
+        generateId: () => 'test-id',
+        now: () => new Date('2026-04-17T12:00:00Z'),
+        sleep: async () => {},
+        jitter: (maxMs) => Math.floor(maxMs / 2),
+        isPaneAlive: async () => true,
+        listWorkers: async () => [],
+        countTmuxSessions: async () => 0,
+        publishEvent: async () => {},
+        resumeAgent: async () => true,
+        updateAgent: async () => {},
+      };
+
+      const deliverFn = async () => false; // delivery always fails — forces escalation branch
+      const sendFn = async (repoArg: string, from: string, to: string, body: string) => {
+        sentRows.push({ repoPath: repoArg, from, to, body });
+        return { id: `msg-sent-${sentRows.length}`, from, to, body, createdAt: '', read: false, deliveredAt: null };
+      };
+
+      return { deps, logs, sentRows, deliverFn, sendFn };
+    }
+
+    test('Guard 1: scheduler-authored message does not produce a new escalation row', async () => {
+      const { deps, logs, sentRows, deliverFn, sendFn } = createExhaustedDeps();
+      const msg = createRetryableMsg({ from: 'scheduler', to: 'team-lead', body: '[escalation] older failure' });
+
+      await processMailboxRetryMessage(deps, msg, { deliverFn, sendFn });
+
+      expect(sentRows).toHaveLength(0);
+      const dropped = logs.find((l) => l.event === 'mailbox_delivery_escalation_dropped');
+      expect(dropped).toBeDefined();
+      expect(dropped?.reason).toBe('already_escalated_by_scheduler');
+      expect(dropped?.messageId).toBe('msg-1');
+      expect(logs.find((l) => l.event === 'mailbox_delivery_escalated')).toBeUndefined();
+    });
+
+    test('Guard 2: [escalation]-prefixed body is dropped even without scheduler authorship', async () => {
+      const { deps, logs, sentRows, deliverFn, sendFn } = createExhaustedDeps();
+      const msg = createRetryableMsg({
+        from: 'genie-configure',
+        to: 'some-other-worker',
+        body: '[escalation] replayed escalation from another sender',
+      });
+
+      await processMailboxRetryMessage(deps, msg, { deliverFn, sendFn });
+
+      expect(sentRows).toHaveLength(0);
+      const dropped = logs.find((l) => l.event === 'mailbox_delivery_escalation_dropped');
+      expect(dropped).toBeDefined();
+      expect(dropped?.reason).toBe('body_prefix');
+    });
+
+    test('Guard 3: message addressed to ESCALATION_RECIPIENT from a non-scheduler sender is dropped', async () => {
+      const { deps, logs, sentRows, deliverFn, sendFn } = createExhaustedDeps();
+      const msg = createRetryableMsg({
+        from: 'genie-configure',
+        to: ESCALATION_RECIPIENT,
+        body: 'direct message to team-lead that exhausted retries',
+      });
+
+      await processMailboxRetryMessage(deps, msg, { deliverFn, sendFn });
+
+      expect(sentRows).toHaveLength(0);
+      const dropped = logs.find((l) => l.event === 'mailbox_delivery_escalation_dropped');
+      expect(dropped).toBeDefined();
+      expect(dropped?.reason).toBe('same_recipient');
+    });
+
+    test('positive path: legitimate worker→worker failure still produces an escalation row', async () => {
+      const { deps, logs, sentRows, deliverFn, sendFn } = createExhaustedDeps();
+      const msg = createRetryableMsg({
+        from: 'genie-configure',
+        to: 'genie-reviewer',
+        body: 'please review this draft',
+      });
+
+      await processMailboxRetryMessage(deps, msg, { deliverFn, sendFn });
+
+      expect(sentRows).toHaveLength(1);
+      expect(sentRows[0].from).toBe('scheduler');
+      expect(sentRows[0].to).toBe(ESCALATION_RECIPIENT);
+      expect(sentRows[0].body.startsWith('[escalation] ')).toBe(true);
+      expect(logs.find((l) => l.event === 'mailbox_delivery_escalated')).toBeDefined();
+      expect(logs.find((l) => l.event === 'mailbox_delivery_escalation_dropped')).toBeUndefined();
+    });
+
+    test('regression: 10 consecutive 3-fail cycles on scheduler-authored team-lead row produce 0 new rows', async () => {
+      const { deps, logs, sentRows, deliverFn, sendFn } = createExhaustedDeps();
+      const msg = createRetryableMsg({
+        from: 'scheduler',
+        to: 'team-lead',
+        body: '[escalation] Message msg-orig from "x" to "y" failed delivery',
+      });
+
+      for (let i = 0; i < 10; i++) {
+        await processMailboxRetryMessage(deps, msg, { deliverFn, sendFn });
+      }
+
+      // Zero new mailbox rows from 10 cycles — this is the property that keeps
+      // the mailbox table from growing by 1500/h indefinitely.
+      expect(sentRows).toHaveLength(0);
+      const dropped = logs.filter((l) => l.event === 'mailbox_delivery_escalation_dropped');
+      expect(dropped).toHaveLength(10);
+      expect(dropped.every((l) => l.reason === 'already_escalated_by_scheduler')).toBe(true);
     });
   });
 });

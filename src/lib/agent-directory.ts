@@ -9,7 +9,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUILTIN_COUNCIL_MEMBERS, BUILTIN_ROLES, type BuiltinAgent } from './builtin-agents.js';
-import { serializeSdkConfig, writeFrontmatter } from './frontmatter-writer.js';
 import type { SdkDirectoryConfig } from './sdk-directory-types.js';
 
 // ============================================================================
@@ -25,6 +24,13 @@ export interface DirectoryEntry {
   dir: string;
   /** Optional default git repo (overridden by team). */
   repo?: string;
+  /**
+   * Template-pinned team from the `agent_templates` PG row (authoritative).
+   * When present, this is the canonical team for the agent, regardless of
+   * which tmux session or workspace the caller is sitting in. Consumed by
+   * `resolveTeamName` as tier 2 of the team-resolution precedence.
+   */
+  team?: string;
   /** Prompt injection mode: 'system' replaces CC default, 'append' adds to it. */
   promptMode: PromptMode;
   /** Default model (e.g., 'sonnet', 'opus', 'codex'). */
@@ -66,6 +72,30 @@ export interface ScopedDirectoryEntry extends DirectoryEntry {
 
 interface ScopeOptions {
   global?: boolean;
+}
+
+/**
+ * Options for {@link rm}.
+ *
+ * `force`: when true, also delete non-`dir:` agent rows (spawn/runtime rows
+ * with id shapes like `<team>-<role>` or UUID) whose `role` matches `name`.
+ * Without this flag, `rm` only removes the `dir:<name>` row and returns a
+ * warning message listing the live instance ids if any exist.
+ */
+interface RmOptions extends ScopeOptions {
+  force?: boolean;
+}
+
+/**
+ * Result of {@link rm}.
+ *
+ * `message`: human-readable explanation when `removed=false` and live runtime
+ * rows exist for the same role (so the caller can print guidance instead of a
+ * generic "not found" message).
+ */
+interface RmResult {
+  removed: boolean;
+  message?: string;
 }
 
 /** Resolved agent — either a user directory entry or a built-in. */
@@ -153,12 +183,46 @@ export async function add(
 
 /**
  * Remove an agent from the directory.
+ *
+ * Storage symmetry with {@link ls}:
+ *   - `ls()` surfaces rows by `role`, regardless of id shape (dir:, team-role, UUID).
+ *   - `rm()` first tries the canonical `dir:<name>` row. If that row exists, it is
+ *     deleted and we are done.
+ *   - If no `dir:` row exists but runtime rows with matching `role` do, we return
+ *     `removed: false` plus a `message` naming the live instance ids and pointing
+ *     the user at `genie kill <id>` or `--force`. Without this, `rm` used to
+ *     report "not found" on agents that `ls` was happily displaying.
+ *   - With `force: true`, we additionally wipe every row whose `role = name`,
+ *     which is how users can reclaim a name whose directory entry was lost but
+ *     whose runtime/spawn rows linger.
  */
-export async function rm(name: string, _options?: ScopeOptions): Promise<boolean> {
+export async function rm(name: string, options?: RmOptions): Promise<RmResult> {
   const { getConnection } = await import('./db.js');
   const sql = await getConnection();
-  const result = await sql`DELETE FROM agents WHERE id = ${`dir:${name}`}`;
-  return result.count > 0;
+
+  // 1. Canonical directory row: id = 'dir:<name>'
+  const dirDelete = await sql`DELETE FROM agents WHERE id = ${`dir:${name}`}`;
+  const dirRemoved = dirDelete.count > 0;
+
+  if (options?.force) {
+    // --force: also purge any runtime/spawn rows sharing this role.
+    const roleDelete = await sql`DELETE FROM agents WHERE role = ${name}`;
+    return { removed: dirRemoved || roleDelete.count > 0 };
+  }
+
+  if (dirRemoved) return { removed: true };
+
+  // 2. No dir: row — check for runtime rows that `ls()` would surface.
+  const instances = await sql`SELECT id FROM agents WHERE role = ${name}`;
+  if (instances.length === 0) {
+    return { removed: false };
+  }
+
+  const idList = instances.map((r: { id: string }) => r.id).join(', ');
+  return {
+    removed: false,
+    message: `No directory entry for "${name}". Active instances: ${idList}. Use 'genie kill <id>' to terminate, or re-run with --force to remove all.`,
+  };
 }
 
 /**
@@ -166,19 +230,29 @@ export async function rm(name: string, _options?: ScopeOptions): Promise<boolean
  * Resolution order: PG agents (by role) → built-in roles → built-in council.
  */
 export async function resolve(name: string): Promise<ResolvedAgent | null> {
+  // Template-pinned team from agent_templates (authoritative for canonical spawns).
+  // Looked up once and attached to whatever entry we return below.
+  const templateTeam = await lookupTemplateTeam(name);
+
   // 1. Check PG agents table — look for agents with matching role, include metadata
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
     const rows = await sql`
-      SELECT role, metadata FROM agents
+      SELECT role, metadata, created_at FROM agents
       WHERE role = ${name}
       ORDER BY (CASE WHEN id LIKE 'dir:%' THEN 0 ELSE 1 END), started_at DESC
       LIMIT 1
     `;
     if (rows.length > 0) {
       const meta = parseMetadata(rows[0].metadata);
-      return { entry: roleToEntry(name, undefined, meta), builtin: false };
+      const createdAt =
+        rows[0].created_at instanceof Date
+          ? rows[0].created_at.toISOString()
+          : (rows[0].created_at as string | undefined);
+      const entry = roleToEntry(name, undefined, meta, createdAt);
+      if (templateTeam) entry.team = templateTeam;
+      return { entry, builtin: false };
     }
   } catch {
     /* PG unavailable — fall through to built-ins */
@@ -187,16 +261,39 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
   // 3. Check built-in roles
   const builtinRole = BUILTIN_ROLES.find((r: BuiltinAgent) => r.name === name);
   if (builtinRole) {
-    return { entry: builtinToEntry(builtinRole), builtin: true };
+    const entry = builtinToEntry(builtinRole);
+    if (templateTeam) entry.team = templateTeam;
+    return { entry, builtin: true };
   }
 
   // 4. Check built-in council members
   const councilMember = BUILTIN_COUNCIL_MEMBERS.find((m: BuiltinAgent) => m.name === name);
   if (councilMember) {
-    return { entry: builtinToEntry(councilMember), builtin: true };
+    const entry = builtinToEntry(councilMember);
+    if (templateTeam) entry.team = templateTeam;
+    return { entry, builtin: true };
   }
 
   return null;
+}
+
+/**
+ * Look up the template-pinned team for an agent name from `agent_templates`.
+ * Returns null when PG is unavailable, the row does not exist, or the team
+ * column is empty. This is an authoritative PG lookup — NOT a synthetic
+ * tmux/env fallback — and powers tier 2 of the team-resolution precedence.
+ */
+async function lookupTemplateTeam(name: string): Promise<string | null> {
+  try {
+    const { getConnection } = await import('./db.js');
+    const sql = await getConnection();
+    const rows = await sql`SELECT team FROM agent_templates WHERE id = ${name} LIMIT 1`;
+    if (rows.length === 0) return null;
+    const team = rows[0].team;
+    return typeof team === 'string' && team.length > 0 ? team : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -236,7 +333,7 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
     const rows = await sql`
-      SELECT DISTINCT ON (a.role) a.role, a.team, a.metadata, e.repo_path, e.provider
+      SELECT DISTINCT ON (a.role) a.role, a.team, a.metadata, a.created_at, e.repo_path, e.provider
       FROM agents a
       LEFT JOIN executors e ON a.current_executor_id = e.id
       WHERE a.role IS NOT NULL
@@ -246,7 +343,9 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
       const name = row.role as string;
       if (!seen.has(name)) {
         const meta = parseMetadata(row.metadata);
-        const entry = roleToEntry(name, row.team as string, meta);
+        const createdAt =
+          row.created_at instanceof Date ? row.created_at.toISOString() : (row.created_at as string | undefined);
+        const entry = roleToEntry(name, row.team as string, meta, createdAt);
         const repoPath = row.repo_path as string;
         if (repoPath) {
           entry.dir = repoPath;
@@ -373,8 +472,18 @@ function builtinToEntry(agent: BuiltinAgent): DirectoryEntry {
 
 /** Convert a PG agent role to a synthetic DirectoryEntry, enriched with metadata.
  *  When metadata is present, it takes priority over built-in defaults
- *  (PG entries represent user overrides or directory-synced agents). */
-function roleToEntry(role: string, team?: string, metadata?: Record<string, unknown>): DirectoryEntry {
+ *  (PG entries represent user overrides or directory-synced agents).
+ *
+ *  `registeredAt` is sourced from the caller-provided `createdAt` (PG
+ *  `agents.created_at`) or `metadata.registeredAt` if present — never
+ *  fabricated at read time. Two reads of the same row must produce the
+ *  same `registeredAt`, otherwise the UI implies a phantom re-registration. */
+function roleToEntry(
+  role: string,
+  team?: string,
+  metadata?: Record<string, unknown>,
+  createdAt?: string,
+): DirectoryEntry {
   const hasMetadata = metadata && Object.keys(metadata).length > 0;
 
   // Only fall back to built-in when there's no PG metadata to use
@@ -383,13 +492,16 @@ function roleToEntry(role: string, team?: string, metadata?: Record<string, unkn
     if (builtin) return builtinToEntry(builtin);
   }
 
+  const registeredAt =
+    (typeof metadata?.registeredAt === 'string' ? (metadata.registeredAt as string) : undefined) ?? createdAt ?? '';
+
   return {
     name: role,
     dir: (metadata?.dir as string) || '',
     promptMode: (metadata?.promptMode as PromptMode) || 'append',
     model: metadata?.model as string | undefined,
     roles: [],
-    registeredAt: new Date().toISOString(),
+    registeredAt,
     description: metadata?.description as string | undefined,
     color: metadata?.color as string | undefined,
     provider: metadata?.provider as string | undefined,
@@ -434,42 +546,8 @@ function parseMetadata(raw: unknown): Record<string, unknown> {
   return {};
 }
 
-/** Frontmatter-relevant keys that should be synced back to AGENTS.md on edit. */
-const FRONTMATTER_KEYS = new Set(['name', 'description', 'model', 'color', 'promptMode', 'provider', 'sdk']);
-
-/**
- * Sync frontmatter-relevant fields back to the agent's AGENTS.md file.
- * Only writes if the agent has a dir with AGENTS.md and the edit touched
- * frontmatter-relevant fields. Best-effort — never throws.
- */
-export function syncFrontmatterToDisk(
-  entry: DirectoryEntry,
-  updates: Partial<Pick<DirectoryEntry, 'dir' | 'model' | 'description' | 'color' | 'promptMode' | 'provider' | 'sdk'>>,
-): void {
-  try {
-    if (!entry.dir) return;
-    const agentsPath = join(entry.dir, 'AGENTS.md');
-    if (!existsSync(agentsPath)) return;
-
-    // Only write if the edit touched frontmatter-relevant fields
-    const touchedFrontmatter = Object.keys(updates).some((k) => FRONTMATTER_KEYS.has(k));
-    if (!touchedFrontmatter) return;
-
-    // Build the frontmatter update object from relevant fields
-    const fmUpdates: Record<string, unknown> = {};
-    if (updates.model !== undefined) fmUpdates.model = updates.model;
-    if (updates.description !== undefined) fmUpdates.description = updates.description;
-    if (updates.color !== undefined) fmUpdates.color = updates.color;
-    if (updates.promptMode !== undefined) fmUpdates.promptMode = updates.promptMode;
-    if (updates.provider !== undefined) fmUpdates.provider = updates.provider;
-    if (updates.sdk !== undefined) {
-      fmUpdates.sdk = serializeSdkConfig(updates.sdk);
-    }
-
-    if (Object.keys(fmUpdates).length === 0) return;
-
-    writeFrontmatter(agentsPath, fmUpdates);
-  } catch {
-    /* Best-effort — disk write failure should not break directory edit */
-  }
-}
+// `syncFrontmatterToDisk` was removed by wish `dir-sync-frontmatter-refresh`
+// Group 4 (PR feat/dir-sync-frontmatter-refresh-group4). Its purpose was to
+// mirror DB edits back into AGENTS.md frontmatter, but AGENTS.md is now
+// body-only post-migration — the canonical file is `agents/<name>/agent.yaml`,
+// written directly by the `dir edit` handler. No replacement is needed.
