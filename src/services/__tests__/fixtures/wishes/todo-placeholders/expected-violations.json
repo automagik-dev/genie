@@ -1,0 +1,51 @@
+{
+  "summary": {
+    "total": 6,
+    "fixable": 0,
+    "unfixable": 6
+  },
+  "violations": [
+    {
+      "rule": "todo-placeholder-remaining",
+      "severity": "error",
+      "line": 20,
+      "column": 3,
+      "fixable": false
+    },
+    {
+      "rule": "todo-placeholder-remaining",
+      "severity": "error",
+      "line": 24,
+      "column": 3,
+      "fixable": false
+    },
+    {
+      "rule": "todo-placeholder-remaining",
+      "severity": "error",
+      "line": 28,
+      "column": 14,
+      "fixable": false
+    },
+    {
+      "rule": "todo-placeholder-remaining",
+      "severity": "error",
+      "line": 30,
+      "column": 11,
+      "fixable": false
+    },
+    {
+      "rule": "todo-placeholder-remaining",
+      "severity": "error",
+      "line": 33,
+      "column": 4,
+      "fixable": false
+    },
+    {
+      "rule": "todo-placeholder-remaining",
+      "severity": "error",
+      "line": 36,
+      "column": 7,
+      "fixable": false
+    }
+  ]
+}

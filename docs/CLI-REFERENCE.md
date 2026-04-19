@@ -21,7 +21,7 @@ Complete command reference generated from `src/term-commands/`. Organized by cat
 - [Brain (Enterprise)](#brain-enterprise) -- genie brain install/uninstall/update/version + passthrough
 - [Omni Bridge](#omni-bridge) -- genie omni start/stop/status
 - [Import/Export](#importexport) -- genie export/import
-- [Dispatch](#dispatch) -- genie brainstorm/wish/work/review
+- [Dispatch](#dispatch) -- genie dispatch brainstorm/wish/review, genie work
 - [QA System](#qa-system) -- genie qa run/status/history/check, genie qa-report
 - [Tags](#tags) -- genie tag list/create
 - [Types](#types) -- genie type list/show/create
@@ -148,17 +148,17 @@ Send a message to your team conversation (PG-backed).
 | `--from <sender>` | string | Sender ID (auto-detected) |
 | `--team <name>` | string | Team name (auto-detected) |
 
-### `genie done <ref>`
+### `genie wish done <ref>`
 
-Mark a wish group as done. Format: `<slug>#<group>`.
+Mark a wish group as done. Format: `<slug>#<group>`. (Flat form `genie done` was removed — now lives under the `genie wish` command group.)
 
-### `genie status <slug>`
+### `genie wish status <slug>`
 
-Show wish state overview for all groups.
+Show wish state overview for all groups. (Flat form `genie status` was removed.)
 
-### `genie reset <ref>`
+### `genie wish reset <ref>`
 
-Reset an in-progress group back to ready. Format: `<slug>#<group>`.
+Reset an in-progress group back to ready, or wipe a whole wish with a bare slug. Format: `<slug>#<group>` or `<slug>`. (Flat form `genie reset` was removed.)
 
 ### `genie read <name>`
 
@@ -1139,15 +1139,19 @@ Import genie data from JSON export.
 
 ## Dispatch
 
-Wish lifecycle commands for spawning agents with context.
+Framework-skill dispatch primitives live under the `genie dispatch` command group. `genie work` is kept flat at the top level.
 
-### `genie brainstorm <agent> <slug>`
+### `genie dispatch brainstorm <agent> <slug>`
 
 Spawn agent with brainstorm DRAFT.md context.
 
-### `genie wish <agent> <slug>`
+### `genie dispatch wish <agent> <slug>`
 
 Spawn agent with wish DESIGN.md context.
+
+### `genie dispatch review <agent> <ref>`
+
+Spawn agent with review scope for a wish group. Format: `<slug>#<group>`.
 
 ### `genie work <ref> [agent]`
 
@@ -1155,10 +1159,6 @@ Auto-orchestrate a wish, or dispatch work on a specific group.
 
 - If `ref` is a slug (no `#`): auto-orchestrate the entire wish
 - If `ref` is `slug#group` with an agent: dispatch that specific group
-
-### `genie review <agent> <ref>`
-
-Spawn agent with review scope for a wish group. Format: `<slug>#<group>`.
 
 ---
 

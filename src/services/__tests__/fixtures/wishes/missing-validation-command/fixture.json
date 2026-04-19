@@ -1,0 +1,6 @@
+{
+  "category": "non-fixable",
+  "rules": ["missing-validation-command"],
+  "description": "Validation label + bash fence present, but fenced block is empty. Not fixable — author must supply the command.",
+  "expectFixChanges": false
+}

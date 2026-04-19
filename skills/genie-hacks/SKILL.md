@@ -210,7 +210,7 @@ The canonical hacks live in the docs at `genie/hacks.mdx`. Below is the embedded
 - **Title:** Debugging Agent Issues Like a Pro
 - **Category:** debugging
 - **Problem:** An agent is stuck, producing wrong output, or a team isn't making progress.
-- **Solution:** Use `genie agent log --raw` for live output, `genie agent log --transcript` for transcripts, `/trace` for root cause analysis, and `genie reset` for recovery.
+- **Solution:** Use `genie agent log --raw` for live output, `genie agent log --transcript` for transcripts, `/trace` for root cause analysis, and `genie wish reset` for recovery.
 - **Code:**
   ```bash
   # Live agent output
@@ -230,7 +230,7 @@ The canonical hacks live in the docs at `genie/hacks.mdx`. Below is the embedded
   genie task status my-wish-slug
 
   # Unstick a blocked group
-  genie reset my-wish-slug#2
+  genie wish reset my-wish-slug#2
   ```
 - **Benefit:** Full visibility into agent behavior. Systematic debugging instead of guessing.
 - **When to use:** Agent taking too long. Output quality dropping. Team progress stalled. Post-mortem on failed dream run.

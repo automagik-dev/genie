@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "total": 1,
+    "fixable": 1,
+    "unfixable": 0
+  },
+  "violations": [
+    {
+      "rule": "group-header-format",
+      "severity": "error",
+      "line": 47,
+      "column": 1,
+      "fixable": true
+    }
+  ]
+}

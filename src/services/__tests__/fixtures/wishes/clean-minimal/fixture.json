@@ -1,0 +1,6 @@
+{
+  "category": "clean",
+  "rules": [],
+  "description": "Smallest structurally valid wish — one group, all required fields.",
+  "expectFixChanges": false
+}
