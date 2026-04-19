@@ -639,6 +639,14 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
   const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to ${leaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
+    // P1 hotfix: forward the team context so spawn lands in the team's
+    // tmux window, not in the operator's "current window". When this
+    // option is omitted, agents.ts:1862 sets teamWasExplicit=false →
+    // spawnIntoCurrentWindow=true → tmux split-window with no -t target,
+    // which tmux resolves to the most-recently-active client (usually
+    // the operator's pane). Authority:
+    // ~/.genie/reports/trace-genie-spawn-wrong-window.md
+    team: process.env.GENIE_TEAM,
     role: effectiveRole,
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: workPrompt,
@@ -715,6 +723,10 @@ async function reviewCommand(agentName: string, ref: string): Promise<void> {
   const reviewPrompt = `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to ${reviewLeaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
+    // P1 hotfix: forward team context (same root cause as workDispatchCommand
+    // above). Review dispatch is also team-context — must not fall back to
+    // operator's "current window".
+    team: process.env.GENIE_TEAM,
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: reviewPrompt,
   });

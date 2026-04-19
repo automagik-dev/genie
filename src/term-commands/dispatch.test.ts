@@ -828,3 +828,107 @@ describe('autoOrchestrateCommand parallel dispatch (issue #1207)', () => {
     expect(between).not.toContain('process.exit(');
   });
 });
+
+/**
+ * P1 regression guard — team-routing fix for spawn-wrong-window bug.
+ *
+ * `workDispatchCommand` (group dispatch) and `reviewCommand` are both
+ * called from WITHIN a team-lead's tmux pane. If they don't forward the
+ * `team` option to `handleWorkerSpawn`, `teamWasExplicit` becomes false
+ * in agents.ts, which flips `spawnIntoCurrentWindow=true`, which causes
+ * `tmux split-window` to run with no `-t` target — tmux then picks the
+ * most-recently-active client (usually the operator's pane), silently
+ * misrouting the engineer/reviewer into the wrong window.
+ *
+ * Authority: ~/.genie/reports/trace-genie-spawn-wrong-window.md
+ *
+ * Regression guard: source-grep the two dispatchers to confirm they
+ * forward `team: process.env.GENIE_TEAM`. If this test breaks, the bug
+ * is back.
+ */
+describe('spawn-wrong-window regression guard (trace-genie-spawn-wrong-window.md)', () => {
+  let source: string;
+
+  beforeAll(async () => {
+    const { readFileSync } = await import('node:fs');
+    source = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+  });
+
+  it('workDispatchCommand forwards team: process.env.GENIE_TEAM to handleWorkerSpawn', () => {
+    const fnStart = source.indexOf('async function workDispatchCommand');
+    expect(fnStart).toBeGreaterThan(-1);
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const body = source.slice(fnStart, nextFnIdx !== -1 ? nextFnIdx : source.length);
+    // handleWorkerSpawn must carry team: process.env.GENIE_TEAM
+    const callIdx = body.indexOf('await handleWorkerSpawn(agentName, {');
+    expect(callIdx).toBeGreaterThan(-1);
+    const nextCloseIdx = body.indexOf('});', callIdx);
+    const callBlock = body.slice(callIdx, nextCloseIdx);
+    expect(callBlock).toContain('team: process.env.GENIE_TEAM');
+  });
+
+  it('reviewCommand forwards team: process.env.GENIE_TEAM to handleWorkerSpawn', () => {
+    const fnStart = source.indexOf('async function reviewCommand');
+    expect(fnStart).toBeGreaterThan(-1);
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const body = source.slice(fnStart, nextFnIdx !== -1 ? nextFnIdx : source.length);
+    const callIdx = body.indexOf('await handleWorkerSpawn(agentName, {');
+    expect(callIdx).toBeGreaterThan(-1);
+    const nextCloseIdx = body.indexOf('});', callIdx);
+    const callBlock = body.slice(callIdx, nextCloseIdx);
+    expect(callBlock).toContain('team: process.env.GENIE_TEAM');
+  });
+
+  it('brainstormCommand does NOT forward team (operator-initiated dispatches should spawn in current window)', () => {
+    const fnStart = source.indexOf('async function brainstormCommand');
+    expect(fnStart).toBeGreaterThan(-1);
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const body = source.slice(fnStart, nextFnIdx !== -1 ? nextFnIdx : source.length);
+    const callIdx = body.indexOf('await handleWorkerSpawn(agentName, {');
+    expect(callIdx).toBeGreaterThan(-1);
+    const nextCloseIdx = body.indexOf('});', callIdx);
+    const callBlock = body.slice(callIdx, nextCloseIdx);
+    // brainstorm/wish are operator-initiated (no team context in env);
+    // they should NOT forward team — spawning in operator's current
+    // window is correct behavior.
+    expect(callBlock).not.toContain('team: process.env.GENIE_TEAM');
+  });
+});
+
+/**
+ * Companion regression guard — agents.ts's spawnIntoCurrentWindow must
+ * be defensive against callers that have GENIE_TEAM set but didn't pass
+ * --team. Without this, a team-lead's own env leaks to tmux's
+ * "most-recently-active client" fallback and misroutes the pane.
+ */
+describe('agents.ts spawnIntoCurrentWindow regression guard', () => {
+  it('spawnIntoCurrentWindow assignment respects process.env.GENIE_TEAM', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(__dirname, 'agents.ts'), 'utf-8');
+    // Anchor on the RUNTIME assignment (`!teamWasExplicit` is unique to it),
+    // not the interface declaration `spawnIntoCurrentWindow: boolean;`.
+    const anchor = source.indexOf('spawnIntoCurrentWindow: !teamWasExplicit');
+    expect(anchor).toBeGreaterThan(-1);
+    // Assignment line must mention GENIE_TEAM as a guard against operator
+    // env leak via team-lead's spawn shell.
+    const lineEnd = source.indexOf('\n', anchor);
+    const line = source.slice(anchor, lineEnd);
+    expect(line).toContain('GENIE_TEAM');
+  });
+});
+
+/**
+ * Companion regression guard — createTmuxPane must refuse to split
+ * without a target. Prevents the root-cause failure mode (tmux picks
+ * most-recently-active client) even if some future callsite forgets to
+ * forward team and GENIE_TEAM is also unset.
+ */
+describe('agents.ts createTmuxPane refuse-no-target regression guard', () => {
+  it('createTmuxPane throws when both teamWindow and TMUX_PANE are absent', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(__dirname, 'agents.ts'), 'utf-8');
+    // Grep for the refusal block inside the createTmuxPane body.
+    expect(source).toContain('refusing to split with no target');
+    expect(source).toContain('trace-genie-spawn-wrong-window');
+  });
+});

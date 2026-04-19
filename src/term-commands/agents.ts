@@ -828,7 +828,21 @@ function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow
     return paneId;
   }
 
-  const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
+  // P1 hotfix: never run `split-window` without `-t` — tmux falls back to
+  // the most-recently-active client (operator's pane) and silently misroutes
+  // the new pane. When `teamWindow` is null but the caller is inside tmux,
+  // explicitly target the caller's pane via `TMUX_PANE`. If neither is set
+  // we'd rather fail loudly than misroute. Authority:
+  // ~/.genie/reports/trace-genie-spawn-wrong-window.md
+  const callerPane = process.env.TMUX_PANE;
+  if (!teamWindow && !callerPane) {
+    throw new Error(
+      'createTmuxPane: refusing to split with no target — neither teamWindow nor TMUX_PANE is set. ' +
+        'This indicates a missing --team or --window flag, or a caller outside tmux. ' +
+        'See ~/.genie/reports/trace-genie-spawn-wrong-window.md',
+    );
+  }
+  const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : `-t '${callerPane}'`;
   const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
   if (useLaunchScript) {
     const splitCmd = `${tmuxPrefix}split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${tmuxCommand}`;
@@ -2028,7 +2042,13 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     transport: insideTmux ? 'tmux' : 'inline',
     extraArgs: options.extraArgs,
     cwd: agent.repoPath,
-    spawnIntoCurrentWindow: !teamWasExplicit && insideTmux && !options.session,
+    // P1 hotfix: a caller running inside a team context (GENIE_TEAM env set
+    // by the team-lead's spawn shell) is NOT a TUI free-form spawn — never
+    // spawn into "current window". tmux's "current window" resolves to the
+    // most-recently-active client (usually the operator's pane), silently
+    // misrouting the new agent. Authority:
+    // ~/.genie/reports/trace-genie-spawn-wrong-window.md
+    spawnIntoCurrentWindow: !teamWasExplicit && !process.env.GENIE_TEAM && insideTmux && !options.session,
     sessionOverride: options.session,
     autoResume: options.autoResume,
     agentIdentityId: agentIdentity.id,
