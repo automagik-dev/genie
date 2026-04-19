@@ -216,7 +216,41 @@ function buildLegacyTeamLeadEntryId(teamName: string): string {
 export async function register(agent: Agent): Promise<void> {
   const sql = await getConnection();
   const now = new Date().toISOString();
-  await sql`INSERT INTO agents (id, pane_id, session, worktree, task_id, task_title, wish_slug, group_number, started_at, state, last_state_change, repo_path, claude_session_id, window_name, window_id, role, custom_name, sub_panes, provider, transport, skill, team, tmux_window, native_agent_id, native_color, native_team_enabled, parent_session_id, suspended_at, auto_resume, resume_attempts, last_resume_attempt, max_resume_attempts, pane_color) VALUES (${agent.id}, ${agent.paneId}, ${agent.session}, ${agent.worktree ?? null}, ${agent.taskId ?? null}, ${agent.taskTitle ?? null}, ${agent.wishSlug ?? null}, ${agent.groupNumber ?? null}, ${agent.startedAt ?? now}, ${agent.state ?? 'spawning'}, ${agent.lastStateChange ?? now}, ${agent.repoPath}, ${agent.claudeSessionId ?? null}, ${agent.windowName ?? null}, ${agent.windowId ?? null}, ${agent.role ?? null}, ${agent.customName ?? null}, ${sql.json(agent.subPanes ?? [])}, ${agent.provider ?? null}, ${agent.transport ?? 'tmux'}, ${agent.skill ?? null}, ${agent.team ?? null}, ${agent.window ?? null}, ${agent.nativeAgentId ?? null}, ${agent.nativeColor ?? null}, ${agent.nativeTeamEnabled ?? false}, ${agent.parentSessionId ?? null}, ${agent.suspendedAt ?? null}, ${agent.autoResume ?? true}, ${agent.resumeAttempts ?? 0}, ${agent.lastResumeAttempt ?? null}, ${agent.maxResumeAttempts ?? 3}, ${agent.paneColor ?? null}) ON CONFLICT (id) DO UPDATE SET pane_id = EXCLUDED.pane_id, session = EXCLUDED.session, state = EXCLUDED.state, last_state_change = EXCLUDED.last_state_change, updated_at = now()`;
+
+  // Defense-in-depth: reject cross-team id collisions BEFORE the INSERT.
+  //
+  // The `ON CONFLICT (id) DO UPDATE` clause below only refreshes pane/session/
+  // state — team, role, and custom_name stay pinned to the original row.
+  // Without this pre-check, a new spawn in team B that happens to reuse an id
+  // still held by team A would silently adopt team A's row: pane/session
+  // switch to the new process, but the row's `team` stays stale. The executor
+  // runs in team B's worktree while every team-scoped query (genie send,
+  // genie inbox, wish_groups dispatch, status heartbeat) keeps routing to
+  // team A. This was the root cause of the genie-serve-obs ↔ docs-drift-omni-v2
+  // cross-team resurrection incident (2026-04-19): engineer anchors from one
+  // team ended up running in another team's worktree while wish_groups
+  // state-machine never saw the transition, stranding the new team-lead in a
+  // forever heartbeat loop.
+  //
+  // Rules:
+  //   - Same id + same team        → refresh (legitimate resume-in-place)
+  //   - Same id + existing team is null → upgrade (legacy rows pre-team-aware)
+  //   - Same id + different non-null team → REJECT loudly
+  //
+  // Callers that legitimately want to move an agent to a different team must
+  // `unregister` first; the explicit two-step signals a real intent transfer.
+  if (agent.team) {
+    const existing = await sql<{ team: string | null }[]>`
+      SELECT team FROM agents WHERE id = ${agent.id} LIMIT 1
+    `;
+    if (existing.length > 0 && existing[0].team !== null && existing[0].team !== agent.team) {
+      throw new Error(
+        `register: cross-team id collision — agent id "${agent.id}" already exists in team "${existing[0].team}", refusing to re-register under team "${agent.team}". Unregister the stale row first, or pick a different id/suffix for this spawn.`,
+      );
+    }
+  }
+
+  await sql`INSERT INTO agents (id, pane_id, session, worktree, task_id, task_title, wish_slug, group_number, started_at, state, last_state_change, repo_path, claude_session_id, window_name, window_id, role, custom_name, sub_panes, provider, transport, skill, team, tmux_window, native_agent_id, native_color, native_team_enabled, parent_session_id, suspended_at, auto_resume, resume_attempts, last_resume_attempt, max_resume_attempts, pane_color) VALUES (${agent.id}, ${agent.paneId}, ${agent.session}, ${agent.worktree ?? null}, ${agent.taskId ?? null}, ${agent.taskTitle ?? null}, ${agent.wishSlug ?? null}, ${agent.groupNumber ?? null}, ${agent.startedAt ?? now}, ${agent.state ?? 'spawning'}, ${agent.lastStateChange ?? now}, ${agent.repoPath}, ${agent.claudeSessionId ?? null}, ${agent.windowName ?? null}, ${agent.windowId ?? null}, ${agent.role ?? null}, ${agent.customName ?? null}, ${sql.json(agent.subPanes ?? [])}, ${agent.provider ?? null}, ${agent.transport ?? 'tmux'}, ${agent.skill ?? null}, ${agent.team ?? null}, ${agent.window ?? null}, ${agent.nativeAgentId ?? null}, ${agent.nativeColor ?? null}, ${agent.nativeTeamEnabled ?? false}, ${agent.parentSessionId ?? null}, ${agent.suspendedAt ?? null}, ${agent.autoResume ?? true}, ${agent.resumeAttempts ?? 0}, ${agent.lastResumeAttempt ?? null}, ${agent.maxResumeAttempts ?? 3}, ${agent.paneColor ?? null}) ON CONFLICT (id) DO UPDATE SET pane_id = EXCLUDED.pane_id, session = EXCLUDED.session, state = EXCLUDED.state, last_state_change = EXCLUDED.last_state_change, team = COALESCE(agents.team, EXCLUDED.team), role = COALESCE(agents.role, EXCLUDED.role), custom_name = COALESCE(agents.custom_name, EXCLUDED.custom_name), updated_at = now()`;
 }
 
 export async function unregister(id: string): Promise<void> {
