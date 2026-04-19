@@ -167,6 +167,13 @@ let pgserveChild: ChildProcess | null = null;
 let sqlClient: any = null;
 let activePort: number | null = null;
 let ensurePromise: Promise<number> | null = null;
+/**
+ * Dedup concurrent rebuilds of sqlClient. N parallel getConnection() callers
+ * observing a null/stale client would each race pgModule(...) and leak pools.
+ * biome-ignore lint/suspicious/noExplicitAny: shared with sqlClient
+ */
+// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
+let buildPromise: Promise<any> | null = null;
 /** Whether this process spawned pgserve (and thus owns the lockfile) */
 let ownsLockfile = false;
 let exitHandlerRegistered = false;
@@ -444,20 +451,31 @@ function registerExitHandler(): void {
  * When GENIE_TEST_SCHEMA is set, all connections use that schema in their search_path.
  * This isolates test data from production tables.
  */
-/** Health-check the cached client. Returns it if alive, or resets and returns null. */
+/** Health-check the cached client. Returns it if alive, or resets and returns null.
+ *
+ * Mirrors the `resetConnection()` null-before-end pattern (commit 74aaa022): the
+ * global reference is cleared first so concurrent callers rebuild a fresh client
+ * instead of racing on the dying one. The teardown itself is fire-and-forget so
+ * concurrent in-flight queries on the shared pool are not killed synchronously
+ * with CONNECTION_ENDED. See issue #1207.
+ */
 async function healthCheckCachedClient() {
   if (!sqlClient) return null;
   try {
     await sqlClient`SELECT 1`;
     return sqlClient;
   } catch {
-    try {
-      await sqlClient.end({ timeout: 2 });
-    } catch {
-      /* ignore */
-    }
+    const dying = sqlClient;
     sqlClient = null;
     activePort = null;
+    // Fire-and-forget teardown — do not await. Concurrent callers holding the
+    // `dying` reference (via closures, iterators, in-flight Promises) will
+    // finish their current operation; the pool's internal connection reaper
+    // handles final cleanup. Awaiting here would cause CONNECTION_ENDED on
+    // queries that are still in flight from other callers.
+    dying.end({ timeout: 5 }).catch(() => {
+      /* ignore — teardown is best-effort */
+    });
     return null;
   }
 }
@@ -489,6 +507,23 @@ export async function getConnection() {
   const cached = await healthCheckCachedClient();
   if (cached) return cached;
 
+  // Dedup concurrent rebuilds. Without this, N parallel callers (e.g.
+  // workDispatchCommand fan-out in `genie work <slug>` when a wave has
+  // ≥2 parallel groups) each race pgModule(...) and overwrite sqlClient,
+  // leaking pools and triggering CONNECTION_ENDED on the orphaned ones.
+  // See issue #1207.
+  if (buildPromise) return buildPromise;
+
+  buildPromise = _buildConnection();
+  try {
+    return await buildPromise;
+  } finally {
+    buildPromise = null;
+  }
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
+async function _buildConnection(): Promise<any> {
   const _t0 = Date.now();
   const port = await ensurePgserve();
   const _t1 = Date.now();
@@ -514,13 +549,14 @@ export async function getConnection() {
   try {
     await runPostConnectSetup(sqlClient, testSchema, { t0: _t0, t1: _t1 });
   } catch (err) {
-    try {
-      await sqlClient.end({ timeout: 2 });
-    } catch {
-      /* ignore */
-    }
+    const dying = sqlClient;
     sqlClient = null;
     activePort = null;
+    // Fire-and-forget teardown — match healthCheckCachedClient so we never
+    // block on a dying pool while other work is in flight.
+    dying?.end({ timeout: 2 }).catch(() => {
+      /* ignore */
+    });
     throw err;
   }
 

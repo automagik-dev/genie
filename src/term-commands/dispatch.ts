@@ -428,17 +428,48 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
 
   // Dispatch all groups in this wave concurrently.
   // workDispatchCommand spawns a tmux pane and returns immediately.
-  await Promise.all(
+  //
+  // Use Promise.allSettled so a single group's post-dispatch failure doesn't
+  // abort reporting for siblings whose state mutations already landed.
+  // See issue #1207 — CONNECTION_ENDED on one dispatch was rejecting the
+  // whole batch and suppressing the success print even when all groups
+  // transitioned to in_progress.
+  const results = await Promise.allSettled(
     nextWave.groups.map(({ group, agent }) => {
       const ref = `${slug}#${group}`;
       return workDispatchCommand(agent, ref);
     }),
   );
 
-  const groupList = nextWave.groups.map((g) => g.group).join(', ');
-  console.log(`\n✅ Agents dispatched for ${nextWave.name} (groups: ${groupList})`);
+  const succeeded: string[] = [];
+  const failed: { group: string; reason: string }[] = [];
+  results.forEach((r, i) => {
+    const groupName = nextWave.groups[i].group;
+    if (r.status === 'fulfilled') {
+      succeeded.push(groupName);
+    } else {
+      const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      failed.push({ group: groupName, reason });
+    }
+  });
+
+  if (succeeded.length > 0) {
+    console.log(`\n✅ Agents dispatched for ${nextWave.name} (groups: ${succeeded.join(', ')})`);
+  }
+  if (failed.length > 0) {
+    console.error(`\n❌ ${failed.length} group(s) failed to dispatch in ${nextWave.name}:`);
+    for (const { group, reason } of failed) {
+      console.error(`   • Group ${group}: ${reason}`);
+    }
+    console.error(`   Check state with: genie status ${slug}`);
+    console.error('   Some groups may have mutated state before failing — rerun genie work to retry.');
+  }
   console.log(`   Monitor: genie status ${slug}`);
   console.log('   Logs:    genie read <agent>');
+
+  if (failed.length > 0) {
+    process.exitCode = 1;
+  }
 }
 
 // ============================================================================

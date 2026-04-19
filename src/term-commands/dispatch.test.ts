@@ -766,3 +766,65 @@ describe('detectWorkMode()', () => {
     expect(result).toEqual({ mode: 'manual', ref: 'auto-orchestrate#5', agent: 'reviewer' });
   });
 });
+
+// ============================================================================
+// autoOrchestrateCommand parallel dispatch resilience (issue #1207)
+// ============================================================================
+
+describe('autoOrchestrateCommand parallel dispatch (issue #1207)', () => {
+  it('uses Promise.allSettled — not Promise.all — for wave dispatch', async () => {
+    // Regression guard: Promise.all aborts the whole batch on the first failed
+    // post-dispatch SQL write (CONNECTION_ENDED from the singleton client race).
+    // Promise.allSettled lets sibling dispatches complete reporting even when
+    // one fails after its state mutation already landed.
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+
+    const fnStart = source.indexOf('async function autoOrchestrateCommand');
+    expect(fnStart).toBeGreaterThan(-1);
+    // Find the end of the function — next function definition or end of file
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const fnEnd = nextFnIdx !== -1 ? nextFnIdx : source.length;
+    const body = source.slice(fnStart, fnEnd);
+
+    // Must use allSettled
+    expect(body).toContain('Promise.allSettled');
+    // Must NOT use bare Promise.all on the wave-dispatch loop
+    expect(body).not.toMatch(/await\s+Promise\.all\s*\(\s*nextWave/);
+  });
+
+  it('reports per-group failures and sets non-zero exit code', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function autoOrchestrateCommand');
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const body = source.slice(fnStart, nextFnIdx !== -1 ? nextFnIdx : source.length);
+
+    // Must surface per-group failures with the group name
+    expect(body).toMatch(/failed/i);
+    expect(body).toContain('process.exitCode');
+    // Must still print success summary for groups that did dispatch
+    expect(body).toContain('Agents dispatched for');
+  });
+
+  it('does not abort the success print on partial failure', async () => {
+    // If any group succeeds we print the success line for those groups even
+    // when others failed. Reads back the same function source and checks
+    // there is no `throw` or early-exit between the success-list build and
+    // the console.log of the success summary.
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function autoOrchestrateCommand');
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const body = source.slice(fnStart, nextFnIdx !== -1 ? nextFnIdx : source.length);
+
+    const allSettledIdx = body.indexOf('Promise.allSettled');
+    const successPrintIdx = body.indexOf('Agents dispatched for');
+    expect(allSettledIdx).toBeGreaterThan(-1);
+    expect(successPrintIdx).toBeGreaterThan(allSettledIdx);
+    const between = body.slice(allSettledIdx, successPrintIdx);
+    // No early `throw` or `process.exit(` between allSettled and the success print
+    expect(between).not.toContain('throw ');
+    expect(between).not.toContain('process.exit(');
+  });
+});
