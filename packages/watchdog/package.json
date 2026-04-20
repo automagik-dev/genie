@@ -1,0 +1,25 @@
+{
+  "name": "@automagik/genie-watchdog",
+  "version": "0.1.0",
+  "description": "External dead-man's switch for genie's structured observability stream. Standalone — no imports from @automagik/genie.",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "genie-watchdog": "src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run typecheck && bun test"
+  },
+  "dependencies": {
+    "postgres": "3.4.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/bun": "latest"
+  },
+  "genieOs": {
+    "services": ["watchdog"]
+  }
+}

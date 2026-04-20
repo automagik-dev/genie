@@ -23,7 +23,10 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import { endSpan, startSpan } from '../lib/emit.js';
+import { isWideEmitEnabled } from '../lib/observability-flag.js';
 import * as protocolRouter from '../lib/protocol-router.js';
+import { getAmbient as getTraceContext } from '../lib/trace-context.js';
 import { parseWishRef, resolveWish } from '../lib/wish-resolve.js';
 import type { GroupDefinition } from '../lib/wish-state.js';
 import * as wishState from '../lib/wish-state.js';
@@ -574,6 +577,33 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
   validateSlug(slug);
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
+  const dispatchSpan = isWideEmitEnabled()
+    ? startSpan(
+        'wish.dispatch',
+        { wish_slug: slug, group_name: group },
+        { source_subsystem: 'dispatch', ctx: getTraceContext() ?? undefined, agent: agentName },
+      )
+    : null;
+  try {
+    await runWorkDispatch(slug, group, agentName, wishPath, ref);
+    if (dispatchSpan) {
+      endSpan(dispatchSpan, { outcome: 'completed' }, { source_subsystem: 'dispatch', agent: agentName });
+    }
+  } catch (err) {
+    if (dispatchSpan) {
+      endSpan(dispatchSpan, { outcome: 'failed' }, { source_subsystem: 'dispatch', agent: agentName });
+    }
+    throw err;
+  }
+}
+
+async function runWorkDispatch(
+  slug: string,
+  group: string,
+  agentName: string,
+  wishPath: string,
+  ref: string,
+): Promise<void> {
   if (!existsSync(wishPath)) {
     console.error(`❌ Wish not found: ${wishPath}`);
     console.error(`   Create it first: genie wish <agent> ${slug}`);

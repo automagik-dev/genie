@@ -175,6 +175,8 @@ program
   .command('doctor')
   .description('Run diagnostic checks on genie installation')
   .option('--fix', 'Auto-fix: kill zombie postgres, clean shared memory, restart daemon')
+  .option('--observability', 'Report partition health + GENIE_WIDE_EMIT flag state')
+  .option('--json', 'Emit JSON instead of human output (pairs with --observability)')
   .action(doctorCommand);
 program
   .command('update')
@@ -249,6 +251,7 @@ installWorkspaceCheck(program);
 // ============================================================================
 
 const auditTimers = new Map<string, number>();
+const auditSpans = new Map<string, import('./lib/emit.js').SpanHandle>();
 
 program.hook('preAction', (_thisCommand, actionCommand) => {
   const name = actionCommand.name();
@@ -262,6 +265,29 @@ program.hook('preAction', (_thisCommand, actionCommand) => {
       }).catch(() => {});
     })
     .catch(() => {});
+
+  // Wide-emit: open a cli.command span so command_success demotes to the debug
+  // sibling table via severity='debug' routing in emit.ts.
+  void (async () => {
+    try {
+      const { isWideEmitEnabled } = await import('./lib/observability-flag.js');
+      if (!isWideEmitEnabled()) return;
+      const { startSpan } = await import('./lib/emit.js');
+      const { getAmbient } = await import('./lib/trace-context.js');
+      const handle = startSpan(
+        'cli.command',
+        {
+          command: name,
+          args: (actionCommand.args ?? []) as string[],
+          cwd: process.cwd(),
+        },
+        { severity: 'debug', source_subsystem: 'cli', ctx: getAmbient() ?? undefined, agent: getActor() },
+      );
+      auditSpans.set(name, handle);
+    } catch {
+      /* best effort */
+    }
+  })();
 });
 
 // postAction audit is a blocking hook so the audit write completes before
@@ -279,6 +305,25 @@ program.hook('postAction', async (_thisCommand, actionCommand) => {
       args: actionCommand.args,
       duration_ms: durationMs,
     });
+  } catch {
+    /* best effort */
+  }
+
+  // Wide-emit: close the cli.command span with severity='debug' so 99/100 go
+  // to genie_runtime_events_debug and 1/100 land in the main table.
+  try {
+    const handle = auditSpans.get(name);
+    auditSpans.delete(name);
+    if (!handle) return;
+    const { isWideEmitEnabled } = await import('./lib/observability-flag.js');
+    if (!isWideEmitEnabled()) return;
+    const { endSpan, flushNow } = await import('./lib/emit.js');
+    endSpan(
+      handle,
+      { exit_code: 0, duration_ms: durationMs ?? 0 },
+      { severity: 'debug', source_subsystem: 'cli', agent: getActor() },
+    );
+    await flushNow();
   } catch {
     /* best effort */
   }

@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+node_modules
 .pnp
 .pnp.js
 
@@ -76,6 +77,7 @@ yarn-error.log*
 .genie/state.json
 .genie/state/
 .genie/chat/
+.claude/scheduled_tasks.lock
 
 # Local notes / scratch
 .genie/incidents/

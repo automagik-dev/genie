@@ -1,0 +1,12 @@
+[Unit]
+Description=genie-watchdog observability dead-man's-switch
+Documentation=https://github.com/automagik-dev/genie/tree/main/packages/watchdog
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=genie-watchdog.service
+
+[Install]
+WantedBy=timers.target

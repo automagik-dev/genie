@@ -1,0 +1,15 @@
+# genie-watchdog alerts.yaml
+# The watchdog runs every 60s. Fires an alert if PG is unreachable OR the
+# newest row in genie_runtime_events is older than staleness_seconds.
+
+pg:
+  dsn: postgres://genie@localhost/genie
+
+staleness_seconds: 300
+
+alerts:
+  # Drop the webhook target of your paging provider here (PagerDuty,
+  # Opsgenie, Slack, Twilio bridge). A POST with a JSON AlertPayload is sent.
+  webhook:
+  email: []
+  sms: []

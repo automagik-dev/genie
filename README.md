@@ -157,6 +157,13 @@ v4 is a ground-up rewrite. 700 commits. 300 files. ~19K lines.
 
 [Full v4 release notes →](https://github.com/automagik-dev/genie/releases/tag/v4.260402.18)
 
+### Observability substrate (v0)
+
+Structured event emission, signed subscription tokens, 4-tier retention, and
+an external dead-man's switch. Consumer-compat promises are published at
+[docs/observability-contract.md](docs/observability-contract.md); the 5-phase
+rollout plan at [docs/observability-rollout.md](docs/observability-rollout.md).
+
 ---
 
 <p align="center">

@@ -855,15 +855,22 @@ describe('spawn-wrong-window regression guard (trace-genie-spawn-wrong-window.md
   });
 
   it('workDispatchCommand forwards team: process.env.GENIE_TEAM to handleWorkerSpawn', () => {
+    // workDispatchCommand delegates to runWorkDispatch, which holds the actual
+    // handleWorkerSpawn call. Walk the delegation to assert team is forwarded.
     const fnStart = source.indexOf('async function workDispatchCommand');
     expect(fnStart).toBeGreaterThan(-1);
-    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
-    const body = source.slice(fnStart, nextFnIdx !== -1 ? nextFnIdx : source.length);
-    // handleWorkerSpawn must carry team: process.env.GENIE_TEAM
-    const callIdx = body.indexOf('await handleWorkerSpawn(agentName, {');
+    const wdcEnd = source.indexOf('\nasync function ', fnStart + 1);
+    const wdcBody = source.slice(fnStart, wdcEnd !== -1 ? wdcEnd : source.length);
+    // Regression guard: workDispatchCommand must delegate to runWorkDispatch.
+    expect(wdcBody).toContain('runWorkDispatch(');
+    const rwdStart = source.indexOf('async function runWorkDispatch');
+    expect(rwdStart).toBeGreaterThan(-1);
+    const rwdEnd = source.indexOf('\nasync function ', rwdStart + 1);
+    const rwdBody = source.slice(rwdStart, rwdEnd !== -1 ? rwdEnd : source.length);
+    const callIdx = rwdBody.indexOf('await handleWorkerSpawn(agentName, {');
     expect(callIdx).toBeGreaterThan(-1);
-    const nextCloseIdx = body.indexOf('});', callIdx);
-    const callBlock = body.slice(callIdx, nextCloseIdx);
+    const nextCloseIdx = rwdBody.indexOf('});', callIdx);
+    const callBlock = rwdBody.slice(callIdx, nextCloseIdx);
     expect(callBlock).toContain('team: process.env.GENIE_TEAM');
   });
 
