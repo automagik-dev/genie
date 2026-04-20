@@ -482,47 +482,57 @@ async function startForeground(headless?: boolean): Promise<void> {
   await startPgserve();
 
   // 1.5. Start brain server (if @automagik/genie-brain is installed)
-  try {
-    // Dynamic import — brain is optional. If not installed, this throws
-    // and we silently skip. Zero behavior change for users without brain.
-    // @ts-expect-error — brain is enterprise-only, not in genie's deps
-    const brain = await import('@khal-os/brain');
-    if (brain.startEmbeddedBrainServer) {
-      const { getActivePort } = await import('../lib/db.js');
-      const pgPort = getActivePort();
-      if (pgPort) {
-        console.log('  Starting brain server...');
-        // Find brain path — check workspace for a brain/ dir
-        let brainPath: string | undefined;
-        try {
-          const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
-          const ws = findWorkspace();
-          if (ws?.root) {
-            const bp = join(ws.root, 'brain');
-            if (existsSync(bp) && existsSync(join(bp, 'brain.json'))) {
-              brainPath = bp;
+  //
+  // Gated by `brain.embedded` config (default: true). Set `brain.embedded=false`
+  // in ~/.genie/config.json to opt out — power-users can then run `brain serve`
+  // standalone with custom settings (port, brain-path, @next dev channel).
+  const { loadGenieConfigSync } = await import('../lib/genie-config.js');
+  const brainEmbedded = loadGenieConfigSync().brain.embedded;
+  if (!brainEmbedded) {
+    console.log('  Brain server: skipped (brain.embedded=false — managed externally)');
+  } else {
+    try {
+      // Dynamic import — brain is optional. If not installed, this throws
+      // and we silently skip. Zero behavior change for users without brain.
+      // @ts-expect-error — brain is enterprise-only, not in genie's deps
+      const brain = await import('@khal-os/brain');
+      if (brain.startEmbeddedBrainServer) {
+        const { getActivePort } = await import('../lib/db.js');
+        const pgPort = getActivePort();
+        if (pgPort) {
+          console.log('  Starting brain server...');
+          // Find brain path — check workspace for a brain/ dir
+          let brainPath: string | undefined;
+          try {
+            const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+            const ws = findWorkspace();
+            if (ws?.root) {
+              const bp = join(ws.root, 'brain');
+              if (existsSync(bp) && existsSync(join(bp, 'brain.json'))) {
+                brainPath = bp;
+              }
             }
+          } catch {
+            // No workspace — skip
           }
-        } catch {
-          // No workspace — skip
-        }
 
-        if (brainPath) {
-          const handle = await brain.startEmbeddedBrainServer({
-            brainPath,
-            geniePgPort: pgPort,
-          });
-          handles.brainHandle = { stop: handle.stop, port: handle.port };
-          console.log(`  Brain server ready on port ${handle.port}`);
+          if (brainPath) {
+            const handle = await brain.startEmbeddedBrainServer({
+              brainPath,
+              geniePgPort: pgPort,
+            });
+            handles.brainHandle = { stop: handle.stop, port: handle.port };
+            console.log(`  Brain server ready on port ${handle.port}`);
+          } else {
+            console.log('  Brain server: no brain/ found in workspace (skipped)');
+          }
         } else {
-          console.log('  Brain server: no brain/ found in workspace (skipped)');
+          console.log('  Brain server: pgserve not available (skipped)');
         }
-      } else {
-        console.log('  Brain server: pgserve not available (skipped)');
       }
+    } catch {
+      // Brain not installed — fine, skip silently
     }
-  } catch {
-    // Brain not installed — fine, skip silently
   }
 
   // 2. Report agent tmux server state (don't create empty sessions —
