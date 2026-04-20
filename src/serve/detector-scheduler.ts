@@ -22,7 +22,17 @@
 
 import { listDetectors } from '../detectors/index.js';
 import type { DetectorEvent, DetectorModule } from '../detectors/index.js';
-import { emitEvent } from '../lib/emit.js';
+import { emitEvent as defaultEmitEvent } from '../lib/emit.js';
+
+/**
+ * Sink contract for emitted detector rows. Production wires this to the real
+ * `emitEvent` in `src/lib/emit.ts`; tests pass a capture closure so they do
+ * not need `mock.module('emit.js', ...)`. Bun's `mock.module` is process-
+ * global and cannot be undone — stubbing emit that way pollutes every later
+ * test that exercises the real emit substrate (observed via the pentest-
+ * observability failures before this DI landed).
+ */
+export type DetectorEmitFn = (type: string, payload: Record<string, unknown>, opts?: Record<string, unknown>) => void;
 
 /** Alias for the concrete render() output so helper signatures stay readable. */
 type DetectorEventResult = DetectorEvent;
@@ -72,6 +82,12 @@ export interface SchedulerOptions {
    * resolver so the global registry stays clean.
    */
   detectorSource?: () => ReadonlyArray<DetectorModule<unknown>>;
+  /**
+   * Emit sink — defaults to the real `emitEvent` from `src/lib/emit.ts`.
+   * Tests pass a capture closure instead of using `mock.module('emit.js', ...)`,
+   * which Bun cannot undo across test files (see `DetectorEmitFn` docstring).
+   */
+  emitFn?: DetectorEmitFn;
 }
 
 export interface SchedulerHandle {
@@ -119,6 +135,7 @@ export function start(options: SchedulerOptions = {}): SchedulerHandle {
       clearTimeout(handle as ReturnType<typeof setTimeout>);
     });
   const resolveDetectors = options.detectorSource ?? listDetectors;
+  const emit: DetectorEmitFn = options.emitFn ?? defaultEmitEvent;
 
   const state: SchedulerStats = {
     ticks: 0,
@@ -157,7 +174,7 @@ export function start(options: SchedulerOptions = {}): SchedulerHandle {
   }
 
   function emitFire(detector: DetectorModule<unknown>, event: DetectorEventResult): void {
-    emitEvent(event.type, event.payload, {
+    emit(event.type, event.payload, {
       detector_version: detector.version,
       source_subsystem: 'detector-scheduler',
       entity_id: event.subject ?? detector.id,
@@ -168,7 +185,7 @@ export function start(options: SchedulerOptions = {}): SchedulerHandle {
 
   function emitDisable(detector: DetectorModule<unknown>, budget: number, current: number, bucketStart: number): void {
     state.disables++;
-    emitEvent(
+    emit(
       'detector.disabled',
       {
         detector_id: detector.id,

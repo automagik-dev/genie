@@ -5,7 +5,10 @@
  * Wish: Observability B1 — rot-pattern detectors (Group 2 / Phase 0).
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import { DEFAULT_FIRE_BUDGET, type SchedulerHandle, start as startScheduler } from '../../serve/detector-scheduler.js';
+import { makeHelloDetector } from '../__fixtures__/hello.js';
+import type { DetectorModule } from '../index.js';
 
 interface CapturedEmit {
   type: string;
@@ -14,25 +17,17 @@ interface CapturedEmit {
 }
 const captured: CapturedEmit[] = [];
 
-// Mock emit before importing the scheduler so it wires to the stub.
-mock.module('../../lib/emit.js', () => ({
-  emitEvent: (type: string, payload: Record<string, unknown>, opts: Record<string, unknown> = {}) => {
-    captured.push({ type, payload, opts });
-  },
-  startSpan: () => ({
-    type: '',
-    trace_id: '',
-    span_id: '',
-    started_at: 0,
-    start_attrs: {},
-    severity: 'info',
-  }),
-  endSpan: () => {},
-}));
-
-import { DEFAULT_FIRE_BUDGET, type SchedulerHandle, start as startScheduler } from '../../serve/detector-scheduler.js';
-import { makeHelloDetector } from '../__fixtures__/hello.js';
-import type { DetectorModule } from '../index.js';
+/**
+ * Capture sink passed to the scheduler via the `emitFn` option. Replaces a
+ * previous `mock.module('../../lib/emit.js', ...)` approach — Bun's
+ * `mock.module` is process-global and cannot be undone, so stubbing emit
+ * that way leaked into every later test file (observed as cascading
+ * pentest-observability failures). Dependency injection keeps the stub
+ * scoped to this file.
+ */
+function captureEmit(type: string, payload: Record<string, unknown>, opts: Record<string, unknown> = {}): void {
+  captured.push({ type, payload, opts });
+}
 
 describe('fire_budget enforcement', () => {
   let scheduler: SchedulerHandle | null = null;
@@ -65,6 +60,7 @@ describe('fire_budget enforcement', () => {
       defaultFireBudget: budget,
       now: () => frozenNow,
       detectorSource: () => [detector as DetectorModule<unknown>],
+      emitFn: captureEmit,
       // No real setTimeout scheduling — we just need the handle to exist.
       setTimeoutFn: () => ({ id: Symbol('test') }),
       clearTimeoutFn: () => {},
@@ -106,6 +102,7 @@ describe('fire_budget enforcement', () => {
       defaultFireBudget: budget,
       now: () => clock,
       detectorSource: () => [detector as DetectorModule<unknown>],
+      emitFn: captureEmit,
       setTimeoutFn: () => ({ id: Symbol('test') }),
       clearTimeoutFn: () => {},
     });
@@ -144,6 +141,7 @@ describe('fire_budget enforcement', () => {
       fireBudgets: { 'test.fire-budget.quiet': 2 },
       now: () => frozenNow,
       detectorSource: () => [loud as DetectorModule<unknown>, quiet as DetectorModule<unknown>],
+      emitFn: captureEmit,
       setTimeoutFn: () => ({ id: Symbol('test') }),
       clearTimeoutFn: () => {},
     });

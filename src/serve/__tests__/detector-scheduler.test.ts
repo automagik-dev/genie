@@ -8,30 +8,7 @@
  * and it is fired manually to advance the scheduler.
  */
 
-import { afterEach, describe, expect, mock, test } from 'bun:test';
-
-interface CapturedEmit {
-  type: string;
-  payload: Record<string, unknown>;
-  opts: Record<string, unknown>;
-}
-const captured: CapturedEmit[] = [];
-
-mock.module('../../lib/emit.js', () => ({
-  emitEvent: (type: string, payload: Record<string, unknown>, opts: Record<string, unknown> = {}) => {
-    captured.push({ type, payload, opts });
-  },
-  startSpan: () => ({
-    type: '',
-    trace_id: '',
-    span_id: '',
-    started_at: 0,
-    start_attrs: {},
-    severity: 'info',
-  }),
-  endSpan: () => {},
-}));
-
+import { afterEach, describe, expect, test } from 'bun:test';
 import { makeHelloDetector } from '../../detectors/__fixtures__/hello.js';
 import type { DetectorModule } from '../../detectors/index.js';
 import {
@@ -40,6 +17,25 @@ import {
   type SchedulerHandle,
   start as startScheduler,
 } from '../detector-scheduler.js';
+
+interface CapturedEmit {
+  type: string;
+  payload: Record<string, unknown>;
+  opts: Record<string, unknown>;
+}
+const captured: CapturedEmit[] = [];
+
+/**
+ * Capture sink passed to the scheduler via the `emitFn` option. Replaces a
+ * previous `mock.module('../../lib/emit.js', ...)` approach — Bun's
+ * `mock.module` is process-global and cannot be undone, so stubbing emit
+ * that way leaked into every later test file. Dependency injection keeps
+ * the stub scoped to this file. See `DetectorEmitFn` docstring in
+ * `detector-scheduler.ts` for the full root-cause analysis.
+ */
+function captureEmit(type: string, payload: Record<string, unknown>, opts: Record<string, unknown> = {}): void {
+  captured.push({ type, payload, opts });
+}
 
 interface CapturedTimer {
   delay: number;
@@ -104,6 +100,7 @@ describe('detector scheduler', () => {
       jitterMs: DEFAULT_JITTER_MS,
       defaultFireBudget: 100,
       detectorSource: () => [detector as DetectorModule<unknown>],
+      emitFn: captureEmit,
       setTimeoutFn: clock.setTimeoutFn,
       clearTimeoutFn: clock.clearTimeoutFn,
     });
@@ -131,6 +128,7 @@ describe('detector scheduler', () => {
       jitterMs: 0,
       defaultFireBudget: 100,
       detectorSource: () => [detector as DetectorModule<unknown>],
+      emitFn: captureEmit,
       setTimeoutFn: clock.setTimeoutFn,
       clearTimeoutFn: clock.clearTimeoutFn,
     });
@@ -157,6 +155,7 @@ describe('detector scheduler', () => {
       jitterMs: 0,
       defaultFireBudget: 100,
       detectorSource: () => [detector as DetectorModule<unknown>],
+      emitFn: captureEmit,
       setTimeoutFn: clock.setTimeoutFn,
       clearTimeoutFn: clock.clearTimeoutFn,
     });
@@ -180,6 +179,7 @@ describe('detector scheduler', () => {
       jitterMs: 0,
       defaultFireBudget: 100,
       detectorSource: () => [detector as DetectorModule<unknown>],
+      emitFn: captureEmit,
       setTimeoutFn: clock.setTimeoutFn,
       clearTimeoutFn: clock.clearTimeoutFn,
     });
@@ -208,6 +208,7 @@ describe('detector scheduler', () => {
       jitterMs: 0,
       defaultFireBudget: 100,
       detectorSource: () => [bad as DetectorModule<unknown>, good as DetectorModule<unknown>],
+      emitFn: captureEmit,
       setTimeoutFn: clock.setTimeoutFn,
       clearTimeoutFn: clock.clearTimeoutFn,
     });
