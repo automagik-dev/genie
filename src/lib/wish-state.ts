@@ -428,14 +428,16 @@ export async function completeGroup(slug: string, groupName: string, cwd?: strin
 
   // Idempotent done — return existing state, don't throw.
   if (child.status === 'done') {
-    const actors = await sql`
-      SELECT actor_id FROM task_actors WHERE task_id = ${child.id as string} AND role = 'assignee' LIMIT 1
-    `;
-    const deps = await sql`
-      SELECT t.group_name FROM task_dependencies td
-      JOIN tasks t ON t.id = td.depends_on_id
-      WHERE td.task_id = ${child.id as string}
-    `;
+    const [actors, deps] = await Promise.all([
+      sql`
+        SELECT actor_id FROM task_actors WHERE task_id = ${child.id as string} AND role = 'assignee' LIMIT 1
+      `,
+      sql`
+        SELECT t.group_name FROM task_dependencies td
+        JOIN tasks t ON t.id = td.depends_on_id
+        WHERE td.task_id = ${child.id as string}
+      `,
+    ]);
     return {
       status: 'done',
       assignee: actors.length > 0 ? (actors[0].actor_id as string) : undefined,
@@ -479,7 +481,11 @@ export async function completeGroup(slug: string, groupName: string, cwd?: strin
       `⚠ Group "${groupName}" was \`ready\` (dispatch-bypass); auto-transitioned to \`in_progress\` before completion.`,
     );
     // Refresh child.status for the write below (child row is mutated by UPDATE).
+    // Also propagate started_at so the final return's toISO(child.started_at)
+    // yields the real timestamp instead of undefined. Mirror PG's COALESCE —
+    // don't overwrite an existing timestamp.
     child.status = 'in_progress';
+    if (!child.started_at) child.started_at = startNow;
   }
 
   if (child.status !== 'in_progress') {

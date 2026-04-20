@@ -250,9 +250,14 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       const result = await completeGroup('test-wish', '1', cwd);
       expect(result.status).toBe('done');
       expect(result.completedAt).toBeDefined();
+      // startedAt must be populated — callers using GroupState for timing
+      // (dashboards, duration reports) would otherwise see undefined.
+      expect(result.startedAt).toBeDefined();
+      expect(typeof result.startedAt).toBe('string');
 
       const state = await getGroupState('test-wish', '1', cwd);
       expect(state?.status).toBe('done');
+      expect(state?.startedAt).toBeDefined();
     });
   });
 
