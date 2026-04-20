@@ -13,6 +13,13 @@
 
 import { z } from 'zod';
 import { buildDispatchCommand } from '../hooks/inject.js';
+import {
+  TRACE_ENV_VAR,
+  TRACE_ID_ENV_VAR,
+  getAmbient as getTraceContext,
+  injectPromptPreamble,
+  mintToken as mintTraceToken,
+} from './trace-context.js';
 
 // ============================================================================
 // Types
@@ -322,6 +329,18 @@ function appendOtelEnv(env: Record<string, string>, params: SpawnParams): void {
   }
 }
 
+function appendTraceContext(parts: string[], env: Record<string, string>, params: SpawnParams): void {
+  const ctx = getTraceContext();
+  if (params.initialPrompt) {
+    const prompt = ctx ? injectPromptPreamble(params.initialPrompt, ctx) : params.initialPrompt;
+    parts.push(escapeShellArg(prompt));
+  }
+  if (ctx) {
+    env[TRACE_ENV_VAR] = mintTraceToken(ctx);
+    env[TRACE_ID_ENV_VAR] = ctx.trace_id;
+  }
+}
+
 export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('claude');
 
@@ -391,9 +410,7 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
     for (const arg of params.extraArgs) parts.push(escapeShellArg(arg));
   }
 
-  if (params.initialPrompt) {
-    parts.push(escapeShellArg(params.initialPrompt));
-  }
+  appendTraceContext(parts, env, params);
 
   return {
     command: parts.join(' '),

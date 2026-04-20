@@ -26,6 +26,7 @@ import { type EventRouterHandle, startEventRouter } from './event-router.js';
 import { getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
 import { type MailboxMessage, getRetryable, markEscalated, subscribeDelivery } from './mailbox.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
+import { getAmbient as getAmbientTraceContext } from './trace-context.js';
 
 // ============================================================================
 // Constants
@@ -154,7 +155,19 @@ function getLogFile(): string {
 export function logToFile(entry: LogEntry): void {
   const logDir = getLogDir();
   mkdirSync(logDir, { recursive: true });
-  appendFileSync(getLogFile(), `${JSON.stringify(entry)}\n`);
+  const enriched = entry.trace_id ? entry : withAmbientTraceId(entry);
+  appendFileSync(getLogFile(), `${JSON.stringify(enriched)}\n`);
+}
+
+/**
+ * Merge the ambient trace context (if any) into a log entry so every line the
+ * scheduler produces carries `trace_id=<hex>`. Callers that already set
+ * `trace_id` explicitly are left alone.
+ */
+function withAmbientTraceId(entry: LogEntry): LogEntry {
+  const ctx = getAmbientTraceContext();
+  if (!ctx) return entry;
+  return { ...entry, trace_id: ctx.trace_id };
 }
 
 // ============================================================================

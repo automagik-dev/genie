@@ -15,6 +15,7 @@ import { tmuxBin } from '../lib/ensure-tmux.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
 import { checkCommand } from '../lib/system-detect.js';
 import { findWorkspace } from '../lib/workspace.js';
+import { collectObservabilityHealth } from './observability-health.js';
 
 interface CheckResult {
   name: string;
@@ -475,9 +476,34 @@ function runCheckSection(label: string, results: CheckResult[], counts: { errors
   }
 }
 
-export async function doctorCommand(options?: { fix?: boolean }): Promise<void> {
+export async function doctorCommand(options?: {
+  fix?: boolean;
+  observability?: boolean;
+  json?: boolean;
+}): Promise<void> {
   if (options?.fix) {
     await doctorFix();
+    return;
+  }
+
+  if (options?.observability) {
+    const report = await collectObservabilityHealth();
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log();
+      console.log('\x1b[1mObservability Health\x1b[0m');
+      console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
+      console.log(`  partition_health:  ${report.partition_health}`);
+      console.log(`  partition_count:   ${report.partition_count}`);
+      console.log(`  next_rotation_at:  ${report.next_rotation_at ?? 'n/a'}`);
+      console.log(`  oldest_partition:  ${report.oldest_partition ?? 'n/a'}`);
+      console.log(`  newest_partition:  ${report.newest_partition ?? 'n/a'}`);
+      console.log(`  GENIE_WIDE_EMIT:   ${report.wide_emit_flag}`);
+      if (report.message) console.log(`  note:              ${report.message}`);
+      console.log();
+    }
+    if (report.partition_health === 'fail') process.exit(1);
     return;
   }
 

@@ -21,7 +21,26 @@ import {
   queryTimeline,
   queryToolUsage,
 } from '../lib/audit.js';
+import { type V2EventRow, queryV2Batch } from '../lib/events/v2-query.js';
 import { formatRelativeTimestamp as formatTimestamp, padRight } from '../lib/term-format.js';
+import {
+  type ExportAuditOptions,
+  type ListRevocationsOptions,
+  type RevokeOptions,
+  type RotateOptions,
+  type UnHashOptions,
+  type VerifyChainOptions,
+  exportAuditCommand,
+  listRevocationsCommand,
+  revokeSubscriberCommand,
+  rotateRedactionKeysCommand,
+  unHashCommand,
+  verifyChainCommand,
+} from './events-admin.js';
+import { migrateCommand } from './events-migrate.js';
+import { type StreamFollowOptions, streamCommand } from './events-stream.js';
+import { type SubscribeOptions, subscribeCommand } from './events-subscribe.js';
+import { type TimelineOptions as V2TimelineOptions, timelineCommand as v2TimelineCommand } from './events-timeline.js';
 
 function printEventsTable(rows: AuditEventRow[]): void {
   if (rows.length === 0) {
@@ -126,9 +145,70 @@ interface ListOptions {
   limit?: string;
   json?: boolean;
   follow?: boolean;
+  v2?: boolean;
+  kind?: string;
+  severity?: string;
+}
+
+function printV2EventsTable(rows: V2EventRow[]): void {
+  if (rows.length === 0) {
+    console.log('No events found.');
+    return;
+  }
+
+  const headers = ['Time', 'Subject', 'Agent', 'TraceId', 'SpanId', 'Severity', 'Duration'];
+  const data = rows.map((r) => [
+    formatTimestamp(r.created_at),
+    r.subject ?? r.text ?? '-',
+    r.agent,
+    r.trace_id ? r.trace_id.slice(0, 8) : '-',
+    r.span_id ? r.span_id.slice(0, 8) : '-',
+    r.severity ?? '-',
+    r.duration_ms != null ? `${r.duration_ms}ms` : '-',
+  ]);
+
+  const widths = headers.map((h, i) => {
+    const colVals = data.map((row) => row[i]);
+    return Math.min(40, Math.max(h.length, ...colVals.map((v) => v.length)));
+  });
+
+  const header = headers.map((h, i) => padRight(h, widths[i])).join(' | ');
+  console.log(header);
+  console.log(widths.map((w) => '-'.repeat(w)).join('-+-'));
+  for (const row of data) {
+    const line = row.map((v, i) => padRight(v.slice(0, widths[i]), widths[i])).join(' | ');
+    console.log(line);
+  }
+
+  console.log(`\n(${rows.length} event${rows.length === 1 ? '' : 's'})`);
+}
+
+async function eventsListV2Command(options: ListOptions): Promise<void> {
+  try {
+    const limit = options.limit ? Number.parseInt(options.limit, 10) : 50;
+    const rows = await queryV2Batch({
+      kindPrefix: options.kind,
+      severity: options.severity,
+      since: options.since ?? '1h',
+      limit,
+    });
+
+    if (options.json) {
+      console.log(JSON.stringify(rows, null, 2));
+    } else {
+      printV2EventsTable(rows);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`Error querying v2 events: ${msg}`);
+    process.exit(1);
+  }
 }
 
 async function eventsListCommand(options: ListOptions): Promise<void> {
+  if (options.v2) {
+    return eventsListV2Command(options);
+  }
   try {
     const queryOpts: AuditQueryOptions = {
       type: options.type,
@@ -546,7 +626,7 @@ export function registerEventsCommands(program: Command): void {
 
   events
     .command('list', { isDefault: true })
-    .description('List recent audit events')
+    .description('List recent audit events (add --v2 for the enriched genie_runtime_events surface)')
     .option('--type <type>', 'Filter by event_type')
     .option('--entity <entity>', 'Filter by entity_type or entity_id')
     .option('--since <duration>', 'Time window (e.g., 1h, 30m, 2d)', '1h')
@@ -554,8 +634,44 @@ export function registerEventsCommands(program: Command): void {
     .option('--limit <n>', 'Max rows to return', '50')
     .option('--json', 'Output as JSON')
     .option('-f, --follow', 'Follow mode — real-time streaming (alias: genie events stream)')
+    .option('--v2', 'Use enriched genie_runtime_events surface with TraceId/SpanId/Severity/Duration columns')
+    .option('--kind <prefix>', 'Filter v2 rows by kind/subject prefix (e.g., mailbox, agent.lifecycle)')
+    .option('--severity <level>', 'Filter v2 rows by severity (debug|info|warn|error|fatal)')
     .action(async (options: ListOptions) => {
       await eventsListCommand(options);
+    });
+
+  events
+    .command('timeline-v2 <trace-id>')
+    .description('Render causal tree for a trace_id from genie_runtime_events (v2 enriched surface)')
+    .option('--json', 'Output as JSON')
+    .action(async (traceId: string, options: V2TimelineOptions) => {
+      await v2TimelineCommand(traceId, options);
+    });
+
+  events
+    .command('stream-follow')
+    .description('Follow-stream enriched genie_runtime_events via LISTEN/NOTIFY + id-cursor (v2)')
+    .option('--follow', 'Continuously follow the stream', true)
+    .option('--kind <prefix>', 'Filter by subject/kind prefix')
+    .option('--severity <level>', 'Filter by severity (debug|info|warn|error|fatal)')
+    .option('--since <duration>', 'Seed window (e.g., 5m, 1h)')
+    .option('--consumer-id <id>', 'Persistent consumer id for cursor resume')
+    .option('--json', 'Output as NDJSON')
+    .action(async (options: StreamFollowOptions & { consumerId?: string }) => {
+      await streamCommand({ ...options, follow: true });
+    });
+
+  events
+    .command('migrate')
+    .description('Backfill legacy audit_events rows into genie_runtime_events (one-shot)')
+    .option('--audit', 'Migrate audit_events → genie_runtime_events with sentinel source tag')
+    .option('--dry-run', 'Report row deltas without writing')
+    .option('--since <duration>', 'Only migrate rows created within this window')
+    .option('--limit <n>', 'Cap the number of rows migrated per run', (v: string) => Number.parseInt(v, 10))
+    .option('--json', 'Output summary as JSON')
+    .action(async (options: { audit?: boolean; dryRun?: boolean; since?: string; limit?: number; json?: boolean }) => {
+      await migrateCommand(options);
     });
 
   events
@@ -633,5 +749,96 @@ export function registerEventsCommands(program: Command): void {
     .option('--breakdown', 'Show per-model breakdown')
     .action(async (options: { since?: string; json?: boolean; breakdown?: boolean }) => {
       await eventsScanCommand(options);
+    });
+
+  // ==========================================================================
+  // Group 5: subscription tokens + incident-response admin commands
+  // ==========================================================================
+
+  events
+    .command('subscribe')
+    .description('Mint a signed subscription token for genie events stream --follow')
+    .requiredOption('--role <role>', 'RBAC role: events:admin|events:operator|events:subscriber|events:audit')
+    .option('--types <csv>', 'Comma-separated allowed event types (subset of role defaults)')
+    .option('--channels <csv>', 'Comma-separated allowed LISTEN channels (subset of role defaults)')
+    .option('--ttl <duration>', 'Token time-to-live (e.g., 30m, 1h, 24h). Defaults to 1h.')
+    .option('--tenant <id>', 'Tenant id. Defaults to "default".')
+    .option('--subscriber-id <id>', 'Stable id for the subscriber agent')
+    .option('--json', 'Output as JSON')
+    .action(async (options: SubscribeOptions) => {
+      await subscribeCommand(options);
+    });
+
+  const admin = events.command('admin').description('Incident-response admin commands (sentinel H6 audited)');
+
+  admin
+    .command('revoke-subscriber')
+    .description('Add a subscription token to the revocation list')
+    .requiredOption('--token-id <id>', 'Token id from `genie events subscribe` output')
+    .option('--subscriber-id <id>', 'Subscriber id associated with the token')
+    .option('--tenant <id>', 'Tenant id. Defaults to "default".')
+    .option('--reason <text>', 'IR justification for revocation')
+    .option('--json', 'Output as JSON')
+    .action(async (options: RevokeOptions) => {
+      await revokeSubscriberCommand(options);
+    });
+
+  admin
+    .command('rotate-redaction-keys')
+    .description('Rotate redaction + audit HMAC keys, preserving prior versions for lookup')
+    .option('--tenant <id>', 'Tenant id. Defaults to "default".')
+    .option('--new-key <material>', 'Explicit key material (default: 32 bytes hex from /dev/urandom)')
+    .option('--target <scope>', 'redaction|audit|both (default: both)')
+    .option('--json', 'Output as JSON')
+    .action(async (options: RotateOptions) => {
+      await rotateRedactionKeysCommand(options);
+    });
+
+  admin
+    .command('un-hash')
+    .description('Admin reverse-lookup for a Tier-A hash (emits audit.un_hash)')
+    .requiredOption('--namespace <ns>', 'Hash namespace (e.g., agent, actor, session)')
+    .requiredOption('--hashed-value <hash>', 'Tier-A hash tag to reverse')
+    .option('--candidates <csv>', 'Comma-separated candidate plaintexts to brute-force')
+    .option('--tenant <id>', 'Tenant id. Defaults to "default".')
+    .option('--reason <text>', 'IR justification (appears in audit.un_hash)')
+    .option('--ticket <ref>', 'Incident ticket reference')
+    .option('--json', 'Output as JSON')
+    .action(async (options: UnHashOptions) => {
+      await unHashCommand(options);
+    });
+
+  admin
+    .command('export-audit')
+    .description('Produce a signed audit-chain bundle (emits audit.export)')
+    .option('--signed', 'Require GENIE_AUDIT_EXPORT_SECRET for HMAC signing', true)
+    .option('--since <duration>', 'Advisory time window (authoritative cursor is --since-id)')
+    .option('--since-id <n>', 'Authoritative id cursor to resume from')
+    .option('--limit <n>', 'Max rows to include')
+    .option('--tenant <id>', 'Tenant id. Defaults to "default".')
+    .option('--output <path>', 'Write bundle to file; omit to print to stdout')
+    .option('--reason <text>', 'IR justification (appears in audit.export)')
+    .option('--json', 'Output as JSON')
+    .action(async (options: ExportAuditOptions) => {
+      await exportAuditCommand(options);
+    });
+
+  admin
+    .command('verify-chain')
+    .description('Quick chain-integrity check (no export)')
+    .option('--since-id <n>', 'Start id', '0')
+    .option('--limit <n>', 'Max rows to verify')
+    .option('--json', 'Output as JSON')
+    .action(async (options: VerifyChainOptions) => {
+      await verifyChainCommand(options);
+    });
+
+  admin
+    .command('list-revocations')
+    .description('List revoked token ids for a tenant')
+    .option('--tenant <id>', 'Tenant id. Defaults to "default".')
+    .option('--json', 'Output as JSON')
+    .action(async (options: ListRevocationsOptions) => {
+      await listRevocationsCommand(options);
     });
 }
