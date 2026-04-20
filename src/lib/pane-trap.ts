@@ -29,7 +29,7 @@ import type { TurnOutcome } from './executor-types.js';
 
 export type TrapReason = 'pane_died' | 'shell_exit';
 
-export interface TrapPaneExitOpts {
+interface TrapPaneExitOpts {
   /** Prefer this when available — fastest lookup. */
   executorId?: string;
   /** Fallback lookup when only the tmux pane id is known. */
@@ -40,7 +40,7 @@ export interface TrapPaneExitOpts {
   actor?: string;
 }
 
-export interface TrapPaneExitResult {
+interface TrapPaneExitResult {
   noop: boolean;
   executorId: string | null;
   outcome: TurnOutcome | null;

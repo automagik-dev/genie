@@ -16,7 +16,7 @@
 import { type Sql, getActivePort, getConnection } from './db.js';
 import type { ExecutorState, TurnOutcome } from './executor-types.js';
 
-export interface ExecutorStateReply {
+interface ExecutorStateReply {
   state: ExecutorState;
   outcome: TurnOutcome | null;
   closed_at: string | null;

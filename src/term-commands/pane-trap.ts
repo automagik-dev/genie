@@ -9,7 +9,7 @@
 
 import { type TrapReason, trapPaneExit } from '../lib/pane-trap.js';
 
-export interface PaneTrapCliOpts {
+interface PaneTrapCliOpts {
   paneId?: string;
   executorId?: string;
   reason?: string;
