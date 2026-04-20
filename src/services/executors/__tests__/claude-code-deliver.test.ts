@@ -14,6 +14,18 @@ mock.module('../../../lib/tmux-wrapper.js', () => ({
   executeTmux: mockExecuteTmux,
   genieTmuxPrefix: () => ['-L', 'genie'],
   genieTmuxCmd: (sub: string) => `tmux -L genie ${sub}`,
+  // Must mirror real export surface — omitting any export poisons Bun's
+  // module cache globally and breaks concurrent tests that import it
+  // (issue #1223). Passthrough matches the real implementation so the
+  // tmux-wrapper.test.ts suite still sees correct behavior when its
+  // import happens to win the mock-cache race.
+  prependEnvVars: (command: string, env?: Record<string, string>) => {
+    if (!env || Object.keys(env).length === 0) return command;
+    const envArgs = Object.entries(env)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(' ');
+    return `env ${envArgs} ${command}`;
+  },
 }));
 
 // isPaneAlive lives in tmux.ts and calls executeTmux internally; by stubbing
