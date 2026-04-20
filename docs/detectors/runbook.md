@@ -53,7 +53,7 @@ Two production paths write to `teams.worktree_path` but nothing reconciles it ag
 
 ```bash
 # 1. Inspect the offender called out in the event payload.
-genie team show <team_name>
+genie team ls --json | jq '.[] | select(.name == "<team_name>")'
 
 # 2. Confirm the worktree really is missing (event evidence could be stale by a tick).
 ls -la "<worktree_path_from_observed_state_json>"
@@ -116,7 +116,7 @@ ls -1 ~/.claude/teams/
 
 # 2. If `missing_in_disband` (PG row but no directory): the team is a PG-only ghost.
 #    Confirm it has no active agents, then disband with the detector-cited raw name.
-genie agent ls --team '<team_id>' --json
+genie ls --json | jq '.[] | select(.team == "<team_id>")'
 genie team disband '<team_id>'
 
 # 3. If `missing_in_ls` (directory but no PG row): the directory is orphaned state.
@@ -166,7 +166,7 @@ tmux has-session -t '<expected_session_id>' && echo "alive" || echo "dead"
 ls -la '<worktree_from_executor_row>'   # if executor JSON is visible via agent show
 
 # 2. If all three confirm orphan, archive the agent cleanly.
-genie agent archive '<agent_id>'
+genie agent kill '<agent_id>'
 
 # 3. If the pane is actually alive and you're seeing a tmux-probe flake, wait for
 #    the next scheduler tick (≤60s) before acting. Persistent fires across 3+ ticks
@@ -217,7 +217,7 @@ psql -c "SELECT id, custom_name, team, created_at, archived_at
 
 # 2. Decide which row is authoritative (usually the newest active one). Archive
 #    the others with the standard agent-archive verb.
-genie agent archive '<older_agent_id>'
+genie agent kill '<older_agent_id>'
 
 # 3. If `total_offending_pairs > 5`, batch-review the full set before reconciling
 #    one at a time — the residue likely points at a single historical incident.
@@ -319,11 +319,11 @@ psql -c "SELECT created_at, data->>'new_state' AS state
          ORDER BY created_at DESC LIMIT 20;"
 
 # 3. If the parent is genuinely dead, archive all cascade members cleanly.
-genie agent archive '<parent_id>'
-for cid in <child_ids>; do genie agent archive "$cid"; done
+genie agent kill '<parent_id>'
+for cid in <child_ids>; do genie agent kill "$cid"; done
 
 # 4. If the parent is recoverable, resume-attempt first, then reassess children.
-genie spawn --resume '<parent_id>'
+genie agent resume '<parent_id>'
 # Wait one full scheduler cycle (60s) before acting on children — the cascade may clear.
 
 # 5. Capture the payload for an OSS issue. Pattern 6 has no tracking ticket yet.
@@ -366,9 +366,9 @@ psql -c "SELECT id, team, text, created_at FROM genie_runtime_events
 
 # 2. For each idle member, check whether they received anything since broadcast_at.
 for m in <idle_member_ids>; do
-  name=$(genie agent show "$m" --json | jq -r '.customName // .role')
+  name=$(genie agent show "$m" --json | jq -r '.customName // .role // .id')
   psql -c "SELECT id, created_at FROM genie_runtime_events
-           WHERE subject = 'genie.user.'${name}'.prompt'
+           WHERE subject = 'genie.user.${name}.prompt'
              AND created_at > '<broadcast_at>'
            LIMIT 1;"
 done
@@ -430,11 +430,11 @@ psql -c "SELECT name, status FROM teams WHERE name = '<conflicting_archived_team
 
 # 4. If the detector is right (real session-reuse ghost), archive the stale agent row
 #    to prevent further collisions — this is the mitigation path #1215 enables.
-genie agent archive '<conflicting_archived_agent_id>'
+genie agent kill '<conflicting_archived_agent_id>'
 
 # 5. If the fresh agent already attached to the wrong transcript, stop it before it
 #    mutates worktree state, then respawn with a distinct custom_name.
-genie agent archive '<new_agent_id>'
+genie agent kill '<new_agent_id>'
 genie spawn '<role>' --team '<new_team>' --name '<unique_name>'
 
 # 6. If ghost_count > 3 in one tick, the team-disband archive path may be failing
