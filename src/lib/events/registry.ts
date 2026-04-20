@@ -36,6 +36,7 @@ import * as notifyDeliveryLag from './schemas/notify.delivery.lag.js';
 import * as permissionsDeny from './schemas/permissions.deny.js';
 import * as permissionsGrant from './schemas/permissions.grant.js';
 import * as resumeAttempt from './schemas/resume.attempt.js';
+import * as rotDetected from './schemas/rot.detected.js';
 import * as rotTeamLsDriftDetected from './schemas/rot.team-ls-drift.detected.js';
 import * as runbookTriggered from './schemas/runbook.triggered.js';
 import * as schemaViolation from './schemas/schema.violation.js';
@@ -120,6 +121,9 @@ export const EventRegistry = {
 
   // Self-healing B1 Group 2 — detector lifecycle meta-events.
   [detectorDisabled.TYPE]: entry(detectorDisabled),
+
+  // Self-healing B1 Group 3a — shared rot-detection event.
+  [rotDetected.TYPE]: entry(rotDetected),
 
   // Self-healing B1 Group 3b — team-ls vs team-disband drift detector.
   [rotTeamLsDriftDetected.TYPE]: entry(rotTeamLsDriftDetected),

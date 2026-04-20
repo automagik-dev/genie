@@ -619,6 +619,11 @@ async function startForeground(headless?: boolean): Promise<void> {
   // no state mutation. `detector_version` is threaded into every emitted row
   // via the shared emit pipeline.
   try {
+    // Import the built-in detector aggregator first so each module's
+    // `registerDetector(default)` side-effect runs BEFORE the scheduler
+    // calls `listDetectors()`. Group 3c landed the first four rot-pattern
+    // detectors behind this single import.
+    await import('../detectors/built-in.js');
     const { start: startDetectorScheduler } = await import('../serve/detector-scheduler.js');
     handles.detectorScheduler = startDetectorScheduler();
     console.log('  Detector scheduler started (measurement only, 60s ± 5s cadence)');
