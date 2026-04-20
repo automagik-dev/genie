@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { getTuiKeybindings, getTuiQuitBindingArgs } from './serve.js';
@@ -111,6 +111,7 @@ function spawnServe(env: Record<string, string | undefined>): SpawnResult {
 
   const proc = spawn(BUN_PATH, [GENIE_ENTRY, 'serve', 'start', '--foreground', '--headless'], {
     env: mergedEnv,
+    cwd: testDir,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   proc.stdout?.on('data', (chunk: Buffer) => {
@@ -132,6 +133,10 @@ beforeEach(() => {
   mkdirSync(testDir, { recursive: true });
   genieHome = join(testDir, '.genie');
   mkdirSync(genieHome, { recursive: true });
+  // Mark this tmp dir as a workspace so `ensureWorkspace()` doesn't abort
+  // with "No workspace found" in hermetic environments (CI) where no
+  // ancestor .genie/workspace.json exists.
+  writeFileSync(join(genieHome, 'workspace.json'), '{"name":"test","tmuxSocket":"genie"}');
   child = null;
 });
 
