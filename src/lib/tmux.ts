@@ -1,4 +1,5 @@
-import { basename } from 'node:path';
+import { existsSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { tmuxBin } from './ensure-tmux.js';
 import { shellQuote } from './team-lead-command.js';
 // tmux-wrapper imported dynamically inside executeTmux for test mockability
@@ -537,6 +538,25 @@ export class TmuxUnreachableError extends Error {
     super(message);
     this.name = 'TmuxUnreachableError';
   }
+}
+
+/**
+ * Check if a tmux socket file exists on disk.
+ *
+ * tmux stores per-user sockets at `/tmp/tmux-<uid>/<socketName>`. If the
+ * file is missing, the tmux server for that socket is not running and
+ * every pane registered against it is permanently dead — no amount of
+ * transient-retry will recover. Callers use this to distinguish
+ * "socket permanently gone" from the transient `TmuxUnreachableError`
+ * surfaced by `isPaneAlive`.
+ *
+ * Returns `false` for empty/undefined socket names (safer default than
+ * assuming `true` and then trying to probe a non-existent server).
+ */
+export function isTmuxSocketAlive(socketName: string | undefined | null): boolean {
+  if (!socketName) return false;
+  const uid = process.getuid?.() ?? 501;
+  return existsSync(join(`/tmp/tmux-${uid}`, socketName));
 }
 
 /**

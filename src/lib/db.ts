@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, runSeed } from './pg-seed.js';
+import { getProcessStartTime } from './process-identity.js';
 
 /**
  * Re-export Sql type for callers that need to annotate sql connection parameters.
@@ -230,37 +231,144 @@ export async function ensurePgserve(): Promise<number> {
   }
 }
 
-/** Auto-start genie serve (headless) if not already running. */
-async function autoStartDaemon(): Promise<void> {
-  // Check if serve is already running via PID file (serve.pid is the canonical source)
-  for (const pidName of ['serve.pid', 'scheduler.pid']) {
-    const pidPath = join(GENIE_HOME, pidName);
-    try {
-      const pidStr = readFileSync(pidPath, 'utf-8').trim();
-      const pid = Number.parseInt(pidStr, 10);
-      if (!Number.isNaN(pid) && pid > 0) {
-        try {
-          process.kill(pid, 0); // Check if alive
-          return; // Already running, just wait for port file
-        } catch {
-          // Stale PID — proceed to start
-        }
-      }
-    } catch {
-      // No PID file — continue checking next
-    }
-  }
+/**
+ * Outcome of the most recent autoStartDaemon() call. Consumed by the branched
+ * timeout error in _ensurePgserve so the user gets a message naming the
+ * actual failure mode instead of a generic timeout.
+ *
+ *   - `missing`   — serve.pid absent; spawned a fresh serve
+ *   - `stale`     — serve.pid existed but its PID was recycled or dead;
+ *                   unlinked the file and spawned a fresh serve
+ *   - `alive`     — serve.pid points at a live serve process whose kernel
+ *                   start time still matches; did NOT respawn
+ *
+ * A module-level variable is acceptable here because autoStartDaemon is only
+ * called from the single-flight _ensurePgserve path (guarded by ensurePromise).
+ */
+type AutoStartOutcome = 'missing' | 'stale' | 'alive';
+let lastAutoStartOutcome: AutoStartOutcome | null = null;
+/** PID that was in serve.pid at the time of the most recent autoStartDaemon() call. */
+let lastAutoStartPid: number | null = null;
 
-  // Start genie serve --headless in background
+/**
+ * Spawn `genie serve start --headless` in the background.
+ * Overridable for tests via {@link __setSpawnDaemonForTest}.
+ */
+let spawnDaemon: () => void = () => {
   const bunPath = process.execPath ?? 'bun';
   const genieBin = process.argv[1] ?? 'genie';
-
   const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless'], {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env },
   });
   child.unref();
+};
+
+/** Test-only hook: swap the spawn implementation so tests don't launch real serves. */
+export function __setSpawnDaemonForTest(fn: (() => void) | null): void {
+  spawnDaemon =
+    fn ??
+    (() => {
+      const bunPath = process.execPath ?? 'bun';
+      const genieBin = process.argv[1] ?? 'genie';
+      const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless'], {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env },
+      });
+      child.unref();
+    });
+}
+
+/**
+ * Auto-start genie serve (headless) if it is not already running, validating
+ * PID identity so a recycled PID can't masquerade as a live serve.
+ *
+ * Format of `~/.genie/serve.pid`:
+ *   `{pid}:{startTime}` — new format written by writeServePid
+ *   `{pid}`             — legacy format (always treated as stale on read)
+ *
+ * A file is considered "live" only if BOTH:
+ *   - `process.kill(pid, 0)` succeeds (PID exists), AND
+ *   - `getProcessStartTime(pid)` returns the exact string recorded in the file
+ *
+ * Any other state → treat as stale, unlink, spawn fresh.
+ */
+export async function autoStartDaemon(): Promise<void> {
+  // Resolve GENIE_HOME at call time (not from the module-level constant) so
+  // tests that toggle process.env.GENIE_HOME see the override.
+  const home = process.env.GENIE_HOME ?? GENIE_HOME;
+  const pidPath = join(home, 'serve.pid');
+
+  let raw: string | null = null;
+  try {
+    raw = readFileSync(pidPath, 'utf-8').trim();
+  } catch {
+    raw = null;
+  }
+
+  if (!raw) {
+    lastAutoStartOutcome = 'missing';
+    lastAutoStartPid = null;
+    spawnDaemon();
+    return;
+  }
+
+  const sepIdx = raw.indexOf(':');
+  let pid: number;
+  let recordedStartTime: string | null;
+  if (sepIdx < 0) {
+    // Legacy single-PID format from an older install — always stale.
+    pid = Number.parseInt(raw, 10);
+    recordedStartTime = null;
+  } else {
+    pid = Number.parseInt(raw.slice(0, sepIdx), 10);
+    const tail = raw.slice(sepIdx + 1).trim();
+    recordedStartTime = tail === '' || tail === 'unknown' ? null : tail;
+  }
+
+  if (Number.isNaN(pid) || pid <= 0) {
+    // Unparseable file — treat as stale.
+    try {
+      unlinkSync(pidPath);
+    } catch {
+      /* already gone */
+    }
+    lastAutoStartOutcome = 'stale';
+    lastAutoStartPid = null;
+    spawnDaemon();
+    return;
+  }
+
+  let pidAlive = false;
+  try {
+    process.kill(pid, 0);
+    pidAlive = true;
+  } catch {
+    pidAlive = false;
+  }
+
+  if (pidAlive && recordedStartTime !== null) {
+    const currentStartTime = getProcessStartTime(pid);
+    if (currentStartTime !== null && currentStartTime === recordedStartTime) {
+      lastAutoStartOutcome = 'alive';
+      lastAutoStartPid = pid;
+      return; // Already running with matching identity.
+    }
+  }
+
+  // Either the PID is dead, the start time changed (PID recycled), the
+  // recorded start time was missing (legacy format), or we couldn't look
+  // one up. Treat as stale across the board.
+  try {
+    unlinkSync(pidPath);
+  } catch {
+    /* already gone */
+  }
+  lastAutoStartOutcome = 'stale';
+  lastAutoStartPid = pid;
+  spawnDaemon();
 }
 
 /**
@@ -325,6 +433,8 @@ async function _ensurePgserve(): Promise<number> {
 
   // 4b. CLI command — auto-start genie serve --headless, wait for port file.
   await autoStartDaemon();
+  const outcomeAtStart = lastAutoStartOutcome;
+  const pidAtStart = lastAutoStartPid;
   const deadline = Date.now() + 16000;
   while (Date.now() < deadline) {
     const p = readLockfile();
@@ -336,7 +446,24 @@ async function _ensurePgserve(): Promise<number> {
     await new Promise((r) => setTimeout(r, 500));
   }
   process.env.GENIE_PG_AVAILABLE = 'false';
-  throw new Error('Timed out waiting for genie serve to start pgserve (16s). Run: genie serve');
+
+  // Branch the timeout error so the user sees the actual failure mode.
+  const home = process.env.GENIE_HOME ?? GENIE_HOME;
+  const pidPath = join(home, 'serve.pid');
+  const hasPidFile = existsSync(pidPath);
+  const currentPort = readLockfile() ?? getPort();
+  if (outcomeAtStart === 'stale') {
+    throw new Error(
+      `Stale ~/.genie/serve.pid (PID ${pidAtStart ?? 'unknown'} was not our serve). Removed and retried — if this persists, run: genie serve start`,
+    );
+  }
+  if (!hasPidFile) {
+    throw new Error('genie serve not running. Run: genie serve start');
+  }
+  const pidLabel = pidAtStart ?? outcomeAtStart ?? 'unknown';
+  throw new Error(
+    `genie serve is running (PID ${pidLabel}) but pgserve did not respond on port ${currentPort} within 16s. Try: genie serve restart, or check ~/.genie/logs/scheduler.log`,
+  );
 }
 
 /** Resolve the pgserve CLI binary path — checks local dep, global, then PATH. */
