@@ -174,7 +174,19 @@ function toISO(v: unknown): string | undefined {
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type varies
 type Sql = any;
 
-/** Find parent task for a wish slug. */
+/**
+ * Find parent task for a wish slug at a specific repo_path.
+ *
+ * Also emits a loud warning when the slug has parent rows at OTHER repo_paths
+ * (state-partitioning — issue #1234). Worktrees, submodule clones, and main
+ * repos all resolve to different `repo_path` values, and naively filtering on
+ * the current cwd's path silently hides sibling state.
+ *
+ * Still returns null on miss — we never auto-heal by adopting a foreign
+ * parent, because picking the wrong one would silently merge unrelated
+ * execution into the current cwd's wish. The warning gives the operator
+ * enough signal to diagnose and reconcile manually.
+ */
 async function findParent(sql: Sql, slug: string, repoPath: string) {
   const wishFile = wishFilePath(slug);
   const rows = await sql`
@@ -182,7 +194,25 @@ async function findParent(sql: Sql, slug: string, repoPath: string) {
     WHERE wish_file = ${wishFile} AND repo_path = ${repoPath} AND parent_id IS NULL
     LIMIT 1
   `;
-  return rows.length > 0 ? rows[0] : null;
+  if (rows.length > 0) return rows[0];
+
+  // Diagnostic: are there parent rows for this wish at *other* repo_paths?
+  // Those would silently own the state while we report "not found" here.
+  const crossRows = await sql`
+    SELECT repo_path FROM tasks
+    WHERE wish_file = ${wishFile} AND parent_id IS NULL AND repo_path != ${repoPath}
+  `;
+  if (crossRows.length > 0) {
+    const otherPaths = crossRows
+      .map((r: Record<string, unknown>) => r.repo_path as string)
+      .filter((p: string, i: number, arr: string[]) => arr.indexOf(p) === i);
+    const otherList = otherPaths.map((p: string) => `     - ${p}`).join('\n');
+    console.warn(
+      `⚠ Wish "${slug}" has state partitioned across repo_paths (issue #1234).\n   Current cwd resolves to: ${repoPath}\n   Other parents exist at:\n${otherList}\n   Operations against this wish from the current cwd see NONE of the state above.\n   Re-run from one of the listed paths, or reconcile the partitioned rows manually.`,
+    );
+  }
+
+  return null;
 }
 
 /** Find a child task (group) under a parent. */
@@ -409,6 +439,12 @@ export async function startGroup(slug: string, groupName: string, assignee: stri
 /**
  * Transition a group to `done`.
  * Recalculates dependent groups (blocked → ready when all deps done).
+ *
+ * Auto-recovers from dispatch-bypass (issue #1214): when the group is `ready`
+ * (never entered `in_progress`) we transition it through `in_progress` before
+ * marking it `done`, so sidechannel-spawned engineers don't produce silent
+ * no-ops. `blocked` still fails — unmet dependencies must not complete. `done`
+ * is idempotent (return existing state rather than throw).
  */
 export async function completeGroup(slug: string, groupName: string, cwd?: string): Promise<GroupState> {
   const sql = await getConnection();
@@ -420,15 +456,91 @@ export async function completeGroup(slug: string, groupName: string, cwd?: strin
   const child = await findGroup(sql, parent.id as string, groupName);
   if (!child) throw new Error(`Group "${groupName}" not found in wish "${slug}"`);
 
+  // Idempotent done — return existing state, don't throw.
+  if (child.status === 'done') {
+    const [actors, deps] = await Promise.all([
+      sql`
+        SELECT actor_id FROM task_actors WHERE task_id = ${child.id as string} AND role = 'assignee' LIMIT 1
+      `,
+      sql`
+        SELECT t.group_name FROM task_dependencies td
+        JOIN tasks t ON t.id = td.depends_on_id
+        WHERE td.task_id = ${child.id as string}
+      `,
+    ]);
+    return {
+      status: 'done',
+      assignee: actors.length > 0 ? (actors[0].actor_id as string) : undefined,
+      dependsOn: deps.map((d: Record<string, unknown>) => d.group_name as string),
+      startedAt: toISO(child.started_at),
+      completedAt: toISO(child.ended_at) ?? toISO(child.updated_at),
+    };
+  }
+
+  // Blocked — unmet deps still prevent completion. Surface the blocker clearly.
+  if (child.status === 'blocked') {
+    const pendingDeps = await sql`
+      SELECT t.group_name, t.status
+      FROM task_dependencies td
+      JOIN tasks t ON t.id = td.depends_on_id
+      WHERE td.task_id = ${child.id as string}
+        AND t.status != 'done'
+    `;
+    const blockers = pendingDeps
+      .map((d: Record<string, unknown>) => `${d.group_name as string} (${d.status as string})`)
+      .join(', ');
+    throw new Error(`Cannot complete group "${groupName}": blocked on unmet dependencies: ${blockers || 'unknown'}`);
+  }
+
+  // Ready — auto-recover dispatch-bypass. Transition ready → in_progress before
+  // marking done. This fixes issue #1214 where sidechannel spawns skipped
+  // startGroup and `genie done` became a silent no-op.
+  if (child.status === 'ready') {
+    const assignee = process.env.GENIE_AGENT_NAME || 'auto-recovered';
+    const startNow = new Date();
+    await sql`
+      UPDATE tasks SET status = 'in_progress', started_at = COALESCE(started_at, ${startNow}), updated_at = ${startNow}
+      WHERE id = ${child.id as string}
+    `;
+    await sql`
+      INSERT INTO task_actors (task_id, actor_type, actor_id, role)
+      VALUES (${child.id as string}, 'local', ${assignee}, 'assignee')
+      ON CONFLICT (task_id, actor_type, actor_id, role) DO UPDATE SET created_at = now()
+    `;
+    console.warn(
+      `⚠ Group "${groupName}" was \`ready\` (dispatch-bypass); auto-transitioned to \`in_progress\` before completion.`,
+    );
+    // Refresh child.status for the write below (child row is mutated by UPDATE).
+    // Also propagate started_at so the final return's toISO(child.started_at)
+    // yields the real timestamp instead of undefined. Mirror PG's COALESCE —
+    // don't overwrite an existing timestamp.
+    child.status = 'in_progress';
+    if (!child.started_at) child.started_at = startNow;
+  }
+
   if (child.status !== 'in_progress') {
     throw new Error(`Cannot complete group "${groupName}": must be in_progress (currently ${child.status})`);
   }
 
   const now = new Date();
-  await sql`
+  // Use RETURNING so a 0-row update fails loudly instead of silently no-opping.
+  // The status read-path and write-path both key on (wish_file, repo_path),
+  // and pre-check gates (findParent, findGroup, status guards) normally catch
+  // drift earlier — but if a concurrent delete or race nukes the row between
+  // the pre-check and this UPDATE, we never want to return success on 0 rows.
+  // Issue #1234: "make genie done fail loudly when it doesn't actually update".
+  const updated = await sql`
     UPDATE tasks SET status = 'done', ended_at = ${now}, updated_at = ${now}
     WHERE id = ${child.id as string}
+    RETURNING id
   `;
+  if (updated.length === 0) {
+    throw new Error(
+      `Completion UPDATE affected 0 rows for group "${groupName}" in wish "${slug}" ` +
+        `(child id ${child.id as string} disappeared mid-operation). ` +
+        `State was NOT written — re-run \`genie done ${slug}#${groupName}\` to retry.`,
+    );
+  }
 
   // Recalculate dependents: blocked siblings → ready when ALL deps done
   await sql`

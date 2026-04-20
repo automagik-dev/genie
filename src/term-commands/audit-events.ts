@@ -653,7 +653,7 @@ export function registerEventsCommands(program: Command): void {
     .command('stream-follow')
     .description('Follow-stream enriched genie_runtime_events via LISTEN/NOTIFY + id-cursor (v2)')
     .option('--follow', 'Continuously follow the stream', true)
-    .option('--kind <prefix>', 'Filter by subject/kind prefix')
+    .option('--kind <prefix>', 'Filter by subject/kind prefix (supports `*` globs, e.g. `detector.*`)')
     .option('--severity <level>', 'Filter by severity (debug|info|warn|error|fatal)')
     .option('--since <duration>', 'Seed window (e.g., 5m, 1h)')
     .option('--consumer-id <id>', 'Persistent consumer id for cursor resume')

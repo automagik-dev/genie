@@ -64,6 +64,7 @@
     "react-dom",
     "@vitejs/plugin-react",
     "vite",
-    "@types/react-dom"
+    "@types/react-dom",
+    "esbuild"
   ]
 }
