@@ -24,6 +24,20 @@ import { listDetectors } from '../detectors/index.js';
 import type { DetectorEvent, DetectorModule } from '../detectors/index.js';
 import { emitEvent as defaultEmitEvent } from '../lib/emit.js';
 
+// Production detector modules — each self-registers at import time via the
+// `registerDetector(...)` call at the bottom of its own file. Importing them
+// here triggers those side effects so `listDetectors()` returns every
+// production module when the scheduler boots. Append-only: new detector
+// wishes add one line each, ordered by their Group number.
+//
+// NOTE: do NOT place these imports inside `src/detectors/index.ts` — doing
+// so creates a TDZ-breaking circular import (detector module imports
+// `registerDetector` from index, index imports detector module for its side
+// effect, and index's `const registry = new Map()` is not yet initialized
+// when the detector's top-level registration runs through the cycle).
+// Importing here keeps `src/detectors/index.ts` dependency-free.
+import '../detectors/pattern-2-team-ls-drift.js';
+
 /**
  * Sink contract for emitted detector rows. Production wires this to the real
  * `emitEvent` in `src/lib/emit.ts`; tests pass a capture closure so they do
