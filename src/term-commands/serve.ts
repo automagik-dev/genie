@@ -619,10 +619,12 @@ async function startForeground(headless?: boolean): Promise<void> {
   // no state mutation. `detector_version` is threaded into every emitted row
   // via the shared emit pipeline.
   //
-  // Group 3a detectors self-register at module load — importing bootstrap.ts
-  // pulls pattern-1/4/5 into the registry before the scheduler's first tick.
+  // All detectors self-register at module load — importing built-in.ts
+  // pulls every production pattern (1-8) into the registry before the
+  // scheduler's first tick. Each module's top-level call to
+  // `registerDetector(module)` runs once via ESM cache.
   try {
-    await import('../detectors/bootstrap.js');
+    await import('../detectors/built-in.js');
     const { start: startDetectorScheduler } = await import('../serve/detector-scheduler.js');
     const { listDetectors } = await import('../detectors/index.js');
     handles.detectorScheduler = startDetectorScheduler();

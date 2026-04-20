@@ -44,7 +44,6 @@
     "src/consumers/runbook-r1/index.ts",
     "src/consumers/runbook-r1/detector.ts",
     "src/detectors/index.ts",
-    "src/detectors/bootstrap.ts",
     "src/detectors/pattern-1-backfill-no-worktree.ts",
     "src/detectors/pattern-4-duplicate-agents.ts",
     "src/detectors/pattern-5-zombie-team-lead.ts",
