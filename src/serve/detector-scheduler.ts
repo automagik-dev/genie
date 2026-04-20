@@ -1,0 +1,251 @@
+/**
+ * Detector Scheduler — runs every registered detector on a 60s cadence.
+ *
+ * Wish: Observability B1 — rot-pattern detectors (Group 2 / Phase 0).
+ *
+ * Responsibilities (read-only):
+ *   1. Tick every 60s ± jitter (5s window).
+ *   2. For each registered detector: run query → shouldFire → render.
+ *   3. Emit the rendered event through `src/lib/emit.ts` with the
+ *      detector's `version` threaded into `detector_version`.
+ *   4. Enforce a per-detector hourly `fire_budget`. When a detector's fire
+ *      count in the current hour bucket meets its configured budget the
+ *      scheduler silences it for the rest of the bucket and emits one
+ *      `detector.disabled` meta-event. The next bucket resets the counter.
+ *
+ * The scheduler is *measurement only*. It never mutates genie state — no
+ * runbook execution, no SQL DDL, no file writes. Future phases build on top
+ * of the events produced here; this module stays read-only forever.
+ *
+ * Wired into `src/term-commands/serve.ts` startup. No opt-in flag.
+ */
+
+import { listDetectors } from '../detectors/index.js';
+import type { DetectorEvent, DetectorModule } from '../detectors/index.js';
+import { emitEvent } from '../lib/emit.js';
+
+/** Alias for the concrete render() output so helper signatures stay readable. */
+type DetectorEventResult = DetectorEvent;
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Base tick interval. Production default: 60 seconds. */
+export const DEFAULT_TICK_INTERVAL_MS = 60_000;
+/** Jitter window applied per-tick (±) to smear scheduler load. */
+export const DEFAULT_JITTER_MS = 5_000;
+/** Default hourly fire budget per detector. */
+export const DEFAULT_FIRE_BUDGET = 10;
+/** Hour bucket size in milliseconds. */
+const HOUR_MS = 60 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface SchedulerOptions {
+  /** Base tick interval in ms. Defaults to 60 seconds. */
+  tickIntervalMs?: number;
+  /** Jitter window applied per-tick (±) to smear load across detectors. */
+  jitterMs?: number;
+  /** Default fire budget applied to every detector unless overridden. */
+  defaultFireBudget?: number;
+  /** Per-detector fire budget overrides keyed on DetectorModule.id. */
+  fireBudgets?: Readonly<Record<string, number>>;
+  /**
+   * Time source — injected so tests can drive deterministic buckets without
+   * mocking the global `Date` object.
+   */
+  now?: () => number;
+  /**
+   * Timer primitives — injected so tests can use fake timers or manual ticks
+   * without pausing the real event loop. The handle type is deliberately
+   * opaque (`unknown`) so callers can return whatever their timer library
+   * produces (`ReturnType<typeof setTimeout>`, a test stub, etc).
+   */
+  setTimeoutFn?: (fn: () => void, ms: number) => unknown;
+  clearTimeoutFn?: (handle: unknown) => void;
+  /**
+   * Detector source — defaults to the module-level registry
+   * (`listDetectors()`). Tests that want isolated detector sets pass a custom
+   * resolver so the global registry stays clean.
+   */
+  detectorSource?: () => ReadonlyArray<DetectorModule<unknown>>;
+}
+
+export interface SchedulerHandle {
+  /** Stop the scheduler (idempotent). Any in-flight tick completes. */
+  stop(): void;
+  /** Run one tick synchronously. Exposed for tests. */
+  tickNow(): Promise<void>;
+  /** Observable stats for introspection / tests. */
+  stats(): SchedulerStats;
+}
+
+export interface SchedulerStats {
+  ticks: number;
+  fires: number;
+  disables: number;
+  /** Fire counts keyed on `${detector_id}:${hour_bucket_start_ms}`. */
+  budgetBuckets: Record<string, number>;
+}
+
+/** Opaque timer handle returned by injected setTimeout primitives. */
+type TimerHandle = unknown;
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Start the scheduler. Returns a handle the serve startup path stores and
+ * invokes `stop()` on during graceful shutdown.
+ *
+ * The first tick runs after `tickIntervalMs ± jitter`; no immediate tick on
+ * startup. That matches how the production emit pipeline pre-warms — a
+ * synchronous tick at boot would fight pgserve readiness in practice.
+ */
+export function start(options: SchedulerOptions = {}): SchedulerHandle {
+  const tickIntervalMs = options.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS;
+  const jitterMs = options.jitterMs ?? DEFAULT_JITTER_MS;
+  const defaultBudget = options.defaultFireBudget ?? DEFAULT_FIRE_BUDGET;
+  const budgets = options.fireBudgets ?? {};
+  const now = options.now ?? (() => Date.now());
+  const setTimeoutFn = options.setTimeoutFn ?? ((fn: () => void, ms: number): TimerHandle => setTimeout(fn, ms));
+  const clearTimeoutFn =
+    options.clearTimeoutFn ??
+    ((handle: TimerHandle) => {
+      clearTimeout(handle as ReturnType<typeof setTimeout>);
+    });
+  const resolveDetectors = options.detectorSource ?? listDetectors;
+
+  const state: SchedulerStats = {
+    ticks: 0,
+    fires: 0,
+    disables: 0,
+    budgetBuckets: {},
+  };
+
+  /**
+   * Per-bucket cache of detectors that have already emitted `detector.disabled`
+   * in this hour. Prevents repeated disable events during the silenced window.
+   */
+  const disabledBuckets = new Set<string>();
+
+  let stopped = false;
+  let currentTimer: TimerHandle | null = null;
+  let tickInFlight: Promise<void> | null = null;
+
+  async function runTick(): Promise<void> {
+    if (stopped) return;
+    state.ticks++;
+
+    const detectors = resolveDetectors();
+    for (const detector of detectors) {
+      await runOneDetector(detector);
+    }
+  }
+
+  /** Safely invoke a detector step; return `null` if the callback throws. */
+  async function safeCall<R>(fn: () => R | Promise<R>): Promise<R | null> {
+    try {
+      return await fn();
+    } catch {
+      return null;
+    }
+  }
+
+  function emitFire(detector: DetectorModule<unknown>, event: DetectorEventResult): void {
+    emitEvent(event.type, event.payload, {
+      detector_version: detector.version,
+      source_subsystem: 'detector-scheduler',
+      entity_id: event.subject ?? detector.id,
+      agent: process.env.GENIE_AGENT_NAME ?? 'detector-scheduler',
+    });
+    state.fires++;
+  }
+
+  function emitDisable(detector: DetectorModule<unknown>, budget: number, current: number, bucketStart: number): void {
+    state.disables++;
+    emitEvent(
+      'detector.disabled',
+      {
+        detector_id: detector.id,
+        cause: 'fire_budget_exceeded',
+        budget,
+        fire_count: current,
+        bucket_end_ts: new Date(bucketStart + HOUR_MS).toISOString(),
+      },
+      {
+        detector_version: detector.version,
+        source_subsystem: 'detector-scheduler',
+        entity_id: detector.id,
+        severity: 'warn',
+        agent: process.env.GENIE_AGENT_NAME ?? 'detector-scheduler',
+      },
+    );
+  }
+
+  async function runOneDetector(detector: DetectorModule<unknown>): Promise<void> {
+    const bucketStart = Math.floor(now() / HOUR_MS) * HOUR_MS;
+    const bucketKey = `${detector.id}:${bucketStart}`;
+    const budget = budgets[detector.id] ?? defaultBudget;
+
+    // Silenced for this bucket — short-circuit without running query.
+    if (disabledBuckets.has(bucketKey)) return;
+
+    const result = await safeCall(() => detector.query());
+    if (result === null) return;
+    const fires = await safeCall(() => detector.shouldFire(result));
+    if (!fires) return;
+
+    // Increment the bucket counter BEFORE emitting so an exception during
+    // emit() doesn't let a noisy detector bypass the budget.
+    const current = (state.budgetBuckets[bucketKey] ?? 0) + 1;
+    state.budgetBuckets[bucketKey] = current;
+
+    const event = await safeCall(() => detector.render(result));
+    if (event === null) return;
+
+    emitFire(detector, event);
+
+    // Budget enforcement — self-disable on the fire that meets the budget.
+    if (current >= budget && !disabledBuckets.has(bucketKey)) {
+      disabledBuckets.add(bucketKey);
+      emitDisable(detector, budget, current, bucketStart);
+    }
+  }
+
+  function scheduleNext(): void {
+    if (stopped) return;
+    const jitter = jitterMs > 0 ? Math.floor((Math.random() * 2 - 1) * jitterMs) : 0;
+    const delay = Math.max(0, tickIntervalMs + jitter);
+    currentTimer = setTimeoutFn(() => {
+      tickInFlight = runTick().finally(() => {
+        tickInFlight = null;
+        scheduleNext();
+      });
+    }, delay);
+  }
+
+  scheduleNext();
+
+  return {
+    stop(): void {
+      if (stopped) return;
+      stopped = true;
+      if (currentTimer) {
+        clearTimeoutFn(currentTimer);
+        currentTimer = null;
+      }
+    },
+    async tickNow(): Promise<void> {
+      if (tickInFlight) await tickInFlight;
+      await runTick();
+    },
+    stats(): SchedulerStats {
+      return { ...state, budgetBuckets: { ...state.budgetBuckets } };
+    },
+  };
+}

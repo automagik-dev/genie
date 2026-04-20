@@ -21,6 +21,7 @@ import * as cliCommand from './schemas/cli.command.js';
 import * as consumerHeartbeat from './schemas/consumer.heartbeat.js';
 import * as consumerLagged from './schemas/consumer.lagged.js';
 import * as correlationOrphanRate from './schemas/correlation.orphan.rate.js';
+import * as detectorDisabled from './schemas/detector.disabled.js';
 import * as emitBackpressureCritical from './schemas/emit.backpressure.critical.js';
 import * as emitterLatencyP99 from './schemas/emitter.latency_p99.js';
 import * as emitterQueueDepth from './schemas/emitter.queue.depth.js';
@@ -115,6 +116,9 @@ export const EventRegistry = {
   [emitterSheddingLoad.TYPE]: entry(emitterSheddingLoad),
   [consumerLagged.TYPE]: entry(consumerLagged),
   [emitBackpressureCritical.TYPE]: entry(emitBackpressureCritical),
+
+  // Self-healing B1 Group 2 — detector lifecycle meta-events.
+  [detectorDisabled.TYPE]: entry(detectorDisabled),
 } as const satisfies Record<string, RegistryEntry>;
 
 export type EventType = keyof typeof EventRegistry;
