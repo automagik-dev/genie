@@ -516,6 +516,100 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       const a = await get('sdk-worker');
       expect(a!.state).toBe('working');
     });
+
+    test('flips workers registered on a dead socket to error (Bug 4)', async () => {
+      // Bug 4 repro: workers recorded on a tmux socket that no longer exists
+      // were stuck in 'idle'/'working' forever because reconcileStaleSpawns
+      // catches the TmuxUnreachableError from isPaneAlive and skips the worker.
+      // After the fix, a dead socket is detected once up-front and every
+      // worker on it is transitioned to 'error' with pane_id cleared.
+      //
+      // We pick a socket name that we can guarantee does NOT exist under
+      // /tmp/tmux-<uid>/ — any random UUID works.
+      const deadSocketName = `genie-dead-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      process.env.GENIE_TMUX_SOCKET = deadSocketName;
+      try {
+        const oldChange = new Date(Date.now() - 5_000).toISOString();
+        await register(
+          makeAgent({
+            id: 'dead-socket-worker-1',
+            paneId: '%9999',
+            state: 'idle',
+            startedAt: oldChange,
+            lastStateChange: oldChange,
+          }),
+        );
+        await register(
+          makeAgent({
+            id: 'dead-socket-worker-2',
+            paneId: '%9998',
+            state: 'working',
+            startedAt: oldChange,
+            lastStateChange: oldChange,
+          }),
+        );
+
+        const reset = await reconcileStaleSpawns(2);
+        expect(reset).toContain('dead-socket-worker-1');
+        expect(reset).toContain('dead-socket-worker-2');
+
+        const a1 = await get('dead-socket-worker-1');
+        expect(a1!.state).toBe('error');
+        expect(a1!.paneId).toBe('');
+        const a2 = await get('dead-socket-worker-2');
+        expect(a2!.state).toBe('error');
+        expect(a2!.paneId).toBe('');
+      } finally {
+        // biome-ignore lint/performance/noDelete: assigning undefined would set the string "undefined"
+        delete process.env.GENIE_TMUX_SOCKET;
+      }
+    });
+
+    test('dead socket reconciliation preserves existing behavior on live sockets', async () => {
+      // Sanity check: when the tmux socket DOES exist, the dead-socket
+      // fast path must not fire — workers must go through the normal
+      // per-pane isPaneAlive check (which remains transient-blip-safe).
+      // We force the socket to appear alive by pointing GENIE_TMUX_SOCKET
+      // at a socket file we create in /tmp/tmux-<uid>/.
+      const { existsSync, mkdirSync, writeFileSync, unlinkSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const { tmpdir } = await import('node:os');
+      const uid = process.getuid?.() ?? 501;
+      const socketDir = `/tmp/tmux-${uid}`;
+      const stubSocketName = `genie-live-stub-${Date.now()}`;
+      const stubPath = join(socketDir, stubSocketName);
+      mkdirSync(socketDir, { recursive: true });
+      writeFileSync(stubPath, '');
+      process.env.GENIE_TMUX_SOCKET = stubSocketName;
+      try {
+        // A fresh (recent) idle row: must NOT be reset because the socket
+        // is alive AND lastStateChange is inside the threshold. This
+        // exercises the preserved transient-retry path.
+        await register(
+          makeAgent({
+            id: 'live-socket-fresh-idle',
+            paneId: '%8888',
+            state: 'idle',
+            lastStateChange: new Date().toISOString(),
+          }),
+        );
+        const reset = await reconcileStaleSpawns(2);
+        expect(reset).not.toContain('live-socket-fresh-idle');
+        const a = await get('live-socket-fresh-idle');
+        expect(a!.state).toBe('idle');
+      } finally {
+        // biome-ignore lint/performance/noDelete: assigning undefined would set the string "undefined"
+        delete process.env.GENIE_TMUX_SOCKET;
+        try {
+          unlinkSync(stubPath);
+        } catch {
+          /* best-effort cleanup */
+        }
+        // silence unused-import warnings if any
+        void existsSync;
+        void tmpdir;
+      }
+    });
   });
 
   describe('templates', () => {

@@ -20,7 +20,20 @@ import { recordAuditEvent } from './audit.js';
 import { type Sql, getConnection } from './db.js';
 import type { AgentIdentity, ExecutorState } from './executor-types.js';
 import type { ProviderName } from './provider-adapters.js';
-import { isPaneAlive } from './tmux.js';
+import { isPaneAlive, isTmuxSocketAlive } from './tmux.js';
+
+/**
+ * Resolve the tmux socket name a worker row is expected to live on.
+ *
+ * The agents schema does not record a per-worker socket column — every
+ * genie worker runs on the global `-L <socket>` server whose name comes
+ * from `GENIE_TMUX_SOCKET` (default `genie`). This helper exists so the
+ * reconciliation loop has a single source of truth and legacy rows
+ * missing any future per-row socket column fall back safely.
+ */
+function resolveWorkerSocketName(): string {
+  return process.env.GENIE_TMUX_SOCKET || 'genie';
+}
 
 export type AgentState = 'spawning' | 'working' | 'idle' | 'permission' | 'question' | 'done' | 'error' | 'suspended';
 export type TransportType = 'tmux' | 'inline';
@@ -284,6 +297,7 @@ export async function list(): Promise<Agent[]> {
  *
  * @param thresholdSeconds - How long an agent must be stuck before reset (default: 60)
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: three sequential reconciliation passes with socket-grouping fast path
 export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<string[]> {
   try {
     const sql = await getConnection();
@@ -313,7 +327,102 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
         AND pane_id IS NOT NULL AND pane_id != ''
         AND started_at < now() - interval '1 second' * ${thresholdSeconds}
     `;
+
+    // Third pass (query): dead-pane zombies in active (non-spawning) states.
+    // Rows whose state is idle/working/permission/question but whose tmux
+    // pane no longer exists (e.g. user killed the session, machine rebooted,
+    // process crashed without state update). These count toward the resume
+    // concurrency cap and permanently block auto-resume once accumulated.
+    // Only rows matching the tmux pane pattern `%\d+` are candidates —
+    // synthetic paneIds ('sdk', 'inline', etc.) are non-tmux transports
+    // with their own liveness source and must not be touched here.
+    const activeDeadCandidates = await sql<{ id: string; pane_id: string; state: string }[]>`
+      SELECT id, pane_id, state FROM agents
+      WHERE state IN ('idle', 'working', 'permission', 'question')
+        AND pane_id ~ '^%[0-9]+$'
+        AND last_state_change < now() - interval '1 second' * ${thresholdSeconds}
+    `;
+
+    // Dead-socket short-circuit (Bug 4).
+    //
+    // Before touching tmux, group the 2nd+3rd pass candidates by the tmux
+    // socket they live on and check the socket file once per unique name.
+    // If the socket is gone, every worker on it is permanently dead —
+    // no need to probe `isPaneAlive` (which would just raise
+    // `TmuxUnreachableError` and cause the per-row catch to skip the
+    // worker forever, as reported in the Bug 4 scheduler-log spam).
+    //
+    // Workers on a LIVE socket keep the existing per-worker
+    // isPaneAlive + try/catch behaviour — that path is correct for
+    // "socket up but pane gone" and for transient tmux blips.
+    type SpawningRow = { id: string; pane_id: string };
+    type ActiveRow = { id: string; pane_id: string; state: string };
+    const socketBuckets = new Map<string, { spawning: SpawningRow[]; active: ActiveRow[] }>();
     for (const row of staleWithPane) {
+      const socket = resolveWorkerSocketName();
+      const bucket = socketBuckets.get(socket) ?? { spawning: [], active: [] };
+      bucket.spawning.push(row);
+      socketBuckets.set(socket, bucket);
+    }
+    for (const row of activeDeadCandidates) {
+      const socket = resolveWorkerSocketName();
+      const bucket = socketBuckets.get(socket) ?? { spawning: [], active: [] };
+      bucket.active.push(row);
+      socketBuckets.set(socket, bucket);
+    }
+
+    const liveSpawning: SpawningRow[] = [];
+    const liveActive: ActiveRow[] = [];
+    for (const [socketName, bucket] of socketBuckets) {
+      if (isTmuxSocketAlive(socketName)) {
+        liveSpawning.push(...bucket.spawning);
+        liveActive.push(...bucket.active);
+        continue;
+      }
+      // Socket is dead — mark every candidate on it as error in one pass.
+      const allIds = [...bucket.spawning.map((r) => r.id), ...bucket.active.map((r) => r.id)];
+      if (allIds.length === 0) continue;
+
+      // Per-row state-guarded UPDATE preserves the concurrent-transition
+      // race protection from the original code.
+      for (const row of bucket.spawning) {
+        const updated = await sql<{ id: string }[]>`
+          UPDATE agents
+          SET state = 'error', last_state_change = now(), pane_id = ''
+          WHERE id = ${row.id} AND state = 'spawning'
+          RETURNING id
+        `;
+        if (updated.length > 0) {
+          console.error(
+            `[reconcile] Reset agent ${row.id} (dead socket ${socketName}, pane ${row.pane_id}) from spawning → error`,
+          );
+          resetIds.push(row.id);
+        }
+      }
+      for (const row of bucket.active) {
+        const prevState = row.state;
+        const updated = await sql<{ id: string }[]>`
+          UPDATE agents
+          SET state = 'error', last_state_change = now(), pane_id = ''
+          WHERE id = ${row.id} AND state = ${prevState}
+          RETURNING id
+        `;
+        if (updated.length > 0) {
+          console.error(
+            `[reconcile] Reset agent ${row.id} (dead socket ${socketName}, pane ${row.pane_id}) from ${prevState} → error`,
+          );
+          resetIds.push(row.id);
+        }
+      }
+      recordAuditEvent('worker', socketName, 'recovery_socket_dead', 'reconciler', {
+        socket: socketName,
+        worker_ids: allIds,
+        worker_count: allIds.length,
+      }).catch(() => {});
+    }
+
+    // Workers on live sockets: run the original per-row liveness probe.
+    for (const row of liveSpawning) {
       try {
         const alive = await isPaneAlive(row.pane_id);
         if (!alive) {
@@ -334,22 +443,7 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
         // when we can't verify pane status
       }
     }
-
-    // Third pass: dead-pane zombies in active (non-spawning) states.
-    // Rows whose state is idle/working/permission/question but whose tmux
-    // pane no longer exists (e.g. user killed the session, machine rebooted,
-    // process crashed without state update). These count toward the resume
-    // concurrency cap and permanently block auto-resume once accumulated.
-    // Only rows matching the tmux pane pattern `%\d+` are candidates —
-    // synthetic paneIds ('sdk', 'inline', etc.) are non-tmux transports
-    // with their own liveness source and must not be touched here.
-    const activeDeadCandidates = await sql<{ id: string; pane_id: string; state: string }[]>`
-      SELECT id, pane_id, state FROM agents
-      WHERE state IN ('idle', 'working', 'permission', 'question')
-        AND pane_id ~ '^%[0-9]+$'
-        AND last_state_change < now() - interval '1 second' * ${thresholdSeconds}
-    `;
-    for (const row of activeDeadCandidates) {
+    for (const row of liveActive) {
       try {
         const alive = await isPaneAlive(row.pane_id);
         if (!alive) {

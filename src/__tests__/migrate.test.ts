@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -27,8 +28,11 @@ import {
 let testDir: string;
 
 beforeEach(() => {
-  testDir = join(tmpdir(), `genie-migrate-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  mkdirSync(testDir, { recursive: true });
+  const raw = join(tmpdir(), `genie-migrate-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(raw, { recursive: true });
+  // macOS: tmpdir() lives under /var → /private/var symlink; realpath so
+  // computed paths match what migrate.ts returns after resolving links.
+  testDir = realpathSync(raw);
 });
 
 afterEach(() => {
