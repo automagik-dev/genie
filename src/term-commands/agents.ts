@@ -2173,8 +2173,19 @@ export async function handleWorkerStop(name: string): Promise<void> {
     return;
   }
 
+  // suspendWorker operates on executor IDs, not agent IDs. If the agent has no
+  // current executor linked (native-spawn path, or already terminated but not
+  // archived), we can't suspend it — explain why instead of failing silently.
+  if (!w.currentExecutorId) {
+    console.error(`Cannot stop agent "${w.id}" — no active executor linked.`);
+    console.error('  The agent may have already exited, or was spawned without');
+    console.error('  executor tracking (e.g. native Claude Code teammate).');
+    console.error(`  To remove the agent row, use: genie kill ${w.id}`);
+    process.exit(1);
+  }
+
   const { suspendWorker } = await import('../lib/idle-timeout.js');
-  const ok = await suspendWorker(w.id);
+  const ok = await suspendWorker(w.currentExecutorId);
   if (ok) {
     console.log(`Agent "${w.id}" stopped.`);
     if (w.claudeSessionId) {
@@ -2183,7 +2194,9 @@ export async function handleWorkerStop(name: string): Promise<void> {
     console.log(`  Send a message to auto-resume: genie send '...' --to ${w.id}`);
     recordAuditEvent('worker', w.id, 'stop', getActor(), { name }).catch(() => {});
   } else {
-    console.error(`Failed to stop agent "${w.id}".`);
+    console.error(`Failed to stop agent "${w.id}" — executor ${w.currentExecutorId} not found in executors table.`);
+    console.error('  This indicates a stale current_executor_id FK. Try:');
+    console.error(`    genie kill ${w.id}    # force remove the agent row`);
     process.exit(1);
   }
 }
