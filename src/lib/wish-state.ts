@@ -409,6 +409,12 @@ export async function startGroup(slug: string, groupName: string, assignee: stri
 /**
  * Transition a group to `done`.
  * Recalculates dependent groups (blocked → ready when all deps done).
+ *
+ * Auto-recovers from dispatch-bypass (issue #1214): when the group is `ready`
+ * (never entered `in_progress`) we transition it through `in_progress` before
+ * marking it `done`, so sidechannel-spawned engineers don't produce silent
+ * no-ops. `blocked` still fails — unmet dependencies must not complete. `done`
+ * is idempotent (return existing state rather than throw).
  */
 export async function completeGroup(slug: string, groupName: string, cwd?: string): Promise<GroupState> {
   const sql = await getConnection();
@@ -419,6 +425,62 @@ export async function completeGroup(slug: string, groupName: string, cwd?: strin
 
   const child = await findGroup(sql, parent.id as string, groupName);
   if (!child) throw new Error(`Group "${groupName}" not found in wish "${slug}"`);
+
+  // Idempotent done — return existing state, don't throw.
+  if (child.status === 'done') {
+    const actors = await sql`
+      SELECT actor_id FROM task_actors WHERE task_id = ${child.id as string} AND role = 'assignee' LIMIT 1
+    `;
+    const deps = await sql`
+      SELECT t.group_name FROM task_dependencies td
+      JOIN tasks t ON t.id = td.depends_on_id
+      WHERE td.task_id = ${child.id as string}
+    `;
+    return {
+      status: 'done',
+      assignee: actors.length > 0 ? (actors[0].actor_id as string) : undefined,
+      dependsOn: deps.map((d: Record<string, unknown>) => d.group_name as string),
+      startedAt: toISO(child.started_at),
+      completedAt: toISO(child.ended_at) ?? toISO(child.updated_at),
+    };
+  }
+
+  // Blocked — unmet deps still prevent completion. Surface the blocker clearly.
+  if (child.status === 'blocked') {
+    const pendingDeps = await sql`
+      SELECT t.group_name, t.status
+      FROM task_dependencies td
+      JOIN tasks t ON t.id = td.depends_on_id
+      WHERE td.task_id = ${child.id as string}
+        AND t.status != 'done'
+    `;
+    const blockers = pendingDeps
+      .map((d: Record<string, unknown>) => `${d.group_name as string} (${d.status as string})`)
+      .join(', ');
+    throw new Error(`Cannot complete group "${groupName}": blocked on unmet dependencies: ${blockers || 'unknown'}`);
+  }
+
+  // Ready — auto-recover dispatch-bypass. Transition ready → in_progress before
+  // marking done. This fixes issue #1214 where sidechannel spawns skipped
+  // startGroup and `genie done` became a silent no-op.
+  if (child.status === 'ready') {
+    const assignee = process.env.GENIE_AGENT_NAME || 'auto-recovered';
+    const startNow = new Date();
+    await sql`
+      UPDATE tasks SET status = 'in_progress', started_at = COALESCE(started_at, ${startNow}), updated_at = ${startNow}
+      WHERE id = ${child.id as string}
+    `;
+    await sql`
+      INSERT INTO task_actors (task_id, actor_type, actor_id, role)
+      VALUES (${child.id as string}, 'local', ${assignee}, 'assignee')
+      ON CONFLICT (task_id, actor_type, actor_id, role) DO UPDATE SET created_at = now()
+    `;
+    console.warn(
+      `⚠ Group "${groupName}" was \`ready\` (dispatch-bypass); auto-transitioned to \`in_progress\` before completion.`,
+    );
+    // Refresh child.status for the write below (child row is mutated by UPDATE).
+    child.status = 'in_progress';
+  }
 
   if (child.status !== 'in_progress') {
     throw new Error(`Cannot complete group "${groupName}": must be in_progress (currently ${child.status})`);
