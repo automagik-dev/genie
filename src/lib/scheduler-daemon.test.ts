@@ -27,6 +27,7 @@ import {
   recoverOnStartup,
   runAgentRecoveryPass,
   startDaemon,
+  terminalizeCleanExitUnverified,
 } from './scheduler-daemon.js';
 
 // ============================================================================
@@ -2210,6 +2211,326 @@ describe('scheduler-daemon', () => {
       expect(dropped).toHaveLength(10);
       expect(dropped.every((l) => l.reason === 'already_escalated_by_scheduler')).toBe(true);
     });
+  });
+});
+
+// ============================================================================
+// Turn-session-contract (Group 4) — D1 / D3 reconciler logic
+// ============================================================================
+
+/**
+ * In-memory fake of the PG state touched by `terminalizeCleanExitUnverified`
+ * and the flag-ON branch of `runAgentRecoveryPass`. Lets tests assert on the
+ * exact writes (outcome, close_reason, current_executor_id) without spinning
+ * up a real database.
+ */
+function createTerminalStateFake(seed: {
+  agent: { id: string; currentExecutorId: string | null; state: AgentState };
+  executor?: { id: string; closedAt: Date | null; outcome: string | null };
+}) {
+  const agentRow: { current_executor_id: string | null; state: string; last_state_change: string | null } = {
+    current_executor_id: seed.agent.currentExecutorId,
+    state: seed.agent.state,
+    last_state_change: null,
+  };
+  const executorRow: { closed_at: Date | null; outcome: string | null; close_reason: string | null; state: string } = {
+    closed_at: seed.executor?.closedAt ?? null,
+    outcome: seed.executor?.outcome ?? null,
+    close_reason: null,
+    state: 'running',
+  };
+  const audit: Record<string, unknown>[] = [];
+
+  const sql: any = (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const query = strings.join('?');
+    if (query.includes('SELECT current_executor_id FROM agents')) {
+      return [{ current_executor_id: agentRow.current_executor_id }];
+    }
+    if (query.includes('SELECT closed_at, outcome FROM executors')) {
+      return [{ closed_at: executorRow.closed_at, outcome: executorRow.outcome }];
+    }
+    if (query.includes('UPDATE executors')) {
+      executorRow.state = 'error';
+      executorRow.outcome = 'clean_exit_unverified';
+      executorRow.close_reason = values[0] as string;
+      executorRow.closed_at = new Date(values[1] as string);
+      return [];
+    }
+    if (query.includes('UPDATE agents') && query.includes('current_executor_id = NULL')) {
+      agentRow.current_executor_id = null;
+      agentRow.state = 'error';
+      agentRow.last_state_change = values[0] as string;
+      return [];
+    }
+    if (query.includes('UPDATE agents')) {
+      agentRow.state = 'error';
+      agentRow.last_state_change = values[0] as string;
+      return [];
+    }
+    if (query.includes('INSERT INTO audit_events')) {
+      audit.push({ values });
+      return [];
+    }
+    return [];
+  };
+
+  sql.begin = async (fn: (tx: typeof sql) => Promise<unknown>) => fn(sql);
+  sql.json = (v: unknown) => v;
+
+  return { sql, agentRow, executorRow, audit };
+}
+
+describe('terminalizeCleanExitUnverified (D1 write)', () => {
+  const worker: WorkerInfo = {
+    id: 'agent-idle-dead',
+    paneId: '%77',
+    state: 'idle',
+    claudeSessionId: 'sess-idle',
+    autoResume: true,
+    resumeAttempts: 0,
+  };
+
+  test('writes clean_exit_unverified terminal state when executor is open', async () => {
+    const fake = createTerminalStateFake({
+      agent: { id: worker.id, currentExecutorId: 'exec-1', state: 'idle' },
+      executor: { id: 'exec-1', closedAt: null, outcome: null },
+    });
+    const { deps, logs } = createMockDeps({}, { getConnection: async () => fake.sql });
+
+    const res = await terminalizeCleanExitUnverified(deps, worker, 'reconciler_idle_dead_pane');
+
+    expect(res).toEqual({ terminalized: true, executorId: 'exec-1' });
+    expect(fake.executorRow.outcome).toBe('clean_exit_unverified');
+    expect(fake.executorRow.close_reason).toBe('reconciler_idle_dead_pane');
+    expect(fake.executorRow.state).toBe('error');
+    expect(fake.executorRow.closed_at).not.toBeNull();
+    expect(fake.agentRow.current_executor_id).toBeNull();
+    expect(fake.agentRow.state).toBe('error');
+    expect(fake.audit).toHaveLength(1);
+    expect(logs.find((l) => l.event === 'terminalize_clean_exit_unverified_failed')).toBeUndefined();
+  });
+
+  test('is idempotent when executor is already closed (first-writer-wins with pane trap / verbs)', async () => {
+    const fake = createTerminalStateFake({
+      agent: { id: worker.id, currentExecutorId: 'exec-2', state: 'idle' },
+      executor: { id: 'exec-2', closedAt: new Date('2026-04-20T11:59:00Z'), outcome: 'done' },
+    });
+    const { deps } = createMockDeps({}, { getConnection: async () => fake.sql });
+
+    const res = await terminalizeCleanExitUnverified(deps, worker, 'reconciler_idle_dead_pane');
+
+    expect(res).toEqual({ terminalized: false, executorId: 'exec-2' });
+    expect(fake.executorRow.outcome).toBe('done'); // not overwritten
+    expect(fake.executorRow.close_reason).toBeNull();
+    expect(fake.agentRow.current_executor_id).toBeNull(); // still cleared
+    expect(fake.agentRow.state).toBe('error');
+    expect(fake.audit).toHaveLength(0);
+  });
+
+  test('flips agent to error when current_executor_id is missing', async () => {
+    const fake = createTerminalStateFake({
+      agent: { id: worker.id, currentExecutorId: null, state: 'idle' },
+    });
+    const { deps } = createMockDeps({}, { getConnection: async () => fake.sql });
+
+    const res = await terminalizeCleanExitUnverified(deps, worker, 'reconciler_idle_dead_pane');
+
+    expect(res).toEqual({ terminalized: false, executorId: null });
+    expect(fake.agentRow.state).toBe('error');
+    expect(fake.audit).toHaveLength(0);
+  });
+
+  test('never throws — DB errors are logged and swallowed', async () => {
+    const bomb = {
+      begin: async () => {
+        throw new Error('PG exploded');
+      },
+    };
+    const { deps, logs } = createMockDeps({}, { getConnection: async () => bomb as any });
+
+    const res = await terminalizeCleanExitUnverified(deps, worker, 'reconciler_idle_dead_pane');
+
+    expect(res).toEqual({ terminalized: false, executorId: null });
+    const failed = logs.find((l) => l.event === 'terminalize_clean_exit_unverified_failed');
+    expect(failed).toBeDefined();
+    expect(failed?.error).toBe('PG exploded');
+  });
+});
+
+describe('runAgentRecoveryPass — turn-aware D1 / D3 routing', () => {
+  const savedFlag = process.env[TURN_AWARE_RECONCILER_FLAG];
+
+  beforeEach(() => {
+    delete process.env[TURN_AWARE_RECONCILER_FLAG];
+  });
+
+  afterEach(() => {
+    if (savedFlag === undefined) delete process.env[TURN_AWARE_RECONCILER_FLAG];
+    else process.env[TURN_AWARE_RECONCILER_FLAG] = savedFlag;
+  });
+
+  function makeWorker(state: AgentState, id = 'agent-x'): WorkerInfo {
+    return {
+      id,
+      paneId: '%99',
+      state,
+      claudeSessionId: 'sess-x',
+      autoResume: true,
+      resumeAttempts: 0,
+      maxResumeAttempts: 3,
+    };
+  }
+
+  test('flag OFF: idle + dead pane still resumes (legacy behavior preserved)', async () => {
+    const w = makeWorker('idle');
+    let resumeCalls = 0;
+    const { deps } = createMockDeps(
+      {},
+      {
+        listWorkers: async () => [w],
+        isPaneAlive: async () => false,
+        resumeAgent: async () => {
+          resumeCalls++;
+          return true;
+        },
+      },
+    );
+
+    const res = await runAgentRecoveryPass(deps, 'daemon-off', defaultConfig);
+
+    expect(resumeCalls).toBe(1);
+    expect(res.resumed).toBe(1);
+    expect(res.terminalized).toBe(0);
+  });
+
+  test('flag ON: idle + dead pane → terminalize, no resume (D1)', async () => {
+    process.env[TURN_AWARE_RECONCILER_FLAG] = '1';
+    const w = makeWorker('idle', 'agent-d1');
+    const fake = createTerminalStateFake({
+      agent: { id: w.id, currentExecutorId: 'exec-d1', state: 'idle' },
+      executor: { id: 'exec-d1', closedAt: null, outcome: null },
+    });
+    let resumeCalls = 0;
+    const { deps, logs } = createMockDeps(
+      {},
+      {
+        listWorkers: async () => [w],
+        isPaneAlive: async () => false,
+        resumeAgent: async () => {
+          resumeCalls++;
+          return true;
+        },
+        getConnection: async () => fake.sql,
+      },
+    );
+
+    const res = await runAgentRecoveryPass(deps, 'daemon-d1', defaultConfig);
+
+    expect(resumeCalls).toBe(0);
+    expect(res.resumed).toBe(0);
+    expect(res.terminalized).toBe(1);
+    expect(fake.executorRow.outcome).toBe('clean_exit_unverified');
+    expect(fake.agentRow.state).toBe('error');
+    const terminalLog = logs.find((l) => l.event === 'agent_terminalized_clean_exit_unverified');
+    expect(terminalLog).toBeDefined();
+    expect(terminalLog?.agent_id).toBe('agent-d1');
+    expect(terminalLog?.executor_id).toBe('exec-d1');
+  });
+
+  test.each<AgentState>(['working', 'permission', 'question'])(
+    'flag ON: state=%s + dead pane → resume (D3)',
+    async (state) => {
+      process.env[TURN_AWARE_RECONCILER_FLAG] = '1';
+      const w = makeWorker(state, `agent-d3-${state}`);
+      let resumeCalls = 0;
+      const { deps } = createMockDeps(
+        {},
+        {
+          listWorkers: async () => [w],
+          isPaneAlive: async () => false,
+          resumeAgent: async () => {
+            resumeCalls++;
+            return true;
+          },
+        },
+      );
+
+      const res = await runAgentRecoveryPass(deps, `daemon-d3-${state}`, defaultConfig);
+
+      expect(resumeCalls).toBe(1);
+      expect(res.resumed).toBe(1);
+      expect(res.terminalized).toBe(0);
+    },
+  );
+
+  test('flag ON: state=error + dead pane → skipped, no resume (prevents post-D1 ghost loop)', async () => {
+    process.env[TURN_AWARE_RECONCILER_FLAG] = '1';
+    const w = makeWorker('error', 'agent-err');
+    let resumeCalls = 0;
+    const { deps, logs } = createMockDeps(
+      {},
+      {
+        listWorkers: async () => [w],
+        isPaneAlive: async () => false,
+        resumeAgent: async () => {
+          resumeCalls++;
+          return true;
+        },
+      },
+    );
+
+    const res = await runAgentRecoveryPass(deps, 'daemon-err', defaultConfig);
+
+    expect(resumeCalls).toBe(0);
+    expect(res.terminalized).toBe(0);
+    expect(logs.some((l) => l.event === 'agent_resume_skipped_turn_aware' && l.state === 'error')).toBe(true);
+  });
+
+  test('C20 regression: ghost-loop cannot replay across multiple ticks when idle+dead (flag ON)', async () => {
+    process.env[TURN_AWARE_RECONCILER_FLAG] = '1';
+    // Model the exact 2026-04-19 scenario: an agent sits in state='idle' while
+    // its tmux pane is dead. Legacy code resumed on every tick (60s forever).
+    // Under flag ON, tick 1 terminalizes to state='error'; tick 2 finds error
+    // and skips — resume is never called.
+    let row = makeWorker('idle', 'ghost-agent');
+    const fake = createTerminalStateFake({
+      agent: { id: row.id, currentExecutorId: 'exec-ghost', state: 'idle' },
+      executor: { id: 'exec-ghost', closedAt: null, outcome: null },
+    });
+
+    let resumeCalls = 0;
+    const { deps, logs } = createMockDeps(
+      {},
+      {
+        listWorkers: async () => [row],
+        isPaneAlive: async () => false,
+        resumeAgent: async () => {
+          resumeCalls++;
+          return true;
+        },
+        getConnection: async () => fake.sql,
+        updateAgent: async (_id, u) => {
+          row = { ...row, ...u } as WorkerInfo;
+        },
+      },
+    );
+
+    // Tick 1: D1 terminalize
+    const t1 = await runAgentRecoveryPass(deps, 'daemon-c20-t1', defaultConfig);
+    expect(t1.terminalized).toBe(1);
+    expect(resumeCalls).toBe(0);
+    // Simulate agent-registry re-read after the terminal write
+    row = { ...row, state: 'error' };
+
+    // Ticks 2..5: state='error' → skipped
+    for (let i = 0; i < 4; i++) {
+      const tick = await runAgentRecoveryPass(deps, `daemon-c20-t${i + 2}`, defaultConfig);
+      expect(tick.resumed).toBe(0);
+      expect(tick.terminalized).toBe(0);
+    }
+    expect(resumeCalls).toBe(0);
+    // And only ONE terminalize event fired across all ticks.
+    expect(logs.filter((l) => l.event === 'agent_terminalized_clean_exit_unverified')).toHaveLength(1);
   });
 });
 
