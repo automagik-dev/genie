@@ -9,6 +9,7 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
+import { homedir } from 'node:os';
 import { getConnection } from '../../src/lib/db.js';
 import { __resetEmitForTests, emitEvent, flushNow, shutdownEmitter } from '../../src/lib/emit.js';
 import { dropSecretShaped, stripEnvVars, tokenizePath } from '../../src/lib/events/redactors.js';
@@ -49,7 +50,9 @@ describe('redactors — pure helpers', () => {
   });
 
   test('tokenizePath collapses deep paths and hex ids', () => {
-    const deep = '/home/genie/workspace/agents/genie-configure/repos/genie/src/lib/emit.ts';
+    // Build path under the current process HOME so the `~/` substitution is
+    // exercised regardless of which user/runner executes the suite.
+    const deep = `${homedir()}/workspace/agents/genie-configure/repos/genie/src/lib/emit.ts`;
     const out = tokenizePath(deep);
     expect(out.startsWith('~/')).toBe(true);
     expect(out).toContain('…');
