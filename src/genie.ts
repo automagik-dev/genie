@@ -270,6 +270,19 @@ program
     await failedAction(options);
   });
 
+program
+  .command('pane-trap')
+  .description(
+    'Internal: write clean_exit_unverified outcome for a dying pane/shell. Invoked by the tmux pane-died hook and the inline shell EXIT trap.',
+  )
+  .option('--pane-id <id>', 'tmux pane id (%N) — resolved to executor via executors.tmux_pane_id')
+  .option('--executor-id <id>', 'explicit executor UUID (preferred when available)')
+  .option('--reason <reason>', 'trap source: pane_died or shell_exit', 'pane_died')
+  .action(async (options: { paneId?: string; executorId?: string; reason?: string }) => {
+    const { paneTrapAction } = await import('./term-commands/pane-trap.js');
+    await paneTrapAction(options);
+  });
+
 // ============================================================================
 // Universal workspace check — ensures workspace exists before commands that need it
 // ============================================================================
