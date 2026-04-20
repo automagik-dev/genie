@@ -7,7 +7,13 @@
  * Resumes from stored offset on restart.
  */
 
-import { buildWorkerMap, discoverAllJsonlFiles, ingestFile, liveWorkPending } from './session-capture.js';
+import {
+  buildWorkerMap,
+  discoverAllJsonlFiles,
+  ingestFile,
+  liveWorkPending,
+  reconcileSubagentParents,
+} from './session-capture.js';
 
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
 type SqlClient = any;
@@ -219,6 +225,17 @@ export async function startBackfill(sql: SqlClient): Promise<void> {
     const workerMap = await buildWorkerMap(sql);
 
     await processAllFiles(sql, allFiles, progress, workerMap);
+
+    // Reconcile any subagent rows whose parent was inserted after they were
+    // (e.g. orphan subagents that got parent=NULL earlier but a main jsonl
+    // with the matching id has since appeared).
+    try {
+      const fixed = await reconcileSubagentParents(sql);
+      if (fixed > 0) console.log(`[backfill] reconciled parent_session_id for ${fixed} subagent(s)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[backfill] parent reconcile skipped: ${message}`);
+    }
 
     resolveBackfillStatus(progress);
     await updateSyncState(sql, progress);
