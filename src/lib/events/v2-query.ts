@@ -59,6 +59,22 @@ export const V2_SELECT = `
 `;
 
 /**
+ * Translate a user-supplied kind filter into a SQL LIKE pattern.
+ *
+ * Backwards compatible with the historic prefix contract: bare strings like
+ * `mailbox` continue to match `mailbox%`. Additionally accepts simple `*`
+ * globs so operators can write `detector.*` per the runbook UX (and matches
+ * `detector.fired`, `detector.disabled`, but not `command.success`). SQL
+ * wildcards (`%`, `_`) inside the input are escaped so they cannot leak into
+ * the predicate.
+ */
+export function kindFilterToLike(input: string): string {
+  const escaped = input.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  if (escaped.includes('*')) return escaped.replace(/\*/g, '%');
+  return `${escaped}%`;
+}
+
+/**
  * Human-friendly duration like "1h", "30m", "2d" → ISO timestamp. Falls
  * through unchanged if the input is already an ISO string.
  */
@@ -94,7 +110,8 @@ export async function queryV2Batch(filter: V2StreamFilter): Promise<V2EventRow[]
 
   if (filter.afterId != null) clauses.push(`id > ${param(filter.afterId)}`);
   if (filter.kindPrefix) {
-    clauses.push(`(subject LIKE ${param(`${filter.kindPrefix}%`)} OR kind LIKE ${param(`${filter.kindPrefix}%`)})`);
+    const pattern = kindFilterToLike(filter.kindPrefix);
+    clauses.push(`(subject LIKE ${param(pattern)} ESCAPE '\\' OR kind LIKE ${param(pattern)} ESCAPE '\\')`);
   }
   if (filter.severity) {
     clauses.push(`(COALESCE(severity, data->>'_severity') = ${param(filter.severity)})`);
