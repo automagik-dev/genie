@@ -262,6 +262,59 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   });
 
   // ============================================================================
+  // findParent diagnostics — issue #1234 repo_path drift warnings
+  // ============================================================================
+
+  describe('findParent state-partition warning (issue #1234)', () => {
+    test('warns when wish has parents at other repo_paths', async () => {
+      // Simulate the real-world bug: the same wish slug gets a parent row
+      // in repo_path A (e.g. a worktree), then someone runs from repo_path B
+      // (e.g. the main repo) and silently forks a NEW parent with fresh
+      // ready/blocked children, so status reads reflect nothing.
+      const cwdA = `${cwd}-A`;
+      const cwdB = `${cwd}-B`;
+
+      await createState('drift-wish', sampleGroups, cwdA);
+
+      // Capture console.warn from the getState call made against cwdB.
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (msg: string) => warnings.push(msg);
+
+      try {
+        const stateB = await getState('drift-wish', cwdB);
+        expect(stateB).toBeNull();
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      const partitionWarning = warnings.find((w) => w.includes('partitioned across repo_paths'));
+      expect(partitionWarning).toBeDefined();
+      expect(partitionWarning).toContain(cwdA);
+      expect(partitionWarning).toContain(cwdB);
+      expect(partitionWarning).toContain('drift-wish');
+    });
+
+    test('does NOT warn when no other repo_paths own this wish', async () => {
+      // Genuinely-new wish — no partition, no noise. A `genie wish status` on
+      // an uncreated wish should still feel clean, not yell about drift.
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (msg: string) => warnings.push(msg);
+
+      try {
+        const state = await getState('totally-new-wish', cwd);
+        expect(state).toBeNull();
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      const partitionWarning = warnings.find((w) => w.includes('partitioned across repo_paths'));
+      expect(partitionWarning).toBeUndefined();
+    });
+  });
+
+  // ============================================================================
   // getState / getGroupState
   // ============================================================================
 
