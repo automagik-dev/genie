@@ -434,6 +434,30 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         expect(disbanded).toBe(false);
       });
 
+      test('archives agent rows belonging to the disbanded team (issue #1215)', async () => {
+        await createTeam('feat/archive-agents', TEST_REPO, 'dev');
+
+        // Insert two agent rows directly: one for this team, one for an unrelated team
+        const sql = await getConnection();
+        const theirId = `test-${Date.now()}-their`;
+        const otherId = `test-${Date.now()}-other`;
+        await sql`
+          INSERT INTO agents (id, pane_id, session, repo_path, state, team, role, started_at)
+          VALUES
+            (${theirId}, '', '', '', 'idle', ${'feat/archive-agents'}, 'engineer', now()),
+            (${otherId}, '', '', '', 'idle', 'feat/other-team', 'engineer', now())
+        `;
+
+        await disbandTeam('feat/archive-agents');
+
+        const theirRow = await sql`SELECT state FROM agents WHERE id = ${theirId}`;
+        const otherRow = await sql`SELECT state FROM agents WHERE id = ${otherId}`;
+
+        expect(theirRow[0].state).toBe('archived');
+        // Other teams' agents must stay untouched
+        expect(otherRow[0].state).toBe('idle');
+      });
+
       test('cleans up Claude teams settings directory', async () => {
         const CLAUDE_DIR = join(TEST_DIR, 'claude-config');
         process.env.CLAUDE_CONFIG_DIR = CLAUDE_DIR;

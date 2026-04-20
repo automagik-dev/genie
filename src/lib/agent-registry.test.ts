@@ -661,6 +661,39 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await findOrCreateAgent('c', 'team2', 'engineer');
       expect((await listAgents({ team: 'team1', role: 'engineer' })).length).toBe(1);
     });
+
+    test('excludes archived rows by default (issue #1215)', async () => {
+      const archived = await findOrCreateAgent('stale', 'disbanded-team', 'engineer');
+      const live = await findOrCreateAgent('fresh', 'active-team', 'engineer');
+
+      // Flip the disbanded row to archived (mirrors archiveTeam/disbandTeam path)
+      const sql = await getConnection();
+      await sql`UPDATE agents SET state = 'archived' WHERE id = ${archived.id}`;
+
+      const names = (await listAgents()).map((a) => a.id);
+      expect(names).toContain(live.id);
+      expect(names).not.toContain(archived.id);
+
+      // Filter variants must also exclude archived by default
+      expect((await listAgents({ team: 'disbanded-team' })).length).toBe(0);
+      expect((await listAgents({ role: 'engineer' })).map((a) => a.id)).not.toContain(archived.id);
+      expect((await listAgents({ team: 'disbanded-team', role: 'engineer' })).length).toBe(0);
+    });
+
+    test('includeArchived=true surfaces archived rows for audit', async () => {
+      const archived = await findOrCreateAgent('stale', 'disbanded-team', 'engineer');
+      const live = await findOrCreateAgent('fresh', 'active-team', 'engineer');
+
+      const sql = await getConnection();
+      await sql`UPDATE agents SET state = 'archived' WHERE id = ${archived.id}`;
+
+      const ids = (await listAgents({ includeArchived: true })).map((a) => a.id);
+      expect(ids).toContain(live.id);
+      expect(ids).toContain(archived.id);
+
+      // Team scope + includeArchived returns the orphan
+      expect((await listAgents({ team: 'disbanded-team', includeArchived: true })).length).toBe(1);
+    });
   });
 
   // ==========================================================================

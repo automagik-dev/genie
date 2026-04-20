@@ -693,36 +693,50 @@ export async function getAgentEffectiveState(agentId: string): Promise<ExecutorS
 interface ListAgentsFilter {
   team?: string;
   role?: string;
+  /**
+   * When true, include rows with `state = 'archived'`. Default false — the
+   * common case (`genie ls`, wish status, send/show) must NOT see orphan rows
+   * from disbanded teams. Pass `true` for audit/history listings (issue #1215).
+   */
+  includeArchived?: boolean;
 }
 
 /** List agent identities with optional filters. */
 export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdentity[]> {
   const sql = await getConnection();
+  const includeArchived = filters?.includeArchived ?? false;
   let rows: AgentIdentityRow[];
 
   if (filters?.team && filters?.role) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
-      FROM agents WHERE team = ${filters.team} AND role = ${filters.role}
+      FROM agents
+      WHERE team = ${filters.team} AND role = ${filters.role}
+        AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
     `;
   } else if (filters?.team) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
-      FROM agents WHERE team = ${filters.team}
+      FROM agents
+      WHERE team = ${filters.team}
+        AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
     `;
   } else if (filters?.role) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
-      FROM agents WHERE role = ${filters.role}
+      FROM agents
+      WHERE role = ${filters.role}
+        AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
     `;
   } else {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
       FROM agents
+      WHERE (${includeArchived} OR state IS DISTINCT FROM 'archived')
     `;
   }
 
