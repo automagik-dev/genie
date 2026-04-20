@@ -188,13 +188,7 @@ export async function terminalizeOrphans(candidates: Candidate[], actor: string)
 function formatTable(candidates: Candidate[]): string {
   if (candidates.length === 0) return '(no orphans)';
   const header = ['id', 'state', 'pane_id', 'last_state_change', 'action'];
-  const rows = candidates.map((c) => [
-    c.id,
-    c.state,
-    c.paneId ?? '∅',
-    c.lastStateChange,
-    `${c.action} (${c.reason})`,
-  ]);
+  const rows = candidates.map((c) => [c.id, c.state, c.paneId ?? '∅', c.lastStateChange, `${c.action} (${c.reason})`]);
   const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
   const fmt = (r: string[]) => r.map((cell, i) => cell.padEnd(widths[i])).join('  ');
   const sep = widths.map((w) => '-'.repeat(w)).join('  ');
