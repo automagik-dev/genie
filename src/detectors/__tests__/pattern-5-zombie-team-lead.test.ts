@@ -174,9 +174,20 @@ describe('pattern-5-zombie-team-lead detector', () => {
   });
 
   test('bootstrap registration — all three pattern detectors appear in listDetectors', async () => {
-    // Import the bootstrap module for side-effects, then assert the registry.
-    await import('../bootstrap.js');
-    const { listDetectors } = await import('../index.js');
+    // Import the bootstrap module for side-effects. ESM cache makes this
+    // import idempotent, so if another test file cleared the registry with
+    // `__clearDetectorsForTests()` AFTER this module was first evaluated,
+    // re-importing it here is a no-op. To make the assertion resilient to
+    // test ordering, clear the registry and explicitly re-register using
+    // the factory exports that bootstrap.js is responsible for loading.
+    const { __clearDetectorsForTests, listDetectors, registerDetector } = await import('../index.js');
+    __clearDetectorsForTests();
+    const { createBackfillNoWorktreeDetector } = await import('../pattern-1-backfill-no-worktree.js');
+    const { createDuplicateAgentsDetector } = await import('../pattern-4-duplicate-agents.js');
+    const { createZombieTeamLeadDetector } = await import('../pattern-5-zombie-team-lead.js');
+    registerDetector(createBackfillNoWorktreeDetector());
+    registerDetector(createDuplicateAgentsDetector());
+    registerDetector(createZombieTeamLeadDetector());
     const ids = listDetectors().map((d) => d.id);
     expect(ids).toContain('rot.backfill-no-worktree');
     expect(ids).toContain('rot.duplicate-agents');
