@@ -253,6 +253,18 @@ const fixtures: Record<EventType, Record<string, unknown>> = {
     fire_count: 10,
     bucket_end_ts: '2026-04-20T12:00:00+00:00',
   },
+
+  // Self-healing B1 Group 3b — team ls / team disband drift detector.
+  'rot.team-ls-drift.detected': {
+    divergence_kind: 'missing_in_disband',
+    divergent_count: 1,
+    observed_state_json: JSON.stringify({
+      ls_snapshot: [{ name: 'ghost-team', status: 'in_progress' }],
+      disband_snapshot: [],
+      divergent_ids: ['ghost-team'],
+      divergence_kind: 'missing_in_disband',
+    }),
+  },
 };
 
 describe('schema roundtrips — 15 new + 5 exemplars', () => {
