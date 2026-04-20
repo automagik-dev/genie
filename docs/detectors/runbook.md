@@ -1,6 +1,6 @@
 # Detector Runbook — Self-Healing Observability B1
 
-**Audience:** operators tailing `genie tail --filter='rot.*'` (or the equivalent structured-event stream) who need a mid-incident reference for what a detector event means, why it fires, when it lies, and what to do next.
+**Audience:** operators tailing `genie events stream-follow --kind='rot.*'` (the live-stream verb that owns runtime event filtering — see PR #1244 for the `*`-glob predicate) who need a mid-incident reference for what a detector event means, why it fires, when it lies, and what to do next.
 
 **Scope:** one section per rot pattern (1–8) shipped under the wish `genie-self-healing-observability-b1-detectors`. Every detector listed here is **read-only** — it observes PG / tmux / filesystem state and emits a `rot.detected` (or `rot.team-ls-drift.detected` for Pattern 2) event. None of them mutate genie state. Remediation is still a human decision in B1; graduation to auto-fix happens per-detector in B2 once fire-rate and false-positive-rate evidence accumulates.
 
