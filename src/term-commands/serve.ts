@@ -564,10 +564,18 @@ async function startForeground(headless?: boolean): Promise<void> {
   // Read-only sweep of registered DetectorModules every 60s ± 5s. No auto-fix,
   // no state mutation. `detector_version` is threaded into every emitted row
   // via the shared emit pipeline.
+  //
+  // Group 3a detectors self-register at module load — importing bootstrap.ts
+  // pulls pattern-1/4/5 into the registry before the scheduler's first tick.
   try {
+    await import('../detectors/bootstrap.js');
     const { start: startDetectorScheduler } = await import('../serve/detector-scheduler.js');
+    const { listDetectors } = await import('../detectors/index.js');
     handles.detectorScheduler = startDetectorScheduler();
-    console.log('  Detector scheduler started (measurement only, 60s ± 5s cadence)');
+    const registered = listDetectors().map((d) => d.id);
+    console.log(
+      `  Detector scheduler started (measurement only, 60s ± 5s cadence) — registered: [${registered.join(', ')}]`,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`  Detector scheduler: failed — ${msg}`);

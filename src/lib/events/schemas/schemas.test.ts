@@ -253,6 +253,18 @@ const fixtures: Record<EventType, Record<string, unknown>> = {
     fire_count: 10,
     bucket_end_ts: '2026-04-20T12:00:00+00:00',
   },
+
+  // Self-healing B1 Group 3a — shared rot-detection event.
+  'rot.detected': {
+    pattern_id: 'pattern-1-backfill-no-worktree',
+    entity_id: 'my-team',
+    observed_state_json: {
+      team_name: 'my-team',
+      status: 'in_progress',
+      expected_worktree_path: '/home/genie/.genie/worktrees/my-team',
+      fs_exists: false,
+    },
+  },
 };
 
 describe('schema roundtrips — 15 new + 5 exemplars', () => {
