@@ -51,19 +51,37 @@ export const MAX_DELIVERY_ATTEMPTS = 3;
 /**
  * Env flag gating the turn-session-contract reconciler.
  *
- * Phase A (this wish, Group 1): flag read exists; default `false`; logged once
- * at daemon startup; no behavior change. Subsequent groups wire the new
- * reconciler passes behind this flag. Phase B (Group 8) flips the default to
- * `true` after the migration completes; Phase C (Group 9) removes the flag.
+ * Phase A (Group 1): flag read exists; default `false`; logged once at daemon
+ * startup; no behavior change. Groups 2/3/4/5/7 wire the new reconciler
+ * passes behind this flag.
+ *
+ * Phase B (Group 8 — this change): default flips to `true`. Migration 044
+ * flipped `agents.auto_resume` default and backfilled live/stale rows; the
+ * code side follows suit so a fresh daemon boot enables the turn-aware
+ * passes by default. Rollback is still supported — set
+ * `GENIE_RECONCILER_TURN_AWARE=0` (or `false`) to force the legacy path
+ * without a redeploy.
+ *
+ * Phase C (Group 9, after 7-day soak): flag and legacy path are removed.
  */
 export const TURN_AWARE_RECONCILER_FLAG = 'GENIE_RECONCILER_TURN_AWARE';
 
-/** Read the turn-aware reconciler flag from env. Accepts '1' | 'true' (case-insensitive). */
+/**
+ * Read the turn-aware reconciler flag from env.
+ *
+ * Default (unset / empty) is `true` since Phase B (Group 8). Explicit
+ * opt-out: `GENIE_RECONCILER_TURN_AWARE=0` (also accepts `false`, `no`,
+ * case-insensitive). Truthy values (`1`, `true`) are always accepted.
+ */
 export function isTurnAwareReconcilerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env[TURN_AWARE_RECONCILER_FLAG];
-  if (!raw) return false;
+  if (raw === undefined) return true;
   const v = raw.trim().toLowerCase();
-  return v === '1' || v === 'true';
+  if (v === '') return true;
+  if (v === '0' || v === 'false' || v === 'no') return false;
+  if (v === '1' || v === 'true' || v === 'yes') return true;
+  // Unknown value — be conservative and honor Phase B default ON.
+  return true;
 }
 
 /** Log the turn-aware reconciler mode once at daemon startup. */

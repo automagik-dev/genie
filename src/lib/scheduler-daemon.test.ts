@@ -186,10 +186,14 @@ const defaultConfig: SchedulerConfig = {
 describe('scheduler-daemon', () => {
   beforeEach(() => {
     process.env.GENIE_MAX_CONCURRENT = undefined;
+    // Each test picks its own turn-aware flag value. Clear between tests so
+    // one test's opt-out doesn't leak into the next.
+    delete process.env[TURN_AWARE_RECONCILER_FLAG];
   });
 
   afterEach(() => {
     process.env.GENIE_MAX_CONCURRENT = undefined;
+    delete process.env[TURN_AWARE_RECONCILER_FLAG];
   });
 
   describe('claimDueTriggers', () => {
@@ -1588,6 +1592,13 @@ describe('scheduler-daemon', () => {
       // `autoResume=false` implicitly via attemptAgentResume's early-skip,
       // but we test the end-to-end exclusion: no new `agent_resume_exhausted`
       // fires).
+      //
+      // Legacy semantics — Phase B (Group 8) defaults the turn-aware flag ON,
+      // which would short-circuit a `state='error'` worker via
+      // `agent_resume_skipped_turn_aware` before reaching the exhaustion
+      // branch. Opt out explicitly so this test continues to exercise the
+      // Bug B resume-exhaustion path.
+      process.env[TURN_AWARE_RECONCILER_FLAG] = '0';
       let row: WorkerInfo = {
         id: 'exhausted-agent',
         paneId: '%99',
@@ -1725,6 +1736,15 @@ describe('scheduler-daemon', () => {
   });
 
   describe('recoverOnStartup with auto-resume', () => {
+    // Legacy semantics — these tests pre-date the turn-aware reconciler.
+    // Phase B (Group 8) defaults the flag ON, which would route `state='idle'`
+    // dead-pane workers into the D1 terminalize path instead of resume. Opt
+    // out for the whole describe so each test exercises the pre-Phase-B
+    // auto-resume-everything-dead behavior.
+    beforeEach(() => {
+      process.env[TURN_AWARE_RECONCILER_FLAG] = '0';
+    });
+
     test('auto-resumes agents with dead panes on startup', async () => {
       const workers: WorkerInfo[] = [
         {
@@ -2382,6 +2402,7 @@ describe('runAgentRecoveryPass — turn-aware D1 / D3 routing', () => {
   }
 
   test('flag OFF: idle + dead pane still resumes (legacy behavior preserved)', async () => {
+    process.env[TURN_AWARE_RECONCILER_FLAG] = '0';
     const w = makeWorker('idle');
     let resumeCalls = 0;
     const { deps } = createMockDeps(
@@ -2550,34 +2571,49 @@ describe('turn-aware reconciler flag', () => {
     expect(TURN_AWARE_RECONCILER_FLAG).toBe('GENIE_RECONCILER_TURN_AWARE');
   });
 
-  test('isTurnAwareReconcilerEnabled returns false when unset', () => {
-    expect(isTurnAwareReconcilerEnabled({})).toBe(false);
+  test('isTurnAwareReconcilerEnabled defaults to true when unset (Phase B, Group 8)', () => {
+    expect(isTurnAwareReconcilerEnabled({})).toBe(true);
   });
 
-  test('isTurnAwareReconcilerEnabled returns false for empty and falsy values', () => {
-    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: '' })).toBe(false);
+  test('isTurnAwareReconcilerEnabled treats empty string as unset (Phase B default ON)', () => {
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: '' })).toBe(true);
+  });
+
+  test('isTurnAwareReconcilerEnabled rollback: explicit 0/false/no → false', () => {
     expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: '0' })).toBe(false);
     expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: 'false' })).toBe(false);
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: 'FALSE' })).toBe(false);
     expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: 'no' })).toBe(false);
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: ' False ' })).toBe(false);
   });
 
-  test('isTurnAwareReconcilerEnabled accepts "1" and "true" (case-insensitive)', () => {
+  test('isTurnAwareReconcilerEnabled accepts "1"/"true"/"yes" (case-insensitive)', () => {
     expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: '1' })).toBe(true);
     expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: 'true' })).toBe(true);
     expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: 'TRUE' })).toBe(true);
     expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: ' True ' })).toBe(true);
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: 'yes' })).toBe(true);
   });
 
-  test('logReconcilerMode emits flag-off message with legacy event when unset', () => {
+  test('logReconcilerMode emits turn-aware event when flag is unset (Phase B default ON)', () => {
     delete process.env[TURN_AWARE_RECONCILER_FLAG];
     const logs: LogEntry[] = [];
     logReconcilerMode({ log: (e) => logs.push(e), now: () => new Date('2026-04-20T00:00:00Z') }, 'daemon-abc');
     expect(logs).toHaveLength(1);
+    expect(logs[0].event).toBe('reconciler_mode_turn_aware');
+    expect(logs[0].enabled).toBe(true);
+    expect(logs[0].flag).toBe('GENIE_RECONCILER_TURN_AWARE');
+    expect(logs[0].daemon_id).toBe('daemon-abc');
+  });
+
+  test('logReconcilerMode emits legacy event when explicitly opted out', () => {
+    process.env[TURN_AWARE_RECONCILER_FLAG] = '0';
+    const logs: LogEntry[] = [];
+    logReconcilerMode({ log: (e) => logs.push(e), now: () => new Date('2026-04-20T00:00:00Z') }, 'daemon-optout');
+    expect(logs).toHaveLength(1);
     expect(logs[0].event).toBe('reconciler_mode_legacy');
     expect(logs[0].enabled).toBe(false);
-    expect(logs[0].flag).toBe('GENIE_RECONCILER_TURN_AWARE');
     expect(logs[0].message).toContain('flag off');
-    expect(logs[0].daemon_id).toBe('daemon-abc');
   });
 
   test('logReconcilerMode emits turn-aware event when flag set to truthy value', () => {
