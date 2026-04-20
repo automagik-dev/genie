@@ -769,7 +769,7 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
   const reclaimed = await reclaimExpiredLeases(deps, daemonId);
   const orphans = await reconcileOrphanedRuns(deps, daemonId);
 
-  const { resumed, failed } = await runAgentRecoveryPass(deps, daemonId, config);
+  const { resumed, failed } = await runAgentRecoveryPass(deps, daemonId, config, 'boot');
 
   deps.log({
     timestamp: deps.now().toISOString(),
@@ -802,7 +802,7 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
 function scheduleRecoveryRetry(deps: SchedulerDeps, daemonId: string, config?: SchedulerConfig): void {
   setTimeout(async () => {
     try {
-      const retry = await runAgentRecoveryPass(deps, daemonId, config);
+      const retry = await runAgentRecoveryPass(deps, daemonId, config, 'boot');
       deps.log({
         timestamp: deps.now().toISOString(),
         level: 'info',
@@ -839,16 +839,23 @@ function scheduleRecoveryRetry(deps: SchedulerDeps, daemonId: string, config?: S
 const TURN_AWARE_RESUMABLE_STATES: ReadonlySet<AgentState> = new Set<AgentState>(['working', 'permission', 'question']);
 
 type RecoveryOutcome = 'resumed' | 'terminalized' | 'skipped';
+type RecoveryMode = 'boot' | 'sweep';
 
 /**
  * Per-worker recovery decision for a dead pane, extracted so
  * `runAgentRecoveryPass` stays below the cognitive-complexity cap.
  *
  * Legacy (flag off): delegate everything to `attemptAgentResume`.
- * Turn-aware (flag on):
+ * Turn-aware (flag on) in 'sweep' mode:
  *   - D1 idle + dead → `terminalizeCleanExitUnverified`, no resume
  *   - D3 working/permission/question + dead → resume
  *   - other non-terminal states → skipped (prevents post-D1 ghost loop)
+ *
+ * 'boot' mode deliberately bypasses the D1/D3 gates: when the daemon
+ * just restarted, an idle-with-dead-pane row is most likely an agent
+ * that was legitimately mid-turn when the daemon itself died (state
+ * preserved across reboot). The turn-aware rules exist for periodic
+ * sweeps, where "idle + dead" is a ghost-loop precursor.
  */
 async function handleDeadPane(
   deps: SchedulerDeps,
@@ -856,7 +863,12 @@ async function handleDeadPane(
   daemonId: string,
   worker: WorkerInfo,
   turnAware: boolean,
+  mode: RecoveryMode,
 ): Promise<RecoveryOutcome> {
+  if (mode === 'boot') {
+    const result = await attemptAgentResume(deps, config, worker);
+    return result === 'resumed' ? 'resumed' : 'skipped';
+  }
   if (turnAware && worker.state === 'idle') {
     const res = await terminalizeCleanExitUnverified(deps, worker, 'reconciler_idle_dead_pane');
     if (res.terminalized) {
@@ -893,6 +905,7 @@ export async function runAgentRecoveryPass(
   deps: SchedulerDeps,
   daemonId: string,
   config?: SchedulerConfig,
+  mode: RecoveryMode = 'sweep',
 ): Promise<{ resumed: number; failed: number; terminalized: number }> {
   const resolvedConfig = config ?? resolveConfig();
   const workers = await deps.listWorkers();
@@ -912,7 +925,7 @@ export async function runAgentRecoveryPass(
     try {
       const alive = await deps.isPaneAlive(worker.paneId);
       if (alive) continue;
-      const outcome = await handleDeadPane(deps, resolvedConfig, daemonId, worker, turnAware);
+      const outcome = await handleDeadPane(deps, resolvedConfig, daemonId, worker, turnAware, mode);
       if (outcome === 'resumed') resumed++;
       else if (outcome === 'terminalized') terminalized++;
     } catch (err) {
