@@ -31,6 +31,10 @@ function makeExecutor(overrides: Partial<Executor> = {}): Executor {
     endedAt: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    turnId: null,
+    outcome: null,
+    closedAt: null,
+    closeReason: null,
     ...overrides,
   };
 }

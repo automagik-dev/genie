@@ -48,6 +48,38 @@ export const ESCALATION_RECIPIENT = 'team-lead';
 /** Maximum delivery attempts before the mailbox retry loop escalates a message. */
 export const MAX_DELIVERY_ATTEMPTS = 3;
 
+/**
+ * Env flag gating the turn-session-contract reconciler.
+ *
+ * Phase A (this wish, Group 1): flag read exists; default `false`; logged once
+ * at daemon startup; no behavior change. Subsequent groups wire the new
+ * reconciler passes behind this flag. Phase B (Group 8) flips the default to
+ * `true` after the migration completes; Phase C (Group 9) removes the flag.
+ */
+export const TURN_AWARE_RECONCILER_FLAG = 'GENIE_RECONCILER_TURN_AWARE';
+
+/** Read the turn-aware reconciler flag from env. Accepts '1' | 'true' (case-insensitive). */
+export function isTurnAwareReconcilerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[TURN_AWARE_RECONCILER_FLAG];
+  if (!raw) return false;
+  const v = raw.trim().toLowerCase();
+  return v === '1' || v === 'true';
+}
+
+/** Log the turn-aware reconciler mode once at daemon startup. */
+export function logReconcilerMode(deps: Pick<SchedulerDeps, 'log' | 'now'>, daemonId: string): void {
+  const enabled = isTurnAwareReconcilerEnabled();
+  deps.log({
+    timestamp: deps.now().toISOString(),
+    level: 'info',
+    event: enabled ? 'reconciler_mode_turn_aware' : 'reconciler_mode_legacy',
+    daemon_id: daemonId,
+    flag: TURN_AWARE_RECONCILER_FLAG,
+    enabled,
+    message: enabled ? 'turn-aware reconciler enabled' : 'flag off, using legacy reconciler',
+  });
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -1953,6 +1985,8 @@ export function startDaemon(
       max_concurrent: config.maxConcurrent,
       poll_interval_ms: config.pollIntervalMs,
     });
+
+    logReconcilerMode(deps, daemonId);
 
     // Startup recovery: reclaim expired leases + reconcile orphans
     try {
