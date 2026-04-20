@@ -548,9 +548,7 @@ describe('executor env propagation', () => {
   });
 
   it('validateSpawnParams rejects a non-UUID executorId', () => {
-    expect(() =>
-      validateSpawnParams({ provider: 'claude', team: 'work', executorId: 'not-a-uuid' }),
-    ).toThrow();
+    expect(() => validateSpawnParams({ provider: 'claude', team: 'work', executorId: 'not-a-uuid' })).toThrow();
   });
 
   it('buildLaunchCommand (claude) forwards env through the top-level entry point', () => {

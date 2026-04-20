@@ -33,7 +33,7 @@ import {
 import { getProvider } from '../lib/providers/registry.js';
 import { waitForAgentReady } from '../lib/spawn-command.js';
 import * as teamManager from '../lib/team-manager.js';
-import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
+import { genieTmuxCmd, prependEnvVars } from '../lib/tmux-wrapper.js';
 import * as tmux from '../lib/tmux.js';
 import { executeTmux, isPaneAlive } from '../lib/tmux.js';
 import { findWorkspace, getWorkspaceConfig } from '../lib/workspace.js';
@@ -1309,14 +1309,6 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
   return process.exit(result.status ?? 0) as never;
 }
 
-function prependEnvVars(command: string, env?: Record<string, string>): string {
-  if (!env || Object.keys(env).length === 0) return command;
-  const envArgs = Object.entries(env)
-    .map(([k, v]) => `${k}=${v}`)
-    .join(' ');
-  return `env ${envArgs} ${command}`;
-}
-
 /**
  * Find a dead worker with a resumable Claude session for the given role/team.
  * Must run BEFORE rejectDuplicateRole which would unregister the dead worker
@@ -2424,8 +2416,7 @@ async function createResumeExecutor(
   // here. Fall back to a fresh mint only if the caller forgot to seed them.
   const resumeAgentName = agent.role ?? agent.id;
   const resumeTeam = agent.team ?? params.team;
-  const agentId =
-    params.agentId ?? (await registry.findOrCreateAgent(resumeAgentName, resumeTeam, agent.role)).id;
+  const agentId = params.agentId ?? (await registry.findOrCreateAgent(resumeAgentName, resumeTeam, agent.role)).id;
   await terminateActiveExecutorWithCleanup(agentId);
 
   const pid = await capturePanePid(paneId);
