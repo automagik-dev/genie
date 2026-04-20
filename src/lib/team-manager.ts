@@ -611,13 +611,29 @@ export async function archiveTeam(teamName: string): Promise<boolean> {
   await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
 
   const sql = await getConnection();
-  const result = await sql`
-    UPDATE teams SET status = 'archived', archived_at = now(), updated_at = now()
-    WHERE name = ${teamName}
-  `;
-  if (result.count === 0) return false;
+  let archivedAgents = 0;
+  let updated = false;
+  await sql.begin(async (tx: typeof sql) => {
+    const result = await tx`
+      UPDATE teams SET status = 'archived', archived_at = now(), updated_at = now()
+      WHERE name = ${teamName}
+    `;
+    if (result.count === 0) return;
+    updated = true;
 
-  recordAuditEvent('team', teamName, 'archived', getActor(), { repo: config.repo }).catch(() => {});
+    // Archive agent rows owned by this team so listAgents (and all the
+    // dashboards that read it) stop serving orphans. State is preserved for
+    // audit; downstream callers pass includeArchived=true when they need
+    // history.
+    const agentResult = await tx`
+      UPDATE agents SET state = 'archived', updated_at = now()
+      WHERE team = ${teamName} AND state IS DISTINCT FROM 'archived'
+    `;
+    archivedAgents = agentResult.count ?? 0;
+  });
+  if (!updated) return false;
+
+  recordAuditEvent('team', teamName, 'archived', getActor(), { repo: config.repo, archivedAgents }).catch(() => {});
   return true;
 }
 
@@ -708,6 +724,16 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
       WHERE name = ${teamName}
     `;
     disbanded = result.count > 0;
+
+    // Archive agent rows owned by this team in the same transaction. Without
+    // this, listAgents serves orphan rows forever (issue #1215). State is
+    // preserved for audit — callers pass includeArchived=true for history.
+    if (disbanded) {
+      await tx`
+        UPDATE agents SET state = 'archived', updated_at = now()
+        WHERE team = ${teamName} AND state IS DISTINCT FROM 'archived'
+      `;
+    }
   });
 
   if (!disbanded) return false;

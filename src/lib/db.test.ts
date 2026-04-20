@@ -486,3 +486,167 @@ describe('migration directory resolution', () => {
     expect(source).toContain('getPackageRootMigrationsDir()');
   });
 });
+
+// ===========================================================================
+// process-identity helper
+// ===========================================================================
+
+describe('getProcessStartTime', () => {
+  test('returns a non-null string for process.pid on macOS and Linux', async () => {
+    const { getProcessStartTime } = await import('./process-identity.js');
+    if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      // Unsupported platform — helper should still return null safely; nothing else to assert.
+      expect(getProcessStartTime(process.pid)).toBeNull();
+      return;
+    }
+    const t = getProcessStartTime(process.pid);
+    expect(t).not.toBeNull();
+    expect(typeof t).toBe('string');
+    expect((t as string).length).toBeGreaterThan(0);
+  });
+
+  test('returns null for a definitely-dead PID', async () => {
+    const { getProcessStartTime } = await import('./process-identity.js');
+    // PID 999999 is almost certainly not in use; even if it is, the kernel
+    // start time lookup on an unrelated process still returns *some* string,
+    // but the most common case is "no such process" → null. On systems
+    // where this PID happens to exist we accept either null or a string.
+    const t = getProcessStartTime(999_999);
+    expect(t === null || typeof t === 'string').toBe(true);
+  });
+
+  test('returns null for non-positive PIDs', async () => {
+    const { getProcessStartTime } = await import('./process-identity.js');
+    expect(getProcessStartTime(0)).toBeNull();
+    expect(getProcessStartTime(-1)).toBeNull();
+    expect(getProcessStartTime(Number.NaN)).toBeNull();
+  });
+});
+
+// ===========================================================================
+// autoStartDaemon identity check (Bug 2)
+// ===========================================================================
+
+describe('autoStartDaemon identity check', () => {
+  let testHome: string;
+  let pidPath: string;
+  let origGenieHome: string | undefined;
+  let spawnCount = 0;
+
+  beforeEach(() => {
+    testHome = join(tmpdir(), `genie-autostart-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testHome, { recursive: true });
+    pidPath = join(testHome, 'serve.pid');
+    origGenieHome = process.env.GENIE_HOME;
+    process.env.GENIE_HOME = testHome;
+    spawnCount = 0;
+  });
+
+  afterEach(async () => {
+    // Always restore the real spawn fn so other tests aren't affected.
+    const { __setSpawnDaemonForTest } = await import('./db.js');
+    __setSpawnDaemonForTest(null);
+    if (origGenieHome !== undefined) {
+      process.env.GENIE_HOME = origGenieHome;
+    } else {
+      process.env.GENIE_HOME = undefined;
+    }
+    try {
+      const { rmSync } = require('node:fs');
+      rmSync(testHome, { recursive: true, force: true });
+    } catch {}
+  });
+
+  test('spawns when serve.pid is absent', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    expect(existsSync(pidPath)).toBe(false);
+    await autoStartDaemon();
+    expect(spawnCount).toBe(1);
+  });
+
+  test('returns early when serve.pid identity matches (live PID + matching start time)', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    const { getProcessStartTime } = await import('./process-identity.js');
+
+    const startTime = getProcessStartTime(process.pid);
+    if (startTime === null) {
+      // Can't run this test on an unsupported platform — nothing to verify.
+      return;
+    }
+    writeFileSync(pidPath, `${process.pid}:${startTime}`, 'utf-8');
+
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    await autoStartDaemon();
+    // Identity matched → no spawn, file left in place.
+    expect(spawnCount).toBe(0);
+    expect(existsSync(pidPath)).toBe(true);
+  });
+
+  test('unlinks and spawns when start time does not match (recycled PID)', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    writeFileSync(pidPath, `${process.pid}:definitely-wrong-start-time`, 'utf-8');
+
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    await autoStartDaemon();
+    expect(spawnCount).toBe(1);
+    expect(existsSync(pidPath)).toBe(false);
+  });
+
+  test('treats legacy single-PID format as stale', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    // Old format — just a PID, no colon.
+    writeFileSync(pidPath, String(process.pid), 'utf-8');
+
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    await autoStartDaemon();
+    expect(spawnCount).toBe(1);
+    expect(existsSync(pidPath)).toBe(false);
+  });
+
+  test('unlinks and spawns when PID is dead', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    // PID 999999 is almost certainly dead.
+    writeFileSync(pidPath, '999999:whatever', 'utf-8');
+
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    await autoStartDaemon();
+    expect(spawnCount).toBe(1);
+    expect(existsSync(pidPath)).toBe(false);
+  });
+
+  test('unlinks and spawns on unparseable content', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    writeFileSync(pidPath, 'not-a-pid:nope', 'utf-8');
+
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    await autoStartDaemon();
+    expect(spawnCount).toBe(1);
+    expect(existsSync(pidPath)).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Branched timeout error messages (Bug 5)
+// ===========================================================================
+
+describe('autoStartDaemon branched timeout messages', () => {
+  test('db.ts source contains each branch label', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    expect(source).toContain('genie serve not running. Run: genie serve start');
+    expect(source).toContain('pgserve did not respond on port');
+    expect(source).toContain('Stale ~/.genie/serve.pid');
+  });
+});

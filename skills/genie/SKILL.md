@@ -74,14 +74,23 @@ Then invoke the skill using the Skill tool, or run the command via Bash.
 
 ## Operational Command Mapping
 
-When the user's intent is **operational**, map natural language to genie CLI commands:
+When the user's intent is **operational**, map natural language to genie CLI commands. **The CLI has two distinct lifecycle namespaces — don't confuse them:**
+
+- **`genie wish …`** — wish-group state (progress, reset, done per `<slug>#<group>`). Source of truth for execution waves.
+- **`genie task …`** — PG task lifecycle (checkout, move, comment, done per `#<seq>`). Source of truth for backlog + board.
 
 | User says | Command |
 |-----------|---------|
 | "check team status" / "how's the team" | `genie team ls` |
 | "spawn an engineer" / "start an engineer" | `genie spawn engineer` |
 | "list agents" / "show agents" | `genie ls` |
-| "show wish progress" / "status of [slug]" | `genie task status [slug]` |
+| **"show wish progress" / "status of [slug]"** | **`genie wish status <slug>`** (NOT `genie task status` — that verb does not exist) |
+| "mark wish group done" | `genie wish done <slug>#<group>` |
+| "reset a stuck group" | `genie wish reset <slug>#<group>` |
+| "list all wishes" | `genie wish list` |
+| "show my tasks" / "backlog" | `genie task list` |
+| "claim a task" / "start working on #N" | `genie task checkout #<seq>` |
+| "mark task done" | `genie task done #<seq>` |
 | "kill agent X" / "stop X" | `genie kill X` or `genie stop X` |
 | "send message to X" | `genie send 'msg' --to X` |
 | "create a team for X" | `genie team create X --repo .` |
@@ -89,7 +98,29 @@ When the user's intent is **operational**, map natural language to genie CLI com
 
 ## CLI Commands (live)
 
-!`genie --help 2>/dev/null | head -50`
+Top-level verb listing — consult this on every session after `genie update` (see Rules):
+
+!`genie --help 2>/dev/null`
+
+## Verb Anatomy (subcommand trees)
+
+Top-level `--help` shows namespaces but hides their subcommands. These four namespaces carry 80% of orchestration traffic — re-read after any CLI version bump, because verbs migrate (`genie task status` → `genie wish status` happened in 4.260420.x).
+
+### `genie wish` — wish-group lifecycle
+
+!`genie wish --help 2>/dev/null`
+
+### `genie task` — PG task lifecycle
+
+!`genie task --help 2>/dev/null`
+
+### `genie team` — team lifecycle
+
+!`genie team --help 2>/dev/null`
+
+### `genie agent` — agent lifecycle
+
+!`genie agent --help 2>/dev/null`
 
 ## Reference
 
@@ -107,3 +138,5 @@ For questions about the wish lifecycle, skill descriptions, or how genie works, 
 - For prompt refinement, suggest `/refine`.
 - NEVER use the Agent tool to spawn agents — use `genie spawn` instead.
 - NEVER use TeamCreate/TeamDelete — use `genie team create` / `genie team disband`.
+- **Wish progress uses `genie wish status <slug>` — NOT `genie task status`.** The `task` subcommand has no `status` verb; it will error with `unknown command 'status'`. `genie task` is for PG tasks (`list`, `show`, `checkout`, `move`, `done`, `comment`, `block`).
+- **After any `genie update` / version bump, re-read `genie wish --help` and `genie task --help` before typing yesterday's verbs.** Verb namespaces evolve (`genie done`, `genie wish done`, `genie task done` all exist and do different things). Muscle memory is a landmine; the live `--help` output in the sections above is the only source of truth.

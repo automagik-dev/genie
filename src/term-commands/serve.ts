@@ -23,6 +23,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { ensureTmux, tmuxBin } from '../lib/ensure-tmux.js';
+import { getProcessStartTime } from '../lib/process-identity.js';
 import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
 
 // ============================================================================
@@ -43,27 +44,66 @@ function servePidPath(): string {
 // PID helpers
 // ============================================================================
 
-function readServePid(): number | null {
+/**
+ * Result of parsing `~/.genie/serve.pid`.
+ * `startTime === null` means the file is in the legacy single-PID format
+ * (treat as stale) or the kernel lookup failed at write time.
+ */
+interface ServePidEntry {
+  pid: number;
+  startTime: string | null;
+}
+
+/**
+ * Read `~/.genie/serve.pid`. Accepts both the new `{pid}:{startTime}` format
+ * and the legacy single-PID format (returned with `startTime: null` so
+ * callers treat it as stale — forces a one-time respawn on upgrade).
+ */
+function readServePid(): ServePidEntry | null {
   const path = servePidPath();
   if (!existsSync(path)) return null;
   const raw = readFileSync(path, 'utf-8').trim();
-  const pid = Number.parseInt(raw, 10);
+  if (raw === '') return null;
+
+  const sepIdx = raw.indexOf(':');
+  if (sepIdx < 0) {
+    // Legacy single-PID format from an older install.
+    const pid = Number.parseInt(raw, 10);
+    if (Number.isNaN(pid) || pid <= 0) return null;
+    return { pid, startTime: null };
+  }
+
+  const pidPart = raw.slice(0, sepIdx);
+  const startTimePart = raw.slice(sepIdx + 1).trim();
+  const pid = Number.parseInt(pidPart, 10);
   if (Number.isNaN(pid) || pid <= 0) return null;
-  return pid;
+  const startTime = startTimePart === '' || startTimePart === 'unknown' ? null : startTimePart;
+  return { pid, startTime };
 }
 
 function writeServePid(pid: number): void {
   mkdirSync(genieHome(), { recursive: true });
-  writeFileSync(servePidPath(), String(pid), 'utf-8');
+  const startTime = getProcessStartTime(pid) ?? 'unknown';
+  writeFileSync(servePidPath(), `${pid}:${startTime}`, 'utf-8');
 }
 
+/**
+ * Remove `~/.genie/serve.pid` — but only if it still belongs to us. A new
+ * serve may have raced in between our shutdown handler firing and this call;
+ * unlinking its file would orphan the new daemon from autoStartDaemon's
+ * identity check.
+ */
 function removeServePid(): void {
   const path = servePidPath();
-  if (existsSync(path)) {
-    try {
-      unlinkSync(path);
-    } catch {}
-  }
+  if (!existsSync(path)) return;
+  try {
+    const current = readServePid();
+    if (current && current.pid !== process.pid) {
+      // Another serve owns the file now — leave it alone.
+      return;
+    }
+    unlinkSync(path);
+  } catch {}
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -288,8 +328,8 @@ function listAgentSessions(): string[] {
 
 /** Check if genie serve is currently running */
 export function isServeRunning(): boolean {
-  const pid = readServePid();
-  return pid !== null && isProcessAlive(pid);
+  const entry = readServePid();
+  return entry !== null && isProcessAlive(entry.pid);
 }
 
 /**
@@ -460,12 +500,16 @@ async function startScheduler(): Promise<void> {
  *  @param headless If true, skip TUI setup (services only: pgserve, scheduler, inbox-watcher).
  */
 async function startForeground(headless?: boolean): Promise<void> {
-  const existingPid = readServePid();
-  if (existingPid && isProcessAlive(existingPid)) {
-    console.log(`genie serve already running (PID ${existingPid})`);
+  const existingEntry = readServePid();
+  if (existingEntry && isProcessAlive(existingEntry.pid)) {
+    console.log(`genie serve already running (PID ${existingEntry.pid})`);
     process.exit(0);
   }
-  if (existingPid) removeServePid();
+  if (existingEntry) {
+    // Stale PID file — unlink it directly (removeServePid only removes files
+    // owned by process.pid, which wouldn't match here).
+    forceRemoveServePid();
+  }
 
   process.env.GENIE_IS_DAEMON = '1';
   writeServePid(process.pid);
@@ -482,47 +526,57 @@ async function startForeground(headless?: boolean): Promise<void> {
   await startPgserve();
 
   // 1.5. Start brain server (if @automagik/genie-brain is installed)
-  try {
-    // Dynamic import — brain is optional. If not installed, this throws
-    // and we silently skip. Zero behavior change for users without brain.
-    // @ts-expect-error — brain is enterprise-only, not in genie's deps
-    const brain = await import('@khal-os/brain');
-    if (brain.startEmbeddedBrainServer) {
-      const { getActivePort } = await import('../lib/db.js');
-      const pgPort = getActivePort();
-      if (pgPort) {
-        console.log('  Starting brain server...');
-        // Find brain path — check workspace for a brain/ dir
-        let brainPath: string | undefined;
-        try {
-          const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
-          const ws = findWorkspace();
-          if (ws?.root) {
-            const bp = join(ws.root, 'brain');
-            if (existsSync(bp) && existsSync(join(bp, 'brain.json'))) {
-              brainPath = bp;
+  //
+  // Gated by `brain.embedded` config (default: true). Set `brain.embedded=false`
+  // in ~/.genie/config.json to opt out — power-users can then run `brain serve`
+  // standalone with custom settings (port, brain-path, @next dev channel).
+  const { loadGenieConfigSync } = await import('../lib/genie-config.js');
+  const brainEmbedded = loadGenieConfigSync().brain.embedded;
+  if (!brainEmbedded) {
+    console.log('  Brain server: skipped (brain.embedded=false — managed externally)');
+  } else {
+    try {
+      // Dynamic import — brain is optional. If not installed, this throws
+      // and we silently skip. Zero behavior change for users without brain.
+      // @ts-expect-error — brain is enterprise-only, not in genie's deps
+      const brain = await import('@khal-os/brain');
+      if (brain.startEmbeddedBrainServer) {
+        const { getActivePort } = await import('../lib/db.js');
+        const pgPort = getActivePort();
+        if (pgPort) {
+          console.log('  Starting brain server...');
+          // Find brain path — check workspace for a brain/ dir
+          let brainPath: string | undefined;
+          try {
+            const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+            const ws = findWorkspace();
+            if (ws?.root) {
+              const bp = join(ws.root, 'brain');
+              if (existsSync(bp) && existsSync(join(bp, 'brain.json'))) {
+                brainPath = bp;
+              }
             }
+          } catch {
+            // No workspace — skip
           }
-        } catch {
-          // No workspace — skip
-        }
 
-        if (brainPath) {
-          const handle = await brain.startEmbeddedBrainServer({
-            brainPath,
-            geniePgPort: pgPort,
-          });
-          handles.brainHandle = { stop: handle.stop, port: handle.port };
-          console.log(`  Brain server ready on port ${handle.port}`);
+          if (brainPath) {
+            const handle = await brain.startEmbeddedBrainServer({
+              brainPath,
+              geniePgPort: pgPort,
+            });
+            handles.brainHandle = { stop: handle.stop, port: handle.port };
+            console.log(`  Brain server ready on port ${handle.port}`);
+          } else {
+            console.log('  Brain server: no brain/ found in workspace (skipped)');
+          }
         } else {
-          console.log('  Brain server: no brain/ found in workspace (skipped)');
+          console.log('  Brain server: pgserve not available (skipped)');
         }
-      } else {
-        console.log('  Brain server: pgserve not available (skipped)');
       }
+    } catch {
+      // Brain not installed — fine, skip silently
     }
-  } catch {
-    // Brain not installed — fine, skip silently
   }
 
   // 2. Report agent tmux server state (don't create empty sessions —
@@ -603,7 +657,8 @@ async function startForeground(headless?: boolean): Promise<void> {
   }
 
   // 6. Start Omni bridge (NATS → agent session router).
-  // Bridge is mandatory: any failure here is fatal and exits non-zero.
+  // Bridge is optional by default: dev machines without NATS should not crash serve.
+  // Set GENIE_OMNI_REQUIRED=1 to make bridge startup fatal (strict/prod mode).
   // Executor type is resolved internally by the bridge.
   {
     const { OmniBridge } = await import('../services/omni-bridge.js');
@@ -614,13 +669,17 @@ async function startForeground(headless?: boolean): Promise<void> {
     });
     try {
       await bridge.start();
+      handles.omniBridge = bridge;
+      console.log('  Omni bridge started');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`  Omni bridge: FAILED — ${msg}`);
-      process.exit(1);
+      if (process.env.GENIE_OMNI_REQUIRED === '1') {
+        console.error(`  Omni bridge: FAILED — ${msg}`);
+        process.exit(1);
+      }
+      console.warn(`  Omni bridge: degraded — ${msg}; set GENIE_OMNI_REQUIRED=1 to make this fatal`);
+      // Continue without bridge — handles.omniBridge stays null so shutdown() skips it.
     }
-    handles.omniBridge = bridge;
-    console.log('  Omni bridge started');
   }
 
   const stopMsg = headless ? 'Send SIGTERM to stop.' : 'Press Ctrl+C to stop.';
@@ -628,7 +687,7 @@ async function startForeground(headless?: boolean): Promise<void> {
 
   // Signal handlers for graceful shutdown
   let shutdownStarted = false;
-  const shutdown = () => {
+  const shutdown = async (): Promise<void> => {
     if (shutdownStarted) return;
     shutdownStarted = true;
 
@@ -637,8 +696,18 @@ async function startForeground(headless?: boolean): Promise<void> {
     // 1. Stop agent watcher
     handles.agentWatcher?.close();
 
-    // 2. Stop scheduler (drains in-flight)
-    handles.schedulerHandle?.stop();
+    // 2. Stop scheduler (drains in-flight) and wait for its done promise so
+    // the final `daemon_stopped` log entry is flushed before we exit.
+    const schedulerHandle = handles.schedulerHandle;
+    if (schedulerHandle) {
+      schedulerHandle.stop();
+      try {
+        await schedulerHandle.done;
+      } catch {
+        // Best effort — we still need to finish the rest of shutdown
+      }
+      handles.schedulerHandle = null;
+    }
 
     // 2.1. Stop detector scheduler (self-healing B1 / Group 2)
     if (handles.detectorScheduler) {
@@ -648,13 +717,13 @@ async function startForeground(headless?: boolean): Promise<void> {
 
     // 2.5. Stop Omni approval handler
     if (handles.omniApprovalHandler) {
-      handles.omniApprovalHandler.stop().catch(() => {});
+      await handles.omniApprovalHandler.stop().catch(() => {});
       handles.omniApprovalHandler = null;
     }
 
     // 2.55. Stop Omni bridge (graceful: detach sessions, don't kill them)
     if (handles.omniBridge) {
-      handles.omniBridge.stop().catch(() => {});
+      await handles.omniBridge.stop().catch(() => {});
       handles.omniBridge = null;
     }
 
@@ -665,7 +734,7 @@ async function startForeground(headless?: boolean): Promise<void> {
     // immediately after shutdown(), so this is fire-and-forget like all other
     // services. The OS reclaims sockets/connections on process exit.)
     if (handles.brainHandle) {
-      handles.brainHandle.stop().catch(() => {});
+      await handles.brainHandle.stop().catch(() => {});
       handles.brainHandle = null;
     }
 
@@ -700,9 +769,13 @@ async function startForeground(headless?: boolean): Promise<void> {
     console.log('genie serve stopped.');
   };
 
-  // Set up force-kill timeout: if graceful shutdown takes > 10s, SIGKILL remaining
-  const forceKillShutdown = () => {
-    shutdown();
+  // Graceful shutdown wrapper: awaits shutdown() with a 10s force-kill fallback,
+  // then exits with the supplied code. Idempotent via the `shutdownStarted` guard.
+  const gracefulExit = (exitCode: number): void => {
+    // Guard against multiple concurrent signals
+    if (shutdownStarted) return;
+
+    // Set up force-kill timeout: if graceful shutdown takes > 10s, SIGKILL remaining
     const forceTimer = setTimeout(() => {
       console.error('Graceful shutdown timeout (10s). Force-killing remaining processes.');
       try {
@@ -717,18 +790,37 @@ async function startForeground(headless?: boolean): Promise<void> {
       } catch {
         // registry not available
       }
+      removeServePid();
       process.exit(1);
     }, 10_000);
     forceTimer.unref();
+
+    shutdown()
+      .catch(() => {
+        // Swallow — removeServePid below still runs
+      })
+      .finally(() => {
+        clearTimeout(forceTimer);
+        removeServePid();
+        process.exit(exitCode);
+      });
   };
 
-  process.on('SIGTERM', () => {
-    forceKillShutdown();
-    process.exit(143);
+  process.on('SIGTERM', () => gracefulExit(143));
+  process.on('SIGINT', () => gracefulExit(130));
+  process.on('SIGHUP', () => gracefulExit(129));
+
+  // `exit` handler can only run synchronous code — ensure the PID file is gone
+  // even if we reach process exit without going through gracefulExit (e.g. the
+  // scheduler's `done` promise resolved normally).
+  process.on('exit', () => {
+    removeServePid();
   });
-  process.on('SIGINT', () => {
-    forceKillShutdown();
-    process.exit(130);
+
+  // Last-resort handler: surface the error, attempt cleanup, then exit 1.
+  process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception in genie serve:', err);
+    gracefulExit(1);
   });
 
   // Wait for scheduler to finish (blocks forever until signal)
@@ -746,12 +838,14 @@ async function startForeground(headless?: boolean): Promise<void> {
  *  @param headless If true, pass --headless to the foreground process.
  */
 async function startBackground(headless?: boolean): Promise<void> {
-  const existingPid = readServePid();
-  if (existingPid && isProcessAlive(existingPid)) {
-    console.log(`genie serve already running (PID ${existingPid})`);
+  const existingEntry = readServePid();
+  if (existingEntry && isProcessAlive(existingEntry.pid)) {
+    console.log(`genie serve already running (PID ${existingEntry.pid})`);
     process.exit(0);
   }
-  if (existingPid) removeServePid();
+  if (existingEntry) {
+    forceRemoveServePid();
+  }
 
   const bunPath = process.execPath ?? 'bun';
   const genieBin = process.argv[1] ?? 'genie';
@@ -781,18 +875,27 @@ async function startBackground(headless?: boolean): Promise<void> {
   }
 }
 
+/** Unlink serve.pid unconditionally, swallowing ENOENT and permission errors. */
+function forceRemoveServePid(): void {
+  try {
+    unlinkSync(servePidPath());
+  } catch {}
+}
+
 /** Stop genie serve and all child services */
 async function stopServe(): Promise<void> {
-  const pid = readServePid();
+  const entry = readServePid();
 
-  if (!pid) {
+  if (!entry) {
     console.log('genie serve is not running (no PID file).');
     return;
   }
 
+  const pid = entry.pid;
+
   if (!isProcessAlive(pid)) {
     console.log(`Stale PID file (PID ${pid} not running). Cleaning up.`);
-    removeServePid();
+    forceRemoveServePid();
     // Only kill TUI session — agent server is independent
     killTuiSession();
     return;
@@ -829,7 +932,9 @@ async function stopServe(): Promise<void> {
   // Only kill TUI session — agent tmux server is eternal
   killTuiSession();
 
-  removeServePid();
+  // Serve process is gone; unlink the file directly rather than through
+  // removeServePid (whose identity check would bail since pid !== process.pid).
+  forceRemoveServePid();
   console.log('genie serve stopped.');
 }
 
@@ -947,15 +1052,15 @@ async function printBridgeStatus(): Promise<void> {
 
 /** Show service health */
 async function statusServe(): Promise<void> {
-  const pid = readServePid();
-  const running = pid !== null && isProcessAlive(pid);
+  const entry = readServePid();
+  const running = entry !== null && isProcessAlive(entry.pid);
 
   console.log('\nGenie Serve');
   console.log('─'.repeat(50));
   console.log(`  Status:     ${running ? 'running' : 'stopped'}`);
 
-  if (running && pid) {
-    console.log(`  PID:        ${pid}`);
+  if (running && entry) {
+    console.log(`  PID:        ${entry.pid}`);
   }
 
   await printPgserveStatus();

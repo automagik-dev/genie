@@ -69,8 +69,8 @@ The canonical hacks live in the docs at `genie/hacks.mdx`. Below is the embedded
   genie team create api-v2 --repo . --wish api-v2
 
   # Monitor both
-  genie task status auth-refactor
-  genie task status api-v2
+  genie wish status auth-refactor
+  genie wish status api-v2
 
   # Cross-team messaging
   genie agent send 'auth-refactor is done, you can proceed' --to api-v2-team-lead
@@ -227,7 +227,7 @@ The canonical hacks live in the docs at `genie/hacks.mdx`. Below is the embedded
 
   # Check team status
   genie team ls my-team
-  genie task status my-wish-slug
+  genie wish status my-wish-slug
 
   # Unstick a blocked group
   genie wish reset my-wish-slug#2
