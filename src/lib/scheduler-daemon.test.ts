@@ -7,6 +7,7 @@ import {
   MAX_DELIVERY_ATTEMPTS,
   type SchedulerConfig,
   type SchedulerDeps,
+  TURN_AWARE_RECONCILER_FLAG,
   type WorkerInfo,
   _resetWorkerStatesForTesting,
   attemptAgentResume,
@@ -15,6 +16,8 @@ import {
   collectMachineSnapshot,
   emitWorkerEvents,
   fireTrigger,
+  isTurnAwareReconcilerEnabled,
+  logReconcilerMode,
   logToFile,
   processMailboxRetryMessage,
   reclaimExpiredLeases,
@@ -2207,5 +2210,62 @@ describe('scheduler-daemon', () => {
       expect(dropped).toHaveLength(10);
       expect(dropped.every((l) => l.reason === 'already_escalated_by_scheduler')).toBe(true);
     });
+  });
+});
+
+// ============================================================================
+// Turn-session-contract (Group 1) — reconciler flag scaffolding
+// ============================================================================
+
+describe('turn-aware reconciler flag', () => {
+  const prev = process.env[TURN_AWARE_RECONCILER_FLAG];
+
+  afterEach(() => {
+    if (prev === undefined) delete process.env[TURN_AWARE_RECONCILER_FLAG];
+    else process.env[TURN_AWARE_RECONCILER_FLAG] = prev;
+  });
+
+  test('flag constant matches expected name', () => {
+    expect(TURN_AWARE_RECONCILER_FLAG).toBe('GENIE_RECONCILER_TURN_AWARE');
+  });
+
+  test('isTurnAwareReconcilerEnabled returns false when unset', () => {
+    expect(isTurnAwareReconcilerEnabled({})).toBe(false);
+  });
+
+  test('isTurnAwareReconcilerEnabled returns false for empty and falsy values', () => {
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: '' })).toBe(false);
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: '0' })).toBe(false);
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: 'false' })).toBe(false);
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: 'no' })).toBe(false);
+  });
+
+  test('isTurnAwareReconcilerEnabled accepts "1" and "true" (case-insensitive)', () => {
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: '1' })).toBe(true);
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: 'true' })).toBe(true);
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: 'TRUE' })).toBe(true);
+    expect(isTurnAwareReconcilerEnabled({ [TURN_AWARE_RECONCILER_FLAG]: ' True ' })).toBe(true);
+  });
+
+  test('logReconcilerMode emits flag-off message with legacy event when unset', () => {
+    delete process.env[TURN_AWARE_RECONCILER_FLAG];
+    const logs: LogEntry[] = [];
+    logReconcilerMode({ log: (e) => logs.push(e), now: () => new Date('2026-04-20T00:00:00Z') }, 'daemon-abc');
+    expect(logs).toHaveLength(1);
+    expect(logs[0].event).toBe('reconciler_mode_legacy');
+    expect(logs[0].enabled).toBe(false);
+    expect(logs[0].flag).toBe('GENIE_RECONCILER_TURN_AWARE');
+    expect(logs[0].message).toContain('flag off');
+    expect(logs[0].daemon_id).toBe('daemon-abc');
+  });
+
+  test('logReconcilerMode emits turn-aware event when flag set to truthy value', () => {
+    process.env[TURN_AWARE_RECONCILER_FLAG] = '1';
+    const logs: LogEntry[] = [];
+    logReconcilerMode({ log: (e) => logs.push(e), now: () => new Date('2026-04-20T00:00:00Z') }, 'daemon-xyz');
+    expect(logs).toHaveLength(1);
+    expect(logs[0].event).toBe('reconciler_mode_turn_aware');
+    expect(logs[0].enabled).toBe(true);
+    expect(logs[0].message).toContain('turn-aware reconciler enabled');
   });
 });

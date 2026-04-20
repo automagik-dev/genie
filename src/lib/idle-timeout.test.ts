@@ -59,6 +59,10 @@ function makeExecutor(overrides: Partial<Executor> = {}): Executor {
     endedAt: null,
     createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
     updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 1h ago
+    turnId: null,
+    outcome: null,
+    closedAt: null,
+    closeReason: null,
     ...overrides,
   };
 }

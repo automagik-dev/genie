@@ -67,32 +67,32 @@ Dependency graph: G1 → {G2, G6, G7}; G2 → {G3, G4, G5}; {G4, G5, G7} → G8;
 ### Wave 1 (solo — schema + flag foundation)
 | Group | Agent | Description |
 |-------|-------|-------------|
-| G1 | engineer | Schema migration: add `turn_id`, `outcome`, `closed_at`, `close_reason` on `executors` + `GENIE_RECONCILER_TURN_AWARE` flag scaffolding |
+| 1 | engineer | Schema migration: add `turn_id`, `outcome`, `closed_at`, `close_reason` on `executors` + `GENIE_RECONCILER_TURN_AWARE` flag scaffolding |
 
-### Wave 2 (parallel — G1 consumers)
+### Wave 2 (parallel — Group 1 consumers)
 | Group | Agent | Description |
 |-------|-------|-------------|
-| G2 | engineer | Turn-close verbs: `genie done` / `blocked` / `failed` with context-dispatch parser |
-| G6 | engineer | Executor read endpoint (HTTP GET `/executors/:id/state` or readonly PG role) |
-| G7 | engineer | `reconcile-orphans` script with `--dry-run` and `--apply` modes |
+| 2 | engineer | Turn-close verbs: `genie done` / `blocked` / `failed` with context-dispatch parser |
+| 6 | engineer | Executor read endpoint (HTTP GET `/executors/:id/state` or readonly PG role) |
+| 7 | engineer | `reconcile-orphans` script with `--dry-run` and `--apply` modes |
 
-### Wave 3 (parallel — G2 consumers, behavior behind flag)
+### Wave 3 (parallel — Group 2 consumers, behavior behind flag)
 | Group | Agent | Description |
 |-------|-------|-------------|
-| G3 | engineer | `GENIE_EXECUTOR_ID` env propagation across all spawn paths + skill contract enforcement |
-| G4 | engineer | New reconciler logic behind `GENIE_RECONCILER_TURN_AWARE` flag (flag off default) |
-| G5 | engineer | Pane-exit trap (tmux + shell) writes `clean_exit_unverified` if verb didn't fire |
+| 3 | engineer | `GENIE_EXECUTOR_ID` env propagation across all spawn paths + skill contract enforcement |
+| 4 | engineer | New reconciler logic behind `GENIE_RECONCILER_TURN_AWARE` flag (flag off default) |
+| 5 | engineer | Pane-exit trap (tmux + shell) writes `clean_exit_unverified` if verb didn't fire |
 
 ### Wave 4 (solo — phase B flip)
 | Group | Agent | Description |
 |-------|-------|-------------|
-| G8 | engineer | Phase B migration: flip `auto_resume DEFAULT false`, backfill live rows, enable flag by default |
+| 8 | engineer | Phase B migration: flip `auto_resume DEFAULT false`, backfill live rows, enable flag by default |
 | review | reviewer | Review Groups 1-8 against Success Criteria |
 
 ### Wave 5 (after ≥7-day soak on Wave 4 — flag removal)
 | Group | Agent | Description |
 |-------|-------|-------------|
-| G9 | engineer | Phase C migration: remove `GENIE_RECONCILER_TURN_AWARE` flag entirely |
+| 9 | engineer | Phase C migration: remove `GENIE_RECONCILER_TURN_AWARE` flag entirely |
 
 ## Execution Groups
 
