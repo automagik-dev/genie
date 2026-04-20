@@ -66,7 +66,7 @@ An engineer reports that `genie work` dispatches engineers but they sit idle. Th
 genie agent spawn tracer
 
 # 2. Send the symptoms
-genie agent send 'Trace: genie work dispatches engineers but they start idle at the prompt. No task received. genie task status shows in_progress but nothing happens. Check dispatch.ts workDispatchCommand and protocol-router.ts sendMessage.' --to tracer
+genie agent send 'Trace: genie work dispatches engineers but they start idle at the prompt. No task received. genie wish status shows in_progress but nothing happens. Check dispatch.ts workDispatchCommand and protocol-router.ts sendMessage.' --to tracer
 
 # 3. Wait for findings
 sleep 60 && genie agent log tracer --raw

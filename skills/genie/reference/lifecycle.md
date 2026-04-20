@@ -39,7 +39,7 @@ This creates a git worktree, hires default agents (team-lead, engineer, reviewer
 ```bash
 genie team ls                         # List all teams
 genie team ls my-feature              # Show team members
-genie task status my-feature-slug     # Wish group progress
+genie wish status my-feature-slug     # Wish group progress
 genie agent log team-lead             # Unified log
 genie agent log team-lead --raw       # Raw pane output
 ```
