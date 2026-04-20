@@ -355,6 +355,28 @@ async function showVersion(): Promise<void> {
 
 /** Install brain package from GitHub release tarball */
 async function installBrain(): Promise<boolean> {
+  // Honour the brain.embedded=false opt-out. Power-users manage brain as a
+  // standalone global install (typically from the @next dev channel) and do
+  // not want genie fetching a release tarball behind their back.
+  const { loadGenieConfigSync } = await import('../lib/genie-config.js');
+  if (!loadGenieConfigSync().brain.embedded) {
+    console.log('');
+    console.log('  Brain is configured as external (brain.embedded=false).');
+    console.log('  Genie will not install brain into its node_modules.');
+    console.log('');
+    console.log('  Install brain standalone instead:');
+    console.log('    bun install -g @khal-os/brain@next    # dev channel');
+    console.log('    bun install -g @khal-os/brain         # stable channel');
+    console.log('');
+    console.log('  Then run your own brain serve:');
+    console.log('    brain serve --brain-path <path> [--port <port>]');
+    console.log('');
+    console.log('  To re-enable embedded management, remove brain.embedded from');
+    console.log('  ~/.genie/config.json (or set it to true).');
+    console.log('');
+    return true;
+  }
+
   console.log('');
   console.log('  Installing brain from GitHub release (enterprise)...');
   console.log('');
