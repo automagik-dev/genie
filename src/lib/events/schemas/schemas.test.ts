@@ -254,7 +254,7 @@ const fixtures: Record<EventType, Record<string, unknown>> = {
     bucket_end_ts: '2026-04-20T12:00:00+00:00',
   },
 
-  // Self-healing B1 Group 3a — shared rot-detection event.
+  // Self-healing B1 Group 3a/3c — shared rot-detection event.
   'rot.detected': {
     pattern_id: 'pattern-1-backfill-no-worktree',
     entity_id: 'my-team',

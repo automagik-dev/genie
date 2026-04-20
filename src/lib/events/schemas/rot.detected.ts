@@ -18,10 +18,10 @@
  *
  * Per-pattern structure still lives inside `observed_state_json`, and each
  * detector's render() function is the local source of truth for which keys
- * it populates. The schema validates keys are strings and values are scalars
- * or string arrays so we keep JSON serializability without opening the door
- * to arbitrary objects — the emit-discipline lint forbids the escape-hatch
- * any-schema, so we enumerate the permitted value shapes explicitly below.
+ * it populates. The schema validates keys are snake_case and values are
+ * scalars, nulls, or primitive arrays so we keep JSON serializability
+ * without opening the door to arbitrary objects (no open-world types —
+ * emit-discipline lint enforces the closed list).
  *
  * V1 is measurement only. Consumers of this event are watchers and future
  * triage tooling; no remediation logic reads it.
@@ -64,9 +64,9 @@ const EntityIdSchema = tagTier(
 
 /**
  * Structured evidence map. Values are restricted to scalars, nulls, and
- * string arrays — no arbitrary nested objects, no unconstrained escape-hatch
- * schema. Free-text string values run through redactFreeText so any
- * secret-shaped substring is scrubbed before write.
+ * primitive arrays — no arbitrary nested objects, no open-world schemas.
+ * Free-text string values run through redactFreeText so any secret-shaped
+ * substring is scrubbed before write.
  */
 const ObservedValueSchema = tagTier(
   z.union([

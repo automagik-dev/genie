@@ -122,7 +122,7 @@ export const EventRegistry = {
   // Self-healing B1 Group 2 — detector lifecycle meta-events.
   [detectorDisabled.TYPE]: entry(detectorDisabled),
 
-  // Self-healing B1 Group 3a — shared rot-detection event.
+  // Self-healing B1 Group 3a/3c — shared rot-detection event.
   [rotDetected.TYPE]: entry(rotDetected),
 
   // Self-healing B1 Group 3b — team-ls vs team-disband drift detector.

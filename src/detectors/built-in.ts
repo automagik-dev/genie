@@ -15,6 +15,12 @@
  * Bun's test registry would leak cross-test state.
  */
 
+// Group 3a — low-risk rot detectors (#1237). Each module registers its
+// detector via the `registerDetector(module)` side-effect at import time.
+import './pattern-1-backfill-no-worktree.js';
+import './pattern-4-duplicate-agents.js';
+import './pattern-5-zombie-team-lead.js';
+
 // Group 3b — pattern-2 team-ls vs team-disband drift detector (#1235).
 import './pattern-2-team-ls-drift.js';
 

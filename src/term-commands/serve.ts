@@ -618,15 +618,20 @@ async function startForeground(headless?: boolean): Promise<void> {
   // Read-only sweep of registered DetectorModules every 60s ± 5s. No auto-fix,
   // no state mutation. `detector_version` is threaded into every emitted row
   // via the shared emit pipeline.
+  //
+  // All detectors self-register at module load — importing built-in.ts
+  // pulls every production pattern (1-8) into the registry before the
+  // scheduler's first tick. Each module's top-level call to
+  // `registerDetector(module)` runs once via ESM cache.
   try {
-    // Import the built-in detector aggregator first so each module's
-    // `registerDetector(default)` side-effect runs BEFORE the scheduler
-    // calls `listDetectors()`. Group 3c landed the first four rot-pattern
-    // detectors behind this single import.
     await import('../detectors/built-in.js');
     const { start: startDetectorScheduler } = await import('../serve/detector-scheduler.js');
+    const { listDetectors } = await import('../detectors/index.js');
     handles.detectorScheduler = startDetectorScheduler();
-    console.log('  Detector scheduler started (measurement only, 60s ± 5s cadence)');
+    const registered = listDetectors().map((d) => d.id);
+    console.log(
+      `  Detector scheduler started (measurement only, 60s ± 5s cadence) — registered: [${registered.join(', ')}]`,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`  Detector scheduler: failed — ${msg}`);
