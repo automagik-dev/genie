@@ -356,6 +356,7 @@ interface DaemonHandles {
   brainHandle: { stop: () => Promise<void>; port: number } | null;
   omniApprovalHandler: { stop: () => Promise<void> } | null;
   omniBridge: { stop: () => Promise<void> } | null;
+  detectorScheduler: { stop: () => void } | null;
 }
 
 const handles: DaemonHandles = {
@@ -364,6 +365,7 @@ const handles: DaemonHandles = {
   brainHandle: null,
   omniApprovalHandler: null,
   omniBridge: null,
+  detectorScheduler: null,
 };
 
 /** Sync agent directory from workspace and start file watcher. */
@@ -558,6 +560,19 @@ async function startForeground(headless?: boolean): Promise<void> {
   // 4. Start scheduler + event-router + inbox-watcher
   await startScheduler();
 
+  // 4a. Start detector scheduler (self-healing B1 / Group 2 — measurement only).
+  // Read-only sweep of registered DetectorModules every 60s ± 5s. No auto-fix,
+  // no state mutation. `detector_version` is threaded into every emitted row
+  // via the shared emit pipeline.
+  try {
+    const { start: startDetectorScheduler } = await import('../serve/detector-scheduler.js');
+    handles.detectorScheduler = startDetectorScheduler();
+    console.log('  Detector scheduler started (measurement only, 60s ± 5s cadence)');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`  Detector scheduler: failed — ${msg}`);
+  }
+
   // 4b. Start executor-read endpoint (Group 6 of turn-session-contract).
   // Non-fatal: if the port is busy or Bun.serve errors, the endpoint logs and
   // skips. Direct-SQL consumers fall back to `executors_reader` role.
@@ -619,6 +634,12 @@ async function startForeground(headless?: boolean): Promise<void> {
 
     // 2. Stop scheduler (drains in-flight)
     handles.schedulerHandle?.stop();
+
+    // 2.1. Stop detector scheduler (self-healing B1 / Group 2)
+    if (handles.detectorScheduler) {
+      handles.detectorScheduler.stop();
+      handles.detectorScheduler = null;
+    }
 
     // 2.5. Stop Omni approval handler
     if (handles.omniApprovalHandler) {

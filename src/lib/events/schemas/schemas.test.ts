@@ -244,6 +244,15 @@ const fixtures: Record<EventType, Record<string, unknown>> = {
     queue_cap: 10_000,
     recommended_action: 'inspect_pg',
   },
+
+  // Self-healing B1 Group 2 — detector lifecycle meta.
+  'detector.disabled': {
+    detector_id: 'rot.backfill-no-worktree',
+    cause: 'fire_budget_exceeded',
+    budget: 10,
+    fire_count: 10,
+    bucket_end_ts: '2026-04-20T12:00:00+00:00',
+  },
 };
 
 describe('schema roundtrips — 15 new + 5 exemplars', () => {

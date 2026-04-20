@@ -43,6 +43,9 @@
     "src/lib/observability-flag.ts",
     "src/consumers/runbook-r1/index.ts",
     "src/consumers/runbook-r1/detector.ts",
+    "src/detectors/index.ts",
+    "src/detectors/__fixtures__/hello.ts",
+    "src/serve/detector-scheduler.ts",
     "src/term-commands/events-migrate.ts",
     "src/genie-commands/observability-health.ts",
     "test/observability/emit-bench.ts"

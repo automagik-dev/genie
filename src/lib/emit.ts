@@ -83,6 +83,14 @@ export interface EmitOptions {
   agent?: string;
   team?: string;
   entity_id?: string;
+  /**
+   * Detector release identifier (semver). Populated by the detector scheduler
+   * (`src/serve/detector-scheduler.ts`) on every emit so downstream queries
+   * can pivot on "which detector version produced this row". Surfaced as a
+   * first-class column on `genie_runtime_events*` (migration 043); stays NULL
+   * for non-detector events.
+   */
+  detector_version?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +112,7 @@ interface QueuedRow {
   repo_path: string;
   agent: string;
   team: string | null;
+  detector_version: string | null;
   payload: Record<string, unknown>;
   created_at: string;
 }
@@ -460,6 +469,7 @@ function buildRow(
     repo_path: opts.repo_path ?? process.env.GENIE_REPO_PATH ?? process.cwd(),
     agent: opts.agent ?? process.env.GENIE_AGENT_NAME ?? 'system',
     team: opts.team ?? process.env.GENIE_TEAM ?? null,
+    detector_version: opts.detector_version ?? null,
     payload,
     created_at: new Date().toISOString(),
   };
@@ -859,6 +869,7 @@ const ROW_COLS = [
   'peer',
   'text',
   'data',
+  'detector_version',
   'created_at',
 ] as const;
 
@@ -902,6 +913,7 @@ function rowRecord(row: QueuedRow): Record<string, unknown> {
     // Serialize to a JSON string — the writeBucket SQL casts this placeholder
     // to ::jsonb so postgres parses it as structured JSON (not a string scalar).
     data: enrichedData,
+    detector_version: row.detector_version,
     created_at: row.created_at,
   };
 }
@@ -928,7 +940,7 @@ async function writeBatch(batch: QueuedRow[]): Promise<void> {
       if (table === 'genie_runtime_events') {
         await sql`
           INSERT INTO genie_runtime_events
-            (repo_path, subject, kind, source, agent, team, direction, peer, text, data, created_at)
+            (repo_path, subject, kind, source, agent, team, direction, peer, text, data, detector_version, created_at)
           VALUES (
             ${rec.repo_path as string},
             ${rec.subject as string},
@@ -940,13 +952,14 @@ async function writeBatch(batch: QueuedRow[]): Promise<void> {
             ${(rec.peer ?? null) as string | null},
             ${rec.text as string},
             ${sql.json(data)},
+            ${(rec.detector_version ?? null) as string | null},
             ${rec.created_at as string}
           )
         `;
       } else if (table === 'genie_runtime_events_debug') {
         await sql`
           INSERT INTO genie_runtime_events_debug
-            (repo_path, subject, kind, source, agent, team, direction, peer, text, data, created_at)
+            (repo_path, subject, kind, source, agent, team, direction, peer, text, data, detector_version, created_at)
           VALUES (
             ${rec.repo_path as string},
             ${rec.subject as string},
@@ -958,13 +971,14 @@ async function writeBatch(batch: QueuedRow[]): Promise<void> {
             ${(rec.peer ?? null) as string | null},
             ${rec.text as string},
             ${sql.json(data)},
+            ${(rec.detector_version ?? null) as string | null},
             ${rec.created_at as string}
           )
         `;
       } else if (table === 'genie_runtime_events_audit') {
         await sql`
           INSERT INTO genie_runtime_events_audit
-            (repo_path, subject, kind, source, agent, team, direction, peer, text, data, created_at)
+            (repo_path, subject, kind, source, agent, team, direction, peer, text, data, detector_version, created_at)
           VALUES (
             ${rec.repo_path as string},
             ${rec.subject as string},
@@ -976,6 +990,7 @@ async function writeBatch(batch: QueuedRow[]): Promise<void> {
             ${(rec.peer ?? null) as string | null},
             ${rec.text as string},
             ${sql.json(data)},
+            ${(rec.detector_version ?? null) as string | null},
             ${rec.created_at as string}
           )
         `;
