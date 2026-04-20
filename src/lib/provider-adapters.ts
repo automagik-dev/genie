@@ -132,6 +132,8 @@ const spawnParamsSchema = z.object({
   team: z.string().min(1, 'Team name is required'),
   role: z.string().optional(),
   skill: z.string().optional(),
+  agentId: z.string().optional(),
+  executorId: z.string().uuid().optional(),
   extraArgs: z.array(z.string()).optional(),
   nativeTeam: z
     .object({
@@ -354,6 +356,8 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 
   if (params.role) env.GENIE_AGENT_NAME = params.role;
   if (params.team) env.GENIE_TEAM = params.team;
+  if (params.executorId) env.GENIE_EXECUTOR_ID = params.executorId;
+  if (params.agentId) env.GENIE_AGENT_ID = params.agentId;
 
   // OTel telemetry injection — only if not already set (user overrides win)
   appendOtelEnv(env, params);
@@ -434,6 +438,11 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('codex');
 
   const parts: string[] = ['codex'];
+  const env: Record<string, string> = {};
+  if (params.executorId) env.GENIE_EXECUTOR_ID = params.executorId;
+  if (params.agentId) env.GENIE_AGENT_ID = params.agentId;
+  if (params.role) env.GENIE_AGENT_NAME = params.role;
+  if (params.team) env.GENIE_TEAM = params.team;
 
   // Full autonomous execution — no permission prompts
   parts.push('--yolo');
@@ -458,6 +467,7 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   return {
     command: parts.join(' '),
     provider: 'codex',
+    env: Object.keys(env).length > 0 ? env : undefined,
     meta: {
       role: params.role,
       skill: params.skill,

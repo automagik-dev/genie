@@ -1995,6 +1995,19 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   if (!params.name) {
     params.name = `${params.team}-${effectiveRole}`;
   }
+
+  // Executor model: find/create durable agent identity + concurrent guard.
+  // Must happen BEFORE buildLaunchCommand so executorId/agentId propagate
+  // into the child env (GENIE_EXECUTOR_ID / GENIE_AGENT_ID) — needed by the
+  // turn-close verbs (genie done/blocked/failed).
+  const nt = params.nativeTeam;
+  const agentName = nt?.agentName ?? effectiveRole;
+  const agentIdentity = await registry.findOrCreateAgent(agentName, team, effectiveRole);
+  await terminateActiveExecutorWithCleanup(agentIdentity.id);
+  const executorId = crypto.randomUUID();
+  params.agentId = agentIdentity.id;
+  params.executorId = executorId;
+
   const validated = validateSpawnParams(params);
   const launch = buildLaunchCommand(validated);
   const layoutMode = resolveLayoutMode(options.layout);
@@ -2014,14 +2027,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   // An explicit session target means "spawn in tmux" even when the caller is outside tmux.
   // This matters for orchestrators like QA, which need detached workers instead of a blocking inline session.
   const insideTmux = Boolean(process.env.TMUX || options.session);
-  const nt = validated.nativeTeam;
   const now = new Date().toISOString();
-  const agentName = nt?.agentName ?? effectiveRole;
-
-  // Executor model: find/create durable agent identity + concurrent guard
-  const agentIdentity = await registry.findOrCreateAgent(agentName, team, effectiveRole);
-  await terminateActiveExecutorWithCleanup(agentIdentity.id);
-  const executorId = crypto.randomUUID();
 
   const otelRelayActive = await maybeStartOtelRelay(nt, validated, insideTmux);
 
@@ -2413,13 +2419,18 @@ async function createResumeExecutor(
   cwd: string,
   spawnColor: string,
 ): Promise<void> {
+  // params.agentId / params.executorId are pre-minted by resumeAgent so the
+  // same UUIDs that landed in the child env (GENIE_EXECUTOR_ID) are written
+  // here. Fall back to a fresh mint only if the caller forgot to seed them.
   const resumeAgentName = agent.role ?? agent.id;
   const resumeTeam = agent.team ?? params.team;
-  const agentIdentity = await registry.findOrCreateAgent(resumeAgentName, resumeTeam, agent.role);
-  await terminateActiveExecutorWithCleanup(agentIdentity.id);
+  const agentId =
+    params.agentId ?? (await registry.findOrCreateAgent(resumeAgentName, resumeTeam, agent.role)).id;
+  await terminateActiveExecutorWithCleanup(agentId);
 
   const pid = await capturePanePid(paneId);
-  await createAndLinkExecutor(agentIdentity.id, params.provider, resolveExecutorTransport(params.provider, 'tmux'), {
+  await createAndLinkExecutor(agentId, params.provider, resolveExecutorTransport(params.provider, 'tmux'), {
+    id: params.executorId,
     pid,
     tmuxSession: params.team,
     tmuxPaneId: paneId,
@@ -2454,6 +2465,16 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
 
   const params = await buildFullResumeParams(agent, template);
 
+  // Mint executor identity BEFORE buildLaunchCommand so GENIE_EXECUTOR_ID /
+  // GENIE_AGENT_ID propagate into the resumed child env. The same executorId
+  // is later reused when createResumeExecutor INSERTs the executor row.
+  const resumeAgentName = agent.role ?? agent.id;
+  const resumeTeam = agent.team ?? params.team;
+  const agentIdentity = await registry.findOrCreateAgent(resumeAgentName, resumeTeam, agent.role);
+  const executorId = crypto.randomUUID();
+  params.agentId = agentIdentity.id;
+  params.executorId = executorId;
+
   const validated = validateSpawnParams(params);
   const launch = buildLaunchCommand(validated);
   const fullCommand = prependEnvVars(launch.command, launch.env);
@@ -2481,6 +2502,8 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
     cwd: template?.cwd ?? agent.repoPath,
     spawnIntoCurrentWindow: false,
     autoResume: agent.autoResume,
+    agentIdentityId: agentIdentity.id,
+    executorId,
   };
 
   const teamWindow = await resolveSpawnTeamWindow(validated.team, ctx.cwd);
