@@ -163,3 +163,16 @@ Next: create PR targeting dev
 - Never implement fixes during review — hand off to `/fix`.
 - Every FAIL includes actionable fix (file, command, what to change).
 - Keep output concise, severity-ordered, and executable.
+
+## Turn close (required)
+
+Every session MUST end by writing a terminal outcome to the turn-session contract. This is how the orchestrator reconciles executor state — skipping it leaves the row open and blocks auto-resume.
+
+- `genie done` — work completed, acceptance criteria met
+- `genie blocked --reason "<why>"` — stuck, needs human input or an unblocking signal
+- `genie failed --reason "<why>"` — aborted, irrecoverable error, or cannot proceed
+
+Rules:
+- Call exactly one close verb as the last action of the session.
+- `blocked` / `failed` require `--reason`.
+- `genie done` inside an agent session (GENIE_AGENT_NAME set) closes the current executor; it does not require a wish ref.

@@ -10,7 +10,7 @@ const mockExecuteTmux = mock(async (_cmd: string) => '');
 
 mock.module('./tmux-wrapper.js', () => ({
   executeTmux: mockExecuteTmux,
-  genieTmuxPrefix: () => ['-L', 'genie'],
+  genieTmuxPrefix: () => ['-L', 'genie', '-f', '/dev/null'],
   genieTmuxCmd: (sub: string) => `tmux -L genie ${sub}`,
 }));
 

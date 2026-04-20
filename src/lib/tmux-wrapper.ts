@@ -54,6 +54,29 @@ export function genieTmuxCmd(subcommand: string): string {
 }
 
 /**
+ * Prepend inline `env KEY=VALUE ...` assignments to a shell command so that
+ * the spawned child (under tmux `new-window` / `split-window`) inherits them.
+ *
+ * This is the tmux-path analogue of Bun's spawn `env` option: tmux has no
+ * structured env-var API for send-keys, so we splice the assignments into
+ * the command string. Env values are NOT shell-escaped — the caller is
+ * responsible for passing values that survive word-splitting (UUIDs, role
+ * names, team slugs). Whitespace in values would break the contract; if
+ * that ever becomes a concern, quote at this boundary.
+ *
+ * Used to propagate GENIE_EXECUTOR_ID / GENIE_AGENT_ID / GENIE_AGENT_NAME
+ * into the agent child so the turn-close verbs (`genie done` / `blocked` /
+ * `failed`) can resolve the current executor.
+ */
+export function prependEnvVars(command: string, env?: Record<string, string>): string {
+  if (!env || Object.keys(env).length === 0) return command;
+  const envArgs = Object.entries(env)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(' ');
+  return `env ${envArgs} ${command}`;
+}
+
+/**
  * Get the directory for tmux debug logs
  */
 function getLogDir(): string {

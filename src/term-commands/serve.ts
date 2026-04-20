@@ -558,6 +558,18 @@ async function startForeground(headless?: boolean): Promise<void> {
   // 4. Start scheduler + event-router + inbox-watcher
   await startScheduler();
 
+  // 4b. Start executor-read endpoint (Group 6 of turn-session-contract).
+  // Non-fatal: if the port is busy or Bun.serve errors, the endpoint logs and
+  // skips. Direct-SQL consumers fall back to `executors_reader` role.
+  try {
+    const { startExecutorReadEndpoint, getExecutorReadPort } = await import('../lib/executor-read.js');
+    const ok = await startExecutorReadEndpoint();
+    if (ok) console.log(`  Executor read endpoint ready on port ${getExecutorReadPort()}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`  Executor read endpoint: failed — ${msg}`);
+  }
+
   // 5. Start Omni approval handler (if workspace has approval config)
   try {
     const { startOmniApprovalHandler } = await import('../lib/omni-approval-handler.js');
@@ -619,6 +631,9 @@ async function startForeground(headless?: boolean): Promise<void> {
       handles.omniBridge.stop().catch(() => {});
       handles.omniBridge = null;
     }
+
+    // 2.58. Stop executor-read endpoint
+    void import('../lib/executor-read.js').then((m) => m.stopExecutorReadEndpoint().catch(() => {}));
 
     // 2.6. Stop brain server (best-effort — signal handlers call process.exit()
     // immediately after shutdown(), so this is fire-and-forget like all other

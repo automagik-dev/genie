@@ -262,25 +262,53 @@ describe('Change #2: periodic resume sweep for error-state agents', () => {
     expect(typeof runAgentRecoveryPass).toBe('function');
   });
 
-  test('runAgentRecoveryPass attempts resume for error-state agents with dead panes', async () => {
+  test('runAgentRecoveryPass does NOT resume error-state agents with dead panes (turn-aware default, Phase B)', async () => {
+    // Post-G8 contract: with GENIE_RECONCILER_TURN_AWARE on by default,
+    // only working/permission/question + dead-pane are resumed (D3).
+    // `error` is terminal intent already — resuming would replay a
+    // failed turn. See WISH turn-session-contract, C20.
     const workers: WorkerInfo[] = [
-      // Error-state agent with dead pane — should be resumed
       makeWorker({ id: 'dead-error', paneId: '%99', state: 'error', claudeSessionId: 'sess-1' }),
-      // Done agent — should NOT be touched
       makeWorker({ id: 'finished', paneId: '%98', state: 'done', claudeSessionId: 'sess-2' }),
-      // Suspended agent — should NOT be touched (explicit user intent)
       makeWorker({ id: 'paused', paneId: '%97', state: 'suspended', claudeSessionId: 'sess-3' }),
     ];
     const { deps, resumedIds } = createMockDeps({
       listWorkers: async () => workers,
-      isPaneAlive: async () => false, // all panes dead
+      isPaneAlive: async () => false,
     });
 
     await runAgentRecoveryPass(deps, 'daemon-test', defaultConfig);
 
-    expect(resumedIds).toContain('dead-error');
+    expect(resumedIds).not.toContain('dead-error');
     expect(resumedIds).not.toContain('finished');
     expect(resumedIds).not.toContain('paused');
+  });
+
+  test('legacy flag OFF: runAgentRecoveryPass still resumes error-state agents with dead panes', async () => {
+    // Rollback path — operators can set GENIE_RECONCILER_TURN_AWARE=0 to
+    // restore pre-Phase-B behavior if the turn-aware reconciler causes
+    // incidents in production.
+    const prev = process.env.GENIE_RECONCILER_TURN_AWARE;
+    process.env.GENIE_RECONCILER_TURN_AWARE = '0';
+    try {
+      const workers: WorkerInfo[] = [
+        makeWorker({ id: 'dead-error', paneId: '%99', state: 'error', claudeSessionId: 'sess-1' }),
+        makeWorker({ id: 'finished', paneId: '%98', state: 'done', claudeSessionId: 'sess-2' }),
+        makeWorker({ id: 'paused', paneId: '%97', state: 'suspended', claudeSessionId: 'sess-3' }),
+      ];
+      const { deps, resumedIds } = createMockDeps({
+        listWorkers: async () => workers,
+        isPaneAlive: async () => false,
+      });
+
+      await runAgentRecoveryPass(deps, 'daemon-test', defaultConfig);
+
+      expect(resumedIds).toContain('dead-error');
+      expect(resumedIds).not.toContain('finished');
+      expect(resumedIds).not.toContain('paused');
+    } finally {
+      process.env.GENIE_RECONCILER_TURN_AWARE = prev;
+    }
   });
 
   test('daemon startup wires the resume timer alongside lease recovery', () => {

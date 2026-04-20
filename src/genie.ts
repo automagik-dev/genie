@@ -241,6 +241,49 @@ registerBriefCommands(program);
 registerApprovalCommands(program);
 
 // ============================================================================
+// Turn-close verbs — genie done / blocked / failed
+// ============================================================================
+
+program
+  .command('done [ref]')
+  .description('Close the current turn (inside an agent session) or mark a wish group done (team-lead, <slug>#<group>)')
+  .action(async (ref: string | undefined) => {
+    const { doneAction } = await import('./term-commands/done.js');
+    await doneAction(ref);
+  });
+
+program
+  .command('blocked')
+  .description('Close the current turn with outcome=blocked')
+  .requiredOption('--reason <message>', 'Why the turn is blocked')
+  .action(async (options: { reason: string }) => {
+    const { blockedAction } = await import('./term-commands/blocked.js');
+    await blockedAction(options);
+  });
+
+program
+  .command('failed')
+  .description('Close the current turn with outcome=failed')
+  .requiredOption('--reason <message>', 'Why the turn failed')
+  .action(async (options: { reason: string }) => {
+    const { failedAction } = await import('./term-commands/failed.js');
+    await failedAction(options);
+  });
+
+program
+  .command('pane-trap')
+  .description(
+    'Internal: write clean_exit_unverified outcome for a dying pane/shell. Invoked by the tmux pane-died hook and the inline shell EXIT trap.',
+  )
+  .option('--pane-id <id>', 'tmux pane id (%N) — resolved to executor via executors.tmux_pane_id')
+  .option('--executor-id <id>', 'explicit executor UUID (preferred when available)')
+  .option('--reason <reason>', 'trap source: pane_died or shell_exit', 'pane_died')
+  .action(async (options: { paneId?: string; executorId?: string; reason?: string }) => {
+    const { paneTrapAction } = await import('./term-commands/pane-trap.js');
+    await paneTrapAction(options);
+  });
+
+// ============================================================================
 // Universal workspace check — ensures workspace exists before commands that need it
 // ============================================================================
 

@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Agent } from './agent-registry.js';
+import type { Agent, AgentState } from './agent-registry.js';
 import { computeNextCronDue, parseDuration } from './cron.js';
 import { type EventRouterHandle, startEventRouter } from './event-router.js';
 import { getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
@@ -51,19 +51,37 @@ export const MAX_DELIVERY_ATTEMPTS = 3;
 /**
  * Env flag gating the turn-session-contract reconciler.
  *
- * Phase A (this wish, Group 1): flag read exists; default `false`; logged once
- * at daemon startup; no behavior change. Subsequent groups wire the new
- * reconciler passes behind this flag. Phase B (Group 8) flips the default to
- * `true` after the migration completes; Phase C (Group 9) removes the flag.
+ * Phase A (Group 1): flag read exists; default `false`; logged once at daemon
+ * startup; no behavior change. Groups 2/3/4/5/7 wire the new reconciler
+ * passes behind this flag.
+ *
+ * Phase B (Group 8 — this change): default flips to `true`. Migration 044
+ * flipped `agents.auto_resume` default and backfilled live/stale rows; the
+ * code side follows suit so a fresh daemon boot enables the turn-aware
+ * passes by default. Rollback is still supported — set
+ * `GENIE_RECONCILER_TURN_AWARE=0` (or `false`) to force the legacy path
+ * without a redeploy.
+ *
+ * Phase C (Group 9, after 7-day soak): flag and legacy path are removed.
  */
 export const TURN_AWARE_RECONCILER_FLAG = 'GENIE_RECONCILER_TURN_AWARE';
 
-/** Read the turn-aware reconciler flag from env. Accepts '1' | 'true' (case-insensitive). */
+/**
+ * Read the turn-aware reconciler flag from env.
+ *
+ * Default (unset / empty) is `true` since Phase B (Group 8). Explicit
+ * opt-out: `GENIE_RECONCILER_TURN_AWARE=0` (also accepts `false`, `no`,
+ * case-insensitive). Truthy values (`1`, `true`) are always accepted.
+ */
 export function isTurnAwareReconcilerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env[TURN_AWARE_RECONCILER_FLAG];
-  if (!raw) return false;
+  if (raw === undefined) return true;
   const v = raw.trim().toLowerCase();
-  return v === '1' || v === 'true';
+  if (v === '') return true;
+  if (v === '0' || v === 'false' || v === 'no') return false;
+  if (v === '1' || v === 'true' || v === 'yes') return true;
+  // Unknown value — be conservative and honor Phase B default ON.
+  return true;
 }
 
 /** Log the turn-aware reconciler mode once at daemon startup. */
@@ -751,7 +769,7 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
   const reclaimed = await reclaimExpiredLeases(deps, daemonId);
   const orphans = await reconcileOrphanedRuns(deps, daemonId);
 
-  const { resumed, failed } = await runAgentRecoveryPass(deps, daemonId, config);
+  const { resumed, failed } = await runAgentRecoveryPass(deps, daemonId, config, 'boot');
 
   deps.log({
     timestamp: deps.now().toISOString(),
@@ -784,7 +802,7 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
 function scheduleRecoveryRetry(deps: SchedulerDeps, daemonId: string, config?: SchedulerConfig): void {
   setTimeout(async () => {
     try {
-      const retry = await runAgentRecoveryPass(deps, daemonId, config);
+      const retry = await runAgentRecoveryPass(deps, daemonId, config, 'boot');
       deps.log({
         timestamp: deps.now().toISOString(),
         level: 'info',
@@ -817,11 +835,78 @@ function scheduleRecoveryRetry(deps: SchedulerDeps, daemonId: string, config?: S
  * (startAgentResumeTimer) — without it, agents that hit `error` while the
  * daemon is up never retry until the next process restart.
  */
+/** States where the turn-aware reconciler resumes a dead pane (D3 rule). */
+const TURN_AWARE_RESUMABLE_STATES: ReadonlySet<AgentState> = new Set<AgentState>(['working', 'permission', 'question']);
+
+type RecoveryOutcome = 'resumed' | 'terminalized' | 'skipped';
+type RecoveryMode = 'boot' | 'sweep';
+
+/**
+ * Per-worker recovery decision for a dead pane, extracted so
+ * `runAgentRecoveryPass` stays below the cognitive-complexity cap.
+ *
+ * Legacy (flag off): delegate everything to `attemptAgentResume`.
+ * Turn-aware (flag on) in 'sweep' mode:
+ *   - D1 idle + dead → `terminalizeCleanExitUnverified`, no resume
+ *   - D3 working/permission/question + dead → resume
+ *   - other non-terminal states → skipped (prevents post-D1 ghost loop)
+ *
+ * 'boot' mode deliberately bypasses the D1/D3 gates: when the daemon
+ * just restarted, an idle-with-dead-pane row is most likely an agent
+ * that was legitimately mid-turn when the daemon itself died (state
+ * preserved across reboot). The turn-aware rules exist for periodic
+ * sweeps, where "idle + dead" is a ghost-loop precursor.
+ */
+async function handleDeadPane(
+  deps: SchedulerDeps,
+  config: SchedulerConfig,
+  daemonId: string,
+  worker: WorkerInfo,
+  turnAware: boolean,
+  mode: RecoveryMode,
+): Promise<RecoveryOutcome> {
+  if (mode === 'boot') {
+    const result = await attemptAgentResume(deps, config, worker);
+    return result === 'resumed' ? 'resumed' : 'skipped';
+  }
+  if (turnAware && worker.state === 'idle') {
+    const res = await terminalizeCleanExitUnverified(deps, worker, 'reconciler_idle_dead_pane');
+    if (res.terminalized) {
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'warn',
+        event: 'agent_terminalized_clean_exit_unverified',
+        daemon_id: daemonId,
+        agent_id: worker.id,
+        executor_id: res.executorId,
+        reason: 'idle_dead_pane',
+      });
+      return 'terminalized';
+    }
+    return 'skipped';
+  }
+  if (turnAware && !TURN_AWARE_RESUMABLE_STATES.has(worker.state as AgentState)) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'debug',
+      event: 'agent_resume_skipped_turn_aware',
+      daemon_id: daemonId,
+      agent_id: worker.id,
+      state: worker.state,
+      reason: 'state_not_in_d3',
+    });
+    return 'skipped';
+  }
+  const result = await attemptAgentResume(deps, config, worker);
+  return result === 'resumed' ? 'resumed' : 'skipped';
+}
+
 export async function runAgentRecoveryPass(
   deps: SchedulerDeps,
   daemonId: string,
   config?: SchedulerConfig,
-): Promise<{ resumed: number; failed: number }> {
+  mode: RecoveryMode = 'sweep',
+): Promise<{ resumed: number; failed: number; terminalized: number }> {
   const resolvedConfig = config ?? resolveConfig();
   const workers = await deps.listWorkers();
   // Safe for SDK/non-tmux transports: the `claudeSessionId` filter below
@@ -830,17 +915,19 @@ export async function runAgentRecoveryPass(
   // paneId check is correct here — no transport dispatch needed. If SDK
   // ever gains resume support, gate on paneId shape like countActiveWorkers.
   const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done' && w.claudeSessionId);
+  const turnAware = isTurnAwareReconcilerEnabled();
 
   let resumed = 0;
   let failed = 0;
+  let terminalized = 0;
 
   for (const worker of resumable) {
     try {
       const alive = await deps.isPaneAlive(worker.paneId);
-      if (!alive) {
-        const result = await attemptAgentResume(deps, resolvedConfig, worker);
-        if (result === 'resumed') resumed++;
-      }
+      if (alive) continue;
+      const outcome = await handleDeadPane(deps, resolvedConfig, daemonId, worker, turnAware, mode);
+      if (outcome === 'resumed') resumed++;
+      else if (outcome === 'terminalized') terminalized++;
     } catch (err) {
       failed++;
       const message = err instanceof Error ? err.message : String(err);
@@ -855,7 +942,114 @@ export async function runAgentRecoveryPass(
     }
   }
 
-  return { resumed, failed };
+  return { resumed, failed, terminalized };
+}
+
+/**
+ * Terminal-boundary write for the turn-aware reconciler's D1 rule.
+ *
+ * An agent found in `state='idle'` with a dead pane is the classic
+ * ghost-loop precursor: the turn finished quietly (no `genie done` /
+ * `blocked` / `failed`) and the pane then exited. Resuming such a row
+ * replays the already-completed turn (C20 incident, 2026-04-19).
+ *
+ * Write semantics (single transaction, first-writer-wins with the pane
+ * trap and the explicit close verbs):
+ *   - look up `agents.current_executor_id`; if absent, only flip the
+ *     agent state to `error` (no executor to terminalize)
+ *   - if the executor is already closed (`closed_at IS NOT NULL` or
+ *     `outcome IS NOT NULL`), the explicit verbs / pane trap already
+ *     ran — leave the executor untouched, just clear
+ *     `current_executor_id` so the next reconcile pass skips it
+ *   - otherwise write `state='error'`, `outcome='clean_exit_unverified'`,
+ *     `close_reason=<reason>`, `closed_at=now`, `ended_at=now`, clear
+ *     `current_executor_id`, emit a `reconciler.clean_exit_unverified`
+ *     audit event
+ *
+ * Never throws: DB errors are caught so a transient PG blip can't
+ * wedge `runAgentRecoveryPass` for every subsequent worker in the pass.
+ */
+export async function terminalizeCleanExitUnverified(
+  deps: SchedulerDeps,
+  worker: WorkerInfo,
+  reason: string,
+): Promise<{ terminalized: boolean; executorId: string | null }> {
+  const nowIso = deps.now().toISOString();
+  try {
+    const sql = await deps.getConnection();
+    return await sql.begin(async (tx: SqlClient) => {
+      const rows = await tx`SELECT current_executor_id FROM agents WHERE id = ${worker.id}`;
+      const executorId = (rows[0]?.current_executor_id as string | null | undefined) ?? null;
+
+      if (!executorId) {
+        await tx`
+          UPDATE agents
+          SET state = 'error',
+              last_state_change = ${nowIso}
+          WHERE id = ${worker.id}
+        `;
+        return { terminalized: false, executorId: null };
+      }
+
+      const execRows = await tx<{ closed_at: Date | null; outcome: string | null }[]>`
+        SELECT closed_at, outcome FROM executors
+        WHERE id = ${executorId}
+        FOR UPDATE
+      `;
+      const alreadyClosed = execRows.length > 0 && (execRows[0].closed_at !== null || execRows[0].outcome !== null);
+      if (alreadyClosed) {
+        await tx`
+          UPDATE agents
+          SET current_executor_id = NULL,
+              state = 'error',
+              last_state_change = ${nowIso}
+          WHERE id = ${worker.id}
+        `;
+        return { terminalized: false, executorId };
+      }
+
+      await tx`
+        UPDATE executors
+        SET state = 'error',
+            outcome = 'clean_exit_unverified',
+            close_reason = ${reason},
+            closed_at = ${nowIso},
+            ended_at = ${nowIso}
+        WHERE id = ${executorId}
+      `;
+
+      await tx`
+        UPDATE agents
+        SET current_executor_id = NULL,
+            state = 'error',
+            last_state_change = ${nowIso}
+        WHERE id = ${worker.id}
+      `;
+
+      await tx`
+        INSERT INTO audit_events (entity_type, entity_id, event_type, actor, details)
+        VALUES (
+          'executor',
+          ${executorId},
+          'reconciler.clean_exit_unverified',
+          'scheduler',
+          ${tx.json({ agent_id: worker.id, reason, outcome: 'clean_exit_unverified' })}
+        )
+      `;
+
+      return { terminalized: true, executorId };
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'error',
+      event: 'terminalize_clean_exit_unverified_failed',
+      agent_id: worker.id,
+      error: message,
+    });
+    return { terminalized: false, executorId: null };
+  }
 }
 
 /**
