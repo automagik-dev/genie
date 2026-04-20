@@ -36,7 +36,8 @@ export async function readExecutorState(id: string, sql?: Sql): Promise<Executor
   return {
     state: row.state,
     outcome: row.outcome ?? null,
-    closed_at: row.closed_at == null ? null : row.closed_at instanceof Date ? row.closed_at.toISOString() : row.closed_at,
+    closed_at:
+      row.closed_at == null ? null : row.closed_at instanceof Date ? row.closed_at.toISOString() : row.closed_at,
   };
 }
 
@@ -60,6 +61,31 @@ export function getExecutorReadPort(): number {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ROUTE_RE = /^\/executors\/([^/]+)\/state\/?$/;
 
+async function handleStateRoute(id: string): Promise<Response> {
+  if (!UUID_RE.test(id)) {
+    return Response.json({ error: 'invalid executor id' }, { status: 400 });
+  }
+  try {
+    const reply = await readExecutorState(id);
+    if (!reply) return Response.json({ error: 'not found' }, { status: 404 });
+    return Response.json(reply, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return Response.json({ error: msg }, { status: 500 });
+  }
+}
+
+async function routeRequest(req: Request, port: number): Promise<Response> {
+  const url = new URL(req.url);
+  if (req.method === 'GET' && url.pathname === '/health') {
+    return Response.json({ status: 'ok', port });
+  }
+  if (req.method !== 'GET') return new Response('Method Not Allowed', { status: 405 });
+  const match = ROUTE_RE.exec(url.pathname);
+  if (!match) return new Response('Not Found', { status: 404 });
+  return handleStateRoute(match[1]);
+}
+
 /**
  * Start the executor read HTTP server. Idempotent — subsequent calls are no-ops
  * while the server is already running. Returns `true` on success (including
@@ -73,29 +99,7 @@ export async function startExecutorReadEndpoint(): Promise<boolean> {
     server = Bun.serve({
       port,
       hostname: '127.0.0.1',
-      fetch: async (req) => {
-        const url = new URL(req.url);
-        if (req.method === 'GET' && url.pathname === '/health') {
-          return Response.json({ status: 'ok', port });
-        }
-        if (req.method !== 'GET') {
-          return new Response('Method Not Allowed', { status: 405 });
-        }
-        const match = ROUTE_RE.exec(url.pathname);
-        if (!match) return new Response('Not Found', { status: 404 });
-        const id = match[1];
-        if (!UUID_RE.test(id)) {
-          return Response.json({ error: 'invalid executor id' }, { status: 400 });
-        }
-        try {
-          const reply = await readExecutorState(id);
-          if (!reply) return Response.json({ error: 'not found' }, { status: 404 });
-          return Response.json(reply, { headers: { 'Cache-Control': 'no-store' } });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return Response.json({ error: msg }, { status: 500 });
-        }
-      },
+      fetch: (req) => routeRequest(req, port),
     });
     return true;
   } catch (err) {

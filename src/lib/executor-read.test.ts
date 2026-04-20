@@ -9,7 +9,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { findOrCreateAgent } from './agent-registry.js';
 import { getConnection } from './db.js';
-import { createExecutor } from './executor-registry.js';
 import {
   getExecutorReadPort,
   isExecutorReadEndpointRunning,
@@ -17,6 +16,7 @@ import {
   startExecutorReadEndpoint,
   stopExecutorReadEndpoint,
 } from './executor-read.js';
+import { createExecutor } from './executor-registry.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('executor-read', () => {
