@@ -164,6 +164,28 @@ an external dead-man's switch. Consumer-compat promises are published at
 [docs/observability-contract.md](docs/observability-contract.md); the 5-phase
 rollout plan at [docs/observability-rollout.md](docs/observability-rollout.md).
 
+### Executor read endpoint
+
+External consumers (e.g. the omni scope-enforcer) can query ground-truth turn
+state directly from `genie serve`. Two paths are supported:
+
+**HTTP** — `GET http://127.0.0.1:<port>/executors/:id/state` returns
+`{state, outcome, closed_at}` as JSON. The default port is `pgserve_port + 2`;
+override with `GENIE_EXECUTOR_READ_PORT`. Returns 404 for unknown IDs, 400 for
+non-UUID IDs, 200 otherwise. No authz — executor IDs are random UUIDs and the
+view exposes no secrets.
+
+**Direct SQL** — connect to genie-PG as the read-only `executors_reader` role
+and `SELECT state, outcome, closed_at FROM executors_public_state WHERE id = $1`.
+Layer login credentials on top:
+
+```sql
+CREATE ROLE omni_scope_enforcer LOGIN PASSWORD '…' IN ROLE executors_reader;
+```
+
+Response shape (`state` / `outcome` / `closed_at`) is the stable boundary
+contract; removing or renaming fields is a coordinated breaking change.
+
 ---
 
 <p align="center">
