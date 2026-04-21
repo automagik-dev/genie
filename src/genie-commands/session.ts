@@ -156,13 +156,19 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
       /* best-effort */
     }
 
-    // Atomic: create executor + set as current in a single transaction
+    // Atomic: create executor + set as current in a single transaction.
+    // state='running' because the team-lead IS the parent Claude Code process —
+    // already alive at registration time. Initializing with 'spawning' would
+    // leave the row stuck indefinitely (no transition callback ever fires for
+    // the parent process itself). Regular workers go through spawnAgent which
+    // does 'spawning'→'running' explicitly; team-leads do not.
+    // Fixes #1184.
     await executorRegistry.createAndLinkExecutor(agentIdentity.id, 'claude', 'tmux', {
       pid,
       tmuxSession: sessionName,
       tmuxPaneId: paneId,
       tmuxWindow: windowName,
-      state: 'spawning',
+      state: 'running',
       repoPath: workspaceDir,
     });
   } catch {
