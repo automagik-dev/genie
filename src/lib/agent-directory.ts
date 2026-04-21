@@ -540,7 +540,11 @@ function buildMetadata(entry: DirectoryEntry): Record<string, unknown> {
   if (entry.omniScopes) meta.omniScopes = entry.omniScopes;
   if (entry.hooks) meta.hooks = entry.hooks;
   if (entry.sdk) meta.sdk = entry.sdk;
-  if (entry.bridgeTmuxSession) meta.bridgeTmuxSession = entry.bridgeTmuxSession;
+  // Always emit bridgeTmuxSession (as null when unset) so the JSONB merge in
+  // edit() can overwrite a stale persisted value. Other optional fields above
+  // share the same "truthy-only" pattern as a pre-existing (separate) concern;
+  // we only fix this field here because it's the one flagged by the review.
+  meta.bridgeTmuxSession = entry.bridgeTmuxSession ?? null;
   return meta;
 }
 

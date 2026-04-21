@@ -80,18 +80,21 @@ export function sanitizeWindowName(chatId: string, chatName?: string): string {
  *      Enables hierarchical co-location ("felipe/scout lands in felipe session").
  *   3. `agentName` — backward-compatible fallback (legacy behavior).
  *
- * Tmux rejects `/` in session names, so the resolved value is sanitized
- * regardless of source. Empty strings are treated as absent (fall through
- * to the next layer) so a caller passing `env.GENIE_TMUX_SESSION = ''`
- * does not accidentally short-circuit to a nameless session.
+ * Uses `||` (not `??`) so any falsy value — including the empty string —
+ * falls through to the next layer. Empty strings in either source would
+ * produce a nameless session, which tmux rejects with a cryptic error.
+ *
+ * Tmux also reserves `/` (used in some window addressing) and `:` (session
+ * vs window separator, e.g. `session:window.pane`), so both are sanitized
+ * to `-` regardless of source.
  */
 export function resolveBridgeTmuxSession(
   agentName: string,
   entryBridgeTmuxSession: string | undefined,
   envOverride: string | undefined,
 ): string {
-  const raw = (envOverride && envOverride.length > 0 ? envOverride : undefined) ?? entryBridgeTmuxSession ?? agentName;
-  return raw.replace(/\//g, '-');
+  const raw = envOverride || entryBridgeTmuxSession || agentName;
+  return raw.replace(/[\/:]/g, '-');
 }
 
 /**
