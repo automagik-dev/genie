@@ -18,6 +18,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import type * as registryTypes from '../lib/agent-registry.js';
+import { emitEvent } from '../lib/emit.js';
 import type * as taskServiceTypes from '../lib/task-service.js';
 import type * as teamManagerTypes from '../lib/team-manager.js';
 import { formatTime, padRight, truncate } from '../lib/term-format.js';
@@ -779,6 +780,15 @@ Examples:
           return result;
         },
         warn: (msg) => console.log(msg),
+        // Pattern 9 — emit on silent-skip transition. Fire-and-forget; errors
+        // swallowed so the poll loop never crashes on an emit glitch.
+        emitDeadInbox: (payload) => {
+          try {
+            emitEvent('rot.inbox-watcher-spawn-loop.detected', payload as unknown as Record<string, unknown>);
+          } catch {
+            // best-effort
+          }
+        },
       });
 
       const shutdown = () => {

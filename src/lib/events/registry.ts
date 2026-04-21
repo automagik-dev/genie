@@ -38,6 +38,7 @@ import * as permissionsGrant from './schemas/permissions.grant.js';
 import * as resumeAttempt from './schemas/resume.attempt.js';
 import * as rotDetected from './schemas/rot.detected.js';
 import * as rotExecutorGhostDetected from './schemas/rot.executor-ghost.detected.js';
+import * as rotInboxWatcherSpawnLoopDetected from './schemas/rot.inbox-watcher-spawn-loop.detected.js';
 import * as rotTeamLsDriftDetected from './schemas/rot.team-ls-drift.detected.js';
 import * as runbookTriggered from './schemas/runbook.triggered.js';
 import * as schemaViolation from './schemas/schema.violation.js';
@@ -133,6 +134,12 @@ export const EventRegistry = {
   // emit this when GENIE_EXECUTOR_ID fails to resolve but agent_id lookup
   // succeeds. See `turn-close.ts#turnClose` and the boot reconciler (F).
   [rotExecutorGhostDetected.TYPE]: entry(rotExecutorGhostDetected),
+
+  // BUGLESS-GENIE Pattern 9 — inbox-watcher silent-skip after
+  // MAX_SPAWN_FAILURES consecutive spawn failures. Fired exactly once on
+  // the transition from recoverable to dead-inbox. See
+  // `brain/memory/reference_pattern9_inbox_watcher_spawn_loop.md`.
+  [rotInboxWatcherSpawnLoopDetected.TYPE]: entry(rotInboxWatcherSpawnLoopDetected),
 } as const satisfies Record<string, RegistryEntry>;
 
 export type EventType = keyof typeof EventRegistry;

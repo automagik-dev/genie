@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { InboxWatcherDeps } from './inbox-watcher.js';
+import type { DeadInboxEventPayload, InboxWatcherDeps } from './inbox-watcher.js';
 import { checkInboxes, resetNoWorkingDirWarned, resetSpawnFailures } from './inbox-watcher.js';
 
 // ============================================================================
@@ -23,6 +23,7 @@ function makeDeps(overrides: Partial<InboxWatcherDeps> = {}): InboxWatcherDeps {
     isAgentAlive: async () => false,
     ensureTeamLead: async () => ({ created: true }),
     warn: () => {},
+    emitDeadInbox: () => {},
     ...overrides,
   } as InboxWatcherDeps;
 }
@@ -274,5 +275,136 @@ describe('checkInboxes', () => {
     const result = await checkInboxes(deps);
     expect(result).toEqual(['plain-team']);
     expect(spawnedTeam).toBe('plain-team');
+  });
+
+  // ==========================================================================
+  // Pattern 9 — rot.inbox-watcher-spawn-loop.detected emission
+  //
+  // Covers the BUGLESS-GENIE Pattern 9 regression. Previously, the watcher
+  // hit `MAX_SPAWN_FAILURES = 3` and flipped into silent-skip mode without
+  // emitting any observable signal. `reference_pattern9_inbox_watcher_spawn_loop.md`
+  // documented 215+ silently-dropped messages before manual detection. The
+  // fix emits `rot.inbox-watcher-spawn-loop.detected` exactly once on the
+  // transition to `failure_count === MAX_SPAWN_FAILURES`.
+  // ==========================================================================
+
+  test('emits dead-inbox event exactly once on transition to MAX_SPAWN_FAILURES', async () => {
+    const emittedPayloads: DeadInboxEventPayload[] = [];
+    const deps = makeDeps({
+      listTeamsWithUnreadInbox: async () => [
+        {
+          teamName: 'dying-team',
+          unreadCount: 7,
+          workingDir: '/tmp/dying',
+          firstUnreadText: null,
+        },
+      ],
+      isTeamActive: async () => false,
+      ensureTeamLead: async () => {
+        throw new Error('ensureTeamLead: tmux spawn failed');
+      },
+      emitDeadInbox: (payload) => emittedPayloads.push(payload),
+    });
+
+    // 3 consecutive poll cycles, each fails the spawn.
+    await checkInboxes(deps); // failures: 1 (not yet emit)
+    expect(emittedPayloads.length).toBe(0);
+    await checkInboxes(deps); // failures: 2 (not yet emit)
+    expect(emittedPayloads.length).toBe(0);
+    await checkInboxes(deps); // failures: 3 (TRANSITION — emit)
+    expect(emittedPayloads.length).toBe(1);
+
+    const [event] = emittedPayloads;
+    expect(event.team_name).toBe('dying-team');
+    expect(event.session_key).toBe('dying-team');
+    expect(event.failure_count).toBe(3);
+    expect(event.last_error_message).toContain('tmux spawn failed');
+  });
+
+  test('subsequent polls after MAX_SPAWN_FAILURES do NOT re-emit', async () => {
+    const emittedPayloads: DeadInboxEventPayload[] = [];
+    const deps = makeDeps({
+      listTeamsWithUnreadInbox: async () => [
+        {
+          teamName: 'post-threshold-team',
+          unreadCount: 3,
+          workingDir: '/tmp/post-threshold',
+          firstUnreadText: null,
+        },
+      ],
+      isTeamActive: async () => false,
+      ensureTeamLead: async () => {
+        throw new Error('still broken');
+      },
+      emitDeadInbox: (payload) => emittedPayloads.push(payload),
+    });
+
+    // Drive to threshold.
+    await checkInboxes(deps);
+    await checkInboxes(deps);
+    await checkInboxes(deps);
+    expect(emittedPayloads.length).toBe(1);
+
+    // 5 more polls — each will hit the silent-skip branch. No re-emit.
+    for (let i = 0; i < 5; i++) {
+      await checkInboxes(deps);
+    }
+    expect(emittedPayloads.length).toBe(1);
+  });
+
+  test('successful spawn after partial failures does NOT emit', async () => {
+    const emittedPayloads: DeadInboxEventPayload[] = [];
+    let attempt = 0;
+    const deps = makeDeps({
+      listTeamsWithUnreadInbox: async () => [
+        {
+          teamName: 'recovering-team',
+          unreadCount: 1,
+          workingDir: '/tmp/recovering',
+          firstUnreadText: null,
+        },
+      ],
+      isTeamActive: async () => false,
+      ensureTeamLead: async () => {
+        attempt++;
+        if (attempt < 3) throw new Error('flaky spawn');
+        return { created: true };
+      },
+      emitDeadInbox: (payload) => emittedPayloads.push(payload),
+    });
+
+    await checkInboxes(deps); // fail 1
+    await checkInboxes(deps); // fail 2
+    await checkInboxes(deps); // success — resets counter, no emit
+    expect(emittedPayloads.length).toBe(0);
+    expect(attempt).toBe(3);
+  });
+
+  test('schema-bound error message is truncated at 2 KiB', async () => {
+    const emittedPayloads: DeadInboxEventPayload[] = [];
+    const hugeMessage = 'x'.repeat(5000);
+    const deps = makeDeps({
+      listTeamsWithUnreadInbox: async () => [
+        {
+          teamName: 'verbose-error-team',
+          unreadCount: 1,
+          workingDir: '/tmp/verbose',
+          firstUnreadText: null,
+        },
+      ],
+      isTeamActive: async () => false,
+      ensureTeamLead: async () => {
+        throw new Error(hugeMessage);
+      },
+      emitDeadInbox: (payload) => emittedPayloads.push(payload),
+    });
+
+    await checkInboxes(deps);
+    await checkInboxes(deps);
+    await checkInboxes(deps);
+    expect(emittedPayloads.length).toBe(1);
+    // Allow ellipsis — schema cap is 2048, truncation logic slices to 2045 + '...'.
+    expect(emittedPayloads[0].last_error_message.length).toBeLessThanOrEqual(2048);
+    expect(emittedPayloads[0].last_error_message.endsWith('...')).toBe(true);
   });
 });
