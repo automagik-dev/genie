@@ -187,6 +187,74 @@ async function handleDirectMessage(from: string, to: string, body: string, team?
 // Broadcast (--broadcast)
 // ============================================================================
 
+/**
+ * Per-member fan-out result for a broadcast. Surfaced to the caller so the
+ * CLI can report which recipients woke and which did not (#1218).
+ */
+export interface BroadcastFanoutResult {
+  member: string;
+  delivered: boolean;
+  reason?: string;
+}
+
+/**
+ * Injectable dependencies for `deliverBroadcastToMembers`. Matches the
+ * `_deps` pattern used in `src/lib/protocol-router.ts` — avoids `mock.module`
+ * in tests (which leaks across bun:test files) while still letting callers
+ * inject stubs for listMembers / sendMessage.
+ */
+export interface BroadcastFanoutDeps {
+  listMembers: (teamName: string) => Promise<string[] | null>;
+  sendMessage: (
+    repoPath: string,
+    from: string,
+    to: string,
+    body: string,
+    teamName?: string,
+  ) => Promise<{ messageId: string; workerId: string; delivered: boolean; reason?: string }>;
+}
+
+/**
+ * Fan out a broadcast to every team member via `protocolRouter.sendMessage`
+ * so each idle recipient gets pane-injected (fires UserPromptSubmit) the
+ * same way a DM does. The previous broadcast implementation only wrote a
+ * group conversation row, which meant at most one member (the one whose
+ * native-team client happened to observe the team conversation log) would
+ * wake — the other N-1 stayed idle indefinitely. Bug #1218.
+ *
+ * Delivery to each member is best-effort and independent: a pane death or
+ * thrown exception on one recipient never aborts the fan-out. Per-member
+ * outcomes are returned so callers can surface them to the operator.
+ *
+ * Self-delivery is elided at the fan-out layer (earlier than protocol-router's
+ * own `from === to` guard) so the results array doesn't include a no-op entry
+ * for the sender.
+ */
+export async function deliverBroadcastToMembers(
+  deps: BroadcastFanoutDeps,
+  repoPath: string,
+  from: string,
+  teamName: string,
+  body: string,
+): Promise<BroadcastFanoutResult[]> {
+  const members = (await deps.listMembers(teamName)) ?? [];
+  const results: BroadcastFanoutResult[] = [];
+  for (const member of members) {
+    if (member === from) continue;
+    try {
+      const r = await deps.sendMessage(repoPath, from, member, body, teamName);
+      results.push({ member, delivered: r.delivered, reason: r.reason });
+    } catch (err) {
+      results.push({
+        member,
+        delivered: false,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return results;
+}
+
 async function handleBroadcast(from: string, body: string, team?: string): Promise<void> {
   const taskService = await import('../../lib/task-service.js');
   const repoPath = process.cwd();
@@ -227,7 +295,26 @@ async function handleBroadcast(from: string, body: string, team?: string): Promi
     // Silent degradation
   }
 
+  // Fan out UserPromptSubmit to every team member (#1218).
+  const { listMembers } = await import('../../lib/team-manager.js');
+  const protocolRouter = await import('../../lib/protocol-router.js');
+  const fanoutResults = await deliverBroadcastToMembers(
+    { listMembers, sendMessage: protocolRouter.sendMessage },
+    repoPath,
+    from,
+    teamName,
+    body,
+  );
+
   console.log(`Broadcast sent to team "${teamName}".`);
   console.log(`  Message ID: ${msg.id}`);
   console.log(`  Conversation: ${conv.id}`);
+
+  const deliveredCount = fanoutResults.filter((r) => r.delivered).length;
+  console.log(`  Fan-out: ${deliveredCount}/${fanoutResults.length} members reached`);
+  for (const r of fanoutResults) {
+    if (!r.delivered) {
+      console.log(`    ⚠ ${r.member}: ${r.reason ?? 'delivery failed'}`);
+    }
+  }
 }
