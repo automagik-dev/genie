@@ -103,6 +103,17 @@ const DETECTOR_VERSION = '0.1.0';
 const MAX_DIVERGENT_IN_EVENT = 100;
 /** Hard cap on snapshot length emitted — detector trims before serialization. */
 const MAX_SNAPSHOT_IN_EVENT = 200;
+/**
+ * Mirror of the schema's `observed_state_json.max(16_384)` — the detector
+ * self-enforces *before* emit so a pathological input falls back to a
+ * compact summary instead of tripping Zod validation and dumping the event
+ * into `schema.violation`. Bug #1291: the per-entry caps above don't
+ * compound-cap, so 100 × (180-char reason) + 200 × {name,status} + 200 × dir
+ * routinely overflows 16 KiB even though each individual slice looks small.
+ */
+const MAX_OBSERVED_STATE_JSON_CHARS = 16_384;
+/** Ids kept in the summary fallback — large enough to triage, small enough to fit. */
+const SUMMARY_DIVERGENT_ID_CAP = 20;
 
 // ---------------------------------------------------------------------------
 // Query + comparison logic
@@ -183,9 +194,11 @@ function primaryDivergenceKind(divergent: ReadonlyArray<DivergentTeam>): Diverge
 }
 
 /**
- * Build the event payload. We cap both snapshots and the divergent list so
- * the `observed_state_json` string honours the schema's 16 KiB limit even
- * when the detector sees a flood of ghost teams.
+ * Build the event payload. The per-list caps above trim individual slices,
+ * but their product can still overflow 16 KiB — so after serializing we
+ * measure and, if we're over, fall back to a compact summary that carries
+ * only totals + the top-N divergent ids. Downstream consumers see
+ * `observed_state_json_truncated: true` and know detail was dropped.
  */
 function renderPayload(state: TeamLsDriftState): Record<string, unknown> {
   const primary = primaryDivergenceKind(state.divergent);
@@ -207,10 +220,30 @@ function renderPayload(state: TeamLsDriftState): Record<string, unknown> {
     divergent_total: state.divergent.length,
   };
 
+  let observedJson = JSON.stringify(observed);
+  let truncated = false;
+
+  if (observedJson.length > MAX_OBSERVED_STATE_JSON_CHARS) {
+    truncated = true;
+    const summary = {
+      divergence_kind: primary,
+      divergent_ids: divergentTrimmed.slice(0, SUMMARY_DIVERGENT_ID_CAP).map((d) => d.team_id),
+      ls_total: state.ls_snapshot.length,
+      disband_total: state.disband_snapshot.length,
+      divergent_total: state.divergent.length,
+      truncation_reason: 'detail payload exceeded observed_state_json cap',
+    };
+    observedJson = JSON.stringify(summary);
+    if (observedJson.length > MAX_OBSERVED_STATE_JSON_CHARS) {
+      observedJson = observedJson.slice(0, MAX_OBSERVED_STATE_JSON_CHARS);
+    }
+  }
+
   return {
     divergence_kind: primary,
     divergent_count: state.divergent.length,
-    observed_state_json: JSON.stringify(observed),
+    observed_state_json: observedJson,
+    ...(truncated ? { observed_state_json_truncated: true as const } : {}),
   };
 }
 
