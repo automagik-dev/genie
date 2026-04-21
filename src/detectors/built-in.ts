@@ -31,5 +31,9 @@ import './pattern-6-subagent-cascade.js';
 import './pattern-7-dispatch-silent-drop.js';
 import './pattern-8-session-reuse-ghost.js';
 
+// Group 3d — pattern-9 team-unpushed-orphaned-worktree (#1288 — registers
+// detector from #1283, which shipped the source without wiring the import).
+import './pattern-9-team-unpushed-orphaned-worktree.js';
+
 // Future detector groups append their imports above. Keep imports
 // alphabetical within each group for predictable registration order.
