@@ -91,9 +91,13 @@ export function attachTuiSession(): void {
 /** Find the next numeric suffix for a role name by listing tmux windows in the agent's session. */
 function nextRoleSuffix(baseName: string): number {
   const sessionName = baseName.replace(/\//g, '-');
+  // Use `=` prefix to force literal session-name match. Without it, tmux
+  // interprets values like `@46` as window-id syntax (`@N`) instead of
+  // session names, causing "can't find window" errors for anonymously-named
+  // sessions created by `genie spawn --new-window`.
   const output = spawnSync(
     TMUX_BIN,
-    ['-L', GENIE_AGENT_SOCKET, 'list-windows', '-t', sessionName, '-F', '#{window_name}'],
+    ['-L', GENIE_AGENT_SOCKET, 'list-windows', '-t', `=${sessionName}`, '-F', '#{window_name}'],
     {
       encoding: 'utf-8',
     },
