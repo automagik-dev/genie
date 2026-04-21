@@ -162,6 +162,21 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       const row = patterns.find((p) => p.entity_id === entityId);
       expect(row?.error_message).toBe('DependencyMissing');
     });
+
+    test('matches events whose only failure signal is the error_type key (gemini review)', async () => {
+      // Reviewer concern on PR #1267: the filter matched on `details ? 'error'`
+      // but not `details ? 'error_type'`. A producer emitting `error_type`
+      // with a neutral event_type (e.g. "resource_check") would slip through.
+      const entityId = `resource-${Date.now()}`;
+      await recordAuditEvent('resource', entityId, 'resource_check', 'cli', {
+        error_type: 'QuotaExceeded',
+      });
+
+      const patterns = await queryErrorPatterns('1h');
+      const row = patterns.find((p) => p.entity_id === entityId);
+      expect(row).toBeDefined();
+      expect(row?.error_message).toBe('QuotaExceeded');
+    });
   });
 
   describe('getActor', () => {
