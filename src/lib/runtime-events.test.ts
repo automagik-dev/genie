@@ -4,6 +4,7 @@ import {
   getLatestRuntimeEventId,
   listRuntimeEvents,
   publishRuntimeEvent,
+  queryRuntimeEventThroughput,
   waitForRuntimeEvent,
 } from './runtime-events.js';
 import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
@@ -205,6 +206,37 @@ describe.skipIf(!DB_AVAILABLE)('runtime-events', () => {
     const event = await waitPromise;
     expect(event?.text).toBe('right-repo');
     expect(event?.data?.result).toBe('pass');
+  });
+
+  test('queryRuntimeEventThroughput counts recently-published events (regression: CLI reported 0)', async () => {
+    // Before C3 the metrics CLI read a module-level `eventsEmitted` counter
+    // from a fresh process → always 0. The fix reads this DB query instead.
+    const baseline = await queryRuntimeEventThroughput(60);
+
+    const marker = `throughput-${Date.now()}`;
+    await publishRuntimeEvent({
+      repoPath: `/tmp/${marker}-a`,
+      kind: 'message',
+      agent: 'agent-a',
+      text: 'hello',
+      source: 'mailbox',
+    });
+    await publishRuntimeEvent({
+      repoPath: `/tmp/${marker}-b`,
+      kind: 'message',
+      agent: 'agent-b',
+      text: 'world',
+      source: 'mailbox',
+    });
+
+    const after = await queryRuntimeEventThroughput(60);
+    expect(after.emitted).toBeGreaterThanOrEqual(baseline.emitted + 2);
+  });
+
+  test('queryRuntimeEventThroughput rejects non-positive windows', async () => {
+    await expect(queryRuntimeEventThroughput(0)).rejects.toThrow(/positive/);
+    await expect(queryRuntimeEventThroughput(-5)).rejects.toThrow(/positive/);
+    await expect(queryRuntimeEventThroughput(Number.NaN)).rejects.toThrow(/positive/);
   });
 
   test('latest event id advances monotonically', async () => {

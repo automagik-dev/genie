@@ -47,23 +47,6 @@ class EventCircuitBreaker {
 
 const circuitBreaker = new EventCircuitBreaker();
 
-// ---------------------------------------------------------------------------
-// Event throughput metrics (Group 3 — #858)
-// ---------------------------------------------------------------------------
-let eventsEmitted = 0;
-let eventsFailed = 0;
-let lastEmitDuration = 0;
-
-/** Returns in-process event throughput counters for the metrics CLI. */
-export function getEventMetrics(): {
-  eventsEmitted: number;
-  eventsFailed: number;
-  lastEmitDuration: number;
-  circuitState: string;
-} {
-  return { eventsEmitted, eventsFailed, lastEmitDuration, circuitState: circuitBreaker.state };
-}
-
 export type RuntimeEventKind =
   | 'user'
   | 'assistant'
@@ -236,11 +219,9 @@ function buildWhere(query: RuntimeEventQuery): { clause: string; values: unknown
 
 export async function publishRuntimeEvent(input: RuntimeEventInput): Promise<RuntimeEvent> {
   if (circuitBreaker.isOpen()) {
-    eventsFailed++;
     throw new Error('circuit breaker open — PG event write skipped');
   }
 
-  const start = Date.now();
   try {
     const sql = await getConnection();
     const threadId = input.threadId ?? `agent:${input.agent}`;
@@ -268,12 +249,9 @@ export async function publishRuntimeEvent(input: RuntimeEventInput): Promise<Run
     `;
 
     circuitBreaker.recordSuccess();
-    eventsEmitted++;
-    lastEmitDuration = Date.now() - start;
     return rowToRuntimeEvent(rows[0]);
   } catch (error) {
     circuitBreaker.recordFailure();
-    eventsFailed++;
     throw error;
   }
 }
@@ -284,6 +262,24 @@ export async function publishSubjectEvent(
   event: Omit<RuntimeEventInput, 'repoPath' | 'subject'>,
 ): Promise<RuntimeEvent> {
   return publishRuntimeEvent({ ...event, repoPath, subject });
+}
+
+/**
+ * Count runtime events emitted within the last `windowSeconds`. Backs
+ * `genie metrics` — a CLI-visible alternative to in-process counters, which
+ * are useless in a short-lived observer process.
+ */
+export async function queryRuntimeEventThroughput(windowSeconds = 60): Promise<{ emitted: number }> {
+  if (!Number.isFinite(windowSeconds) || windowSeconds <= 0) {
+    throw new Error(`windowSeconds must be a positive number, got ${windowSeconds}`);
+  }
+  const sql = await getConnection();
+  const rows = await sql<{ emitted: number }[]>`
+    SELECT COUNT(*)::int AS emitted
+    FROM genie_runtime_events
+    WHERE created_at > NOW() - make_interval(secs => ${windowSeconds})
+  `;
+  return { emitted: rows[0]?.emitted ?? 0 };
 }
 
 export async function listRuntimeEvents(query: RuntimeEventQuery = {}): Promise<RuntimeEvent[]> {
