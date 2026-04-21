@@ -113,6 +113,13 @@ describe.skipIf(!DB_AVAILABLE)('emit — spill journal drain on recovery', () =>
     rmSync(spillDir, { recursive: true, force: true });
   });
 
+  // This test drains 10_000 events (= QUEUE_CAP) in batches of 500 (= 20+
+  // serial PG INSERTs) plus a separate spill-journal drain. Under pgserve-ram
+  // load the cumulative elapsed occasionally exceeds the default 5000ms test
+  // timeout — three local runs in sequence: pass / pass / fail. The test
+  // validates *functional correctness* (journal gone after both drains), not
+  // performance; 30s is a generous ceiling that stops the pre-existing flake
+  // without masking a real slowdown (a real hang would still fail).
   test('drain replays spilled rows oldest-first after recovery', async () => {
     for (let i = 0; i < __TEST_QUEUE_CAP; i++) {
       emitEvent('state_transition', makePayload(), { severity: 'info' });
@@ -129,5 +136,5 @@ describe.skipIf(!DB_AVAILABLE)('emit — spill journal drain on recovery', () =>
     await drainSpillJournalNow();
     // Journal should be gone after successful drain (by either path).
     expect(existsSync(spillPath)).toBe(false);
-  });
+  }, 30_000);
 });

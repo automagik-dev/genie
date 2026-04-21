@@ -353,19 +353,34 @@ program.hook('postAction', async (_thisCommand, actionCommand) => {
   }
 
   // Wide-emit: close the cli.command span with severity='debug' so 99/100 go
-  // to genie_runtime_events_debug and 1/100 land in the main table.
+  // to genie_runtime_events_debug and 1/100 land in the main table. Gated on
+  // GENIE_WIDE_EMIT because the span itself is a wide-emit-only row.
+  const handle = auditSpans.get(name);
+  auditSpans.delete(name);
   try {
-    const handle = auditSpans.get(name);
-    auditSpans.delete(name);
-    if (!handle) return;
-    const { isWideEmitEnabled } = await import('./lib/observability-flag.js');
-    if (!isWideEmitEnabled()) return;
-    const { endSpan, flushNow } = await import('./lib/emit.js');
-    endSpan(
-      handle,
-      { exit_code: 0, duration_ms: durationMs ?? 0 },
-      { severity: 'debug', source_subsystem: 'cli', agent: getActor() },
-    );
+    if (handle) {
+      const { isWideEmitEnabled } = await import('./lib/observability-flag.js');
+      if (isWideEmitEnabled()) {
+        const { endSpan } = await import('./lib/emit.js');
+        endSpan(
+          handle,
+          { exit_code: 0, duration_ms: durationMs ?? 0 },
+          { severity: 'debug', source_subsystem: 'cli', agent: getActor() },
+        );
+      }
+    }
+  } catch {
+    /* best effort */
+  }
+
+  // Always drain the emit queue on CLI exit, regardless of the wide-emit
+  // flag. Short-lived verbs (genie done, genie spawn, etc.) would otherwise
+  // lose every event emitted during execution: the flush timer is `.unref()`
+  // so the process exits between ticks. Events already enqueued represent
+  // real telemetry the caller intended to persist — dropping them is always
+  // wrong. See `.genie/wishes/fix-emit-queue-flush-on-cli-exit/WISH.md`.
+  try {
+    const { flushNow } = await import('./lib/emit.js');
     await flushNow();
   } catch {
     /* best effort */
