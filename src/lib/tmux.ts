@@ -156,7 +156,11 @@ export async function killSession(sessionId: string): Promise<void> {
 export async function listWindows(sessionId: string): Promise<TmuxWindow[]> {
   try {
     const format = '#{window_id}:#{window_name}:#{window_index}:#{?window_active,1,0}';
-    const output = await executeTmux(`list-windows -t '${sessionId}' -F '${format}'`);
+    // Use `=` prefix to force literal session-name match. Without it, tmux
+    // interprets values like `@46` as window-id syntax (`@N`) instead of
+    // session names, causing "can't find window: @46" errors when looking up
+    // anonymously-named sessions created by `genie spawn --new-window`.
+    const output = await executeTmux(`list-windows -t '=${sessionId}' -F '${format}'`);
 
     if (!output) return [];
 

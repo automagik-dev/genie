@@ -734,8 +734,10 @@ if (args.length === 0) {
   if (resolved.source !== 'default') {
     const { execSync } = await import('node:child_process');
     try {
-      // Check if agent has a running tmux session
-      execSync(`tmux has-session -t ${initialAgent} 2>/dev/null`, { stdio: 'pipe' });
+      // Check if agent has a running tmux session.
+      // `=` prefix forces literal session-name match — without it tmux parses
+      // values like `@46` as window-id syntax and fails lookup.
+      execSync(`tmux has-session -t =${initialAgent} 2>/dev/null`, { stdio: 'pipe' });
     } catch {
       // Agent session doesn't exist — spawn it
       console.log(`Spawning ${initialAgent}...`);

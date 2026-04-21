@@ -218,7 +218,9 @@ async function checkTmux(): Promise<CheckResult[]> {
   const sessionName = config.session.name;
 
   try {
-    const sessionResult = await $`${tmuxBin()} -L genie has-session -t ${sessionName} 2>/dev/null`.quiet();
+    // `=` prefix forces literal session-name match — without it tmux parses
+    // values like `@46` as window-id syntax and fails lookup.
+    const sessionResult = await $`${tmuxBin()} -L genie has-session -t ${`=${sessionName}`} 2>/dev/null`.quiet();
     if (sessionResult.exitCode === 0) {
       results.push({
         name: `Session '${sessionName}' exists`,
