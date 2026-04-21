@@ -277,6 +277,15 @@ const fixtures: Record<EventType, Record<string, unknown>> = {
       divergence_kind: 'missing_in_disband',
     }),
   },
+
+  // fix-executor-ghost-on-reinstall — resolver fallback + boot reconciler.
+  'rot.executor-ghost.detected': {
+    resolution_source: 'resolver',
+    env_id: '49483b1e-ebd6-4d7a-b824-fffa945ec052',
+    resolved_id: 'aabbccdd-0000-4000-8000-00ff00ff00ff',
+    agent_name: 'genie-configure',
+    recovered: true,
+  },
 };
 
 describe('schema roundtrips — 15 new + 5 exemplars', () => {

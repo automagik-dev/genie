@@ -175,4 +175,86 @@ describe.skipIf(!DB_AVAILABLE)('turn-close', () => {
     process.env.GENIE_EXECUTOR_ID = undefined;
     await expect(turnClose({ outcome: 'done' })).rejects.toThrow(/GENIE_EXECUTOR_ID/);
   });
+
+  // --------------------------------------------------------------------------
+  // Bug E — resolver fallback for ghost executors.
+  //
+  // Scenario: pgserve reset wipes the `executors` row but the live worker
+  // pane retains `GENIE_EXECUTOR_ID` in env. `turnClose` must fall back to
+  // `agent_id = GENIE_AGENT_NAME` and close successfully with a warning +
+  // `rot.executor-ghost.detected` event, rather than throwing.
+  // --------------------------------------------------------------------------
+
+  test('fallback: env id ghost → resolves by GENIE_AGENT_NAME, closes cleanly', async () => {
+    const { agentId, executorId } = await seed();
+    // Simulate the ghost: env points to a UUID that does not exist in PG.
+    const ghostId = '00000000-dead-4000-8000-000000000001';
+    process.env.GENIE_EXECUTOR_ID = ghostId;
+    process.env.GENIE_AGENT_NAME = agentId;
+
+    const result = await turnClose({ outcome: 'done', actor: agentId });
+
+    expect(result.noop).toBe(false);
+    // Fallback resolved to the real executor for this agent.
+    expect(result.executorId).toBe(executorId);
+    expect(result.outcome).toBe('done');
+
+    // The real executor row got closed, not the ghost UUID.
+    const exec = await getExecutor(executorId);
+    expect(exec!.outcome).toBe('done');
+    expect(exec!.state).toBe('done');
+
+    // Ghost UUID still has no row (we didn't invent one).
+    const sql = await getConnection();
+    const [ghostRow] = await sql<{ id: string }[]>`SELECT id FROM executors WHERE id = ${ghostId}`;
+    expect(ghostRow).toBeUndefined();
+  });
+
+  test('fallback: picks most recent executor when agent has multiple', async () => {
+    const { agentId } = await seed();
+    // Second executor for the same agent — this should win the fallback.
+    const newer = await createExecutor(agentId, 'claude', 'tmux', { state: 'working' });
+
+    process.env.GENIE_EXECUTOR_ID = '00000000-dead-4000-8000-000000000002';
+    process.env.GENIE_AGENT_NAME = agentId;
+
+    const result = await turnClose({ outcome: 'done', actor: agentId });
+    expect(result.executorId).toBe(newer.id);
+  });
+
+  test('fallback: no agent name env → throws (no silent pick)', async () => {
+    await seed();
+    process.env.GENIE_EXECUTOR_ID = '00000000-dead-4000-8000-000000000003';
+    process.env.GENIE_AGENT_NAME = undefined;
+
+    await expect(turnClose({ outcome: 'done' })).rejects.toThrow(/not found/);
+  });
+
+  test('fallback: agent name with zero executor rows → throws', async () => {
+    process.env.GENIE_EXECUTOR_ID = '00000000-dead-4000-8000-000000000004';
+    process.env.GENIE_AGENT_NAME = 'nonexistent-agent-xyz';
+    // No seed — truly nothing exists for this agent.
+
+    await expect(turnClose({ outcome: 'done' })).rejects.toThrow(/not found/);
+  });
+
+  test('happy path unchanged: env id resolves directly, no fallback warning', async () => {
+    const { executorId, agentId } = await seed();
+    process.env.GENIE_EXECUTOR_ID = executorId;
+    process.env.GENIE_AGENT_NAME = agentId;
+
+    // Capture stderr warnings — happy path must NOT emit the fallback warn.
+    const originalWarn = console.warn;
+    const warns: string[] = [];
+    console.warn = (...args: unknown[]) => warns.push(args.join(' '));
+    try {
+      const result = await turnClose({ outcome: 'done', actor: agentId });
+      expect(result.executorId).toBe(executorId);
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const fallbackWarns = warns.filter((w) => w.includes('falling back'));
+    expect(fallbackWarns).toHaveLength(0);
+  });
 });
