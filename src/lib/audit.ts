@@ -209,17 +209,40 @@ export async function queryErrorPatterns(since?: string): Promise<ErrorPattern[]
   const sql = await getConnection();
   const sinceTs = since ? parseSince(since) : new Date(Date.now() - 86_400_000).toISOString();
 
+  // Filter on structural signals, not substring matches:
+  // - event_type names that denote failure (error / failed / rot.*)
+  // - JSONB key 'error' present on details (explicit error payload)
+  // - state_changed where the new state value is literally 'error'
+  //
+  // Extract the human message from whichever key the producer used: error,
+  // message, error_type, reason (state_changed carries this), or stderr.
+  // NOTE: keep the COALESCE expression in SELECT and GROUP BY identical.
+  const messageExpr = `COALESCE(
+       NULLIF(details->>'error', ''),
+       NULLIF(details->>'message', ''),
+       NULLIF(details->>'error_type', ''),
+       NULLIF(details->>'reason', ''),
+       NULLIF(details->>'stderr', ''),
+       '(no message)'
+     )`;
+
   const rows = await sql.unsafe(
     `SELECT
        event_type,
        entity_id,
-       COALESCE(details->>'error', details->>'message', '(no message)') as error_message,
-       COUNT(*)::int as count,
-       MAX(created_at) as last_seen
+       ${messageExpr} AS error_message,
+       COUNT(*)::int AS count,
+       MAX(created_at) AS last_seen
      FROM audit_events
-     WHERE (event_type LIKE '%error%' OR details::text LIKE '%"error"%')
+     WHERE (
+         event_type LIKE '%error%'
+         OR event_type LIKE '%failed%'
+         OR event_type LIKE 'rot.%'
+         OR details ? 'error'
+         OR (event_type = 'state_changed' AND details->>'state' = 'error')
+       )
        AND created_at >= $1::timestamptz
-     GROUP BY event_type, entity_id, COALESCE(details->>'error', details->>'message', '(no message)')
+     GROUP BY event_type, entity_id, ${messageExpr}
      ORDER BY count DESC
      LIMIT 50`,
     [sinceTs],

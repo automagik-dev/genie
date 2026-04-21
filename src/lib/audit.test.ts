@@ -115,6 +115,53 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         expect(deployTimeout.count).toBeGreaterThanOrEqual(2);
       }
     });
+
+    test('surfaces state_changed->error via reason field (regression: empty-message bug)', async () => {
+      // Before fix: state_changed matched via substring filter but COALESCE
+      // only looked at details.error/message → result was '(no message)'.
+      const entityId = `worker-stale-${Date.now()}`;
+      await recordAuditEvent('worker', entityId, 'state_changed', 'cli', {
+        state: 'error',
+        reason: 'stale_spawn',
+      });
+      await recordAuditEvent('worker', entityId, 'state_changed', 'cli', {
+        state: 'error',
+        reason: 'stale_spawn',
+      });
+
+      const patterns = await queryErrorPatterns('1h');
+      const staleSpawn = patterns.find((p) => p.entity_id === entityId && p.error_message === 'stale_spawn');
+      expect(staleSpawn).toBeDefined();
+      expect(staleSpawn?.error_message).toBe('stale_spawn');
+      expect(staleSpawn?.count).toBeGreaterThanOrEqual(2);
+      expect(staleSpawn?.error_message).not.toBe('(no message)');
+    });
+
+    test('excludes state_changed to non-error states (regression: over-broad filter)', async () => {
+      // Before fix: filter `details::text LIKE '%"error"%'` could match any
+      // event whose details serialization contained the substring "error".
+      // A clean transition to 'idle' must NOT appear as an error pattern.
+      const entityId = `worker-idle-${Date.now()}`;
+      await recordAuditEvent('worker', entityId, 'state_changed', 'cli', {
+        state: 'idle',
+        previous_state: 'running',
+      });
+
+      const patterns = await queryErrorPatterns('1h');
+      const noise = patterns.find((p) => p.entity_id === entityId);
+      expect(noise).toBeUndefined();
+    });
+
+    test('extracts error_type when primary error key is absent', async () => {
+      const entityId = `task-typed-${Date.now()}`;
+      await recordAuditEvent('task', entityId, 'task_failed', 'cli', {
+        error_type: 'DependencyMissing',
+      });
+
+      const patterns = await queryErrorPatterns('1h');
+      const row = patterns.find((p) => p.entity_id === entityId);
+      expect(row?.error_message).toBe('DependencyMissing');
+    });
   });
 
   describe('getActor', () => {
