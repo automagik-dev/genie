@@ -40,13 +40,22 @@ interface NativeTeamMember {
 }
 
 /** The native team config.json root structure. */
-interface NativeTeamConfig {
+export interface NativeTeamConfig {
   name: string;
   description?: string;
   createdAt: number;
   leadAgentId: string;
   leadSessionId: string;
   members: NativeTeamMember[];
+  // Optional fields populated by `createTeam` but absent on minimal configs.
+  repo?: string;
+  baseBranch?: string;
+  worktreePath?: string;
+  status?: string;
+  tmuxSessionName?: string;
+  nativeTeamParentSessionId?: string;
+  nativeTeamsEnabled?: boolean;
+  wishSlug?: string;
 }
 
 /** A message in Claude Code's native inbox format. */
@@ -119,6 +128,40 @@ export async function loadConfig(teamName: string): Promise<NativeTeamConfig | n
 }
 
 /**
+ * Public single-team loader — canonical name for the disk→PG rehydration path.
+ * Alias of `loadConfig` with an explicit, self-documenting name. Used by
+ * `team-manager.ts#ensureTeamRow` and `term-commands/doctor.ts#repairTeams`.
+ *
+ * Returns null when the team has no on-disk config.json (e.g. truly-new team)
+ * — callers should fall back to their default construction logic in that case.
+ */
+export async function loadNativeTeamConfig(teamName: string): Promise<NativeTeamConfig | null> {
+  return loadConfig(teamName);
+}
+
+/**
+ * Load every on-disk native team config in one pass.
+ *
+ * Used by `pg-seed.ts#seedTeams` (boot rehydration) and
+ * `term-commands/doctor.ts#repairTeams` (on-demand repair). Teams whose
+ * config.json fails to load are silently skipped (same policy as
+ * `loadConfig`) — this is a best-effort bulk read for observability and
+ * rehydration; individual failures must not block the whole pass.
+ *
+ * Order is filesystem order (as returned by readdir) — callers that need a
+ * stable order should sort.
+ */
+export async function loadAllNativeTeamConfigs(): Promise<NativeTeamConfig[]> {
+  const teamNames = await listTeams();
+  const configs: NativeTeamConfig[] = [];
+  for (const name of teamNames) {
+    const cfg = await loadConfig(name);
+    if (cfg) configs.push(cfg);
+  }
+  return configs;
+}
+
+/**
  * Find all teams whose config.json lists the given agent name as a member.
  *
  * Used by the spawn path as a last-resort fallback to resolve `--team` when
@@ -184,8 +227,10 @@ export async function ensureNativeTeam(
   if (existing) {
     // Back-fill the PG teams row if it's missing (e.g. after a pgserve reset
     // where the on-disk native team survived but the `teams` row did not).
+    // Pass the already-loaded config so the backfill uses disk truth for repo,
+    // worktree, leader, and members — not `process.cwd()` defaults (Bug C).
     // Best-effort — never block the native team code path on PG failures.
-    await backfillTeamRow(sanitizeTeamName(teamName));
+    await backfillTeamRow(sanitizeTeamName(teamName), existing);
     return existing;
   }
 
@@ -202,8 +247,10 @@ export async function ensureNativeTeam(
 
   await saveConfig(teamName, config);
   // Mirror the newly created native team into the PG `teams` registry so
-  // `genie team ls` reflects reality. Idempotent and best-effort.
-  await backfillTeamRow(sanitized);
+  // `genie team ls` reflects reality. Pass the freshly-created config through
+  // so the PG row is seeded with the same members/leader we just wrote to
+  // disk. Idempotent and best-effort.
+  await backfillTeamRow(sanitized, config);
   return config;
 }
 
@@ -214,10 +261,10 @@ export async function ensureNativeTeam(
  * `./team-manager.ts` (which imports this module). Failures are swallowed:
  * the native team code path must not be blocked by PG issues.
  */
-async function backfillTeamRow(name: string): Promise<void> {
+async function backfillTeamRow(name: string, nativeConfig?: NativeTeamConfig): Promise<void> {
   try {
     const { ensureTeamRow } = await import('./team-manager.js');
-    await ensureTeamRow(name);
+    await ensureTeamRow(name, { nativeConfig });
   } catch {
     // best-effort — PG unavailable, circular-import edge case, etc.
   }
