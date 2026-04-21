@@ -115,6 +115,24 @@ describe.skipIf(!DB_AVAILABLE)('dir edit — agent.yaml-first flow (wish dir-syn
     expect(parsed.sdk?.permissionMode).toBe('auto');
   });
 
+  test('--roles [...] → roles survive yaml + sync into PG metadata', async () => {
+    // Regression pin: `dir edit --roles` silently accepted the flag but the
+    // sync layer dropped roles on the way from yaml → PG, and `roleToEntry`
+    // hardcoded `roles: []` on read. Roles must now round-trip through the
+    // full yaml-first flow and be visible via `directory.get()`.
+    const agentDir = seedAgent('roles-agent', '---\npromptMode: append\n---');
+
+    await editAgentYaml('roles-agent', agentDir, {
+      roles: ['team-lead', 'engineer', 'reviewer', 'qa'],
+    });
+
+    const parsed = await parseAgentYaml(join(agentDir, 'agent.yaml'));
+    expect(parsed.roles).toEqual(['team-lead', 'engineer', 'reviewer', 'qa']);
+
+    const entry = await directory.get('roles-agent');
+    expect(entry!.roles).toEqual(['team-lead', 'engineer', 'reviewer', 'qa']);
+  });
+
   test('yaml write happens BEFORE db write — file wins if sync skipped', async () => {
     // Assertion: if we write the yaml but skip the sync step, the file on
     // disk reflects the edit immediately. This pins the "file is source of

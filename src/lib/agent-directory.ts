@@ -510,7 +510,7 @@ function roleToEntry(
     dir: (metadata?.dir as string) || '',
     promptMode: (metadata?.promptMode as PromptMode) || 'append',
     model: metadata?.model as string | undefined,
-    roles: [],
+    roles: Array.isArray(metadata?.roles) ? (metadata.roles as string[]) : [],
     registeredAt,
     description: metadata?.description as string | undefined,
     color: metadata?.color as string | undefined,
@@ -535,6 +535,7 @@ function buildMetadata(entry: DirectoryEntry): Record<string, unknown> {
   if (entry.description) meta.description = entry.description;
   if (entry.color) meta.color = entry.color;
   if (entry.provider) meta.provider = entry.provider;
+  if (entry.roles && entry.roles.length > 0) meta.roles = entry.roles;
   if (entry.permissions) meta.permissions = entry.permissions;
   if (entry.disallowedTools) meta.disallowedTools = entry.disallowedTools;
   if (entry.omniScopes) meta.omniScopes = entry.omniScopes;
