@@ -18,15 +18,17 @@
  *   2. No agent on the team has an executor in `running` / `spawning` state
  *      within the last `idleMinutes` window (default 10 — double pattern-5's
  *      5min so the two detectors span different windows).
- *   3. The worktree at `teams.worktree_path` exists on disk AND has
- *      `git rev-list --count origin/<base_branch>..HEAD > 0` — real unpushed
- *      work exists.
+ *   3. The git probe returns `ok:true` with `branch_ahead_count > 0` — real
+ *      unpushed work exists on disk. Missing worktrees, missing base_branch,
+ *      timeouts, and non-zero git exits all degrade to `ok:false` and are
+ *      silently skipped (row stays eligible for the next tick).
  *
  * Behaviour:
- *   - `query()` reads candidate teams, filters in-memory by liveness + path
- *     sanity, caps at `maxTeamsPerTick` (default 32), and probes git for
- *     each survivor.
- *   - `shouldFire()` true when at least one probed team has aheadCount > 0.
+ *   - `query()` reads candidate teams, filters in-memory by liveness, caps
+ *     probed batch at `maxTeamsPerTick` (default 32), and probes git for each
+ *     survivor. Idle rows beyond the cap are counted as stragglers and
+ *     surfaced via `total_stalled_teams` so the operator sees backlog depth.
+ *   - `shouldFire()` true when at least one probed team has branch_ahead_count > 0.
  *   - `render()` emits one `rot.detected` per tick for the first stalled team,
  *     carrying the evidence an operator needs for a one-liner salvage.
  *
@@ -64,15 +66,19 @@ const DEFAULT_GIT_TIMEOUT_MS = 3_000;
  * in-memory against the idleness threshold before probing git. Exported so
  * tests can type-check fixtures without reaching into private internals.
  */
-export interface CandidateTeamRow {
+export interface TeamUnpushedRow {
   /** PG teams.name — also the subject of the emitted event. */
-  readonly name: string;
+  readonly team_name: string;
   /** Current teams.status — carried through to evidence so operators can triage. */
   readonly status: string;
   /** Absolute path to the team's worktree on disk. */
   readonly worktree_path: string;
-  /** base_branch the worktree was cut from. Empty string tolerated as "malformed". */
-  readonly base_branch: string;
+  /** base_branch the worktree was cut from. Null tolerated — probe degrades to ok:false. */
+  readonly base_branch: string | null;
+  /** Current team-lead agent id (if any). Advisory — used only for evidence. */
+  readonly lead_agent_id: string | null;
+  /** Current team-lead executor/agent state. Evidence only; null when unknown. */
+  readonly lead_state: string | null;
   /** Epoch-ms of the most recent `running`/`spawning` activity across the team; null when never seen. */
   readonly last_executor_active_ms: number | null;
   /** Epoch-ms the query was run — used to compute `minutes_since_active` deterministically. */
@@ -81,41 +87,42 @@ export interface CandidateTeamRow {
 
 /**
  * Result of the per-team git probe. `ok=false` covers every non-happy path
- * (timeout, missing worktree, non-zero exit, parse error). The detector
- * treats `ok=false` as "unknown → do not fire" and moves on — the row stays
- * eligible for the next tick.
+ * (timeout, missing worktree, malformed base_branch, non-zero exit, parse
+ * error). The detector treats `ok=false` as "unknown → do not fire" and moves
+ * on — the row stays eligible for the next tick.
  */
 export interface GitProbeResult {
   /** True when the probe produced a usable answer. False degrades to "do not fire". */
   readonly ok: boolean;
   /** Count of commits on HEAD that are not in origin/<base_branch>. */
-  readonly aheadCount: number;
-  /** ISO-8601 timestamp of the tip commit, or null when the probe could not read it. */
-  readonly lastCommitAt: string | null;
+  readonly branch_ahead_count: number;
+  /** Epoch-ms of the tip commit, or null when the probe could not read it. */
+  readonly last_commit_ms: number | null;
+  /** Optional error label — purely informational, never emitted in payload. */
+  readonly error?: string;
 }
 
 /** Injected git probe contract — production default shells out to `git`. */
-export type GitProbeFn = (worktreePath: string, baseBranch: string) => Promise<GitProbeResult>;
-
-/** Injected fs existence probe — tests inject deterministic stubs. */
-export type FsExistsFn = (path: string) => boolean;
+export type GitProbeFn = (row: TeamUnpushedRow) => Promise<GitProbeResult>;
 
 /** Shape of a single team after all three predicates have been confirmed via git. */
 interface StalledTeamRow {
-  readonly row: CandidateTeamRow;
-  readonly aheadCount: number;
-  readonly lastCommitAt: string | null;
+  readonly row: TeamUnpushedRow;
+  readonly branchAheadCount: number;
+  readonly lastCommitMs: number | null;
 }
 
 export interface TeamUnpushedOrphanedWorktreeState {
   /** Rows the detector confirmed ALL three predicates for. render() picks stalled[0]. */
   readonly stalled: ReadonlyArray<StalledTeamRow>;
+  /** Count of idle candidates that were capped out of this tick (still stalled, not probed). */
+  readonly idleUnprobed: number;
   /** Configured threshold (used in evidence). */
   readonly idleMinutes: number;
 }
 
-/** Default fs check — stat as directory. Tests bypass this via `fsExists`. */
-function defaultFsExists(path: string): boolean {
+/** Default fs check — stat as directory. Tests bypass this via the injected gitProbe. */
+function defaultWorktreeExists(path: string): boolean {
   try {
     return statSync(path).isDirectory();
   } catch {
@@ -136,34 +143,46 @@ function runGit(cwd: string, args: string[], timeoutMs: number): Promise<string>
   });
 }
 
+/** Invoke the ahead+tip probes and package them as a `GitProbeResult`. */
+async function probeWorktree(worktreePath: string, baseBranch: string, timeoutMs: number): Promise<GitProbeResult> {
+  const aheadStr = await runGit(worktreePath, ['rev-list', '--count', `origin/${baseBranch}..HEAD`], timeoutMs);
+  const aheadCount = Number.parseInt(aheadStr, 10);
+  if (!Number.isFinite(aheadCount)) {
+    return { ok: false, branch_ahead_count: 0, last_commit_ms: null, error: 'parse_error' };
+  }
+  if (aheadCount <= 0) {
+    return { ok: true, branch_ahead_count: 0, last_commit_ms: null };
+  }
+  const tipIso = await runGit(worktreePath, ['log', '-1', '--format=%cI', 'HEAD'], timeoutMs);
+  const tipMs = tipIso ? Date.parse(tipIso) : Number.NaN;
+  return {
+    ok: true,
+    branch_ahead_count: aheadCount,
+    last_commit_ms: Number.isFinite(tipMs) ? tipMs : null,
+  };
+}
+
 /** Build a production git probe bound to a timeout. Factored out so tests inject their own. */
 function makeDefaultGitProbe(gitTimeoutMs: number): GitProbeFn {
-  return async (worktreePath, baseBranch) => {
+  return async (row) => {
+    if (!row.base_branch || !row.worktree_path) {
+      return { ok: false, branch_ahead_count: 0, last_commit_ms: null, error: 'malformed_path' };
+    }
+    if (!defaultWorktreeExists(row.worktree_path)) {
+      return { ok: false, branch_ahead_count: 0, last_commit_ms: null, error: 'missing_worktree' };
+    }
     try {
-      const aheadStr = await runGit(
-        worktreePath,
-        ['rev-list', '--count', `origin/${baseBranch}..HEAD`],
-        gitTimeoutMs,
-      );
-      const aheadCount = Number.parseInt(aheadStr, 10);
-      if (!Number.isFinite(aheadCount)) {
-        return { ok: false, aheadCount: 0, lastCommitAt: null };
-      }
-      if (aheadCount <= 0) {
-        return { ok: true, aheadCount: 0, lastCommitAt: null };
-      }
-      const tipIso = await runGit(worktreePath, ['log', '-1', '--format=%cI', 'HEAD'], gitTimeoutMs);
-      return { ok: true, aheadCount, lastCommitAt: tipIso || null };
-    } catch {
-      return { ok: false, aheadCount: 0, lastCommitAt: null };
+      return await probeWorktree(row.worktree_path, row.base_branch, gitTimeoutMs);
+    } catch (err) {
+      const error = (err as NodeJS.ErrnoException | undefined)?.code ?? 'probe_error';
+      return { ok: false, branch_ahead_count: 0, last_commit_ms: null, error };
     }
   };
 }
 
 export function createTeamUnpushedOrphanedWorktreeDetector(opts?: {
-  query?: () => Promise<CandidateTeamRow[]>;
+  query?: () => Promise<TeamUnpushedRow[]>;
   gitProbe?: GitProbeFn;
-  fsExists?: FsExistsFn;
   idleMinutes?: number;
   maxTeamsPerTick?: number;
   gitTimeoutMs?: number;
@@ -175,14 +194,14 @@ export function createTeamUnpushedOrphanedWorktreeDetector(opts?: {
   const gitTimeoutMs = opts?.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
   const version = opts?.version ?? '0.1.0';
   const gitProbe = opts?.gitProbe ?? makeDefaultGitProbe(gitTimeoutMs);
-  const fsExists = opts?.fsExists ?? defaultFsExists;
 
-  const defaultQuery = async (): Promise<CandidateTeamRow[]> => {
+  const defaultQuery = async (): Promise<TeamUnpushedRow[]> => {
     const sql = await getConnection();
     // live_activity aggregates the max executor updated_at per team for the
     // running/spawning states only. We intentionally skip 'idle'/'working' —
     // those lean toward "polling quietly" which pattern-5 already covers.
     // LEFT JOIN so teams that never produced a live executor surface with NULL.
+    // Also LEFT JOIN the current team-lead agent row for evidence continuity.
     const rows = (await sql`
       WITH live_activity AS (
         SELECT a.team AS team, MAX(e.updated_at) AS last_active
@@ -191,32 +210,46 @@ export function createTeamUnpushedOrphanedWorktreeDetector(opts?: {
          WHERE a.team IS NOT NULL
            AND e.state = ANY(${sql.array([...LIVE_EXECUTOR_STATES])})
          GROUP BY a.team
+      ),
+      team_leads AS (
+        SELECT DISTINCT ON (team) team, id AS lead_agent_id, state AS lead_state
+          FROM agents
+         WHERE role = 'team-lead'
+           AND team IS NOT NULL
+         ORDER BY team, created_at DESC
       )
-      SELECT t.name                                          AS name,
+      SELECT t.name                                          AS team_name,
              t.status                                        AS status,
              t.worktree_path                                 AS worktree_path,
              t.base_branch                                   AS base_branch,
+             tl.lead_agent_id                                AS lead_agent_id,
+             tl.lead_state                                   AS lead_state,
              EXTRACT(EPOCH FROM la.last_active) * 1000       AS last_executor_active_ms,
              EXTRACT(EPOCH FROM now()) * 1000                AS now_ms
         FROM teams t
    LEFT JOIN live_activity la ON la.team = t.name
+   LEFT JOIN team_leads tl    ON tl.team = t.name
        WHERE t.status <> ALL(${sql.array([...EXEMPT_TEAM_STATUSES])})
        ORDER BY t.updated_at DESC
        LIMIT 500
     `) as unknown as Array<{
-      name: string;
+      team_name: string;
       status: string;
       worktree_path: string;
       base_branch: string | null;
+      lead_agent_id: string | null;
+      lead_state: string | null;
       last_executor_active_ms: number | string | null;
       now_ms: number | string;
     }>;
 
     return rows.map((r) => ({
-      name: r.name,
+      team_name: r.team_name,
       status: r.status,
-      worktree_path: r.worktree_path ?? '',
-      base_branch: r.base_branch ?? '',
+      worktree_path: r.worktree_path,
+      base_branch: r.base_branch,
+      lead_agent_id: r.lead_agent_id,
+      lead_state: r.lead_state,
       last_executor_active_ms: r.last_executor_active_ms === null ? null : Number(r.last_executor_active_ms),
       now_ms: Number(r.now_ms),
     }));
@@ -224,36 +257,34 @@ export function createTeamUnpushedOrphanedWorktreeDetector(opts?: {
 
   const queryFn = opts?.query ?? defaultQuery;
 
-  const isIdlePastThreshold = (row: CandidateTeamRow): boolean => {
+  const isIdlePastThreshold = (row: TeamUnpushedRow): boolean => {
     if (row.last_executor_active_ms === null) return true;
     return row.now_ms - row.last_executor_active_ms > thresholdMs;
   };
 
-  const isStructurallyValid = (row: CandidateTeamRow): boolean =>
-    row.worktree_path !== '' && row.base_branch !== '' && fsExists(row.worktree_path);
-
-  const probeOne = async (row: CandidateTeamRow): Promise<StalledTeamRow | null> => {
-    const probe = await gitProbe(row.worktree_path, row.base_branch);
-    if (!probe.ok || probe.aheadCount <= 0) return null;
-    return { row, aheadCount: probe.aheadCount, lastCommitAt: probe.lastCommitAt };
+  const probeOne = async (row: TeamUnpushedRow): Promise<StalledTeamRow | null> => {
+    const probe = await gitProbe(row);
+    if (!probe.ok || probe.branch_ahead_count <= 0) return null;
+    return { row, branchAheadCount: probe.branch_ahead_count, lastCommitMs: probe.last_commit_ms };
   };
 
   return {
     id: 'rot.team-unpushed-orphaned-worktree',
     version,
-    riskClass: 'medium',
+    riskClass: 'low',
     async query(): Promise<TeamUnpushedOrphanedWorktreeState> {
       const candidates = await queryFn();
-      const probable = candidates.filter((r) => isIdlePastThreshold(r) && isStructurallyValid(r));
+      const idle = candidates.filter(isIdlePastThreshold);
       // Cap probe batch so one runaway tick cannot spawn hundreds of git
       // subprocesses. Stragglers re-evaluate next tick.
-      const batch = probable.slice(0, maxTeamsPerTick);
+      const batch = idle.slice(0, maxTeamsPerTick);
+      const idleUnprobed = idle.length - batch.length;
       const stalled: StalledTeamRow[] = [];
       for (const row of batch) {
         const result = await probeOne(row);
         if (result !== null) stalled.push(result);
       }
-      return { stalled, idleMinutes };
+      return { stalled, idleUnprobed, idleMinutes };
     },
     shouldFire(state: TeamUnpushedOrphanedWorktreeState): boolean {
       return state.stalled.length > 0;
@@ -265,23 +296,30 @@ export function createTeamUnpushedOrphanedWorktreeDetector(opts?: {
         row.last_executor_active_ms === null ? null : Math.floor((row.now_ms - row.last_executor_active_ms) / 60_000);
       const lastExecutorActiveIso =
         row.last_executor_active_ms === null ? null : new Date(row.last_executor_active_ms).toISOString();
+      const lastCommitIso = first.lastCommitMs === null ? null : new Date(first.lastCommitMs).toISOString();
+      // Total reflects both the probed-and-confirmed rows AND the idle rows
+      // we capped out of this tick. Operators reading the payload see how much
+      // work is queued for subsequent ticks.
+      const totalStalledTeams = state.stalled.length + state.idleUnprobed;
       return {
         type: 'rot.detected',
-        subject: row.name,
+        subject: row.team_name,
         payload: {
           pattern_id: 'pattern-9-team-unpushed-orphaned-worktree',
-          entity_id: row.name,
+          entity_id: row.team_name,
           observed_state_json: {
-            team_name: row.name,
+            team_name: row.team_name,
             team_status: row.status,
             worktree_path: row.worktree_path,
-            base_branch: row.base_branch,
-            branch_ahead_count: first.aheadCount,
-            last_commit_at: first.lastCommitAt,
+            base_branch: row.base_branch ?? '',
+            branch_ahead_count: first.branchAheadCount,
+            last_commit_at: lastCommitIso,
             last_executor_active_at: lastExecutorActiveIso,
             minutes_since_active: minutesSinceActive,
             threshold_minutes: state.idleMinutes,
-            total_stalled_teams: state.stalled.length,
+            lead_agent_id: row.lead_agent_id,
+            lead_state: row.lead_state,
+            total_stalled_teams: totalStalledTeams,
           },
         },
       };
