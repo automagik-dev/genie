@@ -45,6 +45,7 @@ import { execFile } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { getConnection } from '../lib/db.js';
 import { type DetectorEvent, type DetectorModule, registerDetector } from './index.js';
+import { teamLeadPredicate } from './shared/team-leads.js';
 
 /** Executor states that count as "alive and making progress". Matches migration 012 CHECK. */
 const LIVE_EXECUTOR_STATES = ['running', 'spawning'] as const;
@@ -214,7 +215,7 @@ export function createTeamUnpushedOrphanedWorktreeDetector(opts?: {
       team_leads AS (
         SELECT DISTINCT ON (team) team, id AS lead_agent_id, state AS lead_state
           FROM agents
-         WHERE role = 'team-lead'
+         WHERE ${teamLeadPredicate(sql)}
            AND team IS NOT NULL
          ORDER BY team, created_at DESC
       )

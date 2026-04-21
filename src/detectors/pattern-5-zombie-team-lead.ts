@@ -24,6 +24,7 @@
 
 import { getConnection } from '../lib/db.js';
 import { type DetectorEvent, type DetectorModule, registerDetector } from './index.js';
+import { teamLeadPredicate } from './shared/team-leads.js';
 
 /** Agent states that count as "alive and polling". Matches the PG CHECK constraint. */
 const ALIVE_STATES = ['spawning', 'working', 'idle', 'permission', 'question'] as const;
@@ -76,7 +77,7 @@ export function createZombieTeamLeadDetector(opts?: {
       WITH active_leads AS (
         SELECT id, team, state
           FROM agents
-         WHERE role = 'team-lead'
+         WHERE ${teamLeadPredicate(sql)}
            AND team IS NOT NULL
            AND state = ANY(${sql.array([...ALIVE_STATES])})
       ),
