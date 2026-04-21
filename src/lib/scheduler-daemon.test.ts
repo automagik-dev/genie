@@ -1817,14 +1817,20 @@ describe('scheduler-daemon', () => {
       expect(resumedAgents).toHaveLength(0);
     });
 
-    test('per-worker isPaneAlive failure does not abort recovery for remaining workers', async () => {
-      // Regression: prior to fault isolation, a single isPaneAlive throw
-      // (typically "error connecting to /tmp/tmux-.../genie" when the tmux
-      // socket is not ready yet after a reboot) aborted the entire recovery
-      // loop, leaving every subsequent worker stranded with resume_attempts=0.
+    test('per-worker isPaneAlive tmux-down failure is skipped (not counted as failed)', async () => {
+      // Regression 1: fault isolation — one isPaneAlive throw must not abort
+      // the recovery loop for remaining workers.
+      //
+      // Regression 2 (2026-04-21): when tmux is unreachable (stale socket, no
+      // server running, server exited, error connecting), we cannot probe any
+      // pane this tick. Emitting `recovery_worker_failed` at warn level per
+      // worker per tick floods scheduler.log with useless noise while the
+      // registry reconciler's dead-socket fast-path is the real recovery
+      // mechanism. This test pins the quiet-skip behaviour: the worker is
+      // skipped silently (debug event only) and does NOT count as failed.
       const workers: WorkerInfo[] = [
         {
-          id: 'agent-first-fails',
+          id: 'agent-first-tmux-down',
           paneId: '%42',
           state: 'working',
           autoResume: true,
@@ -1865,10 +1871,55 @@ describe('scheduler-daemon', () => {
       await recoverOnStartup(deps, 'daemon-1', defaultConfig);
 
       expect(resumedAgents).toEqual(['agent-second-ok']);
-      const failureLog = logs.find((l) => l.event === 'recovery_worker_failed' && l.worker_id === 'agent-first-fails');
-      expect(failureLog).toBeDefined();
+      // Tmux-down path is quiet (debug), not warn — no recovery_worker_failed.
+      const failureLog = logs.find(
+        (l) => l.event === 'recovery_worker_failed' && l.worker_id === 'agent-first-tmux-down',
+      );
+      expect(failureLog).toBeUndefined();
+      const skipLog = logs.find(
+        (l) => l.event === 'recovery_worker_skipped_tmux_down' && l.worker_id === 'agent-first-tmux-down',
+      );
+      expect(skipLog).toBeDefined();
+      expect(skipLog?.level).toBe('debug');
+      // failed_agents does NOT include tmux-down — those are transient, not failures.
       const completed = logs.find((l) => l.event === 'recovery_completed');
       expect(completed?.resumed_agents).toBe(1);
+      expect(completed?.failed_agents).toBe(0);
+    });
+
+    test('non-tmux per-worker probe error still logs recovery_worker_failed', async () => {
+      // Defense in depth: real probe bugs (PG connection reset, assertion
+      // errors, etc.) must still surface as warn-level failures so they
+      // don't hide behind the tmux-down quiet path.
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-probe-bug',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 0,
+        },
+      ];
+
+      const { deps, logs } = createMockDeps(
+        { triggers: [], runs: [] },
+        {
+          listWorkers: async () => workers,
+          isPaneAlive: async () => {
+            throw new Error('ECONNRESET while probing pane');
+          },
+          resumeAgent: async () => true,
+          updateAgent: async () => {},
+        },
+      );
+
+      await recoverOnStartup(deps, 'daemon-1', defaultConfig);
+
+      const failureLog = logs.find((l) => l.event === 'recovery_worker_failed' && l.worker_id === 'agent-probe-bug');
+      expect(failureLog).toBeDefined();
+      expect(failureLog?.level).toBe('warn');
+      const completed = logs.find((l) => l.event === 'recovery_completed');
       expect(completed?.failed_agents).toBe(1);
     });
 

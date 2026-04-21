@@ -901,6 +901,40 @@ async function handleDeadPane(
   return result === 'resumed' ? 'resumed' : 'skipped';
 }
 
+/**
+ * Distinguish "tmux server is down" from real per-worker probe failures when
+ * the recovery pass cannot verify a pane. When tmux is down we cannot do
+ * anything productive this tick — the registry reconciler's dead-socket
+ * fast-path (`isTmuxServerReachable`) will terminalize these workers once
+ * the stale socket is detected, so spamming `recovery_worker_failed` every
+ * minute per worker is pure log noise. Returns `true` if the caller should
+ * skip this worker silently.
+ */
+function handleRecoveryProbeError(deps: SchedulerDeps, daemonId: string, workerId: string, err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  const tmuxDown =
+    message.includes('no server running') || message.includes('server exited') || message.includes('error connecting');
+  if (tmuxDown) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'debug',
+      event: 'recovery_worker_skipped_tmux_down',
+      daemon_id: daemonId,
+      worker_id: workerId,
+    });
+    return true;
+  }
+  deps.log({
+    timestamp: deps.now().toISOString(),
+    level: 'warn',
+    event: 'recovery_worker_failed',
+    daemon_id: daemonId,
+    worker_id: workerId,
+    error: message,
+  });
+  return false;
+}
+
 export async function runAgentRecoveryPass(
   deps: SchedulerDeps,
   daemonId: string,
@@ -929,16 +963,8 @@ export async function runAgentRecoveryPass(
       if (outcome === 'resumed') resumed++;
       else if (outcome === 'terminalized') terminalized++;
     } catch (err) {
+      if (handleRecoveryProbeError(deps, daemonId, worker.id, err)) continue;
       failed++;
-      const message = err instanceof Error ? err.message : String(err);
-      deps.log({
-        timestamp: deps.now().toISOString(),
-        level: 'warn',
-        event: 'recovery_worker_failed',
-        daemon_id: daemonId,
-        worker_id: worker.id,
-        error: message,
-      });
     }
   }
 

@@ -20,7 +20,7 @@ import { recordAuditEvent } from './audit.js';
 import { type Sql, getConnection } from './db.js';
 import type { AgentIdentity, ExecutorState } from './executor-types.js';
 import type { ProviderName } from './provider-adapters.js';
-import { isPaneAlive, isTmuxSocketAlive } from './tmux.js';
+import { isPaneAlive, isTmuxServerReachable } from './tmux.js';
 
 /**
  * Resolve the tmux socket name a worker row is expected to live on.
@@ -374,7 +374,12 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
     const liveSpawning: SpawningRow[] = [];
     const liveActive: ActiveRow[] = [];
     for (const [socketName, bucket] of socketBuckets) {
-      if (isTmuxSocketAlive(socketName)) {
+      // `isTmuxSocketAlive` returns true for orphaned socket files left after
+      // an ungraceful tmux exit, which would cause the per-row probe branch
+      // below to loop forever on `TmuxUnreachableError`. `isTmuxServerReachable`
+      // actually talks to the server (cheap `list-sessions` exec) so we can
+      // distinguish a live socket from a zombie one.
+      if (await isTmuxServerReachable(socketName)) {
         liveSpawning.push(...bucket.spawning);
         liveActive.push(...bucket.active);
         continue;

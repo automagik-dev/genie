@@ -35,12 +35,38 @@ import { waitForAgentReady } from '../lib/spawn-command.js';
 import * as teamManager from '../lib/team-manager.js';
 import { genieTmuxCmd, prependEnvVars } from '../lib/tmux-wrapper.js';
 import * as tmux from '../lib/tmux.js';
-import { executeTmux, isPaneAlive } from '../lib/tmux.js';
+import { TmuxUnreachableError, executeTmux, isPaneAlive } from '../lib/tmux.js';
 import { findWorkspace, getWorkspaceConfig } from '../lib/workspace.js';
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/**
+ * Wrap `isPaneAlive` so tmux-unreachable errors (stale socket, server crashed,
+ * tmux not yet ready during early boot) degrade to "pane is dead" instead of
+ * bubbling up as a raw CLI crash. The registry reconciler's dead-socket
+ * fast-path is the real recovery mechanism for these rows — user-facing
+ * commands should render / spawn / resume as if the pane is gone.
+ *
+ * Preserve throw semantics for non-tmux errors so genuine bugs still surface.
+ */
+async function isPaneAliveOrDead(paneId: string): Promise<boolean> {
+  try {
+    return await isPaneAlive(paneId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      err instanceof TmuxUnreachableError ||
+      message.includes('no server running') ||
+      message.includes('server exited') ||
+      message.includes('error connecting')
+    ) {
+      return false;
+    }
+    throw err;
+  }
+}
 
 /**
  * Resolve the leader name for a team from team config.
@@ -1330,7 +1356,10 @@ export async function findDeadResumable(team: string, role: string): Promise<reg
   // excludes them by construction (SDK uses provider='claude-sdk'). Only
   // tmux-resumable Claude-CLI agents reach `isPaneAlive`, so a plain paneId
   // check is correct here — no transport dispatch needed.
-  const alive = await isPaneAlive(candidate.paneId);
+  //
+  // `isPaneAliveOrDead` swallows TmuxUnreachableError → dead, so a zombie
+  // tmux socket doesn't crash the spawn path.
+  const alive = await isPaneAliveOrDead(candidate.paneId);
   return alive ? null : candidate;
 }
 
@@ -1838,7 +1867,30 @@ export async function resolveSpawnIdentity(
     };
   }
 
-  const alive = existing.pane_id ? await isAliveFn({ id: existing.id, paneId: existing.pane_id }) : false;
+  // `isAliveFn` routes to `isPaneAlive` for tmux workers, which throws
+  // `TmuxUnreachableError` when the tmux server is down (e.g. crashed with a
+  // stale socket file still on disk). In that state we cannot verify the pane,
+  // but the worker is functionally dead for the purposes of spawning — treat
+  // it as such so `genie agent spawn` proceeds to the canonical-recovery
+  // branch instead of crashing with a raw tmux stderr.
+  let alive = false;
+  if (existing.pane_id) {
+    try {
+      alive = await isAliveFn({ id: existing.id, paneId: existing.pane_id });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        err instanceof TmuxUnreachableError ||
+        message.includes('no server running') ||
+        message.includes('server exited') ||
+        message.includes('error connecting')
+      ) {
+        alive = false;
+      } else {
+        throw err;
+      }
+    }
+  }
   if (!alive) {
     // findDeadResumable is the canonical resume path. If it didn't fire, the
     // existing row lacks a claudeSessionId or isn't a Claude row; creating a
@@ -2208,7 +2260,7 @@ export async function handleWorkerStop(name: string): Promise<void> {
 async function isResumeEligible(w: registry.Agent): Promise<boolean> {
   if (!w.claudeSessionId) return false;
   if (w.state === 'done') return false;
-  const paneAlive = await isPaneAlive(w.paneId);
+  const paneAlive = await isPaneAliveOrDead(w.paneId);
   // Suspended/error agents with dead panes are always eligible
   if ((w.state === 'suspended' || w.state === 'error') && !paneAlive) return true;
   // Working/idle/spawning agents whose panes died (crash) are also eligible
@@ -2268,7 +2320,7 @@ export async function handleWorkerResume(
     process.exit(1);
   }
 
-  if (await isPaneAlive(w.paneId)) {
+  if (await isPaneAliveOrDead(w.paneId)) {
     console.log(`Agent "${w.id}" is already running (pane ${w.paneId} is alive).`);
     return;
   }
@@ -2578,7 +2630,7 @@ type WorkerStatus = {
  */
 async function resolveWorkerLiveness(w: registry.Agent): Promise<{ alive: boolean; state: string }> {
   if (/^%\d+$/.test(w.paneId)) {
-    return { alive: await isPaneAlive(w.paneId), state: w.state };
+    return { alive: await isPaneAliveOrDead(w.paneId), state: w.state };
   }
   const execState = await executorRegistry.getLiveExecutorState(w.id);
   return { alive: execState !== null, state: execState ?? w.state };

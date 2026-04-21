@@ -566,20 +566,27 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     });
 
     test('dead socket reconciliation preserves existing behavior on live sockets', async () => {
-      // Sanity check: when the tmux socket DOES exist, the dead-socket
-      // fast path must not fire — workers must go through the normal
-      // per-pane isPaneAlive check (which remains transient-blip-safe).
-      // We force the socket to appear alive by pointing GENIE_TMUX_SOCKET
-      // at a socket file we create in /tmp/tmux-<uid>/.
-      const { existsSync, mkdirSync, writeFileSync, unlinkSync } = await import('node:fs');
-      const { join } = await import('node:path');
-      const { tmpdir } = await import('node:os');
-      const uid = process.getuid?.() ?? 501;
-      const socketDir = `/tmp/tmux-${uid}`;
-      const stubSocketName = `genie-live-stub-${Date.now()}`;
-      const stubPath = join(socketDir, stubSocketName);
-      mkdirSync(socketDir, { recursive: true });
-      writeFileSync(stubPath, '');
+      // Sanity check: when the tmux socket DOES exist AND the server is
+      // actually accepting commands, the dead-socket fast path must not
+      // fire — workers must go through the normal per-pane isPaneAlive
+      // check (which remains transient-blip-safe).
+      //
+      // The reconciler's reachability probe (`isTmuxServerReachable`, added
+      // 2026-04-21) actually talks to the server (`tmux -L <sock>
+      // list-sessions`) instead of just `existsSync` on the socket file, so
+      // a zero-byte placeholder no longer counts as "live". We spin up a
+      // real tmux server on a throwaway socket to exercise the live branch.
+      const { execSync, spawnSync } = await import('node:child_process');
+      const stubSocketName = `genie-live-real-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      try {
+        spawnSync('tmux', ['-L', stubSocketName, 'new-session', '-d', '-s', 'probe'], {
+          stdio: 'ignore',
+          timeout: 3000,
+        });
+      } catch {
+        // tmux missing → skip gracefully (CI sandbox without tmux).
+        return;
+      }
       process.env.GENIE_TMUX_SOCKET = stubSocketName;
       try {
         // A fresh (recent) idle row: must NOT be reset because the socket
@@ -601,13 +608,69 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         // biome-ignore lint/performance/noDelete: assigning undefined would set the string "undefined"
         delete process.env.GENIE_TMUX_SOCKET;
         try {
-          unlinkSync(stubPath);
+          execSync(`tmux -L ${stubSocketName} kill-server`, { stdio: 'ignore' });
         } catch {
           /* best-effort cleanup */
         }
-        // silence unused-import warnings if any
-        void existsSync;
-        void tmpdir;
+      }
+    });
+
+    test('flips workers on a zombie socket (file exists, server dead) to error (2026-04-21 regression)', async () => {
+      // Repro for the "genie agent spawn crashes with no server running" bug
+      // we shipped on dev on 2026-04-21: when tmux dies ungracefully it leaves
+      // its socket file on disk. `isTmuxSocketAlive` (pure existsSync) reports
+      // the socket as live, the reconciler tries to probe panes, every probe
+      // throws `TmuxUnreachableError`, nothing is ever reset. After the fix
+      // the reconciler uses `isTmuxServerReachable` which actually talks to
+      // the server, so the dead-socket fast path fires.
+      const { writeFileSync, unlinkSync } = await import('node:fs');
+      const { execSync, spawnSync } = await import('node:child_process');
+      const uid = process.getuid?.() ?? 501;
+      const zombieSocketName = `genie-zombie-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      const zombiePath = `/tmp/tmux-${uid}/${zombieSocketName}`;
+      // Start + immediately kill a real tmux server to produce a socket file
+      // that a live server is NOT listening on. Plain `writeFileSync` would
+      // also work but using real tmux proves the scenario end-to-end.
+      try {
+        spawnSync('tmux', ['-L', zombieSocketName, 'new-session', '-d', '-s', 'z'], {
+          stdio: 'ignore',
+          timeout: 3000,
+        });
+        execSync(`tmux -L ${zombieSocketName} kill-server`, { stdio: 'ignore' });
+      } catch {
+        return; // tmux missing → skip
+      }
+      // Recreate the socket file if tmux removed it on kill-server (it does).
+      try {
+        writeFileSync(zombiePath, '');
+      } catch {
+        /* may fail if path doesn't exist; the test just won't trigger the bug */
+      }
+      process.env.GENIE_TMUX_SOCKET = zombieSocketName;
+      try {
+        const oldChange = new Date(Date.now() - 5_000).toISOString();
+        await register(
+          makeAgent({
+            id: 'zombie-socket-worker',
+            paneId: '%7777',
+            state: 'working',
+            startedAt: oldChange,
+            lastStateChange: oldChange,
+          }),
+        );
+        const reset = await reconcileStaleSpawns(2);
+        expect(reset).toContain('zombie-socket-worker');
+        const a = await get('zombie-socket-worker');
+        expect(a!.state).toBe('error');
+        expect(a!.paneId).toBe('');
+      } finally {
+        // biome-ignore lint/performance/noDelete: assigning undefined would set the string "undefined"
+        delete process.env.GENIE_TMUX_SOCKET;
+        try {
+          unlinkSync(zombiePath);
+        } catch {
+          /* best-effort */
+        }
       }
     });
   });
