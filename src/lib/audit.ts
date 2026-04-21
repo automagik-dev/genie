@@ -82,7 +82,14 @@ export async function queryAuditEvents(options: AuditQueryOptions = {}): Promise
   let paramIdx = 1;
 
   if (options.type) {
-    conditions.push(`event_type = $${paramIdx++}`);
+    // Historically `--type` only matched `event_type`, which silently
+    // dropped OTel-sourced rows (they set `entity_type='otel_tool'` etc.
+    // but carry a generic `event_type` like `otel_event`). Widen to
+    // match either column so `--type otel_tool` does the obvious thing.
+    // Closes #1259 bug 1. Strictly non-regressive — every prior match
+    // still matches; the filter just returns a superset.
+    conditions.push(`(event_type = $${paramIdx} OR entity_type = $${paramIdx})`);
+    paramIdx++;
     values.push(options.type);
   }
   if (options.entity) {
@@ -140,7 +147,11 @@ export async function followAuditEvents(
     let paramIdx = 2;
 
     if (options.type) {
-      conditions.push(`event_type = $${paramIdx++}`);
+      // Match the widened semantics from queryAuditEvents — `--type`
+      // hits both `event_type` and `entity_type` so OTel-sourced rows
+      // flow through the follow path too. Closes #1259 bug 1.
+      conditions.push(`(event_type = $${paramIdx} OR entity_type = $${paramIdx})`);
+      paramIdx++;
       values.push(options.type);
     }
     if (options.entity) {

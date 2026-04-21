@@ -84,6 +84,30 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       }
     });
 
+    test('matches entity_type on --type (regression: #1259 bug 1)', async () => {
+      // OTel-sourced rows set `entity_type='otel_tool'` but carry a
+      // generic `event_type` like `otel_event`. Before the fix, `--type
+      // otel_tool` returned [] because the filter only matched
+      // `event_type`. Now both columns are matched — the row flows
+      // through `events list --type otel_tool` as the user expects.
+      await recordAuditEvent('otel_tool', 'Bash-123', 'otel_event', 'test', { tool_name: 'Bash' });
+
+      const events = await queryAuditEvents({ type: 'otel_tool', since: '1h' });
+      const hit = events.find((e) => e.entity_type === 'otel_tool' && e.entity_id === 'Bash-123');
+      expect(hit).toBeDefined();
+      expect(hit?.event_type).toBe('otel_event');
+    });
+
+    test('--type still matches event_type (no regression)', async () => {
+      // Explicit assertion that the widening didn't break the original
+      // semantics — a caller filtering `--type command_start` still
+      // gets event_type='command_start' rows.
+      await recordAuditEvent('command', 'sanity', 'command_start', 'test');
+      const events = await queryAuditEvents({ type: 'command_start', since: '1h' });
+      const hit = events.find((e) => e.entity_id === 'sanity' && e.event_type === 'command_start');
+      expect(hit).toBeDefined();
+    });
+
     test('filters by entity', async () => {
       const events = await queryAuditEvents({ entity: 'command', since: '1h' });
       for (const e of events) {
