@@ -5,6 +5,9 @@
 | **Status** | DRAFT |
 | **Slug** | `team-unpushed-orphaned-worktree` |
 | **Date** | 2026-04-21 |
+| **Author** | felipe |
+| **Appetite** | medium |
+| **Branch** | `team-unpushed-orphaned-worktree` |
 | **Issue** | #1250 — team-create autonomous PR teams complete work but never push branches; no detector fires |
 | **Siblings** | `pattern-5-zombie-team-lead` (nearest neighbor; different failure mode — alive-but-idle vs dead-with-WIP) |
 
@@ -135,10 +138,18 @@ Two waves, parallel where possible.
   - `render()` emits `rot.detected` with `pattern_id: 'pattern-9-team-unpushed-orphaned-worktree'` and the documented evidence shape
   - Side-effect `registerDetector(createTeamUnpushedOrphanedWorktreeDetector())` at module tail
 
+**Acceptance Criteria:**
+- [ ] All three predicates enforced: non-terminal team status, no live executor within the idle window, `branch_ahead_count > 0`.
+- [ ] Probe degradation is total — every non-happy path returns `ok:false` and never throws up the stack.
+- [ ] Event payload carries the full evidence shape (team_name, status, worktree_path, base_branch, branch_ahead_count, last_commit_at, last_executor_active_at, minutes_since_active, threshold_minutes, lead_agent_id, lead_state, total_stalled_teams).
+- [ ] Factory exposes `query`, `gitProbe`, `idleMinutes`, `maxTeamsPerTick`, `gitTimeoutMs`, `version` knobs so tests can drive deterministic timing.
+
 **Validation:**
-- Typecheck clean
-- Lint clean (keep cognitive complexity ≤ 15)
-- Module loads without throwing when required at process start
+```bash
+bun run typecheck && bun run lint
+```
+
+**depends-on:** none
 
 ### Group 2: Tests — `pattern-9-team-unpushed-orphaned-worktree.test.ts`
 
@@ -148,9 +159,18 @@ Two waves, parallel where possible.
 - `src/detectors/__tests__/pattern-9-team-unpushed-orphaned-worktree.test.ts`
 - Reusable `__fixtures__/fake-git-probe.ts` if a factored helper makes the other pattern tests cleaner (optional — only if it reduces duplication)
 
+**Acceptance Criteria:**
+- [ ] Every scenario from the Success Criteria table has a matching test with the injected `query` + `gitProbe` fakes.
+- [ ] No test shells out to real `git`; no test talks to a real Postgres instance.
+- [ ] Negative paths covered: terminal-status exemption, live-executor bypass, `branch_ahead_count == 0`, probe `ok:false` degradation, `idleUnprobed` cap behaviour.
+- [ ] Full `bun test src/detectors/` suite stays green — no regression to patterns 1-8.
+
 **Validation:**
-- `bun test src/detectors/__tests__/pattern-9-team-unpushed-orphaned-worktree.test.ts` — all 9 pass
-- `bun test src/detectors/` — full suite still green (no regression)
+```bash
+bun test src/detectors/__tests__/pattern-9-team-unpushed-orphaned-worktree.test.ts && bun test src/detectors/
+```
+
+**depends-on:** Group 1
 
 ### Group 3: Docs — runbook entry
 
@@ -159,6 +179,18 @@ Two waves, parallel where possible.
 **Deliverables:**
 - New section in `docs/detectors/runbook.md` under the existing detector list
 - Shape: ID, trigger, evidence fields, operator action, severity, related events
+
+**Acceptance Criteria:**
+- [ ] Runbook section exists and is linked from the detector index.
+- [ ] Section documents: detector ID, the three firing predicates, every evidence field emitted, the suggested operator salvage command, severity (`low`), and related detectors (pattern-5 sibling).
+- [ ] Terminology matches the code: field names are identical (`branch_ahead_count`, `minutes_since_active`, `total_stalled_teams`, etc.).
+
+**Validation:**
+```bash
+test -f docs/detectors/runbook.md && grep -q 'pattern-9-team-unpushed-orphaned-worktree' docs/detectors/runbook.md
+```
+
+**depends-on:** Group 1
 
 ### Group 4: Review
 
@@ -169,6 +201,19 @@ Two waves, parallel where possible.
 - `bun run check` green
 - No cognitive-complexity regressions in `pattern-9-*.ts`
 - Docs entry renders correctly in Mintlify
+
+**Acceptance Criteria:**
+- [ ] Every Success Criteria item (SC 1-10) has an explicit pass/fail verdict from the reviewer.
+- [ ] `bun run check` completes without errors or new warnings.
+- [ ] Cognitive complexity of the detector module stays at or below the pre-existing ceiling (≤ 15 per function).
+- [ ] Mintlify preview renders the new runbook section without layout breakage.
+
+**Validation:**
+```bash
+bun run check
+```
+
+**depends-on:** Group 1, Group 2, Group 3
 
 ## Non-goals & follow-up wishes
 
