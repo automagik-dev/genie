@@ -76,6 +76,38 @@ async function defaultAuditInsert(tx: Sql, p: AuditPayload): Promise<void> {
   `;
 }
 
+/**
+ * Close out an agent's rows in the turn-close transaction.
+ *
+ * Flips the identity row's state to 'done' directly via the executor's
+ * agent_id FK (not the reverse-FK sweep used pre-2026-04-21, which missed
+ * dual-row legacy pairs and left name-keyed rows in state='spawning' that
+ * reconcile then resurrected — see turn-session-contract Review Results
+ * Gap #1).
+ *
+ * Also defensively sweeps any legacy name-keyed row sharing (custom_name, team)
+ * so the dual-row pattern on pre-unification instances closes cleanly. Legacy
+ * rows have `id = custom_name` and `custom_name IS NULL` (the partial unique
+ * index `idx_agents_custom_name_team` blocks two rows from sharing non-null
+ * custom_name), so the legacy row is addressable by id=${ident.custom_name}.
+ * Becomes a no-op when `agents-runtime-extraction` lands.
+ */
+async function terminalizeAgentRows(tx: Sql, agentId: string): Promise<void> {
+  const identRows = await tx<{ custom_name: string | null; team: string | null }[]>`
+    UPDATE agents
+    SET state = 'done', current_executor_id = NULL
+    WHERE id = ${agentId}
+    RETURNING custom_name, team
+  `;
+  const ident = identRows[0];
+  if (!ident?.custom_name || !ident?.team || ident.custom_name === agentId) return;
+  await tx`
+    UPDATE agents
+    SET state = 'done', current_executor_id = NULL
+    WHERE id = ${ident.custom_name} AND team = ${ident.team}
+  `;
+}
+
 export async function turnClose(opts: TurnCloseOpts): Promise<TurnCloseResult> {
   if ((opts.outcome === 'blocked' || opts.outcome === 'failed') && !opts.reason?.trim()) {
     throw new Error(`turnClose: --reason is required for outcome '${opts.outcome}'`);
@@ -170,11 +202,7 @@ export async function turnClose(opts: TurnCloseOpts): Promise<TurnCloseResult> {
       WHERE id = ${effectiveId}
     `;
 
-    await tx`
-      UPDATE agents
-      SET current_executor_id = NULL
-      WHERE current_executor_id = ${effectiveId}
-    `;
+    await terminalizeAgentRows(tx, row.agent_id);
 
     await auditInsert(tx, {
       executorId: effectiveId,

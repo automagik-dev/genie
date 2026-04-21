@@ -857,6 +857,34 @@ type RecoveryMode = 'boot' | 'sweep';
  * preserved across reboot). The turn-aware rules exist for periodic
  * sweeps, where "idle + dead" is a ghost-loop precursor.
  */
+/**
+ * Gap #2 (turn-session-contract): boot-mode reconciler's D1/D3 bypass resurrects
+ * properly-closed agents across daemon restart. Returns true when the agent's
+ * current executor is already terminal (closed_at set OR outcome set), meaning an
+ * explicit close verb OR pane-exit trap already fired. Caller should skip resume.
+ *
+ * Never throws — a transient PG error returns false so the worker falls back to
+ * legacy resume behavior. Errs on the side of attempting resume (mirrors the
+ * pre-fix default) rather than silently dropping a legitimate mid-turn crash.
+ */
+async function isLegitimatelyClosed(deps: SchedulerDeps, worker: WorkerInfo): Promise<boolean> {
+  try {
+    const sql = await deps.getConnection();
+    const agentRows = await sql<{ current_executor_id: string | null }[]>`
+      SELECT current_executor_id FROM agents WHERE id = ${worker.id}
+    `;
+    const executorId = agentRows[0]?.current_executor_id;
+    if (!executorId) return false;
+    const execRows = await sql<{ closed_at: Date | null; outcome: string | null }[]>`
+      SELECT closed_at, outcome FROM executors WHERE id = ${executorId}
+    `;
+    if (execRows.length === 0) return false;
+    return execRows[0].closed_at !== null || execRows[0].outcome !== null;
+  } catch {
+    return false;
+  }
+}
+
 async function handleDeadPane(
   deps: SchedulerDeps,
   config: SchedulerConfig,
@@ -866,6 +894,20 @@ async function handleDeadPane(
   mode: RecoveryMode,
 ): Promise<RecoveryOutcome> {
   if (mode === 'boot') {
+    // Gap #2 fix: before resuming, check if the agent's executor is already
+    // terminal. Otherwise we resurrect agents that called `genie done` before
+    // the daemon restarted (2026-04-21 live regression in turn-session-contract-genie team).
+    if (turnAware && (await isLegitimatelyClosed(deps, worker))) {
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'debug',
+        event: 'agent_resume_skipped_boot_terminal',
+        daemon_id: daemonId,
+        agent_id: worker.id,
+        reason: 'executor_already_closed',
+      });
+      return 'skipped';
+    }
     const result = await attemptAgentResume(deps, config, worker);
     return result === 'resumed' ? 'resumed' : 'skipped';
   }
