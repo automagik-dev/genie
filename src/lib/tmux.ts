@@ -557,7 +557,7 @@ export class TmuxUnreachableError extends Error {
  * Returns `false` for empty/undefined socket names (safer default than
  * assuming `true` and then trying to probe a non-existent server).
  */
-export function isTmuxSocketAlive(socketName: string | undefined | null): boolean {
+function isTmuxSocketAlive(socketName: string | undefined | null): boolean {
   if (!socketName) return false;
   const uid = process.getuid?.() ?? 501;
   return existsSync(join(`/tmp/tmux-${uid}`, socketName));
