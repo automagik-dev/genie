@@ -12,11 +12,22 @@ function makePayload(command: string): HookPayload {
 
 /**
  * Build a mock `BranchGuardDeps` that returns the supplied value from
- * `resolvePrBase`. Pass `null` to simulate a lookup failure.
+ * `resolvePrBase`. Pass `null` to simulate a generic lookup failure; pass
+ * a string to simulate a successful base-branch resolution.
  */
 function mockDeps(base: string | null): BranchGuardDeps {
   return {
-    resolvePrBase: async () => base,
+    resolvePrBase: async () => (base === null ? { reason: 'mock-null-failure' } : { base }),
+  };
+}
+
+/**
+ * Build a mock that fails `resolvePrBase` with a specific diagnostic
+ * reason — lets us assert that the diagnostic surfaces in the deny message.
+ */
+function mockDepsWithReason(reason: string): BranchGuardDeps {
+  return {
+    resolvePrBase: async () => ({ reason }),
   };
 }
 
@@ -91,11 +102,50 @@ describe('branch-guard', () => {
   });
 
   describe('blocks gh pr merge when base cannot be resolved', () => {
-    test('blocks when resolvePrBase returns null', async () => {
+    test('blocks when resolvePrBase returns null (generic failure)', async () => {
       const result = await branchGuard(makePayload('gh pr merge 123'), mockDeps(null));
       expect(result).toBeDefined();
       expect(result!.decision).toBe('deny');
       expect(result!.reason).toContain('could not resolve');
+    });
+
+    // Regression: Task #26 — the previous `execSync` with `stdio: ['ignore',
+    // 'pipe', 'ignore']` collapsed every failure mode into one opaque deny
+    // message ("gh view failed or returned empty"), making production
+    // fall-closed incidents undiagnosable. The new `spawnSync` + explicit
+    // `{ reason }` channel surfaces the subprocess diagnostic verbatim.
+    test('surfaces subprocess exit-code diagnostic in deny reason', async () => {
+      const result = await branchGuard(
+        makePayload('gh pr merge 1262'),
+        mockDepsWithReason('gh pr view exited 1: could not find pull request #1262'),
+      );
+      expect(result).toBeDefined();
+      expect(result!.decision).toBe('deny');
+      expect(result!.reason).toContain('#1262');
+      expect(result!.reason).toContain('gh pr view exited 1');
+      expect(result!.reason).toContain('could not find pull request');
+      expect(result!.reason).toContain('§19');
+    });
+
+    test('surfaces empty-stdout diagnostic when subprocess succeeded but produced nothing', async () => {
+      const result = await branchGuard(
+        makePayload('gh pr merge 1262'),
+        mockDepsWithReason('gh pr view exited 0 with empty stdout (stderr: none)'),
+      );
+      expect(result).toBeDefined();
+      expect(result!.decision).toBe('deny');
+      expect(result!.reason).toContain('exited 0 with empty stdout');
+    });
+
+    test('surfaces spawn exception diagnostic in deny reason', async () => {
+      const result = await branchGuard(
+        makePayload('gh pr merge 1262'),
+        mockDepsWithReason('spawnSync threw: ENOENT: no such file or directory, gh'),
+      );
+      expect(result).toBeDefined();
+      expect(result!.decision).toBe('deny');
+      expect(result!.reason).toContain('spawnSync threw');
+      expect(result!.reason).toContain('ENOENT');
     });
   });
 
