@@ -71,8 +71,16 @@ export interface BranchGuardDeps {
   /**
    * Resolve the base branch of a GitHub PR. Callers fall-closed on any
    * failure shape (`reason` present) — that's the §19 v2 safety contract.
+   *
+   * `repo` (when provided) pins the lookup to that `OWNER/NAME` slug. Needed
+   * on multi-repo workstations where the hook's subprocess cwd may resolve
+   * to a different git remote than the PR being merged — e.g. agents running
+   * from a workspace dir whose git remote points at a fork while the PR
+   * lives on the upstream. Without pinning, `gh pr view <num>` hits the
+   * wrong repo and returns GraphQL "no such PR" → fall-closed deny on a
+   * perfectly legitimate merge.
    */
-  resolvePrBase: (prNum: string) => Promise<ResolvePrBaseResult>;
+  resolvePrBase: (prNum: string, repo?: string) => Promise<ResolvePrBaseResult>;
 }
 
 /** Maximum stderr bytes we surface in a deny reason. Protects against gh
@@ -80,14 +88,22 @@ export interface BranchGuardDeps {
 const STDERR_SURFACE_CAP = 500;
 
 const defaultDeps: BranchGuardDeps = {
-  async resolvePrBase(prNum) {
+  async resolvePrBase(prNum, repo) {
     // spawnSync (not execSync) so we can inspect exit code AND stderr
     // independently. The previous `stdio: ['ignore','pipe','ignore']` routed
     // stderr to /dev/null, making every fall-closed deny undiagnosable.
     // Timeout bumped 5s→10s for headroom during `gh auth` token refreshes.
+    //
+    // When the agent's `gh pr merge` command carried `--repo OWNER/NAME` we
+    // forward the same flag to our verification lookup. That keeps the hook
+    // pointing at the same PR the merge will hit — otherwise gh's default
+    // resolution (from the subprocess cwd's git remote) can drift to a
+    // different repo on multi-repo workstations.
+    const args = ['pr', 'view', prNum, '--json', 'baseRefName', '-q', '.baseRefName'];
+    if (repo) args.push('--repo', repo);
     let result: ReturnType<typeof spawnSync>;
     try {
-      result = spawnSync('gh', ['pr', 'view', prNum, '--json', 'baseRefName', '-q', '.baseRefName'], {
+      result = spawnSync('gh', args, {
         encoding: 'utf8',
         timeout: 10_000,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -120,6 +136,24 @@ const defaultDeps: BranchGuardDeps = {
  */
 function extractPrNumber(cmd: string): string | null {
   const match = cmd.match(/gh\s+pr\s+merge\s+(\d+)\b/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Extract an explicit `--repo OWNER/NAME` (or `-R OWNER/NAME`) arg from the
+ * command so the hook's verification `gh pr view` can target the same repo
+ * as the merge. Both the short form and the long form, with or without `=`,
+ * are accepted so the hook matches gh's own tolerance.
+ *
+ * Constrains the slug to `[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+` — loose enough
+ * to cover every real GitHub owner/repo, tight enough to refuse an attacker
+ * trying to smuggle shell metachars into our subsequent `spawnSync` args.
+ *
+ * Returns `null` when no explicit repo is present; callers fall back to the
+ * subprocess's default resolution (git remote of cwd).
+ */
+function extractRepoFlag(cmd: string): string | null {
+  const match = cmd.match(/(?:--repo|-R)(?:\s+|=)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/);
   return match ? match[1] : null;
 }
 
@@ -219,7 +253,8 @@ export async function branchGuard(payload: HookPayload, deps: BranchGuardDeps = 
           'BLOCKED: `gh pr merge` requires an explicit PR number so the target base branch can be verified. §19 (v2): agents merge PRs targeting `dev` only; main/master is humans-only via GitHub UI.',
       };
     }
-    const resolved = await deps.resolvePrBase(prNum);
+    const repo = extractRepoFlag(matchTarget) ?? undefined;
+    const resolved = await deps.resolvePrBase(prNum, repo);
     if ('reason' in resolved) {
       return {
         decision: 'deny',
