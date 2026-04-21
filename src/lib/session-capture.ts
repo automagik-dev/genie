@@ -112,25 +112,34 @@ interface JsonlEntry {
 // Sub-tool extraction (automatic, no hardcoded categories)
 // ============================================================================
 
-function extractSubTool(toolName: string, input: unknown): string | null {
+// Postgres btree index row size limit is ~2704 bytes. Cap well below so multi-byte
+// UTF-8 chars + index overhead still fit in idx_te_sub_tool.
+const MAX_SUB_TOOL_LEN = 2000;
+
+function truncateSubTool(value: string | null): string | null {
+  if (!value) return null;
+  return value.length > MAX_SUB_TOOL_LEN ? value.slice(0, MAX_SUB_TOOL_LEN) : value;
+}
+
+export function extractSubTool(toolName: string, input: unknown): string | null {
   const obj = input as Record<string, unknown>;
   switch (toolName) {
     case 'Bash': {
       const cmd = (obj?.command as string) ?? '';
-      return cmd.split('\n')[0]?.trim() || null;
+      return truncateSubTool(cmd.split('\n')[0]?.trim() || null);
     }
     case 'Read':
     case 'Write':
     case 'Edit':
-      return (obj?.file_path as string) || null;
+      return truncateSubTool((obj?.file_path as string) || null);
     case 'Grep':
-      return (obj?.pattern as string) || null;
+      return truncateSubTool((obj?.pattern as string) || null);
     case 'Glob':
-      return (obj?.pattern as string) || null;
+      return truncateSubTool((obj?.pattern as string) || null);
     case 'Agent':
-      return (obj?.subagent_type as string) || null;
+      return truncateSubTool((obj?.subagent_type as string) || null);
     case 'Skill':
-      return (obj?.skill as string) || null;
+      return truncateSubTool((obj?.skill as string) || null);
     default:
       return null;
   }
@@ -326,6 +335,16 @@ function workerToContext(worker: WorkerMatch | undefined): SessionContext {
   };
 }
 
+async function resolveSafeParentId(sql: SqlClient, parentSessionId: string | null | undefined): Promise<string | null> {
+  // If the referenced parent row doesn't exist yet (stale orphan subagent, or
+  // ordering race where parent is discovered later), return NULL rather than
+  // crashing on the FK constraint. reconcileSubagentParents() can backfill
+  // the link once the parent row exists.
+  if (!parentSessionId) return null;
+  const parentExists = await sql`SELECT 1 FROM sessions WHERE id = ${parentSessionId} LIMIT 1`;
+  return parentExists.length > 0 ? parentSessionId : null;
+}
+
 async function ensureSession(
   sql: SqlClient,
   sessionId: string,
@@ -349,12 +368,37 @@ async function ensureSession(
   }
 
   const worker = workerMap.get(sessionId);
+  const parentSessionId = await resolveSafeParentId(sql, opts?.parentSessionId);
+
   await sql`
     INSERT INTO sessions (id, agent_id, executor_id, team, wish_slug, task_id, role, project_path, jsonl_path, status, last_ingested_offset, total_turns, parent_session_id, is_subagent, file_size, file_mtime)
-    VALUES (${sessionId}, ${worker?.agentId ?? null}, ${worker?.executorId ?? null}, ${worker?.team ?? null}, ${worker?.wishSlug ?? null}, ${worker?.taskId ?? null}, ${worker?.role ?? null}, ${projectPath}, ${jsonlPath}, ${worker ? 'active' : 'orphaned'}, 0, 0, ${opts?.parentSessionId ?? null}, ${opts?.isSubagent ?? false}, ${opts?.fileSize ?? 0}, ${opts?.mtime ?? 0})
+    VALUES (${sessionId}, ${worker?.agentId ?? null}, ${worker?.executorId ?? null}, ${worker?.team ?? null}, ${worker?.wishSlug ?? null}, ${worker?.taskId ?? null}, ${worker?.role ?? null}, ${projectPath}, ${jsonlPath}, ${worker ? 'active' : 'orphaned'}, 0, 0, ${parentSessionId}, ${opts?.isSubagent ?? false}, ${opts?.fileSize ?? 0}, ${opts?.mtime ?? 0})
     ON CONFLICT (id) DO NOTHING
   `;
   return workerToContext(worker);
+}
+
+// ============================================================================
+// Reconcile parent_session_id for subagent rows that landed before their parent
+// ============================================================================
+
+export async function reconcileSubagentParents(sql: SqlClient): Promise<number> {
+  // jsonl_path for a subagent is: <projectPath>/<parentUuid>/subagents/<child>.jsonl
+  // Recover <parentUuid> from jsonl_path and link if a matching session now exists.
+  const result = await sql`
+    UPDATE sessions s
+    SET parent_session_id = p.id
+    FROM sessions p
+    WHERE s.is_subagent = true
+      AND s.parent_session_id IS NULL
+      AND position('/subagents/' in s.jsonl_path) > 0
+      AND p.id = regexp_replace(
+        split_part(s.jsonl_path, '/subagents/', 1),
+        '.*/',
+        ''
+      )
+  `;
+  return result.count ?? 0;
 }
 
 // ============================================================================
