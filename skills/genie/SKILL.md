@@ -1,6 +1,6 @@
 ---
 name: genie
-description: "Single entry point for all genie operations — auto-routes natural language to the right skill, detects existing lifecycle state, and handles operational commands. Use when planning features, reporting bugs, managing teams, or asking about the system."
+description: "Entry point for all genie operations — auto-routes natural language to the right skill, detects lifecycle state, and handles operational commands. Use when planning features, reporting bugs, managing teams, or asking about genie."
 argument-hint: "[what you want to build, fix, or do]"
 ---
 
@@ -95,6 +95,49 @@ When the user's intent is **operational**, map natural language to genie CLI com
 | "send message to X" | `genie send 'msg' --to X` |
 | "create a team for X" | `genie team create X --repo .` |
 | "show logs for X" | `genie agent log X` |
+
+## Spawn Hygiene
+
+**Never pass `--session <team-name>` to `genie spawn`.** The team config already stores the correct `tmuxSessionName` (resolved at team creation from the parent session). Passing `--session` overrides that and creates a separate tmux session, breaking topology.
+
+```bash
+# WRONG — creates separate session
+genie spawn reviewer --team my-team --session my-team
+
+# CORRECT — uses team's configured session
+genie spawn reviewer --team my-team
+```
+
+The `--session` flag is for rare manual overrides only. When `--team` is set, let genie resolve the session from team config.
+
+## Post-Dispatch Monitoring
+
+After `genie team create` or `genie spawn`, use ONLY structured primitives. A hook enforces this automatically — terminal scraping calls fail closed.
+
+### DO — Structured monitoring
+
+| Need | Command |
+|------|---------|
+| Wish progress | `genie wish status <slug>` |
+| Worker state | `genie ls --json` |
+| Send instructions | `genie send '<msg>' --to <agent>` |
+| Event timeline | `genie events timeline <id>` |
+| Error patterns | `genie events errors` |
+| Recent events | `genie events list --since 5m` |
+
+### NEVER — Terminal scraping
+
+- `tmux capture-pane` to check worker progress (BLOCKED by hook)
+- `sleep` + poll loops to watch terminal output (BLOCKED by hook)
+- Raw terminal text parsing for workflow decisions
+
+### Post-dispatch flow
+
+1. **Dispatch** — `genie team create` or `genie spawn`
+2. **Trust** — workers execute autonomously, report via PG events
+3. **Check** — `genie wish status <slug>` for progress
+4. **Communicate** — `genie send` for instructions
+5. **Review** — when workers report done, review output
 
 ## CLI Commands (live)
 
