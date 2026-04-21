@@ -1,5 +1,9 @@
 # Brainstorm Jar
 
+## Umbrella Roadmaps (active)
+
+- [genie-self-healing-observability](brainstorms/genie-self-healing-observability/DESIGN.md) — CRYSTALLIZED (WRS 100/100, 2026-04-21). BUGLESS-GENIE umbrella. Coordinates sub-projects A (observability — shipping), B (self-heal — to create), C (dispatch robustness — to create), D (ghost hygiene — to create). Hybrid finish-line: targeted per-pathology gates ship, empirical 14d zero-occurrence gate labels. Tier 3 autonomy on dev unlocked by §19 v2 + PR #1251 (merged).
+
 ## Sprint Backlog (next sprint — /review + /brainstorm queue)
 
 ### Tier 1: Autonomous dispatch (dream-eligible)
