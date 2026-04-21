@@ -372,3 +372,95 @@ describe('Change #3: reconcileStaleSpawns GCs dead-pane zombies in active states
     expect(source).toContain('WHERE id = ${row.id} AND state = ${prevState}');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gap #2 regression — boot-mode terminal-executor check (turn-session-contract)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mock SQL that returns a closed executor for the isLegitimatelyClosed helper
+ * lookup (agent_id → executor with closed_at set).
+ */
+function createMockSqlWithTerminalExecutor(currentExecutorId: string) {
+  const sql: any = (strings: TemplateStringsArray, ..._values: unknown[]) => {
+    const query = strings.join(' ');
+    if (query.includes('current_executor_id') && query.includes('FROM agents')) {
+      return [{ current_executor_id: currentExecutorId }];
+    }
+    if (query.includes('FROM executors') && query.includes('closed_at')) {
+      return [{ closed_at: new Date(), outcome: 'done' }];
+    }
+    return [];
+  };
+  sql.begin = async (fn: (tx: typeof sql) => Promise<unknown>) => fn(sql);
+  sql.listen = async () => {};
+  sql.end = async () => {};
+  return sql;
+}
+
+describe('Gap #2 regression — boot-mode terminal-executor check (turn-session-contract)', () => {
+  test('boot mode skips resume when current executor is already terminal', async () => {
+    // Live-instance regression (2026-04-21): agent called `genie done`, executor
+    // was marked terminal, daemon restarted, boot-mode reconciler resurrected the
+    // agent anyway because D1/D3 rules were bypassed. Fix: check executor terminal
+    // state before resuming in boot mode.
+    const worker = makeWorker({
+      id: 'dead-closed',
+      paneId: '%50',
+      state: 'spawning',
+      claudeSessionId: 'sess-closed',
+    });
+    const { deps, resumedIds, logs } = createMockDeps({
+      listWorkers: async () => [worker],
+      isPaneAlive: async () => false,
+      getConnection: async () => createMockSqlWithTerminalExecutor('exec-closed-1'),
+    });
+
+    await runAgentRecoveryPass(deps, 'daemon-boot-test', defaultConfig, 'boot');
+
+    expect(resumedIds).not.toContain('dead-closed');
+    const skipLog = logs.find((l) => l.event === 'agent_resume_skipped_boot_terminal');
+    expect(skipLog).toBeDefined();
+  });
+
+  test('boot mode still resumes when executor is open (legitimate mid-turn crash recovery)', async () => {
+    // No regression to the legitimate recovery path — if the executor is still
+    // open (closed_at IS NULL AND outcome IS NULL), boot-mode resume fires as
+    // before. Default mock SQL returns empty rows → isLegitimatelyClosed=false.
+    const worker = makeWorker({
+      id: 'dead-open',
+      paneId: '%51',
+      state: 'spawning',
+      claudeSessionId: 'sess-open',
+    });
+    const { deps, resumedIds } = createMockDeps({
+      listWorkers: async () => [worker],
+      isPaneAlive: async () => false,
+    });
+
+    await runAgentRecoveryPass(deps, 'daemon-boot-test', defaultConfig, 'boot');
+
+    expect(resumedIds).toContain('dead-open');
+  });
+
+  test('sweep mode D1/D3 rules remain intact — state="spawning" + dead pane is skipped (no regression)', async () => {
+    // Separate assertion: the Gap #2 fix only touches boot mode. In sweep mode,
+    // state='spawning' falls through to the state-not-in-D3 skip at line 888 —
+    // unchanged. This guards against accidental bleed between boot and sweep
+    // branches during the fix.
+    const worker = makeWorker({
+      id: 'sweep-spawning',
+      paneId: '%52',
+      state: 'spawning',
+      claudeSessionId: 'sess-sweep',
+    });
+    const { deps, resumedIds } = createMockDeps({
+      listWorkers: async () => [worker],
+      isPaneAlive: async () => false,
+    });
+
+    await runAgentRecoveryPass(deps, 'daemon-sweep-test', defaultConfig, 'sweep');
+
+    expect(resumedIds).not.toContain('sweep-spawning');
+  });
+});

@@ -257,4 +257,63 @@ describe.skipIf(!DB_AVAILABLE)('turn-close', () => {
     const fallbackWarns = warns.filter((w) => w.includes('falling back'));
     expect(fallbackWarns).toHaveLength(0);
   });
+
+  test('Gap #1 regression — dual-row state flip: both identity and legacy name-keyed rows marked done', async () => {
+    // Reproduce the turn-session-contract dual-row pattern observed live on
+    // 2026-04-21 (test team `turn-session-contract-genie`):
+    //   - Identity row: id=UUID, custom_name='genie-configure', team=...
+    //     (created by findOrCreateAgent, carries the executor FK)
+    //   - Legacy row:   id='genie-configure', custom_name=NULL, team=...
+    //     (created by legacy register() path; custom_name=NULL because partial
+    //     unique index `idx_agents_custom_name_team` blocks a second row from
+    //     sharing non-null custom_name)
+    // Before this fix, turnClose only swept by current_executor_id — legacy
+    // row stayed state='spawning' and reconcile resurrected the agent on next
+    // daemon restart.
+    const sql = await getConnection();
+    const teamName = 'dual-row-test';
+    const customName = 'dual-row-agent';
+
+    // Identity row (UUID-keyed) — carries the executor FK
+    const identity = await findOrCreateAgent(customName, teamName, 'engineer');
+    const exec = await createExecutor(identity.id, 'claude', 'tmux', { state: 'working' });
+    await setCurrentExecutor(identity.id, exec.id);
+
+    // Legacy name-keyed row — id = customName, custom_name=NULL (matches live pattern)
+    await sql`
+      INSERT INTO agents (id, custom_name, team, role, state, started_at, last_state_change, repo_path)
+      VALUES (${customName}, NULL, ${teamName}, 'engineer', 'spawning', now(), now(), '/tmp/test')
+    `;
+
+    const result = await turnClose({ outcome: 'done', executorId: exec.id });
+    expect(result.noop).toBe(false);
+
+    // Both rows must be flipped to state='done'
+    const rows = await sql<{ id: string; state: string | null; current_executor_id: string | null }[]>`
+      SELECT id, state, current_executor_id FROM agents
+      WHERE (id = ${customName} OR id = ${identity.id}) AND team = ${teamName}
+      ORDER BY id
+    `;
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      expect(row.state).toBe('done');
+      expect(row.current_executor_id).toBeNull();
+    }
+  });
+
+  test('Gap #1 regression — single-row (post-unification) path: identity-only flip still works', async () => {
+    // When only the identity row exists (no legacy dual-row pair), the
+    // defensive sweep is a no-op and the identity row is flipped correctly.
+    const { agentId, executorId } = await seed();
+
+    const result = await turnClose({ outcome: 'done', executorId });
+    expect(result.noop).toBe(false);
+
+    const sql = await getConnection();
+    const [row] = await sql<{ state: string | null; current_executor_id: string | null }[]>`
+      SELECT state, current_executor_id FROM agents WHERE id = ${agentId}
+    `;
+    expect(row.state).toBe('done');
+    expect(row.current_executor_id).toBeNull();
+  });
 });
