@@ -2,7 +2,7 @@
 
 **Audience:** operators tailing `genie events stream-follow --kind='rot.*'` (the live-stream verb that owns runtime event filtering — see PR #1244 for the `*`-glob predicate) who need a mid-incident reference for what a detector event means, why it fires, when it lies, and what to do next.
 
-**Scope:** one section per rot pattern (1–8) shipped under the wish `genie-self-healing-observability-b1-detectors`. Every detector listed here is **read-only** — it observes PG / tmux / filesystem state and emits a `rot.detected` (or `rot.team-ls-drift.detected` for Pattern 2) event. None of them mutate genie state. Remediation is still a human decision in B1; graduation to auto-fix happens per-detector in B2 once fire-rate and false-positive-rate evidence accumulates.
+**Scope:** one section per rot pattern (1–9). Patterns 1–8 shipped under the wish `genie-self-healing-observability-b1-detectors`; Pattern 9 (`rot.team-unpushed-orphaned-worktree`) follows under wish `team-unpushed-orphaned-worktree` (issue #1250). Every detector listed here is **read-only** — it observes PG / tmux / filesystem state and emits a `rot.detected` (or `rot.team-ls-drift.detected` for Pattern 2) event. None of them mutate genie state. Remediation is still a human decision in B1; graduation to auto-fix happens per-detector in B2 once fire-rate and false-positive-rate evidence accumulates.
 
 **Relationship to code:** each pattern lives in a dedicated source file under `src/detectors/`. The scheduler wiring is `src/serve/detector-scheduler.ts`; the plugin API is `src/detectors/index.ts`; the shared event substrate is PR #1213 (`genie_runtime_events`).
 
@@ -20,6 +20,7 @@
 - [Pattern 6 — rot.subagent-cascade](#pattern-6--rotsubagent-cascade)
 - [Pattern 7 — rot.dispatch-silent-drop](#pattern-7--rotdispatch-silent-drop)
 - [Pattern 8 — rot.session-reuse-ghost](#pattern-8--rotsession-reuse-ghost)
+- [Pattern 9 — rot.team-unpushed-orphaned-worktree](#pattern-9--rotteam-unpushed-orphaned-worktree)
 
 ---
 
@@ -447,7 +448,7 @@ Cross-reference with Pattern 4: duplicate-agents fires when the archive propagat
 
 ## Pattern 9 — rot.team-unpushed-orphaned-worktree
 
-**Detector ID:** `rot.team-unpushed-orphaned-worktree` (risk class: high)
+**Detector ID:** `rot.team-unpushed-orphaned-worktree` (risk class: low)
 **Source:** `src/detectors/pattern-9-team-unpushed-orphaned-worktree.ts`
 **Ship status:** pending merge of the Pattern 9 PR (wish `team-unpushed-orphaned-worktree`, tracks issue #1250).
 
@@ -455,7 +456,7 @@ Cross-reference with Pattern 4: duplicate-agents fires when the archive propagat
 
 A non-terminal team (`teams.status NOT IN ('done','blocked','archived')`) has no executor in `running`/`spawning` state within the last `idleMinutes` (default 10), AND its worktree has commits ahead of `origin/<base_branch>` (`git rev-list --count` > 0). The autonomous team finished local work but the leader died before `git push` / PR creation — the branch sits orphaned on disk, no existing detector fires, and `genie wish status` looks nominal.
 
-Felipe's live-observed version (issue #1250): a `team create --wish <slug>` team executes, engineers commit wip, the lead exits cleanly after marking the wish complete — but the branch is never pushed. Hours later the operator notices the PR never opened. The event payload carries `team_name`, `team_status`, `worktree_path`, `base_branch`, `branch_ahead_count`, ISO `last_commit_at`, ISO `last_executor_active_at`, `minutes_since_active`, `threshold_minutes`, `lead_agent_id`, `lead_state`, and `total_stalled_teams`.
+Reference incident (issue #1250, 2026-04-20T23 → 2026-04-21T01 UTC): 6 `docs-pr-*` teams were dispatched in parallel, only 1 opened a PR. The other 5 worktrees had committed-but-unpushed work that had to be salvaged by hand — ~30-45 min of recovery for work that should have been zero-touch. Pattern 9 is the signal that would have surfaced those 5 stalled teams within one tick after they crossed the 10-minute idleness threshold, instead of waiting for the operator to audit manually hours later. The event payload carries `team_name`, `team_status`, `worktree_path`, `base_branch`, `branch_ahead_count`, ISO `last_commit_at`, ISO `last_executor_active_at`, `minutes_since_active`, `threshold_minutes`, `lead_agent_id`, `lead_state`, and `total_stalled_teams`.
 
 ### Known root cause
 
