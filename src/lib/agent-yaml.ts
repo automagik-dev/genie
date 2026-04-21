@@ -257,6 +257,7 @@ export const AgentConfigSchema = z
     omniScopes: z.array(z.string()).optional(),
     hooks: z.record(z.unknown()).optional(),
     sdk: SdkDirectoryConfigSchema.optional(),
+    bridgeTmuxSession: z.string().optional(),
   })
   .strict();
 

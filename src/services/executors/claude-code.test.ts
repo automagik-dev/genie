@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildOmniSpawnParams, sanitizeWindowName } from './claude-code.js';
+import { buildOmniSpawnParams, resolveBridgeTmuxSession, sanitizeWindowName } from './claude-code.js';
 
 describe('sanitizeWindowName', () => {
   // --- Without chatName (fallback to JID) ---
@@ -209,5 +209,45 @@ describe('buildOmniSpawnParams', () => {
     // are SDK-specific and handled in claude-sdk-permissions.ts, not here.
     expect(params.permissions?.allow).toEqual(['Bash(omni say *)']);
     expect(params.permissions?.deny).toBeUndefined();
+  });
+});
+
+describe('resolveBridgeTmuxSession', () => {
+  test('env override wins over yaml and agent name', () => {
+    expect(resolveBridgeTmuxSession('felipe/scout', 'felipe', 'whatsapp-scout-12')).toBe('whatsapp-scout-12');
+  });
+
+  test('yaml default wins when env is absent', () => {
+    expect(resolveBridgeTmuxSession('felipe/scout', 'felipe', undefined)).toBe('felipe');
+  });
+
+  test('falls back to agentName when neither env nor yaml set', () => {
+    expect(resolveBridgeTmuxSession('felipe', undefined, undefined)).toBe('felipe');
+  });
+
+  test('sanitizes `/` to `-` in the final resolved value (agentName fallback)', () => {
+    expect(resolveBridgeTmuxSession('felipe/scout', undefined, undefined)).toBe('felipe-scout');
+  });
+
+  test('sanitizes `/` to `-` when the yaml value carries a slash', () => {
+    expect(resolveBridgeTmuxSession('agent', 'group/sub', undefined)).toBe('group-sub');
+  });
+
+  test('sanitizes `/` to `-` when the env override carries a slash', () => {
+    expect(resolveBridgeTmuxSession('agent', 'yaml', 'env/scout')).toBe('env-scout');
+  });
+
+  test('empty-string env override is treated as absent (falls through to yaml)', () => {
+    expect(resolveBridgeTmuxSession('agent', 'yaml-default', '')).toBe('yaml-default');
+  });
+
+  test('empty-string env override falls through to agentName when yaml also empty', () => {
+    expect(resolveBridgeTmuxSession('fallback', undefined, '')).toBe('fallback');
+  });
+
+  test('preserves non-slash special chars (tmux already rejects them downstream)', () => {
+    // We only sanitize `/` because tmux treats it as a target separator.
+    // Other characters are the caller's responsibility.
+    expect(resolveBridgeTmuxSession('agent', 'with_underscore-and.dot', undefined)).toBe('with_underscore-and.dot');
   });
 });

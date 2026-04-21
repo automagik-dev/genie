@@ -69,6 +69,32 @@ export function sanitizeWindowName(chatId: string, chatName?: string): string {
 }
 
 /**
+ * Resolve the tmux session name the Omni bridge will spawn into.
+ *
+ * Resolution chain (highest priority first):
+ *   1. `GENIE_TMUX_SESSION` env var — propagated via NATS by the Omni provider,
+ *      sourced from instance-level config (e.g. `instance.bridgeTmuxSession`).
+ *      Enables per-instance routing ("one scout agent → ten inbound numbers,
+ *      each in its own tmux session").
+ *   2. `entry.bridgeTmuxSession` — static per-agent default from agent.yaml.
+ *      Enables hierarchical co-location ("felipe/scout lands in felipe session").
+ *   3. `agentName` — backward-compatible fallback (legacy behavior).
+ *
+ * Tmux rejects `/` in session names, so the resolved value is sanitized
+ * regardless of source. Empty strings are treated as absent (fall through
+ * to the next layer) so a caller passing `env.GENIE_TMUX_SESSION = ''`
+ * does not accidentally short-circuit to a nameless session.
+ */
+export function resolveBridgeTmuxSession(
+  agentName: string,
+  entryBridgeTmuxSession: string | undefined,
+  envOverride: string | undefined,
+): string {
+  const raw = (envOverride && envOverride.length > 0 ? envOverride : undefined) ?? entryBridgeTmuxSession ?? agentName;
+  return raw.replace(/\//g, '-');
+}
+
+/**
  * Look up the chat/contact name from omni API for human-readable window naming.
  * Queries GET /api/v2/chats?externalId=<jid> — returns the chat name.
  * Returns null if lookup fails (best-effort, never blocks spawn).
@@ -175,7 +201,7 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     if (!resolved) throw new Error(`Agent "${agentName}" not found in genie directory`);
 
     const entry = resolved.entry;
-    const tmuxSession = agentName;
+    const tmuxSession = resolveBridgeTmuxSession(agentName, entry.bridgeTmuxSession, env.GENIE_TMUX_SESSION);
     const chatName = await lookupChatName(chatId, env.OMNI_INSTANCE ?? '');
     const windowName = sanitizeWindowName(chatId, chatName ?? undefined);
     const { paneId, created } = await ensureTeamWindow(tmuxSession, windowName, entry.dir);
