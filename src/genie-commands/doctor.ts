@@ -15,6 +15,7 @@ import { tmuxBin } from '../lib/ensure-tmux.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
 import { checkCommand } from '../lib/system-detect.js';
 import { findWorkspace } from '../lib/workspace.js';
+import { collectInstallerResolution } from './installer-resolution.js';
 import { collectObservabilityHealth } from './observability-health.js';
 
 interface CheckResult {
@@ -516,6 +517,7 @@ export async function doctorCommand(options?: {
   const counts = { errors: false, warnings: false };
 
   runCheckSection('Prerequisites', await checkPrerequisites(), counts);
+  runCheckSection('Installer Resolution', await collectInstallerResolution(), counts);
   runCheckSection('Configuration', await checkConfiguration(), counts);
   runCheckSection('Tmux', await checkTmux(), counts);
   runCheckSection('Worker Profiles', await checkWorkerProfiles(), counts);
