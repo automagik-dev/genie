@@ -382,12 +382,20 @@ async function ensureSession(
 // Reconcile parent_session_id for subagent rows that landed before their parent
 // ============================================================================
 
-export async function reconcileSubagentParents(sql: SqlClient): Promise<number> {
+interface ReconcileSubagentParentsResult {
+  /** Subagent rows whose `parent_session_id` was just linked from the path pattern. */
+  linked: number;
+  /** Subagent rows that inherited at least one missing metadata field from their parent. */
+  metadataFilled: number;
+}
+
+export async function reconcileSubagentParents(sql: SqlClient): Promise<ReconcileSubagentParentsResult> {
   // jsonl_path for a subagent is: <projectPath>/<parentUuid>/subagents/<child>.jsonl
   // Recover <parentUuid> from jsonl_path and link if a matching session now exists.
   const linkResult = await sql`
     UPDATE sessions s
-    SET parent_session_id = p.id
+    SET parent_session_id = p.id,
+        updated_at = now()
     FROM sessions p
     WHERE s.is_subagent = true
       AND s.parent_session_id IS NULL
@@ -410,11 +418,24 @@ export async function reconcileSubagentParents(sql: SqlClient): Promise<number> 
   // Status stays 'orphaned': these subagents have no direct worker of
   // their own, so they still don't belong in `--active`. This change is
   // purely metadata inheritance for observability.
-  await sql`
+  //
+  // Safety (codex review on PR #1270): executor_id is only inheritable when
+  // the identity pair stays consistent — if the child already has its own
+  // agent_id that disagrees with the parent's, we must NOT pull the parent's
+  // executor in, or the child ends up pointing at an executor row that
+  // belongs to a different agent. The CASE expression gates executor
+  // inheritance on "child has no agent" OR "child agent matches parent".
+  const metaResult = await sql`
     UPDATE sessions s
     SET
       agent_id    = COALESCE(s.agent_id,    p.agent_id),
-      executor_id = COALESCE(s.executor_id, p.executor_id),
+      executor_id = COALESCE(
+        s.executor_id,
+        CASE
+          WHEN s.agent_id IS NULL OR s.agent_id = p.agent_id THEN p.executor_id
+          ELSE NULL
+        END
+      ),
       team        = COALESCE(s.team,        p.team),
       wish_slug   = COALESCE(s.wish_slug,   p.wish_slug),
       task_id     = COALESCE(s.task_id,     p.task_id),
@@ -425,7 +446,8 @@ export async function reconcileSubagentParents(sql: SqlClient): Promise<number> 
       AND s.parent_session_id = p.id
       AND (
         (s.agent_id    IS NULL AND p.agent_id    IS NOT NULL) OR
-        (s.executor_id IS NULL AND p.executor_id IS NOT NULL) OR
+        (s.executor_id IS NULL AND p.executor_id IS NOT NULL
+          AND (s.agent_id IS NULL OR s.agent_id = p.agent_id)) OR
         (s.team        IS NULL AND p.team        IS NOT NULL) OR
         (s.wish_slug   IS NULL AND p.wish_slug   IS NOT NULL) OR
         (s.task_id     IS NULL AND p.task_id     IS NOT NULL) OR
@@ -433,7 +455,10 @@ export async function reconcileSubagentParents(sql: SqlClient): Promise<number> 
       )
   `;
 
-  return linkResult.count ?? 0;
+  return {
+    linked: linkResult.count ?? 0,
+    metadataFilled: metaResult.count ?? 0,
+  };
 }
 
 // ============================================================================

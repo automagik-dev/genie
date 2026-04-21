@@ -193,10 +193,88 @@ describe.skipIf(!DB_AVAILABLE)('reconcileSubagentParents — metadata inheritanc
     `;
 
     // Should not throw even when both rows are metadata-free.
-    await expect(reconcileSubagentParents(sql)).resolves.toBeDefined();
+    const result = await reconcileSubagentParents(sql);
+    expect(result.linked).toBe(0);
+    expect(result.metadataFilled).toBe(0);
 
     const [row] = await sql`SELECT agent_id, team FROM sessions WHERE id = ${childId}`;
     expect(row.agent_id).toBeNull();
     expect(row.team).toBeNull();
+  });
+
+  test('does NOT inherit executor_id when child agent differs from parent (codex review)', async () => {
+    // Scenario: child has its own agent_id that differs from parent's.
+    // Naively inheriting executor_id would link the child to an executor
+    // row that belongs to a different agent, breaking the executor→agent
+    // identity invariant used by `sessions → executors → agents` joins.
+    const sql = await getConnection();
+    const parentId = 'parent-sess-4';
+    const childId = 'agent-child-4';
+
+    await sql`
+      INSERT INTO agents (id, role, started_at)
+      VALUES ('agent-parent-x', 'engineer', now())
+      ON CONFLICT DO NOTHING
+    `;
+    await sql`
+      INSERT INTO executors (id, agent_id, provider, transport)
+      VALUES ('exec-parent-x', 'agent-parent-x', 'claude', 'process')
+      ON CONFLICT DO NOTHING
+    `;
+    await sql`
+      INSERT INTO sessions (
+        id, agent_id, executor_id, team,
+        project_path, jsonl_path, status, is_subagent
+      ) VALUES (
+        ${parentId}, 'agent-parent-x', 'exec-parent-x', 'team-parent-x',
+        '/tmp/proj4', '/tmp/proj4/parent.jsonl', 'active', false
+      )
+    `;
+    // Child has a DIFFERENT agent_id but no executor_id.
+    await sql`
+      INSERT INTO sessions (
+        id, agent_id, executor_id, team,
+        project_path, jsonl_path, status, is_subagent, parent_session_id
+      ) VALUES (
+        ${childId}, 'agent-child-distinct', NULL, NULL,
+        '/tmp/proj4', ${`/tmp/proj4/${parentId}/subagents/${childId}.jsonl`},
+        'orphaned', true, ${parentId}
+      )
+    `;
+
+    await reconcileSubagentParents(sql);
+
+    const [row] = await sql`SELECT * FROM sessions WHERE id = ${childId}`;
+    // Child's own agent preserved (COALESCE).
+    expect(row.agent_id).toBe('agent-child-distinct');
+    // CRITICAL: executor NOT inherited — would have paired the child with
+    // an executor row pointing at 'agent-parent-x'.
+    expect(row.executor_id).toBeNull();
+    // Safe fields still inherited from parent.
+    expect(row.team).toBe('team-parent-x');
+  });
+
+  test('returns structured counts for linked and metadataFilled', async () => {
+    const sql = await getConnection();
+    const parentId = 'parent-sess-5';
+    const childId = 'agent-child-5';
+
+    await sql`
+      INSERT INTO sessions (id, agent_id, team, project_path, jsonl_path, status, is_subagent)
+      VALUES (${parentId}, 'agent-p5', 'team-5',
+              '/tmp/proj5', '/tmp/proj5/parent.jsonl', 'active', false)
+    `;
+    await sql`
+      INSERT INTO sessions (id, project_path, jsonl_path, status, is_subagent, parent_session_id)
+      VALUES (${childId}, '/tmp/proj5',
+              ${`/tmp/proj5/${parentId}/subagents/${childId}.jsonl`},
+              'orphaned', true, ${parentId})
+    `;
+
+    const result = await reconcileSubagentParents(sql);
+    // Parent link was already set, so linked=0 for this child.
+    // Metadata should have been filled for this one row.
+    expect(result.linked).toBeGreaterThanOrEqual(0);
+    expect(result.metadataFilled).toBeGreaterThanOrEqual(1);
   });
 });

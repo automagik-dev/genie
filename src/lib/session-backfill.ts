@@ -228,10 +228,13 @@ export async function startBackfill(sql: SqlClient): Promise<void> {
 
     // Reconcile any subagent rows whose parent was inserted after they were
     // (e.g. orphan subagents that got parent=NULL earlier but a main jsonl
-    // with the matching id has since appeared).
+    // with the matching id has since appeared). Also backfills missing
+    // metadata (agent_id/team/wish_slug/...) from the parent for rows that
+    // already have a parent link but were captured without worker context.
     try {
-      const fixed = await reconcileSubagentParents(sql);
-      if (fixed > 0) console.log(`[backfill] reconciled parent_session_id for ${fixed} subagent(s)`);
+      const { linked, metadataFilled } = await reconcileSubagentParents(sql);
+      if (linked > 0) console.log(`[backfill] reconciled parent_session_id for ${linked} subagent(s)`);
+      if (metadataFilled > 0) console.log(`[backfill] inherited parent metadata for ${metadataFilled} subagent(s)`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn(`[backfill] parent reconcile skipped: ${message}`);
