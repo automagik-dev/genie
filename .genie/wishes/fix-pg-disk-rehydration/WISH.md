@@ -63,7 +63,7 @@ Until that sibling ships, the repair command treats agents as opaque by `id` and
 - [ ] `teams.leader` is populated from `config.json`'s `leadAgentId` (with `@<team>` suffix stripped to a bare name).
 - [ ] `genie doctor --repair-teams` on a cleanly-installed machine is a no-op (exits 0, reports "0 teams repaired").
 - [ ] `genie doctor --repair-teams --dry-run` on a drifted machine lists every team that would change, with before/after diff, and makes no writes.
-- [ ] Migration 045 converts stringified `members` columns into proper jsonb arrays without data loss; re-running the migration is a no-op.
+- [ ] Migration 045 converts stringified `members` columns into proper jsonb arrays without data loss via `(col #>> '{}')::jsonb` (not `col::text::jsonb` — that cast is a silent no-op for jsonb-string values); re-running the migration is a no-op.
 - [ ] `rot.team-ls-drift.detected` fires ≥1 event on `genie serve` boot if drift exists; fires 0 events on a healthy boot.
 - [ ] Repro script `scripts/tests/repro-pg-disk-rehydration.sh` passes: create teams on disk → wipe PG → start serve → assert PG mirrors disk.
 - [ ] `bun run check` passes (typecheck + lint + dead-code + test).
@@ -177,16 +177,16 @@ bun test src/lib/claude-native-teams.test.ts -t "backfill"
 3. `src/db/migrations/045_fix_stringified_jsonb.sql`:
    ```sql
    UPDATE teams
-   SET members = members::text::jsonb
+   SET members = (members #>> '{}')::jsonb
    WHERE jsonb_typeof(members) = 'string';
 
    UPDATE teams
-   SET allow_child_reachback = allow_child_reachback::text::jsonb
+   SET allow_child_reachback = (allow_child_reachback #>> '{}')::jsonb
    WHERE allow_child_reachback IS NOT NULL
      AND jsonb_typeof(allow_child_reachback) = 'string';
 
    UPDATE agents
-   SET sub_panes = sub_panes::text::jsonb
+   SET sub_panes = (sub_panes #>> '{}')::jsonb
    WHERE sub_panes IS NOT NULL
      AND jsonb_typeof(sub_panes) = 'string';
    ```
