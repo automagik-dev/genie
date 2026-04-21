@@ -385,7 +385,7 @@ async function ensureSession(
 export async function reconcileSubagentParents(sql: SqlClient): Promise<number> {
   // jsonl_path for a subagent is: <projectPath>/<parentUuid>/subagents/<child>.jsonl
   // Recover <parentUuid> from jsonl_path and link if a matching session now exists.
-  const result = await sql`
+  const linkResult = await sql`
     UPDATE sessions s
     SET parent_session_id = p.id
     FROM sessions p
@@ -398,7 +398,42 @@ export async function reconcileSubagentParents(sql: SqlClient): Promise<number> 
         ''
       )
   `;
-  return result.count ?? 0;
+
+  // Inherit metadata from the parent for subagent rows that have a parent
+  // but were captured before their worker was registered. Subagent JSONLs
+  // (Task-tool children) never get a direct worker, so their agent_id/team/
+  // wish_slug/task_id/role stay NULL and they land as status='orphaned'.
+  // Copy the parent's context so `genie sessions list --orphaned` shows
+  // proper lineage and downstream tool-usage queries can join on these
+  // rows. We only fill NULLs — never overwrite existing values.
+  //
+  // Status stays 'orphaned': these subagents have no direct worker of
+  // their own, so they still don't belong in `--active`. This change is
+  // purely metadata inheritance for observability.
+  await sql`
+    UPDATE sessions s
+    SET
+      agent_id    = COALESCE(s.agent_id,    p.agent_id),
+      executor_id = COALESCE(s.executor_id, p.executor_id),
+      team        = COALESCE(s.team,        p.team),
+      wish_slug   = COALESCE(s.wish_slug,   p.wish_slug),
+      task_id     = COALESCE(s.task_id,     p.task_id),
+      role        = COALESCE(s.role,        p.role),
+      updated_at  = now()
+    FROM sessions p
+    WHERE s.is_subagent = true
+      AND s.parent_session_id = p.id
+      AND (
+        (s.agent_id    IS NULL AND p.agent_id    IS NOT NULL) OR
+        (s.executor_id IS NULL AND p.executor_id IS NOT NULL) OR
+        (s.team        IS NULL AND p.team        IS NOT NULL) OR
+        (s.wish_slug   IS NULL AND p.wish_slug   IS NOT NULL) OR
+        (s.task_id     IS NULL AND p.task_id     IS NOT NULL) OR
+        (s.role        IS NULL AND p.role        IS NOT NULL)
+      )
+  `;
+
+  return linkResult.count ?? 0;
 }
 
 // ============================================================================
