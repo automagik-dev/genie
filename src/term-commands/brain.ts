@@ -558,13 +558,16 @@ async function executeBrainCommand(args: string[]): Promise<void> {
     } else {
       console.error('Brain module loaded but execute() not found.');
       console.error('Update: genie brain install');
+      process.exit(1);
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (isModuleNotFound(msg)) {
       printNotInstalledMessage();
+      process.exit(1);
     } else {
       console.error(`Brain error: ${msg}`);
+      process.exit(1);
     }
   }
 }
