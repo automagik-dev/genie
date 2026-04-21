@@ -241,13 +241,35 @@ describe('resolveBridgeTmuxSession', () => {
     expect(resolveBridgeTmuxSession('agent', 'yaml-default', '')).toBe('yaml-default');
   });
 
+  test('empty-string yaml default is treated as absent (falls through to agentName)', () => {
+    // Regression for Gemini review on PR #1271: a yaml file with
+    // `bridgeTmuxSession: ''` previously short-circuited to "" (nameless
+    // session, rejected by tmux). `||` semantics now fall through.
+    expect(resolveBridgeTmuxSession('agent-name', '', undefined)).toBe('agent-name');
+  });
+
   test('empty-string env override falls through to agentName when yaml also empty', () => {
     expect(resolveBridgeTmuxSession('fallback', undefined, '')).toBe('fallback');
   });
 
-  test('preserves non-slash special chars (tmux already rejects them downstream)', () => {
-    // We only sanitize `/` because tmux treats it as a target separator.
-    // Other characters are the caller's responsibility.
+  test('empty-string env and empty-string yaml both fall through to agentName', () => {
+    expect(resolveBridgeTmuxSession('fallback-both', '', '')).toBe('fallback-both');
+  });
+
+  test('sanitizes `:` to `-` (tmux reserves `:` as session:window separator)', () => {
+    // Regression for Gemini review on PR #1271.
+    expect(resolveBridgeTmuxSession('agent', 'team:window', undefined)).toBe('team-window');
+    expect(resolveBridgeTmuxSession('agent', 'yaml', 'whatsapp:12')).toBe('whatsapp-12');
+    expect(resolveBridgeTmuxSession('agent:role', undefined, undefined)).toBe('agent-role');
+  });
+
+  test('sanitizes mixed `/` and `:` in a single value', () => {
+    expect(resolveBridgeTmuxSession('agent', 'team:sub/window', undefined)).toBe('team-sub-window');
+  });
+
+  test('preserves benign special chars (., _, non-reserved)', () => {
+    // Sanitization targets only `/` and `:`; other chars are the caller's
+    // concern. Dots and underscores are legal in tmux session names.
     expect(resolveBridgeTmuxSession('agent', 'with_underscore-and.dot', undefined)).toBe('with_underscore-and.dot');
   });
 });
