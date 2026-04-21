@@ -211,8 +211,14 @@ export async function queryErrorPatterns(since?: string): Promise<ErrorPattern[]
 
   // Filter on structural signals, not substring matches:
   // - event_type names that denote failure (error / failed / rot.*)
-  // - JSONB key 'error' present on details (explicit error payload)
+  // - JSONB key 'error' or 'error_type' present on details (explicit error payload)
   // - state_changed where the new state value is literally 'error'
+  //
+  // Note: `reason` / `stderr` intentionally do NOT widen the filter. They're
+  // extracted from details (see COALESCE below) but only when the event has
+  // ALREADY qualified as an error via another predicate — otherwise benign
+  // events like `turn_close.done` (which carries `reason: "user_requested"`)
+  // would pollute the result set.
   //
   // Extract the human message from whichever key the producer used: error,
   // message, error_type, reason (state_changed carries this), or stderr.
@@ -239,6 +245,7 @@ export async function queryErrorPatterns(since?: string): Promise<ErrorPattern[]
          OR event_type LIKE '%failed%'
          OR event_type LIKE 'rot.%'
          OR details ? 'error'
+         OR details ? 'error_type'
          OR (event_type = 'state_changed' AND details->>'state' = 'error')
        )
        AND created_at >= $1::timestamptz
