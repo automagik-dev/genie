@@ -105,10 +105,16 @@ export async function turnClose(opts: TurnCloseOpts): Promise<TurnCloseResult> {
       // resolution. `opts.actor` can override just the audit actor.
       const agentName = process.env.GENIE_AGENT_NAME;
       if (agentName) {
+        // Tiebreaker: when two executors land in the same `started_at`
+        // microsecond (real on Blacksmith / fast CI hardware), `ctid DESC`
+        // picks the physically-last-inserted row, preserving insertion
+        // order deterministically. ctid is stable for any row that has
+        // not been touched by VACUUM FULL — fine for the ghost-recovery
+        // scenario where the rows of interest are seconds old at most.
         const fallback = await tx<{ id: string }[]>`
           SELECT id FROM executors
           WHERE agent_id = ${agentName}
-          ORDER BY started_at DESC
+          ORDER BY started_at DESC, ctid DESC
           LIMIT 1
           FOR UPDATE
         `;
