@@ -831,9 +831,53 @@ describe('listTeamsWithUnreadInbox workingDir fallback', () => {
     expect(row?.workingDir).toBe('/tmp/bare-repo');
   });
 
+  test('falls back to any member.cwd when lead not in members[] and no worktreePath/repo', async () => {
+    // Real-world council config (e.g. council-1775707451) observed with:
+    //   - leadAgentId pointing at the council itself
+    //   - members[] containing only worker council agents (architect, sentinel, …)
+    //     with a matching cwd on the shared council worktree
+    //   - worktreePath: null, repo: null
+    // Before this tier the inbox-watcher silently refused to spawn the lead
+    // despite unread messages. Any member.cwd recovers the intended path.
+    await createRawTeamConfig('council-1775707451', {
+      leadAgentId: 'council-1775707451@council-1775707451',
+      members: [
+        {
+          agentId: 'council--questioner@council-1775707451',
+          name: 'council--questioner',
+          cwd: '/tmp/shared-council-worktree',
+        },
+        {
+          agentId: 'council--sentinel@council-1775707451',
+          name: 'council--sentinel',
+          cwd: '/tmp/shared-council-worktree',
+        },
+      ],
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'council-1775707451');
+    expect(row?.workingDir).toBe('/tmp/shared-council-worktree');
+  });
+
+  test('member.cwd fallback skips entries with no cwd and picks the first populated one', async () => {
+    await createRawTeamConfig('team-mixed-cwd', {
+      leadAgentId: 'lead@team-mixed-cwd',
+      members: [
+        { agentId: 'worker-a@team-mixed-cwd', name: 'worker-a' },
+        { agentId: 'worker-b@team-mixed-cwd', name: 'worker-b', cwd: '/tmp/first-populated' },
+        { agentId: 'worker-c@team-mixed-cwd', name: 'worker-c', cwd: '/tmp/also-populated' },
+      ],
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-mixed-cwd');
+    expect(row?.workingDir).toBe('/tmp/first-populated');
+  });
+
   test('returns null when no fallback source is available', async () => {
     // Exercised explicitly so the inbox-watcher's "no workingDir in config"
-    // rate-limited warning still fires for configs that have no usable path.
+    // rate-limited warning still fires for configs that have no usable path
+    // — e.g. malformed configs whose members[] is empty AND lack
+    // worktreePath/repo.
     await createRawTeamConfig('team-blank', {
       leadAgentId: 'team-lead@team-blank',
       members: [],
@@ -841,6 +885,17 @@ describe('listTeamsWithUnreadInbox workingDir fallback', () => {
     const rows = await listTeamsWithUnreadInbox();
     const row = rows.find((r) => r.teamName === 'team-blank');
     expect(row?.workingDir).toBeNull();
+  });
+
+  test('worktreePath still beats member.cwd when both are present (ordering invariant)', async () => {
+    await createRawTeamConfig('team-order-invariant', {
+      leadAgentId: 'lead@team-order-invariant',
+      members: [{ agentId: 'worker@team-order-invariant', name: 'worker', cwd: '/tmp/worker-cwd' }],
+      worktreePath: '/tmp/team-worktree',
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-order-invariant');
+    expect(row?.workingDir).toBe('/tmp/team-worktree');
   });
 
   test('prefers leadMember.cwd over worktreePath when both are present', async () => {

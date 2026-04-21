@@ -619,6 +619,27 @@ function extractLeaderInboxName(config: NativeTeamConfig | null, teamName?: stri
   return atIdx > 0 ? config.leadAgentId.slice(0, atIdx) : (teamName ?? 'unknown');
 }
 
+/**
+ * Resolve the working directory for a team's lead, for inbox-watcher spawn.
+ *
+ * Fallback order, matching the PG teams mirror in team-manager.ts:
+ *   1. leadMember.cwd            — the lead's own cwd when present in members[]
+ *   2. config.worktreePath       — team-level worktree when lead isn't a distinct member
+ *   3. config.repo               — repo root when no worktree provisioned
+ *   4. any member.cwd            — real councils seen with both worktreePath/repo
+ *                                  null but workers on the shared council worktree
+ *   5. null                      — preserved so the inbox-watcher's rate-limited
+ *                                  "no workingDir in config" warning still fires
+ *                                  for configs that genuinely have no usable path
+ */
+function resolveLeadWorkingDir(config: NativeTeamConfig, leaderInboxName: string): string | null {
+  const leadMember = config.members.find((m) => m.agentId === config.leadAgentId || m.name === leaderInboxName);
+  if (leadMember?.cwd) return leadMember.cwd;
+  if (config.worktreePath) return config.worktreePath;
+  if (config.repo) return config.repo;
+  return config.members.find((m) => m.cwd)?.cwd ?? null;
+}
+
 /** Scan a single team directory for unread leader inbox messages. */
 async function scanTeamInbox(
   base: string,
@@ -652,24 +673,7 @@ async function scanTeamInbox(
   const unread = messages.filter((m) => m.read === false);
   if (unread.length === 0) return null;
 
-  let workingDir: string | null = null;
-  if (config) {
-    // Prefer the lead's own cwd from members[] when present.
-    const leadMember = config.members.find((m) => m.agentId === config?.leadAgentId || m.name === leaderInboxName);
-    if (leadMember?.cwd) {
-      workingDir = leadMember.cwd;
-    } else if (config.worktreePath) {
-      // Fallback: council/solo teams where the lead is the team itself often
-      // leave members[] empty (or without a matching lead entry). Use the
-      // team's own worktreePath instead of failing with "no workingDir in
-      // config". See inbox-watcher spawn-blocker reported against
-      // council-* sessions.
-      workingDir = config.worktreePath;
-    } else if (config.repo) {
-      // Final fallback: the repo root when no worktree is provisioned.
-      workingDir = config.repo;
-    }
-  }
+  const workingDir = config ? resolveLeadWorkingDir(config, leaderInboxName) : null;
 
   return { teamName: name, unreadCount: unread.length, workingDir, firstUnreadText: unread[0]?.text ?? null };
 }
