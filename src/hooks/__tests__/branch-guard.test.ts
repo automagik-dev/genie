@@ -242,6 +242,78 @@ describe('branch-guard', () => {
   });
 
   // =========================================================================
+  // REGEX OVER-MATCH DEFENSE — quoted body content must not trigger patterns
+  // =========================================================================
+
+  // Regression: Task #30 — a blocked command substring appearing inside a
+  // `--body` / `--message` / `-m` argument triggered a false-positive deny.
+  // Live repro: opening PR #1264 (branch-guard subprocess-diagnostics fix)
+  // was blocked twice because the PR body described the very commands the
+  // hook denies. The fix masks quoted regions before regex matching so the
+  // body text becomes invisible to the pattern tests while word-boundaries
+  // on the unmasked portion stay intact.
+  describe('masks quoted regions so body text does not over-match', () => {
+    const allowed: Array<[string, string]> = [
+      [
+        'allows gh pr create --base dev with `gh pr merge` inside body',
+        'gh pr create --base dev --title "test" --body "see gh pr merge 1262 for context"',
+      ],
+      [
+        'allows gh pr create --base dev with `git push origin main` inside body',
+        'gh pr create --base dev --title "test" --body "fix: git push origin main was denied"',
+      ],
+      [
+        'allows gh pr create --base dev with `git checkout main && git commit` inside body',
+        'gh pr create --base dev --body "repros git checkout main && git commit -m x"',
+      ],
+      [
+        'allows git commit -m with blocked phrase inside the message',
+        'git commit -m "docs: explain why git push origin main is blocked"',
+      ],
+      [
+        'allows single-quoted body containing blocked phrases',
+        "gh pr create --base dev --body 'git push origin main example'",
+      ],
+      [
+        'allows double-quoted body with escaped quote inside',
+        'gh pr create --base dev --body "contains \\"git push origin main\\" escaped"',
+      ],
+      [
+        'allows gh pr merge inside a --body of pr create (the live repro)',
+        'gh pr create --base dev --title "fix" --body "blocked by gh pr merge regex"',
+      ],
+    ];
+    for (const [label, cmd] of allowed) {
+      test(label, async () => {
+        const result = await branchGuard(makePayload(cmd));
+        expect(result).toBeUndefined();
+      });
+    }
+
+    // Negative control: the fix must NOT weaken the real policy. These remain
+    // blocked even though they share structure with the allowed cases above.
+    test('still blocks real push to main (no quotes)', async () => {
+      const result = await branchGuard(makePayload('git push origin main'));
+      expect(result).toBeDefined();
+      expect(result!.decision).toBe('deny');
+    });
+
+    test('still blocks gh pr create lacking --base even if body mentions --base', async () => {
+      const result = await branchGuard(makePayload('gh pr create --title "needs --base dev added" --body "test"'));
+      expect(result).toBeDefined();
+      expect(result!.decision).toBe('deny');
+      expect(result!.reason).toContain('--base');
+    });
+
+    test('still blocks real gh pr merge targeting main (quoted args do not shield the actual command)', async () => {
+      const result = await branchGuard(makePayload('gh pr merge 123 --squash --body "some note"'), mockDeps('main'));
+      expect(result).toBeDefined();
+      expect(result!.decision).toBe('deny');
+      expect(result!.reason).toContain('main');
+    });
+  });
+
+  // =========================================================================
   // EDGE CASES
   // =========================================================================
 
