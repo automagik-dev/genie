@@ -189,6 +189,83 @@ describe('branch-guard', () => {
     }
   });
 
+  // Regression: multi-repo workstation — the hook's `gh pr view` subprocess
+  // inherits a cwd whose git remote points at a different fork/clone than
+  // the PR being merged, so default gh resolution lands on the wrong repo
+  // and GraphQL returns "no such PR". Fix: forward `--repo OWNER/NAME` (or
+  // `-R OWNER/NAME`, with or without `=`) from the agent command to the
+  // lookup subprocess so both sides target the same repo.
+  describe('forwards --repo flag from gh pr merge to resolvePrBase', () => {
+    type ResolveCall = { prNum: string; repo: string | undefined };
+    function spyDeps(base: string): { deps: BranchGuardDeps; calls: ResolveCall[] } {
+      const calls: ResolveCall[] = [];
+      return {
+        calls,
+        deps: {
+          resolvePrBase: async (prNum, repo) => {
+            calls.push({ prNum, repo });
+            return { base };
+          },
+        },
+      };
+    }
+
+    const variants: Array<[string, string]> = [
+      ['long flag, space-separated', 'gh pr merge 1270 --squash --repo automagik-dev/genie'],
+      ['long flag, equals-separated', 'gh pr merge 1270 --repo=automagik-dev/genie --squash'],
+      ['short flag, space-separated', 'gh pr merge 1270 --squash -R automagik-dev/genie'],
+      ['short flag, equals-separated', 'gh pr merge 1270 -R=automagik-dev/genie'],
+      ['repo before pr num still parsed', 'gh pr merge 1270 --repo automagik-dev/genie --auto --delete-branch'],
+      ['slug with dots and hyphens', 'gh pr merge 42 --repo my-org/my.repo-name'],
+      ['slug with underscores', 'gh pr merge 7 --repo owner_x/name_y'],
+    ];
+    for (const [label, cmd] of variants) {
+      test(`${label}: "${cmd}"`, async () => {
+        const { deps, calls } = spyDeps('dev');
+        const result = await branchGuard(makePayload(cmd), deps);
+        expect(result).toBeUndefined();
+        expect(calls).toHaveLength(1);
+        expect(calls[0].prNum).toBe(cmd.match(/gh\s+pr\s+merge\s+(\d+)/)![1]);
+        // The repo slug must round-trip verbatim so subprocess targets the
+        // same repo the merge will hit.
+        expect(calls[0].repo).toBe(cmd.match(/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/)![0]);
+      });
+    }
+
+    test('absent --repo leaves repo param undefined (backward compat — fall back to cwd resolution)', async () => {
+      const { deps, calls } = spyDeps('dev');
+      const result = await branchGuard(makePayload('gh pr merge 1270 --squash'), deps);
+      expect(result).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0].repo).toBeUndefined();
+    });
+
+    test('malformed repo arg (no slash) is ignored — repo stays undefined', async () => {
+      const { deps, calls } = spyDeps('dev');
+      await branchGuard(makePayload('gh pr merge 1270 --repo justowner'), deps);
+      expect(calls[0].repo).toBeUndefined();
+    });
+
+    test('--repo inside a quoted body is stripped before extraction (no accidental forwarding)', async () => {
+      const { deps, calls } = spyDeps('dev');
+      // The body text describes `--repo X/Y`; the actual merge command has
+      // no real --repo flag. The hook must NOT pull the slug out of the body.
+      await branchGuard(
+        makePayload('gh pr merge 1270 --squash --body "see --repo namastexlabs/genie for context"'),
+        deps,
+      );
+      expect(calls[0].repo).toBeUndefined();
+    });
+
+    test('still denies when --repo is present but PR targets main', async () => {
+      const { deps } = spyDeps('main');
+      const result = await branchGuard(makePayload('gh pr merge 1270 --repo automagik-dev/genie'), deps);
+      expect(result).toBeDefined();
+      expect(result!.decision).toBe('deny');
+      expect(result!.reason).toContain('main');
+    });
+  });
+
   describe('allows legitimate commands', () => {
     const allowed = [
       // Push to feature branches
