@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { branchGuard } from '../handlers/branch-guard.js';
+import { type BranchGuardDeps, branchGuard } from '../handlers/branch-guard.js';
 import type { HookPayload } from '../types.js';
 
 function makePayload(command: string): HookPayload {
@@ -7,6 +7,16 @@ function makePayload(command: string): HookPayload {
     hook_event_name: 'PreToolUse',
     tool_name: 'Bash',
     tool_input: { command },
+  };
+}
+
+/**
+ * Build a mock `BranchGuardDeps` that returns the supplied value from
+ * `resolvePrBase`. Pass `null` to simulate a lookup failure.
+ */
+function mockDeps(base: string | null): BranchGuardDeps {
+  return {
+    resolvePrBase: async () => base,
   };
 }
 
@@ -48,17 +58,45 @@ describe('branch-guard', () => {
     }
   });
 
-  describe('blocks gh pr merge', () => {
-    const blocked = ['gh pr merge', 'gh pr merge 123', 'gh pr merge --auto', 'gh pr merge 42 --squash'];
+  describe('blocks gh pr merge without explicit PR number', () => {
+    const blocked = ['gh pr merge', 'gh pr merge --auto', 'gh pr merge --squash'];
 
     for (const cmd of blocked) {
       test(`blocks: ${cmd}`, async () => {
-        const result = await branchGuard(makePayload(cmd));
+        const result = await branchGuard(makePayload(cmd), mockDeps('dev'));
         expect(result).toBeDefined();
         expect(result!.decision).toBe('deny');
-        expect(result!.reason).toContain('merge');
+        expect(result!.reason).toContain('explicit PR number');
       });
     }
+  });
+
+  describe('blocks gh pr merge when PR targets main/master', () => {
+    const cases: Array<{ cmd: string; base: string }> = [
+      { cmd: 'gh pr merge 123', base: 'main' },
+      { cmd: 'gh pr merge 42 --squash', base: 'master' },
+      { cmd: 'gh pr merge 99 --auto', base: 'main' },
+      { cmd: 'gh pr merge 7 --merge', base: 'master' },
+    ];
+
+    for (const { cmd, base } of cases) {
+      test(`blocks "${cmd}" (base=${base})`, async () => {
+        const result = await branchGuard(makePayload(cmd), mockDeps(base));
+        expect(result).toBeDefined();
+        expect(result!.decision).toBe('deny');
+        expect(result!.reason).toContain(base);
+        expect(result!.reason).toContain('§19');
+      });
+    }
+  });
+
+  describe('blocks gh pr merge when base cannot be resolved', () => {
+    test('blocks when resolvePrBase returns null', async () => {
+      const result = await branchGuard(makePayload('gh pr merge 123'), mockDeps(null));
+      expect(result).toBeDefined();
+      expect(result!.decision).toBe('deny');
+      expect(result!.reason).toContain('could not resolve');
+    });
   });
 
   describe('blocks checkout main with chained mutation', () => {
@@ -83,6 +121,23 @@ describe('branch-guard', () => {
   // =========================================================================
   // SHOULD ALLOW
   // =========================================================================
+
+  describe('allows gh pr merge when PR targets dev', () => {
+    const allowed = [
+      'gh pr merge 123',
+      'gh pr merge 42 --squash',
+      'gh pr merge 99 --auto',
+      'gh pr merge 7 --merge',
+      'gh pr merge 1246 --squash --delete-branch',
+    ];
+
+    for (const cmd of allowed) {
+      test(`allows: ${cmd}`, async () => {
+        const result = await branchGuard(makePayload(cmd), mockDeps('dev'));
+        expect(result).toBeUndefined();
+      });
+    }
+  });
 
   describe('allows legitimate commands', () => {
     const allowed = [
