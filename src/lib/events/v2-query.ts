@@ -61,17 +61,44 @@ export const V2_SELECT = `
 /**
  * Translate a user-supplied kind filter into a SQL LIKE pattern.
  *
- * Backwards compatible with the historic prefix contract: bare strings like
- * `mailbox` continue to match `mailbox%`. Additionally accepts simple `*`
- * globs so operators can write `detector.*` per the runbook UX (and matches
- * `detector.fired`, `detector.disabled`, but not `command.success`). SQL
- * wildcards (`%`, `_`) inside the input are escaped so they cannot leak into
- * the predicate.
+ * Preserved as a thin alias over `kindFilterToLikePatterns(...)[0]` for
+ * callers that only need the headline prefix pattern (e.g. `mailbox` →
+ * `mailbox%`). New call sites should prefer the `Patterns` variant so bare
+ * words also hit namespace-prefixed segments (`agent` → `genie.agent.*`).
+ *
+ * SQL wildcards (`%`, `_`) inside the input are escaped so they cannot
+ * leak into the predicate.
  */
 export function kindFilterToLike(input: string): string {
+  return kindFilterToLikePatterns(input)[0];
+}
+
+/**
+ * Translate a user-supplied kind filter into one or more SQL LIKE patterns.
+ * The caller OR-combines them against `subject`/`kind`.
+ *
+ * Historical contract (prefix LIKE) is a strict subset of the output:
+ *   - Bare word `mailbox`      -> `['mailbox%', '%.mailbox.%', '%.mailbox']`
+ *   - Dotted    `agent.lifecycle` -> `['agent.lifecycle%']` (unchanged)
+ *   - Glob      `detector.*`   -> `['detector.%']` (unchanged)
+ *
+ * Why bare words get the wider pattern set: subjects emitted by v2 follow
+ * a `<namespace>.<kind>.<...>` shape (`genie.agent.dir:Y.spawned`,
+ * `rot.team-ls-drift.detected`). Users arriving from the audit_events surface
+ * type `--kind agent` expecting to hit `genie.agent.*`; under the old prefix
+ * rule this returned `[]` because the namespace (`genie.`) sat in front.
+ * Widening bare words to also match `%.<word>.%` / `%.<word>` fixes the
+ * intuitive case without changing what already-correct queries (dotted or
+ * globbed) return. Closes #1259 bug 2.
+ *
+ * Any `%` or `_` in the input is still escaped.
+ */
+export function kindFilterToLikePatterns(input: string): string[] {
   const escaped = input.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-  if (escaped.includes('*')) return escaped.replace(/\*/g, '%');
-  return `${escaped}%`;
+  if (escaped.includes('*')) return [escaped.replace(/\*/g, '%')];
+  if (escaped.includes('.')) return [`${escaped}%`];
+  // Bare word: historic prefix plus namespace-segment matches.
+  return [`${escaped}%`, `%.${escaped}.%`, `%.${escaped}`];
 }
 
 /**
@@ -110,8 +137,15 @@ export async function queryV2Batch(filter: V2StreamFilter): Promise<V2EventRow[]
 
   if (filter.afterId != null) clauses.push(`id > ${param(filter.afterId)}`);
   if (filter.kindPrefix) {
-    const pattern = kindFilterToLike(filter.kindPrefix);
-    clauses.push(`(subject LIKE ${param(pattern)} ESCAPE '\\' OR kind LIKE ${param(pattern)} ESCAPE '\\')`);
+    // Bare words expand to multiple patterns (prefix + namespace-segment)
+    // per `kindFilterToLikePatterns`. OR them all against both `subject`
+    // and `kind` so `--kind agent` hits `genie.agent.*` subjects too.
+    const patterns = kindFilterToLikePatterns(filter.kindPrefix);
+    const ors = patterns.flatMap((p) => {
+      const placeholder = param(p);
+      return [`subject LIKE ${placeholder} ESCAPE '\\'`, `kind LIKE ${placeholder} ESCAPE '\\'`];
+    });
+    clauses.push(`(${ors.join(' OR ')})`);
   }
   if (filter.severity) {
     clauses.push(`(COALESCE(severity, data->>'_severity') = ${param(filter.severity)})`);
