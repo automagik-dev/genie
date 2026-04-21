@@ -442,3 +442,71 @@ genie spawn '<role>' --team '<new_team>' --name '<unique_name>'
 ```
 
 Cross-reference with Pattern 4: duplicate-agents fires when the archive propagation lags but the teams are still active; session-reuse-ghost fires when the archive lag coincides with an archived team. Same underlying substrate gap, two surfaces.
+
+---
+
+## Pattern 9 — rot.team-unpushed-orphaned-worktree
+
+**Detector ID:** `rot.team-unpushed-orphaned-worktree` (risk class: high)
+**Source:** `src/detectors/pattern-9-team-unpushed-orphaned-worktree.ts`
+**Ship status:** pending merge of the Pattern 9 PR (wish `team-unpushed-orphaned-worktree`, tracks issue #1250).
+
+### Description
+
+A non-terminal team (`teams.status NOT IN ('done','blocked','archived')`) has no executor in `running`/`spawning` state within the last `idleMinutes` (default 10), AND its worktree has commits ahead of `origin/<base_branch>` (`git rev-list --count` > 0). The autonomous team finished local work but the leader died before `git push` / PR creation — the branch sits orphaned on disk, no existing detector fires, and `genie wish status` looks nominal.
+
+Felipe's live-observed version (issue #1250): a `team create --wish <slug>` team executes, engineers commit wip, the lead exits cleanly after marking the wish complete — but the branch is never pushed. Hours later the operator notices the PR never opened. The event payload carries `team_name`, `team_status`, `worktree_path`, `base_branch`, `branch_ahead_count`, ISO `last_commit_at`, ISO `last_executor_active_at`, `minutes_since_active`, `threshold_minutes`, `lead_agent_id`, `lead_state`, and `total_stalled_teams`.
+
+### Known root cause
+
+Autonomous team-lead spawn and worker spawn both emit `team.create` / `agent.lifecycle` events but the leader-completion contract is currently implicit — the lead relies on `idleExitMs` to self-terminate after the last worker goes idle, and there is no `team.pushed` / `team.pr_opened` event to assert against. If the lead exits before the final push step (crash, OOM, tmux pane kill, operator Ctrl-C), the branch is left in the worktree with commits ahead of origin and no downstream signal fires.
+
+The detector's SQL reads `teams` plus a `MAX(created_at)` roll-up over `agents.last_activity_at` filtered by non-terminal executor states, then in-memory: filters rows whose most recent executor activity is older than `idleMinutes`, caps the probed batch at `maxTeamsPerTick` (default 32), and for each survivor runs `git -C <worktree_path> rev-list --count origin/<base_branch>..HEAD` plus `git log -1 --format=%ct HEAD`. Any probe failure (missing worktree, missing base_branch, subprocess timeout at `gitTimeoutMs` / default 3s, non-zero exit) degrades to `ok:false` and the row is silently skipped — it stays eligible for the next tick. Fires are rate-limited by the shared `firedKey` budget to once per hour per detector.
+
+### Known false-positive sources
+
+- **Just-committed, not-yet-pushed (<10 min):** the 10-minute idleness threshold means a team that just committed but hasn't pushed yet (e.g. operator is drafting a commit message in another window) can fire if the executor state transitioned out of `running` between tick boundaries. Tuning `idleMinutes` higher trades faster detection for fewer noise fires.
+- **Intentional local branches:** operators sometimes create a team worktree for exploratory local work they never intend to push. The detector treats non-terminal `teams.status` as the contract — mark such teams as `blocked` or `archived` before leaving them parked.
+- **Base branch diverged under the team:** if `origin/<base_branch>` was force-pushed while the team worked, `git rev-list --count origin/<base>..HEAD` counts rebase-able commits that are not actually ahead in the semantic sense. The detector still correctly reports the local ahead count; operators must read the payload before acting.
+- **Git subprocess flaky:** slow disk, NFS mounts, or git locks can push the probe past `gitTimeoutMs`; the degrade-to-skip behaviour means the row is re-probed on the next tick. Persistent timeout on the same worktree indicates something real (hung git lock, missing `.git`).
+
+### Triage action
+
+```bash
+# 1. Read the payload — compare worktree_path, branch_ahead_count, last_commit_at,
+#    and minutes_since_active to understand what work is stranded.
+
+# 2. Inspect the orphaned worktree directly.
+cd "$(jq -r '.payload.observed_state_json.worktree_path' <<< "$EVENT")"
+git log --oneline origin/<base_branch>..HEAD
+
+# 3. Decide per-team whether the work should ship:
+#    (a) Ship: push the branch and open a PR on behalf of the dead lead.
+git push -u origin HEAD
+gh pr create --base <base_branch> --fill
+
+#    (b) Discard: the team's work was wrong / superseded — archive it.
+genie team archive '<team_name>'
+#    If the worktree should be removed from disk:
+git worktree remove --force "$(jq -r '.payload.observed_state_json.worktree_path' <<< "$EVENT")"
+
+# 4. If total_stalled_teams > 3 in one tick, the leader-completion contract is
+#    failing broadly — check for recent tmux-server restarts, OOM kills, or
+#    deployment events that may have killed multiple leads simultaneously.
+psql -c "SELECT t.name, t.status, a.custom_name AS lead, a.state AS lead_state,
+                a.last_activity_at
+         FROM teams t
+         LEFT JOIN agents a ON a.team_id = t.id AND a.role = 'team-lead'
+         WHERE t.status NOT IN ('done','blocked','archived')
+         ORDER BY a.last_activity_at NULLS FIRST;"
+
+# 5. If the detector fires repeatedly on the same team after triage, investigate
+#    why `team.status` is not transitioning — the operator may need to mark the
+#    team `done`/`blocked` explicitly.
+genie team done '<team_name>'   # if the ship path completed
+genie team blocked '<team_name>' # if the work is parked pending input
+```
+
+Cross-reference with Pattern 5: zombie-team-lead fires when a lead is *alive-but-idle* (leader state live, team never did anything); team-unpushed-orphaned-worktree fires when the lead is *dead-with-WIP* (leader gone, work on disk, never pushed). The two spans are deliberately non-overlapping (5min idleMinutes on pattern-5, 10min on pattern-9) so a stalling team surfaces under the pattern matching its actual failure mode.
+
+The deeper architectural fix — a `team.completed` / `team.pushed` event contract that the detector could assert against — is scoped out to a follow-up wish. Pattern 9 is the "observe the gap" half; the "close the gap" half (leader-completion contract + `genie team rescue` one-liner salvage) remains queued.
