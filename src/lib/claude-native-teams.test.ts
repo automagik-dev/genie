@@ -20,6 +20,7 @@ import {
   discoverTeamName,
   ensureNativeTeamWithSessionId,
   findTeamsContainingAgent,
+  listTeamsWithUnreadInbox,
   loadConfig,
   resolveNativeMemberName,
   resolveOrMintLeadSessionId,
@@ -719,5 +720,138 @@ describe('findTeamsContainingAgent', () => {
     // no team config has ever been written.
     const result = await findTeamsContainingAgent('khal-os');
     expect(result).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listTeamsWithUnreadInbox — workingDir resolution
+//
+// Regression coverage for the inbox-watcher spawn-blocker where
+// council/solo teams that leave members[] empty (or without a distinct
+// lead entry) emitted:
+//   [inbox-watcher] Cannot spawn team-lead for "council-…" — no workingDir in config
+// because `scanTeamInbox` only looked at `members[<lead>].cwd`. Fallback
+// order is now: leadMember.cwd → config.worktreePath → config.repo.
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a team config with the exact fields we need to exercise the
+ * workingDir-fallback chain in `scanTeamInbox`. The existing
+ * `createTestTeamConfig` helper always populates members[] with a matching
+ * lead — the bug we're guarding against requires the opposite.
+ */
+async function createRawTeamConfig(
+  teamName: string,
+  config: {
+    leadAgentId?: string;
+    members?: { agentId: string; name: string; cwd?: string }[];
+    worktreePath?: string;
+    repo?: string;
+  },
+  unreadMessage = 'hello lead',
+): Promise<void> {
+  const sanitized = sanitizeTeamName(teamName);
+  const teamDir = join(tempDir, 'teams', sanitized);
+  const inboxDir = join(teamDir, 'inboxes');
+  await mkdir(inboxDir, { recursive: true });
+
+  const leadAgentId = config.leadAgentId ?? `team-lead@${sanitized}`;
+  const leadInboxName = leadAgentId.split('@')[0] ?? 'team-lead';
+
+  await writeFile(
+    join(teamDir, 'config.json'),
+    JSON.stringify({
+      name: sanitized,
+      description: `Test team: ${teamName}`,
+      createdAt: Date.now(),
+      leadAgentId,
+      leadSessionId: 'test-session-id',
+      members: (config.members ?? []).map((m) => ({
+        agentId: m.agentId,
+        name: m.name,
+        agentType: 'general-purpose',
+        joinedAt: Date.now(),
+        cwd: m.cwd,
+        backendType: 'tmux',
+        color: 'blue',
+        planModeRequired: false,
+        isActive: true,
+      })),
+      worktreePath: config.worktreePath,
+      repo: config.repo,
+    }),
+  );
+
+  const msg: NativeInboxMessage = {
+    from: 'someone',
+    text: unreadMessage,
+    summary: 'test',
+    timestamp: new Date().toISOString(),
+    color: 'blue',
+    read: false,
+  };
+  await writeFile(join(inboxDir, `${leadInboxName}.json`), JSON.stringify([msg]));
+}
+
+describe('listTeamsWithUnreadInbox workingDir fallback', () => {
+  test('uses leadMember.cwd when the lead is in members[]', async () => {
+    await createRawTeamConfig('team-alpha', {
+      leadAgentId: 'team-lead@team-alpha',
+      members: [{ agentId: 'team-lead@team-alpha', name: 'team-lead', cwd: '/tmp/alpha-cwd' }],
+      worktreePath: '/tmp/alpha-worktree',
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-alpha');
+    expect(row?.workingDir).toBe('/tmp/alpha-cwd');
+  });
+
+  test('falls back to config.worktreePath when lead is not in members[]', async () => {
+    // Ghost-lead scenario: the lead is the team itself (councils, solo
+    // agents), so members[] is empty. Pre-fix this returned workingDir:null
+    // and the inbox-watcher logged "no workingDir in config" + refused to
+    // spawn. Post-fix we trust the team's own worktreePath.
+    await createRawTeamConfig('council-1775707451', {
+      leadAgentId: 'team-lead@council-1775707451',
+      members: [],
+      worktreePath: '/tmp/council-worktree',
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'council-1775707451');
+    expect(row?.workingDir).toBe('/tmp/council-worktree');
+  });
+
+  test('falls back to config.repo when both leadMember.cwd and worktreePath are absent', async () => {
+    await createRawTeamConfig('team-bare', {
+      leadAgentId: 'team-lead@team-bare',
+      members: [],
+      repo: '/tmp/bare-repo',
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-bare');
+    expect(row?.workingDir).toBe('/tmp/bare-repo');
+  });
+
+  test('returns null when no fallback source is available', async () => {
+    // Exercised explicitly so the inbox-watcher's "no workingDir in config"
+    // rate-limited warning still fires for configs that have no usable path.
+    await createRawTeamConfig('team-blank', {
+      leadAgentId: 'team-lead@team-blank',
+      members: [],
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-blank');
+    expect(row?.workingDir).toBeNull();
+  });
+
+  test('prefers leadMember.cwd over worktreePath when both are present', async () => {
+    await createRawTeamConfig('team-priority', {
+      leadAgentId: 'team-lead@team-priority',
+      members: [{ agentId: 'team-lead@team-priority', name: 'team-lead', cwd: '/tmp/priority-cwd' }],
+      worktreePath: '/tmp/priority-worktree',
+      repo: '/tmp/priority-repo',
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-priority');
+    expect(row?.workingDir).toBe('/tmp/priority-cwd');
   });
 });
