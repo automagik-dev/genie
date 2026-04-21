@@ -2175,6 +2175,42 @@ export function startDaemon(
       const captureSql = await d.getConnection();
       const { startFilewatch } = await import('./session-filewatch.js');
       const { startBackfill } = await import('./session-backfill.js');
+      const { reconcileSubagentParents } = await import('./session-capture.js');
+
+      // Retroactive reconcile — runs once per daemon start, independent of
+      // backfill. The backfill-tail reconcile only fires when backfill
+      // actually runs (i.e., `session_sync.status != 'complete'`). Post-
+      // v1 deployments leave backfill done, so subagents captured by
+      // filewatch BEFORE their parent session row was enriched (async
+      // worker-map lookup miss, filewatch ordering race, or parent
+      // inserted from a later jsonl batch) stay metadata-free forever.
+      //
+      // Running the same idempotent UPDATEs here catches those rows on
+      // the next restart. Zero rows is the happy case; a non-zero count
+      // is diagnostic gold — it says "the filewatch ordering skipped
+      // metadata for N subagents and we just fixed them."
+      reconcileSubagentParents(captureSql)
+        .then(({ linked, metadataFilled }) => {
+          if (linked > 0 || metadataFilled > 0) {
+            d.log({
+              timestamp: d.now().toISOString(),
+              level: 'info',
+              event: 'subagent_reconcile_on_start',
+              linked,
+              metadata_filled: metadataFilled,
+            });
+          }
+        })
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          d.log({
+            timestamp: d.now().toISOString(),
+            level: 'warn',
+            event: 'subagent_reconcile_on_start_failed',
+            error: msg,
+          });
+        });
+
       const filewatchOk = await startFilewatch(captureSql);
       if (!filewatchOk) {
         const { ingestFileFull, discoverAllJsonlFiles, buildWorkerMap } = await import('./session-capture.js');
