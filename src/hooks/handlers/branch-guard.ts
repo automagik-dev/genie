@@ -12,7 +12,7 @@
  * Priority: 1 (runs FIRST, before all other handlers)
  */
 
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import type { HandlerResult, HookPayload } from '../types.js';
 
 /** Branches that agents are allowed to merge PRs into. */
@@ -52,31 +52,64 @@ const SYNC_DENY_PATTERNS: SyncDenyPattern[] = [
 ];
 
 /**
+ * Result of a PR base-branch resolution attempt.
+ * - `{ base: string }` — lookup succeeded; caller checks base against allowlist.
+ * - `{ reason: string }` — lookup failed for a reason the caller surfaces in
+ *   the deny message so humans can diagnose without re-running.
+ *
+ * The reason-channel replaces the older `null` sentinel (which collapsed
+ * "subprocess threw", "exit != 0", and "exit=0 but empty stdout" into one
+ * opaque deny — undiagnosable when it fires in production).
+ */
+export type ResolvePrBaseResult = { base: string } | { reason: string };
+
+/**
  * Dependencies injection surface — tests supply a mock `resolvePrBase` so
  * the hook can be exercised without a live GitHub call.
  */
 export interface BranchGuardDeps {
   /**
-   * Resolve the base branch of a GitHub PR. Return `null` when the lookup
-   * fails (network error, missing PR, auth failure). Callers treat `null`
-   * as a deny.
+   * Resolve the base branch of a GitHub PR. Callers fall-closed on any
+   * failure shape (`reason` present) — that's the §19 v2 safety contract.
    */
-  resolvePrBase: (prNum: string) => Promise<string | null>;
+  resolvePrBase: (prNum: string) => Promise<ResolvePrBaseResult>;
 }
+
+/** Maximum stderr bytes we surface in a deny reason. Protects against gh
+ *  emitting a wall of text and flooding the hook decision payload. */
+const STDERR_SURFACE_CAP = 500;
 
 const defaultDeps: BranchGuardDeps = {
   async resolvePrBase(prNum) {
+    // spawnSync (not execSync) so we can inspect exit code AND stderr
+    // independently. The previous `stdio: ['ignore','pipe','ignore']` routed
+    // stderr to /dev/null, making every fall-closed deny undiagnosable.
+    // Timeout bumped 5s→10s for headroom during `gh auth` token refreshes.
+    let result: ReturnType<typeof spawnSync>;
     try {
-      const out = execSync(`gh pr view ${prNum} --json baseRefName -q .baseRefName`, {
+      result = spawnSync('gh', ['pr', 'view', prNum, '--json', 'baseRefName', '-q', '.baseRefName'], {
         encoding: 'utf8',
-        timeout: 5000,
-        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 10_000,
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
-      const base = out.trim();
-      return base || null;
-    } catch {
-      return null;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { reason: `spawnSync threw: ${message.slice(0, STDERR_SURFACE_CAP)}` };
     }
+    if (result.error) {
+      return { reason: `subprocess error: ${result.error.message.slice(0, STDERR_SURFACE_CAP)}` };
+    }
+    const stderr = typeof result.stderr === 'string' ? result.stderr.trim() : '';
+    if (result.status !== 0) {
+      const tail = stderr.slice(-STDERR_SURFACE_CAP) || 'no stderr captured';
+      return { reason: `gh pr view exited ${result.status}: ${tail}` };
+    }
+    const stdout = typeof result.stdout === 'string' ? result.stdout.trim() : '';
+    if (!stdout) {
+      const tail = stderr.slice(-STDERR_SURFACE_CAP) || 'none';
+      return { reason: `gh pr view exited 0 with empty stdout (stderr: ${tail})` };
+    }
+    return { base: stdout };
   },
 };
 
@@ -116,13 +149,14 @@ export async function branchGuard(payload: HookPayload, deps: BranchGuardDeps = 
           'BLOCKED: `gh pr merge` requires an explicit PR number so the target base branch can be verified. §19 (v2): agents merge PRs targeting `dev` only; main/master is humans-only via GitHub UI.',
       };
     }
-    const base = await deps.resolvePrBase(prNum);
-    if (!base) {
+    const resolved = await deps.resolvePrBase(prNum);
+    if ('reason' in resolved) {
       return {
         decision: 'deny',
-        reason: `BLOCKED: could not resolve base branch of PR #${prNum} (gh view failed or returned empty). §19 (v2): cannot merge without verifying base is \`dev\`. Check the PR exists and try again, or ask a human to merge via GitHub UI.`,
+        reason: `BLOCKED: could not resolve base branch of PR #${prNum} — ${resolved.reason}. §19 (v2): cannot merge without verifying base is \`dev\`. Check the PR exists and try again, or ask a human to merge via GitHub UI.`,
       };
     }
+    const base = resolved.base;
     if (!ALLOWED_MERGE_BASES.has(base)) {
       return {
         decision: 'deny',
