@@ -54,9 +54,12 @@ const defaultDeps: InboxWatcherDeps = {
   warn: (msg) => console.warn(msg),
   emitDeadInbox: (payload) => {
     // Fire-and-forget per emit.ts contract; swallow any synchronous error so
-    // the watcher poll loop never crashes on an emit glitch.
+    // the watcher poll loop never crashes on an emit glitch. The cast widens
+    // our strictly-typed payload to `Record<string, unknown>` at the emit
+    // boundary only — internal callers keep the full DeadInboxEventPayload
+    // signature for compile-time correctness.
     try {
-      emitEvent('rot.inbox-watcher-spawn-loop.detected', payload);
+      emitEvent('rot.inbox-watcher-spawn-loop.detected', payload as unknown as Record<string, unknown>);
     } catch {
       // intentionally swallowed — emit path is best-effort
     }

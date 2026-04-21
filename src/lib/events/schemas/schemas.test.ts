@@ -286,6 +286,15 @@ const fixtures: Record<EventType, Record<string, unknown>> = {
     agent_name: 'genie-configure',
     recovered: true,
   },
+
+  // BUGLESS-GENIE Pattern 9 — inbox-watcher silent-skip after
+  // MAX_SPAWN_FAILURES consecutive spawn failures.
+  'rot.inbox-watcher-spawn-loop.detected': {
+    team_name: 'wish-state-invalidation',
+    session_key: 'wish-state-invalidation',
+    failure_count: 3,
+    last_error_message: 'ensureTeamLead failed: tmux session not found',
+  },
 };
 
 describe('schema roundtrips — 15 new + 5 exemplars', () => {
