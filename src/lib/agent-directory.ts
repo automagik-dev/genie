@@ -62,6 +62,15 @@ export interface DirectoryEntry {
   hooks?: Record<string, unknown>;
   /** Full SDK Options configuration for claude-sdk provider sessions. */
   sdk?: SdkDirectoryConfig;
+  /**
+   * Override for the tmux session name the Omni bridge will spawn into.
+   * When set, hierarchical or grouped agents can share a parent's session
+   * (e.g. `felipe/scout` with `bridgeTmuxSession: felipe` lands next to
+   * felipe's windows in the attached TUI). Overridden per-dispatch by the
+   * `GENIE_TMUX_SESSION` env var propagated via NATS. When neither is set,
+   * the bridge falls back to the agent name (current behavior).
+   */
+  bridgeTmuxSession?: string;
 }
 
 export type DirectoryScope = 'project' | 'global' | 'built-in' | 'archived';
@@ -393,6 +402,7 @@ export async function edit(
       | 'omniScopes'
       | 'hooks'
       | 'sdk'
+      | 'bridgeTmuxSession'
     >
   >,
   _options?: ScopeOptions,
@@ -510,6 +520,7 @@ function roleToEntry(
     omniScopes: metadata?.omniScopes as string[] | undefined,
     hooks: metadata?.hooks as Record<string, unknown> | undefined,
     sdk: metadata?.sdk as SdkDirectoryConfig | undefined,
+    bridgeTmuxSession: metadata?.bridgeTmuxSession as string | undefined,
     ...(metadata?.repo ? { repo: metadata.repo as string } : team ? { repo: team } : {}),
   };
 }
@@ -529,6 +540,7 @@ function buildMetadata(entry: DirectoryEntry): Record<string, unknown> {
   if (entry.omniScopes) meta.omniScopes = entry.omniScopes;
   if (entry.hooks) meta.hooks = entry.hooks;
   if (entry.sdk) meta.sdk = entry.sdk;
+  if (entry.bridgeTmuxSession) meta.bridgeTmuxSession = entry.bridgeTmuxSession;
   return meta;
 }
 

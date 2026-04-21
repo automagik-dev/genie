@@ -436,6 +436,7 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRo
       omniScopes: configFields.omniScopes,
       hooks: configFields.hooks,
       sdk: configFields.sdk,
+      bridgeTmuxSession: configFields.bridgeTmuxSession,
     });
     result.registered.push(agent.name);
     return;
@@ -456,6 +457,7 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRo
     omniScopes: configFields.omniScopes,
     hooks: configFields.hooks,
     sdk: configFields.sdk,
+    bridgeTmuxSession: configFields.bridgeTmuxSession,
   });
   result.updated.push(agent.name);
 }
@@ -472,6 +474,7 @@ interface ConfigFields {
   omniScopes?: string[];
   hooks?: Record<string, unknown>;
   sdk?: Record<string, unknown>;
+  bridgeTmuxSession?: string;
   /** Original record for defaults/resolution callers that still expect the raw shape. */
   rawForResolution: Record<string, unknown>;
 }
@@ -490,6 +493,7 @@ async function readYamlAsConfigFields(yamlPath: string): Promise<ConfigFields> {
     omniScopes: cfg.omniScopes,
     hooks: cfg.hooks,
     sdk: cfg.sdk as Record<string, unknown> | undefined,
+    bridgeTmuxSession: cfg.bridgeTmuxSession,
     rawForResolution: cfg as unknown as Record<string, unknown>,
   };
 }
@@ -509,6 +513,7 @@ function readFrontmatterAsConfigFields(agentsMdPath: string): ConfigFields {
     omniScopes: fm.omniScopes as string[] | undefined,
     hooks: fm.hooks as Record<string, unknown> | undefined,
     sdk: fm.sdk as Record<string, unknown> | undefined,
+    bridgeTmuxSession: fm.bridgeTmuxSession as string | undefined,
     rawForResolution: fm as Record<string, unknown>,
   };
 }
@@ -527,6 +532,7 @@ function dbRowFromEntry(entry: directory.DirectoryEntry): Parameters<typeof migr
     omniScopes: entry.omniScopes,
     hooks: entry.hooks,
     sdk: entry.sdk as unknown as AgentConfig['sdk'],
+    bridgeTmuxSession: entry.bridgeTmuxSession,
   };
 }
 

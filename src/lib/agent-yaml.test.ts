@@ -80,11 +80,30 @@ describe('writeAgentYaml / parseAgentYaml round-trip', () => {
         allowedTools: ['Read', 'Write'],
         settingSources: ['user', 'project'],
       },
+      bridgeTmuxSession: 'felipe',
     };
 
     await writeAgentYaml(path, input);
     const parsed = await parseAgentYaml(path);
     expect(parsed).toEqual(input);
+  });
+
+  test('round-trips bridgeTmuxSession alone and preserves slash-containing values', async () => {
+    const path = tmpYaml();
+    const input: AgentConfig = {
+      promptMode: 'system',
+      bridgeTmuxSession: 'whatsapp-scout-12',
+    };
+    await writeAgentYaml(path, input);
+    const parsed = await parseAgentYaml(path);
+    expect(parsed.bridgeTmuxSession).toBe('whatsapp-scout-12');
+
+    // Slashes are allowed at the storage layer — sanitization happens at
+    // resolution time in the executor, not here.
+    const slashPath = tmpYaml('slash.yaml');
+    await writeAgentYaml(slashPath, { bridgeTmuxSession: 'felipe/scout' });
+    const parsedSlash = await parseAgentYaml(slashPath);
+    expect(parsedSlash.bridgeTmuxSession).toBe('felipe/scout');
   });
 
   test('strips derived fields (name, dir, registeredAt) from on-disk YAML', async () => {
