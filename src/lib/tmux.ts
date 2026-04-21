@@ -564,6 +564,39 @@ export function isTmuxSocketAlive(socketName: string | undefined | null): boolea
 }
 
 /**
+ * Probe whether the tmux server on `socketName` is actually accepting
+ * commands — not just whether its socket file exists on disk.
+ *
+ * `isTmuxSocketAlive` is a pure `existsSync` check, which returns `true`
+ * for orphaned socket files left behind when the tmux server dies
+ * ungracefully (SIGKILL, OOM, host reboot mid-session). Every subsequent
+ * `isPaneAlive` probe on such a "zombie socket" throws
+ * `TmuxUnreachableError`, which jams the reconciler's dead-socket
+ * fast-path, the scheduler's recovery pass, and `resolveSpawnIdentity` —
+ * users see `genie agent spawn` fail with a raw tmux stderr.
+ *
+ * This probe runs `tmux -L <sock> list-sessions`; success (incl. empty
+ * server) means reachable, failure means the socket is stale. We do not
+ * unlink the stale socket — tmux recreates it atomically on next
+ * session start, and silent cleanup of shared fs state outside our
+ * ownership is risky.
+ */
+export async function isTmuxServerReachable(socketName: string | undefined | null): Promise<boolean> {
+  if (!socketName) return false;
+  if (!isTmuxSocketAlive(socketName)) return false;
+  try {
+    const { execSync } = await import('node:child_process');
+    execSync(`${tmuxBin()} -L ${shellQuote(socketName)} list-sessions -F ''`, {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      timeout: 2000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Check if a tmux pane is still alive.
  * Returns false for invalid pane IDs ('inline', empty, non-%N format).
  * Returns false when the pane is dead but tmux is reachable.

@@ -563,8 +563,68 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       expect(s4?.id).toBe('alice-a3f7');
       expect(s5?.id).toBe('alice-a3f7a');
     });
-  });
 
+    test('branch: tmux unreachable during liveness probe → treat as dead, create canonical', async () => {
+      // Regression: stale tmux socket (zombie socket file, no server) caused
+      // `genie agent spawn` to crash with raw tmux stderr because
+      // `isPaneAlive` (routed via `isAliveFn` → `resolveWorkerLivenessByTransport`)
+      // throws `TmuxUnreachableError` and the error escaped the spawn path.
+      // Expected behaviour: treat the worker as dead for spawn purposes so
+      // the CLI proceeds to canonical-recovery instead of failing the user.
+      const team = `team-tmux-down-${Date.now()}`;
+      await seedCanonical('alice', team, { paneId: '%999' });
+
+      const { TmuxUnreachableError } = await import('../lib/tmux.js');
+      const tmuxDown = async () => {
+        throw new TmuxUnreachableError('no server running on /tmp/tmux-1000/genie');
+      };
+
+      const identity = await resolveSpawnIdentity(
+        'alice',
+        team,
+        () => 'recovery-uuid-0000-1111-2222-333333333333',
+        tmuxDown,
+      );
+
+      expect(identity.kind).toBe('canonical');
+      expect(identity.workerId).toBe('alice');
+      expect(identity.sessionUuid).toBe('recovery-uuid-0000-1111-2222-333333333333');
+    });
+
+    test('branch: "no server running" string (non-class error) also treated as dead', async () => {
+      // Defense in depth: some code paths raise a plain Error with the tmux
+      // stderr in the message rather than a typed `TmuxUnreachableError`
+      // (legacy wrappers, third-party tmux bins). We still don't want to
+      // leak that to the user as a spawn failure.
+      const team = `team-tmux-str-${Date.now()}`;
+      await seedCanonical('alice', team, { paneId: '%998' });
+
+      const plainError = async () => {
+        throw new Error('Failed to execute tmux command: no server running on /tmp/tmux-1000/genie');
+      };
+
+      const identity = await resolveSpawnIdentity(
+        'alice',
+        team,
+        () => 'plain-uuid-0000-1111-2222-333333333333',
+        plainError,
+      );
+
+      expect(identity.kind).toBe('canonical');
+      expect(identity.workerId).toBe('alice');
+    });
+
+    test("branch: non-tmux error during probe → rethrow (don't silently mask bugs)", async () => {
+      const team = `team-probe-bug-${Date.now()}`;
+      await seedCanonical('alice', team, { paneId: '%997' });
+
+      const unexpectedError = async () => {
+        throw new Error('ECONNRESET on postgres query');
+      };
+
+      await expect(resolveSpawnIdentity('alice', team, () => 'x', unexpectedError)).rejects.toThrow('ECONNRESET');
+    });
+  });
   describe('pickParallelShortId', () => {
     test('returns s4 when no collision', async () => {
       const team = `team-pick-s4-${Date.now()}`;

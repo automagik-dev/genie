@@ -35,7 +35,7 @@ import { waitForAgentReady } from '../lib/spawn-command.js';
 import * as teamManager from '../lib/team-manager.js';
 import { genieTmuxCmd, prependEnvVars } from '../lib/tmux-wrapper.js';
 import * as tmux from '../lib/tmux.js';
-import { executeTmux, isPaneAlive } from '../lib/tmux.js';
+import { TmuxUnreachableError, executeTmux, isPaneAlive } from '../lib/tmux.js';
 import { findWorkspace, getWorkspaceConfig } from '../lib/workspace.js';
 
 // ============================================================================
@@ -1838,7 +1838,30 @@ export async function resolveSpawnIdentity(
     };
   }
 
-  const alive = existing.pane_id ? await isAliveFn({ id: existing.id, paneId: existing.pane_id }) : false;
+  // `isAliveFn` routes to `isPaneAlive` for tmux workers, which throws
+  // `TmuxUnreachableError` when the tmux server is down (e.g. crashed with a
+  // stale socket file still on disk). In that state we cannot verify the pane,
+  // but the worker is functionally dead for the purposes of spawning — treat
+  // it as such so `genie agent spawn` proceeds to the canonical-recovery
+  // branch instead of crashing with a raw tmux stderr.
+  let alive = false;
+  if (existing.pane_id) {
+    try {
+      alive = await isAliveFn({ id: existing.id, paneId: existing.pane_id });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        err instanceof TmuxUnreachableError ||
+        message.includes('no server running') ||
+        message.includes('server exited') ||
+        message.includes('error connecting')
+      ) {
+        alive = false;
+      } else {
+        throw err;
+      }
+    }
+  }
   if (!alive) {
     // findDeadResumable is the canonical resume path. If it didn't fire, the
     // existing row lacks a claudeSessionId or isn't a Claude row; creating a
