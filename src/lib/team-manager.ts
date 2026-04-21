@@ -446,7 +446,10 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
  * @param opts.repo    Absolute path to the repo. Defaults to `process.cwd()`.
  * @returns The resulting TeamConfig, or null if the insert failed.
  */
-export async function ensureTeamRow(name: string, opts?: { repo?: string }): Promise<TeamConfig | null> {
+export async function ensureTeamRow(
+  name: string,
+  opts?: { repo?: string; nativeConfig?: nativeTeamsManager.NativeTeamConfig },
+): Promise<TeamConfig | null> {
   try {
     validateBranchName(name);
   } catch {
@@ -456,37 +459,83 @@ export async function ensureTeamRow(name: string, opts?: { repo?: string }): Pro
   const existing = await getTeam(name);
   if (existing) return existing;
 
-  const repoPath = path.resolve(opts?.repo ?? process.cwd());
+  // Prefer the native Claude-native config as the source of truth — either
+  // passed in by the caller (e.g. `backfillTeamRow` after `loadConfig`) or
+  // loaded from disk here. Fall back to `process.cwd()` only when no disk
+  // config exists (truly-new team). See Bug B in
+  // `.genie/wishes/fix-pg-disk-rehydration/WISH.md`.
+  const nativeConfig = opts?.nativeConfig ?? (await nativeTeamsManager.loadNativeTeamConfig(name));
   const now = new Date().toISOString();
-  const config: TeamConfig = {
-    name,
-    repo: repoPath,
-    baseBranch: 'dev',
-    worktreePath: repoPath,
-    members: [],
-    status: 'in_progress',
-    createdAt: now,
-    nativeTeamsEnabled: true,
-  };
+
+  let config: TeamConfig;
+  if (nativeConfig) {
+    const leader = deriveBareLeaderName(nativeConfig.leadAgentId);
+    const memberNames = (nativeConfig.members ?? [])
+      .map((m) => m.name)
+      .filter((n): n is string => typeof n === 'string' && n.length > 0);
+    const repoPath = path.resolve(nativeConfig.repo ?? opts?.repo ?? process.cwd());
+    const worktreePath = nativeConfig.worktreePath ?? repoPath;
+    config = {
+      name,
+      repo: repoPath,
+      baseBranch: nativeConfig.baseBranch ?? 'dev',
+      worktreePath,
+      leader: leader ?? undefined,
+      members: memberNames,
+      status: (nativeConfig.status as TeamStatus | undefined) ?? 'in_progress',
+      createdAt: new Date(nativeConfig.createdAt ?? Date.now()).toISOString(),
+      nativeTeamsEnabled: nativeConfig.nativeTeamsEnabled ?? true,
+      tmuxSessionName: nativeConfig.tmuxSessionName,
+      nativeTeamParentSessionId: nativeConfig.nativeTeamParentSessionId,
+      wishSlug: nativeConfig.wishSlug,
+    };
+  } else {
+    const repoPath = path.resolve(opts?.repo ?? process.cwd());
+    config = {
+      name,
+      repo: repoPath,
+      baseBranch: 'dev',
+      worktreePath: repoPath,
+      members: [],
+      status: 'in_progress',
+      createdAt: now,
+      nativeTeamsEnabled: true,
+    };
+  }
 
   try {
     const sql = await getConnection();
     await sql`
       INSERT INTO teams (
         name, repo, base_branch, worktree_path, leader,
-        members, status, native_teams_enabled, created_at
+        members, status, native_teams_enabled, created_at,
+        tmux_session_name, native_team_parent_session_id, wish_slug
       ) VALUES (
         ${config.name}, ${config.repo}, ${config.baseBranch},
-        ${config.worktreePath}, ${null},
-        ${JSON.stringify(config.members)}, ${config.status},
-        ${config.nativeTeamsEnabled ?? false}, ${config.createdAt}
+        ${config.worktreePath}, ${config.leader ?? null},
+        ${sql.json(config.members)}, ${config.status},
+        ${config.nativeTeamsEnabled ?? false}, ${config.createdAt},
+        ${config.tmuxSessionName ?? null},
+        ${config.nativeTeamParentSessionId ?? null},
+        ${config.wishSlug ?? null}
       ) ON CONFLICT (name) DO NOTHING
     `;
-    recordAuditEvent('team', name, 'backfilled', getActor(), { repo: repoPath, source: 'native-team' }).catch(() => {});
+    recordAuditEvent('team', name, 'backfilled', getActor(), {
+      repo: config.repo,
+      source: nativeConfig ? 'native-config' : 'cwd-fallback',
+      member_count: config.members.length,
+    }).catch(() => {});
     return (await getTeam(name)) ?? config;
   } catch {
     return null;
   }
+}
+
+/** Strip `@<team>` suffix from a Claude-native `leadAgentId` → bare leader name. */
+function deriveBareLeaderName(leadAgentId: string | undefined): string | null {
+  if (!leadAgentId) return null;
+  const at = leadAgentId.indexOf('@');
+  return at === -1 ? leadAgentId : leadAgentId.slice(0, at);
 }
 
 /**
@@ -516,8 +565,11 @@ export async function hireAgent(teamName: string, agentName: string): Promise<st
   }
 
   const sql = await getConnection();
+  // `sql.json()` — postgres.js encodes the JS array once into a proper jsonb
+  // array. Previously this used `JSON.stringify(config.members)` which
+  // produced jsonb-string (Bug D). See migration 045.
   await sql`
-    UPDATE teams SET members = ${JSON.stringify(config.members)}
+    UPDATE teams SET members = ${sql.json(config.members)}
     WHERE name = ${teamName}
   `;
   return added;
@@ -538,8 +590,9 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
 
   config.members.splice(idx, 1);
   const sql = await getConnection();
+  // See Bug D note in `hireAgent` — use `sql.json()` for proper jsonb encoding.
   await sql`
-    UPDATE teams SET members = ${JSON.stringify(config.members)}
+    UPDATE teams SET members = ${sql.json(config.members)}
     WHERE name = ${teamName}
   `;
 
