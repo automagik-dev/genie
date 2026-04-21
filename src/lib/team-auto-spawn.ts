@@ -47,27 +47,42 @@ function getSystemPromptFile(workingDir: string): string | null {
 /**
  * Ensure a tmux session exists for the given team.
  *
- * Resolution order:
- *   1. Current tmux session (caller is inside tmux)
- *   2. Team config `tmuxSessionName` (stored during team create)
- *   3. Create/find session named after team (last resort)
+ * Resolution order (TEAM CONFIG FIRST — never the caller's session):
+ *   1. Team config `tmuxSessionName` (authoritative, stored during team create)
+ *   2. Caller's current tmux session (legacy fallback for human-interactive
+ *      callers without team config)
+ *   3. Create/find a session named after the team (last resort)
+ *
+ * Why team config first: when a background daemon (inbox-watcher, scheduler)
+ * processes work for team X while running INSIDE the tmux session of team Y,
+ * the legacy "current session first" rule would route team X operations into
+ * team Y's session — producing ghost team-leads in the wrong place. The team's
+ * own configured session is the only correct target for cross-team automation.
  */
 async function ensureSession(teamName: string): Promise<string> {
-  // If inside tmux, reuse the current session
-  const current = await tmux.getCurrentSessionName();
-  if (current) return current;
-
-  // Check team config for stored session name
   const { getTeam } = await import('./team-manager.js');
   const teamConfig = await getTeam(teamName);
+
+  // 1. Team's own configured session (cross-team safe).
   if (teamConfig?.tmuxSessionName) {
     const existing = await tmux.findSessionByName(teamConfig.tmuxSessionName);
     if (existing) return teamConfig.tmuxSessionName;
+    // Team config knows the session name but it doesn't exist on disk yet —
+    // fall through to creation below using that name.
   }
 
-  // Fallback: atomically create session named after the team.
-  // Uses new-session directly and catches "duplicate session" to eliminate TOCTOU race.
-  const sessionName = sanitizeTeamName(teamName);
+  // 2. Legacy fallback: only when no team config exists (human-interactive
+  // CLI invocations without an established team). Background daemons should
+  // never reach this branch because team configs are persisted at create time.
+  if (!teamConfig) {
+    const current = await tmux.getCurrentSessionName();
+    if (current) return current;
+  }
+
+  // 3. Atomically create a session named after the team (or its configured
+  // name if known). Uses new-session directly and catches "duplicate session"
+  // to eliminate TOCTOU race.
+  const sessionName = teamConfig?.tmuxSessionName ?? sanitizeTeamName(teamName);
   try {
     await tmux.createSession(sessionName);
   } catch (error) {
@@ -85,14 +100,21 @@ async function ensureSession(teamName: string): Promise<string> {
  *
  * A team is considered "active" if:
  * 1. Its native config.json exists, AND
- * 2. A tmux window with the team name exists in any session
+ * 2. A tmux window matching the team name exists in the team's own session
+ *
+ * Session resolution prefers the team's configured `tmuxSessionName` over the
+ * caller's current session — see `ensureSession` above for rationale. Without
+ * this, an inbox-watcher running inside team Y's session would always report
+ * team X as inactive (looking in the wrong session) and trigger ghost spawns.
  */
 export async function isTeamActive(teamName: string): Promise<boolean> {
   const config = await loadConfig(teamName);
   if (!config) return false;
 
-  // Check current session first, then try team name as session
-  const sessionName = (await tmux.getCurrentSessionName()) ?? sanitizeTeamName(teamName);
+  const { getTeam } = await import('./team-manager.js');
+  const teamConfig = await getTeam(teamName);
+  const sessionName = teamConfig?.tmuxSessionName ?? (await tmux.getCurrentSessionName()) ?? sanitizeTeamName(teamName);
+
   const session = await tmux.findSessionByName(sessionName);
   if (!session) return false;
 
@@ -139,10 +161,17 @@ export async function isAgentAlive(agentName: string): Promise<boolean> {
  * @returns Result indicating whether the team was created or already existed
  */
 export async function ensureTeamLead(teamName: string, workingDir: string): Promise<EnsureTeamLeadResult> {
+  // Resolve target session FROM TEAM CONFIG, never from the caller's session.
+  // See `ensureSession` rationale: caller-session fallback is wrong for any
+  // background daemon (inbox-watcher, scheduler) processing cross-team work.
+  const { getTeam } = await import('./team-manager.js');
+  const teamConfig = await getTeam(teamName);
+  const targetSession =
+    teamConfig?.tmuxSessionName ?? (await tmux.getCurrentSessionName()) ?? sanitizeTeamName(teamName);
+
   // Fast path: team already active
-  const currentSession = (await tmux.getCurrentSessionName()) ?? sanitizeTeamName(teamName);
   if (await isTeamActive(teamName)) {
-    return { created: false, session: currentSession, window: sanitizeWindowName(teamName) };
+    return { created: false, session: targetSession, window: sanitizeWindowName(teamName) };
   }
 
   // Resolve the actual leader name from team config (never returns 'team-lead')
