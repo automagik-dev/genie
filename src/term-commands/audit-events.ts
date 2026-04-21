@@ -22,6 +22,7 @@ import {
   queryToolUsage,
 } from '../lib/audit.js';
 import { type V2EventRow, queryV2Batch } from '../lib/events/v2-query.js';
+import { getOtelPort } from '../lib/otel-receiver.js';
 import { formatRelativeTimestamp as formatTimestamp, padRight } from '../lib/term-format.js';
 import {
   type ExportAuditOptions,
@@ -99,6 +100,43 @@ function summarizeDetails(details: Record<string, unknown> | string): string {
   if (details.error) return `error: ${String(details.error).slice(0, 35)}`;
   if (details.duration_ms) return `${details.duration_ms}ms`;
   return JSON.stringify(details).slice(0, 40);
+}
+
+/**
+ * Print a warning that OTel-derived event subcommands only see sessions that
+ * were launched via `genie spawn` / `genie team create`. User-initiated
+ * Claude Code sessions (CLI, IDE extension, desktop app, third-party
+ * wrappers) never get the OTLP exporter env injected by
+ * `src/lib/provider-adapters.ts` and therefore never reach the genie
+ * receiver. Without surfacing this, empty or thin results read as
+ * "observability is broken" — closes #1263.
+ *
+ * Skip when rendering JSON so parsers don't break. When `empty=true` add a
+ * concrete remediation hint with the live receiver port; otherwise print
+ * the scope note alone.
+ */
+function printOtelScopeWarning(opts: { empty: boolean }): void {
+  console.log('\n⚠  OTel-derived events only cover genie-spawned sessions.');
+  if (opts.empty) {
+    let port: number | null = null;
+    try {
+      port = getOtelPort();
+    } catch {
+      port = null;
+    }
+    const endpoint = port ? `http://127.0.0.1:${port}` : 'http://127.0.0.1:<otel-port>';
+    console.log('   If you expected user-session activity, export the OTel vars in your shell rc:');
+    console.log(`     export OTEL_EXPORTER_OTLP_ENDPOINT=${endpoint}`);
+    console.log('     export CLAUDE_CODE_ENABLE_TELEMETRY=1');
+    console.log('   Then restart your Claude Code session.');
+  } else {
+    console.log('   User-initiated Claude Code sessions are not captured unless they export OTLP.');
+  }
+}
+
+/** Returns true when a `--type` filter targets an OTel-sourced event stream. */
+function isOtelTypeFilter(type: string | undefined): boolean {
+  return typeof type === 'string' && type.startsWith('otel_');
 }
 
 function printErrorsTable(patterns: ErrorPattern[]): void {
@@ -248,6 +286,12 @@ async function eventsListCommand(options: ListOptions): Promise<void> {
       console.log(JSON.stringify(rows, null, 2));
     } else {
       printEventsTable(rows);
+      // When the user explicitly filters by an OTel-sourced event_type,
+      // surface the same capture-scope note they'd see from the roll-ups
+      // (tools/summary/costs) so an empty result isn't read as a bug.
+      if (isOtelTypeFilter(options.type)) {
+        printOtelScopeWarning({ empty: rows.length === 0 });
+      }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -452,8 +496,11 @@ async function eventsCostsCommand(options: CostsOptions): Promise<void> {
       console.log(JSON.stringify(rows, null, 2));
     } else {
       printCostsTable(rows, groupBy);
-      // Warn about tracking gap — OTel only captures genie-spawned sessions
-      console.log('\n⚠  OTel costs only include genie-spawned sessions. For full server costs: npx ccusage monthly');
+      // Warn about tracking gap — OTel only captures genie-spawned sessions.
+      printOtelScopeWarning({ empty: rows.length === 0 });
+      if (rows.length > 0) {
+        console.log('   For full server costs: npx ccusage monthly');
+      }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -513,6 +560,10 @@ async function eventsToolsCommand(options: ToolsOptions): Promise<void> {
       console.log(JSON.stringify(rows, null, 2));
     } else {
       printToolsTable(rows, groupBy);
+      // `otel_tool` rows only flow from genie-spawned sessions — surface the
+      // scope so a user running Claude Code outside `genie spawn` doesn't
+      // read empty output as "observability is broken."
+      printOtelScopeWarning({ empty: rows.length === 0 });
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -576,6 +627,11 @@ async function eventsSummaryCommand(options: SummaryOptions): Promise<void> {
       console.log(JSON.stringify(summary, null, 2));
     } else {
       printSummary(summary);
+      // `tool_calls`, `api_requests`, and `total_cost` all come from
+      // OTel-sourced rows — clarify the capture boundary so a low number
+      // isn't mistaken for low activity.
+      const allOtelEmpty = summary.tool_calls === 0 && summary.api_requests === 0 && summary.total_cost === 0;
+      printOtelScopeWarning({ empty: allOtelEmpty });
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
