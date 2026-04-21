@@ -7,12 +7,26 @@
  */
 
 import { listTeamsWithUnreadInbox } from './claude-native-teams.js';
+import { emitEvent } from './emit.js';
 import { parseRoutingHeader, resolveSessionKey } from './routing-header.js';
 import { ensureTeamLead, isAgentAlive, isTeamActive } from './team-auto-spawn.js';
 
 // ============================================================================
 // Dependency injection (testability without real filesystem/tmux)
 // ============================================================================
+
+/**
+ * Payload emitted when a session crosses the `MAX_SPAWN_FAILURES` threshold
+ * and the watcher flips into silent-skip mode. See
+ * `src/lib/events/schemas/rot.inbox-watcher-spawn-loop.detected.ts` for the
+ * full Zod schema (Pattern 9 of the BUGLESS-GENIE roster).
+ */
+export interface DeadInboxEventPayload {
+  team_name: string;
+  session_key: string;
+  failure_count: number;
+  last_error_message: string;
+}
 
 /** Dependencies used by inbox-watcher functions. */
 export interface InboxWatcherDeps {
@@ -21,6 +35,14 @@ export interface InboxWatcherDeps {
   isAgentAlive: (agentName: string) => Promise<boolean>;
   ensureTeamLead: (teamName: string, workingDir: string) => Promise<{ created: boolean }>;
   warn: (msg: string) => void;
+  /**
+   * Emits `rot.inbox-watcher-spawn-loop.detected` on the transition from
+   * `failures === MAX_SPAWN_FAILURES - 1` to `failures === MAX_SPAWN_FAILURES`.
+   * Called exactly once per session key per daemon lifetime (until
+   * `resetSpawnFailures()` clears the counter). Fire-and-forget — errors
+   * must not bubble into the watcher loop.
+   */
+  emitDeadInbox: (payload: DeadInboxEventPayload) => void;
 }
 
 /** Default production dependencies. */
@@ -30,6 +52,15 @@ const defaultDeps: InboxWatcherDeps = {
   isAgentAlive: (agentName) => isAgentAlive(agentName),
   ensureTeamLead: (teamName, workingDir) => ensureTeamLead(teamName, workingDir),
   warn: (msg) => console.warn(msg),
+  emitDeadInbox: (payload) => {
+    // Fire-and-forget per emit.ts contract; swallow any synchronous error so
+    // the watcher poll loop never crashes on an emit glitch.
+    try {
+      emitEvent('rot.inbox-watcher-spawn-loop.detected', payload);
+    } catch {
+      // intentionally swallowed — emit path is best-effort
+    }
+  },
 };
 
 // ============================================================================
@@ -115,6 +146,14 @@ function shouldWarnMissingWorkingDir(teamName: string): boolean {
 /**
  * Attempt to spawn a team-lead; track failures in `spawnFailures`.
  * Returns true on success (caller adds team to `spawned` list).
+ *
+ * On the exact transition to `MAX_SPAWN_FAILURES`, fires a
+ * `rot.inbox-watcher-spawn-loop.detected` event via `deps.emitDeadInbox`
+ * so downstream consumers (B-project detectors, operator runbooks) can
+ * observe the silent-skip state without polling the in-memory counter.
+ * Subsequent failures at or above the threshold do NOT re-emit (prevents
+ * polling-cadence flooding of the event substrate). The counter is reset
+ * on a successful spawn.
  */
 async function attemptSpawn(
   deps: InboxWatcherDeps,
@@ -134,6 +173,18 @@ async function attemptSpawn(
     deps.warn(
       `[inbox-watcher] Failed to spawn team-lead for "${teamName}" (attempt ${newCount}/${MAX_SPAWN_FAILURES}): ${message}`,
     );
+    // Pattern 9 — fire dead-inbox event exactly on the transition to the
+    // silent-skip state. The watcher has already tracked the failure; now
+    // the rest of the system learns about it.
+    if (newCount === MAX_SPAWN_FAILURES) {
+      deps.emitDeadInbox({
+        team_name: teamName,
+        session_key: sessionKey,
+        failure_count: newCount,
+        // Bound the message length to match the schema cap (2 KiB).
+        last_error_message: message.length > 2048 ? `${message.slice(0, 2045)}...` : message,
+      });
+    }
     return false;
   }
 }
