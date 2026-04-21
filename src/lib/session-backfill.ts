@@ -25,6 +25,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Order backfill files so parent sessions ingest before their subagents.
+ *
+ * The `sessions.parent_session_id` FK (migration `010_session_capture_v2`) is
+ * not DEFERRABLE, so inserting a subagent row whose parent hasn't been
+ * inserted yet fails with `sessions_parent_session_id_fkey` and that file's
+ * data is silently dropped. Sorting by mtime alone mixes parents and
+ * subagents arbitrarily — subagents are usually newer than their parents,
+ * so they win the race and get inserted first.
+ *
+ * Fix: sort non-subagents before subagents, then preserve newest-first within
+ * each tier. Exported so the comparator can be unit-tested without a DB.
+ */
+export function compareBackfillFiles(
+  a: { isSubagent: boolean; mtime: number },
+  b: { isSubagent: boolean; mtime: number },
+): number {
+  if (a.isSubagent !== b.isSubagent) return a.isSubagent ? 1 : -1;
+  return b.mtime - a.mtime;
+}
+
 // ============================================================================
 // Progress state
 // ============================================================================
@@ -180,7 +201,7 @@ export async function startBackfill(sql: SqlClient): Promise<void> {
 
   try {
     const allFiles = await discoverAllJsonlFiles();
-    allFiles.sort((a, b) => b.mtime - a.mtime);
+    allFiles.sort(compareBackfillFiles);
 
     const totalBytes = allFiles.reduce((sum, f) => sum + f.fileSize, 0);
     const progress: BackfillProgress = {
