@@ -10,8 +10,16 @@
 --   SELECT members FROM teams WHERE name = 'genie-docs';
 --   → '["genie-configure"]'  (the literal JSON-encoded string, not an array)
 --
--- The fix: cast the jsonb-string value to text (which strips the outer jsonb
--- string quoting and returns the inner JSON text) and re-parse as jsonb.
+-- The fix: extract the jsonb value as plain text via `#>>'{}'` (which strips
+-- the outer jsonb-string wrapping and returns the raw inner JSON text like
+-- `["a","b"]`), then cast that text back into jsonb as a proper array.
+--
+-- NOTE: `jsonb_col::text::jsonb` does NOT work here — for a jsonb-string,
+-- `::text` returns the quoted-escaped form (e.g. `"[\"a\",\"b\"]"`), and
+-- `::jsonb` of that parses to the same jsonb-string. That round-trip is a
+-- silent no-op. Use `#>>'{}'` to unwrap properly. Verified on the live
+-- genie-stefani server (7 teams rehydrated from string → array).
+--
 -- Idempotent: the `WHERE jsonb_typeof(col) = 'string'` guard ensures
 -- re-running this migration is a no-op on already-correct rows.
 --
@@ -23,24 +31,24 @@ BEGIN;
 
 -- teams.members: stringified array → proper jsonb array.
 UPDATE teams
-SET members = members::text::jsonb
+SET members = (members #>> '{}')::jsonb
 WHERE jsonb_typeof(members) = 'string';
 
 -- teams.allow_child_reachback: same pattern, same fix (nullable column).
 UPDATE teams
-SET allow_child_reachback = allow_child_reachback::text::jsonb
+SET allow_child_reachback = (allow_child_reachback #>> '{}')::jsonb
 WHERE allow_child_reachback IS NOT NULL
   AND jsonb_typeof(allow_child_reachback) = 'string';
 
 -- agents.sub_panes: same pattern (written via JSON.stringify in pg-seed.ts).
 UPDATE agents
-SET sub_panes = sub_panes::text::jsonb
+SET sub_panes = (sub_panes #>> '{}')::jsonb
 WHERE sub_panes IS NOT NULL
   AND jsonb_typeof(sub_panes) = 'string';
 
 -- agent_templates.extra_args: same pattern.
 UPDATE agent_templates
-SET extra_args = extra_args::text::jsonb
+SET extra_args = (extra_args #>> '{}')::jsonb
 WHERE extra_args IS NOT NULL
   AND jsonb_typeof(extra_args) = 'string';
 
