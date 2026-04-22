@@ -116,6 +116,12 @@ program.name('genie').description('Genie CLI - AI-assisted development').version
 // Global --no-interactive flag: disables all interactive prompts (scripting safety)
 program.option('--no-interactive', 'Disable interactive prompts (exit 2 instead of prompting)');
 
+// Global --no-tui flag / GENIE_TUI_DISABLE env — hotfix safety valve for the
+// OpenTUI kqueue hot-loop on macOS local ptys (`@opentui/core-darwin-arm64@0.1.102`).
+// When set, every TUI bootstrap path short-circuits BEFORE `@opentui/core` is
+// imported. See src/lib/tui-disable.ts and the hotfix PR for full context.
+program.option('--no-tui', 'Skip TUI bootstrap (or set GENIE_TUI_DISABLE=1)');
+
 program.configureHelp({
   sortSubcommands: true,
   showGlobalOptions: true,
@@ -643,6 +649,21 @@ delete process.env.GENIE_TUI_RIGHT;
 // biome-ignore lint/performance/noDelete: process.env requires delete
 delete process.env.GENIE_IS_DAEMON;
 if (isTuiPane) {
+  // Hotfix: GENIE_TUI_DISABLE / --no-tui short-circuits the OpenTUI renderer
+  // BEFORE any `@opentui/core` dynamic import, so the FFI dylib never loads.
+  // This is the user-side safety valve for the macOS kqueue hot-loop in
+  // `@opentui/core-darwin-arm64@0.1.102` (local ptys only; SSH unaffected).
+  // See src/lib/tui-disable.ts for the full rationale.
+  const { isTuiDisabled, noticeTuiSkipped } = await import('./lib/tui-disable.js');
+  if (isTuiDisabled()) {
+    noticeTuiSkipped('renderer');
+    // Keep the pane quiet. Sleep forever instead of exiting so the tmux pane
+    // doesn't immediately respawn via the launch-script supervisor and retry
+    // the renderer. Users can `tmux kill-session -t genie-tui` or Ctrl-B d
+    // to detach; the pane stays idle with 0 CPU.
+    await new Promise<void>(() => {});
+    process.exit(0);
+  }
   // Restore GENIE_TUI_RIGHT so the TUI renderer can read it (we deleted it
   // from the environment to prevent child process inheritance, but the TUI
   // itself still needs it to control the right pane).
@@ -654,6 +675,19 @@ if (isTuiPane) {
 
 // Default command: genie (no args) → TUI + agent routing based on cwd.
 if (args.length === 0) {
+  // Hotfix: honor GENIE_TUI_DISABLE / --no-tui on the default (attach) path.
+  // Without this the bare `genie` command would still try to start serve and
+  // attach to the TUI pane, re-triggering the OpenTUI kqueue spin.
+  {
+    const { isTuiDisabled, noticeTuiSkipped } = await import('./lib/tui-disable.js');
+    if (isTuiDisabled()) {
+      noticeTuiSkipped('attach');
+      console.error('  Use `genie ls`, `genie spawn <agent>`, `genie log`, etc. directly.');
+      console.error('  Unset GENIE_TUI_DISABLE (or omit --no-tui) to re-enable the TUI.');
+      process.exit(0);
+    }
+  }
+
   // Already inside the TUI — resolve agent from cwd and signal navigation instead of erroring.
   if (process.env.TMUX?.includes('genie-tui')) {
     const { findWorkspace } = await import('./lib/workspace.js');
