@@ -20,13 +20,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { archiveExhaustedZombies, listExhaustedZombies } from './agent-registry.js';
 import { getConnection } from './db.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('archiveExhaustedZombies (issue #1293)', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -57,7 +57,7 @@ describe.skipIf(!DB_AVAILABLE)('archiveExhaustedZombies (issue #1293)', () => {
       INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, last_state_change, auto_resume)
       VALUES (
         ${opts.id},
-        ${'%' + opts.id},
+        ${`%${opts.id}`},
         ${'genie'},
         ${'/tmp/test'},
         now() - make_interval(hours => ${opts.ageHours}),
@@ -180,7 +180,7 @@ describe.skipIf(!DB_AVAILABLE)('listExhaustedZombies — dry-run view (issue #12
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -197,7 +197,7 @@ describe.skipIf(!DB_AVAILABLE)('listExhaustedZombies — dry-run view (issue #12
     const sql = await getConnection();
     await sql`
       INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, last_state_change, auto_resume)
-      VALUES (${id}, ${'%' + id}, 'genie', '/tmp/test',
+      VALUES (${id}, ${`%${id}`}, 'genie', '/tmp/test',
               now() - make_interval(hours => ${ageHours}),
               'error',
               now() - make_interval(hours => ${ageHours}),
