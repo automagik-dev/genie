@@ -113,68 +113,17 @@ jobs:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
         run: bun install
 
-      # Pull the latest test-durations.json artifact from main so the
-      # parallel scheduler can apply LPT packing. A fresh fork, a brand-new
-      # branch, or an expired artifact (>14 days) all produce "no artifact"
-      # here; the scheduler gracefully falls back to median-estimate.
-      # continue-on-error keeps CI green on that cold-start path.
-      - name: Download latest test-durations from main
-        id: durations-download
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          RUN_ID=$(gh run list \
-            --branch main \
-            --status success \
-            --workflow ci.yml \
-            --limit 1 \
-            --json databaseId \
-            --jq '.[0].databaseId' || true)
-          if [ -z "${RUN_ID:-}" ]; then
-            echo "no successful main-branch run found — scheduler will use median-estimate"
-            exit 0
-          fi
-          gh run download "$RUN_ID" --name test-durations --dir . || {
-            echo "artifact missing on run ${RUN_ID} (expired or never uploaded) — scheduler will use median-estimate"
-            exit 0
-          }
-          if [ -f test-durations.json ]; then
-            echo "downloaded test-durations.json from run ${RUN_ID}"
-            echo "path=$(pwd)/test-durations.json" >> "$GITHUB_OUTPUT"
-          fi
-
-      # No `|| bun test` retry. If the test suite is flaky, the retry
-      # masks the signal and causes cache corruption when two overlapping
-      # bun processes race on the install cache. Surface real failures;
-      # root-cause the flakes in #<bun-test-hang-issue>.
-      - name: Test (parallel shards)
+      # Serial bun test. `test:parallel` (Group 7) exposes a latent codebase
+      # antipattern in moveTask() + similar where a sql.begin(tx) transaction
+      # re-acquires a connection from the pool — under parallel shards this
+      # self-deadlocks. Fixing that app-side is out of scope for this wish;
+      # `test:parallel` stays available as a local dev tool (package.json).
+      # CI uses serial `bun test` for determinism and green. See wish:
+      # .genie/wishes/pg-test-perf/WISH.md for the full story.
+      - name: Test (serial, PG-backed)
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-          GENIE_TEST_DURATIONS_PATH: ${{ steps.durations-download.outputs.path }}
-        run: bun run test:parallel
-
-      # On successful push to main only, regenerate the durations cache and
-      # upload it for the next run. We emit via `--emit-durations=` which
-      # spawns one bun-test per file (per shard) so wall-clocks are per-file.
-      # That mode is slower than the default `bun test`, so it runs ONLY on
-      # main-branch push where the 14-day artifact retention makes it worth
-      # paying the cost once to speed up every downstream run.
-      - name: Regenerate test-durations cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-        run: bun run scripts/test-parallel.ts --emit-durations=test-durations.json --report-shard-times
-
-      - name: Upload test-durations artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-durations
-          path: test-durations.json
-          retention-days: 14
-          if-no-files-found: warn
+        run: bun test
 
   # Umbrella status check. Branch protection is configured to require
   # "Quality Gate (typecheck + lint + test)" as a required status, so the
