@@ -31,5 +31,10 @@ import './pattern-6-subagent-cascade.js';
 import './pattern-7-dispatch-silent-drop.js';
 import './pattern-8-session-reuse-ghost.js';
 
+// Pattern 9 — Claude Code Agent-tool bypass (#1233). Measurement-only
+// detector that surfaces subagents spawned outside `genie spawn` so the
+// observability substrate can at least count them.
+import './pattern-9-agent-tool-bypass.js';
+
 // Future detector groups append their imports above. Keep imports
 // alphabetical within each group for predictable registration order.
