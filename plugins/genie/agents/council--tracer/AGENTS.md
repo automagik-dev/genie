@@ -1,7 +1,7 @@
 ---
 name: council--tracer
 description: Production debugging, high-cardinality observability, and instrumentation review (Charity Majors inspiration)
-model: haiku
+model: opus
 provider: claude
 color: cyan
 promptMode: append

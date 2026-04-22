@@ -39,6 +39,6 @@ council-dispatch.sh --topic "..." --members "questioner,architect" --model haiku
 
 ## Notes
 
-- `inherit` means the member uses whatever model is set in its agent definition frontmatter (currently `haiku` for all members)
+- `inherit` means the member uses whatever model is set in its agent definition frontmatter (currently `opus` for all members)
 - Provider/model overrides at spawn time take precedence over these defaults
 - Mixed-LLM councils (e.g., architect on codex/o3, questioner on claude/opus) are supported but require per-member spawn commands
