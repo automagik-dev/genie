@@ -64,6 +64,7 @@ import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerNotifyCommands } from './term-commands/notify.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import { registerProjectCommands } from './term-commands/project.js';
+import { registerPruneCommands } from './term-commands/prune.js';
 import {
   type QaCheckOptions,
   type QaOptions,
@@ -235,6 +236,7 @@ registerBoardCommands(program);
 registerTagCommands(program);
 registerReleaseCommands(program);
 registerProjectCommands(program);
+registerPruneCommands(program);
 registerNotifyCommands(program);
 registerEventsCommands(program);
 registerSessionsCommands(program);
@@ -619,7 +621,8 @@ program
   .description('List registered agents with runtime status')
   .option('--json', 'Output as JSON')
   .option('--source <name>', 'Filter by executor metadata source (e.g. omni)')
-  .action(async (options: { json?: boolean; source?: string }) => {
+  .option('--all', 'Include archived agents (hidden by default)')
+  .action(async (options: { json?: boolean; source?: string; all?: boolean }) => {
     try {
       await handleLsCommand(options);
     } catch (error) {

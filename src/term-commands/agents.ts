@@ -2673,7 +2673,11 @@ async function resolveAgentNamesBySource(source: string): Promise<Set<string>> {
 /**
  * genie ls — Smart view of registered agents with runtime status.
  */
-export async function handleLsCommand(options: { json?: boolean; source?: string }): Promise<void> {
+export async function handleLsCommand(options: {
+  json?: boolean;
+  source?: string;
+  all?: boolean;
+}): Promise<void> {
   const dirEntries = await directory.ls();
   const workers = await registry.list();
   const statusMap = await buildWorkerStatusMap(workers);
@@ -2724,6 +2728,12 @@ export async function handleLsCommand(options: { json?: boolean; source?: string
   // Apply source filter if provided
   if (sourceAgentNames) {
     entries = entries.filter((e) => sourceAgentNames.has(e.name));
+  }
+
+  // Hide archived agents by default (issue #1293 — TTL-archived dead-pane
+  // zombies pile up otherwise). `--all` opts back in for audit/debug.
+  if (!options.all) {
+    entries = entries.filter((e) => e.status !== 'archived');
   }
 
   if (options.json) {
