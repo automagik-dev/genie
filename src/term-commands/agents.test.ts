@@ -712,6 +712,45 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
     });
   });
 
+  // Regression for #1147 (2026-04-22):
+  // `genie work` dispatched in native/inline mode could leave an engineer-N
+  // row with `transport: 'inline'` and `paneId: 'inline'`. On retry, the old
+  // findDeadResumable matched that row (provider='claude', paneId 'inline' →
+  // "dead") and routed through resumeAgent, which hard-requires tmux →
+  // "error connecting to /tmp/tmux-1000/genie". The fix filters non-tmux
+  // rows so rejectDuplicateRole can clean them up instead.
+  describe('findDeadResumable: transport-aware (#1147)', () => {
+    test('skips a dead row whose transport is "inline"', async () => {
+      const team = `team-inline-ghost-${Date.now()}`;
+      await seedCanonical('engineer-1', team, {
+        paneId: 'inline',
+        transport: 'inline',
+        claudeSessionId: 'inline-uuid-11111111-2222-3333-444444444444',
+        provider: 'claude',
+        role: 'engineer-1',
+      });
+
+      const found = await findDeadResumable(team, 'engineer-1');
+      expect(found).toBeNull();
+    });
+
+    test('still returns a dead row whose transport is "tmux"', async () => {
+      const team = `team-tmux-resumable-${Date.now()}`;
+      await seedCanonical('engineer-1', team, {
+        paneId: 'inline', // pane gone — dead
+        transport: 'tmux',
+        claudeSessionId: 'tmux-uuid-99999999-8888-7777-666666666666',
+        provider: 'claude',
+        role: 'engineer-1',
+      });
+
+      const found = await findDeadResumable(team, 'engineer-1');
+      expect(found).not.toBeNull();
+      expect(found?.id).toBe('engineer-1');
+      expect(found?.transport).toBe('tmux');
+    });
+  });
+
   // Regression for cross-team resurrection (2026-04-19):
   // Team A has a dead engineer-2 anchor. Team B spawns engineer-2. The spawn
   // must NOT resume team A's anchor and must NOT silently adopt team A's row.

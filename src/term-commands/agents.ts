@@ -1248,6 +1248,21 @@ async function runSdkQuery(
   }
 }
 
+/**
+ * Roll back a half-completed spawn so a retry doesn't hit a ghost registry
+ * entry. Issue #1147: inline/sdk paths register before the actual process
+ * runs; any exception between register and launch used to strand the entry,
+ * then findDeadResumable routed it back through tmux-only resume → crash.
+ */
+async function rollbackSpawn(ctx: SpawnCtx, opts: { workerRegistered: boolean }): Promise<void> {
+  if (opts.workerRegistered) {
+    await registry.unregister(ctx.workerId).catch(() => {});
+  }
+  if (ctx.executorId) {
+    await executorRegistry.updateExecutorState(ctx.executorId, 'error').catch(() => {});
+  }
+}
+
 async function launchSdkSpawn(
   ctx: SpawnCtx,
   permissionsConfig?: directory.DirectoryEntry['permissions'],
@@ -1255,28 +1270,35 @@ async function launchSdkSpawn(
   sdkConfig?: import('../lib/sdk-directory-types.js').SdkDirectoryConfig,
   runtimeExtraOptions?: Record<string, unknown>,
 ): Promise<string> {
-  if (ctx.agentIdentityId && ctx.executorId) {
-    await createAndLinkExecutor(ctx.agentIdentityId, 'claude-sdk' as ProviderName, 'process', {
-      id: ctx.executorId,
-      claudeSessionId: null,
-      state: 'spawning',
-      repoPath: ctx.cwd,
-    });
+  let workerRegistered = false;
+  try {
+    if (ctx.agentIdentityId && ctx.executorId) {
+      await createAndLinkExecutor(ctx.agentIdentityId, 'claude-sdk' as ProviderName, 'process', {
+        id: ctx.executorId,
+        claudeSessionId: null,
+        state: 'spawning',
+        repoPath: ctx.cwd,
+      });
+    }
+
+    await registerSpawnWorker(ctx, 'sdk');
+    workerRegistered = true;
+
+    // Expose executor ID to child processes and agent tools
+    if (ctx.executorId) process.env.GENIE_EXECUTOR_ID = ctx.executorId;
+
+    console.log(`Agent "${ctx.workerId}" starting via Claude Agent SDK...`);
+    console.log(`  Provider: claude-sdk | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
+    if (ctx.executorId) console.log(`  Executor: ${ctx.executorId}`);
+    console.log('');
+
+    const { resolvePermissionConfig } = await import('../lib/providers/claude-sdk-permissions.js');
+    const permConfig = resolvePermissionConfig(permissionsConfig);
+    await runSdkQuery(ctx, permConfig, streamOpts, sdkConfig, runtimeExtraOptions);
+  } catch (err) {
+    await rollbackSpawn(ctx, { workerRegistered });
+    throw err;
   }
-
-  await registerSpawnWorker(ctx, 'sdk');
-
-  // Expose executor ID to child processes and agent tools
-  if (ctx.executorId) process.env.GENIE_EXECUTOR_ID = ctx.executorId;
-
-  console.log(`Agent "${ctx.workerId}" starting via Claude Agent SDK...`);
-  console.log(`  Provider: claude-sdk | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
-  if (ctx.executorId) console.log(`  Executor: ${ctx.executorId}`);
-  console.log('');
-
-  const { resolvePermissionConfig } = await import('../lib/providers/claude-sdk-permissions.js');
-  const permConfig = resolvePermissionConfig(permissionsConfig);
-  await runSdkQuery(ctx, permConfig, streamOpts, sdkConfig, runtimeExtraOptions);
 
   if (ctx.executorId) {
     await executorRegistry.updateExecutorState(ctx.executorId, 'done').catch(() => {});
@@ -1289,39 +1311,57 @@ async function launchSdkSpawn(
 async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
   const nt = ctx.validated.nativeTeam;
   const paneId = 'inline';
+  let workerRegistered = false;
+  let workerEntry: registry.Agent;
 
-  // Executor model: create executor before blocking spawn
-  if (ctx.agentIdentityId && ctx.executorId) {
-    await createAndLinkExecutor(
-      ctx.agentIdentityId,
-      ctx.validated.provider,
-      resolveExecutorTransport(ctx.validated.provider, 'inline'),
-      {
-        id: ctx.executorId,
-        claudeSessionId: ctx.claudeSessionId ?? null,
-        state: 'spawning',
-        repoPath: ctx.cwd,
-      },
+  try {
+    // Executor model: create executor before blocking spawn
+    if (ctx.agentIdentityId && ctx.executorId) {
+      await createAndLinkExecutor(
+        ctx.agentIdentityId,
+        ctx.validated.provider,
+        resolveExecutorTransport(ctx.validated.provider, 'inline'),
+        {
+          id: ctx.executorId,
+          claudeSessionId: ctx.claudeSessionId ?? null,
+          state: 'spawning',
+          repoPath: ctx.cwd,
+        },
+      );
+    }
+
+    workerEntry = await registerSpawnWorker(ctx, paneId);
+    workerRegistered = true;
+    await notifySpawnJoin(ctx, paneId);
+
+    console.log(`Agent "${ctx.workerId}" starting inline...`);
+    console.log(
+      `  Provider: ${ctx.launch.provider} | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`,
     );
+    if (nt?.enabled) {
+      console.log(`  Native:   enabled | AgentID: ${workerEntry.nativeAgentId}`);
+    }
+    console.log('');
+  } catch (err) {
+    await rollbackSpawn(ctx, { workerRegistered });
+    throw err;
   }
 
-  const workerEntry = await registerSpawnWorker(ctx, paneId);
-  await notifySpawnJoin(ctx, paneId);
-
-  console.log(`Agent "${ctx.workerId}" starting inline...`);
-  console.log(`  Provider: ${ctx.launch.provider} | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
-  if (nt?.enabled) {
-    console.log(`  Native:   enabled | AgentID: ${workerEntry.nativeAgentId}`);
-  }
-  console.log('');
-
-  // Exec into claude — this blocks until the session ends
+  // Exec into claude — this blocks until the session ends.
+  // spawnSync does not throw on launch failure; it returns `result.error`
+  // populated. Treat that as a spawn failure and roll back so the retry
+  // doesn't see a ghost entry.
   const { spawnSync } = require('node:child_process');
   const envVars = { ...process.env, ...(ctx.launch.env ?? {}) };
   const result = spawnSync('sh', ['-c', ctx.launch.command], {
     env: envVars,
     stdio: 'inherit',
   });
+
+  if (result.error) {
+    await rollbackSpawn(ctx, { workerRegistered });
+    throw result.error;
+  }
 
   // Session ended — clean up executor + legacy registry
   if (ctx.agentIdentityId && ctx.executorId) {
@@ -1349,15 +1389,15 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
  */
 export async function findDeadResumable(team: string, role: string): Promise<registry.Agent | null> {
   const existing = await registry.list();
+  // Resume currently only supports tmux transport (resumeAgent hard-requires
+  // process.env.TMUX + createTmuxPane). A stale `transport: 'inline'` row
+  // picked up here would route through resumeAgent → crash with
+  // "error connecting to /tmp/tmux-1000/genie" (issue #1147). Let
+  // rejectDuplicateRole clean those up instead.
   const candidate = existing.find(
-    (w) => w.role === role && w.team === team && w.claudeSessionId && w.provider === 'claude',
+    (w) => w.role === role && w.team === team && w.claudeSessionId && w.provider === 'claude' && w.transport === 'tmux',
   );
   if (!candidate) return null;
-  // Safe for SDK/non-tmux transports: the `provider === 'claude'` filter above
-  // excludes them by construction (SDK uses provider='claude-sdk'). Only
-  // tmux-resumable Claude-CLI agents reach `isPaneAlive`, so a plain paneId
-  // check is correct here — no transport dispatch needed.
-  //
   // `isPaneAliveOrDead` swallows TmuxUnreachableError → dead, so a zombie
   // tmux socket doesn't crash the spawn path.
   const alive = await isPaneAliveOrDead(candidate.paneId);
