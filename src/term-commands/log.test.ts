@@ -8,6 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import * as registry from '../lib/agent-registry.js';
 import type { Agent } from '../lib/agent-registry.js';
 import { send } from '../lib/mailbox.js';
 import { publishRuntimeEvent } from '../lib/runtime-events.js';
@@ -21,6 +22,7 @@ import {
   readAgentLog,
   readTeamLog,
 } from '../lib/unified-log.js';
+import { findAgent } from './log.js';
 
 // ============================================================================
 // Helpers
@@ -318,6 +320,93 @@ describe.skipIf(!DB_AVAILABLE)('log command: human-readable output', () => {
       expect(event.agent).toBeTruthy();
       expect(event.text).toBeTruthy();
       expect(event.source).toBeTruthy();
+    }
+  });
+});
+
+// ============================================================================
+// findAgent — lookup parity with `genie send` (#1302)
+// ============================================================================
+
+describe.skipIf(!DB_AVAILABLE)('findAgent: resolver parity with send', () => {
+  function registerAgent(overrides: Partial<Agent> & { id: string }): Promise<void> {
+    const agent: Agent = {
+      paneId: 'inline',
+      session: 'test',
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: 'suspended',
+      lastStateChange: new Date().toISOString(),
+      repoPath: '/tmp/find-agent-test',
+      ...overrides,
+    };
+    return registry.register(agent);
+  }
+
+  test('resolves a native-team agent by customName (the primary #1302 bug)', async () => {
+    const id = `find-agent-native-${Date.now()}`;
+    await registerAgent({ id, customName: 'engineer-77', role: 'engineer', team: 'native-team' });
+    try {
+      const found = await findAgent('engineer-77');
+      expect(found).not.toBeNull();
+      expect(found?.id).toBe(id);
+    } finally {
+      await registry.unregister(id);
+    }
+  });
+
+  test('resolves by role when customName is absent', async () => {
+    const id = `find-agent-role-${Date.now()}`;
+    await registerAgent({ id, role: 'solo-reviewer', team: 'role-team' });
+    try {
+      const found = await findAgent('solo-reviewer');
+      expect(found).not.toBeNull();
+      expect(found?.id).toBe(id);
+    } finally {
+      await registry.unregister(id);
+    }
+  });
+
+  test('ambiguous prefix throws with a "did you mean" hint instead of silently returning a wrong match', async () => {
+    const ts = Date.now();
+    const idA = `find-agent-amb-a-${ts}`;
+    const idB = `find-agent-amb-b-${ts}`;
+    await registerAgent({ id: idA, customName: `alpha-a-${ts}`, team: 'amb-team' });
+    await registerAgent({ id: idB, customName: `alpha-b-${ts}`, team: 'amb-team' });
+    try {
+      await expect(findAgent('alpha-')).rejects.toThrow(/ambiguous/i);
+    } finally {
+      await registry.unregister(idA);
+      await registry.unregister(idB);
+    }
+  });
+
+  test('returns null for an unknown identifier (no substring accidental match)', async () => {
+    const id = `find-agent-none-${Date.now()}`;
+    await registerAgent({ id, customName: `unique-name-${id}`, team: 'none-team' });
+    try {
+      // Former behavior would .includes()-match against the UUID; verify we no
+      // longer fuzzy-match on ids.
+      const found = await findAgent('agent-none');
+      expect(found).toBeNull();
+    } finally {
+      await registry.unregister(id);
+    }
+  });
+
+  test('team-scoped exact match is preferred over global exact match', async () => {
+    const ts = Date.now();
+    const idTeam = `find-agent-scope-team-${ts}`;
+    const idOther = `find-agent-scope-other-${ts}`;
+    await registerAgent({ id: idTeam, role: 'engineer', team: `team-${ts}` });
+    await registerAgent({ id: idOther, role: 'engineer', team: `other-${ts}` });
+    try {
+      const found = await findAgent('engineer', `team-${ts}`);
+      expect(found).not.toBeNull();
+      expect(found?.id).toBe(idTeam);
+    } finally {
+      await registry.unregister(idTeam);
+      await registry.unregister(idOther);
     }
   });
 });

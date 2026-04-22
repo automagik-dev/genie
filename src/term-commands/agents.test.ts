@@ -15,6 +15,7 @@ import * as wishState from '../lib/wish-state.js';
 import {
   buildInitialSplitWindowCommand,
   buildResumeContext,
+  buildWorkerStatusMap,
   findDeadResumable,
   pickParallelShortId,
   resolveAgentWorkingDir,
@@ -772,5 +773,71 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       expect(a?.team).toBe(teamA);
       expect(a?.paneId).toBe('%67');
     });
+  });
+});
+
+// ============================================================================
+// buildWorkerStatusMap — native-team name visibility (#1302)
+// ============================================================================
+
+describe.skipIf(!DB_AVAILABLE)('buildWorkerStatusMap: customName keying', () => {
+  let cleanupSchema: () => Promise<void>;
+
+  beforeAll(async () => {
+    cleanupSchema = await setupTestSchema();
+  });
+
+  afterAll(async () => {
+    await cleanupSchema();
+  });
+
+  test('keys suspended native-team agents by customName so `genie ls` shows them', async () => {
+    const ts = Date.now();
+    const id = `worker-status-native-${ts}`;
+    const worker: Agent = {
+      id,
+      paneId: 'inline',
+      session: 'test',
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: 'suspended',
+      lastStateChange: new Date().toISOString(),
+      repoPath: `/tmp/worker-status-map-${ts}`,
+      role: 'engineer',
+      customName: `engineer-${ts}`,
+      team: `native-${ts}`,
+      autoResume: true,
+      resumeAttempts: 0,
+      maxResumeAttempts: 3,
+    };
+
+    const map = await buildWorkerStatusMap([worker]);
+
+    // Pre-#1302: keyed by role ("engineer") — collides with every other engineer.
+    // Post-#1302: keyed by customName, matching the name `genie send` uses.
+    expect(map.has(`engineer-${ts}`)).toBe(true);
+    expect(map.has('engineer')).toBe(false);
+    expect(map.get(`engineer-${ts}`)?.team).toBe(`native-${ts}`);
+  });
+
+  test('falls back to role, then id, when customName is absent', async () => {
+    const ts = Date.now();
+    const idRole = `worker-status-role-${ts}`;
+    const idBare = `worker-status-bare-${ts}`;
+    const base = {
+      paneId: 'inline',
+      session: 'test',
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: 'suspended' as const,
+      lastStateChange: new Date().toISOString(),
+      repoPath: `/tmp/worker-status-fallback-${ts}`,
+    };
+    const roleOnly: Agent = { ...base, id: idRole, role: `role-${ts}`, team: `tm-${ts}` };
+    const bare: Agent = { ...base, id: idBare, team: `tm-${ts}` };
+
+    const map = await buildWorkerStatusMap([roleOnly, bare]);
+    expect(map.has(`role-${ts}`)).toBe(true);
+    expect(map.has(idBare)).toBe(true);
   });
 });

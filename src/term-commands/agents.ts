@@ -2737,11 +2737,19 @@ async function resolveWorkerLiveness(w: registry.Agent): Promise<{ alive: boolea
   return { alive: execState !== null, state: execState ?? w.state };
 }
 
-/** Build a name → status map from registry workers, including resume info for dead agents. */
-async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<Map<string, WorkerStatus>> {
+/**
+ * Build a name → status map from registry workers, including resume info for dead agents.
+ *
+ * The key prefers `customName` so that native-team agents (which share a generic
+ * `role` like "engineer" but carry a unique `customName` like "engineer-2") stay
+ * addressable and do not collide in the Map (#1302). Role-only agents still key
+ * by role; UUID-only rows key by id as a last resort. This matches the canonical
+ * display name used by `genie send` and `resolveAgentNamesBySource`.
+ */
+export async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<Map<string, WorkerStatus>> {
   const statusMap = new Map<string, WorkerStatus>();
   for (const w of workers) {
-    const name = w.role || w.id;
+    const name = w.customName ?? w.role ?? w.id;
     const { alive, state } = await resolveWorkerLiveness(w);
     if (alive) {
       statusMap.set(name, { state, team: w.team || '-' });
