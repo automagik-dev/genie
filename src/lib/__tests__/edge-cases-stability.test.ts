@@ -78,10 +78,8 @@ describe('7.1 Concurrent Operations', () => {
   test('connection pool config is sensible for concurrent operations', () => {
     const source = readFileSync(join(__dirname, '..', 'db.ts'), 'utf-8');
 
-    // Default pool size is 50 for concurrent operations. Under parallel-shard
-    // CI (GENIE_TEST_SHARD_INDEX set) it drops to 1 to avoid write-then-read
-    // visibility races across shards. Either form is acceptable.
-    expect(source).toMatch(/max:\s*(?:isShardedCi\s*\?\s*1\s*:\s*)?50\b/);
+    // max: 50 connections
+    expect(source).toContain('max: 50');
     // Aggressive idle timeout (1s) to recycle unused connections
     expect(source).toContain('idle_timeout: 1');
     // 5s connect timeout prevents hanging
