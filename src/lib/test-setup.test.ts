@@ -369,7 +369,9 @@ describe('test-setup CREATE DATABASE advisory lock (Group 7)', () => {
     // After createTestDatabase returns (success OR failure), the advisory lock
     // must be released so the next shard's clone can proceed. Probe from a
     // fresh session: pg_try_advisory_lock returns false if anyone else holds
-    // it. Under a lone bun-test process this must always succeed.
+    // it. Under CI's parallel-shard runner, 4 shards share one pgserve and any
+    // shard may currently hold the lock during its own createTestDatabase call,
+    // so we retry until the lock is observed unowned within a deadline.
     const { __testing } = await import('./test-setup.js');
     const port = Number.parseInt(process.env.GENIE_TEST_PG_PORT ?? '', 10);
     expect(Number.isNaN(port)).toBe(false);
@@ -387,9 +389,18 @@ describe('test-setup CREATE DATABASE advisory lock (Group 7)', () => {
     });
     try {
       const lockIdStr = __testing.CREATE_DB_ADVISORY_LOCK_ID.toString();
-      const rows = await probe.unsafe<{ got: boolean }[]>(`SELECT pg_try_advisory_lock(${lockIdStr}::bigint) AS got`);
-      expect(rows[0]?.got).toBe(true);
-      await probe.unsafe(`SELECT pg_advisory_unlock(${lockIdStr}::bigint)`);
+      const deadline = Date.now() + 2000;
+      let got = false;
+      while (Date.now() < deadline) {
+        const rows = await probe.unsafe<{ got: boolean }[]>(`SELECT pg_try_advisory_lock(${lockIdStr}::bigint) AS got`);
+        got = rows[0]?.got === true;
+        if (got) {
+          await probe.unsafe(`SELECT pg_advisory_unlock(${lockIdStr}::bigint)`);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(got).toBe(true);
     } finally {
       await probe.end({ timeout: 2 }).catch(() => {
         /* best-effort */
