@@ -514,7 +514,15 @@ function scanDependsOn(doc: WishDocument, lines: string[]): Violation[] {
           .trim(),
       )
       .filter(Boolean);
-    const refPattern = /^(Group\s+\d+|[\w-]+#\d+)$/i;
+    // Accepted ref shapes:
+    //   * `Group N`                       — canonical numeric within current wish
+    //   * `Foundation` / `migration-2`    — descriptive identifier (in-wish or cross-wish slug)
+    //   * `wish-slug/group-1`             — same-wish or cross-wish slash form
+    //   * `repo/wish-slug/group-N`        — fully qualified cross-repo reference (any depth)
+    //   * `slug#3`                        — legacy hash form
+    // Reject only truly malformed shapes (empty, bad punctuation, free-form prose).
+    const refPattern =
+      /^(?:Group\s+\d+|[A-Za-z][A-Za-z0-9_-]*(?:\/(?:Group\s+\d+|[A-Za-z][A-Za-z0-9_-]*))*|[A-Za-z][A-Za-z0-9_-]*#\d+)$/i;
     const canonicalParts: string[] = [];
     let anyMalformed = false;
     for (const raw of parts) {
@@ -564,7 +572,7 @@ function scanDependsOn(doc: WishDocument, lines: string[]): Violation[] {
           severity: 'error',
           line: dependsLine + 1,
           column: 1,
-          message: `depends-on value "${rawValue}" cannot be parsed — expected "none" or "Group N[, Group M]"`,
+          message: `depends-on value "${rawValue}" cannot be parsed — expected "none", "Group N", a descriptive name, or a slug/group reference`,
           fixable: false,
           fix: null,
         });

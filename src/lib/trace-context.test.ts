@@ -44,7 +44,12 @@ describe('trace-context — mint/parse', () => {
     const ctx = { trace_id: newTraceId() };
     const token = mintToken(ctx);
     const [payload, sig] = token.split('.');
-    const tampered = `${payload}.${sig.slice(0, -2)}AA`;
+    // Guarantee the replacement differs from the original: HMAC-SHA256 → 43
+    // base64url chars where the last 2 chars equal "AA" ~1/1024 runs; without
+    // this guard, the "tampered" signature is byte-identical to the original
+    // and the assertion fails (#1314).
+    const replacement = sig.endsWith('AA') ? 'BB' : 'AA';
+    const tampered = `${payload}.${sig.slice(0, -2)}${replacement}`;
     const parsed = parseToken(tampered);
     expect(parsed.ok).toBe(false);
     expect(parsed.reason).toBe('signature');

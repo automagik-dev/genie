@@ -13,6 +13,9 @@
 import type { z } from 'zod';
 
 import * as agentLifecycle from './schemas/agent.lifecycle.js';
+import * as agentResumeAttempted from './schemas/agent.resume.attempted.js';
+import * as agentResumeFailed from './schemas/agent.resume.failed.js';
+import * as agentResumeSucceeded from './schemas/agent.resume.succeeded.js';
 import * as auditExport from './schemas/audit.export.js';
 import * as auditUnHash from './schemas/audit.un_hash.js';
 import * as cacheHit from './schemas/cache.hit.js';
@@ -140,6 +143,15 @@ export const EventRegistry = {
   // the transition from recoverable to dead-inbox. See
   // `brain/memory/reference_pattern9_inbox_watcher_spawn_loop.md`.
   [rotInboxWatcherSpawnLoopDetected.TYPE]: entry(rotInboxWatcherSpawnLoopDetected),
+
+  // Issue #1304 — auto-resume telemetry. Every attempt to resume an agent
+  // emits an `attempted` event up-front, then one of `succeeded` / `failed`
+  // once the strategy returns. Pair with existing `resume.attempt` span for
+  // end-to-end latency; these point events expose the attempt/result ratio
+  // that thrash detectors consume.
+  [agentResumeAttempted.TYPE]: entry(agentResumeAttempted),
+  [agentResumeSucceeded.TYPE]: entry(agentResumeSucceeded),
+  [agentResumeFailed.TYPE]: entry(agentResumeFailed),
 } as const satisfies Record<string, RegistryEntry>;
 
 export type EventType = keyof typeof EventRegistry;

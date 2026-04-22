@@ -14,9 +14,15 @@ import { EventRegistry, type EventType, getEntry, isRegistered, listTypes } from
 import { readTier } from '../tier.js';
 
 describe('event registry — closed world', () => {
-  test('all registered types are non-empty (G2 exemplars + G3 + G5 audit + G6 watcher)', () => {
+  test('all registered types are non-empty (G2 exemplars + G3 + G5 audit + G6 watcher + #1304 auto-resume)', () => {
     const types = listTypes();
     expect(types.length).toBeGreaterThanOrEqual(22);
+  });
+
+  test('auto-resume triplet is registered (#1304)', () => {
+    expect(isRegistered('agent.resume.attempted')).toBe(true);
+    expect(isRegistered('agent.resume.succeeded')).toBe(true);
+    expect(isRegistered('agent.resume.failed')).toBe(true);
   });
 
   test('getEntry resolves for every registered type', () => {
@@ -294,6 +300,31 @@ const fixtures: Record<EventType, Record<string, unknown>> = {
     session_key: 'wish-state-invalidation',
     failure_count: 3,
     last_error_message: 'ensureTeamLead failed: tmux session not found',
+  },
+
+  // Issue #1304 — auto-resume telemetry triplet.
+  'agent.resume.attempted': {
+    entity_id: 'engineer-alpha',
+    attempt_number: 1,
+    state_before: 'error',
+    state_after: 'error',
+    trigger: 'scheduler',
+  },
+  'agent.resume.succeeded': {
+    entity_id: 'engineer-alpha',
+    attempt_number: 1,
+    state_before: 'error',
+    state_after: 'spawning',
+    trigger: 'scheduler',
+  },
+  'agent.resume.failed': {
+    entity_id: 'engineer-alpha',
+    attempt_number: 3,
+    state_before: 'error',
+    state_after: 'error',
+    last_error: 'spawn failed: tmux session not found',
+    trigger: 'scheduler',
+    exhausted: true,
   },
 };
 

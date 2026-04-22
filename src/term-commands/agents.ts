@@ -16,6 +16,7 @@ import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { type ResolveContext, resolveField } from '../lib/defaults.js';
+import { emitEvent } from '../lib/emit.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import * as executorRegistry from '../lib/executor-registry.js';
 import type { TransportType as ExecutorTransport } from '../lib/executor-types.js';
@@ -2511,13 +2512,97 @@ async function createResumeExecutor(
  *     increment and prevent the exhaustion check from ever firing. See
  *     fix/auto-resume-counter-persistence.
  */
+const TELEMETRY_KNOWN_STATES = new Set([
+  'spawning',
+  'working',
+  'idle',
+  'permission',
+  'question',
+  'done',
+  'error',
+  'suspended',
+]);
+
+function resumeTelemetryState(raw: registry.AgentState | null | undefined): string {
+  return raw && TELEMETRY_KNOWN_STATES.has(raw) ? raw : 'unknown';
+}
+
+/**
+ * Emit the auto-resume telemetry triplet for the MANUAL CLI path. Pass
+ * `shouldEmit=false` on scheduler-triggered invocations (`--no-reset-attempts`)
+ * — the scheduler's own `attemptAgentResume` is already instrumented in
+ * `scheduler-daemon.ts`, so emitting here would double-count every thrash
+ * detector rate. Issue #1304.
+ *
+ * Both sinks (audit_events + v2 runtime events) are best-effort — never let
+ * observability break the resume path it observes.
+ */
+function recordManualResumeTelemetry(
+  shouldEmit: boolean,
+  eventType: 'agent.resume.attempted' | 'agent.resume.succeeded' | 'agent.resume.failed',
+  payload: {
+    entity_id: string;
+    attempt_number: number;
+    state_before: string;
+    state_after: string;
+    last_error?: string;
+    exhausted?: boolean;
+  },
+): void {
+  if (!shouldEmit) return;
+
+  void recordAuditEvent('agent.resume', payload.entity_id, eventType, getActor(), {
+    ...payload,
+    trigger: 'manual',
+  }).catch(() => {});
+
+  try {
+    const v2: Record<string, unknown> = {
+      entity_id: payload.entity_id,
+      attempt_number: payload.attempt_number,
+      state_before: payload.state_before,
+      state_after: payload.state_after,
+      trigger: 'manual',
+    };
+    if (payload.last_error) {
+      v2.last_error = payload.last_error.slice(0, 500);
+    }
+    if (eventType === 'agent.resume.failed') {
+      v2.exhausted = payload.exhausted ?? false;
+    }
+    emitEvent(eventType, v2, {
+      severity: eventType === 'agent.resume.failed' ? 'warn' : 'info',
+      source_subsystem: 'cli.resume',
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
 async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolean } = {}): Promise<void> {
   const resetAttempts = opts.resetAttempts !== false;
   const template = (await registry.listTemplates()).find((t) => t.id === (agent.role ?? agent.id));
+  // Only emit from the manual path. The scheduler path invokes us via
+  // `genie agent resume <id> --no-reset-attempts` and is already instrumented
+  // by `attemptAgentResume` — double-emission here would inflate every
+  // thrash-detector rate by 2x.
+  const shouldEmitTelemetry = resetAttempts;
+  const telemetryStateBefore = resumeTelemetryState(agent.state);
+  // When manual, `registry.update` below resets the counter to 0, so the
+  // in-flight attempt is #1. When scheduler-triggered, the counter has
+  // already been incremented by `attemptAgentResume` — we don't emit there.
+  const telemetryAttemptNumber = 1;
 
   if (resetAttempts) {
     await registry.update(agent.id, { resumeAttempts: 0 });
   }
+
+  recordManualResumeTelemetry(shouldEmitTelemetry, 'agent.resume.attempted', {
+    entity_id: agent.id,
+    attempt_number: telemetryAttemptNumber,
+    state_before: telemetryStateBefore,
+    state_after: telemetryStateBefore,
+  });
 
   const params = await buildFullResumeParams(agent, template);
 
@@ -2568,7 +2653,16 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
   try {
     paneId = createTmuxPane(ctx, teamWindow);
   } catch (err) {
-    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
+    const errorMessage = err instanceof Error ? err.message : 'unknown error';
+    recordManualResumeTelemetry(shouldEmitTelemetry, 'agent.resume.failed', {
+      entity_id: agent.id,
+      attempt_number: telemetryAttemptNumber,
+      state_before: telemetryStateBefore,
+      state_after: telemetryStateBefore,
+      last_error: `createTmuxPane: ${errorMessage}`,
+      exhausted: false,
+    });
+    console.error(`Failed to create tmux pane: ${errorMessage}`);
     process.exit(1);
   }
 
@@ -2601,6 +2695,13 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
     claudeSessionId: agent.claudeSessionId,
     team: agent.team,
   }).catch(() => {});
+
+  recordManualResumeTelemetry(shouldEmitTelemetry, 'agent.resume.succeeded', {
+    entity_id: agent.id,
+    attempt_number: telemetryAttemptNumber,
+    state_before: telemetryStateBefore,
+    state_after: 'spawning',
+  });
 
   console.log(`Agent "${agent.id}" resumed.`);
   console.log(`  Session:  ${agent.claudeSessionId}`);
@@ -2673,7 +2774,11 @@ async function resolveAgentNamesBySource(source: string): Promise<Set<string>> {
 /**
  * genie ls — Smart view of registered agents with runtime status.
  */
-export async function handleLsCommand(options: { json?: boolean; source?: string }): Promise<void> {
+export async function handleLsCommand(options: {
+  json?: boolean;
+  source?: string;
+  all?: boolean;
+}): Promise<void> {
   const dirEntries = await directory.ls();
   const workers = await registry.list();
   const statusMap = await buildWorkerStatusMap(workers);
@@ -2724,6 +2829,12 @@ export async function handleLsCommand(options: { json?: boolean; source?: string
   // Apply source filter if provided
   if (sourceAgentNames) {
     entries = entries.filter((e) => sourceAgentNames.has(e.name));
+  }
+
+  // Hide archived agents by default (issue #1293 — TTL-archived dead-pane
+  // zombies pile up otherwise). `--all` opts back in for audit/debug.
+  if (!options.all) {
+    entries = entries.filter((e) => e.status !== 'archived');
   }
 
   if (options.json) {

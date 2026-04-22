@@ -35,6 +35,30 @@ function maskCredentials(url: string): string {
 }
 
 /**
+ * Detect whether pgserve would refuse to start because the current process
+ * is running as uid 0 (root). PostgreSQL aborts with
+ *   "root" execution of the PostgreSQL server is not permitted
+ * at the binary level, which surfaces in the CLI as a misleading 16s timeout
+ * with tmux/scheduler cascade errors (issue #1226). Failing fast up front
+ * gives the user the real reason.
+ *
+ * Returns a user-facing error message if the guard should fire, or null if
+ * startup should proceed. `GENIE_ALLOW_ROOT=1` bypasses the guard (pgserve
+ * will still fail at the postgres binary level, but the real error is then
+ * surfaced immediately from the child process).
+ */
+export function checkRootGuard(): string | null {
+  const uid = process.getuid?.();
+  if (uid !== 0) return null;
+  if (process.env.GENIE_ALLOW_ROOT === '1') return null;
+  return (
+    'pgserve cannot start under uid 0 (root) — PostgreSQL refuses to run as root for security reasons. ' +
+    'Run genie as a non-root user, or set GENIE_ALLOW_ROOT=1 to attempt anyway. ' +
+    'See: https://github.com/automagik-dev/genie/issues/1226'
+  );
+}
+
+/**
  * Self-heal: kill stale postgres processes, clean shared memory, remove stale PID files.
  * Handles zombies (which can't be killed) by cleaning their artifacts instead.
  */
@@ -414,6 +438,15 @@ async function _ensurePgserve(): Promise<number> {
   if (process.env.CI === 'true') {
     process.env.GENIE_PG_AVAILABLE = 'false';
     throw new Error('pgserve not available in CI');
+  }
+
+  // 3b. Root guard — pgserve would otherwise time out with a misleading
+  //     16s error because postgres refuses uid 0 at the binary level. See
+  //     checkRootGuard() and issue #1226.
+  const rootErr = checkRootGuard();
+  if (rootErr !== null) {
+    process.env.GENIE_PG_AVAILABLE = 'false';
+    throw new Error(rootErr);
   }
 
   // 4a. If we ARE the daemon (genie serve) — spawn pgserve directly.

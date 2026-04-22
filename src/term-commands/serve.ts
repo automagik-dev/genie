@@ -25,6 +25,7 @@ import type { Command } from 'commander';
 import { ensureTmux, tmuxBin } from '../lib/ensure-tmux.js';
 import { getProcessStartTime } from '../lib/process-identity.js';
 import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
+import { isTuiDisabled, noticeTuiSkipped } from '../lib/tui-disable.js';
 
 // ============================================================================
 // Paths
@@ -375,8 +376,16 @@ export function isTuiSessionReady(): boolean {
 /**
  * Ensure the TUI tmux session exists and is ready for attachment.
  * If the TUI server died while serve is still running, recreate it.
+ *
+ * When `GENIE_TUI_DISABLE=1` / `--no-tui` is set, this is a no-op so we never
+ * re-seed the launch script that re-invokes genie with `GENIE_TUI_PANE=left`
+ * (which would trigger the OpenTUI kqueue spin in the pane).
  */
 export function ensureTuiSession(workspaceRoot?: string): void {
+  if (isTuiDisabled()) {
+    noticeTuiSkipped('session ensure');
+    return;
+  }
   if (isTuiSessionReady()) return;
   const { leftPane, rightPane } = startTuiTmuxServer();
   sendTuiLaunchScript(leftPane, rightPane, workspaceRoot);
@@ -511,14 +520,23 @@ async function startForeground(headless?: boolean): Promise<void> {
     forceRemoveServePid();
   }
 
+  // Hotfix: treat GENIE_TUI_DISABLE / --no-tui like --headless for TUI setup
+  // so `genie serve` starts pgserve + scheduler + bridge but never seeds the
+  // OpenTUI launch pane. Agent sessions (on `-L genie`) are unaffected.
+  const tuiDisabled = isTuiDisabled();
+  if (tuiDisabled && !headless) {
+    noticeTuiSkipped('serve');
+  }
+  const skipTui = headless || tuiDisabled;
+
   process.env.GENIE_IS_DAEMON = '1';
   writeServePid(process.pid);
 
-  const mode = headless ? 'headless' : 'full';
+  const mode = headless ? 'headless' : tuiDisabled ? 'no-tui' : 'full';
   console.log(`genie serve starting (PID ${process.pid}, mode: ${mode})`);
 
   // Ensure tmux is available (downloads static binary if missing)
-  if (!headless) {
+  if (!skipTui) {
     await ensureTmux();
   }
 
@@ -593,8 +611,8 @@ async function startForeground(headless?: boolean): Promise<void> {
   // 2b. Sync agent directory + start watcher
   handles.agentWatcher = await startAgentSync();
 
-  // 3. Start TUI session on default tmux server (skip in headless mode)
-  if (!headless) {
+  // 3. Start TUI session on default tmux server (skip in headless / no-tui mode)
+  if (!skipTui) {
     console.log('  Setting up TUI session...');
     const { leftPane, rightPane } = startTuiTmuxServer();
 

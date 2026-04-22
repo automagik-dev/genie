@@ -70,11 +70,25 @@ const ObservedStateJsonSchema = tagTier(
   'JSON-encoded snapshot of both data sources for triage',
 );
 
+/**
+ * Flag set by the detector when the natural payload would exceed
+ * `observed_state_json`'s 16 KiB cap, so it falls back to a compact summary.
+ * Absent when full detail fits. Literal-true shape (no `false` value) so
+ * consumers can use `if (payload.observed_state_json_truncated)` without
+ * a tri-state check.
+ */
+const ObservedStateJsonTruncatedSchema = tagTier(
+  z.literal(true).optional(),
+  'C',
+  'set when detail was dropped to honor the observed_state_json cap',
+);
+
 export const schema = z
   .object({
     divergence_kind: DivergenceKindSchema,
     divergent_count: DivergentCountSchema,
     observed_state_json: ObservedStateJsonSchema,
+    observed_state_json_truncated: ObservedStateJsonTruncatedSchema,
   })
   .strict();
 

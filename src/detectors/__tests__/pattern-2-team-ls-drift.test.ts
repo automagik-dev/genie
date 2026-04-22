@@ -257,4 +257,68 @@ describe('pattern-2 team-ls-drift detector', () => {
     expect(ids).toContain(DETECTOR_ID);
     expect(DETECTOR_ID).toBe('rot.team-ls-drift');
   });
+
+  test('#1291 — pathological drift (1000 ghosts) stays under schema cap and flags truncation', async () => {
+    // Before #1291: the detector's per-list caps (200 snapshots + 100 divergent
+    // entries) were individually small but compounded past the schema's
+    // 16_384-char `observed_state_json` limit — every emit was rejected by
+    // Zod and 100 % of the rot.team-ls-drift signal was lost. This fixture
+    // reproduces the overflow and proves the fallback-summary path lands a
+    // valid event with `observed_state_json_truncated: true`.
+    const ghostCount = 1000;
+    const lsRows: LsSnapshotEntry[] = Array.from({ length: ghostCount }, (_, i) => ({
+      name: `ghost-team-with-a-reasonably-long-name-${i}`,
+      status: 'in_progress',
+      worktreePath: `/tmp/fake-worktree-${i}`,
+    }));
+    // Zero overlap with disband dirs → every PG row is `missing_in_disband`.
+    const disbandDirs: DisbandSnapshotEntry[] = [];
+    const existingPaths = new Set<string>(lsRows.map((r) => r.worktreePath));
+
+    const detector = makeTeamLsDriftDetector(makeSources(lsRows, disbandDirs, existingPaths));
+    const { captured } = await driveOneTick(detector);
+
+    const rotFires = captured.filter((c) => c.type === 'rot.team-ls-drift.detected');
+    expect(rotFires.length).toBe(1);
+
+    const evt = rotFires[0];
+    expect(evt.payload.divergent_count).toBe(ghostCount);
+    expect(evt.payload.observed_state_json_truncated).toBe(true);
+
+    // Emitted string must fit under the schema cap so Zod parse succeeds.
+    const observedJson = String(evt.payload.observed_state_json);
+    expect(observedJson.length).toBeLessThanOrEqual(16_384);
+
+    // Summary JSON round-trips and preserves totals for downstream triage.
+    const observed = JSON.parse(observedJson);
+    expect(observed.divergent_total).toBe(ghostCount);
+    expect(observed.ls_total).toBe(ghostCount);
+    expect(observed.disband_total).toBe(0);
+    expect(observed.divergence_kind).toBe('missing_in_disband');
+    expect(Array.isArray(observed.divergent_ids)).toBe(true);
+    expect(observed.divergent_ids.length).toBeGreaterThan(0);
+    expect(typeof observed.truncation_reason).toBe('string');
+
+    // Schema parse must succeed — this is the regression assertion that
+    // ties the fix to the 100 %-signal-loss bug.
+    const { getEntry } = await import('../../lib/events/registry.js');
+    const entry = getEntry('rot.team-ls-drift.detected');
+    expect(entry).not.toBeNull();
+    const result = entry!.schema.safeParse(evt.payload);
+    if (!result.success) {
+      console.error('schema parse failed', result.error.issues);
+    }
+    expect(result.success).toBe(true);
+  });
+
+  test('#1291 — normal drift emits without truncation flag', async () => {
+    // Belt-and-braces: confirm the flag is strictly present-on-truncate so
+    // consumers can use `if (payload.observed_state_json_truncated)` without
+    // worrying about accidental `false` values being emitted.
+    const lsRows: LsSnapshotEntry[] = [{ name: 'ghost', status: 'in_progress', worktreePath: '/tmp/ghost' }];
+    const detector = makeTeamLsDriftDetector(makeSources(lsRows, [], new Set(['/tmp/ghost'])));
+    const { captured } = await driveOneTick(detector);
+
+    expect(captured[0].payload.observed_state_json_truncated).toBeUndefined();
+  });
 });
