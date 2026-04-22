@@ -21,7 +21,9 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Agent, AgentState } from './agent-registry.js';
+import { recordAuditEvent } from './audit.js';
 import { computeNextCronDue, parseDuration } from './cron.js';
+import { emitEvent } from './emit.js';
 import { type EventRouterHandle, startEventRouter } from './event-router.js';
 import { getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
 import { type MailboxMessage, getRetryable, markEscalated, subscribeDelivery } from './mailbox.js';
@@ -1241,6 +1243,79 @@ type ResumeResult = 'resumed' | 'exhausted' | 'skipped';
  * Checks eligibility (autoResume flag, retry budget, cooldown, concurrency cap),
  * then delegates to `deps.resumeAgent` to actually respawn the agent.
  */
+/**
+ * Known `AgentState` values we expose on the auto-resume telemetry events.
+ * Any unrecognized value (e.g., a schema migration landed a new state we
+ * haven't registered yet) degrades to `'unknown'` so emission never throws
+ * on a Zod enum mismatch. Keep in sync with `src/lib/events/schemas/agent.resume.*.ts`.
+ */
+const TELEMETRY_STATES = new Set<AgentState>([
+  'spawning',
+  'working',
+  'idle',
+  'permission',
+  'question',
+  'done',
+  'error',
+  'suspended',
+]);
+
+function telemetryState(raw: AgentState | null | undefined): string {
+  return raw && TELEMETRY_STATES.has(raw) ? raw : 'unknown';
+}
+
+/**
+ * Emit the auto-resume telemetry triplet (`agent.resume.attempted|succeeded|failed`)
+ * to both sinks:
+ *   - `audit_events` (via `recordAuditEvent`) so `genie events list --type
+ *      agent.resume.*` surfaces rows immediately. Issue #1304.
+ *   - v2 runtime events (via `emitEvent`) for detector consumers.
+ *
+ * Both calls are best-effort — `recordAuditEvent` swallows DB errors, and
+ * `emitEvent` is fire-and-forget. Failure here MUST NOT break the resume path.
+ */
+function recordResumeTelemetry(
+  eventType: 'agent.resume.attempted' | 'agent.resume.succeeded' | 'agent.resume.failed',
+  payload: {
+    entity_id: string;
+    attempt_number: number;
+    state_before: string;
+    state_after: string;
+    last_error?: string;
+    trigger: 'scheduler' | 'manual' | 'boot';
+    exhausted?: boolean;
+  },
+  actor: string,
+): void {
+  // audit_events (default `genie events list` target)
+  void recordAuditEvent('agent.resume', payload.entity_id, eventType, actor, payload).catch(() => {
+    /* best-effort — swallowed inside recordAuditEvent too */
+  });
+
+  // v2 runtime events (detector target)
+  try {
+    const v2Payload: Record<string, unknown> = {
+      entity_id: payload.entity_id,
+      attempt_number: payload.attempt_number,
+      state_before: payload.state_before,
+      state_after: payload.state_after,
+      trigger: payload.trigger,
+    };
+    if (payload.last_error) {
+      v2Payload.last_error = payload.last_error.slice(0, 500);
+    }
+    if (eventType === 'agent.resume.failed') {
+      v2Payload.exhausted = payload.exhausted ?? false;
+    }
+    emitEvent(eventType, v2Payload, {
+      severity: eventType === 'agent.resume.failed' ? 'warn' : 'info',
+      source_subsystem: 'scheduler.auto-resume',
+    });
+  } catch {
+    /* emit is best-effort — observability must never break the path it observes */
+  }
+}
+
 export async function attemptAgentResume(
   deps: SchedulerDeps,
   config: SchedulerConfig,
@@ -1348,6 +1423,19 @@ export async function attemptAgentResume(
     max_resume_attempts: maxAttempts,
   });
 
+  const stateBefore = telemetryState(agent.state);
+  recordResumeTelemetry(
+    'agent.resume.attempted',
+    {
+      entity_id: agentId,
+      attempt_number: newAttempts,
+      state_before: stateBefore,
+      state_after: stateBefore,
+      trigger: 'scheduler',
+    },
+    'scheduler',
+  );
+
   // Attempt the resume
   const success = await deps.resumeAgent(agentId);
 
@@ -1363,6 +1451,22 @@ export async function attemptAgentResume(
       agent_id: agentId,
       resume_attempts: newAttempts,
     });
+    recordResumeTelemetry(
+      'agent.resume.succeeded',
+      {
+        entity_id: agentId,
+        attempt_number: newAttempts,
+        state_before: stateBefore,
+        // A successful resume re-spawns the agent; the registry row is about
+        // to transition to 'spawning' as `defaultSpawnCommand` fires. Emitting
+        // 'spawning' here gives detectors the state_before != state_after
+        // signal they need to distinguish thrashing (where state never moves)
+        // from healthy resumes (where it does).
+        state_after: 'spawning',
+        trigger: 'scheduler',
+      },
+      'scheduler',
+    );
     return 'resumed';
   }
 
@@ -1374,6 +1478,23 @@ export async function attemptAgentResume(
     resume_attempts: newAttempts,
     max_resume_attempts: maxAttempts,
   });
+
+  const willExhaust = newAttempts >= maxAttempts;
+  recordResumeTelemetry(
+    'agent.resume.failed',
+    {
+      entity_id: agentId,
+      attempt_number: newAttempts,
+      state_before: stateBefore,
+      // On failure the state does NOT move (this is the thrash signal). When
+      // exhaustion trips immediately after, the reconciler flips the row to
+      // `error` — captured on the next scheduler tick, not here.
+      state_after: stateBefore,
+      trigger: 'scheduler',
+      exhausted: willExhaust,
+    },
+    'scheduler',
+  );
 
   // If this was the last attempt, mark exhausted AND persist
   // `auto_resume=false` so the next scheduler tick's resumable filter excludes

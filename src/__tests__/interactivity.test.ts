@@ -189,6 +189,25 @@ describe('commandRequiresWorkspace()', () => {
     const create = team.command('create');
     expect(commandRequiresWorkspace(create)).toBe(false);
   });
+
+  test('#1295 — returns false for hook namespace (root command)', () => {
+    // Regression guard: CC calls `genie hook dispatch` on every PreToolUse /
+    // Stop / UserPromptSubmit event, from any cwd the editor happens to be
+    // in. A non-zero exit here blocks every tool call on the host.
+    const program = new Command();
+    const hook = program.command('hook');
+    expect(commandRequiresWorkspace(hook)).toBe(false);
+  });
+
+  test('#1295 — returns false for hook dispatch subcommand', () => {
+    // The actual invocation shape Claude Code uses — `hook dispatch` must
+    // bypass the workspace guard so a missing `.genie/` never bubbles up as
+    // exit 2.
+    const program = new Command();
+    const hook = program.command('hook');
+    const dispatch = hook.command('dispatch');
+    expect(commandRequiresWorkspace(dispatch)).toBe(false);
+  });
 });
 
 // ─── ensureWorkspace() ──────────────────────────────────────────────────────
@@ -345,5 +364,43 @@ describe('installWorkspaceCheck()', () => {
     expect(actionFn).toHaveBeenCalledTimes(1);
     // No prompt because workspace exists
     expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  test('#1295 — hook dispatch runs to completion even when no workspace exists', async () => {
+    // Fleet-breaking regression in 4.260421.30: `genie hook dispatch` exited
+    // with code 2 whenever cwd lacked `.genie/`, because the pre-fix
+    // WORKSPACE_EXEMPT set didn't include `hook` and stdin was piped
+    // (non-interactive → exit 2 path). CC treated the non-zero as a blocking
+    // deny and every Bash/Read/Edit/etc. tool call died on the host.
+    //
+    // This test drives the real preAction hook with a null workspace and
+    // asserts the hook action runs without triggering the init prompt and
+    // without calling process.exit. If someone removes `'hook'` from the
+    // exempt set, this test fails the same way the live fleet did.
+    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+    // biome-ignore lint/performance/noDelete: process.env requires delete
+    delete process.env.CI;
+    process.argv = ['node', 'genie', 'hook', 'dispatch'];
+    findWorkspaceSpy.mockReturnValue(null);
+
+    const actionFn = mock(async () => {});
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit should not be called for hook dispatch');
+    });
+
+    try {
+      const program = new Command();
+      const hook = program.command('hook');
+      hook.command('dispatch').action(actionFn);
+      installWorkspaceCheck(program);
+
+      await program.parseAsync(['node', 'genie', 'hook', 'dispatch']);
+
+      expect(actionFn).toHaveBeenCalledTimes(1);
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
+    } finally {
+      exitSpy.mockRestore();
+    }
   });
 });

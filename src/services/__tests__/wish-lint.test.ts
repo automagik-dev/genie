@@ -529,6 +529,80 @@ describe('lintWish — post-parse rules', () => {
     expect(v?.fixable).toBe(true);
   });
 
+  test('depends-on accepts canonical numeric form (regression)', () => {
+    const md = cleanMultiGroupWish(); // Group 2 already declares `**depends-on:** Group 1`
+    const doc = parseWish(md);
+    const report = lintWish(doc, md);
+    expect(report.violations.some((v) => v.rule === 'depends-on-malformed')).toBe(false);
+    expect(report.violations.some((v) => v.rule === 'depends-on-dangling')).toBe(false);
+  });
+
+  test('depends-on accepts descriptive in-wish names (Foundation, Migration)', () => {
+    const md = cleanMultiGroupWish().replace('**depends-on:** Group 1', '**depends-on:** Foundation, Migration');
+    const doc = parseWish(md);
+    const report = lintWish(doc, md);
+    expect(report.violations.some((v) => v.rule === 'depends-on-malformed')).toBe(false);
+    expect(report.violations.some((v) => v.rule === 'depends-on-dangling')).toBe(false);
+  });
+
+  test('depends-on accepts same-wish slash form (slug/group-1, slug/foundation)', () => {
+    const md = cleanMultiGroupWish().replace(
+      '**depends-on:** Group 1',
+      '**depends-on:** multi/group-1, multi/foundation',
+    );
+    const doc = parseWish(md);
+    const report = lintWish(doc, md);
+    expect(report.violations.some((v) => v.rule === 'depends-on-malformed')).toBe(false);
+    expect(report.violations.some((v) => v.rule === 'depends-on-dangling')).toBe(false);
+  });
+
+  test('depends-on accepts cross-wish bare slug', () => {
+    const md = cleanMultiGroupWish().replace('**depends-on:** Group 1', '**depends-on:** other-wish');
+    const doc = parseWish(md);
+    const report = lintWish(doc, md);
+    expect(report.violations.some((v) => v.rule === 'depends-on-malformed')).toBe(false);
+    expect(report.violations.some((v) => v.rule === 'depends-on-dangling')).toBe(false);
+  });
+
+  test('depends-on accepts cross-wish repo/slug form', () => {
+    const md = cleanMultiGroupWish().replace('**depends-on:** Group 1', '**depends-on:** automagik-dev/other-wish');
+    const doc = parseWish(md);
+    const report = lintWish(doc, md);
+    expect(report.violations.some((v) => v.rule === 'depends-on-malformed')).toBe(false);
+    expect(report.violations.some((v) => v.rule === 'depends-on-dangling')).toBe(false);
+  });
+
+  test('depends-on accepts fully qualified repo/slug/group-N form', () => {
+    const md = cleanMultiGroupWish().replace(
+      '**depends-on:** Group 1',
+      '**depends-on:** automagik-dev/rlmx/rlmx-sdk-upgrade/group-2',
+    );
+    const doc = parseWish(md);
+    const report = lintWish(doc, md);
+    expect(report.violations.some((v) => v.rule === 'depends-on-malformed')).toBe(false);
+    expect(report.violations.some((v) => v.rule === 'depends-on-dangling')).toBe(false);
+  });
+
+  test('depends-on accepts mixed numeric, cross-wish, and descriptive refs', () => {
+    const md = cleanMultiGroupWish().replace(
+      '**depends-on:** Group 1',
+      '**depends-on:** Group 1, other-wish/foundation, automagik-dev/genie/some-wish/group-5',
+    );
+    const doc = parseWish(md);
+    const report = lintWish(doc, md);
+    expect(report.violations.some((v) => v.rule === 'depends-on-malformed')).toBe(false);
+    expect(report.violations.some((v) => v.rule === 'depends-on-dangling')).toBe(false);
+  });
+
+  test('depends-on still rejects truly malformed punctuation', () => {
+    const md = cleanMultiGroupWish().replace('**depends-on:** Group 1', '**depends-on:** !@#$');
+    const doc = parseWish(md);
+    const report = lintWish(doc, md);
+    const v = report.violations.find((x) => x.rule === 'depends-on-malformed');
+    expect(v).toBeDefined();
+    expect(v?.fixable).toBe(false);
+  });
+
   test('todo-placeholder-remaining fires on `<TODO>` markers, bypassed by allowTodoPlaceholders', () => {
     const md = cleanMinimalWish().replace('widget.ts exists', '<TODO: real criterion>');
     const doc = parseWish(md);

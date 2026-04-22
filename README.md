@@ -25,7 +25,7 @@
 -->
 
 <!-- METRICS:START -->
-**⚡ 50 PRs merged** this week · **0 releases** (24h) · **0.7h** avg merge · **100% SHIP**
+**🚀 114 commits** this week · **6 releases** · **+22.6K LoC** · **6 contributors**
 
 ![Commits per day (30d, all branches)](.genie/assets/commits-30d.svg)
 
@@ -80,7 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh
 
 **Postgres-backed.** All state lives in PostgreSQL — agents, tasks, events, messages. Queryable. Durable. Real-time via LISTEN/NOTIFY.
 
-**Full observability.** Events, metrics, session replay, cost tracking. See everything your agents do.
+**Full observability.** Events, metrics, session replay, cost tracking. See everything your genie-spawned agents do — OTel-derived tool, cost, and API-request rows only cover sessions launched via `genie spawn` / `genie team create`; user-initiated Claude Code sessions are captured only when they export the OTLP env themselves.
 
 **Portable context.** Identity, skills, memory — all markdown files in your repo, git-versioned. You own everything.
 

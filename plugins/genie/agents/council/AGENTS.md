@@ -1,7 +1,7 @@
 ---
 name: council
 description: Multi-perspective architectural review with 10 specialized perspectives via real multi-agent deliberation.
-model: haiku
+model: opus
 provider: claude
 color: purple
 promptMode: append

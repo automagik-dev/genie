@@ -308,6 +308,7 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
         AND (pane_id IS NULL OR pane_id = '')
         AND current_executor_id IS NULL
         AND started_at < now() - interval '1 second' * ${thresholdSeconds}
+        AND id NOT LIKE 'dir:%'
       RETURNING id
     `;
     for (const row of rows) {
@@ -477,9 +478,122 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
       }
     }
 
+    // Fourth pass: TTL-archive exhausted dead-pane zombies.
+    // Once the reconciler flips a dead-pane zombie to state='error' and the
+    // scheduler exhausts its retry budget (auto_resume=false), the row is
+    // inert — it can't be resumed and clutters `genie ls` forever. After
+    // `DEAD_PANE_ZOMBIE_TTL_HOURS`, transition it to 'archived' so the
+    // default listing filter hides it (see listAgents includeArchived).
+    try {
+      const archived = await archiveExhaustedZombies();
+      if (archived.length > 0) {
+        resetIds.push(...archived);
+      }
+    } catch {
+      // Best-effort — TTL archive failure must not block reconciliation.
+    }
+
     return resetIds;
   } catch {
     return []; // Best-effort — don't block startup if DB is unavailable
+  }
+}
+
+/**
+ * Default TTL (hours) after which an exhausted dead-pane zombie is archived.
+ *
+ * A zombie is any agent whose reconciler audit trail shows
+ * `reason=dead_pane_zombie` AND whose `auto_resume` has been flipped to false
+ * by the scheduler's exhaustion branch. Without this TTL, such rows stayed
+ * visible in `genie ls` forever (#1293), holding registry slots and confusing
+ * users into thinking the agent is still recoverable.
+ */
+const DEAD_PANE_ZOMBIE_TTL_HOURS = 24;
+
+/**
+ * Archive exhausted dead-pane zombies older than the TTL.
+ *
+ * Targets agents that:
+ *   1. Are in terminal `state = 'error'`
+ *   2. Have `auto_resume = false` (retry budget exhausted)
+ *   3. Were last transitioned > `ttlHours` ago
+ *   4. Have at least one reconciler audit event tagged
+ *      `reason = 'dead_pane_zombie'` (distinguishes them from other error
+ *      causes the user might want to keep visible, e.g. manual error states).
+ *
+ * Transitions matching rows to `state = 'archived'` so the default listing
+ * filter hides them. An audit event is emitted per row for traceability.
+ *
+ * @param ttlHours - Minimum age in hours before archival (default: 24)
+ * @returns IDs of agents that were archived
+ */
+export async function archiveExhaustedZombies(ttlHours = DEAD_PANE_ZOMBIE_TTL_HOURS): Promise<string[]> {
+  try {
+    const sql = await getConnection();
+    const rows = await sql<{ id: string }[]>`
+      UPDATE agents a
+      SET state = 'archived', last_state_change = now()
+      WHERE a.state = 'error'
+        AND a.auto_resume = false
+        AND a.last_state_change < now() - make_interval(hours => ${ttlHours})
+        AND EXISTS (
+          SELECT 1 FROM audit_events e
+          WHERE e.entity_type = 'worker'
+            AND e.entity_id = a.id
+            AND e.event_type = 'state_changed'
+            AND e.details->>'reason' = 'dead_pane_zombie'
+        )
+      RETURNING id
+    `;
+    const auditPromises: Promise<void>[] = [];
+    for (const row of rows) {
+      console.error(`[reconcile] Archived exhausted zombie ${row.id} (TTL ${ttlHours}h)`);
+      auditPromises.push(
+        recordAuditEvent('worker', row.id, 'state_changed', 'reconciler', {
+          state: 'archived',
+          reason: 'dead_pane_zombie_ttl_exhausted',
+          ttl_hours: ttlHours,
+        }).catch(() => {}),
+      );
+    }
+    // Wait for audit writes to land so callers can immediately query the log.
+    // `recordAuditEvent` already swallows errors, so this never throws.
+    await Promise.allSettled(auditPromises);
+    return rows.map((r: { id: string }) => r.id);
+  } catch {
+    return []; // Best-effort — never block the reconciler
+  }
+}
+
+/**
+ * Count dead-pane zombies eligible for TTL archive without mutating them.
+ * Used by `genie prune --zombies --dry-run`.
+ */
+export async function listExhaustedZombies(
+  ttlHours = DEAD_PANE_ZOMBIE_TTL_HOURS,
+): Promise<Array<{ id: string; lastStateChange: string }>> {
+  try {
+    const sql = await getConnection();
+    const rows = await sql<{ id: string; last_state_change: string }[]>`
+      SELECT a.id, a.last_state_change FROM agents a
+      WHERE a.state = 'error'
+        AND a.auto_resume = false
+        AND a.last_state_change < now() - make_interval(hours => ${ttlHours})
+        AND EXISTS (
+          SELECT 1 FROM audit_events e
+          WHERE e.entity_type = 'worker'
+            AND e.entity_id = a.id
+            AND e.event_type = 'state_changed'
+            AND e.details->>'reason' = 'dead_pane_zombie'
+        )
+      ORDER BY a.last_state_change ASC
+    `;
+    return rows.map((r: { id: string; last_state_change: string }) => ({
+      id: r.id,
+      lastStateChange: r.last_state_change,
+    }));
+  } catch {
+    return [];
   }
 }
 

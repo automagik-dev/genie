@@ -265,9 +265,10 @@ function parseDependsOnValue(raw: string): { value: DependsOn; malformed: boolea
   const trimmed = raw.trim().replace(/\.$/, '');
   if (!trimmed) return { value: [], malformed: true };
   if (/^none$/i.test(trimmed)) return { value: 'none', malformed: false };
-  // Accept `Group 1, Group 2` or `slug#1, slug#2`
+  // Accept `Group N`, `Foundation`, `wish-slug/group-1`, `repo/wish-slug/group-N`, or `slug#N`.
   const parts = trimmed.split(/\s*,\s*/).filter(Boolean);
-  const refPattern = /^(Group\s+\d+|[\w-]+#\d+)$/i;
+  const refPattern =
+    /^(?:Group\s+\d+|[A-Za-z][A-Za-z0-9_-]*(?:\/(?:Group\s+\d+|[A-Za-z][A-Za-z0-9_-]*))*|[A-Za-z][A-Za-z0-9_-]*#\d+)$/i;
   const malformed = parts.some((p) => !refPattern.test(p));
   return { value: parts, malformed };
 }

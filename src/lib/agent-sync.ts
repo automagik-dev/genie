@@ -431,6 +431,7 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRo
       description: configFields.description,
       color: configFields.color,
       provider: configFields.provider,
+      roles: configFields.roles,
       permissions: configFields.permissions,
       disallowedTools: configFields.disallowedTools,
       omniScopes: configFields.omniScopes,
@@ -452,6 +453,7 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRo
     description: configFields.description,
     color: configFields.color,
     provider: configFields.provider,
+    roles: configFields.roles,
     permissions: configFields.permissions,
     disallowedTools: configFields.disallowedTools,
     omniScopes: configFields.omniScopes,
@@ -469,6 +471,7 @@ interface ConfigFields {
   description?: string;
   color?: string;
   provider?: string;
+  roles?: string[];
   permissions?: { allow?: string[]; deny?: string[]; preset?: string; bashAllowPatterns?: string[] };
   disallowedTools?: string[];
   omniScopes?: string[];
@@ -488,6 +491,7 @@ async function readYamlAsConfigFields(yamlPath: string): Promise<ConfigFields> {
     description: cfg.description,
     color: cfg.color,
     provider: cfg.provider,
+    roles: cfg.roles,
     permissions: cfg.permissions,
     disallowedTools: cfg.disallowedTools,
     omniScopes: cfg.omniScopes,
@@ -508,6 +512,7 @@ function readFrontmatterAsConfigFields(agentsMdPath: string): ConfigFields {
     description: fm.description as string | undefined,
     color: fm.color as string | undefined,
     provider: fm.provider as string | undefined,
+    roles: (fm as Record<string, unknown>).roles as string[] | undefined,
     permissions: fm.permissions as ConfigFields['permissions'],
     disallowedTools: fm.disallowedTools as string[] | undefined,
     omniScopes: fm.omniScopes as string[] | undefined,

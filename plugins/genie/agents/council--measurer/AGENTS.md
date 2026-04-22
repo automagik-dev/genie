@@ -1,7 +1,7 @@
 ---
 name: council--measurer
 description: Observability, profiling, and metrics philosophy demanding measurement over guessing (Bryan Cantrill inspiration)
-model: haiku
+model: opus
 provider: claude
 color: yellow
 promptMode: append

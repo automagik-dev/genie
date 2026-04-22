@@ -471,6 +471,67 @@ describe('parallel dispatch race (issue #1207)', () => {
   });
 });
 
+describe('root guard (issue #1226)', () => {
+  let origGetuid: (() => number) | undefined;
+  let origAllowRoot: string | undefined;
+
+  beforeEach(() => {
+    origGetuid = process.getuid;
+    origAllowRoot = process.env.GENIE_ALLOW_ROOT;
+  });
+
+  afterEach(() => {
+    // Restore original getuid
+    if (origGetuid) {
+      Object.defineProperty(process, 'getuid', { value: origGetuid, configurable: true });
+    }
+    if (origAllowRoot !== undefined) {
+      process.env.GENIE_ALLOW_ROOT = origAllowRoot;
+    } else {
+      process.env.GENIE_ALLOW_ROOT = undefined;
+    }
+  });
+
+  test('returns null when uid is non-zero', async () => {
+    Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
+    const { checkRootGuard } = await import('./db.js');
+    expect(checkRootGuard()).toBeNull();
+  });
+
+  test('returns actionable error when running as root', async () => {
+    Object.defineProperty(process, 'getuid', { value: () => 0, configurable: true });
+    process.env.GENIE_ALLOW_ROOT = undefined;
+    const { checkRootGuard } = await import('./db.js');
+    const msg = checkRootGuard();
+    expect(msg).not.toBeNull();
+    // Must name the real cause
+    expect(msg).toContain('uid 0');
+    expect(msg).toContain('root');
+    // Must offer the escape hatch
+    expect(msg).toContain('GENIE_ALLOW_ROOT=1');
+    // Must link the issue for more context
+    expect(msg).toContain('1226');
+  });
+
+  test('GENIE_ALLOW_ROOT=1 bypasses the guard', async () => {
+    Object.defineProperty(process, 'getuid', { value: () => 0, configurable: true });
+    process.env.GENIE_ALLOW_ROOT = '1';
+    const { checkRootGuard } = await import('./db.js');
+    expect(checkRootGuard()).toBeNull();
+  });
+
+  test('_ensurePgserve invokes checkRootGuard before spawn paths', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // The guard call must live inside _ensurePgserve, before the GENIE_IS_DAEMON branch
+    const fnStart = source.indexOf('async function _ensurePgserve');
+    expect(fnStart).toBeGreaterThan(-1);
+    const daemonBranch = source.indexOf("GENIE_IS_DAEMON === '1'", fnStart);
+    const guardCall = source.indexOf('checkRootGuard()', fnStart);
+    expect(guardCall).toBeGreaterThan(-1);
+    expect(guardCall).toBeLessThan(daemonBranch);
+  });
+});
+
 describe('migration directory resolution', () => {
   test('does not use process.cwd() for migration lookup', () => {
     const source = readFileSync(join(__dirname, 'db-migrations.ts'), 'utf-8');
