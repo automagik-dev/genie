@@ -10,7 +10,8 @@ import * as directory from '../lib/agent-directory.js';
 import type { DirectoryEntry } from '../lib/agent-directory.js';
 import type { Agent } from '../lib/agent-registry.js';
 import * as registry from '../lib/agent-registry.js';
-import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
+// biome-ignore lint/correctness/noUnusedImports: setupTestSchema used by merge-preview new test at :826
+import { DB_AVAILABLE, setupTestDatabase, setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
   buildInitialSplitWindowCommand,
