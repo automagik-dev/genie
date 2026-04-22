@@ -1,7 +1,7 @@
 ---
 name: council--operator
 description: Operations reality, infrastructure readiness, and on-call sanity review (Kelsey Hightower inspiration)
-model: haiku
+model: opus
 provider: claude
 color: red
 promptMode: append
