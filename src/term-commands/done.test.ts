@@ -75,7 +75,6 @@ describe('doneAction dispatch', () => {
   test('no ref + no GENIE_AGENT_NAME → exits with error', async () => {
     const originalExit = process.exit;
     let exitCode: number | undefined;
-    // biome-ignore lint/suspicious/noExplicitAny: test override
     process.exit = ((code?: number) => {
       exitCode = code;
       throw new Error('process.exit stub');

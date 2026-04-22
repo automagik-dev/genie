@@ -319,18 +319,53 @@ export function __setSpawnDaemonForTest(fn: (() => void) | null): void {
  *
  * Any other state → treat as stale, unlink, spawn fresh.
  */
+function readPidFile(pidPath: string): string | null {
+  try {
+    return readFileSync(pidPath, 'utf-8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function parsePidFile(raw: string): { pid: number; recordedStartTime: string | null } | null {
+  const sepIdx = raw.indexOf(':');
+  let pid: number;
+  let recordedStartTime: string | null;
+  if (sepIdx < 0) {
+    pid = Number.parseInt(raw, 10);
+    recordedStartTime = null;
+  } else {
+    pid = Number.parseInt(raw.slice(0, sepIdx), 10);
+    const tail = raw.slice(sepIdx + 1).trim();
+    recordedStartTime = tail === '' || tail === 'unknown' ? null : tail;
+  }
+  if (Number.isNaN(pid) || pid <= 0) return null;
+  return { pid, recordedStartTime };
+}
+
+function isServeAlive(pid: number, recordedStartTime: string | null): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  if (recordedStartTime === null) return false;
+  const currentStartTime = getProcessStartTime(pid);
+  return currentStartTime !== null && currentStartTime === recordedStartTime;
+}
+
+function unlinkQuiet(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    /* already gone */
+  }
+}
+
 export async function autoStartDaemon(): Promise<void> {
-  // Resolve GENIE_HOME at call time (not from the module-level constant) so
-  // tests that toggle process.env.GENIE_HOME see the override.
   const home = process.env.GENIE_HOME ?? GENIE_HOME;
   const pidPath = join(home, 'serve.pid');
-
-  let raw: string | null = null;
-  try {
-    raw = readFileSync(pidPath, 'utf-8').trim();
-  } catch {
-    raw = null;
-  }
+  const raw = readPidFile(pidPath);
 
   if (!raw) {
     lastAutoStartOutcome = 'missing';
@@ -339,59 +374,24 @@ export async function autoStartDaemon(): Promise<void> {
     return;
   }
 
-  const sepIdx = raw.indexOf(':');
-  let pid: number;
-  let recordedStartTime: string | null;
-  if (sepIdx < 0) {
-    // Legacy single-PID format from an older install — always stale.
-    pid = Number.parseInt(raw, 10);
-    recordedStartTime = null;
-  } else {
-    pid = Number.parseInt(raw.slice(0, sepIdx), 10);
-    const tail = raw.slice(sepIdx + 1).trim();
-    recordedStartTime = tail === '' || tail === 'unknown' ? null : tail;
-  }
-
-  if (Number.isNaN(pid) || pid <= 0) {
-    // Unparseable file — treat as stale.
-    try {
-      unlinkSync(pidPath);
-    } catch {
-      /* already gone */
-    }
+  const parsed = parsePidFile(raw);
+  if (!parsed) {
+    unlinkQuiet(pidPath);
     lastAutoStartOutcome = 'stale';
     lastAutoStartPid = null;
     spawnDaemon();
     return;
   }
 
-  let pidAlive = false;
-  try {
-    process.kill(pid, 0);
-    pidAlive = true;
-  } catch {
-    pidAlive = false;
+  if (isServeAlive(parsed.pid, parsed.recordedStartTime)) {
+    lastAutoStartOutcome = 'alive';
+    lastAutoStartPid = parsed.pid;
+    return;
   }
 
-  if (pidAlive && recordedStartTime !== null) {
-    const currentStartTime = getProcessStartTime(pid);
-    if (currentStartTime !== null && currentStartTime === recordedStartTime) {
-      lastAutoStartOutcome = 'alive';
-      lastAutoStartPid = pid;
-      return; // Already running with matching identity.
-    }
-  }
-
-  // Either the PID is dead, the start time changed (PID recycled), the
-  // recorded start time was missing (legacy format), or we couldn't look
-  // one up. Treat as stale across the board.
-  try {
-    unlinkSync(pidPath);
-  } catch {
-    /* already gone */
-  }
+  unlinkQuiet(pidPath);
   lastAutoStartOutcome = 'stale';
-  lastAutoStartPid = pid;
+  lastAutoStartPid = parsed.pid;
   spawnDaemon();
 }
 
@@ -411,63 +411,37 @@ async function resolveTestPort(): Promise<number | null> {
   return parsed;
 }
 
-async function _ensurePgserve(): Promise<number> {
-  // Already connected in this process
-  if (activePort !== null) return activePort;
-
-  const port = getPort();
-
-  // 1. Read port file — daemon or another genie process may have written it
+async function tryExistingPort(port: number): Promise<number | null> {
   const portFromFile = readLockfile();
   if (portFromFile !== null && (await isPostgresHealthy(portFromFile))) {
     activePort = portFromFile;
     process.env.GENIE_PG_AVAILABLE = 'true';
     return portFromFile;
   }
-
-  // 2. Check default port (daemon may be running without port file, or external PG)
   if (await isPostgresHealthy(port)) {
     activePort = port;
     process.env.GENIE_PG_AVAILABLE = 'true';
     writeLockfile(port);
     return port;
   }
+  return null;
+}
 
-  // 3. In CI/test — don't attempt to spawn pgserve (not installed).
-  //    Tests use describe.skipIf(!DB_AVAILABLE) to handle this gracefully.
-  if (process.env.CI === 'true') {
+async function spawnPgserveDirect(port: number): Promise<number> {
+  mkdirSync(DATA_DIR, { recursive: true });
+  selfHealPostgres(DATA_DIR);
+  try {
+    const startedPort = await startPgserveOnPort(port);
+    registerExitHandler();
+    return startedPort;
+  } catch (err) {
     process.env.GENIE_PG_AVAILABLE = 'false';
-    throw new Error('pgserve not available in CI');
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`pgserve failed to start: ${maskCredentials(message)}`);
   }
+}
 
-  // 3b. Root guard — pgserve would otherwise time out with a misleading
-  //     16s error because postgres refuses uid 0 at the binary level. See
-  //     checkRootGuard() and issue #1226.
-  const rootErr = checkRootGuard();
-  if (rootErr !== null) {
-    process.env.GENIE_PG_AVAILABLE = 'false';
-    throw new Error(rootErr);
-  }
-
-  // 4a. If we ARE the daemon (genie serve) — spawn pgserve directly.
-  if (process.env.GENIE_IS_DAEMON === '1') {
-    mkdirSync(DATA_DIR, { recursive: true });
-    selfHealPostgres(DATA_DIR);
-    try {
-      const startedPort = await startPgserveOnPort(port);
-      registerExitHandler();
-      return startedPort;
-    } catch (err) {
-      process.env.GENIE_PG_AVAILABLE = 'false';
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`pgserve failed to start: ${maskCredentials(message)}`);
-    }
-  }
-
-  // 4b. CLI command — auto-start genie serve --headless, wait for port file.
-  await autoStartDaemon();
-  const outcomeAtStart = lastAutoStartOutcome;
-  const pidAtStart = lastAutoStartPid;
+async function waitForDaemonPort(): Promise<number | null> {
   const deadline = Date.now() + 16000;
   while (Date.now() < deadline) {
     const p = readLockfile();
@@ -478,9 +452,11 @@ async function _ensurePgserve(): Promise<number> {
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  process.env.GENIE_PG_AVAILABLE = 'false';
+  return null;
+}
 
-  // Branch the timeout error so the user sees the actual failure mode.
+function throwDaemonTimeout(outcomeAtStart: typeof lastAutoStartOutcome, pidAtStart: typeof lastAutoStartPid): never {
+  process.env.GENIE_PG_AVAILABLE = 'false';
   const home = process.env.GENIE_HOME ?? GENIE_HOME;
   const pidPath = join(home, 'serve.pid');
   const hasPidFile = existsSync(pidPath);
@@ -497,6 +473,36 @@ async function _ensurePgserve(): Promise<number> {
   throw new Error(
     `genie serve is running (PID ${pidLabel}) but pgserve did not respond on port ${currentPort} within 16s. Try: genie serve restart, or check ~/.genie/logs/scheduler.log`,
   );
+}
+
+async function _ensurePgserve(): Promise<number> {
+  if (activePort !== null) return activePort;
+
+  const port = getPort();
+  const existing = await tryExistingPort(port);
+  if (existing !== null) return existing;
+
+  if (process.env.CI === 'true') {
+    process.env.GENIE_PG_AVAILABLE = 'false';
+    throw new Error('pgserve not available in CI');
+  }
+
+  const rootErr = checkRootGuard();
+  if (rootErr !== null) {
+    process.env.GENIE_PG_AVAILABLE = 'false';
+    throw new Error(rootErr);
+  }
+
+  if (process.env.GENIE_IS_DAEMON === '1') {
+    return spawnPgserveDirect(port);
+  }
+
+  await autoStartDaemon();
+  const outcomeAtStart = lastAutoStartOutcome;
+  const pidAtStart = lastAutoStartPid;
+  const waited = await waitForDaemonPort();
+  if (waited !== null) return waited;
+  throwDaemonTimeout(outcomeAtStart, pidAtStart);
 }
 
 /** Resolve the pgserve CLI binary path — checks local dep, global, then PATH. */

@@ -78,41 +78,44 @@ async function resolveDeps() {
   };
 }
 
+function shouldSkipSync(payload: HookPayload): { sessionId: string; agentName: string; teamName: string } | null {
+  const sessionId = payload.session_id;
+  if (!sessionId || typeof sessionId !== 'string') return null;
+
+  const hasOverrides = Object.values(_deps).some((v) => v !== null);
+  if (!hasOverrides && (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test')) return null;
+
+  const agentName = process.env.GENIE_AGENT_NAME ?? (payload.teammate_name as string | undefined);
+  const teamName = process.env.GENIE_TEAM ?? (payload.team_name as string | undefined);
+  if (!agentName || !teamName) return null;
+
+  return { sessionId, agentName, teamName };
+}
+
 export async function sessionSync(payload: HookPayload): Promise<HandlerResult> {
   try {
-    const sessionId = payload.session_id;
-    if (!sessionId || typeof sessionId !== 'string') return;
-
-    const hasOverrides = Object.values(_deps).some((v) => v !== null);
-    if (!hasOverrides && (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test')) return;
-
-    const agentName = process.env.GENIE_AGENT_NAME ?? (payload.teammate_name as string | undefined);
-    const teamName = process.env.GENIE_TEAM ?? (payload.team_name as string | undefined);
-    if (!agentName || !teamName) return;
+    const ctx = shouldSkipSync(payload);
+    if (!ctx) return;
 
     const deps = await resolveDeps();
-    const agent = await deps.getAgentByName(agentName, teamName);
+    const agent = await deps.getAgentByName(ctx.agentName, ctx.teamName);
     const executorId = agent?.currentExecutorId;
     if (!executorId) return;
-
-    if (syncedSessions.get(executorId) === sessionId) return;
+    if (syncedSessions.get(executorId) === ctx.sessionId) return;
 
     const executor = await deps.getExecutor(executorId);
     if (!executor) return;
 
     const oldSessionId = executor.claudeSessionId ?? null;
-    if (oldSessionId !== sessionId) {
-      await deps.updateClaudeSessionId(executorId, sessionId);
-      // Emit an audit event so operators can observe UUID rotations. This
-      // mirrors claude-sdk.ts's `session.resume_rejected` but is the
-      // PTY-side counterpart: the session ID we *had* is now stale.
-      await deps.emitAuditEvent('executor', executorId, 'session.reconciled', agentName, {
+    if (oldSessionId !== ctx.sessionId) {
+      await deps.updateClaudeSessionId(executorId, ctx.sessionId);
+      await deps.emitAuditEvent('executor', executorId, 'session.reconciled', ctx.agentName, {
         old_session_id: oldSessionId,
-        new_session_id: sessionId,
-        team: teamName,
+        new_session_id: ctx.sessionId,
+        team: ctx.teamName,
       });
     }
-    syncedSessions.set(executorId, sessionId);
+    syncedSessions.set(executorId, ctx.sessionId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[session-sync] ${msg}`);

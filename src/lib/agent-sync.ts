@@ -378,6 +378,37 @@ async function removeMissingAgents(discoveredNames: Set<string>, result: SyncRes
  *      have neither yaml nor frontmatter (no config — registered with
  *      defaults only).
  */
+async function maybeMigrateFrontmatter(agent: AgentInfo, result: SyncResult): Promise<void> {
+  const yamlPath = join(agent.dir, 'agent.yaml');
+  const agentsMdPath = join(agent.dir, 'AGENTS.md');
+  if (existsSync(yamlPath) || !existsSync(agentsMdPath)) return;
+  const { frontmatter } = extractFrontmatterFromAgentsMd(readFileSync(agentsMdPath, 'utf-8'));
+  if (frontmatter === null) return;
+  const existingEntry = await directory.resolve(agent.name);
+  const dbRow = existingEntry && !existingEntry.builtin ? dbRowFromEntry(existingEntry.entry) : undefined;
+  const migrationResult = await migrateAgentToYaml(agent.dir, dbRow);
+  if (migrationResult.migrated) result.migrated.push(agent.name);
+}
+
+function buildDirectoryPayload(dir: string, repoPath: string, cf: ConfigFields) {
+  return {
+    dir,
+    repo: repoPath,
+    promptMode: cf.promptMode,
+    model: cf.model,
+    description: cf.description,
+    color: cf.color,
+    provider: cf.provider,
+    roles: cf.roles,
+    permissions: cf.permissions,
+    disallowedTools: cf.disallowedTools,
+    omniScopes: cf.omniScopes,
+    hooks: cf.hooks,
+    sdk: cf.sdk,
+    bridgeTmuxSession: cf.bridgeTmuxSession,
+  };
+}
+
 async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRoot?: string): Promise<void> {
   const orgRepo = agent.repoUrl ? extractOrgRepo(agent.repoUrl) : null;
   const repoPath = orgRepo ?? agent.repoUrl ?? agent.dir;
@@ -385,82 +416,28 @@ async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRo
   const yamlPath = join(agent.dir, 'agent.yaml');
   const agentsMdPath = join(agent.dir, 'AGENTS.md');
 
-  // Phase 0: trigger migration if the yaml doesn't exist yet and AGENTS.md
-  // carries frontmatter. Migration writes agent.yaml, saves AGENTS.md.bak, and
-  // strips the frontmatter off AGENTS.md — so by the end, phase 1 below can
-  // just read the yaml.
-  if (!existsSync(yamlPath) && existsSync(agentsMdPath)) {
-    const agentsMdContent = readFileSync(agentsMdPath, 'utf-8');
-    const { frontmatter } = extractFrontmatterFromAgentsMd(agentsMdContent);
-    if (frontmatter !== null) {
-      const existingEntry = await directory.resolve(agent.name);
-      const dbRow = existingEntry && !existingEntry.builtin ? dbRowFromEntry(existingEntry.entry) : undefined;
-      const migrationResult = await migrateAgentToYaml(agent.dir, dbRow);
-      if (migrationResult.migrated) {
-        result.migrated.push(agent.name);
-      }
-    }
-  }
+  await maybeMigrateFrontmatter(agent, result);
 
-  // Phase 1: derive the config. Prefer yaml; fall back to frontmatter for
-  // agents that still have neither (e.g. new agents missing a config file).
   const configFields = existsSync(yamlPath)
     ? await readYamlAsConfigFields(yamlPath)
     : readFrontmatterAsConfigFields(agentsMdPath);
 
-  // Compute resolved metadata if workspace root is available (kept for
-  // compatibility; the declared/resolved diff feeds into defaults.ts).
   if (workspaceRoot) {
     const ctx = buildResolveContext(workspaceRoot, agent.name);
     computeResolvedMetadata(configFields.rawForResolution, ctx);
   }
 
-  // Use resolve() to distinguish PG entries from built-ins.
-  // get() returns built-in entries too, which would skip the add() path
-  // and silently fail the edit() (no dir: row in PG for built-in names).
   const resolved = await directory.resolve(agent.name);
   const existing = resolved && !resolved.builtin ? resolved.entry : null;
 
+  const payload = buildDirectoryPayload(agent.dir, repoPath, configFields);
   if (!existing) {
-    await directory.add({
-      name: agent.name,
-      dir: agent.dir,
-      repo: repoPath,
-      promptMode: configFields.promptMode,
-      model: configFields.model,
-      description: configFields.description,
-      color: configFields.color,
-      provider: configFields.provider,
-      roles: configFields.roles,
-      permissions: configFields.permissions,
-      disallowedTools: configFields.disallowedTools,
-      omniScopes: configFields.omniScopes,
-      hooks: configFields.hooks,
-      sdk: configFields.sdk,
-      bridgeTmuxSession: configFields.bridgeTmuxSession,
-    });
+    await directory.add({ name: agent.name, ...payload });
     result.registered.push(agent.name);
     return;
   }
 
-  // Always upsert — the "Unchanged" skip path was eliminated by
-  // dir-sync-frontmatter-refresh so file-side edits never get dropped.
-  await directory.edit(agent.name, {
-    dir: agent.dir,
-    repo: repoPath,
-    promptMode: configFields.promptMode,
-    model: configFields.model,
-    description: configFields.description,
-    color: configFields.color,
-    provider: configFields.provider,
-    roles: configFields.roles,
-    permissions: configFields.permissions,
-    disallowedTools: configFields.disallowedTools,
-    omniScopes: configFields.omniScopes,
-    hooks: configFields.hooks,
-    sdk: configFields.sdk,
-    bridgeTmuxSession: configFields.bridgeTmuxSession,
-  });
+  await directory.edit(agent.name, payload);
   result.updated.push(agent.name);
 }
 
