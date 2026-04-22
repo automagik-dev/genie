@@ -115,7 +115,7 @@ function summarizeDetails(details: Record<string, unknown> | string): string {
  * concrete remediation hint with the live receiver port; otherwise print
  * the scope note alone.
  */
-function printOtelScopeWarning(opts: { empty: boolean }): void {
+export function printOtelScopeWarning(opts: { empty: boolean }): void {
   console.log('\n⚠  OTel-derived events only cover genie-spawned sessions.');
   if (opts.empty) {
     let port: number | null = null;
@@ -135,8 +135,17 @@ function printOtelScopeWarning(opts: { empty: boolean }): void {
 }
 
 /** Returns true when a `--type` filter targets an OTel-sourced event stream. */
-function isOtelTypeFilter(type: string | undefined): boolean {
+export function isOtelTypeFilter(type: string | undefined): boolean {
   return typeof type === 'string' && type.startsWith('otel_');
+}
+
+/**
+ * Returns true when a v2 `--kind` filter targets kinds that only populate
+ * from the OTel exporter (e.g. `tool`, `tool_call`, `tool_result`). Those
+ * rows only land in `genie_runtime_events` for genie-spawned sessions.
+ */
+export function isOtelKindFilter(kind: string | undefined): boolean {
+  return typeof kind === 'string' && kind.startsWith('tool');
 }
 
 function printErrorsTable(patterns: ErrorPattern[]): void {
@@ -235,6 +244,12 @@ async function eventsListV2Command(options: ListOptions): Promise<void> {
       console.log(JSON.stringify(rows, null, 2));
     } else {
       printV2EventsTable(rows);
+      // v2 kinds like `tool` / `tool_call` / `tool_result` only populate
+      // from the OTLP exporter — mirror the same scope note the roll-ups
+      // surface so an empty result isn't read as "observability broke."
+      if (isOtelKindFilter(options.kind)) {
+        printOtelScopeWarning({ empty: rows.length === 0 });
+      }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -678,7 +693,11 @@ async function eventsScanCommand(options: { since?: string; json?: boolean; brea
 // ============================================================================
 
 export function registerEventsCommands(program: Command): void {
-  const events = program.command('events').description('Audit event log from PG');
+  const events = program
+    .command('events')
+    .description(
+      'Audit event log from PG. OTel-derived data (tools/summary/costs and otel_* list rows) is scoped to genie-spawned agents — user-initiated Claude Code sessions are not captured unless they export OTLP env vars.',
+    );
 
   events
     .command('list', { isDefault: true })
