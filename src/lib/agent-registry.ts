@@ -308,6 +308,7 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
         AND (pane_id IS NULL OR pane_id = '')
         AND current_executor_id IS NULL
         AND started_at < now() - interval '1 second' * ${thresholdSeconds}
+        AND id NOT LIKE 'dir:%'
       RETURNING id
     `;
     for (const row of rows) {
