@@ -97,3 +97,12 @@ export async function setupTestDatabase(): Promise<() => Promise<void>> {
     }
   };
 }
+
+/**
+ * Backwards-compat alias. `setupTestSchema` was the prior API name (schema-
+ * isolation era). Group 3 replaced it with `setupTestDatabase` (database-
+ * clone isolation). Dev still has callsites using the old name that land
+ * via merge-preview into this branch — keep the alias so `tsc --noEmit`
+ * passes under the merge topology. Safe to delete once dev is rebased.
+ */
+export const setupTestSchema = setupTestDatabase;

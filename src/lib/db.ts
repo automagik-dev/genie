@@ -691,6 +691,7 @@ async function _buildConnection(): Promise<any> {
   // env var is never set, so we fall back to DB_NAME ('genie').
   const testDbName = process.env.GENIE_TEST_DB_NAME;
   const database = testDbName && testDbName.length > 0 ? testDbName : DB_NAME;
+  const isTestMode = Boolean(testDbName);
   sqlClient = pgModule({
     host: DEFAULT_HOST,
     port,
