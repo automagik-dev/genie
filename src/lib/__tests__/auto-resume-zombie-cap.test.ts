@@ -50,7 +50,7 @@ function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
     id: 'test-agent',
     paneId: '%42',
     state: 'error',
-    claudeSessionId: 'session-abc',
+    currentSessionId: 'session-abc',
     autoResume: true,
     resumeAttempts: 0,
     maxResumeAttempts: 3,
@@ -268,9 +268,9 @@ describe('Change #2: periodic resume sweep for error-state agents', () => {
     // `error` is terminal intent already — resuming would replay a
     // failed turn. See WISH turn-session-contract, C20.
     const workers: WorkerInfo[] = [
-      makeWorker({ id: 'dead-error', paneId: '%99', state: 'error', claudeSessionId: 'sess-1' }),
-      makeWorker({ id: 'finished', paneId: '%98', state: 'done', claudeSessionId: 'sess-2' }),
-      makeWorker({ id: 'paused', paneId: '%97', state: 'suspended', claudeSessionId: 'sess-3' }),
+      makeWorker({ id: 'dead-error', paneId: '%99', state: 'error', currentSessionId: 'sess-1' }),
+      makeWorker({ id: 'finished', paneId: '%98', state: 'done', currentSessionId: 'sess-2' }),
+      makeWorker({ id: 'paused', paneId: '%97', state: 'suspended', currentSessionId: 'sess-3' }),
     ];
     const { deps, resumedIds } = createMockDeps({
       listWorkers: async () => workers,
@@ -292,9 +292,9 @@ describe('Change #2: periodic resume sweep for error-state agents', () => {
     process.env.GENIE_RECONCILER_TURN_AWARE = '0';
     try {
       const workers: WorkerInfo[] = [
-        makeWorker({ id: 'dead-error', paneId: '%99', state: 'error', claudeSessionId: 'sess-1' }),
-        makeWorker({ id: 'finished', paneId: '%98', state: 'done', claudeSessionId: 'sess-2' }),
-        makeWorker({ id: 'paused', paneId: '%97', state: 'suspended', claudeSessionId: 'sess-3' }),
+        makeWorker({ id: 'dead-error', paneId: '%99', state: 'error', currentSessionId: 'sess-1' }),
+        makeWorker({ id: 'finished', paneId: '%98', state: 'done', currentSessionId: 'sess-2' }),
+        makeWorker({ id: 'paused', paneId: '%97', state: 'suspended', currentSessionId: 'sess-3' }),
       ];
       const { deps, resumedIds } = createMockDeps({
         listWorkers: async () => workers,
@@ -408,7 +408,7 @@ describe('Gap #2 regression — boot-mode terminal-executor check (turn-session-
       id: 'dead-closed',
       paneId: '%50',
       state: 'spawning',
-      claudeSessionId: 'sess-closed',
+      currentSessionId: 'sess-closed',
     });
     const { deps, resumedIds, logs } = createMockDeps({
       listWorkers: async () => [worker],
@@ -431,7 +431,7 @@ describe('Gap #2 regression — boot-mode terminal-executor check (turn-session-
       id: 'dead-open',
       paneId: '%51',
       state: 'spawning',
-      claudeSessionId: 'sess-open',
+      currentSessionId: 'sess-open',
     });
     const { deps, resumedIds } = createMockDeps({
       listWorkers: async () => [worker],
@@ -452,7 +452,7 @@ describe('Gap #2 regression — boot-mode terminal-executor check (turn-session-
       id: 'sweep-spawning',
       paneId: '%52',
       state: 'spawning',
-      claudeSessionId: 'sess-sweep',
+      currentSessionId: 'sess-sweep',
     });
     const { deps, resumedIds } = createMockDeps({
       listWorkers: async () => [worker],

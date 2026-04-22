@@ -71,7 +71,8 @@ async function seedDirectoryAgent(name: string): Promise<void> {
 
 /**
  * Persist a worker row the way `handleWorkerSpawn` does after it picks
- * an identity. Mirrors registry.register's full column set.
+ * an identity. Post-migration-047 the session lives on the current executor,
+ * so this helper also creates+links an executor carrying `claudeSessionId`.
  */
 async function registerWorker(opts: {
   id: string;
@@ -83,6 +84,7 @@ async function registerWorker(opts: {
   session?: string;
   repoPath?: string;
 }): Promise<void> {
+  const provider = opts.provider ?? 'claude';
   await registry.register({
     id: opts.id,
     paneId: opts.paneId,
@@ -92,11 +94,23 @@ async function registerWorker(opts: {
     state: 'idle',
     lastStateChange: new Date().toISOString(),
     repoPath: opts.repoPath ?? `/tmp/integ-${opts.id}-${Date.now()}`,
-    claudeSessionId: opts.claudeSessionId,
     role: opts.role,
     team: opts.team,
-    provider: opts.provider ?? 'claude',
+    provider,
   });
+  const executorRegistry = await import('../lib/executor-registry.js');
+  await executorRegistry.createAndLinkExecutor(opts.id, provider, 'tmux', {
+    claudeSessionId: opts.claudeSessionId,
+    tmuxPaneId: opts.paneId,
+    tmuxSession: opts.session ?? opts.team,
+  });
+}
+
+/** Read the session UUID from the agent's current executor (migration 047). */
+async function agentSessionId(id: string): Promise<string | null> {
+  const executorRegistry = await import('../lib/executor-registry.js');
+  const executor = await executorRegistry.getCurrentExecutor(id);
+  return executor?.claudeSessionId ?? null;
 }
 
 /** Flip a worker's pane to "inline" — isPaneAlive returns false without a tmux call. */
@@ -202,16 +216,17 @@ describe.skipIf(!DB_AVAILABLE)('tui-spawn-dx integration (Group 8)', () => {
       if (dead) {
         // Resume path: canonical already exists, session UUID is reused.
         // handleWorkerSpawn would call resumeAgent here, which does NOT rewrite
-        // claude_session_id. Simulate by re-registering with the same UUID and
-        // a fresh paneId (as resumeAgent's registry.update does).
+        // claude_session_id on the executor. Simulate by re-registering with
+        // the same UUID and a fresh paneId (as resumeAgent's update does).
         expect(dead.id).toBe('alice');
-        expect(dead.claudeSessionId).toBe(canonicalUuid as string);
+        const deadSession = await agentSessionId('alice');
+        expect(deadSession).toBe(canonicalUuid as string);
         await registerWorker({
           id: 'alice',
           role: 'alice',
           team,
           paneId: '%100', // "new" pane from resume
-          claudeSessionId: dead.claudeSessionId as string,
+          claudeSessionId: deadSession as string,
         });
       } else {
         // Fresh canonical creation path.
@@ -234,11 +249,16 @@ describe.skipIf(!DB_AVAILABLE)('tui-spawn-dx integration (Group 8)', () => {
       await killPane('alice');
     }
 
-    // Final invariants: exactly one row, UUID unchanged since cycle 1.
+    // Final invariants: exactly one agent row, and the UUID on its current
+    // executor is unchanged since cycle 1. Post-migration-047 the session
+    // lives on the executor, so the assertion traverses the JOIN.
     const { getConnection } = await import('../lib/db.js');
     const sql = await getConnection();
     const rows = await sql<{ id: string; claude_session_id: string | null }[]>`
-      SELECT id, claude_session_id FROM agents WHERE team = ${team} AND id NOT LIKE 'dir:%'
+      SELECT a.id, e.claude_session_id
+      FROM agents a
+      LEFT JOIN executors e ON e.id = a.current_executor_id
+      WHERE a.team = ${team} AND a.id NOT LIKE 'dir:%'
     `;
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe('alice');
@@ -265,11 +285,15 @@ describe.skipIf(!DB_AVAILABLE)('tui-spawn-dx integration (Group 8)', () => {
       claudeSessionId: canonicalUuid,
     });
 
-    // Snapshot the canonical row bytes BEFORE the second spawn.
+    // Snapshot the canonical row bytes BEFORE the second spawn. Session
+    // UUID is joined from the current executor (migration 047).
     const { getConnection } = await import('../lib/db.js');
     const sql = await getConnection();
     const before = await sql<{ id: string; claude_session_id: string; pane_id: string }[]>`
-      SELECT id, claude_session_id, pane_id FROM agents WHERE id = 'alice'
+      SELECT a.id, e.claude_session_id, a.pane_id
+      FROM agents a
+      LEFT JOIN executors e ON e.id = a.current_executor_id
+      WHERE a.id = 'alice'
     `;
     expect(before).toHaveLength(1);
     expect(before[0].claude_session_id).toBe(canonicalUuid);
@@ -291,18 +315,22 @@ describe.skipIf(!DB_AVAILABLE)('tui-spawn-dx integration (Group 8)', () => {
       claudeSessionId: second.sessionUuid,
     });
 
-    // Canonical must be byte-identical to the snapshot.
+    // Canonical must be byte-identical to the snapshot (executor-joined).
     const after = await sql<{ id: string; claude_session_id: string; pane_id: string }[]>`
-      SELECT id, claude_session_id, pane_id FROM agents WHERE id = 'alice'
+      SELECT a.id, e.claude_session_id, a.pane_id
+      FROM agents a
+      LEFT JOIN executors e ON e.id = a.current_executor_id
+      WHERE a.id = 'alice'
     `;
     expect(after).toHaveLength(1);
     expect(after[0].claude_session_id).toBe(canonicalUuid);
     expect(after[0].pane_id).toBe(before[0].pane_id);
 
-    // Parallel row exists with its own UUID.
+    // Parallel row exists with its own UUID (stored on its executor).
     const parallel = await registry.get('alice-b00b');
-    expect(parallel?.claudeSessionId).toBe(parallelUuid);
+    expect(parallel).not.toBeNull();
     expect(parallel?.role).toBe('alice-b00b');
+    expect(await agentSessionId('alice-b00b')).toBe(parallelUuid);
   });
 
   // -----------------------------------------------------------------------
@@ -357,7 +385,9 @@ describe.skipIf(!DB_AVAILABLE)('tui-spawn-dx integration (Group 8)', () => {
     const s5 = await registry.get('alice-a3f7a');
     expect(s4?.id).toBe('alice-a3f7');
     expect(s5?.id).toBe('alice-a3f7a');
-    expect(s4?.claudeSessionId).not.toBe(s5?.claudeSessionId);
+    const s4Session = await agentSessionId('alice-a3f7');
+    const s5Session = await agentSessionId('alice-a3f7a');
+    expect(s4Session).not.toBe(s5Session);
   });
 
   // -----------------------------------------------------------------------
@@ -385,7 +415,7 @@ describe.skipIf(!DB_AVAILABLE)('tui-spawn-dx integration (Group 8)', () => {
     const byFullId = await findDeadResumable(team, 'alice-a3f7');
     expect(byFullId).not.toBeNull();
     expect(byFullId?.id).toBe('alice-a3f7');
-    expect(byFullId?.claudeSessionId).toBe('dead-parallel-uuid-0000000000000000aaaa');
+    expect(await agentSessionId('alice-a3f7')).toBe('dead-parallel-uuid-0000000000000000aaaa');
   });
 
   // -----------------------------------------------------------------------

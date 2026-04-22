@@ -39,7 +39,7 @@ function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
     id: 'test-agent',
     paneId: '%42',
     state: 'error',
-    claudeSessionId: 'session-abc',
+    currentSessionId: 'session-abc',
     autoResume: true,
     resumeAttempts: 0,
     maxResumeAttempts: 3,

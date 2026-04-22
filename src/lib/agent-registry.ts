@@ -51,7 +51,6 @@ export interface Agent {
   state: AgentState;
   lastStateChange: string;
   repoPath: string;
-  claudeSessionId?: string;
   windowName?: string;
   windowId?: string;
   role?: string;
@@ -105,7 +104,6 @@ interface AgentRow {
   state: AgentState;
   last_state_change: Date | string;
   repo_path: string;
-  claude_session_id: string | null;
   window_name: string | null;
   window_id: string | null;
   role: string | null;
@@ -164,7 +162,6 @@ function rowToAgent(r: AgentRow): Agent {
   if (r.task_title != null) agent.taskTitle = r.task_title;
   if (r.wish_slug != null) agent.wishSlug = r.wish_slug;
   if (r.group_number != null) agent.groupNumber = r.group_number;
-  if (r.claude_session_id != null) agent.claudeSessionId = r.claude_session_id;
   if (r.window_name != null) agent.windowName = r.window_name;
   if (r.window_id != null) agent.windowId = r.window_id;
   if (r.role != null) agent.role = r.role;
@@ -263,7 +260,7 @@ export async function register(agent: Agent): Promise<void> {
     }
   }
 
-  await sql`INSERT INTO agents (id, pane_id, session, worktree, task_id, task_title, wish_slug, group_number, started_at, state, last_state_change, repo_path, claude_session_id, window_name, window_id, role, custom_name, sub_panes, provider, transport, skill, team, tmux_window, native_agent_id, native_color, native_team_enabled, parent_session_id, suspended_at, auto_resume, resume_attempts, last_resume_attempt, max_resume_attempts, pane_color) VALUES (${agent.id}, ${agent.paneId}, ${agent.session}, ${agent.worktree ?? null}, ${agent.taskId ?? null}, ${agent.taskTitle ?? null}, ${agent.wishSlug ?? null}, ${agent.groupNumber ?? null}, ${agent.startedAt ?? now}, ${agent.state ?? 'spawning'}, ${agent.lastStateChange ?? now}, ${agent.repoPath}, ${agent.claudeSessionId ?? null}, ${agent.windowName ?? null}, ${agent.windowId ?? null}, ${agent.role ?? null}, ${agent.customName ?? null}, ${sql.json(agent.subPanes ?? [])}, ${agent.provider ?? null}, ${agent.transport ?? 'tmux'}, ${agent.skill ?? null}, ${agent.team ?? null}, ${agent.window ?? null}, ${agent.nativeAgentId ?? null}, ${agent.nativeColor ?? null}, ${agent.nativeTeamEnabled ?? false}, ${agent.parentSessionId ?? null}, ${agent.suspendedAt ?? null}, ${agent.autoResume ?? true}, ${agent.resumeAttempts ?? 0}, ${agent.lastResumeAttempt ?? null}, ${agent.maxResumeAttempts ?? 3}, ${agent.paneColor ?? null}) ON CONFLICT (id) DO UPDATE SET pane_id = EXCLUDED.pane_id, session = EXCLUDED.session, state = EXCLUDED.state, last_state_change = EXCLUDED.last_state_change, team = COALESCE(agents.team, EXCLUDED.team), role = COALESCE(agents.role, EXCLUDED.role), custom_name = COALESCE(agents.custom_name, EXCLUDED.custom_name), updated_at = now()`;
+  await sql`INSERT INTO agents (id, pane_id, session, worktree, task_id, task_title, wish_slug, group_number, started_at, state, last_state_change, repo_path, window_name, window_id, role, custom_name, sub_panes, provider, transport, skill, team, tmux_window, native_agent_id, native_color, native_team_enabled, parent_session_id, suspended_at, auto_resume, resume_attempts, last_resume_attempt, max_resume_attempts, pane_color) VALUES (${agent.id}, ${agent.paneId}, ${agent.session}, ${agent.worktree ?? null}, ${agent.taskId ?? null}, ${agent.taskTitle ?? null}, ${agent.wishSlug ?? null}, ${agent.groupNumber ?? null}, ${agent.startedAt ?? now}, ${agent.state ?? 'spawning'}, ${agent.lastStateChange ?? now}, ${agent.repoPath}, ${agent.windowName ?? null}, ${agent.windowId ?? null}, ${agent.role ?? null}, ${agent.customName ?? null}, ${sql.json(agent.subPanes ?? [])}, ${agent.provider ?? null}, ${agent.transport ?? 'tmux'}, ${agent.skill ?? null}, ${agent.team ?? null}, ${agent.window ?? null}, ${agent.nativeAgentId ?? null}, ${agent.nativeColor ?? null}, ${agent.nativeTeamEnabled ?? false}, ${agent.parentSessionId ?? null}, ${agent.suspendedAt ?? null}, ${agent.autoResume ?? true}, ${agent.resumeAttempts ?? 0}, ${agent.lastResumeAttempt ?? null}, ${agent.maxResumeAttempts ?? 3}, ${agent.paneColor ?? null}) ON CONFLICT (id) DO UPDATE SET pane_id = EXCLUDED.pane_id, session = EXCLUDED.session, state = EXCLUDED.state, last_state_change = EXCLUDED.last_state_change, team = COALESCE(agents.team, EXCLUDED.team), role = COALESCE(agents.role, EXCLUDED.role), custom_name = COALESCE(agents.custom_name, EXCLUDED.custom_name), updated_at = now()`;
 }
 
 export async function unregister(id: string): Promise<void> {
@@ -625,7 +622,6 @@ export async function update(id: string, updates: Partial<Agent>): Promise<void>
   }
   if (updates.lastStateChange !== undefined) s.last_state_change = updates.lastStateChange;
   if (updates.repoPath !== undefined) s.repo_path = updates.repoPath;
-  if (updates.claudeSessionId !== undefined) s.claude_session_id = updates.claudeSessionId;
   if (updates.windowName !== undefined) s.window_name = updates.windowName;
   if (updates.windowId !== undefined) s.window_id = updates.windowId;
   if (updates.role !== undefined) s.role = updates.role;
