@@ -429,6 +429,31 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(reset).not.toContain(agent.id);
     });
 
+    test('does not touch directory identity rows (dir:%)', async () => {
+      // Directory rows (id prefix `dir:`) are identity records inserted by
+      // directory.add(). Pre-fix, the INSERT omitted `state` so PG applied
+      // the column DEFAULT 'spawning' and the reconciler flipped every row
+      // to 'error' ~60s after every `genie serve` boot (first-pass match:
+      // spawning + no pane + no executor + old). The reconciler now skips
+      // `dir:%` ids unconditionally so legacy rows (and any forgetful
+      // future caller) are safe. This test guards that invariant.
+      const sql = await getConnection();
+      const oldStart = new Date(Date.now() - 10_000).toISOString();
+      await sql`
+        INSERT INTO agents (id, role, custom_name, started_at, state, pane_id, current_executor_id)
+        VALUES ('dir:legacy-poisoned', 'legacy-poisoned', 'legacy-poisoned', ${oldStart}, 'spawning', '', ${null})
+      `;
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).not.toContain('dir:legacy-poisoned');
+
+      // Row still exists, still `spawning` — reconciler ignored it.
+      const [row] = await sql<{ state: string | null }[]>`
+        SELECT state FROM agents WHERE id = 'dir:legacy-poisoned'
+      `;
+      expect(row?.state).toBe('spawning');
+    });
+
     test('flips idle+dead-pane rows to error (auto-resume-zombie-cap fix)', async () => {
       // This is Change #3 of the auto-resume-zombie-cap fix: idle/working
       // rows whose tmux pane is dead must be flipped to 'error' so they

@@ -178,12 +178,17 @@ export async function add(
   // Build metadata JSONB from frontmatter fields
   const metadata = buildMetadata(full);
 
-  // Store as a directory agent in PG with metadata
+  // Store as a directory agent in PG with metadata.
+  // state = NULL: directory records (id prefix `dir:`) are identity rows that
+  // track state through their runtime/executor children, not the legacy `state`
+  // column. NULL prevents reconcileStaleSpawns() from false-positive sweeping
+  // them to 'error' ~60s after every `genie serve` boot (column DEFAULT is
+  // 'spawning'). Mirrors the defense in identityCreate() (agent-registry.ts).
   const { getConnection } = await import('./db.js');
   const sql = await getConnection();
   await sql`
-    INSERT INTO agents (id, role, custom_name, started_at, metadata)
-    VALUES (${`dir:${entry.name}`}, ${entry.name}, ${entry.name}, now(), ${sql.json(metadata)})
+    INSERT INTO agents (id, role, custom_name, started_at, state, metadata)
+    VALUES (${`dir:${entry.name}`}, ${entry.name}, ${entry.name}, now(), ${null}, ${sql.json(metadata)})
     ON CONFLICT (id) DO UPDATE SET metadata = ${sql.json(metadata)}
   `;
 
