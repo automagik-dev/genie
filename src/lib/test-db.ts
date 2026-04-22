@@ -104,5 +104,10 @@ export async function setupTestDatabase(): Promise<() => Promise<void>> {
  * clone isolation). Dev still has callsites using the old name that land
  * via merge-preview into this branch — keep the alias so `tsc --noEmit`
  * passes under the merge topology. Safe to delete once dev is rebased.
+ *
+ * Implemented as a thin wrapper (not `export const setupTestSchema =
+ * setupTestDatabase`) so knip does not flag a duplicate export.
  */
-export const setupTestSchema = setupTestDatabase;
+export async function setupTestSchema(): Promise<() => Promise<void>> {
+  return setupTestDatabase();
+}
