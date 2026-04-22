@@ -25,7 +25,7 @@
 -->
 
 <!-- METRICS:START -->
-**⚡ 50 PRs merged** this week · **0 releases** (24h) · **0.7h** avg merge · **100% SHIP**
+**🚀 114 commits** this week · **6 releases** · **+22.6K LoC** · **6 contributors**
 
 ![Commits per day (30d, all branches)](.genie/assets/commits-30d.svg)
 
