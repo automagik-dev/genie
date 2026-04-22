@@ -39,14 +39,10 @@ import { dirname, join } from 'node:path';
 const PORT_SCAN_START = 20900;
 const PORT_SCAN_END = 20999;
 const HOST = '127.0.0.1';
-// pgserve runs unauthenticated locally — these are bootstrap identifiers,
-// not secrets. The literal is constructed via fromCharCode so pattern-based
-// secret scanners (GitGuardian dashboard, etc.) don't flag the hardcoded
-// default. Overridable via env for CI setups that run against an authenticated
-// postgres.
-const PG_DEFAULT_IDENT = String.fromCharCode(112, 111, 115, 116, 103, 114, 101, 115);
-const TEST_PG_USER = process.env.GENIE_TEST_PG_USER ?? PG_DEFAULT_IDENT;
-const TEST_PG_PASSWORD = process.env.GENIE_TEST_PG_PASSWORD ?? PG_DEFAULT_IDENT;
+// pgserve runs unauthenticated locally — these are default bootstrap credentials,
+// not secrets. Overridable via env for CI secrets scanners.
+const TEST_PG_USER = process.env.GENIE_TEST_PG_USER ?? 'postgres';
+const TEST_PG_PASSWORD = process.env.GENIE_TEST_PG_PASSWORD ?? 'postgres';
 const HEALTH_TIMEOUT_MS = 15_000;
 const TEMPLATE_DB_NAME = 'genie_template';
 // Shared-daemon lockfile: a pgserve whose lockfile is older than this is
