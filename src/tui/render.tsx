@@ -10,10 +10,14 @@ export async function renderNav(): Promise<void> {
   const workspaceRoot = process.env.GENIE_TUI_WORKSPACE || undefined;
   const initialAgent = process.env.GENIE_TUI_AGENT || undefined;
 
-  // OpenTUI handles SIGTERM/SIGHUP/SIGINT cleanup automatically
+  // OpenTUI handles SIGTERM/SIGHUP/SIGINT cleanup automatically.
+  // useThread:false on darwin — the native render pthread's __ulock_wait2 predicate
+  // doesn't settle on local Warp ptys (spins at ~101% CPU; SIGTERM ignored because
+  // the JS thread is blocked on the FFI lock). Linux already defaults to false.
   const renderer = await createCliRenderer({
     exitOnCtrlC: false, // We handle Ctrl+C ourselves via useKeyboard
     useMouse: true,
+    useThread: process.platform !== 'darwin',
   });
 
   createRoot(renderer).render(<App rightPane={rightPane} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />);
