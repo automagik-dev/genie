@@ -120,10 +120,16 @@ jobs:
       # `test:parallel` stays available as a local dev tool (package.json).
       # CI uses serial `bun test` for determinism and green. See wish:
       # .genie/wishes/pg-test-perf/WISH.md for the full story.
+      #
+      # `--timeout 15000`: Blacksmith cold-boot + pgserve bootstrap occasionally
+      # blows past bun test's default 5s budget inside a beforeEach, surfacing
+      # as a cascade of "hook timed out" errors that aren't real regressions.
+      # 15s absorbs that jitter without masking slow tests (a test that takes
+      # >15s is a real problem worth surfacing).
       - name: Test (serial, PG-backed)
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-        run: bun test
+        run: bun test --timeout 15000
 
   # Umbrella status check. Branch protection is configured to require
   # "Quality Gate (typecheck + lint + test)" as a required status, so the
