@@ -9,6 +9,7 @@
  * tmux window, this is a no-op.
  */
 
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { sanitizeWindowName } from '../genie-commands/session.js';
@@ -17,7 +18,6 @@ import {
   ensureNativeTeamWithSessionId,
   loadConfig,
   registerNativeMember,
-  resolveOrMintLeadSessionId,
   sanitizeTeamName,
 } from './claude-native-teams.js';
 import * as executorRegistry from './executor-registry.js';
@@ -178,14 +178,16 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
   const { resolveLeaderName } = await import('./team-manager.js');
   const leaderName = await resolveLeaderName(teamName);
 
-  // Resolve a REAL Claude Code session UUID before we write the team config.
-  //
-  // If a prior JSONL for this team exists, we reuse its UUID and launch CC
-  // via `--resume`. Otherwise we mint a fresh UUID and launch CC via
-  // `--session-id` so the config and the CC process agree from the start.
-  //
-  // Fixes the ghost-approval deadlock (wish: fix-ghost-approval-p0).
-  const { sessionId, shouldResume } = await resolveOrMintLeadSessionId(teamName, workingDir);
+  // Resolve (or create) the team-lead agent identity first so executor lookups
+  // are stable across respawns. If a prior executor has a captured Claude
+  // session UUID, reuse it via `--resume <uuid>` to preserve conversation
+  // continuity. Otherwise mint a fresh UUID and pass it forward via
+  // `--session-id` so the next respawn can find it through the executor row.
+  const sanitized = sanitizeTeamName(teamName);
+  const leaderAgent = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+  const priorSessionId = await executorRegistry.getResumeSessionId(leaderAgent.id).catch(() => null);
+  const sessionId = priorSessionId ?? randomUUID();
+  const shouldResume = priorSessionId !== null;
 
   // Create or heal native team structure. Upserts stale leadSessionId
   // (e.g. legacy "pending" literal) in place — no migration script needed.
@@ -227,8 +229,7 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     // observability) can track this team-lead the same way it tracks spawned
     // workers. Best-effort — lifecycle should not break if PG is unavailable.
     await recordTeamLeadExecutor({
-      teamName,
-      leaderName,
+      agentId: leaderAgent.id,
       session,
       windowName,
       windowId: teamWindow.windowId,
@@ -250,8 +251,7 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
  * prevent stale rows from accumulating on repeated ensure calls.
  */
 async function recordTeamLeadExecutor(opts: {
-  teamName: string;
-  leaderName: string;
+  agentId: string;
   session: string;
   windowName: string;
   windowId?: string;
@@ -259,9 +259,7 @@ async function recordTeamLeadExecutor(opts: {
   sessionId: string;
   workingDir: string;
 }): Promise<void> {
-  const sanitizedTeam = sanitizeTeamName(opts.teamName);
-  const agentIdentity = await registry.findOrCreateAgent(opts.leaderName, sanitizedTeam, opts.leaderName);
-  await executorRegistry.terminateActiveExecutor(agentIdentity.id);
+  await executorRegistry.terminateActiveExecutor(opts.agentId);
 
   let pid: number | null = null;
   try {
@@ -273,7 +271,7 @@ async function recordTeamLeadExecutor(opts: {
     /* best-effort */
   }
 
-  await executorRegistry.createAndLinkExecutor(agentIdentity.id, 'claude', 'tmux', {
+  await executorRegistry.createAndLinkExecutor(opts.agentId, 'claude', 'tmux', {
     pid,
     tmuxSession: opts.session,
     tmuxPaneId: opts.paneId,

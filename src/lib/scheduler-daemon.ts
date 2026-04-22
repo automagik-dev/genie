@@ -165,8 +165,19 @@ export type WorkerInfo = Pick<
   | 'resumeAttempts'
   | 'maxResumeAttempts'
   | 'lastResumeAttempt'
-  | 'claudeSessionId'
-> & { repoPath?: string };
+> & {
+  repoPath?: string;
+  /**
+   * Claude session UUID joined from the current executor row
+   * (`executors.claude_session_id` via `agents.current_executor_id`).
+   * `null` / `undefined` when the agent has no current executor or the
+   * executor's session has not been captured yet.
+   *
+   * Lifted out of the `Agent` Pick intentionally: post-migration-047 the
+   * session belongs to the run (executor), not the identity (agent).
+   */
+  currentSessionId?: string | null;
+};
 
 /** Dependency injection interface for testing. */
 export interface SchedulerDeps {
@@ -249,7 +260,30 @@ async function defaultIsPaneAlive(paneId: string): Promise<boolean> {
 
 async function defaultListWorkers(): Promise<WorkerInfo[]> {
   const { list } = await import('./agent-registry.js');
+  const { getConnection } = await import('./db.js');
   const agents = await list();
+
+  // Pull session UUIDs from `executors.claude_session_id` via
+  // `agents.current_executor_id`. Migration 047 dropped the legacy
+  // `agents.claude_session_id` column — the session lives with the run now,
+  // not the identity. We do a single bulk SELECT and build a map so the
+  // scheduler's resume-eligibility filter stays O(N) without per-worker
+  // round trips.
+  let sessionByAgent = new Map<string, string | null>();
+  try {
+    const sql = await getConnection();
+    const rows = (await sql`
+      SELECT a.id AS agent_id, e.claude_session_id
+      FROM agents a
+      LEFT JOIN executors e ON e.id = a.current_executor_id
+    `) as { agent_id: string; claude_session_id: string | null }[];
+    sessionByAgent = new Map(rows.map((r) => [r.agent_id, r.claude_session_id]));
+  } catch {
+    // Best-effort — fall through with an empty map so all workers look
+    // session-less (conservative: reconcileUnresumable will not false-clear
+    // auto-resume; attemptAgentResume will skip with `no_session_id`).
+  }
+
   return agents.map((a) => ({
     id: a.id,
     paneId: a.paneId,
@@ -262,7 +296,7 @@ async function defaultListWorkers(): Promise<WorkerInfo[]> {
     resumeAttempts: a.resumeAttempts,
     maxResumeAttempts: a.maxResumeAttempts,
     lastResumeAttempt: a.lastResumeAttempt,
-    claudeSessionId: a.claudeSessionId,
+    currentSessionId: sessionByAgent.get(a.id) ?? null,
   }));
 }
 
@@ -987,12 +1021,12 @@ export async function runAgentRecoveryPass(
 ): Promise<{ resumed: number; failed: number; terminalized: number }> {
   const resolvedConfig = config ?? resolveConfig();
   const workers = await deps.listWorkers();
-  // Safe for SDK/non-tmux transports: the `claudeSessionId` filter below
+  // Safe for SDK/non-tmux transports: the `currentSessionId` filter below
   // excludes them (SDK agents don't own a Claude-CLI JSONL session id).
   // Only tmux-resumable Claude-CLI agents reach `isPaneAlive`, so a plain
   // paneId check is correct here — no transport dispatch needed. If SDK
   // ever gains resume support, gate on paneId shape like countActiveWorkers.
-  const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done' && w.claudeSessionId);
+  const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done' && w.currentSessionId);
   const turnAware = isTurnAwareReconcilerEnabled();
 
   let resumed = 0;
@@ -1149,11 +1183,13 @@ export async function reconcileUnresumable(deps: SchedulerDeps): Promise<number>
   let flipped = 0;
   for (const worker of workers) {
     // Terminal boundary condition: error-state, auto-resume on, no session id.
-    // `!worker.claudeSessionId` matches both `null` (DB) and `undefined`
-    // (listWorkers mapping for missing column).
+    // `!worker.currentSessionId` matches both `null` (DB JOIN missing) and
+    // `undefined` (listWorkers mapping where the executor row has no session
+    // captured yet). Post-migration-047 the session lives on the current
+    // executor, not on the agent row.
     if (worker.state !== 'error') continue;
     if (worker.autoResume === false) continue;
-    if (worker.claudeSessionId) continue;
+    if (worker.currentSessionId) continue;
 
     try {
       await deps.updateAgent(worker.id, { autoResume: false });
@@ -1336,8 +1372,9 @@ export async function attemptAgentResume(
     return 'skipped';
   }
 
-  // Must have a Claude session ID to resume
-  if (!agent.claudeSessionId) {
+  // Must have a Claude session ID to resume (joined from
+  // `executors.claude_session_id` via `agents.current_executor_id`).
+  if (!agent.currentSessionId) {
     deps.log({
       timestamp: now.toISOString(),
       level: 'debug',
@@ -1625,7 +1662,7 @@ async function tryResumeOrFail(
     return 'resumed';
   }
   if (result === 'skipped') {
-    const isPermanent = agent.autoResume === false || !agent.claudeSessionId;
+    const isPermanent = agent.autoResume === false || !agent.currentSessionId;
     return isPermanent ? 'failed' : 'deferred';
   }
   return 'failed'; // exhausted

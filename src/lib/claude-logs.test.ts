@@ -6,6 +6,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import * as registry from './agent-registry.js';
 import {
   claudeTranscriptProvider,
   findActiveSession,
@@ -14,6 +15,8 @@ import {
   parseLogEntry,
   projectPathToHash,
 } from './claude-logs.js';
+import { createAndLinkExecutor } from './executor-registry.js';
+import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
 
 // ============================================================================
 // Test Setup
@@ -223,14 +226,16 @@ describe('findActiveSession', () => {
   });
 });
 
-describe('claudeTranscriptProvider.discoverLogPath', () => {
+describe.skipIf(!DB_AVAILABLE)('claudeTranscriptProvider.discoverLogPath', () => {
   const multiProjectPath = '/home/genie/workspace/multi-agent';
   const multiProjectDir = join(PROJECTS_DIR, projectPathToHash(multiProjectPath));
   const savedHome = process.env.HOME;
   const workerPath = join(multiProjectDir, 'worker-session.jsonl');
   const teamLeadPath = join(multiProjectDir, 'team-lead-session.jsonl');
+  let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
+    cleanupSchema = await setupTestSchema();
     await setupTestStructure();
     await mkdir(multiProjectDir, { recursive: true });
 
@@ -272,11 +277,17 @@ describe('claudeTranscriptProvider.discoverLogPath', () => {
     if (savedHome === undefined) process.env.HOME = undefined;
     else process.env.HOME = savedHome;
     await cleanupTestStructure();
+    await cleanupSchema();
   });
 
-  test('uses worker claudeSessionId instead of most-recent project session', async () => {
-    const logPath = await claudeTranscriptProvider.discoverLogPath({
-      id: 'qa-team-engineer',
+  test('uses worker session from current executor instead of most-recent project session', async () => {
+    // Post-migration-047 the session UUID lives on the agent's current
+    // executor. Seed both the agent row and a linked executor carrying
+    // `claude_session_id='worker-session'` so `discoverLogPath` can resolve
+    // the JSONL via the executor JOIN.
+    const agentId = 'qa-team-engineer';
+    await registry.register({
+      id: agentId,
       paneId: '%1',
       session: 'team',
       worktree: multiProjectPath,
@@ -284,10 +295,19 @@ describe('claudeTranscriptProvider.discoverLogPath', () => {
       state: 'working',
       lastStateChange: new Date().toISOString(),
       repoPath: multiProjectPath,
-      claudeSessionId: 'worker-session',
       role: 'engineer',
       team: 'qa-team',
+      provider: 'claude',
     });
+    await createAndLinkExecutor(agentId, 'claude', 'tmux', {
+      claudeSessionId: 'worker-session',
+      tmuxPaneId: '%1',
+      tmuxSession: 'team',
+    });
+
+    const agent = await registry.get(agentId);
+    if (!agent) throw new Error('seed failed: agent not persisted');
+    const logPath = await claudeTranscriptProvider.discoverLogPath(agent);
 
     expect(logPath).toBe(workerPath);
   });

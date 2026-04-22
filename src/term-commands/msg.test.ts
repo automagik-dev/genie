@@ -601,11 +601,11 @@ describe.skipIf(!DB_AVAILABLE)('buildTeamLeadCommand (shared module)', () => {
     expect(cmd).toContain('CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1');
   });
 
-  test('includes --resume when continueName provided', async () => {
+  test('includes --resume when sessionId + resume:true provided', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
-    const cmd = buildTeamLeadCommand('genie', { continueName: 'genie' });
-    expect(cmd).toContain('--resume');
-    expect(cmd).toContain('genie');
+    const cmd = buildTeamLeadCommand('genie', { sessionId: 'uuid-abc-123', resume: true });
+    expect(cmd).toContain("--resume 'uuid-abc-123'");
+    expect(cmd).not.toContain('--session-id');
   });
 
   test('includes --append-system-prompt-file when systemPromptFile provided (default promptMode)', async () => {

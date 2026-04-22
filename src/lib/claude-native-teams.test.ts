@@ -23,7 +23,6 @@ import {
   listTeamsWithUnreadInbox,
   loadConfig,
   resolveNativeMemberName,
-  resolveOrMintLeadSessionId,
   sanitizeTeamName,
   unregisterNativeMember,
   writeNativeInbox,
@@ -464,87 +463,6 @@ describe('writeNativeInbox', () => {
 // ---------------------------------------------------------------------------
 // loadConfig tests
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// resolveOrMintLeadSessionId tests (fix-ghost-approval-p0)
-// ---------------------------------------------------------------------------
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-describe('resolveOrMintLeadSessionId', () => {
-  test('mints a fresh UUID when no prior JSONL exists', async () => {
-    const cwd = '/tmp/fresh-team-cwd';
-    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('fresh-team', cwd);
-
-    expect(shouldResume).toBe(false);
-    expect(sessionId).toMatch(UUID_RE);
-  });
-
-  test('returns the UUID from a matching prior JSONL with shouldResume: true', async () => {
-    const cwd = '/tmp/resume-team-cwd';
-    const priorUuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-
-    await createSessionJsonl(
-      cwd,
-      priorUuid,
-      [
-        { type: 'custom-title', customTitle: 'resume-team' },
-        { type: 'user', cwd, sessionId: priorUuid },
-      ],
-      5_000,
-    );
-
-    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('resume-team', cwd);
-    expect(shouldResume).toBe(true);
-    expect(sessionId).toBe(priorUuid);
-  });
-
-  test('returns the newest JSONL when multiple match the team title', async () => {
-    const cwd = '/tmp/multi-team-cwd';
-    const olderUuid = '11111111-2222-3333-4444-555555555555';
-    const newerUuid = '99999999-8888-7777-6666-555555555555';
-
-    await createSessionJsonl(cwd, olderUuid, [{ type: 'custom-title', customTitle: 'multi-team' }], 1_000);
-    await createSessionJsonl(cwd, newerUuid, [{ type: 'custom-title', customTitle: 'multi-team' }], 9_000);
-
-    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('multi-team', cwd);
-    expect(shouldResume).toBe(true);
-    expect(sessionId).toBe(newerUuid);
-  });
-
-  test('does NOT match {team}-{team} form — prevents alpha from picking up alpha-alpha sessions', async () => {
-    // Gap B from trace-stale-resume (task #6): we used to also accept the
-    // `{team}-{team}` prefixed form, but that let team "alpha" resume a
-    // JSONL written by team "alpha-alpha" under the same worktree. Strict
-    // match only — if the exact title isn't present, mint fresh.
-    const cwd = '/tmp/doubled-team-cwd';
-    const priorUuid = 'cafebabe-dead-beef-cafe-babedeadbeef';
-
-    await createSessionJsonl(
-      cwd,
-      priorUuid,
-      [{ type: 'custom-title', customTitle: 'doubled-team-doubled-team' }],
-      5_000,
-    );
-
-    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('doubled-team', cwd);
-    expect(shouldResume).toBe(false);
-    expect(sessionId).not.toBe(priorUuid);
-    expect(sessionId).toMatch(UUID_RE);
-  });
-
-  test('ignores JSONL without a custom-title matching the team', async () => {
-    const cwd = '/tmp/unrelated-cwd';
-    const unrelatedUuid = '12345678-1234-1234-1234-123456789012';
-
-    await createSessionJsonl(cwd, unrelatedUuid, [{ type: 'custom-title', customTitle: 'some-other-team' }], 5_000);
-
-    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('fresh-team', cwd);
-    expect(shouldResume).toBe(false);
-    expect(sessionId).toMatch(UUID_RE);
-    expect(sessionId).not.toBe(unrelatedUuid);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // ensureNativeTeamWithSessionId tests (fix-ghost-approval-p0)

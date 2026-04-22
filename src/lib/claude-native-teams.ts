@@ -11,7 +11,6 @@
  * approval, direct messages) without needing tmux send-keys injection.
  */
 
-import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -315,111 +314,6 @@ export async function ensureNativeTeamWithSessionId(
   config.leadSessionId = sessionId;
   await saveConfig(teamName, config);
   return config;
-}
-
-/**
- * Resolve an existing Claude Code session ID for a given team name, or mint
- * a fresh UUID if no prior session is found.
- *
- * Strategy:
- *   1. Scan `~/.claude/projects/<sanitized-cwd>/*.jsonl` for a file whose
- *      `custom-title` entry matches the sanitized team name.
- *   2. If found → return the UUID from the most recently modified match
- *      with `shouldResume: true`. The caller should launch CC with
- *      `--resume <teamName>` and CC will load that JSONL by name.
- *   3. If not found → return `{ sessionId: crypto.randomUUID(), shouldResume: false }`.
- *      The caller should launch CC with `--session-id <sessionId>` so the new
- *      CC process boots into that exact UUID — keeping the team config and
- *      the CC process in perfect agreement from the first moment.
- *
- * Callers must pass the resulting `sessionId` to both `ensureNativeTeamWithSessionId`
- * and `buildTeamLeadCommand` so the team config and the launched CC process
- * reference the same session ID.
- */
-export async function resolveOrMintLeadSessionId(
-  teamName: string,
-  cwd: string,
-): Promise<{ sessionId: string; shouldResume: boolean }> {
-  const priorId = await findNewestSessionIdForTeam(teamName, cwd);
-  if (priorId) {
-    return { sessionId: priorId, shouldResume: true };
-  }
-  return { sessionId: randomUUID(), shouldResume: false };
-}
-
-/**
- * Scan Claude Code's project directory for a JSONL whose `custom-title`
- * matches the sanitized team name. Returns the UUID from the filename of
- * the most recently modified match, or null if none found.
- *
- * Matches the same strategy used by `sessionExists()` in
- * `src/lib/team-lead-command.ts` — both the exact sanitized team name and
- * the CC-stored `{team}-{team}` prefixed form are considered matches.
- */
-async function findNewestSessionIdForTeam(teamName: string, cwd: string): Promise<string | null> {
-  const projectDir = join(claudeConfigDir(), 'projects', sanitizePath(cwd));
-  let entries: string[];
-  try {
-    entries = await readdir(projectDir);
-  } catch {
-    return null;
-  }
-  const jsonls = entries.filter((e) => e.endsWith('.jsonl'));
-  if (jsonls.length === 0) return null;
-
-  const needle = sanitizeTeamName(teamName);
-  let best: { name: string; mtime: number } | null = null;
-  for (const name of jsonls) {
-    const full = join(projectDir, name);
-    if (!(await jsonlMatchesTitle(full, needle))) continue;
-    try {
-      const s = await stat(full);
-      if (!best || s.mtimeMs > best.mtime) {
-        best = { name, mtime: s.mtimeMs };
-      }
-    } catch {
-      /* skip unreadable */
-    }
-  }
-  if (!best) return null;
-  return best.name.replace('.jsonl', '');
-}
-
-/**
- * Best-effort scan of the first 8KB of a JSONL file for a `custom-title`
- * entry whose value matches the needle (case-insensitive, exact match).
- *
- * Historical note: we used to also accept `{team}-{team}` as a match for
- * legacy CC-prefixed sessions, but that let team "alpha" pick up JSONLs
- * written by team "alpha-alpha" under the same worktree. Gap B from
- * trace-stale-resume (task #6) — strict match only.
- *
- * Any I/O or parse failure returns false.
- */
-async function jsonlMatchesTitle(filePath: string, needle: string): Promise<boolean> {
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
-  try {
-    handle = await open(filePath, 'r');
-    const buffer = Buffer.alloc(8192);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const head = buffer.toString('utf-8', 0, bytesRead);
-    for (const line of head.split('\n').slice(0, 10)) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.includes('custom-title')) continue;
-      try {
-        const entry = JSON.parse(trimmed) as { type?: string; customTitle?: string };
-        if (entry.type !== 'custom-title' || typeof entry.customTitle !== 'string') continue;
-        if (entry.customTitle.toLowerCase() === needle) return true;
-      } catch {
-        /* malformed line — keep scanning */
-      }
-    }
-  } catch {
-    return false;
-  } finally {
-    await handle?.close().catch(() => {});
-  }
-  return false;
 }
 
 /**

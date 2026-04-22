@@ -100,14 +100,22 @@ describe('buildClaudeCommand', () => {
     expect(cmd).not.toContain('--resume');
   });
 
-  test('with undefined continueName does NOT include --resume', () => {
-    const cmd = buildClaudeCommand('genie', undefined, undefined);
+  test('without sessionId does NOT include --resume or --session-id', () => {
+    const cmd = buildClaudeCommand('genie');
     expect(cmd).not.toContain('--resume');
+    expect(cmd).not.toContain('--session-id');
   });
 
-  test('with a continueName DOES include --resume', () => {
-    const cmd = buildClaudeCommand('my-team', undefined, 'my-team');
-    expect(cmd).toContain("--resume 'my-team'");
+  test('with sessionId + resume:true emits --resume <uuid>', () => {
+    const cmd = buildClaudeCommand('my-team', undefined, undefined, 'uuid-xyz-789', true);
+    expect(cmd).toContain("--resume 'uuid-xyz-789'");
+    expect(cmd).not.toContain('--session-id');
+  });
+
+  test('with sessionId + resume:false emits --session-id <uuid>', () => {
+    const cmd = buildClaudeCommand('my-team', undefined, undefined, 'uuid-xyz-789', false);
+    expect(cmd).toContain("--session-id 'uuid-xyz-789'");
+    expect(cmd).not.toContain('--resume');
   });
 
   test('file path is passed directly, no content inlined', () => {

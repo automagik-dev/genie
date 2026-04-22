@@ -138,25 +138,14 @@ describe('sessionExists', () => {
 // ============================================================================
 
 describe('buildTeamLeadCommand resume behavior', () => {
-  test('omits --resume when continueName is undefined', () => {
+  test('omits --resume and --session-id when neither is set', () => {
     const cmd = buildTeamLeadCommand('test-team', { promptMode: 'append' });
     expect(cmd).not.toContain('--resume');
+    expect(cmd).not.toContain('--session-id');
     expect(cmd).toContain("--name 'test-team'");
   });
 
-  test('includes --resume when continueName is set', () => {
-    const cmd = buildTeamLeadCommand('test-team', { continueName: 'test-team', promptMode: 'append' });
-    expect(cmd).toContain("--resume 'test-team'");
-    expect(cmd).toContain("--name 'test-team'");
-  });
-
-  test('--resume and --name can have the same value', () => {
-    const cmd = buildTeamLeadCommand('my-session', { continueName: 'my-session', promptMode: 'append' });
-    expect(cmd).toContain("--name 'my-session'");
-    expect(cmd).toContain("--resume 'my-session'");
-  });
-
-  test('sessionId takes precedence when no continueName', () => {
+  test('sessionId without resume emits --session-id <uuid>', () => {
     const cmd = buildTeamLeadCommand('team', { sessionId: 'uuid-123', promptMode: 'append' });
     expect(cmd).toContain("--session-id 'uuid-123'");
     expect(cmd).not.toContain('--resume');

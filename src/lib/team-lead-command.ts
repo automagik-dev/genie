@@ -23,13 +23,6 @@ interface BuildTeamLeadCommandOptions {
   /** Path to AGENTS.md or system prompt file (passed directly, no copy). */
   systemPromptFile?: string;
   /**
-   * @deprecated Pass `sessionId` + `resume: true` instead. `continueName` passes
-   * a fuzzy name to `--resume`, letting CC re-do its own JSONL title match
-   * (which may pick a different session than the caller intended). The UUID
-   * form is unambiguous.
-   */
-  continueName?: string;
-  /**
    * Claude Code session UUID. Emitted as `--session-id <uuid>` for new sessions
    * or `--resume <uuid>` when `resume` is true.
    */
@@ -78,8 +71,6 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
   if (options?.sessionId) {
     const flag = options.resume ? '--resume' : '--session-id';
     parts.push(`${flag} ${shellQuote(options.sessionId)}`);
-  } else if (options?.continueName) {
-    parts.push(`--resume ${shellQuote(options.continueName)}`);
   }
 
   // Pass file path directly — no copy step

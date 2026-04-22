@@ -287,23 +287,8 @@ export async function buildWorkerMap(sql: SqlClient): Promise<Map<string, Worker
         role: row.role,
       });
     }
-    // Fallback: also check legacy agents table for sessions not yet migrated
-    const legacyRows = await sql`
-      SELECT id, claude_session_id, team, wish_slug, task_id, role
-      FROM agents WHERE claude_session_id IS NOT NULL
-    `;
-    for (const row of legacyRows) {
-      if (!map.has(row.claude_session_id)) {
-        map.set(row.claude_session_id, {
-          agentId: row.id,
-          executorId: null,
-          team: row.team,
-          wishSlug: row.wish_slug,
-          taskId: row.task_id,
-          role: row.role,
-        });
-      }
-    }
+    // Migration 047 dropped `agents.claude_session_id`; sessions live only
+    // on executors now. The legacy agents-table fallback has no data to read.
   } catch {
     // best-effort
   }

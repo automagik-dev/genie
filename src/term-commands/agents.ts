@@ -567,7 +567,6 @@ async function registerSpawnWorker(
     state: 'spawning',
     lastStateChange: ctx.now,
     repoPath: ctx.cwd,
-    claudeSessionId: ctx.claudeSessionId,
     nativeTeamEnabled: nt?.enabled ?? false,
     nativeAgentId: `${ctx.agentName}@${ctx.validated.team}`,
     nativeColor: nt?.color ?? ctx.spawnColor,
@@ -649,8 +648,11 @@ function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Age
   if (ctx.validated.role) console.log(`  Role:     ${ctx.validated.role}`);
   if (ctx.executorId) console.log(`  Executor: ${ctx.executorId}`);
   if (ctx.validated.skill) console.log(`  Skill:    ${ctx.validated.skill}`);
-  if (workerEntry.claudeSessionId) {
-    console.log(`  Session:  ${workerEntry.claudeSessionId}`);
+  // Session UUID lives on the executor (migration 047). `ctx.claudeSessionId`
+  // carries whatever was minted/resumed for this spawn; the agent row does
+  // not hold it anymore.
+  if (ctx.claudeSessionId) {
+    console.log(`  Session:  ${ctx.claudeSessionId}`);
   }
   console.log(`  Layout:   ${ctx.layoutMode}`);
   if (nt?.enabled) {
@@ -1394,9 +1396,22 @@ export async function findDeadResumable(team: string, role: string): Promise<reg
   // picked up here would route through resumeAgent → crash with
   // "error connecting to /tmp/tmux-1000/genie" (issue #1147). Let
   // rejectDuplicateRole clean those up instead.
-  const candidate = existing.find(
-    (w) => w.role === role && w.team === team && w.claudeSessionId && w.provider === 'claude' && w.transport === 'tmux',
+  //
+  // Post-migration-047 the session UUID lives on the current executor, so
+  // the "has a session we can resume" predicate must traverse
+  // `agents.current_executor_id → executors.claude_session_id`. Narrow by
+  // cheap fields first, then consult the executor JOIN.
+  const prefiltered = existing.filter(
+    (w) => w.role === role && w.team === team && w.provider === 'claude' && w.transport === 'tmux',
   );
+  let candidate: registry.Agent | null = null;
+  for (const w of prefiltered) {
+    const executor = await executorRegistry.getCurrentExecutor(w.id);
+    if (executor?.claudeSessionId) {
+      candidate = w;
+      break;
+    }
+  }
   if (!candidate) return null;
   // `isPaneAliveOrDead` swallows TmuxUnreachableError → dead, so a zombie
   // tmux socket doesn't crash the spawn path.
@@ -1466,8 +1481,16 @@ async function resolveNativeTeam(
   _repoPath: string,
   options: { provider: string; role?: string; color?: string; planMode?: boolean; permissionMode?: string },
 ): Promise<{ parentSessionId: string; spawnColor: ClaudeTeamColor; nativeTeam?: SpawnParams['nativeTeam'] }> {
-  const teamConfig = await teamManager.getTeam(team);
-  let parentSessionId = teamConfig?.nativeTeamParentSessionId;
+  // Team parent session collapses into the team-lead agent's current executor
+  // session (claude-resume-by-session-id wish, Group 5). The legacy
+  // `teams.native_team_parent_session_id` column is no longer read here.
+  const leaderName = await teamManager.resolveLeaderName(team);
+  const sanitizedTeam = nativeTeams.sanitizeTeamName(team);
+  const leaderAgent = await registry.getAgentByName(leaderName, sanitizedTeam).catch(() => null);
+  let parentSessionId: string | undefined;
+  if (leaderAgent) {
+    parentSessionId = (await executorRegistry.getResumeSessionId(leaderAgent.id).catch(() => null)) ?? undefined;
+  }
   if (!parentSessionId) {
     parentSessionId = (await nativeTeams.discoverClaudeParentSessionId()) ?? `genie-${team}`;
   }
@@ -2001,8 +2024,13 @@ async function resolveTeamAndResume(
   }
   const deadResumable = await findDeadResumable(team, effectiveRole);
   if (deadResumable) {
+    // Session now lives on the executor (migration 047). Peek at the current
+    // executor to surface a short UUID in the log line; `resumeAgent` will
+    // re-read it authoritatively via `getResumeSessionId`.
+    const executor = await executorRegistry.getCurrentExecutor(deadResumable.id);
+    const sessionShort = executor?.claudeSessionId?.slice(0, 8) ?? 'unknown';
     console.log(
-      `Resuming existing session for "${effectiveRole}" (session: ${deadResumable.claudeSessionId?.slice(0, 8)}...)`,
+      `Resuming existing session for "${effectiveRole}" (session: ${sessionShort}...)`,
     );
     await resumeAgent(deadResumable);
     return { team, teamWasExplicit, resumed: deadResumable.id };
@@ -2281,8 +2309,12 @@ export async function handleWorkerStop(name: string): Promise<void> {
   const ok = await suspendWorker(w.currentExecutorId);
   if (ok) {
     console.log(`Agent "${w.id}" stopped.`);
-    if (w.claudeSessionId) {
-      console.log(`  Session preserved: ${w.claudeSessionId}`);
+    // Post-migration-047 the session lives on the current executor, not on
+    // the agent row. Read it from the executor so the "session preserved"
+    // hint keeps printing the UUID the operator can use to resume.
+    const stoppedExecutor = await executorRegistry.getExecutor(w.currentExecutorId);
+    if (stoppedExecutor?.claudeSessionId) {
+      console.log(`  Session preserved: ${stoppedExecutor.claudeSessionId}`);
     }
     console.log(`  Send a message to auto-resume: genie send '...' --to ${w.id}`);
     recordAuditEvent('worker', w.id, 'stop', getActor(), { name }).catch(() => {});
@@ -2299,7 +2331,12 @@ export async function handleWorkerStop(name: string): Promise<void> {
  * Includes agents in working/idle/spawning states whose panes have died (crash recovery).
  */
 async function isResumeEligible(w: registry.Agent): Promise<boolean> {
-  if (!w.claudeSessionId) return false;
+  // Session belongs to the current executor (migration 047). Treat an
+  // executor-less agent or one whose executor never captured a session as
+  // ineligible — `resumeAgent` would fail loudly with
+  // `MissingResumeSessionError` otherwise.
+  const executor = await executorRegistry.getCurrentExecutor(w.id);
+  if (!executor?.claudeSessionId) return false;
   if (w.state === 'done') return false;
   const paneAlive = await isPaneAliveOrDead(w.paneId);
   // Suspended/error agents with dead panes are always eligible
@@ -2355,10 +2392,16 @@ export async function handleWorkerResume(
 
   const w = await resolveWorkerByName(name);
 
-  if (!w.claudeSessionId) {
-    console.error(`Error: Agent "${w.id}" has no Claude session ID — cannot resume.`);
-    console.error('  Only agents spawned with the Claude provider have resumable sessions.');
-    process.exit(1);
+  // Canonical resume read — joins agents.current_executor_id → executors.claude_session_id
+  // and emits resume.found / resume.missing_session audit events. Replaces the
+  // direct `w.claudeSessionId` read (Group 3 of claude-resume-by-session-id wish).
+  const sessionId = await executorRegistry.getResumeSessionId(w.id);
+  if (!sessionId) {
+    // Group 6: fail loudly with a typed error so the CLI wrapper in
+    // genie.ts surfaces it on stderr with exit 1 and tests can assert on
+    // the instance. Previously we used console.error + process.exit(1),
+    // which is hostile to unit testing and untyped at the boundary.
+    throw new MissingResumeSessionError(w.id, undefined, 'no_session_id');
   }
 
   if (await isPaneAliveOrDead(w.paneId)) {
@@ -2486,10 +2529,14 @@ export async function buildFullResumeParams(
   agent: registry.Agent,
   template: registry.WorkerTemplate | undefined,
 ): Promise<SpawnParams> {
-  if (!agent.claudeSessionId) {
-    throw new MissingResumeSessionError(agent.id);
+  // Canonical resume read — joins agents.current_executor_id → executors.claude_session_id
+  // and emits resume.found / resume.missing_session audit events. Replaces the
+  // direct `agent.claudeSessionId` read (Group 3 of claude-resume-by-session-id wish).
+  const sessionId = await executorRegistry.getResumeSessionId(agent.id);
+  if (!sessionId) {
+    throw new MissingResumeSessionError(agent.id, undefined, 'null_session');
   }
-  const params = await buildResumeParams(agent, template, agent.claudeSessionId);
+  const params = await buildResumeParams(agent, template, sessionId);
 
   const resumeContext = await buildResumeContext(agent);
   if (resumeContext) {
@@ -2533,7 +2580,12 @@ async function createResumeExecutor(
     tmuxPaneId: paneId,
     tmuxWindow: teamWindow?.windowName ?? null,
     tmuxWindowId: teamWindow?.windowId ?? null,
-    claudeSessionId: agent.claudeSessionId ?? null,
+    // `params.resume` carries the session UUID surfaced by
+    // `getResumeSessionId` inside `buildFullResumeParams`. Post-migration-047
+    // the agent row no longer holds a session — reading `params.resume` keeps
+    // the new executor linked to the same conversation we asked Claude to
+    // resume via `--resume <uuid>`.
+    claudeSessionId: params.resume ?? null,
     state: 'spawning',
     repoPath: cwd,
     paneColor: spawnColor,
@@ -2675,7 +2727,10 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
     agentName: agent.role ?? agent.id,
     spawnColor: agent.nativeColor ?? 'blue',
     parentSessionId: agent.parentSessionId ?? `genie-${params.team}`,
-    claudeSessionId: agent.claudeSessionId,
+    // `params.resume` is the session UUID returned by `getResumeSessionId`
+    // inside `buildFullResumeParams` — the canonical source now that the
+    // agent row no longer carries a session (migration 047).
+    claudeSessionId: params.resume,
     otelRelayActive: false,
     now,
     transport: 'tmux',
@@ -2732,7 +2787,7 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
   }
 
   recordAuditEvent('worker', agent.id, 'resumed', getActor(), {
-    claudeSessionId: agent.claudeSessionId,
+    claudeSessionId: params.resume,
     team: agent.team,
   }).catch(() => {});
 
@@ -2744,7 +2799,7 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
   });
 
   console.log(`Agent "${agent.id}" resumed.`);
-  console.log(`  Session:  ${agent.claudeSessionId}`);
+  console.log(`  Session:  ${params.resume}`);
   console.log(`  Pane:     ${paneId}`);
   if (teamWindow) {
     console.log(`  Window:   ${teamWindow.windowName} (${teamWindow.windowId})`);

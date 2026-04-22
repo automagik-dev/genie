@@ -242,7 +242,8 @@ describe.skipIf(!DB_AVAILABLE)('transport-aware liveness — integration', () =>
     const { getConnection } = await import('../db.js');
     const sql = await getConnection();
 
-    // Seed SDK canonical + live executor.
+    // Seed SDK canonical + live executor. Post-migration-047 the session
+    // UUID lives on the executor row.
     await registry.register({
       id: 'stefani',
       paneId: 'sdk',
@@ -252,14 +253,13 @@ describe.skipIf(!DB_AVAILABLE)('transport-aware liveness — integration', () =>
       state: 'working',
       lastStateChange: new Date().toISOString(),
       repoPath: '/tmp/stefani',
-      claudeSessionId: 'original-canonical-uuid-0000-000000000000',
       role: 'stefani',
       team: 'stefani',
       provider: 'claude-sdk',
     });
     await sql`
-      INSERT INTO executors (id, agent_id, provider, transport, state, started_at)
-      VALUES ('exec-stefani', 'stefani', 'claude-sdk', 'api', 'working', now())
+      INSERT INTO executors (id, agent_id, provider, transport, state, claude_session_id, started_at)
+      VALUES ('exec-stefani', 'stefani', 'claude-sdk', 'api', 'working', 'original-canonical-uuid-0000-000000000000', now())
     `;
     await sql`UPDATE agents SET current_executor_id = 'exec-stefani' WHERE id = 'stefani'`;
 
@@ -273,10 +273,17 @@ describe.skipIf(!DB_AVAILABLE)('transport-aware liveness — integration', () =>
       expect(identity.workerId).toBe('stefani-feed');
     }
 
-    // Canonical row is byte-identical to the seed.
+    // Canonical row is byte-identical to the seed. Session UUID lives on the
+    // executor (migration 047) — assert via the JOIN.
     const canonical = await registry.get('stefani');
-    expect(canonical?.claudeSessionId).toBe('original-canonical-uuid-0000-000000000000');
     expect(canonical?.paneId).toBe('sdk');
+    const sessionRows = await sql<{ claude_session_id: string | null }[]>`
+      SELECT e.claude_session_id
+      FROM agents a
+      JOIN executors e ON e.id = a.current_executor_id
+      WHERE a.id = 'stefani'
+    `;
+    expect(sessionRows[0]?.claude_session_id).toBe('original-canonical-uuid-0000-000000000000');
   });
 
   test('Site 3: resolveSpawnIdentity treats dead SDK canonical as dead', async () => {
@@ -293,12 +300,12 @@ describe.skipIf(!DB_AVAILABLE)('transport-aware liveness — integration', () =>
       state: 'error',
       lastStateChange: new Date().toISOString(),
       repoPath: '/tmp/zombie',
-      claudeSessionId: 'stale-uuid-0000-0000-0000-000000000000',
       role: 'zombie',
       team: 'zombie',
       provider: 'claude-sdk',
     });
     // No current_executor_id → getLiveExecutorState returns null → dead.
+    // (Stale session UUIDs live on terminated executor rows, not on the agent.)
 
     const identity = await resolveSpawnIdentity('zombie', 'zombie', () => 'fresh-uuid');
     expect(identity.kind).toBe('canonical');
