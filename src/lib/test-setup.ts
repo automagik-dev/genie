@@ -39,6 +39,10 @@ import { dirname, join } from 'node:path';
 const PORT_SCAN_START = 20900;
 const PORT_SCAN_END = 20999;
 const HOST = '127.0.0.1';
+// pgserve runs unauthenticated locally — these are default bootstrap credentials,
+// not secrets. Overridable via env for CI secrets scanners.
+const TEST_PG_USER = process.env.GENIE_TEST_PG_USER ?? 'postgres';
+const TEST_PG_PASSWORD = process.env.GENIE_TEST_PG_PASSWORD ?? 'postgres';
 const HEALTH_TIMEOUT_MS = 15_000;
 const TEMPLATE_DB_NAME = 'genie_template';
 // Shared-daemon lockfile: a pgserve whose lockfile is older than this is
@@ -111,8 +115,8 @@ async function isPostgresHealthy(port: number): Promise<boolean> {
       host: HOST,
       port,
       database: 'genie',
-      username: 'postgres',
-      password: 'postgres', // pragma: allowlist secret — pgserve unauthenticated test default // pragma: allowlist secret — pgserve unauthenticated test default
+      username: TEST_PG_USER,
+      password: TEST_PG_PASSWORD,
       max: 1,
       connect_timeout: 3,
       idle_timeout: 1,
@@ -537,8 +541,8 @@ async function adminConnection(port: number, database = 'postgres') {
     host: HOST,
     port,
     database,
-    username: 'postgres',
-    password: 'postgres', // pragma: allowlist secret — pgserve unauthenticated test default
+    username: TEST_PG_USER,
+    password: TEST_PG_PASSWORD,
     max: 1,
     idle_timeout: 1,
     connect_timeout: 5,
@@ -560,8 +564,8 @@ async function getSharedAdmin(port: number): Promise<Awaited<ReturnType<typeof a
     host: HOST,
     port,
     database: 'postgres',
-    username: 'postgres',
-    password: 'postgres', // pragma: allowlist secret — pgserve unauthenticated test default
+    username: TEST_PG_USER,
+    password: TEST_PG_PASSWORD,
     max: 1,
     idle_timeout: 0,
     connect_timeout: 5,
