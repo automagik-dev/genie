@@ -858,21 +858,6 @@ export async function shutdownEmitter(): Promise<void> {
 // the enriched schema identically.
 // ---------------------------------------------------------------------------
 
-const ROW_COLS = [
-  'repo_path',
-  'subject',
-  'kind',
-  'source',
-  'agent',
-  'team',
-  'direction',
-  'peer',
-  'text',
-  'data',
-  'detector_version',
-  'created_at',
-] as const;
-
 /** Target table for a row based on tier + severity + dedup sample. */
 function routeTable(row: QueuedRow): 'main' | 'debug' | 'audit' {
   if (row.tier_defaults === 'audit') return 'audit';
