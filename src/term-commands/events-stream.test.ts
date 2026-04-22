@@ -204,5 +204,5 @@ describe.skipIf(!DB_AVAILABLE)('events-stream — DB path', () => {
 
     expect(secondRun).toContain(missedA);
     expect(secondRun).toContain(missedB);
-  });
+  }, 30_000); // Match BARRIER_TIMEOUT_MS — overrides bun-test 5s default
 });
