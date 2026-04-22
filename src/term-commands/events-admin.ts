@@ -259,16 +259,79 @@ function parseSinceToId(since: string | undefined, sinceId: string | undefined):
   return 0;
 }
 
+function resolveExportSecret(signed: boolean | undefined): string {
+  const fromEnv = process.env.GENIE_AUDIT_EXPORT_SECRET ?? process.env.GENIE_EVENTS_TOKEN_SECRET;
+  if (fromEnv) return fromEnv;
+  if (signed) return requireEnv('GENIE_AUDIT_EXPORT_SECRET', '--signed bundle signatures');
+  return 'genie-export-fallback';
+}
+
+function emitExportAuditEvent(
+  bundle: AuditExportBundle,
+  sinceId: number,
+  tenant: string,
+  signer: string,
+  reason: string | undefined,
+): void {
+  try {
+    emitEvent(
+      'audit.export',
+      {
+        exporter_actor: signer,
+        since_id: sinceId,
+        row_count: bundle.rows.length,
+        break_count: bundle.verify.breaks.length,
+        bundle_signature_prefix: bundle.bundle_signature.slice(0, 16),
+        tenant_id: tenant,
+        reason: reason ?? 'admin IR export (no reason supplied)',
+      },
+      { severity: 'warn', source_subsystem: 'events-admin' },
+    );
+  } catch (err) {
+    console.error(color('yellow', `warning: failed to emit audit.export: ${String(err)}`));
+  }
+}
+
+function printExportPretty(bundle: AuditExportBundle, tenant: string, sinceId: number): void {
+  console.log(color('brightCyan', `Audit export — tenant=${tenant}, since_id=${sinceId}`));
+  console.log(color('dim', `rows:              ${bundle.rows.length}`));
+  console.log(color('dim', `chain breaks:      ${bundle.verify.breaks.length}`));
+  console.log(color('dim', `key versions used: ${bundle.verify.key_versions_used.join(',') || '(none)'}`));
+  console.log(color('dim', `first/last id:     ${bundle.verify.first_id ?? '-'} → ${bundle.verify.last_id ?? '-'}`));
+  console.log(color('dim', `signer:            ${bundle.signer}`));
+  console.log(color('dim', `bundle signature:  ${bundle.bundle_signature.slice(0, 32)}…`));
+  if (bundle.verify.breaks.length === 0) return;
+  console.log(color('red', 'CHAIN BREAK(S) DETECTED:'));
+  for (const b of bundle.verify.breaks.slice(0, 10)) {
+    const expected = b.expected ? ` expected=${b.expected.slice(0, 16)}…` : '';
+    console.log(color('red', `  row=${b.row_id} reason=${b.reason}${expected}`));
+  }
+}
+
+function writeBundleOutput(
+  bundle: AuditExportBundle,
+  options: ExportAuditOptions,
+  tenant: string,
+  sinceId: number,
+): void {
+  if (options.output) {
+    writeFileSync(options.output, JSON.stringify(bundle, null, 2), 'utf8');
+    console.log(color('green', `wrote signed bundle → ${options.output}`));
+    return;
+  }
+  if (options.json) {
+    console.log(JSON.stringify(bundle, null, 2));
+    return;
+  }
+  printExportPretty(bundle, tenant, sinceId);
+}
+
 export async function exportAuditCommand(options: ExportAuditOptions): Promise<void> {
   const tenant = options.tenant ?? 'default';
   const sinceId = parseSinceToId(options.since, options.sinceId);
   const limit = options.limit ? Number.parseInt(options.limit, 10) : 100_000;
   const signer = currentActor();
-
-  const secret =
-    process.env.GENIE_AUDIT_EXPORT_SECRET ??
-    process.env.GENIE_EVENTS_TOKEN_SECRET ??
-    (options.signed ? requireEnv('GENIE_AUDIT_EXPORT_SECRET', '--signed bundle signatures') : 'genie-export-fallback');
+  const secret = resolveExportSecret(options.signed);
 
   const bundle: AuditExportBundle = await exportSignedAuditBundle({
     tenant_id: tenant,
@@ -280,49 +343,8 @@ export async function exportAuditCommand(options: ExportAuditOptions): Promise<v
 
   // Sentinel H6 — the export itself is audit-worthy. Emit before writing the
   // bundle so even a failed write is recorded.
-  try {
-    emitEvent(
-      'audit.export',
-      {
-        exporter_actor: signer,
-        since_id: sinceId,
-        row_count: bundle.rows.length,
-        break_count: bundle.verify.breaks.length,
-        bundle_signature_prefix: bundle.bundle_signature.slice(0, 16),
-        tenant_id: tenant,
-        reason: options.reason ?? 'admin IR export (no reason supplied)',
-      },
-      { severity: 'warn', source_subsystem: 'events-admin' },
-    );
-  } catch (err) {
-    console.error(color('yellow', `warning: failed to emit audit.export: ${String(err)}`));
-  }
-
-  if (options.output) {
-    writeFileSync(options.output, JSON.stringify(bundle, null, 2), 'utf8');
-    console.log(color('green', `wrote signed bundle → ${options.output}`));
-  } else if (options.json) {
-    console.log(JSON.stringify(bundle, null, 2));
-  } else {
-    console.log(color('brightCyan', `Audit export — tenant=${tenant}, since_id=${sinceId}`));
-    console.log(color('dim', `rows:              ${bundle.rows.length}`));
-    console.log(color('dim', `chain breaks:      ${bundle.verify.breaks.length}`));
-    console.log(color('dim', `key versions used: ${bundle.verify.key_versions_used.join(',') || '(none)'}`));
-    console.log(color('dim', `first/last id:     ${bundle.verify.first_id ?? '-'} → ${bundle.verify.last_id ?? '-'}`));
-    console.log(color('dim', `signer:            ${bundle.signer}`));
-    console.log(color('dim', `bundle signature:  ${bundle.bundle_signature.slice(0, 32)}…`));
-    if (bundle.verify.breaks.length > 0) {
-      console.log(color('red', 'CHAIN BREAK(S) DETECTED:'));
-      for (const b of bundle.verify.breaks.slice(0, 10)) {
-        console.log(
-          color(
-            'red',
-            `  row=${b.row_id} reason=${b.reason}${b.expected ? ` expected=${b.expected.slice(0, 16)}…` : ''}`,
-          ),
-        );
-      }
-    }
-  }
+  emitExportAuditEvent(bundle, sinceId, tenant, signer, options.reason);
+  writeBundleOutput(bundle, options, tenant, sinceId);
 
   if (bundle.verify.breaks.length > 0) {
     process.exit(3);

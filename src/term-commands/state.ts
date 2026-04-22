@@ -481,6 +481,40 @@ export function registerStateCommands(_program: Command): void {
 }
 
 /**
+ * Confirm a destructive wipe. Returns false when the user aborted the
+ * interactive prompt; throws via process.exit when a non-interactive shell
+ * omits --yes.
+ */
+async function confirmWipe(
+  slug: string,
+  existing: NonNullable<Awaited<ReturnType<typeof wishState.getState>>>,
+  confirmed: boolean,
+): Promise<boolean> {
+  const groupCount = Object.keys(existing.groups).length;
+  const inProgress = Object.values(existing.groups).filter((g) => g.status === 'in_progress').length;
+  const summary = `Wipe all state for "${slug}" (${groupCount} groups, ${inProgress} in-progress)?`;
+
+  if (!isInteractive()) {
+    if (confirmed) return true;
+    console.error(`❌ ${summary}`);
+    console.error('   Refusing to wipe in non-interactive mode. Pass --yes to confirm.');
+    process.exit(2);
+  }
+  const { confirm } = await import('@inquirer/prompts');
+  return confirm({ message: summary, default: false });
+}
+
+function printResetState(state: Awaited<ReturnType<typeof wishState.createState>>): void {
+  console.log('');
+  console.log(`Wish: ${state.wish}`);
+  console.log('─'.repeat(60));
+  for (const [name, group] of Object.entries(state.groups)) {
+    const icon = STATUS_ICONS[group.status] ?? '❓';
+    console.log(`  ${name}  ${icon} ${group.status}`);
+  }
+}
+
+/**
  * `genie reset <slug>` (bare slug, no `#group`) — wipe all wish state and
  * recreate it from the current WISH.md. Use to recover from
  * `WishStateMismatchError` after the wish's group structure was edited.
@@ -499,27 +533,11 @@ async function resetWishCommand(slug: string, confirmed: boolean): Promise<void>
 
   const existing = await wishState.getState(slug);
   if (existing) {
-    const groupCount = Object.keys(existing.groups).length;
-    const inProgress = Object.values(existing.groups).filter((g) => g.status === 'in_progress').length;
-    const summary = `Wipe all state for "${slug}" (${groupCount} groups, ${inProgress} in-progress)?`;
-
-    if (!isInteractive()) {
-      if (!confirmed) {
-        console.error(`❌ ${summary}`);
-        console.error('   Refusing to wipe in non-interactive mode. Pass --yes to confirm.');
-        process.exit(2);
-      }
-    } else {
-      const { confirm } = await import('@inquirer/prompts');
-      const ok = await confirm({ message: summary, default: false });
-      if (!ok) {
-        console.log('Aborted.');
-        return;
-      }
+    const ok = await confirmWipe(slug, existing, confirmed);
+    if (!ok) {
+      console.log('Aborted.');
+      return;
     }
-  }
-
-  if (existing) {
     console.log(`🗑️  Replacing existing state for wish "${slug}"`);
   } else {
     console.log(`ℹ️  No existing state for wish "${slug}" — creating fresh`);
@@ -527,11 +545,5 @@ async function resetWishCommand(slug: string, confirmed: boolean): Promise<void>
 
   const state = await wishState.createState(slug, groups);
   console.log(`📝 Recreated state from ${wishPath} (${groups.length} groups)`);
-  console.log('');
-  console.log(`Wish: ${state.wish}`);
-  console.log('─'.repeat(60));
-  for (const [name, group] of Object.entries(state.groups)) {
-    const icon = STATUS_ICONS[group.status] ?? '❓';
-    console.log(`  ${name}  ${icon} ${group.status}`);
-  }
+  printResetState(state);
 }

@@ -50,30 +50,133 @@ function parseSince(since: string): string {
   return new Date(Date.now() - amount * ms).toISOString();
 }
 
-export async function runAuditMigration(options: MigrateOptions): Promise<MigrateStats> {
-  const sql = await getConnection();
-  const sinceTs = options.since ? parseSince(options.since) : null;
+interface AuditRow {
+  legacy_id: number;
+  entity_type: string;
+  entity_id: string;
+  event_type: string;
+  actor: string | null;
+  details: Record<string, unknown> | string | null;
+  created_at: string | Date;
+}
 
-  const sinceClause = sinceTs ? 'WHERE ae.created_at >= $1::timestamptz' : '';
-  const sinceParams = sinceTs ? [sinceTs] : [];
+type Sql = Awaited<ReturnType<typeof getConnection>>;
 
-  // Count how many audit rows exist in-scope.
+async function countTotalRows(sql: Sql, sinceTs: string | null): Promise<number> {
+  const clause = sinceTs ? 'WHERE ae.created_at >= $1::timestamptz' : '';
+  const params = sinceTs ? [sinceTs] : [];
   const [{ total }] = (await sql.unsafe(
-    `SELECT COUNT(*)::int AS total FROM audit_events ae ${sinceClause}`,
-    sinceParams,
+    `SELECT COUNT(*)::int AS total FROM audit_events ae ${clause}`,
+    params,
   )) as unknown as Array<{ total: number }>;
+  return total;
+}
 
-  // Count already-migrated rows (sentinel-tagged).
+async function countAlreadyMigrated(sql: Sql, sinceTs: string | null): Promise<number> {
+  const whereTs = sinceTs ? 'AND created_at >= $1::timestamptz' : '';
+  const params = sinceTs ? [sinceTs] : [];
   const [{ already }] = (await sql.unsafe(
     `SELECT COUNT(*)::int AS already
        FROM genie_runtime_events
       WHERE subject = '${MIGRATE_SUBJECT}'
         AND source = '${MIGRATE_SOURCE}'
-      ${sinceTs ? 'AND created_at >= $1::timestamptz' : ''}`,
-    sinceParams,
+      ${whereTs}`,
+    params,
   )) as unknown as Array<{ already: number }>;
+  return already;
+}
 
+async function fetchBatch(sql: Sql, cursorId: number, sinceTs: string | null): Promise<AuditRow[]> {
+  const cursorClause = sinceTs ? 'AND ae.created_at >= $2::timestamptz' : '';
+  const params = sinceTs ? [cursorId, sinceTs] : [cursorId];
+  return (await sql.unsafe(
+    `SELECT
+       ae.id           AS legacy_id,
+       ae.entity_type  AS entity_type,
+       ae.entity_id    AS entity_id,
+       ae.event_type   AS event_type,
+       ae.actor        AS actor,
+       ae.details      AS details,
+       ae.created_at   AS created_at
+     FROM audit_events ae
+     LEFT JOIN genie_runtime_events gre
+       ON gre.subject = '${MIGRATE_SUBJECT}'
+      AND gre.source = '${MIGRATE_SOURCE}'
+      AND gre.data->>'legacy_audit_id' = ae.id::text
+    WHERE ae.id > $1 ${cursorClause}
+      AND gre.id IS NULL
+    ORDER BY ae.id ASC
+    LIMIT ${BATCH_SIZE}`,
+    params,
+  )) as unknown as AuditRow[];
+}
+
+function buildEnrichedData(row: AuditRow): Record<string, unknown> {
+  const details = normalizeDetails(row.details);
+  return {
+    ...details,
+    _trace_id: null,
+    _span_id: null,
+    _parent_span_id: null,
+    _severity: details.error ? 'error' : 'info',
+    _schema_version: MIGRATE_SCHEMA_VERSION,
+    _duration_ms: null,
+    _source_subsystem: MIGRATE_SUBSYSTEM,
+    _tier: 'default',
+    _kind: 'event',
+    legacy_audit_id: String(row.legacy_id),
+    legacy_entity_type: row.entity_type,
+    legacy_entity_id: row.entity_id,
+    legacy_event_type: row.event_type,
+  };
+}
+
+async function insertMigratedRow(sql: Sql, row: AuditRow): Promise<void> {
+  const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at);
+  await sql.unsafe(
+    `INSERT INTO genie_runtime_events (
+       repo_path, subject, kind, source, agent, team, direction, peer,
+       text, data, thread_id, trace_id, parent_event_id, created_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8::jsonb, NULL, NULL, NULL, $9::timestamptz
+     )`,
+    [
+      process.env.GENIE_REPO_PATH ?? process.cwd(),
+      MIGRATE_SUBJECT,
+      'system',
+      MIGRATE_SOURCE,
+      row.actor ?? 'legacy',
+      null,
+      row.event_type,
+      JSON.stringify(buildEnrichedData(row)),
+      createdAt,
+    ],
+  );
+}
+
+async function applyBatch(sql: Sql, batch: AuditRow[], stats: MigrateStats, limit: number): Promise<number> {
+  let cursorId = 0;
+  for (const row of batch) {
+    if (stats.migrated >= limit) break;
+    try {
+      await insertMigratedRow(sql, row);
+      stats.migrated += 1;
+    } catch {
+      stats.skipped += 1;
+    }
+    cursorId = row.legacy_id;
+  }
+  return cursorId;
+}
+
+export async function runAuditMigration(options: MigrateOptions): Promise<MigrateStats> {
+  const sql = await getConnection();
+  const sinceTs = options.since ? parseSince(options.since) : null;
+
+  const total = await countTotalRows(sql, sinceTs);
+  const already = await countAlreadyMigrated(sql, sinceTs);
   const toMigrate = total - already;
+
   const stats: MigrateStats = {
     total_audit_rows: total,
     already_migrated: already,
@@ -83,99 +186,15 @@ export async function runAuditMigration(options: MigrateOptions): Promise<Migrat
     dry_run: Boolean(options.dryRun),
   };
 
-  if (options.dryRun || toMigrate <= 0) {
-    return stats;
-  }
+  if (options.dryRun || toMigrate <= 0) return stats;
 
   const limit = options.limit ?? Number.POSITIVE_INFINITY;
-
-  // Stream through audit_events in id-ascending batches, skipping rows that
-  // already have a genie_runtime_events counterpart.
   let cursorId = 0;
+
   while (stats.migrated < limit) {
-    const cursorClause = sinceTs ? 'AND ae.created_at >= $2::timestamptz' : '';
-    const cursorParams = sinceTs ? [cursorId, sinceTs] : [cursorId];
-
-    const batch = (await sql.unsafe(
-      `SELECT
-         ae.id           AS legacy_id,
-         ae.entity_type  AS entity_type,
-         ae.entity_id    AS entity_id,
-         ae.event_type   AS event_type,
-         ae.actor        AS actor,
-         ae.details      AS details,
-         ae.created_at   AS created_at
-       FROM audit_events ae
-       LEFT JOIN genie_runtime_events gre
-         ON gre.subject = '${MIGRATE_SUBJECT}'
-        AND gre.source = '${MIGRATE_SOURCE}'
-        AND gre.data->>'legacy_audit_id' = ae.id::text
-      WHERE ae.id > $1 ${cursorClause}
-        AND gre.id IS NULL
-      ORDER BY ae.id ASC
-      LIMIT ${BATCH_SIZE}`,
-      cursorParams,
-    )) as unknown as Array<{
-      legacy_id: number;
-      entity_type: string;
-      entity_id: string;
-      event_type: string;
-      actor: string | null;
-      details: Record<string, unknown> | string | null;
-      created_at: string | Date;
-    }>;
-
+    const batch = await fetchBatch(sql, cursorId, sinceTs);
     if (batch.length === 0) break;
-
-    for (const row of batch) {
-      if (stats.migrated >= limit) break;
-      const details = normalizeDetails(row.details);
-      const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at);
-
-      const enrichedData = {
-        ...details,
-        _trace_id: null,
-        _span_id: null,
-        _parent_span_id: null,
-        _severity: details.error ? 'error' : 'info',
-        _schema_version: MIGRATE_SCHEMA_VERSION,
-        _duration_ms: null,
-        _source_subsystem: MIGRATE_SUBSYSTEM,
-        _tier: 'default',
-        _kind: 'event',
-        legacy_audit_id: String(row.legacy_id),
-        legacy_entity_type: row.entity_type,
-        legacy_entity_id: row.entity_id,
-        legacy_event_type: row.event_type,
-      };
-
-      try {
-        await sql.unsafe(
-          `INSERT INTO genie_runtime_events (
-             repo_path, subject, kind, source, agent, team, direction, peer,
-             text, data, thread_id, trace_id, parent_event_id, created_at
-           ) VALUES (
-             $1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8::jsonb, NULL, NULL, NULL, $9::timestamptz
-           )`,
-          [
-            process.env.GENIE_REPO_PATH ?? process.cwd(),
-            MIGRATE_SUBJECT,
-            'system',
-            MIGRATE_SOURCE,
-            row.actor ?? 'legacy',
-            null,
-            row.event_type,
-            JSON.stringify(enrichedData),
-            createdAt,
-          ],
-        );
-        stats.migrated += 1;
-      } catch {
-        stats.skipped += 1;
-      }
-      cursorId = row.legacy_id;
-    }
-
+    cursorId = await applyBatch(sql, batch, stats, limit);
     if (batch.length < BATCH_SIZE) break;
   }
 
