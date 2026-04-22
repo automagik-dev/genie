@@ -692,13 +692,19 @@ async function _buildConnection(): Promise<any> {
   const testDbName = process.env.GENIE_TEST_DB_NAME;
   const database = testDbName && testDbName.length > 0 ? testDbName : DB_NAME;
   const isTestMode = Boolean(testDbName);
+  // Under parallel-shard CI (GENIE_TEST_SHARD_INDEX set by scripts/test-parallel.ts)
+  // cap the pool to a single backend so write-then-read visibility races don't
+  // flake the shards. Local single-process `bun test` leaves this unset, so the
+  // pool stays at 50 and concurrent-query tests continue to pass. Production
+  // (no test envs) is also unchanged.
+  const isShardedCi = process.env.GENIE_TEST_SHARD_INDEX !== undefined;
   sqlClient = pgModule({
     host: DEFAULT_HOST,
     port,
     database,
     username: 'postgres',
     password: 'postgres',
-    max: 50,
+    max: isShardedCi ? 1 : 50,
     idle_timeout: 1,
     connect_timeout: 5,
     onnotice: () => {},
