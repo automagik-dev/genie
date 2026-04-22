@@ -126,10 +126,23 @@ jobs:
       # as a cascade of "hook timed out" errors that aren't real regressions.
       # 15s absorbs that jitter without masking slow tests (a test that takes
       # >15s is a real problem worth surfacing).
+      #
+      # `|| bun test --timeout 15000`: retry-once wrapper for the PGlite/pgserve
+      # cross-connection imperfections (NOTIFY delivery gaps + post-INSERT read
+      # visibility gaps) enumerated in tracker #1335. Measured baseline flake
+      # rate is ~1/3626 per test; two consecutive flakes on the same test are
+      # ~1 in 10M, so a single retry masks the noise without hiding real
+      # regressions. Long-term fix is a pgserve/PGlite backend audit (out of
+      # scope for wish pg-test-perf).
+      #
+      # History: 7b23046e dropped a prior retry wrapper because hangs on the
+      # self-hosted runner produced orphaned bun processes. Mitigated now by
+      # Blacksmith ephemeral runners + `timeout-minutes: 15` (a hang is killed
+      # by the job timeout, not the `||`, so no orphan is produced).
       - name: Test (serial, PG-backed)
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-        run: bun test --timeout 15000
+        run: bun test --timeout 15000 || bun test --timeout 15000
 
   # Umbrella status check. Branch protection is configured to require
   # "Quality Gate (typecheck + lint + test)" as a required status, so the
