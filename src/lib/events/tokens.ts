@@ -233,9 +233,7 @@ function assertPayloadClaims(payload: TokenPayload, opts: VerifyOptions): void {
 }
 
 async function assertNotRevoked(payload: TokenPayload, opts: VerifyOptions): Promise<void> {
-  const revoked = opts.revokedTokenIds
-    ? opts.revokedTokenIds.has(payload.token_id)
-    : await isRevoked(payload.token_id);
+  const revoked = opts.revokedTokenIds ? opts.revokedTokenIds.has(payload.token_id) : await isRevoked(payload.token_id);
   if (revoked) throw new TokenError('TOKEN_REVOKED', `token_id ${payload.token_id} revoked`);
 }
 
