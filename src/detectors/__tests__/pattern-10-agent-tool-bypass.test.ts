@@ -1,5 +1,5 @@
 /**
- * Pattern 9 — Agent-tool bypass detector tests.
+ * Pattern 10 — Agent-tool bypass detector tests.
  *
  * DI capture pattern: inject `listTranscripts`, `checkAgentIds`, `now` per
  * test; avoid `mock.module` (Bun-global, cannot be undone across files).
@@ -14,7 +14,7 @@ import {
   type AgentToolBypassState,
   type TranscriptInfo,
   makeAgentToolBypassDetector,
-} from '../pattern-9-agent-tool-bypass.js';
+} from '../pattern-10-agent-tool-bypass.js';
 
 interface CapturedEmit {
   type: string;
@@ -66,7 +66,7 @@ function runOnce(detector: DetectorModule<AgentToolBypassState>): Promise<Captur
   });
 }
 
-describe('rot.agent-tool-bypass (Pattern 9)', () => {
+describe('rot.agent-tool-bypass (Pattern 10)', () => {
   afterEach(() => {
     __clearDetectorsForTests();
   });
@@ -83,7 +83,7 @@ describe('rot.agent-tool-bypass (Pattern 9)', () => {
     expect(fires.length).toBe(1);
 
     const payload = fires[0].payload as Record<string, unknown>;
-    expect(payload.pattern_id).toBe('pattern-9-agent-tool-bypass');
+    expect(payload.pattern_id).toBe('pattern-10-agent-tool-bypass');
     const obs = payload.observed_state_json as Record<string, unknown>;
     expect(obs.agent_id).toBe('a82478ea1305a8c1c');
     expect(obs.transcript_path).toBe('/tmp/claude-session-xyz/tasks/a82478ea1305a8c1c.output');

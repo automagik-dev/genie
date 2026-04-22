@@ -1,6 +1,6 @@
 // Cross-ref: https://github.com/automagik-dev/genie/issues/1233
 /**
- * Pattern 9 — Agent-tool bypass detector.
+ * Pattern 10 — Agent-tool bypass detector.
  *
  * Rot condition:
  *   A Claude Code `Agent`-tool subagent is actively writing a transcript on
@@ -176,7 +176,7 @@ export function makeAgentToolBypassDetector(deps: AgentToolBypassDeps): Detector
         type: 'rot.detected',
         subject: first?.agent_id ?? 'unknown',
         payload: {
-          pattern_id: 'pattern-9-agent-tool-bypass',
+          pattern_id: 'pattern-10-agent-tool-bypass',
           entity_id: first?.agent_id ?? 'unknown',
           observed_state_json: {
             agent_id: first?.agent_id ?? 'unknown',
