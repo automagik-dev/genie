@@ -139,18 +139,42 @@ describe.skipIf(!DB_AVAILABLE)('events-stream — DB path', () => {
 
   test('persisted cursor resumes on reconnect', async () => {
     const consumerId = generateConsumerId('unit-test-resume');
+    // Generous safety-net: the barrier fires as soon as the target rows are
+    // delivered by the callback, so the timeout only trips on a real failure.
+    const BARRIER_TIMEOUT_MS = 30_000;
 
-    // First run — consume one event, persist cursor.
+    const withTimeout = async <T>(promise: Promise<T>, ms: number, message: string): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      });
+      try {
+        return await Promise.race([promise, timeout]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+
+    // First run — consume one event, persist cursor. A per-row barrier fires
+    // when the consumer callback observes the seeded id; no wall-clock polling.
     const firstRun: number[] = [];
+    let firstTargetId: number | null = null;
+    let firstResolve!: () => void;
+    const firstBarrier = new Promise<void>((resolve) => {
+      firstResolve = resolve;
+    });
     const h1 = await runEventsStreamFollow(
       { follow: true, consumerId, maxEvents: 1, idleExitMs: 3_000, heartbeatIntervalMs: 60_000 },
-      (row) => firstRun.push(row.id),
+      (row) => {
+        firstRun.push(row.id);
+        if (firstTargetId !== null && row.id === firstTargetId) firstResolve();
+      },
     );
     const firstId = await seedEvent('agent.lifecycle', 'info');
-    const t1 = Date.now();
-    while (firstRun.length === 0 && Date.now() - t1 < 4000) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    firstTargetId = firstId;
+    // Handle the race where the callback already fired before the target was set.
+    if (firstRun.includes(firstId)) firstResolve();
+    await withTimeout(firstBarrier, BARRIER_TIMEOUT_MS, `timeout waiting for firstId=${firstId}`);
     await h1.stop();
     expect(firstRun[0]).toBe(firstId);
 
@@ -161,16 +185,21 @@ describe.skipIf(!DB_AVAILABLE)('events-stream — DB path', () => {
     // Second run — same consumer id must resume from persisted cursor and
     // deliver the previously-missed rows. Use a generous maxEvents so that
     // any incidental emit.ts background rows that landed between runs do
-    // not starve the target deliveries.
+    // not starve the target deliveries. The barrier resolves as soon as both
+    // missed ids have been observed by the callback.
     const secondRun: number[] = [];
+    let secondResolve!: () => void;
+    const secondBarrier = new Promise<void>((resolve) => {
+      secondResolve = resolve;
+    });
     const h2 = await runEventsStreamFollow(
       { follow: true, consumerId, maxEvents: 10, idleExitMs: 3_000, heartbeatIntervalMs: 60_000 },
-      (row) => secondRun.push(row.id),
+      (row) => {
+        secondRun.push(row.id);
+        if (secondRun.includes(missedA) && secondRun.includes(missedB)) secondResolve();
+      },
     );
-    const t2 = Date.now();
-    while (!(secondRun.includes(missedA) && secondRun.includes(missedB)) && Date.now() - t2 < 4000) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await withTimeout(secondBarrier, BARRIER_TIMEOUT_MS, `timeout waiting for missed=${missedA},${missedB}`);
     await h2.stop();
 
     expect(secondRun).toContain(missedA);
