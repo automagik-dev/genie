@@ -53,7 +53,9 @@ async function pruneCommand(options: PruneOptions): Promise<void> {
         console.log(`No exhausted zombies older than ${ttlHours}h.`);
         return;
       }
-      console.log(`Would archive ${zombies.length} zombie agent${zombies.length === 1 ? '' : 's'} older than ${ttlHours}h:`);
+      console.log(
+        `Would archive ${zombies.length} zombie agent${zombies.length === 1 ? '' : 's'} older than ${ttlHours}h:`,
+      );
       for (const z of zombies) {
         console.log(`  ${z.id}  (last state change: ${z.lastStateChange})`);
       }
@@ -84,10 +86,8 @@ export function registerPruneCommands(program: Command): void {
     .description('Bulk cleanup of stale or exhausted registry entries')
     .option('--zombies', 'Archive dead-pane zombies whose auto-resume retries are exhausted')
     .option('--dry-run', 'List targets that would be affected without mutating')
-    .option(
-      '--ttl-hours <hours>',
-      'Minimum age in hours before a zombie is eligible for archive (default: 24)',
-      (v) => parsePositiveInt(v, '--ttl-hours'),
+    .option('--ttl-hours <hours>', 'Minimum age in hours before a zombie is eligible for archive (default: 24)', (v) =>
+      parsePositiveInt(v, '--ttl-hours'),
     )
     .action(pruneCommand);
 }
