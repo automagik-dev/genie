@@ -290,101 +290,106 @@ function findValidationFenceInfo(
   return { labelLine, fenceLine, fenceTag, fenceClose };
 }
 
-function scanValidation(doc: WishDocument, lines: string[]): Violation[] {
+const FIELD_BOUNDARY_REGEX = /^\*\*(Goal|Deliverables|Acceptance Criteria|depends-on)\s*:\*\*/i;
+
+function collectValidationProse(lines: string[], start: number, end: number): string[] {
+  let stop = end;
+  for (let j = start; j < end; j++) {
+    if (FIELD_BOUNDARY_REGEX.test(lines[j] as string)) {
+      stop = j;
+      break;
+    }
+  }
+  const collected: string[] = [];
+  for (let j = start; j < stop; j++) collected.push(lines[j] as string);
+  while (collected.length > 0 && (collected[collected.length - 1] as string).trim() === '') {
+    collected.pop();
+  }
+  return collected;
+}
+
+function violationForMissingFence(info: { labelLine: number; fenceLine: number }, contentLines: string[]): Violation {
+  if (!contentLines.some((l) => l.trim() !== '')) {
+    return {
+      rule: 'missing-validation-command',
+      severity: 'error',
+      line: info.labelLine + 1,
+      column: 1,
+      message: 'Validation block is empty — add a fenced `bash` block with the verification command',
+      fixable: false,
+      fix: null,
+    };
+  }
+  return {
+    rule: 'validation-not-fenced-bash',
+    severity: 'error',
+    line: info.labelLine + 1,
+    column: 1,
+    message: 'Validation block is not wrapped in a ```bash fenced code block',
+    fixable: true,
+    fix: {
+      kind: 'rewrite',
+      at: { line: info.labelLine + 2 },
+      content: ['```bash', ...contentLines, '```'].join('\n'),
+      range: { endLine: info.labelLine + 1 + contentLines.length, endColumn: 1 },
+    },
+  };
+}
+
+function violationsForFencedBlock(
+  lines: string[],
+  info: { fenceLine: number; fenceTag: string | null; fenceClose: number | null },
+): Violation[] {
   const out: Violation[] = [];
-  for (const group of doc.executionGroups) {
-    const info = findValidationFenceInfo(lines, group);
-    if (!info) continue; // missing-validation-field already handled
-    if (info.fenceLine < 0) {
-      // Validation label present but no fenced block at all → fixable: wrap content in bash fence.
-      const start = info.labelLine + 1;
-      // Find content range — up to next field label or group end.
-      let end = group.endLine;
-      for (let j = start; j < end; j++) {
-        if (/^\*\*(Goal|Deliverables|Acceptance Criteria|depends-on)\s*:\*\*/i.test(lines[j] as string)) {
-          end = j;
-          break;
-        }
-      }
-      const contentLines: string[] = [];
-      for (let j = start; j < end; j++) {
-        contentLines.push(lines[j] as string);
-      }
-      while (contentLines.length > 0 && (contentLines[contentLines.length - 1] as string).trim() === '') {
-        contentLines.pop();
-      }
-      const nonEmpty = contentLines.some((l) => l.trim() !== '');
-      if (!nonEmpty) {
-        out.push({
-          rule: 'missing-validation-command',
-          severity: 'error',
-          line: info.labelLine + 1,
-          column: 1,
-          message: 'Validation block is empty — add a fenced `bash` block with the verification command',
-          fixable: false,
-          fix: null,
-        });
-        continue;
-      }
-      // Fixable: wrap existing prose in a bash fence.
-      out.push({
-        rule: 'validation-not-fenced-bash',
-        severity: 'error',
-        line: info.labelLine + 1,
-        column: 1,
-        message: 'Validation block is not wrapped in a ```bash fenced code block',
-        fixable: true,
-        fix: {
-          kind: 'rewrite',
-          at: { line: info.labelLine + 2 },
-          content: ['```bash', ...contentLines, '```'].join('\n'),
-          range: { endLine: info.labelLine + 1 + contentLines.length, endColumn: 1 },
-        },
-      });
-      continue;
-    }
-    // Fence found — check the tag.
-    if (info.fenceTag !== 'bash') {
-      // Known-safe rewrite: change just the fence tag to `bash`.
-      out.push({
-        rule: 'validation-not-fenced-bash',
-        severity: 'error',
-        line: info.fenceLine + 1,
-        column: 1,
-        message: `Validation fence has tag "${info.fenceTag ?? '<none>'}" — expected \`bash\``,
-        fixable: true,
-        fix: {
-          kind: 'rewrite',
-          at: { line: info.fenceLine + 1 },
-          content: '```bash',
-          range: { endLine: info.fenceLine + 1, endColumn: ((lines[info.fenceLine] as string).length || 1) + 1 },
-        },
-      });
-    }
-    // Check for empty body inside the fence.
-    if (info.fenceClose !== null) {
-      const body: string[] = [];
-      for (let j = info.fenceLine + 1; j < info.fenceClose; j++) body.push(lines[j] as string);
-      const nonEmpty = body.some((l) => l.trim() !== '');
-      if (!nonEmpty) {
-        out.push({
-          rule: 'missing-validation-command',
-          severity: 'error',
-          line: info.fenceLine + 1,
-          column: 1,
-          message: 'Validation bash block is empty — add a command that verifies this group',
-          fixable: false,
-          fix: null,
-        });
-      }
-    }
+  if (info.fenceTag !== 'bash') {
+    out.push({
+      rule: 'validation-not-fenced-bash',
+      severity: 'error',
+      line: info.fenceLine + 1,
+      column: 1,
+      message: `Validation fence has tag "${info.fenceTag ?? '<none>'}" — expected \`bash\``,
+      fixable: true,
+      fix: {
+        kind: 'rewrite',
+        at: { line: info.fenceLine + 1 },
+        content: '```bash',
+        range: { endLine: info.fenceLine + 1, endColumn: ((lines[info.fenceLine] as string).length || 1) + 1 },
+      },
+    });
+  }
+  if (info.fenceClose === null) return out;
+  const body: string[] = [];
+  for (let j = info.fenceLine + 1; j < info.fenceClose; j++) body.push(lines[j] as string);
+  if (!body.some((l) => l.trim() !== '')) {
+    out.push({
+      rule: 'missing-validation-command',
+      severity: 'error',
+      line: info.fenceLine + 1,
+      column: 1,
+      message: 'Validation bash block is empty — add a command that verifies this group',
+      fixable: false,
+      fix: null,
+    });
   }
   return out;
 }
 
-function scanScope(doc: WishDocument, lines: string[]): Violation[] {
+function scanValidation(doc: WishDocument, lines: string[]): Violation[] {
   const out: Violation[] = [];
-  let scopeHeaderLine = -1;
+  for (const group of doc.executionGroups) {
+    const info = findValidationFenceInfo(lines, group);
+    if (!info) continue;
+    if (info.fenceLine < 0) {
+      const contentLines = collectValidationProse(lines, info.labelLine + 1, group.endLine);
+      out.push(violationForMissingFence(info, contentLines));
+      continue;
+    }
+    out.push(...violationsForFencedBlock(lines, info));
+  }
+  return out;
+}
+
+function findScopeHeaderLine(lines: string[]): number {
   let inFence = false;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i] as string;
@@ -393,46 +398,45 @@ function scanScope(doc: WishDocument, lines: string[]): Violation[] {
       continue;
     }
     if (inFence) continue;
-    if (/^##\s+Scope\s*$/i.test(raw)) {
-      scopeHeaderLine = i;
-      break;
-    }
+    if (/^##\s+Scope\s*$/i.test(raw)) return i;
   }
+  return -1;
+}
+
+function findScopeEndIdx(lines: string[], scopeHeaderLine: number): number {
+  for (let i = scopeHeaderLine + 1; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i] as string)) return i;
+  }
+  return lines.length;
+}
+
+function findOutLine(lines: string[], start: number, end: number): number {
+  for (let i = start; i < end; i++) {
+    if (/^###\s+OUT\b/i.test(lines[i] as string)) return i;
+  }
+  return -1;
+}
+
+function scopeMissingViolation(line: number, message: string): Violation {
+  return { rule: 'scope-section-missing', severity: 'error', line, column: 1, message, fixable: false, fix: null };
+}
+
+function scanScope(doc: WishDocument, lines: string[]): Violation[] {
+  const out: Violation[] = [];
+  const scopeHeaderLine = findScopeHeaderLine(lines);
   if (scopeHeaderLine < 0) {
-    out.push({
-      rule: 'scope-section-missing',
-      severity: 'error',
-      line: 1,
-      column: 1,
-      message: 'Wish is missing the `## Scope` section',
-      fixable: false,
-      fix: null,
-    });
+    out.push(scopeMissingViolation(1, 'Wish is missing the `## Scope` section'));
     return out;
   }
-  // Detect IN / OUT presence by scanning H3 under scope up to next H2.
-  const endIdx = (() => {
-    for (let i = scopeHeaderLine + 1; i < lines.length; i++) {
-      if (/^##\s+/.test(lines[i] as string)) return i;
-    }
-    return lines.length;
-  })();
-  const hasIn = lines.slice(scopeHeaderLine + 1, endIdx).some((l) => /^###\s+IN\b/i.test(l));
-  const hasOut = lines.slice(scopeHeaderLine + 1, endIdx).some((l) => /^###\s+OUT\b/i.test(l));
+  const endIdx = findScopeEndIdx(lines, scopeHeaderLine);
+  const slice = lines.slice(scopeHeaderLine + 1, endIdx);
+  const hasIn = slice.some((l) => /^###\s+IN\b/i.test(l));
+  const hasOut = slice.some((l) => /^###\s+OUT\b/i.test(l));
   if (!hasIn && !hasOut) {
-    out.push({
-      rule: 'scope-section-missing',
-      severity: 'error',
-      line: scopeHeaderLine + 1,
-      column: 1,
-      message: '`## Scope` section has no `### IN` or `### OUT` subsections',
-      fixable: false,
-      fix: null,
-    });
+    out.push(scopeMissingViolation(scopeHeaderLine + 1, '`## Scope` section has no `### IN` or `### OUT` subsections'));
     return out;
   }
   if (!hasOut) {
-    // Insert an OUT stub at the end of the scope section.
     out.push({
       rule: 'scope-section-missing',
       severity: 'error',
@@ -440,11 +444,7 @@ function scanScope(doc: WishDocument, lines: string[]): Violation[] {
       column: 1,
       message: '`## Scope` is missing the `### OUT` subsection',
       fixable: true,
-      fix: {
-        kind: 'insert',
-        at: { line: endIdx + 1 },
-        content: '### OUT\n\n- <TODO>\n\n',
-      },
+      fix: { kind: 'insert', at: { line: endIdx + 1 }, content: '### OUT\n\n- <TODO>\n\n' },
     });
   }
   if (!hasIn) {
@@ -455,22 +455,11 @@ function scanScope(doc: WishDocument, lines: string[]): Violation[] {
       column: 1,
       message: '`## Scope` is missing the `### IN` subsection',
       fixable: true,
-      fix: {
-        kind: 'insert',
-        at: { line: scopeHeaderLine + 2 },
-        content: '\n### IN\n\n- <TODO>\n',
-      },
+      fix: { kind: 'insert', at: { line: scopeHeaderLine + 2 }, content: '\n### IN\n\n- <TODO>\n' },
     });
   }
   if (hasOut && doc.scope.out.length === 0) {
-    // Find OUT line for a more precise location.
-    let outLine = -1;
-    for (let i = scopeHeaderLine + 1; i < endIdx; i++) {
-      if (/^###\s+OUT\b/i.test(lines[i] as string)) {
-        outLine = i;
-        break;
-      }
-    }
+    const outLine = findOutLine(lines, scopeHeaderLine + 1, endIdx);
     out.push({
       rule: 'empty-out-scope',
       severity: 'error',
@@ -484,117 +473,136 @@ function scanScope(doc: WishDocument, lines: string[]): Violation[] {
   return out;
 }
 
+const DEPENDS_REF_PATTERN =
+  /^(?:Group\s+\d+|[A-Za-z][A-Za-z0-9_-]*(?:\/(?:Group\s+\d+|[A-Za-z][A-Za-z0-9_-]*))*|[A-Za-z][A-Za-z0-9_-]*#\d+)$/i;
+
+function findDependsLine(lines: string[], group: { startLine: number; endLine: number }): number {
+  const start = Math.max(0, group.startLine);
+  const end = Math.min(lines.length, group.endLine);
+  for (let i = start; i < end; i++) {
+    if (/^\*\*depends-on\s*:\*\*/i.test(lines[i] as string)) return i;
+  }
+  return -1;
+}
+
+function splitDependsParts(rawValue: string): string[] {
+  return rawValue
+    .replace(/\.$/, '')
+    .split(/\s*,\s*/)
+    .map((p) =>
+      p
+        .trim()
+        .replace(/\s*\(.*$/, '')
+        .trim(),
+    )
+    .filter(Boolean);
+}
+
+function canonicalizeDependsRefs(parts: string[]): { canonical: string[]; malformed: boolean } {
+  const canonical: string[] = [];
+  let malformed = false;
+  for (const raw of parts) {
+    if (DEPENDS_REF_PATTERN.test(raw)) {
+      canonical.push(raw.replace(/^group\s+/i, 'Group '));
+      continue;
+    }
+    const numbers = [...raw.matchAll(/(\d+)/g)].map((m) => Number.parseInt(m[1] as string, 10));
+    if (numbers.length > 0) {
+      for (const n of numbers) canonical.push(`Group ${n}`);
+      malformed = true;
+      continue;
+    }
+    canonical.push(raw);
+    malformed = true;
+  }
+  return { canonical, malformed };
+}
+
+function allRefsResolvable(canonical: string[], validNumbers: Set<number>): boolean {
+  const refs = canonical.filter((p) => /^Group\s+\d+$/i.test(p));
+  if (refs.length === 0) return false;
+  return refs.every((r) => {
+    const m = /^Group\s+(\d+)$/i.exec(r);
+    if (!m) return false;
+    return validNumbers.has(Number.parseInt(m[1] as string, 10));
+  });
+}
+
+function buildMalformedViolation(
+  canonical: string[],
+  rawValue: string,
+  labelLine: string,
+  dependsLine: number,
+  validNumbers: Set<number>,
+): Violation {
+  if (allRefsResolvable(canonical, validNumbers)) {
+    return {
+      rule: 'depends-on-malformed',
+      severity: 'error',
+      line: dependsLine + 1,
+      column: 1,
+      message: `depends-on value "${rawValue}" is not in canonical "Group N, Group M" form`,
+      fixable: true,
+      fix: {
+        kind: 'rewrite',
+        at: { line: dependsLine + 1 },
+        content: `**depends-on:** ${canonical.join(', ')}`,
+        range: { endLine: dependsLine + 1, endColumn: (labelLine.length || 1) + 1 },
+      },
+    };
+  }
+  return {
+    rule: 'depends-on-malformed',
+    severity: 'error',
+    line: dependsLine + 1,
+    column: 1,
+    message: `depends-on value "${rawValue}" cannot be parsed — expected "none", "Group N", a descriptive name, or a slug/group reference`,
+    fixable: false,
+    fix: null,
+  };
+}
+
+function collectDanglingViolations(
+  canonical: string[],
+  groupNumber: number,
+  dependsLine: number,
+  validNumbers: Set<number>,
+): Violation[] {
+  const out: Violation[] = [];
+  for (const ref of canonical) {
+    const m = /^Group\s+(\d+)$/i.exec(ref);
+    if (!m) continue;
+    const n = Number.parseInt(m[1] as string, 10);
+    if (validNumbers.has(n)) continue;
+    out.push({
+      rule: 'depends-on-dangling',
+      severity: 'error',
+      line: dependsLine + 1,
+      column: 1,
+      message: `Group ${groupNumber} depends-on references non-existent Group ${n}`,
+      fixable: false,
+      fix: null,
+    });
+  }
+  return out;
+}
+
 function scanDependsOn(doc: WishDocument, lines: string[]): Violation[] {
   const out: Violation[] = [];
   const validNumbers = new Set(doc.executionGroups.map((g) => g.number));
   for (const group of doc.executionGroups) {
-    // Find raw depends-on line within the group.
-    const start = Math.max(0, group.startLine);
-    const end = Math.min(lines.length, group.endLine);
-    let dependsLine = -1;
-    for (let i = start; i < end; i++) {
-      if (/^\*\*depends-on\s*:\*\*/i.test(lines[i] as string)) {
-        dependsLine = i;
-        break;
-      }
-    }
+    const dependsLine = findDependsLine(lines, group);
     if (dependsLine < 0) continue;
     const labelLine = lines[dependsLine] as string;
     const rawValue = labelLine.replace(/^\*\*depends-on\s*:\*\*/i, '').trim();
     if (!rawValue) continue;
     if (/^none$/i.test(rawValue.replace(/\.$/, ''))) continue;
-    // Strip trailing parenthetical commentary on each ref (e.g., "Group 2 (replaces stub)" → "Group 2").
-    const parts = rawValue
-      .replace(/\.$/, '')
-      .split(/\s*,\s*/)
-      .map((p) =>
-        p
-          .trim()
-          .replace(/\s*\(.*$/, '')
-          .trim(),
-      )
-      .filter(Boolean);
-    // Accepted ref shapes:
-    //   * `Group N`                       — canonical numeric within current wish
-    //   * `Foundation` / `migration-2`    — descriptive identifier (in-wish or cross-wish slug)
-    //   * `wish-slug/group-1`             — same-wish or cross-wish slash form
-    //   * `repo/wish-slug/group-N`        — fully qualified cross-repo reference (any depth)
-    //   * `slug#3`                        — legacy hash form
-    // Reject only truly malformed shapes (empty, bad punctuation, free-form prose).
-    const refPattern =
-      /^(?:Group\s+\d+|[A-Za-z][A-Za-z0-9_-]*(?:\/(?:Group\s+\d+|[A-Za-z][A-Za-z0-9_-]*))*|[A-Za-z][A-Za-z0-9_-]*#\d+)$/i;
-    const canonicalParts: string[] = [];
-    let anyMalformed = false;
-    for (const raw of parts) {
-      if (refPattern.test(raw)) {
-        canonicalParts.push(raw.replace(/^group\s+/i, 'Group '));
-        continue;
-      }
-      // Try to recover "Group N and Group M" or "Groups 1 and 2".
-      const numbers = [...raw.matchAll(/(\d+)/g)].map((m) => Number.parseInt(m[1] as string, 10));
-      if (numbers.length > 0) {
-        for (const n of numbers) canonicalParts.push(`Group ${n}`);
-        anyMalformed = true;
-        continue;
-      }
-      canonicalParts.push(raw);
-      anyMalformed = true;
+    const parts = splitDependsParts(rawValue);
+    const { canonical, malformed } = canonicalizeDependsRefs(parts);
+    if (malformed) {
+      out.push(buildMalformedViolation(canonical, rawValue, labelLine, dependsLine, validNumbers));
     }
-    if (anyMalformed) {
-      // Are all recovered refs resolvable?
-      const refs = canonicalParts.filter((p) => /^Group\s+\d+$/i.test(p));
-      const allResolvable =
-        refs.length > 0 &&
-        refs.every((r) => {
-          const m = /^Group\s+(\d+)$/i.exec(r);
-          if (!m) return false;
-          return validNumbers.has(Number.parseInt(m[1] as string, 10));
-        });
-      if (allResolvable) {
-        const fixed = `**depends-on:** ${canonicalParts.join(', ')}`;
-        out.push({
-          rule: 'depends-on-malformed',
-          severity: 'error',
-          line: dependsLine + 1,
-          column: 1,
-          message: `depends-on value "${rawValue}" is not in canonical "Group N, Group M" form`,
-          fixable: true,
-          fix: {
-            kind: 'rewrite',
-            at: { line: dependsLine + 1 },
-            content: fixed,
-            range: { endLine: dependsLine + 1, endColumn: (labelLine.length || 1) + 1 },
-          },
-        });
-      } else {
-        out.push({
-          rule: 'depends-on-malformed',
-          severity: 'error',
-          line: dependsLine + 1,
-          column: 1,
-          message: `depends-on value "${rawValue}" cannot be parsed — expected "none", "Group N", a descriptive name, or a slug/group reference`,
-          fixable: false,
-          fix: null,
-        });
-      }
-    }
-    // Dangling references — emit here with precise line (schema superRefine covers this too but without line).
-    for (const ref of canonicalParts) {
-      const m = /^Group\s+(\d+)$/i.exec(ref);
-      if (!m) continue;
-      const n = Number.parseInt(m[1] as string, 10);
-      if (!validNumbers.has(n)) {
-        out.push({
-          rule: 'depends-on-dangling',
-          severity: 'error',
-          line: dependsLine + 1,
-          column: 1,
-          message: `Group ${group.number} depends-on references non-existent Group ${n}`,
-          fixable: false,
-          fix: null,
-        });
-      }
-    }
+    out.push(...collectDanglingViolations(canonical, group.number, dependsLine, validNumbers));
   }
   return out;
 }
@@ -631,6 +639,39 @@ function scanTodoPlaceholders(lines: string[]): Violation[] {
   return out;
 }
 
+function collectParseErrorViolations(err: WishParseError, lines: string[]): Violation[] {
+  const violations: Violation[] = [detectParseErrorViolation(err)];
+  if (err.rule !== 'missing-execution-groups-header') return violations;
+  const firstGroup = findFirstGroupHeaderLine(lines);
+  if (firstGroup >= 0) {
+    (violations[0] as Violation).fix = {
+      kind: 'insert',
+      at: { line: firstGroup + 1 },
+      content: '## Execution Groups\n\n',
+    };
+  }
+  violations.push(...scanStrayGroupHeaders(lines, null));
+  return violations;
+}
+
+function collectPostParseViolations(doc: WishDocument, lines: string[], options: LintOptions): Violation[] {
+  const violations: Violation[] = [];
+  const execRange = findExecGroupsRange(lines);
+  violations.push(...scanStrayGroupHeaders(lines, execRange));
+  violations.push(...scanGroupFieldLabels(doc, lines));
+  violations.push(...scanEmptyFieldContent(doc, lines));
+  violations.push(...scanValidation(doc, lines));
+  violations.push(...scanScope(doc, lines));
+  violations.push(...scanDependsOn(doc, lines));
+  if (!options.allowTodoPlaceholders) {
+    violations.push(...scanTodoPlaceholders(lines));
+  }
+  // Run schema as a catch-all; currently no additional violations are surfaced because
+  // richer per-line rules cover each case, but the call remains for future-proofing.
+  WishDocumentSchema.safeParse(doc);
+  return violations;
+}
+
 /**
  * Lint a wish. Accepts either a parsed `WishDocument` or a `WishParseError`
  * (so callers can wrap `parseWish` in a try/catch and hand the error here
@@ -643,72 +684,10 @@ export function lintWish(
 ): LintReport {
   const normalized = markdown.replace(/\r\n/g, '\n');
   const lines = normalized.split('\n');
-  const violations: Violation[] = [];
-
   if (docOrError instanceof WishParseError) {
-    violations.push(detectParseErrorViolation(docOrError));
-    // For `missing-execution-groups-header`, also enumerate stray group headers so
-    // `--fix` can repair both the missing parent and every non-canonical child at once.
-    if (docOrError.rule === 'missing-execution-groups-header') {
-      const firstGroup = findFirstGroupHeaderLine(lines);
-      if (firstGroup >= 0) {
-        // Give the parse-error violation a concrete fix now that we know where to insert.
-        const pv = violations[0] as Violation;
-        pv.fix = {
-          kind: 'insert',
-          at: { line: firstGroup + 1 },
-          content: '## Execution Groups\n\n',
-        };
-      }
-      // Also emit group-header-format violations for stray Portuguese/dash headers.
-      violations.push(...scanStrayGroupHeaders(lines, null));
-    }
-    return finalize(violations, docOrError, options);
+    return finalize(collectParseErrorViolations(docOrError, lines), docOrError, options);
   }
-
-  // Parse succeeded — run the full rule battery.
-  const doc = docOrError;
-
-  // 1. Stray group headers under `## Execution Groups`.
-  const execRange = findExecGroupsRange(lines);
-  violations.push(...scanStrayGroupHeaders(lines, execRange));
-
-  // 2. Per-group field-label scan.
-  violations.push(...scanGroupFieldLabels(doc, lines));
-
-  // 3. Empty field content (label present, value empty).
-  violations.push(...scanEmptyFieldContent(doc, lines));
-
-  // 4. Validation fence checks.
-  violations.push(...scanValidation(doc, lines));
-
-  // 5. Scope section.
-  violations.push(...scanScope(doc, lines));
-
-  // 6. depends-on malformed / dangling.
-  violations.push(...scanDependsOn(doc, lines));
-
-  // 7. TODO placeholders (unless bypassed for scaffolds).
-  if (!options.allowTodoPlaceholders) {
-    violations.push(...scanTodoPlaceholders(lines));
-  }
-
-  // 8. Catch-all: run schema and surface any issue we didn't already emit.
-  const schemaResult = WishDocumentSchema.safeParse(doc);
-  if (!schemaResult.success) {
-    for (const issue of schemaResult.error.issues) {
-      // Skip issues we already emitted via richer per-line rules.
-      const path = issue.path.join('.');
-      const isHandled =
-        (path.startsWith('scope.out') && violations.some((v) => v.rule === 'empty-out-scope')) ||
-        (path.startsWith('executionGroups') && /Group \d+ depends-on references/.test(issue.message)) ||
-        (/min|minimum/i.test(issue.message) &&
-          violations.some((v) => v.rule.startsWith('missing-') || v.rule === 'empty-out-scope'));
-      if (isHandled) continue;
-    }
-  }
-
-  return finalize(violations, doc, options);
+  return finalize(collectPostParseViolations(docOrError, lines, options), docOrError, options);
 }
 
 function finalize(
