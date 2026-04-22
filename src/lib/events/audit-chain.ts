@@ -91,18 +91,11 @@ export async function verifyAuditChain(opts: { since_id?: number; limit?: number
   let firstId: number | null = null;
   let lastId: number | null = null;
 
-  for (const row of rows) {
-    if (firstId === null) firstId = Number(row.id);
-    lastId = Number(row.id);
-    keyVersionsUsed.add(row.chain_key_version);
-
+  const verifyRow = (row: AuditChainRow, prior: Buffer): Buffer => {
     if (!row.chain_hash) {
       breaks.push({ row_id: Number(row.id), reason: 'chain_hash_null' });
-      // Break records continue — downstream rows are almost certainly broken too,
-      // but we surface each one so the operator sees the full scope.
-      continue;
+      return prior;
     }
-
     const key = keyMap.get(row.chain_key_version);
     if (key === undefined) {
       breaks.push({
@@ -110,15 +103,12 @@ export async function verifyAuditChain(opts: { since_id?: number; limit?: number
         reason: 'key_version_unknown',
         expected: `version ${row.chain_key_version} in genie_audit_chain_keys`,
       });
-      priorHash = row.chain_hash;
-      continue;
+      return row.chain_hash;
     }
-
     const rowDigest = computeRowDigest(row);
-    const input = Buffer.concat([priorHash, rowDigest]);
+    const input = Buffer.concat([prior, rowDigest]);
     const expected =
       key.length === 0 ? createHash('sha256').update(input).digest() : createHmac('sha256', key).update(input).digest();
-
     if (!expected.equals(row.chain_hash)) {
       breaks.push({
         row_id: Number(row.id),
@@ -127,8 +117,14 @@ export async function verifyAuditChain(opts: { since_id?: number; limit?: number
         actual: row.chain_hash.toString('hex'),
       });
     }
+    return row.chain_hash;
+  };
 
-    priorHash = row.chain_hash;
+  for (const row of rows) {
+    if (firstId === null) firstId = Number(row.id);
+    lastId = Number(row.id);
+    keyVersionsUsed.add(row.chain_key_version);
+    priorHash = verifyRow(row, priorHash);
   }
 
   return {

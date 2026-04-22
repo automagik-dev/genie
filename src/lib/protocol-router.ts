@@ -16,7 +16,7 @@
 import * as registry from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
 import { getConnection } from './db.js';
-import { findExecutorByPane, getCurrentExecutor } from './executor-registry.js';
+import { findExecutorByPane, getCurrentExecutor, getResumeSessionId } from './executor-registry.js';
 import * as mailbox from './mailbox.js';
 import { detectState } from './orchestrator/index.js';
 import { waitForExecutorReady } from './spawn-command.js';
@@ -42,19 +42,31 @@ interface DeliveryResult {
  *
  * Callers that catch this should surface the error to the operator instead
  * of quietly proceeding with a fresh spawn.
+ *
+ * `reason` names which precondition failed:
+ *   - `no_executor`   — agent has no `current_executor_id` (never spawned, or row pruned)
+ *   - `null_session`  — executor row exists but `claude_session_id` is null
+ *   - `no_session_id` — legacy alias kept for callers that read `agent.claudeSessionId`
+ *                       directly before Group 1's single-reader helper lands.
  */
+export type MissingResumeSessionReason = 'no_executor' | 'null_session' | 'no_session_id';
+
 export class MissingResumeSessionError extends Error {
   readonly workerId: string;
+  readonly entityId: string;
   readonly recipientId?: string;
+  readonly reason: MissingResumeSessionReason;
 
-  constructor(workerId: string, recipientId?: string) {
+  constructor(workerId: string, recipientId?: string, reason: MissingResumeSessionReason = 'null_session') {
     const suffix = recipientId ? ` (recipient "${recipientId}")` : '';
     super(
-      `Cannot resume worker "${workerId}"${suffix}: executor has no claude_session_id recorded. This usually means the worker predates the session-sync hook. Run \`genie reset ${workerId}\` or re-spawn the worker to recover.`,
+      `Cannot resume worker "${workerId}"${suffix}: executor has no claude_session_id recorded (reason: ${reason}). This usually means the worker predates the session-sync hook. Run \`genie reset ${workerId}\` or re-spawn the worker to recover.`,
     );
     this.name = 'MissingResumeSessionError';
     this.workerId = workerId;
+    this.entityId = workerId;
     this.recipientId = recipientId;
+    this.reason = reason;
   }
 }
 
@@ -258,13 +270,17 @@ async function ensureWorkerAlive(
   // trace-stale-resume (task #6).
   let resumeSessionId: string | undefined;
   if (template.provider === 'claude' && worker) {
+    // Canonical resume read — joins agents.current_executor_id → executors.claude_session_id
+    // and emits resume.found / resume.missing_session audit events. Replaces the
+    // direct `worker.claudeSessionId` reads (Group 3 of claude-resume-by-session-id wish).
+    const executorSessionId = await getResumeSessionId(worker.id);
     if (await isExecutorResumable(worker)) {
-      if (!worker.claudeSessionId) {
+      if (!executorSessionId) {
         throw new MissingResumeSessionError(worker.id, recipientId);
       }
-      resumeSessionId = worker.claudeSessionId;
-    } else if (worker.claudeSessionId) {
-      resumeSessionId = worker.claudeSessionId;
+      resumeSessionId = executorSessionId;
+    } else if (executorSessionId) {
+      resumeSessionId = executorSessionId;
     }
   }
 

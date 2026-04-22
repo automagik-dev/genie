@@ -1101,7 +1101,7 @@ describe('scheduler-daemon', () => {
         id: 'test-agent',
         paneId: '%42',
         state: 'error',
-        claudeSessionId: 'session-abc',
+        currentSessionId: 'session-abc',
         autoResume: true,
         resumeAttempts: 0,
         maxResumeAttempts: 3,
@@ -1155,7 +1155,7 @@ describe('scheduler-daemon', () => {
     });
 
     test('skips agent with no Claude session ID', async () => {
-      const agent = makeWorker({ claudeSessionId: undefined });
+      const agent = makeWorker({ currentSessionId: undefined });
       const { deps, logs } = createMockDeps();
 
       const result = await attemptAgentResume(deps, defaultConfig, agent);
@@ -1465,10 +1465,10 @@ describe('scheduler-daemon', () => {
           paneId: '',
           state: 'error',
           autoResume: true,
-          // claudeSessionId intentionally undefined — simulates the DB NULL
+          // currentSessionId intentionally undefined — simulates the DB NULL
           // observed on felipe's machine (genie-docs directory placeholders
           // + omni workers that died before capturing a Claude session).
-          claudeSessionId: undefined,
+          currentSessionId: undefined,
         },
       ];
       const updates: { id: string; updates: Record<string, unknown> }[] = [];
@@ -1504,21 +1504,21 @@ describe('scheduler-daemon', () => {
           autoResume: true,
           // Valid session id — the scheduler CAN still retry this agent.
           // The reconciler must NOT flip auto_resume here.
-          claudeSessionId: 'abcd-1234-valid-uuid',
+          currentSessionId: 'abcd-1234-valid-uuid',
         },
         {
           id: 'already-disabled',
           paneId: '%43',
           state: 'error',
           autoResume: false,
-          claudeSessionId: undefined,
+          currentSessionId: undefined,
         },
         {
           id: 'healthy-working',
           paneId: '%44',
           state: 'working',
           autoResume: true,
-          claudeSessionId: undefined,
+          currentSessionId: undefined,
         },
       ];
       const updates: { id: string; updates: Record<string, unknown> }[] = [];
@@ -1548,7 +1548,7 @@ describe('scheduler-daemon', () => {
         id: 'test-agent',
         paneId: '%42',
         state: 'error',
-        claudeSessionId: 'session-abc',
+        currentSessionId: 'session-abc',
         autoResume: true,
         resumeAttempts: 0,
         maxResumeAttempts: 3,
@@ -1603,7 +1603,7 @@ describe('scheduler-daemon', () => {
         id: 'exhausted-agent',
         paneId: '%99',
         state: 'error',
-        claudeSessionId: 'sess-valid',
+        currentSessionId: 'sess-valid',
         autoResume: true,
         resumeAttempts: 3,
         maxResumeAttempts: 3,
@@ -1646,7 +1646,7 @@ describe('scheduler-daemon', () => {
           paneId: '%42',
           state: 'working',
           autoResume: true,
-          claudeSessionId: 'sess-1',
+          currentSessionId: 'sess-1',
           resumeAttempts: 0,
         },
       ];
@@ -1676,7 +1676,7 @@ describe('scheduler-daemon', () => {
       const runs = [{ id: 'run-orphan', worker_id: 'agent-1', status: 'running', trigger_id: 'trig-1' }];
       const heartbeats = [{ status: 'dead' }, { status: 'dead' }];
       const workers: WorkerInfo[] = [
-        { id: 'agent-1', paneId: '%42', state: 'working', autoResume: false, claudeSessionId: 'sess-1' },
+        { id: 'agent-1', paneId: '%42', state: 'working', autoResume: false, currentSessionId: 'sess-1' },
       ];
 
       const { deps, logs } = createMockDeps(
@@ -1714,7 +1714,7 @@ describe('scheduler-daemon', () => {
           paneId: '%42',
           state: 'working',
           autoResume: true,
-          claudeSessionId: 'sess-1',
+          currentSessionId: 'sess-1',
           resumeAttempts: 3,
           maxResumeAttempts: 3,
         },
@@ -1752,12 +1752,19 @@ describe('scheduler-daemon', () => {
           paneId: '%42',
           state: 'working',
           autoResume: true,
-          claudeSessionId: 'sess-1',
+          currentSessionId: 'sess-1',
           resumeAttempts: 0,
         },
-        { id: 'agent-2', paneId: '%43', state: 'idle', autoResume: true, claudeSessionId: 'sess-2', resumeAttempts: 0 },
-        { id: 'agent-done', paneId: '%44', state: 'done', claudeSessionId: 'sess-3' },
-        { id: 'agent-suspended', paneId: '%45', state: 'suspended', claudeSessionId: 'sess-4' },
+        {
+          id: 'agent-2',
+          paneId: '%43',
+          state: 'idle',
+          autoResume: true,
+          currentSessionId: 'sess-2',
+          resumeAttempts: 0,
+        },
+        { id: 'agent-done', paneId: '%44', state: 'done', currentSessionId: 'sess-3' },
+        { id: 'agent-suspended', paneId: '%45', state: 'suspended', currentSessionId: 'sess-4' },
       ];
 
       const resumedAgents: string[] = [];
@@ -1793,7 +1800,7 @@ describe('scheduler-daemon', () => {
           paneId: '%42',
           state: 'working',
           autoResume: true,
-          claudeSessionId: 'sess-1',
+          currentSessionId: 'sess-1',
           resumeAttempts: 0,
         },
       ];
@@ -1834,7 +1841,7 @@ describe('scheduler-daemon', () => {
           paneId: '%42',
           state: 'working',
           autoResume: true,
-          claudeSessionId: 'sess-1',
+          currentSessionId: 'sess-1',
           resumeAttempts: 0,
         },
         {
@@ -1842,7 +1849,7 @@ describe('scheduler-daemon', () => {
           paneId: '%43',
           state: 'idle',
           autoResume: true,
-          claudeSessionId: 'sess-2',
+          currentSessionId: 'sess-2',
           resumeAttempts: 0,
         },
       ];
@@ -1897,7 +1904,7 @@ describe('scheduler-daemon', () => {
           paneId: '%42',
           state: 'working',
           autoResume: true,
-          claudeSessionId: 'sess-1',
+          currentSessionId: 'sess-1',
           resumeAttempts: 0,
         },
       ];
@@ -1930,7 +1937,7 @@ describe('scheduler-daemon', () => {
           paneId: '%42',
           state: 'working',
           autoResume: true,
-          claudeSessionId: 'sess-1',
+          currentSessionId: 'sess-1',
           resumeAttempts: 0,
         },
       ];
@@ -1961,7 +1968,7 @@ describe('scheduler-daemon', () => {
           paneId: '%42',
           state: 'working',
           autoResume: true,
-          claudeSessionId: 'sess-1',
+          currentSessionId: 'sess-1',
           resumeAttempts: 0,
         },
       ];
@@ -2356,7 +2363,7 @@ describe('terminalizeCleanExitUnverified (D1 write)', () => {
     id: 'agent-idle-dead',
     paneId: '%77',
     state: 'idle',
-    claudeSessionId: 'sess-idle',
+    currentSessionId: 'sess-idle',
     autoResume: true,
     resumeAttempts: 0,
   };
@@ -2445,7 +2452,7 @@ describe('runAgentRecoveryPass — turn-aware D1 / D3 routing', () => {
       id,
       paneId: '%99',
       state,
-      claudeSessionId: 'sess-x',
+      currentSessionId: 'sess-x',
       autoResume: true,
       resumeAttempts: 0,
       maxResumeAttempts: 3,

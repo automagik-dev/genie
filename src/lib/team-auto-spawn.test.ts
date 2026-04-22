@@ -8,6 +8,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import * as registry from './agent-registry.js';
+import { sanitizeTeamName } from './claude-native-teams.js';
+import * as executorRegistry from './executor-registry.js';
 
 // We test the helper functions and logic by importing from team-auto-spawn
 // The tmux-dependent parts are integration-tested separately
@@ -105,5 +108,63 @@ describe('team-auto-spawn: result types', () => {
   test('result shape for existing team', () => {
     const result = { created: false, session: 'genie', window: 'my-team' };
     expect(result.created).toBe(false);
+  });
+});
+
+// ============================================================================
+// Team-lead executor-reuse decision (Group 5 of claude-resume-by-session-id)
+// ============================================================================
+//
+// The executor-reuse decision that ensureTeamLead makes is:
+//   priorSessionId = await getResumeSessionId(teamLeadAgentId)
+//   sessionId      = priorSessionId ?? randomUUID()
+//   shouldResume   = priorSessionId !== null
+//
+// These tests exercise the same lookup path ensureTeamLead uses
+// (findOrCreateAgent → getResumeSessionId) to prove that on a second
+// invocation with the same (leaderName, team), we recover the UUID we
+// captured previously — i.e. no JSONL scan, no fresh mint.
+
+describe('team-auto-spawn: team-lead executor-reuse decision', () => {
+  test('second invocation recovers the session UUID of the first', async () => {
+    const team = `auto-spawn-reuse-${Date.now().toString(36)}`;
+    const sanitized = sanitizeTeamName(team);
+    const leaderName = team;
+
+    // First "spawn": find-or-create agent, mint a UUID, persist via executor.
+    const agent1 = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+    const captured = '11111111-2222-3333-4444-555555555555';
+    const exec1 = await executorRegistry.createAndLinkExecutor(agent1.id, 'claude', 'tmux', {
+      claudeSessionId: captured,
+      state: 'spawning',
+    });
+    await registry.setCurrentExecutor(agent1.id, exec1.id);
+
+    // Second "spawn": ensureTeamLead would look up the same agent and query
+    // getResumeSessionId. It must return the captured UUID, not null.
+    const agent2 = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+    expect(agent2.id).toBe(agent1.id); // idempotent by (custom_name, team)
+
+    const priorSessionId = await executorRegistry.getResumeSessionId(agent2.id);
+    expect(priorSessionId).toBe(captured);
+
+    // Decision: when priorSessionId is non-null we reuse via --resume <uuid>.
+    const shouldResume = priorSessionId !== null;
+    expect(shouldResume).toBe(true);
+  });
+
+  test('fresh team with no executor → decision mints a new UUID and does not resume', async () => {
+    const team = `auto-spawn-fresh-${Date.now().toString(36)}`;
+    const sanitized = sanitizeTeamName(team);
+    const leaderName = team;
+
+    const agent = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+    const priorSessionId = await executorRegistry.getResumeSessionId(agent.id);
+
+    expect(priorSessionId).toBeNull();
+
+    // Decision: fresh → mint + pass via --session-id on spawn.
+    const shouldResume = priorSessionId !== null;
+    expect(shouldResume).toBe(false);
   });
 });

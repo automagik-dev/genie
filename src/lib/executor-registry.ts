@@ -255,6 +255,68 @@ export async function updateClaudeSessionId(executorId: string, sessionId: strin
 }
 
 /**
+ * Single-reader chokepoint for every resume decision.
+ *
+ * Joins `agents.current_executor_id → executors.claude_session_id` and emits
+ * one of two audit events:
+ *   - `resume.found` when a session UUID is available for reuse.
+ *   - `resume.missing_session` when there is no current executor, or the
+ *     current executor has no captured session yet (with `reason` tagged
+ *     so operators can tell `no_executor` from `null_session`).
+ *
+ * Returning `null` is load-bearing: callers that did NOT explicitly request a
+ * resume (e.g., fresh spawns) treat `null` as "no prior session → start
+ * clean". Callers that DID request a resume should throw a
+ * `MissingResumeSessionError` on `null` (see Group 6).
+ */
+export async function getResumeSessionId(agentId: string): Promise<string | null> {
+  const sql = await getConnection();
+  const rows = await sql<{ executor_id: string | null; claude_session_id: string | null }[]>`
+    SELECT a.current_executor_id AS executor_id, e.claude_session_id
+    FROM agents a
+    LEFT JOIN executors e ON e.id = a.current_executor_id
+    WHERE a.id = ${agentId}
+  `;
+
+  if (rows.length === 0 || rows[0].executor_id === null) {
+    await recordAuditEvent('agent', agentId, 'resume.missing_session', process.env.GENIE_AGENT_NAME ?? 'cli', {
+      reason: 'no_executor',
+    });
+    return null;
+  }
+
+  const sessionId = rows[0].claude_session_id;
+  const executorId = rows[0].executor_id;
+
+  if (!sessionId) {
+    await recordAuditEvent('agent', agentId, 'resume.missing_session', process.env.GENIE_AGENT_NAME ?? 'cli', {
+      reason: 'null_session',
+      executorId,
+    });
+    return null;
+  }
+
+  await recordAuditEvent('agent', agentId, 'resume.found', process.env.GENIE_AGENT_NAME ?? 'cli', {
+    executorId,
+    sessionId,
+  });
+  return sessionId;
+}
+
+/**
+ * Record that the provider rejected a resume attempt for a session we believed
+ * was live (e.g., Claude CLI refuses the `--resume <uuid>`). Callers invoke
+ * this after a failed resume so operators can see the rejection in the audit
+ * stream and correlate it with the originating `resume.found` event.
+ */
+export async function recordResumeProviderRejected(agentId: string, sessionId: string, reason: string): Promise<void> {
+  await recordAuditEvent('agent', agentId, 'resume.provider_rejected', process.env.GENIE_AGENT_NAME ?? 'cli', {
+    sessionId,
+    reason,
+  });
+}
+
+/**
  * Return an agent's current executor state iff it is live, else null.
  *
  * Used by `genie ls` to determine liveness for non-tmux transports (SDK, omni,

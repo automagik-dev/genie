@@ -18,10 +18,13 @@ import {
   getCurrentExecutor,
   getExecutor,
   getLiveExecutorState,
+  getResumeSessionId,
   isExecutorAlive,
   listExecutors,
+  recordResumeProviderRejected,
   terminateActiveExecutor,
   terminateExecutor,
+  updateClaudeSessionId,
   updateExecutorState,
 } from './executor-registry.js';
 import type { ExecutorState } from './executor-types.js';
@@ -43,6 +46,7 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
     await sql`DELETE FROM assignments`;
     await sql`DELETE FROM executors`;
     await sql`DELETE FROM agents`;
+    await sql`DELETE FROM audit_events WHERE event_type LIKE 'resume.%'`;
   });
 
   /** Helper: create an agent and return its ID. */
@@ -315,6 +319,130 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
 
     test('returns null for nonexistent session', async () => {
       expect(await findExecutorBySession('sess-nonexistent')).toBeNull();
+    });
+  });
+
+  // ==========================================================================
+  // getResumeSessionId — single-reader chokepoint for resume decisions
+  // ==========================================================================
+
+  describe('getResumeSessionId', () => {
+    async function latestAuditForAgent(agentId: string, eventType: string) {
+      const sql = await getConnection();
+      const rows = await sql<{ event_type: string; details: Record<string, unknown>; created_at: string }[]>`
+        SELECT event_type, details, created_at
+        FROM audit_events
+        WHERE entity_type = 'agent' AND entity_id = ${agentId} AND event_type = ${eventType}
+        ORDER BY id DESC
+        LIMIT 1
+      `;
+      return rows[0] ?? null;
+    }
+
+    test('happy path: returns session from current executor and emits resume.found', async () => {
+      const agentId = await seedAgent();
+      const exec = await createExecutor(agentId, 'claude', 'tmux', { claudeSessionId: 'sess-happy' });
+      await setCurrentExecutor(agentId, exec.id);
+
+      const sessionId = await getResumeSessionId(agentId);
+      expect(sessionId).toBe('sess-happy');
+
+      const event = await latestAuditForAgent(agentId, 'resume.found');
+      expect(event).not.toBeNull();
+      expect(event!.details.executorId).toBe(exec.id);
+      expect(event!.details.sessionId).toBe('sess-happy');
+    });
+
+    test('no current executor: returns null and emits resume.missing_session (no_executor)', async () => {
+      const agentId = await seedAgent();
+      // No executor assigned → current_executor_id is null
+
+      const sessionId = await getResumeSessionId(agentId);
+      expect(sessionId).toBeNull();
+
+      const event = await latestAuditForAgent(agentId, 'resume.missing_session');
+      expect(event).not.toBeNull();
+      expect(event!.details.reason).toBe('no_executor');
+    });
+
+    test('executor without session: returns null and emits resume.missing_session (null_session)', async () => {
+      const agentId = await seedAgent();
+      const exec = await createExecutor(agentId, 'claude', 'tmux'); // no claudeSessionId
+      await setCurrentExecutor(agentId, exec.id);
+
+      const sessionId = await getResumeSessionId(agentId);
+      expect(sessionId).toBeNull();
+
+      const event = await latestAuditForAgent(agentId, 'resume.missing_session');
+      expect(event).not.toBeNull();
+      expect(event!.details.reason).toBe('null_session');
+      expect(event!.details.executorId).toBe(exec.id);
+    });
+
+    test('multiple prior executors: only the current executor counts', async () => {
+      const agentId = await seedAgent();
+
+      // Three historical executors with different sessions
+      const e1 = await createExecutor(agentId, 'claude', 'tmux', { claudeSessionId: 'sess-old-1' });
+      await updateExecutorState(e1.id, 'terminated');
+      const e2 = await createExecutor(agentId, 'claude', 'tmux', { claudeSessionId: 'sess-old-2' });
+      await updateExecutorState(e2.id, 'done');
+
+      // Current executor has its own session
+      const eCurrent = await createExecutor(agentId, 'claude', 'tmux', {
+        claudeSessionId: 'sess-current',
+      });
+      await setCurrentExecutor(agentId, eCurrent.id);
+
+      const sessionId = await getResumeSessionId(agentId);
+      expect(sessionId).toBe('sess-current');
+
+      const event = await latestAuditForAgent(agentId, 'resume.found');
+      expect(event!.details.executorId).toBe(eCurrent.id);
+      expect(event!.details.sessionId).toBe('sess-current');
+    });
+
+    test('returns null for unknown agent and emits resume.missing_session', async () => {
+      const sessionId = await getResumeSessionId('00000000-0000-0000-0000-000000000000');
+      expect(sessionId).toBeNull();
+
+      const event = await latestAuditForAgent('00000000-0000-0000-0000-000000000000', 'resume.missing_session');
+      expect(event).not.toBeNull();
+      expect(event!.details.reason).toBe('no_executor');
+    });
+
+    test('picks up session written after executor creation via updateClaudeSessionId', async () => {
+      const agentId = await seedAgent();
+      const exec = await createExecutor(agentId, 'claude', 'tmux');
+      await setCurrentExecutor(agentId, exec.id);
+
+      expect(await getResumeSessionId(agentId)).toBeNull();
+
+      await updateClaudeSessionId(exec.id, 'sess-late');
+
+      const sessionId = await getResumeSessionId(agentId);
+      expect(sessionId).toBe('sess-late');
+    });
+  });
+
+  describe('recordResumeProviderRejected', () => {
+    test('emits resume.provider_rejected with sessionId and reason', async () => {
+      const agentId = await seedAgent();
+
+      await recordResumeProviderRejected(agentId, 'sess-rejected', 'provider_404');
+
+      const sql = await getConnection();
+      const rows = await sql<{ details: Record<string, unknown> }[]>`
+        SELECT details FROM audit_events
+        WHERE entity_type = 'agent'
+          AND entity_id = ${agentId}
+          AND event_type = 'resume.provider_rejected'
+        ORDER BY id DESC
+        LIMIT 1
+      `;
+      expect(rows.length).toBe(1);
+      expect(rows[0].details.sessionId).toBe('sess-rejected');
+      expect(rows[0].details.reason).toBe('provider_404');
     });
   });
 

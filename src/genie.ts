@@ -141,19 +141,21 @@ program.configureOutput({
 // ============================================================================
 
 async function startNamedSession(name: string): Promise<void> {
-  const { buildTeamLeadCommand, sessionExists } = await import('./lib/team-lead-command.js');
+  const { randomUUID } = await import('node:crypto');
+  const { buildTeamLeadCommand } = await import('./lib/team-lead-command.js');
   const { getAgentsFilePath } = await import('./genie-commands/session.js');
 
   const systemPromptFile = getAgentsFilePath();
 
-  // Only resume if a prior CC session with this name exists (#694, #701)
-  const hasPriorSession = sessionExists(name);
+  // Group 5 of the claude-resume-by-session-id wish will wire up
+  // executor-based resume here. For now, always start a fresh session.
+  const sessionId = randomUUID();
   const cmd = buildTeamLeadCommand(name, {
     systemPromptFile: systemPromptFile ?? undefined,
-    continueName: hasPriorSession ? name : undefined,
+    sessionId,
   });
 
-  console.log(hasPriorSession ? `Resuming session: ${name}` : `Starting new session: ${name}`);
+  console.log(`Starting new session: ${name}`);
 
   const { spawnSync } = await import('node:child_process');
   const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' });

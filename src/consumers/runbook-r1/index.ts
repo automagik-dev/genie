@@ -75,6 +75,34 @@ export async function startRunbookR1(opts: R1ConsumerOptions = {}): Promise<R1Co
 
   const token = opts.token ?? mintR1Token({ subscriberId: opts.subscriberId }).token;
 
+  const parseDelivery = (row: V2EventRow): { from: string; to: string } | null => {
+    if (row.subject !== 'mailbox.delivery') return null;
+    const data = (row.data ?? {}) as Record<string, unknown>;
+    const from = typeof data.from === 'string' ? data.from : null;
+    const to = typeof data.to === 'string' ? data.to : null;
+    if (!from || !to) return null;
+    return { from, to };
+  };
+
+  const emitFinding = (finding: DetectorFinding) => {
+    try {
+      emitEvent(
+        'runbook.triggered',
+        {
+          rule: finding.rule,
+          evidence_count: finding.evidence_count,
+          window_minutes: 10,
+          correlation_id: finding.correlation_id,
+          recommended_sql: finding.recommended_sql,
+          evidence_summary: `scheduler→team-lead mailbox burst: ${finding.evidence_count} deliveries in 10m window`,
+        },
+        { severity: 'warn', source_subsystem: 'consumer-runbook-r1' },
+      );
+    } catch {
+      // Emitting must never tear down the consumer — bookkeeping only.
+    }
+  };
+
   const handle: StreamFollowHandle = await runEventsStreamFollow(
     {
       follow: true,
@@ -84,41 +112,20 @@ export async function startRunbookR1(opts: R1ConsumerOptions = {}): Promise<R1Co
       idleExitMs: opts.idleExitMs,
     },
     (row: V2EventRow) => {
-      if (row.subject !== 'mailbox.delivery') return;
-      const data = (row.data ?? {}) as Record<string, unknown>;
-      const from = typeof data.from === 'string' ? data.from : null;
-      const to = typeof data.to === 'string' ? data.to : null;
-      if (!from || !to) return;
+      const delivery = parseDelivery(row);
+      if (!delivery) return;
 
       const finding = detector.observe({
         createdAt: new Date(row.created_at).getTime(),
-        from,
-        to,
+        from: delivery.from,
+        to: delivery.to,
         trace_id: row.trace_id,
       });
       if (!finding) return;
 
       findingCount++;
-      if (opts.onFinding) {
-        opts.onFinding(finding);
-        return;
-      }
-      try {
-        emitEvent(
-          'runbook.triggered',
-          {
-            rule: finding.rule,
-            evidence_count: finding.evidence_count,
-            window_minutes: 10,
-            correlation_id: finding.correlation_id,
-            recommended_sql: finding.recommended_sql,
-            evidence_summary: `scheduler→team-lead mailbox burst: ${finding.evidence_count} deliveries in 10m window`,
-          },
-          { severity: 'warn', source_subsystem: 'consumer-runbook-r1' },
-        );
-      } catch {
-        // Emitting must never tear down the consumer — bookkeeping only.
-      }
+      if (opts.onFinding) opts.onFinding(finding);
+      else emitFinding(finding);
     },
   );
 

@@ -58,10 +58,6 @@ interface ReactionEvent {
 
 let handlerInstance: OmniApprovalHandler | null = null;
 
-function getApprovalHandler(): OmniApprovalHandler | null {
-  return handlerInstance;
-}
-
 class OmniApprovalHandler {
   private nc: NatsConnection | null = null;
   private subs: Subscription[] = [];
@@ -246,11 +242,4 @@ export async function startOmniApprovalHandler(natsUrl?: string): Promise<OmniAp
 
   await handler.start();
   return handler;
-}
-
-/** Stop the running handler if active. */
-async function stopOmniApprovalHandler(): Promise<void> {
-  if (handlerInstance) {
-    await handlerInstance.stop();
-  }
 }

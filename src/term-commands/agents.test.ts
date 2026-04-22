@@ -10,12 +10,13 @@ import * as directory from '../lib/agent-directory.js';
 import type { DirectoryEntry } from '../lib/agent-directory.js';
 import type { Agent } from '../lib/agent-registry.js';
 import * as registry from '../lib/agent-registry.js';
-// biome-ignore lint/correctness/noUnusedImports: setupTestSchema used by merge-preview new test at :826
+import * as executorRegistry from '../lib/executor-registry.js';
 import { DB_AVAILABLE, setupTestDatabase, setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
   buildInitialSplitWindowCommand,
   buildResumeContext,
+  buildWorkerStatusMap,
   findDeadResumable,
   pickParallelShortId,
   resolveAgentWorkingDir,
@@ -395,23 +396,48 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
     await sql`TRUNCATE TABLE agents CASCADE`;
   });
 
-  /** Seed a canonical-shaped agents row. */
-  async function seedCanonical(id: string, team: string, overrides: Partial<registry.Agent> = {}): Promise<void> {
+  /**
+   * Seed a canonical-shaped agents row.
+   *
+   * Post-migration-047 the session UUID lives on the current executor, not
+   * on the agent row. Accept `claudeSessionId` as a seed-only option: when
+   * provided, create and link an executor carrying it so downstream reads
+   * via `getCurrentExecutor` / `findDeadResumable` behave as before.
+   */
+  async function seedCanonical(
+    id: string,
+    team: string,
+    overrides: Partial<registry.Agent> & { claudeSessionId?: string } = {},
+  ): Promise<void> {
+    const { claudeSessionId, ...agentOverrides } = overrides;
+    const provider = agentOverrides.provider ?? 'claude';
     await registry.register({
       id,
-      paneId: overrides.paneId ?? 'inline',
-      session: overrides.session ?? team,
+      paneId: agentOverrides.paneId ?? 'inline',
+      session: agentOverrides.session ?? team,
       worktree: null,
       startedAt: new Date().toISOString(),
-      state: overrides.state ?? 'idle',
+      state: agentOverrides.state ?? 'idle',
       lastStateChange: new Date().toISOString(),
-      repoPath: overrides.repoPath ?? `/tmp/spawn-state-${id}-${Date.now()}`,
-      claudeSessionId: overrides.claudeSessionId,
-      role: overrides.role ?? id,
+      repoPath: agentOverrides.repoPath ?? `/tmp/spawn-state-${id}-${Date.now()}`,
+      role: agentOverrides.role ?? id,
       team,
-      provider: overrides.provider ?? 'claude',
-      ...overrides,
+      provider,
+      ...agentOverrides,
     });
+    if (claudeSessionId !== undefined) {
+      await executorRegistry.createAndLinkExecutor(id, provider, 'tmux', {
+        claudeSessionId,
+        tmuxPaneId: agentOverrides.paneId,
+        tmuxSession: agentOverrides.session ?? team,
+      });
+    }
+  }
+
+  /** Read the session UUID from the agent's current executor (migration 047). */
+  async function seededSessionId(agentId: string): Promise<string | null> {
+    const executor = await executorRegistry.getCurrentExecutor(agentId);
+    return executor?.claudeSessionId ?? null;
   }
 
   /** Stub transport-aware liveness — always-alive / always-dead. */
@@ -496,7 +522,7 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       // Home-team canonical row must NOT have been touched.
       const homeRow = await registry.get('alice');
       expect(homeRow?.team).toBe(homeTeam);
-      expect(homeRow?.claudeSessionId).toBe('home-team-canonical-uuid-000000000000');
+      expect(await seededSessionId('alice')).toBe('home-team-canonical-uuid-000000000000');
     });
 
     test('invariant: parallel creation does NOT clobber canonical row', async () => {
@@ -509,7 +535,8 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
 
       // Snapshot canonical before parallel resolution.
       const before = await registry.get('alice');
-      expect(before?.claudeSessionId).toBe(canonicalUuid);
+      expect(before).not.toBeNull();
+      expect(await seededSessionId('alice')).toBe(canonicalUuid);
 
       // Resolve spawn identity (alive canonical → parallel).
       const parallelUuid = 'ba110000-aaaa-bbbb-cccc-dddddddddddd';
@@ -526,11 +553,12 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       });
 
       const after = await registry.get('alice');
-      expect(after?.claudeSessionId).toBe(canonicalUuid);
+      expect(await seededSessionId('alice')).toBe(canonicalUuid);
       expect(after?.id).toBe('alice');
 
       const parallel = await registry.get(identity.workerId);
-      expect(parallel?.claudeSessionId).toBe(parallelUuid);
+      expect(parallel).not.toBeNull();
+      expect(await seededSessionId(identity.workerId)).toBe(parallelUuid);
     });
 
     test('invariant: <sN> collision extends to s5 of the SAME UUID', async () => {
@@ -709,7 +737,46 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       const found = await findDeadResumable(team, 'alice-b1c2');
       expect(found).not.toBeNull();
       expect(found?.id).toBe('alice-b1c2');
-      expect(found?.claudeSessionId).toBe('parallel-uuid-b1c2abcd-0000-0000-000000000000');
+      expect(await seededSessionId('alice-b1c2')).toBe('parallel-uuid-b1c2abcd-0000-0000-000000000000');
+    });
+  });
+
+  // Regression for #1147 (2026-04-22):
+  // `genie work` dispatched in native/inline mode could leave an engineer-N
+  // row with `transport: 'inline'` and `paneId: 'inline'`. On retry, the old
+  // findDeadResumable matched that row (provider='claude', paneId 'inline' →
+  // "dead") and routed through resumeAgent, which hard-requires tmux →
+  // "error connecting to /tmp/tmux-1000/genie". The fix filters non-tmux
+  // rows so rejectDuplicateRole can clean them up instead.
+  describe('findDeadResumable: transport-aware (#1147)', () => {
+    test('skips a dead row whose transport is "inline"', async () => {
+      const team = `team-inline-ghost-${Date.now()}`;
+      await seedCanonical('engineer-1', team, {
+        paneId: 'inline',
+        transport: 'inline',
+        claudeSessionId: 'inline-uuid-11111111-2222-3333-444444444444',
+        provider: 'claude',
+        role: 'engineer-1',
+      });
+
+      const found = await findDeadResumable(team, 'engineer-1');
+      expect(found).toBeNull();
+    });
+
+    test('still returns a dead row whose transport is "tmux"', async () => {
+      const team = `team-tmux-resumable-${Date.now()}`;
+      await seedCanonical('engineer-1', team, {
+        paneId: 'inline', // pane gone — dead
+        transport: 'tmux',
+        claudeSessionId: 'tmux-uuid-99999999-8888-7777-666666666666',
+        provider: 'claude',
+        role: 'engineer-1',
+      });
+
+      const found = await findDeadResumable(team, 'engineer-1');
+      expect(found).not.toBeNull();
+      expect(found?.id).toBe('engineer-1');
+      expect(found?.transport).toBe('tmux');
     });
   });
 
@@ -773,5 +840,71 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       expect(a?.team).toBe(teamA);
       expect(a?.paneId).toBe('%67');
     });
+  });
+});
+
+// ============================================================================
+// buildWorkerStatusMap — native-team name visibility (#1302)
+// ============================================================================
+
+describe.skipIf(!DB_AVAILABLE)('buildWorkerStatusMap: customName keying', () => {
+  let cleanupSchema: () => Promise<void>;
+
+  beforeAll(async () => {
+    cleanupSchema = await setupTestSchema();
+  });
+
+  afterAll(async () => {
+    await cleanupSchema();
+  });
+
+  test('keys suspended native-team agents by customName so `genie ls` shows them', async () => {
+    const ts = Date.now();
+    const id = `worker-status-native-${ts}`;
+    const worker: Agent = {
+      id,
+      paneId: 'inline',
+      session: 'test',
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: 'suspended',
+      lastStateChange: new Date().toISOString(),
+      repoPath: `/tmp/worker-status-map-${ts}`,
+      role: 'engineer',
+      customName: `engineer-${ts}`,
+      team: `native-${ts}`,
+      autoResume: true,
+      resumeAttempts: 0,
+      maxResumeAttempts: 3,
+    };
+
+    const map = await buildWorkerStatusMap([worker]);
+
+    // Pre-#1302: keyed by role ("engineer") — collides with every other engineer.
+    // Post-#1302: keyed by customName, matching the name `genie send` uses.
+    expect(map.has(`engineer-${ts}`)).toBe(true);
+    expect(map.has('engineer')).toBe(false);
+    expect(map.get(`engineer-${ts}`)?.team).toBe(`native-${ts}`);
+  });
+
+  test('falls back to role, then id, when customName is absent', async () => {
+    const ts = Date.now();
+    const idRole = `worker-status-role-${ts}`;
+    const idBare = `worker-status-bare-${ts}`;
+    const base = {
+      paneId: 'inline',
+      session: 'test',
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: 'suspended' as const,
+      lastStateChange: new Date().toISOString(),
+      repoPath: `/tmp/worker-status-fallback-${ts}`,
+    };
+    const roleOnly: Agent = { ...base, id: idRole, role: `role-${ts}`, team: `tm-${ts}` };
+    const bare: Agent = { ...base, id: idBare, team: `tm-${ts}` };
+
+    const map = await buildWorkerStatusMap([roleOnly, bare]);
+    expect(map.has(`role-${ts}`)).toBe(true);
+    expect(map.has(idBare)).toBe(true);
   });
 });

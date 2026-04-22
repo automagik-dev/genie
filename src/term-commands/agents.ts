@@ -16,6 +16,7 @@ import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { type ResolveContext, resolveField } from '../lib/defaults.js';
+import { emitEvent } from '../lib/emit.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import * as executorRegistry from '../lib/executor-registry.js';
 import type { TransportType as ExecutorTransport } from '../lib/executor-types.js';
@@ -566,7 +567,6 @@ async function registerSpawnWorker(
     state: 'spawning',
     lastStateChange: ctx.now,
     repoPath: ctx.cwd,
-    claudeSessionId: ctx.claudeSessionId,
     nativeTeamEnabled: nt?.enabled ?? false,
     nativeAgentId: `${ctx.agentName}@${ctx.validated.team}`,
     nativeColor: nt?.color ?? ctx.spawnColor,
@@ -648,8 +648,11 @@ function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Age
   if (ctx.validated.role) console.log(`  Role:     ${ctx.validated.role}`);
   if (ctx.executorId) console.log(`  Executor: ${ctx.executorId}`);
   if (ctx.validated.skill) console.log(`  Skill:    ${ctx.validated.skill}`);
-  if (workerEntry.claudeSessionId) {
-    console.log(`  Session:  ${workerEntry.claudeSessionId}`);
+  // Session UUID lives on the executor (migration 047). `ctx.claudeSessionId`
+  // carries whatever was minted/resumed for this spawn; the agent row does
+  // not hold it anymore.
+  if (ctx.claudeSessionId) {
+    console.log(`  Session:  ${ctx.claudeSessionId}`);
   }
   console.log(`  Layout:   ${ctx.layoutMode}`);
   if (nt?.enabled) {
@@ -1247,6 +1250,21 @@ async function runSdkQuery(
   }
 }
 
+/**
+ * Roll back a half-completed spawn so a retry doesn't hit a ghost registry
+ * entry. Issue #1147: inline/sdk paths register before the actual process
+ * runs; any exception between register and launch used to strand the entry,
+ * then findDeadResumable routed it back through tmux-only resume → crash.
+ */
+async function rollbackSpawn(ctx: SpawnCtx, opts: { workerRegistered: boolean }): Promise<void> {
+  if (opts.workerRegistered) {
+    await registry.unregister(ctx.workerId).catch(() => {});
+  }
+  if (ctx.executorId) {
+    await executorRegistry.updateExecutorState(ctx.executorId, 'error').catch(() => {});
+  }
+}
+
 async function launchSdkSpawn(
   ctx: SpawnCtx,
   permissionsConfig?: directory.DirectoryEntry['permissions'],
@@ -1254,28 +1272,35 @@ async function launchSdkSpawn(
   sdkConfig?: import('../lib/sdk-directory-types.js').SdkDirectoryConfig,
   runtimeExtraOptions?: Record<string, unknown>,
 ): Promise<string> {
-  if (ctx.agentIdentityId && ctx.executorId) {
-    await createAndLinkExecutor(ctx.agentIdentityId, 'claude-sdk' as ProviderName, 'process', {
-      id: ctx.executorId,
-      claudeSessionId: null,
-      state: 'spawning',
-      repoPath: ctx.cwd,
-    });
+  let workerRegistered = false;
+  try {
+    if (ctx.agentIdentityId && ctx.executorId) {
+      await createAndLinkExecutor(ctx.agentIdentityId, 'claude-sdk' as ProviderName, 'process', {
+        id: ctx.executorId,
+        claudeSessionId: null,
+        state: 'spawning',
+        repoPath: ctx.cwd,
+      });
+    }
+
+    await registerSpawnWorker(ctx, 'sdk');
+    workerRegistered = true;
+
+    // Expose executor ID to child processes and agent tools
+    if (ctx.executorId) process.env.GENIE_EXECUTOR_ID = ctx.executorId;
+
+    console.log(`Agent "${ctx.workerId}" starting via Claude Agent SDK...`);
+    console.log(`  Provider: claude-sdk | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
+    if (ctx.executorId) console.log(`  Executor: ${ctx.executorId}`);
+    console.log('');
+
+    const { resolvePermissionConfig } = await import('../lib/providers/claude-sdk-permissions.js');
+    const permConfig = resolvePermissionConfig(permissionsConfig);
+    await runSdkQuery(ctx, permConfig, streamOpts, sdkConfig, runtimeExtraOptions);
+  } catch (err) {
+    await rollbackSpawn(ctx, { workerRegistered });
+    throw err;
   }
-
-  await registerSpawnWorker(ctx, 'sdk');
-
-  // Expose executor ID to child processes and agent tools
-  if (ctx.executorId) process.env.GENIE_EXECUTOR_ID = ctx.executorId;
-
-  console.log(`Agent "${ctx.workerId}" starting via Claude Agent SDK...`);
-  console.log(`  Provider: claude-sdk | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
-  if (ctx.executorId) console.log(`  Executor: ${ctx.executorId}`);
-  console.log('');
-
-  const { resolvePermissionConfig } = await import('../lib/providers/claude-sdk-permissions.js');
-  const permConfig = resolvePermissionConfig(permissionsConfig);
-  await runSdkQuery(ctx, permConfig, streamOpts, sdkConfig, runtimeExtraOptions);
 
   if (ctx.executorId) {
     await executorRegistry.updateExecutorState(ctx.executorId, 'done').catch(() => {});
@@ -1288,39 +1313,57 @@ async function launchSdkSpawn(
 async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
   const nt = ctx.validated.nativeTeam;
   const paneId = 'inline';
+  let workerRegistered = false;
+  let workerEntry: registry.Agent;
 
-  // Executor model: create executor before blocking spawn
-  if (ctx.agentIdentityId && ctx.executorId) {
-    await createAndLinkExecutor(
-      ctx.agentIdentityId,
-      ctx.validated.provider,
-      resolveExecutorTransport(ctx.validated.provider, 'inline'),
-      {
-        id: ctx.executorId,
-        claudeSessionId: ctx.claudeSessionId ?? null,
-        state: 'spawning',
-        repoPath: ctx.cwd,
-      },
+  try {
+    // Executor model: create executor before blocking spawn
+    if (ctx.agentIdentityId && ctx.executorId) {
+      await createAndLinkExecutor(
+        ctx.agentIdentityId,
+        ctx.validated.provider,
+        resolveExecutorTransport(ctx.validated.provider, 'inline'),
+        {
+          id: ctx.executorId,
+          claudeSessionId: ctx.claudeSessionId ?? null,
+          state: 'spawning',
+          repoPath: ctx.cwd,
+        },
+      );
+    }
+
+    workerEntry = await registerSpawnWorker(ctx, paneId);
+    workerRegistered = true;
+    await notifySpawnJoin(ctx, paneId);
+
+    console.log(`Agent "${ctx.workerId}" starting inline...`);
+    console.log(
+      `  Provider: ${ctx.launch.provider} | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`,
     );
+    if (nt?.enabled) {
+      console.log(`  Native:   enabled | AgentID: ${workerEntry.nativeAgentId}`);
+    }
+    console.log('');
+  } catch (err) {
+    await rollbackSpawn(ctx, { workerRegistered });
+    throw err;
   }
 
-  const workerEntry = await registerSpawnWorker(ctx, paneId);
-  await notifySpawnJoin(ctx, paneId);
-
-  console.log(`Agent "${ctx.workerId}" starting inline...`);
-  console.log(`  Provider: ${ctx.launch.provider} | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
-  if (nt?.enabled) {
-    console.log(`  Native:   enabled | AgentID: ${workerEntry.nativeAgentId}`);
-  }
-  console.log('');
-
-  // Exec into claude — this blocks until the session ends
+  // Exec into claude — this blocks until the session ends.
+  // spawnSync does not throw on launch failure; it returns `result.error`
+  // populated. Treat that as a spawn failure and roll back so the retry
+  // doesn't see a ghost entry.
   const { spawnSync } = require('node:child_process');
   const envVars = { ...process.env, ...(ctx.launch.env ?? {}) };
   const result = spawnSync('sh', ['-c', ctx.launch.command], {
     env: envVars,
     stdio: 'inherit',
   });
+
+  if (result.error) {
+    await rollbackSpawn(ctx, { workerRegistered });
+    throw result.error;
+  }
 
   // Session ended — clean up executor + legacy registry
   if (ctx.agentIdentityId && ctx.executorId) {
@@ -1348,15 +1391,28 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
  */
 export async function findDeadResumable(team: string, role: string): Promise<registry.Agent | null> {
   const existing = await registry.list();
-  const candidate = existing.find(
-    (w) => w.role === role && w.team === team && w.claudeSessionId && w.provider === 'claude',
-  );
-  if (!candidate) return null;
-  // Safe for SDK/non-tmux transports: the `provider === 'claude'` filter above
-  // excludes them by construction (SDK uses provider='claude-sdk'). Only
-  // tmux-resumable Claude-CLI agents reach `isPaneAlive`, so a plain paneId
-  // check is correct here — no transport dispatch needed.
+  // Resume currently only supports tmux transport (resumeAgent hard-requires
+  // process.env.TMUX + createTmuxPane). A stale `transport: 'inline'` row
+  // picked up here would route through resumeAgent → crash with
+  // "error connecting to /tmp/tmux-1000/genie" (issue #1147). Let
+  // rejectDuplicateRole clean those up instead.
   //
+  // Post-migration-047 the session UUID lives on the current executor, so
+  // the "has a session we can resume" predicate must traverse
+  // `agents.current_executor_id → executors.claude_session_id`. Narrow by
+  // cheap fields first, then consult the executor JOIN.
+  const prefiltered = existing.filter(
+    (w) => w.role === role && w.team === team && w.provider === 'claude' && w.transport === 'tmux',
+  );
+  let candidate: registry.Agent | null = null;
+  for (const w of prefiltered) {
+    const executor = await executorRegistry.getCurrentExecutor(w.id);
+    if (executor?.claudeSessionId) {
+      candidate = w;
+      break;
+    }
+  }
+  if (!candidate) return null;
   // `isPaneAliveOrDead` swallows TmuxUnreachableError → dead, so a zombie
   // tmux socket doesn't crash the spawn path.
   const alive = await isPaneAliveOrDead(candidate.paneId);
@@ -1425,8 +1481,16 @@ async function resolveNativeTeam(
   _repoPath: string,
   options: { provider: string; role?: string; color?: string; planMode?: boolean; permissionMode?: string },
 ): Promise<{ parentSessionId: string; spawnColor: ClaudeTeamColor; nativeTeam?: SpawnParams['nativeTeam'] }> {
-  const teamConfig = await teamManager.getTeam(team);
-  let parentSessionId = teamConfig?.nativeTeamParentSessionId;
+  // Team parent session collapses into the team-lead agent's current executor
+  // session (claude-resume-by-session-id wish, Group 5). The legacy
+  // `teams.native_team_parent_session_id` column is no longer read here.
+  const leaderName = await teamManager.resolveLeaderName(team);
+  const sanitizedTeam = nativeTeams.sanitizeTeamName(team);
+  const leaderAgent = await registry.getAgentByName(leaderName, sanitizedTeam).catch(() => null);
+  let parentSessionId: string | undefined;
+  if (leaderAgent) {
+    parentSessionId = (await executorRegistry.getResumeSessionId(leaderAgent.id).catch(() => null)) ?? undefined;
+  }
   if (!parentSessionId) {
     parentSessionId = (await nativeTeams.discoverClaudeParentSessionId()) ?? `genie-${team}`;
   }
@@ -1960,9 +2024,12 @@ async function resolveTeamAndResume(
   }
   const deadResumable = await findDeadResumable(team, effectiveRole);
   if (deadResumable) {
-    console.log(
-      `Resuming existing session for "${effectiveRole}" (session: ${deadResumable.claudeSessionId?.slice(0, 8)}...)`,
-    );
+    // Session now lives on the executor (migration 047). Peek at the current
+    // executor to surface a short UUID in the log line; `resumeAgent` will
+    // re-read it authoritatively via `getResumeSessionId`.
+    const executor = await executorRegistry.getCurrentExecutor(deadResumable.id);
+    const sessionShort = executor?.claudeSessionId?.slice(0, 8) ?? 'unknown';
+    console.log(`Resuming existing session for "${effectiveRole}" (session: ${sessionShort}...)`);
     await resumeAgent(deadResumable);
     return { team, teamWasExplicit, resumed: deadResumable.id };
   }
@@ -2240,8 +2307,12 @@ export async function handleWorkerStop(name: string): Promise<void> {
   const ok = await suspendWorker(w.currentExecutorId);
   if (ok) {
     console.log(`Agent "${w.id}" stopped.`);
-    if (w.claudeSessionId) {
-      console.log(`  Session preserved: ${w.claudeSessionId}`);
+    // Post-migration-047 the session lives on the current executor, not on
+    // the agent row. Read it from the executor so the "session preserved"
+    // hint keeps printing the UUID the operator can use to resume.
+    const stoppedExecutor = await executorRegistry.getExecutor(w.currentExecutorId);
+    if (stoppedExecutor?.claudeSessionId) {
+      console.log(`  Session preserved: ${stoppedExecutor.claudeSessionId}`);
     }
     console.log(`  Send a message to auto-resume: genie send '...' --to ${w.id}`);
     recordAuditEvent('worker', w.id, 'stop', getActor(), { name }).catch(() => {});
@@ -2258,7 +2329,12 @@ export async function handleWorkerStop(name: string): Promise<void> {
  * Includes agents in working/idle/spawning states whose panes have died (crash recovery).
  */
 async function isResumeEligible(w: registry.Agent): Promise<boolean> {
-  if (!w.claudeSessionId) return false;
+  // Session belongs to the current executor (migration 047). Treat an
+  // executor-less agent or one whose executor never captured a session as
+  // ineligible — `resumeAgent` would fail loudly with
+  // `MissingResumeSessionError` otherwise.
+  const executor = await executorRegistry.getCurrentExecutor(w.id);
+  if (!executor?.claudeSessionId) return false;
   if (w.state === 'done') return false;
   const paneAlive = await isPaneAliveOrDead(w.paneId);
   // Suspended/error agents with dead panes are always eligible
@@ -2314,10 +2390,16 @@ export async function handleWorkerResume(
 
   const w = await resolveWorkerByName(name);
 
-  if (!w.claudeSessionId) {
-    console.error(`Error: Agent "${w.id}" has no Claude session ID — cannot resume.`);
-    console.error('  Only agents spawned with the Claude provider have resumable sessions.');
-    process.exit(1);
+  // Canonical resume read — joins agents.current_executor_id → executors.claude_session_id
+  // and emits resume.found / resume.missing_session audit events. Replaces the
+  // direct `w.claudeSessionId` read (Group 3 of claude-resume-by-session-id wish).
+  const sessionId = await executorRegistry.getResumeSessionId(w.id);
+  if (!sessionId) {
+    // Group 6: fail loudly with a typed error so the CLI wrapper in
+    // genie.ts surfaces it on stderr with exit 1 and tests can assert on
+    // the instance. Previously we used console.error + process.exit(1),
+    // which is hostile to unit testing and untyped at the boundary.
+    throw new MissingResumeSessionError(w.id, undefined, 'no_session_id');
   }
 
   if (await isPaneAliveOrDead(w.paneId)) {
@@ -2445,10 +2527,14 @@ export async function buildFullResumeParams(
   agent: registry.Agent,
   template: registry.WorkerTemplate | undefined,
 ): Promise<SpawnParams> {
-  if (!agent.claudeSessionId) {
-    throw new MissingResumeSessionError(agent.id);
+  // Canonical resume read — joins agents.current_executor_id → executors.claude_session_id
+  // and emits resume.found / resume.missing_session audit events. Replaces the
+  // direct `agent.claudeSessionId` read (Group 3 of claude-resume-by-session-id wish).
+  const sessionId = await executorRegistry.getResumeSessionId(agent.id);
+  if (!sessionId) {
+    throw new MissingResumeSessionError(agent.id, undefined, 'null_session');
   }
-  const params = await buildResumeParams(agent, template, agent.claudeSessionId);
+  const params = await buildResumeParams(agent, template, sessionId);
 
   const resumeContext = await buildResumeContext(agent);
   if (resumeContext) {
@@ -2492,7 +2578,12 @@ async function createResumeExecutor(
     tmuxPaneId: paneId,
     tmuxWindow: teamWindow?.windowName ?? null,
     tmuxWindowId: teamWindow?.windowId ?? null,
-    claudeSessionId: agent.claudeSessionId ?? null,
+    // `params.resume` carries the session UUID surfaced by
+    // `getResumeSessionId` inside `buildFullResumeParams`. Post-migration-047
+    // the agent row no longer holds a session — reading `params.resume` keeps
+    // the new executor linked to the same conversation we asked Claude to
+    // resume via `--resume <uuid>`.
+    claudeSessionId: params.resume ?? null,
     state: 'spawning',
     repoPath: cwd,
     paneColor: spawnColor,
@@ -2511,13 +2602,97 @@ async function createResumeExecutor(
  *     increment and prevent the exhaustion check from ever firing. See
  *     fix/auto-resume-counter-persistence.
  */
+const TELEMETRY_KNOWN_STATES = new Set([
+  'spawning',
+  'working',
+  'idle',
+  'permission',
+  'question',
+  'done',
+  'error',
+  'suspended',
+]);
+
+function resumeTelemetryState(raw: registry.AgentState | null | undefined): string {
+  return raw && TELEMETRY_KNOWN_STATES.has(raw) ? raw : 'unknown';
+}
+
+/**
+ * Emit the auto-resume telemetry triplet for the MANUAL CLI path. Pass
+ * `shouldEmit=false` on scheduler-triggered invocations (`--no-reset-attempts`)
+ * — the scheduler's own `attemptAgentResume` is already instrumented in
+ * `scheduler-daemon.ts`, so emitting here would double-count every thrash
+ * detector rate. Issue #1304.
+ *
+ * Both sinks (audit_events + v2 runtime events) are best-effort — never let
+ * observability break the resume path it observes.
+ */
+function recordManualResumeTelemetry(
+  shouldEmit: boolean,
+  eventType: 'agent.resume.attempted' | 'agent.resume.succeeded' | 'agent.resume.failed',
+  payload: {
+    entity_id: string;
+    attempt_number: number;
+    state_before: string;
+    state_after: string;
+    last_error?: string;
+    exhausted?: boolean;
+  },
+): void {
+  if (!shouldEmit) return;
+
+  void recordAuditEvent('agent.resume', payload.entity_id, eventType, getActor(), {
+    ...payload,
+    trigger: 'manual',
+  }).catch(() => {});
+
+  try {
+    const v2: Record<string, unknown> = {
+      entity_id: payload.entity_id,
+      attempt_number: payload.attempt_number,
+      state_before: payload.state_before,
+      state_after: payload.state_after,
+      trigger: 'manual',
+    };
+    if (payload.last_error) {
+      v2.last_error = payload.last_error.slice(0, 500);
+    }
+    if (eventType === 'agent.resume.failed') {
+      v2.exhausted = payload.exhausted ?? false;
+    }
+    emitEvent(eventType, v2, {
+      severity: eventType === 'agent.resume.failed' ? 'warn' : 'info',
+      source_subsystem: 'cli.resume',
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
 async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolean } = {}): Promise<void> {
   const resetAttempts = opts.resetAttempts !== false;
   const template = (await registry.listTemplates()).find((t) => t.id === (agent.role ?? agent.id));
+  // Only emit from the manual path. The scheduler path invokes us via
+  // `genie agent resume <id> --no-reset-attempts` and is already instrumented
+  // by `attemptAgentResume` — double-emission here would inflate every
+  // thrash-detector rate by 2x.
+  const shouldEmitTelemetry = resetAttempts;
+  const telemetryStateBefore = resumeTelemetryState(agent.state);
+  // When manual, `registry.update` below resets the counter to 0, so the
+  // in-flight attempt is #1. When scheduler-triggered, the counter has
+  // already been incremented by `attemptAgentResume` — we don't emit there.
+  const telemetryAttemptNumber = 1;
 
   if (resetAttempts) {
     await registry.update(agent.id, { resumeAttempts: 0 });
   }
+
+  recordManualResumeTelemetry(shouldEmitTelemetry, 'agent.resume.attempted', {
+    entity_id: agent.id,
+    attempt_number: telemetryAttemptNumber,
+    state_before: telemetryStateBefore,
+    state_after: telemetryStateBefore,
+  });
 
   const params = await buildFullResumeParams(agent, template);
 
@@ -2550,7 +2725,10 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
     agentName: agent.role ?? agent.id,
     spawnColor: agent.nativeColor ?? 'blue',
     parentSessionId: agent.parentSessionId ?? `genie-${params.team}`,
-    claudeSessionId: agent.claudeSessionId,
+    // `params.resume` is the session UUID returned by `getResumeSessionId`
+    // inside `buildFullResumeParams` — the canonical source now that the
+    // agent row no longer carries a session (migration 047).
+    claudeSessionId: params.resume,
     otelRelayActive: false,
     now,
     transport: 'tmux',
@@ -2568,7 +2746,16 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
   try {
     paneId = createTmuxPane(ctx, teamWindow);
   } catch (err) {
-    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
+    const errorMessage = err instanceof Error ? err.message : 'unknown error';
+    recordManualResumeTelemetry(shouldEmitTelemetry, 'agent.resume.failed', {
+      entity_id: agent.id,
+      attempt_number: telemetryAttemptNumber,
+      state_before: telemetryStateBefore,
+      state_after: telemetryStateBefore,
+      last_error: `createTmuxPane: ${errorMessage}`,
+      exhausted: false,
+    });
+    console.error(`Failed to create tmux pane: ${errorMessage}`);
     process.exit(1);
   }
 
@@ -2598,12 +2785,19 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
   }
 
   recordAuditEvent('worker', agent.id, 'resumed', getActor(), {
-    claudeSessionId: agent.claudeSessionId,
+    claudeSessionId: params.resume,
     team: agent.team,
   }).catch(() => {});
 
+  recordManualResumeTelemetry(shouldEmitTelemetry, 'agent.resume.succeeded', {
+    entity_id: agent.id,
+    attempt_number: telemetryAttemptNumber,
+    state_before: telemetryStateBefore,
+    state_after: 'spawning',
+  });
+
   console.log(`Agent "${agent.id}" resumed.`);
-  console.log(`  Session:  ${agent.claudeSessionId}`);
+  console.log(`  Session:  ${params.resume}`);
   console.log(`  Pane:     ${paneId}`);
   if (teamWindow) {
     console.log(`  Window:   ${teamWindow.windowName} (${teamWindow.windowId})`);
@@ -2636,11 +2830,19 @@ async function resolveWorkerLiveness(w: registry.Agent): Promise<{ alive: boolea
   return { alive: execState !== null, state: execState ?? w.state };
 }
 
-/** Build a name → status map from registry workers, including resume info for dead agents. */
-async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<Map<string, WorkerStatus>> {
+/**
+ * Build a name → status map from registry workers, including resume info for dead agents.
+ *
+ * The key prefers `customName` so that native-team agents (which share a generic
+ * `role` like "engineer" but carry a unique `customName` like "engineer-2") stay
+ * addressable and do not collide in the Map (#1302). Role-only agents still key
+ * by role; UUID-only rows key by id as a last resort. This matches the canonical
+ * display name used by `genie send` and `resolveAgentNamesBySource`.
+ */
+export async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<Map<string, WorkerStatus>> {
   const statusMap = new Map<string, WorkerStatus>();
   for (const w of workers) {
-    const name = w.role || w.id;
+    const name = w.customName ?? w.role ?? w.id;
     const { alive, state } = await resolveWorkerLiveness(w);
     if (alive) {
       statusMap.set(name, { state, team: w.team || '-' });

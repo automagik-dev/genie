@@ -435,9 +435,25 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(err).toBeInstanceOf(Error);
       expect(err.name).toBe('MissingResumeSessionError');
       expect(err.workerId).toBe('w1');
+      expect(err.entityId).toBe('w1');
       expect(err.recipientId).toBe('role-x');
+      expect(err.reason).toBe('null_session');
       expect(err.message).toContain('w1');
       expect(err.message).toContain('genie reset');
+      expect(err.message).toContain('null_session');
+    });
+
+    test('MissingResumeSessionError accepts explicit reason and exposes it on the instance', async () => {
+      const { MissingResumeSessionError } = await import('./protocol-router.js');
+
+      const noExec = new MissingResumeSessionError('orphan-agent', undefined, 'no_executor');
+      expect(noExec.reason).toBe('no_executor');
+      expect(noExec.message).toContain('no_executor');
+      expect(noExec.entityId).toBe('orphan-agent');
+
+      const legacyAlias = new MissingResumeSessionError('pre-hook-agent', undefined, 'no_session_id');
+      expect(legacyAlias.reason).toBe('no_session_id');
+      expect(legacyAlias.message).toContain('no_session_id');
     });
   });
 
