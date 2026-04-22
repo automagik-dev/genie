@@ -1151,38 +1151,61 @@ async function runSdkQuery(
   };
 
   // Process SDK messages — same logic for streaming and non-streaming
+  const recordToolUseBlock = async (block: unknown): Promise<void> => {
+    const b = block as Record<string, unknown>;
+    const name = String(b.name ?? '');
+    const id = String(b.id ?? '');
+    if (id) toolNameById.set(id, name);
+    await record('tool_input', JSON.stringify(b.input ?? {}).slice(0, 500), name);
+  };
+
+  const recordAssistantBlocks = async (
+    message: Extract<import('@anthropic-ai/claude-agent-sdk').SDKMessage, { type: 'assistant' }>,
+  ): Promise<void> => {
+    if (!message.message) return;
+    for (const block of message.message.content) {
+      if (block.type === 'tool_use') {
+        await recordToolUseBlock(block);
+      } else if (block.type === 'text' && block.text) {
+        await record('assistant', block.text);
+      }
+    }
+  };
+
+  const recordToolResultBlock = async (block: unknown): Promise<void> => {
+    const b = block as Record<string, unknown>;
+    if (b.type !== 'tool_result') return;
+    const toolId = String(b.tool_use_id ?? '');
+    const toolName = toolNameById.get(toolId) ?? '';
+    const output = typeof b.content === 'string' ? b.content.slice(0, 500) : '';
+    await record('tool_output', output, toolName);
+  };
+
+  const recordToolResults = async (
+    message: Extract<import('@anthropic-ai/claude-agent-sdk').SDKMessage, { type: 'user' }>,
+  ): Promise<void> => {
+    if (!message.message?.content || !Array.isArray(message.message.content)) return;
+    for (const block of message.message.content) {
+      await recordToolResultBlock(block);
+    }
+  };
+
   const processMessage = async (message: import('@anthropic-ai/claude-agent-sdk').SDKMessage) => {
-    if (message.type === 'system' && (message as Record<string, unknown>).session_id) {
-      claudeSessionId = (message as Record<string, unknown>).session_id as string;
+    if (message.type === 'system') {
+      const sid = (message as Record<string, unknown>).session_id;
+      if (sid) claudeSessionId = sid as string;
+      return;
     }
-    if (message.type === 'assistant' && message.message) {
-      for (const block of message.message.content) {
-        if (block.type === 'tool_use') {
-          const b = block as unknown as Record<string, unknown>;
-          const name = String(b.name ?? '');
-          const id = String(b.id ?? '');
-          if (id) toolNameById.set(id, name);
-          await record('tool_input', JSON.stringify(b.input ?? {}).slice(0, 500), name);
-        }
-        if (block.type === 'text' && block.text) {
-          await record('assistant', block.text);
-        }
-      }
+    if (message.type === 'assistant') {
+      await recordAssistantBlocks(message);
+      return;
     }
-    // Tool results come as user messages with tool_result content blocks
-    if (message.type === 'user' && message.message?.content && Array.isArray(message.message.content)) {
-      for (const block of message.message.content) {
-        const b = block as unknown as Record<string, unknown>;
-        if (b.type === 'tool_result') {
-          const toolId = String(b.tool_use_id ?? '');
-          const toolName = toolNameById.get(toolId) ?? '';
-          const output = typeof b.content === 'string' ? b.content.slice(0, 500) : '';
-          await record('tool_output', output, toolName);
-        }
-      }
+    if (message.type === 'user') {
+      await recordToolResults(message);
+      return;
     }
-    if (message.type === 'result' && message.subtype === 'success') {
-      if (message.session_id) claudeSessionId = message.session_id;
+    if (message.type === 'result' && message.subtype === 'success' && message.session_id) {
+      claudeSessionId = message.session_id;
     }
   };
 
@@ -2669,6 +2692,91 @@ function recordManualResumeTelemetry(
   }
 }
 
+function buildResumeSpawnCtx(args: {
+  agent: registry.Agent;
+  validated: ReturnType<typeof validateSpawnParams>;
+  launch: ReturnType<typeof buildLaunchCommand>;
+  fullCommand: string;
+  now: string;
+  template: Awaited<ReturnType<typeof registry.listTemplates>>[number] | undefined;
+  resumeSessionId: string | undefined;
+  teamName: string;
+  agentIdentityId: string;
+  executorId: string;
+}): SpawnCtx {
+  const {
+    agent,
+    validated,
+    launch,
+    fullCommand,
+    now,
+    template,
+    resumeSessionId,
+    teamName,
+    agentIdentityId,
+    executorId,
+  } = args;
+  return {
+    workerId: agent.id,
+    validated,
+    launch,
+    layoutMode: resolveLayoutMode(undefined),
+    fullCommand,
+    agentName: agent.role ?? agent.id,
+    spawnColor: agent.nativeColor ?? 'blue',
+    parentSessionId: agent.parentSessionId ?? `genie-${teamName}`,
+    // `resumeSessionId` is returned by `getResumeSessionId` inside
+    // `buildFullResumeParams` — the canonical source now that the agent row
+    // no longer carries a session (migration 047).
+    claudeSessionId: resumeSessionId,
+    otelRelayActive: false,
+    now,
+    transport: 'tmux',
+    extraArgs: template?.extraArgs,
+    cwd: template?.cwd ?? agent.repoPath,
+    spawnIntoCurrentWindow: false,
+    autoResume: agent.autoResume,
+    agentIdentityId,
+    executorId,
+  };
+}
+
+function createResumeTmuxPaneOrExit(
+  ctx: SpawnCtx,
+  teamWindow: TeamWindowInfo | null,
+  telemetry: { shouldEmit: boolean; entityId: string; attemptNumber: number; stateBefore: string },
+): string {
+  try {
+    return createTmuxPane(ctx, teamWindow);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'unknown error';
+    recordManualResumeTelemetry(telemetry.shouldEmit, 'agent.resume.failed', {
+      entity_id: telemetry.entityId,
+      attempt_number: telemetry.attemptNumber,
+      state_before: telemetry.stateBefore,
+      state_after: telemetry.stateBefore,
+      last_error: `createTmuxPane: ${errorMessage}`,
+      exhausted: false,
+    });
+    console.error(`Failed to create tmux pane: ${errorMessage}`);
+    process.exit(1);
+  }
+}
+
+function logResumeSuccess(
+  agent: registry.Agent,
+  resumeSessionId: string | undefined,
+  paneId: string,
+  teamWindow: TeamWindowInfo | null,
+): void {
+  console.log(`Agent "${agent.id}" resumed.`);
+  console.log(`  Session:  ${resumeSessionId ?? '(none)'}`);
+  console.log(`  Pane:     ${paneId}`);
+  if (teamWindow) {
+    console.log(`  Window:   ${teamWindow.windowName} (${teamWindow.windowId})`);
+  }
+}
+
 async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolean } = {}): Promise<void> {
   const resetAttempts = opts.resetAttempts !== false;
   const template = (await registry.listTemplates()).find((t) => t.id === (agent.role ?? agent.id));
@@ -2699,9 +2807,7 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
   // Mint executor identity BEFORE buildLaunchCommand so GENIE_EXECUTOR_ID /
   // GENIE_AGENT_ID propagate into the resumed child env. The same executorId
   // is later reused when createResumeExecutor INSERTs the executor row.
-  const resumeAgentName = agent.role ?? agent.id;
-  const resumeTeam = agent.team ?? params.team;
-  const agentIdentity = await registry.findOrCreateAgent(resumeAgentName, resumeTeam, agent.role);
+  const agentIdentity = await registry.findOrCreateAgent(agent.role ?? agent.id, agent.team ?? params.team, agent.role);
   const executorId = crypto.randomUUID();
   params.agentId = agentIdentity.id;
   params.executorId = executorId;
@@ -2716,52 +2822,29 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
     process.exit(1);
   }
 
-  const ctx: SpawnCtx = {
-    workerId: agent.id,
+  const ctx = buildResumeSpawnCtx({
+    agent,
     validated,
     launch,
-    layoutMode: resolveLayoutMode(undefined),
     fullCommand,
-    agentName: agent.role ?? agent.id,
-    spawnColor: agent.nativeColor ?? 'blue',
-    parentSessionId: agent.parentSessionId ?? `genie-${params.team}`,
-    // `params.resume` is the session UUID returned by `getResumeSessionId`
-    // inside `buildFullResumeParams` — the canonical source now that the
-    // agent row no longer carries a session (migration 047).
-    claudeSessionId: params.resume,
-    otelRelayActive: false,
     now,
-    transport: 'tmux',
-    extraArgs: template?.extraArgs,
-    cwd: template?.cwd ?? agent.repoPath,
-    spawnIntoCurrentWindow: false,
-    autoResume: agent.autoResume,
+    template,
+    resumeSessionId: params.resume,
+    teamName: params.team,
     agentIdentityId: agentIdentity.id,
     executorId,
-  };
+  });
 
   const teamWindow = await resolveSpawnTeamWindow(validated.team, ctx.cwd);
-
-  let paneId: string;
-  try {
-    paneId = createTmuxPane(ctx, teamWindow);
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : 'unknown error';
-    recordManualResumeTelemetry(shouldEmitTelemetry, 'agent.resume.failed', {
-      entity_id: agent.id,
-      attempt_number: telemetryAttemptNumber,
-      state_before: telemetryStateBefore,
-      state_after: telemetryStateBefore,
-      last_error: `createTmuxPane: ${errorMessage}`,
-      exhausted: false,
-    });
-    console.error(`Failed to create tmux pane: ${errorMessage}`);
-    process.exit(1);
-  }
+  const paneId = createResumeTmuxPaneOrExit(ctx, teamWindow, {
+    shouldEmit: shouldEmitTelemetry,
+    entityId: agent.id,
+    attemptNumber: telemetryAttemptNumber,
+    stateBefore: telemetryStateBefore,
+  });
 
   // Executor model: create new executor for resumed session
   await createResumeExecutor(agent, validated, paneId, teamWindow, ctx.cwd, ctx.spawnColor);
-
   await applySpawnLayout(ctx, teamWindow);
 
   await registry.update(agent.id, {
@@ -2776,7 +2859,6 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
   });
 
   await notifySpawnJoin(ctx, paneId);
-
   // Inject resume context so the agent knows what wish/group it was working on
   await injectResumeContext(ctx.cwd ?? agent.repoPath ?? process.cwd(), agent.id, agent.role ?? agent.id, params.team);
 
@@ -2788,7 +2870,6 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
     claudeSessionId: params.resume,
     team: agent.team,
   }).catch(() => {});
-
   recordManualResumeTelemetry(shouldEmitTelemetry, 'agent.resume.succeeded', {
     entity_id: agent.id,
     attempt_number: telemetryAttemptNumber,
@@ -2796,12 +2877,7 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
     state_after: 'spawning',
   });
 
-  console.log(`Agent "${agent.id}" resumed.`);
-  console.log(`  Session:  ${params.resume}`);
-  console.log(`  Pane:     ${paneId}`);
-  if (teamWindow) {
-    console.log(`  Window:   ${teamWindow.windowName} (${teamWindow.windowId})`);
-  }
+  logResumeSuccess(agent, params.resume, paneId, teamWindow);
 }
 
 type WorkerStatus = {
