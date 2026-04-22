@@ -28,7 +28,7 @@ import { makeHelloDetector } from '../../detectors/__fixtures__/hello.js';
 import type { DetectorModule } from '../../detectors/index.js';
 import { emitEvent, flushNow } from '../../lib/emit.js';
 import { generateConsumerId } from '../../lib/events/consumer-state.js';
-import { DB_AVAILABLE, setupTestSchema } from '../../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../../lib/test-db.js';
 import { start as startScheduler } from '../../serve/detector-scheduler.js';
 import { runEventsStreamFollow } from '../events-stream.js';
 
@@ -38,7 +38,7 @@ describe.skipIf(!DB_AVAILABLE)('tail / events stream-follow — detector.* filte
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

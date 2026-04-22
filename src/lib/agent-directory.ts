@@ -305,7 +305,14 @@ async function lookupTemplateTeam(name: string): Promise<string | null> {
     if (rows.length === 0) return null;
     const team = rows[0].team;
     return typeof team === 'string' && team.length > 0 ? team : null;
-  } catch {
+  } catch (err) {
+    // Previously silently swallowed — real PG failures (connection drops,
+    // missing table) hid behind a null return and showed up as mysterious
+    // "team is undefined" regressions downstream. Log the full error so the
+    // failure is visible; still return null so production callers that
+    // legitimately run without PG continue to work.
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[agent-directory] lookupTemplateTeam(${name}) failed: ${msg}\n`);
     return null;
   }
 }

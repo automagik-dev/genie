@@ -55,7 +55,7 @@
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["which"],
-  "ignoreExportsUsedInFile": false,
+  "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "@khal-os/brain",
     "@tauri-apps/cli",

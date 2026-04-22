@@ -14,7 +14,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { getConnection } from './db.js';
 import { extractSubTool, reconcileSubagentParents } from './session-capture.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe('extractSubTool — truncation for btree row size', () => {
   test('Bash: first line of command, trimmed, capped at 2000 chars', () => {
@@ -72,7 +72,7 @@ describe.skipIf(!DB_AVAILABLE)('reconcileSubagentParents — metadata inheritanc
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

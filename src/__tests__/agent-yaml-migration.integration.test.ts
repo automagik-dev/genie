@@ -24,14 +24,14 @@ import * as directory from '../lib/agent-directory.js';
 import { printSyncResult, syncAgentDirectory } from '../lib/agent-sync.js';
 import { parseAgentYaml, writeAgentYaml } from '../lib/agent-yaml.js';
 import { getConnection } from '../lib/db.js';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('dir-sync-frontmatter-refresh — integration', () => {
   let cleanup: () => Promise<void>;
   let workspaceRoot: string;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

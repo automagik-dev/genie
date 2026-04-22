@@ -2029,9 +2029,7 @@ async function resolveTeamAndResume(
     // re-read it authoritatively via `getResumeSessionId`.
     const executor = await executorRegistry.getCurrentExecutor(deadResumable.id);
     const sessionShort = executor?.claudeSessionId?.slice(0, 8) ?? 'unknown';
-    console.log(
-      `Resuming existing session for "${effectiveRole}" (session: ${sessionShort}...)`,
-    );
+    console.log(`Resuming existing session for "${effectiveRole}" (session: ${sessionShort}...)`);
     await resumeAgent(deadResumable);
     return { team, teamWasExplicit, resumed: deadResumable.id };
   }

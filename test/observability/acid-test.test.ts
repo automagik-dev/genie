@@ -12,7 +12,7 @@
  *   3. Execute the query (with the `:'since'` psql variable substituted to a
  *      generous '24 hours') and assert the evidence row count matches.
  *
- * Isolation is two-tier: per-file via `setupTestSchema()`, plus per-test
+ * Isolation is two-tier: per-file via `setupTestDatabase()`, plus per-test
  * TRUNCATE of all three event tables in `beforeEach`. TRUNCATE bypasses the
  * audit-WORM trigger because that guards only DELETE / UPDATE.
  *
@@ -25,7 +25,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConnection } from '../../src/lib/db.js';
-import { DB_AVAILABLE, setupTestSchema } from '../../src/lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../../src/lib/test-db.js';
 import { ALL_SEEDERS, type FixtureResult, type Seeder } from './replay-dataset/index.js';
 
 const SQL_FILE = join(import.meta.dir, '..', '..', 'docs', 'observability-acid-tests.sql');
@@ -86,7 +86,7 @@ describe.skipIf(!DB_AVAILABLE)('observability — acid tests (11 patterns)', () 
   let cleanup: () => Promise<void> = async () => {};
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

@@ -230,13 +230,15 @@ follows the same pattern: each pattern's seeder writes raw rows, then the SQL
 query reconstructs the evidence. If you want to test `emit.ts` itself, do it
 in `test/lib/emit.test.ts`; if you want to test a consumer, seed directly.
 
-### Test schema isolation
+### Test database isolation
 
-Use `setupTestSchema()` from `src/lib/test-db.ts` — each test file gets its
-own PG schema, migrations run inside it, and NOTIFY triggers are dropped (NOTIFY
-is instance-scoped, so test triggers would leak events to production). Per-test
-cleanup is `TRUNCATE genie_runtime_events* RESTART IDENTITY CASCADE` —
-`TRUNCATE` bypasses the audit-WORM trigger that guards `DELETE`/`UPDATE`.
+Use `setupTestDatabase()` from `src/lib/test-db.ts` — each test file gets its
+own PG database, cloned from the `genie_template` DB that the preload built
+once at the start of `bun test`. DB-level isolation sidesteps NOTIFY leakage
+for free (NOTIFY is instance-scoped, but each clone is effectively its own
+namespace for the test's lifetime). Per-test cleanup is `TRUNCATE
+genie_runtime_events* RESTART IDENTITY CASCADE` — `TRUNCATE` bypasses the
+audit-WORM trigger that guards `DELETE`/`UPDATE`.
 
 ---
 
@@ -270,7 +272,7 @@ Before shipping a new consumer:
 - [ ] Token mint helper rejects scope escalation (RBACError test).
 - [ ] Consumer wrapper handles `row.subject` filter + `data.from`/`data.to` extraction defensively (no throws on malformed rows).
 - [ ] `runbook.triggered` carries `rule`, `evidence_count`, `recommended_sql` — and **does not auto-execute** the SQL.
-- [ ] Integration test uses `setupTestSchema` + per-test `TRUNCATE` + direct `sql.json()` seeding.
+- [ ] Integration test uses `setupTestDatabase` + per-test `TRUNCATE` + direct `sql.json()` seeding.
 - [ ] Restart test asserts no double-fire after stop/start with same `subscriberId`.
 - [ ] If your rule is sensitive to wall-clock time, the detector takes
       `createdAt` as a parameter (do not call `Date.now()` inside).

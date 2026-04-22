@@ -17,14 +17,14 @@ import {
   stopExecutorReadEndpoint,
 } from './executor-read.js';
 import { createExecutor } from './executor-registry.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('executor-read', () => {
   let cleanup: () => Promise<void>;
   let origPort: string | undefined;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

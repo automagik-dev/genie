@@ -17,7 +17,7 @@ import {
   attemptAgentResume,
   recoverOnStartup,
 } from '../lib/scheduler-daemon.js';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import { handleWorkerResume } from '../term-commands/agents.js';
 
 const TEST_DIR = '/tmp/genie-resume-test';
@@ -85,7 +85,7 @@ let cleanupSchema: () => Promise<void>;
 
 describe.skipIf(!DB_AVAILABLE)('resume', () => {
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {

@@ -1,191 +1,113 @@
 /**
- * Test Database Helpers — PG schema isolation for tests.
+ * Test Database Helpers — per-test PG database isolation.
  *
- * Each test file gets its own PG schema so test data never touches
- * the production `public` schema. Schemas are created in beforeAll
- * and dropped in afterAll — zero artifacts after `bun test`.
- *
- * IMPORTANT: Migrations run with search_path set to ONLY the test schema
- * (no public fallback) so that _genie_migrations is created fresh in the
- * test schema. This prevents the migration runner from reading public's
- * _genie_migrations and skipping table creation in the test schema.
+ * Each test file gets its own PG database, cloned from the `genie_template`
+ * DB that the preload (`test-setup.ts`) built once per `bun test` run. The
+ * template carries all migrations already applied, so per-test setup is
+ * effectively just `CREATE DATABASE ... TEMPLATE genie_template` — milliseconds
+ * rather than the multi-second 48-migration replay this file used to do per
+ * test file.
  *
  * Usage:
- *   import { setupTestSchema } from './test-db.js';
+ *   import { setupTestDatabase } from './test-db.js';
  *
  *   let cleanup: () => Promise<void>;
- *   beforeAll(async () => { cleanup = await setupTestSchema(); });
+ *   beforeAll(async () => { cleanup = await setupTestDatabase(); });
  *   afterAll(async () => { await cleanup(); });
  */
 
-import { runMigrations } from './db-migrations.js';
-import { type Sql, ensurePgserve, resetConnection } from './db.js';
+import { ensurePgserve, resetConnection } from './db.js';
+import { createTestDatabase, dropTestDatabase } from './test-setup.js';
 
 /**
  * Whether a PG database is expected to be reachable for tests.
  * True when GENIE_PG_AVAILABLE has been set by ensurePgserve, or when
  * we are NOT running in CI (local dev boxes auto-start pgserve).
  *
- * Test files that call setupTestSchema() should guard their describe blocks:
+ * Test files that call setupTestDatabase() should guard their describe blocks:
  *   import { DB_AVAILABLE } from './test-db.js';
  *   describe.skipIf(!DB_AVAILABLE)('my suite', () => { ... });
  */
 export const DB_AVAILABLE = process.env.GENIE_PG_AVAILABLE === 'true' || !process.env.CI;
 
-/** Max age (ms) before a test schema is considered stale and eligible for cleanup. */
-const STALE_SCHEMA_AGE_MS = 10 * 60 * 1000; // 10 minutes
+// Monotonic counter so multiple setup calls from the same process get unique names.
+let dbCounter = 0;
 
 /**
- * Create an isolated PG schema for this test file.
- * Returns a cleanup function that drops the schema and resets the connection.
+ * When running under the parallel shard runner (scripts/test-parallel.ts),
+ * each worker exports `GENIE_TEST_SHARD_INDEX=<1-based>`. We fold that index
+ * into the generated DB name so two shards racing to create clones of
+ * `genie_template` can't ever collide on an identifier — even on systems where
+ * process.pid recycles fast. Falsy / non-numeric values fall back to the plain
+ * `test_<pid>_…` layout used by a lone `bun test`.
+ */
+function shardPrefix(): string {
+  const raw = process.env.GENIE_TEST_SHARD_INDEX;
+  if (!raw) return 'test';
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return 'test';
+  return `test_shard${n}`;
+}
+
+/**
+ * Create an isolated PG database for this test file.
+ * Returns a cleanup function that drops the database and resets the connection.
  *
  * How it works:
- * 1. Ensures pgserve is running
- * 2. Creates a unique schema named `test_<pid>_<timestamp>`
- * 3. Runs all migrations with search_path = test schema ONLY (excludes public)
- *    — this ensures _genie_migrations + all tables are created fresh in the test schema,
- *      not skipped because public already has the migration records
- * 4. Resets the connection singleton
- * 5. Sets GENIE_TEST_SCHEMA env var so getConnection() uses `test_schema, public` search_path
+ * 1. Ensures pgserve is running (preload usually already did this).
+ * 2. Picks a unique database name `test_<pid>_<counter>`.
+ * 3. Calls `createTestDatabase(name)` which issues
+ *    `CREATE DATABASE <name> TEMPLATE genie_template` — fast, atomic clone.
+ * 4. Sets `GENIE_TEST_DB_NAME` so `db.ts` connects to the new database.
+ * 5. Resets the connection singleton so the next `getConnection()` rebuilds.
  *
- * On setup, also cleans up stale test schemas from crashed runs.
+ * No migration replay, no search_path gymnastics, no NOTIFY-trigger surgery:
+ * DB-level isolation means each test gets a clean universe.
  */
-export async function setupTestSchema(): Promise<() => Promise<void>> {
-  const schemaName = `test_${process.pid}_${Date.now()}`;
-
-  let port: number;
+export async function setupTestDatabase(): Promise<() => Promise<void>> {
+  // Under concurrent test load, pgserve may have died unexpectedly. If that
+  // happens, fall back to a no-op cleanup so describe.skipIf(!DB_AVAILABLE)
+  // can still make progress.
   try {
-    port = await ensurePgserve();
+    await ensurePgserve();
   } catch {
-    // PG unreachable under concurrent test load — return no-op cleanup
-    return async () => {};
-  }
-  const postgres = (await import('postgres')).default;
-  const adminSql = postgres({
-    host: '127.0.0.1',
-    port,
-    database: 'genie',
-    username: 'postgres',
-    password: 'postgres',
-    max: 1,
-    idle_timeout: 1,
-    connect_timeout: 5,
-    onnotice: () => {},
-    connection: { client_min_messages: 'warning' },
-  });
-
-  try {
-    // Defensively clean up stale test schemas from crashed runs
-    await cleanupStaleSchemas(adminSql);
-
-    // Create the test schema and run migrations inside it.
-    // search_path = test schema ONLY (no public) ensures _genie_migrations is
-    // created fresh in the test schema, so migration runner sees zero applied
-    // and creates all tables in the test schema.
-    // max: 1 ensures SET search_path applies to all subsequent queries on this connection.
-    await adminSql.unsafe(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
-    await adminSql.unsafe(`SET search_path TO "${schemaName}"`);
-    await runMigrations(adminSql);
-
-    // Drop all NOTIFY triggers from the test schema.
-    // PG NOTIFY is instance-scoped (not schema-scoped), so triggers firing in
-    // test schemas leak events to the production event router. Dropping them
-    // after migration keeps test data isolated without modifying migration SQL.
-    await dropNotifyTriggers(adminSql, schemaName);
-
-    await adminSql.end({ timeout: 5 });
-  } catch {
-    // Schema creation or migration race under concurrent test load — skip gracefully
-    try {
-      await adminSql.end({ timeout: 1 });
-    } catch {
-      /* Best-effort cleanup: connection may already be closed */
-    }
     return async () => {};
   }
 
-  // Reset the singleton and set the env var so getConnection() picks up the schema
+  const dbName = `${shardPrefix()}_${process.pid}_${Date.now()}_${++dbCounter}`;
+
+  try {
+    await createTestDatabase(dbName);
+  } catch {
+    return async () => {};
+  }
+
+  // Point db.ts at the new database and force a rebuild.
+  process.env.GENIE_TEST_DB_NAME = dbName;
   await resetConnection();
-  process.env.GENIE_TEST_SCHEMA = schemaName;
 
-  // Return cleanup function
   return async () => {
-    // Reset connection before dropping schema
+    // Close the singleton BEFORE dropping the DB so DROP doesn't fail on
+    // "database is being accessed by other users" (defensive — dropTestDatabase
+    // also force-terminates backends).
     await resetConnection();
-
-    // Drop the test schema with a fresh admin connection
-    const cleanupSql = postgres({
-      host: '127.0.0.1',
-      port,
-      database: 'genie',
-      username: 'postgres',
-      password: 'postgres',
-      max: 2,
-      idle_timeout: 1,
-      connect_timeout: 5,
-      onnotice: () => {},
-      connection: { client_min_messages: 'warning' },
-    });
-
-    try {
-      await cleanupSql.unsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
-    } finally {
-      await cleanupSql.end({ timeout: 5 });
+    await dropTestDatabase(dbName);
+    if (process.env.GENIE_TEST_DB_NAME === dbName) {
+      process.env.GENIE_TEST_DB_NAME = undefined;
     }
-
-    // Clear env var
-    process.env.GENIE_TEST_SCHEMA = undefined;
   };
 }
 
 /**
- * Drop all NOTIFY triggers from a test schema.
+ * Backwards-compat alias. `setupTestSchema` was the prior API name (schema-
+ * isolation era). Group 3 replaced it with `setupTestDatabase` (database-
+ * clone isolation). Dev still has callsites using the old name that land
+ * via merge-preview into this branch — keep the alias so `tsc --noEmit`
+ * passes under the merge topology. Safe to delete once dev is rebased.
  *
- * PG NOTIFY is instance-scoped — a trigger firing in schema "test_123_456"
- * broadcasts to every listener on that channel, including the production
- * event router. Dropping these triggers after migration prevents test
- * state changes from leaking as real events.
+ * Implemented as a thin wrapper (not `export const setupTestSchema =
+ * setupTestDatabase`) so knip does not flag a duplicate export.
  */
-async function dropNotifyTriggers(sql: Sql, schemaName: string): Promise<void> {
-  try {
-    const triggers = await sql`
-      SELECT trigger_name, event_object_table
-      FROM information_schema.triggers
-      WHERE trigger_schema = ${schemaName}
-        AND trigger_name LIKE 'trg_notify_%'
-    `;
-    for (const { trigger_name, event_object_table } of triggers) {
-      await sql.unsafe(`DROP TRIGGER IF EXISTS "${trigger_name}" ON "${schemaName}"."${event_object_table}"`);
-    }
-  } catch {
-    // Best effort — don't block test setup if trigger cleanup fails
-  }
-}
-
-/**
- * Drop test schemas older than STALE_SCHEMA_AGE_MS.
- * Schema names encode a timestamp: test_<pid>_<timestamp>.
- * Best-effort — failures are silently ignored so tests aren't blocked.
- */
-async function cleanupStaleSchemas(sql: Sql): Promise<void> {
-  try {
-    const schemas = await sql`
-      SELECT schema_name FROM information_schema.schemata
-      WHERE schema_name LIKE 'test_%'
-    `;
-
-    const now = Date.now();
-    for (const { schema_name } of schemas) {
-      // Parse timestamp from schema name: test_<pid>_<timestamp>
-      const parts = schema_name.split('_');
-      if (parts.length < 3) continue;
-      const ts = Number.parseInt(parts[2], 10);
-      if (Number.isNaN(ts)) continue;
-      if (now - ts > STALE_SCHEMA_AGE_MS) {
-        await sql.unsafe(`DROP SCHEMA IF EXISTS "${schema_name}" CASCADE`);
-      }
-    }
-  } catch {
-    // Best effort — don't block test setup on cleanup failures
-  }
+export async function setupTestSchema(): Promise<() => Promise<void>> {
+  return setupTestDatabase();
 }

@@ -124,6 +124,12 @@ Single-file bundle: `bun build` inlines all dependencies into `dist/genie.js` (~
 - Git tests: real git repos in `/tmp`, not mocks
 - Concurrency tests: `Promise.allSettled()` pattern
 - Isolation: set `process.env.GENIE_HOME` to tmpdir to isolate global state
+- macOS RAM-disk (opt-in): `GENIE_TEST_MAC_RAM=1 bun test` mounts a 1 GiB
+  hdiutil-backed volume at `/Volumes/genie-test-ram` and points pgserve at
+  `/Volumes/genie-test-ram/pgserve`. Matches Linux `/dev/shm` throughput for
+  the pgserve test harness. Unset = ephemeral temp dir (no change). The volume
+  is detached on daemon reap; a manual `hdiutil detach /Volumes/genie-test-ram`
+  is safe — the next run recreates it.
 
 ## Code Style
 

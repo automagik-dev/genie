@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { $ } from 'bun';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 
 // ============================================================================
 // Test Setup
@@ -27,7 +27,7 @@ const GENIE_BIN = join(import.meta.dir, '..', 'genie.ts');
 
 async function setupTestRepo(): Promise<void> {
   // Set up PG test schema isolation — teams are stored in PG now
-  pgState.cleanup = await setupTestSchema();
+  pgState.cleanup = await setupTestDatabase();
 
   try {
     await rm(TEST_DIR, { recursive: true, force: true });
@@ -106,7 +106,7 @@ async function genie(...args: string[]): Promise<{ stdout: string; exitCode: num
         ...process.env,
         GENIE_HOME: TEST_GENIE_HOME,
         CLAUDE_CONFIG_DIR: TEST_CLAUDE_CONFIG,
-        GENIE_TEST_SCHEMA: process.env.GENIE_TEST_SCHEMA ?? '',
+        GENIE_TEST_DB_NAME: process.env.GENIE_TEST_DB_NAME ?? '',
       });
     return { stdout: result.stdout.toString(), exitCode: 0 };
   } catch (err: unknown) {

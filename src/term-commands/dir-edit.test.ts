@@ -19,14 +19,14 @@ import { migrateAgentToYaml } from '../lib/agent-migrate.js';
 import { syncSingleAgentByName } from '../lib/agent-sync.js';
 import { type AgentConfig, parseAgentYaml, writeAgentYaml } from '../lib/agent-yaml.js';
 import { getConnection } from '../lib/db.js';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('dir edit — agent.yaml-first flow (wish dir-sync-frontmatter-refresh group 4)', () => {
   let cleanup: () => Promise<void>;
   let workspaceRoot: string;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

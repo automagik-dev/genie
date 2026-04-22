@@ -12,7 +12,7 @@
  *      with a `reconcile.terminalize` audit event.
  *
  * The migration runner applies every migration under the test schema in
- * `setupTestSchema`, so by the time a test body runs the schema is already
+ * `setupTestDatabase`, so by the time a test body runs the schema is already
  * in its Phase B shape. To model "live/stale rows at migration time" we
  * INSERT rows in the test body and then re-apply the migration as an
  * idempotent second pass; the write statements (UPDATE + CTE) are
@@ -23,7 +23,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConnection } from '../../lib/db.js';
-import { DB_AVAILABLE, setupTestSchema } from '../../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../../lib/test-db.js';
 
 const MIGRATION_PATH = join(import.meta.dir, '044_phase_b_flip_defaults.sql');
 
@@ -35,7 +35,7 @@ describe.skipIf(!DB_AVAILABLE)('migration 044 — Phase B: flip auto_resume + re
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

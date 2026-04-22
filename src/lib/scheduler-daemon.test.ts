@@ -1755,7 +1755,14 @@ describe('scheduler-daemon', () => {
           currentSessionId: 'sess-1',
           resumeAttempts: 0,
         },
-        { id: 'agent-2', paneId: '%43', state: 'idle', autoResume: true, currentSessionId: 'sess-2', resumeAttempts: 0 },
+        {
+          id: 'agent-2',
+          paneId: '%43',
+          state: 'idle',
+          autoResume: true,
+          currentSessionId: 'sess-2',
+          resumeAttempts: 0,
+        },
         { id: 'agent-done', paneId: '%44', state: 'done', currentSessionId: 'sess-3' },
         { id: 'agent-suspended', paneId: '%45', state: 'suspended', currentSessionId: 'sess-4' },
       ];

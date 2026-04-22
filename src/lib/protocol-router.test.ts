@@ -12,7 +12,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as mailbox from './mailbox.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 // ============================================================================
 // Module mock — protocol-router-spawn.js only (no other test file mocks this).
@@ -109,7 +109,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {

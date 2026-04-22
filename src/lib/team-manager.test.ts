@@ -23,7 +23,7 @@ import {
   updateTeamConfig,
   validateBranchName,
 } from './team-manager.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 // ============================================================================
 // Test Setup
@@ -77,7 +77,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
   describe('Team Manager', () => {
     beforeAll(async () => {
-      cleanupSchema = await setupTestSchema();
+      cleanupSchema = await setupTestDatabase();
       await setupTestRepo();
     });
 

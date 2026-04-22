@@ -14,7 +14,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { getConnection } from '../src/lib/db.js';
-import { DB_AVAILABLE, setupTestSchema } from '../src/lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../src/lib/test-db.js';
 import {
   type Candidate,
   type PaneAliveFn,
@@ -71,7 +71,7 @@ describe.skipIf(!DB_AVAILABLE)('reconcile-orphans (integration)', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

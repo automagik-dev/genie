@@ -18,13 +18,13 @@ import {
 import { getConnection } from './db.js';
 import { createExecutor } from './executor-registry.js';
 import type { AssignmentOutcome } from './executor-types.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('assignment-registry', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

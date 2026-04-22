@@ -2,7 +2,7 @@
  * Tests for board-service.ts — Board CRUD, column management, export/import.
  *
  * Requires pgserve to be running (auto-started via getConnection).
- * Uses isolated test schema via setupTestSchema().
+ * Uses isolated test schema via setupTestDatabase().
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
@@ -22,13 +22,13 @@ import {
 } from './board-service.js';
 import { getConnection } from './db.js';
 import { createTemplate } from './template-service.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {

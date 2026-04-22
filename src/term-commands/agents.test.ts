@@ -11,7 +11,7 @@ import type { DirectoryEntry } from '../lib/agent-directory.js';
 import type { Agent } from '../lib/agent-registry.js';
 import * as registry from '../lib/agent-registry.js';
 import * as executorRegistry from '../lib/executor-registry.js';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase, setupTestSchema } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
   buildInitialSplitWindowCommand,
@@ -30,7 +30,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -287,7 +287,7 @@ describe.skipIf(!DB_AVAILABLE)('directory.resolve team population', () => {
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -379,7 +379,7 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {

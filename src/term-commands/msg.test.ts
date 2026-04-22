@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { getConnection } from '../lib/db.js';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import {
   checkSendScope,
   detectSenderIdentity,
@@ -35,7 +35,7 @@ let cleanupSchema: (() => Promise<void>) | undefined;
 
 beforeAll(async () => {
   if (!DB_AVAILABLE) return;
-  cleanupSchema = await setupTestSchema();
+  cleanupSchema = await setupTestDatabase();
 });
 
 afterAll(async () => {

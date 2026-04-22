@@ -16,7 +16,7 @@ import * as directory from '../lib/agent-directory.js';
 import { syncSingleAgentByName } from '../lib/agent-sync.js';
 import { type AgentConfig, parseAgentYaml, writeAgentYaml } from '../lib/agent-yaml.js';
 import { getConnection } from '../lib/db.js';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)(
   'dir add — scaffolds agent.yaml + body-only AGENTS.md (wish dir-sync-frontmatter-refresh group 5)',
@@ -25,7 +25,7 @@ describe.skipIf(!DB_AVAILABLE)(
     let workspaceRoot: string;
 
     beforeAll(async () => {
-      cleanup = await setupTestSchema();
+      cleanup = await setupTestDatabase();
     });
 
     afterAll(async () => {

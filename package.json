@@ -31,6 +31,7 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "test": "bun test",
+    "test:parallel": "bun run scripts/test-parallel.ts",
     "typecheck": "tsc --noEmit",
     "dead-code": "bunx knip",
     "skills:lint": "bun run scripts/skills-lint.ts",

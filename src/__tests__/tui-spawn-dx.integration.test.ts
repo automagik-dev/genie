@@ -27,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import {
   findDeadResumable,
   pickParallelShortId,
@@ -154,7 +154,7 @@ describe.skipIf(!DB_AVAILABLE)('tui-spawn-dx integration (Group 8)', () => {
   let savedGenieTeam: string | undefined;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -521,7 +521,7 @@ describe.skipIf(!DB_AVAILABLE)('tui-spawn-dx integration — pickParallelShortId
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {
