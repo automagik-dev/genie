@@ -65,10 +65,16 @@ interface BackfillProgress {
   status: 'pending' | 'running' | 'paused' | 'complete' | 'failed';
 }
 
-async function updateSyncState(sql: SqlClient, progress: BackfillProgress): Promise<void> {
+// Exported for unit tests — lets the backfill test suite drive the same INSERT
+// path the daemon uses without reaching into module internals.
+export async function updateSyncState(sql: SqlClient, progress: BackfillProgress): Promise<void> {
+  // started_at is populated on the initial INSERT and preserved on every
+  // subsequent UPDATE. The schema (048_session_sync_require_started_at.sql)
+  // enforces NOT NULL plus `status IN ('complete','failed') ⇒ updated_at >= started_at`,
+  // so any regression that drops started_at will fail loudly at write time.
   await sql`
-    INSERT INTO session_sync (id, status, total_files, processed_files, total_bytes, processed_bytes, errors, updated_at)
-    VALUES ('backfill', ${progress.status}, ${progress.totalFiles}, ${progress.processedFiles}, ${progress.totalBytes}, ${progress.processedBytes}, ${progress.errors}, now())
+    INSERT INTO session_sync (id, status, total_files, processed_files, total_bytes, processed_bytes, errors, started_at, updated_at)
+    VALUES ('backfill', ${progress.status}, ${progress.totalFiles}, ${progress.processedFiles}, ${progress.totalBytes}, ${progress.processedBytes}, ${progress.errors}, now(), now())
     ON CONFLICT (id) DO UPDATE SET
       status = ${progress.status},
       total_files = ${progress.totalFiles},
@@ -86,7 +92,7 @@ async function updateSyncState(sql: SqlClient, progress: BackfillProgress): Prom
 
 let running = false;
 
-async function shouldSkipBackfill(sql: SqlClient): Promise<boolean> {
+export async function shouldSkipBackfill(sql: SqlClient): Promise<boolean> {
   try {
     const existing = await sql`SELECT status FROM session_sync WHERE id = 'backfill'`;
     if (existing.length > 0 && existing[0].status === 'complete') return true;
