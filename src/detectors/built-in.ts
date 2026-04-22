@@ -35,5 +35,10 @@ import './pattern-8-session-reuse-ghost.js';
 // detector from #1283, which shipped the source without wiring the import).
 import './pattern-9-team-unpushed-orphaned-worktree.js';
 
+// Pattern 10 — Claude Code Agent-tool bypass (#1233). Measurement-only
+// detector that surfaces subagents spawned outside `genie spawn` so the
+// observability substrate can at least count them.
+import './pattern-10-agent-tool-bypass.js';
+
 // Future detector groups append their imports above. Keep imports
 // alphabetical within each group for predictable registration order.
