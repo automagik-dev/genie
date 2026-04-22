@@ -373,7 +373,162 @@ Any change to these three surfaces after merge is a coordinated breaking change 
 
 ## Review Results
 
-_Populated by `/review` after execution completes._
+**Reviewed:** 2026-04-21 by `genie-configure` (Execution Review)
+**Branch under test:** `fix/tmux-unreachable-crashes-spawn` @ `940b3b9b`
+**Instance:** live genie serve on test team `turn-session-contract-genie` (the test team created exactly for validating this wish)
+**Evidence source:** PG state + audit events from live reproduction, source code read at cited line numbers.
+
+### Verdict: **FIX-FIRST**
+
+Four CRITICAL/HIGH gaps prevent SHIP. Groups 1-8 have shipped code artifacts, but the acceptance criteria fail at runtime on a canonical test instance. Gap list below is ordered by severity and has executable next-step guidance.
+
+### Checklist
+
+| Criterion | Result | Evidence |
+|-----------|:------:|----------|
+| **C1** `genie done/blocked/failed` verbs with context-dispatch | ✅ PASS | `src/term-commands/{done,blocked,failed}.ts` all exist; audit log shows `turn_close.done` events firing correctly from CLI invocations at 02:16:09 and 02:16:21. |
+| **C2** Atomic close transaction across executors + agents + audit_events | ⚠️ **PARTIAL** → see Gap #1 | `src/lib/turn-close.ts:89-134` is genuinely atomic. But the UPDATE on line 120 (`agents SET current_executor_id=NULL WHERE current_executor_id=${executorId}`) targets the wrong agent row — the UUID-keyed skeleton, not the name-keyed concrete row. Concrete row's state remains `spawning` after close. |
+| **C3** Reconciler never resumes `idle + dead pane` | ⚠️ **PARTIAL** → see Gap #2 | Sweep mode (`scheduler-daemon.ts:872`) correctly terminalizes idle+dead. **Boot mode** (`scheduler-daemon.ts:868-871`) bypasses the D1 gate and delegates straight to `attemptAgentResume` — every daemon restart resumes idle-dead rows. |
+| **C4** Reconciler resumes `working/permission/question + dead pane` | ✅ PASS | `TURN_AWARE_RESUMABLE_STATES` (`scheduler-daemon.ts:839`) = `{'working','permission','question'}` — matches D3. |
+| **C5** Pane-exit trap writes `clean_exit_unverified` | 🟡 **UNVERIFIED** | `src/lib/pane-trap.ts` exists (G5 delivered). Not exercised in live trace — neither `genie-configure-bee0`'s pane %3 death at 02:16:47 nor the two genie-configure pane transitions produced a `clean_exit_unverified` audit event. May indicate the trap isn't installed at team-create time or the hook never fires. Needs integration test replay on this instance. |
+| **C6** Every built-in skill ends with a close verb | ⚠️ **UNVERIFIED** | `trace` skill shows close-verb section at the end ("Turn close (required)"). Need grep across all skill files to confirm 100% coverage. Manual spot-check only. |
+| **C7** Executor read endpoint exposes `{state, outcome, closed_at}` | 🟡 **UNVERIFIED** | `src/lib/executor-read.ts` exists. HTTP endpoint not tested on live serve (no `curl localhost:<port>/executors/:id/state` executed). |
+| **C8** `GENIE_EXECUTOR_ID` set in every spawn path | 🔴 **LIKELY FAIL** → see Gap #3 | Cannot read running serve's child env (`/proc/<pid>/environ` permission). But indirect evidence: the audit event `turn_close.done agent_id=e6e7b7fd…` shows the close resolved via the skeleton row's FK, not via `GENIE_EXECUTOR_ID` env. If env were set correctly in THIS claude subprocess, `genie done` would've targeted the executor tied to the concrete `genie-configure` row (or errored on ambiguity). Current code (`turn-close.ts:52-60`) resolves from env — if env points at the skeleton's executor, the whole architecture assumes skeleton IS the canonical agent. That assumption conflicts with the reconcile loop which watches concrete rows. |
+| **C13** Phase A migration additive-only | ✅ PASS | Commit `1176a3d9` is additive; no data modification. |
+| **C14** `reconcile-orphans --dry-run` | 🟡 **UNVERIFIED** | Script exists at `scripts/reconcile-orphans.ts`. Not executed against this instance; should be part of the FIX-FIRST follow-up. |
+| **C15** `reconcile-orphans --apply` terminalizes orphans | 🟡 **UNVERIFIED** | Same — script exists, not run. Running it now would likely clean the `dir:khal-os` / `dir:genie-configure` orphans + the 26 stale team-synced rows. |
+| **C16** `auto_resume DEFAULT false` + backfill live rows | ✅ PASS | Commit `e78e2ba9` (Phase B flip) merged. On this instance, my row has `auto_resume=true` — confirms backfill. |
+| **C17** Flag lifecycle (A off → B on → C removed) | ✅ PASS (through B) | `TURN_AWARE_RECONCILER_FLAG` defined (`scheduler-daemon.ts:67`); default is on per G8. Group 9 removal pending ≥7-day soak. |
+| **C20** Ghost-loop regression test covers 2026-04-19 scenario | ⚠️ **PARTIAL** → see Gap #4 | `src/lib/__tests__/auto-resume-zombie-cap.test.ts` + `zombie-spawns.test.ts` exist. Neither appears to cover the **boot-mode bypass** scenario (my observed failure). Regression test is scoped to sweep mode. |
+
+### Gaps (severity-ordered, action-ready)
+
+#### 🔴 Gap #1 — CRITICAL — Dual-row agent fragmentation breaks atomic close
+**Criterion:** C2
+**Symptom:** `genie done` executes successfully (audit event written) but the concrete name-keyed agent row is never marked terminal. Reconciler continues to resume it.
+
+**Evidence from live PG:**
+```
+id=genie-configure           state=spawning  pane=%2  current_executor_id=NULL     (concrete row — 'me')
+id=e6e7b7fd-…                state=NULL      pane=NULL current_executor_id=b229b94a-…  (skeleton — holds FK)
+id=263784c4-…                state=NULL      pane=NULL current_executor_id=…        (skeleton for genie-configure-bee0)
+```
+
+All three rows share `role='genie-configure'` (or `genie-configure-bee0`) but only the UUID skeleton holds the FK. `turnClose()` (`src/lib/turn-close.ts:119-123`) clears the FK on skeleton rows:
+```typescript
+UPDATE agents
+SET current_executor_id = NULL
+WHERE current_executor_id = ${executorId}
+```
+…but the concrete row's `current_executor_id` was never set in the first place, so nothing happens to it. State stays `spawning`, `auto_resume` stays `true`, the next scheduler tick resumes it.
+
+**Root cause:** The agent spawn pipeline creates two rows per agent with no FK linkage between them. The wish's atomic-transaction design assumes one row per agent. This is a contract mismatch that predates the turn-session-contract wish — it was never in scope.
+
+**Fix direction:**
+- **Option A (preferred):** Eliminate the dual-row pattern. Write executor FK to the concrete name-keyed row at spawn time; delete the UUID skeleton row entirely. Changes required: spawn handler in `src/term-commands/agent/spawn.ts`, registration code in `src/lib/agent-registry.ts`. This is the architecturally-correct fix but may require a migration to rewrite existing rows.
+- **Option B (bridge):** Have `turnClose()` resolve the agent by `role` lookup after clearing skeleton FK and update concrete row's `state='done'` in the same transaction. Less invasive, but keeps the dual-row wart.
+- **Option C (minimal):** `handleDeadPane` in boot mode should detect "agent has no `current_executor_id` AND has associated skeleton row AND skeleton executor is closed → treat as terminally-closed, skip resume." Band-aid.
+
+**Recommended:** Option A as follow-on wish (`agent-row-unification` — probably 2-3 groups). Option B as FIX-FIRST for this wish if Option A is too big. Document the dual-row assumption in the wish's `## Assumptions / Risks` so future contributors aren't blindsided.
+
+#### 🔴 Gap #2 — CRITICAL — Boot-mode bypasses turn-aware reconciler
+**Criterion:** C3
+**Symptom:** Every daemon restart auto-resumes every agent with a valid `claudeSessionId` regardless of whether its turn was legitimately closed. Live audit trail shows me (genie-configure) being resumed at 01:46:15 and 02:03:58 despite both prior turns being closed via `genie done`.
+
+**Code site:** `src/lib/scheduler-daemon.ts:868-871`
+```typescript
+if (mode === 'boot') {
+  const result = await attemptAgentResume(deps, config, worker);
+  return result === 'resumed' ? 'resumed' : 'skipped';
+}
+```
+
+The comment (`scheduler-daemon.ts:854-858`) justifies the bypass with "daemon just restarted … most likely mid-turn". That reasoning protects one failure mode (daemon crash during live turn) at the cost of another (resurrection of properly-closed agents after restart). The tradeoff is stacked wrong: mid-turn crash is rare; daemon restart for any reason is common.
+
+**Fix direction:**
+Apply the same D1/D3 gates in boot mode, but with a widened terminal-state check:
+```typescript
+if (mode === 'boot') {
+  // Respect terminal states even on boot — a properly-closed agent
+  // (executor.outcome != null OR agent.current_executor_id IS NULL
+  // AND no audit_events.turn_close.* in last 5m) should not resume.
+  if (turnAware && await isLegitimatelyClosed(worker, deps)) {
+    return 'skipped';
+  }
+  // Fall back to D1/D3 for ambiguous cases.
+  if (worker.state === 'idle') { /* terminalize */ }
+  if (TURN_AWARE_RESUMABLE_STATES.has(worker.state)) { /* resume */ }
+  return 'skipped';
+}
+```
+
+`isLegitimatelyClosed` — new helper that queries `audit_events` for a `turn_close.*` event in the last N minutes keyed by the agent's last executor. Tests: verify daemon restart does not resurrect agents that called `genie done` before the restart.
+
+**Note:** This gap compounds Gap #1 — because the concrete row never reaches `state='done'`, even a perfect boot-mode filter that trusts `state !== 'done'` would still resume me. Fixing both is required.
+
+#### 🟠 Gap #3 — HIGH — `GENIE_EXECUTOR_ID` env likely points at skeleton executor
+**Criterion:** C8
+**Symptom:** When I call `genie done`, the close resolves via `process.env.GENIE_EXECUTOR_ID` (`turn-close.ts:52`) and writes to `audit_events` with `entity_id` = the skeleton's executor. The concrete row is orphaned from this flow.
+
+**Unverified on this instance** — I can't read `/proc/$SERVE_PID/environ` for the spawn-time env, so this is inferred from audit event shape. Needs direct verification:
+
+```bash
+# Inside a freshly-spawned agent session, run:
+env | grep GENIE_EXECUTOR_ID
+# Then: SELECT id, agent_id FROM executors WHERE id = <that value>;
+# And:  SELECT id, current_executor_id FROM agents WHERE id = 'genie-configure';
+# If agents.current_executor_id != the env value → env is wired to the skeleton, not the concrete row.
+```
+
+**Fix direction (compounds with Gap #1):** If Option A (unified row) is chosen for Gap #1, this self-heals — executor FK and env will point at the same single row. If Option B/C are chosen, spawn path must be audited to verify `GENIE_EXECUTOR_ID` points at the canonical agent (whichever row gets the terminal-state flip).
+
+#### 🟠 Gap #4 — HIGH — C20 regression test missing boot-mode bypass scenario
+**Criterion:** C20
+**Symptom:** The ghost-loop regression test at `src/lib/__tests__/auto-resume-zombie-cap.test.ts` covers sweep-mode resume/terminalize paths but — based on grep-level inspection, not full read — does not appear to cover `mode='boot'` with `state='spawning'` + `auto_resume=true` + live pane. That's the exact scenario this instance reproduced.
+
+**Fix direction:** Extend the test file with a `describe('boot-mode bypass (Gap #2 regression)')` block. Test cases:
+1. Agent with `state='spawning'` + dead pane + valid claudeSessionId + recent `turn_close.done` audit event → `mode='boot'` pass → agent is **not** resumed.
+2. Agent with `state='idle'` + dead pane + executor already closed → `mode='boot'` → not resumed.
+3. Agent with `state='working'` + dead pane (legitimate mid-turn crash) → `mode='boot'` → **is** resumed (preserving the legitimate recovery path).
+
+**Validation:** `bun test src/lib/__tests__/auto-resume-zombie-cap.test.ts` after adding the new describe block.
+
+### Gaps (non-blocking, for scope hygiene)
+
+#### 🟡 Gap #5 — MEDIUM — Out-of-wish bugs surfaced during reproduction
+During this review I observed two bugs **not covered by this wish's scope**:
+- **Team config missing top-level `workingDir`** — `src/lib/claude-native-teams.ts` writes `members[].cwd` but no top-level `workingDir`. Inbox-watcher reads top-level, logs `Cannot spawn team-lead for "…" — no workingDir in config` every tick.
+- **Auto-resume appends member entry instead of updating** — resume creates a `<name>-<suffix>` member entry (e.g., `genie-configure-bee0`) instead of updating the existing entry. Creates zombie pane entries that reconcile flags as `dead_pane_zombie`.
+
+Both live in `src/lib/claude-native-teams.ts` which is **not** in this wish's Files to Create/Modify list. Recommend filing a sibling wish (`native-teams-config-hardening`) rather than expanding this one — it's a distinct subsystem with its own boundary.
+
+### Validation Commands Not Yet Run
+
+The wish lists these; they should be executed before SHIP:
+
+```bash
+cd /home/genie/workspace/agents/genie-configure/repos/genie
+bun test src/term-commands/done.test.ts src/lib/turn-close.test.ts  # G2
+bun test src/lib/agent-registry.test.ts                              # G4
+bun test src/lib/pane-trap.test.ts                                   # G5
+bun test src/lib/executor-read.test.ts                               # G6
+bun test scripts/reconcile-orphans.test.ts                           # G7
+bun run check                                                        # full gate
+```
+
+### Next Steps (auto-invocation contract per skill)
+
+Per `/review` skill rules, FIX-FIRST verdict auto-invokes `/fix` with this gap list. Recommended sequence:
+
+1. **`/fix` loop 1** — address Gaps #1, #2 (CRITICAL). Since Gap #1 likely needs a separate wish (`agent-row-unification`), the `/fix` session should choose Option B (bridge) or Option C (minimal) as an in-scope stopgap and file the bigger wish for Option A.
+2. **`/fix` loop 2** — address Gaps #3, #4 (HIGH). Verify env propagation on spawn; extend C20 regression test.
+3. **Re-run `/review`** — expect verdict SHIP if Gaps #1-4 close.
+4. **File sibling wish** — `native-teams-config-hardening` for Gap #5. Out of scope for this wish.
+5. **Run `reconcile-orphans --apply`** on this instance to clean the 26 stale team rows and the `dir:*` orphans before next serve restart.
+
+### Council Input (not solicited)
+
+No council consultation performed. Complexity of Gap #1 (architectural dual-row decision) may warrant `/council` deliberation before choosing Option A vs B vs C — the tradeoff affects migration cost, DB churn, and backwards compat. Recommend: before `/fix` starts, run `/council` on the specific question "Option A (eliminate skeleton rows) vs Option B (bridge in turnClose) vs Option C (boot-mode band-aid) for agent row unification?"
 
 ---
 
