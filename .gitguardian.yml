@@ -1,0 +1,9 @@
+version: 2
+secret:
+  ignored-paths:
+    - "src/lib/test-setup.ts"
+    - "src/lib/test-setup.test.ts"
+    - "scripts/test-parallel.ts"
+    - "scripts/test-parallel.test.ts"
+    - "scripts/list-tests.ts"
+    - "**/*.test.ts"
