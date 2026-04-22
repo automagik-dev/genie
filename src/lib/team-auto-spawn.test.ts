@@ -3,6 +3,13 @@
  *
  * Tests the core logic of ensureTeamLead without requiring actual tmux sessions.
  * Run with: bun test src/lib/team-auto-spawn.test.ts
+ *
+ * Classifier marker: this file calls registry.findOrCreateAgent /
+ * executorRegistry.createAndLinkExecutor which transitively open PG via
+ * getConnection(). Without this marker, scripts/list-tests.ts would land
+ * it on the unit-tests (no-pgserve) runner and the tests would fast-fail.
+ * See #1335 and .genie/wishes/pg-test-perf/WISH.md Group 9.
+ * @requires GENIE_TEST_PG
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
