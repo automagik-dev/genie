@@ -21,6 +21,7 @@ import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
 import {
   checkSendScope,
   detectSenderIdentity,
+  printBridgeSuggestion,
   registerSendInboxCommands,
   resolveSenderTeams,
   suggestRelayLeader,
@@ -274,6 +275,60 @@ describe.skipIf(!DB_AVAILABLE)('checkSendScope', () => {
     const error = await checkSendScope(tempDir, 'sub-agent', 'felipe-3');
     expect(error).toBeNull();
   });
+
+  // ---- parent → child reachback (issue #1205) ----
+
+  test('parent member → child member allowed via parentTeam chain (council default prefix)', async () => {
+    await insertTeam('scope-test-parent-1205a', tempDir, ['parent-pm']);
+    await insertTeamWithParent('council-scope-test-1205a', tempDir, ['child-worker'], 'scope-test-parent-1205a');
+
+    // Parent-team member reaches DOWN into an eligible child team.
+    const error = await checkSendScope(tempDir, 'parent-pm', 'child-worker');
+    expect(error).toBeNull();
+  });
+
+  test('parent leader → child team-name (team-lead alias) allowed via ALLOWLIST prefix', async () => {
+    // Simulates the #1205 repro: a parent leader addresses a child by team
+    // name (which `SendMessage` treats as the team-lead alias).
+    await insertTeam('scope-test-parent-1205b', tempDir, ['parent-member'], 'parent-leader');
+    await insertTeamWithParent('scope-test-sub-1205b', tempDir, ['child-lead'], 'scope-test-parent-1205b');
+    // Parent ALLOWLIST permits the `scope-test-sub-` prefix (non-council child).
+    const sql = await getConnection();
+    await sql`
+      UPDATE teams SET allow_child_reachback = ${JSON.stringify(['scope-test-sub-'])}
+      WHERE name = 'scope-test-parent-1205b'
+    `;
+
+    const previousTeam = process.env.GENIE_TEAM;
+    process.env.GENIE_TEAM = 'scope-test-parent-1205b';
+    try {
+      const error = await checkSendScope(tempDir, 'parent-leader', 'scope-test-sub-1205b');
+      expect(error).toBeNull();
+    } finally {
+      if (previousTeam === undefined) Reflect.deleteProperty(process.env, 'GENIE_TEAM');
+      else process.env.GENIE_TEAM = previousTeam;
+    }
+  });
+
+  test('unrelated team recipient still triggers scope violation (not over-permissive)', async () => {
+    // Regression: the DOWN-walk must only expose teams whose parentTeam chain
+    // reaches the sender, not every team on the system.
+    await insertTeam('scope-test-parent-1205c', tempDir, ['parent-member-c']);
+    await insertTeam('scope-test-unrelated-1205c', tempDir, ['stranger']);
+
+    const error = await checkSendScope(tempDir, 'parent-member-c', 'stranger');
+    expect(error).not.toBeNull();
+    expect(error).toContain('Scope violation');
+  });
+
+  test('child with blocked reachback (non-council, no ALLOWLIST) is NOT reachable from parent', async () => {
+    await insertTeam('scope-test-parent-1205d', tempDir, ['parent-member-d']);
+    await insertTeamWithParent('scope-test-blocked-1205d', tempDir, ['blocked-worker'], 'scope-test-parent-1205d');
+
+    const error = await checkSendScope(tempDir, 'parent-member-d', 'blocked-worker');
+    expect(error).not.toBeNull();
+    expect(error).toContain('Scope violation');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -437,6 +492,88 @@ describe.skipIf(!DB_AVAILABLE)('suggestRelayLeader', () => {
     await seed('bridge-test-leaderless', ['solo']);
     const result = await suggestRelayLeader('solo');
     expect(result).toEqual({ leader: 'bridge-test-leaderless', team: 'bridge-test-leaderless' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// printBridgeSuggestion — --bridge hint output (issue #1205)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!DB_AVAILABLE)('printBridgeSuggestion', () => {
+  let tempDir: string;
+  let previousTeam: string | undefined;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'hint-test-'));
+    previousTeam = process.env.GENIE_TEAM;
+  });
+
+  afterEach(async () => {
+    const sql = await getConnection();
+    await sql`DELETE FROM teams WHERE name LIKE 'hint-test-%'`;
+    await rm(tempDir, { recursive: true, force: true });
+    if (previousTeam === undefined) Reflect.deleteProperty(process.env, 'GENIE_TEAM');
+    else process.env.GENIE_TEAM = previousTeam;
+  });
+
+  async function seed(name: string, members: string[], leader?: string): Promise<void> {
+    const sql = await getConnection();
+    await sql`
+      INSERT INTO teams (name, repo, base_branch, worktree_path, leader, members, status, created_at)
+      VALUES (
+        ${name}, ${tempDir}, 'dev', ${join(tempDir, '.worktrees', name)},
+        ${leader ?? null}, ${JSON.stringify(members)}, 'in_progress', now()
+      )
+      ON CONFLICT (name) DO UPDATE SET
+        members = ${JSON.stringify(members)}, leader = ${leader ?? null}
+    `;
+  }
+
+  function captureStderr(): { lines: string[]; restore: () => void } {
+    const lines: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      lines.push(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
+    };
+    const restore = () => {
+      console.error = original;
+    };
+    return { lines, restore };
+  }
+
+  test('when leader equals sender, does NOT emit a looping relay command', async () => {
+    await seed('hint-test-leader-loop', [], 'hint-test-leader');
+    process.env.GENIE_TEAM = 'hint-test-leader-loop';
+
+    const cap = captureStderr();
+    try {
+      await printBridgeSuggestion('hint-test-leader', 'outsider', 'hello', 'dummy error');
+    } finally {
+      cap.restore();
+    }
+
+    const output = cap.lines.join('\n');
+    // Clear no-op-avoidance message
+    expect(output).toContain('already the nearest reachable leader');
+    // Crucially, no "Relay manually via" hint that would loop to sender
+    expect(output).not.toContain('Relay manually via');
+    expect(output).not.toMatch(/--to\s+hint-test-leader\b/);
+  });
+
+  test('when leader differs from sender, emits a valid relay command', async () => {
+    await seed('hint-test-member-relay', ['hint-test-member'], 'hint-test-boss');
+
+    const cap = captureStderr();
+    try {
+      await printBridgeSuggestion('hint-test-member', 'outsider', 'hello', 'dummy error');
+    } finally {
+      cap.restore();
+    }
+
+    const output = cap.lines.join('\n');
+    expect(output).toContain('Nearest reachable leader: hint-test-boss@hint-test-member-relay');
+    expect(output).toContain('Relay manually via:');
+    expect(output).toContain('--to hint-test-boss');
   });
 });
 
