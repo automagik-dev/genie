@@ -248,73 +248,78 @@ export class OmniBridge {
     }
 
     console.log(`[omni-bridge] Connecting to NATS at ${this.natsUrl}...`);
-
     this.nc = await this.natsConnectFn({
       servers: this.natsUrl,
       name: 'genie-omni-bridge',
       reconnect: true,
-      maxReconnectAttempts: -1, // Unlimited reconnects
+      maxReconnectAttempts: -1,
       reconnectTimeWait: 2000,
     });
-
     console.log('[omni-bridge] Connected to NATS');
 
-    // PG probe: graceful degradation on failure — never block startup.
-    // Group 3 scaffolding; Group 4 consumers (SDK + tmux executors) receive a
-    // bound `safePgCall` reference below.
-    await this.probePg();
+    await this.setupPg();
+    this.wireExecutorHooks();
+    this.subscribeOmniChannels();
 
-    // Initialize PG-backed session store and recover surviving sessions.
+    this.startedAtMs = Date.now();
+    this.subscribePingChannel();
+
+    await this.claimPidfile();
+    this.armSignalCleanup();
+
+    // Arm the idle session checker LAST — after the pidfile write has
+    // succeeded and all prior rollback paths are past. See issue #1137.
+    this.idleCheckTimer = setInterval(() => this.checkIdleSessions(), IDLE_CHECK_INTERVAL_MS);
+
+    console.log(
+      `[omni-bridge] Listening on omni.message.> (max_concurrent=${this.maxConcurrent}, idle_timeout=${this.idleTimeoutMs}ms)`,
+    );
+  }
+
+  /** PG probe + session store + queue initialization. */
+  private async setupPg(): Promise<void> {
+    await this.probePg();
     if (this.pgAvailable && this.sql) {
       this.sessionStore = new BridgeSessionStore(this.sql);
       await this.recoverSessions();
     }
-
-    // Initialize PG-backed queue for SDK executor when PG is available.
     if (this.executorType === 'sdk' && this.pgAvailable && this.sql) {
       this.queue = new OmniQueue(this.sql, (_req, msg) => this.routeMessage(msg), this.queueConfig);
       await this.queue.recoverStale();
       this.queue.start();
     }
+  }
 
-    // Inject the bridge's safePgCall into the executor so its World A registry
-    // writes are guarded by the same pgAvailable / connection-loss logic as
-    // the rest of the bridge. Both executors expose `setSafePgCall` (Group 4,
-    // Decision 2 in WISH Post-Audit).
+  /** Inject safePgCall + NATS publish into the executor. */
+  private wireExecutorHooks(): void {
     this.executor.setSafePgCall(this.safePgCall.bind(this));
-
-    // Inject NATS publish for in-process reply delivery (replaces subprocess fork).
     const sc = this.sc;
     const nc = this.nc;
+    if (!nc) return;
     this.executor.setNatsPublish((topic: string, payload: string) => {
       nc.publish(topic, sc.encode(payload));
     });
+  }
 
-    // Subscribe to all omni messages
+  /** Subscribe to omni.message.>, omni.turn.*.>, omni.session.reset.>. */
+  private subscribeOmniChannels(): void {
+    if (!this.nc) return;
     this.sub = this.nc.subscribe('omni.message.>', { queue: 'genie-bridge' });
     this.processSubscription();
 
-    // Turn lifecycle events from Omni
     const turnSubs = ['omni.turn.open.>', 'omni.turn.done.>', 'omni.turn.nudge.>', 'omni.turn.timeout.>'];
     for (const topic of turnSubs) {
       const sub = this.nc.subscribe(topic, { queue: 'genie-bridge' });
       this.processTurnEvents(sub);
     }
 
-    // Session reset events from Omni — kill the agent's executor session when the user
-    // sends a reset token (e.g. 🗑️). Paired with omni-side publisher in
-    // automagik-dev/omni#361. Subject hierarchy: omni.session.reset.{instance}.{chat}
-    // (recursive `>` because WhatsApp chat ids contain dots).
     const sessionResetSub = this.nc.subscribe('omni.session.reset.>', { queue: 'genie-bridge' });
     this.processSessionResetEvents(sessionResetSub);
+  }
 
-    // Set uptime anchor before subscribing the ping handler so the first pong
-    // reports a non-negative value.
-    this.startedAtMs = Date.now();
-
-    // Subscribe to the omni.bridge.ping IPC channel used by `genie doctor`.
-    // Handler replies with {ok,pid,uptimeMs,subjects} so out-of-process
-    // callers can prove the bridge is actually responsive, not just alive.
+  /** Subscribe to the omni.bridge.ping IPC channel and start the responder loop. */
+  private subscribePingChannel(): void {
+    if (!this.nc) return;
     this.pingSub = this.nc.subscribe(BRIDGE_PING_SUBJECT);
     const pingSub = this.pingSub;
     const pingSc = this.sc;
@@ -336,49 +341,14 @@ export class OmniBridge {
     })().catch(() => {
       // subscription closed on shutdown — fine
     });
+  }
 
-    // Write the pidfile AFTER NATS is live and the ping handler is armed so
-    // any reader who sees the file can trust the IPC channel to answer.
-    // Uses O_EXCL so two concurrent `genie serve` starts cannot both claim it.
+  /** Write the pidfile, rolling back NATS on collision. Uses O_EXCL to arbitrate races. */
+  private async claimPidfile(): Promise<void> {
     this.pidfilePath = getBridgePidfilePath();
     try {
       mkdirSync(dirname(this.pidfilePath), { recursive: true });
-      // Stale-pidfile recovery: if a pidfile exists whose owning process is
-      // gone, the previous holder crashed. Unlink it and retake. If the PID
-      // is alive, fail fast — another bridge is legitimately holding the lock.
-      if (existsSync(this.pidfilePath)) {
-        let stalePid: number | null = null;
-        try {
-          const raw = readFileSync(this.pidfilePath, 'utf8');
-          const parsed = JSON.parse(raw) as { pid?: unknown };
-          if (typeof parsed.pid === 'number' && Number.isFinite(parsed.pid)) {
-            stalePid = parsed.pid;
-          }
-        } catch {
-          // Unreadable/corrupt pidfile — treat as stale and unlink below.
-        }
-        if (stalePid !== null) {
-          let alive = false;
-          try {
-            process.kill(stalePid, 0);
-            alive = true;
-          } catch (probeErr) {
-            // ESRCH = no such process → stale. Any other errno (e.g. EPERM)
-            // means the process exists and we must not steal the lock.
-            const code = (probeErr as NodeJS.ErrnoException).code;
-            alive = code !== 'ESRCH';
-          }
-          if (alive) {
-            throw new Error(`pidfile locked by PID ${stalePid}`);
-          }
-        }
-        try {
-          unlinkSync(this.pidfilePath);
-        } catch {
-          // Another process may have cleaned it up already — openSync wx below
-          // will still arbitrate the race atomically.
-        }
-      }
+      this.evictStalePidfile(this.pidfilePath);
       const fd = openSync(this.pidfilePath, 'wx');
       const payload = JSON.stringify({
         pid: process.pid,
@@ -389,28 +359,72 @@ export class OmniBridge {
       writeSync(fd, payload);
       closeSync(fd);
     } catch (err) {
-      // Roll back the NATS connection so a locked pidfile causes a clean,
-      // non-zero exit in serve instead of a half-initialized bridge.
-      this.pidfilePath = null;
-      const detail = err instanceof Error ? err.message : String(err);
-      try {
-        if (this.pingSub) this.pingSub.unsubscribe();
-      } catch {
-        // ignore
-      }
-      this.pingSub = null;
-      try {
-        await this.nc?.drain();
-      } catch {
-        // ignore
-      }
-      this.nc = null;
-      throw new Error(`[omni-bridge] pidfile locked at ${getBridgePidfilePath()}: ${detail}`);
+      await this.rollbackStartOnPidfileError(err);
     }
+  }
 
-    // Best-effort pidfile cleanup on fatal signals. stop() removes it on
-    // graceful shutdown; these handlers cover SIGTERM/SIGINT paths where
-    // stop() may race the process exit.
+  /**
+   * Stale-pidfile recovery: if a pidfile exists whose owning process is
+   * gone, the previous holder crashed. Unlink it and retake. If the PID
+   * is alive, fail fast — another bridge is legitimately holding the lock.
+   */
+  private evictStalePidfile(path: string): void {
+    if (!existsSync(path)) return;
+    let stalePid: number | null = null;
+    try {
+      const raw = readFileSync(path, 'utf8');
+      const parsed = JSON.parse(raw) as { pid?: unknown };
+      if (typeof parsed.pid === 'number' && Number.isFinite(parsed.pid)) {
+        stalePid = parsed.pid;
+      }
+    } catch {
+      // Unreadable/corrupt pidfile — treat as stale and unlink below.
+    }
+    if (stalePid !== null && this.isPidAlive(stalePid)) {
+      throw new Error(`pidfile locked by PID ${stalePid}`);
+    }
+    try {
+      unlinkSync(path);
+    } catch {
+      // Another process may have cleaned it up already — openSync wx will still arbitrate atomically.
+    }
+  }
+
+  private isPidAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (probeErr) {
+      // ESRCH = no such process → stale. Any other errno (e.g. EPERM)
+      // means the process exists and we must not steal the lock.
+      return (probeErr as NodeJS.ErrnoException).code !== 'ESRCH';
+    }
+  }
+
+  private async rollbackStartOnPidfileError(err: unknown): Promise<never> {
+    this.pidfilePath = null;
+    const detail = err instanceof Error ? err.message : String(err);
+    try {
+      if (this.pingSub) this.pingSub.unsubscribe();
+    } catch {
+      // ignore
+    }
+    this.pingSub = null;
+    try {
+      await this.nc?.drain();
+    } catch {
+      // ignore
+    }
+    this.nc = null;
+    throw new Error(`[omni-bridge] pidfile locked at ${getBridgePidfilePath()}: ${detail}`);
+  }
+
+  /**
+   * Best-effort pidfile cleanup on fatal signals. stop() removes it on
+   * graceful shutdown; these handlers cover SIGTERM/SIGINT paths where
+   * stop() may race the process exit.
+   */
+  private armSignalCleanup(): void {
     const onSignal = () => {
       if (this.pidfilePath) {
         try {
@@ -427,17 +441,6 @@ export class OmniBridge {
       process.removeListener('SIGTERM', onSignal);
       process.removeListener('SIGINT', onSignal);
     };
-
-    // Arm the idle session checker LAST — after the pidfile write has
-    // succeeded and all prior rollback paths are past. This guarantees
-    // that if any earlier step throws, no timer handle has been created
-    // and there is nothing for the caller (or test harness) to leak.
-    // See issue #1137 for the bun-test-hang this ordering prevents.
-    this.idleCheckTimer = setInterval(() => this.checkIdleSessions(), IDLE_CHECK_INTERVAL_MS);
-
-    console.log(
-      `[omni-bridge] Listening on omni.message.> (max_concurrent=${this.maxConcurrent}, idle_timeout=${this.idleTimeoutMs}ms)`,
-    );
   }
 
   /**
@@ -455,75 +458,23 @@ export class OmniBridge {
 
     console.log('[omni-bridge] Shutting down...');
 
-    // Stop queue worker
     if (this.queue) {
       this.queue.stop();
       this.queue = null;
     }
-
-    // Stop idle checker
     if (this.idleCheckTimer) {
       clearInterval(this.idleCheckTimer);
       this.idleCheckTimer = null;
     }
 
-    // Clear idle timers and shut down non-tmux sessions.
-    // Tmux sessions are left running — their PG rows stay 'active' so
-    // recoverSessions() can re-attach after restart.
-    for (const [key, entry] of this.sessions) {
-      if (entry.idleTimer) clearTimeout(entry.idleTimer);
-      if (!entry.spawning && entry.session) {
-        if (entry.session.executorType === 'tmux') {
-          console.log(`[omni-bridge] Detaching from tmux session ${key} (pane stays alive)`);
-        } else {
-          try {
-            await this.executor.shutdown(entry.session);
-          } catch (err) {
-            console.warn(`[omni-bridge] Error shutting down session ${key}:`, err);
-          }
-          // Close SDK sessions in PG since they can't survive restart
-          const closeId = entry.pgBridgeSessionId;
-          if (closeId && this.sessionStore) {
-            await this.safePgCall('session_close_sdk', (sql) => new BridgeSessionStore(sql).close(closeId), undefined);
-          }
-        }
-      }
-    }
-    this.sessions.clear();
-
-    // Unsubscribe
-    if (this.sub) {
-      this.sub.unsubscribe();
-      this.sub = null;
-    }
-
-    // Tear down the ping IPC channel.
-    if (this.pingSub) {
-      try {
-        this.pingSub.unsubscribe();
-      } catch {
-        // ignore
-      }
-      this.pingSub = null;
-    }
-
-    // Remove the pidfile deterministically on clean stop.
-    if (this.pidfilePath) {
-      try {
-        unlinkSync(this.pidfilePath);
-      } catch {
-        // already gone — fine
-      }
-      this.pidfilePath = null;
-    }
-
-    // Remove signal handlers so tests can start/stop repeatedly without leaks.
+    await this.shutdownActiveSessions();
+    this.unsubscribeChannels();
+    this.clearPidfileOnStop();
     if (this.signalCleanup) {
       this.signalCleanup();
       this.signalCleanup = null;
     }
 
-    // Drain and close
     try {
       await this.nc.drain();
     } catch {
@@ -538,6 +489,57 @@ export class OmniBridge {
     this.sessionStore = null;
 
     console.log('[omni-bridge] Stopped');
+  }
+
+  /**
+   * Clear idle timers and shut down non-tmux sessions.
+   * Tmux sessions are left running — their PG rows stay 'active' so
+   * recoverSessions() can re-attach after restart.
+   */
+  private async shutdownActiveSessions(): Promise<void> {
+    for (const [key, entry] of this.sessions) {
+      if (entry.idleTimer) clearTimeout(entry.idleTimer);
+      if (entry.spawning || !entry.session) continue;
+      if (entry.session.executorType === 'tmux') {
+        console.log(`[omni-bridge] Detaching from tmux session ${key} (pane stays alive)`);
+        continue;
+      }
+      try {
+        await this.executor.shutdown(entry.session);
+      } catch (err) {
+        console.warn(`[omni-bridge] Error shutting down session ${key}:`, err);
+      }
+      const closeId = entry.pgBridgeSessionId;
+      if (closeId && this.sessionStore) {
+        await this.safePgCall('session_close_sdk', (sql) => new BridgeSessionStore(sql).close(closeId), undefined);
+      }
+    }
+    this.sessions.clear();
+  }
+
+  private unsubscribeChannels(): void {
+    if (this.sub) {
+      this.sub.unsubscribe();
+      this.sub = null;
+    }
+    if (this.pingSub) {
+      try {
+        this.pingSub.unsubscribe();
+      } catch {
+        // ignore
+      }
+      this.pingSub = null;
+    }
+  }
+
+  private clearPidfileOnStop(): void {
+    if (!this.pidfilePath) return;
+    try {
+      unlinkSync(this.pidfilePath);
+    } catch {
+      // already gone — fine
+    }
+    this.pidfilePath = null;
   }
 
   /**
@@ -715,6 +717,48 @@ export class OmniBridge {
   // Internal
   // ==========================================================================
 
+  /** Fill instanceId/chatId from the NATS subject when the payload omits them. */
+  private fillSubjectMetadata(parsed: OmniMessage, subject: string): void {
+    const parts = subject.split('.');
+    if (parts.length < 4) return;
+    parsed.instanceId = parsed.instanceId || (parts[2] as string);
+    parsed.chatId = parsed.chatId || (parts[3] as string);
+  }
+
+  /** Track a recently-seen message id, returning true if it is a duplicate. */
+  private isDuplicateMessage(messageId: string | undefined): boolean {
+    if (!messageId) return false;
+    if (this.recentMessageIds.has(messageId)) return true;
+    this.recentMessageIds.set(messageId, Date.now());
+    // Prune stale entries when cache grows large (TTL 60s)
+    if (this.recentMessageIds.size > 1000) {
+      const cutoff = Date.now() - 60_000;
+      for (const [id, ts] of this.recentMessageIds) {
+        if (ts < cutoff) this.recentMessageIds.delete(id);
+      }
+    }
+    return false;
+  }
+
+  /**
+   * SDK executor with PG queue: persist to queue for durable processing.
+   * Tmux executor or degraded mode: route directly (fire-and-forget).
+   */
+  private async dispatchMessage(parsed: OmniMessage): Promise<void> {
+    if (this.queue) {
+      // biome-ignore lint/suspicious/noExplicitAny: NATS payload may have extra fields
+      const raw = parsed as any;
+      const env = (raw.env as Record<string, string>) ?? {};
+      await this.queue.enqueue(parsed, env);
+      return;
+    }
+    const key = `${parsed.agent}:${parsed.chatId}`;
+    const hasSession = this.sessions.has(key);
+    console.log(`[omni-bridge] Routing message for ${key} (hasSession=${hasSession}, queue=${!!this.queue})`);
+    await this.routeMessage(parsed);
+    console.log(`[omni-bridge] routeMessage done for ${key}`);
+  }
+
   /**
    * Process incoming NATS messages from the subscription.
    */
@@ -725,32 +769,15 @@ export class OmniBridge {
       try {
         const data = this.sc.decode(msg.data);
         const parsed: OmniMessage = JSON.parse(data);
-
-        // Extract instance_id and chat_id from subject: omni.message.{instance}.{chat_id}
-        const parts = msg.subject.split('.');
-        if (parts.length >= 4) {
-          parsed.instanceId = parsed.instanceId || parts[2];
-          parsed.chatId = parsed.chatId || parts[3];
-        }
+        this.fillSubjectMetadata(parsed, msg.subject);
 
         console.log(`[omni-bridge] NATS message received: ${msg.subject} agent=${parsed.agent} chat=${parsed.chatId}`);
 
-        // Dedup: skip messages already processed (JetStream redelivery protection)
         // biome-ignore lint/suspicious/noExplicitAny: NATS payload has extra fields beyond OmniMessage
         const messageId = (parsed as any).messageId as string | undefined;
-        if (messageId && this.recentMessageIds.has(messageId)) {
+        if (this.isDuplicateMessage(messageId)) {
           console.log(`[omni-bridge] Dedup: skipping duplicate messageId=${messageId}`);
           continue;
-        }
-        if (messageId) {
-          this.recentMessageIds.set(messageId, Date.now());
-          // Prune stale entries when cache grows large (TTL 60s)
-          if (this.recentMessageIds.size > 1000) {
-            const cutoff = Date.now() - 60_000;
-            for (const [id, ts] of this.recentMessageIds) {
-              if (ts < cutoff) this.recentMessageIds.delete(id);
-            }
-          }
         }
 
         if (!parsed.chatId || !parsed.agent) {
@@ -758,20 +785,7 @@ export class OmniBridge {
           continue;
         }
 
-        // SDK executor with PG queue: persist to queue for durable processing.
-        // Tmux executor or degraded mode: route directly (fire-and-forget).
-        if (this.queue) {
-          // biome-ignore lint/suspicious/noExplicitAny: NATS payload may have extra fields
-          const raw = parsed as any;
-          const env = (raw.env as Record<string, string>) ?? {};
-          await this.queue.enqueue(parsed, env);
-        } else {
-          const key = `${parsed.agent}:${parsed.chatId}`;
-          const hasSession = this.sessions.has(key);
-          console.log(`[omni-bridge] Routing message for ${key} (hasSession=${hasSession}, queue=${!!this.queue})`);
-          await this.routeMessage(parsed);
-          console.log(`[omni-bridge] routeMessage done for ${key}`);
-        }
+        await this.dispatchMessage(parsed);
       } catch (err) {
         console.error('[omni-bridge] Error processing message:', err);
       }

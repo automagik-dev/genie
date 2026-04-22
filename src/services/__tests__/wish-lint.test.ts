@@ -178,6 +178,30 @@ function wishWithGroupBody(groupBody: string[]): string {
   ].join('\n');
 }
 
+type LintReport = ReturnType<typeof lintWish>;
+type Violation = LintReport['violations'][number];
+
+function lintMarkdownSafe(md: string): LintReport {
+  try {
+    return lintWish(parseWish(md), md);
+  } catch (err) {
+    if (err instanceof WishParseError) return lintWish(err, md);
+    throw err;
+  }
+}
+
+function expectViolationOrdered(prev: Violation, cur: Violation): void {
+  if (prev.line === cur.line && prev.column === cur.column) {
+    expect(prev.rule.localeCompare(cur.rule)).toBeLessThanOrEqual(0);
+    return;
+  }
+  if (prev.line === cur.line) {
+    expect(prev.column).toBeLessThanOrEqual(cur.column);
+    return;
+  }
+  expect(prev.line).toBeLessThanOrEqual(cur.line);
+}
+
 // ============================================================================
 // Shape / export contract
 // ============================================================================
@@ -209,26 +233,13 @@ describe('lintWish — shape contract', () => {
     const md = cleanMultiGroupWish()
       .replace('### Group 2: Second', '### Grupo 2 — Second')
       .replace('**depends-on:** none', '**depends-on:** Groups 1 and 2');
-    let report: ReturnType<typeof lintWish>;
-    try {
-      const parsed = parseWish(md);
-      report = lintWish(parsed, md);
-    } catch (err) {
-      if (err instanceof WishParseError) report = lintWish(err, md);
-      else throw err;
-    }
+    const report = lintMarkdownSafe(md);
     expect(report.violations.length).toBeGreaterThan(1);
     for (let i = 1; i < report.violations.length; i++) {
       const prev = report.violations[i - 1];
       const cur = report.violations[i];
       if (!prev || !cur) continue;
-      if (prev.line === cur.line && prev.column === cur.column) {
-        expect(prev.rule.localeCompare(cur.rule)).toBeLessThanOrEqual(0);
-      } else if (prev.line === cur.line) {
-        expect(prev.column).toBeLessThanOrEqual(cur.column);
-      } else {
-        expect(prev.line).toBeLessThanOrEqual(cur.line);
-      }
+      expectViolationOrdered(prev, cur);
     }
   });
 

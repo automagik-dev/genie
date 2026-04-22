@@ -125,12 +125,11 @@ function sliceContent(lines: string[], span: SectionSpan): string[] {
   return lines.slice(start, end);
 }
 
-function parseMetadataTable(lines: string[], startLine: number): WishMetadata {
+function extractMetadataFromRows(lines: string[]): { metadata: Partial<WishMetadata>; sawHeader: boolean } {
   const metadata: Partial<WishMetadata> = {};
   let sawHeader = false;
   let sawDivider = false;
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i] as string;
+  for (const raw of lines) {
     const line = raw.trim();
     if (!line.startsWith('|')) {
       if (sawHeader) break;
@@ -150,12 +149,16 @@ function parseMetadataTable(lines: string[], startLine: number): WishMetadata {
       .map((c) => c.trim());
     if (cells.length < 2) continue;
     const keyRaw = stripBold(cells[0] as string).toLowerCase();
-    const value = stripBackticks(cells[1] as string);
     const mapped = METADATA_KEY_MAP[keyRaw];
     if (mapped) {
-      (metadata as Record<string, string>)[mapped] = value;
+      (metadata as Record<string, string>)[mapped] = stripBackticks(cells[1] as string);
     }
   }
+  return { metadata, sawHeader };
+}
+
+function parseMetadataTable(lines: string[], startLine: number): WishMetadata {
+  const { metadata, sawHeader } = extractMetadataFromRows(lines);
   if (!sawHeader) {
     throw new WishParseError({
       rule: 'metadata-table-missing-field',
@@ -314,8 +317,28 @@ function extractLabeledField(
   };
 }
 
+function extractValidationBody(rawValue: string): string {
+  const vLines = rawValue.split('\n');
+  let inFence = false;
+  const collected: string[] = [];
+  for (const l of vLines) {
+    const fenceOpen = /^\s*```(\S*)\s*$/.exec(l);
+    if (fenceOpen) {
+      if (!inFence) {
+        inFence = true;
+        continue;
+      }
+      inFence = false;
+      break;
+    }
+    if (inFence) collected.push(l);
+  }
+  // If no fence present, keep raw content (the linter rule `validation-not-fenced-bash` handles this).
+  return collected.length > 0 ? collected.join('\n') : rawValue;
+}
+
 function parseExecutionGroup(
-  allLines: string[],
+  _allLines: string[],
   headerLine: string,
   headerLineNumber: number,
   bodyLines: string[],
@@ -342,40 +365,11 @@ function parseExecutionGroup(
   const validationField = extractLabeledField(bodyLines, bodyStartLine, /^\*\*Validation:\*\*/i, stopRegex);
   const dependsOnField = extractLabeledField(bodyLines, bodyStartLine, /^\*\*depends-on:\*\*/i, stopRegex);
 
-  // Acceptance checklist extraction.
   const acceptanceItems = acceptanceField.found ? parseChecklist(acceptanceField.value.split('\n')) : [];
-
-  // Validation fenced block extraction: first ```bash (or ``` ) block after the label.
-  let validationBody = '';
-  if (validationField.found) {
-    const vLines = validationField.value.split('\n');
-    let inFence = false;
-    let fenceTag: string | null = null;
-    const collected: string[] = [];
-    for (const l of vLines) {
-      const fenceOpen = /^\s*```(\S*)\s*$/.exec(l);
-      if (fenceOpen) {
-        if (!inFence) {
-          inFence = true;
-          fenceTag = (fenceOpen[1] as string) || '';
-          continue;
-        }
-        inFence = false;
-        break;
-      }
-      if (inFence) collected.push(l);
-    }
-    // If no fence present, keep raw content (the linter rule `validation-not-fenced-bash` handles this).
-    validationBody = collected.length > 0 ? collected.join('\n') : validationField.value;
-    // Suppress unused fence-tag warning; parser does not branch on it yet (linter does).
-    void fenceTag;
-  }
-
+  const validationBody = validationField.found ? extractValidationBody(validationField.value) : '';
   const { value: dependsOnValue } = dependsOnField.found
     ? parseDependsOnValue(dependsOnField.value)
     : { value: [] as string[] };
-
-  void allLines; // retained for future line-range utilities
 
   return {
     name: `Group ${number}: ${title}`,
@@ -444,12 +438,10 @@ function extractFencedBlock(content: string): string {
   return m ? (m[1] as string) : '';
 }
 
-export function parseWish(markdown: string): WishDocument {
-  const normalized = markdown.replace(/\r\n/g, '\n');
-  const lines = normalized.split('\n');
-  const spans = detectHeadings(lines);
-
-  // Title (H1).
+function parseTitleAndMetadata(
+  lines: string[],
+  spans: SectionSpan[],
+): { title: string; metadata: WishMetadata; titleSpan: SectionSpan; firstH2: SectionSpan | undefined } {
   const titleSpan = spans.find((s) => s.level === 1);
   if (!titleSpan || !/^Wish:\s*/i.test(titleSpan.title)) {
     throw new WishParseError({
@@ -459,55 +451,33 @@ export function parseWish(markdown: string): WishDocument {
     });
   }
   const title = titleSpan.title.replace(/^Wish:\s*/i, '').trim();
-
-  // Metadata table lives between the title and the first H2.
   const firstH2 = spans.find((s) => s.level === 2);
   const metaLines = lines.slice(titleSpan.start, firstH2 ? firstH2.start - 1 : lines.length);
   const metadata = parseMetadataTable(metaLines, titleSpan.start + 1);
+  return { title, metadata, titleSpan, firstH2 };
+}
 
-  // Summary.
-  const summarySpan = spans.find((s) => s.level === 2 && /^summary$/i.test(s.title));
-  if (!summarySpan) {
-    throw new WishParseError({
-      rule: 'missing-summary',
-      line: firstH2?.start ?? titleSpan.start,
-      message: 'Wish is missing the `## Summary` section',
-    });
-  }
-  const summary = sliceContent(lines, summarySpan).join('\n').trim();
-
-  // Scope.
+function parseScopeSection(lines: string[], spans: SectionSpan[]): { in: string[]; out: string[] } {
   const scopeSpan = spans.find((s) => s.level === 2 && /^scope$/i.test(s.title));
   const scopeIn: string[] = [];
   const scopeOut: string[] = [];
-  if (scopeSpan) {
-    const scopeSubs = spans.filter((s) => s.level === 3 && s.start > scopeSpan.start && s.start <= scopeSpan.end);
-    for (const sub of scopeSubs) {
-      const content = sliceContent(lines, sub);
-      if (/^in\b/i.test(sub.title)) scopeIn.push(...parseBullets(content));
-      else if (/^out\b/i.test(sub.title)) scopeOut.push(...parseBullets(content));
-    }
+  if (!scopeSpan) return { in: scopeIn, out: scopeOut };
+  const scopeSubs = spans.filter((s) => s.level === 3 && s.start > scopeSpan.start && s.start <= scopeSpan.end);
+  for (const sub of scopeSubs) {
+    const content = sliceContent(lines, sub);
+    if (/^in\b/i.test(sub.title)) scopeIn.push(...parseBullets(content));
+    else if (/^out\b/i.test(sub.title)) scopeOut.push(...parseBullets(content));
   }
+  return { in: scopeIn, out: scopeOut };
+}
 
-  // Decisions.
-  const decisionsSpan = spans.find((s) => s.level === 2 && /^decisions$/i.test(s.title));
-  const decisions = decisionsSpan ? parseDecisions(sliceContent(lines, decisionsSpan)) : [];
-
-  // Success Criteria.
-  const successSpan = spans.find((s) => s.level === 2 && /^success criteria$/i.test(s.title));
-  const successCriteria = successSpan ? parseChecklist(sliceContent(lines, successSpan)) : [];
-
-  // Execution Strategy.
-  const strategySpan = spans.find((s) => s.level === 2 && /^execution strategy$/i.test(s.title));
-  const executionStrategy = strategySpan ? parseExecutionStrategy(lines, strategySpan, spans) : [];
-
-  // Execution Groups — hard-required section.
+function parseExecutionGroupsSection(lines: string[], spans: SectionSpan[], fallbackLine: number): ExecutionGroup[] {
   const execGroupsSpan = spans.find((s) => s.level === 2 && /^execution groups$/i.test(s.title));
   if (!execGroupsSpan) {
     const stray = detectStrayGroupHeaders(lines);
     throw new WishParseError({
       rule: 'missing-execution-groups-header',
-      line: stray?.line ?? firstH2?.start ?? titleSpan.start,
+      line: stray?.line ?? fallbackLine,
       message: stray
         ? `Wish contains a "${stray.text}" header but the parent "## Execution Groups" header is missing`
         : 'Wish is missing the `## Execution Groups` section',
@@ -521,20 +491,50 @@ export function parseWish(markdown: string): WishDocument {
       message: 'Wish contains `## Execution Groups` but no `### Group N: …` subsections',
     });
   }
+  return executionGroups;
+}
 
-  // QA Criteria.
+function requireSummary(lines: string[], spans: SectionSpan[], fallbackLine: number): string {
+  const summarySpan = spans.find((s) => s.level === 2 && /^summary$/i.test(s.title));
+  if (!summarySpan) {
+    throw new WishParseError({
+      rule: 'missing-summary',
+      line: fallbackLine,
+      message: 'Wish is missing the `## Summary` section',
+    });
+  }
+  return sliceContent(lines, summarySpan).join('\n').trim();
+}
+
+export function parseWish(markdown: string): WishDocument {
+  const normalized = markdown.replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+  const spans = detectHeadings(lines);
+
+  const { title, metadata, titleSpan, firstH2 } = parseTitleAndMetadata(lines, spans);
+  const summary = requireSummary(lines, spans, firstH2?.start ?? titleSpan.start);
+  const scope = parseScopeSection(lines, spans);
+
+  const decisionsSpan = spans.find((s) => s.level === 2 && /^decisions$/i.test(s.title));
+  const decisions = decisionsSpan ? parseDecisions(sliceContent(lines, decisionsSpan)) : [];
+
+  const successSpan = spans.find((s) => s.level === 2 && /^success criteria$/i.test(s.title));
+  const successCriteria = successSpan ? parseChecklist(sliceContent(lines, successSpan)) : [];
+
+  const strategySpan = spans.find((s) => s.level === 2 && /^execution strategy$/i.test(s.title));
+  const executionStrategy = strategySpan ? parseExecutionStrategy(lines, strategySpan, spans) : [];
+
+  const executionGroups = parseExecutionGroupsSection(lines, spans, firstH2?.start ?? titleSpan.start);
+
   const qaSpan = spans.find((s) => s.level === 2 && /^qa criteria$/i.test(s.title));
   const qaCriteria = qaSpan ? parseChecklist(sliceContent(lines, qaSpan)) : [];
 
-  // Assumptions / Risks.
   const risksSpan = spans.find((s) => s.level === 2 && /^assumptions\s*\/\s*risks$/i.test(s.title));
   const assumptionsRisks = risksSpan ? parseRisks(sliceContent(lines, risksSpan)) : [];
 
-  // Review Results.
   const reviewSpan = spans.find((s) => s.level === 2 && /^review results$/i.test(s.title));
   const reviewResults = reviewSpan ? stripHorizontalRules(sliceContent(lines, reviewSpan).join('\n')) : '';
 
-  // Files to Create/Modify.
   const filesSpan = spans.find((s) => s.level === 2 && /^files to create(\/modify)?$/i.test(s.title));
   const filesToCreate = filesSpan ? extractFencedBlock(sliceContent(lines, filesSpan).join('\n')) : '';
 
@@ -542,7 +542,7 @@ export function parseWish(markdown: string): WishDocument {
     title,
     metadata,
     summary,
-    scope: { in: scopeIn, out: scopeOut },
+    scope,
     decisions,
     successCriteria,
     executionStrategy,
