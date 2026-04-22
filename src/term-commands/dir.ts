@@ -279,12 +279,7 @@ interface EditOptions extends SdkDirOptions {
   global?: boolean;
 }
 
-async function handleEdit(name: string, options: EditOptions): Promise<void> {
-  // dir-sync-frontmatter-refresh (Group 4): `dir edit` writes to agent.yaml
-  // FIRST, then triggers a single-agent sync so the PG row picks up the new
-  // values. No more direct PG writes — the yaml file is the source of truth
-  // and the sync path mirrors it into the DB.
-
+function collectAgentConfigUpdates(options: EditOptions): Partial<AgentConfig> {
   const updates: Partial<AgentConfig> = {};
   if (options.dir) updates.dir = resolvePath(options.dir);
   if (options.repo) updates.repo = resolvePath(options.repo);
@@ -300,6 +295,16 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
 
   const sdk = buildSdkConfig(options);
   if (sdk) updates.sdk = sdk as AgentConfig['sdk'];
+  return updates;
+}
+
+async function handleEdit(name: string, options: EditOptions): Promise<void> {
+  // dir-sync-frontmatter-refresh (Group 4): `dir edit` writes to agent.yaml
+  // FIRST, then triggers a single-agent sync so the PG row picks up the new
+  // values. No more direct PG writes — the yaml file is the source of truth
+  // and the sync path mirrors it into the DB.
+
+  const updates = collectAgentConfigUpdates(options);
 
   if (Object.keys(updates).length === 0) {
     console.error(

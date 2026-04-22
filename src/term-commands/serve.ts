@@ -508,7 +508,7 @@ async function startScheduler(): Promise<void> {
 /** Start all services in foreground mode.
  *  @param headless If true, skip TUI setup (services only: pgserve, scheduler, inbox-watcher).
  */
-async function startForeground(headless?: boolean): Promise<void> {
+function claimServePidOrExit(): void {
   const existingEntry = readServePid();
   if (existingEntry && isProcessAlive(existingEntry.pid)) {
     console.log(`genie serve already running (PID ${existingEntry.pid})`);
@@ -519,7 +519,9 @@ async function startForeground(headless?: boolean): Promise<void> {
     // owned by process.pid, which wouldn't match here).
     forceRemoveServePid();
   }
+}
 
+function resolveServeMode(headless?: boolean): { skipTui: boolean; mode: 'headless' | 'no-tui' | 'full' } {
   // Hotfix: treat GENIE_TUI_DISABLE / --no-tui like --headless for TUI setup
   // so `genie serve` starts pgserve + scheduler + bridge but never seeds the
   // OpenTUI launch pane. Agent sessions (on `-L genie`) are unaffected.
@@ -527,24 +529,26 @@ async function startForeground(headless?: boolean): Promise<void> {
   if (tuiDisabled && !headless) {
     noticeTuiSkipped('serve');
   }
-  const skipTui = headless || tuiDisabled;
+  const skipTui = Boolean(headless) || tuiDisabled;
+  const mode: 'headless' | 'no-tui' | 'full' = headless ? 'headless' : tuiDisabled ? 'no-tui' : 'full';
+  return { skipTui, mode };
+}
 
-  process.env.GENIE_IS_DAEMON = '1';
-  writeServePid(process.pid);
-
-  const mode = headless ? 'headless' : tuiDisabled ? 'no-tui' : 'full';
-  console.log(`genie serve starting (PID ${process.pid}, mode: ${mode})`);
-
-  // Ensure tmux is available (downloads static binary if missing)
-  if (!skipTui) {
-    await ensureTmux();
+function resolveBrainPathFromWorkspace(): string | undefined {
+  try {
+    const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+    const ws = findWorkspace();
+    if (ws?.root) {
+      const bp = join(ws.root, 'brain');
+      if (existsSync(bp) && existsSync(join(bp, 'brain.json'))) return bp;
+    }
+  } catch {
+    // No workspace — skip
   }
+  return undefined;
+}
 
-  // 1. Start pgserve
-  await startPgserve();
-
-  // 1.5. Start brain server (if @automagik/genie-brain is installed)
-  //
+async function startBrainServerIfEnabled(): Promise<void> {
   // Gated by `brain.embedded` config (default: true). Set `brain.embedded=false`
   // in ~/.genie/config.json to opt out — power-users can then run `brain serve`
   // standalone with custom settings (port, brain-path, @next dev channel).
@@ -552,95 +556,62 @@ async function startForeground(headless?: boolean): Promise<void> {
   const brainEmbedded = loadGenieConfigSync().brain.embedded;
   if (!brainEmbedded) {
     console.log('  Brain server: skipped (brain.embedded=false — managed externally)');
+    return;
+  }
+  try {
+    // Dynamic import — brain is optional. Silently skip if not installed.
+    // @ts-expect-error — brain is enterprise-only, not in genie's deps
+    const brain = await import('@khal-os/brain');
+    if (!brain.startEmbeddedBrainServer) return;
+    const { getActivePort } = await import('../lib/db.js');
+    const pgPort = getActivePort();
+    if (!pgPort) {
+      console.log('  Brain server: pgserve not available (skipped)');
+      return;
+    }
+    console.log('  Starting brain server...');
+    const brainPath = resolveBrainPathFromWorkspace();
+    if (!brainPath) {
+      console.log('  Brain server: no brain/ found in workspace (skipped)');
+      return;
+    }
+    const handle = await brain.startEmbeddedBrainServer({ brainPath, geniePgPort: pgPort });
+    handles.brainHandle = { stop: handle.stop, port: handle.port };
+    console.log(`  Brain server ready on port ${handle.port}`);
+  } catch {
+    // Brain not installed — fine, skip silently
+  }
+}
+
+function logAgentSessionInfo(): void {
+  const sessions = listAgentSessions();
+  if (sessions.length > 0) {
+    console.log(`  Agent server (-L genie): ${sessions.length} sessions`);
   } else {
+    console.log('  Agent server (-L genie): no sessions yet (created on first spawn)');
+  }
+}
+
+function startTuiSessionIfEnabled(skipTui: boolean): void {
+  if (skipTui) return;
+  console.log('  Setting up TUI session...');
+  const { leftPane, rightPane } = startTuiTmuxServer();
+  const ws = (() => {
     try {
-      // Dynamic import — brain is optional. If not installed, this throws
-      // and we silently skip. Zero behavior change for users without brain.
-      // @ts-expect-error — brain is enterprise-only, not in genie's deps
-      const brain = await import('@khal-os/brain');
-      if (brain.startEmbeddedBrainServer) {
-        const { getActivePort } = await import('../lib/db.js');
-        const pgPort = getActivePort();
-        if (pgPort) {
-          console.log('  Starting brain server...');
-          // Find brain path — check workspace for a brain/ dir
-          let brainPath: string | undefined;
-          try {
-            const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
-            const ws = findWorkspace();
-            if (ws?.root) {
-              const bp = join(ws.root, 'brain');
-              if (existsSync(bp) && existsSync(join(bp, 'brain.json'))) {
-                brainPath = bp;
-              }
-            }
-          } catch {
-            // No workspace — skip
-          }
-
-          if (brainPath) {
-            const handle = await brain.startEmbeddedBrainServer({
-              brainPath,
-              geniePgPort: pgPort,
-            });
-            handles.brainHandle = { stop: handle.stop, port: handle.port };
-            console.log(`  Brain server ready on port ${handle.port}`);
-          } else {
-            console.log('  Brain server: no brain/ found in workspace (skipped)');
-          }
-        } else {
-          console.log('  Brain server: pgserve not available (skipped)');
-        }
-      }
+      const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+      return findWorkspace();
     } catch {
-      // Brain not installed — fine, skip silently
+      return null;
     }
-  }
+  })();
+  sendTuiLaunchScript(leftPane, rightPane, ws?.root);
+  console.log('  TUI server ready (session: genie-tui)');
+}
 
-  // 2. Report agent tmux server state (don't create empty sessions —
-  // sessions are created on-demand by `genie spawn`).
-  if (!headless) {
-    const sessions = listAgentSessions();
-    if (sessions.length > 0) {
-      console.log(`  Agent server (-L genie): ${sessions.length} sessions`);
-    } else {
-      console.log('  Agent server (-L genie): no sessions yet (created on first spawn)');
-    }
-  }
-
-  // 2b. Sync agent directory + start watcher
-  handles.agentWatcher = await startAgentSync();
-
-  // 3. Start TUI session on default tmux server (skip in headless / no-tui mode)
-  if (!skipTui) {
-    console.log('  Setting up TUI session...');
-    const { leftPane, rightPane } = startTuiTmuxServer();
-
-    // Send launch script to left pane (discovers workspace from serve cwd)
-    const ws = (() => {
-      try {
-        const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
-        return findWorkspace();
-      } catch {
-        return null;
-      }
-    })();
-    sendTuiLaunchScript(leftPane, rightPane, ws?.root);
-    console.log('  TUI server ready (session: genie-tui)');
-  }
-
-  // 4. Start scheduler + event-router + inbox-watcher
-  await startScheduler();
-
-  // 4a. Start detector scheduler (self-healing B1 / Group 2 — measurement only).
+async function startDetectorSchedulerSafely(): Promise<void> {
   // Read-only sweep of registered DetectorModules every 60s ± 5s. No auto-fix,
-  // no state mutation. `detector_version` is threaded into every emitted row
-  // via the shared emit pipeline.
-  //
-  // All detectors self-register at module load — importing built-in.ts
-  // pulls every production pattern (1-8) into the registry before the
-  // scheduler's first tick. Each module's top-level call to
-  // `registerDetector(module)` runs once via ESM cache.
+  // no state mutation. Importing built-in.ts pulls every production pattern
+  // (1-8) into the registry before the scheduler's first tick.
   try {
     await import('../detectors/built-in.js');
     const { start: startDetectorScheduler } = await import('../serve/detector-scheduler.js');
@@ -654,8 +625,9 @@ async function startForeground(headless?: boolean): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`  Detector scheduler: failed — ${msg}`);
   }
+}
 
-  // 4b. Start executor-read endpoint (Group 6 of turn-session-contract).
+async function startExecutorReadEndpointSafely(): Promise<void> {
   // Non-fatal: if the port is busy or Bun.serve errors, the endpoint logs and
   // skips. Direct-SQL consumers fall back to `executors_reader` role.
   try {
@@ -666,8 +638,9 @@ async function startForeground(headless?: boolean): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`  Executor read endpoint: failed — ${msg}`);
   }
+}
 
-  // 5. Start Omni approval handler (if workspace has approval config)
+async function startOmniApprovalHandlerSafely(): Promise<void> {
   try {
     const { startOmniApprovalHandler } = await import('../lib/omni-approval-handler.js');
     const handler = await startOmniApprovalHandler();
@@ -678,141 +651,129 @@ async function startForeground(headless?: boolean): Promise<void> {
   } catch {
     // NATS or workspace not configured — non-fatal
   }
+}
 
-  // 6. Start Omni bridge (NATS → agent session router).
+async function startOmniBridgeSafely(): Promise<void> {
   // Bridge is optional by default: dev machines without NATS should not crash serve.
   // Set GENIE_OMNI_REQUIRED=1 to make bridge startup fatal (strict/prod mode).
-  // Executor type is resolved internally by the bridge.
-  {
-    const { OmniBridge } = await import('../services/omni-bridge.js');
-    const bridge = new OmniBridge({
-      natsUrl: process.env.GENIE_NATS_URL ?? 'localhost:4222',
-      maxConcurrent: Number(process.env.GENIE_MAX_CONCURRENT ?? '20'),
-      idleTimeoutMs: Number(process.env.GENIE_IDLE_TIMEOUT_MS ?? '900000'),
-    });
-    try {
-      await bridge.start();
-      handles.omniBridge = bridge;
-      console.log('  Omni bridge started');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (process.env.GENIE_OMNI_REQUIRED === '1') {
-        console.error(`  Omni bridge: FAILED — ${msg}`);
-        process.exit(1);
-      }
-      console.warn(`  Omni bridge: degraded — ${msg}; set GENIE_OMNI_REQUIRED=1 to make this fatal`);
-      // Continue without bridge — handles.omniBridge stays null so shutdown() skips it.
+  const { OmniBridge } = await import('../services/omni-bridge.js');
+  const bridge = new OmniBridge({
+    natsUrl: process.env.GENIE_NATS_URL ?? 'localhost:4222',
+    maxConcurrent: Number(process.env.GENIE_MAX_CONCURRENT ?? '20'),
+    idleTimeoutMs: Number(process.env.GENIE_IDLE_TIMEOUT_MS ?? '900000'),
+  });
+  try {
+    await bridge.start();
+    handles.omniBridge = bridge;
+    console.log('  Omni bridge started');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (process.env.GENIE_OMNI_REQUIRED === '1') {
+      console.error(`  Omni bridge: FAILED — ${msg}`);
+      process.exit(1);
     }
+    console.warn(`  Omni bridge: degraded — ${msg}; set GENIE_OMNI_REQUIRED=1 to make this fatal`);
+    // Continue without bridge — handles.omniBridge stays null so shutdown() skips it.
   }
+}
 
-  const stopMsg = headless ? 'Send SIGTERM to stop.' : 'Press Ctrl+C to stop.';
-  console.log(`\ngenie serve is running (${mode}). ${stopMsg}`);
+async function stopSchedulerHandles(): Promise<void> {
+  handles.agentWatcher?.close();
+  // Stop scheduler (drains in-flight) and wait for its done promise so the
+  // final `daemon_stopped` log entry is flushed before we exit.
+  const schedulerHandle = handles.schedulerHandle;
+  if (schedulerHandle) {
+    schedulerHandle.stop();
+    try {
+      await schedulerHandle.done;
+    } catch {
+      // Best effort — we still need to finish the rest of shutdown
+    }
+    handles.schedulerHandle = null;
+  }
+  if (handles.detectorScheduler) {
+    handles.detectorScheduler.stop();
+    handles.detectorScheduler = null;
+  }
+}
 
-  // Signal handlers for graceful shutdown
+async function stopOmniAndBrainServices(): Promise<void> {
+  if (handles.omniApprovalHandler) {
+    await handles.omniApprovalHandler.stop().catch(() => {});
+    handles.omniApprovalHandler = null;
+  }
+  if (handles.omniBridge) {
+    await handles.omniBridge.stop().catch(() => {});
+    handles.omniBridge = null;
+  }
+  void import('../lib/executor-read.js').then((m) => m.stopExecutorReadEndpoint().catch(() => {}));
+  // Brain server: best-effort; signal handlers call process.exit() immediately
+  // after shutdown(). The OS reclaims sockets/connections on process exit.
+  if (handles.brainHandle) {
+    await handles.brainHandle.stop().catch(() => {});
+    handles.brainHandle = null;
+  }
+}
+
+function killRegisteredServices(): void {
+  try {
+    const { killAllServices } = require('../lib/service-registry.js');
+    killAllServices();
+  } catch {
+    // Registry not available — best effort
+  }
+}
+
+function removePgservePortLockfile(): void {
+  try {
+    const lockfilePath = join(genieHome(), 'pgserve.port');
+    if (existsSync(lockfilePath)) unlinkSync(lockfilePath);
+  } catch {
+    // Best effort
+  }
+}
+
+function sigKillRegisteredServices(): void {
+  try {
+    const { getRegisteredServices } = require('../lib/service-registry.js');
+    for (const svc of getRegisteredServices()) {
+      try {
+        process.kill(svc.pid, 'SIGKILL');
+      } catch {
+        // already dead
+      }
+    }
+  } catch {
+    // registry not available
+  }
+}
+
+function buildShutdownFn(headless?: boolean): { shutdown: () => Promise<void>; hasStarted: () => boolean } {
   let shutdownStarted = false;
   const shutdown = async (): Promise<void> => {
     if (shutdownStarted) return;
     shutdownStarted = true;
-
     console.log('\nShutting down genie serve...');
-
-    // 1. Stop agent watcher
-    handles.agentWatcher?.close();
-
-    // 2. Stop scheduler (drains in-flight) and wait for its done promise so
-    // the final `daemon_stopped` log entry is flushed before we exit.
-    const schedulerHandle = handles.schedulerHandle;
-    if (schedulerHandle) {
-      schedulerHandle.stop();
-      try {
-        await schedulerHandle.done;
-      } catch {
-        // Best effort — we still need to finish the rest of shutdown
-      }
-      handles.schedulerHandle = null;
-    }
-
-    // 2.1. Stop detector scheduler (self-healing B1 / Group 2)
-    if (handles.detectorScheduler) {
-      handles.detectorScheduler.stop();
-      handles.detectorScheduler = null;
-    }
-
-    // 2.5. Stop Omni approval handler
-    if (handles.omniApprovalHandler) {
-      await handles.omniApprovalHandler.stop().catch(() => {});
-      handles.omniApprovalHandler = null;
-    }
-
-    // 2.55. Stop Omni bridge (graceful: detach sessions, don't kill them)
-    if (handles.omniBridge) {
-      await handles.omniBridge.stop().catch(() => {});
-      handles.omniBridge = null;
-    }
-
-    // 2.58. Stop executor-read endpoint
-    void import('../lib/executor-read.js').then((m) => m.stopExecutorReadEndpoint().catch(() => {}));
-
-    // 2.6. Stop brain server (best-effort — signal handlers call process.exit()
-    // immediately after shutdown(), so this is fire-and-forget like all other
-    // services. The OS reclaims sockets/connections on process exit.)
-    if (handles.brainHandle) {
-      await handles.brainHandle.stop().catch(() => {});
-      handles.brainHandle = null;
-    }
-
-    // 3. Kill registered services via registry
-    try {
-      const { killAllServices } = require('../lib/service-registry.js');
-      killAllServices();
-    } catch {
-      // Registry not available — best effort
-    }
-
-    // 4. Kill TUI session (skip in headless mode)
-    if (!headless) {
-      killTuiSession();
-    }
-
+    await stopSchedulerHandles();
+    await stopOmniAndBrainServices();
+    killRegisteredServices();
     // NEVER kill the agent tmux server — agent sessions are eternal and must
     // survive serve restarts. Only the TUI session is owned by serve.
-
-    // 5. Remove pgserve lockfile
-    try {
-      const lockfilePath = join(genieHome(), 'pgserve.port');
-      if (existsSync(lockfilePath)) {
-        unlinkSync(lockfilePath);
-      }
-    } catch {
-      // Best effort
-    }
-
-    // 6. Remove PID file
+    if (!headless) killTuiSession();
+    removePgservePortLockfile();
     removeServePid();
     console.log('genie serve stopped.');
   };
+  return { shutdown, hasStarted: () => shutdownStarted };
+}
 
-  // Graceful shutdown wrapper: awaits shutdown() with a 10s force-kill fallback,
-  // then exits with the supplied code. Idempotent via the `shutdownStarted` guard.
+function installGracefulExitHandlers(shutdown: () => Promise<void>, hasStarted: () => boolean): void {
   const gracefulExit = (exitCode: number): void => {
-    // Guard against multiple concurrent signals
-    if (shutdownStarted) return;
-
-    // Set up force-kill timeout: if graceful shutdown takes > 10s, SIGKILL remaining
+    if (hasStarted()) return;
+    // 10s force-kill fallback — if graceful shutdown doesn't complete, SIGKILL remaining.
     const forceTimer = setTimeout(() => {
       console.error('Graceful shutdown timeout (10s). Force-killing remaining processes.');
-      try {
-        const { getRegisteredServices } = require('../lib/service-registry.js');
-        for (const svc of getRegisteredServices()) {
-          try {
-            process.kill(svc.pid, 'SIGKILL');
-          } catch {
-            // already dead
-          }
-        }
-      } catch {
-        // registry not available
-      }
+      sigKillRegisteredServices();
       removeServePid();
       process.exit(1);
     }, 10_000);
@@ -832,25 +793,50 @@ async function startForeground(headless?: boolean): Promise<void> {
   process.on('SIGTERM', () => gracefulExit(143));
   process.on('SIGINT', () => gracefulExit(130));
   process.on('SIGHUP', () => gracefulExit(129));
-
   // `exit` handler can only run synchronous code — ensure the PID file is gone
   // even if we reach process exit without going through gracefulExit (e.g. the
   // scheduler's `done` promise resolved normally).
   process.on('exit', () => {
     removeServePid();
   });
-
-  // Last-resort handler: surface the error, attempt cleanup, then exit 1.
   process.on('uncaughtException', (err) => {
     console.error('Uncaught exception in genie serve:', err);
     gracefulExit(1);
   });
+}
+
+async function startForeground(headless?: boolean): Promise<void> {
+  claimServePidOrExit();
+  const { skipTui, mode } = resolveServeMode(headless);
+  process.env.GENIE_IS_DAEMON = '1';
+  writeServePid(process.pid);
+  console.log(`genie serve starting (PID ${process.pid}, mode: ${mode})`);
+
+  if (!skipTui) {
+    await ensureTmux();
+  }
+
+  await startPgserve();
+  await startBrainServerIfEnabled();
+  if (!headless) logAgentSessionInfo();
+  handles.agentWatcher = await startAgentSync();
+  startTuiSessionIfEnabled(skipTui);
+  await startScheduler();
+  await startDetectorSchedulerSafely();
+  await startExecutorReadEndpointSafely();
+  await startOmniApprovalHandlerSafely();
+  await startOmniBridgeSafely();
+
+  const stopMsg = headless ? 'Send SIGTERM to stop.' : 'Press Ctrl+C to stop.';
+  console.log(`\ngenie serve is running (${mode}). ${stopMsg}`);
+
+  const { shutdown, hasStarted } = buildShutdownFn(headless);
+  installGracefulExitHandlers(shutdown, hasStarted);
 
   // Wait for scheduler to finish (blocks forever until signal)
   if (handles.schedulerHandle) {
     await handles.schedulerHandle.done;
   } else {
-    // No scheduler — just keep alive
     await new Promise(() => {});
   }
 
@@ -962,7 +948,7 @@ async function stopServe(): Promise<void> {
 }
 
 /** Check pgserve health and print status */
-async function printPgserveStatus(): Promise<void> {
+async function printPgserveHealth(): Promise<void> {
   try {
     const { isAvailable, getActivePort } = await import('../lib/db.js');
     const dbOk = await isAvailable();
@@ -970,45 +956,55 @@ async function printPgserveStatus(): Promise<void> {
   } catch {
     console.log('  pgserve:    unavailable');
   }
+}
 
-  // Brain server status — probe via HTTP healthz (works cross-process)
+function resolveBrainPortFromWorkspace(brain: { readServerInfo?: (p: string) => { port?: number } | null }):
+  | number
+  | null {
+  try {
+    const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
+    const ws = findWorkspace();
+    if (ws?.root && brain.readServerInfo) {
+      const info = brain.readServerInfo(join(ws.root, 'brain'));
+      if (info?.port) return info.port;
+    }
+  } catch {
+    // No workspace — caller falls back to in-memory handle
+  }
+  return null;
+}
+
+async function probeBrainHealth(brainPort: number): Promise<void> {
+  try {
+    const resp = await fetch(`http://127.0.0.1:${brainPort}/healthz`);
+    console.log(
+      resp.ok
+        ? `  brain:      running (port ${brainPort})`
+        : `  brain:      unhealthy (port ${brainPort}, status ${resp.status})`,
+    );
+  } catch {
+    console.log(`  brain:      stopped (port ${brainPort} unreachable)`);
+  }
+}
+
+async function printBrainStatus(): Promise<void> {
   try {
     // @ts-expect-error — brain is enterprise-only, not in genie's deps
     const brain = await import('@khal-os/brain');
-    // Try readServerInfo first (reads .brain-server.json from workspace)
-    let brainPort: number | null = null;
-    try {
-      const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
-      const ws = findWorkspace();
-      if (ws?.root && brain.readServerInfo) {
-        const info = brain.readServerInfo(join(ws.root, 'brain'));
-        if (info?.port) brainPort = info.port;
-      }
-    } catch {
-      // No workspace — fall back to handle
-    }
-    // Fall back to in-memory handle (same process only)
-    if (!brainPort && handles.brainHandle) {
-      brainPort = handles.brainHandle.port;
-    }
+    const brainPort = resolveBrainPortFromWorkspace(brain) ?? handles.brainHandle?.port ?? null;
     if (brainPort) {
-      // Probe the actual port to verify it's alive
-      try {
-        const resp = await fetch(`http://127.0.0.1:${brainPort}/healthz`);
-        if (resp.ok) {
-          console.log(`  brain:      running (port ${brainPort})`);
-        } else {
-          console.log(`  brain:      unhealthy (port ${brainPort}, status ${resp.status})`);
-        }
-      } catch {
-        console.log(`  brain:      stopped (port ${brainPort} unreachable)`);
-      }
+      await probeBrainHealth(brainPort);
     } else {
       console.log('  brain:      stopped');
     }
   } catch {
     console.log('  brain:      not installed');
   }
+}
+
+async function printPgserveStatus(): Promise<void> {
+  await printPgserveHealth();
+  await printBrainStatus();
 }
 
 /** Print tmux server statuses */

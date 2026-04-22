@@ -168,120 +168,153 @@ function renderDiff(before: string, after: string): string {
   return out.join('\n');
 }
 
-async function wishLintCommand(
-  slug: string,
-  options: { json?: boolean; fix?: boolean; dryRun?: boolean; allowTodoPlaceholders?: boolean },
-): Promise<void> {
-  const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
-  if (!existsSync(wishPath)) {
-    if (options.json) {
-      console.log(
-        JSON.stringify({
-          error: `Wish file not found: ${wishPath}`,
-          rule: 'missing-title',
-          wish: slug,
-          file: wishPath,
-        }),
-      );
-    } else {
-      console.error(`❌ Wish file not found: ${wishPath}`);
-    }
-    process.exit(1);
-  }
+type LintReport = ReturnType<typeof lintWish>;
+type WishLintOptions = { json?: boolean; fix?: boolean; dryRun?: boolean; allowTodoPlaceholders?: boolean };
 
-  const markdown = await readFile(wishPath, 'utf-8');
-  const lintOpts = { allowTodoPlaceholders: options.allowTodoPlaceholders };
-
-  let docOrError: ReturnType<typeof parseWish> | WishParseError;
+function parseWishOrError(markdown: string): Parameters<typeof lintWish>[0] {
   try {
-    docOrError = parseWish(markdown);
+    return parseWish(markdown) as Parameters<typeof lintWish>[0];
   } catch (err) {
-    if (err instanceof WishParseError) docOrError = err;
-    else throw err;
+    if (err instanceof WishParseError) return err as Parameters<typeof lintWish>[0];
+    throw err;
   }
-  let report = lintWish(docOrError as Parameters<typeof lintWish>[0], markdown, lintOpts);
-  // Rewrite `wish` + `file` for CLI context — the pure `lintWish` only has the slug if parse succeeded.
-  report = { ...report, wish: slug, file: wishPath };
+}
 
-  if (options.fix) {
-    // Apply fixes; optionally don't write.
-    const { applyFixes } = await import('../services/wish-lint.js');
-    const fixed = applyFixes(markdown, report);
-    if (fixed === markdown) {
-      if (options.json) {
-        console.log(JSON.stringify({ ...report, fixedViolations: 0 }));
-      } else {
-        console.log(formatLintReport(report, { color: process.stdout.isTTY ?? false, path: wishPath }));
-        console.log('\nNo fixable violations to apply.');
-      }
-      process.exit(report.summary.total > 0 ? 1 : 0);
-    }
-
-    if (options.dryRun) {
-      if (options.json) {
-        console.log(JSON.stringify({ ...report, dryRun: true, diff: renderDiff(markdown, fixed) }));
-      } else {
-        console.log(formatLintReport(report, { color: process.stdout.isTTY ?? false, path: wishPath }));
-        console.log(`\n--- Dry-run diff (${wishPath}) ---`);
-        console.log(renderDiff(markdown, fixed));
-        console.log('\nFile not modified (--dry-run).');
-      }
-      process.exit(report.summary.total > 0 ? 1 : 0);
-    }
-
-    await writeFile(wishPath, fixed, 'utf-8');
-    // Re-lint the new content.
-    let docOrError2: ReturnType<typeof parseWish> | WishParseError;
-    try {
-      docOrError2 = parseWish(fixed);
-    } catch (err) {
-      if (err instanceof WishParseError) docOrError2 = err;
-      else throw err;
-    }
-    let report2 = lintWish(docOrError2 as Parameters<typeof lintWish>[0], fixed, lintOpts);
-    report2 = { ...report2, wish: slug, file: wishPath };
-    const fixedCount = report.summary.fixable;
-    if (options.json) {
-      console.log(JSON.stringify({ ...report2, fixedViolations: fixedCount }));
-    } else {
-      console.log(`✅ Applied ${fixedCount} fix(es) to ${wishPath}`);
-      console.log('');
-      console.log(formatLintReport(report2, { color: process.stdout.isTTY ?? false, path: wishPath }));
-    }
-    const remainingErrors = report2.violations.filter((v) => v.severity === 'error').length;
-    process.exit(remainingErrors > 0 ? 1 : 0);
+function reportWishFileMissing(slug: string, wishPath: string, jsonMode: boolean): never {
+  if (jsonMode) {
+    console.log(
+      JSON.stringify({ error: `Wish file not found: ${wishPath}`, rule: 'missing-title', wish: slug, file: wishPath }),
+    );
+  } else {
+    console.error(`❌ Wish file not found: ${wishPath}`);
   }
+  process.exit(1);
+}
 
-  if (options.json) {
+function emitLintReport(report: LintReport, wishPath: string, jsonMode: boolean): void {
+  if (jsonMode) {
     console.log(JSON.stringify(report));
   } else {
     console.log(formatLintReport(report, { color: process.stdout.isTTY ?? false, path: wishPath }));
   }
+}
+
+function exitWithErrorCount(report: LintReport): never {
   const errors = report.violations.filter((v) => v.severity === 'error').length;
   process.exit(errors > 0 ? 1 : 0);
+}
+
+function handleNoFixableViolations(report: LintReport, wishPath: string, jsonMode: boolean): never {
+  if (jsonMode) {
+    console.log(JSON.stringify({ ...report, fixedViolations: 0 }));
+  } else {
+    console.log(formatLintReport(report, { color: process.stdout.isTTY ?? false, path: wishPath }));
+    console.log('\nNo fixable violations to apply.');
+  }
+  process.exit(report.summary.total > 0 ? 1 : 0);
+}
+
+function handleDryRunFix(
+  report: LintReport,
+  markdown: string,
+  fixed: string,
+  wishPath: string,
+  jsonMode: boolean,
+): never {
+  if (jsonMode) {
+    console.log(JSON.stringify({ ...report, dryRun: true, diff: renderDiff(markdown, fixed) }));
+  } else {
+    console.log(formatLintReport(report, { color: process.stdout.isTTY ?? false, path: wishPath }));
+    console.log(`\n--- Dry-run diff (${wishPath}) ---`);
+    console.log(renderDiff(markdown, fixed));
+    console.log('\nFile not modified (--dry-run).');
+  }
+  process.exit(report.summary.total > 0 ? 1 : 0);
+}
+
+async function applyAndReportFix(
+  report: LintReport,
+  fixed: string,
+  wishPath: string,
+  slug: string,
+  lintOpts: { allowTodoPlaceholders?: boolean },
+  jsonMode: boolean,
+): Promise<never> {
+  await writeFile(wishPath, fixed, 'utf-8');
+  const docOrError2 = parseWishOrError(fixed);
+  const report2 = { ...lintWish(docOrError2, fixed, lintOpts), wish: slug, file: wishPath };
+  const fixedCount = report.summary.fixable;
+  if (jsonMode) {
+    console.log(JSON.stringify({ ...report2, fixedViolations: fixedCount }));
+  } else {
+    console.log(`✅ Applied ${fixedCount} fix(es) to ${wishPath}`);
+    console.log('');
+    console.log(formatLintReport(report2, { color: process.stdout.isTTY ?? false, path: wishPath }));
+  }
+  const remainingErrors = report2.violations.filter((v) => v.severity === 'error').length;
+  process.exit(remainingErrors > 0 ? 1 : 0);
+}
+
+async function runLintFix(
+  report: LintReport,
+  markdown: string,
+  wishPath: string,
+  slug: string,
+  lintOpts: { allowTodoPlaceholders?: boolean },
+  options: WishLintOptions,
+): Promise<never> {
+  const { applyFixes } = await import('../services/wish-lint.js');
+  const fixed = applyFixes(markdown, report);
+  const jsonMode = options.json ?? false;
+  if (fixed === markdown) handleNoFixableViolations(report, wishPath, jsonMode);
+  if (options.dryRun) handleDryRunFix(report, markdown, fixed, wishPath, jsonMode);
+  return applyAndReportFix(report, fixed, wishPath, slug, lintOpts, jsonMode);
+}
+
+async function wishLintCommand(slug: string, options: WishLintOptions): Promise<void> {
+  const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
+  const jsonMode = options.json ?? false;
+  if (!existsSync(wishPath)) reportWishFileMissing(slug, wishPath, jsonMode);
+
+  const markdown = await readFile(wishPath, 'utf-8');
+  const lintOpts = { allowTodoPlaceholders: options.allowTodoPlaceholders };
+  const docOrError = parseWishOrError(markdown);
+  const report: LintReport = { ...lintWish(docOrError, markdown, lintOpts), wish: slug, file: wishPath };
+
+  if (options.fix) {
+    await runLintFix(report, markdown, wishPath, slug, lintOpts, options);
+    return;
+  }
+
+  emitLintReport(report, wishPath, jsonMode);
+  exitWithErrorCount(report);
+}
+
+function reportWishParseError(error: WishParseError, jsonMode: boolean): void {
+  const payload = {
+    error: error.message,
+    rule: error.rule,
+    line: error.line,
+    column: error.column ?? null,
+    file: error.file ?? null,
+  };
+  if (jsonMode) {
+    console.log(JSON.stringify(payload));
+    return;
+  }
+  console.error(`❌ Parse failed (${payload.rule}): ${payload.error}`);
+  if (payload.file) console.error(`   File: ${payload.file}`);
+  if (payload.line) console.error(`   Line: ${payload.line}`);
 }
 
 async function wishParseCommand(slug: string, options: { json?: boolean }): Promise<void> {
   try {
     const doc = parseWishFile(slug);
-    const json = options.json ? JSON.stringify(doc) : JSON.stringify(doc, null, 2);
-    console.log(json);
+    console.log(options.json ? JSON.stringify(doc) : JSON.stringify(doc, null, 2));
+    return;
   } catch (error) {
     if (error instanceof WishParseError) {
-      const payload = {
-        error: error.message,
-        rule: error.rule,
-        line: error.line,
-        column: error.column ?? null,
-        file: error.file ?? null,
-      };
-      if (options.json) {
-        console.log(JSON.stringify(payload));
-      } else {
-        console.error(`❌ Parse failed (${payload.rule}): ${payload.error}`);
-        if (payload.file) console.error(`   File: ${payload.file}`);
-        if (payload.line) console.error(`   Line: ${payload.line}`);
-      }
+      reportWishParseError(error, options.json ?? false);
       process.exit(1);
     }
     const message = error instanceof Error ? error.message : String(error);
