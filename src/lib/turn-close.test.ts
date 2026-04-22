@@ -6,14 +6,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { findOrCreateAgent, setCurrentExecutor } from './agent-registry.js';
 import { getConnection } from './db.js';
 import { createExecutor, getExecutor } from './executor-registry.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 import { turnClose } from './turn-close.js';
 
 describe.skipIf(!DB_AVAILABLE)('turn-close', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

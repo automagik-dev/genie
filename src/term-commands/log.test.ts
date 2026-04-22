@@ -12,7 +12,7 @@ import type { Agent } from '../lib/agent-registry.js';
 import { send } from '../lib/mailbox.js';
 import { publishRuntimeEvent } from '../lib/runtime-events.js';
 import { postMessage } from '../lib/team-chat.js';
-import { setupTestSchema } from '../lib/test-db.js';
+import { setupTestDatabase } from '../lib/test-db.js';
 import {
   type LogEvent,
   applyLogFilter,
@@ -32,7 +32,7 @@ let cleanup: () => Promise<void>;
 
 beforeAll(async () => {
   if (!DB_AVAILABLE) return;
-  cleanup = await setupTestSchema();
+  cleanup = await setupTestDatabase();
 });
 
 afterAll(async () => {

@@ -24,7 +24,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import * as registry from '../agent-registry.js';
 import { resolveWorkerLivenessByTransport } from '../executor-registry.js';
-import { DB_AVAILABLE, setupTestSchema } from '../test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../test-db.js';
 
 // ---------------------------------------------------------------------------
 // Helper unit tests — exhaustive dispatch coverage without DB.
@@ -151,7 +151,7 @@ describe.skipIf(!DB_AVAILABLE)('transport-aware liveness — integration', () =>
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {

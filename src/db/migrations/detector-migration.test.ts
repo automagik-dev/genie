@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Sql, getConnection } from '../../lib/db.js';
-import { DB_AVAILABLE, setupTestSchema } from '../../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../../lib/test-db.js';
 
 const MIGRATIONS_DIR = join(import.meta.dir);
 const MIGRATION_FILE = '043_detector_events_schema.sql';
@@ -67,7 +67,7 @@ describe.skipIf(!DB_AVAILABLE)('043 detector_events_schema migration', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

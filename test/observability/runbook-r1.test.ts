@@ -21,7 +21,7 @@ import { type Sql, getConnection } from '../../src/lib/db.js';
 import { __resetEmitForTests, __setSpillPathForTests, shutdownEmitter } from '../../src/lib/emit.js';
 import { RBACError } from '../../src/lib/events/rbac.js';
 import { mintToken } from '../../src/lib/events/tokens.js';
-import { DB_AVAILABLE, setupTestSchema } from '../../src/lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../../src/lib/test-db.js';
 
 // Direct-insert helper that mirrors the seeder pattern in
 // test/observability/replay-dataset/index.ts. We bypass emit.ts here because
@@ -173,7 +173,7 @@ describe.skipIf(!DB_AVAILABLE)('R1 consumer — end-to-end #1192 replay', () => 
   let spillDir: string;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -252,7 +252,7 @@ describe.skipIf(!DB_AVAILABLE)('R1 consumer — survives restart with cursor + i
   let spillDir: string;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

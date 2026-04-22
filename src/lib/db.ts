@@ -608,8 +608,9 @@ function registerExitHandler(): void {
  * Get a postgres.js connection. Lazy singleton — calls ensurePgserve() on first use.
  * Returns a postgres.js sql tagged template client.
  *
- * When GENIE_TEST_SCHEMA is set, all connections use that schema in their search_path.
- * This isolates test data from production tables.
+ * When GENIE_TEST_DB_NAME is set, connections use that database instead of `genie`.
+ * DB-level isolation (one DB per test, cloned from `genie_template`) replaces the
+ * previous schema-level isolation.
  */
 /** Health-check the cached client. Returns it if alive, or resets and returns null.
  *
@@ -641,19 +642,15 @@ async function healthCheckCachedClient() {
 }
 
 /** Run post-connect setup (migrations, seed, retention). Skipped in test mode. */
-async function runPostConnectSetup(
-  client: postgres.Sql,
-  testSchema: string | undefined,
-  timings: { t0: number; t1: number },
-) {
+async function runPostConnectSetup(client: postgres.Sql, isTestMode: boolean, timings: { t0: number; t1: number }) {
   const _t2 = Date.now();
-  if (!testSchema) await runMigrations(client);
+  if (!isTestMode) await runMigrations(client);
   const _t3 = Date.now();
 
-  if (!testSchema && needsSeed()) await runSeed(client);
+  if (!isTestMode && needsSeed()) await runSeed(client);
   const _t4 = Date.now();
 
-  if (!testSchema && !retentionRan) await runRetention(client);
+  if (!isTestMode && !retentionRan) await runRetention(client);
   const _t5 = Date.now();
 
   if (process.env.GENIE_PROFILE_DB) {
@@ -689,11 +686,16 @@ async function _buildConnection(): Promise<any> {
   const _t1 = Date.now();
   const pgModule = (await import('postgres')).default;
 
-  const testSchema = process.env.GENIE_TEST_SCHEMA;
+  // Per-test isolation now happens at the DATABASE level — setupTestDatabase()
+  // clones `genie_template` and sets GENIE_TEST_DB_NAME. In production, this
+  // env var is never set, so we fall back to DB_NAME ('genie').
+  const testDbName = process.env.GENIE_TEST_DB_NAME;
+  const database = testDbName && testDbName.length > 0 ? testDbName : DB_NAME;
+  const isTestMode = Boolean(testDbName);
   sqlClient = pgModule({
     host: DEFAULT_HOST,
     port,
-    database: DB_NAME,
+    database,
     username: 'postgres',
     password: 'postgres',
     max: 50,
@@ -702,12 +704,11 @@ async function _buildConnection(): Promise<any> {
     onnotice: () => {},
     connection: {
       client_min_messages: 'warning',
-      ...(testSchema ? { search_path: `${testSchema}, public` } : {}),
     },
   });
 
   try {
-    await runPostConnectSetup(sqlClient, testSchema, { t0: _t0, t1: _t1 });
+    await runPostConnectSetup(sqlClient, isTestMode, { t0: _t0, t1: _t1 });
   } catch (err) {
     const dying = sqlClient;
     sqlClient = null;

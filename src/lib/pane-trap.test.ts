@@ -11,7 +11,7 @@ import { findOrCreateAgent, setCurrentExecutor } from './agent-registry.js';
 import { getConnection } from './db.js';
 import { createExecutor, getExecutor } from './executor-registry.js';
 import { buildPaneDiedHookCmd, installTmuxPaneDiedHook, shellExitTrapSnippet, trapPaneExit } from './pane-trap.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 import { turnClose } from './turn-close.js';
 
 describe('buildPaneDiedHookCmd', () => {
@@ -65,7 +65,7 @@ describe.skipIf(!DB_AVAILABLE)('trapPaneExit (integration)', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

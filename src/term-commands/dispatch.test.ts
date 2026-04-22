@@ -15,7 +15,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
   buildContextPrompt,
@@ -32,7 +32,7 @@ let cleanupSchema: () => Promise<void>;
 
 beforeAll(async () => {
   if (!DB_AVAILABLE) return;
-  cleanupSchema = await setupTestSchema();
+  cleanupSchema = await setupTestDatabase();
 });
 
 afterAll(async () => {

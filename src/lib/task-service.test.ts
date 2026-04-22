@@ -64,7 +64,7 @@ import {
   updateMessage,
   updateTask,
 } from './task-service.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 // Unique repo path per test run to avoid collisions
 const REPO = `/tmp/test-repo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -77,7 +77,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
     sql = await getConnection();
   });
 

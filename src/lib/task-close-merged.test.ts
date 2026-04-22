@@ -183,7 +183,7 @@ describe('parseSinceDate', () => {
 // ============================================================================
 
 import { type Actor, createTask, getTask, listTasks, moveTask } from './task-service.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 const REPO = `/tmp/test-close-merged-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const actor: Actor = { actorType: 'local', actorId: 'test-user' };
@@ -192,7 +192,7 @@ describe.skipIf(!DB_AVAILABLE)('closeMergedTasks integration', () => {
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {

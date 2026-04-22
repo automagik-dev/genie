@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, dev]
 
+# Group all three CI jobs (unit-tests, pg-tests, quality-gate umbrella) under a
+# single ref-scoped key so a new push cancels the full gate in one sweep rather
+# than leaving a half-finished pg-tests running while unit-tests has already
+# been replaced by the next push.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -30,8 +34,63 @@ jobs:
           GITHUB_DEFAULT_BRANCH: main
           GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
 
-  quality-gate:
-    name: Quality Gate (typecheck + lint + test)
+  # Short critical path: static checks + the 135 non-PG test files. Runs on a
+  # 4-vCPU runner because typecheck/lint/dead-code dominate and don't benefit
+  # from extra cores. GENIE_TEST_SKIP_PGSERVE=1 plus an explicit non-PG file
+  # list guarantees pgserve never boots on this runner.
+  unit-tests:
+    name: Unit Tests (typecheck + lint + non-PG tests)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Install dependencies
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bun install
+
+      - name: Build
+        run: bun run build
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bunx biome check .
+
+      - name: Dead code check (knip)
+        run: bunx knip
+
+      # `GENIE_TEST_SKIP_PGSERVE=1` alone is not enough — a PG-dependent file
+      # loaded by bun would still open admin connections that time out against
+      # a missing daemon. We therefore hand bun an explicit non-PG file list;
+      # scripts/list-tests.ts classifies by the same markers test-setup.ts
+      # uses for its lazy-skip heuristic.
+      - name: Test (non-PG files, no pgserve)
+        env:
+          GENIE_TEST_SKIP_PGSERVE: "1"
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          FILES=$(bun run scripts/list-tests.ts --non-pg)
+          if [ -z "$FILES" ]; then
+            echo "No non-PG test files discovered — refusing to run bare 'bun test'" >&2
+            exit 1
+          fi
+          echo "$FILES" | xargs bun test
+
+  # Long critical path: 56 PG-dependent test files across K=4 shards sharing a
+  # single pgserve daemon. Runs on an 8-vCPU runner so LPT packing saturates.
+  # Artifact-driven duration cache (downloaded before the run, regenerated +
+  # uploaded only on main-branch push) keeps shard balance within 15%.
+  pg-tests:
+    name: PG Tests (parallel shards)
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
 
@@ -54,26 +113,95 @@ jobs:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
         run: bun install
 
-      - name: Build
-        run: bun run build
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Lint
-        run: bunx biome check .
-
-      - name: Dead code check (knip)
-        run: bunx knip
+      # Pull the latest test-durations.json artifact from main so the
+      # parallel scheduler can apply LPT packing. A fresh fork, a brand-new
+      # branch, or an expired artifact (>14 days) all produce "no artifact"
+      # here; the scheduler gracefully falls back to median-estimate.
+      # continue-on-error keeps CI green on that cold-start path.
+      - name: Download latest test-durations from main
+        id: durations-download
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN_ID=$(gh run list \
+            --branch main \
+            --status success \
+            --workflow ci.yml \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId' || true)
+          if [ -z "${RUN_ID:-}" ]; then
+            echo "no successful main-branch run found — scheduler will use median-estimate"
+            exit 0
+          fi
+          gh run download "$RUN_ID" --name test-durations --dir . || {
+            echo "artifact missing on run ${RUN_ID} (expired or never uploaded) — scheduler will use median-estimate"
+            exit 0
+          }
+          if [ -f test-durations.json ]; then
+            echo "downloaded test-durations.json from run ${RUN_ID}"
+            echo "path=$(pwd)/test-durations.json" >> "$GITHUB_OUTPUT"
+          fi
 
       # No `|| bun test` retry. If the test suite is flaky, the retry
       # masks the signal and causes cache corruption when two overlapping
       # bun processes race on the install cache. Surface real failures;
       # root-cause the flakes in #<bun-test-hang-issue>.
-      - name: Test
+      - name: Test (parallel shards)
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-        run: bun test
+          GENIE_TEST_DURATIONS_PATH: ${{ steps.durations-download.outputs.path }}
+        run: bun run test:parallel
+
+      # On successful push to main only, regenerate the durations cache and
+      # upload it for the next run. We emit via `--emit-durations=` which
+      # spawns one bun-test per file (per shard) so wall-clocks are per-file.
+      # That mode is slower than the default `bun test`, so it runs ONLY on
+      # main-branch push where the 14-day artifact retention makes it worth
+      # paying the cost once to speed up every downstream run.
+      - name: Regenerate test-durations cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bun run scripts/test-parallel.ts --emit-durations=test-durations.json --report-shard-times
+
+      - name: Upload test-durations artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-durations
+          path: test-durations.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Umbrella status check. Branch protection is configured to require
+  # "Quality Gate (typecheck + lint + test)" as a required status, so the
+  # job name MUST stay exactly that string. `if: always()` ensures this
+  # job runs even when a sub-job fails/cancels, so the umbrella reports
+  # a deterministic failure rather than a skipped status that some
+  # branch-protection configs silently accept.
+  quality-gate:
+    name: Quality Gate (typecheck + lint + test)
+    needs: [unit-tests, pg-tests]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    if: always()
+    timeout-minutes: 2
+
+    steps:
+      - name: Verify sub-jobs
+        run: |
+          UNIT="${{ needs.unit-tests.result }}"
+          PG="${{ needs.pg-tests.result }}"
+          echo "unit-tests: $UNIT"
+          echo "pg-tests:   $PG"
+          if [ "$UNIT" = "success" ] && [ "$PG" = "success" ]; then
+            echo "All sub-jobs passed"
+            exit 0
+          fi
+          echo "One or more sub-jobs did not succeed" >&2
+          exit 1
 
   publish-next:
     name: Publish @next

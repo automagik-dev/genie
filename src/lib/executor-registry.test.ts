@@ -25,13 +25,13 @@ import {
   updateExecutorState,
 } from './executor-registry.js';
 import type { ExecutorState } from './executor-types.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -737,36 +737,20 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
   // ==========================================================================
 
   describe('migration integrity', () => {
-    /** Query columns for a table, scoped to test schema if available. */
+    /** Query columns for a table in the test DB's `public` schema. */
     async function getColumns(table: string, filter?: string) {
       const sql = await getConnection();
-      const schema = process.env.GENIE_TEST_SCHEMA;
-      if (schema && filter) {
-        return sql`
-          SELECT column_name FROM information_schema.columns
-          WHERE table_name = ${table} AND table_schema = ${schema}
-          AND column_name IN ${sql(filter.split(','))}
-          ORDER BY column_name
-        `;
-      }
-      if (schema) {
-        return sql`
-          SELECT column_name FROM information_schema.columns
-          WHERE table_name = ${table} AND table_schema = ${schema}
-          ORDER BY ordinal_position
-        `;
-      }
       if (filter) {
         return sql`
           SELECT column_name FROM information_schema.columns
-          WHERE table_name = ${table}
+          WHERE table_name = ${table} AND table_schema = 'public'
           AND column_name IN ${sql(filter.split(','))}
           ORDER BY column_name
         `;
       }
       return sql`
         SELECT column_name FROM information_schema.columns
-        WHERE table_name = ${table}
+        WHERE table_name = ${table} AND table_schema = 'public'
         ORDER BY ordinal_position
       `;
     }
@@ -858,16 +842,10 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
 
     test('indexes exist on executors table', async () => {
       const sql = await getConnection();
-      const schema = process.env.GENIE_TEST_SCHEMA;
-      const indexes = schema
-        ? await sql`
-            SELECT indexname FROM pg_indexes
-            WHERE tablename = 'executors' AND schemaname = ${schema}
-          `
-        : await sql`
-            SELECT indexname FROM pg_indexes
-            WHERE tablename = 'executors'
-          `;
+      const indexes = await sql`
+        SELECT indexname FROM pg_indexes
+        WHERE tablename = 'executors' AND schemaname = 'public'
+      `;
       const names = indexes.map((i: { indexname: string }) => i.indexname);
       expect(names).toContain('idx_executors_agent_id');
       expect(names).toContain('idx_executors_state');

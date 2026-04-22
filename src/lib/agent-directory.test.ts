@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import * as directory from './agent-directory.js';
 import { getConnection } from './db.js';
 import type { SdkDirectoryConfig } from './sdk-directory-types.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanup: () => Promise<void>;
@@ -18,7 +18,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let agentDir: string;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

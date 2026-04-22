@@ -18,14 +18,14 @@ import { join } from 'node:path';
 import * as directory from './agent-directory.js';
 import { syncAgentDirectory } from './agent-sync.js';
 import { getConnection } from './db.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('agent identity sync — integration', () => {
   let cleanup: () => Promise<void>;
   let workspaceRoot: string;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

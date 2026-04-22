@@ -40,6 +40,10 @@ describe('trace-context — mint/parse', () => {
     expect(parsed.ctx?.tenant_id).toBe(ctx.tenant_id);
   });
 
+  // TODO(#1314): pg-test-perf wish flagged this as a potential CI flake.
+  // Inspection found purely logical assertions (no timing budgets, no async
+  // waits) — no source patch applied. Reopen the issue if a real failure
+  // surfaces in CI logs.
   test('parseToken rejects tampered signatures', () => {
     const ctx = { trace_id: newTraceId() };
     const token = mintToken(ctx);

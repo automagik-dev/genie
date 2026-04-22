@@ -12,13 +12,13 @@ import {
   waitForResult,
 } from './qa-runner.js';
 import { publishRuntimeEvent } from './runtime-events.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 let cleanup: (() => Promise<void>) | undefined;
 
 beforeAll(async () => {
   if (!DB_AVAILABLE) return;
-  cleanup = await setupTestSchema();
+  cleanup = await setupTestDatabase();
 });
 
 afterAll(async () => {

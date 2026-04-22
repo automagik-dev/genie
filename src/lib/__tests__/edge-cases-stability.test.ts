@@ -109,18 +109,20 @@ describe('7.1 Concurrent Operations', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 7.1.5 — Test isolation via PG schemas
+  // 7.1.5 — Test isolation via per-test PG databases cloned from a template
   // -------------------------------------------------------------------------
 
-  test('test schema isolation prevents cross-test interference (code review)', () => {
+  test('test database isolation prevents cross-test interference (code review)', () => {
     const source = readFileSync(join(__dirname, '..', 'test-db.ts'), 'utf-8');
 
-    // Each test gets a unique schema
+    // Each test gets a unique database name
     expect(source).toContain('process.pid');
     expect(source).toContain('Date.now()');
 
-    // Schema cleanup happens on setup
-    expect(source).toContain('DROP SCHEMA');
+    // Per-test database is created via createTestDatabase (fast clone of the
+    // genie_template DB) and torn down via dropTestDatabase.
+    expect(source).toContain('createTestDatabase');
+    expect(source).toContain('dropTestDatabase');
   });
 
   // -------------------------------------------------------------------------

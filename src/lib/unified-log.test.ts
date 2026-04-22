@@ -12,7 +12,7 @@ import { recordAuditEvent } from './audit.js';
 import { readOutbox, send } from './mailbox.js';
 import { publishRuntimeEvent } from './runtime-events.js';
 import { postMessage } from './team-chat.js';
-import { setupTestSchema } from './test-db.js';
+import { setupTestDatabase } from './test-db.js';
 import type { TranscriptEntry } from './transcript.js';
 import {
   type LogEvent,
@@ -40,7 +40,7 @@ const BASE_REPO = '/tmp/unified-log-test';
 
 beforeAll(async () => {
   if (!DB_AVAILABLE) return;
-  cleanup = await setupTestSchema();
+  cleanup = await setupTestDatabase();
 });
 
 afterAll(async () => {

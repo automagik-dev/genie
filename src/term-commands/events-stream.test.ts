@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { getConnection } from '../lib/db.js';
 import { generateConsumerId } from '../lib/events/consumer-state.js';
 import { parseSince } from '../lib/events/v2-query.js';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import { runEventsStreamFollow } from './events-stream.js';
 
 describe('events-stream — pure helpers', () => {
@@ -41,7 +41,7 @@ describe.skipIf(!DB_AVAILABLE)('events-stream — DB path', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {
