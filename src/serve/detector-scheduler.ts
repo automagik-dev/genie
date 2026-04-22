@@ -59,8 +59,36 @@ type DetectorEventResult = DetectorEvent;
 export const DEFAULT_TICK_INTERVAL_MS = 60_000;
 /** Jitter window applied per-tick (±) to smear scheduler load. */
 export const DEFAULT_JITTER_MS = 5_000;
-/** Default hourly fire budget per detector. */
-export const DEFAULT_FIRE_BUDGET = 10;
+/**
+ * Default hourly fire budget per detector.
+ *
+ * Raised from 10 → 100 in #1292. At the old 10/hr cap, noisy-but-valid
+ * detectors (`rot.team-ls-drift`, `rot.backfill-no-worktree`) exhausted the
+ * budget within the first few minutes of every hour bucket and self-disabled
+ * for the remaining 55+ minutes, producing bursty `detector.disabled` traffic
+ * every hour rollover. 100 covers one fire every ~36s over the bucket — well
+ * above the scheduler's own 60s cadence — so well-behaved detectors never hit
+ * the ceiling under normal load.
+ */
+export const DEFAULT_FIRE_BUDGET = 100;
+/**
+ * Built-in per-detector budget overrides applied automatically for detectors
+ * known to emit at elevated rates. Callers that pass `fireBudgets` in
+ * `SchedulerOptions` can still override any entry here — the caller's map is
+ * layered on top of these defaults.
+ *
+ * - `rot.team-ls-drift`: throttled hard while #1291 is open. Every fire is
+ *   currently rejected by the event receiver schema, so fewer rows is strictly
+ *   better than more. One `detector.disabled` per bucket signals the condition
+ *   without drowning the receiver in events that will be dropped anyway.
+ * - `rot.backfill-no-worktree`: chatty when the observable worktree population
+ *   is large. Keeping it under the default gives operators a clear disable
+ *   signal instead of wall-to-wall `runbook.triggered` noise.
+ */
+export const DEFAULT_DETECTOR_BUDGETS: Readonly<Record<string, number>> = Object.freeze({
+  'rot.team-ls-drift': 20,
+  'rot.backfill-no-worktree': 40,
+});
 /** Hour bucket size in milliseconds. */
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -140,7 +168,10 @@ export function start(options: SchedulerOptions = {}): SchedulerHandle {
   const tickIntervalMs = options.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS;
   const jitterMs = options.jitterMs ?? DEFAULT_JITTER_MS;
   const defaultBudget = options.defaultFireBudget ?? DEFAULT_FIRE_BUDGET;
-  const budgets = options.fireBudgets ?? {};
+  // Layer built-in overrides (chatty production detectors) under caller-
+  // provided overrides so tests and future callers can bump any specific
+  // detector without having to remember the whole default set.
+  const budgets: Record<string, number> = { ...DEFAULT_DETECTOR_BUDGETS, ...(options.fireBudgets ?? {}) };
   const now = options.now ?? (() => Date.now());
   const setTimeoutFn = options.setTimeoutFn ?? ((fn: () => void, ms: number): TimerHandle => setTimeout(fn, ms));
   const clearTimeoutFn =
