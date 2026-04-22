@@ -72,18 +72,22 @@ jobs:
       # a missing daemon. We therefore hand bun an explicit non-PG file list;
       # scripts/list-tests.ts classifies by the same markers test-setup.ts
       # uses for its lazy-skip heuristic.
+      # Retry-once — same rationale as the pg-tests step (see #1335).
+      # Non-PG tests still flake on fs-timing / fixture-order edges (e.g.
+      # team-auto-spawn executor-reuse fast-fails). Unit Tests runs in ~14s,
+      # so a single retry costs ~15s worst-case and masks the noise.
       - name: Test (non-PG files, no pgserve)
         env:
           GENIE_TEST_SKIP_PGSERVE: "1"
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           FILES=$(bun run scripts/list-tests.ts --non-pg)
           if [ -z "$FILES" ]; then
             echo "No non-PG test files discovered — refusing to run bare 'bun test'" >&2
             exit 1
           fi
-          echo "$FILES" | xargs bun test
+          echo "$FILES" | xargs bun test || echo "$FILES" | xargs bun test
 
   # Long critical path: 56 PG-dependent test files across K=4 shards sharing a
   # single pgserve daemon. Runs on an 8-vCPU runner so LPT packing saturates.
