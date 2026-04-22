@@ -410,6 +410,25 @@ async function checkBridge(): Promise<CheckResult[]> {
  * Exported for unit tests and for callers that want to run this check
  * outside `genie doctor` (e.g. a pre-sync lint).
  */
+function isAgentDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function hasLegacyFrontmatter(agentDir: string): boolean {
+  const yamlPath = join(agentDir, 'agent.yaml');
+  const agentsMdPath = join(agentDir, 'AGENTS.md');
+  if (!existsSync(yamlPath) || !existsSync(agentsMdPath)) return false;
+  try {
+    return readFileSync(agentsMdPath, 'utf-8').slice(0, 4).startsWith('---');
+  } catch {
+    return false;
+  }
+}
+
 export function checkLegacyAgentFrontmatter(workspaceRoot?: string): CheckResult[] {
   const results: CheckResult[] = [];
   const root = workspaceRoot ?? findWorkspace()?.root;
@@ -427,29 +446,8 @@ export function checkLegacyAgentFrontmatter(workspaceRoot?: string): CheckResult
 
   for (const name of entries) {
     const agentDir = join(agentsDir, name);
-    try {
-      if (!statSync(agentDir).isDirectory()) continue;
-    } catch {
-      continue;
-    }
-
-    const yamlPath = join(agentDir, 'agent.yaml');
-    const agentsMdPath = join(agentDir, 'AGENTS.md');
-
-    // Only flag when both files exist AND AGENTS.md starts with a fence.
-    // Pre-migration state (no yaml, frontmatter present) is NOT a warning —
-    // sync will migrate it on the next run.
-    if (!existsSync(yamlPath) || !existsSync(agentsMdPath)) continue;
-
-    let headContent: string;
-    try {
-      // Read only the first handful of bytes to cheaply detect the fence.
-      headContent = readFileSync(agentsMdPath, 'utf-8').slice(0, 4);
-    } catch {
-      continue;
-    }
-
-    if (!headContent.startsWith('---')) continue;
+    if (!isAgentDirectory(agentDir)) continue;
+    if (!hasLegacyFrontmatter(agentDir)) continue;
 
     results.push({
       name: `agents/${name}/AGENTS.md`,
@@ -459,8 +457,6 @@ export function checkLegacyAgentFrontmatter(workspaceRoot?: string): CheckResult
     });
   }
 
-  // Single positive result when nothing drifted, so the section prints a
-  // clean "✓" row.
   if (results.length === 0) {
     results.push({ name: 'No legacy frontmatter in agents/*/AGENTS.md', status: 'pass' });
   }
@@ -490,23 +486,7 @@ export async function doctorCommand(options?: {
   }
 
   if (options?.observability) {
-    const report = await collectObservabilityHealth();
-    if (options.json) {
-      console.log(JSON.stringify(report, null, 2));
-    } else {
-      console.log();
-      console.log('\x1b[1mObservability Health\x1b[0m');
-      console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
-      console.log(`  partition_health:  ${report.partition_health}`);
-      console.log(`  partition_count:   ${report.partition_count}`);
-      console.log(`  next_rotation_at:  ${report.next_rotation_at ?? 'n/a'}`);
-      console.log(`  oldest_partition:  ${report.oldest_partition ?? 'n/a'}`);
-      console.log(`  newest_partition:  ${report.newest_partition ?? 'n/a'}`);
-      console.log(`  GENIE_WIDE_EMIT:   ${report.wide_emit_flag}`);
-      if (report.message) console.log(`  note:              ${report.message}`);
-      console.log();
-    }
-    if (report.partition_health === 'fail') process.exit(1);
+    await runObservabilityCheck(Boolean(options.json));
     return;
   }
 
@@ -524,10 +504,34 @@ export async function doctorCommand(options?: {
   runCheckSection('Omni Bridge', await checkBridge(), counts);
   runCheckSection('Agent Config', checkLegacyAgentFrontmatter(), counts);
 
-  // Summary
+  printDoctorSummary(counts);
+  if (counts.errors) process.exit(1);
+}
+
+function printObservabilityReport(report: Awaited<ReturnType<typeof collectObservabilityHealth>>): void {
+  console.log();
+  console.log('\x1b[1mObservability Health\x1b[0m');
+  console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
+  console.log(`  partition_health:  ${report.partition_health}`);
+  console.log(`  partition_count:   ${report.partition_count}`);
+  console.log(`  next_rotation_at:  ${report.next_rotation_at ?? 'n/a'}`);
+  console.log(`  oldest_partition:  ${report.oldest_partition ?? 'n/a'}`);
+  console.log(`  newest_partition:  ${report.newest_partition ?? 'n/a'}`);
+  console.log(`  GENIE_WIDE_EMIT:   ${report.wide_emit_flag}`);
+  if (report.message) console.log(`  note:              ${report.message}`);
+  console.log();
+}
+
+async function runObservabilityCheck(json: boolean): Promise<void> {
+  const report = await collectObservabilityHealth();
+  if (json) console.log(JSON.stringify(report, null, 2));
+  else printObservabilityReport(report);
+  if (report.partition_health === 'fail') process.exit(1);
+}
+
+function printDoctorSummary(counts: { errors: boolean; warnings: boolean }): void {
   console.log();
   console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
-
   if (counts.errors) {
     console.log('\x1b[31mSome checks failed.\x1b[0m Run \x1b[36mgenie setup\x1b[0m to fix.');
   } else if (counts.warnings) {
@@ -535,12 +539,7 @@ export async function doctorCommand(options?: {
   } else {
     console.log('\x1b[32mAll checks passed!\x1b[0m');
   }
-
   console.log();
-
-  if (counts.errors) {
-    process.exit(1);
-  }
 }
 
 /**

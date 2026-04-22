@@ -188,73 +188,62 @@ export function mintToken(opts: MintOptions): { token: string; payload: TokenPay
  * single-row probe against `genie_events_revocations`. The lazy import keeps
  * the module load cheap for tests that only exercise signing.
  */
-export async function verifyToken(token: string, opts: VerifyOptions = {}): Promise<TokenPayload> {
+function decodeAndVerifyPayload(token: string, secret: string): TokenPayload {
   const parts = token.split('.');
   if (parts.length !== 3) {
     throw new TokenError('TOKEN_MALFORMED', 'token is not a three-segment JWT');
   }
   const [encodedHeader, encodedPayload, signature] = parts;
-
-  const secret = resolveSecret(opts.secret);
   const expected = sign(`${encodedHeader}.${encodedPayload}`, secret);
   if (!safeEqual(expected, signature)) {
     throw new TokenError('TOKEN_SIGNATURE_INVALID', 'signature mismatch');
   }
-
-  let payload: TokenPayload;
   try {
-    payload = JSON.parse(b64urlDecode(encodedPayload).toString('utf8')) as TokenPayload;
+    return JSON.parse(b64urlDecode(encodedPayload).toString('utf8')) as TokenPayload;
   } catch {
     throw new TokenError('TOKEN_MALFORMED', 'payload is not valid JSON');
   }
+}
 
+function assertPayloadClaims(payload: TokenPayload, opts: VerifyOptions): void {
   if (!(ALL_ROLES as readonly string[]).includes(payload.role)) {
     throw new TokenError('TOKEN_ROLE_UNKNOWN', `unknown role '${payload.role}'`);
   }
-
   const nowSec = Math.floor((opts.now ?? Date.now()) / 1000);
   if (nowSec >= payload.exp) {
     throw new TokenError('TOKEN_EXPIRED', `token expired at ${payload.exp} (now=${nowSec})`);
   }
-
   if (opts.expectedTenantId !== undefined && payload.tenant_id !== opts.expectedTenantId) {
     throw new TokenError(
       'TOKEN_TENANT_MISMATCH',
       `token tenant ${payload.tenant_id} does not match expected ${opts.expectedTenantId}`,
     );
   }
-
-  // Token payload must carry an explicit allowlist: either `allowed_channels`
-  // or `allowed_types`. Empty-both = rejection (wish acceptance criterion).
-  if (
-    (!Array.isArray(payload.allowed_types) || payload.allowed_types.length === 0) &&
-    (!Array.isArray(payload.allowed_channels) || payload.allowed_channels.length === 0)
-  ) {
+  const hasTypes = Array.isArray(payload.allowed_types) && payload.allowed_types.length > 0;
+  const hasChannels = Array.isArray(payload.allowed_channels) && payload.allowed_channels.length > 0;
+  if (!hasTypes && !hasChannels) {
     throw new TokenError('TOKEN_ALLOWLIST_EMPTY', 'token must carry at least one of allowed_types / allowed_channels');
   }
-
-  // Validate each requested channel is within the role default set — tokens
-  // minted via `mintToken()` already satisfy this, but a forged-payload attack
-  // must still be rejected here.
   const roleDefaults = allowedChannels(payload.role);
   for (const ch of payload.allowed_channels) {
     if (!roleDefaults.includes(ch)) {
       throw new TokenError('TOKEN_ROLE_UNKNOWN', `channel ${ch} outside role ${payload.role} defaults`);
     }
   }
+}
 
-  // Revocation check.
-  if (opts.revokedTokenIds) {
-    if (opts.revokedTokenIds.has(payload.token_id)) {
-      throw new TokenError('TOKEN_REVOKED', `token_id ${payload.token_id} revoked`);
-    }
-  } else {
-    const revoked = await isRevoked(payload.token_id);
-    if (revoked) {
-      throw new TokenError('TOKEN_REVOKED', `token_id ${payload.token_id} revoked`);
-    }
-  }
+async function assertNotRevoked(payload: TokenPayload, opts: VerifyOptions): Promise<void> {
+  const revoked = opts.revokedTokenIds
+    ? opts.revokedTokenIds.has(payload.token_id)
+    : await isRevoked(payload.token_id);
+  if (revoked) throw new TokenError('TOKEN_REVOKED', `token_id ${payload.token_id} revoked`);
+}
 
+export async function verifyToken(token: string, opts: VerifyOptions = {}): Promise<TokenPayload> {
+  const secret = resolveSecret(opts.secret);
+  const payload = decodeAndVerifyPayload(token, secret);
+  assertPayloadClaims(payload, opts);
+  await assertNotRevoked(payload, opts);
   return payload;
 }
 

@@ -533,23 +533,24 @@ function roleToEntry(
 /** Build a metadata JSONB object from a DirectoryEntry's frontmatter fields. */
 function buildMetadata(entry: DirectoryEntry): Record<string, unknown> {
   const meta: Record<string, unknown> = {};
-  if (entry.dir) meta.dir = entry.dir;
-  if (entry.repo) meta.repo = entry.repo;
-  if (entry.model) meta.model = entry.model;
+  const assignTruthy = <K extends keyof DirectoryEntry>(key: K) => {
+    if (entry[key]) meta[key as string] = entry[key];
+  };
+  assignTruthy('dir');
+  assignTruthy('repo');
+  assignTruthy('model');
   if (entry.promptMode && entry.promptMode !== 'append') meta.promptMode = entry.promptMode;
-  if (entry.description) meta.description = entry.description;
-  if (entry.color) meta.color = entry.color;
-  if (entry.provider) meta.provider = entry.provider;
+  assignTruthy('description');
+  assignTruthy('color');
+  assignTruthy('provider');
   if (entry.roles && entry.roles.length > 0) meta.roles = entry.roles;
-  if (entry.permissions) meta.permissions = entry.permissions;
-  if (entry.disallowedTools) meta.disallowedTools = entry.disallowedTools;
-  if (entry.omniScopes) meta.omniScopes = entry.omniScopes;
-  if (entry.hooks) meta.hooks = entry.hooks;
-  if (entry.sdk) meta.sdk = entry.sdk;
+  assignTruthy('permissions');
+  assignTruthy('disallowedTools');
+  assignTruthy('omniScopes');
+  assignTruthy('hooks');
+  assignTruthy('sdk');
   // Always emit bridgeTmuxSession (as null when unset) so the JSONB merge in
-  // edit() can overwrite a stale persisted value. Other optional fields above
-  // share the same "truthy-only" pattern as a pre-existing (separate) concern;
-  // we only fix this field here because it's the one flagged by the review.
+  // edit() can overwrite a stale persisted value.
   meta.bridgeTmuxSession = entry.bridgeTmuxSession ?? null;
   return meta;
 }
