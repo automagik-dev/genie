@@ -2,7 +2,7 @@
 /** Sessions panel — single tree view of tmux sessions > windows > panes */
 
 import { useKeyboard } from '@opentui/react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { type SpawnIntent, buildSpawnInvocation } from '../../lib/spawn-invocation.js';
 import { scanAgents } from '../../lib/workspace.js';
 import { buildMenuItems } from '../context-menu-items.js';
@@ -36,6 +36,179 @@ interface NavProps {
   keyboardDisabled?: boolean;
 }
 
+function useDiagnosticsRefresh(
+  setDiagnostics: (snap: DiagnosticSnapshot) => void,
+  setRequestedInitialAgent: (agent: string | undefined) => void,
+): void {
+  useEffect(() => {
+    let active = true;
+    async function refresh() {
+      try {
+        const snap = await collectDiagnostics();
+        if (!active) return;
+        setDiagnostics(snap);
+        const signaledAgent = consumeInitialAgentSignal();
+        if (signaledAgent) setRequestedInitialAgent(signaledAgent);
+      } catch (err) {
+        console.error('TUI: diagnostics failed:', err);
+      }
+    }
+    refresh();
+    const timer = setInterval(refresh, 2000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [setDiagnostics, setRequestedInitialAgent]);
+}
+
+function useSessionTreeBuilder(
+  diagnostics: DiagnosticSnapshot | null,
+  workspaceRoot: string | undefined,
+  setSessionTree: (updater: (prev: TreeNode[]) => TreeNode[]) => void,
+): void {
+  useEffect(() => {
+    if (!diagnostics) return;
+    let newTree: TreeNode[];
+    if (workspaceRoot) {
+      const agentNames = scanAgents(workspaceRoot);
+      newTree = buildWorkspaceTree({
+        agentNames,
+        sessions: diagnostics.sessions,
+        executors: diagnostics.executors,
+      });
+    } else {
+      newTree = buildSessionTree(diagnostics);
+    }
+    setSessionTree((prev) => mergeExpandedState(prev, newTree));
+  }, [diagnostics, workspaceRoot, setSessionTree]);
+}
+
+function useStableSelection(
+  flatNodes: { node: TreeNode }[],
+  selectedIndex: number,
+  setSelectedIndex: (idx: number | ((prev: number) => number)) => void,
+  selectedNodeId: MutableRefObject<string | null>,
+): void {
+  // Keep selectedNodeId in sync with the current selection
+  useEffect(() => {
+    const node = flatNodes[selectedIndex]?.node;
+    if (node) selectedNodeId.current = node.id;
+  }, [selectedIndex, flatNodes, selectedNodeId]);
+
+  // Stabilize selection across tree rebuilds
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selectedIndex intentionally excluded — including it creates infinite loop since effect calls setSelectedIndex
+  useLayoutEffect(() => {
+    if (flatNodes.length === 0) return;
+    if (selectedIndex >= flatNodes.length) {
+      setSelectedIndex(flatNodes.length - 1);
+      return;
+    }
+    if (!selectedNodeId.current) return;
+    const currentAtIndex = flatNodes[selectedIndex]?.node;
+    if (currentAtIndex && currentAtIndex.id === selectedNodeId.current) return;
+    const restored = flatNodes.findIndex((n) => n.node.id === selectedNodeId.current);
+    if (restored >= 0) setSelectedIndex(restored);
+  }, [flatNodes]);
+}
+
+function useInitialAgentSelection(
+  requestedInitialAgent: string | undefined,
+  flatNodes: { node: TreeNode }[],
+  setSelectedIndex: (idx: number) => void,
+  setRequestedInitialAgent: (agent: string | undefined) => void,
+  onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void,
+): void {
+  useEffect(() => {
+    if (!requestedInitialAgent || flatNodes.length === 0) return;
+    const idx = flatNodes.findIndex((n) => n.node.id === `agent:${requestedInitialAgent}`);
+    if (idx < 0) return;
+    setSelectedIndex(idx);
+    const node = flatNodes[idx].node;
+    if (node.type === 'agent' && node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
+      spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
+    }
+    setRequestedInitialAgent(undefined);
+  }, [requestedInitialAgent, flatNodes, onTmuxSessionSelect, setSelectedIndex, setRequestedInitialAgent]);
+}
+
+function useAutoAttach(
+  flatNodes: { node: TreeNode }[],
+  selectedIndex: number,
+  lastTarget: MutableRefObject<string | null>,
+  onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void,
+): void {
+  useEffect(() => {
+    const current = flatNodes[selectedIndex]?.node;
+    if (!current) return;
+    const target = getSessionTarget(current);
+    if (!target) return;
+    // Only auto-attach for running agents (or session/window/pane nodes)
+    if (current.type === 'agent' && current.wsAgentState !== 'running') return;
+    const key = `${target.sessionName}:${target.windowIndex ?? ''}`;
+    if (key === lastTarget.current) return;
+    lastTarget.current = key;
+    onTmuxSessionSelect(target.sessionName, target.windowIndex);
+  }, [selectedIndex, flatNodes, onTmuxSessionSelect, lastTarget]);
+}
+
+interface NavKeyboardOpts {
+  keyboardDisabled: boolean;
+  spawnIntoAgent: string | null;
+  spawnPickerTarget: AgentPickerTarget | null;
+  workspaceRoot?: string;
+  showTeamCreate: boolean;
+  contextMenuNodeId: string | null;
+  handleOpenTeamCreate: () => void;
+  flatNodes: { node: TreeNode }[];
+  selectedIndex: number;
+  setContextMenuNodeId: (id: string | null) => void;
+  handleVerticalNav: (keyName: string) => void;
+  handleExpandCollapse: (keyName: string) => void;
+  handleEnter: () => void;
+  handleRetry: () => void;
+  onNewAgentWindow?: (agentName: string) => void;
+}
+
+function useNavKeyboard(opts: NavKeyboardOpts): void {
+  useKeyboard((key) => {
+    if (opts.keyboardDisabled) return;
+    // Spawn-into/spawn-here pickers own the keyboard while open — they
+    // register their own useKeyboard handlers.
+    if (opts.spawnIntoAgent !== null || opts.spawnPickerTarget !== null) return;
+    if (
+      tryOpenTeamCreate(key, {
+        workspaceRoot: opts.workspaceRoot,
+        showTeamCreate: opts.showTeamCreate,
+        contextMenuNodeId: opts.contextMenuNodeId,
+        handleOpenTeamCreate: opts.handleOpenTeamCreate,
+      })
+    )
+      return;
+    if (opts.showTeamCreate) return; // team-create modal owns input
+    handleKeyboardInput(key, opts);
+  });
+}
+
+function computeNavCounts(
+  workspaceRoot: string | undefined,
+  sessionTree: TreeNode[],
+  diagnostics: DiagnosticSnapshot | null,
+): { agentCount: number; runningCount: number } {
+  if (workspaceRoot) {
+    return {
+      agentCount: sessionTree.filter((n) => n.type === 'agent').length,
+      runningCount: sessionTree.filter((n) => n.wsAgentState === 'running').length,
+    };
+  }
+  const paneSum =
+    diagnostics?.sessions.reduce((sum, s) => sum + s.windows.reduce((ws, w) => ws + w.panes.length, 0), 0) ?? 0;
+  return {
+    agentCount: diagnostics?.sessions.length ?? 0,
+    runningCount: paneSum,
+  };
+}
+
 export function Nav({
   onTmuxSessionSelect,
   onNewAgentWindow,
@@ -55,107 +228,20 @@ export function Nav({
   const lastTarget = useRef<string | null>(null);
   const selectedNodeId = useRef<string | null>(null);
 
-  // Refresh diagnostics every 2s
-  useEffect(() => {
-    let active = true;
-
-    async function refresh() {
-      try {
-        const snap = await collectDiagnostics();
-        if (!active) return;
-        setDiagnostics(snap);
-
-        const signaledAgent = consumeInitialAgentSignal();
-        if (signaledAgent) {
-          setRequestedInitialAgent(signaledAgent);
-        }
-      } catch (err) {
-        console.error('TUI: diagnostics failed:', err);
-      }
-    }
-
-    refresh();
-    const timer = setInterval(refresh, 2000);
-
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, []);
-
-  // Build session tree from diagnostics, preserving expanded state
-  useEffect(() => {
-    if (!diagnostics) return;
-
-    let newTree: TreeNode[];
-    if (workspaceRoot) {
-      const agentNames = scanAgents(workspaceRoot);
-      newTree = buildWorkspaceTree({
-        agentNames,
-        sessions: diagnostics.sessions,
-        executors: diagnostics.executors,
-      });
-    } else {
-      newTree = buildSessionTree(diagnostics);
-    }
-
-    setSessionTree((prev) => mergeExpandedState(prev, newTree));
-  }, [diagnostics, workspaceRoot]);
+  useDiagnosticsRefresh(setDiagnostics, setRequestedInitialAgent);
+  useSessionTreeBuilder(diagnostics, workspaceRoot, setSessionTree);
 
   const flatNodes = useMemo(() => flattenTree(sessionTree), [sessionTree]);
 
-  // Keep selectedNodeId in sync with the current selection
-  useEffect(() => {
-    const node = flatNodes[selectedIndex]?.node;
-    if (node) selectedNodeId.current = node.id;
-  }, [selectedIndex, flatNodes]);
-
-  // Stabilize selection across tree rebuilds: if the node at selectedIndex changed,
-  // find the previously selected node by ID and restore the correct index.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: selectedIndex intentionally excluded — including it creates infinite loop since effect calls setSelectedIndex
-  useLayoutEffect(() => {
-    if (flatNodes.length === 0) return;
-    if (selectedIndex >= flatNodes.length) {
-      setSelectedIndex(flatNodes.length - 1);
-      return;
-    }
-    if (!selectedNodeId.current) return;
-    const currentAtIndex = flatNodes[selectedIndex]?.node;
-    if (currentAtIndex && currentAtIndex.id === selectedNodeId.current) return;
-    const restored = flatNodes.findIndex((n) => n.node.id === selectedNodeId.current);
-    if (restored >= 0) {
-      setSelectedIndex(restored);
-    }
-  }, [flatNodes]);
-
-  // Initial agent selection / auto-spawn. Triggered by startup env or file signal.
-  useEffect(() => {
-    if (!requestedInitialAgent || flatNodes.length === 0) return;
-    const idx = flatNodes.findIndex((n) => n.node.id === `agent:${requestedInitialAgent}`);
-    if (idx >= 0) {
-      setSelectedIndex(idx);
-      const node = flatNodes[idx].node;
-      if (node.type === 'agent' && node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
-        spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
-      }
-      setRequestedInitialAgent(undefined);
-    }
-  }, [requestedInitialAgent, flatNodes, onTmuxSessionSelect]);
-
-  // Auto-switch right pane when cursor moves to a new target
-  useEffect(() => {
-    const current = flatNodes[selectedIndex]?.node;
-    if (!current) return;
-    const target = getSessionTarget(current);
-    if (!target) return;
-
-    // Only auto-attach for running agents (or session/window/pane nodes)
-    if (current.type === 'agent' && current.wsAgentState !== 'running') return;
-    const key = `${target.sessionName}:${target.windowIndex ?? ''}`;
-    if (key === lastTarget.current) return;
-    lastTarget.current = key;
-    onTmuxSessionSelect(target.sessionName, target.windowIndex);
-  }, [selectedIndex, flatNodes, onTmuxSessionSelect]);
+  useStableSelection(flatNodes, selectedIndex, setSelectedIndex, selectedNodeId);
+  useInitialAgentSelection(
+    requestedInitialAgent,
+    flatNodes,
+    setSelectedIndex,
+    setRequestedInitialAgent,
+    onTmuxSessionSelect,
+  );
+  useAutoAttach(flatNodes, selectedIndex, lastTarget, onTmuxSessionSelect);
 
   const handleSelect = useCallback(
     (id: string) => {
@@ -288,34 +374,25 @@ export function Nav({
       onTmuxSessionSelect,
     });
 
-  useKeyboard((key) => {
-    if (keyboardDisabled) return;
-    // Spawn-into/spawn-here pickers own the keyboard while open — they
-    // register their own useKeyboard handlers.
-    if (spawnIntoAgent !== null || spawnPickerTarget !== null) return;
-    if (tryOpenTeamCreate(key, { workspaceRoot, showTeamCreate, contextMenuNodeId, handleOpenTeamCreate })) return;
-    if (showTeamCreate) return; // team-create modal owns input
-    handleKeyboardInput(key, {
-      contextMenuNodeId,
-      flatNodes,
-      selectedIndex,
-      setContextMenuNodeId,
-      handleVerticalNav,
-      handleExpandCollapse,
-      handleEnter,
-      handleRetry,
-      onNewAgentWindow,
-    });
+  useNavKeyboard({
+    keyboardDisabled,
+    spawnIntoAgent,
+    spawnPickerTarget,
+    workspaceRoot,
+    showTeamCreate,
+    contextMenuNodeId,
+    handleOpenTeamCreate,
+    flatNodes,
+    selectedIndex,
+    setContextMenuNodeId,
+    handleVerticalNav,
+    handleExpandCollapse,
+    handleEnter,
+    handleRetry,
+    onNewAgentWindow,
   });
 
-  // Summary counts
-  const agentCount = workspaceRoot
-    ? sessionTree.filter((n) => n.type === 'agent').length
-    : (diagnostics?.sessions.length ?? 0);
-  const runningCount = workspaceRoot
-    ? sessionTree.filter((n) => n.wsAgentState === 'running').length
-    : (diagnostics?.sessions.reduce((sum, s) => sum + s.windows.reduce((ws, w) => ws + w.panes.length, 0), 0) ?? 0);
-
+  const { agentCount, runningCount } = computeNavCounts(workspaceRoot, sessionTree, diagnostics);
   const headerLabel = workspaceRoot ? 'Agents' : 'Sessions';
 
   return (

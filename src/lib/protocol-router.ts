@@ -244,6 +244,42 @@ async function lockedSpawnWorker(
   return { worker: lockResult.worker, respawned: true };
 }
 
+/**
+ * Decide whether this call is an explicit resume request. Claude workers
+ * whose last executor is in a non-terminal state (spawning/running/idle/
+ * working/permission/question) are mid-task — we MUST resume them with
+ * their session id. Silently spawning fresh would drop the conversation
+ * history. First-time spawns (no executor) and completed/errored workers
+ * fall through to the normal fresh-spawn path. Gap C from
+ * trace-stale-resume (task #6).
+ */
+async function resolveResumeSessionId(
+  worker: registry.Agent | null,
+  template: registry.WorkerTemplate,
+  recipientId: string,
+): Promise<string | undefined> {
+  if (template.provider !== 'claude' || !worker) return undefined;
+  // Canonical resume read — joins agents.current_executor_id → executors.claude_session_id
+  // and emits resume.found / resume.missing_session audit events. Replaces the
+  // direct `worker.claudeSessionId` reads (Group 3 of claude-resume-by-session-id wish).
+  const executorSessionId = await getResumeSessionId(worker.id);
+  if (await isExecutorResumable(worker)) {
+    if (!executorSessionId) throw new MissingResumeSessionError(worker.id, recipientId);
+    return executorSessionId;
+  }
+  return executorSessionId ?? undefined;
+}
+
+async function handleSpawnError(err: unknown, worker: registry.Agent | null, recipientId: string): Promise<null> {
+  if (err instanceof MissingResumeSessionError) throw err;
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`[protocol-router] Spawn failed for "${recipientId}": ${msg}`);
+  if (worker) {
+    await registry.update(worker.id, { state: 'error' }).catch(() => {});
+  }
+  return null;
+}
+
 async function ensureWorkerAlive(
   worker: registry.Agent | null,
   recipientId: string,
@@ -261,40 +297,12 @@ async function ensureWorkerAlive(
   const template = await findSpawnTemplate(worker, recipientId);
   if (!template) return null;
 
-  // Decide whether this call is an explicit resume request. Claude workers
-  // whose last executor is in a non-terminal state (spawning/running/idle/
-  // working/permission/question) are mid-task — we MUST resume them with
-  // their session id. Silently spawning fresh would drop the conversation
-  // history. First-time spawns (no executor) and completed/errored workers
-  // fall through to the normal fresh-spawn path. Gap C from
-  // trace-stale-resume (task #6).
-  let resumeSessionId: string | undefined;
-  if (template.provider === 'claude' && worker) {
-    // Canonical resume read — joins agents.current_executor_id → executors.claude_session_id
-    // and emits resume.found / resume.missing_session audit events. Replaces the
-    // direct `worker.claudeSessionId` reads (Group 3 of claude-resume-by-session-id wish).
-    const executorSessionId = await getResumeSessionId(worker.id);
-    if (await isExecutorResumable(worker)) {
-      if (!executorSessionId) {
-        throw new MissingResumeSessionError(worker.id, recipientId);
-      }
-      resumeSessionId = executorSessionId;
-    } else if (executorSessionId) {
-      resumeSessionId = executorSessionId;
-    }
-  }
+  const resumeSessionId = await resolveResumeSessionId(worker, template, recipientId);
 
   try {
     return await lockedSpawnWorker(recipientId, worker, template, resumeSessionId);
   } catch (err) {
-    // Resume errors must bubble — the operator needs to see them.
-    if (err instanceof MissingResumeSessionError) throw err;
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[protocol-router] Spawn failed for "${recipientId}": ${msg}`);
-    if (worker) {
-      await registry.update(worker.id, { state: 'error' }).catch(() => {});
-    }
-    return null;
+    return handleSpawnError(err, worker, recipientId);
   }
 }
 
@@ -421,6 +429,60 @@ async function deliverViaNativeInbox(
  *   2. Agent directory + worker registry → auto-spawn from template
  *   3. Native team inbox fallback
  */
+// Re-verify pane alive right before delivery — catches TOCTOU race where the
+// pane dies between resolution (resolveRecipient / ensureWorkerAlive) and the
+// actual injection call.
+async function deliverAfterPaneRecheck(
+  repoPath: string,
+  from: string,
+  worker: registry.Agent,
+  body: string,
+  paneDeadReason: string,
+): Promise<DeliveryResult> {
+  if (!(await _deps.isPaneAlive(worker.paneId))) {
+    const message = await mailbox.send(repoPath, from, worker.id, body);
+    console.error(
+      `[protocol-router] Delivery failed: ${paneDeadReason} (worker=${worker.id}, msg="${body.slice(0, 50)}")`,
+    );
+    return { messageId: message.id, workerId: worker.id, delivered: false, reason: paneDeadReason };
+  }
+  return deliverToWorker(repoPath, from, worker, body);
+}
+
+async function findKnownWorker(to: string): Promise<registry.Agent | null> {
+  const worker = await registry.get(to);
+  if (worker) return worker;
+  const allWorkers = await registry.list();
+  // Prefer suspended workers (they have valid sessions to resume)
+  return (
+    allWorkers.find((w) => w.role === to && w.state === 'suspended') ?? allWorkers.find((w) => w.role === to) ?? null
+  );
+}
+
+async function attemptAutoSpawnDelivery(
+  repoPath: string,
+  from: string,
+  to: string,
+  body: string,
+  worker: registry.Agent | null,
+): Promise<DeliveryResult | null> {
+  let alive: { worker: registry.Agent; respawned: boolean } | null;
+  try {
+    alive = await ensureWorkerAlive(worker, to);
+  } catch (err) {
+    // Resume was explicitly requested but the session id is missing.
+    // Surface the error loudly so the operator can recover (genie reset /
+    // re-spawn). Gap C from trace-stale-resume (task #6).
+    if (err instanceof MissingResumeSessionError) {
+      console.error(`[protocol-router] ${err.message}`);
+      return { messageId: '', workerId: worker?.id ?? to, delivered: false, reason: err.message };
+    }
+    throw err;
+  }
+  if (!alive) return null;
+  return deliverAfterPaneRecheck(repoPath, from, alive.worker, body, 'pane dead after spawn');
+}
+
 export async function sendMessage(
   repoPath: string,
   from: string,
@@ -438,25 +500,9 @@ export async function sendMessage(
 
   // 1. Find live workers using strict tiered matching (ID > role > team:role)
   const liveMatches = await resolveRecipient(to);
-
   if (liveMatches.length === 1) {
-    // Re-verify pane alive right before delivery — catches TOCTOU race
-    // where the pane dies between resolveRecipient and actual injection.
-    if (!(await _deps.isPaneAlive(liveMatches[0].paneId))) {
-      const message = await mailbox.send(repoPath, from, liveMatches[0].id, body);
-      console.error(
-        `[protocol-router] Delivery failed: pane dead (worker=${liveMatches[0].id}, msg="${body.slice(0, 50)}")`,
-      );
-      return {
-        messageId: message.id,
-        workerId: liveMatches[0].id,
-        delivered: false,
-        reason: 'Pane died before delivery',
-      };
-    }
-    return deliverToWorker(repoPath, from, liveMatches[0], body);
+    return deliverAfterPaneRecheck(repoPath, from, liveMatches[0], body, 'Pane died before delivery');
   }
-
   if (liveMatches.length > 1) {
     return {
       messageId: '',
@@ -467,57 +513,13 @@ export async function sendMessage(
   }
 
   // 2. No live match — directory-first resolution for auto-spawn
-  // Check agent directory to validate recipient exists (enables spawn for
-  // agents registered in directory but not yet spawned in this session).
   const { resolve } = await import('./agent-directory.js');
   const dirResolved = await resolve(to);
+  const worker = await findKnownWorker(to);
 
-  // Also check worker registry for session context (provides claudeSessionId for --resume)
-  let worker = await registry.get(to);
-  if (!worker) {
-    const allWorkers = await registry.list();
-    // Prefer suspended workers (they have valid sessions to resume)
-    worker =
-      allWorkers.find((w) => w.role === to && w.state === 'suspended') ?? allWorkers.find((w) => w.role === to) ?? null;
-  }
-
-  // Try auto-spawn if agent is known via directory OR registry
   if (dirResolved || worker) {
-    let alive: { worker: registry.Agent; respawned: boolean } | null;
-    try {
-      alive = await ensureWorkerAlive(worker, to);
-    } catch (err) {
-      // Resume was explicitly requested but the session id is missing.
-      // Surface the error loudly so the operator can recover (genie reset /
-      // re-spawn). Gap C from trace-stale-resume (task #6).
-      if (err instanceof MissingResumeSessionError) {
-        console.error(`[protocol-router] ${err.message}`);
-        return {
-          messageId: '',
-          workerId: worker?.id ?? to,
-          delivered: false,
-          reason: err.message,
-        };
-      }
-      throw err;
-    }
-    if (alive) {
-      // Re-verify pane alive right before delivery — catches race where
-      // the pane dies between ensureWorkerAlive and actual injection.
-      if (!(await _deps.isPaneAlive(alive.worker.paneId))) {
-        const message = await mailbox.send(repoPath, from, alive.worker.id, body);
-        console.error(
-          `[protocol-router] Delivery failed: pane dead after spawn (worker=${alive.worker.id}, msg="${body.slice(0, 50)}")`,
-        );
-        return {
-          messageId: message.id,
-          workerId: alive.worker.id,
-          delivered: false,
-          reason: 'Pane died after spawn',
-        };
-      }
-      return deliverToWorker(repoPath, from, alive.worker, body);
-    }
+    const result = await attemptAutoSpawnDelivery(repoPath, from, to, body, worker);
+    if (result) return result;
   }
 
   // 3. Fallback: try native team inbox for agents not in worker registry

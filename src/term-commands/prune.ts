@@ -31,6 +31,32 @@ function parsePositiveInt(value: string, name: string): number {
   return parsed;
 }
 
+async function runDryRun(ttlHours: number): Promise<void> {
+  const zombies = await listExhaustedZombies(ttlHours);
+  if (zombies.length === 0) {
+    console.log(`No exhausted zombies older than ${ttlHours}h.`);
+    return;
+  }
+  const plural = zombies.length === 1 ? '' : 's';
+  console.log(`Would archive ${zombies.length} zombie agent${plural} older than ${ttlHours}h:`);
+  for (const z of zombies) {
+    console.log(`  ${z.id}  (last state change: ${z.lastStateChange})`);
+  }
+}
+
+async function runArchive(ttlHours: number): Promise<void> {
+  const ids = await archiveExhaustedZombies(ttlHours);
+  if (ids.length === 0) {
+    console.log(`No exhausted zombies older than ${ttlHours}h. Nothing to archive.`);
+    return;
+  }
+  const plural = ids.length === 1 ? '' : 's';
+  console.log(`Archived ${ids.length} zombie agent${plural} older than ${ttlHours}h:`);
+  for (const id of ids) {
+    console.log(`  ${id}`);
+  }
+}
+
 async function pruneCommand(options: PruneOptions): Promise<void> {
   if (!options.zombies) {
     console.error('Error: no prune target specified. Use `--zombies`.');
@@ -40,37 +66,13 @@ async function pruneCommand(options: PruneOptions): Promise<void> {
 
   const ttlHours = options.ttlHours ?? 24;
 
-  const available = await isAvailable();
-  if (!available) {
+  if (!(await isAvailable())) {
     console.error('Database is not running. Start it with: genie db status');
     process.exit(1);
   }
 
   try {
-    if (options.dryRun) {
-      const zombies = await listExhaustedZombies(ttlHours);
-      if (zombies.length === 0) {
-        console.log(`No exhausted zombies older than ${ttlHours}h.`);
-        return;
-      }
-      console.log(
-        `Would archive ${zombies.length} zombie agent${zombies.length === 1 ? '' : 's'} older than ${ttlHours}h:`,
-      );
-      for (const z of zombies) {
-        console.log(`  ${z.id}  (last state change: ${z.lastStateChange})`);
-      }
-      return;
-    }
-
-    const ids = await archiveExhaustedZombies(ttlHours);
-    if (ids.length === 0) {
-      console.log(`No exhausted zombies older than ${ttlHours}h. Nothing to archive.`);
-      return;
-    }
-    console.log(`Archived ${ids.length} zombie agent${ids.length === 1 ? '' : 's'} older than ${ttlHours}h:`);
-    for (const id of ids) {
-      console.log(`  ${id}`);
-    }
+    await (options.dryRun ? runDryRun(ttlHours) : runArchive(ttlHours));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Prune failed: ${message}`);

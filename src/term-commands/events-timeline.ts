@@ -81,25 +81,26 @@ function indent(depth: number): string {
   return `${bars}├─ `;
 }
 
+function severityLabel(sev: string | null): string {
+  const label = (sev ?? '-').padEnd(5);
+  const raw = sev ?? '-';
+  if (raw === 'error' || raw === 'fatal') return color('red', label);
+  if (raw === 'warn') return color('yellow', label);
+  if (raw === 'debug') return color('dim', label);
+  return color('cyan', label);
+}
+
+function renderTimelineRow(r: TimelineRow): string {
+  const ts = new Date(r.created_at).toISOString().replace('T', ' ').slice(11, 19);
+  const sevColor = severityLabel(r.severity);
+  const span = r.span_id ? color('dim', ` [${r.span_id.slice(0, 8)}]`) : '';
+  const dur = r.duration_ms != null ? color('dim', ` (${r.duration_ms}ms)`) : '';
+  const subject = r.subject ?? r.text ?? 'unknown';
+  return `${color('dim', ts)}  ${sevColor} ${indent(r.depth)}${color('brightCyan', subject)}${span}${dur}`;
+}
+
 function renderTreeAscii(rows: TimelineRow[]): string[] {
-  const lines: string[] = [];
-  for (const r of rows) {
-    const ts = new Date(r.created_at).toISOString().replace('T', ' ').slice(11, 19);
-    const sev = r.severity ?? '-';
-    const sevColor =
-      sev === 'error' || sev === 'fatal'
-        ? color('red', sev.padEnd(5))
-        : sev === 'warn'
-          ? color('yellow', sev.padEnd(5))
-          : sev === 'debug'
-            ? color('dim', sev.padEnd(5))
-            : color('cyan', sev.padEnd(5));
-    const span = r.span_id ? color('dim', ` [${r.span_id.slice(0, 8)}]`) : '';
-    const dur = r.duration_ms != null ? color('dim', ` (${r.duration_ms}ms)`) : '';
-    const subject = r.subject ?? r.text ?? 'unknown';
-    lines.push(`${color('dim', ts)}  ${sevColor} ${indent(r.depth)}${color('brightCyan', subject)}${span}${dur}`);
-  }
-  return lines;
+  return rows.map(renderTimelineRow);
 }
 
 export async function timelineCommand(traceId: string, options: TimelineOptions = {}): Promise<void> {

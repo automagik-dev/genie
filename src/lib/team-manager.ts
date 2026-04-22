@@ -446,6 +446,74 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
  * @param opts.repo    Absolute path to the repo. Defaults to `process.cwd()`.
  * @returns The resulting TeamConfig, or null if the insert failed.
  */
+function buildConfigFromNative(
+  name: string,
+  nativeConfig: nativeTeamsManager.NativeTeamConfig,
+  optsRepo: string | undefined,
+): TeamConfig {
+  const leader = deriveBareLeaderName(nativeConfig.leadAgentId);
+  const memberNames = (nativeConfig.members ?? [])
+    .map((m) => m.name)
+    .filter((n): n is string => typeof n === 'string' && n.length > 0);
+  const repoPath = path.resolve(nativeConfig.repo ?? optsRepo ?? process.cwd());
+  return {
+    name,
+    repo: repoPath,
+    baseBranch: nativeConfig.baseBranch ?? 'dev',
+    worktreePath: nativeConfig.worktreePath ?? repoPath,
+    leader: leader ?? undefined,
+    members: memberNames,
+    status: (nativeConfig.status as TeamStatus | undefined) ?? 'in_progress',
+    createdAt: new Date(nativeConfig.createdAt ?? Date.now()).toISOString(),
+    nativeTeamsEnabled: nativeConfig.nativeTeamsEnabled ?? true,
+    tmuxSessionName: nativeConfig.tmuxSessionName,
+    nativeTeamParentSessionId: nativeConfig.nativeTeamParentSessionId,
+    wishSlug: nativeConfig.wishSlug,
+  };
+}
+
+function buildFallbackConfig(name: string, optsRepo: string | undefined): TeamConfig {
+  return {
+    name,
+    repo: path.resolve(optsRepo ?? process.cwd()),
+    baseBranch: 'dev',
+    worktreePath: path.resolve(optsRepo ?? process.cwd()),
+    members: [],
+    status: 'in_progress',
+    createdAt: new Date().toISOString(),
+    nativeTeamsEnabled: true,
+  };
+}
+
+async function insertTeamRow(config: TeamConfig, source: 'native-config' | 'cwd-fallback'): Promise<TeamConfig | null> {
+  try {
+    const sql = await getConnection();
+    await sql`
+      INSERT INTO teams (
+        name, repo, base_branch, worktree_path, leader,
+        members, status, native_teams_enabled, created_at,
+        tmux_session_name, native_team_parent_session_id, wish_slug
+      ) VALUES (
+        ${config.name}, ${config.repo}, ${config.baseBranch},
+        ${config.worktreePath}, ${config.leader ?? null},
+        ${sql.json(config.members)}, ${config.status},
+        ${config.nativeTeamsEnabled ?? false}, ${config.createdAt},
+        ${config.tmuxSessionName ?? null},
+        ${config.nativeTeamParentSessionId ?? null},
+        ${config.wishSlug ?? null}
+      ) ON CONFLICT (name) DO NOTHING
+    `;
+    recordAuditEvent('team', config.name, 'backfilled', getActor(), {
+      repo: config.repo,
+      source,
+      member_count: config.members.length,
+    }).catch(() => {});
+    return (await getTeam(config.name)) ?? config;
+  } catch {
+    return null;
+  }
+}
+
 export async function ensureTeamRow(
   name: string,
   opts?: { repo?: string; nativeConfig?: nativeTeamsManager.NativeTeamConfig },
@@ -465,70 +533,10 @@ export async function ensureTeamRow(
   // config exists (truly-new team). See Bug B in
   // `.genie/wishes/fix-pg-disk-rehydration/WISH.md`.
   const nativeConfig = opts?.nativeConfig ?? (await nativeTeamsManager.loadNativeTeamConfig(name));
-  const now = new Date().toISOString();
-
-  let config: TeamConfig;
-  if (nativeConfig) {
-    const leader = deriveBareLeaderName(nativeConfig.leadAgentId);
-    const memberNames = (nativeConfig.members ?? [])
-      .map((m) => m.name)
-      .filter((n): n is string => typeof n === 'string' && n.length > 0);
-    const repoPath = path.resolve(nativeConfig.repo ?? opts?.repo ?? process.cwd());
-    const worktreePath = nativeConfig.worktreePath ?? repoPath;
-    config = {
-      name,
-      repo: repoPath,
-      baseBranch: nativeConfig.baseBranch ?? 'dev',
-      worktreePath,
-      leader: leader ?? undefined,
-      members: memberNames,
-      status: (nativeConfig.status as TeamStatus | undefined) ?? 'in_progress',
-      createdAt: new Date(nativeConfig.createdAt ?? Date.now()).toISOString(),
-      nativeTeamsEnabled: nativeConfig.nativeTeamsEnabled ?? true,
-      tmuxSessionName: nativeConfig.tmuxSessionName,
-      nativeTeamParentSessionId: nativeConfig.nativeTeamParentSessionId,
-      wishSlug: nativeConfig.wishSlug,
-    };
-  } else {
-    const repoPath = path.resolve(opts?.repo ?? process.cwd());
-    config = {
-      name,
-      repo: repoPath,
-      baseBranch: 'dev',
-      worktreePath: repoPath,
-      members: [],
-      status: 'in_progress',
-      createdAt: now,
-      nativeTeamsEnabled: true,
-    };
-  }
-
-  try {
-    const sql = await getConnection();
-    await sql`
-      INSERT INTO teams (
-        name, repo, base_branch, worktree_path, leader,
-        members, status, native_teams_enabled, created_at,
-        tmux_session_name, native_team_parent_session_id, wish_slug
-      ) VALUES (
-        ${config.name}, ${config.repo}, ${config.baseBranch},
-        ${config.worktreePath}, ${config.leader ?? null},
-        ${sql.json(config.members)}, ${config.status},
-        ${config.nativeTeamsEnabled ?? false}, ${config.createdAt},
-        ${config.tmuxSessionName ?? null},
-        ${config.nativeTeamParentSessionId ?? null},
-        ${config.wishSlug ?? null}
-      ) ON CONFLICT (name) DO NOTHING
-    `;
-    recordAuditEvent('team', name, 'backfilled', getActor(), {
-      repo: config.repo,
-      source: nativeConfig ? 'native-config' : 'cwd-fallback',
-      member_count: config.members.length,
-    }).catch(() => {});
-    return (await getTeam(name)) ?? config;
-  } catch {
-    return null;
-  }
+  const config = nativeConfig
+    ? buildConfigFromNative(name, nativeConfig, opts?.repo)
+    : buildFallbackConfig(name, opts?.repo);
+  return insertTeamRow(config, nativeConfig ? 'native-config' : 'cwd-fallback');
 }
 
 /** Strip `@<team>` suffix from a Claude-native `leadAgentId` → bare leader name. */
