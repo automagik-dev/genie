@@ -61,7 +61,7 @@ export interface AgentToolBypassState {
   readonly scanned_count: number;
 }
 
-export interface AgentToolBypassDeps {
+interface AgentToolBypassDeps {
   readonly listTranscripts: () => Promise<ReadonlyArray<TranscriptInfo>>;
   readonly checkAgentIds: (ids: ReadonlyArray<string>) => Promise<ReadonlySet<string>>;
   readonly now: () => number;
