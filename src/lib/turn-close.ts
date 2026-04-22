@@ -108,6 +108,113 @@ async function terminalizeAgentRows(tx: Sql, agentId: string): Promise<void> {
   `;
 }
 
+type ExecutorRow = { state: string; outcome: string | null; agent_id: string };
+
+async function lockExecutorRow(tx: Sql, executorId: string): Promise<ExecutorRow[]> {
+  return tx<ExecutorRow[]>`
+    SELECT state, outcome, agent_id FROM executors
+    WHERE id = ${executorId}
+    FOR UPDATE
+  `;
+}
+
+/**
+ * Bug E — executor row is a ghost (e.g. env UUID survived a pgserve reset
+ * that wiped the row). Attempt fallback: resolve by the worker's
+ * GENIE_AGENT_NAME env var, taking the most-recent live executor for that
+ * agent. Emits `rot.executor-ghost.detected` on successful fallback so
+ * operators can watch ghost-rate trends.
+ *
+ * Use GENIE_AGENT_NAME (not opts.actor) — the env var is set by the spawn
+ * path and is the canonical agent identity for fallback resolution.
+ * `opts.actor` can override just the audit actor.
+ */
+async function resolveGhostExecutor(
+  tx: Sql,
+  envExecutorId: string,
+): Promise<{ effectiveId: string; rows: ExecutorRow[] } | null> {
+  const agentName = process.env.GENIE_AGENT_NAME;
+  if (!agentName) return null;
+  // Tiebreaker: when two executors land in the same `started_at` microsecond
+  // (real on Blacksmith / fast CI hardware), `ctid DESC` picks the
+  // physically-last-inserted row, preserving insertion order deterministically.
+  // ctid is stable for any row that has not been touched by VACUUM FULL — fine
+  // for the ghost-recovery scenario where the rows of interest are seconds old
+  // at most.
+  const fallback = await tx<{ id: string }[]>`
+    SELECT id FROM executors
+    WHERE agent_id = ${agentName}
+    ORDER BY started_at DESC, ctid DESC
+    LIMIT 1
+    FOR UPDATE
+  `;
+  if (fallback.length === 0) return null;
+  const effectiveId = fallback[0].id;
+  const rows = await lockExecutorRow(tx, effectiveId);
+  console.warn(
+    `[turn-close] executor ${envExecutorId} not found, falling back to agent_id='${agentName}' → ${effectiveId}`,
+  );
+  try {
+    emitEvent(
+      'rot.executor-ghost.detected',
+      {
+        resolution_source: 'resolver',
+        env_id: envExecutorId,
+        resolved_id: effectiveId,
+        agent_name: agentName,
+        recovered: true,
+      },
+      { severity: 'warn', source_subsystem: 'turn-close' },
+    );
+  } catch {
+    // emit is best-effort — never block turn-close on observability.
+  }
+  return { effectiveId, rows };
+}
+
+async function loadExecutorOrRecover(tx: Sql, executorId: string): Promise<{ effectiveId: string; row: ExecutorRow }> {
+  const rows = await lockExecutorRow(tx, executorId);
+  if (rows.length > 0) return { effectiveId: executorId, row: rows[0] };
+
+  const recovered = await resolveGhostExecutor(tx, executorId);
+  if (recovered && recovered.rows.length > 0) {
+    return { effectiveId: recovered.effectiveId, row: recovered.rows[0] };
+  }
+
+  const agentName = process.env.GENIE_AGENT_NAME;
+  throw new Error(`turnClose: executor ${executorId} not found (no fallback by agent_id='${agentName ?? ''}')`);
+}
+
+async function commitTurnClose(
+  tx: Sql,
+  effectiveId: string,
+  row: ExecutorRow,
+  opts: TurnCloseOpts,
+  reason: string | null,
+  actor: string,
+  auditInsert: NonNullable<TurnCloseOpts['auditInsert']>,
+): Promise<TurnCloseResult> {
+  const now = new Date().toISOString();
+  await tx`
+    UPDATE executors
+    SET outcome = ${opts.outcome},
+        closed_at = ${now},
+        close_reason = ${reason},
+        state = 'done',
+        ended_at = ${now}
+    WHERE id = ${effectiveId}
+  `;
+  await terminalizeAgentRows(tx, row.agent_id);
+  await auditInsert(tx, {
+    executorId: effectiveId,
+    agentId: row.agent_id,
+    outcome: opts.outcome,
+    reason,
+    actor,
+  });
+  return { noop: false, executorId: effectiveId, outcome: opts.outcome, closedAt: now };
+}
+
 export async function turnClose(opts: TurnCloseOpts): Promise<TurnCloseResult> {
   if ((opts.outcome === 'blocked' || opts.outcome === 'failed') && !opts.reason?.trim()) {
     throw new Error(`turnClose: --reason is required for outcome '${opts.outcome}'`);
@@ -120,68 +227,7 @@ export async function turnClose(opts: TurnCloseOpts): Promise<TurnCloseResult> {
   const sql = await getConnection();
 
   return sql.begin(async (tx: Sql) => {
-    let effectiveId = executorId;
-    let rows = await tx<{ state: string; outcome: string | null; agent_id: string }[]>`
-      SELECT state, outcome, agent_id FROM executors
-      WHERE id = ${executorId}
-      FOR UPDATE
-    `;
-    if (rows.length === 0) {
-      // Bug E — executor row is a ghost (e.g. env UUID survived a pgserve
-      // reset that wiped the row). Attempt fallback: resolve by the worker's
-      // GENIE_AGENT_NAME env var, taking the most-recent live executor for
-      // that agent. Emits `rot.executor-ghost.detected` on successful
-      // fallback so operators can watch ghost-rate trends.
-      // Use GENIE_AGENT_NAME (not opts.actor) — the env var is set by the
-      // spawn path and is the canonical agent identity for fallback
-      // resolution. `opts.actor` can override just the audit actor.
-      const agentName = process.env.GENIE_AGENT_NAME;
-      if (agentName) {
-        // Tiebreaker: when two executors land in the same `started_at`
-        // microsecond (real on Blacksmith / fast CI hardware), `ctid DESC`
-        // picks the physically-last-inserted row, preserving insertion
-        // order deterministically. ctid is stable for any row that has
-        // not been touched by VACUUM FULL — fine for the ghost-recovery
-        // scenario where the rows of interest are seconds old at most.
-        const fallback = await tx<{ id: string }[]>`
-          SELECT id FROM executors
-          WHERE agent_id = ${agentName}
-          ORDER BY started_at DESC, ctid DESC
-          LIMIT 1
-          FOR UPDATE
-        `;
-        if (fallback.length > 0) {
-          effectiveId = fallback[0].id;
-          rows = await tx<{ state: string; outcome: string | null; agent_id: string }[]>`
-            SELECT state, outcome, agent_id FROM executors
-            WHERE id = ${effectiveId}
-            FOR UPDATE
-          `;
-          console.warn(
-            `[turn-close] executor ${executorId} not found, falling back to agent_id='${agentName}' → ${effectiveId}`,
-          );
-          try {
-            emitEvent(
-              'rot.executor-ghost.detected',
-              {
-                resolution_source: 'resolver',
-                env_id: executorId,
-                resolved_id: effectiveId,
-                agent_name: agentName,
-                recovered: true,
-              },
-              { severity: 'warn', source_subsystem: 'turn-close' },
-            );
-          } catch {
-            // emit is best-effort — never block turn-close on observability.
-          }
-        }
-      }
-      if (rows.length === 0) {
-        throw new Error(`turnClose: executor ${executorId} not found (no fallback by agent_id='${agentName ?? ''}')`);
-      }
-    }
-    const row = rows[0];
+    const { effectiveId, row } = await loadExecutorOrRecover(tx, executorId);
     if (row.outcome !== null || TERMINAL_STATES.has(row.state)) {
       return {
         noop: true,
@@ -190,28 +236,6 @@ export async function turnClose(opts: TurnCloseOpts): Promise<TurnCloseResult> {
         closedAt: null,
       };
     }
-
-    const now = new Date().toISOString();
-    await tx`
-      UPDATE executors
-      SET outcome = ${opts.outcome},
-          closed_at = ${now},
-          close_reason = ${reason},
-          state = 'done',
-          ended_at = ${now}
-      WHERE id = ${effectiveId}
-    `;
-
-    await terminalizeAgentRows(tx, row.agent_id);
-
-    await auditInsert(tx, {
-      executorId: effectiveId,
-      agentId: row.agent_id,
-      outcome: opts.outcome,
-      reason,
-      actor,
-    });
-
-    return { noop: false, executorId: effectiveId, outcome: opts.outcome, closedAt: now };
+    return commitTurnClose(tx, effectiveId, row, opts, reason, actor, auditInsert);
   });
 }

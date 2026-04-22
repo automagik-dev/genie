@@ -903,6 +903,103 @@ function rowRecord(row: QueuedRow): Record<string, unknown> {
   };
 }
 
+type SqlConn = Awaited<ReturnType<typeof getConnection>>;
+
+async function insertIntoMain(sql: SqlConn, rec: Record<string, unknown>): Promise<void> {
+  const data = rec.data as Record<string, unknown>;
+  await sql`
+    INSERT INTO genie_runtime_events
+      (repo_path, subject, kind, source, agent, team, direction, peer, text, data, detector_version, created_at)
+    VALUES (
+      ${rec.repo_path as string},
+      ${rec.subject as string},
+      ${rec.kind as string},
+      ${rec.source as string},
+      ${rec.agent as string},
+      ${(rec.team ?? null) as string | null},
+      ${(rec.direction ?? null) as string | null},
+      ${(rec.peer ?? null) as string | null},
+      ${rec.text as string},
+      ${sql.json(data)},
+      ${(rec.detector_version ?? null) as string | null},
+      ${rec.created_at as string}
+    )
+  `;
+}
+
+async function insertIntoDebug(sql: SqlConn, rec: Record<string, unknown>): Promise<void> {
+  const data = rec.data as Record<string, unknown>;
+  await sql`
+    INSERT INTO genie_runtime_events_debug
+      (repo_path, subject, kind, source, agent, team, direction, peer, text, data, detector_version, created_at)
+    VALUES (
+      ${rec.repo_path as string},
+      ${rec.subject as string},
+      ${rec.kind as string},
+      ${rec.source as string},
+      ${rec.agent as string},
+      ${(rec.team ?? null) as string | null},
+      ${(rec.direction ?? null) as string | null},
+      ${(rec.peer ?? null) as string | null},
+      ${rec.text as string},
+      ${sql.json(data)},
+      ${(rec.detector_version ?? null) as string | null},
+      ${rec.created_at as string}
+    )
+  `;
+}
+
+async function insertIntoAudit(sql: SqlConn, rec: Record<string, unknown>): Promise<void> {
+  const data = rec.data as Record<string, unknown>;
+  await sql`
+    INSERT INTO genie_runtime_events_audit
+      (repo_path, subject, kind, source, agent, team, direction, peer, text, data, detector_version, created_at)
+    VALUES (
+      ${rec.repo_path as string},
+      ${rec.subject as string},
+      ${rec.kind as string},
+      ${rec.source as string},
+      ${rec.agent as string},
+      ${(rec.team ?? null) as string | null},
+      ${(rec.direction ?? null) as string | null},
+      ${(rec.peer ?? null) as string | null},
+      ${rec.text as string},
+      ${sql.json(data)},
+      ${(rec.detector_version ?? null) as string | null},
+      ${rec.created_at as string}
+    )
+  `;
+}
+
+// One tagged-template INSERT per row binds `data` as JSONB via `sql.json()` —
+// crucial because `sql.unsafe(stmt, params)` would bind the payload as text,
+// storing it as a JSON string scalar and breaking structural queries like
+// `data->>'_trace_id'`. postgres.js doesn't accept a dynamic table name in a
+// tagged template; we dispatch to one of three fixed-target inserters.
+async function writeBucket(
+  sql: SqlConn,
+  inserter: (sql: SqlConn, rec: Record<string, unknown>) => Promise<void>,
+  rows: QueuedRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  for (const row of rows) {
+    await inserter(sql, rowRecord(row));
+  }
+}
+
+async function writeBucketWithFallback(
+  sql: SqlConn,
+  inserter: (sql: SqlConn, rec: Record<string, unknown>) => Promise<void>,
+  rows: QueuedRow[],
+): Promise<void> {
+  try {
+    await writeBucket(sql, inserter, rows);
+  } catch {
+    // Sibling table missing (migration 039 not yet applied) — fall back to main.
+    if (rows.length > 0) await writeBucket(sql, insertIntoMain, rows);
+  }
+}
+
 async function writeBatch(batch: QueuedRow[]): Promise<void> {
   const sql = await getConnection();
   const buckets: Record<'main' | 'debug' | 'audit', QueuedRow[]> = { main: [], debug: [], audit: [] };
@@ -910,93 +1007,9 @@ async function writeBatch(batch: QueuedRow[]): Promise<void> {
     buckets[routeTable(row)].push(row);
   }
 
-  const writeBucket = async (table: string, rows: QueuedRow[]): Promise<void> => {
-    if (rows.length === 0) return;
-    // One tagged-template INSERT per row. This binds `data` as JSONB via
-    // `sql.json()` — crucial because `sql.unsafe(stmt, params)` would bind
-    // the payload as text, storing it as a JSON string scalar and breaking
-    // structural queries like `data->>'_trace_id'`.
-    //
-    // postgres.js doesn't accept a dynamic table name in a tagged template;
-    // we switch on the 3 known targets.
-    for (const row of rows) {
-      const rec = rowRecord(row);
-      const data = rec.data as Record<string, unknown>;
-      if (table === 'genie_runtime_events') {
-        await sql`
-          INSERT INTO genie_runtime_events
-            (repo_path, subject, kind, source, agent, team, direction, peer, text, data, detector_version, created_at)
-          VALUES (
-            ${rec.repo_path as string},
-            ${rec.subject as string},
-            ${rec.kind as string},
-            ${rec.source as string},
-            ${rec.agent as string},
-            ${(rec.team ?? null) as string | null},
-            ${(rec.direction ?? null) as string | null},
-            ${(rec.peer ?? null) as string | null},
-            ${rec.text as string},
-            ${sql.json(data)},
-            ${(rec.detector_version ?? null) as string | null},
-            ${rec.created_at as string}
-          )
-        `;
-      } else if (table === 'genie_runtime_events_debug') {
-        await sql`
-          INSERT INTO genie_runtime_events_debug
-            (repo_path, subject, kind, source, agent, team, direction, peer, text, data, detector_version, created_at)
-          VALUES (
-            ${rec.repo_path as string},
-            ${rec.subject as string},
-            ${rec.kind as string},
-            ${rec.source as string},
-            ${rec.agent as string},
-            ${(rec.team ?? null) as string | null},
-            ${(rec.direction ?? null) as string | null},
-            ${(rec.peer ?? null) as string | null},
-            ${rec.text as string},
-            ${sql.json(data)},
-            ${(rec.detector_version ?? null) as string | null},
-            ${rec.created_at as string}
-          )
-        `;
-      } else if (table === 'genie_runtime_events_audit') {
-        await sql`
-          INSERT INTO genie_runtime_events_audit
-            (repo_path, subject, kind, source, agent, team, direction, peer, text, data, detector_version, created_at)
-          VALUES (
-            ${rec.repo_path as string},
-            ${rec.subject as string},
-            ${rec.kind as string},
-            ${rec.source as string},
-            ${rec.agent as string},
-            ${(rec.team ?? null) as string | null},
-            ${(rec.direction ?? null) as string | null},
-            ${(rec.peer ?? null) as string | null},
-            ${rec.text as string},
-            ${sql.json(data)},
-            ${(rec.detector_version ?? null) as string | null},
-            ${rec.created_at as string}
-          )
-        `;
-      } else {
-        throw new Error(`writeBucket: unknown target table '${table}'`);
-      }
-    }
-  };
-
-  await writeBucket('genie_runtime_events', buckets.main);
-  try {
-    await writeBucket('genie_runtime_events_debug', buckets.debug);
-  } catch {
-    // Sibling table missing (migration 039 not yet applied) — fall back to main.
-    if (buckets.debug.length > 0) await writeBucket('genie_runtime_events', buckets.debug);
-  }
-  try {
-    await writeBucket('genie_runtime_events_audit', buckets.audit);
-  } catch {
-    if (buckets.audit.length > 0) await writeBucket('genie_runtime_events', buckets.audit);
-  }
+  await writeBucket(sql, insertIntoMain, buckets.main);
+  await writeBucketWithFallback(sql, insertIntoDebug, buckets.debug);
+  await writeBucketWithFallback(sql, insertIntoAudit, buckets.audit);
 }
 
 // ---------------------------------------------------------------------------
