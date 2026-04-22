@@ -692,13 +692,19 @@ async function _buildConnection(): Promise<any> {
   const testDbName = process.env.GENIE_TEST_DB_NAME;
   const database = testDbName && testDbName.length > 0 ? testDbName : DB_NAME;
   const isTestMode = Boolean(testDbName);
+  // In test mode (per-test-file cloned DB), cap pool to 1 so all queries in a
+  // test share one backend → writes are immediately visible to subsequent
+  // reads, no write-then-read visibility race across pooled connections. This
+  // is what surfaced under Group 7 parallel-shard CI (directory.resolve, dir
+  // edit, events-stream cursor resume all tripped on stale SELECTs). Prod path
+  // (isTestMode=false) keeps max: 50 for throughput.
   sqlClient = pgModule({
     host: DEFAULT_HOST,
     port,
     database,
     username: 'postgres',
     password: 'postgres',
-    max: 50,
+    max: isTestMode ? 1 : 50,
     idle_timeout: 1,
     connect_timeout: 5,
     onnotice: () => {},

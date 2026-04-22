@@ -78,8 +78,11 @@ describe('7.1 Concurrent Operations', () => {
   test('connection pool config is sensible for concurrent operations', () => {
     const source = readFileSync(join(__dirname, '..', 'db.ts'), 'utf-8');
 
-    // max: 50 connections
-    expect(source).toContain('max: 50');
+    // Production: max 50 connections. In test mode (GENIE_TEST_DB_NAME set,
+    // per-test cloned DB), max 1 so all queries share one backend — avoids
+    // write-then-read visibility races under parallel-shard CI. Match either
+    // the prod-only form `max: 50` or the gated form `max: isTestMode ? 1 : 50`.
+    expect(source).toMatch(/max:\s*(?:isTestMode\s*\?\s*1\s*:\s*)?50\b/);
     // Aggressive idle timeout (1s) to recycle unused connections
     expect(source).toContain('idle_timeout: 1');
     // 5s connect timeout prevents hanging
