@@ -112,7 +112,7 @@ async function isPostgresHealthy(port: number): Promise<boolean> {
       port,
       database: 'genie',
       username: 'postgres',
-      password: 'postgres',
+      password: 'postgres', // pragma: allowlist secret — pgserve unauthenticated test default // pragma: allowlist secret — pgserve unauthenticated test default
       max: 1,
       connect_timeout: 3,
       idle_timeout: 1,
@@ -538,7 +538,7 @@ async function adminConnection(port: number, database = 'postgres') {
     port,
     database,
     username: 'postgres',
-    password: 'postgres',
+    password: 'postgres', // pragma: allowlist secret — pgserve unauthenticated test default
     max: 1,
     idle_timeout: 1,
     connect_timeout: 5,
@@ -561,7 +561,7 @@ async function getSharedAdmin(port: number): Promise<Awaited<ReturnType<typeof a
     port,
     database: 'postgres',
     username: 'postgres',
-    password: 'postgres',
+    password: 'postgres', // pragma: allowlist secret — pgserve unauthenticated test default
     max: 1,
     idle_timeout: 0,
     connect_timeout: 5,
