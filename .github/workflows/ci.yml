@@ -181,6 +181,13 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
+    # OIDC trusted publishing — mirrors version.yml (commit f807b3a8).
+    # `id-token: write` is required for npm to exchange the GitHub OIDC token
+    # for a short-lived publish credential. `contents: read` is the default
+    # needed for checkout.
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -194,23 +201,23 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Publish to npm @next
+      - name: Setup Node (for npm OIDC publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish to npm @next via OIDC
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
           HUSKY: "0"
         run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "NPM_TOKEN not set — skipping @next publish"
-            exit 0
-          fi
           LOCAL=$(jq -r '.version' package.json)
           # Check whether the exact version exists in the registry under ANY
           # tag, not just @next. After a dev→main merge, version.yml bumps dev
           # to a new version, publishes it as @latest, and commits the bump
           # back to dev. The next dev push then reads that already-published
           # version from package.json. Querying only the @next tag misses this
-          # cross-tag collision and causes a 403 when bun publish runs.
+          # cross-tag collision and causes a 403 when npm publish runs.
           # Query by exact version so collisions from any tag short-circuit
           # this step; version.yml will derive a fresh version and publish it.
           if [ -n "$(npm view "@automagik/genie@${LOCAL}" version 2>/dev/null)" ]; then
@@ -218,4 +225,4 @@ jobs:
             echo "(version.yml will bump to a new version and publish it as @next)"
             exit 0
           fi
-          bun publish --tag next --access public
+          npm publish --access public --tag next
