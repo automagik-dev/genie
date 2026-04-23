@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 
@@ -40,25 +40,46 @@ export interface SecRollbackOptions {
   json?: boolean;
 }
 
+export interface SecVerifyInstallOptions {
+  offline?: boolean;
+  json?: boolean;
+  tarball?: string;
+  bundleDir?: string;
+}
+
 interface SecScanSpawnResult {
   status: number | null;
   error?: Error;
+  stdout?: Buffer | string;
+  stderr?: Buffer | string;
 }
 
 export interface SecScanDeps {
   existsSync: (path: string) => boolean;
   realpathSync: (path: string) => string;
-  spawnSync: (command: string, args: string[], options: { stdio: 'inherit' }) => SecScanSpawnResult;
+  readFileSync: (path: string, encoding: BufferEncoding) => string;
+  spawnSync: (
+    command: string,
+    args: string[],
+    options: { stdio?: 'inherit' | 'pipe'; encoding?: BufferEncoding },
+  ) => SecScanSpawnResult;
   setExitCode: (exitCode: number) => void;
+  stdout: (line: string) => void;
+  stderr: (line: string) => void;
+  now: () => Date;
 }
 
 const defaultDeps: SecScanDeps = {
   existsSync,
   realpathSync,
-  spawnSync,
+  readFileSync: (path, encoding) => readFileSync(path, encoding),
+  spawnSync: (command, args, options) => spawnSync(command, args, options),
   setExitCode: (exitCode) => {
     process.exitCode = exitCode;
   },
+  stdout: (line) => process.stdout.write(`${line}\n`),
+  stderr: (line) => process.stderr.write(`${line}\n`),
+  now: () => new Date(),
 };
 
 function collectRepeatedOption(value: string, previous: string[]): string[] {
@@ -232,6 +253,323 @@ export function applySecScanExitCode(exitCode: number, deps: Pick<SecScanDeps, '
   if (exitCode !== 0) deps.setExitCode(exitCode);
 }
 
+// ---------------------------------------------------------------------------
+// verify-install
+//
+// `genie sec verify-install` walks the cosign + SLSA verification path that
+// `scripts/verify-release.sh` documents:
+//   1. Locate a signed tarball + .sig + .cert + provenance.intoto.jsonl
+//      bundle on disk (either auto-discovered or user-supplied).
+//   2. Run `cosign verify-blob` pinning the certificate identity regexp +
+//      OIDC issuer documented in .github/cosign.pub.
+//   3. Run `slsa-verifier verify-artifact` against the provenance attestation.
+//   4. Report the outcome with the exit codes documented in the wish.
+//
+// Signing is cosign KEYLESS ONLY — there is no PEM public key to pin. The
+// committed .github/cosign.pub is an explicit NO-KEY sentinel. Any operator
+// who hands us a file whose content matches the sentinel MUST get exit 5
+// ("no signature material found") rather than a false positive.
+// ---------------------------------------------------------------------------
+
+/**
+ * Exit codes are a public contract consumed by operators, CI, and the runbook.
+ * Keep in sync with `scripts/verify-release.sh` and the wish.
+ */
+export const VERIFY_EXIT = {
+  VERIFIED: 0,
+  SIGNATURE_INVALID: 2,
+  SIGNER_IDENTITY_MISMATCH: 3,
+  PROVENANCE_INVALID: 4,
+  NO_SIGNATURE_MATERIAL: 5,
+  MISSING_BINARY: 127,
+} as const;
+
+export type VerifyExitCode = (typeof VERIFY_EXIT)[keyof typeof VERIFY_EXIT];
+
+export const SIGNER_IDENTITY_REGEXP = '^https://github.com/automagik-dev/genie/.github/workflows/release.yml@';
+export const SIGNER_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
+export const PROVENANCE_SOURCE_URI = 'github.com/automagik-dev/genie';
+
+const COSIGN_NO_KEY_SENTINEL = 'BEGIN COSIGN NO-PINNED-KEY SENTINEL';
+
+export interface VerifyInstallJsonShape {
+  verified: boolean;
+  exit_code: VerifyExitCode;
+  signer_identity: string;
+  signer_oidc_issuer: string;
+  signature_source: string | null;
+  provenance_source: string | null;
+  tarball_path: string | null;
+  verified_at: string;
+  pinned_key_fingerprint: null;
+  signing_mode: 'cosign-keyless';
+  offline: boolean;
+  errors: string[];
+}
+
+interface DiscoveredBundle {
+  tarball: string;
+  signature: string;
+  certificate: string;
+  provenance: string | null;
+}
+
+/**
+ * Discover a {tarball, .sig, .cert, provenance} bundle relative to a starting
+ * directory. Looks for a single *.tgz with matching `.sig` + `.cert` siblings
+ * and an optional `provenance.intoto.jsonl`. Returns null if no complete
+ * bundle is present.
+ */
+export function discoverSignatureBundle(
+  bundleDir: string,
+  deps: Pick<SecScanDeps, 'existsSync'> = defaultDeps,
+): DiscoveredBundle | null {
+  if (!deps.existsSync(bundleDir)) return null;
+
+  const candidates: string[] = [];
+  try {
+    for (const entry of readdirSync(bundleDir)) {
+      if (entry.endsWith('.tgz')) candidates.push(entry);
+    }
+  } catch {
+    return null;
+  }
+
+  for (const tarballName of candidates) {
+    const tarball = join(bundleDir, tarballName);
+    const signature = `${tarball}.sig`;
+    const certificate = `${tarball}.cert`;
+    if (!deps.existsSync(signature)) continue;
+    if (!deps.existsSync(certificate)) continue;
+    const provenancePath = join(bundleDir, 'provenance.intoto.jsonl');
+    const provenance = deps.existsSync(provenancePath) ? provenancePath : null;
+    return { tarball, signature, certificate, provenance };
+  }
+
+  return null;
+}
+
+/**
+ * Sentinel guard: the committed `.github/cosign.pub` is not a PEM key. Any
+ * code path that tries to treat it as a key must fail closed with exit 5.
+ */
+export function readsAsCosignSentinel(
+  path: string,
+  deps: Pick<SecScanDeps, 'existsSync' | 'readFileSync'> = defaultDeps,
+): boolean {
+  if (!deps.existsSync(path)) return false;
+  try {
+    const content = deps.readFileSync(path, 'utf8');
+    return content.includes(COSIGN_NO_KEY_SENTINEL);
+  } catch {
+    return false;
+  }
+}
+
+interface CosignBinaryCheck {
+  ok: boolean;
+  binary: string;
+  reason?: string;
+}
+
+function ensureBinary(name: string, deps: Pick<SecScanDeps, 'spawnSync'>): CosignBinaryCheck {
+  const result = deps.spawnSync(name, ['--version'], {
+    stdio: 'pipe',
+    encoding: 'utf8',
+  });
+  if (result.error) return { ok: false, binary: name, reason: result.error.message };
+  if ((result.status ?? 1) !== 0) {
+    return { ok: false, binary: name, reason: `${name} --version exited non-zero` };
+  }
+  return { ok: true, binary: name };
+}
+
+export interface VerifyInstallResult {
+  exitCode: VerifyExitCode;
+  json: VerifyInstallJsonShape;
+}
+
+function buildVerifyResult(
+  exitCode: VerifyExitCode,
+  ctx: {
+    bundle: DiscoveredBundle | null;
+    verifiedAt: string;
+    offline: boolean;
+    errors: string[];
+  },
+): VerifyInstallResult {
+  return {
+    exitCode,
+    json: {
+      verified: exitCode === VERIFY_EXIT.VERIFIED,
+      exit_code: exitCode,
+      signer_identity: SIGNER_IDENTITY_REGEXP,
+      signer_oidc_issuer: SIGNER_OIDC_ISSUER,
+      signature_source: ctx.bundle?.signature ?? null,
+      provenance_source: ctx.bundle?.provenance ?? null,
+      tarball_path: ctx.bundle?.tarball ?? null,
+      verified_at: ctx.verifiedAt,
+      pinned_key_fingerprint: null,
+      signing_mode: 'cosign-keyless',
+      offline: ctx.offline,
+      errors: ctx.errors,
+    },
+  };
+}
+
+function classifyCosignFailure(stderr: string): VerifyExitCode {
+  const lower = stderr.toLowerCase();
+  const identityMismatch =
+    lower.includes('certificate identity') || lower.includes('subject does not match') || lower.includes('oidc issuer');
+  return identityMismatch ? VERIFY_EXIT.SIGNER_IDENTITY_MISMATCH : VERIFY_EXIT.SIGNATURE_INVALID;
+}
+
+function runCosignStep(
+  bundle: DiscoveredBundle,
+  offline: boolean,
+  errors: string[],
+  deps: SecScanDeps,
+): VerifyExitCode {
+  const cosignCheck = ensureBinary('cosign', deps);
+  if (!cosignCheck.ok) {
+    errors.push(
+      `cosign not available in PATH (${cosignCheck.reason ?? 'unknown'}). Install from https://docs.sigstore.dev/cosign/installation/.`,
+    );
+    return VERIFY_EXIT.MISSING_BINARY;
+  }
+
+  const cosignArgs = [
+    'verify-blob',
+    '--certificate-identity-regexp',
+    SIGNER_IDENTITY_REGEXP,
+    '--certificate-oidc-issuer',
+    SIGNER_OIDC_ISSUER,
+    '--signature',
+    bundle.signature,
+    '--certificate',
+    bundle.certificate,
+    bundle.tarball,
+  ];
+  if (offline) cosignArgs.push('--insecure-ignore-tlog', '--offline');
+
+  const result = deps.spawnSync('cosign', cosignArgs, { stdio: 'pipe', encoding: 'utf8' });
+  if (result.error) {
+    errors.push(`cosign spawn failed: ${result.error.message}`);
+    return VERIFY_EXIT.MISSING_BINARY;
+  }
+  if ((result.status ?? 1) === 0) return VERIFY_EXIT.VERIFIED;
+
+  const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+  if (stderr) errors.push(stderr.trim());
+  return classifyCosignFailure(stderr);
+}
+
+function runSlsaStep(bundle: DiscoveredBundle, errors: string[], deps: SecScanDeps): VerifyExitCode {
+  if (!bundle.provenance) {
+    errors.push(
+      `provenance.intoto.jsonl missing alongside ${bundle.tarball} — cosign passed but SLSA provenance cannot be checked.`,
+    );
+    return VERIFY_EXIT.PROVENANCE_INVALID;
+  }
+
+  const slsaCheck = ensureBinary('slsa-verifier', deps);
+  if (!slsaCheck.ok) {
+    errors.push(
+      `slsa-verifier not available in PATH (${slsaCheck.reason ?? 'unknown'}). Install from https://github.com/slsa-framework/slsa-verifier.`,
+    );
+    return VERIFY_EXIT.MISSING_BINARY;
+  }
+
+  const result = deps.spawnSync(
+    'slsa-verifier',
+    ['verify-artifact', bundle.tarball, '--provenance-path', bundle.provenance, '--source-uri', PROVENANCE_SOURCE_URI],
+    { stdio: 'pipe', encoding: 'utf8' },
+  );
+  if (result.error) {
+    errors.push(`slsa-verifier spawn failed: ${result.error.message}`);
+    return VERIFY_EXIT.MISSING_BINARY;
+  }
+  if ((result.status ?? 1) === 0) return VERIFY_EXIT.VERIFIED;
+
+  const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+  if (stderr) errors.push(stderr.trim());
+  return VERIFY_EXIT.PROVENANCE_INVALID;
+}
+
+function resolveBundleDir(options: SecVerifyInstallOptions, genieRoot: string): string {
+  if (options.bundleDir) return options.bundleDir;
+  if (options.tarball) return dirname(resolve(options.tarball));
+  return resolve(genieRoot);
+}
+
+export function runVerifyInstall(
+  options: SecVerifyInstallOptions,
+  deps: SecScanDeps = defaultDeps,
+): VerifyInstallResult {
+  const errors: string[] = [];
+  const verifiedAt = deps.now().toISOString();
+  const offline = options.offline === true;
+
+  const genieRoot = resolveGenieRoot(process.argv[1], deps);
+  const bundleDir = resolveBundleDir(options, genieRoot);
+  const bundle = discoverSignatureBundle(bundleDir, deps);
+  const ctx = { bundle, verifiedAt, offline, errors };
+
+  if (!bundle) {
+    errors.push(
+      `No signed release bundle found under ${bundleDir}. Expected <pkg>.tgz + .sig + .cert + provenance.intoto.jsonl.`,
+    );
+    if (readsAsCosignSentinel(join(genieRoot, '.github', 'cosign.pub'), deps)) {
+      errors.push(
+        '.github/cosign.pub is the documented NO-KEY sentinel — release signing is cosign KEYLESS ONLY; there is no public key to pin.',
+      );
+    }
+    return buildVerifyResult(VERIFY_EXIT.NO_SIGNATURE_MATERIAL, ctx);
+  }
+
+  const cosignExit = runCosignStep(bundle, offline, errors, deps);
+  if (cosignExit !== VERIFY_EXIT.VERIFIED) return buildVerifyResult(cosignExit, ctx);
+
+  const slsaExit = runSlsaStep(bundle, errors, deps);
+  return buildVerifyResult(slsaExit, ctx);
+}
+
+function emitHumanReport(
+  result: VerifyInstallResult,
+  options: SecVerifyInstallOptions,
+  deps: Pick<SecScanDeps, 'stdout' | 'stderr'>,
+): void {
+  const { json, exitCode } = result;
+  const status = json.verified ? 'OK' : 'FAIL';
+  deps.stdout(`verify-install: ${status} (exit ${exitCode})`);
+  deps.stdout(`  signing mode:       ${json.signing_mode}`);
+  deps.stdout(`  signer identity:    ${json.signer_identity}`);
+  deps.stdout(`  OIDC issuer:        ${json.signer_oidc_issuer}`);
+  deps.stdout(`  provenance source:  ${PROVENANCE_SOURCE_URI}`);
+  deps.stdout(`  tarball:            ${json.tarball_path ?? '(not found)'}`);
+  deps.stdout(`  signature:          ${json.signature_source ?? '(not found)'}`);
+  deps.stdout(`  provenance:         ${json.provenance_source ?? '(not found)'}`);
+  deps.stdout(`  verified_at:        ${json.verified_at}`);
+  deps.stdout(`  offline:            ${json.offline ? 'yes (skips Rekor tlog)' : 'no'}`);
+  if (options.offline) {
+    deps.stdout('  warning:            offline mode skips the Rekor transparency log; revoked certs are not detected.');
+  }
+  if (json.errors.length > 0) {
+    deps.stderr('verify-install errors:');
+    for (const err of json.errors) deps.stderr(`  - ${err}`);
+  }
+}
+
+export function runVerifyInstallCommand(options: SecVerifyInstallOptions, deps: SecScanDeps = defaultDeps): number {
+  const result = runVerifyInstall(options, deps);
+  if (options.json) {
+    deps.stdout(JSON.stringify(result.json));
+  } else {
+    emitHumanReport(result, options, deps);
+  }
+  return result.exitCode;
+}
+
 export function registerSecCommands(program: Command, deps: SecScanDeps = defaultDeps): void {
   const sec = program.command('sec').description('Security tooling — host compromise triage and IOC hunts');
 
@@ -308,6 +646,18 @@ export function registerSecCommands(program: Command, deps: SecScanDeps = defaul
     .option('--json', 'Emit JSON summary to stdout')
     .action((options: SecQuarantineGcOptions) => {
       const exitCode = runSecQuarantineGc(options, deps);
+      applySecScanExitCode(exitCode, deps);
+    });
+
+  sec
+    .command('verify-install')
+    .description('Verify the cosign signature + SLSA provenance of the running @automagik/genie release.')
+    .option('--offline', 'Skip the Rekor transparency-log check (signature + cert still verified)')
+    .option('--json', 'Emit machine-readable verification report on stdout')
+    .option('--tarball <path>', 'Point at a specific release tarball (for local verification)')
+    .option('--bundle-dir <path>', 'Directory containing <pkg>.tgz + .sig + .cert + provenance')
+    .action((options: SecVerifyInstallOptions) => {
+      const exitCode = runVerifyInstallCommand(options, deps);
       applySecScanExitCode(exitCode, deps);
     });
 }
