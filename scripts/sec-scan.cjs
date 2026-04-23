@@ -366,6 +366,270 @@ const TEXT_MATCHERS = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Runtime context, ULID, envelope, signal handling, kill switch
+// ---------------------------------------------------------------------------
+
+const REPORT_VERSION = 1;
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const DEFAULT_PROGRESS_INTERVAL_MS = 2000;
+
+function generateUlid(timestampMs, randomBytesProvider) {
+  const provider = randomBytesProvider || ((n) => require('node:crypto').randomBytes(n));
+  let ts = Math.max(0, Math.floor(timestampMs));
+  let tsPart = '';
+  for (let i = 0; i < 10; i += 1) {
+    tsPart = ULID_ALPHABET[ts % 32] + tsPart;
+    ts = Math.floor(ts / 32);
+  }
+  const bytes = provider(16);
+  let randPart = '';
+  for (let i = 0; i < 16; i += 1) {
+    randPart += ULID_ALPHABET[bytes[i] % 32];
+  }
+  return tsPart + randPart;
+}
+
+function readScannerVersion() {
+  try {
+    const pkg = require('../package.json');
+    return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function createHostId(platformInfo) {
+  const input = [
+    platformInfo.platform,
+    platformInfo.arch,
+    platformInfo.release,
+    platformInfo.user || '',
+    hostname(),
+  ].join(':');
+  return createHash('sha256').update(input).digest('hex').slice(0, 16);
+}
+
+function createRuntime({ options, clock, platformInfo, argv, scannerVersion, stderr, randomBytesProvider } = {}) {
+  const resolvedStderr = stderr || process.stderr;
+  const nowFn = clock && typeof clock.now === 'function' ? clock.now : () => Date.now();
+  const startMs = nowFn();
+  const scanId = generateUlid(startMs, randomBytesProvider);
+  const hostId = createHostId(platformInfo);
+  const startedAt = new Date(startMs).toISOString();
+
+  const progressIntervalMs = Number.isFinite(options.progressIntervalMs)
+    ? Math.max(50, Math.floor(options.progressIntervalMs))
+    : DEFAULT_PROGRESS_INTERVAL_MS;
+  const progressEnabled = !options.quiet && !options.noProgress;
+  const progressJson = Boolean(options.progressJson);
+
+  let currentPhase = null;
+  const phaseHistory = [];
+  const capEvents = [];
+  let interrupted = false;
+  let interruptReason = null;
+  let tickerHandle = null;
+  let ticksEmitted = 0;
+  let finishedState = null;
+
+  function emit(event) {
+    if (!progressEnabled) return;
+    try {
+      if (progressJson) {
+        const payload = { ts_ms: nowFn(), scan_id: scanId, ...event };
+        resolvedStderr.write(`${JSON.stringify(payload)}\n`);
+        return;
+      }
+      const elapsed = ((nowFn() - startMs) / 1000).toFixed(1);
+      const phaseLabel = event.phase || (currentPhase ? currentPhase.id : 'startup');
+      const kindLabel = event.kind ? ` ${event.kind}` : '';
+      resolvedStderr.write(`[sec-scan +${elapsed}s] phase=${phaseLabel}${kindLabel}\n`);
+    } catch {
+      /* stderr closed or unavailable */
+    }
+  }
+
+  function startTicker() {
+    if (!progressEnabled || tickerHandle) return;
+    tickerHandle = setInterval(() => {
+      ticksEmitted += 1;
+      emit({ kind: 'tick' });
+    }, progressIntervalMs);
+    if (typeof tickerHandle.unref === 'function') tickerHandle.unref();
+  }
+
+  function stopTicker() {
+    if (!tickerHandle) return;
+    clearInterval(tickerHandle);
+    tickerHandle = null;
+  }
+
+  function startPhase(id) {
+    currentPhase = { id, startMs: nowFn() };
+    emit({ kind: 'phase.start', phase: id });
+  }
+
+  function endPhase(id, extra = {}) {
+    if (!currentPhase || currentPhase.id !== id) {
+      emit({ kind: 'phase.end', phase: id, ...extra });
+      return;
+    }
+    const elapsedMs = nowFn() - currentPhase.startMs;
+    phaseHistory.push({ id, elapsed_ms: elapsedMs, ...extra });
+    emit({ kind: 'phase.end', phase: id, elapsed_ms: elapsedMs });
+    currentPhase = null;
+  }
+
+  function recordCap(kind, detail = {}) {
+    capEvents.push({ kind, ...detail });
+  }
+
+  function markInterrupted(reason) {
+    if (interrupted) return;
+    interrupted = true;
+    interruptReason = reason || 'signal';
+    if (currentPhase) {
+      const elapsedMs = nowFn() - currentPhase.startMs;
+      phaseHistory.push({
+        id: currentPhase.id,
+        elapsed_ms: elapsedMs,
+        interrupted: true,
+      });
+      currentPhase = null;
+    }
+  }
+
+  function isInterrupted() {
+    return interrupted;
+  }
+
+  function finish() {
+    if (finishedState) return finishedState;
+    stopTicker();
+    const finishedMs = nowFn();
+    finishedState = {
+      finishedAt: new Date(finishedMs).toISOString(),
+      elapsedMs: finishedMs - startMs,
+      phases: phaseHistory,
+      capEvents,
+      interrupted,
+      interruptReason,
+      ticksEmitted,
+    };
+    return finishedState;
+  }
+
+  return {
+    scanId,
+    hostId,
+    startedAt,
+    scannerVersion,
+    platformInfo,
+    argv,
+    options,
+    clock: { now: nowFn },
+    startTicker,
+    stopTicker,
+    startPhase,
+    endPhase,
+    emit,
+    recordCap,
+    markInterrupted,
+    isInterrupted,
+    finish,
+  };
+}
+
+function buildInvocation(argv, options) {
+  return {
+    argv: Array.isArray(argv) ? argv.slice(2) : [],
+    flags: {
+      json: Boolean(options.json),
+      allHomes: Boolean(options.allHomes),
+      homes: [...options.homes],
+      roots: [...options.roots],
+      progress: !options.noProgress && !options.quiet,
+      progressJson: Boolean(options.progressJson),
+      progressIntervalMs: Number.isFinite(options.progressIntervalMs)
+        ? options.progressIntervalMs
+        : DEFAULT_PROGRESS_INTERVAL_MS,
+      verbose: Boolean(options.verbose),
+      quiet: Boolean(options.quiet),
+      redact: Boolean(options.redact),
+      persist: options.persist !== false,
+      eventsFile: options.eventsFile || null,
+      impactSurface: Boolean(options.impactSurface),
+      phaseBudgets: { ...options.phaseBudgets },
+    },
+  };
+}
+
+function envelopeFromReport(runtime, report, { reason } = {}) {
+  const state = runtime.finish();
+  return {
+    reportVersion: REPORT_VERSION,
+    scan_id: runtime.scanId,
+    hostId: runtime.hostId,
+    scannerVersion: runtime.scannerVersion,
+    startedAt: runtime.startedAt,
+    finishedAt: state.finishedAt,
+    elapsedMs: state.elapsedMs,
+    invocation: buildInvocation(runtime.argv, runtime.options),
+    platform: runtime.platformInfo,
+    coverage: {
+      phases: state.phases,
+      capEvents: state.capEvents,
+      interrupted: state.interrupted,
+      interruptReason: state.interruptReason || reason || null,
+      complete: !state.interrupted && state.capEvents.length === 0,
+    },
+    ...report,
+  };
+}
+
+function computeExitCode(envelope) {
+  const summary = envelope.summary || {};
+  const hasFindings = Boolean(summary.likelyCompromised || summary.likelyAffected || summary.observedOnly);
+  if (hasFindings) return 1;
+  if (envelope.coverage && envelope.coverage.complete === false) return 2;
+  return 0;
+}
+
+function installSignalHandlers(runtime, flush, { exitFn = (code) => process.exit(code) } = {}) {
+  let handled = false;
+  const onSignal = (signal) => {
+    if (handled) return;
+    handled = true;
+    try {
+      runtime.markInterrupted(`signal:${signal}`);
+      flush(`signal:${signal}`);
+    } catch {
+      /* best effort flush; fall through to exit 2 */
+    }
+    exitFn(2);
+  };
+  process.on('SIGINT', () => onSignal('SIGINT'));
+  process.on('SIGTERM', () => onSignal('SIGTERM'));
+  return onSignal;
+}
+
+function isKillSwitchEnabled(env = process.env) {
+  return env.GENIE_SEC_SCAN_DISABLED === '1';
+}
+
+function emitKillSwitchResponse(options, streams = {}) {
+  const reason = 'GENIE_SEC_SCAN_DISABLED=1';
+  const stdout = streams.stdout || process.stdout;
+  const stderr = streams.stderr || process.stderr;
+  if (options.json) {
+    stdout.write(`${JSON.stringify({ reportVersion: REPORT_VERSION, disabled: true, reason })}\n`);
+  } else {
+    stderr.write(`sec-scan disabled via ${reason}\n`);
+  }
+  return 0;
+}
+
 function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -376,6 +640,24 @@ function parseArgs(argv) {
     allHomes: false,
     roots: [],
     homes: [],
+    noProgress: false,
+    quiet: false,
+    verbose: false,
+    progressJson: false,
+    progressIntervalMs: DEFAULT_PROGRESS_INTERVAL_MS,
+    eventsFile: null,
+    redact: false,
+    persist: true,
+    impactSurface: false,
+    phaseBudgets: {},
+    help: false,
+  };
+
+  const requireValue = (arg, value) => {
+    if (value === undefined || value === null || value === '' || value.startsWith('--')) {
+      throw new Error(`${arg} requires a value`);
+    }
+    return value;
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -389,22 +671,75 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === '--root') {
-      const value = argv[i + 1];
-      if (!value) throw new Error('--root requires a path');
-      options.roots.push(resolve(value));
+      options.roots.push(resolve(requireValue(arg, argv[i + 1])));
       i += 1;
       continue;
     }
     if (arg === '--home') {
-      const value = argv[i + 1];
-      if (!value) throw new Error('--home requires a path');
-      options.homes.push(resolve(value));
+      options.homes.push(resolve(requireValue(arg, argv[i + 1])));
+      i += 1;
+      continue;
+    }
+    if (arg === '--no-progress') {
+      options.noProgress = true;
+      continue;
+    }
+    if (arg === '--quiet' || arg === '-q') {
+      options.quiet = true;
+      continue;
+    }
+    if (arg === '--verbose' || arg === '-v') {
+      options.verbose = true;
+      continue;
+    }
+    if (arg === '--progress-json') {
+      options.progressJson = true;
+      continue;
+    }
+    if (arg === '--progress-interval') {
+      const raw = Number(requireValue(arg, argv[i + 1]));
+      if (!Number.isFinite(raw) || raw < 0) throw new Error(`${arg} requires a non-negative number`);
+      options.progressIntervalMs = raw;
+      i += 1;
+      continue;
+    }
+    if (arg === '--events-file') {
+      options.eventsFile = resolve(requireValue(arg, argv[i + 1]));
+      i += 1;
+      continue;
+    }
+    if (arg === '--redact') {
+      options.redact = true;
+      continue;
+    }
+    if (arg === '--persist') {
+      options.persist = true;
+      continue;
+    }
+    if (arg === '--no-persist') {
+      options.persist = false;
+      continue;
+    }
+    if (arg === '--impact-surface') {
+      options.impactSurface = true;
+      continue;
+    }
+    if (arg === '--phase-budget') {
+      const entry = requireValue(arg, argv[i + 1]);
+      const eqIdx = entry.indexOf('=');
+      if (eqIdx <= 0) throw new Error(`${arg} requires name=ms format`);
+      const key = entry.slice(0, eqIdx).trim();
+      const ms = Number(entry.slice(eqIdx + 1));
+      if (!key || !Number.isFinite(ms) || ms < 0) {
+        throw new Error(`${arg} requires name=ms with non-negative ms`);
+      }
+      options.phaseBudgets[key] = ms;
       i += 1;
       continue;
     }
     if (arg === '--help' || arg === '-h') {
-      printHelp();
-      process.exit(0);
+      options.help = true;
+      continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -412,26 +747,42 @@ function parseArgs(argv) {
   return options;
 }
 
-function printHelp() {
-  console.log(
-    `
+function printHelp(stream) {
+  const out = stream || process.stdout;
+  out.write(
+    `${`
 Usage:
-  node scripts/sec-scan.cjs [--json] [--all-homes] [--home PATH] [--root PATH]
-  genie sec scan [--json] [--all-homes] [--home PATH] [--root PATH]
+  node scripts/sec-scan.cjs [options]
+  genie sec scan [options]
 
 Options:
-  --json        Print JSON only
-  --all-homes   Scan /root, /home/*, /Users/*, and WSL Windows homes when present
-  --home PATH   Add a specific home directory to scan
-  --root PATH   Add an application root to scan for lockfiles and node_modules installs
-  --help, -h    Show this help
+  --json                       Print JSON envelope to stdout
+  --all-homes                  Scan /root, /home/*, /Users/*, and WSL Windows homes
+  --home PATH                  Add a specific home directory (repeatable)
+  --root PATH                  Add an application root (repeatable)
+  --no-progress                Suppress progress output on stderr
+  --quiet, -q                  Suppress progress and banners on stderr
+  --verbose, -v                Emit extra diagnostics on stderr
+  --progress-json              Emit progress as NDJSON events to stderr
+  --progress-interval <ms>     Progress tick interval in milliseconds (default 2000)
+  --events-file <path.jsonl>   Append structured NDJSON events to a 0600-mode file
+  --redact                     Hash \$HOME-prefixed paths; scrub AWS/GitHub/npm/JWT patterns
+  --persist                    Persist report to \$GENIE_HOME/sec-scan/<scan_id>.json (default)
+  --no-persist                 Do not persist the report
+  --impact-surface             Scan for at-risk local material (secrets, wallets, browsers)
+  --phase-budget <name=ms>     Budget (ms) for a named phase; repeatable
+  --help, -h                   Show this help
+
+Exit codes:
+  0  clean and complete scan
+  1  findings present
+  2  clean but incomplete (caps hit or interrupted)
 
 Examples:
-  node scripts/sec-scan.cjs
   node scripts/sec-scan.cjs --json
-  genie sec scan --json
-  sudo node scripts/sec-scan.cjs --all-homes --root /srv --root /opt
-`.trim(),
+  genie sec scan --all-homes --redact --events-file /tmp/scan.jsonl
+  GENIE_SEC_SCAN_DISABLED=1 genie sec scan   # kill switch, exits 0
+`.trim()}\n`,
   );
 }
 
@@ -2280,16 +2631,58 @@ function printHumanReport(report) {
   }
 }
 
+function writeEnvelope(envelope, options, stdout) {
+  const out = stdout || process.stdout;
+  try {
+    if (options.json) {
+      out.write(`${JSON.stringify(envelope, null, 2)}\n`);
+    } else {
+      printHumanReport(envelope);
+    }
+  } catch {
+    /* stdout closed */
+  }
+}
+
+function runPhase(runtime, id, scope, path, fn, report) {
+  runtime.startPhase(id);
+  try {
+    fn();
+  } catch (error) {
+    addError(report, scope, path, error);
+  } finally {
+    runtime.endPhase(id);
+  }
+}
+
 function main() {
   const options = parseArgs(process.argv);
+
+  if (options.help) {
+    printHelp();
+    return 0;
+  }
+
+  if (isKillSwitchEnabled()) {
+    return emitKillSwitchResponse(options);
+  }
+
   const platformInfo = detectPlatform();
+  const scannerVersion = readScannerVersion();
+  const runtime = createRuntime({
+    options,
+    platformInfo,
+    argv: process.argv,
+    scannerVersion,
+  });
+
   const homes = collectHomeDirs(options, platformInfo);
   const roots = collectScanRoots(options, homes);
 
   const report = {
     host: hostname(),
     platform: platformInfo,
-    scannedAt: new Date().toISOString(),
+    scannedAt: runtime.startedAt,
     cwd: process.cwd(),
     homes,
     roots,
@@ -2313,90 +2706,130 @@ function main() {
     errors: [],
   };
 
+  let flushed = false;
+  const flush = (reason) => {
+    if (flushed) return;
+    flushed = true;
+    try {
+      report.timeline = sortTimeline(report.timeline);
+      if (!report.summary) report.summary = summarize(report);
+    } catch {
+      /* partial report; continue */
+    }
+    const envelope = envelopeFromReport(runtime, report, { reason });
+    writeEnvelope(envelope, options);
+  };
+
+  installSignalHandlers(runtime, flush);
+  runtime.startTicker();
+
   for (const homePath of homes) {
-    try {
-      scanNpmCache(homePath, report);
-    } catch (error) {
-      addError(report, 'npm-cache', homePath, error);
-    }
-
-    try {
-      scanBunCache(homePath, report);
-    } catch (error) {
-      addError(report, 'bun-cache', homePath, error);
-    }
+    runPhase(runtime, 'scanNpmCache', 'npm-cache', homePath, () => scanNpmCache(homePath, report), report);
+    runPhase(runtime, 'scanBunCache', 'bun-cache', homePath, () => scanBunCache(homePath, report), report);
   }
 
-  try {
-    scanGlobalInstallCandidates(homes, report);
-  } catch (error) {
-    addError(report, 'global-installs', '(global)', error);
-  }
-
-  try {
-    scanProjectRoots(roots, report);
-  } catch (error) {
-    addError(report, 'project-roots', roots.join(', '), error);
-  }
-
-  try {
-    scanShellHistories(homes, report);
-  } catch (error) {
-    addError(report, 'shell-histories', homes.join(', '), error);
-  }
-
-  try {
-    scanShellProfiles(homes, report);
-  } catch (error) {
-    addError(report, 'shell-profiles', homes.join(', '), error);
-  }
-
-  try {
-    scanPersistenceLocations(platformInfo, homes, report);
-  } catch (error) {
-    addError(report, 'persistence', platformInfo.platform, error);
-  }
-
-  try {
-    scanPythonPthArtifacts(homes, roots, report);
-  } catch (error) {
-    addError(report, 'python-pth', '(python)', error);
-  }
-
-  try {
-    scanTempArtifacts(platformInfo, homes, roots, report);
-  } catch (error) {
-    addError(report, 'temp-artifacts', '(temp)', error);
-  }
-
-  try {
-    scanImpactSurface(homes, roots, report);
-  } catch (error) {
-    addError(report, 'impact-surface', '(surface)', error);
-  }
-
-  try {
-    scanLiveProcesses(report);
-  } catch (error) {
-    addError(report, 'live-processes', '(process table)', error);
-  }
+  runPhase(
+    runtime,
+    'scanGlobalInstallCandidates',
+    'global-installs',
+    '(global)',
+    () => scanGlobalInstallCandidates(homes, report),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanProjectRoots',
+    'project-roots',
+    roots.join(', '),
+    () => scanProjectRoots(roots, report),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanShellHistories',
+    'shell-histories',
+    homes.join(', '),
+    () => scanShellHistories(homes, report),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanShellProfiles',
+    'shell-profiles',
+    homes.join(', '),
+    () => scanShellProfiles(homes, report),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanPersistenceLocations',
+    'persistence',
+    platformInfo.platform,
+    () => scanPersistenceLocations(platformInfo, homes, report),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanPythonPthArtifacts',
+    'python-pth',
+    '(python)',
+    () => scanPythonPthArtifacts(homes, roots, report),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanTempArtifacts',
+    'temp-artifacts',
+    '(temp)',
+    () => scanTempArtifacts(platformInfo, homes, roots, report),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanImpactSurface',
+    'impact-surface',
+    '(surface)',
+    () => scanImpactSurface(homes, roots, report),
+    report,
+  );
+  runPhase(runtime, 'scanLiveProcesses', 'live-processes', '(process table)', () => scanLiveProcesses(report), report);
 
   report.timeline = sortTimeline(report.timeline);
   report.summary = summarize(report);
 
-  if (options.json) {
-    console.log(JSON.stringify(report, null, 2));
-  } else {
-    printHumanReport(report);
-  }
+  flushed = true;
+  const envelope = envelopeFromReport(runtime, report);
+  writeEnvelope(envelope, options);
 
-  process.exitCode =
-    report.summary.likelyAffected || report.summary.likelyCompromised ? 2 : report.summary.observedOnly ? 1 : 0;
+  const exitCode = computeExitCode(envelope);
+  if (exitCode !== 0) process.exitCode = exitCode;
+  return exitCode;
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`sec-scan.cjs failed: ${error.message}`);
-  process.exit(3);
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`sec-scan.cjs failed: ${error.message}\n`);
+    process.exit(3);
+  }
+} else {
+  module.exports = {
+    REPORT_VERSION,
+    DEFAULT_PROGRESS_INTERVAL_MS,
+    generateUlid,
+    createHostId,
+    readScannerVersion,
+    createRuntime,
+    buildInvocation,
+    envelopeFromReport,
+    computeExitCode,
+    installSignalHandlers,
+    isKillSwitchEnabled,
+    emitKillSwitchResponse,
+    parseArgs,
+    printHelp,
+    main,
+    detectPlatform,
+  };
 }
