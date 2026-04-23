@@ -19,12 +19,16 @@ export interface SecScanDeps {
   existsSync: (path: string) => boolean;
   realpathSync: (path: string) => string;
   spawnSync: (command: string, args: string[], options: { stdio: 'inherit' }) => SecScanSpawnResult;
+  setExitCode: (exitCode: number) => void;
 }
 
 const defaultDeps: SecScanDeps = {
   existsSync,
   realpathSync,
   spawnSync,
+  setExitCode: (exitCode) => {
+    process.exitCode = exitCode;
+  },
 };
 
 function collectRepeatedOption(value: string, previous: string[]): string[] {
@@ -89,6 +93,10 @@ export function runSecScan(options: SecScanCommandOptions, deps: SecScanDeps = d
   return result.status ?? 1;
 }
 
+export function applySecScanExitCode(exitCode: number, deps: Pick<SecScanDeps, 'setExitCode'> = defaultDeps): void {
+  if (exitCode !== 0) deps.setExitCode(exitCode);
+}
+
 export function registerSecCommands(program: Command, deps: SecScanDeps = defaultDeps): void {
   const sec = program.command('sec').description('Security tooling — host compromise triage and IOC hunts');
 
@@ -101,6 +109,6 @@ export function registerSecCommands(program: Command, deps: SecScanDeps = defaul
     .option('--root <path>', 'Add an application root to scan for project evidence', collectRepeatedOption, [])
     .action((options: SecScanCommandOptions) => {
       const exitCode = runSecScan(options, deps);
-      if (exitCode !== 0) process.exitCode = exitCode;
+      applySecScanExitCode(exitCode, deps);
     });
 }
