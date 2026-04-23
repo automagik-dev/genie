@@ -233,7 +233,11 @@ jobs:
             echo "(version.yml will bump to a new version and publish it as @next)"
             exit 0
           fi
-          # --provenance is implied by Trusted Publishing but pass it
-          # explicitly so a misconfigured publisher fails loudly instead
-          # of silently falling back to token-based auth.
-          npm publish --access public --tag next --provenance
+          # `--provenance` would emit a sigstore attestation, but npm's
+          # provenance verification rejects self-hosted runners (Blacksmith
+          # is `blacksmith-Nvcpu-ubuntu-*`, not github-hosted). Trusted
+          # Publishing via OIDC token exchange still works without it —
+          # the publish is authenticated, just without the green provenance
+          # badge. To re-enable provenance, move this step to a
+          # `runs-on: ubuntu-latest` job.
+          npm publish --access public --tag next
