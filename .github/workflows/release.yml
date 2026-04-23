@@ -1,5 +1,12 @@
 name: Release
 
+# Creates a GitHub Release object (tag + changelog) on every push to main.
+# npm publishing is intentionally NOT handled here — `version.yml` owns the
+# entire publish path for both `@next` (dev) and `@latest` (main) via a single
+# npm Trusted Publisher entry. Keeping publish logic in one workflow avoids
+# double-publishes, duplicate Trusted Publisher entries on npmjs.com, and the
+# race between `release.yml` and `version.yml` both reacting to a main push.
+
 on:
   push:
     branches: [main]
@@ -7,10 +14,6 @@ on:
 
 permissions:
   contents: write
-  # Required for npm OIDC Trusted Publishing — exchange the GitHub OIDC
-  # token for a short-lived npm publish credential. Matches ci.yml +
-  # version.yml. See npmjs.com package Settings → Trusted Publishers.
-  id-token: write
 
 jobs:
   release:
@@ -91,54 +94,4 @@ jobs:
               --target "${{ github.sha }}" \
               --title "${TAG}" \
               --notes-file /tmp/release-notes.md
-          fi
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.10"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Patch version for hotfix
-        if: steps.ver.outputs.hotfix == 'true'
-        run: |
-          VERSION="${{ steps.ver.outputs.version }}"
-          jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp
-          mv package.json.tmp package.json
-          echo "Patched package.json to ${VERSION}"
-
-      - name: Build CLI
-        run: bun run build
-
-      - name: Setup Node (for npm OIDC publish)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      # Node 22 bundles npm 10.x; npm Trusted Publishing (automatic OIDC
-      # token exchange) requires npm >= 11.5.1. Without this upgrade,
-      # `npm publish` + `npm dist-tag` send the empty placeholder token
-      # and the registry returns a misleading 404.
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
-
-      - name: Publish to npm (latest) via OIDC
-        env:
-          HUSKY: "0"
-          # npm auto-enables provenance in any CI env with `id-token: write`,
-          # regardless of the --provenance CLI flag. Self-hosted Blacksmith
-          # runners fail the server-side sigstore check with 422. Disable
-          # auto-provenance explicitly; OIDC token exchange still happens.
-          NPM_CONFIG_PROVENANCE: "false"
-        run: |
-          VERSION="${{ steps.ver.outputs.version }}"
-          # Try publish; if version exists (from @next), just retag as latest.
-          # npm dist-tag add also authenticates via the OIDC-exchanged token
-          # since both commands read from the same setup-node .npmrc.
-          if ! npm publish --access public 2>&1; then
-            echo "Publish failed — version may already exist from @next. Retagging as latest..."
-            npm dist-tag add "@automagik/genie@${VERSION}" latest
           fi
