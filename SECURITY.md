@@ -58,7 +58,7 @@ Between 2026-04-21 (~22:14 UTC) and 2026-04-22 (~14:00 UTC), versions `4.260421.
 **If you installed any version in that range between April 21–22, 2026, assume your machine is compromised.** Follow the remediation guide linked below.
 
 **Resources:**
-- 📖 [Full incident response manual](https://github.com/namastexlabs/genie-dpo/blob/main/knowledge/canisterworm-incident-response.md)
+- 📖 [Full incident response manual](https://github.com/automagik-dev/genie/blob/main/docs/incident-response/canisterworm.md)
 - 🌐 [Public advisory (English)](https://automagik.dev/security)
 - 🌐 [Aviso público (Português)](https://automagik.dev/seguranca)
 - 🛡️ [GitHub Security Advisories](https://github.com/automagik-dev/genie/security/advisories) for this repository
