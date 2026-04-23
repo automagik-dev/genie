@@ -12,6 +12,7 @@
     "plugins/genie/",
     "scripts/postinstall-tmux.js",
     "scripts/sec-scan.cjs",
+    "scripts/sec-remediate.cjs",
     "scripts/tmux/",
     "src/db/migrations/",
     "templates/",

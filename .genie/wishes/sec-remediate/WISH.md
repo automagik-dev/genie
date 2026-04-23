@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | DRAFT |
 | **Slug** | `sec-remediate` |
 | **Date** | 2026-04-23 |
 | **Author** | Genie Council (split from sec-scan-progress monolith per reviewer verdict) |
@@ -21,7 +21,7 @@
 - **Umbrella committed:** `canisterworm-incident-response/DESIGN.md` exists and was approved.
 - **Base branch:** `codex/sec-scan-command` merged to `main` (per umbrella Preconditions).
 - **Depends on `sec-scan-progress` shipping** for the versioned JSON envelope (`scan_id`, `reportVersion: 1`), events-file schema with `action.start`/`action.end` stubs, audit-log plumbing at `$GENIE_HOME/sec-scan/audit/<scan_id>.jsonl`, and persistence at `$GENIE_HOME/sec-scan/<scan_id>.json`.
-- **Signature verification dependency gate.** Group 1 *implementation* may proceed in parallel with `genie-supply-chain-signing` and use a placeholder for the `--unsafe-unverified` contract. Group 1 *integration tests* (and the apply-mode CI gate) are explicitly blocked on `genie-supply-chain-signing` Group 2 merging to `dev` — the `src/sec/unsafe-verify.ts` helper must exist on `dev` before `sec-remediate` Group 1 can merge. Pre-merge local builds use `--unsafe-unverified <INCIDENT_ID>` with prominent stderr warning + audit-logged ack. When signing G2 lands, default flips to require verification.
+- **Signature verification is best-effort in v1.** This wish ships alongside `genie-supply-chain-signing`; until that wish lands, `sec remediate --apply` default posture is `--unsafe-unverified <INCIDENT_ID>` with prominent stderr warning + audit-logged ack. When signing ships, default flips to require verification.
 
 ## Scope
 
