@@ -6,8 +6,10 @@ import { Command } from 'commander';
 import {
   type SecScanDeps,
   applySecScanExitCode,
+  buildSecRemediateArgv,
   buildSecScanArgv,
   registerSecCommands,
+  resolveSecRemediateScript,
   resolveSecScanScript,
 } from './sec.js';
 
@@ -120,5 +122,123 @@ describe('sec scan command', () => {
     applySecScanExitCode(0, { setExitCode: setExitCodeMock });
 
     expect(setExitCodeMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('sec remediate command', () => {
+  let originalArgv1: string | undefined;
+
+  beforeEach(() => {
+    originalArgv1 = process.argv[1];
+  });
+
+  afterEach(() => {
+    if (originalArgv1 === undefined) {
+      process.argv.splice(1, Math.max(process.argv.length - 1, 0));
+    } else {
+      process.argv[1] = originalArgv1;
+    }
+  });
+
+  test('buildSecRemediateArgv preserves dry-run, scan-id, kill-pid, and unsafe ack', () => {
+    expect(
+      buildSecRemediateArgv({
+        dryRun: true,
+        scanId: 'SCAN1',
+        json: true,
+      }),
+    ).toEqual(['--dry-run', '--scan-id', 'SCAN1', '--json']);
+
+    expect(
+      buildSecRemediateArgv({
+        apply: true,
+        plan: '/tmp/plan.json',
+        unsafeUnverified: 'INC1',
+        killPid: [42, 99],
+        autoConfirmFrom: '/tmp/c.json',
+      }),
+    ).toEqual([
+      '--apply',
+      '--plan',
+      '/tmp/plan.json',
+      '--unsafe-unverified',
+      'INC1',
+      '--kill-pid',
+      '42',
+      '--kill-pid',
+      '99',
+      '--auto-confirm-from',
+      '/tmp/c.json',
+    ]);
+  });
+
+  test('resolveSecRemediateScript locates the cjs payload from a dist layout', () => {
+    const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), 'genie-sec-rem-')));
+    try {
+      mkdirSync(join(tempRoot, 'dist'), { recursive: true });
+      mkdirSync(join(tempRoot, 'scripts'), { recursive: true });
+      writeFileSync(join(tempRoot, 'package.json'), '{}');
+      writeFileSync(join(tempRoot, 'dist', 'genie.js'), '');
+      writeFileSync(join(tempRoot, 'scripts', 'sec-remediate.cjs'), '');
+
+      const scriptPath = resolveSecRemediateScript(join(tempRoot, 'dist', 'genie.js'));
+      expect(scriptPath).toBe(join(tempRoot, 'scripts', 'sec-remediate.cjs'));
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('registered remediate command forwards dry-run by default and surfaces exit code', async () => {
+    const spawnMock = mock<SecScanDeps['spawnSync']>(() => ({ status: 0 }));
+    const setExitCodeMock = mock<SecScanDeps['setExitCode']>(() => {});
+    const deps: SecScanDeps = {
+      existsSync: (path) =>
+        path === '/repo/package.json' ||
+        path === '/repo/scripts/sec-scan.cjs' ||
+        path === '/repo/scripts/sec-remediate.cjs',
+      realpathSync: (path) => path,
+      spawnSync: spawnMock,
+      setExitCode: setExitCodeMock,
+    };
+
+    process.argv[1] = '/repo/dist/genie.js';
+
+    const program = new Command();
+    registerSecCommands(program, deps);
+
+    await program.parseAsync(['bun', 'genie', 'sec', 'remediate', '--scan-id', 'SCAN1', '--json']);
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      process.execPath,
+      ['/repo/scripts/sec-remediate.cjs', '--dry-run', '--scan-id', 'SCAN1', '--json'],
+      { stdio: 'inherit' },
+    );
+    expect(setExitCodeMock).not.toHaveBeenCalled();
+  });
+
+  test('registered restore command forwards quarantine id with --restore', async () => {
+    const spawnMock = mock<SecScanDeps['spawnSync']>(() => ({ status: 0 }));
+    const setExitCodeMock = mock<SecScanDeps['setExitCode']>(() => {});
+    const deps: SecScanDeps = {
+      existsSync: (path) =>
+        path === '/repo/package.json' ||
+        path === '/repo/scripts/sec-scan.cjs' ||
+        path === '/repo/scripts/sec-remediate.cjs',
+      realpathSync: (path) => path,
+      spawnSync: spawnMock,
+      setExitCode: setExitCodeMock,
+    };
+
+    process.argv[1] = '/repo/dist/genie.js';
+    const program = new Command();
+    registerSecCommands(program, deps);
+
+    await program.parseAsync(['bun', 'genie', 'sec', 'restore', 'QUARANTINE-ID-1']);
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      process.execPath,
+      ['/repo/scripts/sec-remediate.cjs', '--restore', 'QUARANTINE-ID-1'],
+      { stdio: 'inherit' },
+    );
   });
 });
