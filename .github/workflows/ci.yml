@@ -218,6 +218,11 @@ jobs:
       - name: Publish to npm @next via OIDC
         env:
           HUSKY: "0"
+          # npm auto-enables provenance in any CI env with `id-token: write`,
+          # regardless of the --provenance CLI flag. Self-hosted Blacksmith
+          # runners fail the server-side sigstore check with 422. Disable
+          # auto-provenance explicitly; OIDC token exchange still happens.
+          NPM_CONFIG_PROVENANCE: "false"
         run: |
           LOCAL=$(jq -r '.version' package.json)
           # Check whether the exact version exists in the registry under ANY

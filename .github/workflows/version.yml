@@ -122,11 +122,9 @@ jobs:
       - name: Publish to npm via OIDC
         env:
           HUSKY: "0"
-        # `--provenance` would emit a sigstore attestation, but npm's
-        # provenance verification rejects self-hosted runners (Blacksmith
-        # is `blacksmith-Nvcpu-ubuntu-*`, not github-hosted). Trusted
-        # Publishing via OIDC token exchange still works without it —
-        # the publish is authenticated, just without the green provenance
-        # badge. To re-enable provenance, move this step to a
-        # `runs-on: ubuntu-latest` job.
+          # npm auto-enables provenance in any CI env with `id-token: write`,
+          # regardless of the --provenance CLI flag. Self-hosted Blacksmith
+          # runners fail the server-side sigstore check with 422. Disable
+          # auto-provenance explicitly; OIDC token exchange still happens.
+          NPM_CONFIG_PROVENANCE: "false"
         run: npm publish --access public --tag ${{ steps.context.outputs.npm_tag }}
