@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -47,7 +47,7 @@ describe('sec scan command', () => {
   });
 
   test('resolveSecScanScript finds the packaged payload from dist layout', () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), 'genie-sec-root-'));
+    const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), 'genie-sec-root-')));
     try {
       mkdirSync(join(tempRoot, 'dist'), { recursive: true });
       mkdirSync(join(tempRoot, 'scripts'), { recursive: true });
