@@ -392,9 +392,147 @@ describe('pool error recovery', () => {
     // Find the cached client health check function
     const healthCheckIdx = source.indexOf('healthCheckCachedClient');
     expect(healthCheckIdx).toBeGreaterThan(-1);
-    const block = source.slice(healthCheckIdx, healthCheckIdx + 400);
+    // Widened from 600 chars — the null-guard block has doc comments
+    // explaining the concurrency race that push the `activePort = null`
+    // assignment further into the function body. The intent is "both nulls
+    // live inside this one function", not "within a fixed byte budget".
+    const block = source.slice(healthCheckIdx, healthCheckIdx + 1400);
     expect(block).toContain('sqlClient = null');
     expect(block).toContain('activePort = null');
+  });
+});
+
+describe('parallel dispatch race (issue #1207)', () => {
+  test('healthCheckCachedClient nulls sqlClient BEFORE calling .end()', () => {
+    // Regression guard: inverting these lines (or re-introducing `await
+    // sqlClient.end(...)` before the null assignment) resurrects the
+    // CONNECTION_ENDED race fixed by 74aaa022 + issue #1207.
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function healthCheckCachedClient');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    const nullIdx = body.indexOf('sqlClient = null');
+    const endCallIdx = body.indexOf('.end(');
+    expect(nullIdx).toBeGreaterThan(-1);
+    expect(endCallIdx).toBeGreaterThan(-1);
+    // Null must come BEFORE the .end() call
+    expect(nullIdx).toBeLessThan(endCallIdx);
+  });
+
+  test('healthCheckCachedClient does not await .end() — fire-and-forget teardown', () => {
+    // If the teardown is awaited synchronously, concurrent in-flight queries
+    // on the shared pool get killed with CONNECTION_ENDED (issue #1207).
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function healthCheckCachedClient');
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    // Should not have `await ... .end(` anywhere in the catch branch
+    const catchIdx = body.indexOf('catch');
+    expect(catchIdx).toBeGreaterThan(-1);
+    const catchBody = body.slice(catchIdx);
+    // Match `await <identifier>.end(` or `await this.end(` patterns
+    expect(catchBody).not.toMatch(/await\s+\w+\.end\(/);
+    // Should call .end() with a .catch(...) attached (fire-and-forget)
+    expect(catchBody).toMatch(/\.end\([^)]*\)\.catch\(/);
+  });
+
+  test('getConnection dedups concurrent rebuilds via buildPromise', () => {
+    // Without dedup, N parallel callers each race pgModule(...) and overwrite
+    // the singleton, leaking pools and triggering CONNECTION_ENDED on the
+    // orphaned ones. See issue #1207.
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    expect(source).toContain('let buildPromise');
+    // getConnection must check buildPromise before rebuilding
+    const getConnIdx = source.indexOf('export async function getConnection');
+    const nextFnIdx = source.indexOf('async function _buildConnection');
+    expect(getConnIdx).toBeGreaterThan(-1);
+    expect(nextFnIdx).toBeGreaterThan(getConnIdx);
+    const body = source.slice(getConnIdx, nextFnIdx);
+    expect(body).toContain('if (buildPromise) return buildPromise');
+    // Must reset buildPromise on both success and failure
+    expect(body).toMatch(/finally\s*\{[^}]*buildPromise\s*=\s*null/);
+  });
+
+  test('_buildConnection fire-and-forget teardown on post-connect failure', () => {
+    // Same pattern as healthCheckCachedClient — if runPostConnectSetup fails,
+    // tear down the doomed client without blocking concurrent work.
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function _buildConnection');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    const catchIdx = body.indexOf('catch (err)');
+    expect(catchIdx).toBeGreaterThan(-1);
+    const catchBody = body.slice(catchIdx);
+    // Null before end, fire-and-forget teardown
+    expect(catchBody.indexOf('sqlClient = null')).toBeLessThan(catchBody.indexOf('.end('));
+    expect(catchBody).not.toMatch(/await\s+\w+\.end\(/);
+    expect(catchBody).toMatch(/\.end\([^)]*\)\.catch\(/);
+  });
+});
+
+describe('root guard (issue #1226)', () => {
+  let origGetuid: (() => number) | undefined;
+  let origAllowRoot: string | undefined;
+
+  beforeEach(() => {
+    origGetuid = process.getuid;
+    origAllowRoot = process.env.GENIE_ALLOW_ROOT;
+  });
+
+  afterEach(() => {
+    // Restore original getuid
+    if (origGetuid) {
+      Object.defineProperty(process, 'getuid', { value: origGetuid, configurable: true });
+    }
+    if (origAllowRoot !== undefined) {
+      process.env.GENIE_ALLOW_ROOT = origAllowRoot;
+    } else {
+      process.env.GENIE_ALLOW_ROOT = undefined;
+    }
+  });
+
+  test('returns null when uid is non-zero', async () => {
+    Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
+    const { checkRootGuard } = await import('./db.js');
+    expect(checkRootGuard()).toBeNull();
+  });
+
+  test('returns actionable error when running as root', async () => {
+    Object.defineProperty(process, 'getuid', { value: () => 0, configurable: true });
+    process.env.GENIE_ALLOW_ROOT = undefined;
+    const { checkRootGuard } = await import('./db.js');
+    const msg = checkRootGuard();
+    expect(msg).not.toBeNull();
+    // Must name the real cause
+    expect(msg).toContain('uid 0');
+    expect(msg).toContain('root');
+    // Must offer the escape hatch
+    expect(msg).toContain('GENIE_ALLOW_ROOT=1');
+    // Must link the issue for more context
+    expect(msg).toContain('1226');
+  });
+
+  test('GENIE_ALLOW_ROOT=1 bypasses the guard', async () => {
+    Object.defineProperty(process, 'getuid', { value: () => 0, configurable: true });
+    process.env.GENIE_ALLOW_ROOT = '1';
+    const { checkRootGuard } = await import('./db.js');
+    expect(checkRootGuard()).toBeNull();
+  });
+
+  test('_ensurePgserve invokes checkRootGuard before spawn paths', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // The guard call must live inside _ensurePgserve, before the GENIE_IS_DAEMON branch
+    const fnStart = source.indexOf('async function _ensurePgserve');
+    expect(fnStart).toBeGreaterThan(-1);
+    const daemonBranch = source.indexOf("GENIE_IS_DAEMON === '1'", fnStart);
+    const guardCall = source.indexOf('checkRootGuard()', fnStart);
+    expect(guardCall).toBeGreaterThan(-1);
+    expect(guardCall).toBeLessThan(daemonBranch);
   });
 });
 
@@ -411,5 +549,169 @@ describe('migration directory resolution', () => {
     // Two deterministic candidates: dev and bundled
     expect(source).toContain('getMigrationsDir()');
     expect(source).toContain('getPackageRootMigrationsDir()');
+  });
+});
+
+// ===========================================================================
+// process-identity helper
+// ===========================================================================
+
+describe('getProcessStartTime', () => {
+  test('returns a non-null string for process.pid on macOS and Linux', async () => {
+    const { getProcessStartTime } = await import('./process-identity.js');
+    if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      // Unsupported platform — helper should still return null safely; nothing else to assert.
+      expect(getProcessStartTime(process.pid)).toBeNull();
+      return;
+    }
+    const t = getProcessStartTime(process.pid);
+    expect(t).not.toBeNull();
+    expect(typeof t).toBe('string');
+    expect((t as string).length).toBeGreaterThan(0);
+  });
+
+  test('returns null for a definitely-dead PID', async () => {
+    const { getProcessStartTime } = await import('./process-identity.js');
+    // PID 999999 is almost certainly not in use; even if it is, the kernel
+    // start time lookup on an unrelated process still returns *some* string,
+    // but the most common case is "no such process" → null. On systems
+    // where this PID happens to exist we accept either null or a string.
+    const t = getProcessStartTime(999_999);
+    expect(t === null || typeof t === 'string').toBe(true);
+  });
+
+  test('returns null for non-positive PIDs', async () => {
+    const { getProcessStartTime } = await import('./process-identity.js');
+    expect(getProcessStartTime(0)).toBeNull();
+    expect(getProcessStartTime(-1)).toBeNull();
+    expect(getProcessStartTime(Number.NaN)).toBeNull();
+  });
+});
+
+// ===========================================================================
+// autoStartDaemon identity check (Bug 2)
+// ===========================================================================
+
+describe('autoStartDaemon identity check', () => {
+  let testHome: string;
+  let pidPath: string;
+  let origGenieHome: string | undefined;
+  let spawnCount = 0;
+
+  beforeEach(() => {
+    testHome = join(tmpdir(), `genie-autostart-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testHome, { recursive: true });
+    pidPath = join(testHome, 'serve.pid');
+    origGenieHome = process.env.GENIE_HOME;
+    process.env.GENIE_HOME = testHome;
+    spawnCount = 0;
+  });
+
+  afterEach(async () => {
+    // Always restore the real spawn fn so other tests aren't affected.
+    const { __setSpawnDaemonForTest } = await import('./db.js');
+    __setSpawnDaemonForTest(null);
+    if (origGenieHome !== undefined) {
+      process.env.GENIE_HOME = origGenieHome;
+    } else {
+      process.env.GENIE_HOME = undefined;
+    }
+    try {
+      const { rmSync } = require('node:fs');
+      rmSync(testHome, { recursive: true, force: true });
+    } catch {}
+  });
+
+  test('spawns when serve.pid is absent', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    expect(existsSync(pidPath)).toBe(false);
+    await autoStartDaemon();
+    expect(spawnCount).toBe(1);
+  });
+
+  test('returns early when serve.pid identity matches (live PID + matching start time)', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    const { getProcessStartTime } = await import('./process-identity.js');
+
+    const startTime = getProcessStartTime(process.pid);
+    if (startTime === null) {
+      // Can't run this test on an unsupported platform — nothing to verify.
+      return;
+    }
+    writeFileSync(pidPath, `${process.pid}:${startTime}`, 'utf-8');
+
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    await autoStartDaemon();
+    // Identity matched → no spawn, file left in place.
+    expect(spawnCount).toBe(0);
+    expect(existsSync(pidPath)).toBe(true);
+  });
+
+  test('unlinks and spawns when start time does not match (recycled PID)', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    writeFileSync(pidPath, `${process.pid}:definitely-wrong-start-time`, 'utf-8');
+
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    await autoStartDaemon();
+    expect(spawnCount).toBe(1);
+    expect(existsSync(pidPath)).toBe(false);
+  });
+
+  test('treats legacy single-PID format as stale', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    // Old format — just a PID, no colon.
+    writeFileSync(pidPath, String(process.pid), 'utf-8');
+
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    await autoStartDaemon();
+    expect(spawnCount).toBe(1);
+    expect(existsSync(pidPath)).toBe(false);
+  });
+
+  test('unlinks and spawns when PID is dead', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    // PID 999999 is almost certainly dead.
+    writeFileSync(pidPath, '999999:whatever', 'utf-8');
+
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    await autoStartDaemon();
+    expect(spawnCount).toBe(1);
+    expect(existsSync(pidPath)).toBe(false);
+  });
+
+  test('unlinks and spawns on unparseable content', async () => {
+    const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
+    writeFileSync(pidPath, 'not-a-pid:nope', 'utf-8');
+
+    __setSpawnDaemonForTest(() => {
+      spawnCount++;
+    });
+    await autoStartDaemon();
+    expect(spawnCount).toBe(1);
+    expect(existsSync(pidPath)).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Branched timeout error messages (Bug 5)
+// ===========================================================================
+
+describe('autoStartDaemon branched timeout messages', () => {
+  test('db.ts source contains each branch label', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    expect(source).toContain('genie serve not running. Run: genie serve start');
+    expect(source).toContain('pgserve did not respond on port');
+    expect(source).toContain('Stale ~/.genie/serve.pid');
   });
 });

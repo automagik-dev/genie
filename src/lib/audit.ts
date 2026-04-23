@@ -82,7 +82,14 @@ export async function queryAuditEvents(options: AuditQueryOptions = {}): Promise
   let paramIdx = 1;
 
   if (options.type) {
-    conditions.push(`event_type = $${paramIdx++}`);
+    // Historically `--type` only matched `event_type`, which silently
+    // dropped OTel-sourced rows (they set `entity_type='otel_tool'` etc.
+    // but carry a generic `event_type` like `otel_event`). Widen to
+    // match either column so `--type otel_tool` does the obvious thing.
+    // Closes #1259 bug 1. Strictly non-regressive — every prior match
+    // still matches; the filter just returns a superset.
+    conditions.push(`(event_type = $${paramIdx} OR entity_type = $${paramIdx})`);
+    paramIdx++;
     values.push(options.type);
   }
   if (options.entity) {
@@ -140,7 +147,11 @@ export async function followAuditEvents(
     let paramIdx = 2;
 
     if (options.type) {
-      conditions.push(`event_type = $${paramIdx++}`);
+      // Match the widened semantics from queryAuditEvents — `--type`
+      // hits both `event_type` and `entity_type` so OTel-sourced rows
+      // flow through the follow path too. Closes #1259 bug 1.
+      conditions.push(`(event_type = $${paramIdx} OR entity_type = $${paramIdx})`);
+      paramIdx++;
       values.push(options.type);
     }
     if (options.entity) {
@@ -209,17 +220,47 @@ export async function queryErrorPatterns(since?: string): Promise<ErrorPattern[]
   const sql = await getConnection();
   const sinceTs = since ? parseSince(since) : new Date(Date.now() - 86_400_000).toISOString();
 
+  // Filter on structural signals, not substring matches:
+  // - event_type names that denote failure (error / failed / rot.*)
+  // - JSONB key 'error' or 'error_type' present on details (explicit error payload)
+  // - state_changed where the new state value is literally 'error'
+  //
+  // Note: `reason` / `stderr` intentionally do NOT widen the filter. They're
+  // extracted from details (see COALESCE below) but only when the event has
+  // ALREADY qualified as an error via another predicate — otherwise benign
+  // events like `turn_close.done` (which carries `reason: "user_requested"`)
+  // would pollute the result set.
+  //
+  // Extract the human message from whichever key the producer used: error,
+  // message, error_type, reason (state_changed carries this), or stderr.
+  // NOTE: keep the COALESCE expression in SELECT and GROUP BY identical.
+  const messageExpr = `COALESCE(
+       NULLIF(details->>'error', ''),
+       NULLIF(details->>'message', ''),
+       NULLIF(details->>'error_type', ''),
+       NULLIF(details->>'reason', ''),
+       NULLIF(details->>'stderr', ''),
+       '(no message)'
+     )`;
+
   const rows = await sql.unsafe(
     `SELECT
        event_type,
        entity_id,
-       COALESCE(details->>'error', details->>'message', '(no message)') as error_message,
-       COUNT(*)::int as count,
-       MAX(created_at) as last_seen
+       ${messageExpr} AS error_message,
+       COUNT(*)::int AS count,
+       MAX(created_at) AS last_seen
      FROM audit_events
-     WHERE (event_type LIKE '%error%' OR details::text LIKE '%"error"%')
+     WHERE (
+         event_type LIKE '%error%'
+         OR event_type LIKE '%failed%'
+         OR event_type LIKE 'rot.%'
+         OR details ? 'error'
+         OR details ? 'error_type'
+         OR (event_type = 'state_changed' AND details->>'state' = 'error')
+       )
        AND created_at >= $1::timestamptz
-     GROUP BY event_type, entity_id, COALESCE(details->>'error', details->>'message', '(no message)')
+     GROUP BY event_type, entity_id, ${messageExpr}
      ORDER BY count DESC
      LIMIT 50`,
     [sinceTs],

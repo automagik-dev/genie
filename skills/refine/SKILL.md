@@ -788,3 +788,16 @@ Success criteria for refined prompt:
 - Never enter a clarification loop — single-turn execution only.
 - File mode overwrites in place. Do not create a new file.
 - Text mode always writes to `/tmp/prompts/`. Do not write elsewhere.
+
+## Turn close (required)
+
+Every session MUST end by writing a terminal outcome to the turn-session contract. This is how the orchestrator reconciles executor state — skipping it leaves the row open and blocks auto-resume.
+
+- `genie done` — work completed, acceptance criteria met
+- `genie blocked --reason "<why>"` — stuck, needs human input or an unblocking signal
+- `genie failed --reason "<why>"` — aborted, irrecoverable error, or cannot proceed
+
+Rules:
+- Call exactly one close verb as the last action of the session.
+- `blocked` / `failed` require `--reason`.
+- `genie done` inside an agent session (GENIE_AGENT_NAME set) closes the current executor; it does not require a wish ref.

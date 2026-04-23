@@ -118,3 +118,28 @@ describe('compareVersions', () => {
     expect(compareVersions('260404.1', '260403.99')).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Closes khal-os/brain wish brain-v2-onboarding-overhaul Grupo G.
+ *
+ * Source-grep guard verifying installBrain chains the brain-side
+ * install wizard. We use a structural test rather than mocking the
+ * dynamic brain import (which is brittle across genie test envs).
+ */
+describe('installBrain → brain install wizard chain', () => {
+  test('source extracts wizard call into runBrainInstallWizard helper', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { dirname, join } = require('node:path') as typeof import('node:path');
+    const src = readFileSync(join(dirname(import.meta.path), 'brain.ts'), 'utf-8');
+
+    // Helper exists and chains via brain.execute(['install', '--apply', '--yes']).
+    expect(src).toContain('async function runBrainInstallWizard()');
+    expect(src).toMatch(/brain\.execute\(\['install', '--apply', '--yes'\]\)/);
+    // installBrain calls the helper after the migrations + before the
+    // final "Get started" line.
+    expect(src).toContain('await runBrainInstallWizard();');
+    // Best-effort: failure is non-fatal (try/catch with skip message).
+    expect(src).toMatch(/Install wizard skipped/);
+    expect(src).toMatch(/brain install --apply --yes/);
+  });
+});

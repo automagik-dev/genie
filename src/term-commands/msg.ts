@@ -18,6 +18,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import type * as registryTypes from '../lib/agent-registry.js';
+import { emitEvent } from '../lib/emit.js';
 import type * as taskServiceTypes from '../lib/task-service.js';
 import type * as teamManagerTypes from '../lib/team-manager.js';
 import { formatTime, padRight, truncate } from '../lib/term-format.js';
@@ -138,8 +139,9 @@ const PARENT_CHAIN_MAX_DEPTH = 3;
 const DEFAULT_REACHBACK_PREFIXES = ['council-'];
 
 /**
- * Enforce team scope: if sender is in a team, recipient must be in the same team
- * (or in a transitively reachable parent team, subject to the ALLOWLIST).
+ * Enforce team scope: if sender is in a team, recipient must be in the same team,
+ * in a transitively reachable parent team (UP-walk), or in a reachable child
+ * team (DOWN-walk) — all subject to the same `childReachbackAllowed` ALLOWLIST.
  * Returns an error message if scope is violated, null if OK.
  */
 export async function checkSendScope(_repoPath: string, sender: string, recipient: string): Promise<string | null> {
@@ -153,6 +155,17 @@ export async function checkSendScope(_repoPath: string, sender: string, recipien
 
   for (const team of senderTeams) {
     if (isRecipientInTeam(team, recipient)) return null;
+  }
+
+  // Parent → child reachback: align with the in-harness `SendMessage` routing.
+  // A sender in a parent team may reach any child team whose parentTeam chain
+  // resolves back to the sender's team, subject to the same reachback rules
+  // used by the UP-walk. Treats the child team's name as the team-lead alias
+  // (mirrors how native `SendMessage` routes `to: "<team-name>"`).
+  const reachableChildren = resolveReachableChildren(teams, senderTeams);
+  for (const child of reachableChildren) {
+    if (recipient === child.name) return null;
+    if (isRecipientInTeam(child, recipient)) return null;
   }
 
   const teamNames = senderTeams.map((t) => t.name).join(', ');
@@ -193,6 +206,43 @@ function walkParentChain(
     current = parent;
     depth++;
   }
+}
+
+/** DFS descendants of a parent team, collecting children allowed by reachback rules. */
+function walkChildTeams(
+  teams: teamManagerTypes.TeamConfig[],
+  parent: teamManagerTypes.TeamConfig,
+  visited: Set<string>,
+  out: teamManagerTypes.TeamConfig[],
+  depth: number,
+): void {
+  if (depth >= PARENT_CHAIN_MAX_DEPTH) return;
+  for (const child of teams) {
+    if (visited.has(child.name)) continue;
+    if (child.parentTeam !== parent.name) continue;
+    if (!childReachbackAllowed(child, parent)) continue;
+    out.push(child);
+    visited.add(child.name);
+    walkChildTeams(teams, child, visited, out, depth + 1);
+  }
+}
+
+/**
+ * Collect all child teams transitively reachable from any of the sender's
+ * teams, subject to the same `childReachbackAllowed` rules used by the
+ * UP-walk. This is the parent → child direction that mirrors the in-harness
+ * `SendMessage` routing.
+ */
+function resolveReachableChildren(
+  teams: teamManagerTypes.TeamConfig[],
+  senderTeams: teamManagerTypes.TeamConfig[],
+): teamManagerTypes.TeamConfig[] {
+  const visited = new Set<string>(senderTeams.map((t) => t.name));
+  const result: teamManagerTypes.TeamConfig[] = [];
+  for (const team of senderTeams) {
+    walkChildTeams(teams, team, visited, result, 0);
+  }
+  return result;
 }
 
 /** Build the list of teams the sender belongs to, including env-based leader membership. */
@@ -545,7 +595,7 @@ function quoteForShell(value: string): string {
  * emits a ready-to-run relay command. Exits 0 (informational) rather than 1
  * so scripts can keep going.
  */
-async function printBridgeSuggestion(
+export async function printBridgeSuggestion(
   sender: string,
   recipient: string,
   body: string,
@@ -553,15 +603,24 @@ async function printBridgeSuggestion(
 ): Promise<void> {
   const suggestion = await suggestRelayLeader(sender);
   console.error(`Scope violation: ${scopeError}`);
-  if (suggestion) {
-    console.error(`Nearest reachable leader: ${suggestion.leader}@${suggestion.team}`);
-    console.error('Relay manually via:');
-    console.error(
-      `  genie send ${quoteForShell(`[relay to ${recipient}] ${body}`)} --to ${suggestion.leader} --team ${suggestion.team}`,
-    );
-  } else {
+  if (!suggestion) {
     console.error('No reachable leader found — sender is not bound to any team.');
+    return;
   }
+  // If the nearest reachable leader is the sender itself, the naïve relay
+  // command would loop back to the sender. Print a clear no-op-avoidance
+  // message instead of emitting a useless command.
+  if (suggestion.leader === sender) {
+    console.error(
+      `You are already the nearest reachable leader (${suggestion.leader}@${suggestion.team}) — no external relay path available.`,
+    );
+    return;
+  }
+  console.error(`Nearest reachable leader: ${suggestion.leader}@${suggestion.team}`);
+  console.error('Relay manually via:');
+  console.error(
+    `  genie send ${quoteForShell(`[relay to ${recipient}] ${body}`)} --to ${suggestion.leader} --team ${suggestion.team}`,
+  );
 }
 
 // ============================================================================
@@ -779,6 +838,15 @@ Examples:
           return result;
         },
         warn: (msg) => console.log(msg),
+        // Pattern 9 — emit on silent-skip transition. Fire-and-forget; errors
+        // swallowed so the poll loop never crashes on an emit glitch.
+        emitDeadInbox: (payload) => {
+          try {
+            emitEvent('rot.inbox-watcher-spawn-loop.detected', payload as unknown as Record<string, unknown>);
+          } catch {
+            // best-effort
+          }
+        },
       });
 
       const shutdown = () => {

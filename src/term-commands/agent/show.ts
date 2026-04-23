@@ -39,8 +39,13 @@ async function showAgent(name: string, json?: boolean): Promise<void> {
   const registry = await import('../../lib/agent-registry.js');
   const executorRegistry = await import('../../lib/executor-registry.js');
 
-  const agents = await registry.listAgents({ team: process.env.GENIE_TEAM });
-  const agent = agents.find((a) => a.customName === name || a.role === name || a.id === name);
+  // Lookup is global (matches `genie ls` semantics) — filtering by GENIE_TEAM
+  // made cross-team agents invisible when the env was set. If the name is
+  // ambiguous across teams, prefer the one matching GENIE_TEAM, then any match.
+  const agents = await registry.listAgents();
+  const matches = agents.filter((a) => a.customName === name || a.role === name || a.id === name);
+  const preferredTeam = process.env.GENIE_TEAM;
+  const agent = (preferredTeam && matches.find((a) => a.team === preferredTeam)) ?? matches[0];
 
   if (!agent) {
     console.error(`Agent "${name}" not found.`);

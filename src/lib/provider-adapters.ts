@@ -13,6 +13,13 @@
 
 import { z } from 'zod';
 import { buildDispatchCommand } from '../hooks/inject.js';
+import {
+  TRACE_ENV_VAR,
+  TRACE_ID_ENV_VAR,
+  getAmbient as getTraceContext,
+  injectPromptPreamble,
+  mintToken as mintTraceToken,
+} from './trace-context.js';
 
 // ============================================================================
 // Types
@@ -125,6 +132,8 @@ const spawnParamsSchema = z.object({
   team: z.string().min(1, 'Team name is required'),
   role: z.string().optional(),
   skill: z.string().optional(),
+  agentId: z.string().optional(),
+  executorId: z.string().uuid().optional(),
   extraArgs: z.array(z.string()).optional(),
   nativeTeam: z
     .object({
@@ -322,42 +331,45 @@ function appendOtelEnv(env: Record<string, string>, params: SpawnParams): void {
   }
 }
 
-export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
-  preflightCheck('claude');
+function appendTraceContext(parts: string[], env: Record<string, string>, params: SpawnParams): void {
+  const ctx = getTraceContext();
+  if (params.initialPrompt) {
+    const prompt = ctx ? injectPromptPreamble(params.initialPrompt, ctx) : params.initialPrompt;
+    parts.push(escapeShellArg(prompt));
+  }
+  if (ctx) {
+    env[TRACE_ENV_VAR] = mintTraceToken(ctx);
+    env[TRACE_ID_ENV_VAR] = ctx.trace_id;
+  }
+}
 
-  const claudeBinary = resolveShellBinary('claude') ?? 'claude';
-  const parts: string[] = [claudeBinary, '--dangerously-skip-permissions'];
+function buildClaudeGenieEnv(params: SpawnParams): Record<string, string> {
   const env: Record<string, string> = {};
-
   // Mark as worker so SessionStart hooks (smart-install, first-run-check,
   // session-context) fast-exit — workers inherit parent's deps and config.
   env.GENIE_WORKER = '1';
-
   if (params.role) env.GENIE_AGENT_NAME = params.role;
   if (params.team) env.GENIE_TEAM = params.team;
+  if (params.executorId) env.GENIE_EXECUTOR_ID = params.executorId;
+  if (params.agentId) env.GENIE_AGENT_ID = params.agentId;
+  return env;
+}
 
-  // OTel telemetry injection — only if not already set (user overrides win)
-  appendOtelEnv(env, params);
-
-  if (params.nativeTeam?.enabled) {
-    appendNativeTeamFlags(parts, env, params.nativeTeam, params);
-  }
-
+function appendSessionFlags(parts: string[], params: SpawnParams): void {
   if (params.resume) {
     parts.push('--resume', escapeShellArg(params.resume));
   } else if (params.sessionId) {
     parts.push('--session-id', escapeShellArg(params.sessionId));
   }
-
   if (params.role) parts.push('--agent', escapeShellArg(params.role));
   if (params.model) parts.push('--model', escapeShellArg(params.model));
   if (params.name) parts.push('--name', escapeShellArg(params.name));
+}
 
-  appendSystemPromptFlags(parts, params);
-
-  // Inject hook dispatch + permissions via --settings (deep-merges with existing settings).
-  // Skip hooks for omni-originated sessions to prevent orchestration side-effects
-  // (e.g., auto-spawning qa/configure agents from seller sessions).
+// Inject hook dispatch + permissions via --settings (deep-merges with existing settings).
+// Skip hooks for omni-originated sessions to prevent orchestration side-effects
+// (e.g., auto-spawning qa/configure agents from seller sessions).
+function buildSettingsObject(params: SpawnParams): Record<string, unknown> {
   const settingsObj: Record<string, unknown> = {};
   if (!params.skipHooks) {
     const dispatchCmd = buildDispatchCommand();
@@ -369,31 +381,49 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
       Stop: [{ hooks: [hookEntry] }],
     };
   }
-  // Merge permissions into settings when provided
   if (params.permissions) {
     const perms: Record<string, string[]> = {};
     if (params.permissions.allow?.length) perms.allow = params.permissions.allow;
     if (params.permissions.deny?.length) perms.deny = params.permissions.deny;
     if (Object.keys(perms).length > 0) settingsObj.permissions = perms;
   }
-  if (Object.keys(settingsObj).length > 0) {
-    parts.push('--settings', escapeShellArg(JSON.stringify(settingsObj)));
-  }
+  return settingsObj;
+}
 
-  // Emit --disallowedTools when the agent declares tool restrictions
+function appendDisallowedAndExtraArgs(parts: string[], params: SpawnParams): void {
   if (params.disallowedTools?.length) {
     for (const tool of params.disallowedTools) {
       parts.push('--disallowedTools', escapeShellArg(tool));
     }
   }
-
   if (params.extraArgs) {
     for (const arg of params.extraArgs) parts.push(escapeShellArg(arg));
   }
+}
 
-  if (params.initialPrompt) {
-    parts.push(escapeShellArg(params.initialPrompt));
+export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
+  preflightCheck('claude');
+
+  const claudeBinary = resolveShellBinary('claude') ?? 'claude';
+  const parts: string[] = [claudeBinary, '--dangerously-skip-permissions'];
+  const env = buildClaudeGenieEnv(params);
+
+  appendOtelEnv(env, params);
+
+  if (params.nativeTeam?.enabled) {
+    appendNativeTeamFlags(parts, env, params.nativeTeam, params);
   }
+
+  appendSessionFlags(parts, params);
+  appendSystemPromptFlags(parts, params);
+
+  const settingsObj = buildSettingsObject(params);
+  if (Object.keys(settingsObj).length > 0) {
+    parts.push('--settings', escapeShellArg(JSON.stringify(settingsObj)));
+  }
+
+  appendDisallowedAndExtraArgs(parts, params);
+  appendTraceContext(parts, env, params);
 
   return {
     command: parts.join(' '),
@@ -417,6 +447,11 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('codex');
 
   const parts: string[] = ['codex'];
+  const env: Record<string, string> = {};
+  if (params.executorId) env.GENIE_EXECUTOR_ID = params.executorId;
+  if (params.agentId) env.GENIE_AGENT_ID = params.agentId;
+  if (params.role) env.GENIE_AGENT_NAME = params.role;
+  if (params.team) env.GENIE_TEAM = params.team;
 
   // Full autonomous execution — no permission prompts
   parts.push('--yolo');
@@ -441,6 +476,7 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   return {
     command: parts.join(' '),
     provider: 'codex',
+    env: Object.keys(env).length > 0 ? env : undefined,
     meta: {
       role: params.role,
       skill: params.skill,

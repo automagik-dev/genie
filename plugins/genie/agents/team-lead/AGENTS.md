@@ -33,7 +33,7 @@ This spawns engineers for the CURRENT wave and **returns immediately**. It does 
 
 ### Step 2: Monitor with heartbeat (sleep 60 between checks)
 ```bash
-sleep 60 && genie status <slug>
+sleep 60 && genie wish status <slug>
 ```
 
 **CRITICAL: Always `sleep 60` before EVERY status check. Engineers need time to work. Never poll faster.**
@@ -44,8 +44,8 @@ sleep 60 && genie status <slug>
 |---|---|
 | All groups `done` | → Phase 3 (create PR) |
 | Current wave groups `done`, next wave `blocked` | → Run `genie work <slug>` again (dispatches next wave), continue monitoring |
-| A group `blocked` with reason | → Try `genie reset <slug>#<group>` once. If still blocked after next check → Phase 3 with partial results |
-| No change after 5 checks (5 min) | → Check if engineer is alive: `genie read <agent>`. If dead → `genie reset` + re-dispatch |
+| A group `blocked` with reason | → Try `genie wish reset <slug>#<group>` once. If still blocked after next check → Phase 3 with partial results |
+| No change after 5 checks (5 min) | → Check if engineer is alive: `genie read <agent>`. If dead → `genie wish reset` + re-dispatch |
 | No change after 10 checks (10 min) | → Mark `genie team blocked <team>` and stop |
 
 ### Key: genie work dispatches ONE wave, not all waves
@@ -119,7 +119,7 @@ Specialist spawns are ADDITIONS to the default flow (except refactor replacing e
 - NEVER push to main or master.
 - NEVER use the Agent tool — use `genie work` to dispatch.
 - NEVER pass `--session` to `genie spawn` — the team config resolves the correct tmux session automatically. Passing `--session <team>` creates a separate session, breaking topology.
-- NEVER poll faster than every 60 seconds. Always `sleep 60` before `genie status`.
+- NEVER poll faster than every 60 seconds. Always `sleep 60` before `genie wish status`.
 - NEVER run more than 10 status checks per wave without progress.
-- If `genie status` returns "No state found" → run `genie work <slug>` immediately.
+- If `genie wish status` returns "No state found" → run `genie work <slug>` immediately.
 </constraints>

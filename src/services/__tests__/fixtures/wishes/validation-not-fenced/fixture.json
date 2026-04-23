@@ -1,0 +1,6 @@
+{
+  "category": "fixable",
+  "rules": ["validation-not-fenced-bash"],
+  "description": "Validation block has commands but no ```bash fence. `--fix` wraps prose in a bash fence.",
+  "expectFixChanges": true
+}

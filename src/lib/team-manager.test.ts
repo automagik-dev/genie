@@ -12,6 +12,7 @@ import { getConnection } from './db.js';
 import {
   createTeam,
   disbandTeam,
+  ensureTeamRow,
   fireAgent,
   getTeam,
   hireAgent,
@@ -22,7 +23,7 @@ import {
   updateTeamConfig,
   validateBranchName,
 } from './team-manager.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 // ============================================================================
 // Test Setup
@@ -76,7 +77,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
   describe('Team Manager', () => {
     beforeAll(async () => {
-      cleanupSchema = await setupTestSchema();
+      cleanupSchema = await setupTestDatabase();
       await setupTestRepo();
     });
 
@@ -205,6 +206,48 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       test('returns null for non-existent team', async () => {
         const config = await getTeam('nonexistent');
         expect(config).toBeNull();
+      });
+    });
+
+    describe('ensureTeamRow', () => {
+      test('inserts a minimal row when no team exists in PG', async () => {
+        const name = 'feat/ensure-new';
+        // Confirm pre-state
+        expect(await getTeam(name)).toBeNull();
+
+        const result = await ensureTeamRow(name, { repo: TEST_REPO });
+        expect(result).not.toBeNull();
+        expect(result!.name).toBe(name);
+        expect(result!.repo).toBe(TEST_REPO);
+        expect(result!.worktreePath).toBe(TEST_REPO);
+        expect(result!.nativeTeamsEnabled).toBe(true);
+        expect(result!.status).toBe('in_progress');
+      });
+
+      test('is idempotent — returns existing row on re-run', async () => {
+        const name = 'feat/ensure-idempotent';
+        const first = await ensureTeamRow(name, { repo: TEST_REPO });
+        const second = await ensureTeamRow(name, { repo: TEST_REPO });
+
+        expect(first).not.toBeNull();
+        expect(second).not.toBeNull();
+        expect(second!.createdAt).toBe(first!.createdAt);
+      });
+
+      test('does not clobber a row created via createTeam', async () => {
+        const name = 'feat/ensure-after-create';
+        const created = await createTeam(name, TEST_REPO, 'dev');
+        expect(created.worktreePath).toContain('feat/ensure-after-create');
+
+        // Back-fill after createTeam should be a no-op — same worktreePath preserved
+        const backfilled = await ensureTeamRow(name, { repo: TEST_REPO });
+        expect(backfilled).not.toBeNull();
+        expect(backfilled!.worktreePath).toBe(created.worktreePath);
+      });
+
+      test('returns null for invalid branch names', async () => {
+        const result = await ensureTeamRow('spaces here', { repo: TEST_REPO });
+        expect(result).toBeNull();
       });
     });
 
@@ -389,6 +432,30 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       test('returns false for non-existent team', async () => {
         const disbanded = await disbandTeam('nonexistent');
         expect(disbanded).toBe(false);
+      });
+
+      test('archives agent rows belonging to the disbanded team (issue #1215)', async () => {
+        await createTeam('feat/archive-agents', TEST_REPO, 'dev');
+
+        // Insert two agent rows directly: one for this team, one for an unrelated team
+        const sql = await getConnection();
+        const theirId = `test-${Date.now()}-their`;
+        const otherId = `test-${Date.now()}-other`;
+        await sql`
+          INSERT INTO agents (id, pane_id, session, repo_path, state, team, role, started_at)
+          VALUES
+            (${theirId}, '', '', '', 'idle', ${'feat/archive-agents'}, 'engineer', now()),
+            (${otherId}, '', '', '', 'idle', 'feat/other-team', 'engineer', now())
+        `;
+
+        await disbandTeam('feat/archive-agents');
+
+        const theirRow = await sql`SELECT state FROM agents WHERE id = ${theirId}`;
+        const otherRow = await sql`SELECT state FROM agents WHERE id = ${otherId}`;
+
+        expect(theirRow[0].state).toBe('archived');
+        // Other teams' agents must stay untouched
+        expect(otherRow[0].state).toBe('idle');
       });
 
       test('cleans up Claude teams settings directory', async () => {

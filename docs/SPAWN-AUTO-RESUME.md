@@ -2,6 +2,8 @@
 
 Auto-resume automatically restores agent sessions when their tmux pane dies unexpectedly (crash, OOM, terminal close). Instead of losing the entire conversation context, Genie detects the dead pane and respawns the agent using its preserved Claude session ID.
 
+> **Canonical-UUID invariant.** Auto-resume is the mechanism that keeps the "one name = one true Claude session UUID" guarantee alive across the canonical agent's lifetime. The invariant itself — plus the single-verb state-gated spawn model, the parallel `<name>-<s4>` convention, and the five-tier team-resolution precedence — lives in [**SPAWN-TEAM-RESOLUTION.md**](SPAWN-TEAM-RESOLUTION.md). Authority trail: wishes `tui-spawn-dx`, `perfect-spawn-hierarchy`, and `fix-ghost-approval-p0` (all archived in `.genie/wishes/_archive/`). **Parallels** (`<name>-<s4>`) are **off** the bare-name auto-resume path described here; they resume only via their full id.
+
 ## How It Works
 
 Auto-resume operates at two levels:

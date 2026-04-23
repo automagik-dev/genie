@@ -478,3 +478,88 @@ describe('OTel env injection in buildClaudeCommand', () => {
     }
   });
 });
+
+// ============================================================================
+// Turn-session env propagation (Group 3: GENIE_EXECUTOR_ID / GENIE_AGENT_ID)
+// ============================================================================
+
+describe('executor env propagation', () => {
+  const originalWhich = (Bun as Record<string, unknown>).which;
+  beforeAll(() => {
+    (Bun as Record<string, unknown>).which = (name: string) =>
+      name === 'claude' || name === 'codex'
+        ? `/usr/local/bin/${name}`
+        : typeof originalWhich === 'function'
+          ? originalWhich(name)
+          : null;
+  });
+  afterAll(() => {
+    (Bun as Record<string, unknown>).which = originalWhich;
+  });
+
+  const execId = '11111111-2222-3333-4444-555555555555';
+  const agentId = 'agent-abc-123';
+
+  it('buildClaudeCommand sets GENIE_EXECUTOR_ID + GENIE_AGENT_ID when present', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'engineer',
+      executorId: execId,
+      agentId,
+    });
+    expect(result.env?.GENIE_EXECUTOR_ID).toBe(execId);
+    expect(result.env?.GENIE_AGENT_ID).toBe(agentId);
+  });
+
+  it('buildClaudeCommand omits GENIE_EXECUTOR_ID when not passed', () => {
+    const result = buildClaudeCommand({ provider: 'claude', team: 'work', role: 'engineer' });
+    expect(result.env?.GENIE_EXECUTOR_ID).toBeUndefined();
+    expect(result.env?.GENIE_AGENT_ID).toBeUndefined();
+  });
+
+  it('buildCodexCommand sets GENIE_EXECUTOR_ID + GENIE_AGENT_ID when present', () => {
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      role: 'engineer',
+      executorId: execId,
+      agentId,
+    });
+    expect(result.env?.GENIE_EXECUTOR_ID).toBe(execId);
+    expect(result.env?.GENIE_AGENT_ID).toBe(agentId);
+  });
+
+  it('buildCodexCommand omits GENIE_EXECUTOR_ID when no executor identity is provided', () => {
+    const result = buildCodexCommand({ provider: 'codex', team: 'work' });
+    expect(result.env?.GENIE_EXECUTOR_ID).toBeUndefined();
+    expect(result.env?.GENIE_AGENT_ID).toBeUndefined();
+  });
+
+  it('validateSpawnParams preserves executorId and agentId fields', () => {
+    const result = validateSpawnParams({
+      provider: 'claude',
+      team: 'work',
+      executorId: execId,
+      agentId,
+    });
+    expect(result.executorId).toBe(execId);
+    expect(result.agentId).toBe(agentId);
+  });
+
+  it('validateSpawnParams rejects a non-UUID executorId', () => {
+    expect(() => validateSpawnParams({ provider: 'claude', team: 'work', executorId: 'not-a-uuid' })).toThrow();
+  });
+
+  it('buildLaunchCommand (claude) forwards env through the top-level entry point', () => {
+    const launch = buildLaunchCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'engineer',
+      executorId: execId,
+      agentId,
+    });
+    expect(launch.env?.GENIE_EXECUTOR_ID).toBe(execId);
+    expect(launch.env?.GENIE_AGENT_ID).toBe(agentId);
+  });
+});

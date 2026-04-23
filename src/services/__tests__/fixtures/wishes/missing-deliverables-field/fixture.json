@@ -1,0 +1,6 @@
+{
+  "category": "fixable",
+  "rules": ["missing-deliverables-field"],
+  "description": "Group has a goal but no `**Deliverables:**` label line. `--fix` inserts a TODO stub.",
+  "expectFixChanges": true
+}

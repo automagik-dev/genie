@@ -8,14 +8,14 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { postMessage, readMessages } from './team-chat.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanup: () => Promise<void>;
   const REPO = '/tmp/team-chat-test-repo';
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

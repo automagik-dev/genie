@@ -69,8 +69,10 @@ describe('7.1 Concurrent Operations', () => {
     const healthIdx = source.indexOf('healthCheckCachedClient');
     expect(healthIdx).toBeGreaterThan(-1);
 
-    // On failure, both sqlClient and activePort are nulled for full reconnect
-    const block = source.slice(healthIdx, healthIdx + 400);
+    // On failure, both sqlClient and activePort are nulled for full reconnect.
+    // Window sized to accommodate doc comments + the null-guard block — we
+    // only care that both invariants live inside the single function body.
+    const block = source.slice(healthIdx, healthIdx + 1200);
     expect(block).toContain('sqlClient = null');
     expect(block).toContain('activePort = null');
   });
@@ -78,7 +80,7 @@ describe('7.1 Concurrent Operations', () => {
   test('connection pool config is sensible for concurrent operations', () => {
     const source = readFileSync(join(__dirname, '..', 'db.ts'), 'utf-8');
 
-    // max: 50 connections
+    // max: 50 connections (serial CI; parallel test:parallel is a local-only tool)
     expect(source).toContain('max: 50');
     // Aggressive idle timeout (1s) to recycle unused connections
     expect(source).toContain('idle_timeout: 1');
@@ -109,18 +111,20 @@ describe('7.1 Concurrent Operations', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 7.1.5 — Test isolation via PG schemas
+  // 7.1.5 — Test isolation via per-test PG databases cloned from a template
   // -------------------------------------------------------------------------
 
-  test('test schema isolation prevents cross-test interference (code review)', () => {
+  test('test database isolation prevents cross-test interference (code review)', () => {
     const source = readFileSync(join(__dirname, '..', 'test-db.ts'), 'utf-8');
 
-    // Each test gets a unique schema
+    // Each test gets a unique database name
     expect(source).toContain('process.pid');
     expect(source).toContain('Date.now()');
 
-    // Schema cleanup happens on setup
-    expect(source).toContain('DROP SCHEMA');
+    // Per-test database is created via createTestDatabase (fast clone of the
+    // genie_template DB) and torn down via dropTestDatabase.
+    expect(source).toContain('createTestDatabase');
+    expect(source).toContain('dropTestDatabase');
   });
 
   // -------------------------------------------------------------------------

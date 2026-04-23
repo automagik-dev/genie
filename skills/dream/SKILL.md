@@ -87,13 +87,13 @@ genie team hire qa             # for QA loop on dev
    - Same-layer wishes dispatch in parallel.
    - Dispatch workers via `genie work <agent> <slug>#<group>` — gets state tracking for free.
    - Parallel groups within a wish dispatched simultaneously.
-3. Monitor via `genie task status <slug>`. Mark groups done via `genie task done <ref>`.
+3. Monitor via `genie wish status <slug>`. Mark groups done via `genie wish done <slug>#<group>` (and, when PG tasks exist, `genie task done #<seq>`).
 4. **Track progress (v4):** as each wish starts execution, move its child task:
    ```bash
    genie task move #<wish-seq> --to build --comment "Execution started"
    ```
 5. Workers signal completion via `genie agent send`.
-6. If a group gets stuck, use `genie reset <ref>` to retry.
+6. If a group gets stuck, use `genie wish reset <ref>` to retry.
 
 ### Worker Contract
 
@@ -192,4 +192,4 @@ When PG is available, the dream run is fully tracked in the task system:
 - Do not expand scope beyond what WISH.md defines.
 - Always write DREAM-REPORT.md, even if all wishes BLOCKED.
 - Poll CI status instead of sleeping — never use `sleep` in CI retry loops.
-- Use `genie task done`, `genie task status`, and `genie reset` for state tracking.
+- Use `genie wish done`, `genie wish status`, and `genie wish reset` for wish-group state; use `genie task …` subcommands for PG task tracking. The two namespaces are distinct — do not substitute one for the other.

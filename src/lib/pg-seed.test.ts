@@ -4,19 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getConnection } from './db.js';
 import { needsSeed, runSeed } from './pg-seed.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
-
-function hasUnmigratedTeamFiles(teamsDir: string): boolean {
-  if (!existsSync(teamsDir)) return false;
-  const files = require('node:fs').readdirSync(teamsDir) as string[];
-  return files.some((f: string) => f.endsWith('.json') && !f.endsWith('.migrated'));
-}
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -167,25 +161,37 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   describe('seed', () => {
     let testHome: string;
     let testRepo: string;
+    let testClaudeDir: string;
     let origGenieHome: string | undefined;
+    let origClaudeConfigDir: string | undefined;
 
     beforeAll(() => {
       testHome = join(tmpdir(), `genie-seed-test-${Date.now()}`);
       testRepo = join(tmpdir(), `genie-seed-repo-${Date.now()}`);
+      testClaudeDir = join(tmpdir(), `genie-seed-claude-${Date.now()}`);
       origGenieHome = process.env.GENIE_HOME;
+      origClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
       process.env.GENIE_HOME = testHome;
+      // Point Claude-native team layout to a test-local dir so the seed's
+      // team path reads only what each test explicitly writes. See Bug A.
+      process.env.CLAUDE_CONFIG_DIR = testClaudeDir;
       mkdirSync(testHome, { recursive: true });
       mkdirSync(testRepo, { recursive: true });
+      mkdirSync(join(testClaudeDir, 'teams'), { recursive: true });
     });
 
     afterAll(async () => {
       process.env.GENIE_HOME = origGenieHome;
+      process.env.CLAUDE_CONFIG_DIR = origClaudeConfigDir;
       const { rmSync } = require('node:fs');
       try {
         rmSync(testHome, { recursive: true, force: true });
       } catch {}
       try {
         rmSync(testRepo, { recursive: true, force: true });
+      } catch {}
+      try {
+        rmSync(testClaudeDir, { recursive: true, force: true });
       } catch {}
       // Clean up seeded data
       const sql = await getConnection();
@@ -280,20 +286,46 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(existsSync(`${workersPath}.migrated`)).toBe(true);
     });
 
-    test('seed imports teams/*.json into teams table', async () => {
+    test('seed imports ~/.claude/teams/<name>/config.json into teams table', async () => {
       const sql = await getConnection();
-      const teamsDir = join(testHome, 'teams');
-      mkdirSync(teamsDir, { recursive: true });
+      const teamDir = join(testClaudeDir, 'teams', 'seed-team-beta');
+      mkdirSync(teamDir, { recursive: true });
+      // Write a Claude-native config.json — the shape emitted by
+      // `ensureNativeTeam` (rich NativeTeamMember[] in members).
       writeFileSync(
-        join(teamsDir, 'seed-team-beta.json'),
+        join(teamDir, 'config.json'),
         JSON.stringify({
           name: 'seed-team-beta',
+          description: 'Seed test team',
+          createdAt: Date.now(),
+          leadAgentId: 'engineer@seed-team-beta',
+          leadSessionId: 'test-session',
+          members: [
+            {
+              agentId: 'engineer@seed-team-beta',
+              name: 'engineer',
+              agentType: 'engineer',
+              joinedAt: Date.now(),
+              backendType: 'tmux',
+              color: 'blue',
+              planModeRequired: false,
+              isActive: true,
+            },
+            {
+              agentId: 'reviewer@seed-team-beta',
+              name: 'reviewer',
+              agentType: 'reviewer',
+              joinedAt: Date.now(),
+              backendType: 'tmux',
+              color: 'red',
+              planModeRequired: false,
+              isActive: true,
+            },
+          ],
           repo: '/tmp/test-repo',
-          baseBranch: 'dev',
           worktreePath: '/tmp/worktree/seed-team-beta',
-          members: ['engineer', 'reviewer'],
+          baseBranch: 'dev',
           status: 'in_progress',
-          createdAt: new Date().toISOString(),
         }),
       );
 
@@ -303,11 +335,18 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       const teams = await sql`SELECT * FROM teams WHERE name = 'seed-team-beta'`;
       expect(teams.length).toBe(1);
       expect(teams[0].repo).toBe('/tmp/test-repo');
-      expect(JSON.parse(teams[0].members)).toEqual(['engineer', 'reviewer']);
+      expect(teams[0].worktree_path).toBe('/tmp/worktree/seed-team-beta');
+      expect(teams[0].leader).toBe('engineer');
 
-      // Verify source file renamed
-      expect(existsSync(join(teamsDir, 'seed-team-beta.json'))).toBe(false);
-      expect(existsSync(join(teamsDir, 'seed-team-beta.json.migrated'))).toBe(true);
+      // Members must be a proper jsonb array (Bug D regression guard) and
+      // must be the bare name strings (rich members mapped to names).
+      const typeRow = await sql`SELECT jsonb_typeof(members) AS t FROM teams WHERE name = 'seed-team-beta'`;
+      expect(typeRow[0].t).toBe('array');
+      expect(teams[0].members).toEqual(['engineer', 'reviewer']);
+
+      // Claude-native configs must NOT be renamed to .migrated (authoritative).
+      expect(existsSync(join(teamDir, 'config.json'))).toBe(true);
+      expect(existsSync(join(teamDir, 'config.json.migrated'))).toBe(false);
     });
 
     test('seed imports mailbox/*.json into mailbox table', async () => {
@@ -443,16 +482,19 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await sql`DELETE FROM agents WHERE id = 'seed-test-idempotent'`;
     });
 
-    test('needsSeed returns false after migration', () => {
-      // Workers.json should be .migrated now, so needsSeed should return false
-      // (unless other unmigrated files exist)
+    test('needsSeed returns false after migration (no workers.json, no claude teams)', () => {
+      // Workers.json should be .migrated now, so that branch returns false.
       const workersPath = join(testHome, 'workers.json');
       if (existsSync(workersPath)) {
-        // Clean up from idempotent test
         require('node:fs').renameSync(workersPath, `${workersPath}.migrated`);
       }
-      // Remove teams dir migrated markers don't interfere
-      if (hasUnmigratedTeamFiles(join(testHome, 'teams'))) return;
+      // Remove any test-local Claude-native team dirs so the disk-check branch
+      // returns false. (Previously-seeded team dirs from this describe block
+      // must be torn down before this assertion.)
+      const { rmSync } = require('node:fs');
+      try {
+        rmSync(join(testClaudeDir, 'teams'), { recursive: true, force: true });
+      } catch {}
       expect(needsSeed()).toBe(false);
     });
   });

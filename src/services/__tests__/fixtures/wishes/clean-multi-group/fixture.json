@@ -1,0 +1,6 @@
+{
+  "category": "clean",
+  "rules": [],
+  "description": "Three groups with depends-on chain — positive multi-group case.",
+  "expectFixChanges": false
+}

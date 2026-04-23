@@ -66,7 +66,7 @@ An engineer reports that `genie work` dispatches engineers but they sit idle. Th
 genie agent spawn tracer
 
 # 2. Send the symptoms
-genie agent send 'Trace: genie work dispatches engineers but they start idle at the prompt. No task received. genie task status shows in_progress but nothing happens. Check dispatch.ts workDispatchCommand and protocol-router.ts sendMessage.' --to tracer
+genie agent send 'Trace: genie work dispatches engineers but they start idle at the prompt. No task received. genie wish status shows in_progress but nothing happens. Check dispatch.ts workDispatchCommand and protocol-router.ts sendMessage.' --to tracer
 
 # 3. Wait for findings
 sleep 60 && genie agent log tracer --raw
@@ -92,3 +92,16 @@ The orchestrator then hands the report to `/fix`.
 - Hand off to `/fix` — trace produces a report, `/fix` applies the correction. Never combine them.
 - Read-only tools — trace subagent uses Read, Bash, Glob, Grep. No Write, no Edit.
 - If root cause spans multiple systems, report each separately with confidence levels.
+
+## Turn close (required)
+
+Every session MUST end by writing a terminal outcome to the turn-session contract. This is how the orchestrator reconciles executor state — skipping it leaves the row open and blocks auto-resume.
+
+- `genie done` — work completed, acceptance criteria met
+- `genie blocked --reason "<why>"` — stuck, needs human input or an unblocking signal
+- `genie failed --reason "<why>"` — aborted, irrecoverable error, or cannot proceed
+
+Rules:
+- Call exactly one close verb as the last action of the session.
+- `blocked` / `failed` require `--reason`.
+- `genie done` inside an agent session (GENIE_AGENT_NAME set) closes the current executor; it does not require a wish ref.

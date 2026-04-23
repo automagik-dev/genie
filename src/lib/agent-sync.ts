@@ -20,6 +20,8 @@ import { execSync } from 'node:child_process';
 import { existsSync, watch as fsWatch, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as directory from './agent-directory.js';
+import { migrateAgentToYaml } from './agent-migrate.js';
+import { type AgentConfig, extractFrontmatterFromAgentsMd, parseAgentYaml } from './agent-yaml.js';
 import { BUILTIN_DEFAULTS, type DefaultField, type ResolveContext, resolveFieldWithSource } from './defaults.js';
 import { parseFrontmatter } from './frontmatter.js';
 import { getWorkspaceConfig } from './workspace.js';
@@ -30,8 +32,15 @@ import { getWorkspaceConfig } from './workspace.js';
 
 interface SyncResult {
   registered: string[];
+  /**
+   * Agents reached during sync whose directory row was upserted. Since the
+   * `dir-sync-frontmatter-refresh` wish eliminated the "Unchanged" skip,
+   * every existing agent that survives sync lands here — `updated` is now
+   * an "at-least-touched" counter, not a "something-diverged" counter.
+   */
   updated: string[];
-  unchanged: string[];
+  /** Agents that were migrated from AGENTS.md frontmatter to agent.yaml during this sync. */
+  migrated: string[];
   archived: string[];
   reactivated: string[];
   healed: Array<{ agent: string; field: string; value: string }>;
@@ -279,7 +288,7 @@ export async function syncAgentDirectory(workspaceRoot: string): Promise<SyncRes
   const result: SyncResult = {
     registered: [],
     updated: [],
-    unchanged: [],
+    migrated: [],
     archived: [],
     reactivated: [],
     healed: [],
@@ -324,16 +333,17 @@ export async function syncAgentDirectory(workspaceRoot: string): Promise<SyncRes
 /** Print sync result summary to console. Shared by dir sync and agent dir sync. */
 export function printSyncResult(result: SyncResult): void {
   if (result.healed.length > 0) console.log(`  Healed: ${result.healed.length} invalid literal(s) removed`);
+  if (result.migrated.length > 0)
+    console.log(`  Migrated: ${result.migrated.join(', ')} (AGENTS.md frontmatter → agent.yaml)`);
   if (result.registered.length > 0) console.log(`  Registered: ${result.registered.join(', ')}`);
   if (result.updated.length > 0) console.log(`  Updated: ${result.updated.join(', ')}`);
   if (result.reactivated.length > 0) console.log(`  Reactivated: ${result.reactivated.join(', ')}`);
   if (result.archived.length > 0) console.log(`  Removed: ${result.archived.join(', ')}`);
-  if (result.unchanged.length > 0) console.log(`  Unchanged: ${result.unchanged.join(', ')}`);
   for (const err of result.errors) {
     console.error(`  Error (${err.name}): ${err.error}`);
   }
-  const total = result.registered.length + result.updated.length + result.unchanged.length + result.reactivated.length;
-  console.log(`\nSync complete: ${total} active agent(s), ${result.archived.length} removed.`);
+  const total = result.registered.length + result.updated.length + result.reactivated.length;
+  console.log(`\nSynced: ${total} agent(s), ${result.archived.length} removed.`);
 }
 
 /** Remove directory entries whose agent dirs no longer exist on disk. */
@@ -345,7 +355,7 @@ async function removeMissingAgents(discoveredNames: Set<string>, result: SyncRes
       if (entry.scope === 'built-in') continue;
       if (!entry.dir || !entry.dir.includes('/agents/')) continue; // only remove auto-synced
 
-      const removed = await directory.rm(entry.name);
+      const { removed } = await directory.rm(entry.name);
       if (removed) result.archived.push(entry.name);
     }
   } catch {
@@ -353,98 +363,159 @@ async function removeMissingAgents(discoveredNames: Set<string>, result: SyncRes
   }
 }
 
-/** Core sync logic for a single agent. */
+/** Core sync logic for a single agent.
+ *
+ * Always re-parses the source of truth and upserts — no "skip if unchanged"
+ * short-circuit. The behavior documented by the `dir-sync-frontmatter-refresh`
+ * wish: files on disk are authoritative, so sync must mirror them into the
+ * DB on every run. Per-sync writes are cheap; lost edits are expensive.
+ *
+ * Resolution order for the source config:
+ *   1. `agent.yaml` if present (post-migration canonical source)
+ *   2. Otherwise, trigger `migrateAgentToYaml` when `AGENTS.md` has
+ *      frontmatter — next read picks up the freshly minted yaml.
+ *   3. Fall back to legacy `parseFrontmatter(AGENTS.md)` for agents that
+ *      have neither yaml nor frontmatter (no config — registered with
+ *      defaults only).
+ */
+async function maybeMigrateFrontmatter(agent: AgentInfo, result: SyncResult): Promise<void> {
+  const yamlPath = join(agent.dir, 'agent.yaml');
+  const agentsMdPath = join(agent.dir, 'AGENTS.md');
+  if (existsSync(yamlPath) || !existsSync(agentsMdPath)) return;
+  const { frontmatter } = extractFrontmatterFromAgentsMd(readFileSync(agentsMdPath, 'utf-8'));
+  if (frontmatter === null) return;
+  const existingEntry = await directory.resolve(agent.name);
+  const dbRow = existingEntry && !existingEntry.builtin ? dbRowFromEntry(existingEntry.entry) : undefined;
+  const migrationResult = await migrateAgentToYaml(agent.dir, dbRow);
+  if (migrationResult.migrated) result.migrated.push(agent.name);
+}
+
+function buildDirectoryPayload(dir: string, repoPath: string, cf: ConfigFields) {
+  return {
+    dir,
+    repo: repoPath,
+    promptMode: cf.promptMode,
+    model: cf.model,
+    description: cf.description,
+    color: cf.color,
+    provider: cf.provider,
+    roles: cf.roles,
+    permissions: cf.permissions,
+    disallowedTools: cf.disallowedTools,
+    omniScopes: cf.omniScopes,
+    hooks: cf.hooks,
+    sdk: cf.sdk,
+    bridgeTmuxSession: cf.bridgeTmuxSession,
+  };
+}
+
 async function syncSingleAgent(agent: AgentInfo, result: SyncResult, workspaceRoot?: string): Promise<void> {
   const orgRepo = agent.repoUrl ? extractOrgRepo(agent.repoUrl) : null;
   const repoPath = orgRepo ?? agent.repoUrl ?? agent.dir;
 
-  // Read and parse AGENTS.md frontmatter for identity fields (post-heal — file is now clean)
+  const yamlPath = join(agent.dir, 'agent.yaml');
   const agentsMdPath = join(agent.dir, 'AGENTS.md');
-  const content = readFileSync(agentsMdPath, 'utf-8');
-  const fm = parseFrontmatter(content);
 
-  // Compute resolved metadata if workspace root is available
-  let _resolvedMeta: { declared: Record<string, unknown>; resolved: Record<string, unknown> } | undefined;
+  await maybeMigrateFrontmatter(agent, result);
+
+  const configFields = existsSync(yamlPath)
+    ? await readYamlAsConfigFields(yamlPath)
+    : readFrontmatterAsConfigFields(agentsMdPath);
+
   if (workspaceRoot) {
     const ctx = buildResolveContext(workspaceRoot, agent.name);
-    _resolvedMeta = computeResolvedMetadata(fm as Record<string, unknown>, ctx);
+    computeResolvedMetadata(configFields.rawForResolution, ctx);
   }
 
-  // Use resolve() to distinguish PG entries from built-ins.
-  // get() returns built-in entries too, which would skip the add() path
-  // and silently fail the edit() (no dir: row in PG for built-in names).
   const resolved = await directory.resolve(agent.name);
   const existing = resolved && !resolved.builtin ? resolved.entry : null;
 
-  // Cast fm.sdk to the directory config type for passthrough storage
-  const sdkConfig = fm.sdk as Record<string, unknown> | undefined;
-  const permissions = fm.permissions as { allow?: string[]; deny?: string[] } | undefined;
-  const disallowedTools = fm.disallowedTools as string[] | undefined;
-  const omniScopes = fm.omniScopes as string[] | undefined;
-  const hooks = fm.hooks as Record<string, unknown> | undefined;
-
+  const payload = buildDirectoryPayload(agent.dir, repoPath, configFields);
   if (!existing) {
-    await directory.add({
-      name: agent.name,
-      dir: agent.dir,
-      repo: repoPath,
-      promptMode: fm.promptMode ?? 'append',
-      model: fm.model,
-      description: fm.description,
-      color: fm.color,
-      provider: fm.provider,
-      permissions,
-      disallowedTools,
-      omniScopes,
-      hooks,
-      sdk: sdkConfig,
-    });
+    await directory.add({ name: agent.name, ...payload });
     result.registered.push(agent.name);
     return;
   }
 
-  // AGENTS.md always wins — update identity fields from frontmatter on every sync
-  const identityUpdate: Parameters<typeof directory.edit>[1] = {
-    dir: agent.dir,
-    repo: repoPath,
-    promptMode: fm.promptMode ?? 'append',
-    model: fm.model,
-    description: fm.description,
-    color: fm.color,
-    provider: fm.provider,
-    permissions,
-    disallowedTools,
-    omniScopes,
-    hooks,
-    sdk: sdkConfig,
+  await directory.edit(agent.name, payload);
+  result.updated.push(agent.name);
+}
+
+/** Shape of the DirectoryEntry fields the sync path feeds into add/edit. */
+interface ConfigFields {
+  promptMode: 'system' | 'append';
+  model?: string;
+  description?: string;
+  color?: string;
+  provider?: string;
+  roles?: string[];
+  permissions?: { allow?: string[]; deny?: string[]; preset?: string; bashAllowPatterns?: string[] };
+  disallowedTools?: string[];
+  omniScopes?: string[];
+  hooks?: Record<string, unknown>;
+  sdk?: Record<string, unknown>;
+  bridgeTmuxSession?: string;
+  /** Original record for defaults/resolution callers that still expect the raw shape. */
+  rawForResolution: Record<string, unknown>;
+}
+
+/** Load config fields from a parsed agent.yaml. */
+async function readYamlAsConfigFields(yamlPath: string): Promise<ConfigFields> {
+  const cfg: AgentConfig = await parseAgentYaml(yamlPath);
+  return {
+    promptMode: cfg.promptMode ?? 'append',
+    model: cfg.model,
+    description: cfg.description,
+    color: cfg.color,
+    provider: cfg.provider,
+    roles: cfg.roles,
+    permissions: cfg.permissions,
+    disallowedTools: cfg.disallowedTools,
+    omniScopes: cfg.omniScopes,
+    hooks: cfg.hooks,
+    sdk: cfg.sdk as Record<string, unknown> | undefined,
+    bridgeTmuxSession: cfg.bridgeTmuxSession,
+    rawForResolution: cfg as unknown as Record<string, unknown>,
   };
+}
 
-  // Check if any field actually changed (deep compare via JSON serialization)
-  const sdkChanged = JSON.stringify(existing.sdk) !== JSON.stringify(sdkConfig);
-  const permissionsChanged = JSON.stringify(existing.permissions) !== JSON.stringify(permissions);
-  const disallowedToolsChanged = JSON.stringify(existing.disallowedTools) !== JSON.stringify(disallowedTools);
-  const omniScopesChanged = JSON.stringify(existing.omniScopes) !== JSON.stringify(omniScopes);
-  const hooksChanged = JSON.stringify(existing.hooks) !== JSON.stringify(hooks);
-  const needsUpdate =
-    sdkChanged ||
-    permissionsChanged ||
-    disallowedToolsChanged ||
-    omniScopesChanged ||
-    hooksChanged ||
-    existing.repo !== repoPath ||
-    existing.dir !== agent.dir ||
-    existing.promptMode !== (fm.promptMode ?? 'append') ||
-    existing.model !== fm.model ||
-    existing.description !== fm.description ||
-    existing.color !== fm.color ||
-    existing.provider !== fm.provider;
+/** Legacy fallback for agents without agent.yaml AND without frontmatter. */
+function readFrontmatterAsConfigFields(agentsMdPath: string): ConfigFields {
+  const content = existsSync(agentsMdPath) ? readFileSync(agentsMdPath, 'utf-8') : '';
+  const fm = parseFrontmatter(content);
+  return {
+    promptMode: (fm.promptMode as 'system' | 'append' | undefined) ?? 'append',
+    model: fm.model as string | undefined,
+    description: fm.description as string | undefined,
+    color: fm.color as string | undefined,
+    provider: fm.provider as string | undefined,
+    roles: (fm as Record<string, unknown>).roles as string[] | undefined,
+    permissions: fm.permissions as ConfigFields['permissions'],
+    disallowedTools: fm.disallowedTools as string[] | undefined,
+    omniScopes: fm.omniScopes as string[] | undefined,
+    hooks: fm.hooks as Record<string, unknown> | undefined,
+    sdk: fm.sdk as Record<string, unknown> | undefined,
+    bridgeTmuxSession: fm.bridgeTmuxSession as string | undefined,
+    rawForResolution: fm as Record<string, unknown>,
+  };
+}
 
-  if (needsUpdate) {
-    await directory.edit(agent.name, identityUpdate);
-    result.updated.push(agent.name);
-  } else {
-    result.unchanged.push(agent.name);
-  }
+/** Extract the fields that `migrateAgentToYaml`'s dbRow shape accepts from an existing directory entry. */
+function dbRowFromEntry(entry: directory.DirectoryEntry): Parameters<typeof migrateAgentToYaml>[1] {
+  return {
+    team: entry.team,
+    model: entry.model,
+    description: entry.description,
+    color: entry.color,
+    provider: entry.provider,
+    promptMode: entry.promptMode,
+    permissions: entry.permissions,
+    disallowedTools: entry.disallowedTools,
+    omniScopes: entry.omniScopes,
+    hooks: entry.hooks,
+    sdk: entry.sdk as unknown as AgentConfig['sdk'],
+    bridgeTmuxSession: entry.bridgeTmuxSession,
+  };
 }
 
 // ============================================================================
@@ -455,15 +526,21 @@ interface AgentWatcher {
   close: () => void;
 }
 
-/** Sync a single agent by name from the workspace (used by file watcher). */
-async function syncSingleAgentByName(workspaceRoot: string, agentName: string): Promise<string> {
+/**
+ * Sync a single agent by name from the workspace (used by file watcher and
+ * the `dir-sync-frontmatter-refresh` wish's Group 4 edit flow).
+ *
+ * Returns the action label: `registered` | `migrated` | `updated` | `synced`
+ * | `not-found`.
+ */
+export async function syncSingleAgentByName(workspaceRoot: string, agentName: string): Promise<string> {
   const agent = discoverSingleAgent(workspaceRoot, agentName);
   if (!agent) return 'not-found';
 
   const result: SyncResult = {
     registered: [],
     updated: [],
-    unchanged: [],
+    migrated: [],
     archived: [],
     reactivated: [],
     healed: [],
@@ -472,8 +549,9 @@ async function syncSingleAgentByName(workspaceRoot: string, agentName: string): 
   await syncSingleAgent(agent, result, workspaceRoot);
 
   if (result.registered.length > 0) return 'registered';
+  if (result.migrated.length > 0) return 'migrated';
   if (result.updated.length > 0) return 'updated';
-  return 'unchanged';
+  return 'synced';
 }
 
 /**
@@ -530,10 +608,10 @@ async function processWatchedAgent(workspaceRoot: string, agentsDir: string, nam
   const agentDir = join(agentsDir, name);
   if (existsSync(agentDir) && existsSync(join(agentDir, 'AGENTS.md'))) {
     const action = await syncSingleAgentByName(workspaceRoot, name);
-    return action !== 'unchanged' && action !== 'not-found' ? action : null;
+    return action !== 'synced' && action !== 'not-found' ? action : null;
   }
   if (!existsSync(agentDir)) {
-    const removed = await directory.rm(name);
+    const { removed } = await directory.rm(name);
     if (removed) return 'removed';
   }
   return null;

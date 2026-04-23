@@ -58,7 +58,7 @@ genie task checkout #<seq>               # Claim for execution
 
 ```bash
 genie team create <name> --repo <path> --wish <slug>
-genie status <slug>                      # Check wish progress
+genie wish status <slug>                      # Check wish progress
 genie team ls [<name>]                   # List teams or members
 genie team done|blocked|disband <name>   # Lifecycle management
 ```
@@ -120,7 +120,7 @@ For cross-session agents, use `genie send '<text>' --to <agent>` via Bash.
 **Genie commands** (via Bash):
 ```
 genie team create <name> --repo <path> --wish <slug>  — create team for wish
-genie status <slug>                                   — check wish progress
+genie wish status <slug>                                   — check wish progress
 genie read <agent>                                    — read agent output
 genie send '<msg>' --to <agent>                       — message cross-session agent
 genie team done|blocked|disband <name>                — lifecycle management

@@ -370,10 +370,17 @@ export async function startOtelReceiver(): Promise<boolean> {
 
 /**
  * Stop the OTel receiver. Used in tests and graceful shutdown.
+ *
+ * Awaits `server.stop(true)` so the listening port is fully released before
+ * the next start attempt. Without the await, back-to-back start/stop cycles
+ * in tests (afterEach → next beforeEach) could race on the TCP port and
+ * produce EADDRINUSE when parallel tests randomly collide within the
+ * 7000-port window (57000-63999), which caused the intermittent push-event
+ * CI failure on `POST /v1/logs handles empty payload`.
  */
-export function stopOtelReceiver(): void {
+export async function stopOtelReceiver(): Promise<void> {
   if (server) {
-    server.stop();
+    await server.stop(true);
     server = null;
   }
 }

@@ -12,7 +12,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as mailbox from './mailbox.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 // ============================================================================
 // Module mock — protocol-router-spawn.js only (no other test file mocks this).
@@ -44,8 +44,18 @@ mock.module('./tmux-wrapper.js', () => ({
     }
     return '';
   },
-  genieTmuxPrefix: () => ['-L', 'genie'],
+  genieTmuxPrefix: () => ['-L', 'genie', '-f', '/dev/null'],
   genieTmuxCmd: (sub: string) => `tmux -L genie ${sub}`,
+  // Passthrough matches the real implementation (issue #1223): the mock
+  // must preserve behavior because Bun's mock.module is process-global,
+  // so tmux-wrapper.test.ts can race and see this stub.
+  prependEnvVars: (command: string, env?: Record<string, string>) => {
+    if (!env || Object.keys(env).length === 0) return command;
+    const envArgs = Object.entries(env)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(' ');
+    return `env ${envArgs} ${command}`;
+  },
 }));
 
 mock.module('./orchestrator/index.js', () => ({
@@ -99,7 +109,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -348,6 +358,102 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(spawnErrorLog).toContain('Simulated spawn failure');
 
       errorSpy.mockRestore();
+    });
+
+    test('missing claudeSessionId on mid-task claude worker surfaces MissingResumeSessionError (Gap C)', async () => {
+      // Gap C from trace-stale-resume (task #6): previously the router
+      // silently substituted undefined for a null claudeSessionId and spawned
+      // a FRESH session, losing the worker's conversation history. Now the
+      // operator sees a clear error and the delivery returns undelivered with
+      // a human-readable reason.
+      //
+      // Scenario: a mid-task Claude worker (executor state = 'idle', i.e.
+      // still alive, not completed) whose claudeSessionId was never synced
+      // back — the exact shape of the pre-Gap-A PTY bug.
+      const registry = await import('./agent-registry.js');
+      const executorReg = await import('./executor-registry.js');
+      const router = await import('./protocol-router.js');
+
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+      router._deps.waitForWorkerReady = async () => true;
+      process.env.TMUX = '/tmp/tmux-test/default,123,0';
+
+      const errorCalls: string[] = [];
+      const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        errorCalls.push(args.map(String).join(' '));
+      });
+
+      const now = new Date().toISOString();
+
+      await registry.register({
+        id: 'ghost-worker',
+        paneId: '%0',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'ghost-role',
+        team: 'ghost-team',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+      });
+
+      // Executor is still in a resumable state (not terminal). Crucially we
+      // do NOT pass claudeSessionId to simulate the pre-Gap-A defect.
+      const executor = await executorReg.createAndLinkExecutor('ghost-worker', 'claude', 'tmux');
+      await executorReg.updateExecutorState(executor.id, 'idle');
+
+      await registry.saveTemplate({
+        id: 'ghost-team-ghost-role',
+        team: 'ghost-team',
+        role: 'ghost-role',
+        provider: 'claude',
+        cwd: tempDir,
+        lastSpawnedAt: now,
+      });
+
+      const spawnCountBefore = spawnCallCount;
+      const result = await router.sendMessage(tempDir, 'alice', 'ghost-role', 'hello', 'ghost-team');
+
+      // Must NOT fall back to a fresh spawn silently.
+      expect(spawnCallCount).toBe(spawnCountBefore);
+      expect(result.delivered).toBe(false);
+      expect(result.reason).toMatch(/claude_session_id/);
+
+      // Error must be logged so operators notice.
+      const resumeErrorLog = errorCalls.find((c) => c.includes('claude_session_id'));
+      expect(resumeErrorLog).toBeTruthy();
+
+      errorSpy.mockRestore();
+    });
+
+    test('MissingResumeSessionError class carries workerId and recipientId', async () => {
+      const { MissingResumeSessionError } = await import('./protocol-router.js');
+      const err = new MissingResumeSessionError('w1', 'role-x');
+      expect(err).toBeInstanceOf(Error);
+      expect(err.name).toBe('MissingResumeSessionError');
+      expect(err.workerId).toBe('w1');
+      expect(err.entityId).toBe('w1');
+      expect(err.recipientId).toBe('role-x');
+      expect(err.reason).toBe('null_session');
+      expect(err.message).toContain('w1');
+      expect(err.message).toContain('genie reset');
+      expect(err.message).toContain('null_session');
+    });
+
+    test('MissingResumeSessionError accepts explicit reason and exposes it on the instance', async () => {
+      const { MissingResumeSessionError } = await import('./protocol-router.js');
+
+      const noExec = new MissingResumeSessionError('orphan-agent', undefined, 'no_executor');
+      expect(noExec.reason).toBe('no_executor');
+      expect(noExec.message).toContain('no_executor');
+      expect(noExec.entityId).toBe('orphan-agent');
+
+      const legacyAlias = new MissingResumeSessionError('pre-hook-agent', undefined, 'no_session_id');
+      expect(legacyAlias.reason).toBe('no_session_id');
+      expect(legacyAlias.message).toContain('no_session_id');
     });
   });
 

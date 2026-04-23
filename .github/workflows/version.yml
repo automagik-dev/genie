@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: version-${{ github.event.workflow_run.head_branch || 'manual' }}
@@ -105,14 +106,25 @@ jobs:
       - name: Build CLI
         run: bun run build
 
-      - name: Publish dev release to npm
+      - name: Setup Node (for npm OIDC publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Node 22 bundles npm 10.x; npm Trusted Publishing (automatic OIDC
+      # token exchange) requires npm >= 11.5.1. Without this upgrade,
+      # `npm publish` sends the empty placeholder token and the registry
+      # returns a misleading 404 instead of the real 401/403 auth failure.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Publish to npm via OIDC
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
           HUSKY: "0"
-        run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "⚠️ NPM_TOKEN not set — skipping dev publish"
-            exit 0
-          fi
-          bun publish --access public --tag ${{ steps.context.outputs.npm_tag }}
+          # npm auto-enables provenance in any CI env with `id-token: write`,
+          # regardless of the --provenance CLI flag. Self-hosted Blacksmith
+          # runners fail the server-side sigstore check with 422. Disable
+          # auto-provenance explicitly; OIDC token exchange still happens.
+          NPM_CONFIG_PROVENANCE: "false"
+        run: npm publish --access public --tag ${{ steps.context.outputs.npm_tag }}

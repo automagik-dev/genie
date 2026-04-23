@@ -5,7 +5,7 @@
  * Checks prerequisites, configuration, and tmux connectivity.
  */
 
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { $ } from 'bun';
@@ -14,6 +14,9 @@ import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-setting
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
 import { checkCommand } from '../lib/system-detect.js';
+import { findWorkspace } from '../lib/workspace.js';
+import { collectInstallerResolution } from './installer-resolution.js';
+import { collectObservabilityHealth } from './observability-health.js';
 
 interface CheckResult {
   name: string;
@@ -216,7 +219,9 @@ async function checkTmux(): Promise<CheckResult[]> {
   const sessionName = config.session.name;
 
   try {
-    const sessionResult = await $`${tmuxBin()} -L genie has-session -t ${sessionName} 2>/dev/null`.quiet();
+    // `=` prefix forces literal session-name match — without it tmux parses
+    // values like `@46` as window-id syntax and fails lookup.
+    const sessionResult = await $`${tmuxBin()} -L genie has-session -t ${`=${sessionName}`} 2>/dev/null`.quiet();
     if (sessionResult.exitCode === 0) {
       results.push({
         name: `Session '${sessionName}' exists`,
@@ -396,6 +401,69 @@ async function checkBridge(): Promise<CheckResult[]> {
 }
 
 /**
+ * Check that no agent has leftover `---` frontmatter in its `AGENTS.md`
+ * when `agent.yaml` is also present. Wish `dir-sync-frontmatter-refresh`
+ * (Group 6) eliminates frontmatter entirely post-migration — if a user
+ * pastes config back into AGENTS.md, sync silently ignores it, which is
+ * confusing. This check surfaces the drift loudly.
+ *
+ * Exported for unit tests and for callers that want to run this check
+ * outside `genie doctor` (e.g. a pre-sync lint).
+ */
+function isAgentDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function hasLegacyFrontmatter(agentDir: string): boolean {
+  const yamlPath = join(agentDir, 'agent.yaml');
+  const agentsMdPath = join(agentDir, 'AGENTS.md');
+  if (!existsSync(yamlPath) || !existsSync(agentsMdPath)) return false;
+  try {
+    return readFileSync(agentsMdPath, 'utf-8').slice(0, 4).startsWith('---');
+  } catch {
+    return false;
+  }
+}
+
+export function checkLegacyAgentFrontmatter(workspaceRoot?: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  const root = workspaceRoot ?? findWorkspace()?.root;
+  if (!root) return [];
+
+  const agentsDir = join(root, 'agents');
+  if (!existsSync(agentsDir)) return [];
+
+  let entries: string[];
+  try {
+    entries = readdirSync(agentsDir);
+  } catch {
+    return [];
+  }
+
+  for (const name of entries) {
+    const agentDir = join(agentsDir, name);
+    if (!isAgentDirectory(agentDir)) continue;
+    if (!hasLegacyFrontmatter(agentDir)) continue;
+
+    results.push({
+      name: `agents/${name}/AGENTS.md`,
+      status: 'warn',
+      message: 'legacy frontmatter detected (ignored by sync)',
+      suggestion: `Move config into agents/${name}/agent.yaml — AGENTS.md is prompt-only post-migration.`,
+    });
+  }
+
+  if (results.length === 0) {
+    results.push({ name: 'No legacy frontmatter in agents/*/AGENTS.md', status: 'pass' });
+  }
+  return results;
+}
+
+/**
  * Main doctor command
  */
 function runCheckSection(label: string, results: CheckResult[], counts: { errors: boolean; warnings: boolean }): void {
@@ -407,9 +475,18 @@ function runCheckSection(label: string, results: CheckResult[], counts: { errors
   }
 }
 
-export async function doctorCommand(options?: { fix?: boolean }): Promise<void> {
+export async function doctorCommand(options?: {
+  fix?: boolean;
+  observability?: boolean;
+  json?: boolean;
+}): Promise<void> {
   if (options?.fix) {
     await doctorFix();
+    return;
+  }
+
+  if (options?.observability) {
+    await runObservabilityCheck(Boolean(options.json));
     return;
   }
 
@@ -420,15 +497,41 @@ export async function doctorCommand(options?: { fix?: boolean }): Promise<void> 
   const counts = { errors: false, warnings: false };
 
   runCheckSection('Prerequisites', await checkPrerequisites(), counts);
+  runCheckSection('Installer Resolution', await collectInstallerResolution(), counts);
   runCheckSection('Configuration', await checkConfiguration(), counts);
   runCheckSection('Tmux', await checkTmux(), counts);
   runCheckSection('Worker Profiles', await checkWorkerProfiles(), counts);
   runCheckSection('Omni Bridge', await checkBridge(), counts);
+  runCheckSection('Agent Config', checkLegacyAgentFrontmatter(), counts);
 
-  // Summary
+  printDoctorSummary(counts);
+  if (counts.errors) process.exit(1);
+}
+
+function printObservabilityReport(report: Awaited<ReturnType<typeof collectObservabilityHealth>>): void {
+  console.log();
+  console.log('\x1b[1mObservability Health\x1b[0m');
+  console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
+  console.log(`  partition_health:  ${report.partition_health}`);
+  console.log(`  partition_count:   ${report.partition_count}`);
+  console.log(`  next_rotation_at:  ${report.next_rotation_at ?? 'n/a'}`);
+  console.log(`  oldest_partition:  ${report.oldest_partition ?? 'n/a'}`);
+  console.log(`  newest_partition:  ${report.newest_partition ?? 'n/a'}`);
+  console.log(`  GENIE_WIDE_EMIT:   ${report.wide_emit_flag}`);
+  if (report.message) console.log(`  note:              ${report.message}`);
+  console.log();
+}
+
+async function runObservabilityCheck(json: boolean): Promise<void> {
+  const report = await collectObservabilityHealth();
+  if (json) console.log(JSON.stringify(report, null, 2));
+  else printObservabilityReport(report);
+  if (report.partition_health === 'fail') process.exit(1);
+}
+
+function printDoctorSummary(counts: { errors: boolean; warnings: boolean }): void {
   console.log();
   console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
-
   if (counts.errors) {
     console.log('\x1b[31mSome checks failed.\x1b[0m Run \x1b[36mgenie setup\x1b[0m to fix.');
   } else if (counts.warnings) {
@@ -436,12 +539,7 @@ export async function doctorCommand(options?: { fix?: boolean }): Promise<void> 
   } else {
     console.log('\x1b[32mAll checks passed!\x1b[0m');
   }
-
   console.log();
-
-  if (counts.errors) {
-    process.exit(1);
-  }
 }
 
 /**

@@ -24,6 +24,35 @@ const offsetCache = new Map<string, number>();
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const DEBOUNCE_MS = 500;
 
+/**
+ * Sessions where ingest raised an unrecoverable (FK) error — logged once,
+ * then silenced. offsetCache for these sessions is set to Infinity so
+ * subsequent file-change events skip ingest entirely.
+ */
+const unrecoverableSessions = new Set<string>();
+
+/** Reset unrecoverable-session tracking (exposed for testing). */
+export function resetUnrecoverableSessions(): void {
+  unrecoverableSessions.clear();
+  offsetCache.clear();
+}
+
+/**
+ * Detect postgres FK constraint violations by error code (`23503`) or
+ * message text. FK errors here mean the parent session row doesn't exist
+ * (orphan subagent JSONLs, typically SDK-spawned agents not registered
+ * with the capture layer). These are unrecoverable at the filewatch layer —
+ * retrying on every write event spams logs forever.
+ */
+export function isForeignKeyViolation(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  // postgres.js errors expose a `code` field matching SQLSTATE
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === 'string' && code === '23503') return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return message.toLowerCase().includes('foreign key constraint');
+}
+
 // ============================================================================
 // Offset cache management
 // ============================================================================
@@ -72,16 +101,42 @@ function extractSessionInfo(
   return null;
 }
 
-async function handleFileChange(filePath: string, sql: SqlClient): Promise<void> {
+/**
+ * Dependencies used by handleFileChange — injected for testability so we
+ * can exercise FK-skip logic without a real postgres connection.
+ */
+export interface FilewatchDeps {
+  buildWorkerMap: typeof buildWorkerMap;
+  ingestFileFull: typeof ingestFileFull;
+  setLiveWorkPending: typeof setLiveWorkPending;
+  logError: (msg: string) => void;
+}
+
+const defaultDeps: FilewatchDeps = {
+  buildWorkerMap,
+  ingestFileFull,
+  setLiveWorkPending,
+  logError: (msg) => console.error(msg),
+};
+
+export async function handleFileChange(
+  filePath: string,
+  sql: SqlClient,
+  deps: FilewatchDeps = defaultDeps,
+): Promise<void> {
   const info = extractSessionInfo(filePath);
   if (!info) return;
+
+  // Session previously hit an unrecoverable error (e.g. FK violation) —
+  // offsetCache is pinned to Infinity so we never retry ingest here.
+  if (unrecoverableSessions.has(info.sessionId)) return;
 
   const storedOffset = offsetCache.get(info.sessionId) ?? 0;
 
   try {
-    setLiveWorkPending(true);
-    const workerMap = await buildWorkerMap(sql);
-    const result = await ingestFileFull(sql, info.sessionId, filePath, info.projectPath, storedOffset, {
+    deps.setLiveWorkPending(true);
+    const workerMap = await deps.buildWorkerMap(sql);
+    const result = await deps.ingestFileFull(sql, info.sessionId, filePath, info.projectPath, storedOffset, {
       parentSessionId: info.parentSessionId,
       isSubagent: info.isSubagent,
       workerMap,
@@ -89,9 +144,22 @@ async function handleFileChange(filePath: string, sql: SqlClient): Promise<void>
     offsetCache.set(info.sessionId, result.newOffset);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[filewatch] error ingesting ${filePath} at offset ${storedOffset}: ${message}`);
+    if (isForeignKeyViolation(err)) {
+      // Unrecoverable at this layer — orphan subagent, parent not in sessions
+      // table. Pin offset to Infinity and mark the session so subsequent
+      // fs.watch events skip ingest entirely. Log once.
+      unrecoverableSessions.add(info.sessionId);
+      offsetCache.set(info.sessionId, Number.POSITIVE_INFINITY);
+      deps.logError(
+        `[filewatch] skipping ${filePath} — FK constraint violation (orphan session, parent not registered): ${message}`,
+      );
+    } else {
+      // Transient error (connection reset, deadlock, etc.) — DO NOT advance
+      // offset. Retry on next write event preserves at-least-once semantics.
+      deps.logError(`[filewatch] error ingesting ${filePath} at offset ${storedOffset}: ${message}`);
+    }
   } finally {
-    setLiveWorkPending(false);
+    deps.setLiveWorkPending(false);
   }
 }
 

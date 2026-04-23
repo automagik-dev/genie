@@ -1,0 +1,6 @@
+{
+  "category": "non-fixable",
+  "rules": ["depends-on-dangling"],
+  "description": "`depends-on: Group 99` — referenced group does not exist in the document. Not fixable.",
+  "expectFixChanges": false
+}

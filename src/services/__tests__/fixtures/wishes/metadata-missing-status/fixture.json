@@ -1,0 +1,6 @@
+{
+  "category": "parse-error",
+  "rules": ["metadata-table-missing-field"],
+  "description": "Metadata table lacks the Status row. Parser throws `metadata-table-missing-field`. Marked fixable by the rule map but no concrete `FixAction` is emitted, so `applyFixes` is a no-op.",
+  "expectFixChanges": false
+}

@@ -1,0 +1,6 @@
+{
+  "category": "non-fixable",
+  "rules": ["empty-out-scope"],
+  "description": "`### OUT` exists but has no bullets. Not fixable — author must invent the exclusions.",
+  "expectFixChanges": false
+}

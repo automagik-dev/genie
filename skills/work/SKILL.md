@@ -112,9 +112,9 @@ Depends-on: <group refs or "none">
 ## State Management
 
 - **Workers signal** completion via `genie agent send` to the leader when a group is done.
-- **Leader tracks** state via `genie task status <slug>` and marks groups complete via `genie task done <ref>`.
+- **Leader tracks** wish-group state via `genie wish status <slug>` and marks groups complete via `genie wish done <slug>#<group>` (and, when PG tasks exist, `genie task done #<seq>`).
 - Workers do NOT call `genie task done` — that is the leader's responsibility after verifying the work.
-- If a group gets stuck, the leader can use `genie reset <ref>` to retry.
+- If a group gets stuck, the leader can use `genie wish reset <ref>` to retry.
 
 ## Escalation
 
@@ -150,11 +150,11 @@ genie work fix-dispatch-initial-prompt
 #         🔧 Dispatching work to engineer for "fix-dispatch-initial-prompt#1"
 
 # 2. Monitor (ALWAYS sleep 60 between checks)
-sleep 60 && genie task status fix-dispatch-initial-prompt
+sleep 60 && genie wish status fix-dispatch-initial-prompt
 # Output: Group 1: 🔄 in_progress
 
 # 3. Check again
-sleep 60 && genie task status fix-dispatch-initial-prompt
+sleep 60 && genie wish status fix-dispatch-initial-prompt
 # Output: Group 1: ✅ done — Progress: 1/1 done
 
 # 4. All groups done → local review
@@ -177,3 +177,16 @@ For multi-wave wishes, call `genie work <slug>` again after each wave completes 
 - Never overwrite WISH.md from workers — refined prompts are runtime context only.
 - Keep work auditable: capture commands + outcomes.
 - Run local `/review` per group before signaling done — never skip the review gate.
+
+## Turn close (required)
+
+Every session MUST end by writing a terminal outcome to the turn-session contract. This is how the orchestrator reconciles executor state — skipping it leaves the row open and blocks auto-resume.
+
+- `genie done` — work completed, acceptance criteria met
+- `genie blocked --reason "<why>"` — stuck, needs human input or an unblocking signal
+- `genie failed --reason "<why>"` — aborted, irrecoverable error, or cannot proceed
+
+Rules:
+- Call exactly one close verb as the last action of the session.
+- `blocked` / `failed` require `--reason`.
+- `genie done` inside an agent session (GENIE_AGENT_NAME set) closes the current executor; it does not require a wish ref.

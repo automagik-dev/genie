@@ -300,7 +300,7 @@ async function notifyWaveCompletion(
  * `genie done <slug>#<group>` — complete a group, push work, notify team-lead
  * on wave completion, and auto-kill the calling agent's tmux pane.
  */
-async function doneCommand(ref: string): Promise<void> {
+export async function doneCommand(ref: string): Promise<void> {
   try {
     const { slug, group } = parseRef(ref);
     const result = await wishState.completeGroup(slug, group);
@@ -402,7 +402,7 @@ async function printWishExecutors(slug: string): Promise<void> {
   }
 }
 
-async function statusCommand(slug: string): Promise<void> {
+export async function statusCommand(slug: string): Promise<void> {
   try {
     const state = (await wishState.getState(slug)) ?? (await autoInitWishState(slug));
 
@@ -449,45 +449,69 @@ async function statusCommand(slug: string): Promise<void> {
 // Registration
 // ============================================================================
 
-export function registerStateCommands(program: Command): void {
-  program
-    .command('done <ref>')
-    .description('Mark a wish group as done (format: <slug>#<group>)')
-    .action(async (ref: string) => {
-      await doneCommand(ref);
-    });
-
-  program
-    .command('status <slug>')
-    .description('Show wish state overview for all groups')
-    .action(async (slug: string) => {
-      await statusCommand(slug);
-    });
-
-  program
-    .command('reset <ref>')
-    .option('-y, --yes', 'Skip confirmation prompt (required in non-interactive mode)')
-    .description(
-      'Reset wish state. <slug>#<group> resets one in-progress group; bare <slug> wipes the wish and recreates from current WISH.md',
-    )
-    .action(async (ref: string, options: { yes?: boolean }) => {
-      try {
-        if (ref.includes('#')) {
-          const { slug, group } = parseRef(ref);
-          const result = await wishState.resetGroup(slug, group);
-          console.log(`🔄 Group "${group}" reset to ready in wish "${slug}"`);
-          if (result.status === 'ready') {
-            console.log('   Status: ready (assignee cleared)');
-          }
-          return;
-        }
-        await resetWishCommand(ref, options?.yes ?? false);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`❌ ${message}`);
-        process.exit(1);
+/**
+ * Reset action: dispatches to resetGroup (when ref has `#`) or resetWishCommand (bare slug).
+ */
+export async function resetAction(ref: string, options: { yes?: boolean }): Promise<void> {
+  try {
+    if (ref.includes('#')) {
+      const { slug, group } = parseRef(ref);
+      const result = await wishState.resetGroup(slug, group);
+      console.log(`🔄 Group "${group}" reset to ready in wish "${slug}"`);
+      if (result.status === 'ready') {
+        console.log('   Status: ready (assignee cleared)');
       }
-    });
+      return;
+    }
+    await resetWishCommand(ref, options?.yes ?? false);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ ${message}`);
+    process.exit(1);
+  }
+}
+
+export function registerStateCommands(_program: Command): void {
+  // Flat `done`, `status`, `reset` registrations removed in Group 2 of
+  // wish-command-group-restructure. These verbs now live under `genie wish`:
+  //   genie wish done <ref>
+  //   genie wish status <slug>
+  //   genie wish reset <ref>
+  // Handler bodies are exported from this file and invoked by wish.ts.
+}
+
+/**
+ * Confirm a destructive wipe. Returns false when the user aborted the
+ * interactive prompt; throws via process.exit when a non-interactive shell
+ * omits --yes.
+ */
+async function confirmWipe(
+  slug: string,
+  existing: NonNullable<Awaited<ReturnType<typeof wishState.getState>>>,
+  confirmed: boolean,
+): Promise<boolean> {
+  const groupCount = Object.keys(existing.groups).length;
+  const inProgress = Object.values(existing.groups).filter((g) => g.status === 'in_progress').length;
+  const summary = `Wipe all state for "${slug}" (${groupCount} groups, ${inProgress} in-progress)?`;
+
+  if (!isInteractive()) {
+    if (confirmed) return true;
+    console.error(`❌ ${summary}`);
+    console.error('   Refusing to wipe in non-interactive mode. Pass --yes to confirm.');
+    process.exit(2);
+  }
+  const { confirm } = await import('@inquirer/prompts');
+  return confirm({ message: summary, default: false });
+}
+
+function printResetState(state: Awaited<ReturnType<typeof wishState.createState>>): void {
+  console.log('');
+  console.log(`Wish: ${state.wish}`);
+  console.log('─'.repeat(60));
+  for (const [name, group] of Object.entries(state.groups)) {
+    const icon = STATUS_ICONS[group.status] ?? '❓';
+    console.log(`  ${name}  ${icon} ${group.status}`);
+  }
 }
 
 /**
@@ -509,27 +533,11 @@ async function resetWishCommand(slug: string, confirmed: boolean): Promise<void>
 
   const existing = await wishState.getState(slug);
   if (existing) {
-    const groupCount = Object.keys(existing.groups).length;
-    const inProgress = Object.values(existing.groups).filter((g) => g.status === 'in_progress').length;
-    const summary = `Wipe all state for "${slug}" (${groupCount} groups, ${inProgress} in-progress)?`;
-
-    if (!isInteractive()) {
-      if (!confirmed) {
-        console.error(`❌ ${summary}`);
-        console.error('   Refusing to wipe in non-interactive mode. Pass --yes to confirm.');
-        process.exit(2);
-      }
-    } else {
-      const { confirm } = await import('@inquirer/prompts');
-      const ok = await confirm({ message: summary, default: false });
-      if (!ok) {
-        console.log('Aborted.');
-        return;
-      }
+    const ok = await confirmWipe(slug, existing, confirmed);
+    if (!ok) {
+      console.log('Aborted.');
+      return;
     }
-  }
-
-  if (existing) {
     console.log(`🗑️  Replacing existing state for wish "${slug}"`);
   } else {
     console.log(`ℹ️  No existing state for wish "${slug}" — creating fresh`);
@@ -537,11 +545,5 @@ async function resetWishCommand(slug: string, confirmed: boolean): Promise<void>
 
   const state = await wishState.createState(slug, groups);
   console.log(`📝 Recreated state from ${wishPath} (${groups.length} groups)`);
-  console.log('');
-  console.log(`Wish: ${state.wish}`);
-  console.log('─'.repeat(60));
-  for (const [name, group] of Object.entries(state.groups)) {
-    const icon = STATUS_ICONS[group.status] ?? '❓';
-    console.log(`  ${name}  ${icon} ${group.status}`);
-  }
+  printResetState(state);
 }

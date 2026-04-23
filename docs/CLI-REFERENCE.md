@@ -21,7 +21,7 @@ Complete command reference generated from `src/term-commands/`. Organized by cat
 - [Brain (Enterprise)](#brain-enterprise) -- genie brain install/uninstall/update/version + passthrough
 - [Omni Bridge](#omni-bridge) -- genie omni start/stop/status
 - [Import/Export](#importexport) -- genie export/import
-- [Dispatch](#dispatch) -- genie brainstorm/wish/work/review
+- [Dispatch](#dispatch) -- genie dispatch brainstorm/wish/review, genie work
 - [QA System](#qa-system) -- genie qa run/status/history/check, genie qa-report
 - [Tags](#tags) -- genie tag list/create
 - [Types](#types) -- genie type list/show/create
@@ -40,12 +40,34 @@ Top-level shortcuts for common operations. These are aliases for commands in the
 
 ### `genie spawn <name>`
 
-Spawn a new agent by name (resolves from directory or built-ins).
+Spawn a new agent by name (resolves from directory or built-ins). Single verb, state-gated by the canonical row's liveness — see [**SPAWN-TEAM-RESOLUTION.md**](SPAWN-TEAM-RESOLUTION.md) for the full model.
+
+**State-gated outcome:**
+
+| Canonical row `<name>` | Result |
+|------------------------|--------|
+| missing | create canonical with a fresh UUID |
+| present, pane **dead** | resume canonical (same UUID) |
+| present, pane **alive** | create a **parallel** `<name>-<s4>` (s4 = first 4 hex chars of the parallel's fresh UUID) |
+
+Parallels are off the bare-name auto-resume path — revive a specific parallel with `genie spawn <name>-<s4>`.
+
+**Team-resolution precedence** (first non-null wins — see `resolveTeamName` at `src/term-commands/agents.ts:1675`):
+
+| Tier | Source |
+|------|--------|
+| 1 | `--team` flag |
+| 2 | `agent.entry?.team` (PG `agent_templates`) |
+| 3 | `$GENIE_TEAM` env var |
+| 4 | `discoverTeamName()` — JSONL `leadSessionId` match → tmux session name |
+| 5 | `findTeamsContainingAgent(name)` — on-disk native team config member scan (heuristic, last-resort) |
+
+If every tier yields nothing AND the agent is globally registered, `ensureNativeTeam` auto-creates a team-of-one named after the agent.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--provider <provider>` | string | `claude` | Provider: claude or codex |
-| `--team <team>` | string | `$GENIE_TEAM` or `genie` | Team name |
+| `--team <team>` | string | precedence chain above | Team name (tier 1) |
 | `--model <model>` | string | | Model override (e.g., sonnet, opus) |
 | `--skill <skill>` | string | | Skill to load |
 | `--layout <layout>` | string | `mosaic` | Layout mode: mosaic or vertical |
@@ -67,11 +89,15 @@ Spawn a new agent by name (resolves from directory or built-ins).
 | `--sdk-effort <level>` | string | | SDK: reasoning effort level (low, medium, high, max) |
 
 ```bash
+genie spawn simone                                # Canonical resume (or create if missing)
+genie spawn simone                                # 2nd invocation while alive → parallel simone-<s4>
+genie spawn simone-a3f7                           # Revive a specific parallel by full id
 genie spawn engineer                              # Spawn built-in engineer role
-genie spawn researcher --model sonnet             # Spawn with model override
-genie spawn my-agent --team my-feature            # Spawn into a specific team
+genie spawn my-agent --team my-feature            # Tier 1 override (explicit)
 genie spawn council--questioner --provider codex  # Use Codex provider
 ```
+
+Short-id collisions (two parallels minting the same 4-hex prefix) are resolved by extending the slice one char at a time until unique — see `pickParallelShortId` at `src/term-commands/agents.ts:1725`. Killed parallels free their id back to the pool.
 
 ### `genie kill <name>`
 
@@ -122,17 +148,17 @@ Send a message to your team conversation (PG-backed).
 | `--from <sender>` | string | Sender ID (auto-detected) |
 | `--team <name>` | string | Team name (auto-detected) |
 
-### `genie done <ref>`
+### `genie wish done <ref>`
 
-Mark a wish group as done. Format: `<slug>#<group>`.
+Mark a wish group as done. Format: `<slug>#<group>`. (Flat form `genie done` was removed — now lives under the `genie wish` command group.)
 
-### `genie status <slug>`
+### `genie wish status <slug>`
 
-Show wish state overview for all groups.
+Show wish state overview for all groups. (Flat form `genie status` was removed.)
 
-### `genie reset <ref>`
+### `genie wish reset <ref>`
 
-Reset an in-progress group back to ready. Format: `<slug>#<group>`.
+Reset an in-progress group back to ready, or wipe a whole wish with a bare slug. Format: `<slug>#<group>` or `<slug>`. (Flat form `genie reset` was removed.)
 
 ### `genie read <name>`
 
@@ -1113,15 +1139,19 @@ Import genie data from JSON export.
 
 ## Dispatch
 
-Wish lifecycle commands for spawning agents with context.
+Framework-skill dispatch primitives live under the `genie dispatch` command group. `genie work` is kept flat at the top level.
 
-### `genie brainstorm <agent> <slug>`
+### `genie dispatch brainstorm <agent> <slug>`
 
 Spawn agent with brainstorm DRAFT.md context.
 
-### `genie wish <agent> <slug>`
+### `genie dispatch wish <agent> <slug>`
 
 Spawn agent with wish DESIGN.md context.
+
+### `genie dispatch review <agent> <ref>`
+
+Spawn agent with review scope for a wish group. Format: `<slug>#<group>`.
 
 ### `genie work <ref> [agent]`
 
@@ -1129,10 +1159,6 @@ Auto-orchestrate a wish, or dispatch work on a specific group.
 
 - If `ref` is a slug (no `#`): auto-orchestrate the entire wish
 - If `ref` is `slug#group` with an agent: dispatch that specific group
-
-### `genie review <agent> <ref>`
-
-Spawn agent with review scope for a wish group. Format: `<slug>#<group>`.
 
 ---
 

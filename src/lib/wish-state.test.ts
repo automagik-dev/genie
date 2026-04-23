@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getConnection } from './db.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 import {
   type GroupDefinition,
   WishStateMismatchError,
@@ -37,7 +37,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanupSchema: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -208,14 +208,18 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(state?.groups['4'].status).toBe('ready');
     });
 
-    test('refuses when group already done', async () => {
+    test('idempotent when group already done (issue #1214)', async () => {
+      // Previously threw `must be in_progress (currently done)`. That caused
+      // `genie done` to exit 1 when an engineer called it twice (e.g. retry),
+      // which the orchestrator couldn't distinguish from a real failure.
+      // Now: return the existing done state without throwing.
       await createState('test-wish', sampleGroups, cwd);
       await startGroup('test-wish', '1', 'agent-a', cwd);
       await completeGroup('test-wish', '1', cwd);
 
-      await expect(completeGroup('test-wish', '1', cwd)).rejects.toThrow(
-        'Cannot complete group "1": must be in_progress (currently done)',
-      );
+      const result = await completeGroup('test-wish', '1', cwd);
+      expect(result.status).toBe('done');
+      expect(result.completedAt).toBeDefined();
     });
 
     test('refuses when group not found', async () => {
@@ -224,25 +228,89 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await expect(completeGroup('test-wish', 'nonexistent', cwd)).rejects.toThrow('not found');
     });
 
-    test('rejects blocked groups', async () => {
+    test('rejects blocked groups with clear unmet-dep message (issue #1214)', async () => {
       await createState('test-wish', sampleGroups, cwd);
 
       // Group 2 depends on group 1 and should be blocked
       const groupState = await getGroupState('test-wish', '2', cwd);
       expect(groupState?.status).toBe('blocked');
 
-      await expect(completeGroup('test-wish', '2', cwd)).rejects.toThrow(
-        'Cannot complete group "2": must be in_progress (currently blocked)',
-      );
+      await expect(completeGroup('test-wish', '2', cwd)).rejects.toThrow(/blocked on unmet dependencies/);
     });
 
-    test('rejects ready groups (must be in_progress)', async () => {
+    test('auto-recovers ready groups from dispatch-bypass (issue #1214)', async () => {
+      // Previously threw `must be in_progress (currently ready)` when a
+      // sidechannel-spawned engineer called `genie done` without first going
+      // through runWorkDispatch → startGroup. The orchestrator couldn't see
+      // the failure (agent loop doesn't inspect exit codes), so every wave
+      // progressed by prose inference. Fix: auto-transition ready → in_progress
+      // before completing, and keep going.
       await createState('test-wish', sampleGroups, cwd);
 
-      // Group 1 is ready but not in_progress
-      await expect(completeGroup('test-wish', '1', cwd)).rejects.toThrow(
-        'Cannot complete group "1": must be in_progress (currently ready)',
-      );
+      const result = await completeGroup('test-wish', '1', cwd);
+      expect(result.status).toBe('done');
+      expect(result.completedAt).toBeDefined();
+      // startedAt must be populated — callers using GroupState for timing
+      // (dashboards, duration reports) would otherwise see undefined.
+      expect(result.startedAt).toBeDefined();
+      expect(typeof result.startedAt).toBe('string');
+
+      const state = await getGroupState('test-wish', '1', cwd);
+      expect(state?.status).toBe('done');
+      expect(state?.startedAt).toBeDefined();
+    });
+  });
+
+  // ============================================================================
+  // findParent diagnostics — issue #1234 repo_path drift warnings
+  // ============================================================================
+
+  describe('findParent state-partition warning (issue #1234)', () => {
+    test('warns when wish has parents at other repo_paths', async () => {
+      // Simulate the real-world bug: the same wish slug gets a parent row
+      // in repo_path A (e.g. a worktree), then someone runs from repo_path B
+      // (e.g. the main repo) and silently forks a NEW parent with fresh
+      // ready/blocked children, so status reads reflect nothing.
+      const cwdA = `${cwd}-A`;
+      const cwdB = `${cwd}-B`;
+
+      await createState('drift-wish', sampleGroups, cwdA);
+
+      // Capture console.warn from the getState call made against cwdB.
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (msg: string) => warnings.push(msg);
+
+      try {
+        const stateB = await getState('drift-wish', cwdB);
+        expect(stateB).toBeNull();
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      const partitionWarning = warnings.find((w) => w.includes('partitioned across repo_paths'));
+      expect(partitionWarning).toBeDefined();
+      expect(partitionWarning).toContain(cwdA);
+      expect(partitionWarning).toContain(cwdB);
+      expect(partitionWarning).toContain('drift-wish');
+    });
+
+    test('does NOT warn when no other repo_paths own this wish', async () => {
+      // Genuinely-new wish — no partition, no noise. A `genie wish status` on
+      // an uncreated wish should still feel clean, not yell about drift.
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (msg: string) => warnings.push(msg);
+
+      try {
+        const state = await getState('totally-new-wish', cwd);
+        expect(state).toBeNull();
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      const partitionWarning = warnings.find((w) => w.includes('partitioned across repo_paths'));
+      expect(partitionWarning).toBeUndefined();
     });
   });
 

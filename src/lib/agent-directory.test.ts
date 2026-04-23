@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import * as directory from './agent-directory.js';
 import { getConnection } from './db.js';
 import type { SdkDirectoryConfig } from './sdk-directory-types.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanup: () => Promise<void>;
@@ -18,7 +18,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let agentDir: string;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -197,8 +197,120 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(metadata.dir).toBe(agentDir);
     });
 
-    test('rm returns false for non-existent', async () => {
-      expect(await directory.rm('nonexistent')).toBe(false);
+    test('rm returns removed=false with no message for truly non-existent', async () => {
+      const result = await directory.rm('nonexistent');
+      expect(result.removed).toBe(false);
+      expect(result.message).toBeUndefined();
+    });
+
+    test('rm returns removed=false + guidance message when runtime rows exist but no dir: row', async () => {
+      // Simulate a spawn-created row (id shape: <team>-<role>) that `ls()` would
+      // show but the old `rm` could not delete because it only tried 'dir:<name>'.
+      const sql = await getConnection();
+      await sql`
+        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change)
+        VALUES ('team1-spawn-agent', '%1', 's', '/tmp', 'working', 'spawn-agent', now(), now())
+      `;
+
+      const result = await directory.rm('spawn-agent');
+      expect(result.removed).toBe(false);
+      expect(result.message).toBeDefined();
+      expect(result.message).toContain('team1-spawn-agent');
+      expect(result.message).toContain('--force');
+
+      // Confirm ls() still shows the row — rm did NOT silently remove it.
+      const entries = await directory.ls();
+      expect(entries.some((e) => e.name === 'spawn-agent')).toBe(true);
+    });
+
+    test('rm with force=true wipes runtime rows sharing role', async () => {
+      const sql = await getConnection();
+      await sql`
+        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change)
+        VALUES ('team1-force-agent', '%1', 's', '/tmp', 'working', 'force-agent', now(), now())
+      `;
+      await sql`
+        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change)
+        VALUES ('uuid-force-agent', '%2', 's', '/tmp', 'working', 'force-agent', now(), now())
+      `;
+
+      const result = await directory.rm('force-agent', { force: true });
+      expect(result.removed).toBe(true);
+      expect(result.message).toBeUndefined();
+
+      const rows = await sql`SELECT id FROM agents WHERE role = 'force-agent'`;
+      expect(rows.length).toBe(0);
+    });
+
+    test('rm removes dir: row even without force', async () => {
+      // Canonical path: dir:<name> is still a single-hop delete.
+      await directory.add({ name: 'canonical-rm', dir: agentDir, promptMode: 'append' });
+      const result = await directory.rm('canonical-rm');
+      expect(result.removed).toBe(true);
+
+      const sql = await getConnection();
+      const rows = await sql`SELECT id FROM agents WHERE id = 'dir:canonical-rm'`;
+      expect(rows.length).toBe(0);
+    });
+  });
+
+  // ============================================================================
+  // roleToEntry() — registeredAt stability (sub-bug B)
+  // ============================================================================
+
+  describe('registeredAt stability', () => {
+    test('ls returns stable registeredAt across successive reads (sourced from PG created_at)', async () => {
+      const sql = await getConnection();
+      // Pin created_at to a past timestamp so a fabricated now() would clearly drift.
+      await sql`
+        INSERT INTO agents (id, role, custom_name, started_at, created_at, metadata)
+        VALUES (
+          'dir:stable-ts',
+          'stable-ts',
+          'stable-ts',
+          now() - interval '1 hour',
+          now() - interval '1 hour',
+          '{}'
+        )
+      `;
+
+      const first = await directory.ls();
+      // Small wall-clock gap — enough that a `new Date().toISOString()` fabrication
+      // would produce a different value on the second read.
+      await new Promise((r) => setTimeout(r, 50));
+      const second = await directory.ls();
+
+      const a = first.find((e) => e.name === 'stable-ts');
+      const b = second.find((e) => e.name === 'stable-ts');
+      expect(a).toBeDefined();
+      expect(b).toBeDefined();
+      expect(a!.registeredAt).toBe(b!.registeredAt);
+      // And it must reflect the pinned past created_at, not wall-clock now().
+      const ts = Date.parse(a!.registeredAt);
+      expect(Number.isNaN(ts)).toBe(false);
+      expect(Date.now() - ts).toBeGreaterThan(30 * 60 * 1000); // > 30min old
+    });
+
+    test('resolve returns stable registeredAt matching ls', async () => {
+      const sql = await getConnection();
+      await sql`
+        INSERT INTO agents (id, role, custom_name, started_at, created_at, metadata)
+        VALUES (
+          'dir:stable-resolve',
+          'stable-resolve',
+          'stable-resolve',
+          now() - interval '2 hours',
+          now() - interval '2 hours',
+          '{}'
+        )
+      `;
+
+      const resolved = await directory.resolve('stable-resolve');
+      const entries = await directory.ls();
+      const listed = entries.find((e) => e.name === 'stable-resolve');
+      expect(resolved).not.toBeNull();
+      expect(listed).toBeDefined();
+      expect(resolved!.entry.registeredAt).toBe(listed!.registeredAt);
     });
   });
 

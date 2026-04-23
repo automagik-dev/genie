@@ -30,6 +30,14 @@ export type TransportType = 'tmux' | 'api' | 'process';
 /** Outcome of a completed assignment. */
 export type AssignmentOutcome = 'completed' | 'failed' | 'reassigned' | 'abandoned';
 
+/**
+ * Turn close outcome written by the turn-close contract (migration 042).
+ * - 'done' / 'blocked' / 'failed' are written by the explicit close verbs.
+ * - 'clean_exit_unverified' is the sentinel written by the pane-exit trap
+ *   when a pane dies without any verb firing.
+ */
+export type TurnOutcome = 'done' | 'blocked' | 'failed' | 'clean_exit_unverified';
+
 // ============================================================================
 // Data Interfaces
 // ============================================================================
@@ -81,6 +89,14 @@ export interface Executor {
   endedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Turn identifier — set at turn open, preserved across close. NULL for pre-contract executors. */
+  turnId: string | null;
+  /** Explicit close outcome. NULL while the turn is still open. */
+  outcome: TurnOutcome | null;
+  /** Monotonic close timestamp written by the single close transaction. */
+  closedAt: string | null;
+  /** Free-form rationale supplied with `--reason`, or 'clean_exit_unverified' for trap-written rows. */
+  closeReason: string | null;
 }
 
 /** DB row shape for the executors table (snake_case). */
@@ -104,6 +120,10 @@ export interface ExecutorRow {
   ended_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  turn_id: string | null;
+  outcome: TurnOutcome | null;
+  closed_at: Date | string | null;
+  close_reason: string | null;
 }
 
 /**
@@ -167,6 +187,10 @@ export function rowToExecutor(r: ExecutorRow): Executor {
     endedAt: r.ended_at ? ts(r.ended_at) : null,
     createdAt: ts(r.created_at),
     updatedAt: ts(r.updated_at),
+    turnId: r.turn_id ?? null,
+    outcome: r.outcome ?? null,
+    closedAt: r.closed_at ? ts(r.closed_at) : null,
+    closeReason: r.close_reason ?? null,
   };
 }
 

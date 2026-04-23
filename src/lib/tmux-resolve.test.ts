@@ -12,8 +12,18 @@ const mockExecuteTmux = mock(async (_cmd: string) => '');
 // We need to mock the module before importing
 mock.module('./tmux-wrapper.js', () => ({
   executeTmux: mockExecuteTmux,
-  genieTmuxPrefix: () => ['-L', 'genie'],
+  genieTmuxPrefix: () => ['-L', 'genie', '-f', '/dev/null'],
   genieTmuxCmd: (sub: string) => `tmux -L genie ${sub}`,
+  // Passthrough matches the real implementation (issue #1223): the mock
+  // must preserve behavior because Bun's mock.module is process-global,
+  // so tmux-wrapper.test.ts can race and see this stub.
+  prependEnvVars: (command: string, env?: Record<string, string>) => {
+    if (!env || Object.keys(env).length === 0) return command;
+    const envArgs = Object.entries(env)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(' ');
+    return `env ${envArgs} ${command}`;
+  },
 }));
 
 const { resolveRepoSession } = await import('./tmux.js');

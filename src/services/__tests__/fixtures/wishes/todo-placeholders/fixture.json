@@ -1,0 +1,6 @@
+{
+  "category": "non-fixable",
+  "rules": ["todo-placeholder-remaining"],
+  "description": "Scaffold with `<TODO>` markers still present. Not fixable — author must replace. Bypass via `allowTodoPlaceholders` option.",
+  "expectFixChanges": false
+}

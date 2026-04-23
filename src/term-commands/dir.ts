@@ -16,10 +16,13 @@
  * Storage: agent-directory.json is the source of truth for registered agents.
  */
 
-import { resolve as resolvePath } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve as resolvePath } from 'node:path';
 import type { Command } from 'commander';
 import * as directory from '../lib/agent-directory.js';
-import { printSyncResult, syncAgentDirectory } from '../lib/agent-sync.js';
+import { migrateAgentToYaml } from '../lib/agent-migrate.js';
+import { printSyncResult, syncAgentDirectory, syncSingleAgentByName } from '../lib/agent-sync.js';
+import { type AgentConfig, parseAgentYaml, writeAgentYaml } from '../lib/agent-yaml.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { ALL_BUILTINS } from '../lib/builtin-agents.js';
 import { RESOLVED_FIELDS, type ResolveContext, resolveFieldWithSource } from '../lib/defaults.js';
@@ -60,14 +63,23 @@ export function registerDirNamespace(program: Command): void {
     .command('rm <name>')
     .description('Remove an agent from the directory')
     .option('--global', 'Remove from global directory instead of project')
-    .action(async (name: string, options: { global?: boolean }) => {
+    .option('--force', 'Also remove runtime/spawn rows sharing this role (id shapes: <team>-<role>, UUID)')
+    .action(async (name: string, options: { global?: boolean; force?: boolean }) => {
       try {
-        const removed = await directory.rm(name, { global: options.global });
-        recordAuditEvent('item', name, 'item_removed', getActor(), { type: 'agent', source: 'dir_rm' }).catch(() => {});
+        const result = await directory.rm(name, { global: options.global, force: options.force });
 
-        if (removed) {
+        if (result.removed) {
           const scope = options.global ? 'global' : 'project';
           console.log(`Agent "${name}" removed from ${scope} directory.`);
+          // Only emit the audit event on actual removal — previously we logged
+          // "item_removed" even when the DELETE matched zero rows.
+          recordAuditEvent('item', name, 'item_removed', getActor(), { type: 'agent', source: 'dir_rm' }).catch(
+            () => {},
+          );
+        } else if (result.message) {
+          // Runtime rows exist but no directory entry — surface guidance.
+          console.error(result.message);
+          process.exit(1);
         } else {
           console.error(`Agent "${name}" not found in directory.`);
           process.exit(1);
@@ -171,30 +183,85 @@ interface DirAddOptions extends SdkDirOptions {
 }
 
 async function handleDirAdd(name: string, options: DirAddOptions): Promise<void> {
+  // dir-sync-frontmatter-refresh (Group 5): `dir add` scaffolds BOTH files on
+  // disk — `agent.yaml` (CLI flags → config) and a frontmatter-less AGENTS.md
+  // body template — then triggers sync to upsert the DB row. The yaml is the
+  // canonical source of every runtime-consumed field; AGENTS.md holds pure
+  // prompt content from line 1.
+
   const promptMode = validatePromptMode(options.promptMode);
   const resolvedDir = resolvePath(options.dir);
   if (options.repo) validateRepoPath(options.repo);
   const permissions = buildPermissions(options.permissionPreset, options.allow, options.bashAllow);
   const sdk = buildSdkConfig(options);
-  const entry = await directory.add(
-    {
-      name,
-      dir: resolvedDir,
-      repo: options.repo ? resolvePath(options.repo) : undefined,
-      promptMode,
-      model: options.model,
-      roles: normalizeRoles(options.roles),
-      ...(permissions && { permissions }),
-      ...(sdk && { sdk }),
-    },
-    { global: options.global },
-  );
+
+  // Build the on-disk AgentConfig. Derived fields (name/dir/registeredAt) are
+  // stripped by writeAgentYaml before serialization.
+  const config: AgentConfig = {
+    promptMode,
+    ...(options.model !== undefined && { model: options.model }),
+    ...(options.repo !== undefined && { repo: resolvePath(options.repo) }),
+    ...(options.roles !== undefined && { roles: normalizeRoles(options.roles) }),
+    ...(permissions && { permissions }),
+    ...(sdk && { sdk: sdk as AgentConfig['sdk'] }),
+  };
+
+  // Ensure the agent directory exists.
+  mkdirSync(resolvedDir, { recursive: true });
+
+  // Scaffold AGENTS.md without a frontmatter block. Users edit this for prompt
+  // content; runtime config lives in agent.yaml.
+  const agentsMdPath = join(resolvedDir, 'AGENTS.md');
+  if (!existsSync(agentsMdPath)) {
+    writeFileSync(agentsMdPath, scaffoldAgentsMdBody(name));
+  }
+
+  // Write agent.yaml atomically (locked).
+  await writeAgentYaml(join(resolvedDir, 'agent.yaml'), config);
+
+  // Propagate to the DB via the same single-agent sync path used by `dir edit`.
+  const ws = findWorkspace();
+  if (ws) {
+    await syncSingleAgentByName(ws.root, name);
+  } else {
+    // Not in a workspace — register a stub in the directory table so the
+    // agent is reachable even before the user runs `genie init`.
+    await directory.add(
+      {
+        name,
+        dir: resolvedDir,
+        repo: options.repo ? resolvePath(options.repo) : undefined,
+        promptMode,
+        model: options.model,
+        roles: normalizeRoles(options.roles),
+        ...(permissions && { permissions }),
+        ...(sdk && { sdk }),
+      },
+      { global: options.global },
+    );
+    console.warn('Not in a genie workspace — directory row created; run `genie dir sync` in a workspace to re-sync.');
+  }
 
   recordAuditEvent('item', name, 'item_registered', getActor(), { type: 'agent', source: 'dir_add' }).catch(() => {});
 
   const scope = options.global ? 'global' : 'project';
-  console.log(`Agent "${entry.name}" registered (${scope}).`);
-  printEntry(entry);
+  console.log(`Agent "${name}" registered (${scope}).`);
+  const entry = await directory.get(name);
+  if (entry) printEntry(entry);
+}
+
+/** AGENTS.md body template for a fresh agent — no YAML fence. */
+function scaffoldAgentsMdBody(name: string): string {
+  return `# Agent: ${name}
+
+Describe what this agent does, how it behaves, and what it owns.
+Runtime config (team, model, permissions, etc.) lives in \`agent.yaml\` —
+this file is pure prompt content.
+
+<mission>
+TBD — single sentence stating the agent's primary goal.
+</mission>
+`;
 }
 
 interface EditOptions extends SdkDirOptions {
@@ -212,8 +279,8 @@ interface EditOptions extends SdkDirOptions {
   global?: boolean;
 }
 
-async function handleEdit(name: string, options: EditOptions): Promise<void> {
-  const updates: Parameters<typeof directory.edit>[1] = {};
+function collectAgentConfigUpdates(options: EditOptions): Partial<AgentConfig> {
+  const updates: Partial<AgentConfig> = {};
   if (options.dir) updates.dir = resolvePath(options.dir);
   if (options.repo) updates.repo = resolvePath(options.repo);
   if (options.promptMode) updates.promptMode = validatePromptMode(options.promptMode);
@@ -227,7 +294,17 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
   if (permissions) updates.permissions = permissions;
 
   const sdk = buildSdkConfig(options);
-  if (sdk) updates.sdk = sdk;
+  if (sdk) updates.sdk = sdk as AgentConfig['sdk'];
+  return updates;
+}
+
+async function handleEdit(name: string, options: EditOptions): Promise<void> {
+  // dir-sync-frontmatter-refresh (Group 4): `dir edit` writes to agent.yaml
+  // FIRST, then triggers a single-agent sync so the PG row picks up the new
+  // values. No more direct PG writes — the yaml file is the source of truth
+  // and the sync path mirrors it into the DB.
+
+  const updates = collectAgentConfigUpdates(options);
 
   if (Object.keys(updates).length === 0) {
     console.error(
@@ -236,16 +313,58 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
     process.exit(1);
   }
 
-  const entry = await directory.edit(name, updates, { global: options.global });
+  // Resolve the agent to find its on-disk directory.
+  const resolved = await directory.resolve(name);
+  if (!resolved || resolved.builtin || !resolved.entry.dir) {
+    console.error(
+      `Agent "${name}" not found (or has no on-disk directory — built-ins and synthetic entries can't be edited via dir edit).`,
+    );
+    process.exit(1);
+  }
+  const agentDir = resolved.entry.dir;
 
-  // Sync frontmatter-relevant fields back to AGENTS.md on disk
-  directory.syncFrontmatterToDisk(entry, updates);
+  // If the agent hasn't been migrated yet, migrate first. After this the
+  // canonical source is agents/<name>/agent.yaml and AGENTS.md loses its
+  // frontmatter (wish `dir-sync-frontmatter-refresh`).
+  const yamlPath = join(agentDir, 'agent.yaml');
+  if (!existsSync(yamlPath)) {
+    const dbRow = {
+      team: resolved.entry.team,
+      model: resolved.entry.model,
+      description: resolved.entry.description,
+      color: resolved.entry.color,
+      provider: resolved.entry.provider,
+      promptMode: resolved.entry.promptMode,
+      permissions: resolved.entry.permissions,
+      disallowedTools: resolved.entry.disallowedTools,
+      omniScopes: resolved.entry.omniScopes,
+      hooks: resolved.entry.hooks,
+      sdk: resolved.entry.sdk as unknown as AgentConfig['sdk'],
+    };
+    await migrateAgentToYaml(agentDir, dbRow);
+  }
+
+  // Read the current yaml, apply the updates, write atomically via the lock.
+  const current = await parseAgentYaml(yamlPath);
+  const next: AgentConfig = { ...current, ...updates };
+  await writeAgentYaml(yamlPath, next);
+
+  // Propagate into the DB by re-running the single-agent sync path. This
+  // replaces the old `directory.edit(name, updates)` PG write.
+  const ws = findWorkspace();
+  if (ws) {
+    await syncSingleAgentByName(ws.root, name);
+  } else {
+    // Not in a genie workspace — skip sync, but the yaml write stands.
+    console.warn('Not in a genie workspace — agent.yaml updated on disk; run `genie dir sync` manually to propagate.');
+  }
 
   recordAuditEvent('item', name, 'item_updated', getActor(), { type: 'agent', source: 'dir_edit' }).catch(() => {});
 
   const scope = options.global ? 'global' : 'project';
   console.log(`Agent "${name}" updated (${scope}).`);
-  printEntry(entry);
+  const refreshed = await directory.get(name);
+  if (refreshed) printEntry(refreshed);
 }
 
 async function handleDirSync(): Promise<void> {

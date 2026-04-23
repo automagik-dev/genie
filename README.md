@@ -25,7 +25,14 @@
 -->
 
 <!-- METRICS:START -->
-**🚀 150 commits** this week · **23 releases** · **+43.0K LoC** · **6 contributors**
+**🚀 117 commits** this week · **6 releases** · **+22.7K LoC** · **6 contributors**
+
+| Metric | Value (7d) |
+|--------|-----------|
+| PRs merged | 142 (20/day) |
+| Avg merge time | 0.7h |
+| SHIP rate | 99% |
+| Releases (24h) | 0 |
 
 ![Commits per day (30d, all branches)](.genie/assets/commits-30d.svg)
 
@@ -80,7 +87,7 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh
 
 **Postgres-backed.** All state lives in PostgreSQL — agents, tasks, events, messages. Queryable. Durable. Real-time via LISTEN/NOTIFY.
 
-**Full observability.** Events, metrics, session replay, cost tracking. See everything your agents do.
+**Full observability.** Events, metrics, session replay, cost tracking. See everything your genie-spawned agents do — OTel-derived tool, cost, and API-request rows only cover sessions launched via `genie spawn` / `genie team create`; user-initiated Claude Code sessions are captured only when they export the OTLP env themselves.
 
 **Portable context.** Identity, skills, memory — all markdown files in your repo, git-versioned. You own everything.
 
@@ -156,6 +163,35 @@ v4 is a ground-up rewrite. 700 commits. 300 files. ~19K lines.
 | **Stability** | Best effort | Advisory locks, spawn watchdog, 200+ bug fixes |
 
 [Full v4 release notes →](https://github.com/automagik-dev/genie/releases/tag/v4.260402.18)
+
+### Observability substrate (v0)
+
+Structured event emission, signed subscription tokens, 4-tier retention, and
+an external dead-man's switch. Consumer-compat promises are published at
+[docs/observability-contract.md](docs/observability-contract.md); the 5-phase
+rollout plan at [docs/observability-rollout.md](docs/observability-rollout.md).
+
+### Executor read endpoint
+
+External consumers (e.g. the omni scope-enforcer) can query ground-truth turn
+state directly from `genie serve`. Two paths are supported:
+
+**HTTP** — `GET http://127.0.0.1:<port>/executors/:id/state` returns
+`{state, outcome, closed_at}` as JSON. The default port is `pgserve_port + 2`;
+override with `GENIE_EXECUTOR_READ_PORT`. Returns 404 for unknown IDs, 400 for
+non-UUID IDs, 200 otherwise. No authz — executor IDs are random UUIDs and the
+view exposes no secrets.
+
+**Direct SQL** — connect to genie-PG as the read-only `executors_reader` role
+and `SELECT state, outcome, closed_at FROM executors_public_state WHERE id = $1`.
+Layer login credentials on top:
+
+```sql
+CREATE ROLE omni_scope_enforcer LOGIN PASSWORD '…' IN ROLE executors_reader;
+```
+
+Response shape (`state` / `outcome` / `closed_at`) is the stable boundary
+contract; removing or renaming fields is a coordinated breaking change.
 
 ---
 

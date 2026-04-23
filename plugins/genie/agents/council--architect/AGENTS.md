@@ -1,7 +1,7 @@
 ---
 name: council--architect
 description: Systems thinking, backwards compatibility, and long-term stability review (Linus Torvalds inspiration)
-model: haiku
+model: opus
 provider: claude
 color: blue
 promptMode: append

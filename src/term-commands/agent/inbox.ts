@@ -4,6 +4,7 @@
  */
 
 import type { Command } from 'commander';
+import { emitEvent } from '../../lib/emit.js';
 import type * as taskServiceTypes from '../../lib/task-service.js';
 import { formatTime, padRight, truncate } from '../../lib/term-format.js';
 import { detectSenderIdentity } from '../msg.js';
@@ -111,6 +112,15 @@ export function registerAgentInbox(parent: Command): void {
           return result;
         },
         warn: (msg) => console.log(msg),
+        // Pattern 9 — emit on silent-skip transition. Fire-and-forget; errors
+        // swallowed so the poll loop never crashes on an emit glitch.
+        emitDeadInbox: (payload) => {
+          try {
+            emitEvent('rot.inbox-watcher-spawn-loop.detected', payload as unknown as Record<string, unknown>);
+          } catch {
+            // best-effort
+          }
+        },
       });
 
       const shutdown = () => {

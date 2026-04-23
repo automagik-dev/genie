@@ -29,11 +29,33 @@
     "src/lib/discovery.ts",
     "src/lib/pending-agents.ts",
     "src/lib/mini-wizard.ts",
-    "src/lib/migrate.ts"
+    "src/lib/migrate.ts",
+    "src/lib/emit.ts",
+    "src/lib/events/registry.ts",
+    "src/lib/events/redactors.ts",
+    "src/lib/events/tier.ts",
+    "src/lib/events/schemas/*.ts",
+    "src/lib/events/tokens.ts",
+    "src/lib/events/rbac.ts",
+    "src/lib/events/audit-chain.ts",
+    "src/lib/events/v2-query.ts",
+    "src/lib/trace-context.ts",
+    "src/lib/observability-flag.ts",
+    "src/consumers/runbook-r1/index.ts",
+    "src/consumers/runbook-r1/detector.ts",
+    "src/detectors/index.ts",
+    "src/detectors/pattern-1-backfill-no-worktree.ts",
+    "src/detectors/pattern-4-duplicate-agents.ts",
+    "src/detectors/pattern-5-zombie-team-lead.ts",
+    "src/detectors/__fixtures__/hello.ts",
+    "src/serve/detector-scheduler.ts",
+    "src/term-commands/events-migrate.ts",
+    "src/genie-commands/observability-health.ts",
+    "test/observability/emit-bench.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignoreBinaries": ["which"],
-  "ignoreExportsUsedInFile": false,
+  "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "@khal-os/brain",
     "@tauri-apps/cli",
@@ -41,6 +63,7 @@
     "react-dom",
     "@vitejs/plugin-react",
     "vite",
-    "@types/react-dom"
+    "@types/react-dom",
+    "esbuild"
   ]
 }

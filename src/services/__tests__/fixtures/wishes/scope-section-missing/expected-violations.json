@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "total": 1,
+    "fixable": 0,
+    "unfixable": 1
+  },
+  "violations": [
+    {
+      "rule": "scope-section-missing",
+      "severity": "error",
+      "line": 1,
+      "column": 1,
+      "fixable": false
+    }
+  ]
+}

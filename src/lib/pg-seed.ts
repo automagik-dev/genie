@@ -14,6 +14,7 @@ import { readFile, readdir, rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type postgres from 'postgres';
+import { type NativeTeamConfig, loadAllNativeTeamConfigs } from './claude-native-teams.js';
 
 type Sql = postgres.Sql;
 
@@ -27,10 +28,6 @@ function getGenieHome(): string {
 
 function workersJsonPath(): string {
   return join(getGenieHome(), 'workers.json');
-}
-
-function teamsDirPath(): string {
-  return join(getGenieHome(), 'teams');
 }
 
 /** Check if a source file needs migration (exists and not yet migrated). */
@@ -71,17 +68,28 @@ async function renameMatchingFiles(dir: string, filter: (filename: string) => bo
 
 /**
  * Check if seed should run.
- * Returns true if any source JSON files exist without a corresponding .migrated marker.
+ *
+ * Returns true when:
+ *  - `~/.genie/workers.json` exists without a `.migrated` sibling (legacy
+ *    one-time migration path — worker seed still uses markers), OR
+ *  - Any Claude-native team config exists on disk at
+ *    `~/.claude/teams/<name>/config.json`.
+ *
+ * The Claude-native branch triggers on every boot when teams exist on disk.
+ * That's intentional: `seedTeams` is idempotent (`ON CONFLICT DO NOTHING`) and
+ * this is how we rehydrate PG after a `pgserve` reset. See Bug A in
+ * `.genie/wishes/fix-pg-disk-rehydration/WISH.md`.
  */
 export function needsSeed(): boolean {
   if (needsMigration(workersJsonPath())) return true;
 
-  const teamsDir = teamsDirPath();
-  if (!existsSync(teamsDir)) return false;
-
+  // Claude-native team configs are authoritative — if any exist on disk,
+  // run the seed so PG mirrors them. No `.migrated` markers here.
+  const claudeTeamsDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'teams');
+  if (!existsSync(claudeTeamsDir)) return false;
   try {
-    const files = require('node:fs').readdirSync(teamsDir) as string[];
-    return files.some((f) => f.endsWith('.json') && !f.endsWith('.migrated') && needsMigration(join(teamsDir, f)));
+    const entries = require('node:fs').readdirSync(claudeTeamsDir) as string[];
+    return entries.some((e) => !e.startsWith('.'));
   } catch {
     return false;
   }
@@ -111,12 +119,13 @@ function toAgentRow(a: JsonRecord): JsonRecord {
     state: a.state ?? 'spawning',
     last_state_change: a.lastStateChange ?? now,
     repo_path: a.repoPath ?? '',
-    claude_session_id: a.claudeSessionId ?? null,
     window_name: a.windowName ?? null,
     window_id: a.windowId ?? null,
     role: a.role ?? null,
     custom_name: a.customName ?? null,
-    sub_panes: JSON.stringify(a.subPanes ?? []),
+    // Kept as JS array — serialized via `sql.json()` at write time, not here.
+    // Legacy: was `JSON.stringify(a.subPanes ?? [])` which produced double-encoded jsonb strings.
+    sub_panes: a.subPanes ?? [],
     provider: a.provider ?? null,
     transport: a.transport ?? 'tmux',
     skill: a.skill ?? null,
@@ -137,11 +146,15 @@ function toAgentRow(a: JsonRecord): JsonRecord {
 
 async function upsertAgent(sql: Sql, a: JsonRecord): Promise<void> {
   const r = toAgentRow(a);
+  // NOTE: `r.sub_panes` is kept as a JS array (NativeTeamMember[]) and passed
+  // via `sql.json()` so postgres.js encodes it once into a proper jsonb array.
+  // Previously this used `JSON.stringify(a.subPanes ?? [])` which double-encoded
+  // into a jsonb-string and broke `jsonb_array_length`. See migration 045.
   await sql`
     INSERT INTO agents (
       id, pane_id, session, worktree, task_id, task_title,
       wish_slug, group_number, started_at, state, last_state_change,
-      repo_path, claude_session_id, window_name, window_id,
+      repo_path, window_name, window_id,
       role, custom_name, sub_panes, provider, transport,
       skill, team, tmux_window, native_agent_id, native_color,
       native_team_enabled, parent_session_id, suspended_at,
@@ -152,8 +165,8 @@ async function upsertAgent(sql: Sql, a: JsonRecord): Promise<void> {
       ${r.task_id}, ${r.task_title}, ${r.wish_slug},
       ${r.group_number}, ${r.started_at}, ${r.state},
       ${r.last_state_change}, ${r.repo_path},
-      ${r.claude_session_id}, ${r.window_name}, ${r.window_id},
-      ${r.role}, ${r.custom_name}, ${r.sub_panes},
+      ${r.window_name}, ${r.window_id},
+      ${r.role}, ${r.custom_name}, ${sql.json(r.sub_panes)},
       ${r.provider}, ${r.transport}, ${r.skill},
       ${r.team}, ${r.tmux_window}, ${r.native_agent_id},
       ${r.native_color}, ${r.native_team_enabled},
@@ -165,6 +178,8 @@ async function upsertAgent(sql: Sql, a: JsonRecord): Promise<void> {
 }
 
 async function upsertTemplate(sql: Sql, t: JsonRecord): Promise<void> {
+  // extra_args stays a JS array until `sql.json()` encodes it once at bind
+  // time. See migration 045 for the cleanup of pre-fix rows.
   await sql`
     INSERT INTO agent_templates (
       id, provider, team, role, skill, cwd,
@@ -172,7 +187,7 @@ async function upsertTemplate(sql: Sql, t: JsonRecord): Promise<void> {
     ) VALUES (
       ${t.id}, ${t.provider ?? 'claude'}, ${t.team ?? ''},
       ${t.role ?? null}, ${t.skill ?? null}, ${t.cwd ?? ''},
-      ${JSON.stringify(t.extraArgs ?? [])},
+      ${sql.json(t.extraArgs ?? [])},
       ${t.nativeTeamEnabled ?? false},
       ${t.lastSpawnedAt ?? new Date().toISOString()}
     ) ON CONFLICT (id) DO NOTHING
@@ -233,10 +248,36 @@ async function seedWorkers(sql: Sql): Promise<{ agents: number; templates: numbe
 }
 
 // ============================================================================
-// Seed teams/*.json → teams
+// Seed ~/.claude/teams/<name>/config.json → teams
 // ============================================================================
+//
+// The old layout (`~/.genie/teams/*.json` with `.migrated` markers) is dead.
+// The live system writes Claude-native configs under `~/.claude/teams/<name>/
+// config.json`. This seed reads those configs and upserts full team rows into
+// PG so `genie team ls` mirrors disk after any pgserve reset.
+//
+// Disk is authoritative — this path never writes back. Configs are re-read
+// every boot; there are no migration markers. See Bug A in
+// `.genie/wishes/fix-pg-disk-rehydration/WISH.md`.
 
-async function upsertTeam(sql: Sql, c: JsonRecord): Promise<void> {
+/** Derive the bare leader name from Claude-native `leadAgentId` (`name@team`). */
+function deriveLeader(cfg: NativeTeamConfig): string | null {
+  if (!cfg.leadAgentId) return null;
+  const at = cfg.leadAgentId.indexOf('@');
+  return at === -1 ? cfg.leadAgentId : cfg.leadAgentId.slice(0, at);
+}
+
+/**
+ * UPSERT a team row from a Claude-native config.
+ *
+ * Members are mapped from rich `NativeTeamMember[]` → bare `string[]` (the PG
+ * column stores names only). Writes via `sql.json(names)` so postgres.js
+ * encodes the array once into a proper jsonb array. ON CONFLICT DO NOTHING —
+ * the seed is an idempotent backfill; `ensureTeamRow` owns the hot update
+ * path and may refresh fields there.
+ */
+async function upsertNativeTeam(sql: Sql, c: NativeTeamConfig): Promise<void> {
+  const memberNames = (c.members ?? []).map((m) => m.name).filter((n) => typeof n === 'string' && n.length > 0);
   await sql`
     INSERT INTO teams (
       name, repo, base_branch, worktree_path, leader,
@@ -244,38 +285,28 @@ async function upsertTeam(sql: Sql, c: JsonRecord): Promise<void> {
       native_teams_enabled, tmux_session_name, wish_slug, created_at
     ) VALUES (
       ${c.name}, ${c.repo ?? ''}, ${c.baseBranch ?? 'dev'},
-      ${c.worktreePath ?? ''}, ${c.leader ?? null},
-      ${JSON.stringify(c.members ?? [])}, ${c.status ?? 'in_progress'},
-      ${c.nativeTeamParentSessionId ?? null}, ${c.nativeTeamsEnabled ?? false},
+      ${c.worktreePath ?? ''}, ${deriveLeader(c)},
+      ${sql.json(memberNames)}, ${c.status ?? 'in_progress'},
+      ${c.nativeTeamParentSessionId ?? null}, ${c.nativeTeamsEnabled ?? true},
       ${c.tmuxSessionName ?? null}, ${c.wishSlug ?? null},
-      ${c.createdAt ?? new Date().toISOString()}
+      ${new Date(c.createdAt ?? Date.now()).toISOString()}
     ) ON CONFLICT (name) DO NOTHING
   `;
 }
 
 async function seedTeams(sql: Sql): Promise<number> {
-  const dir = teamsDirPath();
-  if (!existsSync(dir)) return 0;
-
-  let files: string[];
-  try {
-    files = await readdir(dir);
-  } catch {
-    return 0;
-  }
-
+  const configs = await loadAllNativeTeamConfigs();
   let count = 0;
-  for (const file of files) {
-    if (!file.endsWith('.json') || file.endsWith('.migrated')) continue;
-    if (!needsMigration(join(dir, file))) continue;
-
-    const config = await readJson<JsonRecord>(join(dir, file));
-    if (!config?.name) continue;
-
-    await upsertTeam(sql, config);
-    count++;
+  for (const cfg of configs) {
+    if (!cfg?.name) continue;
+    try {
+      await upsertNativeTeam(sql, cfg);
+      count++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[pg-seed] Failed to seed team "${cfg.name}": ${msg}`);
+    }
   }
-
   return count;
 }
 
@@ -404,8 +435,10 @@ async function markMigrated(repoPath?: string): Promise<void> {
     await rename(workersPath, `${workersPath}.migrated`);
   }
 
-  // Mark teams/*.json
-  await renameMatchingFiles(teamsDirPath(), (f) => f.endsWith('.json') && !f.endsWith('.migrated'));
+  // NOTE: Claude-native team configs at `~/.claude/teams/<name>/config.json`
+  // are NOT marked as migrated. They are the authoritative on-disk source and
+  // must remain readable on every boot so the seed can rehydrate PG after any
+  // `pgserve` reset. See `seedTeams` above.
 
   if (!repoPath) return;
 

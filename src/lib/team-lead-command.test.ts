@@ -138,26 +138,37 @@ describe('sessionExists', () => {
 // ============================================================================
 
 describe('buildTeamLeadCommand resume behavior', () => {
-  test('omits --resume when continueName is undefined', () => {
+  test('omits --resume and --session-id when neither is set', () => {
     const cmd = buildTeamLeadCommand('test-team', { promptMode: 'append' });
     expect(cmd).not.toContain('--resume');
+    expect(cmd).not.toContain('--session-id');
     expect(cmd).toContain("--name 'test-team'");
   });
 
-  test('includes --resume when continueName is set', () => {
-    const cmd = buildTeamLeadCommand('test-team', { continueName: 'test-team', promptMode: 'append' });
-    expect(cmd).toContain("--resume 'test-team'");
-    expect(cmd).toContain("--name 'test-team'");
-  });
-
-  test('--resume and --name can have the same value', () => {
-    const cmd = buildTeamLeadCommand('my-session', { continueName: 'my-session', promptMode: 'append' });
-    expect(cmd).toContain("--name 'my-session'");
-    expect(cmd).toContain("--resume 'my-session'");
-  });
-
-  test('sessionId takes precedence when no continueName', () => {
+  test('sessionId without resume emits --session-id <uuid>', () => {
     const cmd = buildTeamLeadCommand('team', { sessionId: 'uuid-123', promptMode: 'append' });
+    expect(cmd).toContain("--session-id 'uuid-123'");
+    expect(cmd).not.toContain('--resume');
+  });
+
+  test('sessionId + resume:true emits --resume <uuid> (Gap B)', () => {
+    // Gap B from trace-stale-resume (task #6): resuming must pass the UUID,
+    // not a name, so CC cannot fuzzy-match to a different JSONL.
+    const cmd = buildTeamLeadCommand('team', {
+      sessionId: 'uuid-123',
+      resume: true,
+      promptMode: 'append',
+    });
+    expect(cmd).toContain("--resume 'uuid-123'");
+    expect(cmd).not.toContain('--session-id');
+  });
+
+  test('sessionId + resume:false emits --session-id <uuid>', () => {
+    const cmd = buildTeamLeadCommand('team', {
+      sessionId: 'uuid-123',
+      resume: false,
+      promptMode: 'append',
+    });
     expect(cmd).toContain("--session-id 'uuid-123'");
     expect(cmd).not.toContain('--resume');
   });

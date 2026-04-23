@@ -76,12 +76,16 @@ function extractAutoSpawnTarget(payload: HookPayload): { recipient: string; team
 /** Find and execute a spawn template for the recipient. */
 async function executeAutoSpawn(recipient: string, teamName: string): Promise<void> {
   const registryMod = await import('../../lib/agent-registry.js');
-  const tmuxMod = await import('../../lib/tmux.js');
+  const executorRegistryMod = await import('../../lib/executor-registry.js');
   const directoryMod = await import('../../lib/agent-directory.js');
 
   const agents = await registryMod.list();
   const existing = agents.find((a) => (a.role === recipient || a.id === recipient) && a.team === teamName);
-  if (existing && (await tmuxMod.isPaneAlive(existing.paneId))) return;
+  // Transport-aware liveness: a plain `isPaneAlive` check treats live SDK/
+  // omni/inline recipients (synthetic paneIds like 'sdk', '', 'inline') as
+  // dead and triggers a duplicate spawn on every message. Dispatch by
+  // paneId shape so non-tmux transports consult `executors.state` instead.
+  if (existing && (await executorRegistryMod.resolveWorkerLivenessByTransport(existing))) return;
 
   const dirEntry = await directoryMod.resolve(recipient);
   const templates = await registryMod.listTemplates();

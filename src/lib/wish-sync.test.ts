@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getConnection } from './db.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 import { getWish, listWishes, parseWishStatus, syncWishes } from './wish-sync.js';
 
 // ============================================================================
@@ -65,7 +65,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   }
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
     await setupTestRepo();
   });
 

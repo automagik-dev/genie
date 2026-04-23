@@ -21,6 +21,9 @@
  *   Fire-and-forget — all handlers run, output is ignored.
  */
 
+import { endSpan, startSpan } from '../lib/emit.js';
+import { isWideEmitEnabled } from '../lib/observability-flag.js';
+import { getAmbient as getTraceContext } from '../lib/trace-context.js';
 import { auditContext } from './handlers/audit-context.js';
 import { autoSpawn } from './handlers/auto-spawn.js';
 import { brainInject } from './handlers/brain-inject.js';
@@ -34,6 +37,7 @@ import {
   emitToolCallEvent,
   emitUserPromptEvent,
 } from './handlers/runtime-emit.js';
+import { sessionSync } from './handlers/session-sync.js';
 import type { Handler, HandlerResult, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
@@ -117,6 +121,19 @@ const handlers: Handler[] = [
     priority: 30,
     fn: emitAssistantResponseEvent,
   },
+  {
+    name: 'session-sync-tool',
+    event: 'PreToolUse',
+    matcher: /.*/,
+    priority: 35,
+    fn: sessionSync,
+  },
+  {
+    name: 'session-sync-prompt',
+    event: 'UserPromptSubmit',
+    priority: 35,
+    fn: sessionSync,
+  },
 ];
 
 // ============================================================================
@@ -151,6 +168,14 @@ export async function runHandler(
   const handlerPayload: HookPayload = { ...payload };
   if (currentInput) handlerPayload.tool_input = currentInput;
   const start = Date.now();
+  const agentId = process.env.GENIE_AGENT_NAME ?? 'unknown';
+  const span = isWideEmitEnabled()
+    ? startSpan(
+        'hook.delivery',
+        { hook_name: handler.name, agent_id: agentId, tool: payload.tool_name },
+        { source_subsystem: 'hooks', ctx: getTraceContext() ?? undefined, agent: agentId },
+      )
+    : null;
   try {
     const result = await handler.fn(handlerPayload);
     hookDebug(
@@ -158,10 +183,24 @@ export async function runHandler(
       result?.decision ?? result?.hookSpecificOutput?.permissionDecision ?? 'allow',
       Date.now() - start,
     );
+    if (span) {
+      endSpan(
+        span,
+        { hook_name: handler.name, agent_id: agentId, status: result?.decision === 'deny' ? 'rejected' : 'ok' },
+        { source_subsystem: 'hooks', agent: agentId },
+      );
+    }
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[genie-hook] Handler "${handler.name}" threw: ${msg}`);
+    if (span) {
+      endSpan(
+        span,
+        { hook_name: handler.name, agent_id: agentId, status: 'error', stderr_excerpt: msg.slice(0, 1024) },
+        { source_subsystem: 'hooks', agent: agentId },
+      );
+    }
     if (isBlocking) {
       hookDebug(handler.name, 'deny (crash)', Date.now() - start);
       return { decision: 'deny', reason: `handler crashed: ${msg}` };

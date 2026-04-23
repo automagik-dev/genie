@@ -1,0 +1,6 @@
+{
+  "category": "non-fixable",
+  "rules": ["scope-section-missing"],
+  "description": "Entire `## Scope` section is absent. Not fixable — author must author both IN and OUT.",
+  "expectFixChanges": false
+}

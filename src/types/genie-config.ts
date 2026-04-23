@@ -74,6 +74,23 @@ const OmniConfigSchema = z.object({
   executor: z.enum(['tmux', 'sdk']).optional(),
 });
 
+// Brain integration configuration (@khal-os/brain, enterprise)
+const BrainConfigSchema = z.object({
+  /**
+   * Whether genie manages brain embedded in its own node_modules.
+   *
+   * - `true` (default) — `genie serve` auto-starts `startEmbeddedBrainServer` and
+   *   `genie brain install` downloads the latest release tarball into node_modules.
+   *   Best for non-technical users who want brain "just working".
+   *
+   * - `false` — genie skips all embedded brain lifecycle. Power-users install brain
+   *   standalone (`bun install -g @khal-os/brain@next`) and run `brain serve` with
+   *   their own settings (custom port, brain-path, dev channel, etc.).
+   *   `genie brain install` becomes a no-op that points at the manual install command.
+   */
+  embedded: z.boolean().default(true),
+});
+
 // Council preset configuration
 // Defines a pair of profiles for dual-model deliberation
 const CouncilPresetSchema = z.object({
@@ -119,6 +136,8 @@ export const GenieConfigSchema = z.object({
   otel: OtelConfigSchema.optional(),
   // Omni integration (optional — multi-channel messaging)
   omni: OmniConfigSchema.optional(),
+  // Brain integration (optional — enterprise @khal-os/brain)
+  brain: BrainConfigSchema.default({}),
 });
 
 // Inferred types

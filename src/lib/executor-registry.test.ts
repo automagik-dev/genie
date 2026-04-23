@@ -17,19 +17,24 @@ import {
   findExecutorBySession,
   getCurrentExecutor,
   getExecutor,
+  getLiveExecutorState,
+  getResumeSessionId,
+  isExecutorAlive,
   listExecutors,
+  recordResumeProviderRejected,
   terminateActiveExecutor,
   terminateExecutor,
+  updateClaudeSessionId,
   updateExecutorState,
 } from './executor-registry.js';
 import type { ExecutorState } from './executor-types.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -41,6 +46,7 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
     await sql`DELETE FROM assignments`;
     await sql`DELETE FROM executors`;
     await sql`DELETE FROM agents`;
+    await sql`DELETE FROM audit_events WHERE event_type LIKE 'resume.%'`;
   });
 
   /** Helper: create an agent and return its ID. */
@@ -313,6 +319,130 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
 
     test('returns null for nonexistent session', async () => {
       expect(await findExecutorBySession('sess-nonexistent')).toBeNull();
+    });
+  });
+
+  // ==========================================================================
+  // getResumeSessionId — single-reader chokepoint for resume decisions
+  // ==========================================================================
+
+  describe('getResumeSessionId', () => {
+    async function latestAuditForAgent(agentId: string, eventType: string) {
+      const sql = await getConnection();
+      const rows = await sql<{ event_type: string; details: Record<string, unknown>; created_at: string }[]>`
+        SELECT event_type, details, created_at
+        FROM audit_events
+        WHERE entity_type = 'agent' AND entity_id = ${agentId} AND event_type = ${eventType}
+        ORDER BY id DESC
+        LIMIT 1
+      `;
+      return rows[0] ?? null;
+    }
+
+    test('happy path: returns session from current executor and emits resume.found', async () => {
+      const agentId = await seedAgent();
+      const exec = await createExecutor(agentId, 'claude', 'tmux', { claudeSessionId: 'sess-happy' });
+      await setCurrentExecutor(agentId, exec.id);
+
+      const sessionId = await getResumeSessionId(agentId);
+      expect(sessionId).toBe('sess-happy');
+
+      const event = await latestAuditForAgent(agentId, 'resume.found');
+      expect(event).not.toBeNull();
+      expect(event!.details.executorId).toBe(exec.id);
+      expect(event!.details.sessionId).toBe('sess-happy');
+    });
+
+    test('no current executor: returns null and emits resume.missing_session (no_executor)', async () => {
+      const agentId = await seedAgent();
+      // No executor assigned → current_executor_id is null
+
+      const sessionId = await getResumeSessionId(agentId);
+      expect(sessionId).toBeNull();
+
+      const event = await latestAuditForAgent(agentId, 'resume.missing_session');
+      expect(event).not.toBeNull();
+      expect(event!.details.reason).toBe('no_executor');
+    });
+
+    test('executor without session: returns null and emits resume.missing_session (null_session)', async () => {
+      const agentId = await seedAgent();
+      const exec = await createExecutor(agentId, 'claude', 'tmux'); // no claudeSessionId
+      await setCurrentExecutor(agentId, exec.id);
+
+      const sessionId = await getResumeSessionId(agentId);
+      expect(sessionId).toBeNull();
+
+      const event = await latestAuditForAgent(agentId, 'resume.missing_session');
+      expect(event).not.toBeNull();
+      expect(event!.details.reason).toBe('null_session');
+      expect(event!.details.executorId).toBe(exec.id);
+    });
+
+    test('multiple prior executors: only the current executor counts', async () => {
+      const agentId = await seedAgent();
+
+      // Three historical executors with different sessions
+      const e1 = await createExecutor(agentId, 'claude', 'tmux', { claudeSessionId: 'sess-old-1' });
+      await updateExecutorState(e1.id, 'terminated');
+      const e2 = await createExecutor(agentId, 'claude', 'tmux', { claudeSessionId: 'sess-old-2' });
+      await updateExecutorState(e2.id, 'done');
+
+      // Current executor has its own session
+      const eCurrent = await createExecutor(agentId, 'claude', 'tmux', {
+        claudeSessionId: 'sess-current',
+      });
+      await setCurrentExecutor(agentId, eCurrent.id);
+
+      const sessionId = await getResumeSessionId(agentId);
+      expect(sessionId).toBe('sess-current');
+
+      const event = await latestAuditForAgent(agentId, 'resume.found');
+      expect(event!.details.executorId).toBe(eCurrent.id);
+      expect(event!.details.sessionId).toBe('sess-current');
+    });
+
+    test('returns null for unknown agent and emits resume.missing_session', async () => {
+      const sessionId = await getResumeSessionId('00000000-0000-0000-0000-000000000000');
+      expect(sessionId).toBeNull();
+
+      const event = await latestAuditForAgent('00000000-0000-0000-0000-000000000000', 'resume.missing_session');
+      expect(event).not.toBeNull();
+      expect(event!.details.reason).toBe('no_executor');
+    });
+
+    test('picks up session written after executor creation via updateClaudeSessionId', async () => {
+      const agentId = await seedAgent();
+      const exec = await createExecutor(agentId, 'claude', 'tmux');
+      await setCurrentExecutor(agentId, exec.id);
+
+      expect(await getResumeSessionId(agentId)).toBeNull();
+
+      await updateClaudeSessionId(exec.id, 'sess-late');
+
+      const sessionId = await getResumeSessionId(agentId);
+      expect(sessionId).toBe('sess-late');
+    });
+  });
+
+  describe('recordResumeProviderRejected', () => {
+    test('emits resume.provider_rejected with sessionId and reason', async () => {
+      const agentId = await seedAgent();
+
+      await recordResumeProviderRejected(agentId, 'sess-rejected', 'provider_404');
+
+      const sql = await getConnection();
+      const rows = await sql<{ details: Record<string, unknown> }[]>`
+        SELECT details FROM audit_events
+        WHERE entity_type = 'agent'
+          AND entity_id = ${agentId}
+          AND event_type = 'resume.provider_rejected'
+        ORDER BY id DESC
+        LIMIT 1
+      `;
+      expect(rows.length).toBe(1);
+      expect(rows[0].details.sessionId).toBe('sess-rejected');
+      expect(rows[0].details.reason).toBe('provider_404');
     });
   });
 
@@ -735,36 +865,20 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
   // ==========================================================================
 
   describe('migration integrity', () => {
-    /** Query columns for a table, scoped to test schema if available. */
+    /** Query columns for a table in the test DB's `public` schema. */
     async function getColumns(table: string, filter?: string) {
       const sql = await getConnection();
-      const schema = process.env.GENIE_TEST_SCHEMA;
-      if (schema && filter) {
-        return sql`
-          SELECT column_name FROM information_schema.columns
-          WHERE table_name = ${table} AND table_schema = ${schema}
-          AND column_name IN ${sql(filter.split(','))}
-          ORDER BY column_name
-        `;
-      }
-      if (schema) {
-        return sql`
-          SELECT column_name FROM information_schema.columns
-          WHERE table_name = ${table} AND table_schema = ${schema}
-          ORDER BY ordinal_position
-        `;
-      }
       if (filter) {
         return sql`
           SELECT column_name FROM information_schema.columns
-          WHERE table_name = ${table}
+          WHERE table_name = ${table} AND table_schema = 'public'
           AND column_name IN ${sql(filter.split(','))}
           ORDER BY column_name
         `;
       }
       return sql`
         SELECT column_name FROM information_schema.columns
-        WHERE table_name = ${table}
+        WHERE table_name = ${table} AND table_schema = 'public'
         ORDER BY ordinal_position
       `;
     }
@@ -856,16 +970,10 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
 
     test('indexes exist on executors table', async () => {
       const sql = await getConnection();
-      const schema = process.env.GENIE_TEST_SCHEMA;
-      const indexes = schema
-        ? await sql`
-            SELECT indexname FROM pg_indexes
-            WHERE tablename = 'executors' AND schemaname = ${schema}
-          `
-        : await sql`
-            SELECT indexname FROM pg_indexes
-            WHERE tablename = 'executors'
-          `;
+      const indexes = await sql`
+        SELECT indexname FROM pg_indexes
+        WHERE tablename = 'executors' AND schemaname = 'public'
+      `;
       const names = indexes.map((i: { indexname: string }) => i.indexname);
       expect(names).toContain('idx_executors_agent_id');
       expect(names).toContain('idx_executors_state');
@@ -997,6 +1105,135 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
       // FK points to the last executor
       const agent = await getAgent(agentId);
       expect(agent!.currentExecutorId).toBe(active[0].id);
+    });
+  });
+
+  // ==========================================================================
+  // getLiveExecutorState / isExecutorAlive — liveness + display state for
+  // non-tmux transports (SDK, omni, process).
+  //
+  // Regression for `genie ls` showing SDK/omni-bridge agents as 'offline' while
+  // actively running. Tmux liveness (isPaneAlive) stays authoritative for tmux
+  // agents; `executors.state` is the authoritative source for everything else,
+  // and is returned directly so the display doesn't fall back to the stale
+  // `agents.state` column.
+  // ==========================================================================
+
+  describe('getLiveExecutorState', () => {
+    test('returns the executor state for each live state', async () => {
+      const liveStates: ExecutorState[] = ['spawning', 'running', 'working', 'idle', 'permission', 'question'];
+      for (const state of liveStates) {
+        const agentId = await seedAgent(`state-${state}`, 'live-team');
+        await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state });
+        expect(await getLiveExecutorState(agentId)).toBe(state);
+      }
+    });
+
+    test('returns null for terminal states (done / error / terminated)', async () => {
+      const terminalStates: ExecutorState[] = ['done', 'error', 'terminated'];
+      for (const terminal of terminalStates) {
+        const agentId = await seedAgent(`terminal-${terminal}`, 'terminal-team');
+        const exec = await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state: 'running' });
+        await updateExecutorState(exec.id, terminal);
+        expect(await getLiveExecutorState(agentId)).toBeNull();
+      }
+    });
+
+    test('returns null when agent has no current executor', async () => {
+      const agentId = await seedAgent();
+      expect(await getLiveExecutorState(agentId)).toBeNull();
+    });
+
+    test('returns null for nonexistent agent', async () => {
+      expect(await getLiveExecutorState('ghost-agent')).toBeNull();
+    });
+
+    test('tracks live → terminated transition', async () => {
+      const agentId = await seedAgent();
+      const exec = await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state: 'working' });
+      expect(await getLiveExecutorState(agentId)).toBe('working');
+
+      await updateExecutorState(exec.id, 'done');
+      expect(await getLiveExecutorState(agentId)).toBeNull();
+    });
+
+    test('works for process transport (SDK) with null pane id', async () => {
+      // Simulates the real bug: SDK agents register with paneId='sdk',
+      // omni auto-spawn with paneId=''. Neither matches /^%\d+$/ so
+      // isPaneAlive falsely reports offline. getLiveExecutorState bypasses that
+      // and returns the authoritative executor state.
+      const agentId = await seedAgent();
+      await createAndLinkExecutor(agentId, 'claude-sdk', 'process', {
+        state: 'working',
+        tmuxPaneId: null,
+      });
+      expect(await getLiveExecutorState(agentId)).toBe('working');
+    });
+  });
+
+  describe('isExecutorAlive', () => {
+    test('returns true when current executor is running', async () => {
+      const agentId = await seedAgent();
+      await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state: 'running' });
+      expect(await isExecutorAlive(agentId)).toBe(true);
+    });
+
+    test('returns true for each live state (working/idle/permission/question/spawning)', async () => {
+      const liveStates: ExecutorState[] = ['spawning', 'running', 'working', 'idle', 'permission', 'question'];
+      for (const state of liveStates) {
+        const agentId = await seedAgent(`agent-${state}`, 'live-team');
+        await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state });
+        expect(await isExecutorAlive(agentId)).toBe(true);
+      }
+    });
+
+    test('returns false when current executor is terminated', async () => {
+      const agentId = await seedAgent();
+      const exec = await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state: 'running' });
+      await updateExecutorState(exec.id, 'terminated');
+      expect(await isExecutorAlive(agentId)).toBe(false);
+    });
+
+    test('returns false for done / error terminal states', async () => {
+      const agent1 = await seedAgent('done-agent', 'terminal-team');
+      const e1 = await createAndLinkExecutor(agent1, 'claude-sdk', 'process', { state: 'running' });
+      await updateExecutorState(e1.id, 'done');
+      expect(await isExecutorAlive(agent1)).toBe(false);
+
+      const agent2 = await seedAgent('error-agent', 'terminal-team');
+      const e2 = await createAndLinkExecutor(agent2, 'claude-sdk', 'process', { state: 'running' });
+      await updateExecutorState(e2.id, 'error');
+      expect(await isExecutorAlive(agent2)).toBe(false);
+    });
+
+    test('returns false when agent has no current executor', async () => {
+      const agentId = await seedAgent();
+      expect(await isExecutorAlive(agentId)).toBe(false);
+    });
+
+    test('returns false for nonexistent agent', async () => {
+      expect(await isExecutorAlive('ghost-agent')).toBe(false);
+    });
+
+    test('tracks live → terminated transition', async () => {
+      const agentId = await seedAgent();
+      const exec = await createAndLinkExecutor(agentId, 'claude-sdk', 'process', { state: 'working' });
+      expect(await isExecutorAlive(agentId)).toBe(true);
+
+      await updateExecutorState(exec.id, 'done');
+      expect(await isExecutorAlive(agentId)).toBe(false);
+    });
+
+    test('works for process transport (SDK) with empty/synthetic pane ids', async () => {
+      // Simulates the real bug: SDK agents register with paneId='sdk',
+      // omni auto-spawn with paneId=''. Neither matches /^%\d+$/ so
+      // isPaneAlive falsely reports offline. isExecutorAlive bypasses that.
+      const agentId = await seedAgent();
+      await createAndLinkExecutor(agentId, 'claude-sdk', 'process', {
+        state: 'working',
+        tmuxPaneId: null,
+      });
+      expect(await isExecutorAlive(agentId)).toBe(true);
     });
   });
 });

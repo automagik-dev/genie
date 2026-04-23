@@ -11,12 +11,12 @@
  * approval, direct messages) without needing tmux send-keys injection.
  */
 
-import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, open, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ensureTeammateBypassPermissions } from './claude-settings.js';
+import { acquireLock, releaseLock } from './lockfile.js';
 import type { ClaudeTeamColor } from './provider-adapters.js';
 import { CLAUDE_TEAM_COLORS } from './provider-adapters.js';
 
@@ -39,13 +39,22 @@ interface NativeTeamMember {
 }
 
 /** The native team config.json root structure. */
-interface NativeTeamConfig {
+export interface NativeTeamConfig {
   name: string;
   description?: string;
   createdAt: number;
   leadAgentId: string;
   leadSessionId: string;
   members: NativeTeamMember[];
+  // Optional fields populated by `createTeam` but absent on minimal configs.
+  repo?: string;
+  baseBranch?: string;
+  worktreePath?: string;
+  status?: string;
+  tmuxSessionName?: string;
+  nativeTeamParentSessionId?: string;
+  nativeTeamsEnabled?: boolean;
+  wishSlug?: string;
 }
 
 /** A message in Claude Code's native inbox format. */
@@ -101,73 +110,6 @@ function inboxPath(teamName: string, agentName: string): string {
   return join(inboxesDir(teamName), `${sanitizeTeamName(agentName)}.json`);
 }
 
-function lockPath(filePath: string): string {
-  return `${filePath}.lock`;
-}
-
-// ============================================================================
-// Lockfile (simple polling lock for concurrent inbox writes)
-// ============================================================================
-
-const LOCK_TIMEOUT_MS = 5000;
-const LOCK_POLL_MS = 50;
-
-/** Check if a PID is still alive using kill -0 (signal 0 = existence check). */
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function acquireLock(path: string): Promise<void> {
-  const lock = lockPath(path);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
-    try {
-      await writeFile(lock, String(process.pid), { flag: 'wx' });
-      return; // acquired
-    } catch {
-      // Lock exists — check if holder PID is still alive
-      try {
-        const content = await readFile(lock, 'utf-8');
-        const holderPid = Number.parseInt(content.trim(), 10);
-        if (!Number.isNaN(holderPid) && !isPidAlive(holderPid)) {
-          // Holder is dead — remove stale lock and retry immediately
-          try {
-            await unlink(lock);
-          } catch {
-            // Another process may have already cleaned it up
-          }
-          continue;
-        }
-      } catch {
-        // Lock file disappeared between check and read — retry
-        continue;
-      }
-
-      // Lock holder is alive — wait with jitter and retry
-      const jitter = Math.floor(Math.random() * LOCK_POLL_MS);
-      await new Promise((r) => setTimeout(r, LOCK_POLL_MS + jitter));
-    }
-  }
-
-  // Timeout — force acquire (likely stale lock)
-  console.warn(`[claude-native-teams] Force-acquiring stale lock: ${lock}`);
-  await writeFile(lock, String(process.pid));
-}
-
-async function releaseLock(path: string): Promise<void> {
-  try {
-    await unlink(lockPath(path));
-  } catch {
-    // Already released
-  }
-}
-
 // ============================================================================
 // Config Operations
 // ============================================================================
@@ -182,6 +124,60 @@ export async function loadConfig(teamName: string): Promise<NativeTeamConfig | n
     console.warn(`[claude-native-teams] Failed to load config for "${teamName}": ${message}`);
     return null;
   }
+}
+
+/**
+ * Public single-team loader — canonical name for the disk→PG rehydration path.
+ * Alias of `loadConfig` with an explicit, self-documenting name. Used by
+ * `team-manager.ts#ensureTeamRow` and `term-commands/doctor.ts#repairTeams`.
+ *
+ * Returns null when the team has no on-disk config.json (e.g. truly-new team)
+ * — callers should fall back to their default construction logic in that case.
+ */
+export async function loadNativeTeamConfig(teamName: string): Promise<NativeTeamConfig | null> {
+  return loadConfig(teamName);
+}
+
+/**
+ * Load every on-disk native team config in one pass.
+ *
+ * Used by `pg-seed.ts#seedTeams` (boot rehydration) and
+ * `term-commands/doctor.ts#repairTeams` (on-demand repair). Teams whose
+ * config.json fails to load are silently skipped (same policy as
+ * `loadConfig`) — this is a best-effort bulk read for observability and
+ * rehydration; individual failures must not block the whole pass.
+ *
+ * Order is filesystem order (as returned by readdir) — callers that need a
+ * stable order should sort.
+ */
+export async function loadAllNativeTeamConfigs(): Promise<NativeTeamConfig[]> {
+  const teamNames = await listTeams();
+  const configs: NativeTeamConfig[] = [];
+  for (const name of teamNames) {
+    const cfg = await loadConfig(name);
+    if (cfg) configs.push(cfg);
+  }
+  return configs;
+}
+
+/**
+ * Find all teams whose config.json lists the given agent name as a member.
+ *
+ * Used by the spawn path as a last-resort fallback to resolve `--team` when
+ * neither an explicit flag nor `GENIE_TEAM` nor a parent session is available
+ * (e.g. detached spawns from the TUI after a DB reset). Returns team names
+ * sanitized exactly as they appear on disk.
+ */
+export async function findTeamsContainingAgent(agentName: string): Promise<string[]> {
+  const teams = await listTeams();
+  const matches: string[] = [];
+  for (const teamName of teams) {
+    const config = await loadConfig(teamName);
+    if (!config) continue;
+    const hit = config.members.some((m) => m.name === agentName || m.agentType === agentName);
+    if (hit) matches.push(teamName);
+  }
+  return matches;
 }
 
 async function saveConfig(teamName: string, config: NativeTeamConfig): Promise<void> {
@@ -227,7 +223,15 @@ export async function ensureNativeTeam(
   ensureTeammateBypassPermissions();
 
   const existing = await loadConfig(teamName);
-  if (existing) return existing;
+  if (existing) {
+    // Back-fill the PG teams row if it's missing (e.g. after a pgserve reset
+    // where the on-disk native team survived but the `teams` row did not).
+    // Pass the already-loaded config so the backfill uses disk truth for repo,
+    // worktree, leader, and members — not `process.cwd()` defaults (Bug C).
+    // Best-effort — never block the native team code path on PG failures.
+    await backfillTeamRow(sanitizeTeamName(teamName), existing);
+    return existing;
+  }
 
   const sanitized = sanitizeTeamName(teamName);
   const resolvedLeader = sanitizeTeamName(leaderName ?? teamName);
@@ -241,7 +245,28 @@ export async function ensureNativeTeam(
   };
 
   await saveConfig(teamName, config);
+  // Mirror the newly created native team into the PG `teams` registry so
+  // `genie team ls` reflects reality. Pass the freshly-created config through
+  // so the PG row is seeded with the same members/leader we just wrote to
+  // disk. Idempotent and best-effort.
+  await backfillTeamRow(sanitized, config);
   return config;
+}
+
+/**
+ * Best-effort mirror of a native team into the PG `teams` registry.
+ *
+ * Loaded via dynamic import to avoid a circular dependency with
+ * `./team-manager.ts` (which imports this module). Failures are swallowed:
+ * the native team code path must not be blocked by PG issues.
+ */
+async function backfillTeamRow(name: string, nativeConfig?: NativeTeamConfig): Promise<void> {
+  try {
+    const { ensureTeamRow } = await import('./team-manager.js');
+    await ensureTeamRow(name, { nativeConfig });
+  } catch {
+    // best-effort — PG unavailable, circular-import edge case, etc.
+  }
 }
 
 /**
@@ -292,109 +317,6 @@ export async function ensureNativeTeamWithSessionId(
 }
 
 /**
- * Resolve an existing Claude Code session ID for a given team name, or mint
- * a fresh UUID if no prior session is found.
- *
- * Strategy:
- *   1. Scan `~/.claude/projects/<sanitized-cwd>/*.jsonl` for a file whose
- *      `custom-title` entry matches the sanitized team name.
- *   2. If found → return the UUID from the most recently modified match
- *      with `shouldResume: true`. The caller should launch CC with
- *      `--resume <teamName>` and CC will load that JSONL by name.
- *   3. If not found → return `{ sessionId: crypto.randomUUID(), shouldResume: false }`.
- *      The caller should launch CC with `--session-id <sessionId>` so the new
- *      CC process boots into that exact UUID — keeping the team config and
- *      the CC process in perfect agreement from the first moment.
- *
- * Callers must pass the resulting `sessionId` to both `ensureNativeTeamWithSessionId`
- * and `buildTeamLeadCommand` so the team config and the launched CC process
- * reference the same session ID.
- */
-export async function resolveOrMintLeadSessionId(
-  teamName: string,
-  cwd: string,
-): Promise<{ sessionId: string; shouldResume: boolean }> {
-  const priorId = await findNewestSessionIdForTeam(teamName, cwd);
-  if (priorId) {
-    return { sessionId: priorId, shouldResume: true };
-  }
-  return { sessionId: randomUUID(), shouldResume: false };
-}
-
-/**
- * Scan Claude Code's project directory for a JSONL whose `custom-title`
- * matches the sanitized team name. Returns the UUID from the filename of
- * the most recently modified match, or null if none found.
- *
- * Matches the same strategy used by `sessionExists()` in
- * `src/lib/team-lead-command.ts` — both the exact sanitized team name and
- * the CC-stored `{team}-{team}` prefixed form are considered matches.
- */
-async function findNewestSessionIdForTeam(teamName: string, cwd: string): Promise<string | null> {
-  const projectDir = join(claudeConfigDir(), 'projects', sanitizePath(cwd));
-  let entries: string[];
-  try {
-    entries = await readdir(projectDir);
-  } catch {
-    return null;
-  }
-  const jsonls = entries.filter((e) => e.endsWith('.jsonl'));
-  if (jsonls.length === 0) return null;
-
-  const needle = sanitizeTeamName(teamName);
-  let best: { name: string; mtime: number } | null = null;
-  for (const name of jsonls) {
-    const full = join(projectDir, name);
-    if (!(await jsonlMatchesTitle(full, needle))) continue;
-    try {
-      const s = await stat(full);
-      if (!best || s.mtimeMs > best.mtime) {
-        best = { name, mtime: s.mtimeMs };
-      }
-    } catch {
-      /* skip unreadable */
-    }
-  }
-  if (!best) return null;
-  return best.name.replace('.jsonl', '');
-}
-
-/**
- * Best-effort scan of the first 8KB of a JSONL file for a `custom-title`
- * entry whose value matches the needle (case-insensitive).
- *
- * Claude Code writes the `custom-title` as either the exact team name or a
- * `{team}-{team}` prefixed form depending on how the session was launched;
- * both are treated as matches. Any I/O or parse failure returns false.
- */
-async function jsonlMatchesTitle(filePath: string, needle: string): Promise<boolean> {
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
-  try {
-    handle = await open(filePath, 'r');
-    const buffer = Buffer.alloc(8192);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const head = buffer.toString('utf-8', 0, bytesRead);
-    for (const line of head.split('\n').slice(0, 10)) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.includes('custom-title')) continue;
-      try {
-        const entry = JSON.parse(trimmed) as { type?: string; customTitle?: string };
-        if (entry.type !== 'custom-title' || typeof entry.customTitle !== 'string') continue;
-        const ct = entry.customTitle.toLowerCase();
-        if (ct === needle || ct === `${needle}-${needle}`) return true;
-      } catch {
-        /* malformed line — keep scanning */
-      }
-    }
-  } catch {
-    return false;
-  } finally {
-    await handle?.close().catch(() => {});
-  }
-  return false;
-}
-
-/**
  * Register a member in the native team config.json.
  */
 export async function registerNativeMember(
@@ -441,7 +363,19 @@ export async function registerNativeMember(
 
 /**
  * Unregister a member from the native team config.json.
- * Marks them as inactive rather than removing (preserves history).
+ *
+ * Removes the member entry from the `members` array. The prior implementation
+ * marked `isActive: false` "to preserve history", but no call site ever
+ * consults inactive members for history — meanwhile two active readers
+ * (`resolveNativeMemberName`'s active→inactive fallback and
+ * `findTeamsContainingAgent`'s team-resolver tier 5) silently pick up stale
+ * entries, routing messages and spawn-team resolution to the wrong worker.
+ *
+ * The per-member inbox at `~/.claude/teams/<team>/inboxes/<name>.json` is
+ * cleared by `clearNativeInbox` (called alongside this function in the kill
+ * path), so there's no residual state worth preserving.
+ *
+ * See automagik-dev/genie#1179.
  */
 export async function unregisterNativeMember(teamName: string, agentName: string): Promise<void> {
   const config = await loadConfig(teamName);
@@ -450,10 +384,9 @@ export async function unregisterNativeMember(teamName: string, agentName: string
   const sanitized = sanitizeTeamName(teamName);
   const agentId = `${sanitizeTeamName(agentName)}@${sanitized}`;
 
-  const member = config.members.find((m) => m.agentId === agentId);
-  if (member) {
-    member.isActive = false;
-  }
+  const before = config.members.length;
+  config.members = config.members.filter((m) => m.agentId !== agentId);
+  if (config.members.length === before) return; // no-op: no entry matched
 
   await saveConfig(teamName, config);
 }
@@ -580,6 +513,27 @@ function extractLeaderInboxName(config: NativeTeamConfig | null, teamName?: stri
   return atIdx > 0 ? config.leadAgentId.slice(0, atIdx) : (teamName ?? 'unknown');
 }
 
+/**
+ * Resolve the working directory for a team's lead, for inbox-watcher spawn.
+ *
+ * Fallback order, matching the PG teams mirror in team-manager.ts:
+ *   1. leadMember.cwd            — the lead's own cwd when present in members[]
+ *   2. config.worktreePath       — team-level worktree when lead isn't a distinct member
+ *   3. config.repo               — repo root when no worktree provisioned
+ *   4. any member.cwd            — real councils seen with both worktreePath/repo
+ *                                  null but workers on the shared council worktree
+ *   5. null                      — preserved so the inbox-watcher's rate-limited
+ *                                  "no workingDir in config" warning still fires
+ *                                  for configs that genuinely have no usable path
+ */
+function resolveLeadWorkingDir(config: NativeTeamConfig, leaderInboxName: string): string | null {
+  const leadMember = config.members.find((m) => m.agentId === config.leadAgentId || m.name === leaderInboxName);
+  if (leadMember?.cwd) return leadMember.cwd;
+  if (config.worktreePath) return config.worktreePath;
+  if (config.repo) return config.repo;
+  return config.members.find((m) => m.cwd)?.cwd ?? null;
+}
+
 /** Scan a single team directory for unread leader inbox messages. */
 async function scanTeamInbox(
   base: string,
@@ -613,11 +567,7 @@ async function scanTeamInbox(
   const unread = messages.filter((m) => m.read === false);
   if (unread.length === 0) return null;
 
-  let workingDir: string | null = null;
-  if (config) {
-    const leadMember = config.members.find((m) => m.agentId === config?.leadAgentId || m.name === leaderInboxName);
-    if (leadMember?.cwd) workingDir = leadMember.cwd;
-  }
+  const workingDir = config ? resolveLeadWorkingDir(config, leaderInboxName) : null;
 
   return { teamName: name, unreadCount: unread.length, workingDir, firstUnreadText: unread[0]?.text ?? null };
 }
@@ -826,28 +776,61 @@ export async function discoverTeamName(cwd?: string): Promise<string | null> {
   const envTeam = process.env.GENIE_TEAM;
   if (envTeam) return envTeam;
 
+  const base = teamsBaseDir();
+
   // 2. Match session ID against team configs
   const sessionId = await discoverClaudeSessionId(cwd);
-  if (!sessionId) return null;
-
-  const base = teamsBaseDir();
-  try {
-    const teams = await readdir(base);
-    for (const name of teams) {
-      const cfgPath = join(base, name, 'config.json');
-      try {
-        const content = await readFile(cfgPath, 'utf-8');
-        const config: NativeTeamConfig = JSON.parse(content);
-        if (config.leadSessionId === sessionId) return config.name;
-      } catch {
-        // skip invalid configs
+  if (sessionId) {
+    try {
+      const teams = await readdir(base);
+      for (const name of teams) {
+        const cfgPath = join(base, name, 'config.json');
+        try {
+          const content = await readFile(cfgPath, 'utf-8');
+          const config: NativeTeamConfig = JSON.parse(content);
+          if (config.leadSessionId === sessionId) return config.name;
+        } catch {
+          // skip invalid configs
+        }
       }
+    } catch {
+      // no teams dir
     }
-  } catch {
-    // no teams dir
+  }
+
+  // 3. Fallback: if we're inside a tmux session whose name matches an
+  // existing team config, trust that mapping. Handles the post-reboot /
+  // post-claude-restart case where the stored leadSessionId is stale but
+  // the tmux session (and thus team identity) is stable.
+  const tmuxSessionName = await currentTmuxSessionName();
+  if (tmuxSessionName) {
+    const cfgPath = join(base, tmuxSessionName, 'config.json');
+    try {
+      const content = await readFile(cfgPath, 'utf-8');
+      const config: NativeTeamConfig = JSON.parse(content);
+      return config.name;
+    } catch {
+      // no matching team on disk
+    }
   }
 
   return null;
+}
+
+/**
+ * Read the current tmux session name via `tmux display-message -p '#S'`.
+ * Returns null if not inside tmux, if the tmux binary is missing, or if
+ * the command fails for any reason. Kept local to this module to avoid a
+ * circular import with {@link ./tmux.ts} (which imports this module).
+ */
+async function currentTmuxSessionName(): Promise<string | null> {
+  if (!process.env.TMUX) return null;
+  try {
+    const { getCurrentSessionName } = await import('./tmux.js');
+    return await getCurrentSessionName();
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================

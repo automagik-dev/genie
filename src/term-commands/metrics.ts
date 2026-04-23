@@ -9,7 +9,7 @@
 
 import type { Command } from 'commander';
 import { getConnection, isAvailable } from '../lib/db.js';
-import { getEventMetrics } from '../lib/runtime-events.js';
+import { queryRuntimeEventThroughput } from '../lib/runtime-events.js';
 import { formatRelativeTimestamp as formatTimestamp, padRight } from '../lib/term-format.js';
 
 function parseSince(since: string): string {
@@ -62,7 +62,12 @@ async function metricsNowCommand(options: { json?: boolean }): Promise<void> {
   const teamCount = await sql`SELECT count(*)::int as cnt FROM teams WHERE status = 'in_progress'`;
 
   const snapshot = snapshots[0] ?? {};
-  const eventMetrics = getEventMetrics();
+
+  // Event throughput: count runtime events emitted in the last 60s.
+  // Must be DB-backed — a CLI process can't observe the emitter's in-process
+  // counters, which used to show 0 even when the system was busy.
+  const throughput = await queryRuntimeEventThroughput(60);
+
   const data = {
     active_workers: snapshot.active_workers ?? agentCount[0]?.cnt ?? 0,
     active_teams: snapshot.active_teams ?? teamCount[0]?.cnt ?? 0,
@@ -70,10 +75,7 @@ async function metricsNowCommand(options: { json?: boolean }): Promise<void> {
     cpu_percent: snapshot.cpu_percent ?? null,
     memory_mb: snapshot.memory_mb ?? null,
     snapshot_at: snapshot.created_at ? new Date(snapshot.created_at).toISOString() : null,
-    events_emitted: eventMetrics.eventsEmitted,
-    events_failed: eventMetrics.eventsFailed,
-    last_emit_duration_ms: eventMetrics.lastEmitDuration,
-    circuit_state: eventMetrics.circuitState,
+    events_emitted_last_60s: throughput.emitted,
   };
 
   if (options.json) {
@@ -88,11 +90,8 @@ async function metricsNowCommand(options: { json?: boolean }): Promise<void> {
   if (data.cpu_percent !== null) console.log(`  CPU:      ${data.cpu_percent}%`);
   if (data.memory_mb !== null) console.log(`  Memory:   ${data.memory_mb} MB`);
   if (data.snapshot_at) console.log(`  As of:    ${formatTimestamp(data.snapshot_at)}`);
-  console.log('\nEvent Throughput:');
-  console.log(`  Emitted:  ${data.events_emitted}`);
-  console.log(`  Failed:   ${data.events_failed}`);
-  console.log(`  Last ms:  ${data.last_emit_duration_ms}`);
-  console.log(`  Circuit:  ${data.circuit_state}`);
+  console.log('\nEvent Throughput (last 60s):');
+  console.log(`  Emitted:  ${data.events_emitted_last_60s}`);
 }
 
 async function metricsHistoryCommand(options: { since?: string; json?: boolean }): Promise<void> {

@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { parseDuration } from '../lib/cron.js';
 import { getConnection } from '../lib/db.js';
 import { publishRuntimeEvent } from '../lib/runtime-events.js';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 
 // ============================================================================
 // Duration parsing for prune-events
@@ -40,7 +40,7 @@ describe.skipIf(!DB_AVAILABLE)('prune-events DB operations', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {

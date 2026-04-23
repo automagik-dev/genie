@@ -18,14 +18,14 @@ import { join } from 'node:path';
 import * as directory from './agent-directory.js';
 import { syncAgentDirectory } from './agent-sync.js';
 import { getConnection } from './db.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('agent identity sync — integration', () => {
   let cleanup: () => Promise<void>;
   let workspaceRoot: string;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -216,16 +216,17 @@ model: opus
 
     await syncAgentDirectory(workspaceRoot);
     const result = await syncAgentDirectory(workspaceRoot);
-    expect(result.unchanged).toContain('stable-agent');
+    // Per wish `dir-sync-frontmatter-refresh`: the "Unchanged" skip path was
+    // eliminated. Every existing agent gets upserted and lands in `updated`.
+    expect(result.updated).toContain('stable-agent');
     expect(result.registered).toHaveLength(0);
-    expect(result.updated).toHaveLength(0);
   });
 
   // ============================================================================
   // Sync updates when AGENTS.md changes
   // ============================================================================
 
-  test('sync detects AGENTS.md frontmatter changes', async () => {
+  test('sync detects agent.yaml changes (post-migration canonical source)', async () => {
     const agentDir = createWorkspace(
       'evolving-agent',
       `---
@@ -234,18 +235,20 @@ color: blue
 ---`,
     );
 
+    // First sync migrates the AGENTS.md frontmatter into agent.yaml. Per wish
+    // `dir-sync-frontmatter-refresh`, agent.yaml becomes the canonical source
+    // thereafter; editing AGENTS.md frontmatter is a no-op.
     await syncAgentDirectory(workspaceRoot);
 
-    // Update AGENTS.md
+    // Edit the new canonical source directly.
     writeFileSync(
-      join(agentDir, 'AGENTS.md'),
-      `---
-model: opus
+      join(agentDir, 'agent.yaml'),
+      `model: opus
 color: red
 provider: codex
 description: Evolved agent
----
-# Agent`,
+promptMode: append
+`,
     );
 
     const result = await syncAgentDirectory(workspaceRoot);
@@ -284,5 +287,104 @@ promptMode: system
     expect(entry!.provider).toBe('codex');
     expect(entry!.description).toBe('Persistent test');
     expect(entry!.promptMode).toBe('system');
+  });
+
+  // ============================================================================
+  // dir-sync-frontmatter-refresh (Group 3): migration trigger + always-upsert
+  // ============================================================================
+
+  test('first sync on unmigrated agent triggers migration exactly once', async () => {
+    const agentDir = createWorkspace(
+      'fresh-agent',
+      `---
+model: sonnet
+color: blue
+---`,
+    );
+
+    const result = await syncAgentDirectory(workspaceRoot);
+    expect(result.migrated).toContain('fresh-agent');
+
+    // agent.yaml now exists, .bak preserves the original, AGENTS.md has no frontmatter
+    const fs = await import('node:fs');
+    expect(fs.existsSync(join(agentDir, 'agent.yaml'))).toBe(true);
+    expect(fs.existsSync(join(agentDir, 'AGENTS.md.bak'))).toBe(true);
+    const mdAfter = fs.readFileSync(join(agentDir, 'AGENTS.md'), 'utf-8');
+    expect(mdAfter).not.toMatch(/^---/m);
+  });
+
+  test('second sync is a no-op on the migration path (already-migrated)', async () => {
+    createWorkspace(
+      'migrated-twice',
+      `---
+model: sonnet
+---`,
+    );
+
+    const first = await syncAgentDirectory(workspaceRoot);
+    expect(first.migrated).toContain('migrated-twice');
+
+    const second = await syncAgentDirectory(workspaceRoot);
+    // Migration already done — second sync must NOT re-migrate
+    expect(second.migrated).not.toContain('migrated-twice');
+    // But the agent is still reached and upserted
+    expect(second.updated).toContain('migrated-twice');
+  });
+
+  test('editing agent.yaml + re-sync updates the DB row in one breath (the original reproducer)', async () => {
+    const agentDir = createWorkspace(
+      'repro-agent',
+      `---
+model: sonnet
+color: blue
+---`,
+    );
+
+    // First sync migrates AGENTS.md frontmatter into agent.yaml.
+    await syncAgentDirectory(workspaceRoot);
+
+    const entryBefore = await directory.get('repro-agent');
+    expect(entryBefore!.model).toBe('sonnet');
+    expect(entryBefore!.color).toBe('blue');
+
+    // Edit agent.yaml (the new canonical source) — NO manual SQL required.
+    writeFileSync(
+      join(agentDir, 'agent.yaml'),
+      `model: opus
+color: red
+description: Post-migration edit
+promptMode: append
+`,
+    );
+
+    // Second sync picks it up on the very next run.
+    const result = await syncAgentDirectory(workspaceRoot);
+    expect(result.updated).toContain('repro-agent');
+
+    const entry = await directory.get('repro-agent');
+    expect(entry!.model).toBe('opus');
+    expect(entry!.color).toBe('red');
+    expect(entry!.description).toBe('Post-migration edit');
+  });
+
+  test('SyncResult has no `unchanged` property (removed by wish)', async () => {
+    createWorkspace(
+      'stable-after-migration',
+      `---
+model: opus
+---`,
+    );
+
+    const first = await syncAgentDirectory(workspaceRoot);
+    const second = await syncAgentDirectory(workspaceRoot);
+
+    // Both results lack the old `unchanged` key entirely — the type system
+    // enforced this but we also verify at runtime for future-proofing.
+    expect(Object.hasOwn(first, 'unchanged')).toBe(false);
+    expect(Object.hasOwn(second, 'unchanged')).toBe(false);
+
+    // And the agent is reached on every run.
+    expect([...first.registered, ...first.updated]).toContain('stable-after-migration');
+    expect(second.updated).toContain('stable-after-migration');
   });
 });

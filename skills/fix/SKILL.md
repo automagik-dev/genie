@@ -96,3 +96,16 @@ genie agent send 'Review wish fix-dispatch-initial-prompt. Check the fixer chang
 - Never exceed 2 fix loops — escalate, don't spin.
 - Include original wish criteria in every fix dispatch.
 - If identical gaps persist across loops, escalate immediately — no progress means BLOCKED.
+
+## Turn close (required)
+
+Every session MUST end by writing a terminal outcome to the turn-session contract. This is how the orchestrator reconciles executor state — skipping it leaves the row open and blocks auto-resume.
+
+- `genie done` — work completed, acceptance criteria met
+- `genie blocked --reason "<why>"` — stuck, needs human input or an unblocking signal
+- `genie failed --reason "<why>"` — aborted, irrecoverable error, or cannot proceed
+
+Rules:
+- Call exactly one close verb as the last action of the session.
+- `blocked` / `failed` require `--reason`.
+- `genie done` inside an agent session (GENIE_AGENT_NAME set) closes the current executor; it does not require a wish ref.

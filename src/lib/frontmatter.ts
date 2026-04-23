@@ -50,6 +50,8 @@ export const AgentFrontmatterSchema = z.object({
   hooks: z.record(z.unknown()).optional(),
   /** SDK configuration block — permissive record so new SDK options don't require parser updates. */
   sdk: z.record(z.unknown()).optional(),
+  /** Override for the tmux session name the Omni bridge spawns into. See `DirectoryEntry.bridgeTmuxSession`. */
+  bridgeTmuxSession: z.string().optional(),
 });
 
 type AgentFrontmatter = z.infer<typeof AgentFrontmatterSchema>;

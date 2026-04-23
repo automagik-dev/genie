@@ -342,9 +342,9 @@ genie team disband <name>
 ```bash
 genie agent spawn <role>
 genie work <slug>
-genie task status <slug>
-genie task done <slug>#<group>
-genie reset <slug>#<group>
+genie wish status <slug>
+genie wish done <slug>#<group>
+genie wish reset <slug>#<group>
 ```
 
 ## PM Workflow Example
@@ -368,7 +368,7 @@ genie task move #42 --to build
 genie team create rate-limiting --repo . --wish rate-limiting
 
 # 5. Monitor: track progress
-genie task status rate-limiting
+genie wish status rate-limiting
 genie events summary --today
 
 # 6. Review: validate work

@@ -20,7 +20,20 @@ import { recordAuditEvent } from './audit.js';
 import { type Sql, getConnection } from './db.js';
 import type { AgentIdentity, ExecutorState } from './executor-types.js';
 import type { ProviderName } from './provider-adapters.js';
-import { isPaneAlive } from './tmux.js';
+import { isPaneAlive, isTmuxServerReachable } from './tmux.js';
+
+/**
+ * Resolve the tmux socket name a worker row is expected to live on.
+ *
+ * The agents schema does not record a per-worker socket column — every
+ * genie worker runs on the global `-L <socket>` server whose name comes
+ * from `GENIE_TMUX_SOCKET` (default `genie`). This helper exists so the
+ * reconciliation loop has a single source of truth and legacy rows
+ * missing any future per-row socket column fall back safely.
+ */
+function resolveWorkerSocketName(): string {
+  return process.env.GENIE_TMUX_SOCKET || 'genie';
+}
 
 export type AgentState = 'spawning' | 'working' | 'idle' | 'permission' | 'question' | 'done' | 'error' | 'suspended';
 export type TransportType = 'tmux' | 'inline';
@@ -38,7 +51,6 @@ export interface Agent {
   state: AgentState;
   lastStateChange: string;
   repoPath: string;
-  claudeSessionId?: string;
   windowName?: string;
   windowId?: string;
   role?: string;
@@ -92,7 +104,6 @@ interface AgentRow {
   state: AgentState;
   last_state_change: Date | string;
   repo_path: string;
-  claude_session_id: string | null;
   window_name: string | null;
   window_id: string | null;
   role: string | null;
@@ -151,7 +162,6 @@ function rowToAgent(r: AgentRow): Agent {
   if (r.task_title != null) agent.taskTitle = r.task_title;
   if (r.wish_slug != null) agent.wishSlug = r.wish_slug;
   if (r.group_number != null) agent.groupNumber = r.group_number;
-  if (r.claude_session_id != null) agent.claudeSessionId = r.claude_session_id;
   if (r.window_name != null) agent.windowName = r.window_name;
   if (r.window_id != null) agent.windowId = r.window_id;
   if (r.role != null) agent.role = r.role;
@@ -216,7 +226,41 @@ function buildLegacyTeamLeadEntryId(teamName: string): string {
 export async function register(agent: Agent): Promise<void> {
   const sql = await getConnection();
   const now = new Date().toISOString();
-  await sql`INSERT INTO agents (id, pane_id, session, worktree, task_id, task_title, wish_slug, group_number, started_at, state, last_state_change, repo_path, claude_session_id, window_name, window_id, role, custom_name, sub_panes, provider, transport, skill, team, tmux_window, native_agent_id, native_color, native_team_enabled, parent_session_id, suspended_at, auto_resume, resume_attempts, last_resume_attempt, max_resume_attempts, pane_color) VALUES (${agent.id}, ${agent.paneId}, ${agent.session}, ${agent.worktree ?? null}, ${agent.taskId ?? null}, ${agent.taskTitle ?? null}, ${agent.wishSlug ?? null}, ${agent.groupNumber ?? null}, ${agent.startedAt ?? now}, ${agent.state ?? 'spawning'}, ${agent.lastStateChange ?? now}, ${agent.repoPath}, ${agent.claudeSessionId ?? null}, ${agent.windowName ?? null}, ${agent.windowId ?? null}, ${agent.role ?? null}, ${agent.customName ?? null}, ${sql.json(agent.subPanes ?? [])}, ${agent.provider ?? null}, ${agent.transport ?? 'tmux'}, ${agent.skill ?? null}, ${agent.team ?? null}, ${agent.window ?? null}, ${agent.nativeAgentId ?? null}, ${agent.nativeColor ?? null}, ${agent.nativeTeamEnabled ?? false}, ${agent.parentSessionId ?? null}, ${agent.suspendedAt ?? null}, ${agent.autoResume ?? true}, ${agent.resumeAttempts ?? 0}, ${agent.lastResumeAttempt ?? null}, ${agent.maxResumeAttempts ?? 3}, ${agent.paneColor ?? null}) ON CONFLICT (id) DO UPDATE SET pane_id = EXCLUDED.pane_id, session = EXCLUDED.session, state = EXCLUDED.state, last_state_change = EXCLUDED.last_state_change, updated_at = now()`;
+
+  // Defense-in-depth: reject cross-team id collisions BEFORE the INSERT.
+  //
+  // The `ON CONFLICT (id) DO UPDATE` clause below only refreshes pane/session/
+  // state — team, role, and custom_name stay pinned to the original row.
+  // Without this pre-check, a new spawn in team B that happens to reuse an id
+  // still held by team A would silently adopt team A's row: pane/session
+  // switch to the new process, but the row's `team` stays stale. The executor
+  // runs in team B's worktree while every team-scoped query (genie send,
+  // genie inbox, wish_groups dispatch, status heartbeat) keeps routing to
+  // team A. This was the root cause of the genie-serve-obs ↔ docs-drift-omni-v2
+  // cross-team resurrection incident (2026-04-19): engineer anchors from one
+  // team ended up running in another team's worktree while wish_groups
+  // state-machine never saw the transition, stranding the new team-lead in a
+  // forever heartbeat loop.
+  //
+  // Rules:
+  //   - Same id + same team        → refresh (legitimate resume-in-place)
+  //   - Same id + existing team is null → upgrade (legacy rows pre-team-aware)
+  //   - Same id + different non-null team → REJECT loudly
+  //
+  // Callers that legitimately want to move an agent to a different team must
+  // `unregister` first; the explicit two-step signals a real intent transfer.
+  if (agent.team) {
+    const existing = await sql<{ team: string | null }[]>`
+      SELECT team FROM agents WHERE id = ${agent.id} LIMIT 1
+    `;
+    if (existing.length > 0 && existing[0].team !== null && existing[0].team !== agent.team) {
+      throw new Error(
+        `register: cross-team id collision — agent id "${agent.id}" already exists in team "${existing[0].team}", refusing to re-register under team "${agent.team}". Unregister the stale row first, or pick a different id/suffix for this spawn.`,
+      );
+    }
+  }
+
+  await sql`INSERT INTO agents (id, pane_id, session, worktree, task_id, task_title, wish_slug, group_number, started_at, state, last_state_change, repo_path, window_name, window_id, role, custom_name, sub_panes, provider, transport, skill, team, tmux_window, native_agent_id, native_color, native_team_enabled, parent_session_id, suspended_at, auto_resume, resume_attempts, last_resume_attempt, max_resume_attempts, pane_color) VALUES (${agent.id}, ${agent.paneId}, ${agent.session}, ${agent.worktree ?? null}, ${agent.taskId ?? null}, ${agent.taskTitle ?? null}, ${agent.wishSlug ?? null}, ${agent.groupNumber ?? null}, ${agent.startedAt ?? now}, ${agent.state ?? 'spawning'}, ${agent.lastStateChange ?? now}, ${agent.repoPath}, ${agent.windowName ?? null}, ${agent.windowId ?? null}, ${agent.role ?? null}, ${agent.customName ?? null}, ${sql.json(agent.subPanes ?? [])}, ${agent.provider ?? null}, ${agent.transport ?? 'tmux'}, ${agent.skill ?? null}, ${agent.team ?? null}, ${agent.window ?? null}, ${agent.nativeAgentId ?? null}, ${agent.nativeColor ?? null}, ${agent.nativeTeamEnabled ?? false}, ${agent.parentSessionId ?? null}, ${agent.suspendedAt ?? null}, ${agent.autoResume ?? true}, ${agent.resumeAttempts ?? 0}, ${agent.lastResumeAttempt ?? null}, ${agent.maxResumeAttempts ?? 3}, ${agent.paneColor ?? null}) ON CONFLICT (id) DO UPDATE SET pane_id = EXCLUDED.pane_id, session = EXCLUDED.session, state = EXCLUDED.state, last_state_change = EXCLUDED.last_state_change, team = COALESCE(agents.team, EXCLUDED.team), role = COALESCE(agents.role, EXCLUDED.role), custom_name = COALESCE(agents.custom_name, EXCLUDED.custom_name), updated_at = now()`;
 }
 
 export async function unregister(id: string): Promise<void> {
@@ -239,10 +283,18 @@ export async function list(): Promise<Agent[]> {
 /**
  * Reconcile stale spawns: reset agents stuck in 'spawning' state
  * with no pane_id for longer than the threshold back to 'error'.
+ *
+ * Also reconciles dead-pane zombies — rows in active states (`idle`,
+ * `working`, `permission`, `question`) whose tmux pane no longer exists.
+ * Those rows otherwise accumulate forever and inflate the scheduler's
+ * concurrency cap (tracer observed activeCount=142 on one machine),
+ * silently blocking every auto-resume attempt.
+ *
  * Returns the IDs of agents that were reset.
  *
  * @param thresholdSeconds - How long an agent must be stuck before reset (default: 60)
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: three sequential reconciliation passes with socket-grouping fast path
 export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<string[]> {
   try {
     const sql = await getConnection();
@@ -253,6 +305,7 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
         AND (pane_id IS NULL OR pane_id = '')
         AND current_executor_id IS NULL
         AND started_at < now() - interval '1 second' * ${thresholdSeconds}
+        AND id NOT LIKE 'dir:%'
       RETURNING id
     `;
     for (const row of rows) {
@@ -272,7 +325,107 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
         AND pane_id IS NOT NULL AND pane_id != ''
         AND started_at < now() - interval '1 second' * ${thresholdSeconds}
     `;
+
+    // Third pass (query): dead-pane zombies in active (non-spawning) states.
+    // Rows whose state is idle/working/permission/question but whose tmux
+    // pane no longer exists (e.g. user killed the session, machine rebooted,
+    // process crashed without state update). These count toward the resume
+    // concurrency cap and permanently block auto-resume once accumulated.
+    // Only rows matching the tmux pane pattern `%\d+` are candidates —
+    // synthetic paneIds ('sdk', 'inline', etc.) are non-tmux transports
+    // with their own liveness source and must not be touched here.
+    const activeDeadCandidates = await sql<{ id: string; pane_id: string; state: string }[]>`
+      SELECT id, pane_id, state FROM agents
+      WHERE state IN ('idle', 'working', 'permission', 'question')
+        AND pane_id ~ '^%[0-9]+$'
+        AND last_state_change < now() - interval '1 second' * ${thresholdSeconds}
+    `;
+
+    // Dead-socket short-circuit (Bug 4).
+    //
+    // Before touching tmux, group the 2nd+3rd pass candidates by the tmux
+    // socket they live on and check the socket file once per unique name.
+    // If the socket is gone, every worker on it is permanently dead —
+    // no need to probe `isPaneAlive` (which would just raise
+    // `TmuxUnreachableError` and cause the per-row catch to skip the
+    // worker forever, as reported in the Bug 4 scheduler-log spam).
+    //
+    // Workers on a LIVE socket keep the existing per-worker
+    // isPaneAlive + try/catch behaviour — that path is correct for
+    // "socket up but pane gone" and for transient tmux blips.
+    type SpawningRow = { id: string; pane_id: string };
+    type ActiveRow = { id: string; pane_id: string; state: string };
+    const socketBuckets = new Map<string, { spawning: SpawningRow[]; active: ActiveRow[] }>();
     for (const row of staleWithPane) {
+      const socket = resolveWorkerSocketName();
+      const bucket = socketBuckets.get(socket) ?? { spawning: [], active: [] };
+      bucket.spawning.push(row);
+      socketBuckets.set(socket, bucket);
+    }
+    for (const row of activeDeadCandidates) {
+      const socket = resolveWorkerSocketName();
+      const bucket = socketBuckets.get(socket) ?? { spawning: [], active: [] };
+      bucket.active.push(row);
+      socketBuckets.set(socket, bucket);
+    }
+
+    const liveSpawning: SpawningRow[] = [];
+    const liveActive: ActiveRow[] = [];
+    for (const [socketName, bucket] of socketBuckets) {
+      // `isTmuxSocketAlive` returns true for orphaned socket files left after
+      // an ungraceful tmux exit, which would cause the per-row probe branch
+      // below to loop forever on `TmuxUnreachableError`. `isTmuxServerReachable`
+      // actually talks to the server (cheap `list-sessions` exec) so we can
+      // distinguish a live socket from a zombie one.
+      if (await isTmuxServerReachable(socketName)) {
+        liveSpawning.push(...bucket.spawning);
+        liveActive.push(...bucket.active);
+        continue;
+      }
+      // Socket is dead — mark every candidate on it as error in one pass.
+      const allIds = [...bucket.spawning.map((r) => r.id), ...bucket.active.map((r) => r.id)];
+      if (allIds.length === 0) continue;
+
+      // Per-row state-guarded UPDATE preserves the concurrent-transition
+      // race protection from the original code.
+      for (const row of bucket.spawning) {
+        const updated = await sql<{ id: string }[]>`
+          UPDATE agents
+          SET state = 'error', last_state_change = now(), pane_id = ''
+          WHERE id = ${row.id} AND state = 'spawning'
+          RETURNING id
+        `;
+        if (updated.length > 0) {
+          console.error(
+            `[reconcile] Reset agent ${row.id} (dead socket ${socketName}, pane ${row.pane_id}) from spawning → error`,
+          );
+          resetIds.push(row.id);
+        }
+      }
+      for (const row of bucket.active) {
+        const prevState = row.state;
+        const updated = await sql<{ id: string }[]>`
+          UPDATE agents
+          SET state = 'error', last_state_change = now(), pane_id = ''
+          WHERE id = ${row.id} AND state = ${prevState}
+          RETURNING id
+        `;
+        if (updated.length > 0) {
+          console.error(
+            `[reconcile] Reset agent ${row.id} (dead socket ${socketName}, pane ${row.pane_id}) from ${prevState} → error`,
+          );
+          resetIds.push(row.id);
+        }
+      }
+      recordAuditEvent('worker', socketName, 'recovery_socket_dead', 'reconciler', {
+        socket: socketName,
+        worker_ids: allIds,
+        worker_count: allIds.length,
+      }).catch(() => {});
+    }
+
+    // Workers on live sockets: run the original per-row liveness probe.
+    for (const row of liveSpawning) {
       try {
         const alive = await isPaneAlive(row.pane_id);
         if (!alive) {
@@ -293,10 +446,151 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
         // when we can't verify pane status
       }
     }
+    for (const row of liveActive) {
+      try {
+        const alive = await isPaneAlive(row.pane_id);
+        if (!alive) {
+          const prevState = row.state;
+          const updated = await sql<{ id: string }[]>`
+            UPDATE agents
+            SET state = 'error', last_state_change = now()
+            WHERE id = ${row.id} AND state = ${prevState}
+            RETURNING id
+          `;
+          if (updated.length > 0) {
+            console.error(
+              `[reconcile] Reset zombie agent ${row.id} (dead pane ${row.pane_id}) from ${prevState} → error`,
+            );
+            recordAuditEvent('worker', row.id, 'state_changed', 'reconciler', {
+              state: 'error',
+              reason: 'dead_pane_zombie',
+              previous_state: prevState,
+            }).catch(() => {});
+            resetIds.push(row.id);
+          }
+        }
+      } catch {
+        // TmuxUnreachableError or other — skip this agent, don't mark as dead
+        // when we can't verify pane status
+      }
+    }
+
+    // Fourth pass: TTL-archive exhausted dead-pane zombies.
+    // Once the reconciler flips a dead-pane zombie to state='error' and the
+    // scheduler exhausts its retry budget (auto_resume=false), the row is
+    // inert — it can't be resumed and clutters `genie ls` forever. After
+    // `DEAD_PANE_ZOMBIE_TTL_HOURS`, transition it to 'archived' so the
+    // default listing filter hides it (see listAgents includeArchived).
+    try {
+      const archived = await archiveExhaustedZombies();
+      if (archived.length > 0) {
+        resetIds.push(...archived);
+      }
+    } catch {
+      // Best-effort — TTL archive failure must not block reconciliation.
+    }
 
     return resetIds;
   } catch {
     return []; // Best-effort — don't block startup if DB is unavailable
+  }
+}
+
+/**
+ * Default TTL (hours) after which an exhausted dead-pane zombie is archived.
+ *
+ * A zombie is any agent whose reconciler audit trail shows
+ * `reason=dead_pane_zombie` AND whose `auto_resume` has been flipped to false
+ * by the scheduler's exhaustion branch. Without this TTL, such rows stayed
+ * visible in `genie ls` forever (#1293), holding registry slots and confusing
+ * users into thinking the agent is still recoverable.
+ */
+const DEAD_PANE_ZOMBIE_TTL_HOURS = 24;
+
+/**
+ * Archive exhausted dead-pane zombies older than the TTL.
+ *
+ * Targets agents that:
+ *   1. Are in terminal `state = 'error'`
+ *   2. Have `auto_resume = false` (retry budget exhausted)
+ *   3. Were last transitioned > `ttlHours` ago
+ *   4. Have at least one reconciler audit event tagged
+ *      `reason = 'dead_pane_zombie'` (distinguishes them from other error
+ *      causes the user might want to keep visible, e.g. manual error states).
+ *
+ * Transitions matching rows to `state = 'archived'` so the default listing
+ * filter hides them. An audit event is emitted per row for traceability.
+ *
+ * @param ttlHours - Minimum age in hours before archival (default: 24)
+ * @returns IDs of agents that were archived
+ */
+export async function archiveExhaustedZombies(ttlHours = DEAD_PANE_ZOMBIE_TTL_HOURS): Promise<string[]> {
+  try {
+    const sql = await getConnection();
+    const rows = await sql<{ id: string }[]>`
+      UPDATE agents a
+      SET state = 'archived', last_state_change = now()
+      WHERE a.state = 'error'
+        AND a.auto_resume = false
+        AND a.last_state_change < now() - make_interval(hours => ${ttlHours})
+        AND EXISTS (
+          SELECT 1 FROM audit_events e
+          WHERE e.entity_type = 'worker'
+            AND e.entity_id = a.id
+            AND e.event_type = 'state_changed'
+            AND e.details->>'reason' = 'dead_pane_zombie'
+        )
+      RETURNING id
+    `;
+    const auditPromises: Promise<void>[] = [];
+    for (const row of rows) {
+      console.error(`[reconcile] Archived exhausted zombie ${row.id} (TTL ${ttlHours}h)`);
+      auditPromises.push(
+        recordAuditEvent('worker', row.id, 'state_changed', 'reconciler', {
+          state: 'archived',
+          reason: 'dead_pane_zombie_ttl_exhausted',
+          ttl_hours: ttlHours,
+        }).catch(() => {}),
+      );
+    }
+    // Wait for audit writes to land so callers can immediately query the log.
+    // `recordAuditEvent` already swallows errors, so this never throws.
+    await Promise.allSettled(auditPromises);
+    return rows.map((r: { id: string }) => r.id);
+  } catch {
+    return []; // Best-effort — never block the reconciler
+  }
+}
+
+/**
+ * Count dead-pane zombies eligible for TTL archive without mutating them.
+ * Used by `genie prune --zombies --dry-run`.
+ */
+export async function listExhaustedZombies(
+  ttlHours = DEAD_PANE_ZOMBIE_TTL_HOURS,
+): Promise<Array<{ id: string; lastStateChange: string }>> {
+  try {
+    const sql = await getConnection();
+    const rows = await sql<{ id: string; last_state_change: string }[]>`
+      SELECT a.id, a.last_state_change FROM agents a
+      WHERE a.state = 'error'
+        AND a.auto_resume = false
+        AND a.last_state_change < now() - make_interval(hours => ${ttlHours})
+        AND EXISTS (
+          SELECT 1 FROM audit_events e
+          WHERE e.entity_type = 'worker'
+            AND e.entity_id = a.id
+            AND e.event_type = 'state_changed'
+            AND e.details->>'reason' = 'dead_pane_zombie'
+        )
+      ORDER BY a.last_state_change ASC
+    `;
+    return rows.map((r: { id: string; last_state_change: string }) => ({
+      id: r.id,
+      lastStateChange: r.last_state_change,
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -328,7 +622,6 @@ export async function update(id: string, updates: Partial<Agent>): Promise<void>
   }
   if (updates.lastStateChange !== undefined) s.last_state_change = updates.lastStateChange;
   if (updates.repoPath !== undefined) s.repo_path = updates.repoPath;
-  if (updates.claudeSessionId !== undefined) s.claude_session_id = updates.claudeSessionId;
   if (updates.windowName !== undefined) s.window_name = updates.windowName;
   if (updates.windowId !== undefined) s.window_id = updates.windowId;
   if (updates.role !== undefined) s.role = updates.role;
@@ -609,36 +902,50 @@ export async function getAgentEffectiveState(agentId: string): Promise<ExecutorS
 interface ListAgentsFilter {
   team?: string;
   role?: string;
+  /**
+   * When true, include rows with `state = 'archived'`. Default false — the
+   * common case (`genie ls`, wish status, send/show) must NOT see orphan rows
+   * from disbanded teams. Pass `true` for audit/history listings (issue #1215).
+   */
+  includeArchived?: boolean;
 }
 
 /** List agent identities with optional filters. */
 export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdentity[]> {
   const sql = await getConnection();
+  const includeArchived = filters?.includeArchived ?? false;
   let rows: AgentIdentityRow[];
 
   if (filters?.team && filters?.role) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
-      FROM agents WHERE team = ${filters.team} AND role = ${filters.role}
+      FROM agents
+      WHERE team = ${filters.team} AND role = ${filters.role}
+        AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
     `;
   } else if (filters?.team) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
-      FROM agents WHERE team = ${filters.team}
+      FROM agents
+      WHERE team = ${filters.team}
+        AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
     `;
   } else if (filters?.role) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
-      FROM agents WHERE role = ${filters.role}
+      FROM agents
+      WHERE role = ${filters.role}
+        AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
     `;
   } else {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
       FROM agents
+      WHERE (${includeArchived} OR state IS DISTINCT FROM 'archived')
     `;
   }
 

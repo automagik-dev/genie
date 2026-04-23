@@ -52,6 +52,7 @@ import { registerBriefCommands } from './term-commands/brief.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
 import { registerDirNamespace } from './term-commands/dir.js';
+import { registerDispatchGroupCommands } from './term-commands/dispatch-group.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import { registerExportCommands } from './term-commands/export.js';
 import * as historyCmd from './term-commands/history.js';
@@ -63,6 +64,7 @@ import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerNotifyCommands } from './term-commands/notify.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import { registerProjectCommands } from './term-commands/project.js';
+import { registerPruneCommands } from './term-commands/prune.js';
 import {
   type QaCheckOptions,
   type QaOptions,
@@ -74,6 +76,7 @@ import {
 import * as readCmd from './term-commands/read.js';
 import { registerReleaseCommands } from './term-commands/release.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
+import { registerSecCommands } from './term-commands/sec.js';
 import { registerServeCommands } from './term-commands/serve.js';
 import { registerSessionsCommands } from './term-commands/sessions.js';
 import { registerStateCommands } from './term-commands/state.js';
@@ -82,6 +85,7 @@ import { registerTaskCommands } from './term-commands/task.js';
 import { registerTeamNamespace } from './term-commands/team.js';
 import { registerTemplateCommands } from './term-commands/template.js';
 import { registerTypeCommands } from './term-commands/type.js';
+import { registerWishCommands } from './term-commands/wish.js';
 
 // Safety net: ensure git repo is never in bare mode.
 // This should no longer trigger now that we use `git clone --shared` instead of
@@ -114,6 +118,12 @@ program.name('genie').description('Genie CLI - AI-assisted development').version
 // Global --no-interactive flag: disables all interactive prompts (scripting safety)
 program.option('--no-interactive', 'Disable interactive prompts (exit 2 instead of prompting)');
 
+// Global --no-tui flag / GENIE_TUI_DISABLE env — hotfix safety valve for the
+// OpenTUI kqueue hot-loop on macOS local ptys (`@opentui/core-darwin-arm64@0.1.102`).
+// When set, every TUI bootstrap path short-circuits BEFORE `@opentui/core` is
+// imported. See src/lib/tui-disable.ts and the hotfix PR for full context.
+program.option('--no-tui', 'Skip TUI bootstrap (or set GENIE_TUI_DISABLE=1)');
+
 program.configureHelp({
   sortSubcommands: true,
   showGlobalOptions: true,
@@ -132,19 +142,21 @@ program.configureOutput({
 // ============================================================================
 
 async function startNamedSession(name: string): Promise<void> {
-  const { buildTeamLeadCommand, sessionExists } = await import('./lib/team-lead-command.js');
+  const { randomUUID } = await import('node:crypto');
+  const { buildTeamLeadCommand } = await import('./lib/team-lead-command.js');
   const { getAgentsFilePath } = await import('./genie-commands/session.js');
 
   const systemPromptFile = getAgentsFilePath();
 
-  // Only resume if a prior CC session with this name exists (#694, #701)
-  const hasPriorSession = sessionExists(name);
+  // Group 5 of the claude-resume-by-session-id wish will wire up
+  // executor-based resume here. For now, always start a fresh session.
+  const sessionId = randomUUID();
   const cmd = buildTeamLeadCommand(name, {
     systemPromptFile: systemPromptFile ?? undefined,
-    continueName: hasPriorSession ? name : undefined,
+    sessionId,
   });
 
-  console.log(hasPriorSession ? `Resuming session: ${name}` : `Starting new session: ${name}`);
+  console.log(`Starting new session: ${name}`);
 
   const { spawnSync } = await import('node:child_process');
   const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' });
@@ -173,6 +185,8 @@ program
   .command('doctor')
   .description('Run diagnostic checks on genie installation')
   .option('--fix', 'Auto-fix: kill zombie postgres, clean shared memory, restart daemon')
+  .option('--observability', 'Report partition health + GENIE_WIDE_EMIT flag state')
+  .option('--json', 'Emit JSON instead of human output (pairs with --observability)')
   .action(doctorCommand);
 program
   .command('update')
@@ -213,6 +227,8 @@ registerAgentCommands(program);
 registerSendInboxCommands(program);
 registerStateCommands(program);
 registerDispatchCommands(program);
+registerDispatchGroupCommands(program);
+registerWishCommands(program);
 registerHookNamespace(program);
 registerDbCommands(program);
 registerScheduleCommands(program);
@@ -222,7 +238,9 @@ registerTypeCommands(program);
 registerBoardCommands(program);
 registerTagCommands(program);
 registerReleaseCommands(program);
+registerSecCommands(program);
 registerProjectCommands(program);
+registerPruneCommands(program);
 registerNotifyCommands(program);
 registerEventsCommands(program);
 registerSessionsCommands(program);
@@ -235,6 +253,49 @@ registerBriefCommands(program);
 registerApprovalCommands(program);
 
 // ============================================================================
+// Turn-close verbs — genie done / blocked / failed
+// ============================================================================
+
+program
+  .command('done [ref]')
+  .description('Close the current turn (inside an agent session) or mark a wish group done (team-lead, <slug>#<group>)')
+  .action(async (ref: string | undefined) => {
+    const { doneAction } = await import('./term-commands/done.js');
+    await doneAction(ref);
+  });
+
+program
+  .command('blocked')
+  .description('Close the current turn with outcome=blocked')
+  .requiredOption('--reason <message>', 'Why the turn is blocked')
+  .action(async (options: { reason: string }) => {
+    const { blockedAction } = await import('./term-commands/blocked.js');
+    await blockedAction(options);
+  });
+
+program
+  .command('failed')
+  .description('Close the current turn with outcome=failed')
+  .requiredOption('--reason <message>', 'Why the turn failed')
+  .action(async (options: { reason: string }) => {
+    const { failedAction } = await import('./term-commands/failed.js');
+    await failedAction(options);
+  });
+
+program
+  .command('pane-trap')
+  .description(
+    'Internal: write clean_exit_unverified outcome for a dying pane/shell. Invoked by the tmux pane-died hook and the inline shell EXIT trap.',
+  )
+  .option('--pane-id <id>', 'tmux pane id (%N) — resolved to executor via executors.tmux_pane_id')
+  .option('--executor-id <id>', 'explicit executor UUID (preferred when available)')
+  .option('--reason <reason>', 'trap source: pane_died or shell_exit', 'pane_died')
+  .action(async (options: { paneId?: string; executorId?: string; reason?: string }) => {
+    const { paneTrapAction } = await import('./term-commands/pane-trap.js');
+    await paneTrapAction(options);
+  });
+
+// ============================================================================
 // Universal workspace check — ensures workspace exists before commands that need it
 // ============================================================================
 
@@ -245,6 +306,7 @@ installWorkspaceCheck(program);
 // ============================================================================
 
 const auditTimers = new Map<string, number>();
+const auditSpans = new Map<string, import('./lib/emit.js').SpanHandle>();
 
 program.hook('preAction', (_thisCommand, actionCommand) => {
   const name = actionCommand.name();
@@ -258,6 +320,29 @@ program.hook('preAction', (_thisCommand, actionCommand) => {
       }).catch(() => {});
     })
     .catch(() => {});
+
+  // Wide-emit: open a cli.command span so command_success demotes to the debug
+  // sibling table via severity='debug' routing in emit.ts.
+  void (async () => {
+    try {
+      const { isWideEmitEnabled } = await import('./lib/observability-flag.js');
+      if (!isWideEmitEnabled()) return;
+      const { startSpan } = await import('./lib/emit.js');
+      const { getAmbient } = await import('./lib/trace-context.js');
+      const handle = startSpan(
+        'cli.command',
+        {
+          command: name,
+          args: (actionCommand.args ?? []) as string[],
+          cwd: process.cwd(),
+        },
+        { severity: 'debug', source_subsystem: 'cli', ctx: getAmbient() ?? undefined, agent: getActor() },
+      );
+      auditSpans.set(name, handle);
+    } catch {
+      /* best effort */
+    }
+  })();
 });
 
 // postAction audit is a blocking hook so the audit write completes before
@@ -275,6 +360,40 @@ program.hook('postAction', async (_thisCommand, actionCommand) => {
       args: actionCommand.args,
       duration_ms: durationMs,
     });
+  } catch {
+    /* best effort */
+  }
+
+  // Wide-emit: close the cli.command span with severity='debug' so 99/100 go
+  // to genie_runtime_events_debug and 1/100 land in the main table. Gated on
+  // GENIE_WIDE_EMIT because the span itself is a wide-emit-only row.
+  const handle = auditSpans.get(name);
+  auditSpans.delete(name);
+  try {
+    if (handle) {
+      const { isWideEmitEnabled } = await import('./lib/observability-flag.js');
+      if (isWideEmitEnabled()) {
+        const { endSpan } = await import('./lib/emit.js');
+        endSpan(
+          handle,
+          { exit_code: 0, duration_ms: durationMs ?? 0 },
+          { severity: 'debug', source_subsystem: 'cli', agent: getActor() },
+        );
+      }
+    }
+  } catch {
+    /* best effort */
+  }
+
+  // Always drain the emit queue on CLI exit, regardless of the wide-emit
+  // flag. Short-lived verbs (genie done, genie spawn, etc.) would otherwise
+  // lose every event emitted during execution: the flush timer is `.unref()`
+  // so the process exits between ticks. Events already enqueued represent
+  // real telemetry the caller intended to persist — dropping them is always
+  // wrong. See `.genie/wishes/fix-emit-queue-flush-on-cli-exit/WISH.md`.
+  try {
+    const { flushNow } = await import('./lib/emit.js');
+    await flushNow();
   } catch {
     /* best effort */
   }
@@ -506,7 +625,8 @@ program
   .description('List registered agents with runtime status')
   .option('--json', 'Output as JSON')
   .option('--source <name>', 'Filter by executor metadata source (e.g. omni)')
-  .action(async (options: { json?: boolean; source?: string }) => {
+  .option('--all', 'Include archived agents (hidden by default)')
+  .action(async (options: { json?: boolean; source?: string; all?: boolean }) => {
     try {
       await handleLsCommand(options);
     } catch (error) {
@@ -536,6 +656,21 @@ delete process.env.GENIE_TUI_RIGHT;
 // biome-ignore lint/performance/noDelete: process.env requires delete
 delete process.env.GENIE_IS_DAEMON;
 if (isTuiPane) {
+  // Hotfix: GENIE_TUI_DISABLE / --no-tui short-circuits the OpenTUI renderer
+  // BEFORE any `@opentui/core` dynamic import, so the FFI dylib never loads.
+  // This is the user-side safety valve for the macOS kqueue hot-loop in
+  // `@opentui/core-darwin-arm64@0.1.102` (local ptys only; SSH unaffected).
+  // See src/lib/tui-disable.ts for the full rationale.
+  const { isTuiDisabled, noticeTuiSkipped } = await import('./lib/tui-disable.js');
+  if (isTuiDisabled()) {
+    noticeTuiSkipped('renderer');
+    // Keep the pane quiet. Sleep forever instead of exiting so the tmux pane
+    // doesn't immediately respawn via the launch-script supervisor and retry
+    // the renderer. Users can `tmux kill-session -t genie-tui` or Ctrl-B d
+    // to detach; the pane stays idle with 0 CPU.
+    await new Promise<void>(() => {});
+    process.exit(0);
+  }
   // Restore GENIE_TUI_RIGHT so the TUI renderer can read it (we deleted it
   // from the environment to prevent child process inheritance, but the TUI
   // itself still needs it to control the right pane).
@@ -547,6 +682,19 @@ if (isTuiPane) {
 
 // Default command: genie (no args) → TUI + agent routing based on cwd.
 if (args.length === 0) {
+  // Hotfix: honor GENIE_TUI_DISABLE / --no-tui on the default (attach) path.
+  // Without this the bare `genie` command would still try to start serve and
+  // attach to the TUI pane, re-triggering the OpenTUI kqueue spin.
+  {
+    const { isTuiDisabled, noticeTuiSkipped } = await import('./lib/tui-disable.js');
+    if (isTuiDisabled()) {
+      noticeTuiSkipped('attach');
+      console.error('  Use `genie ls`, `genie spawn <agent>`, `genie log`, etc. directly.');
+      console.error('  Unset GENIE_TUI_DISABLE (or omit --no-tui) to re-enable the TUI.');
+      process.exit(0);
+    }
+  }
+
   // Already inside the TUI — resolve agent from cwd and signal navigation instead of erroring.
   if (process.env.TMUX?.includes('genie-tui')) {
     const { findWorkspace } = await import('./lib/workspace.js');
@@ -642,8 +790,10 @@ if (args.length === 0) {
   if (resolved.source !== 'default') {
     const { execSync } = await import('node:child_process');
     try {
-      // Check if agent has a running tmux session
-      execSync(`tmux has-session -t ${initialAgent} 2>/dev/null`, { stdio: 'pipe' });
+      // Check if agent has a running tmux session.
+      // `=` prefix forces literal session-name match — without it tmux parses
+      // values like `@46` as window-id syntax and fails lookup.
+      execSync(`tmux has-session -t =${initialAgent} 2>/dev/null`, { stdio: 'pipe' });
     } catch {
       // Agent session doesn't exist — spawn it
       console.log(`Spawning ${initialAgent}...`);
@@ -697,7 +847,7 @@ if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
     try {
       await program.parseAsync(process.argv);
     } finally {
-      stopOtelReceiver();
+      await stopOtelReceiver().catch(() => {});
       await shutdownDb().catch(() => {});
     }
   }
@@ -708,7 +858,7 @@ if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
     if (process.env.GENIE_PROFILE_DB) console.error(`[profile] parseAsync=${Date.now() - _cmdStart}ms`);
   } finally {
     const _shutStart = Date.now();
-    stopOtelReceiver();
+    await stopOtelReceiver().catch(() => {});
     await shutdownDb().catch(() => {});
     if (process.env.GENIE_PROFILE_DB) console.error(`[profile] shutdown=${Date.now() - _shutStart}ms`);
   }

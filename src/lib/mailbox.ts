@@ -30,6 +30,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { NativeInboxMessage } from './claude-native-teams.js';
 import { getConnection } from './db.js';
+import { endSpan, startSpan } from './emit.js';
+import { isWideEmitEnabled } from './observability-flag.js';
+import { getAmbient as getTraceContext } from './trace-context.js';
 
 // ============================================================================
 // Types
@@ -106,10 +109,32 @@ export async function send(repoPath: string, from: string, to: string, body: str
   const id = generateMessageId();
   const now = new Date().toISOString();
 
-  await sql`
-    INSERT INTO mailbox (id, from_worker, to_worker, body, repo_path, read, delivered_at, created_at)
-    VALUES (${id}, ${from}, ${to}, ${body}, ${repoPath}, false, ${null}, ${now})
-  `;
+  const span = isWideEmitEnabled()
+    ? startSpan(
+        'mailbox.delivery',
+        { from, to, channel: 'tmux', message_id: id },
+        { source_subsystem: 'mailbox', ctx: getTraceContext() ?? undefined, repo_path: repoPath, agent: from },
+      )
+    : null;
+
+  let outcome: 'delivered' | 'queued' | 'rejected' = 'queued';
+  try {
+    await sql`
+      INSERT INTO mailbox (id, from_worker, to_worker, body, repo_path, read, delivered_at, created_at)
+      VALUES (${id}, ${from}, ${to}, ${body}, ${repoPath}, false, ${null}, ${now})
+    `;
+    outcome = 'queued';
+  } catch (err) {
+    outcome = 'rejected';
+    if (span) {
+      endSpan(
+        span,
+        { outcome: 'rejected', body_excerpt: body.slice(0, 256) },
+        { source_subsystem: 'mailbox', repo_path: repoPath, agent: from },
+      );
+    }
+    throw err;
+  }
 
   const message: MailboxMessage = {
     id,
@@ -136,6 +161,14 @@ export async function send(repoPath: string, from: string, to: string, body: str
     });
   } catch {
     // Event log unavailable — mailbox durability already succeeded
+  }
+
+  if (span) {
+    endSpan(
+      span,
+      { outcome, body_excerpt: body.slice(0, 256), message_id: id },
+      { source_subsystem: 'mailbox', repo_path: repoPath, agent: from },
+    );
   }
 
   return message;

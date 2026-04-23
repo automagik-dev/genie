@@ -2,7 +2,7 @@
  * Tests for template-service.ts — Template CRUD, snapshots from boards.
  *
  * Requires pgserve to be running (auto-started via getConnection).
- * Uses isolated test schema via setupTestSchema().
+ * Uses isolated test schema via setupTestDatabase().
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
@@ -19,7 +19,7 @@ import {
   updateTemplate,
   updateTemplateColumn,
 } from './template-service.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanupSchema: () => Promise<void>;
@@ -40,7 +40,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   });
 
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {

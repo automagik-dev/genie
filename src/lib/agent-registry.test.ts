@@ -45,12 +45,12 @@ import {
   terminateExecutor,
   updateExecutorState,
 } from './executor-registry.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanup: () => Promise<void>;
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
   afterAll(async () => {
     await cleanup();
@@ -93,6 +93,96 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     test('paneColor stored', async () => {
       await register(makeAgent({ paneColor: '#ff0000' }));
       expect((await get('bd-42'))!.paneColor).toBe('#ff0000');
+    });
+
+    // Regression: cross-team id collision must not silently adopt the stale
+    // row. Pre-fix behaviour was `ON CONFLICT (id) DO UPDATE` leaving `team`
+    // untouched, so a new spawn in team B re-using an id that still lived in
+    // team A silently inherited team=A. Effect in prod: engineer anchors from
+    // a dead team resumed into a new team's worktree while their PG `team`
+    // field stayed stale, team-lead messaging went to the wrong leader, and
+    // wish_groups never transitioned from ready→in_progress.
+    test('register rejects cross-team id collision', async () => {
+      // Seed: id=engineer-2 lives in team docs-drift-omni-v2.
+      await register(
+        makeAgent({
+          id: 'engineer-2',
+          paneId: '%67',
+          team: 'docs-drift-omni-v2',
+          role: 'engineer-2',
+          customName: 'engineer-2',
+        }),
+      );
+
+      // A different team (genie-serve-obs) must NOT be able to re-register
+      // the same id without a team override — that would silently inherit
+      // team=docs-drift-omni-v2 via the ON CONFLICT clause.
+      let threw = false;
+      try {
+        await register(
+          makeAgent({
+            id: 'engineer-2',
+            paneId: '%99',
+            team: 'genie-serve-obs',
+            role: 'engineer-2',
+            customName: 'engineer-2',
+          }),
+        );
+      } catch (err) {
+        threw = true;
+        const msg = err instanceof Error ? err.message : String(err);
+        expect(msg).toMatch(/team|cross-team|collision/i);
+      }
+      expect(threw).toBe(true);
+
+      // And crucially the stale row's team stays intact — the aborted
+      // re-register must not have partially mutated the row.
+      const existing = (await get('engineer-2'))!;
+      expect(existing.team).toBe('docs-drift-omni-v2');
+    });
+
+    test('register allows same-team re-register (pane/session refresh)', async () => {
+      // Same team, same id: this is the legitimate "resume in place" pattern
+      // (e.g. engineer-2 crashed, pane %99 is dead, new pane %100 reclaims
+      // the same id under the same team). Must still work post-fix.
+      await register(
+        makeAgent({
+          id: 'engineer-2',
+          paneId: '%99',
+          team: 'genie-serve-obs',
+          role: 'engineer-2',
+        }),
+      );
+      await register(
+        makeAgent({
+          id: 'engineer-2',
+          paneId: '%100',
+          team: 'genie-serve-obs',
+          role: 'engineer-2',
+          state: 'idle',
+        }),
+      );
+      const row = (await get('engineer-2'))!;
+      expect(row.team).toBe('genie-serve-obs');
+      expect(row.paneId).toBe('%100');
+      expect(row.state).toBe('idle');
+    });
+
+    test('register allows team=null → set team (legacy upgrade path)', async () => {
+      // Pre-team-aware rows exist with team=null. First register that sets
+      // a team must succeed, not be rejected as "cross-team" (null is not a
+      // team).
+      await register(makeAgent({ id: 'legacy-1', team: undefined }));
+      await register(
+        makeAgent({
+          id: 'legacy-1',
+          paneId: '%17',
+          team: 'alpha',
+          role: 'engineer',
+        }),
+      );
+      const row = (await get('legacy-1'))!;
+      expect(row.team).toBe('alpha');
     });
   });
 
@@ -338,6 +428,276 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       const reset = await reconcileStaleSpawns(2);
       expect(reset).not.toContain(agent.id);
     });
+
+    test('does not touch directory identity rows (dir:%)', async () => {
+      // Directory rows (id prefix `dir:`) are identity records inserted by
+      // directory.add(). Pre-fix, the INSERT omitted `state` so PG applied
+      // the column DEFAULT 'spawning' and the reconciler flipped every row
+      // to 'error' ~60s after every `genie serve` boot (first-pass match:
+      // spawning + no pane + no executor + old). The reconciler now skips
+      // `dir:%` ids unconditionally so legacy rows (and any forgetful
+      // future caller) are safe. This test guards that invariant.
+      const sql = await getConnection();
+      const oldStart = new Date(Date.now() - 10_000).toISOString();
+      await sql`
+        INSERT INTO agents (id, role, custom_name, started_at, state, pane_id, current_executor_id)
+        VALUES ('dir:legacy-poisoned', 'legacy-poisoned', 'legacy-poisoned', ${oldStart}, 'spawning', '', ${null})
+      `;
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).not.toContain('dir:legacy-poisoned');
+
+      // Row still exists, still `spawning` — reconciler ignored it.
+      const [row] = await sql<{ state: string | null }[]>`
+        SELECT state FROM agents WHERE id = 'dir:legacy-poisoned'
+      `;
+      expect(row?.state).toBe('spawning');
+    });
+
+    test('flips idle+dead-pane rows to error (auto-resume-zombie-cap fix)', async () => {
+      // This is Change #3 of the auto-resume-zombie-cap fix: idle/working
+      // rows whose tmux pane is dead must be flipped to 'error' so they
+      // stop inflating the scheduler concurrency cap.
+      const { isPaneAlive } = await import('./tmux.js');
+      try {
+        await isPaneAlive('%1');
+      } catch {
+        return; // tmux server unreachable — nothing to assert
+      }
+
+      const oldChange = new Date(Date.now() - 5_000).toISOString();
+      // pane %42 does not exist → isPaneAlive returns false
+      await register(
+        makeAgent({
+          id: 'zombie-idle',
+          paneId: '%42',
+          state: 'idle',
+          startedAt: oldChange,
+          lastStateChange: oldChange,
+        }),
+      );
+      await register(
+        makeAgent({
+          id: 'zombie-working',
+          paneId: '%43',
+          state: 'working',
+          startedAt: oldChange,
+          lastStateChange: oldChange,
+        }),
+      );
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).toContain('zombie-idle');
+      expect(reset).toContain('zombie-working');
+
+      const a1 = await get('zombie-idle');
+      expect(a1!.state).toBe('error');
+      const a2 = await get('zombie-working');
+      expect(a2!.state).toBe('error');
+    });
+
+    test('does not touch idle rows whose pane is still alive', async () => {
+      // Only dead-pane rows should be GC'd. Live-pane idle rows are
+      // genuinely idle (e.g. between tasks) and must not be touched.
+      // Since we can't easily mock a live pane in this DB test, we use
+      // a recent last_state_change (under the threshold) as a proxy —
+      // the reconciler must also respect the time threshold.
+      const recent = new Date().toISOString();
+      await register(
+        makeAgent({
+          id: 'fresh-idle',
+          paneId: '%99',
+          state: 'idle',
+          startedAt: recent,
+          lastStateChange: recent,
+        }),
+      );
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).not.toContain('fresh-idle');
+
+      const a = await get('fresh-idle');
+      expect(a!.state).toBe('idle');
+    });
+
+    test('skips non-tmux (synthetic) paneIds in dead-pane pass', async () => {
+      // SDK/inline transports have paneIds like 'sdk', 'inline', '' — the
+      // regex `^%[0-9]+$` must NOT match those, so they are skipped here
+      // (their liveness is tracked by executor state, not tmux).
+      const oldChange = new Date(Date.now() - 5_000).toISOString();
+      await register(
+        makeAgent({
+          id: 'sdk-worker',
+          paneId: 'sdk',
+          state: 'working',
+          startedAt: oldChange,
+          lastStateChange: oldChange,
+        }),
+      );
+
+      const reset = await reconcileStaleSpawns(2);
+      expect(reset).not.toContain('sdk-worker');
+
+      const a = await get('sdk-worker');
+      expect(a!.state).toBe('working');
+    });
+
+    test('flips workers registered on a dead socket to error (Bug 4)', async () => {
+      // Bug 4 repro: workers recorded on a tmux socket that no longer exists
+      // were stuck in 'idle'/'working' forever because reconcileStaleSpawns
+      // catches the TmuxUnreachableError from isPaneAlive and skips the worker.
+      // After the fix, a dead socket is detected once up-front and every
+      // worker on it is transitioned to 'error' with pane_id cleared.
+      //
+      // We pick a socket name that we can guarantee does NOT exist under
+      // /tmp/tmux-<uid>/ — any random UUID works.
+      const deadSocketName = `genie-dead-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      process.env.GENIE_TMUX_SOCKET = deadSocketName;
+      try {
+        const oldChange = new Date(Date.now() - 5_000).toISOString();
+        await register(
+          makeAgent({
+            id: 'dead-socket-worker-1',
+            paneId: '%9999',
+            state: 'idle',
+            startedAt: oldChange,
+            lastStateChange: oldChange,
+          }),
+        );
+        await register(
+          makeAgent({
+            id: 'dead-socket-worker-2',
+            paneId: '%9998',
+            state: 'working',
+            startedAt: oldChange,
+            lastStateChange: oldChange,
+          }),
+        );
+
+        const reset = await reconcileStaleSpawns(2);
+        expect(reset).toContain('dead-socket-worker-1');
+        expect(reset).toContain('dead-socket-worker-2');
+
+        const a1 = await get('dead-socket-worker-1');
+        expect(a1!.state).toBe('error');
+        expect(a1!.paneId).toBe('');
+        const a2 = await get('dead-socket-worker-2');
+        expect(a2!.state).toBe('error');
+        expect(a2!.paneId).toBe('');
+      } finally {
+        // biome-ignore lint/performance/noDelete: assigning undefined would set the string "undefined"
+        delete process.env.GENIE_TMUX_SOCKET;
+      }
+    });
+
+    test('dead socket reconciliation preserves existing behavior on live sockets', async () => {
+      // Sanity check: when the tmux socket DOES exist AND the server is
+      // actually accepting commands, the dead-socket fast path must not
+      // fire — workers must go through the normal per-pane isPaneAlive
+      // check (which remains transient-blip-safe).
+      //
+      // The reconciler's reachability probe (`isTmuxServerReachable`, added
+      // 2026-04-21) actually talks to the server (`tmux -L <sock>
+      // list-sessions`) instead of just `existsSync` on the socket file, so
+      // a zero-byte placeholder no longer counts as "live". We spin up a
+      // real tmux server on a throwaway socket to exercise the live branch.
+      const { execSync, spawnSync } = await import('node:child_process');
+      const stubSocketName = `genie-live-real-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      try {
+        spawnSync('tmux', ['-L', stubSocketName, 'new-session', '-d', '-s', 'probe'], {
+          stdio: 'ignore',
+          timeout: 3000,
+        });
+      } catch {
+        // tmux missing → skip gracefully (CI sandbox without tmux).
+        return;
+      }
+      process.env.GENIE_TMUX_SOCKET = stubSocketName;
+      try {
+        // A fresh (recent) idle row: must NOT be reset because the socket
+        // is alive AND lastStateChange is inside the threshold. This
+        // exercises the preserved transient-retry path.
+        await register(
+          makeAgent({
+            id: 'live-socket-fresh-idle',
+            paneId: '%8888',
+            state: 'idle',
+            lastStateChange: new Date().toISOString(),
+          }),
+        );
+        const reset = await reconcileStaleSpawns(2);
+        expect(reset).not.toContain('live-socket-fresh-idle');
+        const a = await get('live-socket-fresh-idle');
+        expect(a!.state).toBe('idle');
+      } finally {
+        // biome-ignore lint/performance/noDelete: assigning undefined would set the string "undefined"
+        delete process.env.GENIE_TMUX_SOCKET;
+        try {
+          execSync(`tmux -L ${stubSocketName} kill-server`, { stdio: 'ignore' });
+        } catch {
+          /* best-effort cleanup */
+        }
+      }
+    });
+
+    test('flips workers on a zombie socket (file exists, server dead) to error (2026-04-21 regression)', async () => {
+      // Repro for the "genie agent spawn crashes with no server running" bug
+      // we shipped on dev on 2026-04-21: when tmux dies ungracefully it leaves
+      // its socket file on disk. `isTmuxSocketAlive` (pure existsSync) reports
+      // the socket as live, the reconciler tries to probe panes, every probe
+      // throws `TmuxUnreachableError`, nothing is ever reset. After the fix
+      // the reconciler uses `isTmuxServerReachable` which actually talks to
+      // the server, so the dead-socket fast path fires.
+      const { writeFileSync, unlinkSync } = await import('node:fs');
+      const { execSync, spawnSync } = await import('node:child_process');
+      const uid = process.getuid?.() ?? 501;
+      const zombieSocketName = `genie-zombie-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      const zombiePath = `/tmp/tmux-${uid}/${zombieSocketName}`;
+      // Start + immediately kill a real tmux server to produce a socket file
+      // that a live server is NOT listening on. Plain `writeFileSync` would
+      // also work but using real tmux proves the scenario end-to-end.
+      try {
+        spawnSync('tmux', ['-L', zombieSocketName, 'new-session', '-d', '-s', 'z'], {
+          stdio: 'ignore',
+          timeout: 3000,
+        });
+        execSync(`tmux -L ${zombieSocketName} kill-server`, { stdio: 'ignore' });
+      } catch {
+        return; // tmux missing → skip
+      }
+      // Recreate the socket file if tmux removed it on kill-server (it does).
+      try {
+        writeFileSync(zombiePath, '');
+      } catch {
+        /* may fail if path doesn't exist; the test just won't trigger the bug */
+      }
+      process.env.GENIE_TMUX_SOCKET = zombieSocketName;
+      try {
+        const oldChange = new Date(Date.now() - 5_000).toISOString();
+        await register(
+          makeAgent({
+            id: 'zombie-socket-worker',
+            paneId: '%7777',
+            state: 'working',
+            startedAt: oldChange,
+            lastStateChange: oldChange,
+          }),
+        );
+        const reset = await reconcileStaleSpawns(2);
+        expect(reset).toContain('zombie-socket-worker');
+        const a = await get('zombie-socket-worker');
+        expect(a!.state).toBe('error');
+        expect(a!.paneId).toBe('');
+      } finally {
+        // biome-ignore lint/performance/noDelete: assigning undefined would set the string "undefined"
+        delete process.env.GENIE_TMUX_SOCKET;
+        try {
+          unlinkSync(zombiePath);
+        } catch {
+          /* best-effort */
+        }
+      }
+    });
   });
 
   describe('templates', () => {
@@ -482,6 +842,39 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await findOrCreateAgent('b', 'team1', 'reviewer');
       await findOrCreateAgent('c', 'team2', 'engineer');
       expect((await listAgents({ team: 'team1', role: 'engineer' })).length).toBe(1);
+    });
+
+    test('excludes archived rows by default (issue #1215)', async () => {
+      const archived = await findOrCreateAgent('stale', 'disbanded-team', 'engineer');
+      const live = await findOrCreateAgent('fresh', 'active-team', 'engineer');
+
+      // Flip the disbanded row to archived (mirrors archiveTeam/disbandTeam path)
+      const sql = await getConnection();
+      await sql`UPDATE agents SET state = 'archived' WHERE id = ${archived.id}`;
+
+      const names = (await listAgents()).map((a) => a.id);
+      expect(names).toContain(live.id);
+      expect(names).not.toContain(archived.id);
+
+      // Filter variants must also exclude archived by default
+      expect((await listAgents({ team: 'disbanded-team' })).length).toBe(0);
+      expect((await listAgents({ role: 'engineer' })).map((a) => a.id)).not.toContain(archived.id);
+      expect((await listAgents({ team: 'disbanded-team', role: 'engineer' })).length).toBe(0);
+    });
+
+    test('includeArchived=true surfaces archived rows for audit', async () => {
+      const archived = await findOrCreateAgent('stale', 'disbanded-team', 'engineer');
+      const live = await findOrCreateAgent('fresh', 'active-team', 'engineer');
+
+      const sql = await getConnection();
+      await sql`UPDATE agents SET state = 'archived' WHERE id = ${archived.id}`;
+
+      const ids = (await listAgents({ includeArchived: true })).map((a) => a.id);
+      expect(ids).toContain(live.id);
+      expect(ids).toContain(archived.id);
+
+      // Team scope + includeArchived returns the orphan
+      expect((await listAgents({ team: 'disbanded-team', includeArchived: true })).length).toBe(1);
     });
   });
 

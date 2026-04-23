@@ -246,7 +246,7 @@ genie agent send 'Trace: genie work dispatches engineers but they start idle. Ch
 
 # 3. Capture evidence
 # Screenshot of idle engineer pane showing empty ❯ prompt
-# Output of: genie task status <slug> showing "in_progress" but no actual progress
+# Output of: genie wish status <slug> showing "in_progress" but no actual progress
 
 # 4. Create GitHub issue with all findings
 gh issue create --title "bug: genie work dispatch — engineers spawn idle without initial task prompt" --body "$(cat <<'EOF'
@@ -259,7 +259,7 @@ protocolRouter.sendMessage fails silently under concurrent dispatch (4/6 enginee
 
 ## Evidence
 - [Screenshot: idle engineer pane]
-- genie task status shows in_progress but engineers at empty prompt
+- genie wish status shows in_progress but engineers at empty prompt
 - Native inbox files: engineer-1 through engineer-4 have no dispatch message
 
 ## Steps to Reproduce

@@ -1,4 +1,5 @@
-import { basename } from 'node:path';
+import { existsSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { tmuxBin } from './ensure-tmux.js';
 import { shellQuote } from './team-lead-command.js';
 // tmux-wrapper imported dynamically inside executeTmux for test mockability
@@ -155,7 +156,11 @@ export async function killSession(sessionId: string): Promise<void> {
 export async function listWindows(sessionId: string): Promise<TmuxWindow[]> {
   try {
     const format = '#{window_id}:#{window_name}:#{window_index}:#{?window_active,1,0}';
-    const output = await executeTmux(`list-windows -t '${sessionId}' -F '${format}'`);
+    // Use `=` prefix to force literal session-name match. Without it, tmux
+    // interprets values like `@46` as window-id syntax (`@N`) instead of
+    // session names, causing "can't find window: @46" errors when looking up
+    // anonymously-named sessions created by `genie spawn --new-window`.
+    const output = await executeTmux(`list-windows -t '=${sessionId}' -F '${format}'`);
 
     if (!output) return [];
 
@@ -536,6 +541,58 @@ export class TmuxUnreachableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'TmuxUnreachableError';
+  }
+}
+
+/**
+ * Check if a tmux socket file exists on disk.
+ *
+ * tmux stores per-user sockets at `/tmp/tmux-<uid>/<socketName>`. If the
+ * file is missing, the tmux server for that socket is not running and
+ * every pane registered against it is permanently dead — no amount of
+ * transient-retry will recover. Callers use this to distinguish
+ * "socket permanently gone" from the transient `TmuxUnreachableError`
+ * surfaced by `isPaneAlive`.
+ *
+ * Returns `false` for empty/undefined socket names (safer default than
+ * assuming `true` and then trying to probe a non-existent server).
+ */
+function isTmuxSocketAlive(socketName: string | undefined | null): boolean {
+  if (!socketName) return false;
+  const uid = process.getuid?.() ?? 501;
+  return existsSync(join(`/tmp/tmux-${uid}`, socketName));
+}
+
+/**
+ * Probe whether the tmux server on `socketName` is actually accepting
+ * commands — not just whether its socket file exists on disk.
+ *
+ * `isTmuxSocketAlive` is a pure `existsSync` check, which returns `true`
+ * for orphaned socket files left behind when the tmux server dies
+ * ungracefully (SIGKILL, OOM, host reboot mid-session). Every subsequent
+ * `isPaneAlive` probe on such a "zombie socket" throws
+ * `TmuxUnreachableError`, which jams the reconciler's dead-socket
+ * fast-path, the scheduler's recovery pass, and `resolveSpawnIdentity` —
+ * users see `genie agent spawn` fail with a raw tmux stderr.
+ *
+ * This probe runs `tmux -L <sock> list-sessions`; success (incl. empty
+ * server) means reachable, failure means the socket is stale. We do not
+ * unlink the stale socket — tmux recreates it atomically on next
+ * session start, and silent cleanup of shared fs state outside our
+ * ownership is risky.
+ */
+export async function isTmuxServerReachable(socketName: string | undefined | null): Promise<boolean> {
+  if (!socketName) return false;
+  if (!isTmuxSocketAlive(socketName)) return false;
+  try {
+    const { execSync } = await import('node:child_process');
+    execSync(`${tmuxBin()} -L ${shellQuote(socketName)} list-sessions -F ''`, {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      timeout: 2000,
+    });
+    return true;
+  } catch {
+    return false;
   }
 }
 

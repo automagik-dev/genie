@@ -8,6 +8,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import type { Agent, AgentState } from '../lib/agent-registry.js';
 import * as registry from '../lib/agent-registry.js';
 import { getConnection } from '../lib/db.js';
+import { MissingResumeSessionError } from '../lib/protocol-router.js';
 import {
   type LogEntry,
   type SchedulerConfig,
@@ -16,7 +17,8 @@ import {
   attemptAgentResume,
   recoverOnStartup,
 } from '../lib/scheduler-daemon.js';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
+import { handleWorkerResume } from '../term-commands/agents.js';
 
 const TEST_DIR = '/tmp/genie-resume-test';
 
@@ -36,7 +38,7 @@ function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
     id: 'test-agent',
     paneId: '%42',
     state: 'error',
-    claudeSessionId: 'session-abc',
+    currentSessionId: 'session-abc',
     autoResume: true,
     resumeAttempts: 0,
     maxResumeAttempts: 3,
@@ -83,7 +85,7 @@ let cleanupSchema: () => Promise<void>;
 
 describe.skipIf(!DB_AVAILABLE)('resume', () => {
   beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
+    cleanupSchema = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -107,7 +109,7 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
   // --------------------------------------------------------------------------
 
   test('manual resume: suspended agent with sessionId is resumed', async () => {
-    const agent = makeWorker({ state: 'suspended', claudeSessionId: 'session-xyz' });
+    const agent = makeWorker({ state: 'suspended', currentSessionId: 'session-xyz' });
     const { deps, logs } = createMockDeps({ resumeAgent: async () => true });
 
     const result = await attemptAgentResume(deps, defaultConfig, agent);
@@ -117,7 +119,7 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
   });
 
   test('manual resume: missing sessionId is rejected', async () => {
-    const agent = makeWorker({ claudeSessionId: undefined });
+    const agent = makeWorker({ currentSessionId: undefined });
     const { deps, logs } = createMockDeps();
 
     const result = await attemptAgentResume(deps, defaultConfig, agent);
@@ -137,7 +139,6 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
       state: 'suspended',
       lastStateChange: '2026-03-20T12:00:00Z',
       repoPath: '/tmp',
-      claudeSessionId: 'session-xyz',
       resumeAttempts: 2,
       maxResumeAttempts: 3,
     };
@@ -156,6 +157,11 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
   });
 
   test('resume --all: identifies all eligible agents', async () => {
+    // Post-migration-047: session lives on the current executor row, not on
+    // the agent row. Eligibility now requires `state ∈ {suspended, error}`
+    // AND `executors.claude_session_id IS NOT NULL` on the agent's current
+    // executor. Seed agents + executors that cover all four cases.
+    const executorRegistry = await import('../lib/executor-registry.js');
     const base = {
       session: 'genie',
       worktree: null as string | null,
@@ -163,38 +169,25 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
       lastStateChange: '2026-03-20T12:00:00Z',
       repoPath: '/tmp',
     };
-    await registry.register({
-      ...base,
-      id: 'a1',
-      paneId: '%51',
-      state: 'suspended',
-      claudeSessionId: 'sess-1',
-    });
-    await registry.register({
-      ...base,
-      id: 'a2',
-      paneId: '%52',
-      state: 'error',
-      claudeSessionId: 'sess-2',
-    });
-    await registry.register({
-      ...base,
-      id: 'a3',
-      paneId: '%53',
-      state: 'done' as AgentState,
-    });
-    await registry.register({
-      ...base,
-      id: 'a4',
-      paneId: '%54',
-      state: 'suspended',
-    }); // no sessionId
+    await registry.register({ ...base, id: 'a1', paneId: '%51', state: 'suspended', provider: 'claude' });
+    await executorRegistry.createAndLinkExecutor('a1', 'claude', 'tmux', { claudeSessionId: 'sess-1' });
+
+    await registry.register({ ...base, id: 'a2', paneId: '%52', state: 'error', provider: 'claude' });
+    await executorRegistry.createAndLinkExecutor('a2', 'claude', 'tmux', { claudeSessionId: 'sess-2' });
+
+    await registry.register({ ...base, id: 'a3', paneId: '%53', state: 'done' as AgentState, provider: 'claude' });
+    // a3 is 'done' — not eligible regardless of session; no executor seeded.
+
+    await registry.register({ ...base, id: 'a4', paneId: '%54', state: 'suspended', provider: 'claude' });
+    // a4 has no executor → no session → not eligible.
 
     const workers = await registry.list();
-    // Same eligibility filter as resumeAllAgents (isResumeEligible)
-    const eligible = workers.filter(
-      (w) => (w.state === 'suspended' || w.state === 'error') && Boolean(w.claudeSessionId),
-    );
+    const eligible: Agent[] = [];
+    for (const w of workers) {
+      if (w.state !== 'suspended' && w.state !== 'error') continue;
+      const executor = await executorRegistry.getCurrentExecutor(w.id);
+      if (executor?.claudeSessionId) eligible.push(w);
+    }
 
     expect(eligible).toHaveLength(2);
     expect(eligible.map((w) => w.id).sort()).toEqual(['a1', 'a2']);
@@ -211,9 +204,13 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
     const result = await attemptAgentResume(deps, defaultConfig, agent);
 
     expect(result).toBe('resumed');
-    expect(agentUpdates).toHaveLength(1);
+    // Two writes: (1) pre-spawn increment, (2) post-success explicit reset.
+    // Post-fix/auto-resume-counter-persistence — scheduler owns the counter
+    // end-to-end (the CLI shell-out is invoked with --no-reset-attempts).
+    expect(agentUpdates).toHaveLength(2);
     expect(agentUpdates[0].updates.resumeAttempts).toBe(1);
     expect(agentUpdates[0].updates.lastResumeAttempt).toBeDefined();
+    expect(agentUpdates[1].updates.resumeAttempts).toBe(0);
     expect(logs.some((l) => l.event === 'agent_resume_attempted')).toBe(true);
     expect(logs.some((l) => l.event === 'agent_resume_succeeded')).toBe(true);
   });
@@ -254,11 +251,17 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
   });
 
   test('concurrency cap: blocks resume when at max workers', async () => {
+    // NOTE (auto-resume-zombie-cap fix): cap filter now verifies pane
+    // liveness — "active workers" semantically require live panes, so we
+    // override the shared mock (isPaneAlive=false) to reflect that.
     const agent = makeWorker();
     const activeWorkers: WorkerInfo[] = Array.from({ length: 5 }, (_, i) =>
       makeWorker({ id: `active-${i}`, state: 'working' }),
     );
-    const { deps, logs } = createMockDeps({ listWorkers: async () => activeWorkers });
+    const { deps, logs } = createMockDeps({
+      listWorkers: async () => activeWorkers,
+      isPaneAlive: async () => true,
+    });
 
     const result = await attemptAgentResume(deps, defaultConfig, agent);
 
@@ -269,10 +272,10 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
 
   test('reboot recovery: resumes previously-running agents on startup', async () => {
     const workers: WorkerInfo[] = [
-      makeWorker({ id: 'running-1', state: 'working', claudeSessionId: 'sess-1', resumeAttempts: 0 }),
-      makeWorker({ id: 'idle-1', state: 'idle', claudeSessionId: 'sess-2', resumeAttempts: 0 }),
-      makeWorker({ id: 'done-1', state: 'done', claudeSessionId: 'sess-3' }),
-      makeWorker({ id: 'suspended-1', state: 'suspended', claudeSessionId: 'sess-4' }),
+      makeWorker({ id: 'running-1', state: 'working', currentSessionId: 'sess-1', resumeAttempts: 0 }),
+      makeWorker({ id: 'idle-1', state: 'idle', currentSessionId: 'sess-2', resumeAttempts: 0 }),
+      makeWorker({ id: 'done-1', state: 'done', currentSessionId: 'sess-3' }),
+      makeWorker({ id: 'suspended-1', state: 'suspended', currentSessionId: 'sess-4' }),
     ];
 
     const resumed: string[] = [];
@@ -297,5 +300,43 @@ describe.skipIf(!DB_AVAILABLE)('resume', () => {
     const recovery = logs.find((l) => l.event === 'recovery_completed');
     expect(recovery).toBeDefined();
     expect(recovery?.resumed_agents).toBe(2);
+  });
+
+  // --------------------------------------------------------------------------
+  // Group 6 — MissingResumeSessionError (fail loudly when resume has no session)
+  // --------------------------------------------------------------------------
+
+  describe('Group 6 — MissingResumeSessionError', () => {
+    test('handleWorkerResume throws MissingResumeSessionError for an agent without a session', async () => {
+      const now = new Date().toISOString();
+      const agentId = 'no-session-agent';
+      const agent: Agent = {
+        id: agentId,
+        paneId: '%99',
+        session: 'genie',
+        worktree: null,
+        startedAt: now,
+        state: 'suspended',
+        lastStateChange: now,
+        repoPath: '/tmp',
+        // currentSessionId intentionally omitted — this is the failure case.
+      };
+      await registry.register(agent);
+
+      try {
+        await handleWorkerResume(agentId, {});
+        throw new Error('handleWorkerResume should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(MissingResumeSessionError);
+        const e = err as MissingResumeSessionError;
+        expect(e.name).toBe('MissingResumeSessionError');
+        expect(e.workerId).toBe(agentId);
+        expect(e.entityId).toBe(agentId);
+        expect(e.reason).toBe('no_session_id');
+        // Runbook hint surfaces in the message for the operator.
+        expect(e.message).toContain(agentId);
+        expect(e.message).toContain('genie reset');
+      }
+    });
   });
 });

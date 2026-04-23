@@ -17,11 +17,14 @@ import { join } from 'node:path';
 import {
   type NativeInboxMessage,
   discoverClaudeParentSessionId,
+  discoverTeamName,
   ensureNativeTeamWithSessionId,
+  findTeamsContainingAgent,
+  listTeamsWithUnreadInbox,
   loadConfig,
   resolveNativeMemberName,
-  resolveOrMintLeadSessionId,
   sanitizeTeamName,
+  unregisterNativeMember,
   writeNativeInbox,
 } from './claude-native-teams.js';
 
@@ -296,6 +299,75 @@ describe('discoverClaudeParentSessionId', () => {
 });
 
 // ---------------------------------------------------------------------------
+// unregisterNativeMember — removes entry from members array
+// See automagik-dev/genie#1179: prior impl marked isActive=false and left
+// stale entries in the config, which silently routed new spawns and messages
+// to dead workers via resolveNativeMemberName and findTeamsContainingAgent.
+// ---------------------------------------------------------------------------
+
+describe('unregisterNativeMember', () => {
+  test('removes the member entry entirely (not just isActive flip)', async () => {
+    await createTestTeamConfig('my-team', [
+      { agentId: 'engineer@my-team', name: 'engineer' },
+      { agentId: 'reviewer@my-team', name: 'reviewer' },
+    ]);
+
+    await unregisterNativeMember('my-team', 'engineer');
+
+    const config = await loadConfig('my-team');
+    expect(config).not.toBeNull();
+    expect(config!.members).toHaveLength(1);
+    expect(config!.members[0].name).toBe('reviewer');
+    expect(config!.members.some((m) => m.name === 'engineer')).toBe(false);
+  });
+
+  test('is a no-op when the member does not exist', async () => {
+    await createTestTeamConfig('my-team', [{ agentId: 'engineer@my-team', name: 'engineer' }]);
+
+    await unregisterNativeMember('my-team', 'nonexistent');
+
+    const config = await loadConfig('my-team');
+    expect(config!.members).toHaveLength(1);
+    expect(config!.members[0].name).toBe('engineer');
+  });
+
+  test('is a no-op when the team does not exist', async () => {
+    // Should not throw; should not create the config.
+    await expect(unregisterNativeMember('nonexistent-team', 'engineer')).resolves.toBeUndefined();
+    const config = await loadConfig('nonexistent-team');
+    expect(config).toBeNull();
+  });
+
+  test('findTeamsContainingAgent stops matching after unregister (regression)', async () => {
+    // Reproducer for #1179: before the fix, an unregistered member still
+    // matched `findTeamsContainingAgent`, routing spawn-team resolution to
+    // the wrong team.
+    await createTestTeamConfig('team-a', [{ agentId: 'simone@team-a', name: 'simone' }]);
+    await createTestTeamConfig('team-b', [{ agentId: 'simone@team-b', name: 'simone' }]);
+
+    expect(await findTeamsContainingAgent('simone')).toEqual(expect.arrayContaining(['team-a', 'team-b']));
+
+    await unregisterNativeMember('team-a', 'simone');
+
+    const matches = await findTeamsContainingAgent('simone');
+    expect(matches).toEqual(['team-b']);
+  });
+
+  test('resolveNativeMemberName stops resolving after unregister (regression)', async () => {
+    // Before the fix, the active→inactive fallback in resolveNativeMemberName
+    // would still return the unregistered member's name, causing messages
+    // addressed to that name to be silently delivered to a dead worker.
+    await createTestTeamConfig('my-team', [{ agentId: 'engineer@my-team', name: 'engineer' }]);
+
+    expect(await resolveNativeMemberName('my-team', 'engineer')).toBe('engineer');
+
+    await unregisterNativeMember('my-team', 'engineer');
+
+    expect(await resolveNativeMemberName('my-team', 'engineer')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // writeNativeInbox format tests
 // ---------------------------------------------------------------------------
 
@@ -393,82 +465,6 @@ describe('writeNativeInbox', () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// resolveOrMintLeadSessionId tests (fix-ghost-approval-p0)
-// ---------------------------------------------------------------------------
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-describe('resolveOrMintLeadSessionId', () => {
-  test('mints a fresh UUID when no prior JSONL exists', async () => {
-    const cwd = '/tmp/fresh-team-cwd';
-    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('fresh-team', cwd);
-
-    expect(shouldResume).toBe(false);
-    expect(sessionId).toMatch(UUID_RE);
-  });
-
-  test('returns the UUID from a matching prior JSONL with shouldResume: true', async () => {
-    const cwd = '/tmp/resume-team-cwd';
-    const priorUuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-
-    await createSessionJsonl(
-      cwd,
-      priorUuid,
-      [
-        { type: 'custom-title', customTitle: 'resume-team' },
-        { type: 'user', cwd, sessionId: priorUuid },
-      ],
-      5_000,
-    );
-
-    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('resume-team', cwd);
-    expect(shouldResume).toBe(true);
-    expect(sessionId).toBe(priorUuid);
-  });
-
-  test('returns the newest JSONL when multiple match the team title', async () => {
-    const cwd = '/tmp/multi-team-cwd';
-    const olderUuid = '11111111-2222-3333-4444-555555555555';
-    const newerUuid = '99999999-8888-7777-6666-555555555555';
-
-    await createSessionJsonl(cwd, olderUuid, [{ type: 'custom-title', customTitle: 'multi-team' }], 1_000);
-    await createSessionJsonl(cwd, newerUuid, [{ type: 'custom-title', customTitle: 'multi-team' }], 9_000);
-
-    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('multi-team', cwd);
-    expect(shouldResume).toBe(true);
-    expect(sessionId).toBe(newerUuid);
-  });
-
-  test('also matches the {team}-{team} custom-title form CC sometimes writes', async () => {
-    const cwd = '/tmp/doubled-team-cwd';
-    const priorUuid = 'cafebabe-dead-beef-cafe-babedeadbeef';
-
-    await createSessionJsonl(
-      cwd,
-      priorUuid,
-      [{ type: 'custom-title', customTitle: 'doubled-team-doubled-team' }],
-      5_000,
-    );
-
-    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('doubled-team', cwd);
-    expect(shouldResume).toBe(true);
-    expect(sessionId).toBe(priorUuid);
-  });
-
-  test('ignores JSONL without a custom-title matching the team', async () => {
-    const cwd = '/tmp/unrelated-cwd';
-    const unrelatedUuid = '12345678-1234-1234-1234-123456789012';
-
-    await createSessionJsonl(cwd, unrelatedUuid, [{ type: 'custom-title', customTitle: 'some-other-team' }], 5_000);
-
-    const { sessionId, shouldResume } = await resolveOrMintLeadSessionId('fresh-team', cwd);
-    expect(shouldResume).toBe(false);
-    expect(sessionId).toMatch(UUID_RE);
-    expect(sessionId).not.toBe(unrelatedUuid);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // ensureNativeTeamWithSessionId tests (fix-ghost-approval-p0)
 // ---------------------------------------------------------------------------
 
@@ -552,5 +548,283 @@ describe('loadConfig', () => {
 
     const config = await loadConfig('bad-team');
     expect(config).toBeNull();
+  });
+});
+
+describe('discoverTeamName', () => {
+  let savedTmux: string | undefined;
+  let savedGenieTeam: string | undefined;
+
+  beforeEach(() => {
+    savedTmux = process.env.TMUX;
+    savedGenieTeam = process.env.GENIE_TEAM;
+    process.env.TMUX = undefined;
+    process.env.GENIE_TEAM = undefined;
+  });
+
+  afterEach(() => {
+    if (savedTmux === undefined) process.env.TMUX = undefined;
+    else process.env.TMUX = savedTmux;
+    if (savedGenieTeam === undefined) process.env.GENIE_TEAM = undefined;
+    else process.env.GENIE_TEAM = savedGenieTeam;
+  });
+
+  test('returns GENIE_TEAM env var when set', async () => {
+    process.env.GENIE_TEAM = 'explicit-team';
+    const result = await discoverTeamName('/repo');
+    expect(result).toBe('explicit-team');
+  });
+
+  test('matches team by leadSessionId', async () => {
+    const cwd = '/repo/x';
+    await createTestTeamConfig('match-team', [{ agentId: 'a@match-team', name: 'a' }], {
+      leadSessionId: 'session-xyz',
+    });
+    await createSessionJsonl(cwd, 'session-xyz', [{ type: 'user', cwd }], 1_000);
+
+    const result = await discoverTeamName(cwd);
+    expect(result).toBe('match-team');
+  });
+
+  test('returns null when no session and TMUX unset', async () => {
+    // No matching JSONL, no TMUX — both discovery paths yield null.
+    const result = await discoverTeamName('/repo/nonexistent');
+    expect(result).toBeNull();
+  });
+
+  test('tmux fallback is skipped when TMUX env is absent', async () => {
+    // Team config exists on disk with matching NAME, but there's no
+    // leadSessionId match AND no TMUX env → fallback must not run,
+    // so result stays null. Regression guard against spuriously
+    // matching by name when not inside a tmux session.
+    await createTestTeamConfig('standalone-team', [{ agentId: 'a@standalone-team', name: 'a' }], {
+      leadSessionId: 'some-other-session',
+    });
+    const result = await discoverTeamName('/repo/no-jsonl-here');
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findTeamsContainingAgent tests — the spawn-fallback scan relied on by
+// `resolveTeamAndResume` when GENIE_TEAM and parent-session context are both
+// missing. Guards against regressions in the agent-name vs agent-type match
+// and the no-match path that must fail closed (so callers can decide whether
+// to auto-create a team-of-one or surface the --team-is-required error).
+// ---------------------------------------------------------------------------
+
+describe('findTeamsContainingAgent', () => {
+  test('returns an empty array when no team lists the agent', async () => {
+    await createTestTeamConfig('team-alpha', [{ agentId: 'other@team-alpha', name: 'other' }]);
+    const result = await findTeamsContainingAgent('khal-os');
+    expect(result).toEqual([]);
+  });
+
+  test('returns the team when the agent is a member by name', async () => {
+    await createTestTeamConfig('team-bravo', [{ agentId: 'khal-os@team-bravo', name: 'khal-os' }]);
+    const result = await findTeamsContainingAgent('khal-os');
+    expect(result).toEqual(['team-bravo']);
+  });
+
+  test('returns every team listing the agent when multiple ghost teams exist', async () => {
+    await createTestTeamConfig('team-gamma', [{ agentId: 'khal-os@team-gamma', name: 'khal-os' }]);
+    await createTestTeamConfig('team-delta', [{ agentId: 'khal-os@team-delta', name: 'khal-os' }]);
+    const result = (await findTeamsContainingAgent('khal-os')).sort();
+    expect(result).toEqual(['team-delta', 'team-gamma']);
+  });
+
+  test('returns empty array when teams dir does not exist', async () => {
+    // Fresh tempDir with no teams/ subdir — mirrors a pristine server where
+    // no team config has ever been written.
+    const result = await findTeamsContainingAgent('khal-os');
+    expect(result).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listTeamsWithUnreadInbox — workingDir resolution
+//
+// Regression coverage for the inbox-watcher spawn-blocker where
+// council/solo teams that leave members[] empty (or without a distinct
+// lead entry) emitted:
+//   [inbox-watcher] Cannot spawn team-lead for "council-…" — no workingDir in config
+// because `scanTeamInbox` only looked at `members[<lead>].cwd`. Fallback
+// order is now: leadMember.cwd → config.worktreePath → config.repo.
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a team config with the exact fields we need to exercise the
+ * workingDir-fallback chain in `scanTeamInbox`. The existing
+ * `createTestTeamConfig` helper always populates members[] with a matching
+ * lead — the bug we're guarding against requires the opposite.
+ */
+async function createRawTeamConfig(
+  teamName: string,
+  config: {
+    leadAgentId?: string;
+    members?: { agentId: string; name: string; cwd?: string }[];
+    worktreePath?: string;
+    repo?: string;
+  },
+  unreadMessage = 'hello lead',
+): Promise<void> {
+  const sanitized = sanitizeTeamName(teamName);
+  const teamDir = join(tempDir, 'teams', sanitized);
+  const inboxDir = join(teamDir, 'inboxes');
+  await mkdir(inboxDir, { recursive: true });
+
+  const leadAgentId = config.leadAgentId ?? `team-lead@${sanitized}`;
+  const leadInboxName = leadAgentId.split('@')[0] ?? 'team-lead';
+
+  await writeFile(
+    join(teamDir, 'config.json'),
+    JSON.stringify({
+      name: sanitized,
+      description: `Test team: ${teamName}`,
+      createdAt: Date.now(),
+      leadAgentId,
+      leadSessionId: 'test-session-id',
+      members: (config.members ?? []).map((m) => ({
+        agentId: m.agentId,
+        name: m.name,
+        agentType: 'general-purpose',
+        joinedAt: Date.now(),
+        cwd: m.cwd,
+        backendType: 'tmux',
+        color: 'blue',
+        planModeRequired: false,
+        isActive: true,
+      })),
+      worktreePath: config.worktreePath,
+      repo: config.repo,
+    }),
+  );
+
+  const msg: NativeInboxMessage = {
+    from: 'someone',
+    text: unreadMessage,
+    summary: 'test',
+    timestamp: new Date().toISOString(),
+    color: 'blue',
+    read: false,
+  };
+  await writeFile(join(inboxDir, `${leadInboxName}.json`), JSON.stringify([msg]));
+}
+
+describe('listTeamsWithUnreadInbox workingDir fallback', () => {
+  test('uses leadMember.cwd when the lead is in members[]', async () => {
+    await createRawTeamConfig('team-alpha', {
+      leadAgentId: 'team-lead@team-alpha',
+      members: [{ agentId: 'team-lead@team-alpha', name: 'team-lead', cwd: '/tmp/alpha-cwd' }],
+      worktreePath: '/tmp/alpha-worktree',
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-alpha');
+    expect(row?.workingDir).toBe('/tmp/alpha-cwd');
+  });
+
+  test('falls back to config.worktreePath when lead is not in members[]', async () => {
+    // Ghost-lead scenario: the lead is the team itself (councils, solo
+    // agents), so members[] is empty. Pre-fix this returned workingDir:null
+    // and the inbox-watcher logged "no workingDir in config" + refused to
+    // spawn. Post-fix we trust the team's own worktreePath.
+    await createRawTeamConfig('council-1775707451', {
+      leadAgentId: 'team-lead@council-1775707451',
+      members: [],
+      worktreePath: '/tmp/council-worktree',
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'council-1775707451');
+    expect(row?.workingDir).toBe('/tmp/council-worktree');
+  });
+
+  test('falls back to config.repo when both leadMember.cwd and worktreePath are absent', async () => {
+    await createRawTeamConfig('team-bare', {
+      leadAgentId: 'team-lead@team-bare',
+      members: [],
+      repo: '/tmp/bare-repo',
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-bare');
+    expect(row?.workingDir).toBe('/tmp/bare-repo');
+  });
+
+  test('falls back to any member.cwd when lead not in members[] and no worktreePath/repo', async () => {
+    // Real-world council config (e.g. council-1775707451) observed with:
+    //   - leadAgentId pointing at the council itself
+    //   - members[] containing only worker council agents (architect, sentinel, …)
+    //     with a matching cwd on the shared council worktree
+    //   - worktreePath: null, repo: null
+    // Before this tier the inbox-watcher silently refused to spawn the lead
+    // despite unread messages. Any member.cwd recovers the intended path.
+    await createRawTeamConfig('council-1775707451', {
+      leadAgentId: 'council-1775707451@council-1775707451',
+      members: [
+        {
+          agentId: 'council--questioner@council-1775707451',
+          name: 'council--questioner',
+          cwd: '/tmp/shared-council-worktree',
+        },
+        {
+          agentId: 'council--sentinel@council-1775707451',
+          name: 'council--sentinel',
+          cwd: '/tmp/shared-council-worktree',
+        },
+      ],
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'council-1775707451');
+    expect(row?.workingDir).toBe('/tmp/shared-council-worktree');
+  });
+
+  test('member.cwd fallback skips entries with no cwd and picks the first populated one', async () => {
+    await createRawTeamConfig('team-mixed-cwd', {
+      leadAgentId: 'lead@team-mixed-cwd',
+      members: [
+        { agentId: 'worker-a@team-mixed-cwd', name: 'worker-a' },
+        { agentId: 'worker-b@team-mixed-cwd', name: 'worker-b', cwd: '/tmp/first-populated' },
+        { agentId: 'worker-c@team-mixed-cwd', name: 'worker-c', cwd: '/tmp/also-populated' },
+      ],
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-mixed-cwd');
+    expect(row?.workingDir).toBe('/tmp/first-populated');
+  });
+
+  test('returns null when no fallback source is available', async () => {
+    // Exercised explicitly so the inbox-watcher's "no workingDir in config"
+    // rate-limited warning still fires for configs that have no usable path
+    // — e.g. malformed configs whose members[] is empty AND lack
+    // worktreePath/repo.
+    await createRawTeamConfig('team-blank', {
+      leadAgentId: 'team-lead@team-blank',
+      members: [],
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-blank');
+    expect(row?.workingDir).toBeNull();
+  });
+
+  test('worktreePath still beats member.cwd when both are present (ordering invariant)', async () => {
+    await createRawTeamConfig('team-order-invariant', {
+      leadAgentId: 'lead@team-order-invariant',
+      members: [{ agentId: 'worker@team-order-invariant', name: 'worker', cwd: '/tmp/worker-cwd' }],
+      worktreePath: '/tmp/team-worktree',
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-order-invariant');
+    expect(row?.workingDir).toBe('/tmp/team-worktree');
+  });
+
+  test('prefers leadMember.cwd over worktreePath when both are present', async () => {
+    await createRawTeamConfig('team-priority', {
+      leadAgentId: 'team-lead@team-priority',
+      members: [{ agentId: 'team-lead@team-priority', name: 'team-lead', cwd: '/tmp/priority-cwd' }],
+      worktreePath: '/tmp/priority-worktree',
+      repo: '/tmp/priority-repo',
+    });
+    const rows = await listTeamsWithUnreadInbox();
+    const row = rows.find((r) => r.teamName === 'team-priority');
+    expect(row?.workingDir).toBe('/tmp/priority-cwd');
   });
 });

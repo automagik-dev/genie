@@ -20,12 +20,85 @@ import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Agent } from './agent-registry.js';
+import type { Agent, AgentState } from './agent-registry.js';
+import { recordAuditEvent } from './audit.js';
 import { computeNextCronDue, parseDuration } from './cron.js';
+import { emitEvent } from './emit.js';
 import { type EventRouterHandle, startEventRouter } from './event-router.js';
 import { getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
-import { getRetryable, markEscalated, subscribeDelivery } from './mailbox.js';
+import { type MailboxMessage, getRetryable, markEscalated, subscribeDelivery } from './mailbox.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
+import { getAmbient as getAmbientTraceContext } from './trace-context.js';
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Recipient used when the mailbox retry loop escalates a permanently-failed
+ * message. Extracted as a constant so the escalation writer and the guard
+ * that prevents re-escalation reference the same literal.
+ *
+ * NOTE: This is a bare string today; there is no resolver that maps it to an
+ * actual worker ID like `team-lead:<session>:<team>`. Delivering to this
+ * bare string fails and, without the guards in `processMailboxRetryMessage`,
+ * recursively produces more escalation messages. A follow-up wish will
+ * replace this with a resolver that locates the real team-lead agent.
+ */
+export const ESCALATION_RECIPIENT = 'team-lead';
+
+/** Maximum delivery attempts before the mailbox retry loop escalates a message. */
+export const MAX_DELIVERY_ATTEMPTS = 3;
+
+/**
+ * Env flag gating the turn-session-contract reconciler.
+ *
+ * Phase A (Group 1): flag read exists; default `false`; logged once at daemon
+ * startup; no behavior change. Groups 2/3/4/5/7 wire the new reconciler
+ * passes behind this flag.
+ *
+ * Phase B (Group 8 — this change): default flips to `true`. Migration 044
+ * flipped `agents.auto_resume` default and backfilled live/stale rows; the
+ * code side follows suit so a fresh daemon boot enables the turn-aware
+ * passes by default. Rollback is still supported — set
+ * `GENIE_RECONCILER_TURN_AWARE=0` (or `false`) to force the legacy path
+ * without a redeploy.
+ *
+ * Phase C (Group 9, after 7-day soak): flag and legacy path are removed.
+ */
+export const TURN_AWARE_RECONCILER_FLAG = 'GENIE_RECONCILER_TURN_AWARE';
+
+/**
+ * Read the turn-aware reconciler flag from env.
+ *
+ * Default (unset / empty) is `true` since Phase B (Group 8). Explicit
+ * opt-out: `GENIE_RECONCILER_TURN_AWARE=0` (also accepts `false`, `no`,
+ * case-insensitive). Truthy values (`1`, `true`) are always accepted.
+ */
+export function isTurnAwareReconcilerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[TURN_AWARE_RECONCILER_FLAG];
+  if (raw === undefined) return true;
+  const v = raw.trim().toLowerCase();
+  if (v === '') return true;
+  if (v === '0' || v === 'false' || v === 'no') return false;
+  if (v === '1' || v === 'true' || v === 'yes') return true;
+  // Unknown value — be conservative and honor Phase B default ON.
+  return true;
+}
+
+/** Log the turn-aware reconciler mode once at daemon startup. */
+export function logReconcilerMode(deps: Pick<SchedulerDeps, 'log' | 'now'>, daemonId: string): void {
+  const enabled = isTurnAwareReconcilerEnabled();
+  deps.log({
+    timestamp: deps.now().toISOString(),
+    level: 'info',
+    event: enabled ? 'reconciler_mode_turn_aware' : 'reconciler_mode_legacy',
+    daemon_id: daemonId,
+    flag: TURN_AWARE_RECONCILER_FLAG,
+    enabled,
+    message: enabled ? 'turn-aware reconciler enabled' : 'flag off, using legacy reconciler',
+  });
+}
 
 // ============================================================================
 // Types
@@ -92,8 +165,19 @@ export type WorkerInfo = Pick<
   | 'resumeAttempts'
   | 'maxResumeAttempts'
   | 'lastResumeAttempt'
-  | 'claudeSessionId'
-> & { repoPath?: string };
+> & {
+  repoPath?: string;
+  /**
+   * Claude session UUID joined from the current executor row
+   * (`executors.claude_session_id` via `agents.current_executor_id`).
+   * `null` / `undefined` when the agent has no current executor or the
+   * executor's session has not been captured yet.
+   *
+   * Lifted out of the `Agent` Pick intentionally: post-migration-047 the
+   * session belongs to the run (executor), not the identity (agent).
+   */
+  currentSessionId?: string | null;
+};
 
 /** Dependency injection interface for testing. */
 export interface SchedulerDeps {
@@ -134,7 +218,19 @@ function getLogFile(): string {
 export function logToFile(entry: LogEntry): void {
   const logDir = getLogDir();
   mkdirSync(logDir, { recursive: true });
-  appendFileSync(getLogFile(), `${JSON.stringify(entry)}\n`);
+  const enriched = entry.trace_id ? entry : withAmbientTraceId(entry);
+  appendFileSync(getLogFile(), `${JSON.stringify(enriched)}\n`);
+}
+
+/**
+ * Merge the ambient trace context (if any) into a log entry so every line the
+ * scheduler produces carries `trace_id=<hex>`. Callers that already set
+ * `trace_id` explicitly are left alone.
+ */
+function withAmbientTraceId(entry: LogEntry): LogEntry {
+  const ctx = getAmbientTraceContext();
+  if (!ctx) return entry;
+  return { ...entry, trace_id: ctx.trace_id };
 }
 
 // ============================================================================
@@ -164,7 +260,30 @@ async function defaultIsPaneAlive(paneId: string): Promise<boolean> {
 
 async function defaultListWorkers(): Promise<WorkerInfo[]> {
   const { list } = await import('./agent-registry.js');
+  const { getConnection } = await import('./db.js');
   const agents = await list();
+
+  // Pull session UUIDs from `executors.claude_session_id` via
+  // `agents.current_executor_id`. Migration 047 dropped the legacy
+  // `agents.claude_session_id` column — the session lives with the run now,
+  // not the identity. We do a single bulk SELECT and build a map so the
+  // scheduler's resume-eligibility filter stays O(N) without per-worker
+  // round trips.
+  let sessionByAgent = new Map<string, string | null>();
+  try {
+    const sql = await getConnection();
+    const rows = (await sql`
+      SELECT a.id AS agent_id, e.claude_session_id
+      FROM agents a
+      LEFT JOIN executors e ON e.id = a.current_executor_id
+    `) as { agent_id: string; claude_session_id: string | null }[];
+    sessionByAgent = new Map(rows.map((r) => [r.agent_id, r.claude_session_id]));
+  } catch {
+    // Best-effort — fall through with an empty map so all workers look
+    // session-less (conservative: reconcileUnresumable will not false-clear
+    // auto-resume; attemptAgentResume will skip with `no_session_id`).
+  }
+
   return agents.map((a) => ({
     id: a.id,
     paneId: a.paneId,
@@ -177,7 +296,7 @@ async function defaultListWorkers(): Promise<WorkerInfo[]> {
     resumeAttempts: a.resumeAttempts,
     maxResumeAttempts: a.maxResumeAttempts,
     lastResumeAttempt: a.lastResumeAttempt,
-    claudeSessionId: a.claudeSessionId,
+    currentSessionId: sessionByAgent.get(a.id) ?? null,
   }));
 }
 
@@ -222,7 +341,15 @@ async function defaultCountTmuxSessions(): Promise<number> {
 async function defaultResumeAgent(agentId: string): Promise<boolean> {
   try {
     const { execSync } = await import('node:child_process');
-    execSync(`genie agent resume ${agentId}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    // `--no-reset-attempts` prevents the resume handler from wiping
+    // `resumeAttempts` — `attemptAgentResume` increments that counter *before*
+    // invoking us, and needs the increment to persist so the exhaustion check
+    // can eventually fire. Without this flag, the counter was stuck at 0 and
+    // dead agents were retried every ~60s forever (fix/auto-resume-counter-persistence).
+    execSync(`genie agent resume ${agentId} --no-reset-attempts`, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     return true;
   } catch {
     return false;
@@ -576,6 +703,15 @@ export async function reclaimExpiredLeases(deps: SchedulerDeps, daemonId: string
 /**
  * Check if a worker is alive by PID or tmux pane.
  * Returns { alive, isPid } for the given worker_id.
+ *
+ * Safe today for SDK/non-tmux transports: `runs.worker_id` is only ever
+ * populated by the scheduler at {@link handleTrigger} from `result.pid` (a
+ * real OS PID) or `daemonId` (a UUID fallback). It never stores a tmux pane
+ * id or a synthetic id like 'sdk'/'inline' (see `INSERT INTO runs` +
+ * `UPDATE runs SET worker_id` — the only two write sites). SDK-backed agents
+ * live in `agents`/`executors`, not `runs`, so no transport dispatch is
+ * needed here. If `runs.worker_id` ever starts carrying synthetic ids, add
+ * an `isExecutorAlive` branch below.
  */
 async function checkWorkerAlive(
   deps: SchedulerDeps,
@@ -642,8 +778,20 @@ export async function reconcileOrphanedRuns(deps: SchedulerDeps, daemonId: strin
 }
 
 /**
+ * Delay before a one-shot retry of the agent recovery pass when the initial
+ * pass had any per-worker failures (e.g. tmux socket not reachable yet).
+ */
+const RECOVERY_RETRY_DELAY_MS = 60_000;
+
+/**
  * Run full startup recovery: reclaim expired leases, reconcile orphaned runs,
  * then auto-resume agents whose panes died while the daemon was down.
+ *
+ * Resilience: if the initial agent recovery pass hits any per-worker failure
+ * (for example, the tmux socket is not yet ready when the daemon boots after
+ * a server reboot), a single retry pass is scheduled {@link RECOVERY_RETRY_DELAY_MS}
+ * later. Per-worker failures never abort the outer loop — each worker is
+ * isolated so one bad pane does not poison recovery for the rest.
  */
 export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, config?: SchedulerConfig): Promise<void> {
   const now = deps.now();
@@ -657,19 +805,7 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
   const reclaimed = await reclaimExpiredLeases(deps, daemonId);
   const orphans = await reconcileOrphanedRuns(deps, daemonId);
 
-  // Auto-resume agents whose panes died while daemon was down
-  let resumed = 0;
-  const resolvedConfig = config ?? resolveConfig();
-  const workers = await deps.listWorkers();
-  const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done' && w.claudeSessionId);
-
-  for (const worker of resumable) {
-    const alive = await deps.isPaneAlive(worker.paneId);
-    if (!alive) {
-      const result = await attemptAgentResume(deps, resolvedConfig, worker);
-      if (result === 'resumed') resumed++;
-    }
-  }
+  const { resumed, failed } = await runAgentRecoveryPass(deps, daemonId, config, 'boot');
 
   deps.log({
     timestamp: deps.now().toISOString(),
@@ -678,8 +814,406 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
     reclaimed_leases: reclaimed,
     orphaned_runs: orphans,
     resumed_agents: resumed,
+    failed_agents: failed,
     daemon_id: daemonId,
   });
+
+  if (failed > 0) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'info',
+      event: 'recovery_retry_scheduled',
+      daemon_id: daemonId,
+      failed_agents: failed,
+      delay_ms: RECOVERY_RETRY_DELAY_MS,
+    });
+    scheduleRecoveryRetry(deps, daemonId, config);
+  }
+}
+
+/**
+ * Schedule a single delayed retry pass. Extracted for test injection and to
+ * keep the happy-path in {@link recoverOnStartup} readable.
+ */
+function scheduleRecoveryRetry(deps: SchedulerDeps, daemonId: string, config?: SchedulerConfig): void {
+  setTimeout(async () => {
+    try {
+      const retry = await runAgentRecoveryPass(deps, daemonId, config, 'boot');
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'info',
+        event: 'recovery_retry_completed',
+        daemon_id: daemonId,
+        resumed_agents: retry.resumed,
+        failed_agents: retry.failed,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'error',
+        event: 'recovery_retry_error',
+        daemon_id: daemonId,
+        error: message,
+      });
+    }
+  }, RECOVERY_RETRY_DELAY_MS).unref?.();
+}
+
+/**
+ * Run a single pass over resumable agents with per-worker fault isolation.
+ *
+ * Each worker's `isPaneAlive` + `attemptAgentResume` is wrapped in try/catch,
+ * so a single failure (for example, an unreachable tmux socket during early
+ * boot) does not abort the recovery loop for the remaining workers.
+ *
+ * Exported so the periodic auto-resume timer can invoke the same pass mid-run
+ * (startAgentResumeTimer) — without it, agents that hit `error` while the
+ * daemon is up never retry until the next process restart.
+ */
+/** States where the turn-aware reconciler resumes a dead pane (D3 rule). */
+const TURN_AWARE_RESUMABLE_STATES: ReadonlySet<AgentState> = new Set<AgentState>(['working', 'permission', 'question']);
+
+type RecoveryOutcome = 'resumed' | 'terminalized' | 'skipped';
+type RecoveryMode = 'boot' | 'sweep';
+
+/**
+ * Per-worker recovery decision for a dead pane, extracted so
+ * `runAgentRecoveryPass` stays below the cognitive-complexity cap.
+ *
+ * Legacy (flag off): delegate everything to `attemptAgentResume`.
+ * Turn-aware (flag on) in 'sweep' mode:
+ *   - D1 idle + dead → `terminalizeCleanExitUnverified`, no resume
+ *   - D3 working/permission/question + dead → resume
+ *   - other non-terminal states → skipped (prevents post-D1 ghost loop)
+ *
+ * 'boot' mode deliberately bypasses the D1/D3 gates: when the daemon
+ * just restarted, an idle-with-dead-pane row is most likely an agent
+ * that was legitimately mid-turn when the daemon itself died (state
+ * preserved across reboot). The turn-aware rules exist for periodic
+ * sweeps, where "idle + dead" is a ghost-loop precursor.
+ */
+/**
+ * Gap #2 (turn-session-contract): boot-mode reconciler's D1/D3 bypass resurrects
+ * properly-closed agents across daemon restart. Returns true when the agent's
+ * current executor is already terminal (closed_at set OR outcome set), meaning an
+ * explicit close verb OR pane-exit trap already fired. Caller should skip resume.
+ *
+ * Never throws — a transient PG error returns false so the worker falls back to
+ * legacy resume behavior. Errs on the side of attempting resume (mirrors the
+ * pre-fix default) rather than silently dropping a legitimate mid-turn crash.
+ */
+async function isLegitimatelyClosed(deps: SchedulerDeps, worker: WorkerInfo): Promise<boolean> {
+  try {
+    const sql = await deps.getConnection();
+    const agentRows = await sql<{ current_executor_id: string | null }[]>`
+      SELECT current_executor_id FROM agents WHERE id = ${worker.id}
+    `;
+    const executorId = agentRows[0]?.current_executor_id;
+    if (!executorId) return false;
+    const execRows = await sql<{ closed_at: Date | null; outcome: string | null }[]>`
+      SELECT closed_at, outcome FROM executors WHERE id = ${executorId}
+    `;
+    if (execRows.length === 0) return false;
+    return execRows[0].closed_at !== null || execRows[0].outcome !== null;
+  } catch {
+    return false;
+  }
+}
+
+async function handleDeadPane(
+  deps: SchedulerDeps,
+  config: SchedulerConfig,
+  daemonId: string,
+  worker: WorkerInfo,
+  turnAware: boolean,
+  mode: RecoveryMode,
+): Promise<RecoveryOutcome> {
+  if (mode === 'boot') {
+    // Gap #2 fix: before resuming, check if the agent's executor is already
+    // terminal. Otherwise we resurrect agents that called `genie done` before
+    // the daemon restarted (2026-04-21 live regression in turn-session-contract-genie team).
+    if (turnAware && (await isLegitimatelyClosed(deps, worker))) {
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'debug',
+        event: 'agent_resume_skipped_boot_terminal',
+        daemon_id: daemonId,
+        agent_id: worker.id,
+        reason: 'executor_already_closed',
+      });
+      return 'skipped';
+    }
+    const result = await attemptAgentResume(deps, config, worker);
+    return result === 'resumed' ? 'resumed' : 'skipped';
+  }
+  if (turnAware && worker.state === 'idle') {
+    const res = await terminalizeCleanExitUnverified(deps, worker, 'reconciler_idle_dead_pane');
+    if (res.terminalized) {
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'warn',
+        event: 'agent_terminalized_clean_exit_unverified',
+        daemon_id: daemonId,
+        agent_id: worker.id,
+        executor_id: res.executorId,
+        reason: 'idle_dead_pane',
+      });
+      return 'terminalized';
+    }
+    return 'skipped';
+  }
+  if (turnAware && !TURN_AWARE_RESUMABLE_STATES.has(worker.state as AgentState)) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'debug',
+      event: 'agent_resume_skipped_turn_aware',
+      daemon_id: daemonId,
+      agent_id: worker.id,
+      state: worker.state,
+      reason: 'state_not_in_d3',
+    });
+    return 'skipped';
+  }
+  const result = await attemptAgentResume(deps, config, worker);
+  return result === 'resumed' ? 'resumed' : 'skipped';
+}
+
+/**
+ * Distinguish "tmux server is down" from real per-worker probe failures when
+ * the recovery pass cannot verify a pane. When tmux is down we cannot do
+ * anything productive this tick — the registry reconciler's dead-socket
+ * fast-path (`isTmuxServerReachable`) will terminalize these workers once
+ * the stale socket is detected, so spamming `recovery_worker_failed` every
+ * minute per worker is pure log noise. Returns `true` if the caller should
+ * skip this worker silently.
+ */
+function handleRecoveryProbeError(deps: SchedulerDeps, daemonId: string, workerId: string, err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  const tmuxDown =
+    message.includes('no server running') || message.includes('server exited') || message.includes('error connecting');
+  if (tmuxDown) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'debug',
+      event: 'recovery_worker_skipped_tmux_down',
+      daemon_id: daemonId,
+      worker_id: workerId,
+    });
+    return true;
+  }
+  deps.log({
+    timestamp: deps.now().toISOString(),
+    level: 'warn',
+    event: 'recovery_worker_failed',
+    daemon_id: daemonId,
+    worker_id: workerId,
+    error: message,
+  });
+  return false;
+}
+
+export async function runAgentRecoveryPass(
+  deps: SchedulerDeps,
+  daemonId: string,
+  config?: SchedulerConfig,
+  mode: RecoveryMode = 'sweep',
+): Promise<{ resumed: number; failed: number; terminalized: number }> {
+  const resolvedConfig = config ?? resolveConfig();
+  const workers = await deps.listWorkers();
+  // Safe for SDK/non-tmux transports: the `currentSessionId` filter below
+  // excludes them (SDK agents don't own a Claude-CLI JSONL session id).
+  // Only tmux-resumable Claude-CLI agents reach `isPaneAlive`, so a plain
+  // paneId check is correct here — no transport dispatch needed. If SDK
+  // ever gains resume support, gate on paneId shape like countActiveWorkers.
+  const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done' && w.currentSessionId);
+  const turnAware = isTurnAwareReconcilerEnabled();
+
+  let resumed = 0;
+  let failed = 0;
+  let terminalized = 0;
+
+  for (const worker of resumable) {
+    try {
+      const alive = await deps.isPaneAlive(worker.paneId);
+      if (alive) continue;
+      const outcome = await handleDeadPane(deps, resolvedConfig, daemonId, worker, turnAware, mode);
+      if (outcome === 'resumed') resumed++;
+      else if (outcome === 'terminalized') terminalized++;
+    } catch (err) {
+      if (handleRecoveryProbeError(deps, daemonId, worker.id, err)) continue;
+      failed++;
+    }
+  }
+
+  return { resumed, failed, terminalized };
+}
+
+/**
+ * Terminal-boundary write for the turn-aware reconciler's D1 rule.
+ *
+ * An agent found in `state='idle'` with a dead pane is the classic
+ * ghost-loop precursor: the turn finished quietly (no `genie done` /
+ * `blocked` / `failed`) and the pane then exited. Resuming such a row
+ * replays the already-completed turn (C20 incident, 2026-04-19).
+ *
+ * Write semantics (single transaction, first-writer-wins with the pane
+ * trap and the explicit close verbs):
+ *   - look up `agents.current_executor_id`; if absent, only flip the
+ *     agent state to `error` (no executor to terminalize)
+ *   - if the executor is already closed (`closed_at IS NOT NULL` or
+ *     `outcome IS NOT NULL`), the explicit verbs / pane trap already
+ *     ran — leave the executor untouched, just clear
+ *     `current_executor_id` so the next reconcile pass skips it
+ *   - otherwise write `state='error'`, `outcome='clean_exit_unverified'`,
+ *     `close_reason=<reason>`, `closed_at=now`, `ended_at=now`, clear
+ *     `current_executor_id`, emit a `reconciler.clean_exit_unverified`
+ *     audit event
+ *
+ * Never throws: DB errors are caught so a transient PG blip can't
+ * wedge `runAgentRecoveryPass` for every subsequent worker in the pass.
+ */
+export async function terminalizeCleanExitUnverified(
+  deps: SchedulerDeps,
+  worker: WorkerInfo,
+  reason: string,
+): Promise<{ terminalized: boolean; executorId: string | null }> {
+  const nowIso = deps.now().toISOString();
+  try {
+    const sql = await deps.getConnection();
+    return await sql.begin(async (tx: SqlClient) => {
+      const rows = await tx`SELECT current_executor_id FROM agents WHERE id = ${worker.id}`;
+      const executorId = (rows[0]?.current_executor_id as string | null | undefined) ?? null;
+
+      if (!executorId) {
+        await tx`
+          UPDATE agents
+          SET state = 'error',
+              last_state_change = ${nowIso}
+          WHERE id = ${worker.id}
+        `;
+        return { terminalized: false, executorId: null };
+      }
+
+      const execRows = await tx<{ closed_at: Date | null; outcome: string | null }[]>`
+        SELECT closed_at, outcome FROM executors
+        WHERE id = ${executorId}
+        FOR UPDATE
+      `;
+      const alreadyClosed = execRows.length > 0 && (execRows[0].closed_at !== null || execRows[0].outcome !== null);
+      if (alreadyClosed) {
+        await tx`
+          UPDATE agents
+          SET current_executor_id = NULL,
+              state = 'error',
+              last_state_change = ${nowIso}
+          WHERE id = ${worker.id}
+        `;
+        return { terminalized: false, executorId };
+      }
+
+      await tx`
+        UPDATE executors
+        SET state = 'error',
+            outcome = 'clean_exit_unverified',
+            close_reason = ${reason},
+            closed_at = ${nowIso},
+            ended_at = ${nowIso}
+        WHERE id = ${executorId}
+      `;
+
+      await tx`
+        UPDATE agents
+        SET current_executor_id = NULL,
+            state = 'error',
+            last_state_change = ${nowIso}
+        WHERE id = ${worker.id}
+      `;
+
+      await tx`
+        INSERT INTO audit_events (entity_type, entity_id, event_type, actor, details)
+        VALUES (
+          'executor',
+          ${executorId},
+          'reconciler.clean_exit_unverified',
+          'scheduler',
+          ${tx.json({ agent_id: worker.id, reason, outcome: 'clean_exit_unverified' })}
+        )
+      `;
+
+      return { terminalized: true, executorId };
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'error',
+      event: 'terminalize_clean_exit_unverified_failed',
+      agent_id: worker.id,
+      error: message,
+    });
+    return { terminalized: false, executorId: null };
+  }
+}
+
+/**
+ * Reconcile agents that can never be auto-resumed.
+ *
+ * Rows in `state='error'` with `autoResume=true` but no `claudeSessionId` are
+ * permanently wedged: the resume filter in {@link runAgentRecoveryPass} drops
+ * them (no session id to resume from), so they are never attempted, their
+ * counter never advances, and `genie ls` keeps displaying `auto-resume: on`
+ * — a lie to the operator since the scheduler cannot possibly try.
+ *
+ * Observed live on felipe's machine: 9 such rows (8 `genie-docs` directory
+ * placeholders + 2 omni workers that died before capturing a Claude session
+ * id). Root cause for why those rows end up in `error` state without a
+ * session id is tracked as a separate investigation (dir:-row state
+ * mutation + omni session capture).
+ *
+ * The fix here is the terminal-boundary invariant: mark them `auto_resume=false`
+ * so subsequent scheduler ticks ignore them and the UI reflects reality.
+ * Each flipped row logs `agent_marked_unresumable` for observability.
+ *
+ * Exported so the periodic timer can invoke it alongside the existing
+ * `reconcileDeadPaneZombies` + `runAgentRecoveryPass` pair.
+ */
+export async function reconcileUnresumable(deps: SchedulerDeps): Promise<number> {
+  const workers = await deps.listWorkers();
+  let flipped = 0;
+  for (const worker of workers) {
+    // Terminal boundary condition: error-state, auto-resume on, no session id.
+    // `!worker.currentSessionId` matches both `null` (DB JOIN missing) and
+    // `undefined` (listWorkers mapping where the executor row has no session
+    // captured yet). Post-migration-047 the session lives on the current
+    // executor, not on the agent row.
+    if (worker.state !== 'error') continue;
+    if (worker.autoResume === false) continue;
+    if (worker.currentSessionId) continue;
+
+    try {
+      await deps.updateAgent(worker.id, { autoResume: false });
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'warn',
+        event: 'agent_marked_unresumable',
+        agent_id: worker.id,
+        reason: 'no_session_id',
+        state: worker.state,
+      });
+      flipped++;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'warn',
+        event: 'agent_marked_unresumable_failed',
+        agent_id: worker.id,
+        error: message,
+      });
+    }
+  }
+  return flipped;
 }
 
 // ============================================================================
@@ -691,6 +1225,45 @@ const RESUME_COOLDOWN_MS = 60_000;
 
 /** Default max auto-resume attempts. */
 const DEFAULT_MAX_RESUME_ATTEMPTS = 3;
+
+/** States that never consume a concurrency-cap slot (terminal or pre-active). */
+const INACTIVE_WORKER_STATES = new Set(['done', 'error', 'suspended', 'spawning']);
+
+/**
+ * Count workers genuinely consuming a concurrency-cap slot.
+ *
+ * Excludes rows that only appear active on paper:
+ *   1. `state == null` — identity records created by `findOrCreateAgent`
+ *      (see `agent-registry.ts:548-550`). They track liveness via the
+ *      `executors` table, not the legacy `state` column.
+ *   2. States in INACTIVE_WORKER_STATES (done/error/suspended/spawning).
+ *   3. tmux-pane rows whose pane is dead — zombie rows whose pane died
+ *      without a state update. Mirrors `term-commands/agents.ts:2475
+ *      resolveWorkerLiveness`. Synthetic paneIds (sdk, inline, empty) are
+ *      skipped because they have their own non-tmux liveness source.
+ *
+ * When `isPaneAlive` throws (tmux unreachable) we conservatively count the
+ * row — better to briefly over-count than to silently under-count during a
+ * tmux blip and over-spawn past the configured cap.
+ */
+async function countActiveWorkers(
+  workers: WorkerInfo[],
+  isPaneAlive: (paneId: string) => Promise<boolean>,
+): Promise<number> {
+  let count = 0;
+  for (const w of workers) {
+    if (w.state == null || INACTIVE_WORKER_STATES.has(w.state)) continue;
+    if (/^%\d+$/.test(w.paneId)) {
+      try {
+        if (!(await isPaneAlive(w.paneId))) continue;
+      } catch {
+        // Tmux unreachable — be conservative, count this row
+      }
+    }
+    count++;
+  }
+  return count;
+}
 
 /**
  * Result of an auto-resume attempt.
@@ -706,6 +1279,79 @@ type ResumeResult = 'resumed' | 'exhausted' | 'skipped';
  * Checks eligibility (autoResume flag, retry budget, cooldown, concurrency cap),
  * then delegates to `deps.resumeAgent` to actually respawn the agent.
  */
+/**
+ * Known `AgentState` values we expose on the auto-resume telemetry events.
+ * Any unrecognized value (e.g., a schema migration landed a new state we
+ * haven't registered yet) degrades to `'unknown'` so emission never throws
+ * on a Zod enum mismatch. Keep in sync with `src/lib/events/schemas/agent.resume.*.ts`.
+ */
+const TELEMETRY_STATES = new Set<AgentState>([
+  'spawning',
+  'working',
+  'idle',
+  'permission',
+  'question',
+  'done',
+  'error',
+  'suspended',
+]);
+
+function telemetryState(raw: AgentState | null | undefined): string {
+  return raw && TELEMETRY_STATES.has(raw) ? raw : 'unknown';
+}
+
+/**
+ * Emit the auto-resume telemetry triplet (`agent.resume.attempted|succeeded|failed`)
+ * to both sinks:
+ *   - `audit_events` (via `recordAuditEvent`) so `genie events list --type
+ *      agent.resume.*` surfaces rows immediately. Issue #1304.
+ *   - v2 runtime events (via `emitEvent`) for detector consumers.
+ *
+ * Both calls are best-effort — `recordAuditEvent` swallows DB errors, and
+ * `emitEvent` is fire-and-forget. Failure here MUST NOT break the resume path.
+ */
+function recordResumeTelemetry(
+  eventType: 'agent.resume.attempted' | 'agent.resume.succeeded' | 'agent.resume.failed',
+  payload: {
+    entity_id: string;
+    attempt_number: number;
+    state_before: string;
+    state_after: string;
+    last_error?: string;
+    trigger: 'scheduler' | 'manual' | 'boot';
+    exhausted?: boolean;
+  },
+  actor: string,
+): void {
+  // audit_events (default `genie events list` target)
+  void recordAuditEvent('agent.resume', payload.entity_id, eventType, actor, payload).catch(() => {
+    /* best-effort — swallowed inside recordAuditEvent too */
+  });
+
+  // v2 runtime events (detector target)
+  try {
+    const v2Payload: Record<string, unknown> = {
+      entity_id: payload.entity_id,
+      attempt_number: payload.attempt_number,
+      state_before: payload.state_before,
+      state_after: payload.state_after,
+      trigger: payload.trigger,
+    };
+    if (payload.last_error) {
+      v2Payload.last_error = payload.last_error.slice(0, 500);
+    }
+    if (eventType === 'agent.resume.failed') {
+      v2Payload.exhausted = payload.exhausted ?? false;
+    }
+    emitEvent(eventType, v2Payload, {
+      severity: eventType === 'agent.resume.failed' ? 'warn' : 'info',
+      source_subsystem: 'scheduler.auto-resume',
+    });
+  } catch {
+    /* emit is best-effort — observability must never break the path it observes */
+  }
+}
+
 export async function attemptAgentResume(
   deps: SchedulerDeps,
   config: SchedulerConfig,
@@ -726,8 +1372,9 @@ export async function attemptAgentResume(
     return 'skipped';
   }
 
-  // Must have a Claude session ID to resume
-  if (!agent.claudeSessionId) {
+  // Must have a Claude session ID to resume (joined from
+  // `executors.claude_session_id` via `agents.current_executor_id`).
+  if (!agent.currentSessionId) {
     deps.log({
       timestamp: now.toISOString(),
       level: 'debug',
@@ -741,8 +1388,16 @@ export async function attemptAgentResume(
   const maxAttempts = agent.maxResumeAttempts ?? DEFAULT_MAX_RESUME_ATTEMPTS;
   const attempts = agent.resumeAttempts ?? 0;
 
-  // Retry budget exhausted
+  // Retry budget exhausted — mark terminal so the scheduler filter excludes
+  // the agent next cycle. Prior to this write, `attempts >= maxAttempts` rows
+  // kept passing the resumable filter, so `agent_resume_exhausted` fired on
+  // every tick (60s) for the same agent without any new delivery attempt. The
+  // log-once invariant requires `auto_resume=false` to persist at the terminal
+  // boundary (mirrors the Bug A unresumable reconciler below). We only reach
+  // this branch when `autoResume !== false` (the earlier early-skip handles
+  // the disabled case), so the write is unconditional here.
   if (attempts >= maxAttempts) {
+    await deps.updateAgent(agentId, { autoResume: false });
     deps.log({
       timestamp: now.toISOString(),
       level: 'warn',
@@ -770,9 +1425,12 @@ export async function attemptAgentResume(
     }
   }
 
-  // Concurrency cap: count active workers
+  // Concurrency cap: count active workers (see `countActiveWorkers` above).
+  // Without NULL-filter + dead-pane filter, accumulated identity rows and
+  // dead-pane zombies inflated activeCount to 142 on one observed machine,
+  // permanently blocking every auto-resume attempt (`active=142, max=5`).
   const workers = await deps.listWorkers();
-  const activeCount = workers.filter((w) => !['done', 'error', 'suspended', 'spawning'].includes(w.state)).length;
+  const activeCount = await countActiveWorkers(workers, deps.isPaneAlive);
   if (activeCount >= config.maxConcurrent) {
     deps.log({
       timestamp: now.toISOString(),
@@ -802,10 +1460,27 @@ export async function attemptAgentResume(
     max_resume_attempts: maxAttempts,
   });
 
+  const stateBefore = telemetryState(agent.state);
+  recordResumeTelemetry(
+    'agent.resume.attempted',
+    {
+      entity_id: agentId,
+      attempt_number: newAttempts,
+      state_before: stateBefore,
+      state_after: stateBefore,
+      trigger: 'scheduler',
+    },
+    'scheduler',
+  );
+
   // Attempt the resume
   const success = await deps.resumeAgent(agentId);
 
   if (success) {
+    // Reset the counter on success so a healthy agent doesn't carry stale
+    // "2/3 resumes" state into the next failure. We own the counter now that
+    // `defaultResumeAgent` passes `--no-reset-attempts` to the CLI.
+    await deps.updateAgent(agentId, { resumeAttempts: 0 });
     deps.log({
       timestamp: now.toISOString(),
       level: 'info',
@@ -813,6 +1488,22 @@ export async function attemptAgentResume(
       agent_id: agentId,
       resume_attempts: newAttempts,
     });
+    recordResumeTelemetry(
+      'agent.resume.succeeded',
+      {
+        entity_id: agentId,
+        attempt_number: newAttempts,
+        state_before: stateBefore,
+        // A successful resume re-spawns the agent; the registry row is about
+        // to transition to 'spawning' as `defaultSpawnCommand` fires. Emitting
+        // 'spawning' here gives detectors the state_before != state_after
+        // signal they need to distinguish thrashing (where state never moves)
+        // from healthy resumes (where it does).
+        state_after: 'spawning',
+        trigger: 'scheduler',
+      },
+      'scheduler',
+    );
     return 'resumed';
   }
 
@@ -825,8 +1516,30 @@ export async function attemptAgentResume(
     max_resume_attempts: maxAttempts,
   });
 
-  // If this was the last attempt, mark exhausted
+  const willExhaust = newAttempts >= maxAttempts;
+  recordResumeTelemetry(
+    'agent.resume.failed',
+    {
+      entity_id: agentId,
+      attempt_number: newAttempts,
+      state_before: stateBefore,
+      // On failure the state does NOT move (this is the thrash signal). When
+      // exhaustion trips immediately after, the reconciler flips the row to
+      // `error` — captured on the next scheduler tick, not here.
+      state_after: stateBefore,
+      trigger: 'scheduler',
+      exhausted: willExhaust,
+    },
+    'scheduler',
+  );
+
+  // If this was the last attempt, mark exhausted AND persist
+  // `auto_resume=false` so the next scheduler tick's resumable filter excludes
+  // this agent. Without the flip, subsequent cycles would hit the early-exit
+  // `attempts >= maxAttempts` branch and re-log `agent_resume_exhausted` every
+  // 60s forever.
   if (newAttempts >= maxAttempts) {
+    await deps.updateAgent(agentId, { autoResume: false });
     deps.log({
       timestamp: now.toISOString(),
       level: 'warn',
@@ -949,7 +1662,7 @@ async function tryResumeOrFail(
     return 'resumed';
   }
   if (result === 'skipped') {
-    const isPermanent = agent.autoResume === false || !agent.claudeSessionId;
+    const isPermanent = agent.autoResume === false || !agent.currentSessionId;
     return isPermanent ? 'failed' : 'deferred';
   }
   return 'failed'; // exhausted
@@ -1210,6 +1923,149 @@ interface DaemonHandle {
 }
 
 /**
+ * Dependency overrides for `processMailboxRetryMessage`. The retry loop uses
+ * dynamic imports for `deliverToPane` and `send` to avoid circular-import
+ * risk; tests can inject mocks here instead of going through the real
+ * protocol-router / mailbox modules.
+ */
+interface MailboxRetryOverrides {
+  /** Pane delivery function. Defaults to `protocol-router.deliverToPane`. */
+  deliverFn?: (toWorker: string, messageId: string) => Promise<boolean>;
+  /** Mailbox writer used to post the escalation row. Defaults to `mailbox.send`. */
+  sendFn?: (repoPath: string, from: string, to: string, body: string) => Promise<unknown>;
+}
+
+/**
+ * Process a single retryable mailbox message. Extracted from the scheduler
+ * daemon's 60s retry loop so guards and edge cases can be unit-tested.
+ *
+ * Attempts instant pane delivery via `deliverFn`. If delivery fails and the
+ * message has now hit `MAX_DELIVERY_ATTEMPTS`, escalate it — BUT only if
+ * none of the three recursion guards match. The guards exist because the
+ * escalation row (`from=scheduler`, `to=ESCALATION_RECIPIENT`) is itself
+ * subject to the same retry+escalate cycle; without them, a single
+ * unresolvable escalation spawns an infinite chain (observed: 181K rows
+ * over 8 days before the guards shipped).
+ *
+ * Guards (in order, any match short-circuits before `sendFn` is called):
+ *   1. `msg.from === 'scheduler'` — message was ALREADY authored by the
+ *      escalation path. Re-escalating it would grow the chain by one each
+ *      retry cycle. Mandatory guard.
+ *   2. `msg.body.startsWith('[escalation] ')` — body-prefix defense for any
+ *      escalation message that somehow lost the scheduler authorship (e.g.
+ *      manual replay, future sender rename).
+ *   3. `msg.to === ESCALATION_RECIPIENT` — same-recipient defense. The bare
+ *      `'team-lead'` recipient is unresolvable; escalating to it cannot
+ *      ever succeed, so re-escalating it only amplifies the problem.
+ *
+ * All three guards log `mailbox_delivery_escalation_dropped` with a
+ * `reason` field so ops can distinguish dropped-by-guard from
+ * delivered-successfully in the scheduler log.
+ */
+export async function processMailboxRetryMessage(
+  deps: SchedulerDeps,
+  msg: MailboxMessage,
+  overrides: MailboxRetryOverrides = {},
+): Promise<void> {
+  const deliverFn =
+    overrides.deliverFn ??
+    (async (toWorker: string, messageId: string) => {
+      const { deliverToPane } = await import('./protocol-router.js');
+      return deliverToPane(toWorker, messageId);
+    });
+  const sendFn =
+    overrides.sendFn ??
+    (async (repoPath: string, from: string, to: string, body: string) => {
+      const { send } = await import('./mailbox.js');
+      return send(repoPath, from, to, body);
+    });
+
+  const delivered = await deliverFn(msg.to, msg.id);
+  if (delivered) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'info',
+      event: 'mailbox_delivery_retried',
+      messageId: msg.id,
+      to: msg.to,
+    });
+    return;
+  }
+
+  // deliverToPane already called markFailed — check if max attempts reached.
+  const sql = await deps.getConnection();
+  const rows = await sql`SELECT delivery_attempts, repo_path FROM mailbox WHERE id = ${msg.id} LIMIT 1`;
+  const attempts = rows[0]?.delivery_attempts ?? 0;
+  if (attempts < MAX_DELIVERY_ATTEMPTS) return;
+
+  await markEscalated(msg.id);
+
+  // Guard 1 (MANDATORY): message already authored by the scheduler means it
+  // IS an escalation; re-escalating it is the exact loop we saw in prod.
+  if (msg.from === 'scheduler') {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'warn',
+      event: 'mailbox_delivery_escalation_dropped',
+      reason: 'already_escalated_by_scheduler',
+      messageId: msg.id,
+      to: msg.to,
+      attempts,
+    });
+    return;
+  }
+
+  // Guard 2 (defense-in-depth): body-prefix check catches any escalation row
+  // that arrives without scheduler authorship (manual replay, sender rename).
+  if (msg.body.startsWith('[escalation] ')) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'warn',
+      event: 'mailbox_delivery_escalation_dropped',
+      reason: 'body_prefix',
+      messageId: msg.id,
+      to: msg.to,
+      attempts,
+    });
+    return;
+  }
+
+  // Guard 3 (defense-in-depth): the bare escalation recipient is
+  // unresolvable today, so escalating to it can never succeed. Drop and
+  // log rather than append another doomed row.
+  if (msg.to === ESCALATION_RECIPIENT) {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'warn',
+      event: 'mailbox_delivery_escalation_dropped',
+      reason: 'same_recipient',
+      messageId: msg.id,
+      to: msg.to,
+      attempts,
+    });
+    return;
+  }
+
+  const repoPath = rows[0]?.repo_path;
+  if (repoPath) {
+    await sendFn(
+      repoPath,
+      'scheduler',
+      ESCALATION_RECIPIENT,
+      `[escalation] Message ${msg.id} from "${msg.from}" to "${msg.to}" failed delivery after ${MAX_DELIVERY_ATTEMPTS} attempts. Body: "${msg.body.slice(0, 200)}"`,
+    );
+  }
+  deps.log({
+    timestamp: deps.now().toISOString(),
+    level: 'warn',
+    event: 'mailbox_delivery_escalated',
+    messageId: msg.id,
+    to: msg.to,
+    attempts,
+  });
+}
+
+/**
  * Start the scheduler daemon.
  *
  * Flow:
@@ -1234,6 +2090,7 @@ export function startDaemon(
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let orphanTimer: ReturnType<typeof setInterval> | null = null;
   let leaseRecoveryTimer: ReturnType<typeof setInterval> | null = null;
+  let agentResumeTimer: ReturnType<typeof setInterval> | null = null;
   let inboxWatcherHandle: NodeJS.Timeout | null = null;
   let captureFallbackTimer: ReturnType<typeof setInterval> | null = null;
   let eventRouterHandle: EventRouterHandle | null = null;
@@ -1263,6 +2120,10 @@ export function startDaemon(
     if (leaseRecoveryTimer) {
       clearInterval(leaseRecoveryTimer);
       leaseRecoveryTimer = null;
+    }
+    if (agentResumeTimer) {
+      clearInterval(agentResumeTimer);
+      agentResumeTimer = null;
     }
     if (inboxWatcherHandle) {
       stopInboxWatcher(inboxWatcherHandle);
@@ -1390,6 +2251,68 @@ export function startDaemon(
     }, cfg.orphanCheckIntervalMs);
   }
 
+  /**
+   * GC dead-pane zombies via `reconcileStaleSpawns`. Runs before the resume
+   * pass each tick so the concurrency cap sees an accurate active set.
+   */
+  async function reconcileDeadPaneZombies(d: SchedulerDeps): Promise<void> {
+    try {
+      const { reconcileStaleSpawns } = await import('./agent-registry.js');
+      await reconcileStaleSpawns();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      d.log({
+        timestamp: d.now().toISOString(),
+        level: 'warn',
+        event: 'reconcile_stale_spawns_error',
+        error: message,
+      });
+    }
+  }
+
+  /**
+   * Periodic auto-resume sweep for error-state agents.
+   *
+   * Before this timer existed, `runAgentRecoveryPass` only ran at daemon
+   * startup (`recoverOnStartup`) plus one delayed retry. Agents that hit
+   * `error` state mid-run — the very failure mode auto-resume is designed
+   * to handle — never retried until the daemon process restarted.
+   *
+   * Interval reuses `leaseRecoveryIntervalMs` (60s default): same cadence as
+   * lease recovery, gentle enough not to thrash tmux on large worker sets,
+   * tight enough that a user sees the 1/3, 2/3, 3/3 resume progression
+   * within a few minutes rather than waiting for a daemon restart.
+   *
+   * Each tick first reconciles dead-pane zombies (idle/working/permission/
+   * question rows whose tmux pane is dead → error) via
+   * `reconcileDeadPaneZombies`, so the subsequent resume pass sees an
+   * accurate activeCount instead of the inflated zombie count.
+   */
+  function startAgentResumeTimer(d: SchedulerDeps, cfg: SchedulerConfig, dId: string): ReturnType<typeof setInterval> {
+    return setInterval(async () => {
+      if (!running) return;
+      try {
+        // Order matters: (1) GC dead-pane zombies so activeCount is accurate;
+        // (2) flip unresumable rows to `auto_resume=false` so they are
+        // excluded from the resumable filter in this same tick; (3) run the
+        // resume pass. Step 2 is the Bug A fix — without it, error rows with
+        // null session ids stayed in `auto_resume=true` forever, misleading
+        // `genie ls` and cluttering the worker list.
+        await reconcileDeadPaneZombies(d);
+        await reconcileUnresumable(d);
+        await runAgentRecoveryPass(d, dId, cfg);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        d.log({
+          timestamp: d.now().toISOString(),
+          level: 'error',
+          event: 'agent_resume_timer_error',
+          error: message,
+        });
+      }
+    }, cfg.leaseRecoveryIntervalMs);
+  }
+
   async function startEventRouterSafe(d: SchedulerDeps): Promise<ReturnType<typeof startEventRouter> | null> {
     try {
       const handle = await startEventRouter();
@@ -1410,6 +2333,42 @@ export function startDaemon(
       const captureSql = await d.getConnection();
       const { startFilewatch } = await import('./session-filewatch.js');
       const { startBackfill } = await import('./session-backfill.js');
+      const { reconcileSubagentParents } = await import('./session-capture.js');
+
+      // Retroactive reconcile — runs once per daemon start, independent of
+      // backfill. The backfill-tail reconcile only fires when backfill
+      // actually runs (i.e., `session_sync.status != 'complete'`). Post-
+      // v1 deployments leave backfill done, so subagents captured by
+      // filewatch BEFORE their parent session row was enriched (async
+      // worker-map lookup miss, filewatch ordering race, or parent
+      // inserted from a later jsonl batch) stay metadata-free forever.
+      //
+      // Running the same idempotent UPDATEs here catches those rows on
+      // the next restart. Zero rows is the happy case; a non-zero count
+      // is diagnostic gold — it says "the filewatch ordering skipped
+      // metadata for N subagents and we just fixed them."
+      reconcileSubagentParents(captureSql)
+        .then(({ linked, metadataFilled }) => {
+          if (linked > 0 || metadataFilled > 0) {
+            d.log({
+              timestamp: d.now().toISOString(),
+              level: 'info',
+              event: 'subagent_reconcile_on_start',
+              linked,
+              metadata_filled: metadataFilled,
+            });
+          }
+        })
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          d.log({
+            timestamp: d.now().toISOString(),
+            level: 'warn',
+            event: 'subagent_reconcile_on_start_failed',
+            error: msg,
+          });
+        });
+
       const filewatchOk = await startFilewatch(captureSql);
       if (!filewatchOk) {
         const { ingestFileFull, discoverAllJsonlFiles, buildWorkerMap } = await import('./session-capture.js');
@@ -1483,6 +2442,8 @@ export function startDaemon(
       poll_interval_ms: config.pollIntervalMs,
     });
 
+    logReconcilerMode(deps, daemonId);
+
     // Startup recovery: reclaim expired leases + reconcile orphans
     try {
       await recoverOnStartup(deps, daemonId, config);
@@ -1500,6 +2461,7 @@ export function startDaemon(
     heartbeatTimer = setInterval(() => runHeartbeat(deps), config.heartbeatIntervalMs);
     orphanTimer = startOrphanTimer(deps, config);
     leaseRecoveryTimer = startLeaseRecoveryTimer(deps, config, daemonId);
+    agentResumeTimer = startAgentResumeTimer(deps, config, daemonId);
     inboxWatcherHandle = startInboxWatcherIfEnabled(deps);
     eventRouterHandle = await startEventRouterSafe(deps);
 
@@ -1518,50 +2480,15 @@ export function startDaemon(
       // PG LISTEN not available — inbox-watcher polling remains the fallback
     }
 
-    // Mailbox delivery retry loop: retry failed deliveries every 60s
-    const MAX_DELIVERY_ATTEMPTS = 3;
+    // Mailbox delivery retry loop: retry failed deliveries every 60s.
+    // Per-message logic lives in `processMailboxRetryMessage` so guards
+    // against escalation recursion are unit-testable.
     deliveryRetryTimer = setInterval(async () => {
       try {
         const retryable = await getRetryable(MAX_DELIVERY_ATTEMPTS);
         for (const msg of retryable) {
           try {
-            const { deliverToPane } = await import('./protocol-router.js');
-            const delivered = await deliverToPane(msg.to, msg.id);
-            if (delivered) {
-              deps.log({
-                timestamp: deps.now().toISOString(),
-                level: 'info',
-                event: 'mailbox_delivery_retried',
-                messageId: msg.id,
-                to: msg.to,
-              });
-              continue;
-            }
-            // deliverToPane already called markFailed — check if max attempts reached
-            const sql = await deps.getConnection();
-            const rows = await sql`SELECT delivery_attempts, repo_path FROM mailbox WHERE id = ${msg.id} LIMIT 1`;
-            const attempts = rows[0]?.delivery_attempts ?? 0;
-            if (attempts >= MAX_DELIVERY_ATTEMPTS) {
-              await markEscalated(msg.id);
-              const repoPath = rows[0]?.repo_path;
-              if (repoPath) {
-                const { send } = await import('./mailbox.js');
-                await send(
-                  repoPath,
-                  'scheduler',
-                  'team-lead',
-                  `[escalation] Message ${msg.id} from "${msg.from}" to "${msg.to}" failed delivery after ${MAX_DELIVERY_ATTEMPTS} attempts. Body: "${msg.body.slice(0, 200)}"`,
-                );
-              }
-              deps.log({
-                timestamp: deps.now().toISOString(),
-                level: 'warn',
-                event: 'mailbox_delivery_escalated',
-                messageId: msg.id,
-                to: msg.to,
-                attempts,
-              });
-            }
+            await processMailboxRetryMessage(deps, msg);
           } catch {
             // Individual message retry failed — will be retried next cycle
           }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildOmniSpawnParams, sanitizeWindowName } from './claude-code.js';
+import { buildOmniSpawnParams, resolveBridgeTmuxSession, sanitizeWindowName } from './claude-code.js';
 
 describe('sanitizeWindowName', () => {
   // --- Without chatName (fallback to JID) ---
@@ -156,5 +156,120 @@ describe('buildOmniSpawnParams', () => {
     const entryWithProvider = { ...fakeEntry, provider: 'codex' };
     const params = buildOmniSpawnParams('simone', 'chat123', entryWithProvider, {});
     expect(params.provider).toBe('codex');
+  });
+
+  test('propagates entry.permissions.allow/deny for turn-sandbox enforcement', () => {
+    const entryWithPermissions = {
+      ...fakeEntry,
+      permissions: {
+        allow: ['Bash(omni say *)', 'Bash(omni done)'],
+        deny: ['Bash(omni chats *)', 'Bash(rm *)'],
+      },
+    };
+    const params = buildOmniSpawnParams('simone', 'chat123', entryWithPermissions, {});
+    expect(params.permissions?.allow).toEqual(['Bash(omni say *)', 'Bash(omni done)']);
+    expect(params.permissions?.deny).toEqual(['Bash(omni chats *)', 'Bash(rm *)']);
+  });
+
+  test('propagates entry.disallowedTools', () => {
+    const entryWithTools = {
+      ...fakeEntry,
+      disallowedTools: ['Edit', 'Write', 'Agent'],
+    };
+    const params = buildOmniSpawnParams('simone', 'chat123', entryWithTools, {});
+    expect(params.disallowedTools).toEqual(['Edit', 'Write', 'Agent']);
+  });
+
+  test('omits permissions when entry has none (no false sense of security)', () => {
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
+    expect(params.permissions).toBeUndefined();
+    expect(params.disallowedTools).toBeUndefined();
+  });
+
+  test('omits permissions when allow/deny are empty arrays', () => {
+    const entryWithEmpty = {
+      ...fakeEntry,
+      permissions: { allow: [], deny: [] },
+    };
+    const params = buildOmniSpawnParams('simone', 'chat123', entryWithEmpty, {});
+    expect(params.permissions).toBeUndefined();
+  });
+
+  test('ignores SDK-only preset/bashAllowPatterns (CLI path uses allow/deny only)', () => {
+    const entryWithSdkFields = {
+      ...fakeEntry,
+      permissions: {
+        preset: 'turn-sandbox',
+        allow: ['Bash(omni say *)'],
+        bashAllowPatterns: ['^omni say .*$'],
+      },
+    };
+    const params = buildOmniSpawnParams('simone', 'chat123', entryWithSdkFields, {});
+    // SpawnParams.permissions only carries allow/deny — preset and bashAllowPatterns
+    // are SDK-specific and handled in claude-sdk-permissions.ts, not here.
+    expect(params.permissions?.allow).toEqual(['Bash(omni say *)']);
+    expect(params.permissions?.deny).toBeUndefined();
+  });
+});
+
+describe('resolveBridgeTmuxSession', () => {
+  test('env override wins over yaml and agent name', () => {
+    expect(resolveBridgeTmuxSession('felipe/scout', 'felipe', 'whatsapp-scout-12')).toBe('whatsapp-scout-12');
+  });
+
+  test('yaml default wins when env is absent', () => {
+    expect(resolveBridgeTmuxSession('felipe/scout', 'felipe', undefined)).toBe('felipe');
+  });
+
+  test('falls back to agentName when neither env nor yaml set', () => {
+    expect(resolveBridgeTmuxSession('felipe', undefined, undefined)).toBe('felipe');
+  });
+
+  test('sanitizes `/` to `-` in the final resolved value (agentName fallback)', () => {
+    expect(resolveBridgeTmuxSession('felipe/scout', undefined, undefined)).toBe('felipe-scout');
+  });
+
+  test('sanitizes `/` to `-` when the yaml value carries a slash', () => {
+    expect(resolveBridgeTmuxSession('agent', 'group/sub', undefined)).toBe('group-sub');
+  });
+
+  test('sanitizes `/` to `-` when the env override carries a slash', () => {
+    expect(resolveBridgeTmuxSession('agent', 'yaml', 'env/scout')).toBe('env-scout');
+  });
+
+  test('empty-string env override is treated as absent (falls through to yaml)', () => {
+    expect(resolveBridgeTmuxSession('agent', 'yaml-default', '')).toBe('yaml-default');
+  });
+
+  test('empty-string yaml default is treated as absent (falls through to agentName)', () => {
+    // Regression for Gemini review on PR #1271: a yaml file with
+    // `bridgeTmuxSession: ''` previously short-circuited to "" (nameless
+    // session, rejected by tmux). `||` semantics now fall through.
+    expect(resolveBridgeTmuxSession('agent-name', '', undefined)).toBe('agent-name');
+  });
+
+  test('empty-string env override falls through to agentName when yaml also empty', () => {
+    expect(resolveBridgeTmuxSession('fallback', undefined, '')).toBe('fallback');
+  });
+
+  test('empty-string env and empty-string yaml both fall through to agentName', () => {
+    expect(resolveBridgeTmuxSession('fallback-both', '', '')).toBe('fallback-both');
+  });
+
+  test('sanitizes `:` to `-` (tmux reserves `:` as session:window separator)', () => {
+    // Regression for Gemini review on PR #1271.
+    expect(resolveBridgeTmuxSession('agent', 'team:window', undefined)).toBe('team-window');
+    expect(resolveBridgeTmuxSession('agent', 'yaml', 'whatsapp:12')).toBe('whatsapp-12');
+    expect(resolveBridgeTmuxSession('agent:role', undefined, undefined)).toBe('agent-role');
+  });
+
+  test('sanitizes mixed `/` and `:` in a single value', () => {
+    expect(resolveBridgeTmuxSession('agent', 'team:sub/window', undefined)).toBe('team-sub-window');
+  });
+
+  test('preserves benign special chars (., _, non-reserved)', () => {
+    // Sanitization targets only `/` and `:`; other chars are the caller's
+    // concern. Dots and underscores are legal in tmux session names.
+    expect(resolveBridgeTmuxSession('agent', 'with_underscore-and.dot', undefined)).toBe('with_underscore-and.dot');
   });
 });

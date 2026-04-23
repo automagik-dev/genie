@@ -7,9 +7,14 @@
  * Run with: bun test src/genie-commands/__tests__/session.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+// Import the real genie-config module so we can spyOn individual exports.
+// Using spyOn instead of mock.module avoids leaking an incomplete mock to
+// other test files (bun 1.3.x leaks mock.module across parallel workers —
+// see PR #1169). Pattern mirrors src/term-commands/init-bootstrap.test.ts.
+import * as genieConfig from '../../lib/genie-config.js';
 import { HEARTBEAT_TEMPLATE, SOUL_TEMPLATE, scaffoldAgentFiles } from '../../templates/index.js';
 import { buildClaudeCommand, getAgentsFilePath, sanitizeWindowName } from '../session.js';
 
@@ -18,6 +23,23 @@ import { buildClaudeCommand, getAgentsFilePath, sanitizeWindowName } from '../se
 // ============================================================================
 
 describe('buildClaudeCommand', () => {
+  // Pin promptMode so tests asserting --append-system-prompt-file don't depend
+  // on the host's ~/.genie/config.json. Without this, a host configured with
+  // promptMode: "system" causes buildTeamLeadCommand to emit --system-prompt-file
+  // instead, failing the append-system-prompt-file assertions below.
+  // Closes the tail surfaced during PR #1169 QA.
+  let loadGenieConfigSyncSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    loadGenieConfigSyncSpy = spyOn(genieConfig, 'loadGenieConfigSync').mockReturnValue({
+      promptMode: 'append',
+    } as ReturnType<typeof genieConfig.loadGenieConfigSync>);
+  });
+
+  afterEach(() => {
+    loadGenieConfigSyncSpy.mockRestore();
+  });
+
   test('always contains --team-name flag', () => {
     const cmd = buildClaudeCommand('genie');
     expect(cmd).toContain('--team-name');
@@ -78,14 +100,22 @@ describe('buildClaudeCommand', () => {
     expect(cmd).not.toContain('--resume');
   });
 
-  test('with undefined continueName does NOT include --resume', () => {
-    const cmd = buildClaudeCommand('genie', undefined, undefined);
+  test('without sessionId does NOT include --resume or --session-id', () => {
+    const cmd = buildClaudeCommand('genie');
     expect(cmd).not.toContain('--resume');
+    expect(cmd).not.toContain('--session-id');
   });
 
-  test('with a continueName DOES include --resume', () => {
-    const cmd = buildClaudeCommand('my-team', undefined, 'my-team');
-    expect(cmd).toContain("--resume 'my-team'");
+  test('with sessionId + resume:true emits --resume <uuid>', () => {
+    const cmd = buildClaudeCommand('my-team', undefined, undefined, 'uuid-xyz-789', true);
+    expect(cmd).toContain("--resume 'uuid-xyz-789'");
+    expect(cmd).not.toContain('--session-id');
+  });
+
+  test('with sessionId + resume:false emits --session-id <uuid>', () => {
+    const cmd = buildClaudeCommand('my-team', undefined, undefined, 'uuid-xyz-789', false);
+    expect(cmd).toContain("--session-id 'uuid-xyz-789'");
+    expect(cmd).not.toContain('--resume');
   });
 
   test('file path is passed directly, no content inlined', () => {

@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "4.260417.1",
+  "version": "4.260423.9",
   "description": "Collaborative terminal toolkit for human + AI workflows",
   "type": "module",
   "bin": {
@@ -11,6 +11,7 @@
     "skills/",
     "plugins/genie/",
     "scripts/postinstall-tmux.js",
+    "scripts/sec-scan.cjs",
     "scripts/tmux/",
     "src/db/migrations/",
     "templates/",
@@ -31,12 +32,15 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "test": "bun test",
+    "test:parallel": "bun run scripts/test-parallel.ts",
     "typecheck": "tsc --noEmit",
     "dead-code": "bunx knip",
     "skills:lint": "bun run scripts/skills-lint.ts",
     "wishes:lint": "bun run scripts/wishes-lint.ts",
     "skills:audit": "bun run scripts/skills-audit.ts",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun test"
+    "lint:emit": "bun run scripts/lint-emit-discipline.ts",
+    "check:perf": "bun run test/perf/observability/gate.ts --duration=30000",
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:emit && bun test"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.91",
@@ -48,7 +52,7 @@
     "ignore": "^7.0.5",
     "js-yaml": "^4.1.1",
     "nats": "^2.29.3",
-    "pgserve": "^1.1.8",
+    "pgserve": "^1.1.10",
     "postgres": "^3.4.8",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

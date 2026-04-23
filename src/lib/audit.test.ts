@@ -17,13 +17,13 @@ import {
   recordAuditEvent,
 } from './audit.js';
 import { getConnection } from './db.js';
-import { DB_AVAILABLE, setupTestSchema } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    cleanup = await setupTestSchema();
+    cleanup = await setupTestDatabase();
   });
 
   afterAll(async () => {
@@ -84,6 +84,30 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       }
     });
 
+    test('matches entity_type on --type (regression: #1259 bug 1)', async () => {
+      // OTel-sourced rows set `entity_type='otel_tool'` but carry a
+      // generic `event_type` like `otel_event`. Before the fix, `--type
+      // otel_tool` returned [] because the filter only matched
+      // `event_type`. Now both columns are matched — the row flows
+      // through `events list --type otel_tool` as the user expects.
+      await recordAuditEvent('otel_tool', 'Bash-123', 'otel_event', 'test', { tool_name: 'Bash' });
+
+      const events = await queryAuditEvents({ type: 'otel_tool', since: '1h' });
+      const hit = events.find((e) => e.entity_type === 'otel_tool' && e.entity_id === 'Bash-123');
+      expect(hit).toBeDefined();
+      expect(hit?.event_type).toBe('otel_event');
+    });
+
+    test('--type still matches event_type (no regression)', async () => {
+      // Explicit assertion that the widening didn't break the original
+      // semantics — a caller filtering `--type command_start` still
+      // gets event_type='command_start' rows.
+      await recordAuditEvent('command', 'sanity', 'command_start', 'test');
+      const events = await queryAuditEvents({ type: 'command_start', since: '1h' });
+      const hit = events.find((e) => e.entity_id === 'sanity' && e.event_type === 'command_start');
+      expect(hit).toBeDefined();
+    });
+
     test('filters by entity', async () => {
       const events = await queryAuditEvents({ entity: 'command', since: '1h' });
       for (const e of events) {
@@ -114,6 +138,68 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       if (deployTimeout) {
         expect(deployTimeout.count).toBeGreaterThanOrEqual(2);
       }
+    });
+
+    test('surfaces state_changed->error via reason field (regression: empty-message bug)', async () => {
+      // Before fix: state_changed matched via substring filter but COALESCE
+      // only looked at details.error/message → result was '(no message)'.
+      const entityId = `worker-stale-${Date.now()}`;
+      await recordAuditEvent('worker', entityId, 'state_changed', 'cli', {
+        state: 'error',
+        reason: 'stale_spawn',
+      });
+      await recordAuditEvent('worker', entityId, 'state_changed', 'cli', {
+        state: 'error',
+        reason: 'stale_spawn',
+      });
+
+      const patterns = await queryErrorPatterns('1h');
+      const staleSpawn = patterns.find((p) => p.entity_id === entityId && p.error_message === 'stale_spawn');
+      expect(staleSpawn).toBeDefined();
+      expect(staleSpawn?.error_message).toBe('stale_spawn');
+      expect(staleSpawn?.count).toBeGreaterThanOrEqual(2);
+      expect(staleSpawn?.error_message).not.toBe('(no message)');
+    });
+
+    test('excludes state_changed to non-error states (regression: over-broad filter)', async () => {
+      // Before fix: filter `details::text LIKE '%"error"%'` could match any
+      // event whose details serialization contained the substring "error".
+      // A clean transition to 'idle' must NOT appear as an error pattern.
+      const entityId = `worker-idle-${Date.now()}`;
+      await recordAuditEvent('worker', entityId, 'state_changed', 'cli', {
+        state: 'idle',
+        previous_state: 'running',
+      });
+
+      const patterns = await queryErrorPatterns('1h');
+      const noise = patterns.find((p) => p.entity_id === entityId);
+      expect(noise).toBeUndefined();
+    });
+
+    test('extracts error_type when primary error key is absent', async () => {
+      const entityId = `task-typed-${Date.now()}`;
+      await recordAuditEvent('task', entityId, 'task_failed', 'cli', {
+        error_type: 'DependencyMissing',
+      });
+
+      const patterns = await queryErrorPatterns('1h');
+      const row = patterns.find((p) => p.entity_id === entityId);
+      expect(row?.error_message).toBe('DependencyMissing');
+    });
+
+    test('matches events whose only failure signal is the error_type key (gemini review)', async () => {
+      // Reviewer concern on PR #1267: the filter matched on `details ? 'error'`
+      // but not `details ? 'error_type'`. A producer emitting `error_type`
+      // with a neutral event_type (e.g. "resource_check") would slip through.
+      const entityId = `resource-${Date.now()}`;
+      await recordAuditEvent('resource', entityId, 'resource_check', 'cli', {
+        error_type: 'QuotaExceeded',
+      });
+
+      const patterns = await queryErrorPatterns('1h');
+      const row = patterns.find((p) => p.entity_id === entityId);
+      expect(row).toBeDefined();
+      expect(row?.error_message).toBe('QuotaExceeded');
     });
   });
 

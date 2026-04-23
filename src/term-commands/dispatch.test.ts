@@ -15,7 +15,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DB_AVAILABLE, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
   buildContextPrompt,
@@ -32,7 +32,7 @@ let cleanupSchema: () => Promise<void>;
 
 beforeAll(async () => {
   if (!DB_AVAILABLE) return;
-  cleanupSchema = await setupTestSchema();
+  cleanupSchema = await setupTestDatabase();
 });
 
 afterAll(async () => {
@@ -764,5 +764,178 @@ describe('detectWorkMode()', () => {
   it('should handle complex slug with # in old style', () => {
     const result = detectWorkMode('reviewer', 'auto-orchestrate#5');
     expect(result).toEqual({ mode: 'manual', ref: 'auto-orchestrate#5', agent: 'reviewer' });
+  });
+});
+
+// ============================================================================
+// autoOrchestrateCommand parallel dispatch resilience (issue #1207)
+// ============================================================================
+
+describe('autoOrchestrateCommand parallel dispatch (issue #1207)', () => {
+  it('uses Promise.allSettled — not Promise.all — for wave dispatch', async () => {
+    // Regression guard: Promise.all aborts the whole batch on the first failed
+    // post-dispatch SQL write (CONNECTION_ENDED from the singleton client race).
+    // Promise.allSettled lets sibling dispatches complete reporting even when
+    // one fails after its state mutation already landed.
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+
+    const fnStart = source.indexOf('async function autoOrchestrateCommand');
+    expect(fnStart).toBeGreaterThan(-1);
+    // Find the end of the function — next function definition or end of file
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const fnEnd = nextFnIdx !== -1 ? nextFnIdx : source.length;
+    const body = source.slice(fnStart, fnEnd);
+
+    // Must use allSettled
+    expect(body).toContain('Promise.allSettled');
+    // Must NOT use bare Promise.all on the wave-dispatch loop
+    expect(body).not.toMatch(/await\s+Promise\.all\s*\(\s*nextWave/);
+  });
+
+  it('reports per-group failures and sets non-zero exit code', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function autoOrchestrateCommand');
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const body = source.slice(fnStart, nextFnIdx !== -1 ? nextFnIdx : source.length);
+
+    // Must surface per-group failures with the group name
+    expect(body).toMatch(/failed/i);
+    expect(body).toContain('process.exitCode');
+    // Must still print success summary for groups that did dispatch
+    expect(body).toContain('Agents dispatched for');
+  });
+
+  it('does not abort the success print on partial failure', async () => {
+    // If any group succeeds we print the success line for those groups even
+    // when others failed. Reads back the same function source and checks
+    // there is no `throw` or early-exit between the success-list build and
+    // the console.log of the success summary.
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function autoOrchestrateCommand');
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const body = source.slice(fnStart, nextFnIdx !== -1 ? nextFnIdx : source.length);
+
+    const allSettledIdx = body.indexOf('Promise.allSettled');
+    const successPrintIdx = body.indexOf('Agents dispatched for');
+    expect(allSettledIdx).toBeGreaterThan(-1);
+    expect(successPrintIdx).toBeGreaterThan(allSettledIdx);
+    const between = body.slice(allSettledIdx, successPrintIdx);
+    // No early `throw` or `process.exit(` between allSettled and the success print
+    expect(between).not.toContain('throw ');
+    expect(between).not.toContain('process.exit(');
+  });
+});
+
+/**
+ * P1 regression guard — team-routing fix for spawn-wrong-window bug.
+ *
+ * `workDispatchCommand` (group dispatch) and `reviewCommand` are both
+ * called from WITHIN a team-lead's tmux pane. If they don't forward the
+ * `team` option to `handleWorkerSpawn`, `teamWasExplicit` becomes false
+ * in agents.ts, which flips `spawnIntoCurrentWindow=true`, which causes
+ * `tmux split-window` to run with no `-t` target — tmux then picks the
+ * most-recently-active client (usually the operator's pane), silently
+ * misrouting the engineer/reviewer into the wrong window.
+ *
+ * Authority: ~/.genie/reports/trace-genie-spawn-wrong-window.md
+ *
+ * Regression guard: source-grep the two dispatchers to confirm they
+ * forward `team: process.env.GENIE_TEAM`. If this test breaks, the bug
+ * is back.
+ */
+describe('spawn-wrong-window regression guard (trace-genie-spawn-wrong-window.md)', () => {
+  let source: string;
+
+  beforeAll(async () => {
+    const { readFileSync } = await import('node:fs');
+    source = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+  });
+
+  it('workDispatchCommand forwards team: process.env.GENIE_TEAM to handleWorkerSpawn', () => {
+    // workDispatchCommand delegates to runWorkDispatch, which holds the actual
+    // handleWorkerSpawn call. Walk the delegation to assert team is forwarded.
+    const fnStart = source.indexOf('async function workDispatchCommand');
+    expect(fnStart).toBeGreaterThan(-1);
+    const wdcEnd = source.indexOf('\nasync function ', fnStart + 1);
+    const wdcBody = source.slice(fnStart, wdcEnd !== -1 ? wdcEnd : source.length);
+    // Regression guard: workDispatchCommand must delegate to runWorkDispatch.
+    expect(wdcBody).toContain('runWorkDispatch(');
+    const rwdStart = source.indexOf('async function runWorkDispatch');
+    expect(rwdStart).toBeGreaterThan(-1);
+    const rwdEnd = source.indexOf('\nasync function ', rwdStart + 1);
+    const rwdBody = source.slice(rwdStart, rwdEnd !== -1 ? rwdEnd : source.length);
+    const callIdx = rwdBody.indexOf('await handleWorkerSpawn(agentName, {');
+    expect(callIdx).toBeGreaterThan(-1);
+    const nextCloseIdx = rwdBody.indexOf('});', callIdx);
+    const callBlock = rwdBody.slice(callIdx, nextCloseIdx);
+    expect(callBlock).toContain('team: process.env.GENIE_TEAM');
+  });
+
+  it('reviewCommand forwards team: process.env.GENIE_TEAM to handleWorkerSpawn', () => {
+    const fnStart = source.indexOf('async function reviewCommand');
+    expect(fnStart).toBeGreaterThan(-1);
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const body = source.slice(fnStart, nextFnIdx !== -1 ? nextFnIdx : source.length);
+    const callIdx = body.indexOf('await handleWorkerSpawn(agentName, {');
+    expect(callIdx).toBeGreaterThan(-1);
+    const nextCloseIdx = body.indexOf('});', callIdx);
+    const callBlock = body.slice(callIdx, nextCloseIdx);
+    expect(callBlock).toContain('team: process.env.GENIE_TEAM');
+  });
+
+  it('brainstormCommand does NOT forward team (operator-initiated dispatches should spawn in current window)', () => {
+    const fnStart = source.indexOf('async function brainstormCommand');
+    expect(fnStart).toBeGreaterThan(-1);
+    const nextFnIdx = source.indexOf('\nasync function ', fnStart + 1);
+    const body = source.slice(fnStart, nextFnIdx !== -1 ? nextFnIdx : source.length);
+    const callIdx = body.indexOf('await handleWorkerSpawn(agentName, {');
+    expect(callIdx).toBeGreaterThan(-1);
+    const nextCloseIdx = body.indexOf('});', callIdx);
+    const callBlock = body.slice(callIdx, nextCloseIdx);
+    // brainstorm/wish are operator-initiated (no team context in env);
+    // they should NOT forward team — spawning in operator's current
+    // window is correct behavior.
+    expect(callBlock).not.toContain('team: process.env.GENIE_TEAM');
+  });
+});
+
+/**
+ * Companion regression guard — agents.ts's spawnIntoCurrentWindow must
+ * be defensive against callers that have GENIE_TEAM set but didn't pass
+ * --team. Without this, a team-lead's own env leaks to tmux's
+ * "most-recently-active client" fallback and misroutes the pane.
+ */
+describe('agents.ts spawnIntoCurrentWindow regression guard', () => {
+  it('spawnIntoCurrentWindow assignment respects process.env.GENIE_TEAM', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(__dirname, 'agents.ts'), 'utf-8');
+    // Anchor on the RUNTIME assignment (`!teamWasExplicit` is unique to it),
+    // not the interface declaration `spawnIntoCurrentWindow: boolean;`.
+    const anchor = source.indexOf('spawnIntoCurrentWindow: !teamWasExplicit');
+    expect(anchor).toBeGreaterThan(-1);
+    // Assignment line must mention GENIE_TEAM as a guard against operator
+    // env leak via team-lead's spawn shell.
+    const lineEnd = source.indexOf('\n', anchor);
+    const line = source.slice(anchor, lineEnd);
+    expect(line).toContain('GENIE_TEAM');
+  });
+});
+
+/**
+ * Companion regression guard — createTmuxPane must refuse to split
+ * without a target. Prevents the root-cause failure mode (tmux picks
+ * most-recently-active client) even if some future callsite forgets to
+ * forward team and GENIE_TEAM is also unset.
+ */
+describe('agents.ts createTmuxPane refuse-no-target regression guard', () => {
+  it('createTmuxPane throws when both teamWindow and TMUX_PANE are absent', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(join(__dirname, 'agents.ts'), 'utf-8');
+    // Grep for the refusal block inside the createTmuxPane body.
+    expect(source).toContain('refusing to split with no target');
+    expect(source).toContain('trace-genie-spawn-wrong-window');
   });
 });

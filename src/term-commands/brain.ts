@@ -355,6 +355,28 @@ async function showVersion(): Promise<void> {
 
 /** Install brain package from GitHub release tarball */
 async function installBrain(): Promise<boolean> {
+  // Honour the brain.embedded=false opt-out. Power-users manage brain as a
+  // standalone global install (typically from the @next dev channel) and do
+  // not want genie fetching a release tarball behind their back.
+  const { loadGenieConfigSync } = await import('../lib/genie-config.js');
+  if (!loadGenieConfigSync().brain.embedded) {
+    console.log('');
+    console.log('  Brain is configured as external (brain.embedded=false).');
+    console.log('  Genie will not install brain into its node_modules.');
+    console.log('');
+    console.log('  Install brain standalone instead:');
+    console.log('    bun install -g @khal-os/brain@next    # dev channel');
+    console.log('    bun install -g @khal-os/brain         # stable channel');
+    console.log('');
+    console.log('  Then run your own brain serve:');
+    console.log('    brain serve --brain-path <path> [--port <port>]');
+    console.log('');
+    console.log('  To re-enable embedded management, remove brain.embedded from');
+    console.log('  ~/.genie/config.json (or set it to true).');
+    console.log('');
+    return true;
+  }
+
   console.log('');
   console.log('  Installing brain from GitHub release (enterprise)...');
   console.log('');
@@ -420,6 +442,8 @@ async function installBrain(): Promise<boolean> {
       console.log('  Auto-migration skipped. Run: genie brain migrate');
     }
 
+    await runBrainInstallWizard();
+
     // Auto-start daemon if a vault is found
     const vaultPath = findBrainVault();
     if (vaultPath) {
@@ -456,6 +480,33 @@ async function installBrain(): Promise<boolean> {
       console.log('');
     }
     return false;
+  }
+}
+
+/**
+ * Closes khal-os/brain wish brain-v2-onboarding-overhaul Grupo G:
+ * chain the brain-side install wizard after the binary is installed
+ * + migrations have run. The wizard does:
+ *   - diagnose (wraps `brain doctor`)
+ *   - auto-install rlmx if missing (`bun install -g @automagik/rlmx`)
+ *   - run a smoke test (`brain doctor --json` parse)
+ *
+ * Idempotent: re-run on a healthy env is a no-op. Best-effort: any
+ * failure here is non-fatal because the binary itself is already
+ * installed and usable. Operator can re-run manually with
+ * `brain install --apply --yes`.
+ */
+async function runBrainInstallWizard(): Promise<void> {
+  try {
+    const brain = await import(BRAIN_PKG);
+    if (brain.execute) {
+      console.log('');
+      console.log('  Running brain install wizard (rlmx + smoke test)...');
+      await brain.execute(['install', '--apply', '--yes']);
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`  Install wizard skipped (${msg.split('\n')[0]}). Run manually: brain install --apply --yes`);
   }
 }
 
@@ -507,13 +558,16 @@ async function executeBrainCommand(args: string[]): Promise<void> {
     } else {
       console.error('Brain module loaded but execute() not found.');
       console.error('Update: genie brain install');
+      process.exit(1);
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (isModuleNotFound(msg)) {
       printNotInstalledMessage();
+      process.exit(1);
     } else {
       console.error(`Brain error: ${msg}`);
+      process.exit(1);
     }
   }
 }

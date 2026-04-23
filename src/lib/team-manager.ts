@@ -421,6 +421,132 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
 }
 
 /**
+ * Ensure a PG row exists for a team that was created via the native
+ * `~/.claude/teams/<name>/config.json` path (e.g. the implicit team created
+ * by {@link ./claude-native-teams#ensureNativeTeam} during a spawn flow).
+ *
+ * This is the back-fill that rescues the PG registry after a reboot where
+ * the pgserve data dir was reset (or any scenario that leaves the native
+ * team file in place but the `teams` row absent). Without it,
+ * {@link listTeams} returns an empty list even though the team is fully
+ * functional on disk.
+ *
+ * Intentionally lightweight:
+ *   - Idempotent via `ON CONFLICT (name) DO NOTHING` — never overwrites an
+ *     explicit `createTeam` row.
+ *   - Does NOT create a git worktree; `worktreePath` defaults to `repo`.
+ *     If the user later runs `genie team create <name>`, that command's
+ *     own `getTeam` check returns this bootstrap row and skips worktree
+ *     creation — callers who need a real worktree should run `createTeam`
+ *     explicitly BEFORE spawning.
+ *   - Best-effort: SQL errors are caught and returned as null so a bad
+ *     PG session never blocks the native-team code path.
+ *
+ * @param name         Team name (must pass `validateBranchName`).
+ * @param opts.repo    Absolute path to the repo. Defaults to `process.cwd()`.
+ * @returns The resulting TeamConfig, or null if the insert failed.
+ */
+function buildConfigFromNative(
+  name: string,
+  nativeConfig: nativeTeamsManager.NativeTeamConfig,
+  optsRepo: string | undefined,
+): TeamConfig {
+  const leader = deriveBareLeaderName(nativeConfig.leadAgentId);
+  const memberNames = (nativeConfig.members ?? [])
+    .map((m) => m.name)
+    .filter((n): n is string => typeof n === 'string' && n.length > 0);
+  const repoPath = path.resolve(nativeConfig.repo ?? optsRepo ?? process.cwd());
+  return {
+    name,
+    repo: repoPath,
+    baseBranch: nativeConfig.baseBranch ?? 'dev',
+    worktreePath: nativeConfig.worktreePath ?? repoPath,
+    leader: leader ?? undefined,
+    members: memberNames,
+    status: (nativeConfig.status as TeamStatus | undefined) ?? 'in_progress',
+    createdAt: new Date(nativeConfig.createdAt ?? Date.now()).toISOString(),
+    nativeTeamsEnabled: nativeConfig.nativeTeamsEnabled ?? true,
+    tmuxSessionName: nativeConfig.tmuxSessionName,
+    nativeTeamParentSessionId: nativeConfig.nativeTeamParentSessionId,
+    wishSlug: nativeConfig.wishSlug,
+  };
+}
+
+function buildFallbackConfig(name: string, optsRepo: string | undefined): TeamConfig {
+  return {
+    name,
+    repo: path.resolve(optsRepo ?? process.cwd()),
+    baseBranch: 'dev',
+    worktreePath: path.resolve(optsRepo ?? process.cwd()),
+    members: [],
+    status: 'in_progress',
+    createdAt: new Date().toISOString(),
+    nativeTeamsEnabled: true,
+  };
+}
+
+async function insertTeamRow(config: TeamConfig, source: 'native-config' | 'cwd-fallback'): Promise<TeamConfig | null> {
+  try {
+    const sql = await getConnection();
+    await sql`
+      INSERT INTO teams (
+        name, repo, base_branch, worktree_path, leader,
+        members, status, native_teams_enabled, created_at,
+        tmux_session_name, native_team_parent_session_id, wish_slug
+      ) VALUES (
+        ${config.name}, ${config.repo}, ${config.baseBranch},
+        ${config.worktreePath}, ${config.leader ?? null},
+        ${sql.json(config.members)}, ${config.status},
+        ${config.nativeTeamsEnabled ?? false}, ${config.createdAt},
+        ${config.tmuxSessionName ?? null},
+        ${config.nativeTeamParentSessionId ?? null},
+        ${config.wishSlug ?? null}
+      ) ON CONFLICT (name) DO NOTHING
+    `;
+    recordAuditEvent('team', config.name, 'backfilled', getActor(), {
+      repo: config.repo,
+      source,
+      member_count: config.members.length,
+    }).catch(() => {});
+    return (await getTeam(config.name)) ?? config;
+  } catch {
+    return null;
+  }
+}
+
+export async function ensureTeamRow(
+  name: string,
+  opts?: { repo?: string; nativeConfig?: nativeTeamsManager.NativeTeamConfig },
+): Promise<TeamConfig | null> {
+  try {
+    validateBranchName(name);
+  } catch {
+    return null;
+  }
+
+  const existing = await getTeam(name);
+  if (existing) return existing;
+
+  // Prefer the native Claude-native config as the source of truth — either
+  // passed in by the caller (e.g. `backfillTeamRow` after `loadConfig`) or
+  // loaded from disk here. Fall back to `process.cwd()` only when no disk
+  // config exists (truly-new team). See Bug B in
+  // `.genie/wishes/fix-pg-disk-rehydration/WISH.md`.
+  const nativeConfig = opts?.nativeConfig ?? (await nativeTeamsManager.loadNativeTeamConfig(name));
+  const config = nativeConfig
+    ? buildConfigFromNative(name, nativeConfig, opts?.repo)
+    : buildFallbackConfig(name, opts?.repo);
+  return insertTeamRow(config, nativeConfig ? 'native-config' : 'cwd-fallback');
+}
+
+/** Strip `@<team>` suffix from a Claude-native `leadAgentId` → bare leader name. */
+function deriveBareLeaderName(leadAgentId: string | undefined): string | null {
+  if (!leadAgentId) return null;
+  const at = leadAgentId.indexOf('@');
+  return at === -1 ? leadAgentId : leadAgentId.slice(0, at);
+}
+
+/**
  * Add an agent to a team's members list.
  *
  * Special case: if agentName is "council", hires all 10 built-in council members.
@@ -447,8 +573,11 @@ export async function hireAgent(teamName: string, agentName: string): Promise<st
   }
 
   const sql = await getConnection();
+  // `sql.json()` — postgres.js encodes the JS array once into a proper jsonb
+  // array. Previously this used `JSON.stringify(config.members)` which
+  // produced jsonb-string (Bug D). See migration 045.
   await sql`
-    UPDATE teams SET members = ${JSON.stringify(config.members)}
+    UPDATE teams SET members = ${sql.json(config.members)}
     WHERE name = ${teamName}
   `;
   return added;
@@ -469,8 +598,9 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
 
   config.members.splice(idx, 1);
   const sql = await getConnection();
+  // See Bug D note in `hireAgent` — use `sql.json()` for proper jsonb encoding.
   await sql`
-    UPDATE teams SET members = ${JSON.stringify(config.members)}
+    UPDATE teams SET members = ${sql.json(config.members)}
     WHERE name = ${teamName}
   `;
 
@@ -542,13 +672,29 @@ export async function archiveTeam(teamName: string): Promise<boolean> {
   await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
 
   const sql = await getConnection();
-  const result = await sql`
-    UPDATE teams SET status = 'archived', archived_at = now(), updated_at = now()
-    WHERE name = ${teamName}
-  `;
-  if (result.count === 0) return false;
+  let archivedAgents = 0;
+  let updated = false;
+  await sql.begin(async (tx: typeof sql) => {
+    const result = await tx`
+      UPDATE teams SET status = 'archived', archived_at = now(), updated_at = now()
+      WHERE name = ${teamName}
+    `;
+    if (result.count === 0) return;
+    updated = true;
 
-  recordAuditEvent('team', teamName, 'archived', getActor(), { repo: config.repo }).catch(() => {});
+    // Archive agent rows owned by this team so listAgents (and all the
+    // dashboards that read it) stop serving orphans. State is preserved for
+    // audit; downstream callers pass includeArchived=true when they need
+    // history.
+    const agentResult = await tx`
+      UPDATE agents SET state = 'archived', updated_at = now()
+      WHERE team = ${teamName} AND state IS DISTINCT FROM 'archived'
+    `;
+    archivedAgents = agentResult.count ?? 0;
+  });
+  if (!updated) return false;
+
+  recordAuditEvent('team', teamName, 'archived', getActor(), { repo: config.repo, archivedAgents }).catch(() => {});
   return true;
 }
 
@@ -639,6 +785,16 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
       WHERE name = ${teamName}
     `;
     disbanded = result.count > 0;
+
+    // Archive agent rows owned by this team in the same transaction. Without
+    // this, listAgents serves orphan rows forever (issue #1215). State is
+    // preserved for audit — callers pass includeArchived=true for history.
+    if (disbanded) {
+      await tx`
+        UPDATE agents SET state = 'archived', updated_at = now()
+        WHERE team = ${teamName} AND state IS DISTINCT FROM 'archived'
+      `;
+    }
   });
 
   if (!disbanded) return false;

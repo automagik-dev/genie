@@ -7,7 +7,13 @@
  * Resumes from stored offset on restart.
  */
 
-import { buildWorkerMap, discoverAllJsonlFiles, ingestFile, liveWorkPending } from './session-capture.js';
+import {
+  buildWorkerMap,
+  discoverAllJsonlFiles,
+  ingestFile,
+  liveWorkPending,
+  reconcileSubagentParents,
+} from './session-capture.js';
 
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
 type SqlClient = any;
@@ -25,6 +31,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Order backfill files so parent sessions ingest before their subagents.
+ *
+ * The `sessions.parent_session_id` FK (migration `010_session_capture_v2`) is
+ * not DEFERRABLE, so inserting a subagent row whose parent hasn't been
+ * inserted yet fails with `sessions_parent_session_id_fkey` and that file's
+ * data is silently dropped. Sorting by mtime alone mixes parents and
+ * subagents arbitrarily — subagents are usually newer than their parents,
+ * so they win the race and get inserted first.
+ *
+ * Fix: sort non-subagents before subagents, then preserve newest-first within
+ * each tier. Exported so the comparator can be unit-tested without a DB.
+ */
+export function compareBackfillFiles(
+  a: { isSubagent: boolean; mtime: number },
+  b: { isSubagent: boolean; mtime: number },
+): number {
+  if (a.isSubagent !== b.isSubagent) return a.isSubagent ? 1 : -1;
+  return b.mtime - a.mtime;
+}
+
 // ============================================================================
 // Progress state
 // ============================================================================
@@ -38,10 +65,16 @@ interface BackfillProgress {
   status: 'pending' | 'running' | 'paused' | 'complete' | 'failed';
 }
 
-async function updateSyncState(sql: SqlClient, progress: BackfillProgress): Promise<void> {
+// Exported for unit tests — lets the backfill test suite drive the same INSERT
+// path the daemon uses without reaching into module internals.
+export async function updateSyncState(sql: SqlClient, progress: BackfillProgress): Promise<void> {
+  // started_at is populated on the initial INSERT and preserved on every
+  // subsequent UPDATE. The schema (048_session_sync_require_started_at.sql)
+  // enforces NOT NULL plus `status IN ('complete','failed') ⇒ updated_at >= started_at`,
+  // so any regression that drops started_at will fail loudly at write time.
   await sql`
-    INSERT INTO session_sync (id, status, total_files, processed_files, total_bytes, processed_bytes, errors, updated_at)
-    VALUES ('backfill', ${progress.status}, ${progress.totalFiles}, ${progress.processedFiles}, ${progress.totalBytes}, ${progress.processedBytes}, ${progress.errors}, now())
+    INSERT INTO session_sync (id, status, total_files, processed_files, total_bytes, processed_bytes, errors, started_at, updated_at)
+    VALUES ('backfill', ${progress.status}, ${progress.totalFiles}, ${progress.processedFiles}, ${progress.totalBytes}, ${progress.processedBytes}, ${progress.errors}, now(), now())
     ON CONFLICT (id) DO UPDATE SET
       status = ${progress.status},
       total_files = ${progress.totalFiles},
@@ -59,7 +92,7 @@ async function updateSyncState(sql: SqlClient, progress: BackfillProgress): Prom
 
 let running = false;
 
-async function shouldSkipBackfill(sql: SqlClient): Promise<boolean> {
+export async function shouldSkipBackfill(sql: SqlClient): Promise<boolean> {
   try {
     const existing = await sql`SELECT status FROM session_sync WHERE id = 'backfill'`;
     if (existing.length > 0 && existing[0].status === 'complete') return true;
@@ -180,7 +213,7 @@ export async function startBackfill(sql: SqlClient): Promise<void> {
 
   try {
     const allFiles = await discoverAllJsonlFiles();
-    allFiles.sort((a, b) => b.mtime - a.mtime);
+    allFiles.sort(compareBackfillFiles);
 
     const totalBytes = allFiles.reduce((sum, f) => sum + f.fileSize, 0);
     const progress: BackfillProgress = {
@@ -198,6 +231,20 @@ export async function startBackfill(sql: SqlClient): Promise<void> {
     const workerMap = await buildWorkerMap(sql);
 
     await processAllFiles(sql, allFiles, progress, workerMap);
+
+    // Reconcile any subagent rows whose parent was inserted after they were
+    // (e.g. orphan subagents that got parent=NULL earlier but a main jsonl
+    // with the matching id has since appeared). Also backfills missing
+    // metadata (agent_id/team/wish_slug/...) from the parent for rows that
+    // already have a parent link but were captured without worker context.
+    try {
+      const { linked, metadataFilled } = await reconcileSubagentParents(sql);
+      if (linked > 0) console.log(`[backfill] reconciled parent_session_id for ${linked} subagent(s)`);
+      if (metadataFilled > 0) console.log(`[backfill] inherited parent metadata for ${metadataFilled} subagent(s)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[backfill] parent reconcile skipped: ${message}`);
+    }
 
     resolveBackfillStatus(progress);
     await updateSyncState(sql, progress);

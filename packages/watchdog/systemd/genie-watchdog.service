@@ -1,0 +1,10 @@
+[Unit]
+Description=genie-watchdog probe run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env genie-watchdog probe --config /etc/genie-watchdog/alerts.yaml
+Nice=5
+TimeoutStartSec=30s

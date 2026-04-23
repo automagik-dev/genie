@@ -488,13 +488,20 @@ export const claudeTranscriptProvider: TranscriptProvider = {
     const projectDir = await findClaudeProjectDir(workspacePath);
     if (!projectDir) return null;
 
-    if (worker.claudeSessionId) {
-      const directPath = join(projectDir, `${worker.claudeSessionId}.jsonl`);
+    // Post-migration-047 the session UUID lives on the current executor
+    // (`executors.claude_session_id`), not on the agent row. Pull it via
+    // the executor-registry so transcript discovery keeps working.
+    const { getCurrentExecutor } = await import('./executor-registry.js');
+    const executor = await getCurrentExecutor(worker.id);
+    const sessionId = executor?.claudeSessionId ?? null;
+
+    if (sessionId) {
+      const directPath = join(projectDir, `${sessionId}.jsonl`);
       try {
         await access(directPath);
         return directPath;
       } catch {
-        const session = await findSessionById(projectDir, worker.claudeSessionId);
+        const session = await findSessionById(projectDir, sessionId);
         if (session?.fullPath) return session.fullPath;
       }
     }

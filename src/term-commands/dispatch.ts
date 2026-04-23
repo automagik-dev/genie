@@ -23,7 +23,10 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import { endSpan, startSpan } from '../lib/emit.js';
+import { isWideEmitEnabled } from '../lib/observability-flag.js';
 import * as protocolRouter from '../lib/protocol-router.js';
+import { getAmbient as getTraceContext } from '../lib/trace-context.js';
 import { parseWishRef, resolveWish } from '../lib/wish-resolve.js';
 import type { GroupDefinition } from '../lib/wish-state.js';
 import * as wishState from '../lib/wish-state.js';
@@ -428,17 +431,48 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
 
   // Dispatch all groups in this wave concurrently.
   // workDispatchCommand spawns a tmux pane and returns immediately.
-  await Promise.all(
+  //
+  // Use Promise.allSettled so a single group's post-dispatch failure doesn't
+  // abort reporting for siblings whose state mutations already landed.
+  // See issue #1207 — CONNECTION_ENDED on one dispatch was rejecting the
+  // whole batch and suppressing the success print even when all groups
+  // transitioned to in_progress.
+  const results = await Promise.allSettled(
     nextWave.groups.map(({ group, agent }) => {
       const ref = `${slug}#${group}`;
       return workDispatchCommand(agent, ref);
     }),
   );
 
-  const groupList = nextWave.groups.map((g) => g.group).join(', ');
-  console.log(`\n✅ Agents dispatched for ${nextWave.name} (groups: ${groupList})`);
+  const succeeded: string[] = [];
+  const failed: { group: string; reason: string }[] = [];
+  results.forEach((r, i) => {
+    const groupName = nextWave.groups[i].group;
+    if (r.status === 'fulfilled') {
+      succeeded.push(groupName);
+    } else {
+      const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      failed.push({ group: groupName, reason });
+    }
+  });
+
+  if (succeeded.length > 0) {
+    console.log(`\n✅ Agents dispatched for ${nextWave.name} (groups: ${succeeded.join(', ')})`);
+  }
+  if (failed.length > 0) {
+    console.error(`\n❌ ${failed.length} group(s) failed to dispatch in ${nextWave.name}:`);
+    for (const { group, reason } of failed) {
+      console.error(`   • Group ${group}: ${reason}`);
+    }
+    console.error(`   Check state with: genie status ${slug}`);
+    console.error('   Some groups may have mutated state before failing — rerun genie work to retry.');
+  }
   console.log(`   Monitor: genie status ${slug}`);
   console.log('   Logs:    genie read <agent>');
+
+  if (failed.length > 0) {
+    process.exitCode = 1;
+  }
 }
 
 // ============================================================================
@@ -448,7 +482,7 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
 /**
  * `genie brainstorm <agent> <slug>` — Read DRAFT.md, spawn agent with content.
  */
-async function brainstormCommand(agentName: string, slug: string): Promise<void> {
+export async function brainstormCommand(agentName: string, slug: string): Promise<void> {
   validateSlug(slug);
   const draftPath = join(process.cwd(), '.genie', 'brainstorms', slug, 'DRAFT.md');
 
@@ -490,7 +524,7 @@ async function brainstormCommand(agentName: string, slug: string): Promise<void>
 /**
  * `genie wish <agent> <slug>` — Read DESIGN.md, spawn agent with content.
  */
-async function wishCommand(agentName: string, slug: string): Promise<void> {
+export async function wishCommand(agentName: string, slug: string): Promise<void> {
   validateSlug(slug);
   const designPath = join(process.cwd(), '.genie', 'brainstorms', slug, 'DESIGN.md');
 
@@ -543,6 +577,33 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
   validateSlug(slug);
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
 
+  const dispatchSpan = isWideEmitEnabled()
+    ? startSpan(
+        'wish.dispatch',
+        { wish_slug: slug, group_name: group },
+        { source_subsystem: 'dispatch', ctx: getTraceContext() ?? undefined, agent: agentName },
+      )
+    : null;
+  try {
+    await runWorkDispatch(slug, group, agentName, wishPath, ref);
+    if (dispatchSpan) {
+      endSpan(dispatchSpan, { outcome: 'completed' }, { source_subsystem: 'dispatch', agent: agentName });
+    }
+  } catch (err) {
+    if (dispatchSpan) {
+      endSpan(dispatchSpan, { outcome: 'failed' }, { source_subsystem: 'dispatch', agent: agentName });
+    }
+    throw err;
+  }
+}
+
+async function runWorkDispatch(
+  slug: string,
+  group: string,
+  agentName: string,
+  wishPath: string,
+  ref: string,
+): Promise<void> {
   if (!existsSync(wishPath)) {
     console.error(`❌ Wish not found: ${wishPath}`);
     console.error(`   Create it first: genie wish <agent> ${slug}`);
@@ -608,6 +669,14 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
   const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to ${leaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
+    // P1 hotfix: forward the team context so spawn lands in the team's
+    // tmux window, not in the operator's "current window". When this
+    // option is omitted, agents.ts:1862 sets teamWasExplicit=false →
+    // spawnIntoCurrentWindow=true → tmux split-window with no -t target,
+    // which tmux resolves to the most-recently-active client (usually
+    // the operator's pane). Authority:
+    // ~/.genie/reports/trace-genie-spawn-wrong-window.md
+    team: process.env.GENIE_TEAM,
     role: effectiveRole,
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: workPrompt,
@@ -624,7 +693,7 @@ async function workDispatchCommand(agentName: string, ref: string): Promise<void
 /**
  * `genie review <agent> <slug>#<group>` — Spawn with group + git diff context.
  */
-async function reviewCommand(agentName: string, ref: string): Promise<void> {
+export async function reviewCommand(agentName: string, ref: string): Promise<void> {
   const { slug, group } = parseRef(ref);
   validateSlug(slug);
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
@@ -684,6 +753,10 @@ async function reviewCommand(agentName: string, ref: string): Promise<void> {
   const reviewPrompt = `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to ${reviewLeaderTarget}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
+    // P1 hotfix: forward team context (same root cause as workDispatchCommand
+    // above). Review dispatch is also team-context — must not fall back to
+    // operator's "current window".
+    team: process.env.GENIE_TEAM,
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: reviewPrompt,
   });
@@ -701,19 +774,13 @@ async function reviewCommand(agentName: string, ref: string): Promise<void> {
 // ============================================================================
 
 export function registerDispatchCommands(program: Command): void {
-  program
-    .command('brainstorm <agent> <slug>')
-    .description('Spawn agent with brainstorm DRAFT.md context')
-    .action(async (agent: string, slug: string) => {
-      await brainstormCommand(agent, slug);
-    });
-
-  program
-    .command('wish <agent> <slug>')
-    .description('Spawn agent with wish DESIGN.md context')
-    .action(async (agent: string, slug: string) => {
-      await wishCommand(agent, slug);
-    });
+  // Flat `brainstorm`, `wish`, `review` registrations were removed in Group 2
+  // of wish-command-group-restructure. They now live under `genie dispatch`:
+  //   genie dispatch brainstorm <agent> <slug>
+  //   genie dispatch wish <agent> <slug>
+  //   genie dispatch review <agent> <ref>
+  // Handler functions are exported and wired by dispatch-group.ts.
+  // `work` stays flat — hot path, by decision #2.
 
   program
     .command('work <ref> [agent]')
@@ -730,12 +797,5 @@ export function registerDispatchCommands(program: Command): void {
         console.error(`❌ ${error instanceof Error ? error.message : error}`);
         process.exit(1);
       }
-    });
-
-  program
-    .command('review <agent> <ref>')
-    .description('Spawn agent with review scope for a wish group (format: <slug>#<group>)')
-    .action(async (agent: string, ref: string) => {
-      await reviewCommand(agent, ref);
     });
 }

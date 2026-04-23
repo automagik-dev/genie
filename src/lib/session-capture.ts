@@ -112,25 +112,34 @@ interface JsonlEntry {
 // Sub-tool extraction (automatic, no hardcoded categories)
 // ============================================================================
 
-function extractSubTool(toolName: string, input: unknown): string | null {
+// Postgres btree index row size limit is ~2704 bytes. Cap well below so multi-byte
+// UTF-8 chars + index overhead still fit in idx_te_sub_tool.
+const MAX_SUB_TOOL_LEN = 2000;
+
+function truncateSubTool(value: string | null): string | null {
+  if (!value) return null;
+  return value.length > MAX_SUB_TOOL_LEN ? value.slice(0, MAX_SUB_TOOL_LEN) : value;
+}
+
+export function extractSubTool(toolName: string, input: unknown): string | null {
   const obj = input as Record<string, unknown>;
   switch (toolName) {
     case 'Bash': {
       const cmd = (obj?.command as string) ?? '';
-      return cmd.split('\n')[0]?.trim() || null;
+      return truncateSubTool(cmd.split('\n')[0]?.trim() || null);
     }
     case 'Read':
     case 'Write':
     case 'Edit':
-      return (obj?.file_path as string) || null;
+      return truncateSubTool((obj?.file_path as string) || null);
     case 'Grep':
-      return (obj?.pattern as string) || null;
+      return truncateSubTool((obj?.pattern as string) || null);
     case 'Glob':
-      return (obj?.pattern as string) || null;
+      return truncateSubTool((obj?.pattern as string) || null);
     case 'Agent':
-      return (obj?.subagent_type as string) || null;
+      return truncateSubTool((obj?.subagent_type as string) || null);
     case 'Skill':
-      return (obj?.skill as string) || null;
+      return truncateSubTool((obj?.skill as string) || null);
     default:
       return null;
   }
@@ -278,23 +287,8 @@ export async function buildWorkerMap(sql: SqlClient): Promise<Map<string, Worker
         role: row.role,
       });
     }
-    // Fallback: also check legacy agents table for sessions not yet migrated
-    const legacyRows = await sql`
-      SELECT id, claude_session_id, team, wish_slug, task_id, role
-      FROM agents WHERE claude_session_id IS NOT NULL
-    `;
-    for (const row of legacyRows) {
-      if (!map.has(row.claude_session_id)) {
-        map.set(row.claude_session_id, {
-          agentId: row.id,
-          executorId: null,
-          team: row.team,
-          wishSlug: row.wish_slug,
-          taskId: row.task_id,
-          role: row.role,
-        });
-      }
-    }
+    // Migration 047 dropped `agents.claude_session_id`; sessions live only
+    // on executors now. The legacy agents-table fallback has no data to read.
   } catch {
     // best-effort
   }
@@ -326,6 +320,16 @@ function workerToContext(worker: WorkerMatch | undefined): SessionContext {
   };
 }
 
+async function resolveSafeParentId(sql: SqlClient, parentSessionId: string | null | undefined): Promise<string | null> {
+  // If the referenced parent row doesn't exist yet (stale orphan subagent, or
+  // ordering race where parent is discovered later), return NULL rather than
+  // crashing on the FK constraint. reconcileSubagentParents() can backfill
+  // the link once the parent row exists.
+  if (!parentSessionId) return null;
+  const parentExists = await sql`SELECT 1 FROM sessions WHERE id = ${parentSessionId} LIMIT 1`;
+  return parentExists.length > 0 ? parentSessionId : null;
+}
+
 async function ensureSession(
   sql: SqlClient,
   sessionId: string,
@@ -349,12 +353,97 @@ async function ensureSession(
   }
 
   const worker = workerMap.get(sessionId);
+  const parentSessionId = await resolveSafeParentId(sql, opts?.parentSessionId);
+
   await sql`
     INSERT INTO sessions (id, agent_id, executor_id, team, wish_slug, task_id, role, project_path, jsonl_path, status, last_ingested_offset, total_turns, parent_session_id, is_subagent, file_size, file_mtime)
-    VALUES (${sessionId}, ${worker?.agentId ?? null}, ${worker?.executorId ?? null}, ${worker?.team ?? null}, ${worker?.wishSlug ?? null}, ${worker?.taskId ?? null}, ${worker?.role ?? null}, ${projectPath}, ${jsonlPath}, ${worker ? 'active' : 'orphaned'}, 0, 0, ${opts?.parentSessionId ?? null}, ${opts?.isSubagent ?? false}, ${opts?.fileSize ?? 0}, ${opts?.mtime ?? 0})
+    VALUES (${sessionId}, ${worker?.agentId ?? null}, ${worker?.executorId ?? null}, ${worker?.team ?? null}, ${worker?.wishSlug ?? null}, ${worker?.taskId ?? null}, ${worker?.role ?? null}, ${projectPath}, ${jsonlPath}, ${worker ? 'active' : 'orphaned'}, 0, 0, ${parentSessionId}, ${opts?.isSubagent ?? false}, ${opts?.fileSize ?? 0}, ${opts?.mtime ?? 0})
     ON CONFLICT (id) DO NOTHING
   `;
   return workerToContext(worker);
+}
+
+// ============================================================================
+// Reconcile parent_session_id for subagent rows that landed before their parent
+// ============================================================================
+
+interface ReconcileSubagentParentsResult {
+  /** Subagent rows whose `parent_session_id` was just linked from the path pattern. */
+  linked: number;
+  /** Subagent rows that inherited at least one missing metadata field from their parent. */
+  metadataFilled: number;
+}
+
+export async function reconcileSubagentParents(sql: SqlClient): Promise<ReconcileSubagentParentsResult> {
+  // jsonl_path for a subagent is: <projectPath>/<parentUuid>/subagents/<child>.jsonl
+  // Recover <parentUuid> from jsonl_path and link if a matching session now exists.
+  const linkResult = await sql`
+    UPDATE sessions s
+    SET parent_session_id = p.id,
+        updated_at = now()
+    FROM sessions p
+    WHERE s.is_subagent = true
+      AND s.parent_session_id IS NULL
+      AND position('/subagents/' in s.jsonl_path) > 0
+      AND p.id = regexp_replace(
+        split_part(s.jsonl_path, '/subagents/', 1),
+        '.*/',
+        ''
+      )
+  `;
+
+  // Inherit metadata from the parent for subagent rows that have a parent
+  // but were captured before their worker was registered. Subagent JSONLs
+  // (Task-tool children) never get a direct worker, so their agent_id/team/
+  // wish_slug/task_id/role stay NULL and they land as status='orphaned'.
+  // Copy the parent's context so `genie sessions list --orphaned` shows
+  // proper lineage and downstream tool-usage queries can join on these
+  // rows. We only fill NULLs — never overwrite existing values.
+  //
+  // Status stays 'orphaned': these subagents have no direct worker of
+  // their own, so they still don't belong in `--active`. This change is
+  // purely metadata inheritance for observability.
+  //
+  // Safety (codex review on PR #1270): executor_id is only inheritable when
+  // the identity pair stays consistent — if the child already has its own
+  // agent_id that disagrees with the parent's, we must NOT pull the parent's
+  // executor in, or the child ends up pointing at an executor row that
+  // belongs to a different agent. The CASE expression gates executor
+  // inheritance on "child has no agent" OR "child agent matches parent".
+  const metaResult = await sql`
+    UPDATE sessions s
+    SET
+      agent_id    = COALESCE(s.agent_id,    p.agent_id),
+      executor_id = COALESCE(
+        s.executor_id,
+        CASE
+          WHEN s.agent_id IS NULL OR s.agent_id = p.agent_id THEN p.executor_id
+          ELSE NULL
+        END
+      ),
+      team        = COALESCE(s.team,        p.team),
+      wish_slug   = COALESCE(s.wish_slug,   p.wish_slug),
+      task_id     = COALESCE(s.task_id,     p.task_id),
+      role        = COALESCE(s.role,        p.role),
+      updated_at  = now()
+    FROM sessions p
+    WHERE s.is_subagent = true
+      AND s.parent_session_id = p.id
+      AND (
+        (s.agent_id    IS NULL AND p.agent_id    IS NOT NULL) OR
+        (s.executor_id IS NULL AND p.executor_id IS NOT NULL
+          AND (s.agent_id IS NULL OR s.agent_id = p.agent_id)) OR
+        (s.team        IS NULL AND p.team        IS NOT NULL) OR
+        (s.wish_slug   IS NULL AND p.wish_slug   IS NOT NULL) OR
+        (s.task_id     IS NULL AND p.task_id     IS NOT NULL) OR
+        (s.role        IS NULL AND p.role        IS NOT NULL)
+      )
+  `;
+
+  return {
+    linked: linkResult.count ?? 0,
+    metadataFilled: metaResult.count ?? 0,
+  };
 }
 
 // ============================================================================

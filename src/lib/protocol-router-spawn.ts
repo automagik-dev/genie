@@ -41,8 +41,16 @@ export const _deps = {
 };
 
 async function resolveParentSession(_repoPath: string, team: string): Promise<string> {
-  const teamConfig = await teamManager.getTeam(team);
-  if (teamConfig?.nativeTeamParentSessionId) return teamConfig.nativeTeamParentSessionId;
+  // Team parent session collapses into the team-lead agent's current executor
+  // session (claude-resume-by-session-id wish, Group 5). The legacy
+  // `teams.native_team_parent_session_id` column is no longer read here.
+  const leaderName = await teamManager.resolveLeaderName(team);
+  const sanitized = nativeTeams.sanitizeTeamName(team);
+  const leaderAgent = await registry.getAgentByName(leaderName, sanitized).catch(() => null);
+  if (leaderAgent) {
+    const resumeId = await executorRegistry.getResumeSessionId(leaderAgent.id).catch(() => null);
+    if (resumeId) return resumeId;
+  }
   return (await nativeTeams.discoverClaudeParentSessionId()) ?? `genie-${team}`;
 }
 
@@ -299,7 +307,9 @@ export async function spawnWorkerFromTemplate(
     state: 'spawning',
     lastStateChange: now,
     repoPath,
-    claudeSessionId: effectiveSessionId,
+    // Session UUID lives on the executor row (migration 047). It is written
+    // below by `createExecutorForAutoSpawn` via `createAndLinkExecutor` with
+    // `claudeSessionId: effectiveSessionId`.
     nativeTeamEnabled: isClaude,
     nativeAgentId: `${agentName}@${team}`,
     nativeColor: spawnColor,

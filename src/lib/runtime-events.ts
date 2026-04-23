@@ -47,23 +47,6 @@ class EventCircuitBreaker {
 
 const circuitBreaker = new EventCircuitBreaker();
 
-// ---------------------------------------------------------------------------
-// Event throughput metrics (Group 3 — #858)
-// ---------------------------------------------------------------------------
-let eventsEmitted = 0;
-let eventsFailed = 0;
-let lastEmitDuration = 0;
-
-/** Returns in-process event throughput counters for the metrics CLI. */
-export function getEventMetrics(): {
-  eventsEmitted: number;
-  eventsFailed: number;
-  lastEmitDuration: number;
-  circuitState: string;
-} {
-  return { eventsEmitted, eventsFailed, lastEmitDuration, circuitState: circuitBreaker.state };
-}
-
 export type RuntimeEventKind =
   | 'user'
   | 'assistant'
@@ -236,11 +219,9 @@ function buildWhere(query: RuntimeEventQuery): { clause: string; values: unknown
 
 export async function publishRuntimeEvent(input: RuntimeEventInput): Promise<RuntimeEvent> {
   if (circuitBreaker.isOpen()) {
-    eventsFailed++;
     throw new Error('circuit breaker open — PG event write skipped');
   }
 
-  const start = Date.now();
   try {
     const sql = await getConnection();
     const threadId = input.threadId ?? `agent:${input.agent}`;
@@ -268,12 +249,9 @@ export async function publishRuntimeEvent(input: RuntimeEventInput): Promise<Run
     `;
 
     circuitBreaker.recordSuccess();
-    eventsEmitted++;
-    lastEmitDuration = Date.now() - start;
     return rowToRuntimeEvent(rows[0]);
   } catch (error) {
     circuitBreaker.recordFailure();
-    eventsFailed++;
     throw error;
   }
 }
@@ -284,6 +262,24 @@ export async function publishSubjectEvent(
   event: Omit<RuntimeEventInput, 'repoPath' | 'subject'>,
 ): Promise<RuntimeEvent> {
   return publishRuntimeEvent({ ...event, repoPath, subject });
+}
+
+/**
+ * Count runtime events emitted within the last `windowSeconds`. Backs
+ * `genie metrics` — a CLI-visible alternative to in-process counters, which
+ * are useless in a short-lived observer process.
+ */
+export async function queryRuntimeEventThroughput(windowSeconds = 60): Promise<{ emitted: number }> {
+  if (!Number.isFinite(windowSeconds) || windowSeconds <= 0) {
+    throw new Error(`windowSeconds must be a positive number, got ${windowSeconds}`);
+  }
+  const sql = await getConnection();
+  const rows = await sql<{ emitted: number }[]>`
+    SELECT COUNT(*)::int AS emitted
+    FROM genie_runtime_events
+    WHERE created_at > NOW() - make_interval(secs => ${windowSeconds})
+  `;
+  return { emitted: rows[0]?.emitted ?? 0 };
 }
 
 export async function listRuntimeEvents(query: RuntimeEventQuery = {}): Promise<RuntimeEvent[]> {
@@ -353,8 +349,16 @@ export async function followRuntimeEvents(
     stop: async () => {
       active = false;
       clearInterval(pollTimer);
-      await drainChain;
-      await listener.unlisten();
+      try {
+        await drainChain;
+      } catch {
+        /* swallow — connection may already be torn down */
+      }
+      try {
+        await listener.unlisten();
+      } catch {
+        /* swallow — connection may already be torn down */
+      }
     },
   };
 }
@@ -366,7 +370,7 @@ export async function waitForRuntimeEvent(
 ): Promise<RuntimeEvent | null> {
   const afterId = query.afterId ?? 0;
 
-  return new Promise<RuntimeEvent | null>((resolve) => {
+  return new Promise<RuntimeEvent | null>((resolve, reject) => {
     let settled = false;
     let handle: FollowRuntimeEventsHandle | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -375,23 +379,42 @@ export async function waitForRuntimeEvent(
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      if (handle) await handle.stop();
+      try {
+        if (handle) await handle.stop();
+      } catch {
+        /* swallow — connection may already be torn down */
+      }
       resolve(event);
     };
 
     void (async () => {
-      handle = await followRuntimeEvents(
-        { ...query, afterId },
-        (event) => {
-          if (predicate && !predicate(event)) return;
-          void finish(event);
-        },
-        { pollIntervalMs: 250 },
-      );
-
-      timer = setTimeout(() => {
-        void finish(null);
-      }, timeoutMs);
+      try {
+        handle = await followRuntimeEvents(
+          { ...query, afterId },
+          (event) => {
+            if (predicate && !predicate(event)) return;
+            void finish(event);
+          },
+          { pollIntervalMs: 250 },
+        );
+        if (settled) {
+          // initial drain already resolved us — stop the late-arriving handle
+          try {
+            await handle.stop();
+          } catch {
+            /* swallow — connection may already be torn down */
+          }
+          return;
+        }
+        timer = setTimeout(() => {
+          void finish(null);
+        }, timeoutMs);
+      } catch (err) {
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+      }
     })();
   });
 }

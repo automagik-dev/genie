@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, runSeed } from './pg-seed.js';
+import { getProcessStartTime } from './process-identity.js';
 
 /**
  * Re-export Sql type for callers that need to annotate sql connection parameters.
@@ -31,6 +32,30 @@ const DB_NAME = 'genie';
 /** Sanitize connection URLs for logging — never expose credentials */
 function maskCredentials(url: string): string {
   return url.replace(/\/\/.*@/, '//***@');
+}
+
+/**
+ * Detect whether pgserve would refuse to start because the current process
+ * is running as uid 0 (root). PostgreSQL aborts with
+ *   "root" execution of the PostgreSQL server is not permitted
+ * at the binary level, which surfaces in the CLI as a misleading 16s timeout
+ * with tmux/scheduler cascade errors (issue #1226). Failing fast up front
+ * gives the user the real reason.
+ *
+ * Returns a user-facing error message if the guard should fire, or null if
+ * startup should proceed. `GENIE_ALLOW_ROOT=1` bypasses the guard (pgserve
+ * will still fail at the postgres binary level, but the real error is then
+ * surfaced immediately from the child process).
+ */
+export function checkRootGuard(): string | null {
+  const uid = process.getuid?.();
+  if (uid !== 0) return null;
+  if (process.env.GENIE_ALLOW_ROOT === '1') return null;
+  return (
+    'pgserve cannot start under uid 0 (root) — PostgreSQL refuses to run as root for security reasons. ' +
+    'Run genie as a non-root user, or set GENIE_ALLOW_ROOT=1 to attempt anyway. ' +
+    'See: https://github.com/automagik-dev/genie/issues/1226'
+  );
 }
 
 /**
@@ -167,6 +192,13 @@ let pgserveChild: ChildProcess | null = null;
 let sqlClient: any = null;
 let activePort: number | null = null;
 let ensurePromise: Promise<number> | null = null;
+/**
+ * Dedup concurrent rebuilds of sqlClient. N parallel getConnection() callers
+ * observing a null/stale client would each race pgModule(...) and leak pools.
+ * biome-ignore lint/suspicious/noExplicitAny: shared with sqlClient
+ */
+// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
+let buildPromise: Promise<any> | null = null;
 /** Whether this process spawned pgserve (and thus owns the lockfile) */
 let ownsLockfile = false;
 let exitHandlerRegistered = false;
@@ -223,37 +255,144 @@ export async function ensurePgserve(): Promise<number> {
   }
 }
 
-/** Auto-start genie serve (headless) if not already running. */
-async function autoStartDaemon(): Promise<void> {
-  // Check if serve is already running via PID file (serve.pid is the canonical source)
-  for (const pidName of ['serve.pid', 'scheduler.pid']) {
-    const pidPath = join(GENIE_HOME, pidName);
-    try {
-      const pidStr = readFileSync(pidPath, 'utf-8').trim();
-      const pid = Number.parseInt(pidStr, 10);
-      if (!Number.isNaN(pid) && pid > 0) {
-        try {
-          process.kill(pid, 0); // Check if alive
-          return; // Already running, just wait for port file
-        } catch {
-          // Stale PID — proceed to start
-        }
-      }
-    } catch {
-      // No PID file — continue checking next
-    }
-  }
+/**
+ * Outcome of the most recent autoStartDaemon() call. Consumed by the branched
+ * timeout error in _ensurePgserve so the user gets a message naming the
+ * actual failure mode instead of a generic timeout.
+ *
+ *   - `missing`   — serve.pid absent; spawned a fresh serve
+ *   - `stale`     — serve.pid existed but its PID was recycled or dead;
+ *                   unlinked the file and spawned a fresh serve
+ *   - `alive`     — serve.pid points at a live serve process whose kernel
+ *                   start time still matches; did NOT respawn
+ *
+ * A module-level variable is acceptable here because autoStartDaemon is only
+ * called from the single-flight _ensurePgserve path (guarded by ensurePromise).
+ */
+type AutoStartOutcome = 'missing' | 'stale' | 'alive';
+let lastAutoStartOutcome: AutoStartOutcome | null = null;
+/** PID that was in serve.pid at the time of the most recent autoStartDaemon() call. */
+let lastAutoStartPid: number | null = null;
 
-  // Start genie serve --headless in background
+/**
+ * Spawn `genie serve start --headless` in the background.
+ * Overridable for tests via {@link __setSpawnDaemonForTest}.
+ */
+let spawnDaemon: () => void = () => {
   const bunPath = process.execPath ?? 'bun';
   const genieBin = process.argv[1] ?? 'genie';
-
   const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless'], {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env },
   });
   child.unref();
+};
+
+/** Test-only hook: swap the spawn implementation so tests don't launch real serves. */
+export function __setSpawnDaemonForTest(fn: (() => void) | null): void {
+  spawnDaemon =
+    fn ??
+    (() => {
+      const bunPath = process.execPath ?? 'bun';
+      const genieBin = process.argv[1] ?? 'genie';
+      const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless'], {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env },
+      });
+      child.unref();
+    });
+}
+
+/**
+ * Auto-start genie serve (headless) if it is not already running, validating
+ * PID identity so a recycled PID can't masquerade as a live serve.
+ *
+ * Format of `~/.genie/serve.pid`:
+ *   `{pid}:{startTime}` — new format written by writeServePid
+ *   `{pid}`             — legacy format (always treated as stale on read)
+ *
+ * A file is considered "live" only if BOTH:
+ *   - `process.kill(pid, 0)` succeeds (PID exists), AND
+ *   - `getProcessStartTime(pid)` returns the exact string recorded in the file
+ *
+ * Any other state → treat as stale, unlink, spawn fresh.
+ */
+function readPidFile(pidPath: string): string | null {
+  try {
+    return readFileSync(pidPath, 'utf-8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function parsePidFile(raw: string): { pid: number; recordedStartTime: string | null } | null {
+  const sepIdx = raw.indexOf(':');
+  let pid: number;
+  let recordedStartTime: string | null;
+  if (sepIdx < 0) {
+    pid = Number.parseInt(raw, 10);
+    recordedStartTime = null;
+  } else {
+    pid = Number.parseInt(raw.slice(0, sepIdx), 10);
+    const tail = raw.slice(sepIdx + 1).trim();
+    recordedStartTime = tail === '' || tail === 'unknown' ? null : tail;
+  }
+  if (Number.isNaN(pid) || pid <= 0) return null;
+  return { pid, recordedStartTime };
+}
+
+function isServeAlive(pid: number, recordedStartTime: string | null): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  if (recordedStartTime === null) return false;
+  const currentStartTime = getProcessStartTime(pid);
+  return currentStartTime !== null && currentStartTime === recordedStartTime;
+}
+
+function unlinkQuiet(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    /* already gone */
+  }
+}
+
+export async function autoStartDaemon(): Promise<void> {
+  const home = process.env.GENIE_HOME ?? GENIE_HOME;
+  const pidPath = join(home, 'serve.pid');
+  const raw = readPidFile(pidPath);
+
+  if (!raw) {
+    lastAutoStartOutcome = 'missing';
+    lastAutoStartPid = null;
+    spawnDaemon();
+    return;
+  }
+
+  const parsed = parsePidFile(raw);
+  if (!parsed) {
+    unlinkQuiet(pidPath);
+    lastAutoStartOutcome = 'stale';
+    lastAutoStartPid = null;
+    spawnDaemon();
+    return;
+  }
+
+  if (isServeAlive(parsed.pid, parsed.recordedStartTime)) {
+    lastAutoStartOutcome = 'alive';
+    lastAutoStartPid = parsed.pid;
+    return;
+  }
+
+  unlinkQuiet(pidPath);
+  lastAutoStartOutcome = 'stale';
+  lastAutoStartPid = parsed.pid;
+  spawnDaemon();
 }
 
 /**
@@ -272,52 +411,37 @@ async function resolveTestPort(): Promise<number | null> {
   return parsed;
 }
 
-async function _ensurePgserve(): Promise<number> {
-  // Already connected in this process
-  if (activePort !== null) return activePort;
-
-  const port = getPort();
-
-  // 1. Read port file — daemon or another genie process may have written it
+async function tryExistingPort(port: number): Promise<number | null> {
   const portFromFile = readLockfile();
   if (portFromFile !== null && (await isPostgresHealthy(portFromFile))) {
     activePort = portFromFile;
     process.env.GENIE_PG_AVAILABLE = 'true';
     return portFromFile;
   }
-
-  // 2. Check default port (daemon may be running without port file, or external PG)
   if (await isPostgresHealthy(port)) {
     activePort = port;
     process.env.GENIE_PG_AVAILABLE = 'true';
     writeLockfile(port);
     return port;
   }
+  return null;
+}
 
-  // 3. In CI/test — don't attempt to spawn pgserve (not installed).
-  //    Tests use describe.skipIf(!DB_AVAILABLE) to handle this gracefully.
-  if (process.env.CI === 'true') {
+async function spawnPgserveDirect(port: number): Promise<number> {
+  mkdirSync(DATA_DIR, { recursive: true });
+  selfHealPostgres(DATA_DIR);
+  try {
+    const startedPort = await startPgserveOnPort(port);
+    registerExitHandler();
+    return startedPort;
+  } catch (err) {
     process.env.GENIE_PG_AVAILABLE = 'false';
-    throw new Error('pgserve not available in CI');
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`pgserve failed to start: ${maskCredentials(message)}`);
   }
+}
 
-  // 4a. If we ARE the daemon (genie serve) — spawn pgserve directly.
-  if (process.env.GENIE_IS_DAEMON === '1') {
-    mkdirSync(DATA_DIR, { recursive: true });
-    selfHealPostgres(DATA_DIR);
-    try {
-      const startedPort = await startPgserveOnPort(port);
-      registerExitHandler();
-      return startedPort;
-    } catch (err) {
-      process.env.GENIE_PG_AVAILABLE = 'false';
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`pgserve failed to start: ${maskCredentials(message)}`);
-    }
-  }
-
-  // 4b. CLI command — auto-start genie serve --headless, wait for port file.
-  await autoStartDaemon();
+async function waitForDaemonPort(): Promise<number | null> {
   const deadline = Date.now() + 16000;
   while (Date.now() < deadline) {
     const p = readLockfile();
@@ -328,8 +452,57 @@ async function _ensurePgserve(): Promise<number> {
     }
     await new Promise((r) => setTimeout(r, 500));
   }
+  return null;
+}
+
+function throwDaemonTimeout(outcomeAtStart: typeof lastAutoStartOutcome, pidAtStart: typeof lastAutoStartPid): never {
   process.env.GENIE_PG_AVAILABLE = 'false';
-  throw new Error('Timed out waiting for genie serve to start pgserve (16s). Run: genie serve');
+  const home = process.env.GENIE_HOME ?? GENIE_HOME;
+  const pidPath = join(home, 'serve.pid');
+  const hasPidFile = existsSync(pidPath);
+  const currentPort = readLockfile() ?? getPort();
+  if (outcomeAtStart === 'stale') {
+    throw new Error(
+      `Stale ~/.genie/serve.pid (PID ${pidAtStart ?? 'unknown'} was not our serve). Removed and retried — if this persists, run: genie serve start`,
+    );
+  }
+  if (!hasPidFile) {
+    throw new Error('genie serve not running. Run: genie serve start');
+  }
+  const pidLabel = pidAtStart ?? outcomeAtStart ?? 'unknown';
+  throw new Error(
+    `genie serve is running (PID ${pidLabel}) but pgserve did not respond on port ${currentPort} within 16s. Try: genie serve restart, or check ~/.genie/logs/scheduler.log`,
+  );
+}
+
+async function _ensurePgserve(): Promise<number> {
+  if (activePort !== null) return activePort;
+
+  const port = getPort();
+  const existing = await tryExistingPort(port);
+  if (existing !== null) return existing;
+
+  if (process.env.CI === 'true') {
+    process.env.GENIE_PG_AVAILABLE = 'false';
+    throw new Error('pgserve not available in CI');
+  }
+
+  const rootErr = checkRootGuard();
+  if (rootErr !== null) {
+    process.env.GENIE_PG_AVAILABLE = 'false';
+    throw new Error(rootErr);
+  }
+
+  if (process.env.GENIE_IS_DAEMON === '1') {
+    return spawnPgserveDirect(port);
+  }
+
+  await autoStartDaemon();
+  const outcomeAtStart = lastAutoStartOutcome;
+  const pidAtStart = lastAutoStartPid;
+  const waited = await waitForDaemonPort();
+  if (waited !== null) return waited;
+  throwDaemonTimeout(outcomeAtStart, pidAtStart);
 }
 
 /** Resolve the pgserve CLI binary path — checks local dep, global, then PATH. */
@@ -441,41 +614,55 @@ function registerExitHandler(): void {
  * Get a postgres.js connection. Lazy singleton — calls ensurePgserve() on first use.
  * Returns a postgres.js sql tagged template client.
  *
- * When GENIE_TEST_SCHEMA is set, all connections use that schema in their search_path.
- * This isolates test data from production tables.
+ * When GENIE_TEST_DB_NAME is set, connections use that database instead of `genie`.
+ * DB-level isolation (one DB per test, cloned from `genie_template`) replaces the
+ * previous schema-level isolation.
  */
-/** Health-check the cached client. Returns it if alive, or resets and returns null. */
+/** Health-check the cached client. Returns it if alive, or resets and returns null.
+ *
+ * Mirrors the `resetConnection()` null-before-end pattern (commit 74aaa022): the
+ * global reference is cleared first so concurrent callers rebuild a fresh client
+ * instead of racing on the dying one. The teardown itself is fire-and-forget so
+ * concurrent in-flight queries on the shared pool are not killed synchronously
+ * with CONNECTION_ENDED. See issue #1207.
+ */
 async function healthCheckCachedClient() {
   if (!sqlClient) return null;
   try {
     await sqlClient`SELECT 1`;
     return sqlClient;
   } catch {
-    try {
-      await sqlClient.end({ timeout: 2 });
-    } catch {
-      /* ignore */
-    }
+    // Concurrency race: two callers can reach this catch simultaneously.
+    // Thread A runs `dying = sqlClient; sqlClient = null;` then enters `end()`.
+    // Thread B's catch block then reads `sqlClient` as null; calling
+    // `dying.end()` crashes with `null is not an object (evaluating 'dying.end')`.
+    // Capture the reference AND null-check it before teardown.
+    const dying = sqlClient;
+    if (!dying) return null;
     sqlClient = null;
     activePort = null;
+    // Fire-and-forget teardown — do not await. Concurrent callers holding the
+    // `dying` reference (via closures, iterators, in-flight Promises) will
+    // finish their current operation; the pool's internal connection reaper
+    // handles final cleanup. Awaiting here would cause CONNECTION_ENDED on
+    // queries that are still in flight from other callers.
+    dying.end({ timeout: 5 }).catch(() => {
+      /* ignore — teardown is best-effort */
+    });
     return null;
   }
 }
 
 /** Run post-connect setup (migrations, seed, retention). Skipped in test mode. */
-async function runPostConnectSetup(
-  client: postgres.Sql,
-  testSchema: string | undefined,
-  timings: { t0: number; t1: number },
-) {
+async function runPostConnectSetup(client: postgres.Sql, isTestMode: boolean, timings: { t0: number; t1: number }) {
   const _t2 = Date.now();
-  if (!testSchema) await runMigrations(client);
+  if (!isTestMode) await runMigrations(client);
   const _t3 = Date.now();
 
-  if (!testSchema && needsSeed()) await runSeed(client);
+  if (!isTestMode && needsSeed()) await runSeed(client);
   const _t4 = Date.now();
 
-  if (!testSchema && !retentionRan) await runRetention(client);
+  if (!isTestMode && !retentionRan) await runRetention(client);
   const _t5 = Date.now();
 
   if (process.env.GENIE_PROFILE_DB) {
@@ -489,16 +676,38 @@ export async function getConnection() {
   const cached = await healthCheckCachedClient();
   if (cached) return cached;
 
+  // Dedup concurrent rebuilds. Without this, N parallel callers (e.g.
+  // workDispatchCommand fan-out in `genie work <slug>` when a wave has
+  // ≥2 parallel groups) each race pgModule(...) and overwrite sqlClient,
+  // leaking pools and triggering CONNECTION_ENDED on the orphaned ones.
+  // See issue #1207.
+  if (buildPromise) return buildPromise;
+
+  buildPromise = _buildConnection();
+  try {
+    return await buildPromise;
+  } finally {
+    buildPromise = null;
+  }
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
+async function _buildConnection(): Promise<any> {
   const _t0 = Date.now();
   const port = await ensurePgserve();
   const _t1 = Date.now();
   const pgModule = (await import('postgres')).default;
 
-  const testSchema = process.env.GENIE_TEST_SCHEMA;
+  // Per-test isolation now happens at the DATABASE level — setupTestDatabase()
+  // clones `genie_template` and sets GENIE_TEST_DB_NAME. In production, this
+  // env var is never set, so we fall back to DB_NAME ('genie').
+  const testDbName = process.env.GENIE_TEST_DB_NAME;
+  const database = testDbName && testDbName.length > 0 ? testDbName : DB_NAME;
+  const isTestMode = Boolean(testDbName);
   sqlClient = pgModule({
     host: DEFAULT_HOST,
     port,
-    database: DB_NAME,
+    database,
     username: 'postgres',
     password: 'postgres',
     max: 50,
@@ -507,20 +716,20 @@ export async function getConnection() {
     onnotice: () => {},
     connection: {
       client_min_messages: 'warning',
-      ...(testSchema ? { search_path: `${testSchema}, public` } : {}),
     },
   });
 
   try {
-    await runPostConnectSetup(sqlClient, testSchema, { t0: _t0, t1: _t1 });
+    await runPostConnectSetup(sqlClient, isTestMode, { t0: _t0, t1: _t1 });
   } catch (err) {
-    try {
-      await sqlClient.end({ timeout: 2 });
-    } catch {
-      /* ignore */
-    }
+    const dying = sqlClient;
     sqlClient = null;
     activePort = null;
+    // Fire-and-forget teardown — match healthCheckCachedClient so we never
+    // block on a dying pool while other work is in flight.
+    dying?.end({ timeout: 2 }).catch(() => {
+      /* ignore */
+    });
     throw err;
   }
 
