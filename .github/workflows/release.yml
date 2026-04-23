@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: write
+  # Required for npm OIDC Trusted Publishing — exchange the GitHub OIDC
+  # token for a short-lived npm publish credential. Matches ci.yml +
+  # version.yml. See npmjs.com package Settings → Trusted Publishers.
+  id-token: write
 
 jobs:
   release:
@@ -108,20 +112,33 @@ jobs:
       - name: Build CLI
         run: bun run build
 
-      - name: Publish to npm
+      - name: Setup Node (for npm OIDC publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Node 22 bundles npm 10.x; npm Trusted Publishing (automatic OIDC
+      # token exchange) requires npm >= 11.5.1. Without this upgrade,
+      # `npm publish` + `npm dist-tag` send the empty placeholder token
+      # and the registry returns a misleading 404.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Publish to npm (latest) via OIDC
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
           HUSKY: "0"
+          # npm auto-enables provenance in any CI env with `id-token: write`,
+          # regardless of the --provenance CLI flag. Self-hosted Blacksmith
+          # runners fail the server-side sigstore check with 422. Disable
+          # auto-provenance explicitly; OIDC token exchange still happens.
+          NPM_CONFIG_PROVENANCE: "false"
         run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "ERROR: NPM_TOKEN secret is not set. Cannot publish to npm." >&2
-            exit 1
-          fi
           VERSION="${{ steps.ver.outputs.version }}"
-          # Try publish; if version exists (from @next), just retag as latest
-          if ! bun publish --access public 2>&1; then
+          # Try publish; if version exists (from @next), just retag as latest.
+          # npm dist-tag add also authenticates via the OIDC-exchanged token
+          # since both commands read from the same setup-node .npmrc.
+          if ! npm publish --access public 2>&1; then
             echo "Publish failed — version may already exist from @next. Retagging as latest..."
-            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
             npm dist-tag add "@automagik/genie@${VERSION}" latest
           fi
