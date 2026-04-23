@@ -3,16 +3,19 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { type SecScanDeps, buildSecScanArgv, registerSecCommands, resolveSecScanScript } from './sec.js';
+import {
+  type SecScanDeps,
+  applySecScanExitCode,
+  buildSecScanArgv,
+  registerSecCommands,
+  resolveSecScanScript,
+} from './sec.js';
 
 describe('sec scan command', () => {
   let originalArgv1: string | undefined;
-  let originalExitCode: typeof process.exitCode;
 
   beforeEach(() => {
     originalArgv1 = process.argv[1];
-    originalExitCode = process.exitCode;
-    process.exitCode = undefined;
   });
 
   afterEach(() => {
@@ -21,7 +24,6 @@ describe('sec scan command', () => {
     } else {
       process.argv[1] = originalArgv1;
     }
-    process.exitCode = originalExitCode;
   });
 
   test('buildSecScanArgv preserves repeated homes and roots', () => {
@@ -64,10 +66,12 @@ describe('sec scan command', () => {
 
   test('registered command forwards options to the scanner payload and preserves exit code', async () => {
     const spawnMock = mock<SecScanDeps['spawnSync']>(() => ({ status: 2 }));
+    const setExitCodeMock = mock<SecScanDeps['setExitCode']>(() => {});
     const deps: SecScanDeps = {
       existsSync: (path) => path === '/repo/package.json' || path === '/repo/scripts/sec-scan.cjs',
       realpathSync: (path) => path,
       spawnSync: spawnMock,
+      setExitCode: setExitCodeMock,
     };
 
     process.argv[1] = '/repo/dist/genie.js';
@@ -106,6 +110,15 @@ describe('sec scan command', () => {
       ],
       { stdio: 'inherit' },
     );
-    expect(process.exitCode).toBe(2);
+    expect(setExitCodeMock).toHaveBeenCalledTimes(1);
+    expect(setExitCodeMock).toHaveBeenCalledWith(2);
+  });
+
+  test('applySecScanExitCode is a no-op for successful scans', () => {
+    const setExitCodeMock = mock<SecScanDeps['setExitCode']>(() => {});
+
+    applySecScanExitCode(0, { setExitCode: setExitCodeMock });
+
+    expect(setExitCodeMock).not.toHaveBeenCalled();
   });
 });
