@@ -13,7 +13,7 @@ Send private reports to one of the following channels:
 | Channel | Address | Best for |
 |---------|---------|----------|
 | Security email | `privacidade@namastex.ai` | Anything security-related, including coordinated disclosure |
-| DPO (privacy + security officer) | `dpo@khal.ai` | Privacy, LGPD, data protection concerns |
+| DPO (privacy + security officer) | `dpo@namastex.ai` | Privacy, LGPD, data protection concerns |
 | Private GitHub advisory | [Report via GitHub](https://github.com/automagik-dev/genie/security/advisories/new) | Preferred for CVE assignment and coordinated release |
 
 **PGP** available on request.
@@ -44,6 +44,33 @@ Always install from the current stable line. Pin explicit versions in your `pack
 
 ---
 
+## Self-Service Host Triage
+
+If you installed a compromised version or need to assess a workstation, developer VM, CI runner, or WSL environment, start with:
+
+```bash
+genie sec scan --all-homes --root "$PWD"
+```
+
+Add one `--root` per repository or application directory you want scanned. Use `--json` for machine-readable output.
+
+Interpretation:
+
+- `LIKELY COMPROMISED` — execution, persistence, `.pth`, dropped payload, or live-process evidence exists.
+- `LIKELY AFFECTED` — compromised versions were installed or fetched and the host should be treated as exposed.
+- `OBSERVED ONLY` — logs, caches, or lockfiles reference the malicious versions, but stronger execution evidence was not found.
+- `NO FINDINGS` — no incident-specific evidence was found in the scanned scope.
+
+The scanner inventories:
+
+- compromised versions in npm and bun caches plus installed package directories
+- shell history, shell startup files, persistence locations, Python `.pth` injection paths, temp drops, and suspicious live processes
+- `at-risk local material present on host` so operators can see which secret stores, browser profiles, wallets, and local app files were present and should be considered during rotation
+
+If `genie` is not available, use the manual procedure in the incident response guide below.
+
+---
+
 ## Past Incidents
 
 ### 2026-04 — CanisterWorm supply-chain compromise
@@ -55,10 +82,10 @@ Between 2026-04-21 (~22:14 UTC) and 2026-04-22 (~14:00 UTC), versions `4.260421.
 - **Estimated base affected:** ≤ 2% of weekly download volume
 - **Current status:** malicious versions `npm unpublish`-ed and no longer installable
 
-**If you installed any version in that range between April 21–22, 2026, assume your machine is compromised.** Follow the remediation guide linked below.
+**If you installed any version in that range between April 21–22, 2026, run `genie sec scan --all-homes --root "$PWD"` immediately.** If the host shows `LIKELY COMPROMISED` or `LIKELY AFFECTED`, follow the remediation guide linked below.
 
 **Resources:**
-- 📖 [Full incident response manual](https://github.com/namastexlabs/genie-dpo/blob/main/knowledge/canisterworm-incident-response.md)
+- 📖 [Incident response manual](./docs/incident-response/canisterworm.md)
 - 🌐 [Public advisory (English)](https://automagik.dev/security)
 - 🌐 [Aviso público (Português)](https://automagik.dev/seguranca)
 - 🛡️ [GitHub Security Advisories](https://github.com/automagik-dev/genie/security/advisories) for this repository
@@ -104,7 +131,7 @@ Effective 2026-04-23, all `@automagik/genie` releases are governed by:
 ## Contact
 
 - **Security & incidents:** `privacidade@namastex.ai`
-- **Data Protection Officer (DPO):** Cezar Vasconcelos — `dpo@khal.ai`
+- **Data Protection Officer (DPO):** Cezar Vasconcelos — `dpo@namastex.ai`
 - **Security disclosure page:** [automagik.dev/security](https://automagik.dev/security)
 
 Namastex Labs Serviços em Tecnologia Ltda · CNPJ 46.156.854/0001-62

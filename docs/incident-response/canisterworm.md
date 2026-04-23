@@ -14,6 +14,8 @@ Entre 21 e 22 de abril de 2026, versões maliciosas dos pacotes npm `@automagik/
 
 Se você instalou qualquer versão listada abaixo entre **2026-04-21 e 2026-04-22**, leia este documento do início ao fim antes de executar qualquer comando.
 
+O caminho preferencial agora é começar com `genie sec scan`. Os checks manuais abaixo continuam válidos como confirmação adicional, fallback, ou triagem em hosts onde o CLI não está disponível.
+
 ---
 
 ## 1. O que aconteceu
@@ -62,11 +64,51 @@ Se qualquer versão maliciosa foi instalada na sua máquina, os itens abaixo for
 
 > ⚠️ **Leitura crítica:** o roubo aconteceu no momento da instalação. Rotacionar chaves no GitHub **não desfaz** o que já foi exfiltrado — você precisa rotacionar **todos** os itens listados acima.
 
+Sempre que possível, use também a saída do `genie sec scan` para confirmar quais tipos de material estavam presentes no host. A seção `at-risk local material present on host` não mostra segredos, mas lista os caminhos e artefatos locais que o malware provavelmente teria tentado ler.
+
 ---
 
 ## 2. Passo 1 — Identificar se você foi afetado
 
 Execute todos os checks abaixo. Anote resultados antes de seguir para o Passo 2.
+
+### Usando `genie sec scan` (recomendado)
+
+Rode primeiro:
+
+```bash
+genie sec scan --all-homes --root "$PWD"
+```
+
+Se precisar cobrir múltiplos repositórios ou serviços:
+
+```bash
+genie sec scan --all-homes --root /srv/app --root /opt/service --root "$PWD"
+```
+
+Use `--json` quando quiser arquivar ou automatizar a triagem:
+
+```bash
+genie sec scan --json --all-homes --root "$PWD"
+```
+
+Como interpretar:
+
+- `LIKELY COMPROMISED` — há sinais de execução, persistência, `.pth`, artefatos de drop, ou processo ativo. Vá direto para o Passo 3.
+- `LIKELY AFFECTED` — há versões comprometidas instaladas ou em cache. Trate o host como exposto e siga para o Passo 3.
+- `OBSERVED ONLY` — só foram encontradas referências em cache, lockfile, ou log. Ainda assim revise os checks manuais abaixo antes de declarar o host limpo.
+- `NO FINDINGS` — não houve evidência específica do incidente dentro do escopo escaneado.
+
+O scanner cobre os mesmos sinais principais deste manual:
+
+- caches npm e bun
+- instalações locais e globais
+- históricos de shell e arquivos de inicialização
+- persistência `systemd`, `cron`, `launchd`, `.pth`
+- artefatos temporários e processos vivos
+- material local em risco para priorizar rotação
+
+Se o scanner acusar `LIKELY COMPROMISED` ou `LIKELY AFFECTED`, continue com os passos manuais abaixo apenas para coleta complementar e preservação de evidência.
 
 ### 2.1 Versão instalada globalmente (bun)
 
@@ -159,6 +201,10 @@ ss -tnp 2>/dev/null | grep -iE "api-monitor|icp0|tdtqy|cjn37|143\.198\.237\.25"
 
 | Situação | Veredicto | Ação |
 |----------|-----------|------|
+| `genie sec scan` retorna `LIKELY COMPROMISED` | **INFECTADO** | Desconecte da rede se possível e execute o Passo 3 completo |
+| `genie sec scan` retorna `LIKELY AFFECTED` | **INFECTADO** | Execute o Passo 3 completo |
+| `genie sec scan` retorna `OBSERVED ONLY` | **OBSERVADO** | Continue nos checks manuais; se houver dúvida operacional, trate como infectado |
+| `genie sec scan` retorna `NO FINDINGS` | **CLEAN provisório** | Se o escopo cobriu todos os homes e roots relevantes, siga para o Passo 4 |
 | Nenhuma versão maliciosa no cache, nenhum IoC | **CLEAN** | Vá direto para o Passo 4 (prevenção) |
 | Versão maliciosa no cache, mas `env-compat.cjs`/`check-env.js` ausentes | **OBSERVADO** | Cache presente mas postinstall pode não ter rodado — trate como **INFECTADO** por precaução (Passo 3) |
 | `env-compat.cjs`, `public.pem` ou `check-env.js` presentes | **INFECTADO** | Execute o Passo 3 completo |
@@ -218,6 +264,8 @@ bun install -g pgserve@1.1.10
 ### 4.4 Rotacionar TODAS as credenciais
 
 > 🔥 **Este é o passo mais importante.** Qualquer credencial presente na máquina no momento da instalação foi exfiltrada. Rotacionar = revogar a existente e emitir uma nova.
+
+Se você executou `genie sec scan`, use a seção `at-risk local material present on host` como checklist para não esquecer nenhuma classe de credencial, carteira, perfil de navegador, ou `.env` local presente no host comprometido.
 
 **npm**
 ```bash
@@ -428,6 +476,8 @@ Em Sophos, OPNsense, pfSense ou similares, crie um grupo `CanisterWorm-C2` com o
 ## 7. Checklist de um olhar (imprima e cole no monitor)
 
 - [ ] Verifiquei cache bun e npm — nenhuma versão da tabela 1.2 presente
+- [ ] Rodei `genie sec scan --all-homes --root <repo>` e revisei o veredicto
+- [ ] Revisei `at-risk local material present on host` para priorizar rotação
 - [ ] Verifiquei `env-compat.cjs`, `public.pem`, `check-env.js` — ausentes
 - [ ] Verifiquei `pgmon.service` e `/tmp/pglog` — ausentes
 - [ ] Verifiquei `.pth` Python — apenas legítimos
