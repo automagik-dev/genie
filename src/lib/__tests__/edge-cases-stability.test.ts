@@ -69,8 +69,10 @@ describe('7.1 Concurrent Operations', () => {
     const healthIdx = source.indexOf('healthCheckCachedClient');
     expect(healthIdx).toBeGreaterThan(-1);
 
-    // On failure, both sqlClient and activePort are nulled for full reconnect
-    const block = source.slice(healthIdx, healthIdx + 400);
+    // On failure, both sqlClient and activePort are nulled for full reconnect.
+    // Window sized to accommodate doc comments + the null-guard block — we
+    // only care that both invariants live inside the single function body.
+    const block = source.slice(healthIdx, healthIdx + 1200);
     expect(block).toContain('sqlClient = null');
     expect(block).toContain('activePort = null');
   });

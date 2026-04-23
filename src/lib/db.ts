@@ -632,7 +632,13 @@ async function healthCheckCachedClient() {
     await sqlClient`SELECT 1`;
     return sqlClient;
   } catch {
+    // Concurrency race: two callers can reach this catch simultaneously.
+    // Thread A runs `dying = sqlClient; sqlClient = null;` then enters `end()`.
+    // Thread B's catch block then reads `sqlClient` as null; calling
+    // `dying.end()` crashes with `null is not an object (evaluating 'dying.end')`.
+    // Capture the reference AND null-check it before teardown.
     const dying = sqlClient;
+    if (!dying) return null;
     sqlClient = null;
     activePort = null;
     // Fire-and-forget teardown — do not await. Concurrent callers holding the

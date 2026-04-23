@@ -392,7 +392,11 @@ describe('pool error recovery', () => {
     // Find the cached client health check function
     const healthCheckIdx = source.indexOf('healthCheckCachedClient');
     expect(healthCheckIdx).toBeGreaterThan(-1);
-    const block = source.slice(healthCheckIdx, healthCheckIdx + 600);
+    // Widened from 600 chars — the null-guard block has doc comments
+    // explaining the concurrency race that push the `activePort = null`
+    // assignment further into the function body. The intent is "both nulls
+    // live inside this one function", not "within a fixed byte budget".
+    const block = source.slice(healthCheckIdx, healthCheckIdx + 1400);
     expect(block).toContain('sqlClient = null');
     expect(block).toContain('activePort = null');
   });
