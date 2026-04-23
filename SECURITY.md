@@ -13,7 +13,7 @@ Send private reports to one of the following channels:
 | Channel | Address | Best for |
 |---------|---------|----------|
 | Security email | `privacidade@namastex.ai` | Anything security-related, including coordinated disclosure |
-| DPO (privacy + security officer) | `dpo@khal.ai` | Privacy, LGPD, data protection concerns |
+| DPO (privacy + security officer) | `dpo@namastex.ai` | Privacy, LGPD, data protection concerns |
 | Private GitHub advisory | [Report via GitHub](https://github.com/automagik-dev/genie/security/advisories/new) | Preferred for CVE assignment and coordinated release |
 
 **PGP** available on request.
@@ -52,7 +52,7 @@ Between 2026-04-21 (~22:14 UTC) and 2026-04-22 (~14:00 UTC), versions `4.260421.
 
 - **Exposure window:** ~16 hours
 - **Detection-to-containment:** under 20 hours
-- **Estimated base affected:** ≤ 2% of weekly download volume
+- **Estimated base affected:** ≤ 0.5% of monthly download volume
 - **Current status:** malicious versions `npm unpublish`-ed and no longer installable
 
 **If you installed any version in that range between April 21–22, 2026, assume your machine is compromised.** Follow the remediation guide linked below.
@@ -104,7 +104,7 @@ Effective 2026-04-23, all `@automagik/genie` releases are governed by:
 ## Contact
 
 - **Security & incidents:** `privacidade@namastex.ai`
-- **Data Protection Officer (DPO):** Cezar Vasconcelos — `dpo@khal.ai`
+- **Data Protection Officer (DPO):** Cezar Vasconcelos — `dpo@namastex.ai`
 - **Security disclosure page:** [automagik.dev/security](https://automagik.dev/security)
 
 Namastex Labs Serviços em Tecnologia Ltda · CNPJ 46.156.854/0001-62
