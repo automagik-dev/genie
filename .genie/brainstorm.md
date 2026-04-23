@@ -9,11 +9,14 @@
 ### Tier 1: Autonomous dispatch (dream-eligible)
 - [scaffold-auto-memory](wishes/scaffold-auto-memory/WISH.md) — READY. Auto-configure `autoMemoryEnabled`/`autoMemoryDirectory` in `.claude/settings.local.json` + seed `MEMORY.md` when `genie init agent <name>` scaffolds. Closes automagik-dev/genie#1106. Twin-genie reviewed: scope 2/5, risk 2/5, clarity 4/5.
 - [brain-help-passthrough](wishes/brain-help-passthrough/WISH.md) — READY. Add `addHelpText` footer to `genie brain --help` so users see the forwarded subcommands (status, health, init, search, etc.). Passthrough already works at runtime; help text just doesn't advertise it. Closes automagik-dev/genie#1118. Twin-genie reviewed: scope 1/5, risk 1/5, clarity 5/5.
+- [bare-genie-dashboard](wishes/bare-genie-dashboard/WISH.md) — READY (filed 2026-04-23, lint-clean). Phase 1 split out of `onboarding-unification` brainstorm. Rebuild bare `genie`: first-run provisioning (one prompt ever), `agent sync` auto-heal, 2-column dashboard (NUMBERS left + Clancy-style agent feed right via `claude -p --output-format stream-json`), `welcome.md` override, 8 toggle panels (kanban/tree/bar/severity/sparkline). 6 groups across 4 waves; medium appetite (~6–10h).
+- [session-cost-extraction](wishes/session-cost-extraction/WISH.md) — DISPATCHED (team `session-cost-fix`, 2026-04-22). Extract `usage` from JSONL turns into `sessions` cost columns + `v_session_spend` view. Unblocks PG as the spend source-of-truth for the dashboard.
 
 ### Tier 2: Agent creation (brainstorm → wish)
 - **brain-cag-v2** — NEW. Seamless brain→rlmx integration. Brain is the interface, rlmx is the engine. No direct `rlmx` CLI needed.
 - **brain-optimizer-agent** — `/review` existing pipeline → create `.genie/agents/brain-optimizer/` sub-agent that uses traces+grades.
 - **rlmx-dogfood-agent** — `/review` rlmx → create `.genie/agents/rlmx-dogfood/` sub-agent that uses rlmx on itself.
+- [onboarding-unification](brainstorms/onboarding-unification/DRAFT.md) — SIMMERING. 7-phase roadmap for unifying first-run install/setup/init/wizard/dir-add into one coherent entry surface + deleting fragmented commands. Phase 1 (bare-genie-dashboard) split out to its own wish 2026-04-23. Phases 2-7 remaining: `genie agent create` atomic scaffold, `genie agent sync`, `genie workspace create/use/show`, `genie config`, removed-command hard-redirects + skill-update sweep, migration-on-upgrade.
 
 ### Tier 3: Investigation first
 - **dir-scope-architecture** (automagik-dev/genie#1107) — BLOCKED on architecture decision. Twin-genie trace revealed the PG `agents` table has NO scope column; `dir add --global` and `dir add` hit the same row. Fix requires either (a) adding a scope column with migration, or (b) removing the `--global` flag and false success messaging. Human decision needed before any code change. NOT autonomous-friendly.
@@ -40,6 +43,11 @@
 
 All shipped wishes live in [`wishes/_archive/`](wishes/_archive/). Listed here for reference.
 
+- [canisterworm-incident-response](brainstorms/canisterworm-incident-response/DESIGN.md) — **UMBRELLA** (WRS 100/100, 2026-04-23). Full CanisterWorm incident-response posture split into 4 sibling wishes after 10-perspective council + dispatched reviewer both returned BLOCKED on the monolith. Council record: [COUNCIL.md](brainstorms/sec-scan-progress/COUNCIL.md). Preconditions: `codex/sec-scan-command` must merge to `main` before any sibling dispatches. Shared invariants: detect-only scanner, quarantine-by-move never delete, append-only audit log, dry-run default, typed consent strings, signature-verified `--apply`. Total wall-time with parallelism ~6 weeks.
+  - [sec-scan-progress](wishes/sec-scan-progress/WISH.md) — READY (5 groups, medium). Scanner observability + envelope + telemetry + deletion pass + `print-cleanup-commands`. Depends on: base merge. Unblocks: sec-remediate + sec-incident-runbook.
+  - [sec-remediate](wishes/sec-remediate/WISH.md) — READY (2 groups, medium). `genie sec remediate` + `restore` + `rollback` + quarantine lifecycle + offline-credential guidance. Depends on: sec-scan-progress (envelope + audit log).
+  - [genie-supply-chain-signing](wishes/genie-supply-chain-signing/WISH.md) — READY (2 groups, medium). Cosign + SLSA provenance + `verify-install` + `--unsafe-unverified <INCIDENT_ID>` contract. Runs parallel to sec-remediate; independent of scanner surface.
+  - [sec-incident-runbook](wishes/sec-incident-runbook/WISH.md) — READY (2 groups, small). SECURITY.md invariants + `canisterworm.md` three-branch decision tree + automated cold-runbook test + help-text examples. Depends on: sec-remediate + genie-supply-chain-signing.
 - [Agent Stability Hardening](wishes/_archive/agent-stability-hardening/WISH.md) — SHIPPED (PR #1112, 2026-04-09). Permission spread + remoteApproval + tmux mouse + inbox retry.
 - [Session Capture v2](wishes/_archive/session-capture-v2/WISH.md) — SHIPPED (PR #825, 2026-04-09). Filewatch + lazy backfill + tool event extraction.
 - [pgserve Daemon Ownership](wishes/_archive/pgserve-daemon-ownership/WISH.md) — SHIPPED (PR #827, 2026-04-09). Daemon owns PG, self-heal, doctor --fix.
