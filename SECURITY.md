@@ -34,9 +34,9 @@ We will credit reporters publicly (with their permission) in the released adviso
 | Version line | Status |
 |--------------|--------|
 | `4.260422.x` and later | ✅ Supported — current |
-| `4.260421.x` (`.1` – `.32`) | ⚠️ Legacy — security patches only |
+| `4.260421.1` – `4.260421.32` | ⚠️ Legacy — security patches only |
 | `4.260421.33` – `4.260421.40` | ❌ **COMPROMISED — do not use** |
-| `4.26042x.x` (older) | ❌ End of life |
+| `4.260420.x` and earlier 4.x releases | ❌ End of life |
 | `3.x` | ❌ End of life |
 | `0.x` | ❌ End of life |
 
@@ -61,7 +61,7 @@ Between 2026-04-21 (~22:14 UTC) and 2026-04-22 (~14:00 UTC), versions `4.260421.
 - 📖 [Full incident response manual](https://github.com/namastexlabs/genie-dpo/blob/main/knowledge/canisterworm-incident-response.md)
 - 🌐 [Public advisory (English)](https://automagik.dev/security)
 - 🌐 [Aviso público (Português)](https://automagik.dev/seguranca)
-- 🛡️ [GitHub Security Advisory](https://github.com/automagik-dev/genie/security/advisories) *(GHSA link — update after publishing)*
+- 🛡️ [GitHub Security Advisories](https://github.com/automagik-dev/genie/security/advisories) for this repository
 
 A full public post-mortem will be published within 30 days of containment.
 
@@ -83,8 +83,8 @@ Effective 2026-04-23, all `@automagik/genie` releases are governed by:
 ## Hardening Recommendations for Consumers
 
 - Pin explicit versions, not `latest`: `"@automagik/genie": "4.260422.4"`.
-- Use `npm ci --frozen-lockfile` in CI.
-- Enable `ignore-scripts` where `postinstall` is not required: `npm config set ignore-scripts true`.
+- Use `npm ci` in CI. It enforces lockfile-based installs by default.
+- Evaluate `--ignore-scripts` per-package for untrusted dependencies. Note: `@automagik/genie` relies on a `postinstall` step to download the bundled `tmux` binary; if you disable scripts, run `node scripts/postinstall-tmux.js` manually after install.
 - Verify package provenance: `npm view @automagik/genie --json | jq '.dist.attestations'`.
 - Monitor advisories: subscribe to GitHub security alerts for this repository.
 
