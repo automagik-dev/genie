@@ -1,11 +1,22 @@
 name: Release
 
-# Creates a GitHub Release object (tag + changelog) on every push to main.
-# npm publishing is intentionally NOT handled here — `version.yml` owns the
-# entire publish path for both `@next` (dev) and `@latest` (main) via a single
-# npm Trusted Publisher entry. Keeping publish logic in one workflow avoids
-# double-publishes, duplicate Trusted Publisher entries on npmjs.com, and the
-# race between `release.yml` and `version.yml` both reacting to a main push.
+# Creates a GitHub Release object (tag + changelog + signed artifacts) on
+# every push to main. npm publishing is handled separately by version.yml;
+# this workflow owns the signed-tarball path + SLSA Level 3 provenance
+# attestation. See .genie/wishes/genie-supply-chain-signing/WISH.md.
+#
+# Signing is cosign keyless (OIDC via GitHub Actions) — KEYLESS ONLY.
+# There is no long-lived fallback key: no private key in repo secrets, no
+# hardware-backed offline key, no static public key to pin. Ephemeral Fulcio
+# certificates are tied to the workflow OIDC identity (this file's path@ref),
+# and verification pins the certificate identity + OIDC issuer, NOT a key
+# fingerprint. The committed .github/cosign.pub is an explicit NO-KEY
+# sentinel — any tooling that expects a pinned key must fail closed.
+#
+# Any failure in signing, provenance generation, self-verify, or the in-band
+# tamper-detection self-test exits the workflow non-zero. Signing happens
+# BEFORE the GitHub Release is created, so a broken signature or failed
+# self-verify guarantees no release assets are ever published.
 
 on:
   push:
@@ -14,13 +25,20 @@ on:
 
 permissions:
   contents: write
+  id-token: write   # required for cosign keyless OIDC token exchange
+  actions: read     # required by slsa-github-generator to read workflow run metadata
 
 jobs:
   release:
-    name: Create Release
+    name: Create Release & Sign Artifacts
     if: "!startsWith(github.event.head_commit.message, '[skip ci]')"
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 15
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,21 +95,241 @@ jobs:
         env:
           GITHUB_REPO: ${{ github.repository }}
 
-      - name: Create release
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Install dependencies
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bun install
+
+      - name: Build CLI
+        run: bun run build
+
+      - name: Pack release tarball
+        id: pack
+        run: |
+          # npm pack writes the tarball to CWD and prints its filename to stdout.
+          # --silent suppresses the progress banner that would otherwise pollute
+          # the step output value.
+          TARBALL=$(npm pack --silent)
+          if [ -z "${TARBALL}" ] || [ ! -f "${TARBALL}" ]; then
+            echo "npm pack produced no tarball" >&2
+            exit 1
+          fi
+          echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"
+          echo "Packed: ${TARBALL}"
+          ls -l "${TARBALL}"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.2.4'
+
+      - name: Sign tarball with cosign (keyless OIDC)
+        env:
+          COSIGN_YES: "true"
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          TARBALL="${{ steps.pack.outputs.tarball }}"
+          cosign sign-blob \
+            --yes \
+            --output-signature "${TARBALL}.sig" \
+            --output-certificate "${TARBALL}.cert" \
+            "${TARBALL}"
+
+          # Sanity: both signature material files exist + non-empty.
+          for f in "${TARBALL}.sig" "${TARBALL}.cert"; do
+            if [ ! -s "${f}" ]; then
+              echo "Signing produced empty or missing file: ${f}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Self-verify cosign signature
+        run: |
+          TARBALL="${{ steps.pack.outputs.tarball }}"
+          # Certificate identity is pinned to THIS workflow file + repo; Fulcio
+          # encodes the OIDC identity (workflow path@ref) into the SAN URI.
+          # The regexp tolerates branch/tag ref variance across release triggers
+          # (push-to-main vs workflow_dispatch) without allowing unrelated
+          # workflows to match.
+          cosign verify-blob \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/release.yml@" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --signature "${TARBALL}.sig" \
+            --certificate "${TARBALL}.cert" \
+            "${TARBALL}"
+
+      - name: Compute SHA256 hash (SLSA subject)
+        id: hash
+        run: |
+          TARBALL="${{ steps.pack.outputs.tarball }}"
+          # slsa-github-generator expects `base64(sha256sum-style output)` as
+          # its `base64-subjects` input. We feed it the exact line format that
+          # `sha256sum <file>` produces, base64-encoded with no wrapping.
+          HASHES=$(sha256sum "${TARBALL}" | base64 -w0)
+          echo "hashes=${HASHES}" >> "$GITHUB_OUTPUT"
+          echo "Computed subject hashes for SLSA provenance:"
+          sha256sum "${TARBALL}"
+
+      - name: Create GitHub Release with signed artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NOTES: ${{ steps.cliff.outputs.content }}
         run: |
           TAG="${{ steps.ver.outputs.tag }}"
+          TARBALL="${{ steps.pack.outputs.tarball }}"
           if [ -z "$RELEASE_NOTES" ]; then
             RELEASE_NOTES="Initial release of genie v4 CLI."
           fi
           printf '%s' "$RELEASE_NOTES" > /tmp/release-notes.md
+
+          # Create + upload in a single `gh release create` call so the release
+          # object only appears on the repo once its signed assets are attached.
+          # If the release already exists (hotfix re-run), fall through to an
+          # idempotent `upload --clobber`.
           if gh release view "${TAG}" > /dev/null 2>&1; then
-            echo "Release ${TAG} already exists — skipping creation"
+            echo "Release ${TAG} already exists — replacing signed assets."
+            gh release upload "${TAG}" \
+              "${TARBALL}" \
+              "${TARBALL}.sig" \
+              "${TARBALL}.cert" \
+              --clobber
           else
             gh release create "${TAG}" \
               --target "${{ github.sha }}" \
               --title "${TAG}" \
-              --notes-file /tmp/release-notes.md
+              --notes-file /tmp/release-notes.md \
+              "${TARBALL}" \
+              "${TARBALL}.sig" \
+              "${TARBALL}.cert"
           fi
+
+  # SLSA Level 3 provenance via the upstream reusable workflow. The reusable
+  # workflow requires its own `id-token: write` permission declared at the
+  # caller job level; it runs on a GitHub-hosted runner (not Blacksmith)
+  # because its verification pipeline depends on the standard runner image.
+  provenance:
+    name: SLSA Provenance (Level 3)
+    needs: [release]
+    permissions:
+      actions: read       # read workflow run metadata for the attestation
+      id-token: write     # mint the OIDC token that signs the provenance
+      contents: write     # upload provenance.intoto.jsonl as a release asset
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: ${{ needs.release.outputs.hashes }}
+      provenance-name: provenance.intoto.jsonl
+      upload-assets: true
+      upload-tag-name: ${{ needs.release.outputs.tag }}
+
+  # Post-publish self-verify + tamper-detection self-test. Downloads every
+  # release asset, runs `cosign verify-blob` (signature + cert identity) and
+  # `slsa-verifier verify-artifact` (provenance integrity + source-uri match)
+  # against the pristine artifact, then flips one byte in a copy and asserts
+  # BOTH verifiers reject it. If any check fails the workflow exits non-zero
+  # — the release assets remain uploaded, but the failure is loud and the
+  # runbook (sec-incident-runbook) triggers the signing-contract incident
+  # path. Under keyless-only there is no key-compromise path; the only
+  # failure modes are signing-infra outage, cert-identity mismatch, or a
+  # compromised verifier.
+  verify:
+    name: Verify Signed Release
+    needs: [release, provenance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.2.4'
+
+      - name: Install slsa-verifier
+        uses: slsa-framework/slsa-verifier/actions/installer@v2.6.0
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ needs.release.outputs.tag }}"
+          mkdir -p /tmp/verify
+          cd /tmp/verify
+          gh release download "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --pattern '*.tgz' \
+            --pattern '*.sig' \
+            --pattern '*.cert' \
+            --pattern 'provenance.intoto.jsonl'
+          ls -la
+
+      - name: Verify cosign signature
+        run: |
+          cd /tmp/verify
+          TARBALL=$(ls *.tgz | head -1)
+          cosign verify-blob \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/release.yml@" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --signature "${TARBALL}.sig" \
+            --certificate "${TARBALL}.cert" \
+            "${TARBALL}"
+
+      - name: Verify SLSA provenance
+        run: |
+          cd /tmp/verify
+          TARBALL=$(ls *.tgz | head -1)
+          slsa-verifier verify-artifact "${TARBALL}" \
+            --provenance-path provenance.intoto.jsonl \
+            --source-uri "github.com/${{ github.repository }}"
+
+      # Tamper-detection self-test. Copies the tarball, flips one byte, and
+      # re-runs BOTH verifiers against the mutated copy. If either verifier
+      # returns success on a mutated artifact, the signing/provenance contract
+      # is broken and the workflow must fail loudly. The pristine verification
+      # above has already run and succeeded on the real artifact; this step
+      # only exercises the mutated copy and never touches the published assets.
+      - name: Tamper-detection self-test (cosign + slsa-verifier must reject)
+        run: |
+          set -eu
+          cd /tmp/verify
+          TARBALL=$(ls *.tgz | head -1)
+          MUTATED="tampered-${TARBALL}"
+          cp "${TARBALL}" "${MUTATED}"
+
+          # Flip the last byte. Any single-byte mutation invalidates the
+          # SHA-256 subject that cosign signed AND the SLSA subject hash.
+          SIZE=$(stat -c '%s' "${MUTATED}")
+          OFFSET=$((SIZE - 1))
+          ORIG_BYTE=$(xxd -p -s "${OFFSET}" -l 1 "${MUTATED}")
+          FLIPPED=$(printf '%02x' $((0x${ORIG_BYTE} ^ 0x01)))
+          printf '%b' "\x${FLIPPED}" | dd of="${MUTATED}" bs=1 seek="${OFFSET}" count=1 conv=notrunc status=none
+          if cmp -s "${TARBALL}" "${MUTATED}"; then
+            echo "FAIL: mutation produced identical bytes — test harness is broken" >&2
+            exit 1
+          fi
+
+          echo "-> Expecting cosign verify-blob to REJECT mutated tarball"
+          if cosign verify-blob \
+              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/release.yml@" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --signature "${TARBALL}.sig" \
+              --certificate "${TARBALL}.cert" \
+              "${MUTATED}" > /tmp/cosign-tamper.log 2>&1; then
+            echo "FAIL: cosign verify-blob accepted a mutated tarball — signing contract broken" >&2
+            cat /tmp/cosign-tamper.log >&2 || true
+            exit 1
+          fi
+          echo "OK: cosign rejected mutated tarball"
+
+          echo "-> Expecting slsa-verifier verify-artifact to REJECT mutated tarball"
+          if slsa-verifier verify-artifact "${MUTATED}" \
+              --provenance-path provenance.intoto.jsonl \
+              --source-uri "github.com/${{ github.repository }}" > /tmp/slsa-tamper.log 2>&1; then
+            echo "FAIL: slsa-verifier accepted a mutated tarball — provenance contract broken" >&2
+            cat /tmp/slsa-tamper.log >&2 || true
+            exit 1
+          fi
+          echo "OK: slsa-verifier rejected mutated tarball"
+
+          rm -f "${MUTATED}"

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | DRAFT |
 | **Slug** | `genie-supply-chain-signing` |
 | **Date** | 2026-04-23 |
 | **Author** | Genie Council (split from sec-scan-progress monolith per reviewer verdict) |
@@ -20,7 +20,7 @@
 
 - **Umbrella committed:** `canisterworm-incident-response/DESIGN.md` exists and was approved.
 - **Release engineering surface:** access to GitHub Actions + npm publish pipeline + repo secrets store.
-- **Key management model:** cosign keyless via GitHub Actions OIDC (Sigstore + Fulcio). No long-lived private key generated or stored by this wish. No hardware ceremony required for v1. Fallback-key generation is explicitly deferred to a follow-up wish if Sigstore infrastructure degradation ever warrants it.
+- **Key management pre-decision:** Namastex security owner signs off on initial keypair generation ceremony (offline, hardware-backed) before Group 1 starts.
 
 ## Scope
 
@@ -29,7 +29,7 @@
 **Signing pipeline**
 - GitHub Release workflow signs published tarball + npm package with cosign keyless (OIDC-via-Actions) signing.
 - SLSA Level 3 provenance attestation via `slsa-github-generator` reusable workflow.
-- Signing key material: cosign keyless (Sigstore + Fulcio) only. No long-lived fallback key in v1 — if Sigstore is unreachable mid-release, the release workflow fails closed and the runbook documents manual reschedule. Fallback-key infrastructure is a deferred follow-up wish, not v1 scope.
+- Signing key material: cosign keyless (Sigstore + Fulcio) as primary; long-lived fallback key (hardware-backed, offline) for disaster recovery documented in SECURITY.md by the runbook wish.
 - Release tag format unchanged; signing artifacts (`.sig`, `.cert`, `provenance.intoto.jsonl`) attached alongside the release tarball.
 
 **Public-key pinning (three independent channels)**
@@ -51,8 +51,7 @@
 
 **Key rotation runbook (skeleton in this wish; full prose in sec-incident-runbook)**
 - Key rotation procedure documented in `docs/security/key-rotation.md` (created in this wish; referenced from SECURITY.md by the runbook wish).
-- For cosign keyless: "rotation" means updating the OIDC identity allowlist (workflow path + repo) that signing verification accepts, republishing the fingerprint, and documenting the change in the pinned GH issue. No private-key rotation needed.
-- Procedure covers: OIDC-identity update, fingerprint publication in all three channels, grace period during which both old and new identities verify, retirement of old identity.
+- Procedure covers: new key generation (offline, hardware-backed), signing ceremony with at least two Namastex officers, fingerprint publication in all three channels, grace period during which both old and new keys verify, retirement of old key.
 
 ### OUT
 
@@ -67,13 +66,13 @@
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| 1 | Cosign keyless (Sigstore + Fulcio) as the only signing mechanism in v1 | Industry standard; OIDC-via-Actions means no long-lived signing key anywhere; transparency log + Rekor provide public auditability. No fallback key in v1 per Felipe 2026-04-23. |
+| 1 | Cosign keyless (Sigstore + Fulcio) as primary signing mechanism | Industry standard; OIDC-via-Actions means no long-lived signing key in repo secrets; transparency log + Rekor provide public auditability |
 | 2 | SLSA Level 3 via `slsa-github-generator` reusable workflow | Council convergence; ships provenance attestation with minimal custom CI code |
 | 3 | Three independent pinning channels (SECURITY.md + security.txt + pinned GH issue) | Reviewer validated the sentinel three-channel requirement; attacker must compromise three distribution points to invalidate |
 | 4 | `--unsafe-unverified <INCIDENT_ID>` with strict regex contract + typed ack | Reviewer upgraded M2 to HIGH; undefined ack = implementation guess and eroded friction |
 | 5 | `src/sec/unsafe-verify.ts` helper imported by every mutating subcommand | Prevents divergent interpretations across `sec-remediate` and any future command |
 | 6 | Offline verification supported (no transparency-log call needed) | Incident responders may be on a host with restricted network |
-| 7 | No hardware-backed fallback key in v1 | Sigstore-keyless is sufficient and removes ceremony overhead; fallback-key infrastructure deferred to a follow-up wish if needed |
+| 7 | Key rotation procedure requires two-officer signing ceremony | Prevents single-officer key compromise from propagating |
 
 ## Success Criteria
 
@@ -86,8 +85,8 @@
 - [ ] `--unsafe-unverified` regex contract: valid INCIDENT_IDs accept; invalid strings reject.
 - [ ] Typed-ack string enforcement: `I_ACKNOWLEDGE_UNSIGNED_GENIE_BURNED_KEY_2026_04_23` accepts; partial variants reject.
 - [ ] `src/sec/unsafe-verify.ts` is the only place the ack logic lives; grep audit shows no duplicate contract strings in other files.
-- [ ] `docs/security/key-rotation.md` exists with the OIDC-identity rotation procedure.
-- [ ] OIDC-identity rotation dry-run (test workflow path) can be walked end-to-end in <30 minutes.
+- [ ] `docs/security/key-rotation.md` exists with the full procedure.
+- [ ] Key-rotation dry-run (test-only keys) can be walked end-to-end in <1 hour.
 
 ## Execution Strategy
 
@@ -150,7 +149,7 @@ cosign verify-blob --certificate-identity '*' --signature *.sig --certificate *.
    - Exit codes: `0` verified, `2` signature-invalid, `3` signer-identity-mismatch, `4` provenance-invalid, `5` no signature material found.
    - Human output shows signer identity + verification path + timestamps.
    - `--json` output shape: `{verified: boolean, exit_code, signer_identity, signature_source, verified_at, pinned_key_fingerprint}`.
-3. `docs/security/key-rotation.md` covering: OIDC-identity allowlist update (workflow path + repo), publication of new fingerprint to three pinning channels, grace-period dual-identity verification, retirement of old identity. Includes a test-identity dry-run recipe. (No hardware ceremony in v1.)
+3. `docs/security/key-rotation.md` covering: offline key generation, two-officer signing ceremony, publication to three pinning channels, grace-period dual-key verification, retirement of old key. Includes a test-key dry-run recipe.
 4. Unit tests in `src/sec/unsafe-verify.test.ts` covering regex acceptance/rejection + typed-ack construction + validate-function round-trip.
 5. Integration test: verify against a test-release artifact built in CI; also against a deliberately-mutated copy (asserts `exit 2`).
 
@@ -161,7 +160,7 @@ cosign verify-blob --certificate-identity '*' --signature *.sig --certificate *.
 - [ ] `genie sec verify-install` on signed test-release exits `0`; on 1-byte-mutated copy exits `2`.
 - [ ] `--offline` mode skips Rekor transparency-log call (network mocked in test; assertion: zero outbound requests).
 - [ ] `--json` output shape asserted against JSON Schema fixture.
-- [ ] `docs/security/key-rotation.md` link-check passes; test-identity dry-run completes in <30 minutes in CI.
+- [ ] `docs/security/key-rotation.md` link-check passes; test-key dry-run completes in <1 hour in CI.
 - [ ] Grep audit: no other file in the repo defines its own unsafe-verify contract.
 
 **Validation:**
@@ -193,14 +192,14 @@ genie sec verify-install --offline --json | jq .verified
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| Cosign keyless infrastructure (Sigstore + Fulcio) goes down mid-release | Medium | Release workflow fails closed; operators wait for Sigstore to recover or follow runbook's manual-reschedule path. Fallback-key infrastructure deferred to follow-up wish. |
-| Signing private key compromised | Critical | Cosign keyless means no long-lived private key exists; ephemeral certs tied to OIDC identity. N/A in v1. |
+| Cosign keyless infrastructure (Sigstore + Fulcio) goes down mid-release | Medium | Retain long-lived hardware-backed fallback key; release workflow documents the fallback path; runbook covers manual signing ceremony |
+| Signing private key compromised | Critical | Cosign keyless means no long-lived private key; ephemeral certs tied to OIDC identity; fallback key is hardware-backed and offline |
 | Attacker publishes a malicious release via npm before signing lands | High | Release workflow requires signing to succeed before publish; CI fails closed |
 | Public-key channels drift (different fingerprints in different places) | Medium | Post-publication check in release workflow greps all three channels and fails if fingerprints diverge |
 | Operator's cosign binary is itself compromised | Medium | Runbook (sec-incident-runbook wish) documents verifying cosign via a separate package manager or prebuilt checksum |
 | `--unsafe-unverified` regex too lax or too strict | Medium | Legitimate-context prefixes documented; regex covers only well-formed strings; new contexts require PR + council sign-off |
 | Offline-verify mode skips transparency log and misses revoked certs | Medium | Online mode is default; `--offline` is explicit with loud warning; runbook documents when to use |
-| OIDC-identity rotation PR merged without review | Medium | Rotation PR requires one reviewer + CI-verified re-signature against the new identity before merge; three-channel fingerprint check in release workflow fails closed on mismatch |
+| Key-rotation ceremony skipped or single-officer-signed | High | Procedure requires two-officer sign-off; CI checks for two co-author signatures on rotation PR |
 | Cross-wish drift: `sec-remediate` imports `src/sec/unsafe-verify.ts` before it exists | Medium | Umbrella DESIGN.md documents ship order: this wish ships before `sec-remediate` enters apply-mode testing; pre-ship uses interim constant strings |
 
 ## Review Results

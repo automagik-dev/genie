@@ -1,20 +1,43 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import {
+  PROVENANCE_SOURCE_URI,
+  SIGNER_IDENTITY_REGEXP,
+  SIGNER_OIDC_ISSUER,
   type SecScanDeps,
+  VERIFY_EXIT,
   applySecScanExitCode,
   buildSecQuarantineGcArgv,
   buildSecQuarantineListArgv,
   buildSecRemediateArgv,
   buildSecRollbackArgv,
   buildSecScanArgv,
+  discoverSignatureBundle,
+  readsAsCosignSentinel,
   registerSecCommands,
   resolveSecRemediateScript,
   resolveSecScanScript,
+  runVerifyInstall,
 } from './sec.js';
+
+// Minimal shared stubs so every test can build a SecScanDeps without
+// re-declaring the whole surface.
+function buildDeps(overrides: Partial<SecScanDeps> = {}): SecScanDeps {
+  return {
+    existsSync: () => false,
+    realpathSync: (p) => p,
+    readFileSync: () => '',
+    spawnSync: () => ({ status: 0 }),
+    setExitCode: () => {},
+    stdout: () => {},
+    stderr: () => {},
+    now: () => new Date('2026-04-23T00:00:00.000Z'),
+    ...overrides,
+  };
+}
 
 describe('sec scan command', () => {
   let originalArgv1: string | undefined;
@@ -72,12 +95,12 @@ describe('sec scan command', () => {
   test('registered command forwards options to the scanner payload and preserves exit code', async () => {
     const spawnMock = mock<SecScanDeps['spawnSync']>(() => ({ status: 2 }));
     const setExitCodeMock = mock<SecScanDeps['setExitCode']>(() => {});
-    const deps: SecScanDeps = {
+    const deps = buildDeps({
       existsSync: (path) => path === '/repo/package.json' || path === '/repo/scripts/sec-scan.cjs',
       realpathSync: (path) => path,
       spawnSync: spawnMock,
       setExitCode: setExitCodeMock,
-    };
+    });
 
     process.argv[1] = '/repo/dist/genie.js';
 
@@ -200,8 +223,12 @@ describe('sec remediate command', () => {
         path === '/repo/scripts/sec-scan.cjs' ||
         path === '/repo/scripts/sec-remediate.cjs',
       realpathSync: (path) => path,
+      readFileSync: () => '',
       spawnSync: spawnMock,
       setExitCode: setExitCodeMock,
+      stdout: () => {},
+      stderr: () => {},
+      now: () => new Date(0),
     };
 
     process.argv[1] = '/repo/dist/genie.js';
@@ -228,8 +255,12 @@ describe('sec remediate command', () => {
         path === '/repo/scripts/sec-scan.cjs' ||
         path === '/repo/scripts/sec-remediate.cjs',
       realpathSync: (path) => path,
+      readFileSync: () => '',
       spawnSync: spawnMock,
       setExitCode: setExitCodeMock,
+      stdout: () => {},
+      stderr: () => {},
+      now: () => new Date(0),
     };
 
     process.argv[1] = '/repo/dist/genie.js';
@@ -290,8 +321,12 @@ describe('sec rollback + quarantine list/gc commands', () => {
         path === '/repo/scripts/sec-scan.cjs' ||
         path === '/repo/scripts/sec-remediate.cjs',
       realpathSync: (path) => path,
+      readFileSync: () => '',
       spawnSync: spawnMock,
       setExitCode: () => {},
+      stdout: () => {},
+      stderr: () => {},
+      now: () => new Date(0),
     };
   }
 
@@ -355,5 +390,283 @@ describe('sec rollback + quarantine list/gc commands', () => {
       ],
       { stdio: 'inherit' },
     );
+  });
+});
+
+describe('sec verify-install — fixture helpers', () => {
+  test('readsAsCosignSentinel identifies the committed no-key sentinel', () => {
+    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), 'genie-sentinel-')));
+    try {
+      const path = join(tempDir, 'cosign.pub');
+      writeFileSync(
+        path,
+        '-----BEGIN COSIGN NO-PINNED-KEY SENTINEL-----\nKEYLESS_ONLY\n-----END COSIGN NO-PINNED-KEY SENTINEL-----\n',
+      );
+      expect(readsAsCosignSentinel(path)).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('readsAsCosignSentinel returns false for a real PEM-shaped file', () => {
+    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), 'genie-pem-')));
+    try {
+      const path = join(tempDir, 'cosign.pub');
+      writeFileSync(path, '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n');
+      expect(readsAsCosignSentinel(path)).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('discoverSignatureBundle finds a complete {tgz,sig,cert,provenance} bundle', () => {
+    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), 'genie-bundle-')));
+    try {
+      const tarball = join(tempDir, 'automagik-genie-4.260423.11.tgz');
+      writeFileSync(tarball, 'fake tarball');
+      writeFileSync(`${tarball}.sig`, 'fake-sig');
+      writeFileSync(`${tarball}.cert`, 'fake-cert');
+      writeFileSync(join(tempDir, 'provenance.intoto.jsonl'), '{}');
+
+      const bundle = discoverSignatureBundle(tempDir);
+      expect(bundle).toBeTruthy();
+      expect(bundle?.tarball).toBe(tarball);
+      expect(bundle?.signature).toBe(`${tarball}.sig`);
+      expect(bundle?.certificate).toBe(`${tarball}.cert`);
+      expect(bundle?.provenance).toBe(join(tempDir, 'provenance.intoto.jsonl'));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('discoverSignatureBundle returns null when .sig is missing', () => {
+    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), 'genie-bundle-')));
+    try {
+      writeFileSync(join(tempDir, 'automagik-genie-4.260423.11.tgz'), 'fake');
+      expect(discoverSignatureBundle(tempDir)).toBeNull();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sec verify-install — runtime', () => {
+  function makeBundleDir(withProvenance = true): string {
+    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), 'genie-verify-')));
+    const tarball = join(tempDir, 'automagik-genie-4.260423.11.tgz');
+    writeFileSync(tarball, 'fake tarball');
+    writeFileSync(`${tarball}.sig`, 'fake-sig');
+    writeFileSync(`${tarball}.cert`, 'fake-cert');
+    if (withProvenance) writeFileSync(join(tempDir, 'provenance.intoto.jsonl'), '{}');
+    return tempDir;
+  }
+
+  test('exit 5 (no signature material) when no bundle is found', () => {
+    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), 'genie-empty-')));
+    try {
+      const result = runVerifyInstall(
+        { bundleDir: tempDir },
+        buildDeps({
+          existsSync: () => true,
+        }),
+      );
+      expect(result.exitCode).toBe(VERIFY_EXIT.NO_SIGNATURE_MATERIAL);
+      expect(result.json.verified).toBe(false);
+      expect(result.json.pinned_key_fingerprint).toBeNull();
+      expect(result.json.signing_mode).toBe('cosign-keyless');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exit 0 when cosign + slsa-verifier both succeed', () => {
+    const bundleDir = makeBundleDir();
+    try {
+      const spawnCalls: string[] = [];
+      const deps = buildDeps({
+        existsSync,
+        spawnSync: (cmd, _args, _opts) => {
+          spawnCalls.push(cmd);
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      const result = runVerifyInstall({ bundleDir }, deps);
+      expect(result.exitCode).toBe(VERIFY_EXIT.VERIFIED);
+      expect(result.json.verified).toBe(true);
+      expect(result.json.offline).toBe(false);
+      expect(result.json.signer_identity).toBe(SIGNER_IDENTITY_REGEXP);
+      expect(result.json.signer_oidc_issuer).toBe(SIGNER_OIDC_ISSUER);
+      // ensureBinary(cosign), cosign verify-blob, ensureBinary(slsa-verifier), slsa verify-artifact
+      expect(spawnCalls).toEqual(['cosign', 'cosign', 'slsa-verifier', 'slsa-verifier']);
+    } finally {
+      rmSync(bundleDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exit 2 (signature-invalid) when cosign rejects without identity hint', () => {
+    const bundleDir = makeBundleDir();
+    try {
+      const deps = buildDeps({
+        existsSync,
+        spawnSync: (cmd, args) => {
+          if (cmd === 'cosign' && args[0] === '--version') return { status: 0, stdout: 'cosign 2.2.4' };
+          if (cmd === 'cosign' && args[0] === 'verify-blob') {
+            return {
+              status: 1,
+              stdout: '',
+              stderr: 'error: signature mismatch: payload hash does not match',
+            };
+          }
+          return { status: 0 };
+        },
+      });
+      const result = runVerifyInstall({ bundleDir }, deps);
+      expect(result.exitCode).toBe(VERIFY_EXIT.SIGNATURE_INVALID);
+    } finally {
+      rmSync(bundleDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exit 3 (signer-identity-mismatch) when cosign complains about certificate identity', () => {
+    const bundleDir = makeBundleDir();
+    try {
+      const deps = buildDeps({
+        existsSync,
+        spawnSync: (cmd, args) => {
+          if (cmd === 'cosign' && args[0] === '--version') return { status: 0, stdout: 'cosign 2.2.4' };
+          if (cmd === 'cosign' && args[0] === 'verify-blob') {
+            return {
+              status: 1,
+              stdout: '',
+              stderr: 'error: none of the expected certificate identity patterns matched',
+            };
+          }
+          return { status: 0 };
+        },
+      });
+      const result = runVerifyInstall({ bundleDir }, deps);
+      expect(result.exitCode).toBe(VERIFY_EXIT.SIGNER_IDENTITY_MISMATCH);
+    } finally {
+      rmSync(bundleDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exit 4 (provenance-invalid) when slsa-verifier rejects the artifact', () => {
+    const bundleDir = makeBundleDir();
+    try {
+      const deps = buildDeps({
+        existsSync,
+        spawnSync: (cmd, args) => {
+          if (cmd === 'cosign') return { status: 0, stdout: 'cosign 2.2.4', stderr: '' };
+          if (cmd === 'slsa-verifier' && args[0] === '--version') {
+            return { status: 0, stdout: 'slsa-verifier 2.6' };
+          }
+          if (cmd === 'slsa-verifier' && args[0] === 'verify-artifact') {
+            return { status: 1, stdout: '', stderr: 'FAILED: artifact hash mismatch' };
+          }
+          return { status: 0 };
+        },
+      });
+      const result = runVerifyInstall({ bundleDir }, deps);
+      expect(result.exitCode).toBe(VERIFY_EXIT.PROVENANCE_INVALID);
+    } finally {
+      rmSync(bundleDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exit 4 (provenance-invalid) when provenance.intoto.jsonl is missing', () => {
+    const bundleDir = makeBundleDir(false);
+    try {
+      const deps = buildDeps({
+        existsSync,
+        spawnSync: (cmd, args) => {
+          if (cmd === 'cosign') return { status: 0, stdout: 'cosign 2.2.4', stderr: '' };
+          if (cmd === 'slsa-verifier' && args[0] === '--version') {
+            return { status: 0, stdout: 'slsa-verifier 2.6' };
+          }
+          return { status: 0 };
+        },
+      });
+      const result = runVerifyInstall({ bundleDir }, deps);
+      expect(result.exitCode).toBe(VERIFY_EXIT.PROVENANCE_INVALID);
+    } finally {
+      rmSync(bundleDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exit 127 (missing binary) when cosign is not on PATH', () => {
+    const bundleDir = makeBundleDir();
+    try {
+      const deps = buildDeps({
+        existsSync,
+        spawnSync: (cmd, args) => {
+          if (cmd === 'cosign' && args[0] === '--version') {
+            return { status: 127, error: new Error('command not found: cosign') };
+          }
+          return { status: 0 };
+        },
+      });
+      const result = runVerifyInstall({ bundleDir }, deps);
+      expect(result.exitCode).toBe(VERIFY_EXIT.MISSING_BINARY);
+    } finally {
+      rmSync(bundleDir, { recursive: true, force: true });
+    }
+  });
+
+  test('--offline passes cosign flags that skip the Rekor transparency-log check', () => {
+    const bundleDir = makeBundleDir();
+    try {
+      let cosignVerifyArgs: string[] = [];
+      const deps = buildDeps({
+        existsSync,
+        spawnSync: (cmd, args) => {
+          if (cmd === 'cosign' && args[0] === 'verify-blob') cosignVerifyArgs = args;
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      const result = runVerifyInstall({ bundleDir, offline: true }, deps);
+      expect(result.exitCode).toBe(VERIFY_EXIT.VERIFIED);
+      expect(result.json.offline).toBe(true);
+      expect(cosignVerifyArgs).toContain('--insecure-ignore-tlog');
+      expect(cosignVerifyArgs).toContain('--offline');
+    } finally {
+      rmSync(bundleDir, { recursive: true, force: true });
+    }
+  });
+
+  test('json output shape is stable and contains every documented field', () => {
+    const bundleDir = makeBundleDir();
+    try {
+      const deps = buildDeps({
+        existsSync,
+        spawnSync: () => ({ status: 0, stdout: '', stderr: '' }),
+      });
+      const result = runVerifyInstall({ bundleDir }, deps);
+      const keys = Object.keys(result.json).sort();
+      expect(keys).toEqual(
+        [
+          'errors',
+          'exit_code',
+          'offline',
+          'pinned_key_fingerprint',
+          'provenance_source',
+          'signature_source',
+          'signer_identity',
+          'signer_oidc_issuer',
+          'signing_mode',
+          'tarball_path',
+          'verified',
+          'verified_at',
+        ].sort(),
+      );
+      expect(result.json.pinned_key_fingerprint).toBeNull();
+      expect(result.json.signing_mode).toBe('cosign-keyless');
+    } finally {
+      rmSync(bundleDir, { recursive: true, force: true });
+    }
+  });
+
+  test('provenance source-uri matches the release.yml pin', () => {
+    expect(PROVENANCE_SOURCE_URI).toBe('github.com/automagik-dev/genie');
   });
 });

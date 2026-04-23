@@ -41,7 +41,8 @@
     "skills:audit": "bun run scripts/skills-audit.ts",
     "lint:emit": "bun run scripts/lint-emit-discipline.ts",
     "check:perf": "bun run test/perf/observability/gate.ts --duration=30000",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:emit && bun test"
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:emit && bun test",
+    "verify:release": "scripts/verify-release.sh"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.91",
