@@ -34,13 +34,7 @@
  */
 
 const { gunzipSync } = require('node:zlib');
-const {
-  existsSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  statSync,
-} = require('node:fs');
+const { existsSync, readFileSync, readdirSync, realpathSync, statSync } = require('node:fs');
 const { createHash } = require('node:crypto');
 const { homedir, hostname, release, userInfo } = require('node:os');
 const { join, resolve, basename } = require('node:path');
@@ -81,20 +75,14 @@ const TRACKED_PACKAGE_VERSION_SET = new Set(
   TRACKED_PACKAGES.flatMap((entry) => entry.versions.map((version) => `${entry.name}@${version}`)),
 );
 
-const IOC_FILE_SUFFIXES = [
-  'dist/env-compat.cjs',
-  'dist/env-compat.js',
-  'dist/public.pem',
-];
+const IOC_FILE_SUFFIXES = ['dist/env-compat.cjs', 'dist/env-compat.js', 'dist/public.pem'];
 
 const MALWARE_FILE_HASHES = {
   'dist/env-compat.cjs': 'c19c4574d09e60636425f9555d3b63e8cb5c9d63ceb1c982c35e5a310c97a839',
   'dist/public.pem': '834b6e5db5710b9308d0598978a0148a9dc832361f1fa0b7ad4343dcceba2812',
 };
 
-const MALWARE_RSA_FINGERPRINTS = [
-  '87259b0d1d017ad8b8daa7c177c2d9f0940e457f8dd1ab3abab3681e433ca88e',
-];
+const MALWARE_RSA_FINGERPRINTS = ['87259b0d1d017ad8b8daa7c177c2d9f0940e457f8dd1ab3abab3681e433ca88e'];
 
 const IOC_STRINGS = [
   'telemetry.api-monitor.com',
@@ -182,11 +170,7 @@ const SHELL_PROFILE_FILES = [
   '.xsessionrc',
 ];
 
-const SHELL_PROFILE_DIRS = [
-  '.config/fish/conf.d',
-  '.config/environment.d',
-  '.profile.d',
-];
+const SHELL_PROFILE_DIRS = ['.config/fish/conf.d', '.config/environment.d', '.profile.d'];
 
 const SHELL_HISTORY_FILES = [
   '.bash_history',
@@ -198,14 +182,7 @@ const SHELL_HISTORY_FILES = [
   '.histfile',
 ];
 
-const PYTHON_PTH_ROOTS = [
-  '.local/lib',
-  'Library/Python',
-  '.pyenv/versions',
-  '.virtualenvs',
-  'venv',
-  '.venv',
-];
+const PYTHON_PTH_ROOTS = ['.local/lib', 'Library/Python', '.pyenv/versions', '.virtualenvs', 'venv', '.venv'];
 
 const TARGETED_SECRET_PATHS = [
   { kind: 'secret-store', relativePath: '.npmrc' },
@@ -284,7 +261,8 @@ const MAX_TEMP_WALK_ENTRIES = 25000;
 const MAX_TEMP_FINDINGS = 200;
 const MAX_TIMELINE_EVENTS = 120;
 
-const TEMP_ARTIFACT_NAME_REGEX = /(?:genie-(4\.260421\.(?:33|34|35|36|37|38|39|40))\.tgz|pgserve-1\.1\.(?:11|12|13)\.tgz|websocket-1\.0\.(?:38|39)\.tgz|loopback-connector-es-1\.4\.(?:3|4)\.tgz|design-tokens-1\.0\.3\.tgz|theme-owc-1\.0\.3\.tgz|env-compat\.(?:cjs|js)|public\.pem)$/i;
+const TEMP_ARTIFACT_NAME_REGEX =
+  /(?:genie-(4\.260421\.(?:33|34|35|36|37|38|39|40))\.tgz|pgserve-1\.1\.(?:11|12|13)\.tgz|websocket-1\.0\.(?:38|39)\.tgz|loopback-connector-es-1\.4\.(?:3|4)\.tgz|design-tokens-1\.0\.3\.tgz|theme-owc-1\.0\.3\.tgz|env-compat\.(?:cjs|js)|public\.pem)$/i;
 
 const TEXT_MATCHERS = [
   { label: 'ioc:telemetry.api-monitor.com', category: 'ioc', regex: /telemetry\.api-monitor\.com/i },
@@ -305,20 +283,41 @@ const TEXT_MATCHERS = [
   { label: 'ioc:env-compat.cjs', category: 'ioc', regex: /env-compat\.cjs/i },
   { label: 'ioc:env-compat.js', category: 'ioc', regex: /env-compat\.js/i },
   { label: 'ioc:public.pem', category: 'ioc', regex: /public\.pem/i },
-  { label: 'ioc:node dist/env-compat.cjs || true', category: 'ioc', regex: /node\s+dist\/env-compat\.cjs\s*\|\|\s*true/i },
+  {
+    label: 'ioc:node dist/env-compat.cjs || true',
+    category: 'ioc',
+    regex: /node\s+dist\/env-compat\.cjs\s*\|\|\s*true/i,
+  },
   { label: 'ioc:.pth injection', category: 'ioc', regex: /\.pth\b/i },
   { label: 'ioc:twine upload', category: 'ioc', regex: /\btwine\b/i },
-  { label: 'ioc:rsa fingerprint', category: 'ioc', regex: /87259b0d1d017ad8b8daa7c177c2d9f0940e457f8dd1ab3abab3681e433ca88e/i },
+  {
+    label: 'ioc:rsa fingerprint',
+    category: 'ioc',
+    regex: /87259b0d1d017ad8b8daa7c177c2d9f0940e457f8dd1ab3abab3681e433ca88e/i,
+  },
   { label: 'package:@automagik/genie', category: 'package', regex: /@automagik\/genie(?:@[0-9.]+)?/i },
   { label: 'package:pgserve', category: 'package', regex: /\bpgserve(?:@[0-9.]+)?\b/i },
   { label: 'package:@fairwords/websocket', category: 'package', regex: /@fairwords\/websocket(?:@[0-9.]+)?/i },
-  { label: 'package:@fairwords/loopback-connector-es', category: 'package', regex: /@fairwords\/loopback-connector-es(?:@[0-9.]+)?/i },
-  { label: 'package:@openwebconcept/design-tokens', category: 'package', regex: /@openwebconcept\/design-tokens(?:@[0-9.]+)?/i },
-  { label: 'package:@openwebconcept/theme-owc', category: 'package', regex: /@openwebconcept\/theme-owc(?:@[0-9.]+)?/i },
+  {
+    label: 'package:@fairwords/loopback-connector-es',
+    category: 'package',
+    regex: /@fairwords\/loopback-connector-es(?:@[0-9.]+)?/i,
+  },
+  {
+    label: 'package:@openwebconcept/design-tokens',
+    category: 'package',
+    regex: /@openwebconcept\/design-tokens(?:@[0-9.]+)?/i,
+  },
+  {
+    label: 'package:@openwebconcept/theme-owc',
+    category: 'package',
+    regex: /@openwebconcept\/theme-owc(?:@[0-9.]+)?/i,
+  },
   {
     label: 'package:compromised-tarball',
     category: 'package',
-    regex: /(?:genie-4\.260421\.(?:33|34|35|36|37|38|39|40)|pgserve-1\.1\.(?:11|12|13)|websocket-1\.0\.(?:38|39)|loopback-connector-es-1\.4\.(?:3|4)|design-tokens-1\.0\.3|theme-owc-1\.0\.3)\.tgz/i,
+    regex:
+      /(?:genie-4\.260421\.(?:33|34|35|36|37|38|39|40)|pgserve-1\.1\.(?:11|12|13)|websocket-1\.0\.(?:38|39)|loopback-connector-es-1\.4\.(?:3|4)|design-tokens-1\.0\.3|theme-owc-1\.0\.3)\.tgz/i,
   },
   {
     label: 'install:npm @automagik/genie',
@@ -414,7 +413,8 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`
+  console.log(
+    `
 Usage:
   node scripts/sec-scan.cjs [--json] [--all-homes] [--home PATH] [--root PATH]
   genie sec scan [--json] [--all-homes] [--home PATH] [--root PATH]
@@ -431,7 +431,8 @@ Examples:
   node scripts/sec-scan.cjs --json
   genie sec scan --json
   sudo node scripts/sec-scan.cjs --all-homes --root /srv --root /opt
-`.trim());
+`.trim(),
+  );
 }
 
 function safeExists(path) {
@@ -614,10 +615,10 @@ function collectHomeDirs(options, platformInfo) {
   }
 
   return [...homes]
-    .map((path) => resolve(path))
+    .map((path) => safeRealpath(resolve(path)))
     .filter((path) => {
       const stat = safeStat(path);
-      return stat && stat.isDirectory();
+      return stat?.isDirectory();
     })
     .sort();
 }
@@ -629,15 +630,15 @@ function collectScanRoots(options, homes) {
     for (const relativePath of COMMON_WORKSPACE_DIRS) {
       const candidate = join(homePath, relativePath);
       const stat = safeStat(candidate);
-      if (stat && stat.isDirectory()) roots.add(candidate);
+      if (stat?.isDirectory()) roots.add(candidate);
     }
   }
 
   return [...roots]
-    .map((path) => resolve(path))
+    .map((path) => safeRealpath(resolve(path)))
     .filter((path) => {
       const stat = safeStat(path);
-      return stat && stat.isDirectory();
+      return stat?.isDirectory();
     })
     .sort();
 }
@@ -657,17 +658,15 @@ function detectNpmGlobalPrefixes() {
 }
 
 function detectNpmCacheRoots(homePath) {
-  return [
-    join(homePath, '.npm', '_cacache'),
-    join(homePath, 'AppData', 'Local', 'npm-cache', '_cacache'),
-  ].filter((path) => safeExists(path));
+  return [join(homePath, '.npm', '_cacache'), join(homePath, 'AppData', 'Local', 'npm-cache', '_cacache')].filter(
+    (path) => safeExists(path),
+  );
 }
 
 function detectNpmLogRoots(homePath) {
-  return [
-    join(homePath, '.npm', '_logs'),
-    join(homePath, 'AppData', 'Local', 'npm-cache', '_logs'),
-  ].filter((path) => safeExists(path));
+  return [join(homePath, '.npm', '_logs'), join(homePath, 'AppData', 'Local', 'npm-cache', '_logs')].filter((path) =>
+    safeExists(path),
+  );
 }
 
 function detectBunCacheRoots(homePath) {
@@ -866,8 +865,7 @@ function inspectPackageDirectory(packageDir) {
       sha256: fileHash,
       expectedSha256: MALWARE_FILE_HASHES[relativeSuffix] || null,
       knownMalwareHash:
-        typeof MALWARE_FILE_HASHES[relativeSuffix] === 'string' &&
-        MALWARE_FILE_HASHES[relativeSuffix] === fileHash,
+        typeof MALWARE_FILE_HASHES[relativeSuffix] === 'string' && MALWARE_FILE_HASHES[relativeSuffix] === fileHash,
     });
   }
 
@@ -923,18 +921,15 @@ function parseNpmIndexEntry(line) {
 }
 
 function walkTreeFiles(roots, options, onFile) {
-  const stack = roots
-    .filter((path) => safeExists(path))
-    .map((path) => ({ path, depth: 0 }));
+  const stack = roots.filter((path) => safeExists(path)).map((path) => ({ path, depth: 0 }));
 
   const seen = new Set();
   let visitedEntries = 0;
 
   while (stack.length > 0) {
     const current = stack.pop();
-    const real = safeRealpath(current.path);
-    if (seen.has(real)) continue;
-    seen.add(real);
+    if (seen.has(current.path)) continue;
+    seen.add(current.path);
 
     const entries = safeReaddir(current.path);
     if (!entries) continue;
@@ -1049,6 +1044,8 @@ function scanNpmCache(homePath, report) {
 
       const contentPath = entry.integrity ? integrityToContentPath(cacheRoot, entry.integrity) : null;
       if (contentPath && safeExists(contentPath)) {
+        const contentStat = safeStat(contentPath);
+        if (!contentStat || !contentStat.isFile() || contentStat.size > MAX_SCAN_FILE_SIZE) continue;
         const content = safeReadText(contentPath);
         if (content) {
           const parsed = safeJsonParse(content);
@@ -1108,6 +1105,8 @@ function scanNpmCache(homePath, report) {
     for (const entry of logEntries) {
       if (!entry.isFile()) continue;
       const fullPath = join(logsRoot, entry.name);
+      const stat = safeStat(fullPath);
+      if (!stat || stat.size > MAX_SCAN_FILE_SIZE) continue;
       const text = safeReadText(fullPath);
       if (!text || !TRACKED_PACKAGES.some(({ name }) => text.includes(name))) continue;
 
@@ -1197,7 +1196,7 @@ function scanBunCache(homePath, report) {
         time: isoTime(safeStat(bunGlobal)?.mtimeMs),
         category: 'install',
         severity: 'affected',
-        summary: `bun global install contains suspicious ${(inspection.packageName || PACKAGE_NAME)} bytes`,
+        summary: `bun global install contains suspicious ${inspection.packageName || PACKAGE_NAME} bytes`,
         path: bunGlobal,
       });
     }
@@ -1219,11 +1218,7 @@ function scanGlobalInstallCandidates(homes, report) {
     candidates.add(join(prefix, 'node_modules'));
   }
 
-  for (const systemPath of [
-    '/usr/local/lib/node_modules',
-    '/usr/lib/node_modules',
-    '/opt/homebrew/lib/node_modules',
-  ]) {
+  for (const systemPath of ['/usr/local/lib/node_modules', '/usr/lib/node_modules', '/opt/homebrew/lib/node_modules']) {
     candidates.add(systemPath);
   }
 
@@ -1252,7 +1247,7 @@ function scanGlobalInstallCandidates(homes, report) {
         time: isoTime(safeStat(candidate)?.mtimeMs),
         category: 'install',
         severity: 'affected',
-        summary: `global install contains suspicious ${(inspection.packageName || PACKAGE_NAME)} bytes`,
+        summary: `global install contains suspicious ${inspection.packageName || PACKAGE_NAME} bytes`,
         path: candidate,
       });
     }
@@ -1318,7 +1313,7 @@ function scanProjectRoots(roots, report) {
           time: isoTime(safeStat(packageDir)?.mtimeMs),
           category: 'install',
           severity: 'affected',
-          summary: `project node_modules contains suspicious ${(inspection.packageName || PACKAGE_NAME)} bytes`,
+          summary: `project node_modules contains suspicious ${inspection.packageName || PACKAGE_NAME} bytes`,
           path: packageDir,
         });
       }
@@ -1388,35 +1383,31 @@ function scanShellProfiles(homes, report) {
       time: finding.modifiedAt,
       category: 'shell-profile',
       severity: 'compromised',
-        summary: 'shell startup file references suspicious package execution or IOC data',
+      summary: 'shell startup file references suspicious package execution or IOC data',
       path: finding.path,
     });
   }
 
   for (const candidate of directoryRoots) {
     if (!safeExists(candidate.path)) continue;
-    walkTreeFiles(
-      [candidate.path],
-      { maxDepth: 2, maxEntries: 1000, skipDirs: WALK_SKIP_DIRS },
-      (fullPath) => {
-        const finding = inspectTextEvidenceFile(fullPath);
-        if (!finding) return;
+    walkTreeFiles([candidate.path], { maxDepth: 2, maxEntries: 1000, skipDirs: WALK_SKIP_DIRS }, (fullPath) => {
+      const finding = inspectTextEvidenceFile(fullPath);
+      if (!finding) return;
 
-        report.shellProfileFindings.push({
-          kind: candidate.kind,
-          home: candidate.home,
-          ...finding,
-        });
+      report.shellProfileFindings.push({
+        kind: candidate.kind,
+        home: candidate.home,
+        ...finding,
+      });
 
-        addTimeline(report, {
-          time: finding.modifiedAt,
-          category: 'shell-profile',
-          severity: 'compromised',
-          summary: 'shell profile drop-in references suspicious package execution or IOC data',
-          path: finding.path,
-        });
-      },
-    );
+      addTimeline(report, {
+        time: finding.modifiedAt,
+        category: 'shell-profile',
+        severity: 'compromised',
+        summary: 'shell profile drop-in references suspicious package execution or IOC data',
+        path: finding.path,
+      });
+    });
   }
 }
 
@@ -1477,7 +1468,11 @@ function buildPersistenceTargets(platformInfo, homes) {
   } else {
     for (const homePath of homes) {
       targets.push({ kind: 'systemd-user', home: homePath, path: join(homePath, '.config', 'systemd', 'user') });
-      targets.push({ kind: 'systemd-user', home: homePath, path: join(homePath, '.local', 'share', 'systemd', 'user') });
+      targets.push({
+        kind: 'systemd-user',
+        home: homePath,
+        path: join(homePath, '.local', 'share', 'systemd', 'user'),
+      });
       targets.push({ kind: 'autostart-user', home: homePath, path: join(homePath, '.config', 'autostart') });
       targets.push({ kind: 'cron-user', home: homePath, path: join(homePath, '.config', 'cron') });
       targets.push({ kind: 'cron-user', home: homePath, path: join(homePath, '.crontab') });
@@ -1533,38 +1528,29 @@ function scanPersistenceLocations(platformInfo, homes, report) {
       continue;
     }
 
-    walkTreeFiles(
-      [target.path],
-      { maxDepth: 3, maxEntries: 4000, skipDirs: WALK_SKIP_DIRS },
-      (fullPath) => {
-        const finding = inspectTextEvidenceFile(fullPath);
-        if (!finding) return;
+    walkTreeFiles([target.path], { maxDepth: 3, maxEntries: 4000, skipDirs: WALK_SKIP_DIRS }, (fullPath) => {
+      const finding = inspectTextEvidenceFile(fullPath);
+      if (!finding) return;
 
-        report.persistenceFindings.push({
-          kind: target.kind,
-          home: target.home,
-          ...finding,
-        });
+      report.persistenceFindings.push({
+        kind: target.kind,
+        home: target.home,
+        ...finding,
+      });
 
-        addTimeline(report, {
-          time: finding.modifiedAt,
-          category: 'persistence',
-          severity: 'compromised',
-          summary: `${target.kind} contains suspicious persistence or IOC data`,
-          path: finding.path,
-        });
-      },
-    );
+      addTimeline(report, {
+        time: finding.modifiedAt,
+        category: 'persistence',
+        severity: 'compromised',
+        summary: `${target.kind} contains suspicious persistence or IOC data`,
+        path: finding.path,
+      });
+    });
   }
 }
 
 function collectPythonPthScanRoots(homes, roots) {
-  const pthRoots = new Set([
-    '/usr/local/lib',
-    '/usr/lib',
-    '/Library/Python',
-    '/opt/homebrew/lib',
-  ]);
+  const pthRoots = new Set(['/usr/local/lib', '/usr/lib', '/Library/Python', '/opt/homebrew/lib']);
 
   for (const homePath of homes) {
     for (const relativePath of PYTHON_PTH_ROOTS) {
@@ -1579,7 +1565,7 @@ function collectPythonPthScanRoots(homes, roots) {
 
   return [...pthRoots].filter((path) => {
     const stat = safeStat(path);
-    return stat && stat.isDirectory();
+    return stat?.isDirectory();
   });
 }
 
@@ -1714,7 +1700,7 @@ function collectTempRoots(platformInfo, homes, roots) {
 
   return [...tempRoots].filter((path) => {
     const stat = safeStat(path);
-    return stat && stat.isDirectory();
+    return stat?.isDirectory();
   });
 }
 
@@ -1875,9 +1861,7 @@ function countStrongProfileEvidence(report) {
 function countExecutionHistoryEvidence(report) {
   return report.shellHistoryFindings.filter(
     (finding) =>
-      finding.executionCommands.length > 0 ||
-      finding.networkCommands.length > 0 ||
-      finding.iocMatches.length > 0,
+      finding.executionCommands.length > 0 || finding.networkCommands.length > 0 || finding.iocMatches.length > 0,
   ).length;
 }
 
@@ -1977,9 +1961,7 @@ function summarize(report) {
 
   const observedOnly =
     !likelyAffected &&
-    (report.npmCacheMetadata.length > 0 ||
-      report.npmLogHits.length > 0 ||
-      report.lockfileFindings.length > 0);
+    (report.npmCacheMetadata.length > 0 || report.npmLogHits.length > 0 || report.lockfileFindings.length > 0);
 
   let suspicionScore = 0;
   suspicionScore += Math.min(report.persistenceFindings.length * 30, 60);
@@ -2063,12 +2045,16 @@ function printHumanReport(report) {
   console.log('Genie Security Scan');
   console.log('');
   console.log(`Host: ${report.host}`);
-  console.log(`Platform: ${report.platform.platform}${report.platform.isWSL ? ' (WSL)' : ''} ${report.platform.release} ${report.platform.arch}`);
+  console.log(
+    `Platform: ${report.platform.platform}${report.platform.isWSL ? ' (WSL)' : ''} ${report.platform.release} ${report.platform.arch}`,
+  );
   console.log(`User: ${report.platform.user || 'unknown'}`);
   console.log(`Runtime: ${report.platform.runtime}`);
   console.log(`Scanned at: ${report.scannedAt}`);
   console.log(`Compromise window: ${report.compromiseWindow.start} .. ${report.compromiseWindow.end}`);
-  console.log(`Tracked packages: ${TRACKED_PACKAGES.map((entry) => `${entry.name}@${entry.versions.join('|')}`).join(', ')}`);
+  console.log(
+    `Tracked packages: ${TRACKED_PACKAGES.map((entry) => `${entry.name}@${entry.versions.join('|')}`).join(', ')}`,
+  );
   console.log(`Homes: ${report.homes.join(', ') || '(none)'}`);
   console.log(`Roots: ${report.roots.join(', ') || '(none)'}`);
   console.log('');
@@ -2101,7 +2087,9 @@ function printHumanReport(report) {
     console.log('');
     console.log('npm tarball fetches:');
     for (const finding of report.npmTarballFetches) {
-      console.log(`- ${(finding.packageName || PACKAGE_NAME)}@${finding.version} from ${finding.home} at ${finding.time || finding.cacheRecordTime || 'unknown time'}`);
+      console.log(
+        `- ${finding.packageName || PACKAGE_NAME}@${finding.version} from ${finding.home} at ${finding.time || finding.cacheRecordTime || 'unknown time'}`,
+      );
       if (finding.iocHits.length > 0) {
         console.log(`  IOC hits: ${finding.iocHits.join(', ')}`);
       }
@@ -2137,7 +2125,9 @@ function printHumanReport(report) {
       }
       const hashHits = flattenKnownHashHits(finding);
       if (hashHits.length > 0) {
-        console.log(`  exact malware hashes: ${hashHits.map((entry) => `${basename(entry.path)}=${entry.sha256}`).join(', ')}`);
+        console.log(
+          `  exact malware hashes: ${hashHits.map((entry) => `${basename(entry.path)}=${entry.sha256}`).join(', ')}`,
+        );
       }
       const iocMatches = flattenPackageIocMatches(finding);
       if (iocMatches.length > 0) {
@@ -2234,7 +2224,9 @@ function printHumanReport(report) {
     console.log('npm cache metadata observations:');
     for (const finding of report.npmCacheMetadata) {
       const tags = finding.distTags ? JSON.stringify(finding.distTags) : '{}';
-      console.log(`- ${finding.home} observed versions ${finding.observedVersions.join(', ')} at ${finding.observedAt || finding.cacheRecordTime || 'unknown time'}`);
+      console.log(
+        `- ${finding.home} observed versions ${finding.observedVersions.join(', ')} at ${finding.observedAt || finding.cacheRecordTime || 'unknown time'}`,
+      );
       console.log(`  dist-tags: ${tags}`);
     }
   }
@@ -2398,7 +2390,8 @@ function main() {
     printHumanReport(report);
   }
 
-  process.exitCode = report.summary.likelyAffected || report.summary.likelyCompromised ? 2 : report.summary.observedOnly ? 1 : 0;
+  process.exitCode =
+    report.summary.likelyAffected || report.summary.likelyCompromised ? 2 : report.summary.observedOnly ? 1 : 0;
 }
 
 try {

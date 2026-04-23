@@ -3,16 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import {
-  buildSecScanArgv,
-  registerSecCommands,
-  resolveSecScanScript,
-  type SecScanDeps,
-} from './sec.js';
+import { type SecScanDeps, buildSecScanArgv, registerSecCommands, resolveSecScanScript } from './sec.js';
 
 describe('sec scan command', () => {
   let originalArgv1: string | undefined;
-  let originalExitCode: number | undefined;
+  let originalExitCode: typeof process.exitCode;
 
   beforeEach(() => {
     originalArgv1 = process.argv[1];
