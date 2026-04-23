@@ -112,7 +112,14 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      # Node 22 bundles npm 10.x; npm Trusted Publishing (automatic OIDC
+      # token exchange) requires npm >= 11.5.1. Without this upgrade,
+      # `npm publish` sends the empty placeholder token and the registry
+      # returns a misleading 404 instead of the real 401/403 auth failure.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
       - name: Publish to npm via OIDC
         env:
           HUSKY: "0"
-        run: npm publish --access public --tag ${{ steps.context.outputs.npm_tag }}
+        run: npm publish --access public --tag ${{ steps.context.outputs.npm_tag }} --provenance

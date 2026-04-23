@@ -207,6 +207,14 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      # Node 22 bundles npm 10.x; npm Trusted Publishing (automatic OIDC
+      # token exchange) requires npm >= 11.5.1. Without this upgrade,
+      # `npm publish` sends the empty `XXXXX-...-XXXXX` placeholder token
+      # and the registry returns a misleading 404 instead of the real
+      # 401/403 auth failure. See: https://docs.npmjs.com/trusted-publishers
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
       - name: Publish to npm @next via OIDC
         env:
           HUSKY: "0"
@@ -225,4 +233,7 @@ jobs:
             echo "(version.yml will bump to a new version and publish it as @next)"
             exit 0
           fi
-          npm publish --access public --tag next
+          # --provenance is implied by Trusted Publishing but pass it
+          # explicitly so a misconfigured publisher fails loudly instead
+          # of silently falling back to token-based auth.
+          npm publish --access public --tag next --provenance
