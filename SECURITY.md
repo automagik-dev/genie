@@ -67,6 +67,17 @@ A full public post-mortem will be published within 30 days of containment.
 
 ---
 
+## Acknowledgments
+
+We thank the researchers and organizations that identified and tracked this incident:
+
+- [**Socket Research Team**](https://socket.dev/blog/namastex-npm-packages-compromised-canisterworm) — primary discovery and continued tracking at [socket.dev/supply-chain-attacks/canistersprawl](https://socket.dev/supply-chain-attacks/canistersprawl).
+- **Endor Labs**, **Kodem Security**, **BleepingComputer**, **The Register**, **CSO Online**, **GBHackers**, **Cybersecurity News** — for coverage, analysis, and technical breakdowns that helped defenders respond quickly.
+
+We also thank the Automagik team that ran the end-to-end response during the incident window, and the broader open-source community whose scrutiny, tools, and unfiltered feedback keep this ecosystem healthy. We will keep earning it.
+
+---
+
 ## Our Commitments
 
 Effective 2026-04-23, all `@automagik/genie` releases are governed by:
