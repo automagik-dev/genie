@@ -11,6 +11,7 @@
     "skills/",
     "plugins/genie/",
     "scripts/postinstall-tmux.js",
+    "scripts/sec-scan.cjs",
     "scripts/tmux/",
     "src/db/migrations/",
     "templates/",

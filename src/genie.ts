@@ -76,6 +76,7 @@ import {
 import * as readCmd from './term-commands/read.js';
 import { registerReleaseCommands } from './term-commands/release.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
+import { registerSecCommands } from './term-commands/sec.js';
 import { registerServeCommands } from './term-commands/serve.js';
 import { registerSessionsCommands } from './term-commands/sessions.js';
 import { registerStateCommands } from './term-commands/state.js';
@@ -237,6 +238,7 @@ registerTypeCommands(program);
 registerBoardCommands(program);
 registerTagCommands(program);
 registerReleaseCommands(program);
+registerSecCommands(program);
 registerProjectCommands(program);
 registerPruneCommands(program);
 registerNotifyCommands(program);
