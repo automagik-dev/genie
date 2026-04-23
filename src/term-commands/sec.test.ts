@@ -6,7 +6,10 @@ import { Command } from 'commander';
 import {
   type SecScanDeps,
   applySecScanExitCode,
+  buildSecQuarantineGcArgv,
+  buildSecQuarantineListArgv,
   buildSecRemediateArgv,
+  buildSecRollbackArgv,
   buildSecScanArgv,
   registerSecCommands,
   resolveSecRemediateScript,
@@ -238,6 +241,118 @@ describe('sec remediate command', () => {
     expect(spawnMock).toHaveBeenCalledWith(
       process.execPath,
       ['/repo/scripts/sec-remediate.cjs', '--restore', 'QUARANTINE-ID-1'],
+      { stdio: 'inherit' },
+    );
+  });
+});
+
+describe('sec rollback + quarantine list/gc commands', () => {
+  let originalArgv1: string | undefined;
+
+  beforeEach(() => {
+    originalArgv1 = process.argv[1];
+  });
+
+  afterEach(() => {
+    if (originalArgv1 === undefined) {
+      process.argv.splice(1, Math.max(process.argv.length - 1, 0));
+    } else {
+      process.argv[1] = originalArgv1;
+    }
+  });
+
+  test('buildSecRollbackArgv forwards scan_id and optional --json', () => {
+    expect(buildSecRollbackArgv('SCAN-X', {})).toEqual(['--rollback', 'SCAN-X']);
+    expect(buildSecRollbackArgv('SCAN-X', { json: true })).toEqual(['--rollback', 'SCAN-X', '--json']);
+  });
+
+  test('buildSecQuarantineListArgv emits the top-level flag and --json', () => {
+    expect(buildSecQuarantineListArgv({})).toEqual(['--quarantine-list']);
+    expect(buildSecQuarantineListArgv({ json: true })).toEqual(['--quarantine-list', '--json']);
+  });
+
+  test('buildSecQuarantineGcArgv forwards --older-than + --confirm-gc', () => {
+    expect(buildSecQuarantineGcArgv({ olderThan: '30d' })).toEqual(['--quarantine-gc', '--older-than', '30d']);
+    expect(buildSecQuarantineGcArgv({ olderThan: '24h', confirmGc: 'CONFIRM-GC-abcdef', json: true })).toEqual([
+      '--quarantine-gc',
+      '--older-than',
+      '24h',
+      '--confirm-gc',
+      'CONFIRM-GC-abcdef',
+      '--json',
+    ]);
+  });
+
+  function depsWith(spawnMock: ReturnType<typeof mock<SecScanDeps['spawnSync']>>): SecScanDeps {
+    return {
+      existsSync: (path) =>
+        path === '/repo/package.json' ||
+        path === '/repo/scripts/sec-scan.cjs' ||
+        path === '/repo/scripts/sec-remediate.cjs',
+      realpathSync: (path) => path,
+      spawnSync: spawnMock,
+      setExitCode: () => {},
+    };
+  }
+
+  test('rollback command forwards scan-id + --json to the payload', async () => {
+    const spawnMock = mock<SecScanDeps['spawnSync']>(() => ({ status: 0 }));
+    process.argv[1] = '/repo/dist/genie.js';
+    const program = new Command();
+    registerSecCommands(program, depsWith(spawnMock));
+
+    await program.parseAsync(['bun', 'genie', 'sec', 'rollback', 'SCAN-Z', '--json']);
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      process.execPath,
+      ['/repo/scripts/sec-remediate.cjs', '--rollback', 'SCAN-Z', '--json'],
+      { stdio: 'inherit' },
+    );
+  });
+
+  test('quarantine list command forwards --quarantine-list', async () => {
+    const spawnMock = mock<SecScanDeps['spawnSync']>(() => ({ status: 0 }));
+    process.argv[1] = '/repo/dist/genie.js';
+    const program = new Command();
+    registerSecCommands(program, depsWith(spawnMock));
+
+    await program.parseAsync(['bun', 'genie', 'sec', 'quarantine', 'list', '--json']);
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      process.execPath,
+      ['/repo/scripts/sec-remediate.cjs', '--quarantine-list', '--json'],
+      { stdio: 'inherit' },
+    );
+  });
+
+  test('quarantine gc command forwards --older-than and --confirm-gc', async () => {
+    const spawnMock = mock<SecScanDeps['spawnSync']>(() => ({ status: 0 }));
+    process.argv[1] = '/repo/dist/genie.js';
+    const program = new Command();
+    registerSecCommands(program, depsWith(spawnMock));
+
+    await program.parseAsync([
+      'bun',
+      'genie',
+      'sec',
+      'quarantine',
+      'gc',
+      '--older-than',
+      '30d',
+      '--confirm-gc',
+      'CONFIRM-GC-abcdef',
+    ]);
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      process.execPath,
+      [
+        '/repo/scripts/sec-remediate.cjs',
+        '--quarantine-gc',
+        '--older-than',
+        '30d',
+        '--confirm-gc',
+        'CONFIRM-GC-abcdef',
+      ],
       { stdio: 'inherit' },
     );
   });

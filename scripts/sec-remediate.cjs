@@ -30,6 +30,7 @@ const {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
   writeSync,
   chmodSync,
@@ -143,6 +144,21 @@ function resumeDir() {
 
 function auditDir() {
   return join(secScanRoot(), 'audit');
+}
+
+function rollbackDir() {
+  return join(secScanRoot(), 'rollback');
+}
+
+// Duration tokens are intentionally narrow: s, m, h, d. Anything else is a typo.
+function parseDurationMs(spec) {
+  const match = /^(\d+)([smhd])$/.exec(String(spec || '').trim());
+  if (!match) {
+    throw new Error(`invalid duration: "${spec}" (expected <N>[smhd], e.g. 30d, 24h, 15m)`);
+  }
+  const amount = Number.parseInt(match[1], 10);
+  const multiplier = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2]];
+  return amount * multiplier;
 }
 
 function ensureDir(path, mode = SECRETS_DIR_MODE) {
@@ -273,17 +289,20 @@ function readJson(path) {
 
 function parseArgs(argv) {
   const out = {
-    mode: null, // 'dry-run' | 'apply' | 'resume' | 'restore' | 'help'
+    mode: null, // 'dry-run' | 'apply' | 'resume' | 'restore' | 'rollback' | 'quarantine-list' | 'quarantine-gc' | 'help'
     json: false,
     scanReport: null,
     scanId: null,
     plan: null,
     resume: null,
     restoreId: null,
+    rollbackScanId: null,
     quarantineDir: null,
     unsafeUnverified: null,
     remediatePartial: false,
     confirmIncomplete: null,
+    olderThan: null,
+    confirmGc: null,
     killPids: [],
     autoConfirm: null, // for tests / non-interactive: object map action_id -> token
   };
@@ -303,6 +322,22 @@ function parseArgs(argv) {
       case '--restore':
         out.mode = 'restore';
         out.restoreId = argv[++i];
+        break;
+      case '--rollback':
+        out.mode = 'rollback';
+        out.rollbackScanId = argv[++i];
+        break;
+      case '--quarantine-list':
+        out.mode = 'quarantine-list';
+        break;
+      case '--quarantine-gc':
+        out.mode = 'quarantine-gc';
+        break;
+      case '--older-than':
+        out.olderThan = argv[++i];
+        break;
+      case '--confirm-gc':
+        out.confirmGc = argv[++i];
         break;
       case '--scan-report':
         out.scanReport = argv[++i];
@@ -355,6 +390,10 @@ function printHelp() {
       '  --dry-run --scan-id <ulid>               Generate plan from a persisted scan',
       '  --apply --plan <path>                    Execute a frozen plan (sha256-drift + signature checks)',
       '  --resume <resume-file>                   Resume a partially-applied plan',
+      '  --restore <quarantine-id>                Restore every action under a quarantine id',
+      '  --rollback <scan_id>                     Bulk undo every quarantined action for a scan (reverse order)',
+      '  --quarantine-list                        List quarantine dirs (id, timestamp, size, status, scan_id)',
+      '  --quarantine-gc --older-than <dur>       Delete restored/abandoned quarantines older than <dur>',
       '',
       'Options:',
       '  --quarantine-dir <path>                  Override quarantine root (must be on same device as targets)',
@@ -363,6 +402,8 @@ function printHelp() {
       '  --confirm-incomplete-scan <ack>          Typed ack for --remediate-partial',
       '  --kill-pid <pid>                         Authorize SIGTERM to a PID (must match a plan entry)',
       '  --auto-confirm-from <path>               Non-interactive consent JSON (testing only)',
+      '  --older-than <duration>                  GC threshold (30d, 24h, 15m, 60s) — required for --quarantine-gc',
+      '  --confirm-gc <token>                     Typed GC ack: CONFIRM-GC-<6-hex>',
       '  --json                                   Emit JSON summary to stdout',
       '',
     ].join('\n'),
@@ -1134,6 +1175,287 @@ function restoreQuarantine(quarantineId) {
   return { quarantine_id: quarantineId, restored, failed };
 }
 
+// ----- Rollback + quarantine lifecycle ------------------------------------
+
+function readAuditEvents(scanId) {
+  const path = join(auditDir(), `${scanId}.jsonl`);
+  if (!existsSync(path)) {
+    throw new Error(`audit log not found for scan_id ${scanId}: ${path}`);
+  }
+  const raw = readFileSync(path, 'utf8');
+  if (!raw.trim()) return [];
+  const events = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      events.push(JSON.parse(trimmed));
+    } catch (error) {
+      // Tampering or partial write: surface via stderr but continue — the rest
+      // of the audit trail is still the operator's best evidence.
+      process.stderr.write(`WARNING: audit log has a corrupt entry (${error.message}): ${trimmed.slice(0, 120)}\n`);
+    }
+  }
+  return events;
+}
+
+function rollbackActionFromSidecar(sidecar, rollbackId, scanId) {
+  if (!existsSync(sidecar.quarantine_path)) {
+    throw new Error(`quarantine path already missing (already restored?): ${sidecar.quarantine_path}`);
+  }
+  if (existsSync(sidecar.original_path)) {
+    throw new Error(`original path already occupied: ${sidecar.original_path}`);
+  }
+  ensureDir(dirname(sidecar.original_path));
+  renameSync(sidecar.quarantine_path, sidecar.original_path);
+  let restoredHash = null;
+  if (sidecar.sha256_before) {
+    restoredHash = sha256File(sidecar.original_path);
+    if (restoredHash !== sidecar.sha256_before) {
+      throw new Error(`sha256 mismatch after rollback (expected ${sidecar.sha256_before}, got ${restoredHash})`);
+    }
+  }
+  appendAuditEvent(scanId, {
+    ts: isoNow(),
+    actor: 'rollback',
+    scan_id: scanId,
+    plan_id: sidecar.plan_id,
+    action_id: sidecar.action_id,
+    event: 'action.rollback',
+    rollback_id: rollbackId,
+    original_path: sidecar.original_path,
+    sha256_match: restoredHash === sidecar.sha256_before,
+  });
+  return { action_id: sidecar.action_id, original_path: sidecar.original_path, sha256: restoredHash };
+}
+
+function performRollback(scanId) {
+  const events = readAuditEvents(scanId);
+
+  // A quarantine action is roll-back-eligible iff its `action.end` says
+  // result=ok AND action_type=quarantine. Order by the audit-log sequence,
+  // then reverse so we undo in LIFO — the same discipline as filesystem
+  // unrolling: later actions first.
+  const quarantineEnds = events
+    .filter(
+      (e) => e.actor === 'remediate' && e.event === 'action.end' && e.result === 'ok' && e.action_type === 'quarantine',
+    )
+    .reverse();
+
+  const rollbackId = `R${ulid()}`;
+  const startedAt = isoNow();
+  const startMs = Date.now();
+  const actionsUndone = [];
+  const actionsFailed = [];
+
+  appendAuditEvent(scanId, {
+    ts: startedAt,
+    actor: 'rollback',
+    scan_id: scanId,
+    event: 'rollback.start',
+    rollback_id: rollbackId,
+    eligible_actions: quarantineEnds.length,
+  });
+
+  for (const event of quarantineEnds) {
+    const payload = event.payload || {};
+    const quarantinePath = payload.quarantine_path;
+    const actionId = event.action_id || payload.action_id;
+    try {
+      if (!quarantinePath) {
+        throw new Error('audit entry missing quarantine_path in payload');
+      }
+      const sidecarPath = join(dirname(quarantinePath), 'action.json');
+      if (!existsSync(sidecarPath)) {
+        throw new Error(`sidecar missing: ${sidecarPath}`);
+      }
+      const sidecar = readJson(sidecarPath);
+      const result = rollbackActionFromSidecar(sidecar, rollbackId, scanId);
+      actionsUndone.push(result);
+    } catch (error) {
+      actionsFailed.push({ action_id: actionId || '(unknown)', reason: error.message });
+      appendAuditEvent(scanId, {
+        ts: isoNow(),
+        actor: 'rollback',
+        scan_id: scanId,
+        action_id: actionId || '(unknown)',
+        event: 'action.rollback.error',
+        rollback_id: rollbackId,
+        error: error.message,
+      });
+    }
+  }
+
+  const finishedAt = isoNow();
+  const durationMs = Date.now() - startMs;
+  const summary = {
+    rollback_id: rollbackId,
+    scan_id: scanId,
+    started_at: startedAt,
+    finished_at: finishedAt,
+    actions_undone: actionsUndone,
+    actions_failed: actionsFailed,
+    duration_ms: durationMs,
+  };
+  ensureDir(rollbackDir());
+  const summaryPath = join(rollbackDir(), `${rollbackId}.json`);
+  fsyncWriteFile(summaryPath, JSON.stringify(summary, null, 2));
+
+  appendAuditEvent(scanId, {
+    ts: finishedAt,
+    actor: 'rollback',
+    scan_id: scanId,
+    event: 'rollback.end',
+    rollback_id: rollbackId,
+    summary_path: summaryPath,
+    actions_undone: actionsUndone.length,
+    actions_failed: actionsFailed.length,
+    duration_ms: durationMs,
+  });
+
+  return { ...summary, summary_path: summaryPath };
+}
+
+function readSidecarSafely(actionDir) {
+  const sidecarPath = join(actionDir, 'action.json');
+  if (!existsSync(sidecarPath)) return null;
+  try {
+    return readJson(sidecarPath);
+  } catch {
+    return null;
+  }
+}
+
+function classifyQuarantineDir(quarantineDir) {
+  if (!existsSync(quarantineDir)) {
+    return { status: 'abandoned', scan_id: null, action_counts: { active: 0, restored: 0, abandoned: 0 } };
+  }
+  const entries = readdirSync(quarantineDir, { withFileTypes: true }).filter((e) => e.isDirectory());
+  let active = 0;
+  let restored = 0;
+  let abandoned = 0;
+  let scanId = null;
+  for (const entry of entries) {
+    const actionDir = join(quarantineDir, entry.name);
+    const sidecar = readSidecarSafely(actionDir);
+    if (!sidecar) {
+      abandoned += 1;
+      continue;
+    }
+    if (!scanId && sidecar.scan_id) scanId = sidecar.scan_id;
+    if (existsSync(sidecar.quarantine_path)) {
+      active += 1;
+    } else {
+      restored += 1;
+    }
+  }
+  const status = active > 0 ? 'active' : restored > 0 ? 'restored' : 'abandoned';
+  return { status, scan_id: scanId, action_counts: { active, restored, abandoned } };
+}
+
+function listQuarantines() {
+  const root = quarantineRoot();
+  if (!existsSync(root)) return [];
+  const entries = readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory());
+  const out = [];
+  for (const entry of entries) {
+    const dir = join(root, entry.name);
+    const stat = statSafe(dir);
+    const classification = classifyQuarantineDir(dir);
+    out.push({
+      id: entry.name,
+      timestamp: entry.name,
+      mtime_ms: stat ? stat.mtimeMs : 0,
+      size_bytes: dirSizeBytes(dir),
+      status: classification.status,
+      scan_id: classification.scan_id,
+      action_counts: classification.action_counts,
+    });
+  }
+  out.sort((a, b) => a.mtime_ms - b.mtime_ms);
+  return out;
+}
+
+function formatQuarantineTable(rows) {
+  if (rows.length === 0) return 'No quarantines present.\n';
+  const header = ['ID', 'TIMESTAMP', 'SIZE', 'STATUS', 'SCAN_ID'];
+  const lines = [header.join('\t')];
+  for (const row of rows) {
+    const sizeStr = `${(row.size_bytes / 1024).toFixed(1)}KB`;
+    lines.push([row.id, row.timestamp, sizeStr, row.status, row.scan_id || '(unknown)'].join('\t'));
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+function expectedGcToken(eligibleIds) {
+  const digest = createHash('sha256').update(eligibleIds.slice().sort().join('|')).digest('hex');
+  return `CONFIRM-GC-${digest.slice(0, 6)}`;
+}
+
+function performGc(options) {
+  if (!options.olderThan) {
+    throw new Error('--quarantine-gc requires --older-than <duration> (e.g. 30d, 24h, 15m).');
+  }
+  const thresholdMs = parseDurationMs(options.olderThan);
+  const now = Date.now();
+  const all = listQuarantines();
+  const active = all.filter((q) => q.status === 'active');
+  const stale = all.filter((q) => q.status !== 'active' && now - q.mtime_ms >= thresholdMs);
+  const staleIds = stale.map((q) => q.id);
+  const expected = expectedGcToken(staleIds);
+
+  const summary = {
+    older_than: options.olderThan,
+    threshold_ms: thresholdMs,
+    eligible_ids: staleIds,
+    eligible_size_bytes: stale.reduce((sum, q) => sum + q.size_bytes, 0),
+    active_refused: active.length,
+    expected_token: expected,
+  };
+
+  if (active.length > 0) {
+    summary.active_refused_ids = active.map((q) => q.id);
+  }
+
+  if (staleIds.length === 0) {
+    summary.status = 'nothing-to-gc';
+    return summary;
+  }
+
+  if (options.confirmGc !== expected) {
+    summary.status = 'needs-typed-confirmation';
+    summary.hint = `Re-run with: --confirm-gc ${expected}`;
+    return summary;
+  }
+
+  const deleted = [];
+  const failed = [];
+  for (const q of stale) {
+    const dir = join(quarantineRoot(), q.id);
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      deleted.push(q.id);
+      if (q.scan_id) {
+        appendAuditEvent(q.scan_id, {
+          ts: isoNow(),
+          actor: 'gc',
+          scan_id: q.scan_id,
+          event: 'quarantine.gc',
+          quarantine_id: q.id,
+          size_bytes: q.size_bytes,
+          older_than: options.olderThan,
+        });
+      }
+    } catch (error) {
+      failed.push({ id: q.id, reason: error.message });
+    }
+  }
+  summary.status = failed.length > 0 ? 'partial' : 'ok';
+  summary.deleted_ids = deleted;
+  summary.failed = failed;
+  return summary;
+}
+
 // ----- Entry point --------------------------------------------------------
 
 async function main() {
@@ -1183,6 +1505,86 @@ async function main() {
     if (result.failed.length > 0) process.exit(2);
     return;
   }
+  if (options.mode === 'rollback') {
+    if (!options.rollbackScanId) {
+      process.stderr.write('error: --rollback requires a scan_id argument\n');
+      process.exit(1);
+    }
+    const summary = performRollback(options.rollbackScanId);
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    } else {
+      process.stdout.write(
+        [
+          '',
+          '─── genie sec rollback complete ───',
+          `rollback_id    : ${summary.rollback_id}`,
+          `scan_id        : ${summary.scan_id}`,
+          `started_at     : ${summary.started_at}`,
+          `finished_at    : ${summary.finished_at}`,
+          `duration_ms    : ${summary.duration_ms}`,
+          `actions_undone : ${summary.actions_undone.length}`,
+          `actions_failed : ${summary.actions_failed.length}`,
+          `summary        : ${summary.summary_path}`,
+          '',
+        ].join('\n'),
+      );
+      if (summary.actions_failed.length > 0) {
+        process.stdout.write('Failed actions:\n');
+        for (const f of summary.actions_failed) {
+          process.stdout.write(`  - ${f.action_id}: ${f.reason}\n`);
+        }
+        process.stdout.write('\n');
+      }
+    }
+    if (summary.actions_failed.length > 0) process.exit(2);
+    return;
+  }
+  if (options.mode === 'quarantine-list') {
+    const rows = listQuarantines();
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify({ quarantines: rows }, null, 2)}\n`);
+    } else {
+      process.stdout.write(formatQuarantineTable(rows));
+    }
+    return;
+  }
+  if (options.mode === 'quarantine-gc') {
+    const summary = performGc(options);
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    } else {
+      const eligibleSize = (summary.eligible_size_bytes / 1024).toFixed(1);
+      const lines = [
+        '',
+        '─── genie sec quarantine gc ───',
+        `older_than        : ${summary.older_than}`,
+        `eligible ids      : ${summary.eligible_ids.length}`,
+        `eligible size     : ${eligibleSize} KB`,
+        `active refused    : ${summary.active_refused}`,
+      ];
+      if (summary.status === 'nothing-to-gc') {
+        lines.push('status            : nothing-to-gc');
+      } else if (summary.status === 'needs-typed-confirmation') {
+        lines.push('status            : needs-typed-confirmation');
+        lines.push('');
+        lines.push(`Re-run with:  --confirm-gc ${summary.expected_token}`);
+      } else {
+        lines.push(`deleted ids       : ${summary.deleted_ids?.length ?? 0}`);
+        lines.push(`status            : ${summary.status}`);
+        if (summary.failed && summary.failed.length > 0) {
+          lines.push('failed:');
+          for (const f of summary.failed) lines.push(`  - ${f.id}: ${f.reason}`);
+        }
+      }
+      lines.push('');
+      process.stdout.write(`${lines.join('\n')}\n`);
+    }
+    if (summary.status === 'needs-typed-confirmation' || summary.status === 'partial') {
+      process.exit(2);
+    }
+    return;
+  }
 }
 
 if (require.main === module) {
@@ -1198,16 +1600,23 @@ module.exports = {
   buildCredentialEmissionAction,
   buildKillProcessAction,
   buildQuarantineActionFromFinding,
+  classifyQuarantineDir,
   detectPlanDrift,
   enforceCoverageGate,
   ensureRunRootOnSameDevice,
   emitCredentialRotation,
   expectedConsentToken,
+  expectedGcToken,
   generatePlan,
+  listQuarantines,
   loadPlan,
   parseArgs,
+  parseDurationMs,
+  performGc,
+  performRollback,
   promptConsent,
   quarantineFile,
+  readAuditEvents,
   restoreQuarantine,
   runDryRun,
   applyPlan,
@@ -1222,6 +1631,7 @@ module.exports = {
     plansDir,
     resumeDir,
     auditDir,
+    rollbackDir,
     sha256File,
     sha256Buffer,
   },

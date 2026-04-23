@@ -26,6 +26,20 @@ export interface SecRemediateCommandOptions {
   autoConfirmFrom?: string;
 }
 
+export interface SecQuarantineListOptions {
+  json?: boolean;
+}
+
+export interface SecQuarantineGcOptions {
+  json?: boolean;
+  olderThan?: string;
+  confirmGc?: string;
+}
+
+export interface SecRollbackOptions {
+  json?: boolean;
+}
+
 interface SecScanSpawnResult {
   status: number | null;
   error?: Error;
@@ -170,6 +184,50 @@ export function runSecRestore(quarantineId: string, deps: SecScanDeps = defaultD
   return result.status ?? 1;
 }
 
+export function buildSecRollbackArgv(scanId: string, options: SecRollbackOptions): string[] {
+  const args: string[] = ['--rollback', scanId];
+  if (options.json) args.push('--json');
+  return args;
+}
+
+export function buildSecQuarantineListArgv(options: SecQuarantineListOptions): string[] {
+  const args: string[] = ['--quarantine-list'];
+  if (options.json) args.push('--json');
+  return args;
+}
+
+export function buildSecQuarantineGcArgv(options: SecQuarantineGcOptions): string[] {
+  const args: string[] = ['--quarantine-gc'];
+  if (options.olderThan) args.push('--older-than', options.olderThan);
+  if (options.confirmGc) args.push('--confirm-gc', options.confirmGc);
+  if (options.json) args.push('--json');
+  return args;
+}
+
+export function runSecRollback(scanId: string, options: SecRollbackOptions, deps: SecScanDeps = defaultDeps): number {
+  const scriptPath = resolveSecRemediateScript(process.argv[1], deps);
+  const args = [scriptPath, ...buildSecRollbackArgv(scanId, options)];
+  const result = deps.spawnSync(process.execPath, args, { stdio: 'inherit' });
+  if (result.error) throw result.error;
+  return result.status ?? 1;
+}
+
+export function runSecQuarantineList(options: SecQuarantineListOptions, deps: SecScanDeps = defaultDeps): number {
+  const scriptPath = resolveSecRemediateScript(process.argv[1], deps);
+  const args = [scriptPath, ...buildSecQuarantineListArgv(options)];
+  const result = deps.spawnSync(process.execPath, args, { stdio: 'inherit' });
+  if (result.error) throw result.error;
+  return result.status ?? 1;
+}
+
+export function runSecQuarantineGc(options: SecQuarantineGcOptions, deps: SecScanDeps = defaultDeps): number {
+  const scriptPath = resolveSecRemediateScript(process.argv[1], deps);
+  const args = [scriptPath, ...buildSecQuarantineGcArgv(options)];
+  const result = deps.spawnSync(process.execPath, args, { stdio: 'inherit' });
+  if (result.error) throw result.error;
+  return result.status ?? 1;
+}
+
 export function applySecScanExitCode(exitCode: number, deps: Pick<SecScanDeps, 'setExitCode'> = defaultDeps): void {
   if (exitCode !== 0) deps.setExitCode(exitCode);
 }
@@ -219,6 +277,37 @@ export function registerSecCommands(program: Command, deps: SecScanDeps = defaul
     .description('Restore every action under a quarantine id (sha256-verified per file)')
     .action((quarantineId: string) => {
       const exitCode = runSecRestore(quarantineId, deps);
+      applySecScanExitCode(exitCode, deps);
+    });
+
+  sec
+    .command('rollback <scan-id>')
+    .description('Bulk undo every quarantined action for a scan (walks audit log in reverse)')
+    .option('--json', 'Emit JSON summary to stdout')
+    .action((scanId: string, options: SecRollbackOptions) => {
+      const exitCode = runSecRollback(scanId, options, deps);
+      applySecScanExitCode(exitCode, deps);
+    });
+
+  const quarantine = sec.command('quarantine').description('Quarantine lifecycle (list, gc)');
+
+  quarantine
+    .command('list')
+    .description('List quarantines with id, timestamp, size, status, scan_id')
+    .option('--json', 'Emit JSON rows to stdout')
+    .action((options: SecQuarantineListOptions) => {
+      const exitCode = runSecQuarantineList(options, deps);
+      applySecScanExitCode(exitCode, deps);
+    });
+
+  quarantine
+    .command('gc')
+    .description('Delete restored/abandoned quarantines older than <duration> (refuses active)')
+    .requiredOption('--older-than <duration>', 'Duration threshold, e.g. 30d, 24h, 15m')
+    .option('--confirm-gc <token>', 'Typed ack: CONFIRM-GC-<6-hex>')
+    .option('--json', 'Emit JSON summary to stdout')
+    .action((options: SecQuarantineGcOptions) => {
+      const exitCode = runSecQuarantineGc(options, deps);
       applySecScanExitCode(exitCode, deps);
     });
 }
