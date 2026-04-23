@@ -175,74 +175,8 @@ jobs:
           echo "One or more sub-jobs did not succeed" >&2
           exit 1
 
-  publish-next:
-    name: Publish @next
-    needs: [quality-gate]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 10
-    # OIDC trusted publishing — mirrors version.yml (commit f807b3a8).
-    # `id-token: write` is required for npm to exchange the GitHub OIDC token
-    # for a short-lived publish credential. `contents: read` is the default
-    # needed for checkout.
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.11"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build
-        run: bun run build
-
-      - name: Setup Node (for npm OIDC publish)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      # Node 22 bundles npm 10.x; npm Trusted Publishing (automatic OIDC
-      # token exchange) requires npm >= 11.5.1. Without this upgrade,
-      # `npm publish` sends the empty `XXXXX-...-XXXXX` placeholder token
-      # and the registry returns a misleading 404 instead of the real
-      # 401/403 auth failure. See: https://docs.npmjs.com/trusted-publishers
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
-
-      - name: Publish to npm @next via OIDC
-        env:
-          HUSKY: "0"
-          # npm auto-enables provenance in any CI env with `id-token: write`,
-          # regardless of the --provenance CLI flag. Self-hosted Blacksmith
-          # runners fail the server-side sigstore check with 422. Disable
-          # auto-provenance explicitly; OIDC token exchange still happens.
-          NPM_CONFIG_PROVENANCE: "false"
-        run: |
-          LOCAL=$(jq -r '.version' package.json)
-          # Check whether the exact version exists in the registry under ANY
-          # tag, not just @next. After a dev→main merge, version.yml bumps dev
-          # to a new version, publishes it as @latest, and commits the bump
-          # back to dev. The next dev push then reads that already-published
-          # version from package.json. Querying only the @next tag misses this
-          # cross-tag collision and causes a 403 when npm publish runs.
-          # Query by exact version so collisions from any tag short-circuit
-          # this step; version.yml will derive a fresh version and publish it.
-          if [ -n "$(npm view "@automagik/genie@${LOCAL}" version 2>/dev/null)" ]; then
-            echo "Version ${LOCAL} already published to npm — skipping @next publish"
-            echo "(version.yml will bump to a new version and publish it as @next)"
-            exit 0
-          fi
-          # `--provenance` would emit a sigstore attestation, but npm's
-          # provenance verification rejects self-hosted runners (Blacksmith
-          # is `blacksmith-Nvcpu-ubuntu-*`, not github-hosted). Trusted
-          # Publishing via OIDC token exchange still works without it —
-          # the publish is authenticated, just without the green provenance
-          # badge. To re-enable provenance, move this step to a
-          # `runs-on: ubuntu-latest` job.
-          npm publish --access public --tag next
+  # Publishing moved out of this workflow. `version.yml` triggers via
+  # workflow_run when CI completes on dev, derives the next version,
+  # bumps + tags, and publishes via OIDC. Keeping a second publish
+  # path here required a second npm Trusted Publisher entry for
+  # `ci.yml` and kept tripping 404s. One publish pipeline is simpler.
