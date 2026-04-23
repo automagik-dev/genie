@@ -366,6 +366,431 @@ const TEXT_MATCHERS = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Runtime context, ULID, envelope, signal handling, kill switch
+// ---------------------------------------------------------------------------
+
+const REPORT_VERSION = 1;
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const DEFAULT_PROGRESS_INTERVAL_MS = 2000;
+const DEFAULT_PROJECT_WALK_MAX_DEPTH = 8;
+const DEFAULT_PROJECT_WALK_MAX_ENTRIES = 50000;
+const _DEFAULT_WORKSPACE_WALK_MAX_DEPTH = 3;
+const _DEFAULT_WORKSPACE_WALK_MAX_ENTRIES = 2000;
+const REMOTE_FS_TYPES = new Set([
+  'nfs',
+  'nfs4',
+  'smbfs',
+  'smb2',
+  'smb3',
+  'cifs',
+  'afpfs',
+  'fuse.sshfs',
+  'fuse.rclone',
+  'fuse.gvfsd-fuse',
+  'fuse.netfs',
+  'drvfs',
+  '9p',
+  '9p2000',
+  '9p2000.L',
+  '9p2000.u',
+]);
+
+function generateUlid(timestampMs, randomBytesProvider) {
+  const provider = randomBytesProvider || ((n) => require('node:crypto').randomBytes(n));
+  let ts = Math.max(0, Math.floor(timestampMs));
+  let tsPart = '';
+  for (let i = 0; i < 10; i += 1) {
+    tsPart = ULID_ALPHABET[ts % 32] + tsPart;
+    ts = Math.floor(ts / 32);
+  }
+  const bytes = provider(16);
+  let randPart = '';
+  for (let i = 0; i < 16; i += 1) {
+    randPart += ULID_ALPHABET[bytes[i] % 32];
+  }
+  return tsPart + randPart;
+}
+
+function readScannerVersion() {
+  try {
+    const pkg = require('../package.json');
+    return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function createHostId(platformInfo) {
+  const input = [
+    platformInfo.platform,
+    platformInfo.arch,
+    platformInfo.release,
+    platformInfo.user || '',
+    hostname(),
+  ].join(':');
+  return createHash('sha256').update(input).digest('hex').slice(0, 16);
+}
+
+function createRuntime({
+  options,
+  clock,
+  platformInfo,
+  argv,
+  scannerVersion,
+  stderr,
+  randomBytesProvider,
+  resourceProvider,
+  hrtimeProvider,
+} = {}) {
+  const resolvedStderr = stderr || process.stderr;
+  const nowFn = clock && typeof clock.now === 'function' ? clock.now : () => Date.now();
+  const hrtimeFn =
+    typeof hrtimeProvider === 'function'
+      ? hrtimeProvider
+      : typeof process.hrtime?.bigint === 'function'
+        ? () => Number(process.hrtime.bigint())
+        : () => nowFn() * 1e6;
+  const resourceFn =
+    typeof resourceProvider === 'function'
+      ? resourceProvider
+      : typeof process.resourceUsage === 'function'
+        ? () => process.resourceUsage()
+        : () => null;
+  const startMs = nowFn();
+  const scanId = generateUlid(startMs, randomBytesProvider);
+  const hostId = createHostId(platformInfo);
+  const startedAt = new Date(startMs).toISOString();
+
+  const progressIntervalMs = Number.isFinite(options.progressIntervalMs)
+    ? Math.max(50, Math.floor(options.progressIntervalMs))
+    : DEFAULT_PROGRESS_INTERVAL_MS;
+  const progressEnabled = !options.quiet && !options.noProgress;
+  const progressJson = Boolean(options.progressJson);
+
+  let currentPhase = null;
+  const phaseHistory = [];
+  const capEvents = [];
+  const walkEvents = [];
+  const rootFingerprints = [];
+  const rootTimings = [];
+  let interrupted = false;
+  let interruptReason = null;
+  let tickerHandle = null;
+  let ticksEmitted = 0;
+  let finishedState = null;
+
+  function emit(event) {
+    if (!progressEnabled) return;
+    try {
+      if (progressJson) {
+        const payload = { ts_ms: nowFn(), scan_id: scanId, ...event };
+        resolvedStderr.write(`${JSON.stringify(payload)}\n`);
+        return;
+      }
+      const elapsed = ((nowFn() - startMs) / 1000).toFixed(1);
+      const phaseLabel = event.phase || (currentPhase ? currentPhase.id : 'startup');
+      const kindLabel = event.kind ? ` ${event.kind}` : '';
+      resolvedStderr.write(`[sec-scan +${elapsed}s] phase=${phaseLabel}${kindLabel}\n`);
+    } catch {
+      /* stderr closed or unavailable */
+    }
+  }
+
+  function startTicker() {
+    if (!progressEnabled || tickerHandle) return;
+    tickerHandle = setInterval(() => {
+      ticksEmitted += 1;
+      emit({ kind: 'tick' });
+    }, progressIntervalMs);
+    if (typeof tickerHandle.unref === 'function') tickerHandle.unref();
+  }
+
+  function stopTicker() {
+    if (!tickerHandle) return;
+    clearInterval(tickerHandle);
+    tickerHandle = null;
+  }
+
+  function startPhase(id) {
+    currentPhase = {
+      id,
+      startMs: nowFn(),
+      startHrNs: hrtimeFn(),
+      startResource: resourceFn(),
+      entries: 0,
+      bytes: 0,
+      errors: 0,
+      caps: 0,
+      skips: 0,
+    };
+    emit({ kind: 'phase.start', phase: id });
+  }
+
+  function computePhaseRecord(phase, extra = {}) {
+    const endMs = nowFn();
+    const elapsedMs = endMs - phase.startMs;
+    const wall_ns = Math.max(0, hrtimeFn() - phase.startHrNs);
+    const endResource = resourceFn();
+    let cpu_user_ns = null;
+    let cpu_sys_ns = null;
+    if (phase.startResource && endResource) {
+      cpu_user_ns = Math.max(0, (endResource.userCPUTime - phase.startResource.userCPUTime) * 1000);
+      cpu_sys_ns = Math.max(0, (endResource.systemCPUTime - phase.startResource.systemCPUTime) * 1000);
+    }
+    return {
+      id: phase.id,
+      elapsed_ms: elapsedMs,
+      wall_ns,
+      cpu_user_ns,
+      cpu_sys_ns,
+      entries: phase.entries,
+      bytes: phase.bytes,
+      errors: phase.errors,
+      caps: phase.caps,
+      skips: phase.skips,
+      ...extra,
+    };
+  }
+
+  function endPhase(id, extra = {}) {
+    if (!currentPhase || currentPhase.id !== id) {
+      emit({ kind: 'phase.end', phase: id, ...extra });
+      return;
+    }
+    const record = computePhaseRecord(currentPhase, extra);
+    phaseHistory.push(record);
+    emit({ kind: 'phase.end', phase: id, elapsed_ms: record.elapsed_ms });
+    currentPhase = null;
+  }
+
+  function recordCap(kind, detail = {}) {
+    const entry = { kind, phase: currentPhase ? currentPhase.id : null, ts_ms: nowFn(), ...detail };
+    capEvents.push(entry);
+    if (currentPhase) currentPhase.caps += 1;
+    walkEvents.push({
+      event: 'walk.capped',
+      phase: entry.phase,
+      ts_ms: entry.ts_ms,
+      cap_kind: kind,
+      ...detail,
+    });
+  }
+
+  function recordSkip(kind, detail = {}) {
+    walkEvents.push({
+      event: 'walk.skipped',
+      phase: currentPhase ? currentPhase.id : null,
+      ts_ms: nowFn(),
+      skip_reason: kind,
+      ...detail,
+    });
+    if (currentPhase) currentPhase.skips += 1;
+  }
+
+  function recordSymlinkCycle(detail = {}) {
+    walkEvents.push({
+      event: 'symlink.cycle',
+      phase: currentPhase ? currentPhase.id : null,
+      ts_ms: nowFn(),
+      ...detail,
+    });
+  }
+
+  function recordReaddirError(detail = {}) {
+    walkEvents.push({
+      event: 'walk.error',
+      phase: currentPhase ? currentPhase.id : null,
+      ts_ms: nowFn(),
+      ...detail,
+    });
+    if (currentPhase) currentPhase.errors += 1;
+  }
+
+  function addEntries(n) {
+    if (currentPhase && n > 0) currentPhase.entries += n;
+  }
+
+  function addBytes(n) {
+    if (currentPhase && n > 0) currentPhase.bytes += n;
+  }
+
+  function recordRootTiming(root, entry) {
+    rootTimings.push({ root, ...entry });
+  }
+
+  function setRootFingerprints(fingerprints) {
+    rootFingerprints.length = 0;
+    for (const fp of fingerprints || []) rootFingerprints.push(fp);
+  }
+
+  function markInterrupted(reason) {
+    if (interrupted) return;
+    interrupted = true;
+    interruptReason = reason || 'signal';
+    if (currentPhase) {
+      const record = computePhaseRecord(currentPhase, { interrupted: true });
+      phaseHistory.push(record);
+      currentPhase = null;
+    }
+  }
+
+  function isInterrupted() {
+    return interrupted;
+  }
+
+  function finish() {
+    if (finishedState) return finishedState;
+    stopTicker();
+    const finishedMs = nowFn();
+    finishedState = {
+      finishedAt: new Date(finishedMs).toISOString(),
+      elapsedMs: finishedMs - startMs,
+      phases: phaseHistory,
+      capEvents,
+      walkEvents,
+      rootFingerprints: rootFingerprints.slice(),
+      rootTimings: rootTimings.slice(),
+      interrupted,
+      interruptReason,
+      ticksEmitted,
+    };
+    return finishedState;
+  }
+
+  return {
+    scanId,
+    hostId,
+    startedAt,
+    scannerVersion,
+    platformInfo,
+    argv,
+    options,
+    clock: { now: nowFn },
+    startTicker,
+    stopTicker,
+    startPhase,
+    endPhase,
+    emit,
+    recordCap,
+    recordSkip,
+    recordSymlinkCycle,
+    recordReaddirError,
+    addEntries,
+    addBytes,
+    recordRootTiming,
+    setRootFingerprints,
+    markInterrupted,
+    isInterrupted,
+    finish,
+  };
+}
+
+function buildInvocation(argv, options) {
+  return {
+    argv: Array.isArray(argv) ? argv.slice(2) : [],
+    flags: {
+      json: Boolean(options.json),
+      allHomes: Boolean(options.allHomes),
+      homes: [...options.homes],
+      roots: [...options.roots],
+      progress: !options.noProgress && !options.quiet,
+      progressJson: Boolean(options.progressJson),
+      progressIntervalMs: Number.isFinite(options.progressIntervalMs)
+        ? options.progressIntervalMs
+        : DEFAULT_PROGRESS_INTERVAL_MS,
+      verbose: Boolean(options.verbose),
+      quiet: Boolean(options.quiet),
+      redact: Boolean(options.redact),
+      persist: options.persist !== false,
+      eventsFile: options.eventsFile || null,
+      impactSurface: Boolean(options.impactSurface),
+      phaseBudgets: { ...options.phaseBudgets },
+    },
+  };
+}
+
+function envelopeFromReport(runtime, report, { reason } = {}) {
+  const state = runtime.finish();
+  const cappedRoots = uniq(
+    state.capEvents
+      .map((event) => event.root || event.path || null)
+      .filter((value) => typeof value === 'string' && value.length > 0),
+  );
+  const skippedRoots = uniq(
+    (state.walkEvents || [])
+      .filter((event) => event.event === 'walk.skipped')
+      .map((event) => event.root || event.path || null)
+      .filter((value) => typeof value === 'string' && value.length > 0),
+  );
+  return {
+    reportVersion: REPORT_VERSION,
+    scan_id: runtime.scanId,
+    hostId: runtime.hostId,
+    scannerVersion: runtime.scannerVersion,
+    startedAt: runtime.startedAt,
+    finishedAt: state.finishedAt,
+    elapsedMs: state.elapsedMs,
+    invocation: buildInvocation(runtime.argv, runtime.options),
+    platform: runtime.platformInfo,
+    coverage: {
+      phases: state.phases,
+      capEvents: state.capEvents,
+      walkEvents: state.walkEvents || [],
+      rootFingerprints: state.rootFingerprints || [],
+      rootTimings: state.rootTimings || [],
+      cappedRoots,
+      skippedRoots,
+      interrupted: state.interrupted,
+      interruptReason: state.interruptReason || reason || null,
+      complete: !state.interrupted && state.capEvents.length === 0,
+    },
+    ...report,
+  };
+}
+
+function computeExitCode(envelope) {
+  const summary = envelope.summary || {};
+  const hasFindings = Boolean(summary.likelyCompromised || summary.likelyAffected || summary.observedOnly);
+  if (hasFindings) return 1;
+  if (envelope.coverage && envelope.coverage.complete === false) return 2;
+  return 0;
+}
+
+function installSignalHandlers(runtime, flush, { exitFn = (code) => process.exit(code) } = {}) {
+  let handled = false;
+  const onSignal = (signal) => {
+    if (handled) return;
+    handled = true;
+    try {
+      runtime.markInterrupted(`signal:${signal}`);
+      flush(`signal:${signal}`);
+    } catch {
+      /* best effort flush; fall through to exit 2 */
+    }
+    exitFn(2);
+  };
+  process.on('SIGINT', () => onSignal('SIGINT'));
+  process.on('SIGTERM', () => onSignal('SIGTERM'));
+  return onSignal;
+}
+
+function isKillSwitchEnabled(env = process.env) {
+  return env.GENIE_SEC_SCAN_DISABLED === '1';
+}
+
+function emitKillSwitchResponse(options, streams = {}) {
+  const reason = 'GENIE_SEC_SCAN_DISABLED=1';
+  const stdout = streams.stdout || process.stdout;
+  const stderr = streams.stderr || process.stderr;
+  if (options.json) {
+    stdout.write(`${JSON.stringify({ reportVersion: REPORT_VERSION, disabled: true, reason })}\n`);
+  } else {
+    stderr.write(`sec-scan disabled via ${reason}\n`);
+  }
+  return 0;
+}
+
 function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -376,6 +801,24 @@ function parseArgs(argv) {
     allHomes: false,
     roots: [],
     homes: [],
+    noProgress: false,
+    quiet: false,
+    verbose: false,
+    progressJson: false,
+    progressIntervalMs: DEFAULT_PROGRESS_INTERVAL_MS,
+    eventsFile: null,
+    redact: false,
+    persist: true,
+    impactSurface: false,
+    phaseBudgets: {},
+    help: false,
+  };
+
+  const requireValue = (arg, value) => {
+    if (value === undefined || value === null || value === '' || value.startsWith('--')) {
+      throw new Error(`${arg} requires a value`);
+    }
+    return value;
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -389,22 +832,75 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === '--root') {
-      const value = argv[i + 1];
-      if (!value) throw new Error('--root requires a path');
-      options.roots.push(resolve(value));
+      options.roots.push(resolve(requireValue(arg, argv[i + 1])));
       i += 1;
       continue;
     }
     if (arg === '--home') {
-      const value = argv[i + 1];
-      if (!value) throw new Error('--home requires a path');
-      options.homes.push(resolve(value));
+      options.homes.push(resolve(requireValue(arg, argv[i + 1])));
+      i += 1;
+      continue;
+    }
+    if (arg === '--no-progress') {
+      options.noProgress = true;
+      continue;
+    }
+    if (arg === '--quiet' || arg === '-q') {
+      options.quiet = true;
+      continue;
+    }
+    if (arg === '--verbose' || arg === '-v') {
+      options.verbose = true;
+      continue;
+    }
+    if (arg === '--progress-json') {
+      options.progressJson = true;
+      continue;
+    }
+    if (arg === '--progress-interval') {
+      const raw = Number(requireValue(arg, argv[i + 1]));
+      if (!Number.isFinite(raw) || raw < 0) throw new Error(`${arg} requires a non-negative number`);
+      options.progressIntervalMs = raw;
+      i += 1;
+      continue;
+    }
+    if (arg === '--events-file') {
+      options.eventsFile = resolve(requireValue(arg, argv[i + 1]));
+      i += 1;
+      continue;
+    }
+    if (arg === '--redact') {
+      options.redact = true;
+      continue;
+    }
+    if (arg === '--persist') {
+      options.persist = true;
+      continue;
+    }
+    if (arg === '--no-persist') {
+      options.persist = false;
+      continue;
+    }
+    if (arg === '--impact-surface') {
+      options.impactSurface = true;
+      continue;
+    }
+    if (arg === '--phase-budget') {
+      const entry = requireValue(arg, argv[i + 1]);
+      const eqIdx = entry.indexOf('=');
+      if (eqIdx <= 0) throw new Error(`${arg} requires name=ms format`);
+      const key = entry.slice(0, eqIdx).trim();
+      const ms = Number(entry.slice(eqIdx + 1));
+      if (!key || !Number.isFinite(ms) || ms < 0) {
+        throw new Error(`${arg} requires name=ms with non-negative ms`);
+      }
+      options.phaseBudgets[key] = ms;
       i += 1;
       continue;
     }
     if (arg === '--help' || arg === '-h') {
-      printHelp();
-      process.exit(0);
+      options.help = true;
+      continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -412,26 +908,42 @@ function parseArgs(argv) {
   return options;
 }
 
-function printHelp() {
-  console.log(
-    `
+function printHelp(stream) {
+  const out = stream || process.stdout;
+  out.write(
+    `${`
 Usage:
-  node scripts/sec-scan.cjs [--json] [--all-homes] [--home PATH] [--root PATH]
-  genie sec scan [--json] [--all-homes] [--home PATH] [--root PATH]
+  node scripts/sec-scan.cjs [options]
+  genie sec scan [options]
 
 Options:
-  --json        Print JSON only
-  --all-homes   Scan /root, /home/*, /Users/*, and WSL Windows homes when present
-  --home PATH   Add a specific home directory to scan
-  --root PATH   Add an application root to scan for lockfiles and node_modules installs
-  --help, -h    Show this help
+  --json                       Print JSON envelope to stdout
+  --all-homes                  Scan /root, /home/*, /Users/*, and WSL Windows homes
+  --home PATH                  Add a specific home directory (repeatable)
+  --root PATH                  Add an application root (repeatable)
+  --no-progress                Suppress progress output on stderr
+  --quiet, -q                  Suppress progress and banners on stderr
+  --verbose, -v                Emit extra diagnostics on stderr
+  --progress-json              Emit progress as NDJSON events to stderr
+  --progress-interval <ms>     Progress tick interval in milliseconds (default 2000)
+  --events-file <path.jsonl>   Append structured NDJSON events to a 0600-mode file
+  --redact                     Hash \$HOME-prefixed paths; scrub AWS/GitHub/npm/JWT patterns
+  --persist                    Persist report to \$GENIE_HOME/sec-scan/<scan_id>.json (default)
+  --no-persist                 Do not persist the report
+  --impact-surface             Scan for at-risk local material (secrets, wallets, browsers)
+  --phase-budget <name=ms>     Budget (ms) for a named phase; repeatable
+  --help, -h                   Show this help
+
+Exit codes:
+  0  clean and complete scan
+  1  findings present
+  2  clean but incomplete (caps hit or interrupted)
 
 Examples:
-  node scripts/sec-scan.cjs
   node scripts/sec-scan.cjs --json
-  genie sec scan --json
-  sudo node scripts/sec-scan.cjs --all-homes --root /srv --root /opt
-`.trim(),
+  genie sec scan --all-homes --redact --events-file /tmp/scan.jsonl
+  GENIE_SEC_SCAN_DISABLED=1 genie sec scan   # kill switch, exits 0
+`.trim()}\n`,
   );
 }
 
@@ -556,6 +1068,135 @@ function sortTimeline(events) {
     if (right.time) return 1;
     return left.summary.localeCompare(right.summary);
   });
+}
+
+function readLinuxMountInfo() {
+  const text = safeReadText('/proc/self/mountinfo');
+  if (!text) return [];
+  const entries = [];
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    const parts = line.split(' ');
+    const dashIdx = parts.indexOf('-');
+    if (dashIdx === -1 || parts.length < dashIdx + 3) continue;
+    const mountPoint = parts[4] || '';
+    if (!mountPoint) continue;
+    const devMajMin = parts[2] || '0:0';
+    const fsType = parts[dashIdx + 1] || 'unknown';
+    const source = parts[dashIdx + 2] || '';
+    entries.push({
+      mountPoint,
+      fsType,
+      source,
+      dev: devMajMin,
+    });
+  }
+  entries.sort((a, b) => b.mountPoint.length - a.mountPoint.length);
+  return entries;
+}
+
+function parseMacOsMountLine(line) {
+  const match = line.match(/^(.+?) on (.+?) \(([^)]+)\)$/);
+  if (!match) return null;
+  const opts = match[3].split(',').map((value) => value.trim());
+  return {
+    source: match[1],
+    mountPoint: match[2],
+    fsType: opts[0] || 'unknown',
+    options: opts,
+  };
+}
+
+function readMacOsMounts() {
+  const result = safeSpawn('mount', []);
+  if (!result || result.status !== 0) return [];
+  const entries = [];
+  for (const line of result.stdout.split('\n')) {
+    const parsed = parseMacOsMountLine(line);
+    if (parsed) entries.push(parsed);
+  }
+  entries.sort((a, b) => b.mountPoint.length - a.mountPoint.length);
+  return entries;
+}
+
+function mountInfoForPath(path, mountInfo) {
+  for (const entry of mountInfo) {
+    if (!entry.mountPoint) continue;
+    if (entry.mountPoint === path) return entry;
+    if (entry.mountPoint === '/' || path.startsWith(`${entry.mountPoint}/`)) return entry;
+  }
+  return null;
+}
+
+function isRemoteFsType(fsType) {
+  if (!fsType) return false;
+  const lower = fsType.toLowerCase();
+  if (REMOTE_FS_TYPES.has(lower)) return true;
+  if (lower.startsWith('fuse.')) return true;
+  if (lower.startsWith('9p')) return true;
+  return false;
+}
+
+function classifyRootFingerprint(path, platformInfo, stat, mountCache) {
+  const realpath = safeRealpath(path);
+  const fingerprint = {
+    root: path,
+    realpath,
+    fs_type: 'unknown',
+    is_remote: false,
+    mount_source: null,
+    dev: stat && typeof stat.dev === 'number' ? stat.dev : null,
+    cross_device: false,
+    mount_point: null,
+  };
+
+  if (platformInfo.platform === 'linux') {
+    mountCache.linux = mountCache.linux || readLinuxMountInfo();
+    const match = mountInfoForPath(realpath, mountCache.linux);
+    if (match) {
+      fingerprint.fs_type = match.fsType;
+      fingerprint.mount_source = match.source || null;
+      fingerprint.mount_point = match.mountPoint;
+      fingerprint.is_remote = isRemoteFsType(match.fsType);
+    }
+    if (platformInfo.isWSL) {
+      if (fingerprint.fs_type === 'drvfs' || fingerprint.fs_type.toLowerCase().startsWith('9p')) {
+        fingerprint.is_remote = true;
+      }
+    }
+  } else if (platformInfo.platform === 'darwin') {
+    mountCache.darwin = mountCache.darwin || readMacOsMounts();
+    const match = mountInfoForPath(realpath, mountCache.darwin);
+    if (match) {
+      fingerprint.fs_type = match.fsType;
+      fingerprint.mount_source = match.source || null;
+      fingerprint.mount_point = match.mountPoint;
+      fingerprint.is_remote = isRemoteFsType(match.fsType);
+    }
+  }
+
+  return fingerprint;
+}
+
+function computeRootFingerprints(paths, platformInfo) {
+  const cache = {};
+  const seen = new Map();
+  const fingerprints = [];
+  let baselineDev = null;
+
+  for (const path of paths) {
+    if (seen.has(path)) continue;
+    const stat = safeStat(path);
+    const fp = classifyRootFingerprint(path, platformInfo, stat, cache);
+    if (fp.dev != null) {
+      if (baselineDev === null) baselineDev = fp.dev;
+      else if (baselineDev !== fp.dev) fp.cross_device = true;
+    }
+    seen.set(path, fp);
+    fingerprints.push(fp);
+  }
+
+  return fingerprints;
 }
 
 function detectPlatform() {
@@ -920,38 +1561,157 @@ function parseNpmIndexEntry(line) {
   return safeJsonParse(jsonText);
 }
 
+function dedupKey(stat, path) {
+  if (stat && typeof stat.dev === 'number' && typeof stat.ino === 'number' && stat.ino !== 0) {
+    return `inode:${stat.dev}:${stat.ino}`;
+  }
+  return `path:${path}`;
+}
+
 function walkTreeFiles(roots, options, onFile) {
-  const stack = roots.filter((path) => safeExists(path)).map((path) => ({ path, depth: 0 }));
+  const runtime = options.runtime || null;
+  const maxDepth = options.maxDepth ?? Number.POSITIVE_INFINITY;
+  const maxEntries = options.maxEntries ?? Number.POSITIVE_INFINITY;
+  const skipDirs = options.skipDirs;
+  const scope = options.scope || null;
 
-  const seen = new Set();
-  let visitedEntries = 0;
+  const seenInodes = new Set();
+  let totalVisited = 0;
+  let capped = false;
 
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (seen.has(current.path)) continue;
-    seen.add(current.path);
+  for (const rootPath of roots) {
+    if (capped) break;
+    if (!safeExists(rootPath)) continue;
+    const rootStat = safeStat(rootPath);
+    if (!rootStat || !rootStat.isDirectory()) continue;
+    const rootKey = dedupKey(rootStat, rootPath);
+    if (seenInodes.has(rootKey)) {
+      if (runtime) {
+        runtime.recordSymlinkCycle({
+          root: rootPath,
+          path: rootPath,
+          dedup_key: rootKey,
+          reason: 'duplicate-root',
+          scope,
+        });
+      }
+      continue;
+    }
+    seenInodes.add(rootKey);
 
-    const entries = safeReaddir(current.path);
-    if (!entries) continue;
+    const rootStartMs = runtime ? runtime.clock.now() : 0;
+    let rootEntries = 0;
+    let rootReaddirErrors = 0;
+    const stack = [{ path: rootPath, depth: 0, root: rootPath }];
 
-    for (const entry of entries) {
-      if (visitedEntries >= (options.maxEntries ?? Number.POSITIVE_INFINITY)) return;
-      visitedEntries += 1;
-
-      const fullPath = join(current.path, entry.name);
-
-      if (entry.isDirectory()) {
-        if (current.depth >= (options.maxDepth ?? Number.POSITIVE_INFINITY)) continue;
-        if (options.skipDirs?.has(entry.name)) continue;
-        stack.push({ path: fullPath, depth: current.depth + 1 });
+    outer: while (stack.length > 0) {
+      const current = stack.pop();
+      const entries = safeReaddir(current.path);
+      if (!entries) {
+        rootReaddirErrors += 1;
+        if (runtime) {
+          runtime.recordReaddirError({
+            root: current.root,
+            path: current.path,
+            depth: current.depth,
+            error_class: 'readdir',
+            scope,
+          });
+        }
         continue;
       }
 
-      if (entry.isFile()) {
-        onFile(fullPath, entry, current.depth + 1);
+      for (const entry of entries) {
+        if (totalVisited >= maxEntries) {
+          if (runtime) {
+            runtime.recordCap('walk.max-entries', {
+              scope,
+              root: current.root,
+              path: current.path,
+              entries: totalVisited,
+              limit: maxEntries,
+            });
+          }
+          capped = true;
+          break outer;
+        }
+        totalVisited += 1;
+        rootEntries += 1;
+        if (runtime) runtime.addEntries(1);
+
+        const fullPath = join(current.path, entry.name);
+
+        if (entry.isDirectory()) {
+          if (current.depth >= maxDepth) {
+            if (runtime) {
+              runtime.recordSkip('max-depth', {
+                root: current.root,
+                path: fullPath,
+                depth: current.depth,
+                scope,
+              });
+            }
+            continue;
+          }
+          if (skipDirs?.has(entry.name)) {
+            if (runtime) {
+              runtime.recordSkip('skip-dir', {
+                root: current.root,
+                path: fullPath,
+                name: entry.name,
+                scope,
+              });
+            }
+            continue;
+          }
+          const childStat = safeStat(fullPath);
+          if (!childStat || !childStat.isDirectory()) {
+            if (!childStat && runtime) {
+              runtime.recordReaddirError({
+                root: current.root,
+                path: fullPath,
+                error_class: 'stat',
+                scope,
+              });
+            }
+            continue;
+          }
+          const key = dedupKey(childStat, fullPath);
+          if (seenInodes.has(key)) {
+            if (runtime) {
+              runtime.recordSymlinkCycle({
+                root: current.root,
+                path: fullPath,
+                dedup_key: key,
+                fs_device: childStat.dev,
+                scope,
+              });
+            }
+            continue;
+          }
+          seenInodes.add(key);
+          stack.push({ path: fullPath, depth: current.depth + 1, root: current.root });
+          continue;
+        }
+
+        if (entry.isFile()) {
+          onFile(fullPath, entry, current.depth + 1);
+        }
       }
     }
+
+    if (runtime) {
+      const elapsed = runtime.clock.now() - rootStartMs;
+      runtime.recordRootTiming(rootPath, {
+        elapsed_ms: elapsed,
+        scope,
+        entries: rootEntries,
+        readdir_errors: rootReaddirErrors,
+      });
+    }
   }
+
+  return { visitedEntries: totalVisited, capped };
 }
 
 function findTrackedPackageDirs(nodeModulesPath) {
@@ -1254,42 +2014,137 @@ function scanGlobalInstallCandidates(homes, report) {
   }
 }
 
-function walkProjectRoots(roots, onNodeModules, onLockfile) {
-  const stack = [...roots];
-  const seen = new Set();
+function walkProjectRoots(roots, options, onNodeModules, onLockfile) {
+  const runtime = options?.runtime || null;
+  const maxDepth = options?.maxDepth ?? DEFAULT_PROJECT_WALK_MAX_DEPTH;
+  const maxEntries = options?.maxEntries ?? DEFAULT_PROJECT_WALK_MAX_ENTRIES;
+  const scope = 'project-roots';
 
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (seen.has(current)) continue;
-    seen.add(current);
+  const seenInodes = new Set();
+  let totalVisited = 0;
+  let capped = false;
 
-    const entries = safeReaddir(current);
-    if (!entries) continue;
+  for (const rootPath of roots) {
+    if (capped) break;
+    const rootStat = safeStat(rootPath);
+    if (!rootStat || !rootStat.isDirectory()) continue;
+    const rootKey = dedupKey(rootStat, rootPath);
+    if (seenInodes.has(rootKey)) {
+      if (runtime) {
+        runtime.recordSymlinkCycle({
+          root: rootPath,
+          path: rootPath,
+          dedup_key: rootKey,
+          reason: 'duplicate-root',
+          scope,
+        });
+      }
+      continue;
+    }
+    seenInodes.add(rootKey);
 
-    for (const entry of entries) {
-      const fullPath = join(current, entry.name);
+    const rootStartMs = runtime ? runtime.clock.now() : 0;
+    let rootEntries = 0;
+    const stack = [{ path: rootPath, depth: 0, root: rootPath }];
 
-      if (entry.isDirectory()) {
-        if (entry.name === 'node_modules') {
-          onNodeModules(fullPath);
-          continue;
+    outer: while (stack.length > 0) {
+      const current = stack.pop();
+      const entries = safeReaddir(current.path);
+      if (!entries) {
+        if (runtime) {
+          runtime.recordReaddirError({
+            root: current.root,
+            path: current.path,
+            depth: current.depth,
+            error_class: 'readdir',
+            scope,
+          });
         }
-
-        if (WALK_SKIP_DIRS.has(entry.name)) continue;
-        stack.push(fullPath);
         continue;
       }
 
-      if (!entry.isFile()) continue;
-      if (!LOCKFILE_NAMES.has(entry.name)) continue;
-      onLockfile(fullPath);
+      for (const entry of entries) {
+        if (totalVisited >= maxEntries) {
+          if (runtime) {
+            runtime.recordCap('walk.max-entries', {
+              scope,
+              root: current.root,
+              path: current.path,
+              entries: totalVisited,
+              limit: maxEntries,
+            });
+          }
+          capped = true;
+          break outer;
+        }
+        totalVisited += 1;
+        rootEntries += 1;
+        if (runtime) runtime.addEntries(1);
+
+        const fullPath = join(current.path, entry.name);
+
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules') {
+            onNodeModules(fullPath);
+            continue;
+          }
+          if (WALK_SKIP_DIRS.has(entry.name)) {
+            if (runtime) {
+              runtime.recordSkip('skip-dir', { root: current.root, path: fullPath, name: entry.name, scope });
+            }
+            continue;
+          }
+          if (current.depth >= maxDepth) {
+            if (runtime) {
+              runtime.recordSkip('max-depth', { root: current.root, path: fullPath, depth: current.depth, scope });
+            }
+            continue;
+          }
+          const childStat = safeStat(fullPath);
+          if (!childStat || !childStat.isDirectory()) {
+            if (!childStat && runtime) {
+              runtime.recordReaddirError({ root: current.root, path: fullPath, error_class: 'stat', scope });
+            }
+            continue;
+          }
+          const key = dedupKey(childStat, fullPath);
+          if (seenInodes.has(key)) {
+            if (runtime) {
+              runtime.recordSymlinkCycle({
+                root: current.root,
+                path: fullPath,
+                dedup_key: key,
+                fs_device: childStat.dev,
+                scope,
+              });
+            }
+            continue;
+          }
+          seenInodes.add(key);
+          stack.push({ path: fullPath, depth: current.depth + 1, root: current.root });
+          continue;
+        }
+
+        if (!entry.isFile()) continue;
+        if (!LOCKFILE_NAMES.has(entry.name)) continue;
+        onLockfile(fullPath);
+      }
+    }
+
+    if (runtime) {
+      runtime.recordRootTiming(rootPath, {
+        elapsed_ms: runtime.clock.now() - rootStartMs,
+        scope,
+        entries: rootEntries,
+      });
     }
   }
 }
 
-function scanProjectRoots(roots, report) {
+function scanProjectRoots(roots, report, runtime) {
   walkProjectRoots(
     roots,
+    { runtime, maxDepth: DEFAULT_PROJECT_WALK_MAX_DEPTH, maxEntries: DEFAULT_PROJECT_WALK_MAX_ENTRIES },
     (nodeModulesPath) => {
       for (const packageDir of findTrackedPackageDirs(nodeModulesPath)) {
         const inspection = inspectPackageDirectory(packageDir);
@@ -1345,7 +2200,7 @@ function scanProjectRoots(roots, report) {
   );
 }
 
-function scanShellProfiles(homes, report) {
+function scanShellProfiles(homes, report, runtime) {
   const directPaths = [];
   const directoryRoots = [];
 
@@ -1390,24 +2245,28 @@ function scanShellProfiles(homes, report) {
 
   for (const candidate of directoryRoots) {
     if (!safeExists(candidate.path)) continue;
-    walkTreeFiles([candidate.path], { maxDepth: 2, maxEntries: 1000, skipDirs: WALK_SKIP_DIRS }, (fullPath) => {
-      const finding = inspectTextEvidenceFile(fullPath);
-      if (!finding) return;
+    walkTreeFiles(
+      [candidate.path],
+      { maxDepth: 2, maxEntries: 1000, skipDirs: WALK_SKIP_DIRS, runtime, scope: 'shell-profiles' },
+      (fullPath) => {
+        const finding = inspectTextEvidenceFile(fullPath);
+        if (!finding) return;
 
-      report.shellProfileFindings.push({
-        kind: candidate.kind,
-        home: candidate.home,
-        ...finding,
-      });
+        report.shellProfileFindings.push({
+          kind: candidate.kind,
+          home: candidate.home,
+          ...finding,
+        });
 
-      addTimeline(report, {
-        time: finding.modifiedAt,
-        category: 'shell-profile',
-        severity: 'compromised',
-        summary: 'shell profile drop-in references suspicious package execution or IOC data',
-        path: finding.path,
-      });
-    });
+        addTimeline(report, {
+          time: finding.modifiedAt,
+          category: 'shell-profile',
+          severity: 'compromised',
+          summary: 'shell profile drop-in references suspicious package execution or IOC data',
+          path: finding.path,
+        });
+      },
+    );
   }
 }
 
@@ -1501,7 +2360,7 @@ function buildPersistenceTargets(platformInfo, homes) {
   return targets;
 }
 
-function scanPersistenceLocations(platformInfo, homes, report) {
+function scanPersistenceLocations(platformInfo, homes, report, runtime) {
   const targets = buildPersistenceTargets(platformInfo, homes);
 
   for (const target of targets) {
@@ -1528,24 +2387,28 @@ function scanPersistenceLocations(platformInfo, homes, report) {
       continue;
     }
 
-    walkTreeFiles([target.path], { maxDepth: 3, maxEntries: 4000, skipDirs: WALK_SKIP_DIRS }, (fullPath) => {
-      const finding = inspectTextEvidenceFile(fullPath);
-      if (!finding) return;
+    walkTreeFiles(
+      [target.path],
+      { maxDepth: 3, maxEntries: 4000, skipDirs: WALK_SKIP_DIRS, runtime, scope: 'persistence' },
+      (fullPath) => {
+        const finding = inspectTextEvidenceFile(fullPath);
+        if (!finding) return;
 
-      report.persistenceFindings.push({
-        kind: target.kind,
-        home: target.home,
-        ...finding,
-      });
+        report.persistenceFindings.push({
+          kind: target.kind,
+          home: target.home,
+          ...finding,
+        });
 
-      addTimeline(report, {
-        time: finding.modifiedAt,
-        category: 'persistence',
-        severity: 'compromised',
-        summary: `${target.kind} contains suspicious persistence or IOC data`,
-        path: finding.path,
-      });
-    });
+        addTimeline(report, {
+          time: finding.modifiedAt,
+          category: 'persistence',
+          severity: 'compromised',
+          summary: `${target.kind} contains suspicious persistence or IOC data`,
+          path: finding.path,
+        });
+      },
+    );
   }
 }
 
@@ -1569,12 +2432,18 @@ function collectPythonPthScanRoots(homes, roots) {
   });
 }
 
-function scanPythonPthArtifacts(homes, roots, report) {
+function scanPythonPthArtifacts(homes, roots, report, runtime) {
   const pthRoots = collectPythonPthScanRoots(homes, roots);
 
   walkTreeFiles(
     pthRoots,
-    { maxDepth: 5, maxEntries: 12000, skipDirs: new Set([...WALK_SKIP_DIRS, 'node_modules']) },
+    {
+      maxDepth: 5,
+      maxEntries: 12000,
+      skipDirs: new Set([...WALK_SKIP_DIRS, 'node_modules']),
+      runtime,
+      scope: 'python-pth',
+    },
     (fullPath) => {
       if (!fullPath.endsWith('.pth')) return;
 
@@ -1597,7 +2466,7 @@ function scanPythonPthArtifacts(homes, roots, report) {
   );
 }
 
-function scanImpactSurface(homes, roots, report) {
+function scanImpactSurface(homes, roots, report, runtime) {
   const findings = [];
 
   for (const homePath of homes) {
@@ -1622,7 +2491,13 @@ function scanImpactSurface(homes, roots, report) {
       for (const extension of TARGETED_BROWSER_EXTENSION_IDS) {
         walkTreeFiles(
           [fullPath],
-          { maxDepth: 3, maxEntries: 1500, skipDirs: new Set([...WALK_SKIP_DIRS, 'Cache']) },
+          {
+            maxDepth: 3,
+            maxEntries: 1500,
+            skipDirs: new Set([...WALK_SKIP_DIRS, 'Cache']),
+            runtime,
+            scope: 'impact-surface',
+          },
           (candidatePath) => {
             if (!candidatePath.includes(`/Extensions/${extension.id}/`)) return;
             if (basename(candidatePath) !== 'manifest.json') return;
@@ -1704,7 +2579,7 @@ function collectTempRoots(platformInfo, homes, roots) {
   });
 }
 
-function scanTempArtifacts(platformInfo, homes, roots, report) {
+function scanTempArtifacts(platformInfo, homes, roots, report, runtime) {
   const tempRoots = collectTempRoots(platformInfo, homes, roots);
 
   walkTreeFiles(
@@ -1713,6 +2588,8 @@ function scanTempArtifacts(platformInfo, homes, roots, report) {
       maxDepth: 4,
       maxEntries: MAX_TEMP_WALK_ENTRIES,
       skipDirs: new Set([...WALK_SKIP_DIRS, 'node_modules']),
+      runtime,
+      scope: 'temp-artifacts',
     },
     (fullPath) => {
       if (report.tempArtifactFindings.length >= MAX_TEMP_FINDINGS) return;
@@ -2039,9 +2916,25 @@ function printTextFindingDetails(finding) {
   }
 }
 
+function printCoverageBanner(report) {
+  const coverage = report.coverage;
+  if (!coverage) return;
+  const capped = coverage.cappedRoots?.length || 0;
+  const skipped = coverage.skippedRoots?.length || 0;
+  const interrupted = Boolean(coverage.interrupted);
+  if (!capped && !skipped && !interrupted) return;
+  const pieces = [];
+  if (interrupted) pieces.push(`interrupted (${coverage.interruptReason || 'signal'})`);
+  if (capped) pieces.push(`${capped} capped roots`);
+  if (skipped) pieces.push(`${skipped} skipped roots`);
+  console.log(`⚠ INCOMPLETE SCAN: ${pieces.join(', ')}`);
+  console.log('');
+}
+
 function printHumanReport(report) {
   const { summary } = report;
 
+  printCoverageBanner(report);
   console.log('Genie Security Scan');
   console.log('');
   console.log(`Host: ${report.host}`);
@@ -2280,16 +3173,90 @@ function printHumanReport(report) {
   }
 }
 
+function writeEnvelope(envelope, options, stdout) {
+  const out = stdout || process.stdout;
+  try {
+    if (options.json) {
+      out.write(`${JSON.stringify(envelope, null, 2)}\n`);
+    } else {
+      printHumanReport(envelope);
+    }
+  } catch {
+    /* stdout closed */
+  }
+}
+
+function emitSlowestRootsReport(envelope, options, stderr) {
+  if (!options.verbose) return;
+  if (options.quiet) return;
+  const coverage = envelope.coverage;
+  if (!coverage) return;
+  const timings = coverage.rootTimings || [];
+  if (timings.length === 0) return;
+  const fingerprintsByRoot = new Map();
+  for (const fp of coverage.rootFingerprints || []) {
+    fingerprintsByRoot.set(fp.root, fp);
+    if (fp.realpath) fingerprintsByRoot.set(fp.realpath, fp);
+  }
+  const sorted = [...timings]
+    .filter((entry) => typeof entry.elapsed_ms === 'number')
+    .sort((a, b) => b.elapsed_ms - a.elapsed_ms)
+    .slice(0, 5);
+  if (sorted.length === 0) return;
+  const out = stderr || process.stderr;
+  try {
+    out.write('[sec-scan] top 5 slowest roots:\n');
+    for (const entry of sorted) {
+      const fp = fingerprintsByRoot.get(entry.root) || {};
+      const mount = fp.fs_type || 'unknown';
+      const realpath = fp.realpath || entry.root;
+      out.write(`  ${entry.elapsed_ms.toFixed(0)}ms  ${mount}  ${realpath}\n`);
+    }
+  } catch {
+    /* stderr closed */
+  }
+}
+
+function runPhase(runtime, id, scope, path, fn, report) {
+  runtime.startPhase(id);
+  try {
+    fn();
+  } catch (error) {
+    addError(report, scope, path, error);
+  } finally {
+    runtime.endPhase(id);
+  }
+}
+
 function main() {
   const options = parseArgs(process.argv);
+
+  if (options.help) {
+    printHelp();
+    return 0;
+  }
+
+  if (isKillSwitchEnabled()) {
+    return emitKillSwitchResponse(options);
+  }
+
   const platformInfo = detectPlatform();
+  const scannerVersion = readScannerVersion();
+  const runtime = createRuntime({
+    options,
+    platformInfo,
+    argv: process.argv,
+    scannerVersion,
+  });
+
   const homes = collectHomeDirs(options, platformInfo);
   const roots = collectScanRoots(options, homes);
+  runtime.setRootFingerprints(computeRootFingerprints(uniq([...homes, ...roots]), platformInfo));
 
   const report = {
     host: hostname(),
     platform: platformInfo,
-    scannedAt: new Date().toISOString(),
+    scannedAt: runtime.startedAt,
     cwd: process.cwd(),
     homes,
     roots,
@@ -2313,90 +3280,148 @@ function main() {
     errors: [],
   };
 
+  let flushed = false;
+  const flush = (reason) => {
+    if (flushed) return;
+    flushed = true;
+    try {
+      report.timeline = sortTimeline(report.timeline);
+      if (!report.summary) report.summary = summarize(report);
+    } catch {
+      /* partial report; continue */
+    }
+    const envelope = envelopeFromReport(runtime, report, { reason });
+    writeEnvelope(envelope, options);
+  };
+
+  installSignalHandlers(runtime, flush);
+  runtime.startTicker();
+
   for (const homePath of homes) {
-    try {
-      scanNpmCache(homePath, report);
-    } catch (error) {
-      addError(report, 'npm-cache', homePath, error);
-    }
-
-    try {
-      scanBunCache(homePath, report);
-    } catch (error) {
-      addError(report, 'bun-cache', homePath, error);
-    }
+    runPhase(runtime, 'scanNpmCache', 'npm-cache', homePath, () => scanNpmCache(homePath, report), report);
+    runPhase(runtime, 'scanBunCache', 'bun-cache', homePath, () => scanBunCache(homePath, report), report);
   }
 
-  try {
-    scanGlobalInstallCandidates(homes, report);
-  } catch (error) {
-    addError(report, 'global-installs', '(global)', error);
-  }
-
-  try {
-    scanProjectRoots(roots, report);
-  } catch (error) {
-    addError(report, 'project-roots', roots.join(', '), error);
-  }
-
-  try {
-    scanShellHistories(homes, report);
-  } catch (error) {
-    addError(report, 'shell-histories', homes.join(', '), error);
-  }
-
-  try {
-    scanShellProfiles(homes, report);
-  } catch (error) {
-    addError(report, 'shell-profiles', homes.join(', '), error);
-  }
-
-  try {
-    scanPersistenceLocations(platformInfo, homes, report);
-  } catch (error) {
-    addError(report, 'persistence', platformInfo.platform, error);
-  }
-
-  try {
-    scanPythonPthArtifacts(homes, roots, report);
-  } catch (error) {
-    addError(report, 'python-pth', '(python)', error);
-  }
-
-  try {
-    scanTempArtifacts(platformInfo, homes, roots, report);
-  } catch (error) {
-    addError(report, 'temp-artifacts', '(temp)', error);
-  }
-
-  try {
-    scanImpactSurface(homes, roots, report);
-  } catch (error) {
-    addError(report, 'impact-surface', '(surface)', error);
-  }
-
-  try {
-    scanLiveProcesses(report);
-  } catch (error) {
-    addError(report, 'live-processes', '(process table)', error);
-  }
+  runPhase(
+    runtime,
+    'scanGlobalInstallCandidates',
+    'global-installs',
+    '(global)',
+    () => scanGlobalInstallCandidates(homes, report),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanProjectRoots',
+    'project-roots',
+    roots.join(', '),
+    () => scanProjectRoots(roots, report, runtime),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanShellHistories',
+    'shell-histories',
+    homes.join(', '),
+    () => scanShellHistories(homes, report),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanShellProfiles',
+    'shell-profiles',
+    homes.join(', '),
+    () => scanShellProfiles(homes, report, runtime),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanPersistenceLocations',
+    'persistence',
+    platformInfo.platform,
+    () => scanPersistenceLocations(platformInfo, homes, report, runtime),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanPythonPthArtifacts',
+    'python-pth',
+    '(python)',
+    () => scanPythonPthArtifacts(homes, roots, report, runtime),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanTempArtifacts',
+    'temp-artifacts',
+    '(temp)',
+    () => scanTempArtifacts(platformInfo, homes, roots, report, runtime),
+    report,
+  );
+  runPhase(
+    runtime,
+    'scanImpactSurface',
+    'impact-surface',
+    '(surface)',
+    () => scanImpactSurface(homes, roots, report, runtime),
+    report,
+  );
+  runPhase(runtime, 'scanLiveProcesses', 'live-processes', '(process table)', () => scanLiveProcesses(report), report);
 
   report.timeline = sortTimeline(report.timeline);
   report.summary = summarize(report);
 
-  if (options.json) {
-    console.log(JSON.stringify(report, null, 2));
-  } else {
-    printHumanReport(report);
-  }
+  flushed = true;
+  const envelope = envelopeFromReport(runtime, report);
+  writeEnvelope(envelope, options);
+  emitSlowestRootsReport(envelope, options);
 
-  process.exitCode =
-    report.summary.likelyAffected || report.summary.likelyCompromised ? 2 : report.summary.observedOnly ? 1 : 0;
+  const exitCode = computeExitCode(envelope);
+  if (exitCode !== 0) process.exitCode = exitCode;
+  return exitCode;
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`sec-scan.cjs failed: ${error.message}`);
-  process.exit(3);
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`sec-scan.cjs failed: ${error.message}\n`);
+    process.exit(3);
+  }
+} else {
+  module.exports = {
+    REPORT_VERSION,
+    DEFAULT_PROGRESS_INTERVAL_MS,
+    DEFAULT_PROJECT_WALK_MAX_DEPTH,
+    DEFAULT_PROJECT_WALK_MAX_ENTRIES,
+    REMOTE_FS_TYPES,
+    WALK_SKIP_DIRS,
+    generateUlid,
+    createHostId,
+    readScannerVersion,
+    createRuntime,
+    buildInvocation,
+    envelopeFromReport,
+    computeExitCode,
+    installSignalHandlers,
+    isKillSwitchEnabled,
+    emitKillSwitchResponse,
+    parseArgs,
+    printHelp,
+    main,
+    detectPlatform,
+    walkTreeFiles,
+    walkProjectRoots,
+    dedupKey,
+    readLinuxMountInfo,
+    parseMacOsMountLine,
+    readMacOsMounts,
+    mountInfoForPath,
+    isRemoteFsType,
+    classifyRootFingerprint,
+    computeRootFingerprints,
+    printCoverageBanner,
+    printHumanReport,
+    emitSlowestRootsReport,
+  };
 }
