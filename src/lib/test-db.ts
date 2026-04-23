@@ -17,7 +17,7 @@
  */
 
 import { ensurePgserve, resetConnection } from './db.js';
-import { shutdownEmitter } from './emit.js';
+import { resumeEmitter, shutdownEmitter } from './emit.js';
 import { createTestDatabase, dropTestDatabase } from './test-setup.js';
 
 /**
@@ -90,12 +90,24 @@ export async function setupTestDatabase(): Promise<() => Promise<void>> {
   try {
     await createTestDatabase(dbName);
   } catch {
+    // createTestDatabase failed (e.g. pgserve died, template DB missing).
+    // shutdownEmitter() already latched `shuttingDown = true`; if we return
+    // without resumeEmitter() the emitter stays quiesced for the remainder
+    // of this process, silently dropping every emit from every subsequent
+    // test file. Re-open admits before bailing so fallback no-op cleanup is
+    // truly side-effect free.
+    resumeEmitter();
     return async () => {};
   }
 
   // Point db.ts at the new database and force a rebuild.
   process.env.GENIE_TEST_DB_NAME = dbName;
   await resetConnection();
+  // Re-open admits now that the new DB is bound. shutdownEmitter() latched
+  // `shuttingDown = true` so leaked background pollers from prior test files
+  // couldn't re-arm the flusher mid-swap; with the new sqlClient in place,
+  // it's safe to accept new events again.
+  resumeEmitter();
 
   return async () => {
     // Quiesce the emit flusher BEFORE closing the pool. Same rationale as
@@ -111,6 +123,10 @@ export async function setupTestDatabase(): Promise<() => Promise<void>> {
     if (process.env.GENIE_TEST_DB_NAME === dbName) {
       process.env.GENIE_TEST_DB_NAME = undefined;
     }
+    // Re-open admits so subsequent test files (or the next setupTestDatabase
+    // cycle in this process) aren't locked out. Without this, admits stay
+    // latched-off indefinitely after the last cleanup runs.
+    resumeEmitter();
   };
 }
 

@@ -558,6 +558,12 @@ function enqueueTyped(
 }
 
 function admitToQueue(row: QueuedRow): void {
+  // Drop admits while the test harness is swapping DBs. `enqueueTyped()` has
+  // a top-level shuttingDown check, but backpressure paths
+  // (`handleInfoBackpressure`, `handleSpillPath`) re-invoke `admitToQueue`
+  // after a bounded wait — this guard ensures those deferred paths also
+  // no-op during the quiesce window.
+  if (shuttingDown) return;
   queue.push(row);
   stats.enqueued++;
   stats.queue_depth = queue.length;
@@ -725,7 +731,11 @@ function newId(): string {
 // ---------------------------------------------------------------------------
 
 function ensureFlusher(): void {
-  if (flushTimer) return;
+  // Also gate on `shuttingDown` so leaked background pollers from prior test
+  // files can't re-arm the timer during the quiesce window while
+  // `setupTestDatabase()` is swapping DBs between `resetConnection()` and
+  // `createTestDatabase()`.
+  if (flushTimer || shuttingDown) return;
   flushTimer = setInterval(() => {
     void triggerFlush();
   }, FLUSH_INTERVAL_MS);
@@ -795,6 +805,15 @@ async function doFlush(): Promise<void> {
       void drainSpillJournal();
     }
   } catch (err) {
+    // If the test harness is quiescing, drop the batch rather than requeue
+    // against a sqlClient that's about to be reset. Requeueing here would
+    // repopulate the queue that shutdownEmitter() just cleared, and the next
+    // flush tick would hit the about-to-be-dropped DB and cascade into
+    // CONNECTION_ENDED on the next test's first await.
+    if (shuttingDown) {
+      stats.queue_depth = queue.length;
+      return;
+    }
     // Push back to the head so we don't lose events when PG blips. Cap the
     // re-inject so a permanently-broken PG can't pathologically grow memory.
     const reinjectCap = Math.max(0, QUEUE_CAP - queue.length);
@@ -837,6 +856,17 @@ export async function drainSpillJournalNow(): Promise<number> {
  *   4. Attempt ONE bounded final drain. If it fails, we do NOT loop — a dead
  *      PG would otherwise requeue forever. The queue is then reset explicitly
  *      so the test's next cycle starts from a clean slate.
+ *
+ * IMPORTANT: On return, `shuttingDown` STAYS LATCHED TRUE. Admits remain
+ * blocked until the caller explicitly invokes `resumeEmitter()`. This prevents
+ * leaked background pollers from prior test files (e.g. `audit.ts` setInterval,
+ * `runtime-events.ts` subscribe+poll) from re-arming the flusher against a
+ * stale `sqlClient` mid-swap while `setupTestDatabase()` is between
+ * `resetConnection()` and `createTestDatabase()`. If such a poller fires an
+ * `emitEvent()` in the quiesce window, it would hit `admitToQueue()` →
+ * `ensureFlusher()` → rearm the flush timer → flush against the about-to-be-
+ * dropped DB → `pg_terminate_backend` kills the backend mid-query →
+ * `CONNECTION_ENDED` propagates to the next test's first await.
  */
 export async function shutdownEmitter(): Promise<void> {
   shuttingDown = true;
@@ -851,8 +881,9 @@ export async function shutdownEmitter(): Promise<void> {
     }
   }
 
-  // Step 2: tear down all timers. The flusher's re-arm check (`if (flushTimer)
-  // return`) guarantees ensureFlusher() re-arms cleanly next call.
+  // Step 2: tear down all timers. The flusher's re-arm check (`if (flushTimer
+  // || shuttingDown) return`) guarantees ensureFlusher() stays quiesced until
+  // resumeEmitter() is called.
   if (flushTimer) {
     clearInterval(flushTimer);
     flushTimer = null;
@@ -884,6 +915,20 @@ export async function shutdownEmitter(): Promise<void> {
   // flushes use `flushNow()` before calling shutdown.
   queue.length = 0;
   stats.queue_depth = 0;
+  // Intentional: `shuttingDown` stays true until `resumeEmitter()` is called.
+  // See block comment above for the CONNECTION_ENDED race this prevents.
+  // `flushTimer` is already null — `ensureFlusher()` gates re-arm on both
+  // `flushTimer` and `shuttingDown`, so the quiesce window is honoured.
+}
+
+/**
+ * Re-open admits after a `shutdownEmitter()` quiesce.
+ *
+ * Must be called by the test harness AFTER `resetConnection()` +
+ * `createTestDatabase()` succeed, so fresh emits land in the new DB's pool
+ * rather than racing the swap.
+ */
+export function resumeEmitter(): void {
   shuttingDown = false;
 }
 
