@@ -822,8 +822,37 @@ export async function drainSpillJournalNow(): Promise<number> {
   return drainSpillJournal();
 }
 
+/**
+ * Quiesce the emitter.
+ *
+ * Used by tests between `setupTestDatabase()` cycles so the background flusher
+ * doesn't hold a stale reference to a pool whose DB is about to be dropped.
+ * Callers MUST await this before `resetConnection()` / `dropTestDatabase()`.
+ *
+ * Order matters:
+ *   1. Set `shuttingDown` so new emits are dropped (no more queue growth).
+ *   2. Await any in-flight `writeBatch` promise — otherwise clearing the timer
+ *      leaves a half-done write racing against the DB drop.
+ *   3. Clear the flush + watcher intervals (next `ensureFlusher()` rearms).
+ *   4. Attempt ONE bounded final drain. If it fails, we do NOT loop — a dead
+ *      PG would otherwise requeue forever. The queue is then reset explicitly
+ *      so the test's next cycle starts from a clean slate.
+ */
 export async function shutdownEmitter(): Promise<void> {
   shuttingDown = true;
+  // Step 1: wait for any flush currently writing to PG. Clearing timers while
+  // writeBatch is in flight would leave the Promise dangling against a pool
+  // that tests are about to dispose.
+  if (flushInFlight) {
+    try {
+      await flushInFlight;
+    } catch {
+      /* best-effort — the in-flight flush may fail if PG is unreachable */
+    }
+  }
+
+  // Step 2: tear down all timers. The flusher's re-arm check (`if (flushTimer)
+  // return`) guarantees ensureFlusher() re-arms cleanly next call.
   if (flushTimer) {
     clearInterval(flushTimer);
     flushTimer = null;
@@ -841,11 +870,21 @@ export async function shutdownEmitter(): Promise<void> {
     correlationTimer = null;
   }
   watchersStartedAt = 0;
+
+  // Step 3: best-effort final drain. Bounded to a single attempt — failures
+  // during teardown must not block the caller's DB drop.
   try {
-    while (queue.length > 0) await triggerFlush();
-  } finally {
-    shuttingDown = false;
+    if (queue.length > 0) await triggerFlush();
+  } catch {
+    /* ignore — we're tearing down */
   }
+
+  // Step 4: reset queue + transient state so the next ensureFlusher() starts
+  // clean. Dropping the in-memory tail is intentional: tests that need durable
+  // flushes use `flushNow()` before calling shutdown.
+  queue.length = 0;
+  stats.queue_depth = 0;
+  shuttingDown = false;
 }
 
 // ---------------------------------------------------------------------------

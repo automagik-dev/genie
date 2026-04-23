@@ -7,3 +7,9 @@ secret:
     - "scripts/test-parallel.test.ts"
     - "scripts/list-tests.ts"
     - "**/*.test.ts"
+    # pgserve default credentials — local-only, never authenticate against
+    # a real database. Extending the allowlist matches the #1249 decision
+    # to allowlist test fixtures rather than obscure or env-extract.
+    - "src/lib/db.ts"
+    - "src/lib/db-backup.ts"
+    - "src/term-commands/db.ts"

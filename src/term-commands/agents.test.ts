@@ -11,7 +11,7 @@ import type { DirectoryEntry } from '../lib/agent-directory.js';
 import type { Agent } from '../lib/agent-registry.js';
 import * as registry from '../lib/agent-registry.js';
 import * as executorRegistry from '../lib/executor-registry.js';
-import { DB_AVAILABLE, setupTestDatabase, setupTestSchema } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
   buildInitialSplitWindowCommand,
@@ -26,18 +26,61 @@ import {
 
 let cwd: string;
 
+// ============================================================================
+// File-level PG harness.
+//
+// This file originally carried four separate `describe.skipIf(!DB_AVAILABLE)`
+// blocks, each with its own `beforeAll(setupTestDatabase)`/`afterAll(cleanup)`
+// pair. Under `scripts/test-parallel.ts --shards=4` the four-cycle churn made
+// the background emit.ts flusher hold stale pool references across DB
+// swaps — the flusher's next tick then crashed with
+//   `[emit] flush failed: database "test_shardN_..." does not exist`
+// or
+//   `[emit] flush failed: null is not an object (evaluating 'dying.end')`,
+// and any test reading back state it had just written saw the wrong DB and
+// failed with `undefined`/`null` assertions.
+//
+// Consolidation: ONE file-level setupTestDatabase() cycle + each inner
+// describe's own targeted `beforeEach` TRUNCATE to reset state between
+// tests. The outer cycle itself is guarded by a `pgOk` flag so the non-PG
+// describes further down (buildInitialSplitWindowCommand, resolveTeamName,
+// etc.) still run even when pgserve is unreachable in CI — those describes
+// are pure and don't need a DB.
+// ============================================================================
+let cleanupDb: (() => Promise<void>) | null = null;
+let pgOk = false;
+
+beforeAll(async () => {
+  if (!DB_AVAILABLE) return;
+  cleanupDb = await setupTestDatabase();
+  // setupTestDatabase returns a no-op cleanup when pgserve is unreachable —
+  // detect that by probing the cleanup reference AND verifying the env var
+  // points at a real test DB.
+  pgOk = typeof process.env.GENIE_TEST_DB_NAME === 'string' && process.env.GENIE_TEST_DB_NAME.length > 0;
+});
+
+afterAll(async () => {
+  if (cleanupDb) await cleanupDb();
+});
+
+/**
+ * Truncate every mutable table a PG-touching describe in this file writes to,
+ * so tests in different describes never see each other's rows. Called from
+ * each inner describe's `beforeEach`. CASCADE propagates to `executors`,
+ * `executor_events`, `agent_checkpoints`, and `task_*` FK children — covering
+ * the surface `buildResumeContext`, `resolveSpawnIdentity`, `findDeadResumable`,
+ * and `directory.resolve` exercise.
+ */
+async function truncateAgentsSurface(): Promise<void> {
+  if (!pgOk) return;
+  const { getConnection } = await import('../lib/db.js');
+  const sql = await getConnection();
+  await sql`TRUNCATE TABLE agents, agent_templates, tasks, task_dependencies, task_actors CASCADE`;
+}
+
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
-  let cleanupSchema: () => Promise<void>;
-
-  beforeAll(async () => {
-    cleanupSchema = await setupTestDatabase();
-  });
-
-  afterAll(async () => {
-    await cleanupSchema();
-  });
-
-  beforeEach(() => {
+  beforeEach(async () => {
+    await truncateAgentsSurface();
     cwd = `/tmp/genie-resume-ctx-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   });
 
@@ -284,14 +327,10 @@ describe('resolveTeamName', () => {
 // directory.resolve populates entry.team from agent_templates
 // ============================================================================
 describe.skipIf(!DB_AVAILABLE)('directory.resolve team population', () => {
-  let cleanupSchema: () => Promise<void>;
-
-  beforeAll(async () => {
-    cleanupSchema = await setupTestDatabase();
-  });
-
-  afterAll(async () => {
-    await cleanupSchema();
+  // Reset agents + agent_templates between tests so earlier describe blocks
+  // don't leak rows into this one (shared DB, per-file setup).
+  beforeEach(async () => {
+    await truncateAgentsSurface();
   });
 
   async function seedDirectoryAgent(name: string): Promise<void> {
@@ -376,24 +415,14 @@ describe.skipIf(!DB_AVAILABLE)('directory.resolve team population', () => {
 //     resumable via their full id).
 // ============================================================================
 describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
-  let cleanupSchema: () => Promise<void>;
-
-  beforeAll(async () => {
-    cleanupSchema = await setupTestDatabase();
-  });
-
-  afterAll(async () => {
-    await cleanupSchema();
-  });
-
   // Each test gets a clean agents table — registry.register's ON CONFLICT DO UPDATE
   // only rewrites a subset of columns (pane_id, session, state, last_state_change),
   // so leftover rows from prior tests carry stale claude_session_id/role/team into
   // new tests and break id-based probes. TRUNCATE keeps each test hermetic.
+  // Agent-surface truncation also clears agent_templates + task_* so the
+  // prior describe blocks' seed rows can't leak into state-machine assertions.
   beforeEach(async () => {
-    const { getConnection } = await import('../lib/db.js');
-    const sql = await getConnection();
-    await sql`TRUNCATE TABLE agents CASCADE`;
+    await truncateAgentsSurface();
   });
 
   /**
@@ -848,16 +877,10 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
 // ============================================================================
 
 describe.skipIf(!DB_AVAILABLE)('buildWorkerStatusMap: customName keying', () => {
-  let cleanupSchema: () => Promise<void>;
-
-  beforeAll(async () => {
-    cleanupSchema = await setupTestSchema();
-  });
-
-  afterAll(async () => {
-    await cleanupSchema();
-  });
-
+  // This describe builds Agent values in memory and never writes to PG, but
+  // it still used to spin up its own DB via setupTestSchema() — that extra
+  // cycle is precisely what the flusher-race fix eliminates. The shared
+  // file-level DB is sufficient here; no truncation needed.
   test('keys suspended native-team agents by customName so `genie ls` shows them', async () => {
     const ts = Date.now();
     const id = `worker-status-native-${ts}`;

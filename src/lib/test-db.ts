@@ -17,6 +17,7 @@
  */
 
 import { ensurePgserve, resetConnection } from './db.js';
+import { shutdownEmitter } from './emit.js';
 import { createTestDatabase, dropTestDatabase } from './test-setup.js';
 
 /**
@@ -74,6 +75,16 @@ export async function setupTestDatabase(): Promise<() => Promise<void>> {
     return async () => {};
   }
 
+  // Quiesce the emit.ts background flusher BEFORE we swap databases.
+  // The flusher holds a reference to the current sqlClient's pool; if we
+  // swap the test DB out from under it, the next flush throws
+  // `database "test_shardN_..." does not exist` (requeuing the batch on
+  // every tick) or `null is not an object (evaluating 'dying.end')` when
+  // the pool's reaper races a concurrent getConnection() teardown.
+  // Awaiting here guarantees any in-flight writeBatch drains before we
+  // invalidate its pool, and the queue resets so no stale rows carry over.
+  await shutdownEmitter();
+
   const dbName = `${shardPrefix()}_${process.pid}_${Date.now()}_${++dbCounter}`;
 
   try {
@@ -87,6 +98,11 @@ export async function setupTestDatabase(): Promise<() => Promise<void>> {
   await resetConnection();
 
   return async () => {
+    // Quiesce the emit flusher BEFORE closing the pool. Same rationale as
+    // setup: the flusher's in-flight batch against the now-doomed DB would
+    // otherwise surface as `database "..." does not exist` in stderr and
+    // block the test run from exiting cleanly.
+    await shutdownEmitter();
     // Close the singleton BEFORE dropping the DB so DROP doesn't fail on
     // "database is being accessed by other users" (defensive — dropTestDatabase
     // also force-terminates backends).

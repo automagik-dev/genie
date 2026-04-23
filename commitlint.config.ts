@@ -17,5 +17,14 @@ export default {
     // the rolling promotion PRs without rewriting dev history. Do NOT add
     // more `wip:` commits — type-enum still rejects them for new commits.
     (message: string) => message.startsWith('wip: fix-omni-bridge-hardening#1'),
+    // Historical exception: two docs(wish) commits merged via #1249 before
+    // pre-commit hooks caught body-max-line-length. Their bodies quote live
+    // PostgreSQL SQL idioms (#>>'{}')::jsonb and jsonb drift samples that
+    // cannot be reflowed without destroying meaning. Ignoring unblocks the
+    // rolling promotion PR without rewriting dev history. Do NOT reuse
+    // these exact subjects for new commits — use shorter bodies instead.
+    (message: string) => message.startsWith('docs(wish): scaffold fix-pg-disk-rehydration'),
+    (message: string) =>
+      message.startsWith('docs(wish): correct SQL idiom in migration 045 sample + success criterion'),
   ],
 };
