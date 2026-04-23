@@ -1,5 +1,27 @@
 name: Version
 
+# Single source of npm publishing for @automagik/genie.
+#
+#   Trigger                              Context  npm tag   Bump?
+#   -----------------------------------  -------  --------  ------
+#   workflow_run (CI success on dev)     dev      @next     yes
+#   workflow_run (merge PR to main)      main     @latest   no
+#   workflow_dispatch (manual)           dev      @next     yes
+#
+# On dev triggers we DERIVE a fresh version (today + build-count),
+# commit + tag + push back to dev, then publish as @next.
+#
+# On main triggers (merge from dev) we DO NOT bump — the version that
+# release.yml tagged into the GitHub Release on the same main push is
+# already in package.json. We just publish that exact version as
+# @latest, so npm and the GitHub Release agree. Bumping on main
+# caused a historical drift (release v4.260423.9 vs npm latest
+# 4.260423.10 on 2026-04-23).
+#
+# Auth: npm OIDC Trusted Publishing. The package's only Trusted
+# Publisher entry on npmjs.com is this file (version.yml). All
+# other workflows defer to this one for npm publishing.
+
 on:
   workflow_run:
     workflows: ["CI"]
@@ -39,15 +61,19 @@ jobs:
         run: |
           BRANCH="${{ github.event.workflow_run.head_branch || 'dev' }}"
           if [ "$BRANCH" = "main" ]; then
-            echo "branch=dev" >> "$GITHUB_OUTPUT"
-            echo "prefix=4" >> "$GITHUB_OUTPUT"
+            # Main push: publish the version release.yml just tagged.
+            # Do NOT bump — avoids drift between GitHub Release tag and npm.
+            echo "branch=main" >> "$GITHUB_OUTPUT"
             echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
           else
+            # Dev push (or manual dispatch): derive + bump + publish @next.
             echo "branch=dev" >> "$GITHUB_OUTPUT"
-            echo "prefix=4" >> "$GITHUB_OUTPUT"
             echo "npm_tag=next" >> "$GITHUB_OUTPUT"
+            echo "should_bump=true" >> "$GITHUB_OUTPUT"
           fi
-          echo "Resolved: branch=dev, prefix=4"
+          echo "prefix=4" >> "$GITHUB_OUTPUT"
+          echo "Resolved: branch=${BRANCH}"
 
       - uses: actions/checkout@v4
         with:
@@ -63,12 +89,14 @@ jobs:
         run: bun install
 
       - name: Configure git
+        if: steps.context.outputs.should_bump == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Derive version
         id: version
+        if: steps.context.outputs.should_bump == 'true'
         run: |
           PREFIX="${{ steps.context.outputs.prefix }}"
           TODAY=$(date -u +%y%m%d)
@@ -80,15 +108,18 @@ jobs:
           echo "Derived version: ${VERSION}"
 
       - name: Sync all version files
+        if: steps.context.outputs.should_bump == 'true'
         run: bun run version
         env:
           GENIE_BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
 
       - name: Format versioned JSON (Biome)
+        if: steps.context.outputs.should_bump == 'true'
         run: |
           bunx biome format --write package.json openclaw.plugin.json plugins/genie/.claude-plugin/plugin.json plugins/genie/package.json .claude-plugin/marketplace.json 2>/dev/null || true
 
       - name: Commit and tag
+        if: steps.context.outputs.should_bump == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           BRANCH="${{ steps.context.outputs.branch }}"
@@ -102,6 +133,20 @@ jobs:
 
           git tag "v${VERSION}"
           git push --atomic origin "HEAD:refs/heads/${BRANCH}" "refs/tags/v${VERSION}"
+
+      # On main context we publish whatever package.json currently holds —
+      # that's the version release.yml tagged into the GitHub Release on
+      # the same main push, which is exactly what @latest should point at.
+      - name: Resolve publish version
+        id: pubver
+        run: |
+          if [ "${{ steps.context.outputs.should_bump }}" = "true" ]; then
+            VERSION="${{ steps.version.outputs.version }}"
+          else
+            VERSION=$(jq -r '.version' package.json)
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publishing ${VERSION} with tag ${{ steps.context.outputs.npm_tag }}"
 
       - name: Build CLI
         run: bun run build
@@ -127,4 +172,7 @@ jobs:
           # runners fail the server-side sigstore check with 422. Disable
           # auto-provenance explicitly; OIDC token exchange still happens.
           NPM_CONFIG_PROVENANCE: "false"
+        # On main context: publish package.json's current version as @latest
+        # (no bump, matches the GitHub Release tag exactly).
+        # On dev context: publish the version we just bumped to as @next.
         run: npm publish --access public --tag ${{ steps.context.outputs.npm_tag }}
