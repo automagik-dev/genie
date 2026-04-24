@@ -259,6 +259,9 @@ const MAX_TEXT_SNIPPETS = 6;
 const MAX_SNIPPET_CHARS = 240;
 const MAX_TEMP_WALK_ENTRIES = 25000;
 const MAX_TEMP_FINDINGS = 200;
+const DEFAULT_TEMP_FILES_BUDGET = 5000;
+const DEFAULT_TEMP_BYTES_BUDGET = 256 * 1024 * 1024;
+const TEMP_YIELD_INTERVAL = 128;
 const MAX_TIMELINE_EVENTS = 120;
 
 const TEMP_ARTIFACT_NAME_REGEX =
@@ -577,6 +580,31 @@ function createRuntime({
     });
   }
 
+  function recordPhaseCapHit(reason, detail = {}) {
+    const phaseId = currentPhase ? currentPhase.id : null;
+    const ts = nowFn();
+    const breachedAtMs = currentPhase ? ts - currentPhase.startMs : null;
+    const entry = {
+      kind: 'phase.cap_hit',
+      phase: phaseId,
+      ts_ms: ts,
+      reason,
+      breached_at_ms: breachedAtMs,
+      ...detail,
+    };
+    capEvents.push(entry);
+    if (currentPhase) currentPhase.caps += 1;
+    walkEvents.push({
+      event: 'phase.cap_hit',
+      phase: phaseId,
+      ts_ms: ts,
+      reason,
+      breached_at_ms: breachedAtMs,
+      ...detail,
+    });
+    emit({ kind: 'phase.cap_hit', phase: phaseId, reason, ...detail });
+  }
+
   function recordSkip(kind, detail = {}) {
     walkEvents.push({
       event: 'walk.skipped',
@@ -673,6 +701,7 @@ function createRuntime({
     endPhase,
     emit,
     recordCap,
+    recordPhaseCapHit,
     recordSkip,
     recordSymlinkCycle,
     recordReaddirError,
@@ -2554,11 +2583,11 @@ function collectTempRoots(platformInfo, homes, roots) {
   }
 
   for (const homePath of homes) {
+    // ~/.npm, ~/.npm/_npx, ~/.cache, ~/.bun intentionally omitted: dedicated
+    // scanNpmCache / scanBunCache phases cover them with tighter caps; walking
+    // them here surfaces hundreds of MB of content scans and bypasses
+    // WALK_SKIP_DIRS (skip-set only filters sub-entries, not chosen roots).
     for (const candidate of [
-      join(homePath, '.npm'),
-      join(homePath, '.npm', '_npx'),
-      join(homePath, '.cache'),
-      join(homePath, '.bun'),
       join(homePath, 'Library', 'Caches'),
       join(homePath, 'AppData', 'Local', 'Temp'),
       join(homePath, 'AppData', 'Local', 'npm-cache'),
@@ -2579,8 +2608,172 @@ function collectTempRoots(platformInfo, homes, roots) {
   });
 }
 
-function scanTempArtifacts(platformInfo, homes, roots, report, runtime) {
+function resolveTempBudgets(runtime) {
+  const budgets = runtime?.options?.phaseBudgets || {};
+  const filesOverride = Number(budgets['scanTempArtifacts.files']);
+  const bytesOverride = Number(budgets['scanTempArtifacts.bytes']);
+  // Back-compat: `--phase-budget scanTempArtifacts=N` is interpreted as the
+  // files-count cap (dominant failure mode for this phase).
+  const shorthandOverride = Number(budgets.scanTempArtifacts);
+  const files =
+    Number.isFinite(filesOverride) && filesOverride >= 0
+      ? filesOverride
+      : Number.isFinite(shorthandOverride) && shorthandOverride >= 0
+        ? shorthandOverride
+        : DEFAULT_TEMP_FILES_BUDGET;
+  const bytes = Number.isFinite(bytesOverride) && bytesOverride >= 0 ? bytesOverride : DEFAULT_TEMP_BYTES_BUDGET;
+  return { files, bytes };
+}
+
+function pushSizeCappedTempFinding(report, fullPath, stat, namedHits) {
+  const finding = {
+    path: fullPath,
+    realpath: safeRealpath(fullPath),
+    size: stat.size,
+    modifiedAt: isoTime(stat.mtimeMs),
+    nameMatches: namedHits,
+    sha256: null,
+    expectedSha256: expectedMalwareHashForBasename(basename(fullPath)),
+    knownMalwareHash: false,
+    iocMatches: [],
+    versions: [],
+    packageRefs: [],
+    executionCommands: [],
+    networkCommands: [],
+    snippets: [],
+    size_capped_not_hashed: true,
+  };
+  report.tempArtifactFindings.push(finding);
+  addTimeline(report, {
+    time: finding.modifiedAt,
+    category: 'temp-artifact',
+    severity: namedHits.some((value) => /env-compat\.(?:cjs|js)/i.test(value)) ? 'compromised' : 'affected',
+    summary: 'temp or cache artifact matched known-bad basename; size-capped, content not scanned',
+    path: fullPath,
+  });
+}
+
+function inspectTempFileSync(fullPath, report) {
+  const stat = safeStat(fullPath);
+  if (!stat || !stat.isFile()) return { bytesRead: 0, skipped: true };
+
+  const namedHits = collectNamedArtifactHits(fullPath);
+
+  // Size guard applies universally (hotfix: close DoS via name-regex fast path).
+  // Basename hits still surface a finding but content is NOT read/hashed.
+  if (stat.size > MAX_TEMP_CONTENT_SCAN_SIZE) {
+    if (namedHits.length > 0 && report.tempArtifactFindings.length < MAX_TEMP_FINDINGS) {
+      pushSizeCappedTempFinding(report, fullPath, stat, namedHits);
+    }
+    return { bytesRead: 0, skipped: true };
+  }
+
+  const buffer = safeReadFile(fullPath);
+  if (!buffer) return { bytesRead: 0, skipped: true };
+
+  const bytesRead = buffer.length;
+  const expanded = maybeGunzip(buffer);
+  const iocMatches = searchBufferForIocs(expanded);
+  const fileSha256 = sha256(expanded);
+  const expectedSha256 = expectedMalwareHashForBasename(basename(fullPath));
+
+  const text = expanded.toString('utf8');
+  const indicators = collectTextIndicators(text);
+  const versions = indicators.versions;
+  const packageRefs = indicators.packageRefs;
+  const executionCommands = indicators.executionCommands;
+  const networkCommands = indicators.networkCommands;
+  const snippets = extractInterestingSnippets(text);
+
+  if (
+    namedHits.length === 0 &&
+    iocMatches.length === 0 &&
+    versions.length === 0 &&
+    packageRefs.length === 0 &&
+    executionCommands.length === 0 &&
+    networkCommands.length === 0
+  ) {
+    return { bytesRead, skipped: false };
+  }
+
+  const finding = {
+    path: fullPath,
+    realpath: safeRealpath(fullPath),
+    size: stat.size,
+    modifiedAt: isoTime(stat.mtimeMs),
+    nameMatches: namedHits,
+    sha256: fileSha256,
+    expectedSha256,
+    knownMalwareHash: Boolean(expectedSha256 && expectedSha256 === fileSha256),
+    iocMatches,
+    versions,
+    packageRefs,
+    executionCommands,
+    networkCommands,
+    snippets,
+  };
+
+  report.tempArtifactFindings.push(finding);
+  addTimeline(report, {
+    time: finding.modifiedAt,
+    category: 'temp-artifact',
+    severity:
+      iocMatches.length > 0 ||
+      namedHits.some((value) => /env-compat\.(?:cjs|js)/i.test(value)) ||
+      Boolean(expectedSha256 && expectedSha256 === fileSha256)
+        ? 'compromised'
+        : 'affected',
+    summary: 'temp or cache artifact retained suspicious package evidence',
+    path: fullPath,
+  });
+  return { bytesRead, skipped: false };
+}
+
+async function processTempArtifactQueue(pending, report, runtime) {
+  const { files: filesBudget, bytes: bytesBudget } = resolveTempBudgets(runtime);
+  let filesProcessed = 0;
+  let bytesProcessed = 0;
+  let capRecorded = false;
+
+  const recordCapOnce = (reason, limit) => {
+    if (capRecorded) return;
+    capRecorded = true;
+    if (runtime && typeof runtime.recordPhaseCapHit === 'function') {
+      runtime.recordPhaseCapHit(reason, {
+        limit,
+        entries_processed: filesProcessed,
+        bytes_processed: bytesProcessed,
+      });
+    }
+  };
+
+  for (const fullPath of pending) {
+    if (runtime && typeof runtime.isInterrupted === 'function' && runtime.isInterrupted()) break;
+    if (report.tempArtifactFindings.length >= MAX_TEMP_FINDINGS) break;
+    if (filesProcessed >= filesBudget) {
+      recordCapOnce('files_budget', filesBudget);
+      break;
+    }
+    if (bytesProcessed >= bytesBudget) {
+      recordCapOnce('bytes_budget', bytesBudget);
+      break;
+    }
+
+    const { bytesRead } = inspectTempFileSync(fullPath, report);
+    filesProcessed += 1;
+    if (bytesRead > 0) bytesProcessed += bytesRead;
+    if (runtime && typeof runtime.addBytes === 'function' && bytesRead > 0) runtime.addBytes(bytesRead);
+
+    if (filesProcessed % TEMP_YIELD_INTERVAL === 0) {
+      await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    }
+  }
+  return { filesProcessed, bytesProcessed, capRecorded };
+}
+
+async function scanTempArtifacts(platformInfo, homes, roots, report, runtime) {
   const tempRoots = collectTempRoots(platformInfo, homes, roots);
+  const pending = [];
 
   walkTreeFiles(
     tempRoots,
@@ -2592,80 +2785,11 @@ function scanTempArtifacts(platformInfo, homes, roots, report, runtime) {
       scope: 'temp-artifacts',
     },
     (fullPath) => {
-      if (report.tempArtifactFindings.length >= MAX_TEMP_FINDINGS) return;
-
-      const stat = safeStat(fullPath);
-      if (!stat || !stat.isFile()) return;
-
-      const namedHits = collectNamedArtifactHits(fullPath);
-      let iocMatches = [];
-      let versions = [];
-      let packageRefs = [];
-      let executionCommands = [];
-      let networkCommands = [];
-      let snippets = [];
-
-      if (namedHits.length === 0 && stat.size > MAX_TEMP_CONTENT_SCAN_SIZE) return;
-
-      const buffer = safeReadFile(fullPath);
-      if (!buffer) return;
-
-      const expanded = maybeGunzip(buffer);
-      iocMatches = searchBufferForIocs(expanded);
-      const fileSha256 = sha256(expanded);
-      const expectedSha256 = expectedMalwareHashForBasename(basename(fullPath));
-
-      const text = expanded.toString('utf8');
-      const indicators = collectTextIndicators(text);
-      versions = indicators.versions;
-      packageRefs = indicators.packageRefs;
-      executionCommands = indicators.executionCommands;
-      networkCommands = indicators.networkCommands;
-      snippets = extractInterestingSnippets(text);
-
-      if (
-        namedHits.length === 0 &&
-        iocMatches.length === 0 &&
-        versions.length === 0 &&
-        packageRefs.length === 0 &&
-        executionCommands.length === 0 &&
-        networkCommands.length === 0
-      ) {
-        return;
-      }
-
-      const finding = {
-        path: fullPath,
-        realpath: safeRealpath(fullPath),
-        size: stat.size,
-        modifiedAt: isoTime(stat.mtimeMs),
-        nameMatches: namedHits,
-        sha256: fileSha256,
-        expectedSha256,
-        knownMalwareHash: Boolean(expectedSha256 && expectedSha256 === fileSha256),
-        iocMatches,
-        versions,
-        packageRefs,
-        executionCommands,
-        networkCommands,
-        snippets,
-      };
-
-      report.tempArtifactFindings.push(finding);
-      addTimeline(report, {
-        time: finding.modifiedAt,
-        category: 'temp-artifact',
-        severity:
-          iocMatches.length > 0 ||
-          namedHits.some((value) => /env-compat\.(?:cjs|js)/i.test(value)) ||
-          Boolean(expectedSha256 && expectedSha256 === fileSha256)
-            ? 'compromised'
-            : 'affected',
-        summary: 'temp or cache artifact retained suspicious package evidence',
-        path: fullPath,
-      });
+      pending.push(fullPath);
     },
   );
+
+  await processTempArtifactQueue(pending, report, runtime);
 }
 
 function scanLiveProcesses(report) {
@@ -3217,10 +3341,10 @@ function emitSlowestRootsReport(envelope, options, stderr) {
   }
 }
 
-function runPhase(runtime, id, scope, path, fn, report) {
+async function runPhase(runtime, id, scope, path, fn, report) {
   runtime.startPhase(id);
   try {
-    fn();
+    await fn();
   } catch (error) {
     addError(report, scope, path, error);
   } finally {
@@ -3228,7 +3352,7 @@ function runPhase(runtime, id, scope, path, fn, report) {
   }
 }
 
-function main() {
+async function main() {
   const options = parseArgs(process.argv);
 
   if (options.help) {
@@ -3298,11 +3422,11 @@ function main() {
   runtime.startTicker();
 
   for (const homePath of homes) {
-    runPhase(runtime, 'scanNpmCache', 'npm-cache', homePath, () => scanNpmCache(homePath, report), report);
-    runPhase(runtime, 'scanBunCache', 'bun-cache', homePath, () => scanBunCache(homePath, report), report);
+    await runPhase(runtime, 'scanNpmCache', 'npm-cache', homePath, () => scanNpmCache(homePath, report), report);
+    await runPhase(runtime, 'scanBunCache', 'bun-cache', homePath, () => scanBunCache(homePath, report), report);
   }
 
-  runPhase(
+  await runPhase(
     runtime,
     'scanGlobalInstallCandidates',
     'global-installs',
@@ -3310,7 +3434,7 @@ function main() {
     () => scanGlobalInstallCandidates(homes, report),
     report,
   );
-  runPhase(
+  await runPhase(
     runtime,
     'scanProjectRoots',
     'project-roots',
@@ -3318,7 +3442,7 @@ function main() {
     () => scanProjectRoots(roots, report, runtime),
     report,
   );
-  runPhase(
+  await runPhase(
     runtime,
     'scanShellHistories',
     'shell-histories',
@@ -3326,7 +3450,7 @@ function main() {
     () => scanShellHistories(homes, report),
     report,
   );
-  runPhase(
+  await runPhase(
     runtime,
     'scanShellProfiles',
     'shell-profiles',
@@ -3334,7 +3458,7 @@ function main() {
     () => scanShellProfiles(homes, report, runtime),
     report,
   );
-  runPhase(
+  await runPhase(
     runtime,
     'scanPersistenceLocations',
     'persistence',
@@ -3342,7 +3466,7 @@ function main() {
     () => scanPersistenceLocations(platformInfo, homes, report, runtime),
     report,
   );
-  runPhase(
+  await runPhase(
     runtime,
     'scanPythonPthArtifacts',
     'python-pth',
@@ -3350,7 +3474,7 @@ function main() {
     () => scanPythonPthArtifacts(homes, roots, report, runtime),
     report,
   );
-  runPhase(
+  await runPhase(
     runtime,
     'scanTempArtifacts',
     'temp-artifacts',
@@ -3358,7 +3482,7 @@ function main() {
     () => scanTempArtifacts(platformInfo, homes, roots, report, runtime),
     report,
   );
-  runPhase(
+  await runPhase(
     runtime,
     'scanImpactSurface',
     'impact-surface',
@@ -3366,7 +3490,14 @@ function main() {
     () => scanImpactSurface(homes, roots, report, runtime),
     report,
   );
-  runPhase(runtime, 'scanLiveProcesses', 'live-processes', '(process table)', () => scanLiveProcesses(report), report);
+  await runPhase(
+    runtime,
+    'scanLiveProcesses',
+    'live-processes',
+    '(process table)',
+    () => scanLiveProcesses(report),
+    report,
+  );
 
   report.timeline = sortTimeline(report.timeline);
   report.summary = summarize(report);
@@ -3382,12 +3513,10 @@ function main() {
 }
 
 if (require.main === module) {
-  try {
-    main();
-  } catch (error) {
-    process.stderr.write(`sec-scan.cjs failed: ${error.message}\n`);
+  main().catch((error) => {
+    process.stderr.write(`sec-scan.cjs failed: ${error?.message ? error.message : error}\n`);
     process.exit(3);
-  }
+  });
 } else {
   module.exports = {
     REPORT_VERSION,
@@ -3423,5 +3552,17 @@ if (require.main === module) {
     printCoverageBanner,
     printHumanReport,
     emitSlowestRootsReport,
+    collectTempRoots,
+    scanTempArtifacts,
+    processTempArtifactQueue,
+    inspectTempFileSync,
+    resolveTempBudgets,
+    runPhase,
+    MAX_TEMP_CONTENT_SCAN_SIZE,
+    MAX_TEMP_WALK_ENTRIES,
+    MAX_TEMP_FINDINGS,
+    DEFAULT_TEMP_FILES_BUDGET,
+    DEFAULT_TEMP_BYTES_BUDGET,
+    TEMP_YIELD_INTERVAL,
   };
 }
