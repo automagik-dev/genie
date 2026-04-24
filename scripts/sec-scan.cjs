@@ -259,8 +259,9 @@ const MAX_TEXT_SNIPPETS = 6;
 const MAX_SNIPPET_CHARS = 240;
 const MAX_TEMP_WALK_ENTRIES = 25000;
 const MAX_TEMP_FINDINGS = 200;
-const DEFAULT_TEMP_FILES_BUDGET = 5000;
-const DEFAULT_TEMP_BYTES_BUDGET = 256 * 1024 * 1024;
+const DEFAULT_TEMP_FILES_BUDGET = 500;
+const DEFAULT_TEMP_BYTES_BUDGET = 32 * 1024 * 1024;
+const DEFAULT_TEMP_WALL_BUDGET_MS = 2000;
 const TEMP_YIELD_INTERVAL = 128;
 const MAX_TIMELINE_EVENTS = 120;
 
@@ -325,32 +326,32 @@ const TEXT_MATCHERS = [
   {
     label: 'install:npm @automagik/genie',
     category: 'install',
-    regex: /\bnpm\b[^\n]*\b(?:install|i|add|update|exec|ci)\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\bnpm\b[^\n]{0,200}\b(?:install|i|add|update|exec|ci)\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'install:pnpm @automagik/genie',
     category: 'install',
-    regex: /\bpnpm\b[^\n]*\b(?:add|install|update|up)\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\bpnpm\b[^\n]{0,200}\b(?:add|install|update|up)\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'install:yarn @automagik/genie',
     category: 'install',
-    regex: /\byarn\b[^\n]*\b(?:add|install|up|upgrade)\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\byarn\b[^\n]{0,200}\b(?:add|install|up|upgrade)\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'install:bun @automagik/genie',
     category: 'install',
-    regex: /\bbun\b[^\n]*\b(?:add|install|pm add)\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\bbun\b[^\n]{0,200}\b(?:add|install|pm add)\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'exec:npx @automagik/genie',
     category: 'execution',
-    regex: /\bnpx\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\bnpx\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'exec:bunx @automagik/genie',
     category: 'execution',
-    regex: /\bbunx\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\bbunx\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'exec:node_modules/@automagik/genie',
@@ -360,12 +361,12 @@ const TEXT_MATCHERS = [
   {
     label: 'exec:env-compat',
     category: 'execution',
-    regex: /\b(?:node|bun|bash|sh)\b[^\n]*env-compat\.(?:cjs|js)\b/i,
+    regex: /\b(?:node|bun|bash|sh)\b[^\n]{0,200}env-compat\.(?:cjs|js)\b/i,
   },
   {
     label: 'network:curl-wget IOC',
     category: 'network',
-    regex: /\b(?:curl|wget|fetch|Invoke-WebRequest)\b[^\n]*(?:telemetry\.api-monitor\.com|raw\.icp0\.io\/drop)/i,
+    regex: /\b(?:curl|wget|fetch|Invoke-WebRequest)\b[^\n]{0,200}(?:telemetry\.api-monitor\.com|raw\.icp0\.io\/drop)/i,
   },
 ];
 
@@ -1404,7 +1405,7 @@ function collectTextIndicators(text) {
     const escapedName = escapeRegex(trackedPackage.name);
     if (
       new RegExp(
-        `\\b(?:npm|pnpm|yarn|bun)\\b[^\\n]*(?:install|i|add|update|up|upgrade|exec|ci|pm add)?[^\\n]*${escapedName}(?:@[0-9.]+)?`,
+        `\\b(?:npm|pnpm|yarn|bun)\\b[^\\n]{0,200}(?:install|i|add|update|up|upgrade|exec|ci|pm add)?[^\\n]{0,200}${escapedName}(?:@[0-9.]+)?`,
         'i',
       ).test(text)
     ) {
@@ -1412,8 +1413,8 @@ function collectTextIndicators(text) {
     }
 
     if (
-      new RegExp(`\\b(?:npx|bunx)\\b[^\\n]*${escapedName}(?:@[0-9.]+)?`, 'i').test(text) ||
-      new RegExp(`${escapedName}[^\\n]*node_modules`, 'i').test(text)
+      new RegExp(`\\b(?:npx|bunx)\\b[^\\n]{0,200}${escapedName}(?:@[0-9.]+)?`, 'i').test(text) ||
+      new RegExp(`${escapedName}[^\\n]{0,200}node_modules`, 'i').test(text)
     ) {
       indicators.executionCommands.push(`exec:${trackedPackage.name}`);
     }
@@ -2612,6 +2613,7 @@ function resolveTempBudgets(runtime) {
   const budgets = runtime?.options?.phaseBudgets || {};
   const filesOverride = Number(budgets['scanTempArtifacts.files']);
   const bytesOverride = Number(budgets['scanTempArtifacts.bytes']);
+  const wallOverride = Number(budgets['scanTempArtifacts.wall_ms']);
   // Back-compat: `--phase-budget scanTempArtifacts=N` is interpreted as the
   // files-count cap (dominant failure mode for this phase).
   const shorthandOverride = Number(budgets.scanTempArtifacts);
@@ -2622,7 +2624,8 @@ function resolveTempBudgets(runtime) {
         ? shorthandOverride
         : DEFAULT_TEMP_FILES_BUDGET;
   const bytes = Number.isFinite(bytesOverride) && bytesOverride >= 0 ? bytesOverride : DEFAULT_TEMP_BYTES_BUDGET;
-  return { files, bytes };
+  const wallMs = Number.isFinite(wallOverride) && wallOverride >= 0 ? wallOverride : DEFAULT_TEMP_WALL_BUDGET_MS;
+  return { files, bytes, wallMs };
 }
 
 function pushSizeCappedTempFinding(report, fullPath, stat, namedHits) {
@@ -2730,16 +2733,20 @@ function inspectTempFileSync(fullPath, report) {
 }
 
 async function processTempArtifactQueue(pending, report, runtime) {
-  const { files: filesBudget, bytes: bytesBudget } = resolveTempBudgets(runtime);
+  const { files: filesBudget, bytes: bytesBudget, wallMs: wallBudget } = resolveTempBudgets(runtime);
   let filesProcessed = 0;
   let bytesProcessed = 0;
   let capRecorded = false;
+  const startMs = Date.now();
 
   const recordCapOnce = (reason, limit) => {
     if (capRecorded) return;
     capRecorded = true;
     if (runtime && typeof runtime.recordPhaseCapHit === 'function') {
       runtime.recordPhaseCapHit(reason, {
+        // `root` is what `envelopeFromReport` greps for in `coverage.cappedRoots`;
+        // without it a phase-budget breach does not surface in the coverage banner.
+        root: 'scanTempArtifacts',
         limit,
         entries_processed: filesProcessed,
         bytes_processed: bytesProcessed,
@@ -2750,6 +2757,13 @@ async function processTempArtifactQueue(pending, report, runtime) {
   for (const fullPath of pending) {
     if (runtime && typeof runtime.isInterrupted === 'function' && runtime.isInterrupted()) break;
     if (report.tempArtifactFindings.length >= MAX_TEMP_FINDINGS) break;
+    // Wall first — a single slow `readFileSync` (spinning disk, NFS, large
+    // near-limit file) can blow the other budgets' theoretical bounds; the
+    // wall-clock check is the definitive "stop" signal.
+    if (wallBudget > 0 && Date.now() - startMs >= wallBudget) {
+      recordCapOnce('wall_budget', wallBudget);
+      break;
+    }
     if (filesProcessed >= filesBudget) {
       recordCapOnce('files_budget', filesBudget);
       break;
