@@ -3066,9 +3066,14 @@ function summarize(report) {
   if (installHistoryEvidence > 0) {
     affectedReasons.push('shell history shows package installation commands');
   }
-  if (report.tempArtifactFindings.length > 0 && strongTempEvidence === 0) {
-    affectedReasons.push('temp or cache directories retain suspicious tarball or package references');
-  }
+  // Weak temp findings (name-only matches on /tmp text files like Claude
+  // session logs and bun task-output dumps) are NOT affected-grade evidence
+  // — they're just text files that happen to contain the string "pgserve"
+  // or "@automagik/genie". They still appear in the report for transparency
+  // but must not elevate status from OBSERVED ONLY to LIKELY AFFECTED.
+  // Only `strongTempEvidence` (IOC string, malware hash, env-compat name)
+  // pushes a compromise/affected reason, via the `compromiseReasons` branch
+  // above.
 
   const likelyCompromised = compromiseReasons.length > 0;
   const likelyAffected =
