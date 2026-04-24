@@ -365,7 +365,63 @@ function renderAuditRow(severity, verb, target, recovery) {
   process.stderr.write(`                ${TTY.dim}recovery: ${TTY.reset}${TTY.cyan}${recovery}${TTY.reset}\n\n`);
 }
 
-function showPlanSummary(plan, options) {
+function renderBreachImpact(envelope) {
+  const breach = envelope?.breachImpact || { enabled: false };
+  if (!breach.enabled || (breach.likelyStolen || []).length === 0) return;
+
+  process.stderr.write('\n');
+  hrule('═', TTY.red + TTY.bold);
+  banner('☠  BREACH IMPACT — RETRACING THE WORM  ☠', SEVERITY.CRITICAL);
+  hrule('═', TTY.red + TTY.bold);
+  process.stderr.write('\n');
+
+  process.stderr.write(
+    `  ${TTY.dim}Exfil channel:${TTY.reset}   ${TTY.red}${TTY.bold}${breach.exfilChannel.host}${TTY.reset} ${breach.exfilChannel.paths.join(', ')}\n`,
+  );
+  if (breach.compromiseWindow) {
+    process.stderr.write(
+      `  ${TTY.dim}Window:${TTY.reset}          ${breach.compromiseWindow.firstEvidence} .. ${breach.compromiseWindow.lastEvidence}\n`,
+    );
+  }
+  if ((breach.compromisedInstallPaths || []).length > 0) {
+    process.stderr.write(`  ${TTY.dim}Install path:${TTY.reset}    ${breach.compromisedInstallPaths[0]}\n`);
+  }
+  process.stderr.write('\n');
+  process.stderr.write(
+    `  ${TTY.bold}${TTY.red}The env-compat.cjs payload ran as this user during the window.${TTY.reset}\n`,
+  );
+  process.stderr.write(`  ${TTY.dim}These credentials were readable to it — assume stolen:${TTY.reset}\n\n`);
+
+  for (const item of breach.rotationChecklist || []) {
+    const sev =
+      item.severity === 'CRITICAL'
+        ? SEVERITY.CRITICAL.paint(` ${item.severity} `)
+        : SEVERITY.DESTRUCTIVE.paint(` ${item.severity} `);
+    process.stderr.write(`  ${sev}  ${TTY.bold}${item.category}${TTY.reset}\n`);
+    for (const p of item.paths || []) process.stderr.write(`           ${TTY.dim}path:${TTY.reset}   ${p}\n`);
+    process.stderr.write(`           ${TTY.dim}why:${TTY.reset}    ${item.reason}\n`);
+    if (item.rotationUrl) {
+      process.stderr.write(
+        `           ${TTY.cyan}rotate:${TTY.reset} ${TTY.underline}${item.rotationUrl}${TTY.reset}\n`,
+      );
+    }
+    process.stderr.write('\n');
+  }
+
+  if ((breach.runningProcessesDuringWindow || []).length > 0) {
+    process.stderr.write(`  ${TTY.bold}Processes that ran the compromised binary:${TTY.reset}\n`);
+    for (const proc of breach.runningProcessesDuringWindow) {
+      process.stderr.write(
+        `    pid=${proc.pid}  elapsed=${proc.elapsed}  ${TTY.dim}${(proc.command || '').slice(0, 90)}${TTY.reset}\n`,
+      );
+    }
+    process.stderr.write('\n');
+  }
+}
+
+function showPlanSummary(plan, options, envelope) {
+  renderBreachImpact(envelope);
+
   process.stderr.write('\n');
   hrule('═', TTY.red + TTY.bold);
   banner('⚠  DESTRUCTIVE OPERATIONS AUDIT — REVIEW BEFORE ACCEPTING  ⚠', SEVERITY.DESTRUCTIVE);
@@ -668,7 +724,7 @@ function main() {
 
   const envelope = runScan();
   const plan = classifyEnvelope(envelope);
-  const somethingToDo = showPlanSummary(plan, options);
+  const somethingToDo = showPlanSummary(plan, options, envelope);
 
   if (!somethingToDo) {
     if (options.json) {
