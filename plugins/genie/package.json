@@ -1,6 +1,6 @@
 {
   "name": "genie-plugin",
-  "version": "4.260424.16",
+  "version": "4.260424.17",
   "private": true,
   "description": "Runtime dependencies for genie bundled CLIs",
   "type": "module",
