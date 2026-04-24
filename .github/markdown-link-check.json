@@ -1,0 +1,28 @@
+{
+  "ignorePatterns": [
+    { "pattern": "^https://automagik\\.dev/" },
+    { "pattern": "^mailto:" },
+    { "pattern": "^https://revoke\\.cash$" },
+    { "pattern": "^https://hub\\.docker\\.com/settings" }
+  ],
+  "replacementPatterns": [
+    {
+      "pattern": "^/",
+      "replacement": "{{BASEURL}}/"
+    }
+  ],
+  "httpHeaders": [
+    {
+      "urls": ["https://github.com/", "https://api.github.com/"],
+      "headers": {
+        "Accept": "text/html,application/xhtml+xml",
+        "User-Agent": "automagik-genie-docs-lint"
+      }
+    }
+  ],
+  "timeout": "20s",
+  "retryOn429": true,
+  "retryCount": 3,
+  "fallbackRetryDelay": "30s",
+  "aliveStatusCodes": [200, 206, 301, 302, 307, 308, 403, 429]
+}

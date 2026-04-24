@@ -1,0 +1,78 @@
+name: Runbook Cold-Test
+
+# Replays docs/incident-response/canisterworm.md against a sandboxed fixture so
+# the playbook does not silently rot. The test parses every `genie sec …`
+# invocation out of the runbook, asserts each subcommand + flag still exists on
+# the current build of the CLI, seeds a CanisterWorm IOC fixture, and runs the
+# LIKELY AFFECTED branch end-to-end inside a clean runner.
+#
+# Runs on every PR that touches:
+#   - the runbook itself (docs/incident-response/canisterworm.md)
+#   - SECURITY.md (invariants + signing-identity pin live there)
+#   - the scanner payload (scripts/sec-scan.cjs)
+#   - the sec CLI surface (src/term-commands/sec.ts)
+#   - the test harness itself (scripts/test-runbook.sh)
+#   - this workflow
+#
+# Enforced as a merge gate: if a subcommand was renamed, a flag removed, or the
+# LIKELY AFFECTED branch no longer flips the scanner band, the PR is blocked
+# until the runbook is updated to match.
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'docs/incident-response/canisterworm.md'
+      - 'SECURITY.md'
+      - 'scripts/sec-scan.cjs'
+      - 'scripts/sec-remediate.cjs'
+      - 'scripts/test-runbook.sh'
+      - 'src/term-commands/sec.ts'
+      - '.github/workflows/runbook-test.yml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'docs/incident-response/canisterworm.md'
+      - 'SECURITY.md'
+      - 'scripts/sec-scan.cjs'
+      - 'scripts/sec-remediate.cjs'
+      - 'scripts/test-runbook.sh'
+      - 'src/term-commands/sec.ts'
+      - '.github/workflows/runbook-test.yml'
+
+concurrency:
+  group: runbook-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cold-test:
+    name: Cold-runbook replay (Phase 1–4)
+    runs-on: ubuntu-latest
+    # Match the hard budget inside scripts/test-runbook.sh — plus a grace period
+    # for checkout, bun install, and build.
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Install dependencies
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bun install
+
+      - name: Build genie CLI
+        run: bun run build
+
+      - name: Replay runbook against sandbox fixture
+        run: bash scripts/test-runbook.sh --sandbox tmpdir --ci
+
+      - name: Record timing evidence
+        if: always()
+        run: |
+          printf '\nRunbook cold-test completed at %s UTC\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

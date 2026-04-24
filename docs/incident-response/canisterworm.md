@@ -138,6 +138,7 @@ ls ~/.cache/.bun/install/cache/ 2>/dev/null | grep -E "pgserve@1\.1\.(1[1-4])"
 ```
 
 As versões maliciosas aparecem como, por exemplo:
+
 ```
 genie@4.260421.36@@@1
 pgserve@1.1.14@@@1
@@ -268,6 +269,7 @@ bun install -g pgserve@1.1.10
 Se você executou `genie sec scan`, use a seção `at-risk local material present on host` como checklist para não esquecer nenhuma classe de credencial, carteira, perfil de navegador, ou `.env` local presente no host comprometido.
 
 **npm**
+
 ```bash
 cat ~/.npmrc  # ver token atual
 # Rotacionar em: https://www.npmjs.com/settings/<user>/tokens
@@ -275,6 +277,7 @@ cat ~/.npmrc  # ver token atual
 ```
 
 **GitHub CLI / PAT**
+
 ```bash
 cat ~/.config/gh/hosts.yml  # ver contas logadas
 # Rotacionar em: https://github.com/settings/tokens
@@ -282,6 +285,7 @@ gh auth login  # re-autenticar após revogar
 ```
 
 **Chaves SSH**
+
 ```bash
 ls -la ~/.ssh/id_*
 # Gerar nova chave
@@ -294,6 +298,7 @@ ssh-keygen -t ed25519 -C "seu@email.com" -f ~/.ssh/id_ed25519_new
 > 💡 **Lição aprendida da nossa investigação:** hosts clonados a partir de um mesmo template podem compartilhar o mesmo par de chaves. Se esse for o seu caso, rotacionar em um host não basta — precisa gerar chaves únicas em cada host e atualizar `authorized_keys` em toda a frota.
 
 **AWS**
+
 ```bash
 ls ~/.aws/credentials
 # Rotacionar em: AWS Console → IAM → Access Keys
@@ -301,6 +306,7 @@ aws sts get-caller-identity  # verificar que novas creds estão ativas
 ```
 
 **GCP**
+
 ```bash
 ls ~/.config/gcloud/
 gcloud auth revoke --all
@@ -308,6 +314,7 @@ gcloud auth login
 ```
 
 **Azure**
+
 ```bash
 ls ~/.azure/
 az logout
@@ -316,6 +323,7 @@ az login
 ```
 
 **Kubernetes**
+
 ```bash
 # Rotacionar tokens de service account
 # Rotacionar kubeconfig e contextos com acesso a produção
@@ -323,12 +331,14 @@ cat ~/.kube/config | grep -E "certificate-authority-data|token"
 ```
 
 **Docker registry**
+
 ```bash
 cat ~/.docker/config.json
 # Rotacionar credenciais de cada registry (Docker Hub, ECR, GCR, GHCR, OCIR, etc.)
 ```
 
 **Arquivos `.env`**
+
 ```bash
 # Encontrar todos os .env no workspace
 find ~/workspace ~ -maxdepth 5 -name ".env*" -not -path "*/node_modules/*" 2>/dev/null | head -50
@@ -336,9 +346,10 @@ find ~/workspace ~ -maxdepth 5 -name ".env*" -not -path "*/node_modules/*" 2>/de
 ```
 
 **LLM API keys**
-- Anthropic: https://console.anthropic.com → API Keys → revogar e emitir nova
-- OpenAI: https://platform.openai.com/api-keys → revogar e emitir nova
-- Google: https://aistudio.google.com/apikey → revogar e emitir nova
+
+- Anthropic: <https://console.anthropic.com> → API Keys → revogar e emitir nova
+- OpenAI: <https://platform.openai.com/api-keys> → revogar e emitir nova
+- Google: <https://aistudio.google.com/apikey> → revogar e emitir nova
 - Verifique o faturamento das últimas 72h para identificar uso anômalo.
 
 **Carteiras crypto (crítico)**
@@ -347,7 +358,7 @@ Se MetaMask, Phantom, Exodus, Atomic ou qualquer carteira estava instalada na m�
 
 1. Gere uma nova seed phrase
 2. Mova todos os fundos para a nova carteira imediatamente
-3. Revogue approvals ativas (use https://revoke.cash ou equivalente)
+3. Revogue approvals ativas (use <https://revoke.cash> ou equivalente)
 
 Roubos de carteira são **irreversíveis**. Não existe recuperação.
 
@@ -377,6 +388,7 @@ Notifique o npm Security: `security@npmjs.com` e, se possível, abra um Security
 ### 4.6 Preservar evidências (opcional, recomendado)
 
 Antes de destruir tudo, se tiver como, preserve:
+
 - Cópia dos arquivos maliciosos identificados no Passo 2 (`env-compat.cjs`, `public.pem`, `check-env.js`)
 - Logs de egress da máquina no período 2026-04-21 a 2026-04-22
 - Saída de `ss -tnp`, `journalctl --user -u pgmon`, `last`, `who`
@@ -523,6 +535,375 @@ Reportes privados de segurança relacionados a qualquer pacote Namastex: `privac
 | Data | Versão | Mudança |
 |------|--------|---------|
 | 2026-04-23 | 1.0 | Publicação inicial consolidada pós-investigação |
+| 2026-04-24 | 1.1 | Adicionado operator playbook em inglês (§11) com árvore de decisão de três ramos, escalations e template de post-mortem |
+
+---
+
+## 11. Operator playbook (English) — three-branch decision tree
+
+The preceding sections are the public advisory for any operator or organization that installed a compromised version. The following section is the **cold-runnable operator playbook** tied to `genie sec scan` status bands. Use it when you already have `@automagik/genie` on the host and you need a step-by-step remediation recipe that matches exactly what the CLI is about to ask of you.
+
+### 11.1 When to use this playbook
+
+Use this playbook when **any** of the following is true:
+
+- `genie sec scan` returned `LIKELY COMPROMISED`, `LIKELY AFFECTED`, or `OBSERVED ONLY`.
+- A host ran `@automagik/genie` versions `4.260421.33` through `4.260421.40`, or `pgserve` `1.1.11`–`1.1.14`, between **2026-04-21 and 2026-04-22**.
+- An unexpected `pgmon.service`, `/tmp/pglog`, or suspicious `.pth` file appeared on disk.
+- Egress to `telemetry.api-monitor.com`, `143.198.237.25`, or any `*.raw.icp0.io` was logged.
+
+### 11.2 Scanner output → decision tree
+
+`genie sec scan` emits a status band at the top of its report. That band picks the branch below.
+
+| Scanner status | Branch | Severity |
+|----------------|--------|----------|
+| `LIKELY COMPROMISED` | [§11.3 LIKELY COMPROMISED](#113-likely-compromised--full-remediation) | Active compromise evidence (execution, persistence, live process) |
+| `LIKELY AFFECTED` | [§11.4 LIKELY AFFECTED](#114-likely-affected--purge--rescan--rotate) | Malicious versions installed or cached; postinstall may have run |
+| `OBSERVED ONLY` | [§11.5 OBSERVED ONLY](#115-observed-only--clear--rescan) | Cache/lockfile/log references; no execution evidence |
+| `NO FINDINGS` | Stop — pin versions, enable `ignore-scripts`, keep monitoring | None in scope |
+
+> **Non-negotiable first step for any branch:** verify the CLI you are about to trust is genuine. Run `genie sec verify-install` **before** any `remediate`, `restore`, or `rollback` invocation. If that call cannot return exit `0`, read [§11.7 Escalation — `--unsafe-unverified`](#117-escalation----unsafe-unverified) before touching the host.
+
+### 11.3 LIKELY COMPROMISED — full remediation
+
+**Preconditions:** `genie sec scan` returned `LIKELY COMPROMISED`. A live process, persistence unit, or dropped payload was detected. Assume the host is exfiltrating or about to exfiltrate.
+
+#### Step 1 of 7 — Snapshot live processes (evidence preservation)
+
+Before any kill action, capture the live state of every PID the scanner flagged. This output is the forensic baseline for the post-mortem.
+
+```bash
+# Replace <pid-from-findings> with each PID from the scan JSON report:
+#   scan_id=$(genie sec scan --json --all-homes --root "$PWD" | jq -r '.scan_id')
+#   jq -r '.findings[] | select(.category=="live_process") | .pid' \
+#     "$GENIE_HOME/sec-scan/$scan_id/report.json"
+ps -o pid=,comm=,args= -p <pid-from-findings>
+
+# Archive the full process table too, in case the scanner missed a child:
+ps -eo pid,ppid,user,etime,comm,args > /tmp/ps-snapshot-$(date -u +%Y%m%dT%H%M%SZ).txt
+```
+
+#### Step 2 of 7 — Block egress to known C2 hosts
+
+CanisterWorm exfiltrates over HTTPS to `telemetry.api-monitor.com`, `143.198.237.25`, and multiple `*.raw.icp0.io` ICP canisters. Block at the host level before scanning.
+
+**Linux — iptables**
+
+```bash
+iptables -I OUTPUT -d 143.198.237.25 -j DROP
+iptables -I OUTPUT -p tcp --dport 443 -m string --algo bm --string "api-monitor.com" -j DROP
+iptables -I OUTPUT -p tcp --dport 443 -m string --algo bm --string "icp0.io" -j LOG --log-prefix "[CANISTERWORM-C2] "
+iptables -I OUTPUT -p tcp --dport 443 -m string --algo bm --string "icp0.io" -j DROP
+```
+
+**macOS — pf**
+
+```bash
+cat >/etc/pf.anchors/canisterworm <<'EOF'
+block drop out quick to 143.198.237.25
+block drop out quick proto tcp to any port 443 \
+  host { "telemetry.api-monitor.com", "cjn37-uyaaa-aaaac-qgnva-cai.raw.icp0.io", \
+         "tdtqy-oyaaa-aaaae-af2dq-cai.raw.icp0.io" }
+EOF
+echo 'anchor "canisterworm"' >> /etc/pf.conf
+echo 'load anchor "canisterworm" from "/etc/pf.anchors/canisterworm"' >> /etc/pf.conf
+pfctl -f /etc/pf.conf -e
+```
+
+**Windows — netsh advfirewall**
+
+```powershell
+netsh advfirewall firewall add rule name="CanisterWorm-C2-IP"     dir=out action=block remoteip=143.198.237.25
+# Domain-based blocking on Windows requires a WFP filter or upstream DNS sinkhole —
+# if your fleet uses a DNS RPZ, push telemetry.api-monitor.com, cjn37-uyaaa-aaaac-qgnva-cai.raw.icp0.io,
+# and tdtqy-oyaaa-aaaae-af2dq-cai.raw.icp0.io there.
+```
+
+#### Step 3 of 7 — Verify the CLI and run an authoritative scan
+
+`genie sec verify-install` must return exit `0` before you trust the binary. If it does not, see [§11.7](#117-escalation----unsafe-unverified).
+
+```bash
+# Exit 0 = signature + provenance both pass against the pinned identity.
+genie sec verify-install
+
+# Full scan, persisted JSON report, all home directories, filesystem root.
+# GENIE_SEC_SCAN_DISABLED must be unset for this call.
+unset GENIE_SEC_SCAN_DISABLED
+genie sec scan --all-homes --root / --json
+```
+
+Capture the `scan_id` from the output — every subsequent step references it.
+
+#### Step 4 of 7 — Generate a remediation plan, review, apply
+
+`genie sec remediate` is dry-run by default. Generate the plan, read it, then apply.
+
+```bash
+SCAN_ID=<paste-scan-id-from-step-3>
+
+# Dry run — materializes a frozen plan manifest.
+genie sec remediate --dry-run --scan-id "$SCAN_ID"
+
+# Review the plan: every action class is listed with the target and exit criteria.
+cat "$GENIE_HOME/sec-scan/$SCAN_ID/plan.json" | jq '.actions[] | {type, target, reason}'
+
+# Apply — typed per-action consent is required interactively.
+genie sec remediate --apply --plan "$GENIE_HOME/sec-scan/$SCAN_ID/plan.json"
+```
+
+If `--apply` aborts partway through, resume with:
+
+```bash
+genie sec remediate --resume "$GENIE_HOME/sec-scan/$SCAN_ID/resume.json"
+```
+
+If `--apply` completed but broke something, see [§11.6 Escalation — rollback](#116-escalation--rollback).
+
+#### Step 5 of 7 — Rotate credentials in priority order
+
+Any credential the host could read at install time was exfiltrated. Rotation = **revoke the old, issue the new**. Order matters.
+
+| # | Target | Rotate URL | Verification |
+|---|--------|------------|--------------|
+| 1 | npm token | <https://www.npmjs.com/settings/~/tokens> | `npm whoami` with new token |
+| 2 | GitHub PAT + gh CLI | <https://github.com/settings/tokens> | `gh auth status` |
+| 3 | AWS access keys | AWS IAM Console | `aws sts get-caller-identity` |
+| 4 | GCP | `gcloud auth revoke --all && gcloud auth login` | `gcloud auth list` |
+| 5 | Azure | `az logout && az login` + rotate service principals | `az account show` |
+| 6 | Kubernetes | Rotate service-account tokens + kubeconfig contexts | `kubectl auth whoami` |
+| 7 | Docker registries | <https://hub.docker.com/settings/security> (and ECR/GCR/GHCR) | `docker login <registry>` |
+| 8 | AI provider keys (Anthropic / OpenAI / Google) | Provider console | Audit billing last 72h |
+| 9 | Crypto wallets | New seed on a clean device; move funds | revoke.cash approvals audit |
+| 10 | TLS private keys on host | Re-issue via your CA | Verify cert chain on endpoint |
+
+`genie sec remediate --apply` emits a per-host rotation checklist at the end of its run; the table above is the fleet-level order across hosts.
+
+#### Step 6 of 7 — Rebuild image or restore from pre-compromise snapshot
+
+```bash
+# Preferred: restore from a snapshot/image predating 2026-04-21.
+zfs list -t snapshot | awk '$1 ~ /@2026-04-2[01]/'
+aws ec2 describe-snapshots --owner-ids self --filters Name=start-time,Values=2026-04-20*
+```
+
+If no clean snapshot exists: re-provision the host from a fresh image, install `@automagik/genie` from the current stable line, run `genie sec verify-install`, and restore workload state from your backup channel (not from the compromised host).
+
+#### Step 7 of 7 — Write the post-mortem
+
+Use the template in [§11.8 Post-mortem template](#118-post-mortem-template). Paste the `scan_id` from Step 3; the audit log under `$GENIE_SEC_AUDIT_LOG` contains the full action trail keyed off that id.
+
+### 11.4 LIKELY AFFECTED — purge → rescan → rotate
+
+**Preconditions:** `genie sec scan` returned `LIKELY AFFECTED`. Malicious versions were installed or cached. Postinstall execution cannot be ruled out, but no live process, persistence unit, or dropped payload was observed.
+
+#### Step 1 of 4 — Purge caches and installed packages
+
+```bash
+# bun cache — versions 4.260421.33 through 4.260421.40
+for v in 33 34 35 36 37 38 39 40; do
+  rm -rf ~/.bun/install/cache/@automagik/genie@4.260421.${v}@@@1
+  rm -rf ~/.cache/.bun/install/cache/@automagik/genie@4.260421.${v}@@@1
+done
+
+# pgserve — 1.1.11 through 1.1.14
+for v in 11 12 13 14; do
+  rm -rf ~/.bun/install/cache/pgserve@1.1.${v}@@@1
+  rm -rf ~/.cache/.bun/install/cache/pgserve@1.1.${v}@@@1
+done
+
+# Globally installed copies
+bun pm uninstall -g @automagik/genie pgserve 2>/dev/null || true
+npm uninstall -g @automagik/genie pgserve 2>/dev/null || true
+```
+
+#### Step 2 of 4 — Re-scan, confirm delta is empty
+
+```bash
+genie sec verify-install
+genie sec scan --all-homes --root "$PWD" --json > /tmp/rescan.json
+
+# Status MUST now be NO FINDINGS. If it still reports LIKELY AFFECTED:
+# a cache entry was missed. Re-run Step 1.
+jq -r '.status' /tmp/rescan.json
+```
+
+#### Step 3 of 4 — Install clean versions
+
+```bash
+bun install -g @automagik/genie@^4.260422.4
+bun install -g pgserve@^1.1.10
+```
+
+#### Step 4 of 4 — Rotate credentials that were live during the compromise window
+
+Rotate every credential that was **in environment or on disk between 2026-04-21 and 2026-04-22**. If you cannot bound the window, rotate everything in the [§11.3 Step 5 table](#step-5-of-7--rotate-credentials-in-priority-order).
+
+### 11.5 OBSERVED ONLY — clear → rescan
+
+**Preconditions:** `genie sec scan` returned `OBSERVED ONLY`. Only passive references (cache index without unpacked contents, lockfile entries, shell history) were found. No dropped payload, no persistence, no live process.
+
+#### Step 1 of 3 — Clear the referenced cache / history entries
+
+```bash
+# bun cache (even if empty manifests, clear the names)
+rm -rf ~/.bun/install/cache/@automagik/genie@4.260421.*@@@1
+rm -rf ~/.bun/install/cache/pgserve@1.1.1[1-4]@@@1
+
+# Shell history entries mentioning compromised versions
+for h in ~/.bash_history ~/.zsh_history; do
+  [ -f "$h" ] || continue
+  cp -a "$h" "${h}.pre-canisterworm.bak"
+  grep -vE 'genie@4\.260421\.(3[3-9]|40)|pgserve@1\.1\.(1[1-4])' "${h}.pre-canisterworm.bak" > "$h" || true
+done
+```
+
+#### Step 2 of 3 — Re-scan to confirm
+
+```bash
+genie sec scan --all-homes --root "$PWD" --json > /tmp/rescan.json
+# Expected: NO FINDINGS.
+jq -r '.status' /tmp/rescan.json
+```
+
+#### Step 3 of 3 — Do not rotate credentials yet
+
+`OBSERVED ONLY` means we have no evidence the postinstall script executed. **Skip credential rotation** unless later evidence (shell history showing an install + invoke, auditd `execve` of `node scripts/env-compat.cjs`, egress logs to a C2 host) surfaces. If any of those appears, re-classify as `LIKELY AFFECTED` and run §11.4.
+
+### 11.6 Escalation — rollback
+
+Use `genie sec rollback <scan_id>` when `genie sec remediate --apply` completed but broke something on the host. Rollback walks the audit log in reverse, restoring every quarantined item to its original path with sha256-verified content.
+
+**When to reach for this:** a service fails to start after remediation, a legitimate config file was quarantined, a dependency your application needs is gone. Rollback is safe — it only touches items the audit log recorded.
+
+```bash
+# Bulk rollback: walks $GENIE_SEC_AUDIT_LOG in reverse for this scan_id.
+genie sec rollback "$SCAN_ID"
+
+# Per-item: if you only need to restore a specific quarantine id.
+genie sec quarantine list
+genie sec restore <quarantine-id>
+```
+
+### 11.7 Escalation — `--unsafe-unverified`
+
+`genie sec remediate --apply` refuses to run unless `genie sec verify-install` returned exit `0`. The `--unsafe-unverified <INCIDENT_ID>` flag is the only documented escape hatch. Every invocation is written to `$GENIE_SEC_AUDIT_LOG` with the incident id, the typed ack, and the reason.
+
+#### When `--unsafe-unverified` is legitimate
+
+There are **three** contexts in which `--unsafe-unverified` is a correct operator choice.
+
+**Context 1 — Burned public key / burned signing identity**
+
+A Namastex security officer confirmed the cosign keyless identity is compromised (see [`docs/security/key-rotation.md`](../security/key-rotation.md)). `verify-install` returns exit `3` (signer-identity-mismatch). The host needs remediation now; rotation will take hours.
+
+```bash
+# Incident id MUST come from the pinned rotation issue; do not invent one.
+genie sec remediate --apply \
+  --plan "$GENIE_HOME/sec-scan/$SCAN_ID/plan.json" \
+  --unsafe-unverified "SIGNING_CERT_IDENTITY_20260423"
+# Typed ack prompt: I_ACKNOWLEDGE_UNSIGNED_GENIE_SIGNING_CERT_IDENTITY_20260423
+```
+
+Audit-log verification:
+
+```bash
+jq -r 'select(.event=="remediate.apply.start" and .unsafe_unverified != null)' \
+  "$GENIE_SEC_AUDIT_LOG"
+# Expect a single entry whose incident_id matches the rotation issue number.
+```
+
+**Context 2 — CI pre-signing period**
+
+The release channel is older than the `genie-supply-chain-signing` cutover and does not ship a signed tarball. `verify-install` returns exit `5` (no signature material found). Common during staged rollouts between `4.260423.x` and `4.260424.x`.
+
+```bash
+genie sec remediate --apply \
+  --plan "$GENIE_HOME/sec-scan/$SCAN_ID/plan.json" \
+  --unsafe-unverified "PRE_SIGNING_CHANNEL_260423"
+# Typed ack prompt: I_ACKNOWLEDGE_UNSIGNED_GENIE_PRE_SIGNING_CHANNEL_260423
+```
+
+**Context 3 — Integration test harness**
+
+`scripts/test-runbook.sh` and the CI workflow exercise `remediate --apply` against a fixture on an unsigned development tarball. The `INCIDENT_ID` is a fixed sentinel recognized by the harness.
+
+```bash
+genie sec remediate --apply \
+  --plan "$FIXTURE_DIR/plan.json" \
+  --unsafe-unverified "TEST_HARNESS_CANISTERWORM_FIXTURE" \
+  --auto-confirm-from "$FIXTURE_DIR/consent.json"
+# Typed ack prompt: I_ACKNOWLEDGE_UNSIGNED_GENIE_TEST_HARNESS_CANISTERWORM_FIXTURE
+```
+
+#### When `--unsafe-unverified` is NOT legitimate
+
+- **"It's faster."** The prompt is the point; verification is the contract.
+- **"The prompt is annoying."** See above.
+- **"I don't have the key locally."** There is no key — the signing identity is a three-value tuple (see [SECURITY.md § Release Signing](../../SECURITY.md#release-signingpinned-identity-cosign-keyless)). If `verify-install` exits `5`, use Context 2.
+- **"Our release channel is old."** Upgrade. If that is not possible right now, use Context 2 with the correct release-line identifier.
+
+Any `--unsafe-unverified` invocation whose incident id does not map to one of the three legitimate contexts is treated as an incident of its own by post-hoc review.
+
+### 11.8 Post-mortem template
+
+Copy the block below into your incident channel and fill in every field. The `scan_id` ties it to the persisted scan JSON, the audit log, and the remediation plan manifest.
+
+```markdown
+# Post-mortem: CanisterWorm exposure on <host or fleet scope>
+
+## Metadata
+- Scan id:          <paste from `genie sec scan --json`>
+- Scan bands hit:   LIKELY COMPROMISED / LIKELY AFFECTED / OBSERVED ONLY (delete two)
+- Detection time:   <ISO-8601 UTC>
+- Containment time: <ISO-8601 UTC>
+- Runbook branch:   §11.3 / §11.4 / §11.5
+
+## Exposure
+- Affected versions installed: <list @automagik/genie + pgserve versions>
+- Install method:              <bun / npm / CI / auto-update>
+- Window of exposure:          <from when the compromised version landed to when the host was contained>
+- Material at risk:            <paste `at-risk local material present on host` from scan report>
+
+## Actions taken
+- Scan report:   $GENIE_HOME/sec-scan/<scan_id>/report.json
+- Plan manifest: $GENIE_HOME/sec-scan/<scan_id>/plan.json
+- Audit log:     $GENIE_SEC_AUDIT_LOG (filter on scan_id)
+- Rollback used? yes / no (if yes, reason)
+- --unsafe-unverified used? yes / no (if yes, which legitimate context from §11.7)
+
+## Credential rotation
+- npm:        rotated at <time> · verified with `npm whoami`
+- GitHub:     rotated at <time> · verified with `gh auth status`
+- AWS:        rotated at <time> · verified with `aws sts get-caller-identity`
+- GCP:        rotated at <time>
+- Azure:      rotated at <time>
+- Kubernetes: rotated at <time>
+- Docker:     rotated at <time>
+- AI keys:    rotated at <time> · 72h billing audit clean? yes / no
+- Crypto:     wallets moved to new seed on clean device? yes / no / N/A
+- TLS:        certs re-issued? yes / no / N/A
+
+## Timeline
+- <ISO>  Scanner flagged host.
+- <ISO>  Egress blocked at perimeter.
+- <ISO>  `genie sec remediate --dry-run --scan-id ...` reviewed.
+- <ISO>  `genie sec remediate --apply ...` completed.
+- <ISO>  Credential rotation completed.
+- <ISO>  Host rebuilt / snapshot restored.
+- <ISO>  Re-scan returned NO FINDINGS.
+
+## Lessons learned
+- <what the compromise window cost>
+- <what would have shortened detection>
+- <what policy/tooling change lands this week>
+
+## Attachments
+- Process snapshot: /tmp/ps-snapshot-*.txt
+- Re-scan report:   /tmp/rescan.json
+- C2 egress logs:   <link>
+```
 
 ---
 
