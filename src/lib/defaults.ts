@@ -24,7 +24,7 @@ export const BUILTIN_DEFAULTS: AgentDefaults = {
   color: 'blue',
   effort: 'high',
   thinking: 'enabled',
-  permissionMode: 'bypassPermissions',
+  permissionMode: 'auto',
 };
 
 /** Type of the built-in defaults object. Runtime values can be any string (not just the defaults). */

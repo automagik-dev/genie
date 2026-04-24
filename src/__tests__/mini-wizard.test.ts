@@ -23,14 +23,14 @@ describe('formatDefaults()', () => {
 
     expect(output).toContain('model: opus');
     expect(output).toContain('built-in');
-    expect(output).toContain('permissionMode: bypassPermissions');
+    expect(output).toContain('permissionMode: auto');
   });
 
   test('shows workspace overrides', () => {
     const output = formatDefaults({ model: 'sonnet' });
 
     expect(output).toContain('model: sonnet');
-    expect(output).toContain('permissionMode: bypassPermissions');
+    expect(output).toContain('permissionMode: auto');
   });
 });
 

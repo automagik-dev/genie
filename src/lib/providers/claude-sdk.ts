@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { HookCallbackMatcher, Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { ensureTeammateBypassPermissions } from '../claude-settings.js';
+import { ensureClaudeSettingsSafe } from '../claude-settings.js';
 import type {
   Executor,
   ExecutorProvider,
@@ -150,8 +150,8 @@ export class ClaudeSdkProvider implements ExecutorProvider {
     extraOptions?: Partial<Options>,
     sdkConfig?: SdkDirectoryConfig,
   ): { messages: Query; abortController: AbortController } {
-    // Defense-in-depth: ensure Claude Code global settings allow bypass
-    ensureTeammateBypassPermissions();
+    // Defense-in-depth: ensure Claude Code global settings are safe/valid
+    ensureClaudeSettingsSafe();
 
     const abortController = new AbortController();
 
@@ -219,9 +219,9 @@ export class ClaudeSdkProvider implements ExecutorProvider {
       ...extraOptions,
       // Hooks are always merged, never overwritten
       ...(hasHooks && { hooks: mergedHooks }),
-      // MUST come last — SDK executor always bypasses permissions.
+      // MUST come last — SDK executor runs under auto permission mode by default.
       // No spread above may override these.
-      permissionMode: 'bypassPermissions',
+      permissionMode: 'auto',
       allowDangerouslySkipPermissions: true,
     };
 

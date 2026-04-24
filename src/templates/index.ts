@@ -90,7 +90,7 @@ promptMode: append
 color: cyan
 effort: high
 thinking: enabled
-permissionMode: bypassPermissions
+permissionMode: auto
 ---
 
 @HEARTBEAT.md

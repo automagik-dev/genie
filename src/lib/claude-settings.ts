@@ -48,19 +48,26 @@ export function removeHookScript(): void {
 }
 
 /**
- * Ensure `teammateMode` is set to `bypassPermissions` in ~/.claude/settings.json.
+ * Ensure ~/.claude/settings.json is in a safe, valid state for genie operation.
  *
- * CC's native team layer has a separate permission gate controlled by this global
- * setting. Without it, tool approvals route to the team lead — which is an AI agent
- * that can't approve, causing a deadlock. The per-session `--permission-mode` flag
- * is not sufficient when `teammateMode` is explicitly set to a restrictive value.
+ * Prior bug: the old `ensureTeammateBypassPermissions()` helper wrote
+ * `teammateMode: "bypassPermissions"` into settings.json, but `teammateMode` is
+ * CC's topology selector with valid values {auto, tmux, in-process}. Newer CC
+ * versions hard-reject the entire settings file when they encounter an invalid
+ * `teammateMode`, silently wiping the user's permissions, hooks, and plugins
+ * config. This function repairs any such stale value on existing installs.
  *
- * Also ensures `skipDangerousModePermissionPrompt` is true so agents spawned with
- * `--dangerously-skip-permissions` don't hit an interactive confirmation prompt.
+ * What this function does:
+ * - Repair: if `settings.teammateMode` is present and not a valid topology value
+ *   (auto | tmux | in-process), delete it so CC accepts the file again.
+ * - Keep: ensure `settings.skipDangerousModePermissionPrompt === true` so that
+ *   agents spawned with `--dangerously-skip-permissions` (manual/legacy path)
+ *   don't hit an interactive confirmation prompt.
+ * - Write back only if something changed.
  *
  * Idempotent — safe to call on every team setup.
  */
-export function ensureTeammateBypassPermissions(): void {
+export function ensureClaudeSettingsSafe(): void {
   const dir = join(homedir(), '.claude');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
@@ -73,9 +80,14 @@ export function ensureTeammateBypassPermissions(): void {
     }
   }
 
+  const validTopologyValues = new Set(['auto', 'tmux', 'in-process']);
+
   let changed = false;
-  if (settings.teammateMode !== 'bypassPermissions') {
-    settings.teammateMode = 'bypassPermissions';
+  // Repair: remove any invalid legacy teammateMode value written by older genie versions.
+  // We rebuild the object without the key so JSON.stringify won't emit it.
+  if ('teammateMode' in settings && !validTopologyValues.has(settings.teammateMode as string)) {
+    const { teammateMode: _removed, ...rest } = settings;
+    settings = rest;
     changed = true;
   }
   if (settings.skipDangerousModePermissionPrompt !== true) {

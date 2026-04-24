@@ -62,9 +62,9 @@ describe('buildClaudeCommand', () => {
     expect(cmd).toContain("GENIE_TEAM='genie'");
   });
 
-  test('includes --dangerously-skip-permissions', () => {
+  test('includes --permission-mode auto', () => {
     const cmd = buildClaudeCommand('genie');
-    expect(cmd).toContain('--dangerously-skip-permissions');
+    expect(cmd).toContain('--permission-mode auto');
   });
 
   test('sets GENIE_WORKER=1 to skip SessionStart hooks on spawn (#712)', () => {
