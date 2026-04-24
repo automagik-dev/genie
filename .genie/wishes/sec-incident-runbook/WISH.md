@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | DRAFT |
 | **Slug** | `sec-incident-runbook` |
 | **Date** | 2026-04-23 |
 | **Author** | Genie Council (split from sec-scan-progress monolith per reviewer verdict) |

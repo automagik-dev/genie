@@ -1,0 +1,12 @@
+{
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD033": false,
+    "MD036": false,
+    "MD040": false,
+    "MD041": false,
+    "MD060": false
+  },
+  "ignores": ["node_modules/**", "dist/**", ".well-known/**", "CHANGELOG.md", "report.md", ".genie/wishes/_archive/**"]
+}
