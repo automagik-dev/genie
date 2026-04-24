@@ -76,6 +76,46 @@ describe('sec scan command', () => {
     ]);
   });
 
+  test('buildSecScanArgv passes through Group 1 observability flags', () => {
+    expect(
+      buildSecScanArgv({
+        json: true,
+        noProgress: true,
+        quiet: true,
+        verbose: true,
+        progressJson: true,
+        progressInterval: '500',
+        eventsFile: '/tmp/evt.jsonl',
+        redact: true,
+        persist: false,
+        impactSurface: true,
+        phaseBudget: ['temp=3000', 'npm=5000'],
+      }),
+    ).toEqual([
+      '--json',
+      '--no-progress',
+      '--quiet',
+      '--verbose',
+      '--progress-json',
+      '--redact',
+      '--impact-surface',
+      '--phase-budget',
+      'temp=3000',
+      '--phase-budget',
+      'npm=5000',
+      '--progress-interval',
+      '500',
+      '--events-file',
+      '/tmp/evt.jsonl',
+      '--no-persist',
+    ]);
+  });
+
+  test('buildSecScanArgv defaults persist=true to no flag', () => {
+    expect(buildSecScanArgv({ json: true, persist: true })).toEqual(['--json']);
+    expect(buildSecScanArgv({ json: true })).toEqual(['--json']);
+  });
+
   test('resolveSecScanScript finds the packaged payload from dist layout', () => {
     const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), 'genie-sec-root-')));
     try {
