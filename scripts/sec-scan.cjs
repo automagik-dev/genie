@@ -1496,6 +1496,28 @@ function searchBufferForIocs(buffer) {
   return uniq(hits);
 }
 
+// An install finding is "hard evidence" only when the version matches the
+// compromised list OR a file hash matches a known malware hash. IOC-string
+// matches in file content are NOT hard evidence on their own — the scanner's
+// own source literally contains every IOC string as a detection pattern, so
+// scanning `@automagik/genie@<clean-version>` would always match itself
+// (the self-detection false positive fixed here).
+function hasHardInfectionEvidence(inspection) {
+  if (inspection.compromisedVersion) return true;
+  if (inspection.iocFileHashes.some((entry) => entry.knownMalwareHash === true)) return true;
+  return false;
+}
+
+// `@automagik/genie` is the scanner package itself. On CLEAN versions its
+// source files contain IOC strings as detection patterns — scanning its own
+// bytes therefore produces thousands of spurious `iocStrings` hits. Skip the
+// content walk entirely for clean versions of the scanner package.
+function shouldSkipContentWalk(packageName, version) {
+  if (packageName !== '@automagik/genie') return false;
+  if (!version) return false;
+  return !isTrackedCompromisedVersion(packageName, version);
+}
+
 function inspectPackageDirectory(packageDir) {
   const result = {
     path: packageDir,
@@ -1506,6 +1528,7 @@ function inspectPackageDirectory(packageDir) {
     iocFiles: [],
     iocFileHashes: [],
     iocStrings: [],
+    contentWalkSkipped: false,
   };
 
   const packageJsonPath = join(packageDir, 'package.json');
@@ -1538,6 +1561,11 @@ function inspectPackageDirectory(packageDir) {
       knownMalwareHash:
         typeof MALWARE_FILE_HASHES[relativeSuffix] === 'string' && MALWARE_FILE_HASHES[relativeSuffix] === fileHash,
     });
+  }
+
+  if (shouldSkipContentWalk(result.packageName, result.version)) {
+    result.contentWalkSkipped = true;
+    return result;
   }
 
   const stack = [packageDir];
@@ -1968,7 +1996,7 @@ function scanBunCache(homePath, report) {
     if (!safeExists(bunGlobal)) continue;
 
     const inspection = inspectPackageDirectory(bunGlobal);
-    if (inspection.compromisedVersion || inspection.iocFiles.length > 0 || inspection.iocStrings.length > 0) {
+    if (hasHardInfectionEvidence(inspection)) {
       const finding = {
         kind: 'bun-global',
         home: homePath,
@@ -2017,9 +2045,7 @@ function scanGlobalInstallCandidates(homes, report) {
 
     for (const candidate of findTrackedPackageDirs(nodeModulesPath)) {
       const inspection = inspectPackageDirectory(candidate);
-      if (!inspection.compromisedVersion && inspection.iocFiles.length === 0 && inspection.iocStrings.length === 0) {
-        continue;
-      }
+      if (!hasHardInfectionEvidence(inspection)) continue;
 
       const finding = {
         kind: 'global-install',
@@ -2178,9 +2204,7 @@ function scanProjectRoots(roots, report, runtime) {
     (nodeModulesPath) => {
       for (const packageDir of findTrackedPackageDirs(nodeModulesPath)) {
         const inspection = inspectPackageDirectory(packageDir);
-        if (!inspection.compromisedVersion && inspection.iocFiles.length === 0 && inspection.iocStrings.length === 0) {
-          continue;
-        }
+        if (!hasHardInfectionEvidence(inspection)) continue;
 
         const finding = {
           kind: 'local-install',
@@ -2825,19 +2849,27 @@ function scanLiveProcesses(report) {
     if (!match) continue;
 
     const [, pid, ppid, user, elapsed, command] = match;
+
+    // Self-exclusion: the running scanner process itself always matches
+    // `exec:@automagik/genie` in its own cmdline. Ignore it.
+    if (command.includes('sec-scan.cjs') || command.includes('/sec-scan ')) continue;
+
     const indicators = collectTextIndicators(command);
     const namedHits = collectNamedArtifactHits(command);
     const matchedInstallPaths = suspectPaths.filter((path) => command.includes(path));
 
-    const isStrongHit =
+    // Hard evidence requires either an actual compromised version token in
+    // the cmdline OR an IOC string hit OR a network-IOC command. Pure name
+    // matches (e.g. `pgserve@1.1.10` where 1.1.10 is CLEAN) are NOT compromise
+    // evidence — they only tell us the package is running, which is normal.
+    const hasHardEvidence =
       indicators.iocMatches.length > 0 ||
-      indicators.executionCommands.length > 0 ||
       indicators.networkCommands.length > 0 ||
       indicators.versions.length > 0 ||
-      namedHits.length > 0 ||
       matchedInstallPaths.length > 0;
 
-    if (!isStrongHit) continue;
+    const hasWeakHit = hasHardEvidence || indicators.executionCommands.length > 0 || namedHits.length > 0;
+    if (!hasWeakHit) continue;
 
     report.liveProcessFindings.push({
       pid: Number(pid),
@@ -2851,13 +2883,16 @@ function scanLiveProcesses(report) {
       executionCommands: indicators.executionCommands,
       networkCommands: indicators.networkCommands,
       nameMatches: namedHits,
+      hardEvidence: hasHardEvidence,
     });
 
     addTimeline(report, {
       time: null,
       category: 'live-process',
-      severity: 'compromised',
-      summary: `live process ${pid} matches suspicious package execution indicators`,
+      severity: hasHardEvidence ? 'compromised' : 'observed',
+      summary: hasHardEvidence
+        ? `live process ${pid} matches suspicious package execution indicators`
+        : `live process ${pid} running tracked package name (clean or unversioned) — informational`,
       path: command,
     });
   }
@@ -2943,7 +2978,8 @@ function summarize(report) {
   if (strongTempEvidence > 0) {
     compromiseReasons.push('temp or cache directories retain dropped env-compat artifacts or IOC strings');
   }
-  if (report.liveProcessFindings.length > 0) {
+  const hardEvidenceProcesses = report.liveProcessFindings.filter((entry) => entry.hardEvidence);
+  if (hardEvidenceProcesses.length > 0) {
     compromiseReasons.push('live processes match suspicious package execution indicators');
   }
   if (report.pythonPthFindings.length > 0) {
@@ -2983,7 +3019,7 @@ function summarize(report) {
   suspicionScore += Math.min(strongProfileEvidence * 20, 40);
   suspicionScore += Math.min(executionHistoryEvidence * 20, 40);
   suspicionScore += Math.min(strongTempEvidence * 20, 40);
-  suspicionScore += Math.min(report.liveProcessFindings.length * 25, 50);
+  suspicionScore += Math.min(hardEvidenceProcesses.length * 25, 50);
   suspicionScore += Math.min(report.pythonPthFindings.length * 25, 50);
   suspicionScore += Math.min(report.installFindings.length * 12, 24);
   suspicionScore += Math.min(report.npmTarballFetches.length * 8, 24);
