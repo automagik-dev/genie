@@ -992,3 +992,255 @@ describe('sec-scan SIGINT chaos', () => {
     expect(state.phases[0].elapsed_ms).toBe(120);
   });
 });
+
+// ---------------------------------------------------------------------------
+// sec-scan-temp-hang-hotfix coverage
+// ---------------------------------------------------------------------------
+
+describe('sec-scan-temp-hang-hotfix — collectTempRoots overreach closure', () => {
+  test('drops ~/.npm, ~/.bun, ~/.cache, ~/.npm/_npx from top-level roots', () => {
+    const home = mkdtempSync(join(tmpdir(), 'sec-scan-roots-'));
+    try {
+      mkdirSync(join(home, '.npm'));
+      mkdirSync(join(home, '.npm', '_npx'), { recursive: true });
+      mkdirSync(join(home, '.bun'));
+      mkdirSync(join(home, '.cache'));
+      mkdirSync(join(home, 'Library', 'Caches'), { recursive: true });
+      const roots = scanner.collectTempRoots(
+        { platform: 'linux', arch: 'x64', release: '1', user: 'u', isWSL: false, runtime: 'node' },
+        [home],
+        [],
+      );
+      for (const forbidden of ['.npm', '.bun', '.cache']) {
+        expect(roots.some((r: string) => r === join(home, forbidden))).toBe(false);
+      }
+      expect(roots.some((r: string) => r === join(home, '.npm', '_npx'))).toBe(false);
+      // Library/Caches stays (macOS cross-platform compatibility; tempRoots
+      // filters by existence, so on Linux it's a no-op unless created).
+      expect(roots.some((r: string) => r === join(home, 'Library', 'Caches'))).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sec-scan-temp-hang-hotfix — size-ceiling bypass closure', () => {
+  test('name-matching oversized file is flagged but NOT read into memory', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sec-scan-size-'));
+    try {
+      // Use a name that matches TEMP_ARTIFACT_NAME_REGEX — env-compat.cjs.
+      const decoyPath = join(tempRoot, 'env-compat.cjs');
+      // 6 MiB is just above the 5 MiB MAX_TEMP_CONTENT_SCAN_SIZE ceiling.
+      const bigContent = Buffer.alloc(6 * 1024 * 1024, 0x00);
+      writeFileSync(decoyPath, bigContent);
+
+      const report: Record<string, any> = { tempArtifactFindings: [], timeline: [] };
+      if (global.gc) global.gc();
+      const heapBefore = process.memoryUsage().heapUsed;
+      const result = scanner.inspectTempFileSync(decoyPath, report);
+      const heapAfter = process.memoryUsage().heapUsed;
+
+      expect(result.skipped).toBe(true);
+      expect(result.bytesRead).toBe(0);
+      expect(report.tempArtifactFindings).toHaveLength(1);
+      expect(report.tempArtifactFindings[0].path).toBe(decoyPath);
+      expect(report.tempArtifactFindings[0].size_capped_not_hashed).toBe(true);
+      expect(report.tempArtifactFindings[0].sha256).toBeNull();
+      expect(report.tempArtifactFindings[0].nameMatches).toContain('env-compat.cjs');
+      // Heap delta must be tiny — we must NOT have allocated the 6 MiB file.
+      expect(heapAfter - heapBefore).toBeLessThan(2 * 1024 * 1024);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('oversized file without name match is silently skipped (no finding, no read)', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sec-scan-size-'));
+    try {
+      const innocuousPath = join(tempRoot, 'boring-6mb.log');
+      writeFileSync(innocuousPath, Buffer.alloc(6 * 1024 * 1024, 0x41));
+      const report: Record<string, any> = { tempArtifactFindings: [], timeline: [] };
+      const result = scanner.inspectTempFileSync(innocuousPath, report);
+      expect(result.skipped).toBe(true);
+      expect(result.bytesRead).toBe(0);
+      expect(report.tempArtifactFindings).toHaveLength(0);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sec-scan-temp-hang-hotfix — phase budgets + event-loop yield', () => {
+  function buildPendingFiles(
+    count: number,
+    mkFile: (path: string, idx: number) => void,
+  ): { dir: string; files: string[] } {
+    const dir = mkdtempSync(join(tmpdir(), 'sec-scan-queue-'));
+    const files: string[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const p = join(dir, `f-${i}.log`);
+      mkFile(p, i);
+      files.push(p);
+    }
+    return { dir, files };
+  }
+
+  test('processTempArtifactQueue yields to the event loop every 128 files', async () => {
+    const { dir, files } = buildPendingFiles(512, (p, i) => writeFileSync(p, `entry-${i}`));
+    try {
+      const runtime = scanner.createRuntime({
+        options: scanner.parseArgs(['node', 'sec-scan.cjs', '--no-progress']),
+        clock: makeClock(),
+        platformInfo: scanner.detectPlatform(),
+        argv: ['node', 'sec-scan.cjs'],
+        scannerVersion: '0.0.0',
+        stderr: makeFakeStream(),
+        randomBytesProvider: deterministicRandom(),
+      });
+      runtime.startPhase('scanTempArtifacts');
+      const report: Record<string, any> = { tempArtifactFindings: [], timeline: [] };
+
+      let immediateTicks = 0;
+      const interval = setInterval(() => {
+        immediateTicks += 1;
+      }, 0);
+      try {
+        await scanner.processTempArtifactQueue(files, report, runtime);
+      } finally {
+        clearInterval(interval);
+      }
+      runtime.endPhase('scanTempArtifacts');
+      expect(immediateTicks).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('files_budget breach records phase.cap_hit event', async () => {
+    const { dir, files } = buildPendingFiles(30, (p, i) => writeFileSync(p, `x${i}`));
+    try {
+      const runtime = scanner.createRuntime({
+        options: scanner.parseArgs([
+          'node',
+          'sec-scan.cjs',
+          '--no-progress',
+          '--phase-budget',
+          'scanTempArtifacts.files=5',
+        ]),
+        clock: makeClock(),
+        platformInfo: scanner.detectPlatform(),
+        argv: ['node', 'sec-scan.cjs'],
+        scannerVersion: '0.0.0',
+        stderr: makeFakeStream(),
+        randomBytesProvider: deterministicRandom(),
+      });
+      runtime.startPhase('scanTempArtifacts');
+      const report: Record<string, any> = { tempArtifactFindings: [], timeline: [] };
+      const result = await scanner.processTempArtifactQueue(files, report, runtime);
+      runtime.endPhase('scanTempArtifacts');
+      const state = runtime.finish();
+      const capHit = state.capEvents.find(
+        (e: Record<string, any>) => e.kind === 'phase.cap_hit' && e.reason === 'files_budget',
+      );
+      expect(capHit).toBeDefined();
+      expect(capHit.limit).toBe(5);
+      expect(capHit.entries_processed).toBeGreaterThanOrEqual(5);
+      expect(result.filesProcessed).toBeGreaterThanOrEqual(5);
+      // Break on the budget — we must NOT drain the whole queue.
+      expect(result.filesProcessed).toBeLessThan(30);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('bytes_budget breach records phase.cap_hit event', async () => {
+    // 10 x 100 KiB = 1 MiB total; budget = 200 KiB forces an early break.
+    const { dir, files } = buildPendingFiles(10, (p) => writeFileSync(p, Buffer.alloc(100 * 1024, 0x41)));
+    try {
+      const runtime = scanner.createRuntime({
+        options: scanner.parseArgs([
+          'node',
+          'sec-scan.cjs',
+          '--no-progress',
+          '--phase-budget',
+          `scanTempArtifacts.bytes=${200 * 1024}`,
+        ]),
+        clock: makeClock(),
+        platformInfo: scanner.detectPlatform(),
+        argv: ['node', 'sec-scan.cjs'],
+        scannerVersion: '0.0.0',
+        stderr: makeFakeStream(),
+        randomBytesProvider: deterministicRandom(),
+      });
+      runtime.startPhase('scanTempArtifacts');
+      const report: Record<string, any> = { tempArtifactFindings: [], timeline: [] };
+      await scanner.processTempArtifactQueue(files, report, runtime);
+      runtime.endPhase('scanTempArtifacts');
+      const state = runtime.finish();
+      const capHit = state.capEvents.find(
+        (e: Record<string, any>) => e.kind === 'phase.cap_hit' && e.reason === 'bytes_budget',
+      );
+      expect(capHit).toBeDefined();
+      expect(capHit.limit).toBe(200 * 1024);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('interrupt mid-scan stops processing within the next yield boundary', async () => {
+    const { dir, files } = buildPendingFiles(400, (p, i) => writeFileSync(p, `x${i}`));
+    try {
+      const runtime = scanner.createRuntime({
+        options: scanner.parseArgs(['node', 'sec-scan.cjs', '--no-progress']),
+        clock: makeClock(),
+        platformInfo: scanner.detectPlatform(),
+        argv: ['node', 'sec-scan.cjs'],
+        scannerVersion: '0.0.0',
+        stderr: makeFakeStream(),
+        randomBytesProvider: deterministicRandom(),
+      });
+      runtime.startPhase('scanTempArtifacts');
+      const report: Record<string, any> = { tempArtifactFindings: [], timeline: [] };
+      setImmediate(() => runtime.markInterrupted('signal:SIGINT'));
+      const start = Date.now();
+      const result = await scanner.processTempArtifactQueue(files, report, runtime);
+      const elapsed = Date.now() - start;
+      runtime.endPhase('scanTempArtifacts');
+      expect(runtime.isInterrupted()).toBe(true);
+      expect(elapsed).toBeLessThan(500);
+      // We must have broken before draining the full 400-file queue.
+      expect(result.filesProcessed).toBeLessThan(400);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('sec-scan-temp-hang-hotfix — runPhase awaits async handlers', () => {
+  test('runPhase awaits a Promise-returning phase fn', async () => {
+    const runtime = scanner.createRuntime({
+      options: scanner.parseArgs(['node', 'sec-scan.cjs', '--no-progress']),
+      clock: makeClock(),
+      platformInfo: scanner.detectPlatform(),
+      argv: ['node', 'sec-scan.cjs'],
+      scannerVersion: '0.0.0',
+      stderr: makeFakeStream(),
+      randomBytesProvider: deterministicRandom(),
+    });
+    let completed = false;
+    await scanner.runPhase(
+      runtime,
+      'test',
+      'scope',
+      'path',
+      async () => {
+        await new Promise((resolveP) => setImmediate(resolveP));
+        completed = true;
+      },
+      { errors: [] },
+    );
+    expect(completed).toBe(true);
+    const state = runtime.finish();
+    expect(state.phases[0].id).toBe('test');
+  });
+});
