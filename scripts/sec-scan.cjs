@@ -2660,6 +2660,229 @@ function scanImpactSurface(homes, roots, report, runtime) {
   report.impactSurfaceFindings = uniq(findings.map((entry) => JSON.stringify(entry))).map((entry) => JSON.parse(entry));
 }
 
+// ---------------------------------------------------------------------------
+// Breach-impact analysis — retrace the known CanisterWorm payload behavior
+// against what actually exists on this host.
+//
+// The `env-compat.cjs` payload is a postinstall script that runs under the
+// installing user's identity. Public research + the IOC strings the scanner
+// already matches (TEL_ENDPOINT, ICP_CANISTER_ID, pkg-telemetry, AES-256-CBC,
+// RSA-OAEP-SHA256, pypi-pth-exfil, etc.) give us a concrete list of targets:
+//
+//   1. Environment variables visible to `npm run postinstall` at install
+//      time (anything in process.env when `env-compat.cjs` executed). The
+//      scanner cannot read historical env state, but install-time env for
+//      shells is commonly .env files + shell profiles.
+//   2. Credential files under $HOME that the install-user could read.
+//   3. Browser login-data / cookie stores (chrome/brave/edge/chromium).
+//   4. Crypto wallets.
+//   5. SSH keys + known_hosts (for lateral movement).
+//   6. Session tokens in ~/.config/gh and ~/.config/gcloud and ~/.aws.
+//
+// This phase correlates the scanner's own impactSurfaceFindings (what EXISTS
+// on this host) with the known CanisterWorm targeting to produce
+// `breachImpact.likelyStolen` — a structured, actionable checklist for
+// credential rotation rather than a generic "rotate your tokens" line.
+//
+// Only fires if hard compromise evidence is present; otherwise the host is
+// not believed to have been exposed and we emit an empty/disabled report.
+// ---------------------------------------------------------------------------
+
+const CANISTERWORM_TARGETS = [
+  // Package registry tokens — highest priority (full supply-chain impact).
+  {
+    match: /(^|\/)\.npmrc$/,
+    category: 'npm-token',
+    severity: 'CRITICAL',
+    rotationUrl: 'https://www.npmjs.com/settings/~/tokens',
+    reason: 'env-compat.cjs reads ~/.npmrc to exfil auth tokens; compromised npm publish rights = supply-chain risk',
+  },
+  {
+    match: /\.config\/gh\/hosts\.yml$/,
+    category: 'github-pat',
+    severity: 'CRITICAL',
+    rotationUrl: 'https://github.com/settings/tokens',
+    reason:
+      'gh CLI tokens grant repo + workflow-secrets access; public research shows exfil to telemetry.api-monitor.com',
+  },
+  // Cloud IAM — infrastructure access.
+  {
+    match: /\.aws\/(credentials|config)$/,
+    category: 'aws-iam',
+    severity: 'CRITICAL',
+    rotationUrl: 'https://console.aws.amazon.com/iam/home#/security_credentials',
+    reason: 'AWS access keys enable infrastructure takeover',
+  },
+  {
+    match: /\.config\/gcloud\/(application_default_credentials|access_tokens)/,
+    category: 'gcp-iam',
+    severity: 'CRITICAL',
+    rotationUrl: 'https://console.cloud.google.com/iam-admin/serviceaccounts',
+    reason: 'GCP application-default credentials / access tokens enable project takeover',
+  },
+  {
+    match: /\.azure\//,
+    category: 'azure-iam',
+    severity: 'CRITICAL',
+    rotationUrl: 'https://portal.azure.com/#view/Microsoft_AAD_IAM/ActiveDirectoryMenuBlade/~/Overview',
+    reason: 'Azure CLI refresh tokens enable subscription access',
+  },
+  // AI provider keys (the payload specifically targets these per pkg-telemetry).
+  {
+    match: /(^|\/)\.env(\.|$)/,
+    category: 'dotenv',
+    severity: 'CRITICAL',
+    rotationUrl: null,
+    reason: 'env-compat.cjs reads .env files for ANTHROPIC_API_KEY / OPENAI_API_KEY / custom secrets',
+  },
+  // SSH — lateral movement.
+  {
+    match: /\.ssh\/(id_rsa|id_ed25519|id_ecdsa|config|known_hosts)/,
+    category: 'ssh-key',
+    severity: 'HIGH',
+    rotationUrl: null,
+    reason: 'SSH private keys + known_hosts enable lateral movement to other hosts',
+  },
+  // Browser login data — session cookies, stored passwords.
+  {
+    match:
+      /(Application Support|\.config)\/(Google\/Chrome|Chromium|BraveSoftware|Microsoft Edge)\/(Default|Profile\s*\d+)\/?/i,
+    category: 'browser-session',
+    severity: 'HIGH',
+    rotationUrl: null,
+    reason: 'browser Login Data + Cookies files contain session tokens that bypass 2FA on re-use',
+  },
+  // Crypto wallets.
+  {
+    match: /(Application Support|\.local\/share|\.config)\/(Ledger Live|Exodus|Electrum|MetaMask)/i,
+    category: 'crypto-wallet',
+    severity: 'CRITICAL',
+    rotationUrl: null,
+    reason: 'crypto wallet data allows direct fund theft if keystore passphrase is also captured',
+  },
+];
+
+function classifyCanisterWormTarget(path) {
+  for (const target of CANISTERWORM_TARGETS) {
+    if (target.match.test(path)) return target;
+  }
+  return null;
+}
+
+function hasHardCompromiseEvidence(report) {
+  if ((report.installFindings || []).length > 0) return true;
+  if ((report.bunCacheFindings || []).length > 0) return true;
+  if ((report.npmTarballFetches || []).length > 0) return true;
+  // Any temp-artifact with known malware hash.
+  for (const entry of report.tempArtifactFindings || []) {
+    if (entry.knownMalwareHash) return true;
+    if ((entry.iocMatches || []).length > 0) return true;
+  }
+  return false;
+}
+
+function scanBreachImpact(report) {
+  const hasEvidence = hasHardCompromiseEvidence(report);
+  const breachImpact = {
+    enabled: hasEvidence,
+    exfilChannel: {
+      host: 'telemetry.api-monitor.com',
+      paths: ['/v1/telemetry', '/v1/drop'],
+      observed: false,
+    },
+    compromiseWindow: null,
+    likelyStolen: [],
+    compromisedInstallPaths: [],
+    runningProcessesDuringWindow: [],
+    rotationChecklist: [],
+  };
+
+  if (!hasEvidence) {
+    report.breachImpact = breachImpact;
+    return;
+  }
+
+  // Determine compromise window from evidence timestamps.
+  const evidenceTimes = [];
+  for (const entry of report.installFindings || []) {
+    const t = entry.modifiedAt || null;
+    if (t) evidenceTimes.push(Date.parse(t));
+    breachImpact.compromisedInstallPaths.push(entry.path);
+  }
+  for (const entry of report.bunCacheFindings || []) {
+    const t = entry.modifiedAt || null;
+    if (t) evidenceTimes.push(Date.parse(t));
+  }
+  for (const entry of report.npmTarballFetches || []) {
+    const t = entry.time || entry.cacheRecordTime || null;
+    if (t) evidenceTimes.push(Date.parse(t));
+  }
+  const validTimes = evidenceTimes.filter((t) => Number.isFinite(t) && t > 0);
+  if (validTimes.length > 0) {
+    breachImpact.compromiseWindow = {
+      firstEvidence: new Date(Math.min(...validTimes)).toISOString(),
+      lastEvidence: new Date(Math.max(...validTimes)).toISOString(),
+    };
+  }
+
+  // Cross-reference impact-surface findings against known CanisterWorm targets.
+  // Every match is a credential the payload, running as the installing user,
+  // had read access to during the compromise window.
+  for (const entry of report.impactSurfaceFindings || []) {
+    const target = classifyCanisterWormTarget(entry.path);
+    if (!target) continue;
+    breachImpact.likelyStolen.push({
+      category: target.category,
+      severity: target.severity,
+      path: entry.path,
+      reason: target.reason,
+      rotationUrl: target.rotationUrl,
+    });
+  }
+
+  // Also include .env files discovered in scanImpactSurface (they're in
+  // impactSurfaceFindings with kind='secret-store').
+  for (const entry of report.impactSurfaceFindings || []) {
+    if (entry.kind !== 'secret-store') continue;
+    if (breachImpact.likelyStolen.some((s) => s.path === entry.path)) continue;
+    const target = classifyCanisterWormTarget(entry.path);
+    if (target) continue; // already classified above
+    breachImpact.likelyStolen.push({
+      category: 'dotenv',
+      severity: 'CRITICAL',
+      path: entry.path,
+      reason: 'env-compat.cjs reads .env files for API keys (ANTHROPIC, OPENAI, custom secrets)',
+      rotationUrl: null,
+    });
+  }
+
+  // Correlate live processes with the compromise window: any process whose
+  // elapsed time overlaps the window and which was spawned by the compromised
+  // install path is part of the breach footprint.
+  for (const entry of report.liveProcessFindings || []) {
+    if (!entry.matchedInstallPaths || entry.matchedInstallPaths.length === 0) continue;
+    breachImpact.runningProcessesDuringWindow.push({
+      pid: entry.pid,
+      elapsed: entry.elapsed,
+      command: (entry.command || '').slice(0, 160),
+    });
+  }
+
+  // Build a priority-sorted rotation checklist (deduped by category).
+  const severityRank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+  const byCategory = new Map();
+  for (const item of breachImpact.likelyStolen) {
+    const existing = byCategory.get(item.category);
+    if (!existing) byCategory.set(item.category, { ...item, paths: [item.path] });
+    else existing.paths.push(item.path);
+  }
+  breachImpact.rotationChecklist = [...byCategory.values()].sort(
+    (a, b) => (severityRank[a.severity] ?? 99) - (severityRank[b.severity] ?? 99),
+  );
+
+  report.breachImpact = breachImpact;
+}
+
 function collectTempRoots(platformInfo, homes, roots) {
   const tempRoots = new Set();
 
@@ -3380,6 +3603,35 @@ function printHumanReport(report) {
     }
   }
 
+  const breach = report.breachImpact || { enabled: false };
+  if (breach.enabled && (breach.likelyStolen || []).length > 0) {
+    console.log('');
+    console.log('BREACH IMPACT — retracing CanisterWorm exfil behavior against this host:');
+    if (breach.compromiseWindow) {
+      console.log(
+        `  compromise window: ${breach.compromiseWindow.firstEvidence} .. ${breach.compromiseWindow.lastEvidence}`,
+      );
+    }
+    console.log(
+      `  exfil channel: ${breach.exfilChannel.host} ${breach.exfilChannel.paths.join(', ')}${breach.exfilChannel.observed ? '  (observed)' : '  (not observed in logs — channel targeting only)'}`,
+    );
+    console.log('');
+    console.log('  likely-stolen credentials (grouped, priority-sorted):');
+    for (const item of breach.rotationChecklist || []) {
+      console.log(`  [${item.severity}] ${item.category}`);
+      for (const p of item.paths || []) console.log(`    path: ${p}`);
+      console.log(`    why:  ${item.reason}`);
+      if (item.rotationUrl) console.log(`    rotate at: ${item.rotationUrl}`);
+    }
+    if ((breach.runningProcessesDuringWindow || []).length > 0) {
+      console.log('');
+      console.log('  processes that ran the compromised binary:');
+      for (const proc of breach.runningProcessesDuringWindow) {
+        console.log(`    pid=${proc.pid} elapsed=${proc.elapsed} cmd=${proc.command}`);
+      }
+    }
+  }
+
   if (report.npmCacheMetadata.length > 0) {
     console.log('');
     console.log('npm cache metadata observations:');
@@ -3544,6 +3796,7 @@ async function main() {
     tempArtifactFindings: [],
     liveProcessFindings: [],
     impactSurfaceFindings: [],
+    breachImpact: { enabled: false, likelyStolen: [], rotationChecklist: [] },
     timeline: [],
     errors: [],
   };
@@ -3640,6 +3893,14 @@ async function main() {
     'live-processes',
     '(process table)',
     () => scanLiveProcesses(report),
+    report,
+  );
+  await runPhase(
+    runtime,
+    'scanBreachImpact',
+    'breach-impact',
+    '(breach analysis)',
+    () => scanBreachImpact(report),
     report,
   );
 
