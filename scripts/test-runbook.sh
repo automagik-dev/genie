@@ -445,7 +445,22 @@ if [ ! -s "${scan_out}" ]; then
 fi
 ok "initial scan ran (exit ${scan_exit})"
 
-if ! grep -qE '4\.260421\.(3[3-9]|40)' "${scan_out}"; then
+findings_slice_initial="${TMP_DIR}/scan-1-findings.json"
+if command -v jq >/dev/null 2>&1; then
+  if ! jq '{
+    findings: (.findings // []),
+    installFindings: (.installFindings // []),
+    npmCacheMetadata: (.npmCacheMetadata // []),
+    bunCacheFindings: (.bunCacheFindings // []),
+    npmTarballFetches: (.npmTarballFetches // [])
+  }' "${scan_out}" > "${findings_slice_initial}" 2>/dev/null; then
+    cp "${scan_out}" "${findings_slice_initial}"
+  fi
+else
+  sed -E 's/"trackedPackages":\[[^]]*\]//g; s/"compromiseWindow":"[^"]*"//g' "${scan_out}" > "${findings_slice_initial}"
+fi
+
+if ! grep -qE '4\.260421\.(3[3-9]|40)' "${findings_slice_initial}"; then
   warn "initial scan did not surface the seeded fixture — fixture paths may have changed"
 fi
 
@@ -475,7 +490,39 @@ ok "re-scan ran"
 # We do not assert a specific status string because the scanner's band names
 # may evolve; we assert that the re-scan did not re-surface the seeded cache
 # entries. That's the load-bearing property of the LIKELY AFFECTED recipe.
-if grep -qE '4\.260421\.(3[3-9]|40)|pgserve@1\.1\.1[1-4]' "${scan2_out}"; then
+#
+# IMPORTANT: scan a finding-scoped slice, not the whole JSON. The envelope
+# header carries a `trackedPackages` list of compromised versions (literally
+# the scanner's detection database) plus a `compromiseWindow` timestamp band.
+# A naive grep over the full JSON matches those and falsely reports residue
+# even when every findings array is empty.
+findings_slice="${TMP_DIR}/scan-2-findings.json"
+if command -v jq >/dev/null 2>&1; then
+  if ! jq '{
+    findings: (.findings // []),
+    installFindings: (.installFindings // []),
+    npmCacheMetadata: (.npmCacheMetadata // []),
+    npmTarballFetches: (.npmTarballFetches // []),
+    bunCacheFindings: (.bunCacheFindings // []),
+    lockfileFindings: (.lockfileFindings // []),
+    npmLogHits: (.npmLogHits // []),
+    shellProfileFindings: (.shellProfileFindings // []),
+    shellHistoryFindings: (.shellHistoryFindings // []),
+    persistenceFindings: (.persistenceFindings // []),
+    pythonPthFindings: (.pythonPthFindings // []),
+    tempArtifactFindings: (.tempArtifactFindings // []),
+    liveProcessFindings: (.liveProcessFindings // []),
+    impactSurfaceFindings: (.impactSurfaceFindings // [])
+  }' "${scan2_out}" > "${findings_slice}" 2>/dev/null; then
+    cp "${scan2_out}" "${findings_slice}"
+  fi
+else
+  # jq unavailable — fall back to the whole file but strip the envelope's
+  # trackedPackages + compromiseWindow keys before grep.
+  sed -E 's/"trackedPackages":\[[^]]*\]//g; s/"compromiseWindow":"[^"]*"//g' "${scan2_out}" > "${findings_slice}"
+fi
+
+if grep -qE '4\.260421\.(3[3-9]|40)|pgserve@1\.1\.1[1-4]' "${findings_slice}"; then
   err "re-scan still references compromised versions — purge did not cover the sandbox layout"
   exit 2
 fi
