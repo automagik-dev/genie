@@ -436,7 +436,7 @@ fi
 # Step 1: scan — expect findings (the cache entries match compromised versions).
 scan_out="${TMP_DIR}/scan-1.json"
 set +e
-timeout 600 "${BUN_BIN}" "${SCAN_SCRIPT}" --json --home "${SANDBOX_HOME}" --root "${SANDBOX_HOME}" > "${scan_out}" 2>&1
+timeout 600 "${BUN_BIN}" "${SCAN_SCRIPT}" --json --no-progress --home "${SANDBOX_HOME}" --root "${SANDBOX_HOME}" > "${scan_out}" 2>"${scan_out}.stderr.log"
 scan_exit=$?
 set -e
 if [ ! -s "${scan_out}" ]; then
@@ -475,11 +475,26 @@ for v in 11 12 13 14; do
 done
 ok "purged compromised cache entries"
 
+# Step 2b: remove every intermediate scan JSON under TMP_DIR. TMP_DIR lives
+# at /tmp/runbook-test.XXX (via mktemp), and the scanner walks /tmp as a
+# hardcoded temp root. scan-1.json AND scan-1-findings.json (the jq slice
+# from step 1) both contain compromised version strings inside their
+# findings arrays — if we leave them on disk, the re-scan walks them and
+# pushes their contents back into tempArtifactFindings, causing a
+# scan-of-its-own-prior-output loop.
+rm -f "${scan_out}" "${findings_slice_initial}"
+
+# Redirect scan-2 output into the sandbox (not /tmp) so the re-scan doesn't
+# walk itself either. Belt-and-suspenders in case someone wraps the test to
+# re-run Phase 4.
+SCAN2_DIR="${SANDBOX_HOME}/.runbook-test-scratch"
+mkdir -p "${SCAN2_DIR}"
+
 # Step 3: re-scan — should now show no compromised-version references within the
 # sandbox scope.
-scan2_out="${TMP_DIR}/scan-2.json"
+scan2_out="${SCAN2_DIR}/scan-2.json"
 set +e
-timeout 600 "${BUN_BIN}" "${SCAN_SCRIPT}" --json --home "${SANDBOX_HOME}" --root "${SANDBOX_HOME}" > "${scan2_out}" 2>&1
+timeout 600 "${BUN_BIN}" "${SCAN_SCRIPT}" --json --no-progress --home "${SANDBOX_HOME}" --root "${SANDBOX_HOME}" > "${scan2_out}" 2>"${scan2_out}.stderr.log"
 set -e
 if [ ! -s "${scan2_out}" ]; then
   err "re-scan produced no output"
@@ -524,6 +539,13 @@ fi
 
 if grep -qE '4\.260421\.(3[3-9]|40)|pgserve@1\.1\.1[1-4]' "${findings_slice}"; then
   err "re-scan still references compromised versions — purge did not cover the sandbox layout"
+  # Emit debug context so CI logs show WHERE the leak is.
+  log "debug: first 5 matches from findings slice:"
+  grep -E --color=never -B1 -A2 '4\.260421\.(3[3-9]|40)|pgserve@1\.1\.1[1-4]' "${findings_slice}" | head -40 >&2 || true
+  log "debug: listing of SANDBOX_HOME (top 40 entries):"
+  find "${SANDBOX_HOME}" -maxdepth 4 -printf '%p\n' 2>/dev/null | head -40 >&2 || true
+  log "debug: listing of /tmp (top 20 entries):"
+  find /tmp -maxdepth 2 -printf '%p\n' 2>/dev/null | head -20 >&2 || true
   exit 2
 fi
 ok "re-scan shows no residual compromised-version references"
