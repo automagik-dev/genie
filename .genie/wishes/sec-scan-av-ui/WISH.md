@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DRAFT (reviewer FIX-FIRST round 1 applied 2026-04-24) |
 | **Slug** | `sec-scan-av-ui` |
 | **Date** | 2026-04-24 |
 | **Author** | Genie + Felipe (post-hotfix observation) |
@@ -90,7 +90,23 @@ This wish fixes both: ships a **real-time AV-grade progress UI** (sticky one-lin
   - Version-unknown temp artifact findings count 0.1 each, capped at 1.0 total
   - `install` findings count only when version matches compromise list
 
-- **Banner wording:** "Status: LIKELY COMPROMISED / Suspicion score: 100/100" only appears when the verdict logic says so after the new scoring. On the 2026-04-24 sample output the same host would report "Status: OBSERVED ONLY / Suspicion 12/100 · 2 version-unknown temp artifacts".
+- **Deployment strategy (back-compat for band shift)** — The new bands (`CLEAN<20`, `OBSERVED 20-49`, `AFFECTED 50-79`, `COMPROMISED≥80`) change the user-facing verdict for hosts that previously scored 20-79 under the old bands (`CLEAN<50`, `AFFECTED 50-79`, `COMPROMISED≥80`). Automation keying off `summary.status == "CLEAN"` or `suspicionScore < 50` WILL start reporting differently. Three-release deprecation plan:
+  1. **Release N (this wish):** JSON envelope emits BOTH `summary.status_v1` (old band) and `summary.status_v2` (new band). `summary.status` alias defaults to v2. Document the v1 alias in the runbook + release notes. Operators using old thresholds read `status_v1` during transition. Bump `reportVersion` to `1.1` (minor — additive).
+  2. **Release N+1 (1 minor later):** deprecation warning on stderr when any consumer reads `status_v1` via the `summary.status_v1_reads` counter (scanner emits on JSON stringify when the key is accessed through a documented `GENIE_SEC_V1_READ` sentinel).
+  3. **Release N+2 (2 minors later):** drop `status_v1` from JSON output. Bump `reportVersion` to `2`.
+  - Snapshot tests lock both `status_v1` and `status_v2` output for every verdict fixture for Release N.
+  - Documented in `docs/sec-scan/verdict-bands-migration.md` (created in this wish).
+
+- **Shell-history exclusion governance (threat-model + ownership)** — The exclusion table is a *convenience* layer, not a security boundary. Threat model explicitly documented:
+  - An attacker who can write to `.zsh_history` can dodge shell-history detection by writing lines that match the exclusion patterns (e.g. fake `npm uninstall`). **Mitigation:** shell-history is the weakest signal in the scoring model; `install` / `live-process` / `temp-artifact` findings carry ≥40x the weight per hit. An attacker can only suppress shell-history evidence, not the entire compromise footprint.
+  - Exclusion patterns are reviewed + added by Namastex security team only. Community contributions go through the `automagik-dev/genie-signatures` review gate (owned by `sec-signature-registry` wish). Ad-hoc regex-spaghetti additions in PRs are rejected.
+  - Every exclusion entry includes a `justification: string` field in addition to `pattern`, `reason`, `comment`. Snapshot tests lock the full exclusion table in CI; any addition requires PR + Namastex security reviewer sign-off.
+  - Initial exclusion table in wish:
+    - `^npm uninstall .*@automagik/genie$` — reason `remediation`, justification: operator removing the compromised package is not execution evidence
+    - `^npm uninstall .*pgserve$` — same as above
+    - `^rm -rf .*(node_modules|\.bun)/.*@automagik/genie` — reason `remediation`, justification: operator purging install is not execution
+    - `^genie sec (scan|remediate|restore|rollback|verify-install|print-cleanup-commands)` — reason `investigation`, justification: operator running the scanner
+    - `^: \d+:0;` — reason `ioc-probe`, justification: fc-style history-inspection prefix — the line describes a probe, not an execution. NOTE: lines that have a probe-like command *without* the `: <ts>:0;` prefix still get matched (the prefix is how zsh fc output is distinguished from real execution).
 
 ### OUT
 
@@ -151,7 +167,15 @@ Single wave, 4 sequential groups. Each group lands its own PR to keep review sur
 **Deliverables:**
 1. `resolveSelfInstallRoot()` helper: `realpathSync(process.argv[1])` → walk up to the nearest `package.json` whose `name === '@automagik/genie'`. Cache the root. On any scan finding, compare the finding's path against `startsWith(selfRoot)` and skip+emit `self.skip` event if matched.
 2. Rework `installFindings`, `liveProcessFindings`, `tempArtifactFindings` to take a `version` argument and match against `COMPROMISED_VERSIONS` per-package, not against package name alone.
-3. For live-process: walk up from the executable path to the nearest `package.json` to resolve the package's version; tag each live-process finding with `package_version` and `version_matched: true|false|unknown`.
+3. For live-process: walk up from the executable path to the nearest `package.json` to resolve the package's version; tag each live-process finding with `package_version` and `version_matched: true|false|unknown`. Resolution algorithm (explicit fallback chain — in order):
+   1. `realpathSync(executable_path)` — canonical path through symlinks (handles `node_modules/.bin/*` shims).
+   2. Walk up from the resolved path looking for `package.json`. Read `name` + `version`. If `name` matches one of the tracked packages, use it.
+   3. If the walk traverses a `.pnpm/` directory segment, extract the package name + version from the pnpm virtual-store path pattern (`.pnpm/<name>@<version>/node_modules/<name>/`).
+   4. If the walk traverses a `.yarn/cache/` or `.yarn/berry-*` segment, fall back to reading `.yarn/install-state.gz` when present; else `version_unknown`.
+   5. For a monorepo layout (multiple `package.json` while walking up), take the FIRST `package.json` whose `name` matches a tracked package — stops before reaching the workspace root.
+   6. For `.bun/install/global/node_modules/<name>/` layout, version is read directly from the inner `package.json` (bun's global install mirror).
+   7. Otherwise classify as `version_unknown: true` and downgrade the finding severity to `observed`.
+   - Fixture coverage for each path: `test-fixtures/version-layouts/{npm, pnpm-virtual-store, yarn-berry, bun-global, monorepo-workspaces, symlink-bin, unresolvable}/`.
 4. For temp artifacts where version is unrecoverable, classify as `observed` with `version_unknown: true`.
 5. Detection-parity test against the existing CanisterWorm fixture: every finding today that's on a compromised version should still be produced; every self-detection should disappear; every version-unknown finding now classified correctly.
 

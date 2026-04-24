@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DRAFT (reviewer FIX-FIRST round 1 applied 2026-04-24) |
 | **Slug** | `sec-signature-registry` |
 | **Date** | 2026-04-24 |
 | **Author** | Felipe + Genie (product-vision distillation) |
@@ -153,24 +153,68 @@ Pack validation: JSON Schema file `.genie/schemas/signature-pack-v1.schema.json`
   4. Emit audit log entry `signatures.update { from_version, to_version, packs_added, packs_removed }`
 - CI in the new repo runs the same schema validation + loads the pack against a hermetic fixture set to verify detection + no regression
 
-**E. Per-finding attribution**
+**E. Per-finding attribution (explicit schema)**
 
-- Every finding object gains a `matched_signatures: [{ id, name, reported, severity }]` array
-- Human report groups findings by signature: `CanisterWorm (2026-04): 3 hits · Shai-Hulud (2025): 0 hits`
-- JSON envelope adds `summary.signatures[]` with counts per pack
-- Snapshot tests lock the grouping format
+- Every finding object gains a `matched_signatures: MatchedSignature[]` array. Shape of each entry (ONLY these fields — embedded, not referenced):
+  ```typescript
+  interface MatchedSignature {
+    id: string;              // pack id, e.g. "canisterworm-2026-04"
+    name: string;            // human name for report grouping
+    reported: string;        // ISO-8601 date
+    severity: 'critical'|'high'|'medium'|'low';
+    schema_version: string;  // pack schema version at match time
+  }
+  ```
+- **Multi-match semantics:** one finding CAN match multiple signatures if the same IOC appears in more than one pack (e.g. `telemetry.api-monitor.com` string present in both `canisterworm-2026-04` and a hypothetical `teampcp-2025-11` pack). `matched_signatures[]` records ALL matches in load-precedence order (highest precedence first). The first entry drives severity + remediation routing by default; downstream consumers can choose otherwise.
+- **`summary.signatures[]` aggregation rule:** one entry per pack that produced any finding in this scan. Shape:
+  ```typescript
+  interface SignatureSummary {
+    id: string;
+    name: string;
+    severity: 'critical'|'high'|'medium'|'low';
+    finding_count: number;                  // total findings attributed to this pack (a finding matching N packs counts in all N summary entries)
+    finding_by_scope: Record<string, number>; // {install: 2, live-process: 1, ...}
+    remediation_available: boolean;         // true iff pack ships remediation.cleanup_commands for the host platform
+    verified: boolean;                      // cosign-verified against pinned Namastex identity
+  }
+  ```
+- Human report groups findings by signature under a per-pack header: `CanisterWorm / TeamPCP (canisterworm-2026-04) · critical · 3 hits · verified`. `summary.signatures[]` in JSON envelope always present (empty array if scan found nothing).
+- Snapshot tests lock the grouping format, multi-match ordering, and `summary.signatures[]` aggregation.
 
-**F. Default pack bundle**
+**F. Default pack bundle (bundled fallback + optional npm dep)**
 
-- Scanner core ships with at least `signatures/canisterworm-2026-04.yaml` committed under `signatures/`
-- `@automagik/genie-signatures` is installed as an npm `dependency` of `@automagik/genie`, so default posture is: latest signature pack is available at install time without any explicit `signatures update` call
-- Bundled pack is updated via `renovate` / manual PR; emergency updates bump patch version of the signature package and operators get them via `genie sec signatures update`
+- Scanner core ships `signatures/canisterworm-2026-04.yaml` committed **inside the `@automagik/genie` package itself** as the authoritative fallback. This is the bundled floor — always available, never dependent on npm registry reachability.
+- `@automagik/genie-signatures` is declared as an **`optionalDependency`** (NOT `dependency`) of `@automagik/genie`. If the signatures package is missing, corrupted, or fails schema validation, the scanner falls back to the bundled-inside pack and emits a stderr warning `⚠ @automagik/genie-signatures unavailable — using bundled fallback (canisterworm-2026-04 only)`.
+- Loader precedence (deterministic, in order):
+  1. `~/.genie/sec-scan/signatures/*.yaml` — operator-added packs (highest priority)
+  2. `node_modules/@automagik/genie-signatures/signatures/*.yaml` — optionalDep, npm-published
+  3. `<genie-install>/signatures/*.yaml` — bundled inside `@automagik/genie` (always present)
+  4. Dedup by `id`: the first one wins. Each loaded pack records its `source_precedence` for `signatures list` output.
+- Bundled-inside pack is updated via `renovate` / manual PR when a new incident crystallizes; emergency updates bump patch version of `@automagik/genie-signatures` and operators get them via `genie sec signatures update`.
+- `npm install @automagik/genie` NEVER fails because of a signatures-package issue — bundled pack guarantees scanner is operational at install time.
 
-**G. Community contribution pathway**
+**G. Community contribution pathway (hardened trust model)**
 
-- Third-party pack: `genie sec signatures add https://example.com/my-incident.yaml` — requires typed ack `I_ACKNOWLEDGE_UNVERIFIED_SIGNATURE_PACK` because it's not cosign-verified against the Namastex identity
-- Community contribution: fork `automagik-dev/genie-signatures`, open PR with new pack + fixtures + detection-parity tests; Namastex security team reviews + merges
-- Documented review checklist in `automagik-dev/genie-signatures/CONTRIBUTING.md`
+- **Reserved pack IDs** — canonical Namastex pack IDs (`canisterworm-*`, `teampcp-*`, `shai-hulud-*`, and any future namespace prefix matching the pattern `<incident-name>-<YYYY>-<MM>`) are RESERVED. Community packs must use a distinct namespace (e.g. `community-<contributor-handle>-<description>-<YYYY>-<MM>`). Loader refuses to register a community pack that collides with a reserved ID AND emits a loud error pointing to the documented reserved-ID list at `docs/sec-signatures/reserved-ids.md`.
+- **Per-install ack (never cached)** — `genie sec signatures add https://example.com/my-incident.yaml` prompts typed ack `I_ACKNOWLEDGE_UNVERIFIED_SIGNATURE_PACK_<random-6-hex>`. The hex suffix is fresh per invocation and logged to audit. Operators CANNOT save a blanket "trust unverified packs" preference; the ack prompt fires on every `add` call. Design decision: prevents muscle-memory drift where the typed ack becomes reflex.
+- **Verified-vs-unverified flag** — `genie sec signatures list` shows a `verified: true|false` column per pack, with "verified" meaning cosign-verified against the pinned Namastex identity. Unverified packs get a prominent `⚠ unverified — community pack, not reviewed by Namastex` banner in scan output whenever they produce a finding.
+- **Namastex review gate for upstream contributions** — community members wanting their pack canonicalized open a PR against `automagik-dev/genie-signatures`. PR review MUST check every item in CONTRIBUTING.md (see Group 7). Namastex security team approval required to merge; CI alone cannot self-merge community signature PRs.
+- **Community pack removal path** — if a community pack produces widespread false positives, operators can `genie sec signatures remove <id>` to drop it; `genie sec signatures blocklist add <id>` pins an anti-entry so subsequent `signatures add` of the same pack-id requires a fresh double typed ack.
+- Documented review checklist in `automagik-dev/genie-signatures/CONTRIBUTING.md` (see Group 7 deliverables).
+
+**H. Schema Extension Points (forward-compatibility)**
+
+Schema v1 is the public data contract. To avoid a churny v2, v1 is designed with explicit extension points documented in `.genie/schemas/signature-pack-v1.schema.json`:
+
+- **Additive fields allowed in v1.x** (schema minor bump, backward-compatible): new top-level keys (`attestation_verification`, `container_image_ioc`, `binary_patterns`), new entries in `detection.scopes[]` enum, new per-finding-type fields. Loaders tolerate unknown fields by default (not `additionalProperties: false`); strict mode available via `--schema-strict`.
+- **Breaking changes require v2** (schema major bump): removing or renaming fields, changing enum semantics, changing required/optional on existing fields, reshaping nested objects. When v2 ships, v1 packs still load; scanner emits `⚠ pack canisterworm-2026-04 uses schema v1 — consider updating` but does not refuse.
+- **Detection-kind extension** — `detection.scopes[]` today: `[install, live-process, shell-history, temp-artifact, lockfile, npm-cache-metadata, npm-log]`. Candidates for future scopes (explicitly forward-compatible in v1.x):
+  - `container-image` — Docker / OCI image digest + layer ioc matching
+  - `binary-pattern` — raw byte pattern matching (not just strings)
+  - `attestation` — SLSA provenance / cosign-attested metadata checks
+  - `network-egress` — runtime outbound connection log matching
+  - When the scanner learns a new scope, a pack that opts into it simply lists it in `detection.scopes[]`. Packs without the scope are still loaded (they just don't benefit from the new matcher).
+- **Schema version negotiation** — packs declare `schema_version: 1`; loader supports 1.x. When a pack declares `schema_version: 2`, the v1 loader emits `⚠ pack <id> requires schema v2 — update @automagik/genie to <min-version>` and skips (does NOT crash).
 
 ### OUT
 
@@ -190,10 +234,13 @@ Pack validation: JSON Schema file `.genie/schemas/signature-pack-v1.schema.json`
 | 4 | Version-gated matching mandatory in the schema (`require_version_match: true` by default) | Prevents the 2026-04-24 `pgserve@1.1.10`-clean-flagged-as-compromised FP from ever happening again |
 | 5 | Self-skip enabled by default on the core pack | Scanner binary cannot flag itself |
 | 6 | Per-finding attribution in both human report and JSON envelope | Operators know WHICH incident applies; remediation scoped to the right pack |
-| 7 | `@automagik/genie-signatures` shipped as a runtime dependency of `@automagik/genie` | Fresh installs have signatures immediately; no silent-no-coverage window |
-| 8 | Community packs require typed ack on install | Third-party signatures could contain false positives or deliberate sabotage; explicit consent required |
+| 7 | `@automagik/genie-signatures` shipped as an **optionalDependency** + bundled-inside fallback pack | Avoids cascading install failure if signatures package is missing/corrupt/malformed; bundled pack is the always-available floor so `npm install @automagik/genie` never breaks on a pack issue |
+| 8 | Community packs require **per-install typed ack with random hex suffix**, plus reserved-ID namespacing | Prevents muscle-memory drift where the ack becomes reflex; reserved IDs (`canisterworm-*`, `teampcp-*`, etc.) cannot be shadowed by community packs |
 | 9 | Remediation commands per-signature, not global | CanisterWorm has different cleanup than a future wormlet; operators need correct commands per incident |
 | 10 | `genie sec print-cleanup-commands` reads from matched-signature remediation blocks | Closes the loop: scanner finds → signature explains → operator cleans up |
+| 11 | Multi-match semantics: `matched_signatures[]` records ALL packs that matched in load-precedence order; first drives severity/remediation | An IOC in multiple packs should credit all packs; downstream consumers choose routing |
+| 12 | Schema v1 uses forward-compatible extension points (unknown-field tolerance + documented `detection.scopes[]` candidates) | Delays the need for a v2 schema; adds new detection kinds without a breaking change |
+| 13 | Cosign identity pinning handles rotation via release-metadata + operator `--repin` flow | Identity rotation is inevitable; explicit playbook prevents operator lockout |
 
 ## Success Criteria
 
@@ -227,15 +274,46 @@ Two-repo, multi-wave execution. The signature-package repo is created first so t
 | 2 | genie | engineer | Schema + loader + matcher: `.genie/schemas/signature-pack-v1.schema.json`, loader module, refactor scanner to consume loaded signatures |
 | 3 | genie | engineer | CLI surface: `genie sec signatures list / verify / add / remove / update / search` subcommands |
 | 4 | genie | engineer | Per-finding attribution: JSON envelope changes, human report grouping, snapshot tests |
-| 5 | genie | engineer | `print-cleanup-commands` integration: pull remediation block from matched signature |
-| 6 | genie | engineer | Default pack bundling: `@automagik/genie-signatures` as dependency, fresh-install smoke test, audit-log wiring for `signatures update` |
+| 5 | genie | engineer | `print-cleanup-commands` integration: **OWNED BY THIS GROUP** — reads `matched_signatures[0]` from each finding, emits remediation block from that signature's `remediation.cleanup_commands[<host-platform>]`. When a finding has multiple matches, emit the primary block + a comment listing other matches for operator review. Snapshot test locks multi-match cleanup output. Updates `src/term-commands/sec.ts` (`print-cleanup-commands` subcommand owned by sec-scan-progress G5 #1368 — this wish extends it). |
+| 6 | genie | engineer | Default pack bundling: `@automagik/genie-signatures` as **optionalDependency** + bundled-inside fallback pack inside `@automagik/genie`; loader precedence chain (`~/.genie/sec-scan/signatures/` → npm-installed → bundled-inside); fresh-install smoke test with signatures-package absent; audit-log wiring for `signatures update` |
 
 ### Wave 2 (sequential, docs)
 
 | Group | Repo | Agent | Description |
 |-------|------|-------|-------------|
-| 7 | genie-signatures | engineer | CONTRIBUTING.md + schema docs + community pack review checklist |
-| 8 | genie | engineer | SECURITY.md + runbook updates: signature-update procedure, verify-install flow extended to signatures |
+| 7 | genie-signatures | engineer | **CONTRIBUTING.md with explicit quality gates** (see below) + schema docs + community pack review checklist + `docs/sec-signatures/reserved-ids.md` listing canonical Namastex pack-id prefixes that cannot be shadowed |
+| 8 | genie | engineer | SECURITY.md + runbook updates: signature-update procedure, verify-install flow extended to signatures, **cosign identity rotation playbook** (see below) |
+
+### Group 7 — CONTRIBUTING.md quality-gate checklist (explicit)
+
+Every community PR against `automagik-dev/genie-signatures` must check:
+
+- [ ] **Schema validation** — `scripts/validate.ts` passes against the new pack file
+- [ ] **Detection-parity tests** — the PR ships test fixtures under `tests/fixtures/<pack-id>/` for each `iocs.strings`, `iocs.file_basenames`, `iocs.sha256` entry; CI runs the loaded pack against fixtures and asserts every IOC fires
+- [ ] **Per-finding justification comments** — every IOC entry in the YAML has a `# comment` explaining why it's reliable (e.g. "exfil host confirmed in <blog-url>", "file basename is package-unique"). Reviewer rejects entries without justification.
+- [ ] **Sources cited** — `sources:` array has at least ONE public URL (blog, advisory, tweet with analyst handle). Reviewer validates every URL resolves.
+- [ ] **Compromise window documented** — `compromise_window.{start,end}` are present and realistic; window < 30 days unless publicly corroborated.
+- [ ] **Remediation commands per platform** — `remediation.cleanup_commands.macos` AND `remediation.cleanup_commands.linux` both present and non-empty.
+- [ ] **No shell-history-exclusion abuse** — `detection.shell_history_exclusions[]` additions are scrutinized for "hide attacker activity" risk. Reviewer rejects any exclusion that could plausibly suppress real compromise evidence.
+- [ ] **No reserved ID collision** — pack `id` does NOT start with `canisterworm-`, `teampcp-`, `shai-hulud-`, or any prefix listed in `docs/sec-signatures/reserved-ids.md` unless PR is from Namastex security team.
+- [ ] **Namastex security-team approval** — at least one Namastex security engineer has left an approving review. No CI auto-merge for community signature PRs; squash-merge by maintainer only.
+
+### Group 8 — Cosign identity rotation playbook
+
+Add `docs/sec-signatures/cosign-rotation.md` covering:
+
+- **Default pinned identity** is published in `SECURITY.md` at repo root + in `@automagik/genie-signatures` tarball metadata + in the pinned GH issue (three-channel pinning, matches existing supply-chain-signing pattern).
+- **Operator re-pin flow** (`genie sec signatures verify --repin`) — interactive command that:
+  1. Fetches the currently-published identity from all three channels (SECURITY.md via raw.githubusercontent.com, tarball metadata, pinned GH issue API)
+  2. Displays the three strings; operator confirms they match
+  3. Writes `~/.genie/sec-scan/signatures-pinned.json` with the confirmed identity
+  4. All subsequent `signatures update` / `verify` calls use the pinned identity
+- **Rotation procedure (Namastex side)** when the OIDC identity rotates:
+  1. Publish `@automagik/genie-signatures` with a major-version bump and the new identity in tarball metadata
+  2. Update SECURITY.md + pinned GH issue concurrently
+  3. CI check in `automagik-dev/genie` asserts byte-identity across three channels (extends existing `check-fingerprint-pinning.sh`)
+  4. Emit a loud stderr banner on `genie sec signatures update` for 2 releases: `⚠ signing identity rotated — run 'genie sec signatures verify --repin' after confirming via <SECURITY.md URL>`
+- **Air-gap flow** — operators without network access can copy the signatures tarball + the pinned identity string via sneakernet; runbook covers this path.
 
 ## Execution Groups
 
