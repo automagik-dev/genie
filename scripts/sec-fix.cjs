@@ -241,9 +241,37 @@ function promptYesNo(message, { yes }) {
 // Scan
 // ---------------------------------------------------------------------------
 
+function isRootUid() {
+  return typeof process.getuid === 'function' && process.getuid() === 0;
+}
+
 function runScan() {
   section('1/6 Scan — gathering evidence');
-  const result = spawnSync(process.execPath, [SCAN_SCRIPT, '--json', '--no-progress', '--redact'], {
+  const rootMode = isRootUid();
+  if (rootMode) {
+    process.stderr.write(
+      `  ${TTY.bgRed}${TTY.white}${TTY.bold} ROOT MODE ${TTY.reset}  ${TTY.red}${TTY.bold}scanning every user home, system-wide persistence, all PIDs, root-only files${TTY.reset}\n`,
+    );
+    if (process.env.SUDO_USER && process.env.SUDO_USER !== 'root') {
+      process.stderr.write(
+        `  ${TTY.dim}invoking user: ${TTY.reset}${process.env.SUDO_USER} ${TTY.dim}(reinstall will be routed back to this user via su)${TTY.reset}\n`,
+      );
+    }
+  } else {
+    process.stderr.write(
+      `  ${TTY.yellow}running as user $(id -un) — for full coverage of other homes + /etc/cron + /etc/systemd + all PIDs, re-run under ${TTY.bold}sudo -E env "PATH=$PATH" genie sec fix${TTY.reset}\n`,
+    );
+  }
+  const scanArgs = [SCAN_SCRIPT, '--json', '--no-progress', '--redact'];
+  if (rootMode) {
+    // --all-homes enumerates /root + every /home/* + /Users/* on darwin.
+    // The persistence + shell-history + impact-surface phases iterate these
+    // homes so the deeper coverage falls out naturally once they're in the
+    // input list. /etc/cron.* and /etc/systemd/system/* are already in the
+    // persistence target table and become readable under root.
+    scanArgs.push('--all-homes');
+  }
+  const result = spawnSync(process.execPath, scanArgs, {
     stdio: ['ignore', 'pipe', 'inherit'],
     maxBuffer: 256 * 1024 * 1024,
   });
@@ -656,6 +684,29 @@ function reinstall(options) {
     warn('bun not found in PATH — skipping reinstall. Install manually: bun add -g @automagik/genie@next');
     return { reinstalled: false, reason: 'bun-not-found' };
   }
+
+  // When running under sudo, route the install to the invoking user so
+  // the bun global ends up in THEIR home (correct ownership + matches the
+  // binary that user invokes from the command line). Root's own bun
+  // global would be orphaned.
+  const sudoUser = process.env.SUDO_USER;
+  if (isRootUid() && sudoUser && sudoUser !== 'root') {
+    info(`routing reinstall to invoking user: ${sudoUser}`);
+    const suBin = findExecutable('su');
+    if (!suBin) {
+      warn('su not found — falling back to root install (may need manual reinstall as the user later)');
+    } else {
+      const cmd = `${bunBin} add -g @automagik/genie@next`;
+      const result = spawnSync(suBin, ['-', sudoUser, '-c', cmd], { stdio: 'inherit' });
+      if (result.status !== 0) {
+        warn(`reinstall (as ${sudoUser}) exited with code ${result.status}`);
+        return { reinstalled: false, exitCode: result.status, ranAs: sudoUser };
+      }
+      ok(`reinstalled @automagik/genie@next (as ${sudoUser})`);
+      return { reinstalled: true, ranAs: sudoUser };
+    }
+  }
+
   const result = spawnSync(bunBin, ['add', '-g', '@automagik/genie@next'], { stdio: 'inherit' });
   if (result.status !== 0) {
     warn(`reinstall exited with code ${result.status}`);
@@ -681,7 +732,9 @@ function findExecutable(name) {
 function rescan(options) {
   if (options.skipRescan) return null;
   section('6/6 Re-scan — confirm clean state');
-  const result = spawnSync(process.execPath, [SCAN_SCRIPT, '--json', '--no-progress', '--redact'], {
+  const rescanArgs = [SCAN_SCRIPT, '--json', '--no-progress', '--redact'];
+  if (isRootUid()) rescanArgs.push('--all-homes');
+  const result = spawnSync(process.execPath, rescanArgs, {
     stdio: ['ignore', 'pipe', 'inherit'],
     maxBuffer: 256 * 1024 * 1024,
   });
