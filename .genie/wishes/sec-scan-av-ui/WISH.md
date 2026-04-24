@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT (reviewer FIX-FIRST round 1 applied 2026-04-24) |
+| **Status** | DRAFT (reviewer round-1 FIX-FIRST + round-2 MEDIUM-gap fix applied 2026-04-24) |
 | **Slug** | `sec-scan-av-ui` |
 | **Date** | 2026-04-24 |
 | **Author** | Genie + Felipe (post-hotfix observation) |
@@ -92,7 +92,7 @@ This wish fixes both: ships a **real-time AV-grade progress UI** (sticky one-lin
 
 - **Deployment strategy (back-compat for band shift)** — The new bands (`CLEAN<20`, `OBSERVED 20-49`, `AFFECTED 50-79`, `COMPROMISED≥80`) change the user-facing verdict for hosts that previously scored 20-79 under the old bands (`CLEAN<50`, `AFFECTED 50-79`, `COMPROMISED≥80`). Automation keying off `summary.status == "CLEAN"` or `suspicionScore < 50` WILL start reporting differently. Three-release deprecation plan:
   1. **Release N (this wish):** JSON envelope emits BOTH `summary.status_v1` (old band) and `summary.status_v2` (new band). `summary.status` alias defaults to v2. Document the v1 alias in the runbook + release notes. Operators using old thresholds read `status_v1` during transition. Bump `reportVersion` to `1.1` (minor — additive).
-  2. **Release N+1 (1 minor later):** deprecation warning on stderr when any consumer reads `status_v1` via the `summary.status_v1_reads` counter (scanner emits on JSON stringify when the key is accessed through a documented `GENIE_SEC_V1_READ` sentinel).
+  2. **Release N+1 (1 minor later):** deprecation warning on stderr — fires AT MOST ONCE per scan invocation when `summary.status_v1` has been read. Implementation: the scanner constructs the JSON envelope with `summary` as a tracked object — a thin `Object.defineProperty(summary, 'status_v1', { get })` that, on first access, flips a `v1_was_read` flag (no re-fire on subsequent reads of the same scan). At end-of-scan, if `v1_was_read`, write a single line to stderr: `⚠ summary.status_v1 is deprecated (will be removed in release N+2 = <version>). Switch automation to summary.status (v2) or summary.status_v2. See docs/sec-scan/verdict-bands-migration.md.` Operators see the warning once per scan, not per access. Snapshot test locks the warning text + single-emit behaviour.
   3. **Release N+2 (2 minors later):** drop `status_v1` from JSON output. Bump `reportVersion` to `2`.
   - Snapshot tests lock both `status_v1` and `status_v2` output for every verdict fixture for Release N.
   - Documented in `docs/sec-scan/verdict-bands-migration.md` (created in this wish).

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT (reviewer FIX-FIRST round 1 applied 2026-04-24) |
+| **Status** | DRAFT (reviewer round-1 FIX-FIRST + round-2 MEDIUM/HIGH-gap fixes applied 2026-04-24) |
 | **Slug** | `sec-signature-registry` |
 | **Date** | 2026-04-24 |
 | **Author** | Felipe + Genie (product-vision distillation) |
@@ -193,10 +193,26 @@ Pack validation: JSON Schema file `.genie/schemas/signature-pack-v1.schema.json`
 - Bundled-inside pack is updated via `renovate` / manual PR when a new incident crystallizes; emergency updates bump patch version of `@automagik/genie-signatures` and operators get them via `genie sec signatures update`.
 - `npm install @automagik/genie` NEVER fails because of a signatures-package issue — bundled pack guarantees scanner is operational at install time.
 
+**Operational cadence contract (explicit):**
+- **Bundled pack is a FALLBACK FLOOR, not the primary delivery channel.** It updates only when `@automagik/genie` itself releases (cadence: weekly-to-monthly). For minute-to-hour incident response, operators MUST run `genie sec signatures update` on a regular schedule.
+- **Recommended SLA for `signatures update`:**
+  - Production / CI runners: cron every hour
+  - Development workstations: cron daily OR on-shell-startup
+  - Air-gapped environments: pull tarball + `signatures add --from-tarball` on the air-gap network's sync cadence
+- **Stale-pack banner** — scanner emits a loud stderr banner on every scan when any loaded pack's `reported` date is > 90 days old AND a newer version of `@automagik/genie-signatures` is available via `npm view`:
+  ```
+  ⚠ Signature packs are stale — oldest is <date> (<N> days). Run `genie sec signatures update`.
+  ⚠ Newer @automagik/genie-signatures@<version> is available (installed: <current>).
+  ```
+  The banner is suppressible via `GENIE_SEC_SCAN_SUPPRESS_STALE_BANNER=1` for CI / read-only environments; suppression logged to audit.
+- **Release coordination:** when a critical incident requires urgent signature delivery, Namastex security team publishes `@automagik/genie-signatures@<patch>` within 1 hour of signature approval; operators on the recommended update cadence receive it within their next scheduled run; operators on a looser cadence get the stale-pack banner.
+- Runbook (`docs/incident-response/canisterworm.md`, owned by `sec-incident-runbook` wish — already merged) MUST add a "signature update cadence" section referencing this contract. That update is in scope for this wish (modifies the existing runbook, not creates a new one).
+
 **G. Community contribution pathway (hardened trust model)**
 
 - **Reserved pack IDs** — canonical Namastex pack IDs (`canisterworm-*`, `teampcp-*`, `shai-hulud-*`, and any future namespace prefix matching the pattern `<incident-name>-<YYYY>-<MM>`) are RESERVED. Community packs must use a distinct namespace (e.g. `community-<contributor-handle>-<description>-<YYYY>-<MM>`). Loader refuses to register a community pack that collides with a reserved ID AND emits a loud error pointing to the documented reserved-ID list at `docs/sec-signatures/reserved-ids.md`.
-- **Per-install ack (never cached)** — `genie sec signatures add https://example.com/my-incident.yaml` prompts typed ack `I_ACKNOWLEDGE_UNVERIFIED_SIGNATURE_PACK_<random-6-hex>`. The hex suffix is fresh per invocation and logged to audit. Operators CANNOT save a blanket "trust unverified packs" preference; the ack prompt fires on every `add` call. Design decision: prevents muscle-memory drift where the typed ack becomes reflex.
+- **Per-install ack (never cached)** — `genie sec signatures add https://example.com/my-incident.yaml` prompts typed ack `I_ACKNOWLEDGE_UNVERIFIED_SIGNATURE_PACK_<random-6-hex>`. The hex suffix is fresh per invocation and logged to audit. Operators CANNOT save a blanket "trust unverified packs" preference; the ack prompt fires on every `add` call.
+  - **Threat-model boundary (explicit):** this mechanism prevents *reflexive* trust — an operator muscle-memorizing a fixed ack string and typing it without thinking. It does NOT prevent a determined adversary who scripts the ack (`echo "I_ACKNOWLEDGE_..._$(hex-gen)" | genie sec signatures add`). For determined-adversary threat models you need rate limiting, TOTP-style challenges, or an out-of-band approval channel — all explicitly out of scope for this wish. The contract we provide: a forced pause + fresh-hex prompt that breaks the muscle-memory loop of "type the same string you typed last time". Operators who bypass this with a shell alias have affirmatively decided to trust their automation.
 - **Verified-vs-unverified flag** — `genie sec signatures list` shows a `verified: true|false` column per pack, with "verified" meaning cosign-verified against the pinned Namastex identity. Unverified packs get a prominent `⚠ unverified — community pack, not reviewed by Namastex` banner in scan output whenever they produce a finding.
 - **Namastex review gate for upstream contributions** — community members wanting their pack canonicalized open a PR against `automagik-dev/genie-signatures`. PR review MUST check every item in CONTRIBUTING.md (see Group 7). Namastex security team approval required to merge; CI alone cannot self-merge community signature PRs.
 - **Community pack removal path** — if a community pack produces widespread false positives, operators can `genie sec signatures remove <id>` to drop it; `genie sec signatures blocklist add <id>` pins an anti-entry so subsequent `signatures add` of the same pack-id requires a fresh double typed ack.
