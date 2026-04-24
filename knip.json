@@ -54,7 +54,25 @@
     "test/observability/emit-bench.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
-  "ignoreBinaries": ["which"],
+  "ignoreBinaries": [
+    "which",
+    "init",
+    "config",
+    "add",
+    "commit",
+    "branch",
+    "worktree",
+    "team",
+    "fetch",
+    "rev-parse",
+    "diff",
+    "ls-files",
+    "origin/",
+    "tsc",
+    "biome",
+    "husky",
+    "scripts/verify-release.sh"
+  ],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "@khal-os/brain",
@@ -64,6 +82,8 @@
     "@vitejs/plugin-react",
     "vite",
     "@types/react-dom",
-    "esbuild"
+    "@biomejs/biome",
+    "@commitlint/cli",
+    "husky"
   ]
 }
