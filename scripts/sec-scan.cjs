@@ -2336,15 +2336,9 @@ function scanShellHistories(homes, report) {
       // history. Pure `executionCommands`/`installCommands` name-match is
       // ambient noise (triggered every time the user runs the scanner).
       const hasHardEvidence =
-        finding.networkCommands.length > 0 ||
-        finding.iocMatches.length > 0 ||
-        finding.versions.length > 0;
+        finding.networkCommands.length > 0 || finding.iocMatches.length > 0 || finding.versions.length > 0;
 
-      const exposure = hasHardEvidence
-        ? 'execution'
-        : finding.executionCommands.length > 0 || finding.installCommands.length > 0
-          ? 'reference'
-          : 'reference';
+      const exposure = hasHardEvidence ? 'execution' : 'reference';
 
       report.shellHistoryFindings.push({
         kind: 'shell-history',
@@ -2359,8 +2353,8 @@ function scanShellHistories(homes, report) {
         category: 'shell-history',
         severity: hasHardEvidence ? 'compromised' : 'observed',
         summary: hasHardEvidence
-          ? `shell history shows execution evidence for suspicious package activity`
-          : `shell history references tracked package name (clean or unversioned) — informational`,
+          ? 'shell history shows execution evidence for suspicious package activity'
+          : 'shell history references tracked package name (clean or unversioned) — informational',
         path: finding.path,
       });
     }
@@ -2865,7 +2859,11 @@ function scanLiveProcesses(report) {
     if (String(pid) === String(process.pid)) continue;
     if (String(pid) === String(process.ppid)) continue;
     if (command.includes('sec-scan.cjs') || command.includes('/sec-scan ')) continue;
-    if (/\bgenie\s+sec\s+(scan|remediate|restore|rollback|verify-install|quarantine|print-cleanup-commands)\b/.test(command)) {
+    if (
+      /\bgenie\s+sec\s+(scan|remediate|restore|rollback|verify-install|quarantine|print-cleanup-commands)\b/.test(
+        command,
+      )
+    ) {
       continue;
     }
 
@@ -2931,10 +2929,7 @@ function countStrongProfileEvidence(report) {
 // activity (`npm uninstall -g @automagik/genie`) triggers them.
 function countExecutionHistoryEvidence(report) {
   return report.shellHistoryFindings.filter(
-    (finding) =>
-      finding.networkCommands.length > 0 ||
-      finding.iocMatches.length > 0 ||
-      finding.versions.length > 0,
+    (finding) => finding.networkCommands.length > 0 || finding.iocMatches.length > 0 || finding.versions.length > 0,
   ).length;
 }
 
@@ -2942,9 +2937,8 @@ function countInstallHistoryEvidence(report) {
   // Same logic: only count install lines that explicitly reference a
   // compromised version OR carry an IOC pattern. Bare install/uninstall
   // commands on tracked package names are ambient noise.
-  return report.shellHistoryFindings.filter(
-    (finding) => finding.versions.length > 0 || finding.iocMatches.length > 0,
-  ).length;
+  return report.shellHistoryFindings.filter((finding) => finding.versions.length > 0 || finding.iocMatches.length > 0)
+    .length;
 }
 
 // Strong temp-artifact evidence = actual malware bytes / IOC strings /
