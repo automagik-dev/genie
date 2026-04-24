@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT (reviewer round-1 FIX-FIRST + round-2 MEDIUM-gap fix applied 2026-04-24) |
+| **Status** | APPROVED (3 review rounds: round-1 FIX-FIRST → round-2 FIX-FIRST → round-3 SHIP, 2026-04-24) |
 | **Slug** | `sec-scan-av-ui` |
 | **Date** | 2026-04-24 |
 | **Author** | Genie + Felipe (post-hotfix observation) |

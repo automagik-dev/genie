@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT (reviewer round-1 FIX-FIRST + round-2 MEDIUM/HIGH-gap fixes applied 2026-04-24) |
+| **Status** | APPROVED (3 review rounds: round-1 FIX-FIRST → round-2 FIX-FIRST → round-3 SHIP after stale-pack polling clarification, 2026-04-24) |
 | **Slug** | `sec-signature-registry` |
 | **Date** | 2026-04-24 |
 | **Author** | Felipe + Genie (product-vision distillation) |
@@ -199,12 +199,17 @@ Pack validation: JSON Schema file `.genie/schemas/signature-pack-v1.schema.json`
   - Production / CI runners: cron every hour
   - Development workstations: cron daily OR on-shell-startup
   - Air-gapped environments: pull tarball + `signatures add --from-tarball` on the air-gap network's sync cadence
-- **Stale-pack banner** — scanner emits a loud stderr banner on every scan when any loaded pack's `reported` date is > 90 days old AND a newer version of `@automagik/genie-signatures` is available via `npm view`:
+- **Stale-pack banner** — scanner emits a loud stderr banner on every scan when any loaded pack's `reported` date is > 90 days old AND the cached npm-availability check indicates a newer version of `@automagik/genie-signatures` is available:
   ```
   ⚠ Signature packs are stale — oldest is <date> (<N> days). Run `genie sec signatures update`.
   ⚠ Newer @automagik/genie-signatures@<version> is available (installed: <current>).
   ```
   The banner is suppressible via `GENIE_SEC_SCAN_SUPPRESS_STALE_BANNER=1` for CI / read-only environments; suppression logged to audit.
+  - **Polling / caching contract (implementation)** — `genie sec scan` NEVER blocks on network at scan time. The npm-availability check runs:
+    1. Synchronously during `genie sec signatures update` (result cached to `~/.genie/sec-scan/signatures-npm-cache.json`, TTL 24h)
+    2. On-demand via `genie sec signatures check-updates [--refresh-cache]` (explicit operator invocation)
+  - `genie sec scan` reads the cached result if age < 24h (banner reflects cache). If cache is stale (> 24h), scan skips the "newer version available" check entirely (only the age-based stale banner fires) and emits a lower-priority stderr line: `ℹ signature update cache stale — run 'genie sec signatures check-updates' to refresh`. No scan ever issues an `npm view` call synchronously.
+  - Cache failures (malformed JSON, permissions) fail open: scan continues, no banner, `walk.error` event logged.
 - **Release coordination:** when a critical incident requires urgent signature delivery, Namastex security team publishes `@automagik/genie-signatures@<patch>` within 1 hour of signature approval; operators on the recommended update cadence receive it within their next scheduled run; operators on a looser cadence get the stale-pack banner.
 - Runbook (`docs/incident-response/canisterworm.md`, owned by `sec-incident-runbook` wish — already merged) MUST add a "signature update cadence" section referencing this contract. That update is in scope for this wish (modifies the existing runbook, not creates a new one).
 
