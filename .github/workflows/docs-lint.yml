@@ -1,0 +1,72 @@
+name: Docs Lint
+
+# Lints markdown sources and checks that every link in the runbook + SECURITY.md
+# still resolves. Enforced as a merge gate on any PR touching these files so the
+# incident-response prose does not rot with broken references.
+#
+# Tools:
+#   - markdownlint-cli2 (configured via .markdownlint-cli2.jsonc) — structural
+#     markdown issues, code-fence hygiene, bare URLs, list formatting.
+#   - markdown-link-check — verifies internal anchors and external URLs. Run
+#     with a config that retries on 429/5xx and allows the GitHub user-agent
+#     so shortlink checks don't false-fail in CI.
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'SECURITY.md'
+      - 'docs/**/*.md'
+      - '.markdownlint.json'
+      - '.markdownlint-cli2.jsonc'
+      - '.github/markdown-link-check.json'
+      - '.github/workflows/docs-lint.yml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'SECURITY.md'
+      - 'docs/**/*.md'
+      - '.markdownlint.json'
+      - '.markdownlint-cli2.jsonc'
+      - '.github/markdown-link-check.json'
+      - '.github/workflows/docs-lint.yml'
+
+concurrency:
+  group: docs-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  markdownlint:
+    name: markdownlint-cli2
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Lint SECURITY.md + runbook
+        run: |
+          bunx markdownlint-cli2 \
+            "SECURITY.md" \
+            "docs/incident-response/canisterworm.md"
+
+  link-check:
+    name: markdown-link-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Verify links in SECURITY.md + runbook
+        run: |
+          bunx markdown-link-check --config .github/markdown-link-check.json SECURITY.md
+          bunx markdown-link-check --config .github/markdown-link-check.json docs/incident-response/canisterworm.md
