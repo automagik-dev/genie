@@ -1379,6 +1379,34 @@ function findVersionsInText(text) {
   return found;
 }
 
+// Name-version correlated match. A tracked version string (e.g. "1.0.3")
+// may belong to MANY unrelated packages (tweetnacl@1.0.3, escape-html@1.0.3,
+// @inquirer/external-editor@1.0.3). findVersionsInText matches the bare
+// version and produces false positives on every unrelated package sharing
+// the same number. This variant only returns tuples `name@version` when
+// BOTH appear correlated in the text:
+//   - Form 1: the literal "name@version" substring (bun.lock, yarn.lock,
+//     pnpm-lock.yaml all use this).
+//   - Form 2: JSON-style '"name" ... "version": "X.Y.Z"' within 500 chars
+//     (package-lock.json, npm manifest).
+function findTrackedPackageVersionTuples(text) {
+  if (!text) return [];
+  const matches = new Set();
+  for (const pkg of TRACKED_PACKAGES) {
+    const escName = pkg.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (const version of pkg.versions) {
+      if (text.includes(`${pkg.name}@${version}`)) {
+        matches.add(`${pkg.name}@${version}`);
+        continue;
+      }
+      const escVersion = version.replace(/\./g, '\\.');
+      const pattern = new RegExp(`"${escName}"[^{]{0,50}\\{[^{}]{0,500}"version"\\s*:\\s*"${escVersion}"`, 's');
+      if (pattern.test(text)) matches.add(`${pkg.name}@${version}`);
+    }
+  }
+  return [...matches];
+}
+
 function collectTextIndicators(text) {
   const indicators = {
     versions: findVersionsInText(text),
@@ -1881,13 +1909,26 @@ function scanNpmCache(homePath, report) {
         }
       }
 
-      if (metadata.observedVersions.length > 0) {
+      // Only flag when the cached npm manifest's dist-tag points at a
+      // compromised version. The manifest ALWAYS lists every historical
+      // version by design; that list alone is not evidence of compromise —
+      // only "latest" or "next" resolving to a bad version means the user's
+      // next `npm install <pkg>` would pull the malware. If a tarball
+      // fetch for a compromised version is separately recorded, that goes
+      // through npmTarballFetches as 'affected' severity regardless.
+      const distTagsCompromised = metadata.distTags
+        ? Object.entries(metadata.distTags).filter(([, v]) => TRACKED_VERSION_SET.has(v))
+        : [];
+      if (metadata.observedVersions.length > 0 && distTagsCompromised.length > 0) {
+        metadata.compromisedDistTags = distTagsCompromised.map(([tag, version]) => ({ tag, version }));
         report.npmCacheMetadata.push(metadata);
         addTimeline(report, {
           time: metadata.observedAt || metadata.cacheRecordTime,
           category: 'npm-cache-metadata',
           severity: 'observed',
-          summary: `npm cache metadata recorded compromised versions ${metadata.observedVersions.join(', ')}`,
+          summary: `npm cache dist-tag points at compromised version: ${distTagsCompromised
+            .map(([tag, version]) => `${tag}=${version}`)
+            .join(', ')}`,
           path: cacheRoot,
         });
       }
@@ -1928,20 +1969,20 @@ function scanNpmCache(homePath, report) {
       const text = safeReadText(fullPath);
       if (!text || !TRACKED_PACKAGES.some(({ name }) => text.includes(name))) continue;
 
-      const versions = findVersionsInText(text);
+      // Name-version correlated match — the log may contain `1.0.3` because
+      // an unrelated transitive dep (escape-html, tweetnacl) resolved to that
+      // version during the same install. Only flag when the tracked name
+      // and a tracked version appear as a correlated tuple.
+      const versionTuples = findTrackedPackageVersionTuples(text);
       const indicators = collectTextIndicators(text);
-      // Hard evidence in an npm log: an actual compromised version string
-      // or IOC network pattern. Name-only install/exec entries happen every
-      // time anyone runs `npx @automagik/genie ...` and are NOT evidence of
-      // compromise — they just record that the package was interacted with.
-      const hardEvidence = versions.length > 0 || indicators.iocMatches.length > 0;
+      const hardEvidence = versionTuples.length > 0 || indicators.iocMatches.length > 0;
       if (!hardEvidence) continue;
 
       report.npmLogHits.push({
         home: homePath,
         path: fullPath,
         modifiedAt: isoTime(safeStat(fullPath)?.mtimeMs),
-        versions,
+        versions: versionTuples,
         installCommands: indicators.installCommands,
         executionCommands: indicators.executionCommands,
         iocMatches: indicators.iocMatches,
@@ -2231,21 +2272,23 @@ function scanProjectRoots(roots, report, runtime) {
 
       const text = safeReadText(lockfilePath);
       if (!text) return;
-      if (!TRACKED_PACKAGES.some(({ name }) => text.includes(name))) return;
 
-      const versions = findVersionsInText(text);
-      if (versions.length === 0) return;
+      // Correlated tuples only — raw version match produced false positives
+      // whenever an unrelated dep shared a version string with a tracked
+      // compromised version (tweetnacl@1.0.3 vs @openwebconcept/design-tokens@1.0.3).
+      const tuples = findTrackedPackageVersionTuples(text);
+      if (tuples.length === 0) return;
 
       report.lockfileFindings.push({
         path: lockfilePath,
         modifiedAt: isoTime(stat.mtimeMs),
-        versions,
+        versions: tuples,
       });
       addTimeline(report, {
         time: isoTime(stat.mtimeMs),
         category: 'lockfile',
         severity: 'observed',
-        summary: `lockfile references compromised versions ${versions.join(', ')}`,
+        summary: `lockfile references compromised ${tuples.join(', ')}`,
         path: lockfilePath,
       });
     },
