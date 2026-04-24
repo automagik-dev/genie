@@ -69,6 +69,7 @@ yarn-error.log*
 !.genie/brainstorms/*/
 !.genie/brainstorms/*/DESIGN.md
 !.genie/brainstorms/*/DRAFT.md
+!.genie/brainstorms/*/COUNCIL.md
 !.genie/brainstorms/README.md
 
 # Team runtime state
