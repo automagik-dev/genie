@@ -148,6 +148,46 @@ export function resolveSecRemediateScript(
   return scriptPath;
 }
 
+export function resolveSecFixScript(
+  argv1: string | undefined = process.argv[1],
+  deps: Pick<SecScanDeps, 'existsSync' | 'realpathSync'> = defaultDeps,
+): string {
+  const root = resolveGenieRoot(argv1, deps);
+  const scriptPath = join(root, 'scripts', 'sec-fix.cjs');
+  if (!deps.existsSync(scriptPath)) {
+    throw new Error(`Security fix payload not found at ${scriptPath}`);
+  }
+  return scriptPath;
+}
+
+export interface SecFixCommandOptions {
+  yes?: boolean;
+  json?: boolean;
+  skipReinstall?: boolean;
+  skipRescan?: boolean;
+  unsafeUnverified?: string;
+  dryRun?: boolean;
+}
+
+export function buildSecFixArgv(options: SecFixCommandOptions): string[] {
+  const args: string[] = [];
+  if (options.yes) args.push('--yes');
+  if (options.json) args.push('--json');
+  if (options.skipReinstall) args.push('--skip-reinstall');
+  if (options.skipRescan) args.push('--skip-rescan');
+  if (options.dryRun) args.push('--dry-run');
+  if (options.unsafeUnverified) args.push('--unsafe-unverified', options.unsafeUnverified);
+  return args;
+}
+
+export function runSecFix(options: SecFixCommandOptions, deps: SecScanDeps = defaultDeps): number {
+  const scriptPath = resolveSecFixScript(process.argv[1], deps);
+  const args = [scriptPath, ...buildSecFixArgv(options)];
+  const result = deps.spawnSync(process.execPath, args, { stdio: 'inherit' });
+  if (result.error) throw result.error;
+  return result.status ?? 1;
+}
+
 const BOOLEAN_FLAG_MAP: Array<[keyof SecScanCommandOptions, string]> = [
   ['json', '--json'],
   ['allHomes', '--all-homes'],
@@ -728,6 +768,45 @@ Nothing is deleted without a recoverable copy under $GENIE_SEC_QUARANTINE_DIR. U
         normalized.dryRun = true;
       }
       const exitCode = runSecRemediate(normalized, deps);
+      applySecScanExitCode(exitCode, deps);
+    });
+
+  sec
+    .command('fix')
+    .description(
+      'One-shot remediation — scan, kill compromised processes, purge caches, reinstall clean binary, re-scan (interactive)',
+    )
+    .option('--yes, -y', 'Non-interactive — pre-accepts the operator confirmation prompt (CI use only)')
+    .option('--json', 'Emit a machine-readable final summary')
+    .option('--skip-reinstall', 'Do not run `bun add -g @automagik/genie@next` at the end')
+    .option('--skip-rescan', 'Do not run the confirmation re-scan')
+    .option(
+      '--unsafe-unverified <id>',
+      'Passed through to `sec-remediate --apply` when the binary is not signature-verified',
+    )
+    .option('--dry-run', 'Plan everything, change nothing; prints exact commands that would run')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  # Interactive: review the plan, type 'y' to apply, get a clean re-scan.
+  $ genie sec fix
+
+  # CI / scripted: all consents pre-accepted, JSON summary at the end.
+  $ genie sec fix --yes --json > /var/log/genie-sec-fix.json
+
+  # Plan-only, no mutations.
+  $ genie sec fix --dry-run
+
+Recovery after \`fix\` (nothing is destructive-without-recourse):
+  # restore one quarantined item
+  $ genie sec restore <quarantine-id>
+  # roll back every action for this scan
+  $ genie sec rollback <scan-id>
+`.trimStart(),
+    )
+    .action((options: SecFixCommandOptions) => {
+      const exitCode = runSecFix(options, deps);
       applySecScanExitCode(exitCode, deps);
     });
 
