@@ -2553,23 +2553,25 @@ function collectTempRoots(platformInfo, homes, roots) {
     if (candidate) tempRoots.add(candidate);
   }
 
+  // `~/.npm`, `~/.bun`, `~/.cache` deliberately NOT added here — `scanNpmCache`
+  // and `scanBunCache` own those trees with tighter caps. Previously this
+  // function added them as top-level roots, bypassing WALK_SKIP_DIRS (which
+  // only applies to sub-entries), causing minute-long hangs on populated
+  // caches. Platform-gated Library/Caches + AppData paths remain because
+  // they have no dedicated scanner.
   for (const homePath of homes) {
-    for (const candidate of [
-      join(homePath, '.npm'),
-      join(homePath, '.npm', '_npx'),
-      join(homePath, '.cache'),
-      join(homePath, '.bun'),
-      join(homePath, 'Library', 'Caches'),
-      join(homePath, 'AppData', 'Local', 'Temp'),
-      join(homePath, 'AppData', 'Local', 'npm-cache'),
-    ]) {
-      tempRoots.add(candidate);
+    const candidates = [join(homePath, '.npm', '_npx')];
+    if (platformInfo.platform === 'darwin') {
+      candidates.push(join(homePath, 'Library', 'Caches'));
     }
+    if (platformInfo.platform === 'win32') {
+      candidates.push(join(homePath, 'AppData', 'Local', 'Temp'));
+      candidates.push(join(homePath, 'AppData', 'Local', 'npm-cache'));
+    }
+    for (const candidate of candidates) tempRoots.add(candidate);
   }
 
   for (const rootPath of roots) {
-    tempRoots.add(join(rootPath, '.npm'));
-    tempRoots.add(join(rootPath, '.cache'));
     tempRoots.add(join(rootPath, 'tmp'));
   }
 
@@ -2579,8 +2581,37 @@ function collectTempRoots(platformInfo, homes, roots) {
   });
 }
 
+// Per-phase read budgets for scanTempArtifacts. These bound total wall-clock
+// inside the synchronous onFile callback so the event loop is not starved,
+// progress ticker can still fire, and SIGINT remains responsive. Tunable via
+// env for ops that deliberately want to read more.
+// Conservative defaults that keep scanTempArtifacts under ~2s on any host.
+// Operators who want deeper coverage can raise these via env vars; the caps
+// record a `temp-read-budget` cap-event so coverage-gap reporting is accurate.
+const TEMP_READ_BYTES_BUDGET = Number(process.env.GENIE_SEC_SCAN_TEMP_BYTES_BUDGET) || 16 * 1024 * 1024;
+const TEMP_READ_FILES_BUDGET = Number(process.env.GENIE_SEC_SCAN_TEMP_FILES_BUDGET) || 100;
+const TEMP_READ_WALL_BUDGET_MS = Number(process.env.GENIE_SEC_SCAN_TEMP_WALL_MS) || 2000;
+
 function scanTempArtifacts(platformInfo, homes, roots, report, runtime) {
   const tempRoots = collectTempRoots(platformInfo, homes, roots);
+
+  let bytesRead = 0;
+  let filesRead = 0;
+  let capped = false;
+  const startMs = Date.now();
+
+  const markCapped = (reason) => {
+    if (capped) return;
+    capped = true;
+    if (runtime && typeof runtime.recordCap === 'function') {
+      runtime.recordCap('temp-read-budget', {
+        phase: 'scanTempArtifacts',
+        reason,
+        entries_processed: filesRead,
+        bytes_processed: bytesRead,
+      });
+    }
+  };
 
   walkTreeFiles(
     tempRoots,
@@ -2592,7 +2623,14 @@ function scanTempArtifacts(platformInfo, homes, roots, report, runtime) {
       scope: 'temp-artifacts',
     },
     (fullPath) => {
+      if (capped) return;
       if (report.tempArtifactFindings.length >= MAX_TEMP_FINDINGS) return;
+
+      // Budget gates — enforce before any synchronous I/O.
+      if (filesRead >= TEMP_READ_FILES_BUDGET) return markCapped('files_budget');
+      if (bytesRead >= TEMP_READ_BYTES_BUDGET) return markCapped('bytes_budget');
+      const elapsed = Date.now() - startMs;
+      if (elapsed >= TEMP_READ_WALL_BUDGET_MS) return markCapped('wall_budget');
 
       const stat = safeStat(fullPath);
       if (!stat || !stat.isFile()) return;
@@ -2605,7 +2643,45 @@ function scanTempArtifacts(platformInfo, homes, roots, report, runtime) {
       let networkCommands = [];
       let snippets = [];
 
-      if (namedHits.length === 0 && stat.size > MAX_TEMP_CONTENT_SCAN_SIZE) return;
+      // ALWAYS honour the size ceiling — never read a huge file into memory
+      // just because its basename matches an IOC name pattern. A basename
+      // hit alone is still reportable below (size_capped_not_hashed flag).
+      const oversize = stat.size > MAX_TEMP_CONTENT_SCAN_SIZE;
+      if (oversize && namedHits.length === 0) return;
+
+      filesRead += 1;
+
+      if (oversize) {
+        // Basename-IOC hit on an oversized file: report without reading.
+        const finding = {
+          path: fullPath,
+          realpath: safeRealpath(fullPath),
+          size: stat.size,
+          modifiedAt: isoTime(stat.mtimeMs),
+          nameMatches: namedHits,
+          sha256: null,
+          expectedSha256: expectedMalwareHashForBasename(basename(fullPath)),
+          knownMalwareHash: false,
+          iocMatches: [],
+          versions: [],
+          packageRefs: [],
+          executionCommands: [],
+          networkCommands: [],
+          snippets: [],
+          sizeCappedNotHashed: true,
+        };
+        report.tempArtifactFindings.push(finding);
+        addTimeline(report, {
+          time: finding.modifiedAt,
+          category: 'temp-artifact',
+          severity: 'affected',
+          summary: 'temp artifact basename matches IOC but exceeded content-scan size ceiling',
+          path: fullPath,
+        });
+        return;
+      }
+
+      bytesRead += stat.size;
 
       const buffer = safeReadFile(fullPath);
       if (!buffer) return;
