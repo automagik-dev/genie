@@ -1930,14 +1930,12 @@ function scanNpmCache(homePath, report) {
 
       const versions = findVersionsInText(text);
       const indicators = collectTextIndicators(text);
-      if (
-        versions.length === 0 &&
-        indicators.installCommands.length === 0 &&
-        indicators.executionCommands.length === 0 &&
-        indicators.iocMatches.length === 0
-      ) {
-        continue;
-      }
+      // Hard evidence in an npm log: an actual compromised version string
+      // or IOC network pattern. Name-only install/exec entries happen every
+      // time anyone runs `npx @automagik/genie ...` and are NOT evidence of
+      // compromise — they just record that the package was interacted with.
+      const hardEvidence = versions.length > 0 || indicators.iocMatches.length > 0;
+      if (!hardEvidence) continue;
 
       report.npmLogHits.push({
         home: homePath,
@@ -2333,25 +2331,30 @@ function scanShellHistories(homes, report) {
       const finding = inspectTextEvidenceFile(fullPath);
       if (!finding) continue;
 
-      const exposure =
-        finding.executionCommands.length > 0 || finding.networkCommands.length > 0
-          ? 'execution'
-          : finding.installCommands.length > 0
-            ? 'install'
-            : 'reference';
+      // Hard evidence: network-IOC pattern (curl/wget to exfil host),
+      // raw IOC string match, or explicit compromised-version string in
+      // history. Pure `executionCommands`/`installCommands` name-match is
+      // ambient noise (triggered every time the user runs the scanner).
+      const hasHardEvidence =
+        finding.networkCommands.length > 0 || finding.iocMatches.length > 0 || finding.versions.length > 0;
+
+      const exposure = hasHardEvidence ? 'execution' : 'reference';
 
       report.shellHistoryFindings.push({
         kind: 'shell-history',
         home: homePath,
         exposure,
+        hardEvidence: hasHardEvidence,
         ...finding,
       });
 
       addTimeline(report, {
         time: finding.modifiedAt,
         category: 'shell-history',
-        severity: exposure === 'execution' ? 'compromised' : 'affected',
-        summary: `shell history shows ${exposure} evidence for suspicious package activity`,
+        severity: hasHardEvidence ? 'compromised' : 'observed',
+        summary: hasHardEvidence
+          ? 'shell history shows execution evidence for suspicious package activity'
+          : 'shell history references tracked package name (clean or unversioned) — informational',
         path: finding.path,
       });
     }
@@ -2850,9 +2853,19 @@ function scanLiveProcesses(report) {
 
     const [, pid, ppid, user, elapsed, command] = match;
 
-    // Self-exclusion: the running scanner process itself always matches
-    // `exec:@automagik/genie` in its own cmdline. Ignore it.
+    // Self-exclusion: the running scanner + any wrapping shell that invoked
+    // it (e.g. `bash -c "npx @automagik/genie sec scan …"`) will always
+    // match the tracked-package regexes in their own cmdline. Ignore both.
+    if (String(pid) === String(process.pid)) continue;
+    if (String(pid) === String(process.ppid)) continue;
     if (command.includes('sec-scan.cjs') || command.includes('/sec-scan ')) continue;
+    if (
+      /\bgenie\s+sec\s+(scan|remediate|restore|rollback|verify-install|quarantine|print-cleanup-commands)\b/.test(
+        command,
+      )
+    ) {
+      continue;
+    }
 
     const indicators = collectTextIndicators(command);
     const namedHits = collectNamedArtifactHits(command);
@@ -2908,22 +2921,34 @@ function countStrongProfileEvidence(report) {
   ).length;
 }
 
+// Hard execution evidence in shell history = actual network-IOC (curl/wget
+// to exfil host) or raw IOC string or explicit compromised version. Pure
+// `executionCommands` matches (exec:@automagik/genie, exec:npx @automagik/genie)
+// fire every time the user runs the scanner itself or any other genie command
+// and are NOT compromise evidence. Same for `installCommands` — cleanup
+// activity (`npm uninstall -g @automagik/genie`) triggers them.
 function countExecutionHistoryEvidence(report) {
   return report.shellHistoryFindings.filter(
-    (finding) =>
-      finding.executionCommands.length > 0 || finding.networkCommands.length > 0 || finding.iocMatches.length > 0,
+    (finding) => finding.networkCommands.length > 0 || finding.iocMatches.length > 0 || finding.versions.length > 0,
   ).length;
 }
 
 function countInstallHistoryEvidence(report) {
-  return report.shellHistoryFindings.filter((finding) => finding.installCommands.length > 0).length;
+  // Same logic: only count install lines that explicitly reference a
+  // compromised version OR carry an IOC pattern. Bare install/uninstall
+  // commands on tracked package names are ambient noise.
+  return report.shellHistoryFindings.filter((finding) => finding.versions.length > 0 || finding.iocMatches.length > 0)
+    .length;
 }
 
+// Strong temp-artifact evidence = actual malware bytes / IOC strings /
+// env-compat artifact. Pure `executionCommands` (package-name execute
+// pattern) in a text file (log, audit json, registry) is NOT compromise —
+// dev tooling routinely writes package names into /tmp during tests.
 function countStrongTempEvidence(report) {
   return report.tempArtifactFindings.filter(
     (finding) =>
       finding.iocMatches.length > 0 ||
-      finding.executionCommands.length > 0 ||
       finding.knownMalwareHash ||
       finding.nameMatches.some((value) => /env-compat\.(?:cjs|js)/i.test(value)),
   ).length;
