@@ -259,11 +259,10 @@ function appendNativeTeamFlags(
   if (nt.parentSessionId) parts.push('--parent-session-id', escapeShellArg(nt.parentSessionId));
   if (nt.agentType) parts.push('--agent-type', escapeShellArg(nt.agentType));
   if (nt.planModeRequired) parts.push('--plan-mode-required');
-  // Always set permission mode for native team workers. Without this, CC's native
-  // team layer routes tool approvals to the team lead (which is an AI agent that
-  // can't approve). --dangerously-skip-permissions alone isn't enough — the native
-  // team permission gate is a separate layer.
-  const effectivePermMode = nt.permissionMode ?? 'bypassPermissions';
+  // Always set permission mode for native team workers. `auto` gives tool-by-tool
+  // judgment; keeps team-leads unblocked while refusing genuinely destructive ops.
+  // `bypassPermissions` remains a valid opt-in via agent frontmatter.
+  const effectivePermMode = nt.permissionMode ?? 'auto';
   parts.push('--permission-mode', escapeShellArg(effectivePermMode));
 }
 
@@ -405,7 +404,7 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('claude');
 
   const claudeBinary = resolveShellBinary('claude') ?? 'claude';
-  const parts: string[] = [claudeBinary, '--dangerously-skip-permissions'];
+  const parts: string[] = [claudeBinary, '--permission-mode', escapeShellArg('auto')];
   const env = buildClaudeGenieEnv(params);
 
   appendOtelEnv(env, params);

@@ -105,9 +105,9 @@ describe('ClaudeCodeProvider', () => {
       expect(result.meta.role).toBe('engineer');
     });
 
-    it('includes --dangerously-skip-permissions', () => {
+    it('includes --permission-mode auto', () => {
       const result = provider.buildSpawnCommand(makeSpawnContext());
-      expect(result.command).toContain('--dangerously-skip-permissions');
+      expect(result.command).toContain('--permission-mode');
     });
 
     it('produces identical output to buildClaudeCommand for same inputs', () => {

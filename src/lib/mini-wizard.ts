@@ -188,6 +188,7 @@ async function customizeDefaults(currentDefaults?: Partial<AgentDefaults>): Prom
 
   // Permission mode
   const permChoices = [
+    { name: 'auto (tool-by-tool judgment — default)', value: 'auto' },
     { name: 'default (ask for risky tools)', value: 'default' },
     { name: 'plan (require plan approval)', value: 'plan' },
     { name: 'bypassPermissions (auto-approve all)', value: 'bypassPermissions' },

@@ -62,7 +62,7 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     `--agent-name ${shellQuote(sanitizedLeader)}`,
     `--team-name ${qTeam}`,
     '--agent-type team-lead',
-    '--dangerously-skip-permissions',
+    '--permission-mode auto',
   ];
 
   // Session name for CC's /resume and terminal title
