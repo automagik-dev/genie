@@ -135,11 +135,63 @@ const TTY = {
   reset: isTTY ? '\x1b[0m' : '',
   bold: isTTY ? '\x1b[1m' : '',
   dim: isTTY ? '\x1b[2m' : '',
+  underline: isTTY ? '\x1b[4m' : '',
+  blink: isTTY ? '\x1b[5m' : '',
+  inverse: isTTY ? '\x1b[7m' : '',
   red: isTTY ? '\x1b[31m' : '',
   green: isTTY ? '\x1b[32m' : '',
   yellow: isTTY ? '\x1b[33m' : '',
   blue: isTTY ? '\x1b[34m' : '',
+  magenta: isTTY ? '\x1b[35m' : '',
+  cyan: isTTY ? '\x1b[36m' : '',
+  white: isTTY ? '\x1b[37m' : '',
+  bgRed: isTTY ? '\x1b[41m' : '',
+  bgYellow: isTTY ? '\x1b[43m' : '',
+  bgGreen: isTTY ? '\x1b[42m' : '',
+  bgBlue: isTTY ? '\x1b[44m' : '',
 };
+
+// Severity tags used in the audit print. Order matters for the summary
+// banner — CRITICAL is always the loudest signal.
+const SEVERITY = {
+  CRITICAL: {
+    label: 'CRITICAL',
+    paint: (s) => `${TTY.bgRed}${TTY.white}${TTY.bold}${TTY.blink} ${s} ${TTY.reset}`,
+    rowPaint: (s) => `${TTY.red}${TTY.bold}${s}${TTY.reset}`,
+    icon: '☠',
+  },
+  DESTRUCTIVE: {
+    label: 'DESTRUCTIVE',
+    paint: (s) => `${TTY.bgRed}${TTY.white}${TTY.bold} ${s} ${TTY.reset}`,
+    rowPaint: (s) => `${TTY.red}${s}${TTY.reset}`,
+    icon: '⚠',
+  },
+  REVERSIBLE: {
+    label: 'REVERSIBLE',
+    paint: (s) => `${TTY.bgYellow}${TTY.bold} ${s} ${TTY.reset}`,
+    rowPaint: (s) => `${TTY.yellow}${s}${TTY.reset}`,
+    icon: '↻',
+  },
+  SAFE: {
+    label: 'SAFE',
+    paint: (s) => `${TTY.bgGreen}${TTY.bold} ${s} ${TTY.reset}`,
+    rowPaint: (s) => `${TTY.green}${s}${TTY.reset}`,
+    icon: '✓',
+  },
+};
+
+function hrule(char, color) {
+  const width = Math.min((process.stderr.columns || 100) - 2, 96);
+  process.stderr.write(`${color || TTY.dim}${char.repeat(width)}${TTY.reset}\n`);
+}
+function banner(text, severity) {
+  const width = Math.min((process.stderr.columns || 100) - 2, 96);
+  const padded = ` ${text} `;
+  const pad = Math.max(0, Math.floor((width - padded.length) / 2));
+  const line = ' '.repeat(pad) + padded + ' '.repeat(Math.max(0, width - pad - padded.length));
+  const paint = severity.paint;
+  process.stderr.write(`${paint(line)}\n`);
+}
 
 function section(title) {
   process.stderr.write(`\n${TTY.bold}${TTY.blue}▶ ${title}${TTY.reset}\n`);
@@ -305,36 +357,124 @@ function parseElapsedSeconds(raw) {
 // Plan summary + consent prompt
 // ---------------------------------------------------------------------------
 
-function showPlanSummary(plan) {
-  section('2/6 Plan — actions to apply');
-  if (plan.killPids.length > 0) {
-    info(`${TTY.bold}Kill processes:${TTY.reset} ${plan.killPids.join(', ')}`);
-  }
-  if (plan.compromisedInstallPaths.length > 0) {
-    info(`${TTY.bold}Quarantine install dirs:${TTY.reset}`);
-    for (const p of plan.compromisedInstallPaths) info(`  • ${p}`);
-  }
-  if (plan.compromisedBunCacheDirs.length > 0) {
-    info(`${TTY.bold}Purge bun cache dirs:${TTY.reset}`);
-    for (const p of plan.compromisedBunCacheDirs) info(`  • ${p}`);
-  }
-  if (plan.compromisedNpmCache) {
-    info(
-      `${TTY.bold}Purge npm cache:${TTY.reset} ${join(homedir(), '.npm', '_cacache')} (entire cache — re-fetches on demand)`,
+function renderAuditRow(severity, verb, target, recovery) {
+  const tag = severity.paint(`${severity.icon} ${severity.label.padEnd(11)}`);
+  const verbRow = severity.rowPaint(verb);
+  process.stderr.write(`  ${tag}  ${verbRow}\n`);
+  process.stderr.write(`                ${TTY.dim}target:   ${TTY.reset}${target}\n`);
+  process.stderr.write(`                ${TTY.dim}recovery: ${TTY.reset}${TTY.cyan}${recovery}${TTY.reset}\n\n`);
+}
+
+function showPlanSummary(plan, options) {
+  process.stderr.write('\n');
+  hrule('═', TTY.red + TTY.bold);
+  banner('⚠  DESTRUCTIVE OPERATIONS AUDIT — REVIEW BEFORE ACCEPTING  ⚠', SEVERITY.DESTRUCTIVE);
+  hrule('═', TTY.red + TTY.bold);
+  process.stderr.write('\n');
+
+  const counts = { CRITICAL: 0, DESTRUCTIVE: 0, REVERSIBLE: 0, SAFE: 0 };
+  let sawAny = false;
+
+  for (const pid of plan.killPids) {
+    counts.CRITICAL += 1;
+    sawAny = true;
+    renderAuditRow(
+      SEVERITY.CRITICAL,
+      `KILL PROCESS  pid=${pid}  (SIGTERM + 2s + SIGKILL if still alive)`,
+      `running process id ${pid}`,
+      "service must be restarted manually after fix completes (e.g. 'genie serve start')",
     );
   }
-  if (plan.tempTarballsToDelete.length > 0) {
-    info(`${TTY.bold}Delete temp tarballs:${TTY.reset}`);
-    for (const p of plan.tempTarballsToDelete) info(`  • ${p}`);
+
+  for (const path of plan.compromisedInstallPaths) {
+    counts.DESTRUCTIVE += 1;
+    sawAny = true;
+    renderAuditRow(
+      SEVERITY.DESTRUCTIVE,
+      'REMOVE INSTALL DIR',
+      path,
+      'clean binary reinstalls in step 5; malicious bytes are quarantined (genie sec restore)',
+    );
   }
-  const nothingToDo =
-    plan.killPids.length === 0 &&
-    plan.compromisedInstallPaths.length === 0 &&
-    plan.compromisedBunCacheDirs.length === 0 &&
-    !plan.compromisedNpmCache &&
-    plan.tempTarballsToDelete.length === 0;
-  if (nothingToDo) ok('no compromise evidence — nothing to fix');
-  return !nothingToDo;
+
+  for (const path of plan.compromisedBunCacheDirs) {
+    counts.REVERSIBLE += 1;
+    sawAny = true;
+    renderAuditRow(
+      SEVERITY.REVERSIBLE,
+      'PURGE BUN CACHE DIR',
+      path,
+      'bun re-fetches this package from npm registry on next install',
+    );
+  }
+
+  if (plan.compromisedNpmCache) {
+    counts.REVERSIBLE += 1;
+    sawAny = true;
+    renderAuditRow(
+      SEVERITY.REVERSIBLE,
+      'PURGE NPM CACHE (wholesale)',
+      join(homedir(), '.npm', '_cacache'),
+      'npm rebuilds cache from registry on next install; no user data',
+    );
+  }
+
+  for (const path of plan.tempTarballsToDelete) {
+    counts.DESTRUCTIVE += 1;
+    sawAny = true;
+    renderAuditRow(
+      SEVERITY.DESTRUCTIVE,
+      'UNLINK MALICIOUS TARBALL',
+      path,
+      'this file IS the payload — deletion IS the recovery',
+    );
+  }
+
+  if (!options.skipReinstall && sawAny) {
+    counts.SAFE += 1;
+    renderAuditRow(
+      SEVERITY.SAFE,
+      'REINSTALL @automagik/genie@next  (global binary)',
+      "via 'bun add -g @automagik/genie@next'",
+      'installing the clean version never regresses; old bytes are already quarantined',
+    );
+  }
+
+  if (!options.skipRescan && sawAny) {
+    counts.SAFE += 1;
+    renderAuditRow(
+      SEVERITY.SAFE,
+      'RE-SCAN to confirm clean state',
+      'invokes `sec-scan.cjs --json --redact`',
+      'read-only; no mutations',
+    );
+  }
+
+  hrule('═', TTY.red + TTY.bold);
+  const total = counts.CRITICAL + counts.DESTRUCTIVE + counts.REVERSIBLE + counts.SAFE;
+  if (sawAny) {
+    const countsLine =
+      `${SEVERITY.CRITICAL.rowPaint(`${counts.CRITICAL} CRITICAL`)}  ` +
+      `${SEVERITY.DESTRUCTIVE.rowPaint(`${counts.DESTRUCTIVE} DESTRUCTIVE`)}  ` +
+      `${SEVERITY.REVERSIBLE.rowPaint(`${counts.REVERSIBLE} REVERSIBLE`)}  ` +
+      `${SEVERITY.SAFE.rowPaint(`${counts.SAFE} SAFE`)}`;
+    process.stderr.write(`  ${TTY.bold}TOTAL: ${total} operations${TTY.reset}     ${countsLine}\n`);
+    hrule('═', TTY.red + TTY.bold);
+
+    if (counts.CRITICAL > 0) {
+      process.stderr.write('\n');
+      process.stderr.write(
+        `  ${TTY.blink}${TTY.red}${TTY.bold}⚠  ${counts.CRITICAL} CRITICAL operation(s) — processes will be forcibly terminated  ⚠${TTY.reset}\n`,
+      );
+      process.stderr.write(
+        `  ${TTY.dim}Running services (genie serve, pgserve, codex workers) will be killed.\n  Any in-flight work in those processes will be lost.${TTY.reset}\n`,
+      );
+    }
+    process.stderr.write('\n');
+  } else {
+    ok('no compromise evidence — nothing to fix');
+  }
+  return sawAny;
 }
 
 // ---------------------------------------------------------------------------
@@ -528,7 +668,7 @@ function main() {
 
   const envelope = runScan();
   const plan = classifyEnvelope(envelope);
-  const somethingToDo = showPlanSummary(plan);
+  const somethingToDo = showPlanSummary(plan, options);
 
   if (!somethingToDo) {
     if (options.json) {
