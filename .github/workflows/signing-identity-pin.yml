@@ -1,0 +1,50 @@
+name: Signing Identity Pin
+
+# Asserts the cosign keyless signing identity is byte-identical across the
+# four in-repo witnesses on every PR that touches any of them. A divergent
+# edit to a single witness indicates one of two things: (a) a legitimate
+# rotation missed a channel (operator needs to land the missing channels in
+# the same PR per docs/security/key-rotation.md), or (b) a tampered PR
+# trying to move the pin. Either way, the PR must not merge until the
+# witnesses agree.
+#
+# See scripts/check-fingerprint-pinning.sh for the check implementation and
+# SECURITY.md "Release Signing — Pinned Identity (cosign keyless)" for the
+# canonical pin values.
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'SECURITY.md'
+      - '.well-known/security.txt'
+      - '.github/ISSUE_TEMPLATE/signing-key-fingerprint.md'
+      - '.github/cosign.pub'
+      - 'scripts/check-fingerprint-pinning.sh'
+      - '.github/workflows/signing-identity-pin.yml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'SECURITY.md'
+      - '.well-known/security.txt'
+      - '.github/ISSUE_TEMPLATE/signing-key-fingerprint.md'
+      - '.github/cosign.pub'
+      - 'scripts/check-fingerprint-pinning.sh'
+      - '.github/workflows/signing-identity-pin.yml'
+
+concurrency:
+  group: signing-identity-pin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-pin:
+    name: check-fingerprint-pinning (four-channel byte-identity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assert signing-identity pin agrees across all four witnesses
+        run: bash scripts/check-fingerprint-pinning.sh
