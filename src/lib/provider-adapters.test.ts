@@ -75,14 +75,15 @@ describe('buildClaudeCommand', () => {
     expect(result.meta.role).toBe('implementor');
   });
 
-  it('includes --dangerously-skip-permissions', () => {
+  it('includes --permission-mode auto', () => {
     const result = buildClaudeCommand({ provider: 'claude', team: 'work', role: 'implementor' });
-    expect(result.command).toContain('--dangerously-skip-permissions');
+    expect(result.command).toContain('--permission-mode');
+    expect(result.command).toContain("'auto'");
   });
 
   it('excludes --agent when no role specified', () => {
     const result = buildClaudeCommand({ provider: 'claude', team: 'work' });
-    expect(result.command).toContain('--dangerously-skip-permissions');
+    expect(result.command).toContain('--permission-mode');
     expect(result.command).not.toContain('--agent');
   });
 

@@ -148,8 +148,8 @@ export function buildOmniSpawnParams(
 
   // Pass agent permissions through to Claude Code via --settings so the tmux
   // executor honors AGENTS.md frontmatter permissions. Without this, WhatsApp
-  // turn agents run under bypassPermissions with zero Bash-level enforcement,
-  // defeating the unified per-agent permission system.
+  // turn agents run under the default (auto) permission mode with no Bash-level
+  // enforcement, defeating the unified per-agent permission system.
   const permissions =
     entry.permissions?.allow?.length || entry.permissions?.deny?.length
       ? { allow: entry.permissions.allow, deny: entry.permissions.deny }
