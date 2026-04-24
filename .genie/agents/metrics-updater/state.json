@@ -1,5 +1,5 @@
 {
-  "last_run": "2026-04-23T12:20:13Z",
+  "last_run": "2026-04-24T12:25:20Z",
   "last_run_status": "success",
   "last_metrics": {
     "releases_24h": 0,
@@ -7,8 +7,8 @@
     "avg_merge_time_h": 0.7,
     "ship_rate_pct": 99
   },
-  "daily_stats_count": 40,
+  "daily_stats_count": 41,
   "charts_generated": 3,
   "velocity_md_updated": true,
-  "duration_ms": 42500
+  "duration_ms": 4068
 }
