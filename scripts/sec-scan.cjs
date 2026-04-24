@@ -364,9 +364,24 @@ const TEXT_MATCHERS = [
     regex: /\b(?:node|bun|bash|sh)\b[^\n]{0,200}env-compat\.(?:cjs|js)\b/i,
   },
   {
-    label: 'network:curl-wget IOC',
+    // Hard evidence: curl/wget/fetch to the exact exfil endpoint path.
+    // This is what the CanisterWorm payload uses to upload stolen data
+    // (POST /v1/telemetry and POST /v1/drop). Matching these = compromise.
+    label: 'network:curl-wget IOC-exfil',
     category: 'network',
-    regex: /\b(?:curl|wget|fetch|Invoke-WebRequest)\b[^\n]{0,200}(?:telemetry\.api-monitor\.com|raw\.icp0\.io\/drop)/i,
+    regex:
+      /\b(?:curl|wget|fetch|Invoke-WebRequest)\b[^\n]{0,200}(?:telemetry\.api-monitor\.com\/v1\/(?:telemetry|drop)|raw\.icp0\.io\/drop)/i,
+  },
+  {
+    // Soft evidence: bare-host mention of the exfil domain WITHOUT the
+    // /v1/ path. Almost always an incident responder (or documentation)
+    // probing the host, not the payload itself — the payload never runs
+    // a bare `curl <host>` because there's no endpoint that would accept
+    // the uploaded payload. Classify as 'probe' so it shows in the
+    // report but doesn't elevate the suspicion score.
+    label: 'network:exfil-host-probe',
+    category: 'probe',
+    regex: /\b(?:curl|wget|fetch|Invoke-WebRequest)\b[^\n]{0,200}telemetry\.api-monitor\.com(?!\/v1\/)/i,
   },
 ];
 
@@ -1415,6 +1430,7 @@ function collectTextIndicators(text) {
     installCommands: [],
     executionCommands: [],
     networkCommands: [],
+    probeMatches: [],
     allMatches: [],
   };
 
@@ -1427,6 +1443,11 @@ function collectTextIndicators(text) {
     if (matcher.category === 'install') indicators.installCommands.push(matcher.label);
     if (matcher.category === 'execution') indicators.executionCommands.push(matcher.label);
     if (matcher.category === 'network') indicators.networkCommands.push(matcher.label);
+    // `probe` is informational-only: it means the text references an
+    // exfil host but WITHOUT the attacker's uploading path. Almost
+    // always a responder probing or documentation. Never elevates
+    // compromise severity.
+    if (matcher.category === 'probe') indicators.probeMatches.push(matcher.label);
   }
 
   for (const trackedPackage of TRACKED_PACKAGES) {
