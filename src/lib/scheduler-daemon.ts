@@ -1102,10 +1102,16 @@ export async function terminalizeCleanExitUnverified(
       `;
       const alreadyClosed = execRows.length > 0 && (execRows[0].closed_at !== null || execRows[0].outcome !== null);
       if (alreadyClosed) {
+        // Keep `current_executor_id` pointing at the terminated executor —
+        // its `claude_session_id` is the only durable handle to the dormant
+        // session UUID. Nulling it here erases the recovery anchor (see the
+        // `getResumeSessionId` contract in executor-registry.ts and the
+        // 2026-04-25 power-outage post-mortem). The state filter on
+        // `getCurrentExecutor` / `getLiveExecutorState` already encodes "is it
+        // alive"; the FK becomes a "what was the last session" pointer.
         await tx`
           UPDATE agents
-          SET current_executor_id = NULL,
-              state = 'error',
+          SET state = 'error',
               last_state_change = ${nowIso}
           WHERE id = ${worker.id}
         `;
@@ -1122,10 +1128,12 @@ export async function terminalizeCleanExitUnverified(
         WHERE id = ${executorId}
       `;
 
+      // See note above: keep `current_executor_id` pointing at the just-
+      // terminated executor so `getResumeSessionId` and the JSONL fallback
+      // can use its `claude_session_id` as the recovery anchor.
       await tx`
         UPDATE agents
-        SET current_executor_id = NULL,
-            state = 'error',
+        SET state = 'error',
             last_state_change = ${nowIso}
         WHERE id = ${worker.id}
       `;

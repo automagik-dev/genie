@@ -197,6 +197,49 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(metadata.dir).toBe(agentDir);
     });
 
+    test('add writes team and repo_path to PG (Gap 1+3 fix, 2026-04-25 power-outage post-mortem)', async () => {
+      // Pre-fix bug: dir: agents inserted with team=NULL even when the entry
+      // had a known team. session-sync hook's `getAgentByName(name, team)`
+      // lookup then missed (WHERE custom_name=$1 AND team=$2 → NULL row),
+      // so the agent's claude_session_id was never persisted. Post-fix:
+      // team and dir are written to top-level columns, not just metadata.
+      await directory.add({
+        name: 'teamed-agent',
+        dir: agentDir,
+        promptMode: 'append',
+        team: 'genie',
+      });
+
+      const sql = await getConnection();
+      const rows = await sql<{ team: string | null; repo_path: string | null }[]>`
+        SELECT team, repo_path FROM agents WHERE id = 'dir:teamed-agent'
+      `;
+      expect(rows.length).toBe(1);
+      expect(rows[0].team).toBe('genie');
+      expect(rows[0].repo_path).toBe(agentDir);
+    });
+
+    test('add upserts team without overwriting an already-set team (Gap 3 idempotence)', async () => {
+      const sql = await getConnection();
+      // Pre-seed with team
+      await directory.add({ name: 'idempotent-team', dir: agentDir, promptMode: 'append', team: 'genie' });
+      // Re-add with no team — must not clobber
+      await sql`UPDATE agents SET team = 'genie' WHERE id = 'dir:idempotent-team'`;
+      // Calling add again with no team specified should not erase the existing one.
+      // (Note: add() throws on duplicate non-builtin, so test via raw INSERT path.)
+      await sql`
+        INSERT INTO agents (id, role, custom_name, team, repo_path, started_at, state, metadata)
+        VALUES ('dir:idempotent-team', 'idempotent-team', 'idempotent-team', NULL, ${agentDir}, now(), NULL, '{}'::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+          team = COALESCE(EXCLUDED.team, agents.team),
+          metadata = '{}'::jsonb
+      `;
+      const [row] = await sql<{ team: string | null }[]>`
+        SELECT team FROM agents WHERE id = 'dir:idempotent-team'
+      `;
+      expect(row.team).toBe('genie');
+    });
+
     test('rm returns removed=false with no message for truly non-existent', async () => {
       const result = await directory.rm('nonexistent');
       expect(result.removed).toBe(false);

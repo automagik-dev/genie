@@ -84,13 +84,17 @@ describe('session-sync handler', () => {
     function installMocks(options: {
       executorId: string;
       currentSessionId: string | null;
+      executorState?: string | null;
       updates?: { id: string; sessionId: string }[];
       emissions?: Emission[];
     }) {
       const updates = options.updates ?? [];
       const emissions = options.emissions ?? [];
       _deps.getAgentByName = async () => ({ currentExecutorId: options.executorId });
-      _deps.getExecutor = async () => ({ claudeSessionId: options.currentSessionId });
+      _deps.getExecutor = async () => ({
+        claudeSessionId: options.currentSessionId,
+        state: options.executorState ?? 'running',
+      });
       _deps.updateClaudeSessionId = async (id, sid) => {
         updates.push({ id, sessionId: sid });
       };
@@ -163,6 +167,110 @@ describe('session-sync handler', () => {
 
       expect(updates).toHaveLength(0);
       expect(emissions).toHaveLength(0);
+    });
+
+    // ========================================================================
+    // Gap 5 (2026-04-25 power-outage post-mortem): when the executor is in a
+    // terminal state, its claude_session_id is a recovery anchor — overwriting
+    // it with a divergent live session destroys the only DB-side handle to
+    // the dormant session UUID. Regression tests below.
+    // ========================================================================
+
+    test('PRESERVES stored UUID when executor is terminated (recovery anchor)', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const { updates, emissions } = installMocks({
+        executorId: 'exec-terminated',
+        currentSessionId: '9623de43-cf19-4350-a970-770ef6382e29', // dormant pre-crash session
+        executorState: 'terminated',
+      });
+
+      await sessionSync({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        session_id: '8b9b674e-9063-4f84-aada-5925eb7db1f4', // live post-crash session
+      });
+
+      // The original session_id MUST survive untouched.
+      expect(updates).toHaveLength(0);
+      // session.divergence_preserved emitted instead of session.reconciled.
+      expect(emissions).toHaveLength(1);
+      expect(emissions[0]?.type).toBe('session.divergence_preserved');
+      expect(emissions[0]?.details.stored_session_id).toBe('9623de43-cf19-4350-a970-770ef6382e29');
+      expect(emissions[0]?.details.live_session_id).toBe('8b9b674e-9063-4f84-aada-5925eb7db1f4');
+      expect(emissions[0]?.details.executor_state).toBe('terminated');
+      expect(emissions[0]?.details.reason).toBe('terminal_executor_is_recovery_anchor');
+    });
+
+    test('PRESERVES stored UUID when executor is in error state', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const { updates, emissions } = installMocks({
+        executorId: 'exec-error',
+        currentSessionId: 'dormant-uuid',
+        executorState: 'error',
+      });
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'live-uuid' });
+
+      expect(updates).toHaveLength(0);
+      expect(emissions[0]?.type).toBe('session.divergence_preserved');
+      expect(emissions[0]?.details.executor_state).toBe('error');
+    });
+
+    test('PRESERVES stored UUID when executor is in done state', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const { updates, emissions } = installMocks({
+        executorId: 'exec-done',
+        currentSessionId: 'dormant-uuid',
+        executorState: 'done',
+      });
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'live-uuid' });
+
+      expect(updates).toHaveLength(0);
+      expect(emissions[0]?.type).toBe('session.divergence_preserved');
+    });
+
+    test('STILL overwrites when executor is in active state (UUID rotation, original purpose)', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const { updates, emissions } = installMocks({
+        executorId: 'exec-running',
+        currentSessionId: 'pre-rotation-uuid',
+        executorState: 'running',
+      });
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'post-rotation-uuid' });
+
+      // Active-state divergence is genuine UUID rotation — handler's original
+      // job. Overwrite + emit session.reconciled.
+      expect(updates).toEqual([{ id: 'exec-running', sessionId: 'post-rotation-uuid' }]);
+      expect(emissions[0]?.type).toBe('session.reconciled');
+    });
+
+    test('STILL writes on first capture when oldSessionId is null even if state is terminated', async () => {
+      // Edge case: terminal-state executor with no session yet (synthesized
+      // recovery row). First capture should still write — there's no
+      // pre-existing UUID to preserve, only NULL.
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const { updates, emissions } = installMocks({
+        executorId: 'exec-fresh-terminal',
+        currentSessionId: null,
+        executorState: 'terminated',
+      });
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'first-uuid' });
+
+      expect(updates).toEqual([{ id: 'exec-fresh-terminal', sessionId: 'first-uuid' }]);
+      expect(emissions[0]?.type).toBe('session.reconciled');
     });
 
     test('does NOT re-emit on repeated invocations with the same UUID (process cache)', async () => {
