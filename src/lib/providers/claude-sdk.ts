@@ -213,6 +213,18 @@ export class ClaudeSdkProvider implements ExecutorProvider {
       abortController,
       ...(ctx.model && { model: ctx.model }),
       ...(resolvedSystemPrompt && { systemPrompt: resolvedSystemPrompt }),
+      // SDK 0.2.108+: emits `{type:'system', subtype:'status', status:'requesting'}`
+      // before each API request and surfaces partial assistant deltas. Our
+      // routeSdkMessage already handles `system` subtypes generically; turning
+      // this on gives observability into in-flight requests + partial output
+      // without code changes.
+      includePartialMessages: true,
+      // SDK 0.2.72+: periodic AI-generated progress summaries for running
+      // subagents (foreground and background), emitted on `task_progress`
+      // events via the new `summary` field. Lets `genie ls` / event timeline
+      // show what each spawned subagent is actually doing instead of a bare
+      // pid + duration.
+      agentProgressSummaries: true,
       // Layer 1: directory-level SDK config (lowest priority)
       ...translatedSdk,
       // Layer 2: runtime overrides (highest priority)

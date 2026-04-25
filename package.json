@@ -46,7 +46,7 @@
     "verify:release": "scripts/verify-release.sh"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.91",
+    "@anthropic-ai/claude-agent-sdk": "0.2.119",
     "@inquirer/prompts": "^7.0.0",
     "@opentui/core": "0.1.103",
     "@opentui/react": "0.1.103",
