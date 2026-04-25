@@ -82,7 +82,7 @@ Define your agent's mission here. What is their primary goal? What do they own?
 
 // ─── Genie Specialist Templates ─────────────────────────────────────────────
 
-const GENIE_AGENTS_TEMPLATE = `---
+export const GENIE_AGENTS_TEMPLATE = `---
 name: genie
 description: Workspace concierge and orchestrator — guides new users, manages agents, runs pipelines.
 model: opus
@@ -126,7 +126,7 @@ Your role adapts based on workspace maturity:
 </constraints>
 `;
 
-const GENIE_SOUL_TEMPLATE = [
+export const GENIE_SOUL_TEMPLATE = [
   '# Genie Specialist \u2014 Soul',
   '',
   'You are the genie workspace specialist. You guide users through the genie workflow and orchestrate agents.',
@@ -239,7 +239,7 @@ const GENIE_SOUL_TEMPLATE = [
   '',
 ].join('\n');
 
-const GENIE_HEARTBEAT_TEMPLATE = [
+export const GENIE_HEARTBEAT_TEMPLATE = [
   '# Heartbeat \u2014 Genie Specialist',
   '',
   'Run this checklist on every iteration. Exit early if nothing actionable.',
@@ -299,6 +299,20 @@ function renderAgentsTemplate(agentName?: string, workspaceDefaults?: Partial<Ag
 
   return rendered;
 }
+
+/**
+ * Fingerprint markers used by `genie doctor` to detect workspaces that
+ * pre-date the GENIE_AGENTS_TEMPLATE branch in scaffoldAgentFiles. A workspace
+ * scaffolded before that branch landed received the generic AGENTS_TEMPLATE
+ * for its `genie` agent — gray TUI, missing model/color/promptMode. Upgrading
+ * the package never re-runs scaffold, so the stale file persists. See #1374.
+ *
+ * The first marker is a near-line-by-line literal from the generic template's
+ * <mission> body. The second is the absence of `model:` in agent.yaml — the
+ * generic frontmatter omits it whereas the specialist sets `model: opus`.
+ */
+export const STALE_GENIE_AGENTS_MD_MARKER = "Define your agent's mission here.";
+export const STALE_GENIE_AGENT_YAML_MISSING_MODEL_REGEX = /^model\s*:/m;
 
 /**
  * Write scaffold templates (SOUL.md, HEARTBEAT.md, AGENTS.md) into the target directory.
