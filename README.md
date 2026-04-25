@@ -25,7 +25,7 @@
 -->
 
 <!-- METRICS:START -->
-**🚀 122 commits** this week · **7 releases** · **+28.1K LoC** · **6 contributors**
+**🚀 121 commits** this week · **7 releases** · **+28.1K LoC** · **6 contributors**
 
 ![Commits per day (30d, all branches)](.genie/assets/commits-30d.svg)
 
