@@ -454,9 +454,11 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
           // No executor assigned — simulates the post-host-crash state where
           // reconciler nulled current_executor_id.
 
-          _resumeJsonlScannerDeps.scanForSession = async (scannedCwd, customName) => {
+          _resumeJsonlScannerDeps.scanForSession = async (scannedCwd, identity) => {
             expect(scannedCwd).toBe(cwd);
-            expect(customName).toBe('crash-eng');
+            expect(identity).not.toBeNull();
+            expect(identity!.team).toBe('crash-team');
+            expect(identity!.customName).toBe('crash-eng');
             return recoveredUuid;
           };
 
@@ -467,6 +469,7 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
           expect(event).not.toBeNull();
           expect(event!.details.sessionId).toBe(recoveredUuid);
           expect(event!.details.cwd).toBe(cwd);
+          expect(event!.details.team).toBe('crash-team');
           expect(event!.details.customName).toBe('crash-eng');
           expect(event!.details.recoveredFrom).toBe('no_executor');
 
@@ -539,6 +542,65 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
           const event = await latestAuditForAgent(agentId, 'resume.missing_session');
           expect(event).not.toBeNull();
           expect(event!.details.reason).toBe('no_executor');
+        } finally {
+          resetScanner();
+        }
+      });
+
+      test('agent with cwd but null custom_name: scanner refuses (identity unknown)', async () => {
+        // Legacy rows / partially-seeded agents where custom_name is NULL.
+        // Returning newest JSONL would attach this agent to whatever
+        // happened to be most-recent in the project dir — cross-agent
+        // context corruption. Strict refusal is the right behavior; the
+        // outer caller emits resume.missing_session.
+        const cwd = '/tmp/null-customname-fixture';
+        let scannerCalls = 0;
+        _resumeJsonlScannerDeps.scanForSession = async () => {
+          scannerCalls++;
+          return 'never-returned';
+        };
+
+        try {
+          const agentId = await seedAgent('legacy-eng', 'legacy-team');
+          const sql = await getConnection();
+          await sql`UPDATE agents SET repo_path = ${cwd}, custom_name = NULL WHERE id = ${agentId}`;
+
+          const sessionId = await getResumeSessionId(agentId);
+          expect(sessionId).toBeNull();
+          expect(scannerCalls).toBe(0); // gate fired before reaching scanner
+
+          const event = await latestAuditForAgent(agentId, 'resume.missing_session');
+          expect(event).not.toBeNull();
+        } finally {
+          resetScanner();
+        }
+      });
+
+      test('scanner receives team-prefixed identity match (genie-genie case)', async () => {
+        // Regression: pre-fix code compared customTitle to bare custom_name,
+        // missing the canonical "<team>-<role>" pattern Claude workers use.
+        // The new contract passes structured (team, customName) to the
+        // scanner so the scanner can match (teamName, agentName) pulled
+        // from JSONL body lines correctly.
+        const cwd = '/tmp/genie-genie-fixture';
+        const captured: { team: string | null; customName: string | null } = {
+          team: null,
+          customName: null,
+        };
+
+        _resumeJsonlScannerDeps.scanForSession = async (_cwd, identity) => {
+          captured.team = identity?.team ?? null;
+          captured.customName = identity?.customName ?? null;
+          return 'recovered-genie-uuid';
+        };
+
+        try {
+          const agentId = await seedAgentWithCwd(cwd, 'genie', 'genie');
+
+          const sessionId = await getResumeSessionId(agentId);
+          expect(sessionId).toBe('recovered-genie-uuid');
+          expect(captured.team).toBe('genie');
+          expect(captured.customName).toBe('genie');
         } finally {
           resetScanner();
         }

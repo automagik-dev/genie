@@ -258,8 +258,21 @@ export async function updateClaudeSessionId(executorId: string, sessionId: strin
 }
 
 /**
+ * Identity passed to the JSONL fallback scanner. Mirrors the canonical
+ * `(team, custom_name)` columns on `agents`. Both fields must be non-null
+ * to attempt a match — the fallback refuses to return another agent's
+ * transcript when ownership is unknown.
+ */
+export interface ResumeFallbackIdentity {
+  /** Agent's `team` column. Populated by `findOrCreateAgent`. */
+  team: string;
+  /** Agent's `custom_name` column. The role-or-name part of the identity. */
+  customName: string;
+}
+
+/**
  * Sanitize a filesystem path the same way Claude Code encodes its
- * `~/.claude/projects/<encoded-cwd>/` directory names: every non-alphanumeric
+ * `<config-dir>/projects/<encoded-cwd>/` directory names: every non-alphanumeric
  * char becomes `-`. Kept in this module so the JSONL-fallback below has no
  * cross-module dependency for hotfix scope.
  */
@@ -268,44 +281,106 @@ function sanitizeCwdForProjects(p: string): string {
 }
 
 /**
- * Read the head of a Claude Code session JSONL and pluck the `customTitle`
- * marker. Returns null on parse error, missing file, or no marker. The marker
- * is what teammate sessions set (e.g., `"customTitle": "genie-genie"`) and is
- * the only durable identity link between an agent and its on-disk session.
+ * Resolve the Claude Code config directory the same way the rest of the repo
+ * does (see `claude-native-teams.ts:74`, `session-filewatch.ts:173`). Honoring
+ * `CLAUDE_CONFIG_DIR` is required for environments that relocate Claude state
+ * (test fixtures, sandboxes, alternate installs).
  */
-async function readJsonlCustomTitle(filePath: string): Promise<string | null> {
+function resolveClaudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
+}
+
+/**
+ * Concurrency cap on the parallel `stat` calls we issue against every JSONL
+ * candidate. Project dirs can accumulate hundreds of historical sessions; an
+ * uncapped `Promise.all` could exhaust file-descriptor limits in the host
+ * process. 32 is small enough to be safe and large enough that the scan stays
+ * fast on typical dirs.
+ */
+const STAT_CONCURRENCY_CAP = 32;
+
+/**
+ * Read the head of a Claude Code session JSONL and pluck the first
+ * `(teamName, agentName)` pair we encounter. Returns nulls on parse error,
+ * missing file, or no marker.
+ *
+ * The pair is what teammate sessions write on every body line (e.g.
+ * `"teamName":"genie","agentName":"genie"`) and is the durable, structured
+ * identity link between an agent and its on-disk session — much more robust
+ * than the `customTitle` header line, which is stringly-typed and may
+ * legitimately differ from `agents.custom_name` (workers set
+ * `customTitle = "<team>-<role>"` while `custom_name = "<role>"`).
+ *
+ * Mirrors the canonical reader in `claude-native-teams.ts:665`
+ * (`readSessionMetadata`) so both modules agree on what counts as identity.
+ */
+async function readJsonlIdentity(filePath: string): Promise<{ teamName: string | null; agentName: string | null }> {
+  // Body lines (`type` absent) carry the canonical pair, e.g.
+  //   {"type":"attachment","teamName":"genie","agentName":"genie",...}
+  //
+  // Header lines like `{"type":"agent-name","agentName":"genie-genie"}`
+  // carry a team-prefixed `agentName` and NO `teamName` — taking that
+  // record would mismatch `agents.custom_name` (bare role). We require
+  // both fields populated together, scanning farther into the file
+  // until we find the first qualifying body line.
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
     handle = await open(filePath, 'r');
-    const buffer = Buffer.alloc(4096);
+    const buffer = Buffer.alloc(16384);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     const head = buffer.toString('utf-8', 0, bytesRead);
-    for (const line of head.split('\n').slice(0, 10)) {
+    for (const line of head.split('\n').slice(0, 40)) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       try {
-        const entry = JSON.parse(trimmed) as { customTitle?: unknown; type?: unknown };
-        if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') {
-          return entry.customTitle;
+        const entry = JSON.parse(trimmed) as { teamName?: unknown; agentName?: unknown };
+        const teamName = typeof entry.teamName === 'string' ? entry.teamName : null;
+        const agentName = typeof entry.agentName === 'string' ? entry.agentName : null;
+        // Require BOTH fields populated — that pinpoints the body line that
+        // matches `(agents.team, agents.custom_name)`. Header lines that
+        // carry only `agentName` (in team-prefixed form) are skipped.
+        if (teamName !== null && agentName !== null) {
+          return { teamName, agentName };
         }
       } catch {
-        // Ignore malformed lines and keep scanning the head.
+        // Ignore malformed lines and keep scanning the JSONL head.
       }
     }
   } catch {
-    return null;
+    return { teamName: null, agentName: null };
   } finally {
     await handle?.close().catch(() => {});
   }
-  return null;
+  return { teamName: null, agentName: null };
+}
+
+/** Run an async mapper over `items` with at most `cap` in flight at once. */
+async function mapWithConcurrency<T, R>(items: T[], cap: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers: Promise<void>[] = [];
+  const workerCount = Math.min(cap, items.length);
+  for (let w = 0; w < workerCount; w++) {
+    workers.push(
+      (async () => {
+        while (cursor < items.length) {
+          const i = cursor++;
+          if (i >= items.length) return;
+          results[i] = await fn(items[i]);
+        }
+      })(),
+    );
+  }
+  await Promise.all(workers);
+  return results;
 }
 
 /**
  * Resolve the most-recent on-disk Claude session UUID for an agent identified
- * by its `repoPath` (cwd) and optional `customName` (e.g. `"genie-genie"` for
- * the genie teammate of the genie team). The scanner walks
- * `~/.claude/projects/<sanitize(cwd)>/*.jsonl`, optionally filters by the
- * `customTitle` header line, and returns the UUID of the newest matching
+ * by its `repoPath` (cwd) plus a `(team, customName)` identity. The scanner
+ * walks `<claudeConfigDir>/projects/<sanitize(cwd)>/*.jsonl`, requires every
+ * returned candidate to have BOTH `teamName` and `agentName` matching the
+ * identity in the JSONL body, and returns the UUID of the newest matching
  * file. Returns null if no JSONL matches.
  *
  * This is the last-resort recovery path for the bug where `getResumeSessionId`
@@ -313,14 +388,24 @@ async function readJsonlCustomTitle(filePath: string): Promise<string | null> {
  * (e.g., post-host-crash when the executor row got archived) — even though the
  * conversation JSONL is still on disk and `claude --resume <uuid>` would work
  * on it. Without this fallback, every reboot strands teammate work.
+ *
+ * Identity matching is strict by design: returning a JSONL whose `(teamName,
+ * agentName)` does not match the requesting agent risks attaching one agent's
+ * runtime to another's transcript. Callers without a known identity (legacy
+ * rows where `agents.custom_name IS NULL`, or rows where `team IS NULL`) get
+ * `null` here so the outer caller emits `resume.missing_session` rather than
+ * silently corrupting context.
  */
 export const _resumeJsonlScannerDeps: {
   /** Override for tests — set to null to use the real fs scan. */
-  scanForSession: ((cwd: string, customName?: string | null) => Promise<string | null>) | null;
+  scanForSession: ((cwd: string, identity: ResumeFallbackIdentity | null) => Promise<string | null>) | null;
 } = { scanForSession: null };
 
-async function defaultScanForSession(cwd: string, customName?: string | null): Promise<string | null> {
-  const projectDir = join(homedir(), '.claude', 'projects', sanitizeCwdForProjects(cwd));
+async function defaultScanForSession(cwd: string, identity: ResumeFallbackIdentity | null): Promise<string | null> {
+  // Refuse to match without a complete identity. See header doc for why.
+  if (!identity) return null;
+
+  const projectDir = join(resolveClaudeConfigDir(), 'projects', sanitizeCwdForProjects(cwd));
   let entries: string[];
   try {
     entries = await readdir(projectDir);
@@ -331,28 +416,23 @@ async function defaultScanForSession(cwd: string, customName?: string | null): P
   const jsonls = entries.filter((e) => e.endsWith('.jsonl'));
   if (jsonls.length === 0) return null;
 
-  // Stat all candidates in parallel so we can sort by mtime.
-  const stats = await Promise.all(
-    jsonls.map(async (name) => {
-      const full = join(projectDir, name);
-      try {
-        const s = await stat(full);
-        return { name, full, mtime: s.mtimeMs };
-      } catch {
-        return null;
-      }
-    }),
-  );
+  const stats = await mapWithConcurrency(jsonls, STAT_CONCURRENCY_CAP, async (name) => {
+    const full = join(projectDir, name);
+    try {
+      const s = await stat(full);
+      return { name, full, mtime: s.mtimeMs } as const;
+    } catch {
+      return null;
+    }
+  });
 
   const sorted = stats
     .filter((x): x is { name: string; full: string; mtime: number } => x !== null)
     .sort((a, b) => b.mtime - a.mtime);
 
   for (const candidate of sorted) {
-    if (customName) {
-      const title = await readJsonlCustomTitle(candidate.full);
-      if (title !== customName) continue;
-    }
+    const { teamName, agentName } = await readJsonlIdentity(candidate.full);
+    if (teamName !== identity.team || agentName !== identity.customName) continue;
     return candidate.name.replace(/\.jsonl$/, '');
   }
   return null;
@@ -381,20 +461,30 @@ type ResumeRow = {
   claude_session_id: string | null;
   repo_path: string | null;
   custom_name: string | null;
+  team: string | null;
 };
 
 /**
  * Try the JSONL on-disk fallback for an agent whose DB resume read missed.
  * Returns the recovered session UUID if a matching JSONL is found, or null
- * if no cwd is known or no JSONL matches. Emits `resume.recovered_via_jsonl`
+ * if no cwd / no identity / no JSONL match. Emits `resume.recovered_via_jsonl`
  * on hit.
+ *
+ * Identity is `(team, custom_name)` and BOTH must be present — a missing
+ * identity makes ownership unverifiable, and we refuse to attach an agent's
+ * runtime to another agent's transcript.
  */
 async function tryJsonlFallback(agentId: string, row: ResumeRow | null, actor: string): Promise<string | null> {
   const cwd = row?.repo_path ?? null;
   if (!cwd) return null;
 
+  const team = row?.team ?? null;
+  const customName = row?.custom_name ?? null;
+  const identity: ResumeFallbackIdentity | null = team && customName ? { team, customName } : null;
+  if (!identity) return null;
+
   const scanner = _resumeJsonlScannerDeps.scanForSession ?? defaultScanForSession;
-  const recoveredSessionId = await scanner(cwd, row?.custom_name ?? null);
+  const recoveredSessionId = await scanner(cwd, identity);
   if (!recoveredSessionId) return null;
 
   const reason = row && row.executor_id !== null ? 'null_session' : 'no_executor';
@@ -402,7 +492,8 @@ async function tryJsonlFallback(agentId: string, row: ResumeRow | null, actor: s
     sessionId: recoveredSessionId,
     executorId: row?.executor_id ?? null,
     cwd,
-    customName: row?.custom_name ?? null,
+    team: identity.team,
+    customName: identity.customName,
     recoveredFrom: reason,
   });
   return recoveredSessionId;
@@ -428,7 +519,8 @@ export async function getResumeSessionId(agentId: string): Promise<string | null
     SELECT a.current_executor_id AS executor_id,
            e.claude_session_id,
            a.repo_path,
-           a.custom_name
+           a.custom_name,
+           a.team
     FROM agents a
     LEFT JOIN executors e ON e.id = a.current_executor_id
     WHERE a.id = ${agentId}
