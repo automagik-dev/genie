@@ -710,10 +710,26 @@ async function cleanSharedMemory(): Promise<void> {
   console.log('  Cleaning shared memory...');
   try {
     const { execSync } = await import('node:child_process');
-    execSync("ipcs -m 2>/dev/null | awk '$6 == 0 {print $2}' | xargs -I{} ipcrm -m {} 2>/dev/null || true", {
-      stdio: 'ignore',
-      timeout: 5000,
-    });
+    // Linux ipcs -m columns: key shmid owner perms bytes nattch status
+    //   \u2192 `$6 == 0` filter removes only segments with no attached processes.
+    // Darwin (macOS) ipcs -m columns: T ID KEY MODE OWNER GROUP
+    //   \u2192 no nattch column. We blind-call ipcrm on every segment owned by
+    //   the current uid and let the kernel reject in-use ones with EBUSY.
+    //   Real PostgreSQL 18 (pgserve 1.2.0+) needs SysV shmem; without this
+    //   path, leaked segments accumulate to SHMMNI=32 and pgserve startup
+    //   fails with "could not create shared memory segment: No space left
+    //   on device" \u2014 surfacing as the #1335 / #1273 test flake.
+    if (process.platform === 'darwin') {
+      execSync(`ipcs -m 2>/dev/null | awk '/^m/ {print $2}' | xargs -I{} ipcrm -m {} 2>/dev/null || true`, {
+        stdio: 'ignore',
+        timeout: 5000,
+      });
+    } else {
+      execSync(`ipcs -m 2>/dev/null | awk '$6 == 0 {print $2}' | xargs -I{} ipcrm -m {} 2>/dev/null || true`, {
+        stdio: 'ignore',
+        timeout: 5000,
+      });
+    }
     console.log('  \x1b[32m\u2713\x1b[0m Shared memory cleaned');
   } catch {
     console.log('  \x1b[32m\u2713\x1b[0m No stale shared memory');
