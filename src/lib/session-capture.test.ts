@@ -11,10 +11,37 @@
  *      wish_slug/task_id/role from their parent session.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { getConnection } from './db.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { getConnection, resetConnection } from './db.js';
 import { extractSubTool, reconcileSubagentParents } from './session-capture.js';
 import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
+
+/**
+ * Warm up the SQL connection and retry once on `CONNECTION_ENDED`. The race
+ * is documented at issue #1207: when an emit-queue background flush against
+ * a pool whose database was just swapped by `setupTestDatabase` lands on the
+ * test runner's `await sql\`...\`` path, the first query throws with
+ * `code: "CONNECTION_ENDED"`. The fix is to discard the stale singleton and
+ * grab a fresh one. Any test in this file that does a SELECT/INSERT against
+ * `sessions` / `agents` / `executors` should call this in `beforeEach` so
+ * the underlying pool is healthy before the test body runs.
+ */
+async function warmConnection(): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const sql = await getConnection();
+      await sql`SELECT 1`;
+      return;
+    } catch (err) {
+      const code = (err as { code?: string } | null)?.code;
+      if (code === 'CONNECTION_ENDED' && attempt === 0) {
+        await resetConnection();
+        continue;
+      }
+      throw err;
+    }
+  }
+}
 
 describe('extractSubTool — truncation for btree row size', () => {
   test('Bash: first line of command, trimmed, capped at 2000 chars', () => {
@@ -73,6 +100,14 @@ describe.skipIf(!DB_AVAILABLE)('reconcileSubagentParents — metadata inheritanc
 
   beforeAll(async () => {
     cleanup = await setupTestDatabase();
+  });
+
+  beforeEach(async () => {
+    // Guard against the issue-#1207 emit-queue race that occasionally
+    // surfaces CONNECTION_ENDED on the first SQL of this describe block
+    // when other test files in the shard finish flushing background work
+    // moments before this test starts. See `warmConnection` doc.
+    await warmConnection();
   });
 
   afterAll(async () => {
