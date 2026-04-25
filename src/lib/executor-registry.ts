@@ -7,6 +7,9 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { open, readdir, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { recordAuditEvent } from './audit.js';
 import { type Sql, getConnection } from './db.js';
 import {
@@ -255,52 +258,204 @@ export async function updateClaudeSessionId(executorId: string, sessionId: strin
 }
 
 /**
+ * Sanitize a filesystem path the same way Claude Code encodes its
+ * `~/.claude/projects/<encoded-cwd>/` directory names: every non-alphanumeric
+ * char becomes `-`. Kept in this module so the JSONL-fallback below has no
+ * cross-module dependency for hotfix scope.
+ */
+function sanitizeCwdForProjects(p: string): string {
+  return p.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+/**
+ * Read the head of a Claude Code session JSONL and pluck the `customTitle`
+ * marker. Returns null on parse error, missing file, or no marker. The marker
+ * is what teammate sessions set (e.g., `"customTitle": "genie-genie"`) and is
+ * the only durable identity link between an agent and its on-disk session.
+ */
+async function readJsonlCustomTitle(filePath: string): Promise<string | null> {
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(filePath, 'r');
+    const buffer = Buffer.alloc(4096);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const head = buffer.toString('utf-8', 0, bytesRead);
+    for (const line of head.split('\n').slice(0, 10)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const entry = JSON.parse(trimmed) as { customTitle?: unknown; type?: unknown };
+        if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') {
+          return entry.customTitle;
+        }
+      } catch {
+        // Ignore malformed lines and keep scanning the head.
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+  return null;
+}
+
+/**
+ * Resolve the most-recent on-disk Claude session UUID for an agent identified
+ * by its `repoPath` (cwd) and optional `customName` (e.g. `"genie-genie"` for
+ * the genie teammate of the genie team). The scanner walks
+ * `~/.claude/projects/<sanitize(cwd)>/*.jsonl`, optionally filters by the
+ * `customTitle` header line, and returns the UUID of the newest matching
+ * file. Returns null if no JSONL matches.
+ *
+ * This is the last-resort recovery path for the bug where `getResumeSessionId`
+ * returns `no_executor` after the reconciler nullified `agents.current_executor_id`
+ * (e.g., post-host-crash when the executor row got archived) — even though the
+ * conversation JSONL is still on disk and `claude --resume <uuid>` would work
+ * on it. Without this fallback, every reboot strands teammate work.
+ */
+export const _resumeJsonlScannerDeps: {
+  /** Override for tests — set to null to use the real fs scan. */
+  scanForSession: ((cwd: string, customName?: string | null) => Promise<string | null>) | null;
+} = { scanForSession: null };
+
+async function defaultScanForSession(cwd: string, customName?: string | null): Promise<string | null> {
+  const projectDir = join(homedir(), '.claude', 'projects', sanitizeCwdForProjects(cwd));
+  let entries: string[];
+  try {
+    entries = await readdir(projectDir);
+  } catch {
+    return null;
+  }
+
+  const jsonls = entries.filter((e) => e.endsWith('.jsonl'));
+  if (jsonls.length === 0) return null;
+
+  // Stat all candidates in parallel so we can sort by mtime.
+  const stats = await Promise.all(
+    jsonls.map(async (name) => {
+      const full = join(projectDir, name);
+      try {
+        const s = await stat(full);
+        return { name, full, mtime: s.mtimeMs };
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const sorted = stats
+    .filter((x): x is { name: string; full: string; mtime: number } => x !== null)
+    .sort((a, b) => b.mtime - a.mtime);
+
+  for (const candidate of sorted) {
+    if (customName) {
+      const title = await readJsonlCustomTitle(candidate.full);
+      if (title !== customName) continue;
+    }
+    return candidate.name.replace(/\.jsonl$/, '');
+  }
+  return null;
+}
+
+/**
  * Single-reader chokepoint for every resume decision.
  *
  * Joins `agents.current_executor_id → executors.claude_session_id` and emits
- * one of two audit events:
- *   - `resume.found` when a session UUID is available for reuse.
- *   - `resume.missing_session` when there is no current executor, or the
- *     current executor has no captured session yet (with `reason` tagged
- *     so operators can tell `no_executor` from `null_session`).
+ * one of three audit events:
+ *   - `resume.found` when a session UUID is available for reuse via the DB path.
+ *   - `resume.recovered_via_jsonl` when DB lookup misses but the on-disk JSONL
+ *     for the agent's cwd yields a usable session UUID — last-resort recovery
+ *     after reconciler-driven `current_executor_id` nullification (the
+ *     post-host-crash scenario where the executor row got archived).
+ *   - `resume.missing_session` when neither path turns up a session (with
+ *     `reason` tagged so operators can tell `no_executor` from `null_session`).
  *
  * Returning `null` is load-bearing: callers that did NOT explicitly request a
  * resume (e.g., fresh spawns) treat `null` as "no prior session → start
  * clean". Callers that DID request a resume should throw a
  * `MissingResumeSessionError` on `null` (see Group 6).
  */
+type ResumeRow = {
+  executor_id: string | null;
+  claude_session_id: string | null;
+  repo_path: string | null;
+  custom_name: string | null;
+};
+
+/**
+ * Try the JSONL on-disk fallback for an agent whose DB resume read missed.
+ * Returns the recovered session UUID if a matching JSONL is found, or null
+ * if no cwd is known or no JSONL matches. Emits `resume.recovered_via_jsonl`
+ * on hit.
+ */
+async function tryJsonlFallback(agentId: string, row: ResumeRow | null, actor: string): Promise<string | null> {
+  const cwd = row?.repo_path ?? null;
+  if (!cwd) return null;
+
+  const scanner = _resumeJsonlScannerDeps.scanForSession ?? defaultScanForSession;
+  const recoveredSessionId = await scanner(cwd, row?.custom_name ?? null);
+  if (!recoveredSessionId) return null;
+
+  const reason = row && row.executor_id !== null ? 'null_session' : 'no_executor';
+  await recordAuditEvent('agent', agentId, 'resume.recovered_via_jsonl', actor, {
+    sessionId: recoveredSessionId,
+    executorId: row?.executor_id ?? null,
+    cwd,
+    customName: row?.custom_name ?? null,
+    recoveredFrom: reason,
+  });
+  return recoveredSessionId;
+}
+
+/** Emit the appropriate `resume.missing_session` event when both DB and JSONL miss. */
+async function emitMissingSession(agentId: string, row: ResumeRow | null, actor: string): Promise<void> {
+  if (row === null || row.executor_id === null) {
+    await recordAuditEvent('agent', agentId, 'resume.missing_session', actor, {
+      reason: 'no_executor',
+    });
+    return;
+  }
+  await recordAuditEvent('agent', agentId, 'resume.missing_session', actor, {
+    reason: 'null_session',
+    executorId: row.executor_id,
+  });
+}
+
 export async function getResumeSessionId(agentId: string): Promise<string | null> {
   const sql = await getConnection();
-  const rows = await sql<{ executor_id: string | null; claude_session_id: string | null }[]>`
-    SELECT a.current_executor_id AS executor_id, e.claude_session_id
+  const rows = await sql<ResumeRow[]>`
+    SELECT a.current_executor_id AS executor_id,
+           e.claude_session_id,
+           a.repo_path,
+           a.custom_name
     FROM agents a
     LEFT JOIN executors e ON e.id = a.current_executor_id
     WHERE a.id = ${agentId}
   `;
 
-  if (rows.length === 0 || rows[0].executor_id === null) {
-    await recordAuditEvent('agent', agentId, 'resume.missing_session', process.env.GENIE_AGENT_NAME ?? 'cli', {
-      reason: 'no_executor',
+  const actor = process.env.GENIE_AGENT_NAME ?? 'cli';
+  const row = rows[0] ?? null;
+
+  // DB happy path: current executor has a session id.
+  if (row && row.executor_id !== null && row.claude_session_id) {
+    await recordAuditEvent('agent', agentId, 'resume.found', actor, {
+      executorId: row.executor_id,
+      sessionId: row.claude_session_id,
     });
-    return null;
+    return row.claude_session_id;
   }
 
-  const sessionId = rows[0].claude_session_id;
-  const executorId = rows[0].executor_id;
+  // DB miss — try JSONL fallback when we know the agent's cwd. Reconciler
+  // crashes routinely null out `current_executor_id` after pane death, but
+  // the conversation JSONL on disk is the durable artifact that
+  // `claude --resume <uuid>` actually replays from.
+  const recovered = await tryJsonlFallback(agentId, row, actor);
+  if (recovered) return recovered;
 
-  if (!sessionId) {
-    await recordAuditEvent('agent', agentId, 'resume.missing_session', process.env.GENIE_AGENT_NAME ?? 'cli', {
-      reason: 'null_session',
-      executorId,
-    });
-    return null;
-  }
-
-  await recordAuditEvent('agent', agentId, 'resume.found', process.env.GENIE_AGENT_NAME ?? 'cli', {
-    executorId,
-    sessionId,
-  });
-  return sessionId;
+  // Final miss — no DB session, no JSONL on disk.
+  await emitMissingSession(agentId, row, actor);
+  return null;
 }
 
 /**

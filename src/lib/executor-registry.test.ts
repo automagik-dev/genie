@@ -11,6 +11,7 @@ import { completeAssignment, createAssignment, getActiveAssignment } from './ass
 import { getConnection } from './db.js';
 import {
   type CreateExecutorOpts,
+  _resumeJsonlScannerDeps,
   createAndLinkExecutor,
   createExecutor,
   findExecutorByPane,
@@ -422,6 +423,126 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
 
       const sessionId = await getResumeSessionId(agentId);
       expect(sessionId).toBe('sess-late');
+    });
+
+    // ========================================================================
+    // JSONL fallback — last-resort recovery after host crash / reconciler
+    // nullified `current_executor_id`. The conversation JSONL on disk is the
+    // durable artifact and `claude --resume <uuid>` works on it directly.
+    // ========================================================================
+
+    describe('JSONL fallback (post-crash recovery)', () => {
+      async function seedAgentWithCwd(cwd: string, name = 'eng', team = 'test-team') {
+        const agentId = await seedAgent(name, team);
+        const sql = await getConnection();
+        await sql`UPDATE agents SET repo_path = ${cwd} WHERE id = ${agentId}`;
+        return agentId;
+      }
+
+      // Reset the scanner override after each fallback test so the rest of
+      // the suite stays on the real-fs path (which yields null in CI cwds).
+      const resetScanner = () => {
+        _resumeJsonlScannerDeps.scanForSession = null;
+      };
+
+      test('no executor + JSONL exists: recovers session and emits resume.recovered_via_jsonl', async () => {
+        const cwd = '/tmp/crash-recovery-fixture';
+        const recoveredUuid = '11111111-2222-3333-4444-555555555555';
+
+        try {
+          const agentId = await seedAgentWithCwd(cwd, 'crash-eng', 'crash-team');
+          // No executor assigned — simulates the post-host-crash state where
+          // reconciler nulled current_executor_id.
+
+          _resumeJsonlScannerDeps.scanForSession = async (scannedCwd, customName) => {
+            expect(scannedCwd).toBe(cwd);
+            expect(customName).toBe('crash-eng');
+            return recoveredUuid;
+          };
+
+          const sessionId = await getResumeSessionId(agentId);
+          expect(sessionId).toBe(recoveredUuid);
+
+          const event = await latestAuditForAgent(agentId, 'resume.recovered_via_jsonl');
+          expect(event).not.toBeNull();
+          expect(event!.details.sessionId).toBe(recoveredUuid);
+          expect(event!.details.cwd).toBe(cwd);
+          expect(event!.details.customName).toBe('crash-eng');
+          expect(event!.details.recoveredFrom).toBe('no_executor');
+
+          // The fallback path must NOT emit resume.missing_session.
+          const miss = await latestAuditForAgent(agentId, 'resume.missing_session');
+          expect(miss).toBeNull();
+        } finally {
+          resetScanner();
+        }
+      });
+
+      test('null-session executor + JSONL exists: recovers and tags recoveredFrom=null_session', async () => {
+        const cwd = '/tmp/null-session-fixture';
+        const recoveredUuid = '99999999-aaaa-bbbb-cccc-dddddddddddd';
+        _resumeJsonlScannerDeps.scanForSession = async () => recoveredUuid;
+
+        try {
+          const agentId = await seedAgentWithCwd(cwd, 'null-eng', 'null-team');
+          const exec = await createExecutor(agentId, 'claude', 'tmux'); // no claudeSessionId
+          await setCurrentExecutor(agentId, exec.id);
+
+          const sessionId = await getResumeSessionId(agentId);
+          expect(sessionId).toBe(recoveredUuid);
+
+          const event = await latestAuditForAgent(agentId, 'resume.recovered_via_jsonl');
+          expect(event).not.toBeNull();
+          expect(event!.details.recoveredFrom).toBe('null_session');
+          expect(event!.details.executorId).toBe(exec.id);
+        } finally {
+          resetScanner();
+        }
+      });
+
+      test('no executor + no JSONL on disk: still emits resume.missing_session (no_executor)', async () => {
+        const cwd = '/tmp/no-jsonl-fixture';
+        _resumeJsonlScannerDeps.scanForSession = async () => null;
+
+        try {
+          const agentId = await seedAgentWithCwd(cwd, 'gone-eng', 'gone-team');
+
+          const sessionId = await getResumeSessionId(agentId);
+          expect(sessionId).toBeNull();
+
+          const event = await latestAuditForAgent(agentId, 'resume.missing_session');
+          expect(event).not.toBeNull();
+          expect(event!.details.reason).toBe('no_executor');
+
+          const recovered = await latestAuditForAgent(agentId, 'resume.recovered_via_jsonl');
+          expect(recovered).toBeNull();
+        } finally {
+          resetScanner();
+        }
+      });
+
+      test('agent with no repo_path: skips JSONL scan entirely', async () => {
+        let scannerCalls = 0;
+        _resumeJsonlScannerDeps.scanForSession = async () => {
+          scannerCalls++;
+          return 'should-never-be-returned';
+        };
+
+        try {
+          // seedAgent does NOT set repo_path (findOrCreateAgent identity-only).
+          const agentId = await seedAgent();
+
+          const sessionId = await getResumeSessionId(agentId);
+          expect(sessionId).toBeNull();
+          expect(scannerCalls).toBe(0); // scanner never invoked when cwd is null
+
+          const event = await latestAuditForAgent(agentId, 'resume.missing_session');
+          expect(event).not.toBeNull();
+          expect(event!.details.reason).toBe('no_executor');
+        } finally {
+          resetScanner();
+        }
+      });
     });
   });
 
