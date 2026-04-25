@@ -114,11 +114,15 @@ export async function trapPaneExit(opts: TrapPaneExitOpts): Promise<TrapPaneExit
         WHERE id = ${executorId}
       `;
 
-      await tx`
-        UPDATE agents
-        SET current_executor_id = NULL
-        WHERE current_executor_id = ${executorId}
-      `;
+      // Keep `current_executor_id` pointing at the just-terminated executor
+      // so its `claude_session_id` survives as the recovery anchor for
+      // `getResumeSessionId` (see executor-registry.ts and the 2026-04-25
+      // power-outage post-mortem). State filters in `getCurrentExecutor` /
+      // `getLiveExecutorState` already gate "alive" semantics on executor
+      // state, so leaving the FK populated is safe — and required for
+      // post-crash auto-resume to find the dormant session.
+      // (No agent UPDATE needed here — the executor row's state transition
+      // above is the source of truth for "this run is over.")
 
       await tx`
         INSERT INTO audit_events (entity_type, entity_id, event_type, actor, details)
