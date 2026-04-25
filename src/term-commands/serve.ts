@@ -286,17 +286,35 @@ function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
 /**
  * Send TUI launch script to left pane.
  * Writes ~/.genie/tui-launch.sh with workspace env vars, sends it to the pane.
+ *
+ * The wrapper redirects stderr to ~/.genie/logs/tui-crash.log so native panics
+ * from @opentui/core's libopentui.dylib (which write directly to fd 2 from the
+ * Zig FFI layer) survive the alt-screen reset on crash. Without this, the
+ * panic message is overwritten when the terminal returns from raw mode and
+ * the user sees a SIGTRAP exit with no diagnostic. See #1390.
  */
 function sendTuiLaunchScript(leftPane: string, rightPane: string, workspaceRoot?: string): void {
   const home = genieHome();
   const bunPath = process.execPath || 'bun';
   const genieBin = process.argv[1] || 'genie';
   const scriptPath = join(home, 'tui-launch.sh');
+  const logsDir = join(home, 'logs');
+  const crashLog = join(logsDir, 'tui-crash.log');
 
   const envVars = ['GENIE_TUI_PANE=left', `GENIE_TUI_RIGHT=${rightPane}`];
   if (workspaceRoot) envVars.push(`GENIE_TUI_WORKSPACE=${workspaceRoot}`);
 
-  const content = `#!/bin/sh\nexport ${envVars.join('\nexport ')}\nexec ${bunPath} ${genieBin}\n`;
+  const content = [
+    '#!/bin/sh',
+    `mkdir -p '${logsDir}'`,
+    // fd-level redirect catches native (Zig/FFI) panics that write directly
+    // to fd 2 — JS-level monkey patching cannot.
+    `exec 2>> '${crashLog}'`,
+    `printf -- '--- tui-launch %s pid=%s ---\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" >&2`,
+    `export ${envVars.join('\nexport ')}`,
+    `exec ${bunPath} ${genieBin}`,
+    '',
+  ].join('\n');
   writeFileSync(scriptPath, content, { mode: 0o755 });
 
   try {
