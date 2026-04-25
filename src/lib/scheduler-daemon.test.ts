@@ -2382,7 +2382,13 @@ describe('terminalizeCleanExitUnverified (D1 write)', () => {
     expect(fake.executorRow.close_reason).toBe('reconciler_idle_dead_pane');
     expect(fake.executorRow.state).toBe('error');
     expect(fake.executorRow.closed_at).not.toBeNull();
-    expect(fake.agentRow.current_executor_id).toBeNull();
+    // Post-2026-04-25 power-outage post-mortem: keep current_executor_id
+    // pointing at the just-terminated executor so its claude_session_id
+    // survives as the recovery anchor for getResumeSessionId. Liveness is
+    // gated by executor.state via getCurrentExecutor / getLiveExecutorState,
+    // so the FK staying populated is safe — and required for post-crash
+    // auto-resume to find the dormant session.
+    expect(fake.agentRow.current_executor_id).toBe('exec-1');
     expect(fake.agentRow.state).toBe('error');
     expect(fake.audit).toHaveLength(1);
     expect(logs.find((l) => l.event === 'terminalize_clean_exit_unverified_failed')).toBeUndefined();
@@ -2400,7 +2406,9 @@ describe('terminalizeCleanExitUnverified (D1 write)', () => {
     expect(res).toEqual({ terminalized: false, executorId: 'exec-2' });
     expect(fake.executorRow.outcome).toBe('done'); // not overwritten
     expect(fake.executorRow.close_reason).toBeNull();
-    expect(fake.agentRow.current_executor_id).toBeNull(); // still cleared
+    // Recovery-anchor preservation: even on the idempotent branch the FK
+    // stays populated. See note above.
+    expect(fake.agentRow.current_executor_id).toBe('exec-2');
     expect(fake.agentRow.state).toBe('error');
     expect(fake.audit).toHaveLength(0);
   });

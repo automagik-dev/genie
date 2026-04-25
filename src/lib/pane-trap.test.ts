@@ -120,7 +120,14 @@ describe.skipIf(!DB_AVAILABLE)('trapPaneExit (integration)', () => {
     const [agentRow] = await sql<{ current_executor_id: string | null }[]>`
       SELECT current_executor_id FROM agents WHERE id = ${agentId}
     `;
-    expect(agentRow.current_executor_id).toBeNull();
+    // Post-2026-04-25 power-outage post-mortem: keep current_executor_id
+    // pointing at the just-terminated executor so its claude_session_id
+    // survives as the recovery anchor for getResumeSessionId. Prior contract
+    // (null FK on terminate) erased the link to the dormant session UUID.
+    // Liveness is gated by executor.state ∈ {error, terminated, done} via
+    // getCurrentExecutor / getLiveExecutorState, so the FK staying populated
+    // is safe.
+    expect(agentRow.current_executor_id).toBe(executorId);
 
     const audits = await sql<{ event_type: string; actor: string; details: unknown }[]>`
       SELECT event_type, actor, details FROM audit_events
