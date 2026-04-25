@@ -6,6 +6,9 @@
 
 ## Sprint Backlog (next sprint — /review + /brainstorm queue)
 
+### Ready (crystallized, awaiting /wish)
+- [tui-bottom-bar-opentui](brainstorms/tui-bottom-bar-opentui/DESIGN.md) — CRYSTALLIZED (2026-04-25, WRS 100/100). Replace ASCII bars in `SystemStats.tsx` with opentui primitives. SS-1 token-burn meter as scene-stealer (top header, ascii-font + 60s sparkline + 1Hz mint / 2Hz crimson pulse). 4 sections: HW (CPU/RAM/disk+IO latency), PgServe health+stats, Genie ops (workers/queue/last event), SS-1 burn meter. Multi-track friendly — no "active wish" framing. Adjacent to `design-system-severance` (palette tokens) and `bare-genie-dashboard` (full-screen surface — non-overlapping).
+
 ### Tier 1: Autonomous dispatch (dream-eligible)
 - [scaffold-auto-memory](wishes/scaffold-auto-memory/WISH.md) — READY. Auto-configure `autoMemoryEnabled`/`autoMemoryDirectory` in `.claude/settings.local.json` + seed `MEMORY.md` when `genie init agent <name>` scaffolds. Closes automagik-dev/genie#1106. Twin-genie reviewed: scope 2/5, risk 2/5, clarity 4/5.
 - [brain-help-passthrough](wishes/brain-help-passthrough/WISH.md) — READY. Add `addHelpText` footer to `genie brain --help` so users see the forwarded subcommands (status, health, init, search, etc.). Passthrough already works at runtime; help text just doesn't advertise it. Closes automagik-dev/genie#1118. Twin-genie reviewed: scope 1/5, risk 1/5, clarity 5/5.
