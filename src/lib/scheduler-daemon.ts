@@ -28,6 +28,7 @@ import { type EventRouterHandle, startEventRouter } from './event-router.js';
 import { getInboxPollIntervalMs, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
 import { type MailboxMessage, getRetryable, markEscalated, subscribeDelivery } from './mailbox.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
+import { type BootPassDecision, bootPassDecisions, emitBootPassEvent } from './should-resume.js';
 import { getAmbient as getAmbientTraceContext } from './trace-context.js';
 
 // ============================================================================
@@ -784,6 +785,83 @@ export async function reconcileOrphanedRuns(deps: SchedulerDeps, daemonId: strin
 const RECOVERY_RETRY_DELAY_MS = 60_000;
 
 /**
+ * Boot-pass: rehydrate every in-flight agent through the canonical
+ * `shouldResume(agentId)` chokepoint and fan out to one of three actions
+ * per agent:
+ *
+ *   - `eager_invoke`: re-invoke now (permanent agents — team-leads, dir-row
+ *     placeholders, root identities). The actual re-invoke is delegated to
+ *     `runAgentRecoveryPass` immediately after this returns; this pass exists
+ *     to make the decision visible in `genie status` and the audit stream
+ *     without changing existing recovery semantics.
+ *   - `lazy_surface`: surface in `genie status` with `genie agent resume <id>`
+ *     verb (task-bound agents). No auto-spawn; operator drives.
+ *   - `skip`: row is unresumable (auto_resume disabled, assignment closed,
+ *     no session UUID). Recorded for audit visibility but no action.
+ *
+ * Decision per the wish: "Boot-pass ALWAYS rehydrates (load identity,
+ * register in `ls`/`status`). Re-invoke (push API tokens, send resume
+ * message) is eager for permanent, lazy for task-bound, surfaced as
+ * actionable verb." The two are split here so the side-effects can move
+ * independently — the existing `runAgentRecoveryPass` already handles
+ * permanent re-invoke today; this pass surfaces the decision.
+ *
+ * Returns the per-agent decisions for telemetry / test assertions. Callers
+ * who only want side-effects can ignore the return value.
+ */
+export async function runBootPass(deps: SchedulerDeps, daemonId: string): Promise<{ decisions: BootPassDecision[] }> {
+  const startedAt = deps.now();
+  const workers = await deps.listWorkers();
+
+  // Filter to in-flight agents: `auto_resume=true` AND state isn't terminal.
+  // The chokepoint has its own `auto_resume` check, so the inclusion criterion
+  // here is "the row exists, the operator hasn't paused it, and we haven't
+  // already terminalized it via genie done / failed". Done/error rows are
+  // included only when the operator passes `--all` (out of scope here — the
+  // boot pass touches the live set).
+  const inflight = workers.filter((w) => w.autoResume !== false && w.state !== 'done');
+  const ids = inflight.map((w) => w.id);
+
+  let decisions: BootPassDecision[] = [];
+  try {
+    decisions = await bootPassDecisions(ids);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'error',
+      event: 'boot_pass_decisions_error',
+      daemon_id: daemonId,
+      error: message,
+    });
+    return { decisions: [] };
+  }
+
+  // Emit one audit event per decision so `genie status` and metrics
+  // dashboards can render the post-boot world. Best-effort: a single
+  // failed write must not wedge the boot pass.
+  await Promise.all(decisions.map((d) => emitBootPassEvent(d).catch(() => {})));
+
+  const eagerInvoked = decisions.filter((d) => d.action === 'eager_invoke').length;
+  const lazyPending = decisions.filter((d) => d.action === 'lazy_surface').length;
+  const skipped = decisions.filter((d) => d.action === 'skip').length;
+
+  deps.log({
+    timestamp: deps.now().toISOString(),
+    level: 'info',
+    event: 'boot_pass_completed',
+    daemon_id: daemonId,
+    inflight_total: ids.length,
+    eager_invoked: eagerInvoked,
+    lazy_pending: lazyPending,
+    skipped,
+    duration_ms: deps.now().getTime() - startedAt.getTime(),
+  });
+
+  return { decisions };
+}
+
+/**
  * Run full startup recovery: reclaim expired leases, reconcile orphaned runs,
  * then auto-resume agents whose panes died while the daemon was down.
  *
@@ -805,6 +883,12 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
   const reclaimed = await reclaimExpiredLeases(deps, daemonId);
   const orphans = await reconcileOrphanedRuns(deps, daemonId);
 
+  // Canonical boot-pass — run BEFORE the recovery pass so the audit stream
+  // records the chokepoint decision for every in-flight agent. The recovery
+  // pass that follows is the existing eager-invoke side-effect; the boot
+  // pass output is what `genie status` reads to surface lazy-pending verbs.
+  const bootPass = await runBootPass(deps, daemonId);
+
   const { resumed, failed } = await runAgentRecoveryPass(deps, daemonId, config, 'boot');
 
   deps.log({
@@ -815,6 +899,7 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
     orphaned_runs: orphans,
     resumed_agents: resumed,
     failed_agents: failed,
+    boot_pass_total: bootPass.decisions.length,
     daemon_id: daemonId,
   });
 

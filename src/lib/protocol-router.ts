@@ -16,9 +16,10 @@
 import * as registry from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
 import { getConnection } from './db.js';
-import { findExecutorByPane, getCurrentExecutor, getResumeSessionId } from './executor-registry.js';
+import { findExecutorByPane, getCurrentExecutor } from './executor-registry.js';
 import * as mailbox from './mailbox.js';
 import { detectState } from './orchestrator/index.js';
+import { shouldResume } from './should-resume.js';
 import { waitForExecutorReady } from './spawn-command.js';
 import { capturePaneContent, executeTmux, isPaneAlive } from './tmux.js';
 
@@ -259,15 +260,17 @@ async function resolveResumeSessionId(
   recipientId: string,
 ): Promise<string | undefined> {
   if (template.provider !== 'claude' || !worker) return undefined;
-  // Canonical resume read — joins agents.current_executor_id → executors.claude_session_id
-  // and emits resume.found / resume.missing_session audit events. Replaces the
-  // direct `worker.claudeSessionId` reads (Group 3 of claude-resume-by-session-id wish).
-  const executorSessionId = await getResumeSessionId(worker.id);
+  // Canonical chokepoint — joins identity, auto_resume, latest assignment
+  // outcome, and the session-UUID lookup (DB happy path → JSONL fallback).
+  // We pass through the session UUID for ANY non-terminal worker so a
+  // mid-task spawn can latch onto the existing conversation; an active /
+  // resumable worker without a session UUID is a hard error (Gap C).
+  const decision = await shouldResume(worker.id);
   if (await isExecutorResumable(worker)) {
-    if (!executorSessionId) throw new MissingResumeSessionError(worker.id, recipientId);
-    return executorSessionId;
+    if (!decision.sessionId) throw new MissingResumeSessionError(worker.id, recipientId);
+    return decision.sessionId;
   }
-  return executorSessionId ?? undefined;
+  return decision.sessionId;
 }
 
 async function handleSpawnError(err: unknown, worker: registry.Agent | null, recipientId: string): Promise<null> {
