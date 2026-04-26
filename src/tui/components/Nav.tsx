@@ -398,9 +398,9 @@ export function Nav({
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor={palette.bg}>
       {/* Header */}
-      <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
+      <box height={1} paddingX={1} backgroundColor={palette.bgRaised}>
         <text>
-          <span fg={palette.purple}>{headerLabel}</span>
+          <span fg={palette.accent}>{headerLabel}</span>
           {diagnostics ? (
             <span fg={palette.textDim}>
               {' '}
@@ -485,7 +485,7 @@ export function Nav({
       <SystemStats />
 
       {/* Footer */}
-      <box height={1} paddingX={1} backgroundColor={palette.bgLight}>
+      <box height={1} paddingX={1} backgroundColor={palette.bgRaised}>
         <text>
           <span fg={palette.textMuted}>{buildFooterHint(workspaceRoot)}</span>
         </text>

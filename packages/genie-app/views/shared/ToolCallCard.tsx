@@ -43,11 +43,11 @@ function getToolIcon(name: string): string {
 
 function getToolColor(name: string): string {
   const lc = name.toLowerCase();
-  if (lc.startsWith('bash')) return '#fbbf24'; // amber
-  if (lc.startsWith('read')) return '#60a5fa'; // blue
-  if (lc.startsWith('write')) return '#a78bfa'; // purple
-  if (lc.startsWith('edit')) return '#34d399'; // green
-  if (lc.startsWith('glob') || lc.startsWith('grep')) return '#22d3ee'; // cyan
+  if (lc.startsWith('bash')) return theme.warning; // amber
+  if (lc.startsWith('read')) return theme.info; // blue/info
+  if (lc.startsWith('write')) return theme.purple; // accent-bright
+  if (lc.startsWith('edit')) return theme.emerald; // mint accent
+  if (lc.startsWith('glob') || lc.startsWith('grep')) return theme.info; // info
   return theme.textDim;
 }
 

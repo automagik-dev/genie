@@ -32,7 +32,7 @@ export const TreeNodeRow = memo(function TreeNodeRow({
     <box
       height={1}
       width="100%"
-      backgroundColor={selected ? palette.violet : undefined}
+      backgroundColor={selected ? palette.accentDim : undefined}
       onMouseDown={(event: { button?: number }) => {
         if (event.button === 2 && onContextMenu) {
           onSelect(node.id);
@@ -49,7 +49,7 @@ export const TreeNodeRow = memo(function TreeNodeRow({
           {expandIcon}{' '}
         </span>
         <span fg={color}>{icon} </span>
-        <span fg={selected ? '#ffffff' : palette.text}>{node.label}</span>
+        <span fg={selected ? palette.accentBright : palette.text}>{node.label}</span>
         {suffix ? <span fg={palette.textDim}>{suffix}</span> : null}
         {node.agentState ? <span fg={getStateColor(node.agentState)}> {node.agentState}</span> : null}
         <span fg={palette.textMuted}>{` [${node.type}]`}</span>
@@ -108,9 +108,9 @@ function getNodeColor(node: TreeNodeType): string {
 
   switch (node.type) {
     case 'session':
-      return node.data.attached ? palette.emerald : palette.textDim;
+      return node.data.attached ? palette.success : palette.textDim;
     case 'window':
-      return node.data.active ? palette.cyan : palette.text;
+      return node.data.active ? palette.info : palette.text;
     case 'pane':
       return getPaneColor(node);
     default:
@@ -121,7 +121,7 @@ function getNodeColor(node: TreeNodeType): string {
 function getAgentColor(node: TreeNodeType): string {
   switch (node.wsAgentState) {
     case 'running':
-      return palette.emerald;
+      return palette.success;
     case 'stopped':
       return palette.textDim;
     case 'error':
@@ -135,11 +135,11 @@ function getAgentColor(node: TreeNodeType): string {
 
 function getPaneColor(node: TreeNodeType): string {
   if (node.data.isDead) return palette.error;
-  if (node.agentState === 'working') return palette.cyan;
+  if (node.agentState === 'working') return palette.info;
   if (node.agentState === 'permission') return palette.warning;
   if (node.agentState === 'error') return palette.error;
   if (node.agentState === 'idle') return palette.textDim;
-  if (node.data.command === 'claude') return palette.cyan;
+  if (node.data.command === 'claude') return palette.info;
   return palette.textDim;
 }
 
@@ -164,7 +164,7 @@ function getNodeSuffix(node: TreeNodeType): string {
 function getStateColor(state: string): string {
   switch (state) {
     case 'working':
-      return palette.cyan;
+      return palette.info;
     case 'idle':
       return palette.textDim;
     case 'permission':

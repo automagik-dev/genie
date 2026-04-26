@@ -368,8 +368,8 @@ const styles = {
     padding: '4px 16px',
   },
   typingDots: {
-    backgroundColor: '#166534',
-    color: '#6ee7b7',
+    backgroundColor: theme.bgCard,
+    color: theme.emerald,
     padding: '8px 14px',
     borderRadius: '12px',
     borderBottomLeftRadius: '4px',
@@ -432,8 +432,8 @@ function injectPulseAnimation() {
   const style = document.createElement('style');
   style.textContent = `
     @keyframes pulse-glow {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5); }
-      50% { box-shadow: 0 0 0 4px rgba(52, 211, 153, 0); }
+      0%, 100% { box-shadow: 0 0 0 0 rgba(127, 200, 169, 0.5); }
+      50% { box-shadow: 0 0 0 4px rgba(127, 200, 169, 0); }
     }
   `;
   document.head.appendChild(style);
@@ -475,7 +475,7 @@ function SessionRowItem({ session, selected, onSelect }: SessionRowItemProps) {
           <span
             style={{
               ...styles.statusDot,
-              backgroundColor: '#6b7280',
+              backgroundColor: theme.textMuted,
             }}
           />
         )}

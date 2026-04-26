@@ -85,14 +85,14 @@ const STATE_COLORS: Record<string, string> = {
   working: theme.emerald,
   spawning: theme.warning,
   error: theme.error,
-  idle: '#6b7280',
-  done: '#6b7280',
-  suspended: '#6b7280',
-  offline: '#6b7280',
+  idle: theme.textMuted,
+  done: theme.textMuted,
+  suspended: theme.textMuted,
+  offline: theme.textMuted,
 };
 
 function stateColor(state: string): string {
-  return STATE_COLORS[state] ?? '#6b7280';
+  return STATE_COLORS[state] ?? theme.textMuted;
 }
 
 const EVENT_KIND_COLORS: Record<string, string> = {

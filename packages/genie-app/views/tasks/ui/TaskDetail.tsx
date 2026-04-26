@@ -67,11 +67,11 @@ const ORG_ID = 'default';
 
 const PRIORITY_CONFIG: Record<string, { color: string; label: string }> = {
   P0: { color: theme.error, label: 'P0 Critical' },
-  P1: { color: '#fb923c', label: 'P1 High' },
+  P1: { color: theme.warning, label: 'P1 High' },
   P2: { color: theme.blue, label: 'P2 Medium' },
   P3: { color: theme.textMuted, label: 'P3 Low' },
   urgent: { color: theme.error, label: 'Urgent' },
-  high: { color: '#fb923c', label: 'High' },
+  high: { color: theme.warning, label: 'High' },
   normal: { color: theme.blue, label: 'Normal' },
   low: { color: theme.textMuted, label: 'Low' },
 };

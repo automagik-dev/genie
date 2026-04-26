@@ -64,6 +64,25 @@ jobs:
       - name: Lint
         run: bunx biome check .
 
+      - name: Tmux theme up-to-date (regenerate + assert clean diff)
+        run: |
+          bash scripts/tmux/generate-theme.sh
+          if ! git diff --exit-code scripts/tmux/.generated.theme.conf; then
+            echo "::error::scripts/tmux/.generated.theme.conf is stale. Run 'bash scripts/tmux/generate-theme.sh' and commit." >&2
+            exit 1
+          fi
+
+      # Visual regression — TUI snapshots locked to the Severance Lumon-MDR
+      # palette (Group 6 of the design-system-severance wish). Any palette
+      # token change without a matching `bun test test/visual/ -u` rerun
+      # produces a snapshot diff and fails the build. Runs before knip so a
+      # palette regression surfaces with a clean error rather than after
+      # full dead-code analysis.
+      - name: Visual regression (TUI snapshots)
+        env:
+          GENIE_TEST_SKIP_PGSERVE: "1"
+        run: bun test test/visual/
+
       - name: Dead code check (knip)
         run: bunx knip
 

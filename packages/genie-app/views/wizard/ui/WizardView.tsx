@@ -1,22 +1,23 @@
 import { useState } from 'react';
 import { invoke } from '../../../lib/ipc';
+import { palette } from '../../../lib/theme';
 import type { AppComponentProps } from '../../../lib/types';
 
 // ============================================================================
-// Theme tokens
+// Theme tokens — sourced from genie-tokens via lib/theme
 // ============================================================================
 
 const t = {
-  bg: '#1a1028',
-  bgCard: '#241838',
-  border: '#414868',
-  text: '#e2e8f0',
-  textDim: '#94a3b8',
-  textMuted: '#64748b',
-  purple: '#a855f7',
-  violet: '#7c3aed',
-  emerald: '#34d399',
-  error: '#f87171',
+  bg: palette.bg,
+  bgCard: palette.bgRaised,
+  border: palette.border,
+  text: palette.text,
+  textDim: palette.textDim,
+  textMuted: palette.textMuted,
+  purple: palette.accentBright,
+  violet: palette.accent,
+  emerald: palette.success,
+  error: palette.error,
 } as const;
 
 const styles = {
