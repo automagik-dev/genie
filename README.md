@@ -186,10 +186,15 @@ CREATE ROLE omni_scope_enforcer LOGIN PASSWORD '…' IN ROLE executors_reader;
 Response shape (`state` / `outcome` / `closed_at`) is the stable boundary
 contract; removing or renaming fields is a coordinated breaking change.
 
+## Design
+
+Genie ships a single, dark-only color palette inspired by **Severance** — the Lumon MDR room. One source of truth (`packages/genie-tokens/`), three consumers (TUI, desktop app, tmux). See [docs/design-system.md](docs/design-system.md) for tokens, the Severance rationale, how to add a color, how to regenerate the tmux theme, and the visual snapshot workflow.
+
 ---
 
 <p align="center">
   <a href="https://docs.automagik.dev/genie"><strong>Docs</strong></a> &middot;
+  <a href="docs/design-system.md"><strong>Design</strong></a> &middot;
   <a href="https://github.com/automagik-dev/genie/releases/tag/v4.260402.18"><strong>v4 Release</strong></a> &middot;
   <a href="https://discord.gg/xcW8c7fF3R"><strong>Discord</strong></a> &middot;
   <a href="LICENSE"><strong>MIT License</strong></a>

@@ -1,22 +1,6 @@
 import { useEffect, useState } from 'react';
 import { invoke } from './ipc';
-
-// ============================================================================
-// Theme tokens (matches all views)
-// ============================================================================
-
-const t = {
-  bg: '#1a1028',
-  bgLight: '#241838',
-  border: '#414868',
-  text: '#e2e8f0',
-  textDim: '#94a3b8',
-  textMuted: '#64748b',
-  purple: '#a855f7',
-  emerald: '#34d399',
-  warning: '#fbbf24',
-  error: '#f87171',
-} as const;
+import { fonts, palette } from './theme';
 
 // ============================================================================
 // Types
@@ -88,41 +72,43 @@ export function StatusBar({ activeView, shortcuts = [] }: StatusBarProps) {
         justifyContent: 'space-between',
         height: '28px',
         padding: '0 16px',
-        borderTop: `1px solid ${t.border}`,
-        backgroundColor: t.bgLight,
+        borderTop: `1px solid ${palette.border}`,
+        backgroundColor: palette.bgRaised,
         fontSize: '11px',
-        fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace",
+        fontFamily: fonts.family,
         gap: '16px',
         flexShrink: 0,
       }}
     >
       {/* Left: keyboard shortcuts */}
-      <div style={{ display: 'flex', gap: '12px', color: t.textMuted }}>
+      <div style={{ display: 'flex', gap: '12px', color: palette.textMuted }}>
         {mergedShortcuts.map((s) => (
           <span key={s.key}>
-            <span style={{ color: t.textDim, fontWeight: 500 }}>{s.key}</span>
+            <span style={{ color: palette.textDim, fontWeight: 500 }}>{s.key}</span>
             <span style={{ marginLeft: '4px' }}>{s.label}</span>
           </span>
         ))}
       </div>
 
       {/* Center: active view */}
-      <span style={{ color: t.purple, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+      <span
+        style={{ color: palette.accentBright, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em' }}
+      >
         {activeView}
       </span>
 
       {/* Right: quick stats + connection */}
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', color: t.textMuted }}>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', color: palette.textMuted }}>
         {stats && (
           <>
             <span>
-              <span style={{ color: t.emerald }}>{stats.agentsOnline}</span> agents
+              <span style={{ color: palette.accent }}>{stats.agentsOnline}</span> agents
             </span>
             <span>
-              <span style={{ color: t.textDim }}>{stats.tasksActive}</span> tasks
+              <span style={{ color: palette.textDim }}>{stats.tasksActive}</span> tasks
             </span>
             <span>
-              <span style={{ color: t.purple }}>{stats.teamsActive}</span> teams
+              <span style={{ color: palette.accentBright }}>{stats.teamsActive}</span> teams
             </span>
           </>
         )}
@@ -131,7 +117,7 @@ export function StatusBar({ activeView, shortcuts = [] }: StatusBarProps) {
             width: '6px',
             height: '6px',
             borderRadius: '50%',
-            backgroundColor: connected ? t.emerald : t.error,
+            backgroundColor: connected ? palette.accent : palette.error,
           }}
           title={connected ? 'Connected' : 'Disconnected'}
         />

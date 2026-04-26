@@ -121,7 +121,7 @@ const s = {
     width: '16px',
     height: '16px',
     borderRadius: '50%',
-    backgroundColor: '#fff',
+    backgroundColor: theme.text,
     transition: 'left 0.2s ease',
   }),
 } as const;
@@ -403,7 +403,7 @@ function SaveButton({
           fontSize: '12px',
           fontFamily: theme.fontFamily,
           backgroundColor: dirty ? theme.violet : theme.bgCard,
-          color: dirty ? '#fff' : theme.textMuted,
+          color: dirty ? theme.bg : theme.textMuted,
           border: `1px solid ${dirty ? theme.violet : theme.border}`,
           borderRadius: theme.radiusSm,
           cursor: dirty ? 'pointer' : 'default',

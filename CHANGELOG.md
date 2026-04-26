@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Breaking — design system
+
+- **Unified design system on the Severance Lumon-MDR palette.** All color
+  tokens now live in a single workspace package, `packages/genie-tokens/`,
+  consumed by the TUI (`src/tui/theme.ts`), the desktop app
+  (`packages/genie-app/lib/theme.ts`), and tmux (via the generated
+  `scripts/tmux/.generated.theme.conf`). The old purple/green/red look is
+  replaced by petrol surfaces, mint accent, and amber/crimson reserved for
+  true alarms. See `docs/design-system.md`.
+- **Old palette names deleted — no aliases.** `palette.purple`,
+  `palette.violet`, `palette.cyan`, and `palette.emerald` are gone.
+  Replacements:
+  - `purple` / `violet` → `accent` (`#7fc8a9`) or `accentBright`
+    (`#9eddc1`) for selection text.
+  - `emerald` → `accent` for normal/OK states; `success` is the same value
+    aliased for intent.
+  - `cyan` → `info` (`#5a8ca8`) where it signaled attention.
+  Internal callers are migrated. External consumers must switch to the new
+  semantic tokens (`accent`, `accentBright`, `success`, `info`, `danger`,
+  `attention`).
+- **`SystemStats` thresholds recalibrated** from `>50/>80` to `>70/>90`. A
+  normal multitasked dev box no longer sits permanently in amber; color is
+  reserved for genuine attention.
+- **Tmux theme is generated, not hand-maintained.** Run
+  `bash scripts/tmux/generate-theme.sh` after any palette change; CI fails
+  on a non-empty diff. This eliminates the off-by-one hue drift that
+  produced `#7c3aed` (TUI) vs. `#7b2ff7` (tmux).
+
 ### Changed
 
 - **Agent config has moved from `AGENTS.md` frontmatter to a dedicated

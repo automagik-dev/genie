@@ -30,9 +30,9 @@ export interface TimelineDensityProps {
 // ============================================================================
 
 const TYPE_COLORS: Record<string, string> = {
-  user: '#2563eb',
-  assistant: '#166534',
-  tool: '#fbbf24',
+  user: theme.info,
+  assistant: theme.emerald,
+  tool: theme.warning,
   system: theme.textMuted,
 };
 

@@ -63,16 +63,17 @@ const bubbleBase = {
 
 const userBubble = {
   ...bubbleBase,
-  backgroundColor: '#2563eb',
-  color: '#f0f4ff',
+  backgroundColor: theme.info,
+  color: theme.text,
   borderBottomRightRadius: '4px',
 };
 
 const assistantBubble = {
   ...bubbleBase,
-  backgroundColor: '#166534',
-  color: '#ecfdf5',
+  backgroundColor: theme.bgCard,
+  color: theme.emerald,
   borderBottomLeftRadius: '4px',
+  border: `1px solid ${theme.borderActive}`,
 };
 
 const systemBubble = {
@@ -121,7 +122,7 @@ export function ChatBubble({ role, content, timestamp, isExpanded: controlledExp
                 display: 'inline',
                 background: 'none',
                 border: 'none',
-                color: role === 'user' ? '#93c5fd' : role === 'assistant' ? '#6ee7b7' : theme.textDim,
+                color: role === 'user' ? theme.text : role === 'assistant' ? theme.emerald : theme.textDim,
                 fontSize: '12px',
                 cursor: 'pointer',
                 padding: '0 0 0 4px',

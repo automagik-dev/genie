@@ -70,11 +70,11 @@ const REFRESH_INTERVAL_MS = 10_000;
 
 const PRIORITY_CONFIG: Record<string, { color: string; label: string; sort: number }> = {
   P0: { color: theme.error, label: 'P0', sort: 0 },
-  P1: { color: '#fb923c', label: 'P1', sort: 1 },
+  P1: { color: theme.warning, label: 'P1', sort: 1 },
   P2: { color: theme.blue, label: 'P2', sort: 2 },
   P3: { color: theme.textMuted, label: 'P3', sort: 3 },
   urgent: { color: theme.error, label: 'P0', sort: 0 },
-  high: { color: '#fb923c', label: 'P1', sort: 1 },
+  high: { color: theme.warning, label: 'P1', sort: 1 },
   normal: { color: theme.blue, label: 'P2', sort: 2 },
   low: { color: theme.textMuted, label: 'P3', sort: 3 },
 };
