@@ -66,7 +66,7 @@ Make `genie serve stop && genie serve start` a no-op for in-flight work. After P
 - [x] `genie status` exists; default output lists agents that should resume (one line each with reason); `--health` adds the 4 health checks; `--all` reveals archived/done; `--debug` is the former `doctor --state`.
 - [ ] `agents.kind` column populated for every row; consumer reads use `WHERE kind='permanent'` not `id LIKE 'dir:%'` ad-hoc; `kind` cannot drift (GENERATED column) or has CHECK + trigger that prevent drift (fallback path).
 - [ ] Derived-signal rule engine subscribes to `genie_runtime_events`; emits `observability.recovery_anchor_at_risk` on the `session.reconciled` corruption fingerprint; emits `agents.zombie_storm` when `dead_pane_zombie` rate > baseline; both visible in `genie status` red-flag section.
-- [ ] `genie serve start` refuses or auto-fixes: today's partition exists; watchdog daemon running; backfill drift < 5%; no orphaned `dead_pane_zombie` rows; no orphaned team-config dirs (active orphans flagged in `genie status` with `genie team repair <name>` verb; stale orphans archived to `_archive/`).
+- [x] `genie serve start` refuses or auto-fixes: today's partition exists; watchdog daemon running; backfill drift < 5%; no orphaned `dead_pane_zombie` rows; no orphaned team-config dirs (active orphans flagged in `genie status` with `genie team repair <name>` verb; stale orphans archived to `_archive/`).
 - [ ] Deletions landed in same PR: `genie metrics agents` removed (or returns deprecation warning + redirects to `status`); `events list --v2` folded as `--enriched` flag; `doctor --state` removed (folded into `status --debug`); cleanup migration archives `felipe-trace-*` rows + legacy stringly-typed identity rows.
 - [ ] `genie done` from a permanent agent context throws `PermanentAgentDoneRejected` with the agent identifier; existing task-bound `genie done` flow unchanged.
 - [ ] `docs/state-machine.md` exists, < 600 lines, covers three layers + chokepoint + surface + key decisions; an invariant test in `src/__tests__/state-machine.invariants.test.ts` asserts the doc-claimed contracts (`kind` consistency, `shouldResume` chokepoint usage, no consumer reads `agents.claude_session_id` directly).
@@ -224,9 +224,9 @@ cd repos/genie && bun run typecheck && bun test src/lib/agent-registry.test.ts s
 4. Documentation note in `docs/state-machine.md` (Group 6) explaining why `serve start` is opinionated.
 
 **Acceptance Criteria:**
-- [ ] On a fresh install / fresh DB, `genie serve start` succeeds without manual fix steps.
-- [ ] On a degraded install (no watchdog, missing partition), `genie serve start` either auto-fixes (default) or refuses with actionable error (`--no-fix`).
-- [ ] `bun test src/term-commands/serve/ensure-ready.test.ts` covers all four preconditions × auto-fix and refuse paths.
+- [x] On a fresh install / fresh DB, `genie serve start` succeeds without manual fix steps.
+- [x] On a degraded install (no watchdog, missing partition), `genie serve start` either auto-fixes (default) or refuses with actionable error (`--no-fix`).
+- [x] `bun test src/term-commands/serve/ensure-ready.test.ts` covers all four preconditions × auto-fix and refuse paths.
 
 **Validation:**
 ```bash
