@@ -2,9 +2,10 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED |
 | **Slug** | `design-system-severance` |
 | **Date** | 2026-04-25 |
+| **Approved** | 2026-04-26 by Felipe (palette ✅ · variants punted to v2 ✅ · hard-cut aliases ✅ · dispatch via team-lead w/ Genie as orchestrator ✅) |
 | **Author** | Genie (per Felipe directive 2026-04-25: "review entire design system, standardize all color scheme, inspired in Severance TV show") |
 | **Appetite** | medium (~1.5 weeks across 4 phases) |
 | **Branch** | `wish/design-system-severance` |
@@ -22,7 +23,7 @@ Genie's design system has fragmented into **three parallel sources of truth** (T
 
 **Phase A — Token source of truth**
 - New `packages/genie-tokens/` package (zero deps): `palette.ts` exporting full Severance palette, `tokens.ts` for semantic aliases (`accent`, `surface`, `surfaceRaised`, `danger`, etc.), `index.ts` re-exporting.
-- `src/tui/theme.ts` re-exports from `genie-tokens` — backward-compatible names retained as aliases.
+- `src/tui/theme.ts` re-exports from `genie-tokens` — **hard cut**, no backward-compat aliases. Group 3 migrates every `purple`/`violet`/`cyan`/`emerald` reference to a semantic token in the same wish.
 - `packages/genie-app/lib/theme.ts` re-exports from `genie-tokens` — its 24 duplicated hex values deleted.
 - New `scripts/tmux/generate-theme.sh` reads `genie-tokens/palette.ts` (via `bun -e`), emits `scripts/tmux/.generated.theme.conf` with `set -g status-style "bg=$bg,fg=$text"`, `set -g pane-active-border-style "fg=$accent"`, etc.
 - `scripts/tmux/genie.tmux.conf` and `scripts/tmux/tui-tmux.conf` `source-file` the generated file.
@@ -55,7 +56,7 @@ Genie's design system has fragmented into **three parallel sources of truth** (T
 - **Font changes** — current JetBrains Mono stays.
 - **i18n of color-name strings** in CLI help.
 - **Rewriting opentui** — we use it as a dependency; any opentui-side bug stays upstream.
-- **Backward-compatibility shims beyond one minor release cycle** — old palette names (`purple`, `violet`, `cyan`, `emerald`) re-export as aliases for v4.x; removed in v5.0.
+- **Backward-compat aliases** — explicitly out per Felipe directive 2026-04-26. Old palette names (`purple`, `violet`, `cyan`, `emerald`) are deleted, not aliased. All internal references migrated within this wish (see Group 3); zero external consumers verified before approval.
 
 ## Decisions
 
@@ -65,7 +66,7 @@ Genie's design system has fragmented into **three parallel sources of truth** (T
 | 2 | Tmux theme generated from JS source, not maintained by hand | Eliminates the off-by-one hue drift class of bug. One source of truth. CI lint catches forgotten regenerations. |
 | 3 | Severance palette hard-codes the new look — no opt-out flag in this wish | Felipe directive was unambiguous. Variants are Phase C of the proposal but moved OUT to keep this wish shippable in one cycle. |
 | 4 | `pickColor` recalibrated to `>70/>90` (was `>50/>80`) | Old thresholds made a normal multitasked dev box sit permanently in amber. New thresholds reserve color for genuine attention. |
-| 5 | Backward-compat aliases (`palette.purple` etc) retained for one minor version | Avoids breaking external embedders + plugin consumers. Removed cleanly in v5.0 per Felipe's "no backward compat" guideline applied at major boundaries. |
+| 5 | **Hard cut** — old palette names (`palette.purple`, `violet`, `cyan`, `emerald`) are deleted, not aliased. Every internal reference is migrated by Group 3 of this wish. | Felipe approval 2026-04-26: "no backward compat — break old behavior cleanly so bugs get fixed". External-consumer scan confirms zero non-genie callers. Aliases would only encourage zombie names and undermine the single-source rule. |
 | 6 | Snapshot tests use opentui's tree-to-string render, not pixel diffs | Token-level snapshots; immune to terminal-specific rendering quirks. |
 | 7 | `src/lib/tmux.ts` window-bg colors derived from accent via HSL rotation, not 8 hand-picked hexes | Removes 8 magic numbers. New windows always look palette-coherent. |
 | 8 | Modal overlay backgrounds (currently `#0a0a0a`) become `palette.bgOverlay` (`rgba(10, 29, 42, 0.92)`) | Tints the scrim in palette-petrol so modals feel part of the world, not a black void. |
@@ -169,7 +170,7 @@ grep -E '#[0-9a-fA-F]{6}' scripts/tmux/genie.tmux.conf scripts/tmux/tui-tmux.con
 ### Group 3: TUI component migration
 **Goal:** Every `src/tui/components/*.tsx` file references `palette.X` from `genie-tokens`. `pickColor` recalibrated.
 **Deliverables:**
-1. `src/tui/theme.ts` becomes a thin re-export of `genie-tokens`. Backward-compat aliases (`purple`, `violet`, `cyan`, `emerald`) retained.
+1. `src/tui/theme.ts` becomes a thin re-export of `genie-tokens`. **Hard cut** — old names (`purple`, `violet`, `cyan`, `emerald`) deleted; every reference in `src/tui/components/*.tsx` migrated to semantic tokens (`accent`, `accentBright`, `success`, etc.) within this group.
 2. `src/tui/components/SystemStats.tsx`: `pickColor` thresholds `>70/>90`; `palette.emerald` → `palette.accent` (Severance mint).
 3. `src/tui/components/AgentPicker.tsx`, `TeamCreate.tsx`, `QuitDialog.tsx`, `SpawnTargetPicker.tsx`: modal overlay `#0a0a0a` → `palette.bgOverlay`; modal interior `#111111` → `palette.bgRaised`.
 4. `src/tui/components/TreeNode.tsx`, `ContextMenu.tsx`: `#ffffff` selected text → `palette.accentBright`.
@@ -262,7 +263,7 @@ bun test test/visual/
 **Deliverables:**
 1. `docs/design-system.md` (~400-600 words) — Severance rationale, token list with semantic mapping, "how to add a color", "how to regenerate tmux theme", "how to update visual snapshots".
 2. `README.md` adds a "Design" section linking to `docs/design-system.md`.
-3. `CHANGELOG.md` entry under upcoming version: "Unified design system on Severance Lumon-MDR palette. Old `palette.purple` etc retained as aliases for v4.x, removed in v5.0."
+3. `CHANGELOG.md` entry under upcoming version: "**BREAKING**: Unified design system on Severance Lumon-MDR palette. Old palette names (`palette.purple`, `violet`, `cyan`, `emerald`) deleted — replaced by semantic tokens (`accent`, `accentBright`, `success`, `info`). Internal callers migrated; external consumers must switch to the new token names."
 
 **Acceptance Criteria:**
 - [ ] `docs/design-system.md` exists and renders cleanly in GitHub markdown preview.
@@ -302,7 +303,7 @@ grep -q "design-system" README.md
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| Visual change is jarring for users who liked the purple | Medium | CHANGELOG calls it out; aliases retained one cycle; future `design-system-themes-v2` wish can ship a `legacy-purple` variant if demand appears. |
+| Visual change is jarring for users who liked the purple | Medium | CHANGELOG marked **BREAKING** so the swap is visible; future `design-system-themes-v2` wish can ship a `legacy-purple` variant if user demand appears. No alias bridge — clean break per Felipe directive. |
 | Tmux generator complicates the build for contributors who don't use tmux | Low | Generator runs only when tmux configs are touched; produces a static file that's also committed. |
 | Some chalk consumers run on terminals that downgrade truecolor | Low | `palette.toAnsi(token)` helper picks closest 16-color fallback. |
 | Snapshot tests are brittle across opentui versions | Medium | Snapshot the `palette.X` tokens used (token-level), not raw rendered output. Keep snapshots small. |
@@ -340,7 +341,7 @@ scripts/tmux/
 └── genie-sessions.sh                               [MODIFY: derive from tokens]
 
 src/tui/
-├── theme.ts                                        [MODIFY: re-export tokens, alias old names]
+├── theme.ts                                        [MODIFY: re-export tokens; hard-cut old names]
 └── components/
     ├── SystemStats.tsx                             [MODIFY: pickColor thresholds + accent]
     ├── AgentPicker.tsx                             [MODIFY: overlay/interior tokens]
