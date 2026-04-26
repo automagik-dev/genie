@@ -179,12 +179,18 @@ describe.skipIf(!DB_AVAILABLE)('migration 049 — agents.kind GENERATED column',
     let stdout = '';
     try {
       stdout = execSync(
-        `rg --no-heading "id LIKE 'dir:%'" src --type ts --type sql ` +
+        // `-n` so the comment-line filter below can read the code part via
+        // `slice(2)` on the `file:line:content` output format.
+        `rg --no-heading -n "id LIKE 'dir:%'" src --type ts --type sql ` +
           // The migration that defines the rule (049) and the migration that
           // backfills dir: state (046) legitimately reference the pattern.
           `--glob '!src/db/migrations/049_agents_kind_generated.sql' ` +
           `--glob '!src/db/migrations/046_dir_agents_state_null.sql' ` +
-          `--glob '!src/db/migrations/agents-kind.test.ts'`,
+          `--glob '!src/db/migrations/agents-kind.test.ts' ` +
+          // The state-machine invariants test file legitimately references
+          // the pattern in test descriptions, comments, and the rg pattern
+          // it itself constructs.
+          `--glob '!src/__tests__/state-machine.invariants.test.ts'`,
         { encoding: 'utf-8', cwd: process.cwd() },
       );
     } catch (err) {
@@ -193,6 +199,18 @@ describe.skipIf(!DB_AVAILABLE)('migration 049 — agents.kind GENERATED column',
       if (e.status === 1) stdout = '';
       else throw err;
     }
-    expect(stdout.trim()).toBe('');
+    // Strip comment lines (SQL `--`, TS `//`, JSDoc `*`) — references inside
+    // comments are documentation, not executable inference.
+    const violations = stdout
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .filter((line) => {
+        const codePart = line.split(':').slice(2).join(':').trimStart();
+        if (codePart.startsWith('--')) return false;
+        if (codePart.startsWith('//')) return false;
+        if (codePart.startsWith('*')) return false;
+        return true;
+      });
+    expect(violations).toEqual([]);
   });
 });
