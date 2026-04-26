@@ -9,7 +9,7 @@
  */
 
 import type { DiagnosticSnapshot, TmuxPane, TmuxSession, TmuxWindow } from './diagnostics.js';
-import type { AgentState, TreeNode, TuiExecutor } from './types.js';
+import type { AgentState, TreeNode, TuiExecutor, WorkState } from './types.js';
 
 /** The TUI's own session name — filtered from the tree to prevent self-attach loops */
 const TUI_SESSION = 'genie-tui';
@@ -44,11 +44,18 @@ interface WorkspaceTreeInput {
   sessions: TmuxSession[];
   /** Executors from PG */
   executors: TuiExecutor[];
+  /**
+   * Per-agent work state derived from `shouldResume()` (invincible-genie /
+   * Group 2). Optional — empty map means workState badges are hidden, the
+   * tree falls back to `wsAgentState` for icon/color decisions.
+   */
+  workStates?: Map<string, WorkState>;
 }
 
 /** Build workspace-aware tree: all agents from filesystem, enriched with tmux + executor state. */
 export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
   const { agentNames, sessions, executors } = input;
+  const workStates = input.workStates ?? new Map<string, WorkState>();
 
   // Index tmux sessions by name
   const sessionByName = new Map<string, TmuxSession>();
@@ -82,8 +89,9 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
       sessionByName.get(toSessionName(name)),
       executorsByAgent.get(name) ?? [],
       executorByPaneId,
+      workStates.get(name),
     );
-    appendSubAgentNodes(node, subsByParent.get(name), sessionByName, executorsByAgent, executorByPaneId);
+    appendSubAgentNodes(node, subsByParent.get(name), sessionByName, executorsByAgent, executorByPaneId, workStates);
     return node;
   });
 
@@ -144,6 +152,7 @@ function appendSubAgentNodes(
   sessionByName: Map<string, TmuxSession>,
   executorsByAgent: Map<string, TuiExecutor[]>,
   executorByPaneId: Map<string, TuiExecutor>,
+  workStates: Map<string, WorkState>,
 ): void {
   if (!subs) return;
   for (const subName of subs) {
@@ -153,6 +162,7 @@ function appendSubAgentNodes(
       sessionByName.get(toSessionName(subName)),
       executorsByAgent.get(subName) ?? [],
       executorByPaneId,
+      workStates.get(subName),
     );
     subNode.label = subLabel;
     subNode.depth = 1;
@@ -172,6 +182,7 @@ function buildAgentNode(
   session: TmuxSession | undefined,
   agentExecutors: TuiExecutor[],
   executorByPaneId: Map<string, TuiExecutor>,
+  workState: WorkState | undefined,
 ): TreeNode {
   const wsState = deriveWsAgentState(session, agentExecutors);
   const attachWindowIndex = session ? resolvePreferredWindowIndex(session, name) : undefined;
@@ -184,7 +195,7 @@ function buildAgentNode(
     }
   }
 
-  return {
+  const node: TreeNode = {
     id: `agent:${name}`,
     type: 'agent',
     label: name,
@@ -201,6 +212,8 @@ function buildAgentNode(
     agentState: agentExecutors.length > 0 ? deriveExecutorState(agentExecutors) : undefined,
     wsAgentState: wsState,
   };
+  if (workState) node.workState = workState;
+  return node;
 }
 
 /** Derive workspace-level agent state from tmux session + executors */

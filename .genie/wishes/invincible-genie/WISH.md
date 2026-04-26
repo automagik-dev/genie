@@ -63,7 +63,7 @@ Make `genie serve stop && genie serve start` a no-op for in-flight work. After P
 
 - [ ] `shouldResume(agentId)` exported from `src/lib/should-resume.ts` (or extension of `executor-registry.ts`); 8 prior consumer sites migrated; `rg "agent\.claudeSessionId\|worker\.claudeSessionId" repos/genie/src` returns zero hits outside the new chokepoint.
 - [ ] `genie serve start` boot-pass: every agent with `assignments.outcome IS NULL AND auto_resume=true` rehydrated; `genie ls` post-restart shows pre-restart truth, not a fresh slate.
-- [ ] `genie status` exists; default output lists agents that should resume (one line each with reason); `--health` adds the 4 health checks; `--all` reveals archived/done; `--debug` is the former `doctor --state`.
+- [x] `genie status` exists; default output lists agents that should resume (one line each with reason); `--health` adds the 4 health checks; `--all` reveals archived/done; `--debug` is the former `doctor --state`.
 - [ ] `agents.kind` column populated for every row; consumer reads use `WHERE kind='permanent'` not `id LIKE 'dir:%'` ad-hoc; `kind` cannot drift (GENERATED column) or has CHECK + trigger that prevent drift (fallback path).
 - [ ] Derived-signal rule engine subscribes to `genie_runtime_events`; emits `observability.recovery_anchor_at_risk` on the `session.reconciled` corruption fingerprint; emits `agents.zombie_storm` when `dead_pane_zombie` rate > baseline; both visible in `genie status` red-flag section.
 - [ ] `genie serve start` refuses or auto-fixes: today's partition exists; watchdog daemon running; backfill drift < 5%; no orphaned `dead_pane_zombie` rows; no orphaned team-config dirs (active orphans flagged in `genie status` with `genie team repair <name>` verb; stale orphans archived to `_archive/`).
@@ -87,7 +87,7 @@ Make `genie serve stop && genie serve start` a no-op for in-flight work. After P
 | Group | Agent | Description |
 |-------|-------|-------------|
 | 2 | engineer | Derived-signal rule engine + `genie status` aggregator + flags (depends on G1) |
-| 6 | engineer + docs | `docs/state-machine.md` + invariant test + `genie done` rejection (depends on G1, G3) |
+| 6 | engineer | `docs/state-machine.md` + invariant test + `genie done` rejection (depends on G1, G3) |
 
 ### Wave 3 (parallel — depend on `genie status` existing in Wave 2)
 
@@ -118,6 +118,7 @@ Make `genie serve stop && genie serve start` a no-op for in-flight work. After P
    - `genie-commands/session.ts` × 5 sites (`:226, :304, :328, :367, :484`).
 3. Boot-pass logic in `scheduler-daemon` boot path: enumerate agents where `assignments.outcome IS NULL AND auto_resume=true`; call `shouldResume(agentId)` × N (parallelized, batch=32); rehydrate ALL (DB row + executor anchor); re-invoke eager for `kind='permanent'`, lazy for `kind='task'` (surfaced via `genie status` as actionable verb).
 3a. **Dispatcher pre-spawned-teammate reuse** (DX gap caught from live `genie work` dispatch on 2026-04-26): before spawning a fresh `engineer-N` for a wish group, `genie work` should check `genie ls --json` for idle teammates of the matching role in the same team, and reuse if available. Today the dispatcher mints fresh agents even when an idle one is sitting next to them — wasted compute and confusing topology. New helper `pickEngineerForGroup(groupNumber, team)` either returns an idle existing engineer or spawns. Adds `agent.dispatcher.reused_idle` audit event (consumer: `genie status` "Dispatch efficiency" line, info-level).
+3b. **Multi-agent group strings** (DX gap caught from live `genie work` dispatch on 2026-04-26): the wish's "Execution Strategy" agent column accepts strings like `"engineer + docs"` to indicate a multi-role group, but the dispatcher passes the literal string to the agent registry, which fails with `Agent "engineer + docs" not found in directory or built-ins.` Either (a) the wish parser should split on `+` / `,` and dispatch to the first listed agent (with a deliverables hint to the rest), or (b) reject multi-agent strings at lint time and require single-agent entries. Recommend (b) — multi-role groups are a sign the group is too big and should be split into independent groups (Decision: align with Simplifier's 6-group ceiling discipline). Genie wish lint should flag any agent string containing `+` or `,` as a structural violation.
 4. New audit events (per Measurer's methodology rule — defined consumer + green-state + action threshold per event):
    - `agent.boot_pass.rehydrated` (consumer: `genie status`; green = boot completed; action = none, info-level).
    - `agent.boot_pass.skipped_task_done` (consumer: `genie status --all`; green = expected; action = none).
@@ -159,10 +160,10 @@ cd repos/genie && bun test src/lib/should-resume.test.ts src/lib/scheduler-daemo
 6. **TUI Nav header shows derived-signal badge**: when the rule engine has emitted a `recovery_anchor_at_risk` / `agents.zombie_storm` / `observability.partition.missing` signal that hasn't been acked, render a `🔴 N alerts` badge in the Nav header next to `Sessions/Agents`. Drill-down to `genie status --debug`. Closes the "audit log captured the corruption, nobody listened" gap at the TUI surface.
 
 **Acceptance Criteria:**
-- [ ] `genie status` runs in < 1s for ≤ 100 agents.
-- [ ] Derived-signal subscriber catches the corruption fingerprint within 30s of `session.reconciled` write (verified by integration test that emits the bad event and asserts `observability.recovery_anchor_at_risk` appears).
-- [ ] `genie status --health` shows partition, watchdog, backfill, watcher-metric status.
-- [ ] `bun test src/term-commands/status.test.ts src/lib/derived-signals/*.test.ts` passes.
+- [x] `genie status` runs in < 1s for ≤ 100 agents.
+- [x] Derived-signal subscriber catches the corruption fingerprint within 30s of `session.reconciled` write (verified by integration test that emits the bad event and asserts `observability.recovery_anchor_at_risk` appears).
+- [x] `genie status --health` shows partition, watchdog, backfill, watcher-metric status.
+- [x] `bun test src/term-commands/status.test.ts src/lib/derived-signals/*.test.ts` passes.
 
 **Validation:**
 ```bash

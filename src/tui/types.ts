@@ -7,6 +7,24 @@ export type TreeNodeType = 'session' | 'window' | 'pane' | 'agent';
 
 export type AgentState = 'running' | 'stopped' | 'error' | 'spawning';
 
+/**
+ * Work-state derived from `shouldResume()` (invincible-genie / Group 2).
+ *
+ * This is what the wish actually needs the user to see — process state
+ * (`running`/`stopped`/`error`/`spawning`) describes the tmux pane;
+ * work state describes the agent's relationship to its task. The two
+ * coexist: a `paused` agent can still have a live tmux pane, and a
+ * `done` agent can still be `stopped`.
+ *
+ * Mapping (`ShouldResumeReason` → `WorkState`):
+ *   - `ok`                    → `in_flight`        (resume-ready)
+ *   - `auto_resume_disabled`  → `paused`
+ *   - `assignment_closed`     → `done`
+ *   - `no_session_id`         → `stuck`
+ *   - `unknown_agent`         → undefined (not a real row)
+ */
+export type WorkState = 'in_flight' | 'paused' | 'done' | 'stuck';
+
 export interface TreeNode {
   id: string;
   type: TreeNodeType;
@@ -21,6 +39,11 @@ export interface TreeNode {
   agentState?: 'idle' | 'working' | 'permission' | 'error';
   /** Workspace agent lifecycle state */
   wsAgentState?: AgentState;
+  /**
+   * Work state derived from `shouldResume()` (invincible-genie / Group 2).
+   * Distinct from `wsAgentState` — see {@link WorkState}.
+   */
+  workState?: WorkState;
 }
 
 export interface FlatNode {
