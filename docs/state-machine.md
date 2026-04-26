@@ -238,6 +238,43 @@ executor row, latest assignment, JSONL fallback) so you can see exactly which
 axis is forcing the decision. This is what `genie doctor --state` used to do;
 that command has been folded in.
 
+## Why `serve start` is opinionated (`ensureServeReady`)
+
+The day-one user inherits Felipe's-machine green state, not Felipe's
+incident. `genie serve start` runs `ensureServeReady()` before any service
+boots — five preconditions, all read-only when `--no-fix` is set:
+
+1. **`partition`** — today's `genie_runtime_events` partition exists, or
+   `genie_runtime_events_maintain_partitions(2, 30)` rotates one in.
+2. **`watchdog`** — systemd units installed, or `bun run
+   packages/watchdog/src/cli.ts install` writes them. EACCES (no root)
+   surfaces as `refused` with a `sudo` hint, never crashes the boot.
+3. **`backfill`** — JSONL→PG drift below 5% (`session_sync.processed_bytes`
+   vs `total_bytes`). Above threshold, a foreground `startBackfill` pass
+   converges before scheduler starts.
+4. **`dead_pane_zombies`** — exhausted-zombie rows past TTL are flagged
+   only; auto-archive remains opt-in (`genie prune --zombies`). Boot never
+   silently mutates state the operator might want to inspect.
+5. **`team_config_orphans`** — `~/.claude/teams/<name>/` dirs missing
+   `config.json` are classified active (recent + non-empty inboxes →
+   flagged for `genie team repair`) or stale (empty/old → moved to
+   `_archive/<name>-<timestamp>/`). Closes the chronic
+   `inbox-watcher: Cannot spawn team-lead — no workingDir` warning class.
+
+Audit events (`serve.precondition.fixed`, `serve.precondition.refused`)
+land in `audit_events` and are surfaced via `genie status --health`. The
+modes:
+
+| Mode | Behavior |
+|------|----------|
+| Default (`--fix`) | Auto-fix every fixable precondition; refused entries print a verb but boot proceeds. |
+| `--no-fix` | Refuse to start if any precondition is non-`ok`; exit 2 with the fix command per failure. |
+| `GENIE_SKIP_PRECONDITIONS=1` | Bypass entirely. Reserved for lifecycle integration tests; production code paths must never set this. |
+
+The full implementation lives in `src/term-commands/serve/ensure-ready.ts`
+with dependency injection for every external call so each branch is unit-
+tested without touching PG, systemd, or the real filesystem.
+
 ## The 3am runbook
 
 Imagine: 3am, prod host you don't admin, power blip recovered, pager fires.
