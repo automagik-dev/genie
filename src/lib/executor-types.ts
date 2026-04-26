@@ -61,6 +61,12 @@ export interface AgentIdentity {
   currentExecutorId: string | null;
   reportsTo?: string | null;
   title?: string | null;
+  /**
+   * Schema-derived permanence label (migration 049). Computed by the
+   * GENERATED column from `id` shape + `reports_to` — never authored
+   * directly by consumers, never drifts.
+   */
+  kind?: 'permanent' | 'task';
   createdAt?: string;
   updatedAt?: string;
 }

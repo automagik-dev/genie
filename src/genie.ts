@@ -80,6 +80,7 @@ import { registerSecCommands } from './term-commands/sec.js';
 import { registerServeCommands } from './term-commands/serve.js';
 import { registerSessionsCommands } from './term-commands/sessions.js';
 import { registerStateCommands } from './term-commands/state.js';
+import { type StatusOptions, statusCommand as systemStatusCommand } from './term-commands/status.js';
 import { registerTagCommands } from './term-commands/tag.js';
 import { registerTaskCommands } from './term-commands/task.js';
 import { registerTeamNamespace } from './term-commands/team.js';
@@ -186,6 +187,11 @@ program
   .description('Run diagnostic checks on genie installation')
   .option('--fix', 'Auto-fix: kill zombie postgres, clean shared memory, restart daemon')
   .option('--observability', 'Report partition health + GENIE_WIDE_EMIT flag state')
+  .option(
+    '--fix-team-orphans',
+    'Archive stale Claude-team config dirs missing config.json (paired with invincible-genie wish migration 050)',
+  )
+  .option('--dry-run', 'Pair with --fix-team-orphans to preview archive moves without mutating')
   .option('--json', 'Emit JSON instead of human output (pairs with --observability)')
   .action(doctorCommand);
 program
@@ -617,6 +623,24 @@ program
   .description('Answer a question for an agent (use "text:..." for text input)')
   .action(async (name: string, choice: string) => {
     await orchestrateCmd.answerQuestion(name, choice);
+  });
+
+// genie status — canonical observability surface (invincible-genie / Group 2)
+program
+  .command('status')
+  .description('Aggregated observability — agents to resume, active alerts, optional health checklist')
+  .option('--health', 'Add the four-item health checklist (partition, watchdog, spill, watcher metrics)')
+  .option('--all', 'Include archived / done agents')
+  .option('--debug', 'Add structural-inference audit (former `doctor --state`)')
+  .option('--json', 'Emit JSON instead of human output')
+  .action(async (options: StatusOptions) => {
+    try {
+      await systemStatusCommand(options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
   });
 
 // genie ls — smart agent view

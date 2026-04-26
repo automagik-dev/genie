@@ -425,6 +425,8 @@ interface DaemonHandles {
   omniApprovalHandler: { stop: () => Promise<void> } | null;
   omniBridge: { stop: () => Promise<void> } | null;
   detectorScheduler: { stop: () => void } | null;
+  /** Derived-signal rule engine (invincible-genie / Group 2). */
+  derivedSignals: { stop: () => Promise<void> } | null;
 }
 
 const handles: DaemonHandles = {
@@ -434,6 +436,7 @@ const handles: DaemonHandles = {
   omniApprovalHandler: null,
   omniBridge: null,
   detectorScheduler: null,
+  derivedSignals: null,
 };
 
 /** Sync agent directory from workspace and start file watcher. */
@@ -521,6 +524,19 @@ async function startScheduler(): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  Scheduler failed: ${msg}`);
+  }
+
+  // Derived-signal rule engine (invincible-genie / Group 2). Subscribes to
+  // audit_events and emits second-order signals consumed by `genie status`.
+  // Failure is non-fatal — without it, `genie status` still renders agents
+  // and the health checklist; only the active-signals section goes empty.
+  try {
+    const { startDerivedSignalsEngine } = await import('../lib/derived-signals/index.js');
+    handles.derivedSignals = await startDerivedSignalsEngine();
+    console.log('  Derived-signal rule engine subscribed');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  Derived-signal engine failed: ${msg}`);
   }
 }
 
@@ -713,6 +729,10 @@ async function stopSchedulerHandles(): Promise<void> {
   if (handles.detectorScheduler) {
     handles.detectorScheduler.stop();
     handles.detectorScheduler = null;
+  }
+  if (handles.derivedSignals) {
+    await handles.derivedSignals.stop().catch(() => {});
+    handles.derivedSignals = null;
   }
 }
 
@@ -1118,6 +1138,34 @@ interface ServeStartOptions {
   daemon?: boolean;
   foreground?: boolean;
   headless?: boolean;
+  fix?: boolean;
+}
+
+/**
+ * Run `ensureServeReady` and decide whether to proceed with boot.
+ *
+ * Default mode (`--fix` true): auto-fix every precondition that can be fixed,
+ * surface the rest as warnings, and start anyway. The caller still sees the
+ * fix verbs printed by `printReport`.
+ *
+ * Explicit `--no-fix`: refuse to start when any precondition is non-`ok`.
+ * Exit code 2 mirrors the convention used by `genie doctor` for actionable
+ * failures.
+ *
+ * `GENIE_SKIP_PRECONDITIONS=1` bypasses the orchestrator entirely. Used by
+ * lifecycle integration tests that exercise the post-precondition boot path
+ * (e.g. bridge-failure assertions) within a tight timing envelope. Production
+ * code paths must never set this — `--no-fix` is the operator-facing escape.
+ */
+async function runStartPreconditions(autoFix: boolean): Promise<void> {
+  if (process.env.GENIE_SKIP_PRECONDITIONS === '1') return;
+  const { ensureServeReady } = await import('./serve/ensure-ready.js');
+  const report = await ensureServeReady({ autoFix });
+  if (autoFix) return;
+  if (!report.ok) {
+    console.error('genie serve start refused: one or more preconditions are not ok (--no-fix mode).');
+    process.exit(2);
+  }
 }
 
 export function registerServeCommands(program: Command): void {
@@ -1129,7 +1177,11 @@ export function registerServeCommands(program: Command): void {
     .option('--daemon', 'Run in background')
     .option('--foreground', 'Run in foreground (default)')
     .option('--headless', 'Run without TUI (services only: pgserve, scheduler, inbox-watcher)')
+    .option('--no-fix', 'Refuse to start when any precondition is not ok (default: auto-fix)')
     .action(async (options: ServeStartOptions) => {
+      // commander's `--no-fix` flips `options.fix` to false. Default is true.
+      const autoFix = options.fix !== false;
+      await runStartPreconditions(autoFix);
       if (options.daemon) {
         await startBackground(options.headless);
       } else {

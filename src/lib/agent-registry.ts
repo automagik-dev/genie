@@ -77,6 +77,12 @@ export interface Agent {
   reportsTo?: string | null;
   /** Agent title in org context (CPO, CTO, Research Lead). */
   title?: string | null;
+  /**
+   * Schema-derived permanence label (migration 049). Computed by the
+   * GENERATED column from id-shape + reports_to — never authored by
+   * consumers, never drifts. See migration 049 for the inference rule.
+   */
+  kind?: 'permanent' | 'task';
 }
 
 export interface WorkerTemplate {
@@ -127,6 +133,7 @@ interface AgentRow {
   current_executor_id: string | null;
   reports_to: string | null;
   title: string | null;
+  kind: 'permanent' | 'task' | null;
 }
 
 interface TemplateRow {
@@ -188,6 +195,7 @@ function rowToAgent(r: AgentRow): Agent {
   agent.currentExecutorId = r.current_executor_id ?? null;
   agent.reportsTo = r.reports_to ?? null;
   agent.title = r.title ?? null;
+  if (r.kind != null) agent.kind = r.kind;
   return agent;
 }
 
@@ -796,12 +804,13 @@ interface AgentIdentityRow {
   current_executor_id: string | null;
   reports_to: string | null;
   title: string | null;
+  kind: 'permanent' | 'task' | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
 
 function rowToAgentIdentity(r: AgentIdentityRow): AgentIdentity {
-  return {
+  const identity: AgentIdentity = {
     id: r.id,
     startedAt: ts(r.started_at),
     role: r.role ?? undefined,
@@ -817,6 +826,8 @@ function rowToAgentIdentity(r: AgentIdentityRow): AgentIdentity {
     createdAt: ts(r.created_at),
     updatedAt: ts(r.updated_at),
   };
+  if (r.kind != null) identity.kind = r.kind;
+  return identity;
 }
 
 /**
@@ -830,7 +841,7 @@ export async function findOrCreateAgent(name: string, team: string, role?: strin
   // Try to find existing agent by composite unique (custom_name, team)
   const existing = await sql<AgentIdentityRow[]>`
     SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
     FROM agents
     WHERE custom_name = ${name} AND team = ${team}
     LIMIT 1
@@ -849,7 +860,7 @@ export async function findOrCreateAgent(name: string, team: string, role?: strin
     ON CONFLICT (custom_name, team) WHERE custom_name IS NOT NULL AND team IS NOT NULL
     DO UPDATE SET updated_at = now()
     RETURNING id, started_at, role, custom_name, team, native_agent_id, native_color,
-              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
   `;
 
   return rowToAgentIdentity(rows[0]);
@@ -860,7 +871,7 @@ export async function getAgent(id: string): Promise<AgentIdentity | null> {
   const sql = await getConnection();
   const rows = await sql<AgentIdentityRow[]>`
     SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
     FROM agents WHERE id = ${id}
   `;
   return rows.length > 0 ? rowToAgentIdentity(rows[0]) : null;
@@ -871,7 +882,7 @@ export async function getAgentByName(name: string, team: string): Promise<AgentI
   const sql = await getConnection();
   const rows = await sql<AgentIdentityRow[]>`
     SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
     FROM agents WHERE custom_name = ${name} AND team = ${team}
     LIMIT 1
   `;
@@ -919,7 +930,7 @@ export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdent
   if (filters?.team && filters?.role) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
       FROM agents
       WHERE team = ${filters.team} AND role = ${filters.role}
         AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
@@ -927,7 +938,7 @@ export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdent
   } else if (filters?.team) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
       FROM agents
       WHERE team = ${filters.team}
         AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
@@ -935,7 +946,7 @@ export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdent
   } else if (filters?.role) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
       FROM agents
       WHERE role = ${filters.role}
         AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
@@ -943,11 +954,67 @@ export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdent
   } else {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
       FROM agents
       WHERE (${includeArchived} OR state IS DISTINCT FROM 'archived')
     `;
   }
 
   return rows.map(rowToAgentIdentity);
+}
+
+// ============================================================================
+// agents.kind audit (migration 049)
+// ============================================================================
+
+export interface AgentKindAuditRow {
+  id: string;
+  kind: 'permanent' | 'task' | null;
+  expected: 'permanent' | 'task';
+}
+
+export interface AgentKindAuditResult {
+  /** Total rows scanned. */
+  total: number;
+  /** Rows whose stored `kind` disagreed with the structural inference. */
+  drifted: AgentKindAuditRow[];
+}
+
+/**
+ * Audit `agents.kind` against the structural inference rule.
+ *
+ * Migration 049 declares `kind` as `GENERATED ALWAYS AS … STORED`, so on
+ * Postgres the column cannot drift — every INSERT/UPDATE recomputes it.
+ * This audit exists as belt-and-suspenders for two scenarios:
+ *
+ *   1. Backends that fall back to a CHECK + trigger implementation (if a
+ *      future Postgres version blocks GENERATED columns, or if a non-PG
+ *      adapter is added).
+ *   2. Defense-in-depth against schema-bypassing writes (a rogue tool
+ *      that issued raw SQL to set `kind` would still be caught here).
+ *
+ * Drift rows are logged as `agents.kind.audit_drift` audit events so the
+ * `genie status --debug` surface (Group 2 / 6) can render them. Returns
+ * the drift list so callers can render synchronously without reading
+ * `audit_events` back.
+ */
+export async function auditAgentKind(): Promise<AgentKindAuditResult> {
+  const sql = await getConnection();
+  const rows = await sql<{ id: string; kind: 'permanent' | 'task' | null; reports_to: string | null }[]>`
+    SELECT id, kind, reports_to FROM agents
+  `;
+  const drifted: AgentKindAuditRow[] = [];
+  for (const row of rows) {
+    const expected: 'permanent' | 'task' = row.id.startsWith('dir:') || row.reports_to === null ? 'permanent' : 'task';
+    if (row.kind !== expected) {
+      drifted.push({ id: row.id, kind: row.kind, expected });
+    }
+  }
+  for (const drift of drifted) {
+    recordAuditEvent('worker', drift.id, 'agents.kind.audit_drift', 'auditor', {
+      stored: drift.kind,
+      expected: drift.expected,
+    }).catch(() => {});
+  }
+  return { total: rows.length, drifted };
 }

@@ -3,9 +3,11 @@
  *
  * Issue #1263 Sub-fix 1 — the roll-ups (`events tools`, `events summary`,
  * `events costs`) and the filtered list surfaces (`events list --type
- * otel_*`, `events list --v2 --kind tool`) must surface the capture
- * scope so empty output isn't read as "observability is broken." These
- * tests pin down the helper behavior the command wrappers rely on.
+ * otel_*`, `events list --enriched --kind tool`) must surface the
+ * capture scope so empty output isn't read as "observability is
+ * broken." These tests pin down the helper behavior the command
+ * wrappers rely on. (`--v2` is the legacy alias kept for one release;
+ * see invincible-genie Group 5.)
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';

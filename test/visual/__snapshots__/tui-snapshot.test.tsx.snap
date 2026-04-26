@@ -69,23 +69,23 @@ row 04: [fg=#5e6e74 bg=#0f2638]"Load " [fg=#a83838 bg=#0f2638]"95%" [fg=#8a9499 
 
 exports[`visual: TreeNode (workspace agent states) agent state = running — palette + icon match the design 1`] = `
 "── visible chars ──
-  ● engineer (1 window) [agent]
+  ● engineer (1 window)
 ── colour spans ──
-row 00: [fg=#7fc8a9 bg=#000000]"● " [fg=#c9cfd4 bg=#000000]"engineer" [fg=#8a9499 bg=#000000]" (1 window)" [fg=#5e6e74 bg=#000000]" [agent]""
+row 00: [fg=#7fc8a9 bg=#000000]"● " [fg=#c9cfd4 bg=#000000]"engineer" [fg=#8a9499 bg=#000000]" (1 window)""
 `;
 
 exports[`visual: TreeNode (workspace agent states) agent state = stopped — palette + icon match the design 1`] = `
 "── visible chars ──
-  ○ engineer [agent]
+  ○ engineer
 ── colour spans ──
-row 00: [fg=#8a9499 bg=#000000]"  ○ " [fg=#c9cfd4 bg=#000000]"engineer" [fg=#5e6e74 bg=#000000]" [agent]""
+row 00: [fg=#8a9499 bg=#000000]"  ○ " [fg=#c9cfd4 bg=#000000]"engineer""
 `;
 
 exports[`visual: TreeNode (workspace agent states) agent state = error — palette + icon match the design 1`] = `
 "── visible chars ──
-  ⊘ engineer [agent]
+  ⊘ engineer
 ── colour spans ──
-row 00: [fg=#a83838 bg=#000000]"⊘ " [fg=#c9cfd4 bg=#000000]"engineer" [fg=#5e6e74 bg=#000000]" [agent]""
+row 00: [fg=#a83838 bg=#000000]"⊘ " [fg=#c9cfd4 bg=#000000]"engineer""
 `;
 
 exports[`visual: TreeNode (workspace agent states) agent state = spawning — palette + icon match the design 1`] = `
@@ -97,9 +97,9 @@ row 00: [fg=#d4a574 bg=#000000]"⌛ " [fg=#c9cfd4 bg=#000000]"engineer" [fg=#8a9
 
 exports[`visual: TreeNode (workspace agent states) selected agent — accentDim row background + accentBright label 1`] = `
 "── visible chars ──
-  ● engineer (1 window) [agent]
+  ● engineer (1 window)
 ── colour spans ──
-row 00: [fg=#7fc8a9 bg=#5a9d82]"● " [fg=#9eddc1 bg=#5a9d82]"engineer" [fg=#8a9499 bg=#5a9d82]" (1 window)" [fg=#5e6e74 bg=#5a9d82]" [agent]""
+row 00: [fg=#7fc8a9 bg=#5a9d82]"● " [fg=#9eddc1 bg=#5a9d82]"engineer" [fg=#8a9499 bg=#5a9d82]" (1 window)""
 `;
 
 exports[`visual: AgentPicker empty directory — "No agents registered" message is rendered 1`] = `
