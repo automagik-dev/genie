@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkLegacyAgentFrontmatter } from './doctor.js';
+import { checkGenieAgentTemplate, checkLegacyAgentFrontmatter, findBundledTmuxConfigDir } from './doctor.js';
 
 let workspaceRoot: string;
 
@@ -119,5 +119,126 @@ describe('checkLegacyAgentFrontmatter', () => {
     const results = checkLegacyAgentFrontmatter(workspaceRoot);
     expect(results).toHaveLength(1);
     expect(results[0].status).toBe('pass');
+  });
+});
+
+// Stale-template marker matching what scaffoldAgentFiles wrote pre-#1374
+// (lifted verbatim from the generic AGENTS_TEMPLATE body — `seed` mimics
+// what an old workspace would have on disk after upgrading the package).
+const GENERIC_AGENTS_MD = [
+  '@HEARTBEAT.md',
+  '',
+  '<mission>',
+  "Define your agent's mission here. What is their primary goal? What do they own?",
+  '</mission>',
+  '',
+  '<principles>',
+  '- **Clarity over ambiguity.** Be specific.',
+  '</principles>',
+  '',
+].join('\n');
+
+const GENERIC_AGENT_YAML_NO_MODEL = [
+  'team: genie',
+  'promptMode: system',
+  'description: Describe what this agent does.',
+  'color: blue',
+  '',
+].join('\n');
+
+const SPECIALIST_AGENTS_MD = [
+  '---',
+  'name: genie',
+  'description: Workspace concierge and orchestrator.',
+  'model: opus',
+  'promptMode: append',
+  'color: cyan',
+  '---',
+  '',
+  '@HEARTBEAT.md',
+  '',
+  '<mission>',
+  'You are the **genie specialist**.',
+  '</mission>',
+  '',
+].join('\n');
+
+const SPECIALIST_AGENT_YAML = ['name: genie', 'model: opus', 'color: cyan', 'promptMode: append', ''].join('\n');
+
+describe('checkGenieAgentTemplate', () => {
+  test('warns when AGENTS.md still uses generic placeholder template', () => {
+    seedAgent('genie', {
+      agentYaml: SPECIALIST_AGENT_YAML,
+      agentsMd: GENERIC_AGENTS_MD,
+    });
+
+    const results = checkGenieAgentTemplate(workspaceRoot);
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('warn');
+    expect(results[0].message).toMatch(/generic placeholder template/);
+    expect(results[0].suggestion).toMatch(/genie doctor --fix/);
+  });
+
+  test('warns when agent.yaml is missing model field', () => {
+    seedAgent('genie', {
+      agentYaml: GENERIC_AGENT_YAML_NO_MODEL,
+      agentsMd: SPECIALIST_AGENTS_MD,
+    });
+
+    const results = checkGenieAgentTemplate(workspaceRoot);
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('warn');
+    expect(results[0].message).toMatch(/missing model/);
+  });
+
+  test('reports both symptoms in the same warning when both stale', () => {
+    seedAgent('genie', {
+      agentYaml: GENERIC_AGENT_YAML_NO_MODEL,
+      agentsMd: GENERIC_AGENTS_MD,
+    });
+
+    const results = checkGenieAgentTemplate(workspaceRoot);
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('warn');
+    expect(results[0].message).toMatch(
+      /generic placeholder template.*missing model|missing model.*generic placeholder template/,
+    );
+  });
+
+  test('passes when both files match the modern specialist template', () => {
+    seedAgent('genie', {
+      agentYaml: SPECIALIST_AGENT_YAML,
+      agentsMd: SPECIALIST_AGENTS_MD,
+    });
+
+    const results = checkGenieAgentTemplate(workspaceRoot);
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('pass');
+  });
+
+  test('returns empty when agents/genie/ does not exist (non-genie workspace)', () => {
+    seedAgent('other-agent', {
+      agentYaml: 'promptMode: append\nmodel: opus\n',
+      agentsMd: '# something else',
+    });
+
+    const results = checkGenieAgentTemplate(workspaceRoot);
+    expect(results).toEqual([]);
+  });
+
+  test('returns empty when no workspace root resolved', () => {
+    // Pass an explicit non-existent root — the early-return path.
+    const results = checkGenieAgentTemplate(join(workspaceRoot, 'does-not-exist'));
+    expect(results).toEqual([]);
+  });
+});
+
+describe('findBundledTmuxConfigDir', () => {
+  test('locates the bundled scripts/tmux directory in the dev tree', () => {
+    const dir = findBundledTmuxConfigDir();
+    // Running from the genie repo, the helper must resolve scripts/tmux
+    // relative to this module's URL.
+    expect(dir).not.toBeNull();
+    expect(dir).toMatch(/scripts[/\\]tmux$/);
   });
 });

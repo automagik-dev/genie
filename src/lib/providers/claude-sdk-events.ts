@@ -117,6 +117,13 @@ function resultDetails(msg: Record<string, unknown>): Record<string, unknown> {
     numTurns: msg.num_turns,
     totalCostUsd: msg.total_cost_usd,
   };
+  // SDK 0.2.91+ result messages carry `terminal_reason` documenting why
+  // the query loop ended (`completed`, `aborted_tools`, `max_turns`,
+  // `blocking_limit`, etc.). Surface it so downstream observability sees
+  // the actual termination cause instead of a generic 'success'/'error'.
+  if (msg.terminal_reason !== undefined) {
+    details.terminalReason = msg.terminal_reason;
+  }
   if (msg.usage) details.usage = msg.usage;
   if (msg.subtype === 'success' && typeof msg.result === 'string') {
     details.resultPreview = truncate(msg.result as string);
