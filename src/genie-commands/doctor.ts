@@ -859,9 +859,9 @@ function ensureGenieHomeDir(home: string): boolean {
   }
 }
 
-function refreshTmuxConfFile(bundledDir: string, home: string, file: string): void {
-  const src = join(bundledDir, file);
-  const dst = join(home, file);
+function refreshTmuxConfFile(bundledDir: string, home: string, srcFile: string, dstFile: string): void {
+  const src = join(bundledDir, srcFile);
+  const dst = join(home, dstFile);
   if (!existsSync(src)) return;
   if (existsSync(dst)) {
     try {
@@ -872,10 +872,10 @@ function refreshTmuxConfFile(bundledDir: string, home: string, file: string): vo
   }
   try {
     copyFileSync(src, dst);
-    console.log(`  \x1b[32m\u2713\x1b[0m wrote ${file} (previous saved as ${file}.bak)`);
+    console.log(`  \x1b[32m\u2713\x1b[0m wrote ${dstFile} (previous saved as ${dstFile}.bak)`);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    console.log(`  \x1b[31m\u2717\x1b[0m ${file}: ${detail}`);
+    console.log(`  \x1b[31m\u2717\x1b[0m ${dstFile}: ${detail}`);
   }
 }
 
@@ -883,6 +883,12 @@ function refreshTmuxConfFile(bundledDir: string, home: string, file: string): vo
  * Refresh `~/.genie/{tui-tmux,tmux}.conf` from the bundled scripts/tmux
  * versions. Backs up the existing file to `<name>.bak` before overwriting
  * so users can recover any local edits. See #1153 + this PR's audit.
+ *
+ * Source/destination names differ for the agent server config \u2014 the
+ * bundle ships `genie.tmux.conf` and the postinstall/setup steps copy it
+ * to `~/.genie/tmux.conf` (renamed to avoid colliding with the user's
+ * own tmux config if they happen to run `tmux -L genie -f ~/.genie/...`).
+ * The TUI server config keeps the same name on both sides.
  */
 function fixTmuxConfigs(): void {
   const bundledDir = findBundledTmuxConfigDir();
@@ -893,8 +899,8 @@ function fixTmuxConfigs(): void {
   const home = join(homedir(), '.genie');
   if (!ensureGenieHomeDir(home)) return;
   console.log('  Refreshing ~/.genie tmux configs...');
-  refreshTmuxConfFile(bundledDir, home, 'tui-tmux.conf');
-  refreshTmuxConfFile(bundledDir, home, 'tmux.conf');
+  refreshTmuxConfFile(bundledDir, home, 'tui-tmux.conf', 'tui-tmux.conf');
+  refreshTmuxConfFile(bundledDir, home, 'genie.tmux.conf', 'tmux.conf');
 }
 
 async function doctorFix(): Promise<void> {
