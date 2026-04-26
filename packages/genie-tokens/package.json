@@ -1,0 +1,17 @@
+{
+  "name": "@automagik/genie-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Genie design tokens — Severance Lumon-MDR palette + semantic aliases.",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./palette": "./palette.ts",
+    "./tokens": "./tokens.ts",
+    "./hsl": "./hsl.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}
