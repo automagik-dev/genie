@@ -55,7 +55,11 @@ function hasRipgrep(): boolean {
  */
 function rg(pattern: string, ...extraArgs: string[]): string {
   try {
-    return execSync(`rg --no-heading ${pattern} ${SRC_ROOT} ${extraArgs.join(' ')}`, {
+    // `-n` is required so output is `file:line:content` — the comment-line
+    // filters in each invariant rely on `line.split(':').slice(2)` to extract
+    // the code text. Without line numbers, slice(2) yields the empty string
+    // and comments leak through as false-positive violations.
+    return execSync(`rg --no-heading -n ${pattern} ${SRC_ROOT} ${extraArgs.join(' ')}`, {
       encoding: 'utf-8',
       cwd: process.cwd(),
     }).trim();
@@ -139,14 +143,26 @@ describe('invariant 2: no ad-hoc permanence inference', () => {
     //   - Migration 049 (defines the GENERATED column — references the
     //     pattern in the CASE expression).
     //   - The migration test that asserts the rule + this invariant test.
-    const violations = rg(
+    const raw = rg(
       `--type ts --type sql "id LIKE 'dir:%'"`,
       `--glob '!src/db/migrations/046_dir_agents_state_null.sql'`,
       `--glob '!src/db/migrations/049_agents_kind_generated.sql'`,
       `--glob '!src/db/migrations/agents-kind.test.ts'`,
       `--glob '!src/__tests__/state-machine.invariants.test.ts'`,
     );
-    expect(violations).toBe('');
+    // Strip comment lines (SQL `--`, TS `//`, JSDoc `*`) — references inside
+    // comments are documentation, not executable inference.
+    const violations = raw
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .filter((line) => {
+        const codePart = line.split(':').slice(2).join(':').trimStart();
+        if (codePart.startsWith('--')) return false;
+        if (codePart.startsWith('//')) return false;
+        if (codePart.startsWith('*')) return false;
+        return true;
+      });
+    expect(violations).toEqual([]);
   });
 });
 
@@ -163,7 +179,10 @@ describe('invariant 3: shouldResume owns getResumeSessionId', () => {
     //     contains its own name in the `export async function` line)
     //   - test files (free to exercise the lower-level helper directly).
     const callSites = rg(
-      `--type ts -- "getResumeSessionId\\("`,
+      // No `--` separator: it terminates rg option parsing, which then
+      // treats subsequent `--glob` flags as positional path args and
+      // crashes with `--glob: No such file or directory`.
+      `--type ts "getResumeSessionId\\("`,
       // Tests are allowed to call the lower-level helper directly.
       `--glob '!**/*.test.ts'`,
       `--glob '!**/__tests__/**'`,
