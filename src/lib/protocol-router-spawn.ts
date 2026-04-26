@@ -26,6 +26,7 @@ import {
   validateSpawnParams,
 } from './provider-adapters.js';
 import { getProvider } from './providers/registry.js';
+import { shouldResume } from './should-resume.js';
 import * as teamManager from './team-manager.js';
 import { genieTmuxCmd } from './tmux-wrapper.js';
 import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows, resolveRepoSession } from './tmux.js';
@@ -48,8 +49,12 @@ async function resolveParentSession(_repoPath: string, team: string): Promise<st
   const sanitized = nativeTeams.sanitizeTeamName(team);
   const leaderAgent = await registry.getAgentByName(leaderName, sanitized).catch(() => null);
   if (leaderAgent) {
-    const resumeId = await executorRegistry.getResumeSessionId(leaderAgent.id).catch(() => null);
-    if (resumeId) return resumeId;
+    // Route through the canonical chokepoint. We want the leader's session
+    // UUID for use as a parent_session_id — `shouldResume` exposes it
+    // regardless of the resume verdict (a paused or assignment-closed leader
+    // still anchors a valid parent session for new teammate spawns).
+    const decision = await shouldResume(leaderAgent.id).catch(() => null);
+    if (decision?.sessionId) return decision.sessionId;
   }
   return (await nativeTeams.discoverClaudeParentSessionId()) ?? `genie-${team}`;
 }

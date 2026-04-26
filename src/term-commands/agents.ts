@@ -32,6 +32,7 @@ import {
   validateSpawnParams,
 } from '../lib/provider-adapters.js';
 import { getProvider } from '../lib/providers/registry.js';
+import { shouldResume } from '../lib/should-resume.js';
 import { waitForAgentReady } from '../lib/spawn-command.js';
 import * as teamManager from '../lib/team-manager.js';
 import { genieTmuxCmd, prependEnvVars } from '../lib/tmux-wrapper.js';
@@ -1512,7 +1513,11 @@ async function resolveNativeTeam(
   const leaderAgent = await registry.getAgentByName(leaderName, sanitizedTeam).catch(() => null);
   let parentSessionId: string | undefined;
   if (leaderAgent) {
-    parentSessionId = (await executorRegistry.getResumeSessionId(leaderAgent.id).catch(() => null)) ?? undefined;
+    // Route through the canonical chokepoint. We want the leader's session
+    // UUID for use as a parent_session_id — `shouldResume` exposes it
+    // regardless of the resume verdict (a paused or assignment-closed leader
+    // still anchors a valid parent session for new teammate spawns).
+    parentSessionId = (await shouldResume(leaderAgent.id).catch(() => null))?.sessionId;
   }
   if (!parentSessionId) {
     parentSessionId = (await nativeTeams.discoverClaudeParentSessionId()) ?? `genie-${team}`;
@@ -2413,17 +2418,23 @@ export async function handleWorkerResume(
 
   const w = await resolveWorkerByName(name);
 
-  // Canonical resume read — joins agents.current_executor_id → executors.claude_session_id
-  // and emits resume.found / resume.missing_session audit events. Replaces the
-  // direct `w.claudeSessionId` read (Group 3 of claude-resume-by-session-id wish).
-  const sessionId = await executorRegistry.getResumeSessionId(w.id);
-  if (!sessionId) {
+  // Canonical chokepoint — `shouldResume` joins identity, auto_resume, latest
+  // assignment outcome, and the session-UUID lookup. Manual CLI resume only
+  // makes sense when `resume === true`; any non-ok reason throws loudly so
+  // the operator sees the actual blocker rather than a silent no-op.
+  const decision = await shouldResume(w.id);
+  if (!decision.resume || !decision.sessionId) {
     // Group 6: fail loudly with a typed error so the CLI wrapper in
     // genie.ts surfaces it on stderr with exit 1 and tests can assert on
     // the instance. Previously we used console.error + process.exit(1),
     // which is hostile to unit testing and untyped at the boundary.
-    throw new MissingResumeSessionError(w.id, undefined, 'no_session_id');
+    // Map the chokepoint reason onto the legacy MissingResumeSessionError
+    // enum — `no_executor` keeps its meaning, all other "we can't resume"
+    // outcomes collapse onto `no_session_id` (the legacy catch-all).
+    const errReason = decision.reason === 'unknown_agent' ? 'no_executor' : 'no_session_id';
+    throw new MissingResumeSessionError(w.id, undefined, errReason);
   }
+  const _sessionId = decision.sessionId;
 
   if (await isPaneAliveOrDead(w.paneId)) {
     console.log(`Agent "${w.id}" is already running (pane ${w.paneId} is alive).`);
@@ -2550,14 +2561,16 @@ export async function buildFullResumeParams(
   agent: registry.Agent,
   template: registry.WorkerTemplate | undefined,
 ): Promise<SpawnParams> {
-  // Canonical resume read — joins agents.current_executor_id → executors.claude_session_id
-  // and emits resume.found / resume.missing_session audit events. Replaces the
-  // direct `agent.claudeSessionId` read (Group 3 of claude-resume-by-session-id wish).
-  const sessionId = await executorRegistry.getResumeSessionId(agent.id);
-  if (!sessionId) {
-    throw new MissingResumeSessionError(agent.id, undefined, 'null_session');
+  // Canonical chokepoint — `shouldResume` joins identity, auto_resume,
+  // latest assignment outcome, and the session-UUID lookup. The build
+  // path only proceeds with a valid session UUID; any other state throws
+  // `MissingResumeSessionError` so the caller surfaces the failure.
+  const decision = await shouldResume(agent.id);
+  if (!decision.resume || !decision.sessionId) {
+    const errReason = decision.reason === 'unknown_agent' ? 'no_executor' : 'null_session';
+    throw new MissingResumeSessionError(agent.id, undefined, errReason);
   }
-  const params = await buildResumeParams(agent, template, sessionId);
+  const params = await buildResumeParams(agent, template, decision.sessionId);
 
   const resumeContext = await buildResumeContext(agent);
   if (resumeContext) {

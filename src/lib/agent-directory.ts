@@ -278,7 +278,7 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
     const rows = await sql`
       SELECT role, metadata, created_at FROM agents
       WHERE role = ${name}
-      ORDER BY (CASE WHEN id LIKE 'dir:%' THEN 0 ELSE 1 END), started_at DESC
+      ORDER BY (CASE WHEN position('dir:' in id) = 1 THEN 0 ELSE 1 END), started_at DESC
       LIMIT 1
     `;
     if (rows.length > 0) {
@@ -381,7 +381,7 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
       FROM agents a
       LEFT JOIN executors e ON a.current_executor_id = e.id
       WHERE a.role IS NOT NULL
-      ORDER BY a.role, (CASE WHEN a.id LIKE 'dir:%' THEN 0 ELSE 1 END), a.started_at DESC
+      ORDER BY a.role, (CASE WHEN position('dir:' in a.id) = 1 THEN 0 ELSE 1 END), a.started_at DESC
     `;
     for (const row of rows) {
       const name = row.role as string;
