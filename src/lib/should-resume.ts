@@ -104,7 +104,13 @@ async function readAgentResumeRow(agentId: string): Promise<AgentResumeRow | nul
         FROM assignments asg
         JOIN executors e2 ON e2.id = asg.executor_id
         WHERE e2.agent_id = a.id
-        ORDER BY asg.started_at DESC
+        -- id DESC is the tiebreaker: BIGSERIAL guarantees newer rows
+        -- have larger ids, so when two assignments share a started_at
+        -- (CI shared-pgserve frequently hits sub-millisecond collisions),
+        -- insertion order still wins. Without this, ORDER BY started_at
+        -- DESC alone is non-deterministic on the equality case and the
+        -- test "most-recent assignment is the one consulted" flakes.
+        ORDER BY asg.started_at DESC, asg.id DESC
         LIMIT 1
       ) AS latest_assignment_outcome
     FROM agents a

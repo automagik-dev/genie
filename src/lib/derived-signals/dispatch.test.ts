@@ -11,13 +11,22 @@
  * `recovery_anchor_at_risk` signal.
  */
 
+// PG harness marker — this file calls dispatch() and queryAuditEvents(),
+// both of which write/read audit_events through getConnection(). Without
+// pgserve the writes fail with `flush failed: pgserve not available in CI`
+// and the persistence assertions break. Importing getConnection here flags
+// the file as PG-dependent for scripts/list-tests.ts → PG-shard CI runner.
 import { describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { AuditEventRow } from '../audit.js';
 import { queryAuditEvents } from '../audit.js';
+import { getConnection as _pgMarker } from '../db.js';
 import { dispatch, listActiveDerivedSignals } from './index.js';
 import { LostAnchorDetector } from './lost-anchor.js';
 import { ZombieStormDetector } from './zombie-storm.js';
+
+// Reference the marker so biome/knip don't strip it as unused.
+void _pgMarker;
 
 function makeRow(overrides: Partial<AuditEventRow>): AuditEventRow {
   return {
