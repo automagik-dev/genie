@@ -1336,13 +1336,24 @@ Machine snapshot history.
 | `--since <duration>` | string | `1h` | Time window (e.g., 1h, 6h, 1d) |
 | `--json` | boolean | | Output as JSON |
 
-### `genie metrics agents`
+### `genie metrics agents` *(DEPRECATED — invincible-genie / Group 5)*
 
-Per-agent heartbeat summary.
+The pre-`genie status` heartbeat summary was a corpse counter (indexed by
+`process_id`, never reaped on restart). The command is preserved for
+one release as a deprecation stub; it now prints a redirect to
+`genie status` and exits 0. Migrate scripts as follows:
+
+```bash
+# Before
+genie metrics agents --json
+
+# After
+genie status --json
+```
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `--json` | boolean | Output as JSON |
+| `--json` | boolean | Emit a structured deprecation marker `{ deprecated, replacement, message }` |
 
 ---
 

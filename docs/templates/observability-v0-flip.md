@@ -40,7 +40,7 @@ Query used to produce evidence (paste exact SQL or CLI):
 
 ```bash
 # Example — adjust window to 14d
-genie events list --v2 --kind 'emitter.*,notify.*,stream.*,correlation.*' \
+genie events list --enriched --kind 'emitter.*,notify.*,stream.*,correlation.*' \
   --since 14d --format json | jq ...
 ```
 

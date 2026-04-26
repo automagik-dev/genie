@@ -192,8 +192,8 @@ genie events tools --today
 # Historical metrics
 genie metrics history --days 7
 
-# Per-agent metrics
-genie metrics agents
+# Per-agent live state (replaces the deprecated `genie metrics agents`)
+genie status
 ```
 
 ### Status Report Template
@@ -322,7 +322,7 @@ genie sessions list
 genie sessions search <query>
 genie metrics now
 genie metrics history [--days N]
-genie metrics agents
+genie status                       # replaces deprecated `genie metrics agents`
 ```
 
 ### Team Operations

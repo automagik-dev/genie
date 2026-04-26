@@ -625,10 +625,17 @@ function runCheckSection(label: string, results: CheckResult[], counts: { errors
 export async function doctorCommand(options?: {
   fix?: boolean;
   observability?: boolean;
+  fixTeamOrphans?: boolean;
+  dryRun?: boolean;
   json?: boolean;
 }): Promise<void> {
   if (options?.fix) {
     await doctorFix();
+    return;
+  }
+
+  if (options?.fixTeamOrphans) {
+    await runFixTeamOrphans({ dryRun: Boolean(options.dryRun), json: Boolean(options.json) });
     return;
   }
 
@@ -676,6 +683,36 @@ async function runObservabilityCheck(json: boolean): Promise<void> {
   if (json) console.log(JSON.stringify(report, null, 2));
   else printObservabilityReport(report);
   if (report.partition_health === 'fail') process.exit(1);
+}
+
+/**
+ * `genie doctor --fix-team-orphans` — companion to invincible-genie
+ * migration 050. Walks `<claudeConfigDir>/teams/`, archives stale dirs
+ * missing `config.json`, leaves active orphans visible for `genie status`
+ * + `genie team repair <name>`. Idempotent — safe to re-run.
+ */
+async function runFixTeamOrphans(opts: { dryRun: boolean; json: boolean }): Promise<void> {
+  const { archiveOrphanTeamConfigs } = await import('../../scripts/archive-orphan-team-configs.js');
+  const decisions = archiveOrphanTeamConfigs({ dryRun: opts.dryRun });
+
+  if (opts.json) {
+    console.log(JSON.stringify({ dryRun: opts.dryRun, decisions }, null, 2));
+    return;
+  }
+
+  if (decisions.length === 0) {
+    console.log('  no team config dirs found — nothing to do');
+    return;
+  }
+  for (const d of decisions) {
+    const tag =
+      d.classification === 'stale' ? (opts.dryRun ? 'WOULD ARCHIVE' : 'ARCHIVED') : d.classification.toUpperCase();
+    const tail = d.archivedTo ? ` → ${d.archivedTo}` : '';
+    console.log(`  [${tag}] ${d.team}  — ${d.reason}${tail}`);
+  }
+  const stale = decisions.filter((d) => d.classification === 'stale').length;
+  const active = decisions.filter((d) => d.classification === 'active').length;
+  console.log(`\n  ${decisions.length} dirs inspected, ${stale} archived, ${active} flagged active.`);
 }
 
 function printDoctorSummary(counts: { errors: boolean; warnings: boolean }): void {

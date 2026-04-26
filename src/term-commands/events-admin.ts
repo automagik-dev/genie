@@ -251,7 +251,7 @@ function parseSinceToId(since: string | undefined, sinceId: string | undefined):
     return Number.isFinite(n) ? n : 0;
   }
   // `since` as duration is advisory — the authoritative cursor is id. Callers
-  // wanting a time-based window should first run `genie events list --v2
+  // wanting a time-based window should first run `genie events list --enriched
   // --since <dur>` to find the anchor id.
   if (since) {
     console.log(color('yellow', '--since is advisory; exporting from id=0. Use --since-id <n> for a precise cursor.'));
