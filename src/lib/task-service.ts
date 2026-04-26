@@ -8,6 +8,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { palette } from '../../packages/genie-tokens';
 import { getActor, recordAuditEvent } from './audit.js';
 import { type Sql, getConnection } from './db.js';
 
@@ -330,7 +331,7 @@ function mapTag(row: Record<string, unknown>): TagRow {
   return {
     id: row.id as string,
     name: row.name as string,
-    color: (row.color as string) ?? '#9ca3af',
+    color: (row.color as string) ?? palette.textDim,
     typeId: (row.type_id as string) ?? null,
     createdAt: String(row.created_at),
   };
@@ -1462,7 +1463,7 @@ export async function createTag(input: { id: string; name: string; color?: strin
   const sql = await getConnection();
   const rows = await sql`
     INSERT INTO tags (id, name, color, type_id)
-    VALUES (${input.id}, ${input.name}, ${input.color ?? '#9ca3af'}, ${input.typeId ?? null})
+    VALUES (${input.id}, ${input.name}, ${input.color ?? palette.textDim}, ${input.typeId ?? null})
     RETURNING *
   `;
   return mapTag(rows[0]);

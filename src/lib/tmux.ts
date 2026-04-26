@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { palette, rotateHue } from '../../packages/genie-tokens';
 import { tmuxBin } from './ensure-tmux.js';
 import { shellQuote } from './team-lead-command.js';
 // tmux-wrapper imported dynamically inside executeTmux for test mockability
@@ -408,18 +409,14 @@ async function ensureTeamWindowOnce(
 
 /**
  * Map agent color names to tmux hex colors for active border styling.
- * Palette matches ClaudeTeamColor from provider-adapters.
+ * Palette matches ClaudeTeamColor from provider-adapters. Hues are derived
+ * by rotating `palette.accent` so every window-bg stays palette-coherent
+ * (no hand-picked magic numbers).
  */
-const TMUX_COLOR_MAP: Record<string, string> = {
-  red: '#b83030',
-  blue: '#2a6cb8',
-  green: '#20a050',
-  yellow: '#b8a020',
-  purple: '#7830b8',
-  orange: '#b86820',
-  pink: '#b83078',
-  cyan: '#20a0a0',
-};
+const TMUX_COLOR_NAMES = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'pink', 'cyan'] as const;
+const TMUX_COLOR_MAP: Record<string, string> = Object.fromEntries(
+  TMUX_COLOR_NAMES.map((name, i) => [name, rotateHue(palette.accent, i * 45)]),
+);
 
 const PANE_COLOR_SCRIPT = `${require('node:os').homedir()}/.genie/tmux-pane-color.sh`;
 
