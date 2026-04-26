@@ -277,7 +277,7 @@ test -f docs/design-system.md && markdownlint-cli2 docs/design-system.md
 grep -q "design-system" README.md
 ```
 
-**depends-on:** Groups 1-5
+**depends-on:** Groups 1, 2, 3, 4, 5
 
 ---
 
