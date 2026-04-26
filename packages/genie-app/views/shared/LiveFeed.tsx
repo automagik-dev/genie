@@ -8,14 +8,14 @@ import type { RuntimeEvent, RuntimeEventKind } from '../../lib/types';
 
 /** Color coding by event kind. */
 const KIND_COLORS: Record<RuntimeEventKind, string> = {
-  tool_call: '#fbbf24', // amber
-  tool_result: '#fbbf24', // amber
-  state: '#60a5fa', // blue
-  message: '#34d399', // green
-  system: '#94a3b8', // gray
-  user: '#a855f7', // purple
-  assistant: '#a855f7', // purple
-  qa: '#22d3ee', // cyan
+  tool_call: theme.warning, // amber
+  tool_result: theme.warning, // amber
+  state: theme.info, // blue/info
+  message: theme.emerald, // mint
+  system: theme.textDim, // dim
+  user: theme.purple, // accent-bright
+  assistant: theme.purple, // accent-bright
+  qa: theme.info, // info
 };
 
 /** Icon per event kind. */

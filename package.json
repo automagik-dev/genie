@@ -34,6 +34,7 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "test": "bun test",
+    "test:visual": "GENIE_TEST_SKIP_PGSERVE=1 bun test test/visual/",
     "test:parallel": "bun run scripts/test-parallel.ts",
     "typecheck": "tsc --noEmit",
     "dead-code": "bunx knip",

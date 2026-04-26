@@ -25,12 +25,12 @@ export function QuitDialog({ onConfirm, onCancel }: QuitDialogProps) {
       height="100%"
       justifyContent="center"
       alignItems="center"
-      backgroundColor="#0a0a0a"
+      backgroundColor={palette.bgOverlay}
     >
       <box
         border
-        borderColor={palette.violet}
-        backgroundColor="#111111"
+        borderColor={palette.borderActive}
+        backgroundColor={palette.bgRaised}
         paddingX={3}
         paddingY={1}
         flexDirection="column"
@@ -38,7 +38,7 @@ export function QuitDialog({ onConfirm, onCancel }: QuitDialogProps) {
         gap={1}
       >
         <text>
-          <span fg={palette.purple}>Quit genie?</span>
+          <span fg={palette.accent}>Quit genie?</span>
         </text>
         <text>
           <span fg={palette.text}>Enter</span>

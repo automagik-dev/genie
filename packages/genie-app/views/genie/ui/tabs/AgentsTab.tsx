@@ -139,7 +139,7 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
             width: '16px',
             height: '16px',
             borderRadius: '50%',
-            backgroundColor: '#fff',
+            backgroundColor: theme.text,
             transition: 'left 0.2s',
           }}
         />
@@ -340,7 +340,7 @@ function TemplateForm({
             fontSize: '12px',
             fontFamily: theme.fontFamily,
             backgroundColor: theme.violet,
-            color: '#fff',
+            color: theme.bg,
             border: 'none',
             borderRadius: theme.radiusSm,
             cursor: saving ? 'default' : 'pointer',
@@ -383,7 +383,7 @@ export function AgentsTab({ templates, onSave, onCreate }: AgentsTabProps) {
               fontSize: '11px',
               fontFamily: theme.fontFamily,
               backgroundColor: theme.violet,
-              color: '#fff',
+              color: theme.bg,
               border: 'none',
               borderRadius: theme.radiusSm,
               cursor: 'pointer',

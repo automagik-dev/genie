@@ -210,13 +210,13 @@ export function SpawnTargetPicker({ agentName, sessions, onConfirm, onCancel }: 
       height="100%"
       justifyContent="center"
       alignItems="center"
-      backgroundColor="#0a0a0a"
+      backgroundColor={palette.bgOverlay}
     >
       <box
         border
         borderStyle="rounded"
-        borderColor={palette.violet}
-        backgroundColor={palette.bgLight}
+        borderColor={palette.borderActive}
+        backgroundColor={palette.bgRaised}
         paddingX={2}
         paddingY={1}
         flexDirection="column"
@@ -224,7 +224,7 @@ export function SpawnTargetPicker({ agentName, sessions, onConfirm, onCancel }: 
         gap={1}
       >
         <text>
-          <span fg={palette.purple}>{`Spawn "${agentName}" into…`}</span>
+          <span fg={palette.accent}>{`Spawn "${agentName}" into…`}</span>
         </text>
 
         {rows.length === 0 ? (
@@ -235,7 +235,7 @@ export function SpawnTargetPicker({ agentName, sessions, onConfirm, onCancel }: 
           <box flexDirection="column">
             {rows.map((row, i) => (
               <text key={`${row.kind}:${row.sessionName}:${row.kind === 'window' ? row.windowIndex : ''}`}>
-                <span fg={i === selectedIndex ? palette.cyan : palette.text}>
+                <span fg={i === selectedIndex ? palette.accent : palette.text}>
                   {i === selectedIndex ? '> ' : '  '}
                   {row.label}
                 </span>

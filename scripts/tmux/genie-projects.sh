@@ -2,15 +2,55 @@
 # Genie TUI — project session tabs for tmux top status bar
 # Reads workers.json for agent counts per session, merges with tmux sessions.
 #
+# Colors are read from the generated theme via `tmux show-environment -g`,
+# which is populated by sourcing scripts/tmux/.generated.theme.conf at server
+# start. Single source of truth — no hex literals in this script.
+#
 # Output format per session:
-#   Active:   #[bg=#7b2ff7,fg=#e0e0e0,bold] name (N) ● #[bg=#1a1a2e,fg=#7b2ff7]
-#   Inactive: #[fg=#b8a9c9,bg=#1a1a2e] name (N)
+#   Active:   #[bg=$ACCENT,fg=$BG,bold] name (N) ● #[bg=$BG,fg=$ACCENT]
+#   Inactive: #[fg=$TEXT_DIM,bg=$BG] name (N)
 #
 # Env: GENIE_WORKERS — override path to workers.json (for testing)
 
 set -euo pipefail
 
 workers_file="${GENIE_WORKERS:-${HOME}/.genie/workers.json}"
+
+# Resolve a tmux global env var to a color value. Reads from the running
+# tmux server first; falls back to parsing the generated theme conf so the
+# script still works in unit tests / dry-runs outside a tmux session.
+# Either way, no hex literal lives in this file — single source of truth.
+_theme_conf_path() {
+  local here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  for candidate in \
+    "${HOME}/.genie/.generated.theme.conf" \
+    "${here}/.generated.theme.conf"; do
+    [[ -f "$candidate" ]] && { printf '%s' "$candidate"; return; }
+  done
+}
+
+resolve_color() {
+  local var="$1" out conf
+  if command -v tmux >/dev/null 2>&1; then
+    out=$(tmux show-environment -g "$var" 2>/dev/null | sed -n "s/^${var}=//p") || out=""
+    if [[ -n "$out" ]]; then
+      printf '%s' "$out"
+      return
+    fi
+  fi
+  conf="$(_theme_conf_path)"
+  if [[ -n "$conf" ]]; then
+    sed -n "s/^set-environment -g ${var} \"\\(.*\\)\"$/\\1/p" "$conf"
+  fi
+}
+
+BG=$(resolve_color GENIE_TMUX_BG)
+BG_RAISED=$(resolve_color GENIE_TMUX_BG_RAISED)
+ACCENT=$(resolve_color GENIE_TMUX_ACCENT)
+TEXT=$(resolve_color GENIE_TMUX_TEXT)
+TEXT_DIM=$(resolve_color GENIE_TMUX_TEXT_DIM)
+TEXT_MUTED=$(resolve_color GENIE_TMUX_TEXT_MUTED)
 
 # Get agent counts per session from workers.json (single jq pass)
 declare -A agent_counts=()
@@ -57,7 +97,7 @@ if [[ "$has_tmux" == "true" ]]; then
     task_count="${agent_counts[$session_name]:-$window_count}"
 
     if [[ "$session_name" == "$active_session" ]]; then
-      active_output="#[bg=#7b2ff7,fg=#e0e0e0,bold] ${session_name} (${task_count}) ● #[bg=#1a1a2e,fg=#7b2ff7] "
+      active_output="#[bg=${ACCENT},fg=${BG},bold] ${session_name} (${task_count}) ● #[bg=${BG},fg=${ACCENT}] "
     fi
   done < <(tmux list-sessions -F "#{session_name}	#{session_windows}" 2>/dev/null)
 fi
@@ -81,9 +121,9 @@ if [[ "$total" -le "$max_visible" ]]; then
     fi
 
     if [[ "$session_name" == "$active_session" ]]; then
-      output+="#[bg=#7b2ff7,fg=#e0e0e0,bold] ${session_name} (${task_count}) ● #[bg=#1a1a2e,fg=#7b2ff7] "
+      output+="#[bg=${ACCENT},fg=${BG},bold] ${session_name} (${task_count}) ● #[bg=${BG},fg=${ACCENT}] "
     else
-      output+="#[fg=#b8a9c9,bg=#1a1a2e] ${session_name} (${task_count}) "
+      output+="#[fg=${TEXT_DIM},bg=${BG}] ${session_name} (${task_count}) "
     fi
   done
 else
@@ -107,10 +147,10 @@ else
     fi
 
     if [[ "$session_name" == "$active_session" ]]; then
-      output+="#[bg=#7b2ff7,fg=#e0e0e0,bold] ${session_name} (${task_count}) ● #[bg=#1a1a2e,fg=#7b2ff7] "
+      output+="#[bg=${ACCENT},fg=${BG},bold] ${session_name} (${task_count}) ● #[bg=${BG},fg=${ACCENT}] "
       active_shown=true
     else
-      output+="#[fg=#b8a9c9,bg=#1a1a2e] ${session_name} (${task_count}) "
+      output+="#[fg=${TEXT_DIM},bg=${BG}] ${session_name} (${task_count}) "
     fi
     ((shown++)) || true
   done
@@ -122,12 +162,16 @@ else
       wcount=$(tmux list-windows -t "$active_session" -F "x" 2>/dev/null | wc -l) || wcount=0
       task_count="${agent_counts[$active_session]:-$wcount}"
     fi
-    output+="#[bg=#7b2ff7,fg=#e0e0e0,bold] ${active_session} (${task_count}) ● #[bg=#1a1a2e,fg=#7b2ff7] "
+    output+="#[bg=${ACCENT},fg=${BG},bold] ${active_session} (${task_count}) ● #[bg=${BG},fg=${ACCENT}] "
   fi
 
   # Append overflow indicator
   remaining=$((total - max_visible))
-  output+="#[fg=#6c6c8a,bg=#1a1a2e] +${remaining} more "
+  output+="#[fg=${TEXT_MUTED},bg=${BG}] +${remaining} more "
 fi
+
+# Reference unused vars to keep linters happy without dropping the resolution
+# code (they remain available for shells sourcing this script).
+: "${BG_RAISED}" "${TEXT}"
 
 echo -n "$output"

@@ -54,7 +54,7 @@ export function CliPreviewLine({ intent, hint = DEFAULT_HINT }: CliPreviewLinePr
   return (
     <box flexDirection="column" paddingX={1}>
       <text>
-        <span fg={palette.cyan}>{'\u25b6 '}</span>
+        <span fg={palette.accent}>{'\u25b6 '}</span>
         <span fg={palette.text}>{cli}</span>
       </text>
       <text>

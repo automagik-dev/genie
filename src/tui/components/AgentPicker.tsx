@@ -216,13 +216,13 @@ export function AgentPicker({ target, onConfirm, onCancel, loadAgents = defaultL
       height="100%"
       justifyContent="center"
       alignItems="center"
-      backgroundColor="#0a0a0a"
+      backgroundColor={palette.bgOverlay}
     >
       <box
         border
         borderStyle="rounded"
-        borderColor={palette.violet}
-        backgroundColor={palette.bgLight}
+        borderColor={palette.borderActive}
+        backgroundColor={palette.bgRaised}
         width={80}
         flexDirection="column"
         paddingX={1}
@@ -230,7 +230,7 @@ export function AgentPicker({ target, onConfirm, onCancel, loadAgents = defaultL
         gap={1}
       >
         <text>
-          <span fg={palette.purple}>Spawn here</span>
+          <span fg={palette.accent}>Spawn here</span>
           <span fg={palette.textDim}>{` — ${modeHint} `}</span>
           <span fg={palette.text}>{targetLabel}</span>
         </text>
@@ -253,10 +253,10 @@ export function AgentPicker({ target, onConfirm, onCancel, loadAgents = defaultL
           <box flexDirection="column">
             {filtered.map((agent, i) => (
               <text key={agent.name}>
-                <span fg={i === selectedIndex ? palette.violet : palette.textDim}>
+                <span fg={i === selectedIndex ? palette.accent : palette.textDim}>
                   {i === selectedIndex ? '▸ ' : '  '}
                 </span>
-                <span fg={i === selectedIndex ? palette.text : palette.textDim}>{agent.name}</span>
+                <span fg={i === selectedIndex ? palette.accentBright : palette.textDim}>{agent.name}</span>
               </text>
             ))}
           </box>

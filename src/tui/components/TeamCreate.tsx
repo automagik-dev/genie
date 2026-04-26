@@ -120,12 +120,12 @@ export function TeamCreate({ availableAgents, workspaceRoot, onConfirm, onCancel
       height="100%"
       justifyContent="center"
       alignItems="center"
-      backgroundColor="#0a0a0a"
+      backgroundColor={palette.bgOverlay}
     >
       <box
         border
-        borderColor={palette.violet}
-        backgroundColor="#111111"
+        borderColor={palette.borderActive}
+        backgroundColor={palette.bgRaised}
         paddingX={3}
         paddingY={1}
         flexDirection="column"
@@ -133,7 +133,7 @@ export function TeamCreate({ availableAgents, workspaceRoot, onConfirm, onCancel
         gap={1}
       >
         <text>
-          <span fg={palette.purple}>New team</span>
+          <span fg={palette.accent}>New team</span>
           <span fg={palette.textMuted}>{step === 'name' ? ' \u2014 step 1 of 2' : ' \u2014 step 2 of 2'}</span>
         </text>
 
@@ -228,7 +228,7 @@ function MembersStep({ agents, selected, cursor }: MembersStepProps) {
           const prefix = isCursor ? '\u25b6 ' : '  ';
           return (
             <text key={name}>
-              <span fg={isCursor ? palette.cyan : palette.textMuted}>{prefix}</span>
+              <span fg={isCursor ? palette.accent : palette.textMuted}>{prefix}</span>
               <span fg={isSelected ? palette.success : palette.textDim}>{tick}</span>
               <span fg={palette.text}>{` ${name}`}</span>
             </text>

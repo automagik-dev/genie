@@ -440,6 +440,19 @@ function syncTmuxConf(tmuxScriptsSrc: string): void {
     }
   }
 
+  // Install .generated.theme.conf → ~/.genie/.generated.theme.conf (Severance palette,
+  // sourced by both tmux configs above). Generated from packages/genie-tokens.
+  const themeSrc = join(tmuxScriptsSrc, '.generated.theme.conf');
+  const themeDest = join(GENIE_HOME, '.generated.theme.conf');
+  if (existsSync(themeSrc)) {
+    try {
+      copyFileSync(themeSrc, themeDest);
+      success(`Installed tmux theme to ${themeDest}`);
+    } catch {
+      // Read/write failed — non-fatal
+    }
+  }
+
   // Install osc52-copy.sh → ~/.genie/scripts/osc52-copy.sh (clipboard helper for nested tmux)
   const osc52Src = join(tmuxScriptsSrc, 'osc52-copy.sh');
   const osc52Dest = join(GENIE_HOME, 'scripts', 'osc52-copy.sh');
@@ -464,7 +477,12 @@ function syncTmuxScripts(globalPkgDir: string): void {
 
   let scriptCount = 0;
   for (const entry of readdirSync(tmuxScriptsSrc)) {
-    if (entry.endsWith('.sh') || entry === 'genie.tmux.conf' || entry === 'tui-tmux.conf') {
+    if (
+      entry.endsWith('.sh') ||
+      entry === 'genie.tmux.conf' ||
+      entry === 'tui-tmux.conf' ||
+      entry === '.generated.theme.conf'
+    ) {
       const src = join(tmuxScriptsSrc, entry);
       const dest = join(scriptsDir, entry);
       copyFileSync(src, dest);

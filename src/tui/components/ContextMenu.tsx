@@ -91,8 +91,8 @@ export function ContextMenu({ items, onAction, onClose, positionY = 0 }: Context
       <box
         border
         borderStyle="rounded"
-        borderColor={palette.violet}
-        backgroundColor={palette.bgLight}
+        borderColor={palette.borderActive}
+        backgroundColor={palette.bgRaised}
         width={32}
         height={inputMode ? items.length + 5 : items.length + 2}
         flexDirection="column"
@@ -106,8 +106,8 @@ export function ContextMenu({ items, onAction, onClose, positionY = 0 }: Context
           focused={!inputMode}
           height={items.length}
           showDescription={false}
-          selectedBackgroundColor={palette.violet}
-          selectedTextColor="#ffffff"
+          selectedBackgroundColor={palette.accentDim}
+          selectedTextColor={palette.accentBright}
         />
 
         {inputMode ? (

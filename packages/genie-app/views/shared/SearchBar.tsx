@@ -166,8 +166,8 @@ export function SearchBar({ orgId, onNavigate }: SearchBarProps) {
                     fontSize: '10px',
                     padding: '1px 4px',
                     borderRadius: '3px',
-                    backgroundColor: result.role === 'user' ? '#2563eb33' : '#16653433',
-                    color: result.role === 'user' ? '#93c5fd' : '#6ee7b7',
+                    backgroundColor: result.role === 'user' ? `${theme.info}33` : `${theme.emerald}33`,
+                    color: result.role === 'user' ? theme.text : theme.emerald,
                   }}
                 >
                   {result.role}

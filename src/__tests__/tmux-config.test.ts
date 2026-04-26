@@ -19,9 +19,16 @@ const conf = readFileSync(CONF_PATH, 'utf-8');
 const TUI_CONF_PATH = resolve(import.meta.dirname, '../../scripts/tmux/tui-tmux.conf');
 const tuiConf = readFileSync(TUI_CONF_PATH, 'utf-8');
 
+// Color/format directives now live in the generated theme file (sourced by
+// both confs above). Tests that target color or status-format[N] content
+// must consult the generated file rather than the now-color-free configs.
+const THEME_PATH = resolve(import.meta.dirname, '../../scripts/tmux/.generated.theme.conf');
+const theme = readFileSync(THEME_PATH, 'utf-8');
+const confAndTheme = `${conf}\n${theme}`;
+
 /** Return non-comment, non-empty lines that match a pattern. */
 function activeLines(pattern: RegExp): string[] {
-  return conf
+  return confAndTheme
     .split('\n')
     .filter((l) => !l.trimStart().startsWith('#') && l.trim() !== '')
     .filter((l) => pattern.test(l));
