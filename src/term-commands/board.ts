@@ -23,6 +23,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
+import { palette } from '../../packages/genie-tokens';
 import type * as boardServiceTypes from '../lib/board-service.js';
 import type * as taskServiceTypes from '../lib/task-service.js';
 import type * as templateServiceTypes from '../lib/template-service.js';
@@ -471,7 +472,7 @@ async function handleTemplateCreate(
       auto_advance: false,
       transitions: [],
       roles: ['*'],
-      color: '#94a3b8',
+      color: palette.textDim,
       parallel: false,
       on_fail: null,
       position: i,

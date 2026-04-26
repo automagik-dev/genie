@@ -31,6 +31,7 @@ import {
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import { palette } from '../../packages/genie-tokens';
 import { ensureTmux, tmuxBin } from '../lib/ensure-tmux.js';
 import { getProcessStartTime } from '../lib/process-identity.js';
 import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
@@ -205,8 +206,8 @@ const NAV_WIDTH = 30;
 
 /** Theme colors for TUI tmux styling */
 const TUI_STYLE = {
-  activeBorder: '#7c3aed',
-  inactiveBorder: '#414868',
+  activeBorder: palette.borderActive,
+  inactiveBorder: palette.border,
 };
 
 export function getTuiKeybindings(sessionName = TUI_SESSION): string[] {
