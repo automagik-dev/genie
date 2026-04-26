@@ -10,13 +10,17 @@
  * The TUI never creates tmux servers or sessions.
  */
 
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const TUI_CRASH_LOG_BANNER_PREFIX = '--- tui-launch ';
 const TUI_CRASH_LOG_RECOVERY_MAX_BYTES = 65_536;
 const TUI_CRASH_LOG_RECOVERY_MAX_MSG_CHARS = 3_000;
+
+function genieHome(): string {
+  return process.env.GENIE_HOME ?? join(homedir(), '.genie');
+}
 
 /**
  * Extract the body that was written between the last `--- tui-launch ---`
@@ -25,23 +29,39 @@ const TUI_CRASH_LOG_RECOVERY_MAX_MSG_CHARS = 3_000;
  * the body contains whatever native panic / stderr survived the alt-screen
  * reset — that's what we ingest into the structured event bus.
  *
- * Bounded read: only the last 64 KiB of the log is examined so a runaway
- * stderr stream cannot OOM the launch path.
+ * Bounded read: pulls only the last 64 KiB tail off disk via fd-level
+ * `readSync` — never loads the full file into memory, so an append-only
+ * stderr stream that has grown to MBs over many launches still costs O(64K)
+ * per startup.
  */
 function extractPreviousRunCrashOutput(logPath: string): string {
-  let buffer: string;
+  let fd: number | null = null;
   try {
-    const full = readFileSync(logPath, 'utf-8');
-    buffer = full.length > TUI_CRASH_LOG_RECOVERY_MAX_BYTES ? full.slice(-TUI_CRASH_LOG_RECOVERY_MAX_BYTES) : full;
+    const stats = statSync(logPath);
+    const size = stats.size;
+    if (size === 0) return '';
+    const readSize = Math.min(size, TUI_CRASH_LOG_RECOVERY_MAX_BYTES);
+    fd = openSync(logPath, 'r');
+    const buffer = Buffer.alloc(readSize);
+    readSync(fd, buffer, 0, readSize, size - readSize);
+    const text = buffer.toString('utf-8');
+    const lastBannerIndex = text.lastIndexOf(TUI_CRASH_LOG_BANNER_PREFIX);
+    if (lastBannerIndex < 0) return '';
+    // Skip past the banner line itself.
+    const afterBannerNewline = text.indexOf('\n', lastBannerIndex);
+    if (afterBannerNewline < 0) return '';
+    return text.slice(afterBannerNewline + 1).trim();
   } catch {
     return '';
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // best-effort
+      }
+    }
   }
-  const lastBannerIndex = buffer.lastIndexOf(TUI_CRASH_LOG_BANNER_PREFIX);
-  if (lastBannerIndex < 0) return '';
-  // Skip past the banner line itself.
-  const afterBannerNewline = buffer.indexOf('\n', lastBannerIndex);
-  if (afterBannerNewline < 0) return '';
-  return buffer.slice(afterBannerNewline + 1).trim();
 }
 
 /**
@@ -91,7 +111,7 @@ async function ingestPreviousRunCrash(logPath: string): Promise<void> {
  */
 async function recordTuiLaunchBreadcrumb(): Promise<void> {
   try {
-    const logsDir = join(homedir(), '.genie', 'logs');
+    const logsDir = join(genieHome(), 'logs');
     mkdirSync(logsDir, { recursive: true });
     const logPath = join(logsDir, 'tui-crash.log');
     // Ingest BEFORE writing the new banner so the recovery body is bounded
