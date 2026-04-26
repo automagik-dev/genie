@@ -76,6 +76,7 @@ function useSessionTreeBuilder(
         agentNames,
         sessions: diagnostics.sessions,
         executors: diagnostics.executors,
+        workStates: diagnostics.workStates,
       });
     } else {
       newTree = buildSessionTree(diagnostics);
@@ -188,6 +189,18 @@ function useNavKeyboard(opts: NavKeyboardOpts): void {
     if (opts.showTeamCreate) return; // team-create modal owns input
     handleKeyboardInput(key, opts);
   });
+}
+
+/** Render the alert badge for the Nav header. Extracted to keep the
+ * Nav component under the cognitive-complexity cap (Decision: pure
+ * helper, not a React component, since it returns a single span). */
+function renderAlertBadge(alertCount: number) {
+  if (alertCount <= 0) return null;
+  return (
+    <span fg={palette.error}>
+      {'  '}● {alertCount} alert{alertCount === 1 ? '' : 's'}
+    </span>
+  );
 }
 
 function computeNavCounts(
@@ -394,6 +407,7 @@ export function Nav({
 
   const { agentCount, runningCount } = computeNavCounts(workspaceRoot, sessionTree, diagnostics);
   const headerLabel = workspaceRoot ? 'Agents' : 'Sessions';
+  const alertCount = diagnostics?.alertCount ?? 0;
 
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor={palette.bg}>
@@ -407,6 +421,7 @@ export function Nav({
               {workspaceRoot ? `${runningCount}/${agentCount}` : `${agentCount}s ${runningCount}p`}
             </span>
           ) : null}
+          {renderAlertBadge(alertCount)}
         </text>
       </box>
 
