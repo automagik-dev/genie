@@ -57,7 +57,7 @@ Two invariants enforced by CI:
 
 | Surface | Stability |
 |---|---|
-| `genie events list --v2` flag output | Stable shape; columns only grow, never shrink or reorder |
+| `genie events list --enriched` flag output (alias `--v2` removed next release) | Stable shape; columns only grow, never shrink or reorder |
 | `genie events stream --follow` NDJSON output | Stable key set; new keys may appear but existing keys will not be removed within a `schema_version` |
 | `genie events timeline <trace_id>` ASCII output | Human-readable only — not a contract surface |
 | `LISTEN genie_events.<prefix>` channel names | Stable; adding a new type under an existing prefix does not rename the channel |

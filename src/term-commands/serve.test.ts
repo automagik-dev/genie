@@ -165,6 +165,9 @@ describe('serve lifecycle — bridge failure + shutdown', () => {
       GENIE_NATS_URL: 'nats://127.0.0.1:1',
       // Do NOT set GENIE_OMNI_REQUIRED — degraded mode should be the default.
       GENIE_OMNI_REQUIRED: undefined,
+      // Bypass `ensureServeReady` — this test exercises the post-precondition
+      // bridge/shutdown lifecycle, not the precondition orchestrator.
+      GENIE_SKIP_PRECONDITIONS: '1',
     });
     child = result.child;
 
@@ -208,6 +211,7 @@ describe('serve lifecycle — bridge failure + shutdown', () => {
       GENIE_HOME: genieHome,
       GENIE_NATS_URL: 'nats://127.0.0.1:1',
       GENIE_OMNI_REQUIRED: '1',
+      GENIE_SKIP_PRECONDITIONS: '1',
     });
     child = result.child;
 

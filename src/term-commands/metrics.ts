@@ -1,10 +1,20 @@
 /**
- * Metrics CLI — machine state, snapshots history, per-agent heartbeats.
+ * Metrics CLI — machine state, snapshots history.
  *
  * Commands:
  *   genie metrics now             — current machine state
  *   genie metrics history [--since 1h] — machine_snapshots over time
- *   genie metrics agents          — per-agent heartbeat summary
+ *   genie metrics agents          — DEPRECATED stub (corpse counter); see `genie status`.
+ *
+ * `genie metrics agents` was a per-agent heartbeat summary indexed by
+ * `process_id`. It failed Measurer's methodology rule on day one: no
+ * defined consumer, no action threshold. Restarts left dead `process_id`
+ * rows in the result, so the table grew monotonically and lied harder
+ * with every reboot ("65 dead, 0 alive"). It was deleted in the
+ * invincible-genie wish (Group 5). The stub remains for one release as
+ * a deprecation notice that redirects callers to `genie status`, which
+ * is indexed by agent identity (not pid) and aggregates the
+ * `shouldResume()` chokepoint instead of stale heartbeats.
  */
 
 import type { Command } from 'commander';
@@ -32,13 +42,6 @@ interface SnapshotRow {
   cpu_percent: number | null;
   memory_mb: number | null;
   created_at: string;
-}
-
-interface HeartbeatRow {
-  worker_id: string;
-  status: string;
-  context: string | Record<string, unknown>;
-  last_seen_at: string;
 }
 
 // ============================================================================
@@ -143,55 +146,25 @@ async function metricsHistoryCommand(options: { since?: string; json?: boolean }
   console.log(`\n(${rows.length} snapshot${rows.length === 1 ? '' : 's'})`);
 }
 
-async function metricsAgentsCommand(options: { json?: boolean }): Promise<void> {
-  if (!(await isAvailable())) {
-    console.error('Database not available.');
-    process.exit(1);
-  }
-
-  const sql = await getConnection();
-
-  // Get latest heartbeat per worker
-  const rows = await sql`
-    SELECT DISTINCT ON (worker_id)
-      worker_id, status, context, last_seen_at
-    FROM heartbeats
-    ORDER BY worker_id, created_at DESC
-  `;
-
+/**
+ * Deprecation stub — `genie metrics agents` was deleted in invincible-genie
+ * Group 5. Prints a redirect notice and exits 0 so any one-off scripts that
+ * still reference it don't break in CI before the user has migrated.
+ */
+export async function metricsAgentsCommand(options: { json?: boolean }): Promise<void> {
+  const message = 'Use `genie status` for live agent state.';
   if (options.json) {
-    console.log(JSON.stringify(rows, null, 2));
+    console.log(
+      JSON.stringify({
+        deprecated: true,
+        replacement: 'genie status',
+        message,
+      }),
+    );
     return;
   }
-
-  if (rows.length === 0) {
-    console.log('No heartbeats found.');
-    return;
-  }
-
-  const headers = ['Worker', 'Status', 'Last Seen', 'Team', 'Wish'];
-  const data = rows.map((r: HeartbeatRow) => {
-    const ctx = typeof r.context === 'string' ? JSON.parse(r.context) : (r.context ?? {});
-    return [
-      String(r.worker_id ?? '-').slice(0, 20),
-      r.status ?? '-',
-      formatTimestamp(r.last_seen_at),
-      ctx.team ?? '-',
-      ctx.wish_slug ?? '-',
-    ];
-  });
-
-  const widths = headers.map((h, i) => {
-    const colVals = data.map((row: string[]) => row[i]);
-    return Math.min(25, Math.max(h.length, ...colVals.map((v: string) => v.length)));
-  });
-
-  console.log(headers.map((h, i) => padRight(h, widths[i])).join(' | '));
-  console.log(widths.map((w) => '-'.repeat(w)).join('-+-'));
-  for (const row of data) {
-    console.log(row.map((v: string, i: number) => padRight(v.slice(0, widths[i]), widths[i])).join(' | '));
-  }
-  console.log(`\n(${rows.length} worker${rows.length === 1 ? '' : 's'})`);
+  console.error('⚠️  `genie metrics agents` is deprecated and will be removed in a future release.');
+  console.error(`    ${message}`);
 }
 
 // ============================================================================
@@ -220,7 +193,7 @@ export function registerMetricsCommands(program: Command): void {
 
   metrics
     .command('agents')
-    .description('Per-agent heartbeat summary')
+    .description('[DEPRECATED] Use `genie status` for live agent state')
     .option('--json', 'Output as JSON')
     .action(async (options: { json?: boolean }) => {
       await metricsAgentsCommand(options);
