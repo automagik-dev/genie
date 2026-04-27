@@ -699,4 +699,22 @@ export async function updateCommand(options: { next?: boolean; stable?: boolean 
   }
 
   await syncPlugin(installType);
+  await runPostUpdateMaintenanceSafe();
+}
+
+/**
+ * Day-one users hit watchdog install + foreground backfill convergence on
+ * first `genie` after upgrade. Run maintenance NOW so `genie` (auto-start)
+ * can stay fast. Failures are surfaced but never block the update.
+ */
+async function runPostUpdateMaintenanceSafe(): Promise<void> {
+  try {
+    const { runPostUpdateMaintenance } = await import('./doctor.js');
+    console.log();
+    log('Running post-update maintenance...');
+    await runPostUpdateMaintenance();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    error(`Post-update maintenance skipped: ${msg}`);
+  }
 }
