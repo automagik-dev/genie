@@ -27,6 +27,7 @@ import {
   defaultArchiveStaleTeamConfigs,
   defaultScanTeamConfigOrphans,
   ensureServeReady,
+  runDoctorMaintenance,
 } from './ensure-ready.js';
 
 // ============================================================================
@@ -92,23 +93,46 @@ function buildDeps(overrides: Partial<EnsureServeReadyDeps> = {}): {
 // Happy path
 // ============================================================================
 
-describe('ensureServeReady — happy path', () => {
-  test('all preconditions ok → ok=true, no audit events, all entries reported', async () => {
+describe('ensureServeReady — happy path (boot)', () => {
+  test('all preconditions ok → ok=true, no audit events, only boot-path entries reported', async () => {
     const { deps, audits, log } = buildDeps();
     const report = await ensureServeReady({ autoFix: true, deps });
     expect(report.ok).toBe(true);
-    expect(report.results).toHaveLength(5);
-    expect(report.results.map((r) => r.name).sort()).toEqual([
-      'backfill',
-      'dead_pane_zombies',
-      'partition',
-      'team_config_orphans',
-      'watchdog',
-    ]);
+    // Boot path is fast-only: partition + backfill + dead_pane_zombies.
+    // Watchdog install and team-config orphan archive are doctor's job.
+    expect(report.results.map((r) => r.name).sort()).toEqual(['backfill', 'dead_pane_zombies', 'partition']);
     expect(report.results.every((r) => r.status === 'ok')).toBe(true);
     expect(audits).toHaveLength(0);
-    // One header + one line per precondition.
-    expect(log.length).toBeGreaterThanOrEqual(6);
+    expect(log.length).toBeGreaterThanOrEqual(4);
+  });
+
+  test('does NOT call installWatchdog at boot (one-time install lives in doctor)', async () => {
+    let installCalls = 0;
+    const { deps } = buildDeps({
+      collectHealth: async () => fakeHealth({ watchdog: 'warn' }),
+      installWatchdog: async () => {
+        installCalls++;
+        return { filesWritten: [], filesSkipped: [] };
+      },
+    });
+    await ensureServeReady({ autoFix: true, deps });
+    expect(installCalls).toBe(0);
+  });
+
+  test('does NOT archive stale team-config orphans at boot', async () => {
+    let archiveCalls = 0;
+    const { deps } = buildDeps({
+      scanTeamConfigOrphans: () => ({
+        active: [],
+        stale: [{ teamName: 'old', path: '/tmp/old', newestInboxMs: 1, hasContent: false }],
+      }),
+      archiveStaleTeamConfigs: () => {
+        archiveCalls++;
+        return [];
+      },
+    });
+    await ensureServeReady({ autoFix: true, deps });
+    expect(archiveCalls).toBe(0);
   });
 });
 
@@ -164,11 +188,11 @@ describe('partition precondition', () => {
 });
 
 // ============================================================================
-// Watchdog precondition × auto-fix / refuse
+// Watchdog precondition — only ever runs in doctor maintenance, never boot
 // ============================================================================
 
-describe('watchdog precondition', () => {
-  test('watchdog warn + autoFix=true → fixed via installWatchdog', async () => {
+describe('runDoctorMaintenance — watchdog precondition', () => {
+  test('watchdog warn → fixed via installWatchdog', async () => {
     let installCalls = 0;
     const { deps, audits } = buildDeps({
       collectHealth: async () => fakeHealth({ watchdog: 'warn', watchdog_detail: 'units missing' }),
@@ -177,21 +201,10 @@ describe('watchdog precondition', () => {
         return { filesWritten: ['/etc/systemd/system/genie-watchdog.timer'], filesSkipped: [] };
       },
     });
-    const report = await ensureServeReady({ autoFix: true, deps });
+    const report = await runDoctorMaintenance({ deps, silent: true });
     expect(installCalls).toBe(1);
     expect(report.results.find((r) => r.name === 'watchdog')?.status).toBe('fixed');
     expect(audits.find((a) => a.name === 'watchdog')?.eventType).toBe('serve.precondition.fixed');
-  });
-
-  test('watchdog warn + autoFix=false → refused with sudo hint', async () => {
-    const { deps } = buildDeps({
-      collectHealth: async () => fakeHealth({ watchdog: 'warn' }),
-    });
-    const report = await ensureServeReady({ autoFix: false, deps });
-    const wd = report.results.find((r) => r.name === 'watchdog');
-    expect(wd?.status).toBe('refused');
-    expect(wd?.fixCommand).toContain('sudo');
-    expect(report.ok).toBe(false);
   });
 
   test('install throws (EACCES) → refused, not crashed', async () => {
@@ -201,7 +214,7 @@ describe('watchdog precondition', () => {
         throw new Error("EACCES: permission denied, open '/etc/systemd/system/genie-watchdog.timer'");
       },
     });
-    const report = await ensureServeReady({ autoFix: true, deps });
+    const report = await runDoctorMaintenance({ deps, silent: true });
     const wd = report.results.find((r) => r.name === 'watchdog');
     expect(wd?.status).toBe('refused');
     expect(wd?.detail).toContain('EACCES');
@@ -229,20 +242,22 @@ describe('backfill precondition', () => {
     expect(syncCalls).toBe(0);
   });
 
-  test('drift above threshold + autoFix=true → fixed via runBackfillSync', async () => {
+  test('drift above threshold + autoFix=true → fixed via runBackfillSync (fire-and-forget at boot)', async () => {
     let syncCalls = 0;
     const { deps, audits } = buildDeps({
       measureBackfillDrift: async () => ({ driftPct: 12.5, detail: '12.5%' }),
+      // Boot uses the fire-and-forget default; the test's stub stands in for
+      // it — what matters is the call count, not whether it blocks.
       runBackfillSync: async () => {
         syncCalls++;
-        return { ranSync: true, driftPct: 0.1, detail: 'converged to 0.1%' };
+        return { ranSync: true, driftPct: null, detail: 'background convergence kicked' };
       },
     });
     const report = await ensureServeReady({ autoFix: true, deps });
     expect(syncCalls).toBe(1);
     const bf = report.results.find((r) => r.name === 'backfill');
     expect(bf?.status).toBe('fixed');
-    expect(bf?.detail).toContain('converged');
+    expect(bf?.detail).toContain('background convergence kicked');
     expect(audits.find((a) => a.name === 'backfill')?.eventType).toBe('serve.precondition.fixed');
   });
 
@@ -299,7 +314,7 @@ describe('dead-pane zombies precondition', () => {
 // Team-config orphans × active / stale × auto-fix / refuse
 // ============================================================================
 
-describe('team-config orphans precondition', () => {
+describe('runDoctorMaintenance — team-config orphans precondition', () => {
   function activeOrphan(name: string): TeamConfigOrphan {
     return { teamName: name, path: `/tmp/${name}`, newestInboxMs: Date.now(), hasContent: true };
   }
@@ -320,12 +335,12 @@ describe('team-config orphans precondition', () => {
         return [];
       },
     });
-    const report = await ensureServeReady({ autoFix: true, deps });
+    const report = await runDoctorMaintenance({ deps, silent: true });
     expect(report.results.find((r) => r.name === 'team_config_orphans')?.status).toBe('ok');
     expect(archiveCalls).toBe(0);
   });
 
-  test('only stale orphans + autoFix=true → fixed via archive', async () => {
+  test('only stale orphans → fixed via archive', async () => {
     let archived: string[] = [];
     const { deps, audits } = buildDeps({
       scanTeamConfigOrphans: () => ({ active: [], stale: [staleOrphan('qa-moak1'), staleOrphan('qa-moak2')] }),
@@ -334,7 +349,7 @@ describe('team-config orphans precondition', () => {
         return archived;
       },
     });
-    const report = await ensureServeReady({ autoFix: true, deps });
+    const report = await runDoctorMaintenance({ deps, silent: true });
     const o = report.results.find((r) => r.name === 'team_config_orphans');
     expect(o?.status).toBe('fixed');
     expect(o?.detail).toContain('archived 2');
@@ -342,7 +357,7 @@ describe('team-config orphans precondition', () => {
     expect(audits.find((a) => a.name === 'team_config_orphans')?.eventType).toBe('serve.precondition.fixed');
   });
 
-  test('active orphans + autoFix=true → refused (cannot rebuild config without operator)', async () => {
+  test('active orphans → refused (cannot rebuild config without operator)', async () => {
     const { deps, audits } = buildDeps({
       scanTeamConfigOrphans: () => ({
         active: [activeOrphan('felipe-scout')],
@@ -350,29 +365,13 @@ describe('team-config orphans precondition', () => {
       }),
       archiveStaleTeamConfigs: () => ['archived-qa-moak1'],
     });
-    const report = await ensureServeReady({ autoFix: true, deps });
+    const report = await runDoctorMaintenance({ deps, silent: true });
     const o = report.results.find((r) => r.name === 'team_config_orphans');
     expect(o?.status).toBe('refused');
     expect(o?.fixCommand).toContain('genie team repair felipe-scout');
     expect(o?.detail).toContain('archived 1 stale');
     expect(report.ok).toBe(false);
     expect(audits.find((a) => a.name === 'team_config_orphans')?.eventType).toBe('serve.precondition.refused');
-  });
-
-  test('orphans present + autoFix=false → refused, no archive call', async () => {
-    let archiveCalls = 0;
-    const { deps } = buildDeps({
-      scanTeamConfigOrphans: () => ({ active: [activeOrphan('felipe-scout')], stale: [staleOrphan('qa-moak1')] }),
-      archiveStaleTeamConfigs: () => {
-        archiveCalls++;
-        return [];
-      },
-    });
-    const report = await ensureServeReady({ autoFix: false, deps });
-    const o = report.results.find((r) => r.name === 'team_config_orphans');
-    expect(o?.status).toBe('refused');
-    expect(o?.detail).toContain('active=1 stale=1');
-    expect(archiveCalls).toBe(0);
   });
 });
 
@@ -393,9 +392,9 @@ describe('reporter', () => {
   test('every entry uses a status tag', async () => {
     const { deps, log } = buildDeps();
     await ensureServeReady({ autoFix: true, deps });
-    // 5 preconditions, all ok → 5 lines tagged [ok].
+    // Boot path: partition + backfill + dead_pane_zombies → 3 [ok] lines.
     const okLines = log.filter((l) => l.includes('[ok]'));
-    expect(okLines).toHaveLength(5);
+    expect(okLines).toHaveLength(3);
   });
 });
 
