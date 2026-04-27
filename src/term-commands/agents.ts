@@ -1710,6 +1710,7 @@ async function buildSpawnParams(
   options: SpawnOptions,
   agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
   preassignedSessionId?: string,
+  agentTemplate?: string,
 ): Promise<{ params: SpawnParams; parentSessionId: string; spawnColor: ClaudeTeamColor }> {
   // Provider resolution chain: CLI --provider > directory entry > default 'claude'
   const resolvedProvider = (options.provider ?? agent.entry.provider ?? 'claude') as ProviderName;
@@ -1718,6 +1719,11 @@ async function buildSpawnParams(
     provider: resolvedProvider,
     team,
     role: name,
+    // Group 21: pin the verified template separately from role/identity.
+    // The caller passes agentTemplate = the original `<name>` positional
+    // (the template that resolved via directory.resolve, guaranteed to
+    // exist on disk). Falls back to `name` itself for non-overridden spawns.
+    agentTemplate: agentTemplate ?? name,
     skill: options.skill,
     extraArgs: options.extraArgs,
     model: agent.model,
@@ -2147,12 +2153,16 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
 
   // 3. Build params (pre-mint session UUID for state-machine paths so the row
   // id and the Claude session UUID stay in lockstep).
+  // Group 21: pass the ORIGINAL `name` as agentTemplate so Claude's `--agent`
+  // flag uses the resolved template (directory.resolve verified it exists),
+  // even when --role overrides the identity for registration.
   const { params, parentSessionId, spawnColor } = await buildSpawnParams(
     effectiveRole,
     team,
     options,
     agent,
     identity?.sessionUuid,
+    name,
   );
 
   // Set CC session display name if not already set
