@@ -666,7 +666,20 @@ function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Age
   }
 }
 
-type TeamWindowInfo = { windowId: string; windowName: string; paneId: string; created: boolean };
+type TeamWindowInfo = {
+  windowId: string;
+  windowName: string;
+  /**
+   * Human-readable session name (e.g. `genie`, `felipe`). Distinct from
+   * `windowId` (which is `@N` per tmux's `#{window_id}`) and from the
+   * tmux session-id (which is `$N`). Used as the canonical session anchor
+   * when bootstrapping a new window — see §19 v3 / `agents.ts:newWindow`
+   * branch comment for the full bug story.
+   */
+  sessionName: string;
+  paneId: string;
+  created: boolean;
+};
 
 function shellQuote(arg: string): string {
   return `'${arg.replace(/'/g, "'\\''")}'`;
@@ -822,7 +835,19 @@ function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow
   // The claude window is created with `-n claude`; navigation-wise `home` is
   // window 0 and `claude` is window 1, matching the multi-member team layout.
   if (ctx.validated.newWindow) {
-    const session = ctx.sessionOverride ?? teamWindow?.windowId?.split(':')[0] ?? ctx.validated.team;
+    // §19 v3 fix: prefer the human-readable session name (canonical 1:1 anchor)
+    // over `teamWindow.windowId.split(':')[0]`. The split was wrong in two ways:
+    // (a) `windowId` is ALWAYS in `@N` format from tmux's `#{window_id}`, never
+    //     `<session>:<window>` — the colon never appears, so split returns `@N`
+    //     verbatim and downstream `tmux new-session -d -s "@N"` creates a rogue
+    //     session NAMED literally `@N`. Twin's evidence at
+    //     `/tmp/genie-recover/twin-overnight/finding-001-ghost-session-at60.md`
+    //     traced this to PR #1413's incomplete §19 v2 — the fix only landed at
+    //     the protocol-router layer, this CLI spawn path remained broken.
+    // (b) Even if `@N` were a valid session id, tmux distinguishes `@`-prefix
+    //     (window-id) from `$`-prefix (session-id) — neither is a session NAME.
+    //     Routing them to `tmux new-session -s "${name}"` always corrupts.
+    const session = ctx.sessionOverride ?? teamWindow?.sessionName ?? ctx.validated.team;
     const cwdFlag = ctx.cwd ? ` -c ${shellQuote(ctx.cwd)}` : '';
     let sessionExists = false;
     try {
