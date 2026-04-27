@@ -29,7 +29,7 @@ import { getProvider } from './providers/registry.js';
 import { shouldResume } from './should-resume.js';
 import * as teamManager from './team-manager.js';
 import { genieTmuxCmd } from './tmux-wrapper.js';
-import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows, resolveRepoSession } from './tmux.js';
+import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows } from './tmux.js';
 import * as wishState from './wish-state.js';
 
 const execAsync = promisify(exec);
@@ -289,8 +289,35 @@ export async function spawnWorkerFromTemplate(
   const workerId = await generateWorkerId(team, template.role);
 
   const teamConfig = await teamManager.getTeam(team);
-  const session =
-    teamConfig?.tmuxSessionName ?? (await resolveRepoSession(repoPath)) ?? (await getCurrentSessionName()) ?? team;
+  // §19 v2 architectural rule: session_name = owning agent, strictly 1:1.
+  // When a leader hires a worker into their team, the worker MUST land in
+  // the leader's existing tmux session as a new window. Prior code chained
+  // `resolveRepoSession(repoPath)` ahead of `getCurrentSessionName()`, which
+  // for `--cwd <worktree>` spawns derived a basename that never matched any
+  // existing session — `ensureTeamWindow` then created an orphan auto-named
+  // session (e.g. `@55`, `@60`) the operator could not see in their TUI.
+  //
+  // Resolution order:
+  //   1. Caller is attached to tmux (`TMUX` env set) → use their session.
+  //      This honors the §19 v2 1:1 rule: the spawner's session is the
+  //      team-leader's own session, hires land there as new windows.
+  //   2. Caller is NOT in tmux (CLI/SDK/background) → use the team's
+  //      configured session if any.
+  //   3. Last resort: the literal team name.
+  //
+  // Why we gate step 1 on `TMUX` env: `getCurrentSessionName()` falls back
+  // to "first session from `tmux list-sessions`" when `TMUX` is unset
+  // (legacy hint-resolution path). For background spawns that fallback
+  // would silently route workers into an unrelated session, IGNORING the
+  // configured `teamConfig.tmuxSessionName`. The TMUX-env gate keeps
+  // current-session preference for the interactive case (which is what
+  // matters for the §19 1:1 rule) while letting non-interactive callers
+  // use their explicit team config. `resolveRepoSession` is removed from
+  // this hot path — the worker's `repoPath` controls its working dir,
+  // NOT its tmux session.
+  const inTmux = Boolean(process.env.TMUX);
+  const callerSession = inTmux ? await getCurrentSessionName() : null;
+  const session = callerSession ?? teamConfig?.tmuxSessionName ?? team;
   const { paneId, teamWindow } = await spawnPaneInSession(session, team, repoPath, fullCommand);
 
   const now = new Date().toISOString();
