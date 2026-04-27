@@ -442,6 +442,14 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
  * Uses `codex` with `--instructions` to inject skill-based task
  * instructions. Role is advisory metadata only (DEC-4).
  */
+/** Build the auto-generated codex prompt when no initialPrompt is supplied. */
+function buildCodexAutoPrompt(params: SpawnParams): string {
+  const promptParts = [`Genie worker. Team: ${params.team}.`];
+  if (params.role) promptParts.push(`Role: ${params.role}.`);
+  if (params.skill) promptParts.push(`Execute the ${params.skill} skill instructions.`);
+  return promptParts.join(' ');
+}
+
 export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('codex');
 
@@ -465,11 +473,16 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
     }
   }
 
-  // Build prompt from available context (skill + role are both optional)
-  const promptParts = [`Genie worker. Team: ${params.team}.`];
-  if (params.role) promptParts.push(`Role: ${params.role}.`);
-  if (params.skill) promptParts.push(`Execute the ${params.skill} skill instructions.`);
-  const prompt = promptParts.join(' ');
+  // Group 11 (codex-provider-parity): honor params.initialPrompt as the
+  // codex worker's first user message. Pre-fix, codex spawn ignored
+  // --prompt entirely — operators were stuck either editing --extra-args
+  // by hand or sending a follow-up via genie send (which until Group 3
+  // landed today, silently failed the native bridge for codex agents).
+  //
+  // When initialPrompt is provided, use it verbatim. When absent, fall
+  // back to the auto-generated "Genie worker. Team: X. Role: Y." string
+  // so spawn-without-prompt behavior is unchanged.
+  const prompt = params.initialPrompt ?? buildCodexAutoPrompt(params);
   parts.push(escapeShellArg(prompt));
 
   return {

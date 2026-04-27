@@ -316,6 +316,36 @@ describe('buildCodexCommand', () => {
     expect(result.command).toContain('Role: tester');
   });
 
+  // Group 11 (codex-provider-parity): codex spawn must honor --prompt
+  // (params.initialPrompt) as the worker's first user message, not
+  // override it with the auto-generated "Genie worker. Team: X." string.
+  it('honors initialPrompt verbatim when provided (Group 11)', () => {
+    const customPrompt = 'Implement Group 7 of security-install-download-guard wish';
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      role: 'sec-install-guard-codex',
+      initialPrompt: customPrompt,
+    });
+    // Custom prompt is used verbatim
+    expect(result.command).toContain(customPrompt);
+    // Auto-generated prompt is NOT used when initialPrompt is supplied
+    expect(result.command).not.toContain('Genie worker. Team: work');
+  });
+
+  it('falls back to auto-prompt when initialPrompt is empty/absent', () => {
+    // Backward compat: spawn-without-prompt produces the same auto-string
+    // as before the Group 11 change.
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      role: 'tester',
+      skill: 'work',
+    });
+    expect(result.command).toContain('Genie worker. Team: work.');
+    expect(result.command).toContain('Role: tester.');
+  });
+
   it('does not depend on agent-name routing', () => {
     const result = buildCodexCommand({ provider: 'codex', team: 'work', skill: 'work' });
     expect(result.command).not.toContain('--agent');
