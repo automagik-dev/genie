@@ -279,7 +279,11 @@ export async function rm(name: string, options?: RmOptions): Promise<RmResult> {
     if (protectedRows.length > 0) {
       const ids = protectedRows.map((r: { id: string }) => r.id).join(', ');
       const { recordAuditEvent } = await import('./audit.js');
-      recordAuditEvent('agent', `dir:${name}`, 'directory.rm.refused', 'agent-directory', {
+      // Awaited: recordAuditEvent already swallows internal failures, but the
+      // INSERT round-trip MUST complete before we throw — otherwise the CLI
+      // process exits and the unawaited Promise is dropped, leaving a refusal
+      // with no audit trail (the very gap this guardrail exists to close).
+      await recordAuditEvent('agent', `dir:${name}`, 'directory.rm.refused', 'agent-directory', {
         reason: 'protected_master_row',
         protected_ids: protectedRows.map((r: { id: string }) => r.id),
         force: options?.force ?? false,

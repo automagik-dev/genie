@@ -330,8 +330,11 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       await expect(directory.rm('audit-master')).rejects.toThrow();
 
-      // Audit event written best-effort — give a brief moment.
-      await new Promise((r) => setTimeout(r, 50));
+      // No timeout needed — the production code awaits the audit INSERT before
+      // throwing, so the row is queryable immediately. (A previous draft slept
+      // 50ms here to mask a CLI regression where the unawaited Promise was
+      // dropped before the process exited; twin caught it and the await fix
+      // landed in the same commit as this assertion.)
       const sql = await getConnection();
       const events = await sql<{ details: Record<string, unknown> }[]>`
         SELECT details FROM audit_events
