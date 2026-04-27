@@ -65,6 +65,23 @@ export interface SpawnParams {
   provider: ProviderName;
   team: string;
   role?: string;
+  /**
+   * Resolved agent template name (the `<name>` positional arg that
+   * resolves via `directory.resolve` to a built-in or user-registered
+   * agent definition). Used as Claude's `--agent <template>` flag —
+   * Claude looks up the agent definition by this name.
+   *
+   * Distinct from `role`, which is the IDENTITY override (operator's
+   * `--role <custom>` flag). When operator passes `--role custom-id`
+   * with a template `engineer`, the spawn must build:
+   *   --agent 'engineer'         (template — for definition lookup)
+   *   --agent-name 'custom-id'   (identity — for inbox/registry)
+   *
+   * Group 21 fix: previously `--agent` was sourced from `role`, which
+   * cascaded the custom identity into Claude's template lookup,
+   * producing phantom rows and 14M `resume.missing_session` events.
+   */
+  agentTemplate?: string;
   skill?: string;
   /** Agent ID this executor belongs to. Used by executor model (Groups 3+). */
   agentId?: string;
@@ -131,6 +148,7 @@ const spawnParamsSchema = z.object({
   provider: z.enum(['claude', 'codex', 'claude-sdk', 'app-pty']),
   team: z.string().min(1, 'Team name is required'),
   role: z.string().optional(),
+  agentTemplate: z.string().optional(),
   skill: z.string().optional(),
   agentId: z.string().optional(),
   executorId: z.string().uuid().optional(),
@@ -360,7 +378,16 @@ function appendSessionFlags(parts: string[], params: SpawnParams): void {
   } else if (params.sessionId) {
     parts.push('--session-id', escapeShellArg(params.sessionId));
   }
-  if (params.role) parts.push('--agent', escapeShellArg(params.role));
+  // Group 21 fix: --agent flag uses the resolved template (agentTemplate),
+  // NOT the identity override (role). Falls back to role only when no
+  // template field is set (legacy callers / built-in spawn paths that
+  // bypass buildSpawnParams). When role is custom AND no template is
+  // resolved, we still emit --agent <role> to preserve prior behavior;
+  // the agents.ts:buildSpawnParams call site is now responsible for
+  // setting agentTemplate to the verified template name so the right
+  // value reaches Claude's template lookup.
+  const claudeAgentFlag = params.agentTemplate ?? params.role;
+  if (claudeAgentFlag) parts.push('--agent', escapeShellArg(claudeAgentFlag));
   if (params.model) parts.push('--model', escapeShellArg(params.model));
   if (params.name) parts.push('--name', escapeShellArg(params.name));
 }
