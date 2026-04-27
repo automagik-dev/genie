@@ -268,13 +268,17 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
     test('rm with force=true wipes runtime rows sharing role', async () => {
       const sql = await getConnection();
+      // reports_to set so the generated `kind` column resolves to 'task' (the
+      // wave-1 heal-not-wipe guardrail refuses to delete kind='permanent'
+      // rows with a non-empty repo_path; ephemeral workers always carry a
+      // parent reference, so this fixture matches real ephemeral shape).
       await sql`
-        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change)
-        VALUES ('team1-force-agent', '%1', 's', '/tmp', 'working', 'force-agent', now(), now())
+        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change, reports_to)
+        VALUES ('team1-force-agent', '%1', 's', '/tmp', 'working', 'force-agent', now(), now(), 'parent-1')
       `;
       await sql`
-        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change)
-        VALUES ('uuid-force-agent', '%2', 's', '/tmp', 'working', 'force-agent', now(), now())
+        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change, reports_to)
+        VALUES ('uuid-force-agent', '%2', 's', '/tmp', 'working', 'force-agent', now(), now(), 'parent-1')
       `;
 
       const result = await directory.rm('force-agent', { force: true });
@@ -285,14 +289,121 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(rows.length).toBe(0);
     });
 
-    test('rm removes dir: row even without force', async () => {
-      // Canonical path: dir:<name> is still a single-hop delete.
+    test('rm removes dir: row even without force (with explicitPermanent escape)', async () => {
+      // Canonical path: dir:<name> is still a single-hop delete. The dir: row
+      // carries kind='permanent' (generated column) AND repo_path=agentDir,
+      // matching the heal-not-wipe guardrail's protected shape — operator
+      // confirmation via explicitPermanent is required.
       await directory.add({ name: 'canonical-rm', dir: agentDir, promptMode: 'append' });
-      const result = await directory.rm('canonical-rm');
+      const result = await directory.rm('canonical-rm', { explicitPermanent: true });
       expect(result.removed).toBe(true);
 
       const sql = await getConnection();
       const rows = await sql`SELECT id FROM agents WHERE id = 'dir:canonical-rm'`;
+      expect(rows.length).toBe(0);
+    });
+  });
+
+  // ============================================================================
+  // Heal-not-wipe guardrail (master-aware-spawn wish, Group 3)
+  // ============================================================================
+
+  describe('rm heal-not-wipe guardrail', () => {
+    test('refuses to delete master agent row (kind=permanent, repo_path set)', async () => {
+      // Create a `dir:email`-shaped row (post-fix add() writes team + repo_path
+      // to top-level columns; kind is generated from id LIKE 'dir:%').
+      await directory.add({ name: 'protected-master', dir: agentDir, promptMode: 'append', team: 'felipe' });
+
+      await expect(directory.rm('protected-master')).rejects.toThrow(/Refused to delete master agent row/);
+      await expect(directory.rm('protected-master')).rejects.toThrow(/genie agent recover protected-master/);
+
+      // Row is intact.
+      const sql = await getConnection();
+      const rows = await sql`SELECT id, kind, repo_path FROM agents WHERE id = 'dir:protected-master'`;
+      expect(rows.length).toBe(1);
+      expect(rows[0].kind).toBe('permanent');
+      expect(rows[0].repo_path).toBe(agentDir);
+    });
+
+    test('emits directory.rm.refused audit event on guardrail block', async () => {
+      await directory.add({ name: 'audit-master', dir: agentDir, promptMode: 'append', team: 'felipe' });
+
+      await expect(directory.rm('audit-master')).rejects.toThrow();
+
+      // Audit event written best-effort — give a brief moment.
+      await new Promise((r) => setTimeout(r, 50));
+      const sql = await getConnection();
+      const events = await sql<{ details: Record<string, unknown> }[]>`
+        SELECT details FROM audit_events
+        WHERE entity_id = 'dir:audit-master' AND event_type = 'directory.rm.refused'
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      expect(events.length).toBe(1);
+      expect(events[0].details.reason).toBe('protected_master_row');
+      expect((events[0].details.protected_ids as string[])[0]).toBe('dir:audit-master');
+    });
+
+    test('allows delete of ephemeral row (kind=task, regression guard)', async () => {
+      // Ephemeral worker — reports_to set, so kind='task'. Always deletable.
+      const sql = await getConnection();
+      await sql`
+        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change, reports_to)
+        VALUES ('team-eph-1', '%1', 's', '/tmp', 'working', 'ephemeral-role', now(), now(), 'parent-1')
+      `;
+      const kindCheck = await sql<{ kind: string }[]>`SELECT kind FROM agents WHERE id = 'team-eph-1'`;
+      expect(kindCheck[0].kind).toBe('task');
+
+      // No dir: row, but force=true touches role='ephemeral-role'. Guardrail
+      // sees no protected match (kind='task'), so deletion proceeds.
+      const result = await directory.rm('ephemeral-role', { force: true });
+      expect(result.removed).toBe(true);
+
+      const rows = await sql`SELECT id FROM agents WHERE id = 'team-eph-1'`;
+      expect(rows.length).toBe(0);
+    });
+
+    test('explicitPermanent=true bypasses the guardrail', async () => {
+      await directory.add({ name: 'escape-hatch', dir: agentDir, promptMode: 'append', team: 'felipe' });
+
+      const result = await directory.rm('escape-hatch', { explicitPermanent: true });
+      expect(result.removed).toBe(true);
+
+      const sql = await getConnection();
+      const rows = await sql`SELECT id FROM agents WHERE id = 'dir:escape-hatch'`;
+      expect(rows.length).toBe(0);
+    });
+
+    test('force=true alone still respects the guardrail (master row protected)', async () => {
+      // A master-shaped runtime row (no dir: prefix but kind='permanent' via
+      // reports_to=NULL, repo_path set). Without --explicit-permanent, even
+      // --force must refuse because the role-sweep would wipe the master row.
+      const sql = await getConnection();
+      await sql`
+        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change)
+        VALUES ('lead-master-x', '%1', 's', '/workspace/master-x', 'working', 'master-x', now(), now())
+      `;
+      const kindCheck = await sql<{ kind: string }[]>`SELECT kind FROM agents WHERE id = 'lead-master-x'`;
+      expect(kindCheck[0].kind).toBe('permanent');
+
+      await expect(directory.rm('master-x', { force: true })).rejects.toThrow(/Refused to delete master agent row/);
+
+      // Row intact.
+      const rows = await sql`SELECT id FROM agents WHERE id = 'lead-master-x'`;
+      expect(rows.length).toBe(1);
+    });
+
+    test('force=true with explicitPermanent=true wipes master + runtime rows together', async () => {
+      const sql = await getConnection();
+      await directory.add({ name: 'nuke-master', dir: agentDir, promptMode: 'append', team: 'felipe' });
+      await sql`
+        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change, reports_to)
+        VALUES ('runtime-nuke', '%1', 's', '/tmp', 'working', 'nuke-master', now(), now(), 'parent-1')
+      `;
+
+      const result = await directory.rm('nuke-master', { force: true, explicitPermanent: true });
+      expect(result.removed).toBe(true);
+
+      const rows = await sql`SELECT id FROM agents WHERE role = 'nuke-master'`;
       expect(rows.length).toBe(0);
     });
   });

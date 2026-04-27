@@ -90,9 +90,18 @@ interface ScopeOptions {
  * with id shapes like `<team>-<role>` or UUID) whose `role` matches `name`.
  * Without this flag, `rm` only removes the `dir:<name>` row and returns a
  * warning message listing the live instance ids if any exist.
+ *
+ * `explicitPermanent`: when true, bypasses the heal-not-wipe guardrail that
+ * refuses to delete master agent rows (kind='permanent' AND repo_path is
+ * non-empty). Master agents own irreplaceable session UUIDs / workspace
+ * identity; data-loss here was the 2026-04-25 power-outage's worst gap
+ * (the `dir:email` row vanished mid-recovery via a watcher race in
+ * `agent-sync.ts:processWatchedAgent` → `directory.rm` → `DELETE FROM
+ * agents`). Default false — explicit operator confirmation required.
  */
 interface RmOptions extends ScopeOptions {
   force?: boolean;
+  explicitPermanent?: boolean;
 }
 
 /**
@@ -236,6 +245,50 @@ export async function add(
 export async function rm(name: string, options?: RmOptions): Promise<RmResult> {
   const { getConnection } = await import('./db.js');
   const sql = await getConnection();
+
+  // Heal-not-wipe guardrail (master-aware-spawn wish, Group 3).
+  //
+  // Refuse to delete agents rows that own a workspace identity: master rows
+  // satisfy `kind='permanent' AND repo_path IS NOT NULL AND repo_path != ''`.
+  // These hold irreplaceable claude session UUIDs and persistent workspace
+  // identity; silent deletion was the 2026-04-25 power-outage's worst gap
+  // (`dir:email` vanished mid-recovery via the agent-sync watcher race —
+  // `processWatchedAgent` saw a transient missing dir, called
+  // `directory.rm`, and the row was wiped without an audit trail).
+  //
+  // The watcher and `removeMissingAgents` paths in `agent-sync.ts` both
+  // reach this function with `options=undefined`; the guardrail short-
+  // circuits them regardless. Operators who *do* want to remove a master
+  // pass `--explicit-permanent` from the CLI.
+  if (!options?.explicitPermanent) {
+    const protectedRows: { id: string }[] = options?.force
+      ? await sql`
+          SELECT id FROM agents
+          WHERE (id = ${`dir:${name}`} OR role = ${name})
+            AND kind = 'permanent'
+            AND repo_path IS NOT NULL
+            AND repo_path <> ''
+        `
+      : await sql`
+          SELECT id FROM agents
+          WHERE id = ${`dir:${name}`}
+            AND kind = 'permanent'
+            AND repo_path IS NOT NULL
+            AND repo_path <> ''
+        `;
+    if (protectedRows.length > 0) {
+      const ids = protectedRows.map((r: { id: string }) => r.id).join(', ');
+      const { recordAuditEvent } = await import('./audit.js');
+      recordAuditEvent('agent', `dir:${name}`, 'directory.rm.refused', 'agent-directory', {
+        reason: 'protected_master_row',
+        protected_ids: protectedRows.map((r: { id: string }) => r.id),
+        force: options?.force ?? false,
+      }).catch(() => {});
+      throw new Error(
+        `Refused to delete master agent row(s) ${ids} (kind='permanent' with repo_path). These rows hold irreplaceable session identity. Use 'genie agent recover ${name}' to heal, or pass --explicit-permanent to force deletion.`,
+      );
+    }
+  }
 
   // 1. Canonical directory row: id = 'dir:<name>'
   const dirDelete = await sql`DELETE FROM agents WHERE id = ${`dir:${name}`}`;
