@@ -3320,7 +3320,9 @@ export async function handleLsCommand(options: {
   all?: boolean;
 }): Promise<void> {
   const dirEntries = await directory.ls();
-  const workers = await registry.list();
+  // Render path uses listForRender() so bare-name shadow rows don't clobber
+  // the live UUID row in the status map. See dedupeShadowRows in agent-registry.
+  const workers = await registry.listForRender();
   const statusMap = await buildWorkerStatusMap(workers);
   const sourceAgentNames = options.source ? await resolveAgentNamesBySource(options.source) : undefined;
 

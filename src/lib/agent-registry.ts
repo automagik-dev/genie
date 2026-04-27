@@ -289,6 +289,80 @@ export async function list(): Promise<Agent[]> {
 }
 
 /**
+ * Dedupe bare-name shadow rows for read/render call sites.
+ *
+ * The DB sometimes carries two rows for the same logical agent:
+ *   - a legacy "bare-name" row keyed by `id == display name`,
+ *     with `custom_name = NULL` and no executor link (a shadow); and
+ *   - a modern UUID-keyed row with `custom_name = display name`
+ *     and a live `current_executor_id`.
+ *
+ * Both surface in `genie ls` and `genie status` because the renderer keys
+ * by `customName ?? id`, which collides for the pair. Whichever the Map
+ * happens to overwrite last wins, often the dead shadow — so the live
+ * agent appears idle/dead while a real process is running.
+ *
+ * This dedup pairs rows with the same `(customName ?? id, team)` key and
+ * keeps the live one (`current_executor_id IS NOT NULL`), tie-breaking on
+ * most-recent `startedAt`. Row-shape only — fixes the spawn-time creation
+ * of shadows are out of scope here.
+ *
+ * Use this for *read/render* paths (`genie ls`, `genie status`, TUI). Do
+ * not use it for spawn lookups, reconcilers, or detectors — they need the
+ * full row set.
+ */
+function dedupeShadowRows<T>(
+  rows: T[],
+  opts: {
+    keyFor: (r: T) => string;
+    hasExecutor: (r: T) => boolean;
+    startedAt: (r: T) => string;
+  },
+): T[] {
+  const groups = new Map<string, T[]>();
+  for (const r of rows) {
+    const k = opts.keyFor(r);
+    const arr = groups.get(k);
+    if (arr) arr.push(r);
+    else groups.set(k, [r]);
+  }
+  const out: T[] = [];
+  for (const arr of groups.values()) {
+    if (arr.length === 1) {
+      out.push(arr[0]);
+      continue;
+    }
+    arr.sort((a, b) => {
+      const aExec = opts.hasExecutor(a) ? 1 : 0;
+      const bExec = opts.hasExecutor(b) ? 1 : 0;
+      if (aExec !== bExec) return bExec - aExec;
+      // Tie-break: most recent startedAt first (lexicographic on ISO).
+      return opts.startedAt(b).localeCompare(opts.startedAt(a));
+    });
+    out.push(arr[0]);
+  }
+  return out;
+}
+
+function shadowKey(customName: string | null | undefined, id: string, team: string | null | undefined): string {
+  return `${customName ?? id}\x00${team ?? ''}`;
+}
+
+/**
+ * Render-path variant of `list()` — drops bare-name shadow rows when a
+ * UUID-keyed peer with a live executor exists. See `dedupeShadowRows` for
+ * the pairing rule and call-site guidance.
+ */
+export async function listForRender(): Promise<Agent[]> {
+  const all = await list();
+  return dedupeShadowRows(all, {
+    keyFor: (a) => shadowKey(a.customName, a.id, a.team),
+    hasExecutor: (a) => a.currentExecutorId != null,
+    startedAt: (a) => a.startedAt,
+  });
+}
+
+/**
  * Reconcile stale spawns: reset agents stuck in 'spawning' state
  * with no pane_id for longer than the threshold back to 'error'.
  *
@@ -961,6 +1035,21 @@ export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdent
   }
 
   return rows.map(rowToAgentIdentity);
+}
+
+/**
+ * Render-path variant of `listAgents()` — drops bare-name shadow rows so
+ * the `genie status` aggregator and other identity-only renderers don't
+ * surface ghost peers next to live agents. See `dedupeShadowRows` for
+ * the pairing rule.
+ */
+export async function listAgentsForRender(filters?: ListAgentsFilter): Promise<AgentIdentity[]> {
+  const all = await listAgents(filters);
+  return dedupeShadowRows(all, {
+    keyFor: (a) => shadowKey(a.customName, a.id, a.team),
+    hasExecutor: (a) => a.currentExecutorId != null,
+    startedAt: (a) => a.startedAt,
+  });
 }
 
 // ============================================================================
