@@ -189,10 +189,9 @@ async function checkPrerequisites(): Promise<CheckResult[]> {
         message: 'interactive-only',
         suggestion: `Move PATH export from ~/.bashrc to ~/.profile so spawn-scripts can resolve ${bin}. (Or use a stable symlink in ~/.local/bin.)`,
       });
-    } else if (!interactivePath && bin === 'codex') {
-      // Codex absence already reported above; skip duplicate.
-      continue;
-    } else if (!interactivePath) {
+    } else if (!interactivePath && bin !== 'codex') {
+      // Codex absence is already reported by the per-tool check above;
+      // skip the duplicate. For other tools, drop into the soft-warn branch.
       // Not resolvable in non-interactive shell — soft warning only,
       // because most of our spawn-scripts use absolute paths (resolved
       // at spawn time via `which` from the parent shell). This still
