@@ -940,6 +940,19 @@ function fixTmuxConfigs(): void {
   refreshTmuxConfFile(bundledDir, home, 'genie.tmux.conf', 'tmux.conf');
 }
 
+async function runMaintenancePreconditions(silent = false): Promise<void> {
+  // Heavy preconditions live here, NOT in `ensureServeReady`: watchdog install,
+  // foreground backfill convergence, stale team-config archive. Boot is fast;
+  // upgrades and explicit `doctor --fix` are where housekeeping happens.
+  try {
+    const { runDoctorMaintenance } = await import('../term-commands/serve/ensure-ready.js');
+    await runDoctorMaintenance({ silent });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!silent) console.warn(`  Maintenance preconditions skipped: ${msg}`);
+  }
+}
+
 async function doctorFix(): Promise<void> {
   console.log('\n\x1b[1mGenie Doctor \u2014 Auto Fix\x1b[0m');
   console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m\n`);
@@ -958,8 +971,23 @@ async function doctorFix(): Promise<void> {
   fixGenieAgentTemplate();
   fixTmuxConfigs();
 
+  // Maintenance preconditions previously gated boot; now they live here so
+  // `genie` (auto-start) stays fast and one-time work happens at upgrade /
+  // explicit doctor invocations.
+  await runMaintenancePreconditions();
+
   await restartDaemon();
 
   console.log(`\n\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
   console.log('\x1b[32mFix complete.\x1b[0m Run \x1b[36mgenie doctor\x1b[0m to verify.\n');
+}
+
+/**
+ * Silent maintenance pass for the post-update hook. Skips daemon restart and
+ * stops/cleans state \u2014 those are explicit doctor concerns. Only runs the
+ * shells-out / one-time-cost preconditions that day-one users would otherwise
+ * hit on first `genie` after upgrade.
+ */
+export async function runPostUpdateMaintenance(): Promise<void> {
+  await runMaintenancePreconditions(/* silent */ true);
 }

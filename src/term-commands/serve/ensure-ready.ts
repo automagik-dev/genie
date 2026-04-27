@@ -1,22 +1,29 @@
 /**
- * `ensureServeReady` — opinionated preconditions for `genie serve start`.
+ * `ensureServeReady` — fast boot-time preconditions for `genie serve start`.
  *
- * Wish: invincible-genie / Group 4. Day-one users inherit Felipe's-machine
- * green state, not Felipe's incident. Install/upgrade story is automatic.
+ * Boot path is hot — `genie` (auto-start) gives the spawned `genie serve
+ * --foreground` 15s before declaring it dead. Anything that can take longer
+ * than that lives in `runDoctorMaintenance` (called from `genie doctor --fix`
+ * and `genie update`), not here.
  *
- * Five preconditions, all read-only when `autoFix=false`:
- *   1. `partition`            — today's `genie_runtime_events` partition exists
- *                               (or rotates now via `genie_runtime_events_maintain_partitions`).
- *   2. `watchdog`              — systemd watchdog units present (or installs them
- *                               from `packages/watchdog/src/install.ts`).
- *   3. `backfill`              — JSONL→PG drift < 5% (or kicks `startBackfill`).
- *   4. `dead_pane_zombies`     — orphaned exhausted-zombie rows surfaced; user
- *                               must resolve via `genie status` actionable verb.
- *                               (Auto-archive is opt-in via `genie doctor`.)
- *   5. `team_config_orphans`   — `~/.claude/teams/<name>/` dirs missing
- *                               `config.json`. Active orphans (recent, non-empty
- *                               inboxes) flagged for `genie team repair`; stale
- *                               orphans archived to `_archive/`.
+ * Boot preconditions (all O(seconds-or-less)):
+ *   1. `partition`             — today's `genie_runtime_events` partition exists
+ *                                (cheap SQL maintenance call). REQUIRED before
+ *                                serve writes events; can't move out of boot.
+ *   2. `backfill`              — JSONL→PG drift probe; if drift ≥ 5%, fire a
+ *                                background convergence pass and return
+ *                                immediately. The agent-watcher and
+ *                                scheduler-daemon converge in the background.
+ *                                NEVER blocks boot.
+ *   3. `dead_pane_zombies`     — read-only flag for `genie status`. No fix.
+ *   4. `team_config_orphans`   — surfaced for `genie team repair`. At boot
+ *                                stale dirs are flagged but NOT archived;
+ *                                archival is doctor's job.
+ *
+ * Doctor-only (run from `runDoctorMaintenance` — see below):
+ *   - `watchdog` install  (shells out, needs sudo, one-time cost)
+ *   - foreground backfill convergence (blocks until full sync done)
+ *   - team-config orphan archive
  *
  * Flow:
  *   - Run each precondition; capture `PreconditionResult` (status + detail + fix command).
@@ -31,7 +38,8 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   type ObservabilityHealthReport,
   collectObservabilityHealth,
@@ -156,6 +164,32 @@ async function defaultRunPartitionMaintenance(): Promise<PartitionMaintenanceRes
 }
 
 /**
+ * Locate the watchdog CLI shipped with the genie install. Walks up from this
+ * module file (which lives inside the bundled dist or the source tree) until
+ * it finds a directory containing `packages/watchdog/src/cli.ts`. Returns null
+ * when the CLI cannot be found — caller decides what to do.
+ *
+ * Bundled installs ship `dist/genie.js` only; `packages/watchdog/` is not
+ * inlined. So bundle-mode users will get null here and the install step is
+ * surfaced as a refused precondition with a sudo hint, not a hard crash.
+ */
+function resolveWatchdogCliPath(): string | null {
+  try {
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 8; i++) {
+      const candidate = join(dir, 'packages/watchdog/src/cli.ts');
+      if (existsSync(candidate)) return candidate;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // import.meta.url unavailable — fall through
+  }
+  return null;
+}
+
+/**
  * Install the watchdog systemd units. Requires write access to `/etc/systemd/`,
  * which most non-root accounts don't have — the call is wrapped in try/catch
  * by the precondition so an EACCES surfaces as `refused` (with a sudo hint),
@@ -165,13 +199,28 @@ async function defaultRunPartitionMaintenance(): Promise<PartitionMaintenanceRes
  * directly because (a) it sidesteps tsconfig include scope and (b) it lets the
  * operator inject sudo in front via `GENIE_WATCHDOG_INSTALL_CMD` if their
  * install layout demands it.
+ *
+ * Path resolution: the CLI is found relative to this module (not `process.cwd()`),
+ * so `genie` invoked from any working directory still locates it correctly.
  */
 async function defaultInstallWatchdog(): Promise<WatchdogInstallResult> {
   const overrideCmd = process.env.GENIE_WATCHDOG_INSTALL_CMD;
-  const repoRoot = process.cwd();
-  const cmd = overrideCmd ?? 'bun';
-  const args = overrideCmd ? [] : ['run', join(repoRoot, 'packages/watchdog/src/cli.ts'), 'install'];
-  const result = spawnSync(cmd, args, { stdio: 'pipe', encoding: 'utf8' });
+  if (overrideCmd) {
+    const result = spawnSync(overrideCmd, [], { stdio: 'pipe', encoding: 'utf8', shell: true });
+    if (result.status !== 0) {
+      const stderr = (result.stderr ?? '').toString().trim();
+      const stdout = (result.stdout ?? '').toString().trim();
+      throw new Error(stderr || stdout || `watchdog install exited ${result.status}`);
+    }
+    return { filesWritten: [], filesSkipped: [] };
+  }
+  const cliPath = resolveWatchdogCliPath();
+  if (!cliPath) {
+    throw new Error(
+      'watchdog CLI not found relative to genie install — set GENIE_WATCHDOG_INSTALL_CMD or run from the source repo',
+    );
+  }
+  const result = spawnSync('bun', ['run', cliPath, 'install'], { stdio: 'pipe', encoding: 'utf8' });
   if (result.status !== 0) {
     const stderr = (result.stderr ?? '').toString().trim();
     const stdout = (result.stdout ?? '').toString().trim();
@@ -218,15 +267,45 @@ async function defaultMeasureBackfillDrift(): Promise<{ driftPct: number | null;
   }
 }
 
-/** Foreground backfill pass — blocks until JSONL→PG ingestion completes. */
+/**
+ * Boot-time backfill kicker — fire-and-forget. Returns immediately so boot
+ * isn't held hostage to JSONL volume. The agent-watcher and scheduler-daemon
+ * continue convergence in the background; users who want a synchronous pass
+ * use `genie doctor --fix` (which calls `defaultRunBackfillBlocking`).
+ */
 async function defaultRunBackfillSync(): Promise<BackfillReport> {
+  if (!(await isAvailable())) {
+    return { ranSync: false, driftPct: null, detail: 'pg unavailable — backfill skipped' };
+  }
+  // Kick async, never await. Errors are swallowed at this layer; they surface
+  // through observability events emitted by `startBackfill` itself.
+  void (async () => {
+    try {
+      const sql = await getConnection();
+      const { startBackfill } = await import('../../lib/session-backfill.js');
+      await startBackfill(sql);
+    } catch {
+      // Background failure — observability layer handles reporting.
+    }
+  })();
+  return {
+    ranSync: true,
+    driftPct: null,
+    detail: 'background convergence kicked — `genie doctor --fix` to wait',
+  };
+}
+
+/**
+ * Blocking backfill pass — used by `genie doctor --fix` and `genie sessions
+ * sync` where the caller explicitly wants to wait for full convergence.
+ */
+export async function defaultRunBackfillBlocking(): Promise<BackfillReport> {
   if (!(await isAvailable())) {
     return { ranSync: false, driftPct: null, detail: 'pg unavailable — backfill skipped' };
   }
   const sql = await getConnection();
   const { startBackfill } = await import('../../lib/session-backfill.js');
   await startBackfill(sql);
-  // Re-read drift after the convergence pass.
   const after = await defaultMeasureBackfillDrift();
   return { ranSync: true, driftPct: after.driftPct, detail: after.detail };
 }
@@ -442,6 +521,8 @@ async function checkBackfill(
       fixCommand: `genie sessions sync  # drift ${drift.driftPct.toFixed(1)}% > ${BACKFILL_DRIFT_THRESHOLD_PCT}%`,
     };
   }
+  // Boot kicks fire-and-forget; `runBackfillSync` is expected to return
+  // immediately. Foreground convergence lives in `runDoctorMaintenance`.
   const ran = await deps.runBackfillSync();
   return {
     name: 'backfill',
@@ -528,8 +609,19 @@ function bindDefaults(deps: EnsureServeReadyDeps | undefined): Required<EnsureSe
 }
 
 /**
- * Run all five preconditions. Returns `{ ok, results }`. The caller (`genie
- * serve start`) decides whether to abort (`ok=false` and `--no-fix`) or proceed.
+ * Boot orchestrator. Runs only fast preconditions so `genie` (auto-start) hits
+ * its 15 s readiness window every time:
+ *
+ *   - `partition`            — sub-second SQL maintenance call.
+ *   - `backfill`             — drift probe; high drift kicks a background
+ *                              convergence pass and returns immediately.
+ *   - `dead_pane_zombies`    — read-only count for `genie status`.
+ *   - `team_config_orphans`  — surfaced for `genie team repair`; archive of
+ *                              stale dirs is doctor's job, not boot's.
+ *
+ * Watchdog install + foreground backfill convergence + stale-orphan archive
+ * live in `runDoctorMaintenance` (called from `genie doctor --fix` and
+ * `genie update`).
  *
  * Audit events:
  *   - `serve.precondition.fixed`     — emitted per precondition that auto-fixed.
@@ -542,11 +634,67 @@ export async function ensureServeReady(opts: EnsureServeReadyOptions): Promise<E
 
   const results: PreconditionResult[] = [];
   results.push(await checkPartition(health, opts.autoFix, deps));
-  results.push(await checkWatchdog(health, opts.autoFix, deps));
   results.push(await checkBackfill(opts.autoFix, deps));
   results.push(await checkDeadPaneZombies(deps));
-  results.push(checkTeamConfigOrphans(opts.autoFix, deps));
+  // At boot we DO NOT archive stale team-config dirs — that's housekeeping the
+  // doctor handles. Surfacing them as `refused` would only nag users on every
+  // run; surfacing them as `ok` would lie. Skip the check entirely; doctor
+  // takes care of it.
 
+  await emitAuditEvents(results, deps);
+  const ok = results.every((r) => r.status === 'ok' || r.status === 'fixed' || r.status === 'skipped');
+  printReport(results, deps.log);
+  return { ok, results };
+}
+
+/**
+ * Doctor maintenance orchestrator. Runs the slow / one-time / shells-out work
+ * that does NOT belong on the boot hot path:
+ *
+ *   - `watchdog` install (needs sudo on most systems; surface refused with
+ *     hint when auto-install can't write `/etc/systemd/`).
+ *   - `partition` maintenance (idempotent — re-creates today's partition if
+ *     missing).
+ *   - foreground `backfill` convergence (blocks until JSONL→PG sync is done
+ *     to within the threshold).
+ *   - `team_config_orphans` archive (moves stale dirs into `_archive/`).
+ *
+ * Designed to be called from `genie doctor --fix` and from the post-update
+ * hook in `genie update`. The `silent` flag suppresses the per-line print.
+ */
+export interface RunDoctorMaintenanceOptions {
+  deps?: EnsureServeReadyDeps;
+  silent?: boolean;
+}
+
+export async function runDoctorMaintenance(opts: RunDoctorMaintenanceOptions = {}): Promise<EnsureServeReadyReport> {
+  // Doctor uses the BLOCKING backfill variant by default — when the user runs
+  // `genie doctor --fix` they expect the work to actually happen, not just be
+  // kicked off. Boot uses the fire-and-forget default.
+  const deps = bindDefaults({
+    runBackfillSync: defaultRunBackfillBlocking,
+    log: opts.silent ? () => {} : undefined,
+    ...opts.deps,
+  });
+  const health = await deps.collectHealth();
+
+  const results: PreconditionResult[] = [];
+  results.push(await checkPartition(health, /* autoFix */ true, deps));
+  results.push(await checkWatchdog(health, /* autoFix */ true, deps));
+  results.push(await checkBackfill(/* autoFix */ true, deps));
+  results.push(await checkDeadPaneZombies(deps));
+  results.push(checkTeamConfigOrphans(/* autoFix */ true, deps));
+
+  await emitAuditEvents(results, deps);
+  const ok = results.every((r) => r.status === 'ok' || r.status === 'fixed' || r.status === 'skipped');
+  printReport(results, deps.log);
+  return { ok, results };
+}
+
+async function emitAuditEvents(
+  results: PreconditionResult[],
+  deps: Required<Pick<EnsureServeReadyDeps, 'recordAudit'>>,
+): Promise<void> {
   for (const result of results) {
     if (result.status === 'fixed') {
       await deps
@@ -563,10 +711,6 @@ export async function ensureServeReady(opts: EnsureServeReadyOptions): Promise<E
         .catch(() => {});
     }
   }
-
-  const ok = results.every((r) => r.status === 'ok' || r.status === 'fixed' || r.status === 'skipped');
-  printReport(results, deps.log);
-  return { ok, results };
 }
 
 function printReport(results: PreconditionResult[], log: (line: string) => void): void {
