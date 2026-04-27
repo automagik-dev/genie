@@ -1761,7 +1761,7 @@ async function buildSpawnParams(
     try {
       const { injectCodexHooks } = await import('../hooks/codex-inject.js');
       const codexInjected = await injectCodexHooks();
-      if (codexInjected) console.log(`  Hooks:    injected genie hook dispatch into ~/.codex/config.toml`);
+      if (codexInjected) console.log('  Hooks:    injected genie hook dispatch into ~/.codex/config.toml');
     } catch (err) {
       console.warn(`Warning: could not inject codex hooks: ${err instanceof Error ? err.message : err}`);
     }

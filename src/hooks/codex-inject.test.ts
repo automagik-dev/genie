@@ -23,7 +23,7 @@ describe('injectCodexHooks', () => {
 
   afterEach(() => {
     if (originalCodexHome === undefined) {
-      delete process.env.CODEX_HOME;
+      process.env.CODEX_HOME = undefined as unknown as string;
     } else {
       process.env.CODEX_HOME = originalCodexHome;
     }

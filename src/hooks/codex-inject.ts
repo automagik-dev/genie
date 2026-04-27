@@ -148,7 +148,10 @@ export async function injectCodexHooks(): Promise<boolean> {
 
   await mkdir(codexHomeDir(), { recursive: true });
   await writeFile(path, candidate);
-  return existed ? true : true; // semantics: "modified or freshly added"
+  // Semantics: "modified or freshly added"; existed is captured for any
+  // future caller that wants to distinguish "first install" from "update".
+  void existed;
+  return true;
 }
 
 /**
