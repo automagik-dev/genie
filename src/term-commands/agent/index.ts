@@ -14,6 +14,7 @@ import { registerAgentInbox } from './inbox.js';
 import { registerAgentKill } from './kill.js';
 import { registerAgentList } from './list.js';
 import { registerAgentLog } from './log.js';
+import { registerAgentRecover } from './recover.js';
 import { registerAgentRegister } from './register.js';
 import { registerAgentResume } from './resume.js';
 import { registerAgentSend } from './send.js';
@@ -27,6 +28,7 @@ export function registerAgentCommands(program: Command): void {
   registerAgentSpawn(agent);
   registerAgentStop(agent);
   registerAgentResume(agent);
+  registerAgentRecover(agent);
   registerAgentKill(agent);
   registerAgentList(agent);
   registerAgentShow(agent);
