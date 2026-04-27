@@ -1,13 +1,17 @@
 /**
- * CodexProvider — Limited ExecutorProvider for Codex.
+ * CodexProvider — ExecutorProvider for Codex.
  *
- * Transport: api (fire-and-forget)
- * State detection: returns 'working' (API polling is future work)
- * Session extraction: not supported (no JSONL)
- * Resume: not supported
- * Termination: no-op (API cancel is future work)
+ * Transport: api (fire-and-forget) + tmux pane.
+ * State detection: pane-content based via `detectCodexState` (Group 1
+ *   of codex-provider-parity wish — was previously a hardcoded 'working'
+ *   stub, leaving genie ls/status blind to codex activity).
+ * Session extraction: not supported (no JSONL — `~/.codex/sessions/`
+ *   ingest tracked as Group 4 of codex-provider-parity).
+ * Resume: not supported (codex's --fork is the upstream-owned mechanic).
+ * Termination: best-effort SIGTERM when PID is available.
  */
 
+import { detectCodexState, mapCodexToExecutorState } from '../orchestrator/codex-state.js';
 import type {
   Executor,
   ExecutorProvider,
@@ -47,14 +51,36 @@ export class CodexProvider implements ExecutorProvider {
   }
 
   /**
-   * Detect the current state of an executor.
+   * Detect the current state of an executor via tmux pane capture +
+   * codex-specific pattern matching (`detectCodexState`).
    *
-   * Codex is fire-and-forget — returns 'working' for any non-terminated executor.
-   * API-based state polling is future work.
+   * Group 1 of codex-provider-parity wish: was a hardcoded 'working'
+   * stub. Now mirrors ClaudeCodeProvider's pane-capture flow but
+   * recognizes codex's prompt glyph (`›`), spinner glyphs, and
+   * permission affordances.
+   *
+   * Falls back to 'working' (the prior stub behavior) if pane capture
+   * fails — preserves "the worker is alive but state is uncertain"
+   * semantics rather than mis-marking as 'idle' or 'terminated'.
    */
   async detectState(executor: Executor): Promise<ExecutorState> {
     if (executor.state === 'terminated' || executor.endedAt) return 'terminated';
-    return 'working';
+
+    const paneId = executor.tmuxPaneId;
+    if (!paneId) return 'working'; // No pane to inspect — keep prior semantics.
+
+    try {
+      const { capturePaneContent } = await import('../tmux.js');
+      const content = await capturePaneContent(paneId, 50);
+      if (!content || !content.trim()) return 'working';
+      const result = detectCodexState(content);
+      return mapCodexToExecutorState(result.type);
+    } catch {
+      // Pane gone or tmux not running — caller will reconcile via
+      // pane-liveness probe; here we fall back to 'working' to avoid
+      // false-positive transitions to terminated/idle.
+      return 'working';
+    }
   }
 
   /**
