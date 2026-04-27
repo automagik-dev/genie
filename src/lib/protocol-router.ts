@@ -176,11 +176,59 @@ async function resolveRecipient(recipientId: string): Promise<registry.Agent[]> 
 }
 
 /**
+ * Master-aware-spawn shadow dedup (Group 22).
+ *
+ * The DB sometimes carries two rows for the same logical agent:
+ *   - a legacy "bare-name" row keyed by `id == display name`,
+ *     with `custom_name = NULL`, possibly inheriting a stale `pane_id`; and
+ *   - a modern UUID-keyed row with `custom_name = display name` and a
+ *     live `current_executor_id`.
+ *
+ * `resolveRecipient` filters by `isPaneAlive(paneId)` — when the shadow
+ * row's `pane_id` happens to point at the live pane (concurrent spawn,
+ * pane-id reuse across the same tmux server, or split-state writes),
+ * BOTH rows survive the filter even though only the UUID-keyed one
+ * holds the actual executor. Caller-side `findLiveWorkerFuzzy` then
+ * returns null on `length !== 1`, the auto-spawn path treats the
+ * agent as "missing", and `terminateActiveExecutorIfRunning` kills
+ * the live executor before respawning.
+ *
+ * Pair rows by `(customName ?? id, team)` and keep the one with
+ * `currentExecutorId !== null`. Tie-break on most-recent `startedAt`.
+ * Read-path dedup (`agent-registry.listForRender`) does the same; this
+ * is its send-path counterpart.
+ */
+function dedupShadowsForSend(workers: registry.Agent[]): registry.Agent[] {
+  const groups = new Map<string, registry.Agent[]>();
+  for (const w of workers) {
+    const key = `${w.customName ?? w.id}\x00${w.team ?? ''}`;
+    const arr = groups.get(key);
+    if (arr) arr.push(w);
+    else groups.set(key, [w]);
+  }
+  const out: registry.Agent[] = [];
+  for (const arr of groups.values()) {
+    if (arr.length === 1) {
+      out.push(arr[0]);
+      continue;
+    }
+    arr.sort((a, b) => {
+      const aExec = a.currentExecutorId != null ? 1 : 0;
+      const bExec = b.currentExecutorId != null ? 1 : 0;
+      if (aExec !== bExec) return bExec - aExec;
+      return (b.startedAt ?? '').localeCompare(a.startedAt ?? '');
+    });
+    out.push(arr[0]);
+  }
+  return out;
+}
+
+/**
  * Find exactly one live worker by tiered match.
- * Returns null if zero or multiple matches (ambiguous).
+ * Returns null if zero matches; collapses bare-name shadow pairs first.
  */
 async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Agent | null> {
-  const matches = await resolveRecipient(recipientId);
+  const matches = dedupShadowsForSend(await resolveRecipient(recipientId));
   return matches.length === 1 ? matches[0] : null;
 }
 
