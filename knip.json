@@ -54,6 +54,7 @@
     "test/observability/emit-bench.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
+  "ignore": ["src/lib/design-tokens.ts"],
   "ignoreBinaries": ["which", "scripts/verify-release.sh"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
