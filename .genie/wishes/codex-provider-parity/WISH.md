@@ -78,12 +78,15 @@ The spawned codex genie (`genie-8b0e@genie`) discovered most of these empiricall
 | 7 | engineer | `genie update` symlink-resolve install-detection |
 | review | reviewer | Review Groups 4+5+6+7 |
 
-### Wave 3 — P2 (orchestration ergonomics)
+### Wave 3 — P2 (orchestration ergonomics + dispatch-flow)
 | Group | Agent | Description |
 |-------|-------|-------------|
 | 8 | engineer | `genie spawn --fork <session-id>` flag |
 | 9 | engineer | Auto-brief injection on codex spawn |
-| qa | qa | End-to-end smoke: spawn codex, verify all surfaces |
+| 10 | engineer | `genie work` provider-aware dispatch + reuse-agent |
+| 11 | engineer | Codex spawn `--prompt` flag honored |
+| 12 | engineer | `genie wish set-group-state` direct verb |
+| qa | qa | End-to-end smoke: spawn codex, dispatch via `genie work --reuse-agent`, verify all surfaces |
 
 ---
 
@@ -326,6 +329,90 @@ bun test src/lib/protocol-router-spawn.test.ts
 
 ---
 
+### Group 10: `genie work` provider-aware dispatch + existing-agent reuse
+
+**Goal:** `genie work` can dispatch to an existing codex worker (or spawn a new codex worker), instead of always cold-spawning claude. Eliminates the "must spawn cold claude over loaded codex" problem genie-8b0e@genie hit at 17:18 (forced workaround: marked tasks via `genie task block` instead of using `genie work` because the latter would spawn a redundant claude alongside the active codex worker).
+
+**Reproducer:**
+- Active codex agent `sec-install-guard-codex` already loaded with security context.
+- `genie work security-install-download-guard --group 1` would spawn a fresh claude worker, ignoring the live codex.
+- Operator forced manual workaround (PG message + task state mutation) instead of using the canonical work-dispatch flow.
+
+**Deliverables:**
+1. Add `--provider <claude|codex>` flag to `genie work` to override spawn provider.
+2. Add `--reuse-agent <agent-name>` flag to dispatch into an existing live worker rather than cold-spawning. Validate the target agent is alive (`isPaneAlive` + executor.state in {idle, working}) before dispatching.
+3. `genie work` auto-detects: if the wish team has an active worker matching the group's role, reuse it (with a confirmation prompt unless `--no-interactive`).
+4. Tests: dispatch into existing codex; dispatch with explicit `--provider codex`; dispatch with no live worker falls back to fresh spawn.
+
+**Acceptance Criteria:**
+- [ ] `genie work <slug> --group N --provider codex` spawns a codex worker for the group.
+- [ ] `genie work <slug> --group N --reuse-agent <name>` dispatches the group prompt into the named live worker via `genie send`.
+- [ ] Auto-detection: with one live codex worker matching the group's role, `genie work` confirms reuse before cold-spawning.
+
+**Validation:**
+```bash
+bun test src/term-commands/work.test.ts
+# Manual: spawn codex, then `genie work <slug> --group 1 --reuse-agent <codex-name>`, observe dispatch into the live pane
+```
+
+**depends-on:** Group 3 (native inbox bridge for the dispatch send to land natively)
+
+---
+
+### Group 11: Codex spawn `--prompt` flag honored
+
+**Goal:** `genie spawn ... --provider codex --prompt '<text>'` injects the prompt as the codex worker's first user-message, mirroring claude's `--prompt` behavior.
+
+**Reproducer:**
+- Today, codex spawn ignores `--prompt` (the auto-generated `Genie worker. Team: <name>. Role: <role>.` is hardcoded into the buildCodexCommand at `src/lib/provider-adapters.ts`).
+- Operators must either edit `--extra-args` manually OR send a follow-up message via `genie send` after spawn (which today fails the native bridge — Group 3).
+
+**Deliverables:**
+1. `buildCodexCommand` in `src/lib/provider-adapters.ts` reads `params.initialPrompt` (or equivalent) and uses it as the codex CLI's positional prompt arg, falling back to the auto-generated string when absent.
+2. `genie spawn` already accepts `--prompt`; ensure the flag value is plumbed through `SpawnContext.initialPrompt → SpawnParams.initialPrompt → buildCodexCommand`.
+3. Tests: spawn-script generation contains the user-supplied prompt verbatim.
+
+**Acceptance Criteria:**
+- [ ] `genie spawn <name> --provider codex --prompt 'do X' --team <t>` produces a spawn-script ending in `codex --yolo --no-alt-screen 'do X'` (not the auto-string).
+- [ ] No regression on claude `--prompt` handling.
+
+**Validation:**
+```bash
+bun test src/lib/provider-adapters.test.ts
+# Manual: spawn codex with --prompt, inspect ~/.genie/spawn-scripts/<file>.sh for the prompt text
+```
+
+**depends-on:** none
+
+---
+
+### Group 12: `genie wish status` provider-agnostic group state
+
+**Goal:** Mark a wish-group `in_progress` / `done` / `blocked` from the orchestrator side without forcing a claude worker spawn. Today the wish-state mutation flow is tied to claude's `genie work` dispatch path, so codex orchestrators must touch `wishState` indirectly via `genie task` (which orchestrates correctly but doesn't update the wish-side group state).
+
+**Reproducer:**
+- genie-8b0e@genie noted at 17:18: _"Wish state still shows Group 1 as ready because native genie work is Claude-only right now; I avoided using it so we do not spawn a cold Claude worker over the loaded Codex worker."_
+- The operator wanted to mark Group 1 `in_progress` for `security-install-download-guard` but `genie wish` doesn't expose a direct group-state mutation verb; `genie work` does it as a side effect of spawning a worker.
+
+**Deliverables:**
+1. Add `genie wish set-group-state <slug> <group-num> <state>` (or `genie wish update-group <slug> <group-num> --state <s> --assignee <name>`) — a direct CLI verb for mutating wish-group state without spawning.
+2. The verb writes to the wish state machinery the same way `genie work` does (via `wishState.setGroupState` or equivalent).
+3. Document in `genie wish --help` and the wish skill so this is the canonical "marking work in progress" path.
+
+**Acceptance Criteria:**
+- [ ] `genie wish set-group-state codex-provider-parity 1 in_progress --assignee <agent>` mutates the wish-state without spawning anything.
+- [ ] Subsequent `genie wish status codex-provider-parity` shows Group 1 as `in_progress` with the named assignee.
+
+**Validation:**
+```bash
+bun test src/term-commands/wish.test.ts
+# Manual: mutate state, observe in `genie wish status`
+```
+
+**depends-on:** none
+
+---
+
 ## QA Criteria
 
 _To run after merge to dev (smoke test on npm `@next` build)._
@@ -382,7 +469,11 @@ MODIFY:
   src/genie-commands/doctor.test.ts             # Group 6
   src/genie-commands/update.ts                  # Group 7 (realpath in detectFromBinaryPath)
   src/genie-commands/update.test.ts             # Group 7
-  src/lib/provider-adapters.ts                  # Group 8 (forkSessionId in SpawnParams)
+  src/lib/provider-adapters.ts                  # Group 8 (forkSessionId) + Group 11 (initialPrompt)
+  src/term-commands/work.ts                     # Group 10 (--provider, --reuse-agent flags)
+  src/term-commands/work.test.ts                # Group 10
+  src/term-commands/wish.ts                     # Group 12 (set-group-state verb)
+  src/term-commands/wish.test.ts                # Group 12
 ```
 
 ---
