@@ -236,7 +236,7 @@ Genie runs unsandboxed: every skill, plugin, MCP server, and shell tool can reac
 2. Cargo workspace at the repo root with crates listed in scope IN. `cargo build --workspace --release` succeeds on local dev host.
 3. `aegis-daemon` binary: tokio main loop; Unix socket listener at `~/.genie/aegis/aegis.sock` (mode 0600); structured tracing-crate logs to stderr + a future audit log; graceful shutdown on SIGTERM.
 4. `aegis-cli` binary: subcommands `start | stop | restart | status` invoking platform supervisor + JSON-RPC `daemon.status`.
-5. JSON-RPC schema crate `aegis-protocol` with v1 method definitions + serde-derived request/response types.
+5. JSON-RPC schema crate `aegis-protocol` with v1 method definitions + serde-derived request/response types. Every JSON-RPC response from the daemon includes a top-level `protocol_version: 1` field. CLI invokes `daemon.status` on every connect and refuses with exit code 12 + message `"Aegis daemon reports protocol v<X>; this CLI expects v1. Run: genie aegis install --reinstall (or aegis self-update if available)"` on mismatch. Sibling D (`aegis-scanner`) extends this crate with a `v1/scanner-notification.json` method group — this wish reserves the namespace `scanner.*` (`scanner.status`, `scanner.trigger`, `scanner.history`, `scanner.cancel`, `scanner.notify-critical-finding`, `scanner.notify-resolved`) so sibling D extends without breaking versioning.
 6. Platform supervisor units:
    - `aegis-cli` writes `~/Library/LaunchAgents/dev.automagik.aegis.plist` on macOS first-launch.
    - `aegis-cli` writes `~/.config/systemd/user/aegis.service` on Linux first-launch.
@@ -276,7 +276,7 @@ gh run watch
 1. `aegis-proxy` crate: TCP listener on `127.0.0.1:<auto-port>`; port written to `~/.genie/aegis/proxy.port`. SNI parser for TLS ClientHello (no MITM). Connection splicing via tokio::io::copy_bidirectional. Per-connection metadata tagging via SO_PEERCRED (Linux) / LOCAL_PEERPID (macOS).
 2. `aegis-policy` crate: YAML loader with JSON-Schema validation against `crates/aegis-policy/schemas/network-policy-v1.schema.json`. Policy evaluation function `evaluate(host, port, client_pid, mode) -> Decision`. File watcher (notify crate) for hot reload on save.
 3. Default `network-policy.yaml` shipped at first run: mode `observe`, allow_list with the 5 baseline hosts (api.anthropic.com, api.openai.com, github.com, cdn.automagik.dev, registry.npmjs.org with sunset date). Operator-survey for additional defaults documented in `docs/network-policy-defaults.md`.
-4. `daemon.set_mode(observe|enforce)` JSON-RPC method; CLI subcommand `aegis policy enforce` / `aegis policy observe`.
+4. `daemon.set_mode(observe|enforce)` JSON-RPC method; CLI subcommand `aegis policy enforce` / `aegis policy observe`. If `network-policy.yaml` contains `mode: prompt` (reserved-but-unimplemented in v1), the loader refuses with the exact error: `"mode: prompt is reserved for Aegis v2; use mode: observe or mode: enforce in v0.1.x. See docs/network-policy-defaults.md."` Daemon retains prior policy in memory; CLI `aegis policy reload` exit code 13. Other unknown modes get the same refusal with the offending value substituted.
 5. Refusal behavior: blocked connection returns HTTP 403 with JSON body `{error, host, suggestion}`; client sees a clear error.
 6. Hardcoded-allowed paths (daemon's own outbound): `cdn.automagik.dev`, `objects.githubusercontent.com` (Sigstore), `rekor.sigstore.dev`, `fulcio.sigstore.dev`, `tuf-repo-cdn.sigstore.dev`. Documented in `crates/aegis-proxy/src/hardcoded_allowed.rs` with rationale comments.
 7. Tests:
@@ -368,7 +368,10 @@ stat -c '%a' ~/.genie/aegis/netflow.jsonl  # 600
    - Runs `aegis start`.
    - Prints first-run summary with policy mode, key fingerprint, mission-control commands.
 5. First-run prompt during `genie install` (sibling A integration): final step asks "install Aegis for network observability? [Y/n]". Default `Y`. `n` skips; `Y` runs `genie aegis install`. Skip is audit-logged in `~/.genie/audit/install.jsonl` so operators who later opt in don't lose context.
-6. Fail-soft daemon-down handling: genie startup checks daemon health via `aegis status`; if daemon down, logs warning to stderr + writes `~/.genie/audit/aegis.jsonl` event `aegis.daemon-down` (creates audit file if absent); proceeds with direct network calls.
+6. Fail-soft daemon-down handling — two detection paths:
+   - **Proactive (startup):** genie checks daemon health via `aegis status` once at session start. If unreachable, logs a single stderr warning + writes `aegis.daemon-down` event to `~/.genie/audit/aegis.jsonl` (creates file if absent) and skips proxy injection for the session.
+   - **Reactive (per-call):** when a genie subprocess HTTPS call to `127.0.0.1:<proxy-port>` fails with `ECONNREFUSED` (daemon died mid-session), the call retries once *without* the proxy; on success, logs `aegis.daemon-down-reactive` audit event (rate-limited to once per session); on failure, propagates the original error to the caller.
+   - Detection mechanism is layered into `src/lib/aegis-detect.ts` (proactive) + a per-process retry helper in `src/lib/aegis-context.ts` that wraps outbound `fetch`/HTTPS calls. Subprocess shell-outs (curl, wget, gh, etc.) do NOT get reactive fallback — they see the daemon-down state via the same retry chain only if the genie hook layer wraps them.
 7. Tests:
    - `src/lib/aegis-detect.test.ts` — socket detection happy path, missing-socket fallback, daemon-down fallback.
    - `src/lib/aegis-context.test.ts` — header injection.
