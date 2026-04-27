@@ -101,7 +101,9 @@ Today `genie sec scan` is a one-shot, operator-invoked command. Threat intel upd
 | 5 | Signature pack poll cadence: 1 hour | Matches `sec-signature-registry` recommended SLA for production / CI runners; configurable for lower-volume operators |
 | 6 | Audit log reuses existing `~/.genie/sec-scan/audit/<scan_id>.jsonl` | No new on-disk format; existing forensic tools work unchanged; aegis adds `triggered_by` field for distinguishing source |
 | 7 | Critical-finding response: pause + notify + typed-ack prompt | Mirrors industry AV "found critical, took action" UX; pause prevents in-flight agent from continuing toward unsafe state; typed-ack respects operator agency |
-| 8 | Sec-fix integration via existing `genie sec fix --apply --plan <path>` | No new remediation UX; consistent operator experience between manual `genie sec scan` and continuous Aegis scans |
+| 8 | Sec-fix integration: `aegis approve` invokes `genie sec fix` (the existing one-shot entrypoint shipped by `sec-fix-one-shot`) without passing a plan path; sec-fix runs its standard scan→dry-run→apply chain | sec-fix-one-shot does NOT define a `--prompt` or `--plan-from-aegis` interface in v1; the existing entrypoint is the contract. Aegis's typed-ack prompt carries finding evidence (path, IOC, severity), NOT a plan path; sec-fix re-discovers the finding during its own scan stage and routes accordingly. Avoids coupling that would require a follow-up update to sec-fix-one-shot. |
+| 8b | New JSON-RPC namespace `scanner.*` extends `aegis-protocol` crate (shared with sibling C) | Sibling C (aegis-runtime) reserves the `scanner.*` namespace at workspace creation time; this wish adds the actual method definitions (`scanner.notify-critical-finding`, `scanner.notify-resolved`, etc.) into `crates/aegis-protocol/schemas/v1/scanner-notification.json`. Versioned at `protocol_version: 1` matching sibling C's contract. |
+| 8c | Genie-side process-manager pause is a NEW component owned by this wish | Sibling C's Decision #19 explicitly notes "aegis approve ships in v1 even though no producer exists yet" — this wish adds the producer (scanner notification) and the genie-side listener (`src/lib/aegis-pause.ts`) that translates the notification into agent-session pause state. No existing genie process manager handles this; this wish creates it. |
 | 9 | Scanner subprocess concurrency: max 1 deep scan + max 4 FS-watch incremental | Prevents resource exhaustion on busy hosts; backpressure drops to audit log rather than blocking; tunable via policy |
 | 10 | Pack-update failure does NOT halt scanning | Robustness: stale-but-verified packs > no protection; 6-failure desktop notification surfaces persistent issues |
 | 11 | Prompt expiration default: 24h | Long enough for weekend-out-of-office operators; short enough to prevent prompt-pollution; auto-reject + auto-unpause on expiration |
@@ -284,20 +286,49 @@ stat -c '%a' ~/.genie/aegis/audit/scanner.jsonl  # 600
 
 ### Group 4: Critical-finding pipeline + sec-fix integration
 
-**Goal:** Critical IOC hits pause genie, notify operator, write typed-ack prompt, hand off to `genie sec fix --apply` on approval.
+**Goal:** Critical IOC hits write a typed-ack prompt, notify the operator, pause the active genie agent, and on approval hand off to the existing `genie sec fix` entrypoint (no plan path) which runs its own scan→dry-run→apply chain.
 
 **Deliverables:**
 1. `crates/aegis-scanner/src/severity_router.rs`: filters scan findings; routes critical → prompt creation; sub-critical → audit log only.
-2. Genie-pause IPC: aegis-daemon sends `aegis.critical-finding-detected {prompt_id, scan_id, brief}` JSON-RPC notification over the existing genie ↔ aegis socket. Genie process manager (modification in `automagik-dev/genie` repo) listens, sets `paused: true` on active agent session, surfaces banner.
-3. Desktop notification: `notify-rust` crate cross-platform. Body: "<n> critical IOC(s) detected. Run `aegis prompts list` to review." On Linux uses libnotify; on macOS falls back to `osascript -e 'display notification "..."'` if no notify daemon.
-4. Typed-ack prompt creation: writes `~/.genie/aegis/prompts/<prompt-id>.json` schema v1: `{prompt_id, scan_id, finding, severity, signature_id, suggested_action, typed_ack_string, expires_at, status}`. Schema at `crates/aegis-protocol/schemas/v1/prompt.json`.
-5. `aegis approve <prompt-id>` (extends sibling C surface): types the ack string; aegis hands off to `genie sec fix --apply --plan <plan-path>` (existing UX from `sec-fix-one-shot`). Result audit-logged; on success, aegis emits `aegis.critical-finding-resolved`.
-6. `aegis approve --reject <prompt-id> --reason <text>` — dismisses prompt; audit event `prompt.rejected`; auto-unpause if no other pending.
-7. `aegis prompts list [--pending|--resolved|--rejected|--expired]` — filtered prompt list.
-8. `aegis prompts show <prompt-id>` — full details: finding evidence, suggested action, typed-ack hint, expiration.
-9. `aegis scanner promote <finding-id> [--severity critical]` — manually promotes a sub-critical finding to a typed-ack prompt; audit event `finding.promoted`.
-10. Prompt expiration timer: tokio interval scans `~/.genie/aegis/prompts/` every minute; expired prompts auto-reject with `reason: expired`; auto-unpause if no other pending.
-11. Genie integration in `automagik-dev/genie` repo: `src/lib/aegis-pause.ts` (new) — listens for `aegis.critical-finding-detected` on the existing aegis-detect socket connection; sets agent session paused state; surfaces banner in TUI + tasks view.
+2. **JSON-RPC scanner-notification schema (extends sibling C's reserved `scanner.*` namespace):** new file `crates/aegis-protocol/schemas/v1/scanner-notification.json` defines methods:
+   - `scanner.notify-critical-finding {prompt_id, scan_id, finding_summary, severity, signature_id, expires_at}` — daemon → genie subscriber notification (push).
+   - `scanner.notify-resolved {prompt_id, resolution: "approved" | "rejected" | "expired"}` — daemon → genie subscriber notification.
+   - `scanner.subscribe-notifications {client_id}` — genie → daemon long-poll subscription RPC; daemon retains client_id and pushes notifications until the connection closes.
+   - All methods carry `protocol_version: 1` matching sibling C's contract; CLI/genie reject mismatched versions per sibling C Group 1 Deliverable 5.
+3. Daemon-side notification dispatch (`crates/aegis-scanner/src/notify.rs`): on critical finding routed by Deliverable 1, writes prompt file (Deliverable 5), emits desktop notification (Deliverable 4), broadcasts `scanner.notify-critical-finding` to all subscribed JSON-RPC clients.
+4. Desktop notification: `notify-rust` crate cross-platform. Body: "<n> critical IOC(s) detected. Run `aegis prompts list` to review." Linux: libnotify; macOS: falls back to `osascript -e 'display notification "..."'` if no notify daemon.
+5. Typed-ack prompt creation: writes `~/.genie/aegis/prompts/<prompt-id>.json` schema v1 — note `finding_evidence` replaces the old `suggested_action`/plan-path coupling:
+   ```json
+   {
+     "schema_version": 1,
+     "prompt_id": "...",
+     "scan_id": "...",
+     "finding_evidence": {
+       "path": "<absolute path triggering match>",
+       "ioc_kind": "string|file_basename|sha256|network_host",
+       "ioc_value": "<matched value, redacted if requested>",
+       "severity": "critical",
+       "signature_id": "canisterworm-2026-04",
+       "first_seen_at": "..."
+     },
+     "recommended_command": "genie sec fix --yes --incident-id <auto-generated>",
+     "typed_ack_string": "CONFIRM-AEGIS-CRITICAL-<6hex>",
+     "expires_at": "...",
+     "status": "pending|approved|rejected|expired"
+   }
+   ```
+   Schema at `crates/aegis-protocol/schemas/v1/prompt.json`. The prompt does NOT carry a sec-fix plan path — sec-fix discovers the finding during its own scan stage.
+6. `aegis approve <prompt-id>` (extends sibling C's reserved CLI surface from Decision #19): operator types the `typed_ack_string`; on match, aegis spawns `genie sec fix --yes --incident-id <prompt-id>` (existing one-shot entrypoint from `sec-fix-one-shot`). Sec-fix runs its standard scan → dry-run → apply chain and re-discovers the finding. Result audit-logged; on success, aegis emits `scanner.notify-resolved {resolution: "approved"}`.
+7. `aegis approve --reject <prompt-id> --reason <text>` — dismisses prompt; audit event `prompt.rejected`; emits `scanner.notify-resolved {resolution: "rejected"}`; auto-unpause if no other pending.
+8. `aegis prompts list [--pending|--resolved|--rejected|--expired]` — filtered prompt list (extends sibling C's reserved CLI).
+9. `aegis prompts show <prompt-id>` — full details: finding evidence, recommended command, typed-ack hint, expiration.
+10. `aegis scanner promote <finding-id> [--severity critical]` — manually promotes a sub-critical finding into a typed-ack prompt; audit event `finding.promoted`. Operator override of signature-author severity; documented in `docs/scanner.md`.
+11. Prompt expiration timer: tokio interval scans `~/.genie/aegis/prompts/` every minute; expired prompts auto-reject with `reason: expired`; emits `scanner.notify-resolved {resolution: "expired"}`. 24h default expiration; operator overrides via `prompt_expiration_seconds` in `~/.genie/aegis/scanner-policy.yaml` (range: 1h–7d).
+12. **Genie-side integration (NEW components — no existing process manager handles this):**
+    - `src/lib/aegis-pause.ts` (new): subscribes to `scanner.subscribe-notifications` over the aegis socket (reuses sibling C's aegis-detect connection); on `scanner.notify-critical-finding`, sets `paused: true` on the active agent session row in PG (uses existing `sessions` table — adds an in-memory pause flag, NO schema migration required for v1); surfaces banner in TUI + tasks view via existing genie status aggregator (from `invincible-genie` work).
+    - On `scanner.notify-resolved`, clears the pause flag if no other prompts are pending (genie queries `aegis prompts list --pending --json` to check).
+    - Pause semantics: agent suspends new tool invocations + new model calls until unpaused; in-flight tool calls complete; UI banner shows "Paused by Aegis: <prompt-id>; resolve via `aegis approve <prompt-id>` or `aegis approve --reject <prompt-id>`".
+    - Reactive fallback: if the JSON-RPC notification subscription drops mid-session, genie polls `aegis prompts list --pending --json` once per minute as a backstop; reconnects on next aegis-detect cycle.
 12. Tests:
    - `crates/aegis-scanner/tests/severity_router_test.rs` — critical → prompt; sub-critical → audit only.
    - `tests/prompt_lifecycle_test.rs` — create → approve → resolve; create → reject; create → expire.
@@ -305,15 +336,19 @@ stat -c '%a' ~/.genie/aegis/audit/scanner.jsonl  # 600
    - Integration: `scripts/integration/critical-finding-e2e.sh` — plant fixture IOC → watch fswatch → confirm pause → approve → confirm sec-fix runs → confirm unpause.
 
 **Acceptance Criteria:**
-- [ ] Plant fixture: write file with critical IOC string; fswatch (Group 2) triggers scan; severity router (this group) filters critical; prompt created in `~/.genie/aegis/prompts/<id>.json`; desktop notification visible; genie agent receives `aegis.critical-finding-detected` and pauses.
-- [ ] Operator runs `aegis approve <prompt-id>`: aegis types the typed-ack string + invokes `genie sec fix --apply --plan <plan-path>`; sec-fix completes successfully; aegis emits `aegis.critical-finding-resolved`; genie auto-unpauses.
-- [ ] Operator runs `aegis approve --reject <prompt-id> --reason "false positive: known dev fixture"`: prompt status → rejected; audit event recorded; genie unpauses if no other pending prompts.
+- [ ] JSON-RPC schema extension: `crates/aegis-protocol/schemas/v1/scanner-notification.json` defines `scanner.notify-critical-finding`, `scanner.notify-resolved`, `scanner.subscribe-notifications` with `protocol_version: 1`; CLI `aegis status --json | jq .protocol_version` returns `1`.
+- [ ] Genie subscribes to scanner notifications: `aegis-detect` opens long-poll subscription via `scanner.subscribe-notifications`; daemon retains client_id; subscription survives until aegis-detect connection closes.
+- [ ] Plant fixture: write file with critical IOC string in a watched path; fswatch (Group 2) triggers scan; severity router (this group) filters critical; prompt created at `~/.genie/aegis/prompts/<id>.json` validating against `crates/aegis-protocol/schemas/v1/prompt.json`; desktop notification visible; daemon broadcasts `scanner.notify-critical-finding` to subscribed genie session; genie session sets in-memory pause flag and surfaces TUI banner.
+- [ ] Operator runs `aegis approve <prompt-id>`: typed-ack string verified; aegis spawns `genie sec fix --yes --incident-id <prompt-id>` (existing `sec-fix-one-shot` entrypoint, NO `--plan` arg); sec-fix runs its own scan→dry-run→apply chain; on success aegis emits `scanner.notify-resolved {resolution: "approved"}`; genie auto-unpauses if no other prompts pending.
+- [ ] Operator runs `aegis approve --reject <prompt-id> --reason "false positive: known dev fixture"`: prompt status → rejected; audit event recorded; aegis emits `scanner.notify-resolved {resolution: "rejected"}`; genie unpauses if no other pending.
 - [ ] Sub-critical finding (severity: high): logged to `aegis scanner findings`; NO desktop notification; NO genie pause; NO prompt creation.
 - [ ] Promote: `aegis scanner promote <high-severity-finding-id> --severity critical` creates a prompt; same approve/reject flow.
-- [ ] Prompt expiration: prompt with `expires_at: now() - 1h` auto-rejected on next minute-tick; audit event `prompt.expired`; genie auto-unpauses if applicable.
+- [ ] Prompt expiration: prompt with `expires_at: now() - 1h` auto-rejected on next minute-tick; audit event `prompt.expired`; aegis emits `scanner.notify-resolved {resolution: "expired"}`; genie auto-unpauses if applicable.
+- [ ] Operator override expiration via `prompt_expiration_seconds` in scanner-policy.yaml: setting `259200` (3 days) makes new prompts use 3d expiration; setting outside `[3600, 604800]` range refused with helpful error.
 - [ ] Multiple critical findings simultaneously: 3 fixture IOCs detected at once → 3 prompts → 3 desktop notifications (or 1 batched if `notify-rust` supports) → genie pauses on first; remains paused until ALL 3 resolved.
+- [ ] Notification subscription drop fallback: kill aegis-detect subscription mid-session; genie polls `aegis prompts list --pending --json` once per minute; subscription reconnects on next aegis-detect cycle without missing prompts.
 - [ ] Integration test `scripts/integration/critical-finding-e2e.sh` passes end-to-end on Linux + macOS.
-- [ ] Schema: `prompt.json` validates against `crates/aegis-protocol/schemas/v1/prompt.json`.
+- [ ] No schema migration to genie's PG `sessions` table required for v1 (in-memory pause flag only).
 
 **Validation:**
 ```bash
@@ -385,11 +420,13 @@ crates/aegis-scanner/src/lib.rs                       create
 crates/aegis-scanner/src/runner.rs                    create — subprocess invocation + envelope ingest
 crates/aegis-scanner/src/policy.rs                    create — scanner-policy.yaml loader
 crates/aegis-scanner/src/severity_router.rs           create — critical-finding routing
+crates/aegis-scanner/src/notify.rs                    create — daemon-side notification dispatch + JSON-RPC broadcast
 crates/aegis-scanner/tests/runner_test.rs             create
 crates/aegis-scanner/tests/concurrency_test.rs        create
 crates/aegis-scanner/tests/policy_test.rs             create
 crates/aegis-scanner/tests/severity_router_test.rs    create
 crates/aegis-scanner/tests/prompt_lifecycle_test.rs   create
+crates/aegis-scanner/tests/notify_test.rs             create — JSON-RPC notification broadcast + subscription drop fallback
 
 crates/aegis-fswatch/Cargo.toml                       create
 crates/aegis-fswatch/src/lib.rs                       create — backend dispatcher
@@ -402,8 +439,9 @@ crates/aegis-signatures-poller/Cargo.toml             create
 crates/aegis-signatures-poller/src/lib.rs             create
 crates/aegis-signatures-poller/tests/                 create
 
-crates/aegis-protocol/schemas/v1/scanner.json         create — JSON-RPC scanner methods schema
-crates/aegis-protocol/schemas/v1/prompt.json          create — typed-ack prompt schema
+crates/aegis-protocol/schemas/v1/scanner.json              create — JSON-RPC scanner.{status,trigger,history,cancel} (methods reserved by sibling C, defined here)
+crates/aegis-protocol/schemas/v1/scanner-notification.json create — scanner.{notify-critical-finding,notify-resolved,subscribe-notifications} (producer methods)
+crates/aegis-protocol/schemas/v1/prompt.json               create — typed-ack prompt schema (finding_evidence + recommended_command, NO plan path)
 
 crates/aegis-cli/src/cmds/scanner.rs                  create — `aegis scanner ...` subcommands
 crates/aegis-cli/src/cmds/prompts.rs                  create — `aegis prompts ...` subcommands
