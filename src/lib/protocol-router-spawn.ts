@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import * as registry from './agent-registry.js';
 import type { WorkerTemplate } from './agent-registry.js';
+import { recordAuditEvent } from './audit.js';
 import * as nativeTeams from './claude-native-teams.js';
 import { getConnection } from './db.js';
 import * as executorRegistry from './executor-registry.js';
@@ -29,7 +30,7 @@ import { getProvider } from './providers/registry.js';
 import { shouldResume } from './should-resume.js';
 import * as teamManager from './team-manager.js';
 import { genieTmuxCmd } from './tmux-wrapper.js';
-import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows } from './tmux.js';
+import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, isPaneAlive, listWindows } from './tmux.js';
 import * as wishState from './wish-state.js';
 
 const execAsync = promisify(exec);
@@ -111,10 +112,31 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
  * Create executor record for an auto-spawned worker.
  * Best-effort: don't block auto-spawn if executor tracking fails.
  */
-/** Terminate the current active executor for an agent if it's still running. */
+/**
+ * Terminate the current active executor for an agent if it's still running.
+ *
+ * Defensive guard (Group 22): refuse to terminate when the executor's pane
+ * is still alive AND state is in a "doing work" set. This blocks the
+ * shadow-row send-path bug from killing live executors mid-task — when the
+ * resolver mis-routes due to bare-name+UUID dual rows, this guard catches
+ * the kill before it lands. Emits `tried_to_kill_live_executor` audit so
+ * the misroute is observable.
+ */
 async function terminateActiveExecutorIfRunning(agentId: string): Promise<void> {
   const currentExec = await executorRegistry.getCurrentExecutor(agentId);
   if (!currentExec || currentExec.state === 'terminated' || currentExec.state === 'done') return;
+
+  const liveStates = new Set(['running', 'idle', 'working', 'permission', 'question']);
+  if (currentExec.tmuxPaneId && liveStates.has(currentExec.state) && (await isPaneAlive(currentExec.tmuxPaneId))) {
+    recordAuditEvent('executor', currentExec.id, 'tried_to_kill_live_executor', process.env.GENIE_AGENT_NAME ?? 'cli', {
+      agent_id: agentId,
+      state: currentExec.state,
+      pane_id: currentExec.tmuxPaneId,
+      reason: 'live_pane_guard',
+    }).catch(() => {});
+    return;
+  }
+
   const providerImpl = getProvider(currentExec.provider);
   if (providerImpl) {
     try {
