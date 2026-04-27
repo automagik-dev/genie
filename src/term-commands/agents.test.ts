@@ -14,11 +14,13 @@ import * as executorRegistry from '../lib/executor-registry.js';
 import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
+  RecoverAgentNotFoundError,
   buildInitialSplitWindowCommand,
   buildResumeContext,
   buildWorkerStatusMap,
   findDeadResumable,
   pickParallelShortId,
+  recoverSurgery,
   resolveAgentWorkingDir,
   resolveSpawnIdentity,
   resolveTeamName,
@@ -929,5 +931,171 @@ describe.skipIf(!DB_AVAILABLE)('buildWorkerStatusMap: customName keying', () => 
     const map = await buildWorkerStatusMap([roleOnly, bare]);
     expect(map.has(`role-${ts}`)).toBe(true);
     expect(map.has(idBare)).toBe(true);
+  });
+});
+
+// ============================================================================
+// recoverSurgery — master-recovery surgery primitive (Group 2, master-aware-spawn)
+//
+// Encodes the manual sequence Felipe ran on the 2026-04-25 power outage:
+//   1. Flip auto_resume.
+//   2. Terminate stale 'spawning' executors with close_reason='recovery_anchor'.
+//   3. Locate session UUID via shouldResume; fall back to relaxed JSONL scan
+//      and create a recovery_anchor executor row to seed it into the chokepoint.
+//
+// Idempotency is the contract: a second invocation against an already-healed
+// row returns flippedAutoResume=false and staleSpawningTerminated=0.
+// ============================================================================
+
+describe.skipIf(!DB_AVAILABLE)('recoverSurgery', () => {
+  beforeEach(async () => {
+    await truncateAgentsSurface();
+  });
+
+  /** Insert a `dir:<name>` master row directly. Mirrors `agent-directory.add()`. */
+  async function seedMasterRow(name: string, opts: { team: string; repoPath: string; autoResume: boolean }) {
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    await sql`
+      INSERT INTO agents (id, role, custom_name, team, repo_path, started_at, auto_resume, state, metadata)
+      VALUES (
+        ${`dir:${name}`}, ${name}, ${name}, ${opts.team}, ${opts.repoPath},
+        now(), ${opts.autoResume}, ${null}, ${sql.json({})}
+      )
+    `;
+  }
+
+  /** Insert a stale spawning executor (no claude_session_id, ended_at NULL) for an agent. */
+  async function seedStaleSpawningExecutor(agentId: string, ageSeconds = 300): Promise<string> {
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    const id = crypto.randomUUID();
+    await sql`
+      INSERT INTO executors (id, agent_id, provider, transport, state, started_at)
+      VALUES (
+        ${id}, ${agentId}, 'claude', 'tmux', 'spawning',
+        now() - interval '1 second' * ${ageSeconds}
+      )
+    `;
+    return id;
+  }
+
+  test('flips auto_resume, terminates stale spawning, and surfaces session UUID via DB happy path', async () => {
+    const executorReg = await import('../lib/executor-registry.js');
+    const ts = Date.now();
+    const repoPath = `/tmp/recover-happy-${ts}`;
+    const sessionId = `fa1fac7b-${ts.toString(16).padStart(12, '0').slice(0, 12)}`.slice(0, 36);
+    await seedMasterRow('recover-happy', { team: 'team-recover', repoPath, autoResume: false });
+    const staleId = await seedStaleSpawningExecutor('dir:recover-happy');
+    // Healthy executor with the session UUID — resolves via DB happy path.
+    await executorReg.createAndLinkExecutor('dir:recover-happy', 'claude', 'tmux', {
+      claudeSessionId: sessionId,
+      state: 'idle',
+    });
+
+    const result = await recoverSurgery('dir:recover-happy');
+
+    expect(result.flippedAutoResume).toBe(true);
+    expect(result.staleSpawningTerminated).toBe(1);
+    expect(result.createdAnchor).toBe(false);
+    expect(result.sessionId).toBe(sessionId);
+
+    // Stale executor was actually terminated with the recovery_anchor reason.
+    const stale = await executorReg.getExecutor(staleId);
+    expect(stale?.state).toBe('terminated');
+    expect(stale?.closeReason).toBe('recovery_anchor');
+    expect(stale?.closedAt).not.toBeNull();
+
+    // auto_resume actually flipped.
+    const reg = await import('../lib/agent-registry.js');
+    const agent = await reg.get('dir:recover-happy');
+    expect(agent?.autoResume).toBe(true);
+  });
+
+  test('idempotent: second invocation against already-healed row is a no-op', async () => {
+    const executorReg = await import('../lib/executor-registry.js');
+    const ts = Date.now();
+    const repoPath = `/tmp/recover-idempotent-${ts}`;
+    await seedMasterRow('recover-idempotent', { team: 'team-recover', repoPath, autoResume: false });
+    await seedStaleSpawningExecutor('dir:recover-idempotent');
+    await executorReg.createAndLinkExecutor('dir:recover-idempotent', 'claude', 'tmux', {
+      claudeSessionId: '11111111-2222-3333-4444-555555555555',
+      state: 'idle',
+    });
+
+    const first = await recoverSurgery('dir:recover-idempotent');
+    expect(first.flippedAutoResume).toBe(true);
+    expect(first.staleSpawningTerminated).toBe(1);
+
+    const second = await recoverSurgery('dir:recover-idempotent');
+    expect(second.flippedAutoResume).toBe(false);
+    expect(second.staleSpawningTerminated).toBe(0);
+    expect(second.sessionId).toBe('11111111-2222-3333-4444-555555555555');
+  });
+
+  test('preserves PG state when resume cannot proceed: surgery commits even with no session UUID', async () => {
+    // The surgery itself succeeds (auto_resume flipped, stale executor
+    // terminated). What fails is the session-UUID lookup downstream — there
+    // is no executor with a UUID, no JSONL on disk, nothing for shouldResume
+    // to surface. We assert the surgery was applied so handleWorkerRecover's
+    // outer caller can preserve the healthier state for retry.
+    const ts = Date.now();
+    const repoPath = `/tmp/recover-no-session-${ts}`;
+    await seedMasterRow('recover-no-session', { team: 'team-recover', repoPath, autoResume: false });
+    await seedStaleSpawningExecutor('dir:recover-no-session');
+
+    const result = await recoverSurgery('dir:recover-no-session');
+
+    // Surgery committed:
+    expect(result.flippedAutoResume).toBe(true);
+    expect(result.staleSpawningTerminated).toBe(1);
+    // … but no session UUID could be located:
+    expect(result.sessionId).toBeNull();
+    expect(result.createdAnchor).toBe(false);
+
+    // PG state really was mutated, not rolled back on the lookup miss.
+    const reg = await import('../lib/agent-registry.js');
+    const agent = await reg.get('dir:recover-no-session');
+    expect(agent?.autoResume).toBe(true);
+  });
+
+  test('skips stale executors that already have ended_at (do not double-terminate)', async () => {
+    const ts = Date.now();
+    const repoPath = `/tmp/recover-ended-${ts}`;
+    await seedMasterRow('recover-ended', { team: 'team-recover', repoPath, autoResume: true });
+    // Seed an executor that's already in spawning + ended_at — close_reason
+    // already set. Our UPDATE filter (`ended_at IS NULL`) should skip it.
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    const closedId = crypto.randomUUID();
+    await sql`
+      INSERT INTO executors (id, agent_id, provider, transport, state, started_at, ended_at, close_reason)
+      VALUES (
+        ${closedId}, 'dir:recover-ended', 'claude', 'tmux', 'spawning',
+        now() - interval '10 minutes', now() - interval '5 minutes', 'pre_existing'
+      )
+    `;
+
+    const result = await recoverSurgery('dir:recover-ended');
+    expect(result.staleSpawningTerminated).toBe(0);
+
+    const executorReg = await import('../lib/executor-registry.js');
+    const closed = await executorReg.getExecutor(closedId);
+    expect(closed?.closeReason).toBe('pre_existing'); // not overwritten
+  });
+});
+
+// ============================================================================
+// RecoverAgentNotFoundError — typed error keeps exit-code mapping out of strings
+// ============================================================================
+
+describe('RecoverAgentNotFoundError', () => {
+  test('is an Error subclass with name and recoverName fields', () => {
+    const err = new RecoverAgentNotFoundError('ghost-agent');
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('RecoverAgentNotFoundError');
+    expect(err.recoverName).toBe('ghost-agent');
+    expect(err.message).toContain('ghost-agent');
+    expect(err.message).toContain('genie agent list');
   });
 });
