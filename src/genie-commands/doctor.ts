@@ -139,7 +139,109 @@ async function checkPrerequisites(): Promise<CheckResult[]> {
     });
   }
 
+  // Check Codex (Group 6 of codex-provider-parity wish — was missing).
+  // Codex is required for `genie spawn ... --provider codex` to work.
+  const codexCheck = await checkCommand('codex');
+  if (codexCheck.exists) {
+    results.push({
+      name: 'Codex CLI',
+      status: 'pass',
+      message: codexCheck.version || '',
+    });
+  } else {
+    results.push({
+      name: 'Codex CLI',
+      status: 'warn',
+      suggestion: 'Install via OpenAI account; codex is optional unless using --provider codex',
+    });
+  }
+
+  // Non-interactive PATH check (Group 6 deliverable 1).
+  //
+  // Spawn-scripts at ~/.genie/spawn-scripts/*.sh run via `tmux send-keys`
+  // and `sh -c`, which load ~/.profile but NOT ~/.bashrc (the latter is
+  // typically gated by an interactive-shell guard). If `genie`, `bun`,
+  // `node`, `npm`, `claude`, `codex`, or `git` is on PATH only via .bashrc,
+  // worker spawn scripts will fail with `posix_spawn 'X': ENOENT` even
+  // though `genie doctor` (running interactively) reports them OK.
+  //
+  // Felipe hit this exact failure today on the `genie update` flow:
+  // `ENOENT: no such file or directory, posix_spawn 'git'` because git
+  // wasn't on the non-interactive PATH for that user.
+  const requiredForSpawn = ['genie', 'bun', 'node', 'npm', 'git', 'claude', 'codex'] as const;
+  for (const bin of requiredForSpawn) {
+    const interactivePath = await resolveBinaryInteractive(bin);
+    const nonInteractivePath = await resolveBinaryNonInteractive(bin);
+
+    if (interactivePath && nonInteractivePath) {
+      // OK in both shells — green.
+      results.push({
+        name: `Non-interactive PATH: ${bin}`,
+        status: 'pass',
+        message: nonInteractivePath,
+      });
+    } else if (interactivePath && !nonInteractivePath) {
+      // Available interactively but missing in non-interactive shells —
+      // spawn-scripts will fail. This is the actionable warning case.
+      results.push({
+        name: `Non-interactive PATH: ${bin}`,
+        status: 'warn',
+        message: 'interactive-only',
+        suggestion: `Move PATH export from ~/.bashrc to ~/.profile so spawn-scripts can resolve ${bin}. (Or use a stable symlink in ~/.local/bin.)`,
+      });
+    } else if (!interactivePath && bin === 'codex') {
+      // Codex absence already reported above; skip duplicate.
+      continue;
+    } else if (!interactivePath) {
+      // Not resolvable in non-interactive shell — soft warning only,
+      // because most of our spawn-scripts use absolute paths (resolved
+      // at spawn time via `which` from the parent shell). This still
+      // bites flows that shell out to bare names — `genie update`'s
+      // `git fetch` is the canonical failure case. Operator can ignore
+      // these for binaries they don't use; the warning is informational.
+      if (bin === 'genie' || bin === 'node' || bin === 'npm' || bin === 'git') {
+        results.push({
+          name: `Non-interactive PATH: ${bin}`,
+          status: 'warn',
+          message: 'not in non-interactive PATH',
+          suggestion: `Add ${bin} to ~/.profile (not just ~/.bashrc). Some flows (e.g. genie update) shell out to bare '${bin}' from non-interactive subprocesses.`,
+        });
+      }
+    }
+  }
+
   return results;
+}
+
+/**
+ * Resolve a binary's path in the *interactive* shell (the one the user
+ * is running `genie doctor` from). Uses Bun's `$` which inherits the
+ * parent process environment.
+ */
+async function resolveBinaryInteractive(bin: string): Promise<string | null> {
+  try {
+    const result = await $`command -v ${bin}`.quiet().text();
+    return result.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a binary's path in a *non-interactive* shell — the same
+ * environment that `tmux send-keys` + spawn-scripts run under.
+ *
+ * Uses `sh -c` to ensure ~/.profile loads but ~/.bashrc's interactive-only
+ * sections are skipped. This catches the `posix_spawn ENOENT` class of
+ * failures BEFORE they break a worker spawn at runtime.
+ */
+async function resolveBinaryNonInteractive(bin: string): Promise<string | null> {
+  try {
+    const result = await $`sh -c "command -v ${bin}"`.quiet().text();
+    return result.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
