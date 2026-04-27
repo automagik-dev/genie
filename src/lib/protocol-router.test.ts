@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spy
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { WorkerTemplate } from './agent-registry.js';
 import * as mailbox from './mailbox.js';
 import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
@@ -769,6 +770,128 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       // First-time spawn should work — no executor record means no completion guard
       expect(spawnCallCount).toBe(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Master-aware resume (Group 1, master-aware-spawn wish):
+  // resolveResumeSessionId must probe `dir:<recipientId>` when worker == null.
+  // ---------------------------------------------------------------------------
+
+  describe('resolveResumeSessionId (master-aware fallback)', () => {
+    /**
+     * Insert a `dir:<name>` master agent row directly. Mirrors
+     * `agent-directory.add()` but skips the `agents.yaml` round-trip so the
+     * test keeps a tight surface around the chokepoint behavior.
+     * Crucially sets `auto_resume=true` (fresh-DB default is `false` since
+     * migration 044) so the chokepoint returns `resume=true` for permanent
+     * rows that have a session UUID on file.
+     */
+    async function seedMasterDirRow(name: string, opts: { team: string; repoPath: string }): Promise<void> {
+      const { getConnection } = await import('./db.js');
+      const sql = await getConnection();
+      await sql`
+        INSERT INTO agents (id, role, custom_name, team, repo_path, started_at, auto_resume, state, metadata)
+        VALUES (
+          ${`dir:${name}`}, ${name}, ${name}, ${opts.team}, ${opts.repoPath},
+          now(), true, ${null}, ${sql.json({})}
+        )
+      `;
+    }
+
+    function templateFor(role: string, team: string): WorkerTemplate {
+      return {
+        id: `${team}-${role}`,
+        team,
+        role,
+        provider: 'claude',
+        cwd: '/tmp',
+        lastSpawnedAt: new Date().toISOString(),
+      };
+    }
+
+    test('master agent: dir:<name> with current_executor.claude_session_id resolves via chokepoint', async () => {
+      const executorReg = await import('./executor-registry.js');
+      const { resolveResumeSessionId } = await import('./protocol-router.js');
+
+      const sessionId = 'fa1fac7b-1234-4abc-9def-000000000001';
+      await seedMasterDirRow('master-db', { team: 'team-db', repoPath: tempDir });
+      await executorReg.createAndLinkExecutor('dir:master-db', 'claude', 'tmux', {
+        claudeSessionId: sessionId,
+        state: 'idle',
+      });
+
+      const result = await resolveResumeSessionId(null, templateFor('master-db', 'team-db'), 'master-db');
+      expect(result).toBe(sessionId);
+    });
+
+    test('master agent jsonl-fallback: no executor on row, jsonl on disk resolves via chokepoint', async () => {
+      const { resolveResumeSessionId } = await import('./protocol-router.js');
+      const executorReg = await import('./executor-registry.js');
+
+      const recoveredSessionId = 'fa1fac7b-1234-4abc-9def-000000000002';
+      await seedMasterDirRow('master-jsonl', { team: 'team-jsonl', repoPath: tempDir });
+      // No executor → DB happy path misses; getResumeSessionId falls through
+      // to the JSONL scanner. Override scanner to return our recovered UUID
+      // without touching the real ~/.claude/projects/* tree.
+      executorReg._resumeJsonlScannerDeps.scanForSession = async (cwd, identity) => {
+        if (cwd === tempDir && identity?.team === 'team-jsonl' && identity?.customName === 'master-jsonl') {
+          return recoveredSessionId;
+        }
+        return null;
+      };
+
+      try {
+        const result = await resolveResumeSessionId(null, templateFor('master-jsonl', 'team-jsonl'), 'master-jsonl');
+        expect(result).toBe(recoveredSessionId);
+      } finally {
+        executorReg._resumeJsonlScannerDeps.scanForSession = null;
+      }
+    });
+
+    test('ephemeral spawn: no dir:<name> row, no worker → undefined (fresh --session-id)', async () => {
+      const { resolveResumeSessionId } = await import('./protocol-router.js');
+
+      const result = await resolveResumeSessionId(
+        null,
+        templateFor('ephemeral-role', 'team-eph'),
+        'unknown-ephemeral-task',
+      );
+      expect(result).toBeUndefined();
+    });
+
+    test('live-worker path unchanged: worker.id resolves via chokepoint (regression guard)', async () => {
+      const registry = await import('./agent-registry.js');
+      const executorReg = await import('./executor-registry.js');
+      const { resolveResumeSessionId } = await import('./protocol-router.js');
+
+      const sessionId = 'fa1fac7b-1234-4abc-9def-000000000003';
+      const now = new Date().toISOString();
+      await registry.register({
+        id: 'live-master-worker',
+        paneId: '%50',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'master-live',
+        team: 'team-live',
+        customName: 'master-live',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+        autoResume: true,
+      });
+      await executorReg.createAndLinkExecutor('live-master-worker', 'claude', 'tmux', {
+        claudeSessionId: sessionId,
+        state: 'idle',
+      });
+
+      const worker = await registry.get('live-master-worker');
+      expect(worker).toBeTruthy();
+      const result = await resolveResumeSessionId(worker!, templateFor('master-live', 'team-live'), 'master-live');
+      expect(result).toBe(sessionId);
     });
   });
 });

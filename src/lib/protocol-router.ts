@@ -250,25 +250,25 @@ async function lockedSpawnWorker(
  * whose last executor is in a non-terminal state (spawning/running/idle/
  * working/permission/question) are mid-task — we MUST resume them with
  * their session id. Silently spawning fresh would drop the conversation
- * history. First-time spawns (no executor) and completed/errored workers
- * fall through to the normal fresh-spawn path. Gap C from
- * trace-stale-resume (task #6).
+ * history. Master agents (`kind='permanent'`, `dir:<name>` rows) lose
+ * their runtime worker on reboot but retain a recoverable session UUID
+ * via the chokepoint; probing `dir:<recipientId>` when no live worker
+ * exists keeps team-lead "hires" on the master's persistent session
+ * instead of forking a fresh UUID and orphaning conversation history.
+ * Ephemeral spawns have no `dir:<name>` row, so the chokepoint returns
+ * `unknown_agent` and the caller proceeds with a fresh `--session-id`.
+ * Gap C from trace-stale-resume (task #6) + master-aware-spawn Group 1.
  */
-async function resolveResumeSessionId(
+export async function resolveResumeSessionId(
   worker: registry.Agent | null,
   template: registry.WorkerTemplate,
   recipientId: string,
 ): Promise<string | undefined> {
-  if (template.provider !== 'claude' || !worker) return undefined;
-  // Canonical chokepoint — joins identity, auto_resume, latest assignment
-  // outcome, and the session-UUID lookup (DB happy path → JSONL fallback).
-  // We pass through the session UUID for ANY non-terminal worker so a
-  // mid-task spawn can latch onto the existing conversation; an active /
-  // resumable worker without a session UUID is a hard error (Gap C).
-  const decision = await shouldResume(worker.id);
-  if (await isExecutorResumable(worker)) {
+  if (template.provider !== 'claude') return undefined;
+  const agentIdToProbe = worker?.id ?? `dir:${recipientId}`;
+  const decision = await shouldResume(agentIdToProbe);
+  if (worker && (await isExecutorResumable(worker))) {
     if (!decision.sessionId) throw new MissingResumeSessionError(worker.id, recipientId);
-    return decision.sessionId;
   }
   return decision.sessionId;
 }
