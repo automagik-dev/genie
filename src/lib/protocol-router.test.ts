@@ -300,6 +300,76 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Group 22 — bare-name shadow dedup on send path
+  // ---------------------------------------------------------------------------
+
+  describe('shadow-row send-path dedup (Group 22)', () => {
+    test('shadow row + UUID-keyed live row resolves to the live row, no respawn', async () => {
+      const registry = await import('./agent-registry.js');
+      const router = await import('./protocol-router.js');
+
+      router._deps.isPaneAlive = async (paneId: string) => alivePanes.has(paneId);
+      router._deps.waitForWorkerReady = async () => true;
+      process.env.TMUX = '/tmp/tmux-test/default,123,0';
+
+      const now = new Date().toISOString();
+
+      // Bare-name shadow row: id == display name, customName=null,
+      // currentExecutorId=null, but pane_id happens to point at the
+      // live pane (the bug's smoking gun in production).
+      await registry.register({
+        id: 'reviewer',
+        paneId: '%500',
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'reviewer',
+        team: 'shadow-team',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+        customName: undefined,
+        currentExecutorId: undefined,
+      });
+
+      // UUID-keyed canonical row: customName='reviewer', currentExecutorId set.
+      await registry.register({
+        id: '11111111-2222-3333-4444-555555555555',
+        paneId: '%500', // same pane — both rows survive isPaneAlive
+        session: 'test-session',
+        provider: 'claude',
+        transport: 'tmux',
+        role: 'reviewer',
+        team: 'shadow-team',
+        state: 'idle',
+        startedAt: now,
+        lastStateChange: now,
+        repoPath: tempDir,
+        worktree: null,
+        customName: 'reviewer',
+        currentExecutorId: 'exec-live-7777',
+      });
+
+      alivePanes.add('%500');
+
+      // Reset spawn counter
+      const spawnCountBefore = spawnCallCount;
+
+      // Send message — recipient='reviewer' matches both rows by role.
+      // Without dedup, findLiveWorkerFuzzy returns null → auto-spawn fires → KILLS the live executor.
+      // With dedup, the UUID row (with currentExecutorId) wins → message routes through, no spawn.
+      const result = await router.sendMessage(tempDir, 'sender', 'reviewer', 'test message', 'shadow-team');
+
+      // Critical assertion: NO spawn was triggered (the live worker was found).
+      expect(spawnCallCount).toBe(spawnCountBefore);
+      // Message should have been delivered (not pending-spawn).
+      expect(result).toBeDefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Spawn failure logging — errors surfaced, not silently swallowed
   // ---------------------------------------------------------------------------
 
