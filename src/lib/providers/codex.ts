@@ -11,7 +11,6 @@
  * Termination: best-effort SIGTERM when PID is available.
  */
 
-import { detectCodexState, mapCodexToExecutorState } from '../orchestrator/codex-state.js';
 import type {
   Executor,
   ExecutorProvider,
@@ -20,6 +19,7 @@ import type {
   SpawnContext,
   TransportType,
 } from '../executor-types.js';
+import { detectCodexState, mapCodexToExecutorState } from '../orchestrator/codex-state.js';
 import type { SpawnParams } from '../provider-adapters.js';
 import { buildCodexCommand } from '../provider-adapters.js';
 
