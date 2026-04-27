@@ -381,9 +381,22 @@ export async function spawnWorkerFromTemplate(
     /* best-effort: executor tracking is additive, don't block auto-spawn */
   }
 
-  if (isClaude) {
-    await registerNativeTeamMember(team, agentName, template, paneId, repoPath, spawnColor, resumeSessionId);
-  }
+  // Group 3 (codex-provider-parity): register ALL providers as native team
+  // members, not just claude. The native registry is what `genie send`'s
+  // bridge resolver (`resolveNativeMemberName`) queries to route messages
+  // through `~/.claude/teams/<team>/inboxes/<agent>.json`. Pre-fix, codex
+  // agents were never registered, so every `genie send --to <codex-agent>`
+  // emitted the warning `[genie send] Native inbox bridge: could not find
+  // native team member for "<name>"`. PG mailbox path worked as fallback,
+  // but native delivery silently failed.
+  //
+  // Note: `nativeTeamEnabled` on the agent registry row stays gated by
+  // isClaude — that flag controls claude-cli-specific protocol behaviors
+  // (--agent-id, --team-name, --agent-color flags) which codex's CLI
+  // doesn't understand. We register the codex agent in the native team
+  // namespace, but don't pretend it speaks the claude-cli teammate
+  // protocol.
+  await registerNativeTeamMember(team, agentName, template, paneId, repoPath, spawnColor, resumeSessionId);
 
   if (spawnColor) {
     await applyPaneColor(paneId, spawnColor, teamWindow?.windowId);
