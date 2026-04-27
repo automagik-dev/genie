@@ -4,10 +4,10 @@
  * Run with: bun test src/genie-commands/__tests__/update.test.ts
  */
 
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, test } from 'bun:test';
 import { detectFromBinaryPath, detectGlobalInstalls } from '../update.js';
 
 // We can't easily mock runCommandSilent inside the module, so we test
