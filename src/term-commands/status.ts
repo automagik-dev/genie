@@ -15,7 +15,7 @@
 
 import { collectObservabilityHealth } from '../genie-commands/observability-health.js';
 import { auditAgentKind } from '../lib/agent-registry.js';
-import { listAgents as listAgentIdentities } from '../lib/agent-registry.js';
+import { listAgentsForRender } from '../lib/agent-registry.js';
 import {
   type DerivedSignal,
   SIGNAL_DRILLDOWN,
@@ -73,7 +73,9 @@ function colorize(text: string, color: keyof typeof ANSI): string {
  * scheduler share scaling characteristics.
  */
 async function aggregateAgentDecisions(includeArchived: boolean): Promise<AgentStatusLine[]> {
-  const agents = await listAgentIdentities({ includeArchived });
+  // Render path: dedupe bare-name shadow rows so each agent is reported once
+  // with the live signals from its UUID-keyed peer (see agent-registry).
+  const agents = await listAgentsForRender({ includeArchived });
   const results: AgentStatusLine[] = new Array(agents.length);
   let cursor = 0;
 
