@@ -187,6 +187,11 @@ describe.skipIf(!DB_AVAILABLE)('migration 049 — agents.kind GENERATED column',
           `--glob '!src/db/migrations/049_agents_kind_generated.sql' ` +
           `--glob '!src/db/migrations/046_dir_agents_state_null.sql' ` +
           `--glob '!src/db/migrations/agents-kind.test.ts' ` +
+          // Migration 053's test file (master-aware-spawn Group 14a+b)
+          // legitimately queries `id LIKE 'dir:%'` to verify dir-row
+          // backfill + bare-shadow archive shape post-migration. Distinguishing
+          // dir-shape vs bare-shape is the whole point — not permanence inference.
+          `--glob '!src/db/migrations/master-backfill-and-shadow-cleanup.test.ts' ` +
           // The state-machine invariants test file legitimately references
           // the pattern in test descriptions, comments, and the rg pattern
           // it itself constructs.

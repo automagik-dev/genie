@@ -148,6 +148,7 @@ describe('invariant 2: no ad-hoc permanence inference', () => {
       `--glob '!src/db/migrations/046_dir_agents_state_null.sql'`,
       `--glob '!src/db/migrations/049_agents_kind_generated.sql'`,
       `--glob '!src/db/migrations/agents-kind.test.ts'`,
+      `--glob '!src/db/migrations/master-backfill-and-shadow-cleanup.test.ts'`,
       `--glob '!src/__tests__/state-machine.invariants.test.ts'`,
     );
     // Strip comment lines (SQL `--`, TS `//`, JSDoc `*`) — references inside
