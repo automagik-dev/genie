@@ -135,10 +135,32 @@ async function runCommandSilent(
 
 type InstallationType = 'source' | 'npm' | 'bun' | 'unknown';
 
-function detectFromBinaryPath(path: string): InstallationType | null {
-  if (path.includes('.bun')) return 'bun';
-  if (path.includes('node_modules')) return 'npm';
-  if (path === join(LOCAL_BIN, 'genie') || path.startsWith(GENIE_BIN)) return 'source';
+/**
+ * Detect installation type from the binary path returned by `which genie`.
+ *
+ * Group 7 fix: realpath the input first. The standard CLI install symlinks
+ * `~/.local/bin/genie → ~/.bun/bin/genie → ~/.bun/install/global/.../dist/genie.js`
+ * mean the literal `which` output is the symlink path, not the resolved target.
+ * Pre-fix, `~/.local/bin/genie` matched the `LOCAL_BIN` source-install branch
+ * even when the actual binary lived in `node_modules`, breaking
+ * `genie update --next` for bun-installed users with `ENOENT: posix_spawn 'git'`
+ * because the source-install path then tried to `git fetch` against a
+ * non-existent `~/.genie/src/` directory.
+ */
+export function detectFromBinaryPath(path: string): InstallationType | null {
+  // Resolve symlink chain so node_modules / .bun checks see the real target.
+  let resolved = path;
+  try {
+    resolved = require('node:fs').realpathSync(path);
+  } catch {
+    // Broken symlink or permission error — fall back to the literal path.
+  }
+
+  if (resolved.includes('.bun')) return 'bun';
+  if (resolved.includes('node_modules')) return 'npm';
+  // Source install: literal LOCAL_BIN path with no node_modules in resolved
+  // target, OR the binary lives under ~/.genie/bin/ directly.
+  if (path === join(LOCAL_BIN, 'genie') || resolved.startsWith(GENIE_BIN)) return 'source';
   return null;
 }
 
