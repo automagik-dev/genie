@@ -164,8 +164,37 @@ export function detectFromBinaryPath(path: string): InstallationType | null {
   return null;
 }
 
+/**
+ * Detect the genie installation type by inspecting the running binary first.
+ *
+ * Group 7 v2: binary path is ground truth. Previous order — config first, then
+ * GENIE_SRC/.git, then binary detection — was wrong: both upstream signals are
+ * stale hints from prior installs; the actual running binary's location is the
+ * only reliable source of truth.
+ *
+ * Felipe's `felipe-personal` machine reproduced this: bun-installed genie at
+ * `~/.bun/install/global/.../@automagik/genie` BUT `~/.genie/src/.git` existed
+ * from a legacy source clone. Pre-v2, detection returned 'source' on the stale
+ * clone, then `genie update` ran `git fetch` against a directory git couldn't
+ * even resolve (PATH didn't include git non-interactively), failing with
+ * `posix_spawn 'git': ENOENT` — total dead-end for the user.
+ *
+ * Order:
+ *   1. Detect from binary path via `which genie` + realpath chain.
+ *   2. Fall back to `config.installMethod` if binary detection is null.
+ *   3. Fall back to `GENIE_SRC/.git` legacy hint only when config is missing.
+ *   4. Final fallback: prefer bun if available, else npm.
+ */
 async function detectInstallationType(): Promise<InstallationType> {
-  // Check config first
+  // 1. Binary path is ground truth — runs FIRST.
+  const whichResult = await runCommandSilent('which', ['genie']);
+  if (whichResult.success) {
+    const detected = detectFromBinaryPath(whichResult.output.trim());
+    if (detected) return detected;
+  }
+
+  // 2. Cached config is a hint, not truth — used only when binary path
+  //    didn't classify (e.g. installed to a custom location).
   if (genieConfigExists()) {
     try {
       const config = await loadGenieConfig();
@@ -175,17 +204,12 @@ async function detectInstallationType(): Promise<InstallationType> {
     }
   }
 
-  // Check for source installation
+  // 3. Legacy `~/.genie/src/.git` hint — last-resort. Pre-v2 this fired
+  //    aggressively and broke bun installs that happened to have a stale
+  //    source clone in their home directory.
   if (existsSync(join(GENIE_SRC, '.git'))) return 'source';
 
-  // Detect from binary location
-  const result = await runCommandSilent('which', ['genie']);
-  if (!result.success) return 'unknown';
-
-  const detected = detectFromBinaryPath(result.output.trim());
-  if (detected) return detected;
-
-  // Default to bun for other paths if bun is available
+  // 4. Final fallback: prefer bun if available
   const hasBun = (await runCommandSilent('which', ['bun'])).success;
   return hasBun ? 'bun' : 'npm';
 }
