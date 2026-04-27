@@ -2444,6 +2444,356 @@ export async function handleWorkerResume(
   await resumeAgent(w, resumeOpts);
 }
 
+// ============================================================================
+// `genie agent recover <name>` — master-recovery surgery
+// ============================================================================
+
+/**
+ * Typed error so the CLI wrapper can map "agent not found" to exit code 2
+ * (distinct from "spawn failed" exit 1) without string-matching error messages.
+ */
+export class RecoverAgentNotFoundError extends Error {
+  readonly recoverName: string;
+  constructor(recoverName: string) {
+    super(
+      `Agent "${recoverName}" not found. Tried exact id, dir:<name>, custom_name, and role lookups. Run \`genie agent list\` to see registered agents.`,
+    );
+    this.name = 'RecoverAgentNotFoundError';
+    this.recoverName = recoverName;
+  }
+}
+
+/**
+ * Resolve a name to an agent row for recovery. Distinct from
+ * {@link resolveWorkerByName} because recover targets agents that may not be
+ * runnable (no live pane) — we look up the row, not a live worker. Resolution
+ * order:
+ *   1. Exact id (`registry.get(name)`).
+ *   2. Master-row form `dir:<name>` (the canonical master-agent shape).
+ *   3. `custom_name = $1` SQL lookup. Permits matching native-team names.
+ *   4. `role = $1` SQL lookup. Last-resort fallback for legacy rows.
+ *
+ * Throws {@link RecoverAgentNotFoundError} if nothing matches. Throws a plain
+ * `Error` on multi-row ambiguity so the caller can disambiguate.
+ */
+async function resolveAgentForRecover(name: string): Promise<registry.Agent> {
+  const exact = await registry.get(name);
+  if (exact) return exact;
+
+  const masterRow = await registry.get(`dir:${name}`);
+  if (masterRow) return masterRow;
+
+  const { getConnection } = await import('../lib/db.js');
+  const sql = await getConnection();
+  const byCustomName = await sql`SELECT * FROM agents WHERE custom_name = ${name} LIMIT 2`;
+  if (byCustomName.length === 1) {
+    return (await registry.get(byCustomName[0].id)) as registry.Agent;
+  }
+  if (byCustomName.length > 1) {
+    const ids = byCustomName.map((r: { id: string }) => r.id).join(', ');
+    throw new Error(`Multiple agents with custom_name "${name}": ${ids}. Pass the full id (e.g. dir:${name}).`);
+  }
+
+  const byRole = await sql`SELECT * FROM agents WHERE role = ${name} LIMIT 2`;
+  if (byRole.length === 1) {
+    return (await registry.get(byRole[0].id)) as registry.Agent;
+  }
+  if (byRole.length > 1) {
+    const ids = byRole.map((r: { id: string }) => r.id).join(', ');
+    throw new Error(`Multiple agents with role "${name}": ${ids}. Pass the full id.`);
+  }
+
+  throw new RecoverAgentNotFoundError(name);
+}
+
+/**
+ * Result of {@link recoverSurgery}. Captures what the surgery actually mutated
+ * so the caller can distinguish "no-op (already healed)" from "performed work".
+ */
+export interface RecoverSurgeryResult {
+  /** True if `auto_resume` was flipped from false → true (idempotent: false on re-runs). */
+  flippedAutoResume: boolean;
+  /** Number of `state='spawning'` executors transitioned to terminated. */
+  staleSpawningTerminated: number;
+  /** True if a recovery_anchor executor row was created from a relaxed JSONL scan. */
+  createdAnchor: boolean;
+  /** Recovered session UUID (DB happy path, JSONL strict, or relaxed scan). Null when none located. */
+  sessionId: string | null;
+}
+
+/**
+ * Run the master-recovery surgery against an agent row. Idempotent on a
+ * already-healed row: a second invocation flips no flags and terminates no
+ * executors. Surgery is committed BEFORE the resume is attempted so a failed
+ * resume preserves the operator-visible state changes — the row stays
+ * `auto_resume=true` and the stale `spawning` row stays terminated, both of
+ * which are unconditionally healthier states than the pre-recovery shape.
+ *
+ * Steps:
+ *   1. `UPDATE agents SET auto_resume = true WHERE id = <agentId>`.
+ *   2. `UPDATE executors SET state='terminated', closed_at=now(),
+ *      close_reason='recovery_anchor' WHERE agent_id=<agentId>
+ *      AND state='spawning' AND ended_at IS NULL`.
+ *   3. Call `shouldResume(<agentId>)`. If it returns a session UUID (DB happy
+ *      path or strict-identity JSONL fallback), we are done.
+ *   4. If still no session UUID, scan JSONLs in `repo_path` with relaxed
+ *      identity (`agentName` only, ignore `teamName` mismatch). On a hit,
+ *      INSERT an executor anchor (state='terminated',
+ *      close_reason='recovery_anchor', claudeSessionId=<found>) and link
+ *      `current_executor_id`. The next `shouldResume` will return the UUID
+ *      via the DB happy path.
+ */
+export async function recoverSurgery(agentId: string): Promise<RecoverSurgeryResult> {
+  const { getConnection } = await import('../lib/db.js');
+  const sql = await getConnection();
+
+  const flipped = await sql<{ id: string }[]>`
+    UPDATE agents SET auto_resume = true
+    WHERE id = ${agentId} AND auto_resume = false
+    RETURNING id
+  `;
+
+  const terminated = await sql<{ id: string }[]>`
+    UPDATE executors
+    SET state = 'terminated',
+        closed_at = now(),
+        ended_at = COALESCE(ended_at, now()),
+        close_reason = 'recovery_anchor'
+    WHERE agent_id = ${agentId}
+      AND state = 'spawning'
+      AND ended_at IS NULL
+    RETURNING id
+  `;
+
+  let decision = await shouldResume(agentId);
+  let createdAnchor = false;
+
+  if (!decision.sessionId) {
+    const agent = await registry.get(agentId);
+    const cwd = agent?.repoPath ?? null;
+    const customName = agent?.customName ?? agent?.role ?? null;
+    if (cwd && customName) {
+      const recovered = await scanJsonlByCustomName(cwd, customName);
+      if (recovered) {
+        await executorRegistry.createExecutor(agentId, 'claude', 'tmux', {
+          claudeSessionId: recovered,
+          state: 'terminated',
+          repoPath: cwd,
+          metadata: { source: 'recovery_anchor' },
+        });
+        // The anchor row is `state='terminated'` so it cannot accidentally be
+        // mistaken for a live runtime; we still link it as
+        // `current_executor_id` so the next `getResumeSessionId` reads the
+        // session UUID via the DB happy path. The resume flow's
+        // `createResumeExecutor` will replace this current_executor_id with
+        // its own live row when the new pane spawns — the anchor's only job
+        // is to seed the session UUID for the chokepoint.
+        const anchor = await sql<{ id: string }[]>`
+          SELECT id FROM executors
+          WHERE agent_id = ${agentId}
+            AND claude_session_id = ${recovered}
+            AND close_reason = 'recovery_anchor'
+          ORDER BY started_at DESC
+          LIMIT 1
+        `;
+        if (anchor.length > 0) {
+          await executorRegistry.relinkExecutorToAgent(anchor[0].id, agentId);
+          createdAnchor = true;
+          decision = await shouldResume(agentId);
+        }
+      }
+    }
+  }
+
+  await recordAuditEvent('agent', agentId, 'recover.surgery_applied', getActor(), {
+    flippedAutoResume: flipped.length > 0,
+    staleSpawningTerminated: terminated.length,
+    createdAnchor,
+    sessionId: decision.sessionId ?? null,
+  }).catch(() => {});
+
+  return {
+    flippedAutoResume: flipped.length > 0,
+    staleSpawningTerminated: terminated.length,
+    createdAnchor,
+    sessionId: decision.sessionId ?? null,
+  };
+}
+
+/**
+ * Read the head of a Claude Code JSONL and return whether any of the first 40
+ * lines carries `agentName === customName`. Mirrors the head-scan strategy in
+ * `executor-registry.ts:readJsonlIdentity` (16KiB read, 40-line cap) so both
+ * scanners agree on what counts as a match.
+ */
+async function jsonlHeadMatchesCustomName(filePath: string, customName: string): Promise<boolean> {
+  const { open } = await import('node:fs/promises');
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(filePath, 'r');
+    const buffer = Buffer.alloc(16384);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const head = buffer.toString('utf-8', 0, bytesRead);
+    for (const line of head.split('\n').slice(0, 40)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const entry = JSON.parse(trimmed) as { agentName?: unknown };
+        if (typeof entry.agentName === 'string' && entry.agentName === customName) return true;
+      } catch {
+        /* malformed line — keep scanning */
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+/** Resolve the Claude Code per-cwd projects directory the same way the rest of the repo does. */
+async function resolveClaudeProjectDir(cwd: string): Promise<string> {
+  const { join } = await import('node:path');
+  const { homedir } = await import('node:os');
+  const sanitize = (p: string) => p.replace(/[^a-zA-Z0-9]/g, '-');
+  const claudeConfigDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
+  return join(claudeConfigDir, 'projects', sanitize(cwd));
+}
+
+/** Newest-first list of `<dir>/*.jsonl` files paired with their mtimes. */
+async function listJsonlsByMtime(projectDir: string): Promise<{ name: string; full: string; mtime: number }[]> {
+  const { readdir, stat } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  let entries: string[];
+  try {
+    entries = await readdir(projectDir);
+  } catch {
+    return [];
+  }
+  const jsonls = entries.filter((e) => e.endsWith('.jsonl'));
+  const candidates: { name: string; full: string; mtime: number }[] = [];
+  for (const name of jsonls) {
+    const full = join(projectDir, name);
+    try {
+      const s = await stat(full);
+      candidates.push({ name, full, mtime: s.mtimeMs });
+    } catch {
+      /* skip unreadable */
+    }
+  }
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  return candidates;
+}
+
+/**
+ * Relaxed JSONL scan keyed on `agentName` only. Mirrors
+ * `defaultScanForSession` in `executor-registry.ts` but drops the
+ * `teamName === identity.team` check — operator-directed recovery accepts the
+ * risk of recovering a session whose team metadata diverged historically (the
+ * exact scenario from the 2026-04-25 power-outage post-mortem). `repo_path`
+ * scoping still rules out cross-workspace bleed because we only ever look in
+ * the agent's own project dir. Not exported as a generic helper because Group 7
+ * will land the canonical relaxation directly inside `defaultScanForSession`.
+ */
+async function scanJsonlByCustomName(cwd: string, customName: string): Promise<string | null> {
+  const projectDir = await resolveClaudeProjectDir(cwd);
+  const candidates = await listJsonlsByMtime(projectDir);
+  for (const candidate of candidates) {
+    if (await jsonlHeadMatchesCustomName(candidate.full, customName)) {
+      return candidate.name.replace(/\.jsonl$/, '');
+    }
+  }
+  return null;
+}
+
+/**
+ * Interactive Y/n confirmation. Defaults to "no" if the answer isn't 'y' or 'yes';
+ * a missing TTY makes confirmation impossible, so we surface the error instead of
+ * silently proceeding (which would defeat the purpose of the prompt).
+ */
+async function confirmRecover(agentId: string): Promise<boolean> {
+  if (!process.stdin.isTTY) {
+    console.error(
+      `Refusing to recover "${agentId}" without --yes in a non-interactive shell. Re-run with \`--yes\` for unattended use.`,
+    );
+    return false;
+  }
+  const { createInterface } = await import('node:readline');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((resolve) => {
+    rl.question(
+      `About to recover agent "${agentId}" (flip auto_resume, terminate stale spawning executors, resume). Continue? [y/N] `,
+      (a) => {
+        rl.close();
+        resolve(a.trim().toLowerCase());
+      },
+    );
+  });
+  return answer === 'y' || answer === 'yes';
+}
+
+/**
+ * `genie agent recover <name>` — One-shot operator command for the manual
+ * surgery sequence required to recover a master agent post-outage. Idempotent.
+ *
+ * This encodes the manual recovery Felipe ran on the 2026-04-25 power outage:
+ *   1. Resolve the agent row (master rows live at `dir:<name>`).
+ *   2. Confirm with operator (skip with --yes for unattended use).
+ *   3. Apply the surgery (auto_resume + stale spawning + anchor).
+ *   4. Invoke `genie agent resume <name>` internally — Group 1's chokepoint
+ *      patch routes the dir:<name> session UUID into `--resume <uuid>` instead
+ *      of forking a fresh `--session-id <new>`.
+ *
+ * Failure modes:
+ *   - Agent not found → throws `RecoverAgentNotFoundError`. CLI wrapper exits 2.
+ *   - Multiple matches by custom_name/role → throws Error. CLI exits 1.
+ *   - Resume fails → surgery state preserved (auto_resume=true, stale
+ *     executors terminated). Operator sees the resume error and can re-try.
+ */
+export async function handleWorkerRecover(name: string, options: { yes?: boolean }): Promise<void> {
+  const agent = await resolveAgentForRecover(name);
+
+  if (!options.yes) {
+    const confirmed = await confirmRecover(agent.id);
+    if (!confirmed) {
+      console.log('Recovery cancelled.');
+      return;
+    }
+  }
+
+  console.log(`Recovering agent "${agent.id}"...`);
+  const surgery = await recoverSurgery(agent.id);
+  if (surgery.flippedAutoResume) console.log('  ✓ auto_resume re-enabled');
+  if (surgery.staleSpawningTerminated > 0) {
+    console.log(`  ✓ terminated ${surgery.staleSpawningTerminated} stale spawning executor(s)`);
+  }
+  if (surgery.createdAnchor) console.log('  ✓ created executor anchor from JSONL on disk');
+  if (surgery.sessionId) {
+    console.log(`  ✓ session UUID located: ${surgery.sessionId}`);
+  } else {
+    console.error(
+      `  ✗ no recoverable session UUID for "${agent.id}". ` +
+        `JSONL scan in ${agent.repoPath ?? '<no repo_path>'} did not match custom_name="${agent.customName ?? agent.role ?? '<none>'}".`,
+    );
+    process.exit(1);
+  }
+
+  // Invoke resume internally. Pane-alive case (already running) prints a
+  // friendly "already running" — that is the correct idempotent outcome on a
+  // recover called against an already-healed row.
+  const resumeName = agent.customName ?? agent.role ?? agent.id;
+  await handleWorkerResume(resumeName, { all: false, noResetAttempts: false });
+
+  // Pane id + tmux attach hint — read the post-resume row so we surface the
+  // freshly-minted pane, not the stale pre-recovery one.
+  const post = await registry.get(agent.id);
+  if (post?.paneId && post.session) {
+    console.log(`  pane:    ${post.paneId}`);
+    console.log(`  attach:  tmux attach -t ${post.session}`);
+  }
+}
+
 /**
  * Build SpawnParams for a resume operation from agent + template.
  *
