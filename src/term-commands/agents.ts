@@ -1750,6 +1750,23 @@ async function buildSpawnParams(
     console.warn(`Warning: could not inject hooks for team "${team}": ${err instanceof Error ? err.message : err}`);
   }
 
+  // Codex hook bridge — write `~/.codex/config.toml` so codex agents fire
+  // PreToolUse / PostToolUse / UserPromptSubmit / SessionStart / Stop /
+  // PermissionRequest hooks through `genie hook dispatch`. Same dispatcher
+  // claude uses; closes the genie log/events blackout for codex AND enables
+  // file-watcher-equivalent message delivery (UserPromptSubmit handler can
+  // return additionalContext from genie's mailbox). Replaces tmux send-keys
+  // for engineer-driven sends.
+  if (params.provider === 'codex') {
+    try {
+      const { injectCodexHooks } = await import('../hooks/codex-inject.js');
+      const codexInjected = await injectCodexHooks();
+      if (codexInjected) console.log('  Hooks:    injected genie hook dispatch into ~/.codex/config.toml');
+    } catch (err) {
+      console.warn(`Warning: could not inject codex hooks: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   // Generate a session ID for Claude workers so we can resume by ID later.
   // Stored in the agent registry on spawn for --resume on respawn.
   // The state machine in handleWorkerSpawn pre-mints the UUID for parallels so
