@@ -3,12 +3,12 @@
   "last_run_status": "success",
   "last_metrics": {
     "releases_24h": 0,
-    "merged_prs_7d": 95,
-    "avg_merge_time_h": 0.5,
-    "ship_rate_pct": 95
+    "merged_prs_7d": 142,
+    "avg_merge_time_h": 0.7,
+    "ship_rate_pct": 99
   },
   "daily_stats_count": 45,
   "charts_generated": 3,
   "velocity_md_updated": true,
-  "duration_ms": 487
+  "duration_ms": 603
 }
