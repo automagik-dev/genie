@@ -44,6 +44,7 @@
     "lint:emit": "bun run scripts/lint-emit-discipline.ts",
     "check:perf": "bun run test/perf/observability/gate.ts --duration=30000",
     "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:emit && bun test",
+    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:emit",
     "verify:release": "scripts/verify-release.sh"
   },
   "dependencies": {
