@@ -13,7 +13,7 @@
  */
 
 import type { Command } from 'commander';
-import { detectSenderIdentity } from '../msg.js';
+import { detectSenderIdentity, isCliSender } from '../msg.js';
 
 export function registerAgentSend(parent: Command): void {
   parent
@@ -57,13 +57,13 @@ async function isTeamLeader(agentName: string, teamName: string): Promise<boolea
 
 /**
  * Check hierarchy: sender can reach recipient if:
- * 1. sender is 'cli' (bypass)
+ * 1. sender is the CLI bypass marker — `'cli'` or `'cli:<origin>'` (see `isCliSender`)
  * 2. recipient reports_to sender (direct report)
  * 3. sender reports_to recipient (manager)
  * 4. they share the same manager (siblings — allowed for team coordination)
  */
 async function checkHierarchy(from: string, to: string): Promise<{ allowed: boolean; reason?: string }> {
-  if (from === 'cli') return { allowed: true };
+  if (isCliSender(from)) return { allowed: true };
   if (from === to) return { allowed: true };
 
   try {
