@@ -340,9 +340,9 @@ describe('daemon-owned pgserve', () => {
 });
 
 describe('retention cleanup', () => {
-  test('retention DELETEs are present in getConnection()', () => {
+  test('retention DELETEs are present in runRetention()', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    // All 4 retention policies present
+    // All 4 retention policies still defined in the runRetention function
     expect(source).toContain("DELETE FROM heartbeats WHERE created_at < now() - interval '7 days'");
     expect(source).toContain("DELETE FROM machine_snapshots WHERE created_at < now() - interval '30 days'");
     expect(source).toContain(
@@ -351,10 +351,27 @@ describe('retention cleanup', () => {
     expect(source).toContain("DELETE FROM genie_runtime_events WHERE created_at < now() - interval '14 days'");
   });
 
-  test('retention is guarded by retentionRan flag', () => {
+  test('runRetention is exported for daemon-side timer', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // runRetention must be exported so scheduler-daemon can call it on its
+    // periodic timer (was inline-private when it ran from runPostConnectSetup).
+    expect(source).toContain('export async function runRetention');
+  });
+
+  test('runPostConnectSetup no longer invokes runRetention (Mac CPU fix A)', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // The hook-dispatch cold-start fanout path must NOT trigger retention;
+    // every `genie hook dispatch` bun fork would otherwise issue 4 DELETEs.
+    // Scheduler-daemon now owns the periodic call.
+    const setupFnIdx = source.indexOf('async function runPostConnectSetup');
+    expect(setupFnIdx).toBeGreaterThan(-1);
+    const setupFn = source.slice(setupFnIdx, source.indexOf('\nexport async function getConnection'));
+    expect(setupFn).not.toContain('await runRetention(');
+  });
+
+  test('retentionRan flag still exists for daemon intra-process guard', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     expect(source).toContain('let retentionRan = false');
-    expect(source).toContain('!retentionRan');
     expect(source).toContain('retentionRan = true');
   });
 
@@ -372,6 +389,16 @@ describe('retention cleanup', () => {
     expect(migration).toContain('DELETE FROM machine_snapshots');
     expect(migration).toContain('DELETE FROM audit_events');
     expect(migration).toContain('DELETE FROM genie_runtime_events');
+  });
+
+  test('scheduler-daemon owns the periodic retention timer', () => {
+    const daemonSource = readFileSync(join(__dirname, 'scheduler-daemon.ts'), 'utf-8');
+    expect(daemonSource).toContain('retentionTimer');
+    expect(daemonSource).toContain('runRetention');
+    // 1-hour cadence
+    expect(daemonSource).toContain('60 * 60 * 1000');
+    // Cleanup on stop()
+    expect(daemonSource).toContain('clearInterval(retentionTimer)');
   });
 });
 
