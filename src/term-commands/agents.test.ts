@@ -14,6 +14,7 @@ import * as executorRegistry from '../lib/executor-registry.js';
 import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
+  OwnerSpawnCollisionError,
   RecoverAgentNotFoundError,
   buildInitialSplitWindowCommand,
   buildResumeContext,
@@ -870,6 +871,117 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       const a = await registry.get('engineer-2');
       expect(a?.team).toBe(teamA);
       expect(a?.paneId).toBe('%67');
+    });
+  });
+
+  // Regression for owner-spawn identity collision (2026-04-28 04:05):
+  // `genie spawn genie --team genie` cloned the orchestrator-genie's identity
+  // because findDeadResumable's alive-pane branch silently returned null →
+  // resolveSpawnIdentity created a parallel that ended up duplicating the
+  // owner's name. The contract below pins findDeadResumable's owner-aware
+  // throw on alive + kind='permanent'.
+  describe('findDeadResumable: owner-collision throw', () => {
+    const alwaysAlive = async () => true;
+    const alwaysDead = async () => false;
+
+    /** Mark an existing canonical row as a task spawn (kind='task') by
+     * pointing reports_to at a parent. The kind column is GENERATED, so
+     * this is the only path to flip it. */
+    async function makeTaskKind(id: string, parentId: string): Promise<void> {
+      const { getConnection } = await import('../lib/db.js');
+      const sql = await getConnection();
+      await sql`UPDATE agents SET reports_to = ${parentId} WHERE id = ${id}`;
+    }
+
+    test('throws OwnerSpawnCollisionError when alive canonical has kind=permanent', async () => {
+      const team = `team-owner-throw-${Date.now()}`;
+      await seedCanonical('genie', team, {
+        paneId: '%66',
+        state: 'idle',
+        role: 'genie',
+        provider: 'claude',
+        transport: 'tmux',
+        claudeSessionId: 'orch-session-aaaa-bbbb-cccc-dddddddddddd',
+      });
+
+      let caught: unknown = null;
+      try {
+        await findDeadResumable(team, 'genie', alwaysAlive);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(OwnerSpawnCollisionError);
+      const err = caught as OwnerSpawnCollisionError;
+      expect(err.ownerName).toBe('genie');
+      expect(err.team).toBe(team);
+      expect(err.conflictId).toBe('genie');
+      expect(err.conflictPaneId).toBe('%66');
+      expect(err.conflictState).toBe('idle');
+    });
+
+    test('does NOT throw when canonical pane is dead — returns it for resume', async () => {
+      const team = `team-owner-dead-${Date.now()}`;
+      await seedCanonical('genie', team, {
+        paneId: '%67',
+        state: 'error',
+        role: 'genie',
+        provider: 'claude',
+        transport: 'tmux',
+        claudeSessionId: 'orch-session-dead-bbbb-cccc-dddddddddddd',
+      });
+
+      // Dead pane → returns the candidate so the caller can resume it.
+      // No throw, no parallel-creation path needed.
+      const found = await findDeadResumable(team, 'genie', alwaysDead);
+      expect(found).not.toBeNull();
+      expect(found?.id).toBe('genie');
+    });
+
+    test('does NOT throw when alive candidate has kind=task (non-owner)', async () => {
+      const team = `team-owner-task-${Date.now()}`;
+      // Seed a parent owner so the child has a valid reports_to FK target.
+      await seedCanonical('lead', team, { paneId: '%50', state: 'idle', role: 'lead' });
+      await seedCanonical('engineer', team, {
+        paneId: '%51',
+        state: 'idle',
+        role: 'engineer',
+        provider: 'claude',
+        transport: 'tmux',
+        claudeSessionId: 'engineer-session-eeee-ffff-0000-111111111111',
+      });
+      await makeTaskKind('engineer', 'lead');
+
+      // Alive engineer with kind='task' → owner-collision branch skipped,
+      // alive-pane fallback returns null (caller falls through to spawn
+      // state machine, which handles the kind='task' duplicate via
+      // findOrCreateAgent ON CONFLICT).
+      const found = await findDeadResumable(team, 'engineer', alwaysAlive);
+      expect(found).toBeNull();
+    });
+
+    test('does NOT throw when --role override drops owner out of prefilter', async () => {
+      // `genie spawn genie --role genie-clone --team genie` is the canonical
+      // escape hatch. handleWorkerSpawn passes effectiveRole='genie-clone'
+      // here, so the owner row (role='genie') drops out of the prefilter and
+      // findDeadResumable returns null — no collision check, no throw.
+      const team = `team-owner-role-bypass-${Date.now()}`;
+      await seedCanonical('genie', team, {
+        paneId: '%66',
+        state: 'idle',
+        role: 'genie',
+        provider: 'claude',
+        transport: 'tmux',
+        claudeSessionId: 'orch-session-bypass-aaaa-bbbb-cccccccccccc',
+      });
+
+      const found = await findDeadResumable(team, 'genie-clone', alwaysAlive);
+      expect(found).toBeNull();
+    });
+
+    test('does NOT throw on fresh spawn — no candidate to compare', async () => {
+      const team = `team-owner-fresh-${Date.now()}`;
+      const found = await findDeadResumable(team, 'genie', alwaysAlive);
+      expect(found).toBeNull();
     });
   });
 });

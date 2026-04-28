@@ -1428,6 +1428,30 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
 }
 
 /**
+ * Typed error thrown by `findDeadResumable` when a fresh `<name>` spawn would
+ * clone an alive owner agent's identity (`kind = 'permanent'`). Caller
+ * (`handleWorkerSpawn`) catches this and prints a helpful error directing
+ * the user to use `--role` to carve out a separate identity.
+ *
+ * Empirical incident 2026-04-28 04:05: `genie spawn genie --team genie`
+ * cloned the orchestrator-genie's identity because the alive-pane branch in
+ * `findDeadResumable` returned `null` (silently fell through to parallel
+ * creation), instead of refusing the collision.
+ */
+export class OwnerSpawnCollisionError extends Error {
+  override readonly name = 'OwnerSpawnCollisionError';
+  constructor(
+    readonly ownerName: string,
+    readonly team: string,
+    readonly conflictId: string,
+    readonly conflictPaneId: string,
+    readonly conflictState: string,
+  ) {
+    super(`owner agent "${ownerName}" already alive in team "${team}"`);
+  }
+}
+
+/**
  * Find a dead worker with a resumable Claude session for the given role/team.
  * Must run BEFORE rejectDuplicateRole which would unregister the dead worker
  * and lose the claudeSessionId needed for resume.
@@ -1436,9 +1460,25 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
  * their id), so `findDeadResumable(team, name)` filters them out — parallels
  * are resumable only by their full id (`genie spawn <name>-<sN>`).
  *
- * Exported for unit testing the "parallels off auto-resume path" invariant.
+ * Owner-collision contract: when the resumable candidate's pane is alive AND
+ * `kind = 'permanent'`, throw `OwnerSpawnCollisionError` instead of silently
+ * returning null. Owner identities are exclusive — the alive orchestrator
+ * holds the name; a fresh spawn would clone its identity. The caller refuses
+ * the spawn and surfaces the error message. An explicit `--role <other>`
+ * bypasses naturally because `effectiveRole` no longer matches the owner's
+ * `role`, dropping it out of the prefilter.
+ *
+ * `isAliveFn` is injected so unit tests can exercise alive/dead branches
+ * without real tmux — same pattern as `resolveSpawnIdentity`.
+ *
+ * Exported for unit testing the "parallels off auto-resume path" invariant
+ * and the owner-collision throw.
  */
-export async function findDeadResumable(team: string, role: string): Promise<registry.Agent | null> {
+export async function findDeadResumable(
+  team: string,
+  role: string,
+  isAliveFn: (paneId: string) => Promise<boolean> = isPaneAliveOrDead,
+): Promise<registry.Agent | null> {
   const existing = await registry.list();
   // Resume currently only supports tmux transport (resumeAgent hard-requires
   // process.env.TMUX + createTmuxPane). A stale `transport: 'inline'` row
@@ -1464,8 +1504,14 @@ export async function findDeadResumable(team: string, role: string): Promise<reg
   if (!candidate) return null;
   // `isPaneAliveOrDead` swallows TmuxUnreachableError → dead, so a zombie
   // tmux socket doesn't crash the spawn path.
-  const alive = await isPaneAliveOrDead(candidate.paneId);
-  return alive ? null : candidate;
+  const alive = await isAliveFn(candidate.paneId);
+  if (alive) {
+    if (candidate.kind === 'permanent') {
+      throw new OwnerSpawnCollisionError(role, team, candidate.id, candidate.paneId, candidate.state);
+    }
+    return null;
+  }
+  return candidate;
 }
 
 /**
@@ -2115,6 +2161,30 @@ async function resolveTeamAndResume(
   return { team, teamWasExplicit };
 }
 
+/**
+ * Wrap `resolveTeamAndResume` so the owner-collision throw from
+ * `findDeadResumable` becomes a clean error message + exit(1), not a CLI
+ * stack trace. Keeps `handleWorkerSpawn`'s cyclomatic complexity at the
+ * pre-existing budget — the catch lives here, not inline at the call site.
+ */
+async function resolveTeamAndResumeOrExit(
+  effectiveRole: string,
+  options: SpawnOptions,
+  agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
+): Promise<{ team: string; teamWasExplicit: boolean; resumed?: string }> {
+  try {
+    return await resolveTeamAndResume(effectiveRole, options, agent);
+  } catch (err) {
+    if (err instanceof OwnerSpawnCollisionError) {
+      console.error(
+        `Error: owner agent "${err.ownerName}" already alive in team "${err.team}" (id: ${err.conflictId}, pane: ${err.conflictPaneId}, state: ${err.conflictState}).\nOwner identities are exclusive — to spawn a separate worker under the same template, use --role <custom-name>:\n  genie spawn ${err.ownerName} --role ${err.ownerName}-2 --team ${err.team}`,
+      );
+      return process.exit(1) as never;
+    }
+    throw err;
+  }
+}
+
 export async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<string> {
   // Effective role: suffixed name for registration/duplicate-check, original name for directory lookup
   let effectiveRole = options.role ?? name;
@@ -2126,7 +2196,15 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   // `agent` is passed through so template-pinned teams (agent.entry.team) take
   // precedence over GENIE_TEAM / discoverTeamName — preserves canonical-UUID invariant
   // when spawning from a tmux session that does not match the agent's home team.
-  const { team, teamWasExplicit, resumed } = await resolveTeamAndResume(effectiveRole, options, agent);
+  // Owner-collision guard lives inside `findDeadResumable` (called by
+  // `resolveTeamAndResume`): when the resumable candidate is alive AND
+  // `kind = 'permanent'`, it throws `OwnerSpawnCollisionError` instead of
+  // silently falling through to parallel creation. `resolveTeamAndResumeOrExit`
+  // catches + formats so the user sees a helpful message + clean exit (not a
+  // CLI stack trace). Explicit `--role <other>` bypasses naturally because
+  // the owner's role no longer matches `effectiveRole` and the candidate drops
+  // out of the findDeadResumable prefilter.
+  const { team, teamWasExplicit, resumed } = await resolveTeamAndResumeOrExit(effectiveRole, options, agent);
   if (resumed) return resumed;
 
   // 2b. Spawn state machine — branch on canonical liveness (authority: wish
