@@ -181,6 +181,82 @@ describe('handler chain behavior', () => {
   });
 });
 
+describe('UserPromptSubmit dispatch flow', () => {
+  const originalEnv = { ...process.env };
+  let originalDeps: { findCodexAgent: unknown; fetchUnread: unknown; markReadBatch: unknown };
+
+  beforeEach(async () => {
+    process.env.GENIE_AGENT_NAME = 'codex-eng';
+    process.env.GENIE_TEAM = 'test-team';
+    process.env.NODE_ENV = undefined;
+    process.env.BUN_ENV = undefined;
+    const mod = await import('../handlers/codex-inbox-deliver.js');
+    originalDeps = { ...mod._deps };
+  });
+
+  afterEach(async () => {
+    process.env = { ...originalEnv };
+    const mod = await import('../handlers/codex-inbox-deliver.js');
+    mod._deps.findCodexAgent = originalDeps.findCodexAgent as typeof mod._deps.findCodexAgent;
+    mod._deps.fetchUnread = originalDeps.fetchUnread as typeof mod._deps.fetchUnread;
+    mod._deps.markReadBatch = originalDeps.markReadBatch as typeof mod._deps.markReadBatch;
+  });
+
+  test('codex inbox deliver additionalContext surfaces as hookSpecificOutput', async () => {
+    const mod = await import('../handlers/codex-inbox-deliver.js');
+    mod._deps.findCodexAgent = async () => ({
+      id: 'agent-uuid',
+      role: 'codex-eng',
+      customName: 'codex-eng',
+      repoPath: '/repo',
+      provider: 'codex',
+    });
+    mod._deps.fetchUnread = async () => [
+      {
+        id: 'msg-1',
+        from: 'operator',
+        to: 'codex-eng',
+        body: 'pong test',
+        createdAt: '2026-04-28T00:00:00Z',
+        read: false,
+        deliveredAt: null,
+        source: 'agent',
+        meta: {},
+      },
+    ];
+    mod._deps.markReadBatch = async () => 1;
+
+    const payload = {
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'session-1',
+      cwd: '/repo',
+      prompt: 'hi',
+    };
+    const raw = await dispatch(JSON.stringify(payload));
+    expect(raw).not.toBe('');
+    const parsed = JSON.parse(raw);
+    expect(parsed.hookSpecificOutput).toBeDefined();
+    expect(parsed.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
+    expect(parsed.hookSpecificOutput.additionalContext).toBe('pong test');
+  });
+
+  test('UserPromptSubmit returns empty when no codex agent matches (no hookSpecificOutput)', async () => {
+    const mod = await import('../handlers/codex-inbox-deliver.js');
+    mod._deps.findCodexAgent = async () => null;
+    mod._deps.fetchUnread = async () => [];
+    mod._deps.markReadBatch = async () => 0;
+
+    const payload = {
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'session-1',
+      cwd: '/repo',
+      prompt: 'hi',
+    };
+    const raw = await dispatch(JSON.stringify(payload));
+    expect(raw).toBe('');
+  });
+});
+
 describe('runHandler crash behavior', () => {
   const crashingHandler: Handler = {
     name: 'crashing-handler',
