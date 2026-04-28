@@ -139,6 +139,8 @@ Worktrees share the main repo's `.genie/` via `git rev-parse --git-common-dir`. 
 | `CLAUDECODE=1` | Enables Claude Code features (set in team-lead command) |
 | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` | Enables native teammate UI |
 | `GENIE_IDLE_TIMEOUT_MS` | Auto-suspend idle workers after N ms |
+| `GENIE_OTEL_PORT` | Pins the Claude OTel receiver to one explicit port; if busy, genie skips telemetry injection instead of probing |
+| `GENIE_OTEL_PORT_PROBE_MAX` | Number of receiver ports to probe in default mode, starting at pgserve port + 1; defaults to 8 |
 
 `GENIE_AGENT_NAME` and the 5 native team CLI flags must stay in sync — if any are missing, Claude Code won't recognize the agent as a team member.
 
