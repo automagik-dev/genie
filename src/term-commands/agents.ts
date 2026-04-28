@@ -1867,6 +1867,20 @@ export function resolveAgentWorkingDir(entry: directory.DirectoryEntry, explicit
   return process.cwd();
 }
 
+export function buildDirectoryPermissionSpawnParams(
+  entry: directory.DirectoryEntry,
+): Pick<SpawnParams, 'permissions' | 'disallowedTools'> {
+  const permissions =
+    entry.permissions?.allow?.length || entry.permissions?.deny?.length
+      ? { allow: entry.permissions.allow, deny: entry.permissions.deny }
+      : undefined;
+
+  return {
+    ...(permissions ? { permissions } : {}),
+    ...(entry.disallowedTools ? { disallowedTools: entry.disallowedTools } : {}),
+  };
+}
+
 /** Build SpawnParams from resolved agent + options. */
 async function buildSpawnParams(
   name: string,
@@ -1896,6 +1910,9 @@ async function buildSpawnParams(
     initialPrompt: options.prompt ?? options.initialPrompt,
     newWindow: options.newWindow,
     windowTarget: options.window,
+    // #1449: keep canonical tmux spawn aligned with buildOmniSpawnParams()
+    // so agent.yaml allow/deny rules reach Claude's --settings payload.
+    ...buildDirectoryPermissionSpawnParams(agent.entry),
   };
 
   // owner-vs-meeseeks gate: propagate the identity-spawn signal so
