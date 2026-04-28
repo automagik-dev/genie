@@ -206,3 +206,14 @@ describe('buildSdkConfig', () => {
     });
   });
 });
+
+describe('dir command CLI surface', () => {
+  test('source declares both `ls` and `list` aliases for the list subcommand', () => {
+    const source = require('node:fs').readFileSync(require('node:path').join(__dirname, 'dir.ts'), 'utf-8');
+    // The `ls` form is the canonical command; `list` is registered via .alias()
+    // so both `genie dir ls` and `genie dir list` work and resolve to the same
+    // action handler. Closes #1465 (genie dir list exited 1 because the
+    // alias was missing).
+    expect(source).toMatch(/\.command\(['"]ls \[name\]['"]\)\s*\.alias\(['"]list['"]\)/);
+  });
+});
