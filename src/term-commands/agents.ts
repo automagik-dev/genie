@@ -1515,8 +1515,17 @@ export async function findDeadResumable(
 }
 
 /**
- * Reject spawn if a live worker with the same role already exists in the team.
+ * Reject spawn if a live worker collides with the requested role in the team.
  * Dead/suspended workers (pane gone) are auto-cleaned from registry — only live panes block.
+ *
+ * Two collision shapes are refused:
+ *   1. role match — a live row already carries `role === requested role` (the
+ *      legacy `--role <X> --role <X>` duplicate guard).
+ *   2. bare-name match — a live row has `id === requested role`. Dogfood
+ *      2026-04-28 caught `genie spawn engineer --role genie-0ca8` succeeding
+ *      while alive canonical `genie-0ca8` carried `role='genie'`; the role-only
+ *      check missed the identity collision and two PG rows landed with
+ *      `role='genie-0ca8'` so `genie ls --json` dedup hid the canonical.
  *
  * Transport-aware liveness (see `resolveWorkerLivenessByTransport`): for
  * non-tmux transports (SDK, omni, inline) the paneId is synthetic and
@@ -1524,41 +1533,47 @@ export async function findDeadResumable(
  * a live SDK agent. Dispatches by paneId shape so SDK/omni/inline rows are
  * checked via `executors.state` instead.
  */
-async function rejectDuplicateRole(team: string, role: string): Promise<void> {
+export async function rejectDuplicateRole(team: string, role: string): Promise<void> {
   const existing = await registry.list();
   for (const w of existing) {
-    if (w.role === role && w.team === team) {
-      const alive = await executorRegistry.resolveWorkerLivenessByTransport(w);
-      // tmux recycles pane IDs — a pane may be "alive" but belong to a
-      // completely different session now. Verify the pane is still in the
-      // expected session before blocking. Only applies to real tmux panes;
-      // synthetic paneIds (sdk/inline/'') never collide with a recycled pane.
-      if (alive && w.session && /^%\d+$/.test(w.paneId)) {
-        const paneSession = await getPaneSession(w.paneId);
-        if (paneSession !== w.session) {
-          // Pane was recycled — treat as dead
-          await registry.unregister(w.id);
-          continue;
-        }
-        console.error(
-          `Error: Worker with role "${role}" already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
-            `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
-        );
-        process.exit(1);
-      }
-      // Live SDK/omni/inline row — block the duplicate without a session-recycle
-      // check, since synthetic paneIds cannot be recycled by tmux.
-      if (alive) {
-        console.error(
-          `Error: Worker with role "${role}" already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
-            `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
-        );
-        process.exit(1);
-      }
-      // Dead worker with same role — clean up stale registry entry so spawn can proceed
-      await registry.unregister(w.id);
+    if (w.team !== team) continue;
+    const matchesRole = w.role === role;
+    const matchesName = w.id === role;
+    if (!matchesRole && !matchesName) continue;
+    const verdict = await classifyCollisionLiveness(w);
+    if (verdict === 'alive') {
+      const collisionLabel = matchesName && !matchesRole ? `name "${w.id}"` : `role "${role}"`;
+      console.error(
+        `Error: Worker with ${collisionLabel} already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
+          `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
+      );
+      process.exit(1);
     }
+    // 'dead' or 'recycled' → clean up stale registry entry so spawn can proceed.
+    await registry.unregister(w.id);
   }
+}
+
+/**
+ * Classify a collision candidate by liveness, accounting for tmux pane recycling.
+ *
+ * - `alive`: pane/transport is live AND (synthetic paneId OR the tmux pane is
+ *   still in the expected session). Caller refuses the spawn.
+ * - `recycled`: real tmux paneId returned alive, but the pane now belongs to a
+ *   different session. Caller treats as dead and cleans up the stale row.
+ * - `dead`: liveness probe says dead. Caller cleans up.
+ */
+async function classifyCollisionLiveness(w: registry.Agent): Promise<'alive' | 'recycled' | 'dead'> {
+  const alive = await executorRegistry.resolveWorkerLivenessByTransport(w);
+  if (!alive) return 'dead';
+  // tmux recycles pane IDs — a pane may be "alive" but belong to a completely
+  // different session now. Synthetic paneIds (sdk/inline/'') never collide
+  // with a recycled pane, so the recycle probe only applies to real `%N` ids.
+  if (w.session && /^%\d+$/.test(w.paneId)) {
+    const paneSession = await getPaneSession(w.paneId);
+    if (paneSession !== w.session) return 'recycled';
+  }
+  return 'alive';
 }
 
 /** Get the session name a pane belongs to, or null if unreachable. */

@@ -22,6 +22,7 @@ import {
   findDeadResumable,
   pickParallelShortId,
   recoverSurgery,
+  rejectDuplicateRole,
   resolveAgentWorkingDir,
   resolveSpawnIdentity,
   resolveTeamName,
@@ -982,6 +983,53 @@ describe.skipIf(!DB_AVAILABLE)('spawn state machine', () => {
       const team = `team-owner-fresh-${Date.now()}`;
       const found = await findDeadResumable(team, 'genie', alwaysAlive);
       expect(found).toBeNull();
+    });
+  });
+
+  // Regression for dogfood gap (release 4.260428.10):
+  // `genie spawn engineer --team genie --role genie-0ca8` was NOT refused while
+  // alive canonical genie-0ca8 carried role='genie' — #1442's findDeadResumable
+  // guard checked role-of-existing-row vs effective-role-of-spawn, and the
+  // role-only branch in rejectDuplicateRole missed the bare-name collision.
+  // Two PG rows landed with role='genie-0ca8' and `genie ls --json` dedup hid
+  // the canonical. Extension: also refuse when --role matches an alive
+  // canonical's bare name (id) in the same team.
+  describe('rejectDuplicateRole: bare-name collision', () => {
+    test('refuses --role <X> when alive canonical id=X exists in same team (regardless of canonical role)', async () => {
+      const team = `team-name-collision-${Date.now()}`;
+      // Seed an alive canonical whose ID is the bare name `genie-0ca8` but
+      // whose role is `genie` — mirrors the dogfood state where the
+      // orchestrator was registered under a bare name distinct from its role.
+      await seedCanonical('genie-0ca8', team, {
+        paneId: 'inline-orch', // synthetic paneId → liveness via executor.state, not tmux probe
+        state: 'idle',
+        role: 'genie',
+        provider: 'claude',
+        transport: 'inline',
+        claudeSessionId: 'orch-name-collision-aaaa-bbbb-cccccccccccc',
+      });
+
+      const originalExit = process.exit;
+      const originalConsoleError = console.error;
+      let exitCode: number | undefined;
+      let captured = '';
+      process.exit = ((code?: number) => {
+        exitCode = code;
+        throw new Error('process.exit stub');
+      }) as never;
+      console.error = (msg?: unknown) => {
+        captured += String(msg ?? '');
+      };
+
+      try {
+        await expect(rejectDuplicateRole(team, 'genie-0ca8')).rejects.toThrow(/process.exit stub/);
+        expect(exitCode).toBe(1);
+        expect(captured).toMatch(/name "genie-0ca8"/);
+        expect(captured).toMatch(/already exists in team "/);
+      } finally {
+        process.exit = originalExit;
+        console.error = originalConsoleError;
+      }
     });
   });
 });
