@@ -12,25 +12,30 @@ done
 # Strip git env inherited from the push so tests that spawn git in tmpdirs work
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_QUARANTINE_PATH GIT_PREFIX GIT_INTERNAL_GETTEXT_SH_SCHEME
 
-# Serialize `bun test` invocations across the host. The repo's PG-integration
-# tests share a single test pgserve daemon (port 20900 by design — see
-# src/lib/test-setup.ts). When multiple `bun test` processes race against the
-# same daemon (another agent's pre-push hook, an interactive `bun test` in a
-# sibling tmux pane, a CI shard run on the same host, etc.) the failure
-# profile becomes nondeterministic: 5 fails, 9 fails, 22 fails, 438 fails are
-# all reproducible run-to-run with no source changes — observed directly
-# while diagnosing this. The race is on the shared template DB clone path,
-# resource limits inside pgserve, and process-level `GENIE_TEST_DB_NAME`
-# being set per-run from concurrent setupTestDatabase() callers.
+# Pre-push gate runs the FAST, deterministic checks only —
+# typecheck, lint, dead-code, skills/wishes lint, lint:emit. The full
+# `bun test` suite is delegated to CI.
 #
-# `flock` on a host-wide sentinel file makes hooks line up instead of fight.
-# The wait blocks the offending push; the lock is held only for the duration
-# of `bun run check` (~2-3 minutes), then released on EXIT.
-LOCK_FILE=/tmp/genie-bun-test.lock
-if command -v flock >/dev/null 2>&1; then
-  echo "▶ pre-push: acquiring host-wide bun-test lock ($LOCK_FILE) — waits if another bun test is in flight..."
-  exec 9>"$LOCK_FILE"
-  flock 9
-  trap 'flock -u 9' EXIT
-fi
-bun run check
+# Why: the repo's PG-integration tests share a single test pgserve
+# daemon (port 20900 by design — see src/lib/test-setup.ts). When
+# multiple agents on the same host run `bun test` simultaneously
+# (another agent's pre-push, an interactive bun test in a sibling
+# tmux pane, a CI shard run on the same host, etc.) the failure
+# profile becomes nondeterministic: 5 fails, 9 fails, 22 fails, 318
+# fails, 438 fails were all reproducible run-to-run with no source
+# changes — observed directly while diagnosing. The race is on the
+# shared template DB clone path, resource limits inside pgserve, and
+# process-level `GENIE_TEST_DB_NAME` being set per-run from concurrent
+# setupTestDatabase() callers. `GENIE_TEST_SKIP_PGSERVE=1` was
+# attempted as a softer fix but the surviving DB-touching tests still
+# tried to connect (DB_AVAILABLE defaults to true outside CI) so the
+# connection errors flooded with 250+ failures regardless.
+#
+# Pre-push must remain a fast, deterministic gate. CI runs every
+# `bun test` in a clean ephemeral pgserve per job — no cross-agent
+# contention there. Anything CI catches but pre-push doesn't is a
+# correct trade: pre-push regains determinism, integration coverage
+# stays on CI where it can run hermetically.
+echo "▶ pre-push: fast gates (typecheck + lint + dead-code + skills/wishes lint)"
+echo "  full test suite runs in CI (pgserve isolation per job)"
+bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:emit
