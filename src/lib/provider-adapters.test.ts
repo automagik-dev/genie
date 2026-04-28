@@ -2,7 +2,7 @@
  * Provider Adapters — Unit Tests
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import {
   type SpawnParams,
   buildClaudeCommand,
@@ -10,6 +10,36 @@ import {
   buildLaunchCommand,
   validateSpawnParams,
 } from './provider-adapters.js';
+import { CodexProvider } from './providers/codex.js';
+
+const CODEX_PROMPT_TEST_DIR = '/tmp/genie-codex-prompts';
+const CODEX_SOURCE_PROMPT_TEST_DIR = '/tmp/genie-codex-source-prompts';
+
+function resetCodexPromptTestDirs(): void {
+  const { rmSync } = require('node:fs') as typeof import('node:fs');
+  rmSync(CODEX_PROMPT_TEST_DIR, { recursive: true, force: true });
+  rmSync(CODEX_SOURCE_PROMPT_TEST_DIR, { recursive: true, force: true });
+}
+
+function writeCodexSourcePromptFile(name: string, content: string): string {
+  const { mkdirSync, writeFileSync } = require('node:fs') as typeof import('node:fs');
+  const { join } = require('node:path') as typeof import('node:path');
+  mkdirSync(CODEX_SOURCE_PROMPT_TEST_DIR, { recursive: true });
+  const path = join(CODEX_SOURCE_PROMPT_TEST_DIR, name);
+  writeFileSync(path, content, 'utf-8');
+  return path;
+}
+
+function codexPromptPathFromCommand(command: string): string {
+  const match = command.match(/"\$\(cat '([^']+)'\)"/);
+  expect(match).toBeTruthy();
+  return match![1];
+}
+
+function codexPromptContentFromCommand(command: string): string {
+  const { readFileSync } = require('node:fs') as typeof import('node:fs');
+  return readFileSync(codexPromptPathFromCommand(command), 'utf-8');
+}
 
 // ============================================================================
 // Validation Tests (Group A)
@@ -308,8 +338,12 @@ describe('buildCodexCommand', () => {
     (Bun as Record<string, unknown>).which = (name: string) =>
       name === 'codex' ? '/usr/local/bin/codex' : typeof originalWhich === 'function' ? originalWhich(name) : null;
   });
+  beforeEach(() => {
+    resetCodexPromptTestDirs();
+  });
   afterAll(() => {
     (Bun as Record<string, unknown>).which = originalWhich;
+    resetCodexPromptTestDirs();
   });
 
   it('builds command with positional prompt for skill', () => {
@@ -344,10 +378,74 @@ describe('buildCodexCommand', () => {
     expect(result.command).toContain('Role: tester');
   });
 
+  it('includes --model flag when model is set', () => {
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      skill: 'work',
+      model: 'gpt-5-codex',
+    });
+    expect(result.command).toContain("--model 'gpt-5-codex'");
+  });
+
+  it('writes systemPromptFile content to a temp prompt file referenced by command', () => {
+    const systemPromptFile = writeCodexSourcePromptFile('AGENTS.md', 'AGENTS instructions for Codex');
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      executorId: '11111111-2222-3333-4444-555555555555',
+      systemPromptFile,
+    });
+
+    const promptPath = codexPromptPathFromCommand(result.command);
+    expect(promptPath).toBe(`${CODEX_PROMPT_TEST_DIR}/11111111-2222-3333-4444-555555555555.txt`);
+    expect(result.command).toContain(`"$(cat '${promptPath}')"`);
+    expect(result.command).not.toContain(systemPromptFile);
+    expect(codexPromptContentFromCommand(result.command)).toBe('AGENTS instructions for Codex');
+  });
+
+  it('writes inline systemPrompt to a temp prompt file', () => {
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      executorId: '22222222-2222-3333-4444-555555555555',
+      systemPrompt: 'Inline system prompt for a built-in agent',
+    });
+
+    expect(codexPromptContentFromCommand(result.command)).toBe('Inline system prompt for a built-in agent');
+    expect(result.command).not.toContain('Inline system prompt for a built-in agent');
+  });
+
+  it('consumes prompt-file extraArgs and strips them from the codex command', () => {
+    const appendPromptFile = writeCodexSourcePromptFile('append.md', 'append prompt file');
+    const systemPromptFile = writeCodexSourcePromptFile('system.md', 'system prompt file');
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      executorId: '33333333-2222-3333-4444-555555555555',
+      extraArgs: [
+        '--sandbox',
+        'workspace-write',
+        '--append-system-prompt-file',
+        appendPromptFile,
+        '--system-prompt-file',
+        systemPromptFile,
+      ],
+    });
+
+    expect(result.command).toContain('--sandbox');
+    expect(result.command).toContain('workspace-write');
+    expect(result.command).not.toContain('--append-system-prompt-file');
+    expect(result.command).not.toContain('--system-prompt-file');
+    expect(result.command).not.toContain(appendPromptFile);
+    expect(result.command).not.toContain(systemPromptFile);
+    expect(codexPromptContentFromCommand(result.command)).toBe('append prompt file\n\nsystem prompt file');
+  });
+
   // Group 11 (codex-provider-parity): codex spawn must honor --prompt
   // (params.initialPrompt) as the worker's first user message, not
   // override it with the auto-generated "Genie worker. Team: X." string.
-  it('honors initialPrompt verbatim when provided (Group 11)', () => {
+  it('honors initialPrompt via temp prompt file when provided (Group 11)', () => {
     const customPrompt = 'Implement Group 7 of security-install-download-guard wish';
     const result = buildCodexCommand({
       provider: 'codex',
@@ -355,13 +453,28 @@ describe('buildCodexCommand', () => {
       role: 'sec-install-guard-codex',
       initialPrompt: customPrompt,
     });
-    // Custom prompt is used verbatim
-    expect(result.command).toContain(customPrompt);
+    // Custom prompt is used verbatim via a temp file, not inline.
+    expect(codexPromptContentFromCommand(result.command)).toBe(customPrompt);
+    expect(result.command).not.toContain(customPrompt);
     // Auto-generated prompt is NOT used when initialPrompt is supplied
     expect(result.command).not.toContain('Genie worker. Team: work');
   });
 
-  it('falls back to auto-prompt when initialPrompt is empty/absent', () => {
+  it('preserves initialPrompt newlines, quotes, and backticks in a temp file without inlining it', () => {
+    const customPrompt =
+      'Line 1 "quoted"\nLine 2 with `backticks`\nLine 3: $(echo should-not-run)\nSingle quote: \'ok\'';
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      executorId: '44444444-2222-3333-4444-555555555555',
+      initialPrompt: customPrompt,
+    });
+
+    expect(codexPromptContentFromCommand(result.command)).toBe(customPrompt);
+    expect(result.command).not.toContain(customPrompt);
+  });
+
+  it('falls back to auto-prompt when no prompt fields are set and writes no temp file', () => {
     // Backward compat: spawn-without-prompt produces the same auto-string
     // as before the Group 11 change.
     const result = buildCodexCommand({
@@ -372,6 +485,28 @@ describe('buildCodexCommand', () => {
     });
     expect(result.command).toContain('Genie worker. Team: work.');
     expect(result.command).toContain('Role: tester.');
+    expect(result.command).not.toContain(CODEX_PROMPT_TEST_DIR);
+    const { existsSync } = require('node:fs') as typeof import('node:fs');
+    expect(existsSync(CODEX_PROMPT_TEST_DIR)).toBe(false);
+  });
+
+  it('round-trips CodexProvider systemPromptFile and initialPrompt into the rendered command', () => {
+    const systemPromptFile = writeCodexSourcePromptFile('provider-AGENTS.md', 'provider AGENTS content');
+    const provider = new CodexProvider();
+    const result = provider.buildSpawnCommand({
+      agentId: 'agent-001',
+      executorId: 'codex-provider-roundtrip',
+      team: 'work',
+      role: 'engineer',
+      cwd: '/tmp',
+      systemPromptFile,
+      initialPrompt: 'Initial Omni turn prompt',
+    });
+
+    expect(result.command).toContain(`"$(cat '${CODEX_PROMPT_TEST_DIR}/codex-provider-roundtrip.txt')"`);
+    expect(result.command).not.toContain(systemPromptFile);
+    expect(result.command).not.toContain('Initial Omni turn prompt');
+    expect(codexPromptContentFromCommand(result.command)).toBe('provider AGENTS content\n\nInitial Omni turn prompt');
   });
 
   it('does not depend on agent-name routing', () => {
