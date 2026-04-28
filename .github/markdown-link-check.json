@@ -9,6 +9,10 @@
     {
       "pattern": "^/",
       "replacement": "{{BASEURL}}/"
+    },
+    {
+      "pattern": "^(\\.\\.?/.+)\\.md(#.*)?$",
+      "replacement": "$1.mdx$2"
     }
   ],
   "httpHeaders": [
