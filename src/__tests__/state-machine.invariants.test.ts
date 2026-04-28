@@ -1,10 +1,10 @@
 /**
  * State-machine invariant tests — Group 6 of invincible-genie wish.
  *
- * These tests convert the contracts in `docs/state-machine.md` into
- * executable assertions. If a test here fails, either the doc is wrong
- * (update it in the same PR) or the invariant has regressed (fix the
- * regression — do not weaken the test).
+ * These tests convert the contracts in `docs/_internal/state-machine.mdx`
+ * into executable assertions. If a test here fails, either the doc is
+ * wrong (update it in the same PR) or the invariant has regressed (fix
+ * the regression — do not weaken the test).
  *
  * Four invariants:
  *
@@ -269,10 +269,12 @@ describe.skipIf(!DB_AVAILABLE)('invariant 4: agents.kind == structural inference
 // ============================================================================
 
 describe('doc/code coupling', () => {
-  test('docs/state-machine.md exists and references the four invariants', () => {
+  test('docs/_internal/state-machine.mdx exists and references the four invariants', () => {
     // Defensive: if the doc was renamed/removed the invariants test should
     // fail loudly. The doc is the contract this test enforces.
-    const direct = execSync('test -f docs/state-machine.md && echo present || echo missing', {
+    // Path migrated from `docs/state-machine.md` to `docs/_internal/state-machine.mdx`
+    // when docs/ became a submodule of automagik-dev/docs (#1426).
+    const direct = execSync('test -f docs/_internal/state-machine.mdx && echo present || echo missing', {
       encoding: 'utf-8',
     }).trim();
     expect(direct).toBe('present');
@@ -286,7 +288,7 @@ describe('doc/code coupling', () => {
       'rehydrate',
       'genie status',
     ];
-    const docContents = execSync('cat docs/state-machine.md', { encoding: 'utf-8' });
+    const docContents = execSync('cat docs/_internal/state-machine.mdx', { encoding: 'utf-8' });
     for (const term of required) {
       expect(docContents).toContain(term);
     }
