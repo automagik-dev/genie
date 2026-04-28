@@ -15,19 +15,59 @@ async function getTaskService(): Promise<typeof taskServiceTypes> {
   return _taskService;
 }
 
+/**
+ * Extract the channel `source` tag from a message-like object. Defaults to
+ * `'agent'` for messages without metadata or with an empty/non-string source.
+ *
+ * Exported for unit tests and future renderers.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: message metadata shape varies across stores
+export function extractSource(msg: any): string {
+  if (!msg || typeof msg !== 'object') return 'agent';
+  const meta = (msg.metadata ?? {}) as Record<string, unknown>;
+  const value = typeof meta.source === 'string' ? meta.source : null;
+  return value && value.length > 0 ? value : 'agent';
+}
+
+/**
+ * Build the human-readable inbox lines for a single conversation/preview pair.
+ * Returns an array of lines (already padded) rather than printing directly so
+ * tests can assert against the rendered shape without capturing stdout.
+ */
 // biome-ignore lint/suspicious/noExplicitAny: conversation + message from dynamic import
-function printConversation(conv: any, lastMsg: any): void {
+export function renderConversation(conv: any, lastMsg: any): string[] {
   const name = conv.name ?? conv.id;
   const type = conv.type === 'dm' ? 'DM' : 'Group';
   const linked = conv.linkedEntity ? ` [${conv.linkedEntity}:${conv.linkedEntityId}]` : '';
   const preview = lastMsg ? truncate(lastMsg.body, 50) : '(no messages)';
   const time = lastMsg ? formatTime(lastMsg.createdAt) : '';
+  const source = extractSource(lastMsg);
+  const sourceTag = source !== 'agent' ? `[${source}] ` : '';
 
-  console.log(`  ${padRight(name, 30)} ${padRight(type, 6)}${linked}`);
+  const lines = [`  ${padRight(name, 30)} ${padRight(type, 6)}${linked}`];
   if (lastMsg) {
-    console.log(`    ${time} ${lastMsg.senderId}: ${preview}`);
+    lines.push(`    ${sourceTag}${time} ${lastMsg.senderId}: ${preview}`);
   }
-  console.log('');
+  lines.push('');
+  return lines;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: conversation + message from dynamic import
+function printConversation(conv: any, lastMsg: any): void {
+  for (const line of renderConversation(conv, lastMsg)) console.log(line);
+}
+
+/**
+ * Build an enriched inbox entry per conversation: the conversation row, its
+ * last message preview (or null), and the channel source/meta surfaced from
+ * the last message's metadata. Pure — exported for tests so callers can
+ * verify JSON output without touching stdout.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: conversation + message from dynamic import
+export function buildInboxEntry(conversation: any, lastMessage: any) {
+  const source = extractSource(lastMessage);
+  const meta = ((lastMessage?.metadata as Record<string, unknown> | undefined) ?? {}) as Record<string, unknown>;
+  return { conversation, lastMessage, source, meta };
 }
 
 async function handleInbox(agent: string | undefined, options: { json?: boolean }): Promise<void> {
@@ -36,12 +76,23 @@ async function handleInbox(agent: string | undefined, options: { json?: boolean 
   const actor: taskServiceTypes.Actor = { actorType: 'local', actorId: resolvedAgent };
   const conversations = await ts.listConversations(actor);
 
+  // Hydrate the last message for every conversation in one pass so JSON and
+  // human renders share the same source-of-truth (and source/meta surface
+  // verbatim in JSON output).
+  const enriched = await Promise.all(
+    conversations.map(async (conv) => {
+      const messages = await ts.getMessages(conv.id, { limit: 1 });
+      const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+      return buildInboxEntry(conv, lastMessage);
+    }),
+  );
+
   if (options.json) {
-    console.log(JSON.stringify(conversations, null, 2));
+    console.log(JSON.stringify(enriched, null, 2));
     return;
   }
 
-  if (conversations.length === 0) {
+  if (enriched.length === 0) {
     console.log(`No conversations for "${resolvedAgent}".`);
     return;
   }
@@ -50,10 +101,8 @@ async function handleInbox(agent: string | undefined, options: { json?: boolean 
   console.log(`INBOX: ${resolvedAgent}`);
   console.log('─'.repeat(60));
 
-  for (const conv of conversations) {
-    const messages = await ts.getMessages(conv.id, { limit: 1 });
-    const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-    printConversation(conv, lastMsg);
+  for (const entry of enriched) {
+    printConversation(entry.conversation, entry.lastMessage);
   }
 }
 
