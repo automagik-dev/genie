@@ -3,7 +3,14 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { getTuiKeybindings, getTuiQuitBindingArgs } from './serve.js';
+import {
+  autoStartServe,
+  clearStoppingLock,
+  getTuiKeybindings,
+  getTuiQuitBindingArgs,
+  isStoppingLockActive,
+  writeStoppingLockSync,
+} from './serve.js';
 
 describe('getTuiKeybindings', () => {
   test('includes explicit left and right pane focus bindings', () => {
@@ -220,5 +227,168 @@ describe('serve lifecycle — bridge failure + shutdown', () => {
     // Strict mode uses the old FAILED messaging
     expect(combined).toContain('Omni bridge: FAILED');
     expect(combined).not.toContain('Omni bridge: degraded');
+  }, 30_000);
+});
+
+// ============================================================================
+// Stopping sentinel — Defect 1 (autoStartServe cascade)
+//
+// `serve stop` writes ~/.genie/serve.stopping.lock before SIGTERM. While the
+// lock is active, autoStartServe must refuse to spawn a new daemon — even
+// when isServeRunning() is false. The lock has a TTL so a crashed stop
+// cannot brick autostart.
+// ============================================================================
+
+describe('stopping sentinel', () => {
+  let originalGenieHome: string | undefined;
+
+  beforeEach(() => {
+    originalGenieHome = process.env.GENIE_HOME;
+    process.env.GENIE_HOME = genieHome;
+  });
+
+  afterEach(() => {
+    if (originalGenieHome === undefined) {
+      // Assigning `undefined` would store the literal string "undefined" in
+      // process.env (Node coerces env values to strings); `delete` is the
+      // only way to fully remove the variable.
+      // biome-ignore lint/performance/noDelete: env vars must actually be removed
+      delete process.env.GENIE_HOME;
+    } else {
+      process.env.GENIE_HOME = originalGenieHome;
+    }
+  });
+
+  test('writeStoppingLockSync creates a non-empty sentinel that isStoppingLockActive recognises', () => {
+    expect(isStoppingLockActive()).toBe(false);
+    writeStoppingLockSync();
+    expect(existsSync(join(genieHome, 'serve.stopping.lock'))).toBe(true);
+    expect(isStoppingLockActive()).toBe(true);
+    clearStoppingLock();
+    expect(existsSync(join(genieHome, 'serve.stopping.lock'))).toBe(false);
+    expect(isStoppingLockActive()).toBe(false);
+  });
+
+  test('expired lock is treated as absent and cleaned up', () => {
+    // Negative TTL → expiry timestamp is in the past.
+    writeStoppingLockSync(-1_000);
+    expect(existsSync(join(genieHome, 'serve.stopping.lock'))).toBe(true);
+    expect(isStoppingLockActive()).toBe(false);
+    // isStoppingLockActive removes the corrupt/expired file.
+    expect(existsSync(join(genieHome, 'serve.stopping.lock'))).toBe(false);
+  });
+
+  test('corrupt sentinel content is treated as expired and removed', () => {
+    mkdirSync(genieHome, { recursive: true });
+    writeFileSync(join(genieHome, 'serve.stopping.lock'), 'not-a-number', 'utf-8');
+    expect(isStoppingLockActive()).toBe(false);
+    expect(existsSync(join(genieHome, 'serve.stopping.lock'))).toBe(false);
+  });
+
+  test('autoStartServe returns immediately while sentinel is active and never writes a PID file', async () => {
+    writeStoppingLockSync();
+    const before = Date.now();
+    await autoStartServe();
+    const elapsed = Date.now() - before;
+    // Must short-circuit; the spawn-and-poll path takes >=500 ms even on the
+    // happy path. < 200 ms is well below that threshold.
+    expect(elapsed).toBeLessThan(200);
+    // No PID file means we did not spawn the daemon.
+    expect(existsSync(join(genieHome, 'serve.pid'))).toBe(false);
+    clearStoppingLock();
+  });
+});
+
+// ============================================================================
+// Atomic PID claim — Defect 2 (claimServePidOrExit race)
+//
+// Two parallel `genie serve --foreground --headless` processes used to both
+// pass the pre-write isProcessAlive check and stomp serve.pid. With
+// O_EXCL-based claim, exactly one survives — the other prints "already
+// running" and exits 0.
+// ============================================================================
+
+describe('atomic PID claim', () => {
+  test('two parallel serves resolve to exactly one survivor', async () => {
+    const r1 = spawnServe({
+      GENIE_HOME: genieHome,
+      GENIE_NATS_URL: 'nats://127.0.0.1:1',
+      GENIE_OMNI_REQUIRED: undefined,
+    });
+    const r2 = spawnServe({
+      GENIE_HOME: genieHome,
+      GENIE_NATS_URL: 'nats://127.0.0.1:1',
+      GENIE_OMNI_REQUIRED: undefined,
+    });
+
+    // Track both children for afterEach cleanup. We can only assign `child`
+    // once — kill r2 manually if it's still alive.
+    child = r1.child;
+
+    const pidPath = join(genieHome, 'serve.pid');
+    const settled = await waitUntil(async () => {
+      if (!existsSync(pidPath)) return false;
+      // One process exited (the loser) AND the other is still alive.
+      const r1Exited = !isAlive(r1.child.pid);
+      const r2Exited = !isAlive(r2.child.pid);
+      return r1Exited !== r2Exited;
+    }, 15_000);
+    expect(settled).toBe(true);
+
+    const pidContents = readFileSync(pidPath, 'utf-8').trim();
+    const survivorPid = Number.parseInt(pidContents.split(':')[0], 10);
+    const survivor = isAlive(r1.child.pid) ? r1 : r2;
+    const loser = survivor === r1 ? r2 : r1;
+    expect(survivorPid).toBe(survivor.child.pid as number);
+
+    // Loser exited 0 with the "already running" message.
+    const loserExit = await Promise.race([loser.exit, waitFor(5_000).then(() => null)]);
+    expect(loserExit?.code).toBe(0);
+    expect(`${loser.stdout.buffer}\n${loser.stderr.buffer}`).toContain('already running');
+
+    // Cleanup: SIGKILL the survivor so afterEach doesn't have to wait for
+    // graceful shutdown of the slow scheduler.
+    try {
+      survivor.child.kill('SIGKILL');
+    } catch {
+      // already gone
+    }
+    await Promise.race([survivor.exit, waitFor(5_000)]);
+  }, 30_000);
+});
+
+// ============================================================================
+// Stale pgserve.port invalidation — Defect 3
+//
+// An unclean prior shutdown leaves ~/.genie/pgserve.port pointing at a dead
+// port. startForeground() must remove that lockfile before pgserve is
+// brought up, so cached callers don't ECONNREFUSED forever.
+// ============================================================================
+
+describe('pgserve port lockfile invalidation', () => {
+  test('startForeground removes a pre-existing pgserve.port at boot', async () => {
+    // Seed a stale lockfile pointing at an unused port.
+    const stalePortPath = join(genieHome, 'pgserve.port');
+    writeFileSync(stalePortPath, '19642', 'utf-8');
+    expect(readFileSync(stalePortPath, 'utf-8').trim()).toBe('19642');
+
+    const result = spawnServe({
+      GENIE_HOME: genieHome,
+      GENIE_NATS_URL: 'nats://127.0.0.1:1',
+      GENIE_OMNI_REQUIRED: undefined,
+    });
+    child = result.child;
+
+    // Wait until the stale value is gone (either deleted or rewritten by
+    // ensurePgserve to the new live port).
+    const cleared = await waitUntil(() => {
+      if (!existsSync(stalePortPath)) return true;
+      const current = readFileSync(stalePortPath, 'utf-8').trim();
+      return current !== '19642' && current !== '';
+    }, 15_000);
+    expect(cleared).toBe(true);
+
+    result.child.kill('SIGKILL');
+    await Promise.race([result.exit, waitFor(5_000)]);
   }, 30_000);
 });

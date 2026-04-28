@@ -18,7 +18,16 @@
  */
 
 import { execSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
@@ -82,12 +91,6 @@ function readServePid(): ServePidEntry | null {
   return { pid, startTime };
 }
 
-function writeServePid(pid: number): void {
-  mkdirSync(genieHome(), { recursive: true });
-  const startTime = getProcessStartTime(pid) ?? 'unknown';
-  writeFileSync(servePidPath(), `${pid}:${startTime}`, 'utf-8');
-}
-
 /**
  * Remove `~/.genie/serve.pid` — but only if it still belongs to us. A new
  * serve may have raced in between our shutdown handler firing and this call;
@@ -114,6 +117,61 @@ function isProcessAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+// ============================================================================
+// Stopping sentinel — signals "operator is intentionally stopping serve"
+//
+// `stopServe()` writes the lock before SIGTERM and clears it after the PID
+// file is gone. `autoStartServe()` checks for the lock and refuses to spawn
+// while it's active, so the next genie command after `serve stop` does not
+// immediately respawn the daemon the operator just killed.
+//
+// The file body is a single absolute expiry timestamp (ms since epoch); a
+// crashed `stopServe` cannot brick auto-start beyond {@link STOPPING_LOCK_TTL_MS}.
+// ============================================================================
+
+const STOPPING_LOCK_TTL_MS = 30_000;
+
+function stoppingLockPath(): string {
+  return join(genieHome(), 'serve.stopping.lock');
+}
+
+/** Write the shutdown sentinel with an absolute expiry; safe to call repeatedly. */
+export function writeStoppingLockSync(ttlMs: number = STOPPING_LOCK_TTL_MS): void {
+  mkdirSync(genieHome(), { recursive: true });
+  writeFileSync(stoppingLockPath(), String(Date.now() + ttlMs), 'utf-8');
+}
+
+/** Best-effort unlink of the shutdown sentinel. */
+export function clearStoppingLock(): void {
+  try {
+    unlinkSync(stoppingLockPath());
+  } catch {
+    // already gone
+  }
+}
+
+/**
+ * `true` iff a non-expired sentinel exists. Corrupt/empty files and expired
+ * timestamps are treated as absent (and removed) so a malformed lock can
+ * never block auto-start indefinitely.
+ */
+export function isStoppingLockActive(): boolean {
+  const path = stoppingLockPath();
+  if (!existsSync(path)) return false;
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf-8').trim();
+  } catch {
+    return false;
+  }
+  const expiresAt = Number.parseInt(raw, 10);
+  if (raw === '' || Number.isNaN(expiresAt) || expiresAt <= Date.now()) {
+    clearStoppingLock();
+    return false;
+  }
+  return true;
 }
 
 // ============================================================================
@@ -338,6 +396,14 @@ export function isServeRunning(): boolean {
  * Ready = PID file exists + PID alive + genie-tui session exists on default server.
  */
 export async function autoStartServe(): Promise<void> {
+  // Defense in depth against the cascade where any genie command (TUI, hook,
+  // automation) re-spawns serve immediately after `serve stop`. The sentinel
+  // is cleared by stopServe once teardown finishes, so a normal restart loop
+  // (stop → start) is unaffected.
+  if (isStoppingLockActive()) {
+    console.log('genie serve is shutting down — skipping auto-start.');
+    return;
+  }
   if (isServeRunning()) return;
 
   const bunPath = process.execPath ?? 'bun';
@@ -505,20 +571,57 @@ async function startScheduler(): Promise<void> {
   }
 }
 
-/** Start all services in foreground mode.
- *  @param headless If true, skip TUI setup (services only: pgserve, scheduler, inbox-watcher).
+/**
+ * Atomically claim ownership of `~/.genie/serve.pid` via `O_EXCL`.
+ *
+ * Resolves the boot-path race where two parallel `serve --foreground`
+ * processes both passed a pre-write `isProcessAlive` check and then both
+ * stomped the PID file. Symptom: out-of-order PIDs across `serve stop`
+ * calls because each stop targeted a different surviving sibling.
+ *
+ * Strategy:
+ *   - `openSync(path, 'wx')` creates the file or fails with EEXIST.
+ *   - On EEXIST, read it: a live entry with a known startTime is a real
+ *     survivor (we exit 0 with the existing-running message). A dead PID
+ *     or legacy/no-startTime entry is treated as stale — unlink and
+ *     retry the open ONCE.
+ *   - After two failed attempts, refuse to start: a genuine concurrent
+ *     race that needs operator attention.
  */
 function claimServePidOrExit(): void {
-  const existingEntry = readServePid();
-  if (existingEntry && isProcessAlive(existingEntry.pid)) {
-    console.log(`genie serve already running (PID ${existingEntry.pid})`);
-    process.exit(0);
+  const path = servePidPath();
+  mkdirSync(genieHome(), { recursive: true });
+  const startTime = getProcessStartTime(process.pid) ?? 'unknown';
+  const payload = `${process.pid}:${startTime}`;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(path, 'wx', 0o644);
+      try {
+        writeSync(fd, payload);
+      } finally {
+        closeSync(fd);
+      }
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') throw err;
+
+      const existing = readServePid();
+      if (existing && existing.startTime !== null && isProcessAlive(existing.pid)) {
+        console.log(`genie serve already running (PID ${existing.pid})`);
+        process.exit(0);
+      }
+      // Stale (dead PID) or legacy (no startTime) — clear and retry once.
+      forceRemoveServePid();
+    }
   }
-  if (existingEntry) {
-    // Stale PID file — unlink it directly (removeServePid only removes files
-    // owned by process.pid, which wouldn't match here).
-    forceRemoveServePid();
-  }
+
+  console.error(
+    'Could not claim serve.pid after 2 attempts — another genie serve is racing this one. ' +
+      'Wait a moment and retry, or run `genie serve status`.',
+  );
+  process.exit(1);
 }
 
 function resolveServeMode(headless?: boolean): { skipTui: boolean; mode: 'headless' | 'no-tui' | 'full' } {
@@ -807,9 +910,14 @@ function installGracefulExitHandlers(shutdown: () => Promise<void>, hasStarted: 
 
 async function startForeground(headless?: boolean): Promise<void> {
   claimServePidOrExit();
+  // Invalidate any stale port lockfile from an unclean prior shutdown — the
+  // next ensurePgserve() call will rewrite it with the live port. Without
+  // this, callers (TUI, hooks) cache the dead port and hammer ECONNREFUSED
+  // until pgserve happens to reuse it.
+  removePgservePortLockfile();
   const { skipTui, mode } = resolveServeMode(headless);
   process.env.GENIE_IS_DAEMON = '1';
-  writeServePid(process.pid);
+  // claimServePidOrExit already wrote `${pid}:${startTime}` atomically.
   console.log(`genie serve starting (PID ${process.pid}, mode: ${mode})`);
 
   if (!skipTui) {
@@ -900,51 +1008,59 @@ async function stopServe(): Promise<void> {
     return;
   }
 
-  const pid = entry.pid;
-
-  if (!isProcessAlive(pid)) {
-    console.log(`Stale PID file (PID ${pid} not running). Cleaning up.`);
-    forceRemoveServePid();
-    // Only kill TUI session — agent server is independent
-    killTuiSession();
-    return;
-  }
-
-  console.log(`Stopping genie serve (PID ${pid})...`);
-
-  // Send SIGTERM to the process group
+  // Block auto-start cascade BEFORE issuing SIGTERM. Cleared in `finally`
+  // once the PID file is gone, so the next genie invocation can spawn a
+  // fresh serve. The lock has a TTL so a crashed stop cannot brick autostart.
+  writeStoppingLockSync();
   try {
-    process.kill(-pid, 'SIGTERM');
-  } catch {
-    try {
-      process.kill(pid, 'SIGTERM');
-    } catch {}
-  }
+    const pid = entry.pid;
 
-  // Wait up to 10s for graceful shutdown
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline && isProcessAlive(pid)) {
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
+    if (!isProcessAlive(pid)) {
+      console.log(`Stale PID file (PID ${pid} not running). Cleaning up.`);
+      forceRemoveServePid();
+      // Only kill TUI session — agent server is independent
+      killTuiSession();
+      return;
+    }
 
-  if (isProcessAlive(pid)) {
-    console.log('Did not stop within 10s. Sending SIGKILL.');
+    console.log(`Stopping genie serve (PID ${pid})...`);
+
+    // Send SIGTERM to the process group
     try {
-      process.kill(-pid, 'SIGKILL');
+      process.kill(-pid, 'SIGTERM');
     } catch {
       try {
-        process.kill(pid, 'SIGKILL');
+        process.kill(pid, 'SIGTERM');
       } catch {}
     }
+
+    // Wait up to 10s for graceful shutdown
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && isProcessAlive(pid)) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    if (isProcessAlive(pid)) {
+      console.log('Did not stop within 10s. Sending SIGKILL.');
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
+      }
+    }
+
+    // Only kill TUI session — agent tmux server is eternal
+    killTuiSession();
+
+    // Serve process is gone; unlink the file directly rather than through
+    // removeServePid (whose identity check would bail since pid !== process.pid).
+    forceRemoveServePid();
+    console.log('genie serve stopped.');
+  } finally {
+    clearStoppingLock();
   }
-
-  // Only kill TUI session — agent tmux server is eternal
-  killTuiSession();
-
-  // Serve process is gone; unlink the file directly rather than through
-  // removeServePid (whose identity check would bail since pid !== process.pid).
-  forceRemoveServePid();
-  console.log('genie serve stopped.');
 }
 
 /** Check pgserve health and print status */
