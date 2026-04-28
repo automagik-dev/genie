@@ -127,6 +127,7 @@ describe('buildClaudeCommand', () => {
       team: 'work',
       role: 'custom-identity', // operator's --role override (registration name)
       agentTemplate: 'engineer', // resolved template (verified on disk)
+      systemPromptFile: '/path/to/AGENTS.md',
     });
     expect(result.command).toContain("--agent 'engineer'");
     expect(result.command).not.toContain("--agent 'custom-identity'");
@@ -141,6 +142,7 @@ describe('buildClaudeCommand', () => {
       provider: 'claude',
       team: 'work',
       role: 'engineer',
+      systemPromptFile: '/path/to/AGENTS.md',
     });
     expect(result.command).toContain("--agent 'engineer'");
   });
@@ -211,6 +213,27 @@ describe('buildClaudeCommand', () => {
     });
     expect(result.command).not.toContain('--system-prompt-file');
     expect(result.command).not.toContain('--append-system-prompt-file');
+  });
+
+  it('throws when a known built-in would launch without any prompt identity', () => {
+    expect(() =>
+      buildClaudeCommand({
+        provider: 'claude',
+        team: 'work',
+        role: 'qa',
+      }),
+    ).toThrow('Refusing to launch built-in agent "qa" without AGENTS.md identity');
+  });
+
+  it('allows a non-built-in agent to launch without prompt identity', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'implementor',
+    });
+    expect(result.command).toContain("--agent 'implementor'");
+    expect(result.command).not.toContain('--append-system-prompt-file');
+    expect(result.command).not.toContain('--system-prompt-file');
   });
 
   it('writes systemPrompt to temp file and uses --append-system-prompt-file', () => {
@@ -605,7 +628,7 @@ describe('OTel env injection in buildClaudeCommand', () => {
     const result = buildClaudeCommand({
       provider: 'claude',
       team: 'test-team',
-      role: 'engineer',
+      role: 'implementor',
       otelPort: 19643,
     });
     expect(result.env).toBeDefined();
@@ -622,22 +645,22 @@ describe('OTel env injection in buildClaudeCommand', () => {
     const result = buildClaudeCommand({
       provider: 'claude',
       team: 'test-team',
-      role: 'engineer',
+      role: 'implementor',
       otelPort: 19643,
       otelWishSlug: 'my-wish',
     });
     const attrs = result.env?.OTEL_RESOURCE_ATTRIBUTES ?? '';
-    expect(attrs).toContain('agent.name=engineer');
+    expect(attrs).toContain('agent.name=implementor');
     expect(attrs).toContain('team.name=test-team');
     expect(attrs).toContain('wish.slug=my-wish');
-    expect(attrs).toContain('agent.role=engineer');
+    expect(attrs).toContain('agent.role=implementor');
   });
 
   it('does not inject OTel env vars when otelPort is not set', () => {
     const result = buildClaudeCommand({
       provider: 'claude',
       team: 'test-team',
-      role: 'engineer',
+      role: 'implementor',
     });
     expect(result.env?.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
     expect(result.env?.OTEL_LOGS_EXPORTER).toBeUndefined();
@@ -647,7 +670,7 @@ describe('OTel env injection in buildClaudeCommand', () => {
     const result = buildClaudeCommand({
       provider: 'claude',
       team: 'test-team',
-      role: 'engineer',
+      role: 'implementor',
       otelPort: 19643,
       otelLogPrompts: false,
     });
@@ -661,7 +684,7 @@ describe('OTel env injection in buildClaudeCommand', () => {
       const result = buildClaudeCommand({
         provider: 'claude',
         team: 'test-team',
-        role: 'engineer',
+        role: 'implementor',
         otelPort: 19643,
       });
       // Should not override user's existing OTEL_EXPORTER_OTLP_ENDPOINT
@@ -698,7 +721,7 @@ describe('executor env propagation', () => {
     const result = buildClaudeCommand({
       provider: 'claude',
       team: 'work',
-      role: 'engineer',
+      role: 'implementor',
       executorId: execId,
       agentId,
     });
@@ -707,7 +730,7 @@ describe('executor env propagation', () => {
   });
 
   it('buildClaudeCommand omits GENIE_EXECUTOR_ID when not passed', () => {
-    const result = buildClaudeCommand({ provider: 'claude', team: 'work', role: 'engineer' });
+    const result = buildClaudeCommand({ provider: 'claude', team: 'work', role: 'implementor' });
     expect(result.env?.GENIE_EXECUTOR_ID).toBeUndefined();
     expect(result.env?.GENIE_AGENT_ID).toBeUndefined();
   });
@@ -749,7 +772,7 @@ describe('executor env propagation', () => {
     const launch = buildLaunchCommand({
       provider: 'claude',
       team: 'work',
-      role: 'engineer',
+      role: 'implementor',
       executorId: execId,
       agentId,
     });

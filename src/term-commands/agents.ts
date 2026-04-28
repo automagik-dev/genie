@@ -1795,6 +1795,9 @@ export async function resolveAgentForSpawn(
   } else if (entry.dir) {
     identityPath = _spawnAutoSyncDeps.loadIdentity(entry);
   }
+  if (!identityPath) {
+    identityPath = resolveBuiltinAgentPath(name);
+  }
 
   const repoPath = resolveAgentWorkingDir(entry, options.cwd);
 

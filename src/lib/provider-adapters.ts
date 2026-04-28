@@ -13,6 +13,7 @@
 
 import { z } from 'zod';
 import { buildDispatchCommand } from '../hooks/inject.js';
+import { resolveBuiltinAgentPath } from './builtin-agents.js';
 import {
   TRACE_ENV_VAR,
   TRACE_ID_ENV_VAR,
@@ -427,7 +428,22 @@ function appendDisallowedAndExtraArgs(parts: string[], params: SpawnParams): voi
   }
 }
 
+function assertClaudeBuiltinHasIdentity(params: SpawnParams): void {
+  const templateName = params.agentTemplate ?? params.role;
+  if (!templateName) return;
+  // Resumes attach to an existing Claude conversation whose identity was set
+  // at session creation; ResumeContext does not carry prompt fields.
+  if (params.resume) return;
+  if (!resolveBuiltinAgentPath(templateName)) return;
+  if (params.systemPromptFile || params.systemPrompt) return;
+
+  throw new Error(
+    `Refusing to launch built-in agent "${templateName}" without AGENTS.md identity. Resolve systemPromptFile or systemPrompt before building the Claude command.`,
+  );
+}
+
 export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
+  assertClaudeBuiltinHasIdentity(params);
   preflightCheck('claude');
 
   const claudeBinary = resolveShellBinary('claude') ?? 'claude';

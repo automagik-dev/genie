@@ -346,6 +346,9 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
           : (rows[0].created_at as string | undefined);
       const entry = roleToEntry(name, undefined, meta, createdAt);
       if (templateTeam) entry.team = templateTeam;
+      if (isKnownBuiltinName(name) && entry.dir.trim() === '') {
+        return { entry, builtin: true };
+      }
       return { entry, builtin: false };
     }
   } catch {
@@ -570,6 +573,10 @@ function builtinToEntry(agent: BuiltinAgent): DirectoryEntry {
     roles: [],
     registeredAt: '(built-in)',
   };
+}
+
+function isKnownBuiltinName(name: string): boolean {
+  return [...BUILTIN_ROLES, ...BUILTIN_COUNCIL_MEMBERS].some((agent) => agent.name === name);
 }
 
 /** Convert a PG agent role to a synthetic DirectoryEntry, enriched with metadata.

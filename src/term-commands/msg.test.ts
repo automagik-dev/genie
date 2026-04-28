@@ -622,12 +622,10 @@ describe.skipIf(!DB_AVAILABLE)('printBridgeSuggestion', () => {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!DB_AVAILABLE)('buildTeamLeadCommand (shared module)', () => {
-  test('sets GENIE_AGENT_NAME to folder name', async () => {
-    const { basename } = await import('node:path');
+  test('sets GENIE_AGENT_NAME to leader name', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie');
-    const folderName = basename(process.cwd());
-    expect(cmd).toContain(`GENIE_AGENT_NAME='${folderName}'`);
+    expect(cmd).toContain("GENIE_AGENT_NAME='genie'");
   });
 
   test('sets all required CC native team flags', async () => {
@@ -675,12 +673,10 @@ describe.skipIf(!DB_AVAILABLE)('buildTeamLeadCommand (shared module)', () => {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!DB_AVAILABLE)('session.ts: delegates to shared buildTeamLeadCommand', () => {
-  test('session buildClaudeCommand sets GENIE_AGENT_NAME to folder name', async () => {
-    const { basename } = await import('node:path');
+  test('session buildClaudeCommand sets GENIE_AGENT_NAME to leader name', async () => {
     const { buildClaudeCommand } = await import('../genie-commands/session.js');
     const cmd = buildClaudeCommand('genie');
-    const folderName = basename(process.cwd());
-    expect(cmd).toContain(`GENIE_AGENT_NAME='${folderName}'`);
+    expect(cmd).toContain("GENIE_AGENT_NAME='genie'");
   });
 });
 

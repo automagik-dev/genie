@@ -67,13 +67,31 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(resolved!.builtin).toBe(true);
     });
 
-    test('PG agent overrides built-in', async () => {
+    test('PG runtime row with empty dir for a built-in resolves as built-in', async () => {
       const sql = await getConnection();
-      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change) VALUES ('eng1', '%1', 's', '/tmp', 'working', 'engineer', now(), now())`;
+      await sql`INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change, metadata) VALUES ('runtime-qa', '%1', 's', '/tmp', 'working', 'qa', now(), now(), '{}')`;
 
-      const resolved = await directory.resolve('engineer');
+      const resolved = await directory.resolve('qa');
+      expect(resolved).not.toBeNull();
+      expect(resolved!.builtin).toBe(true);
+      expect(resolved!.entry.dir).toBe('');
+    });
+
+    test('PG directory agent sharing a built-in name is not classified as built-in', async () => {
+      const sql = await getConnection();
+      await sql`
+        INSERT INTO agents (id, role, custom_name, repo_path, state, started_at, metadata)
+        VALUES ('dir:qa', 'qa', 'qa', ${agentDir}, NULL, now(), ${sql.json({
+          dir: agentDir,
+          registeredAt: 'test',
+          promptMode: 'append',
+        })})
+      `;
+
+      const resolved = await directory.resolve('qa');
       expect(resolved).not.toBeNull();
       expect(resolved!.builtin).toBe(false);
+      expect(resolved!.entry.dir).toBe(agentDir);
     });
 
     test('returns null for unknown name', async () => {

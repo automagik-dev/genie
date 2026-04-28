@@ -51,10 +51,9 @@ describe('buildClaudeCommand', () => {
     expect(cmd).toContain('claude');
   });
 
-  test('sets GENIE_AGENT_NAME env var to folder name', () => {
+  test('sets GENIE_AGENT_NAME env var to leader name', () => {
     const cmd = buildClaudeCommand('genie');
-    const folderName = basename(process.cwd());
-    expect(cmd).toContain(`GENIE_AGENT_NAME='${folderName}'`);
+    expect(cmd).toContain("GENIE_AGENT_NAME='genie'");
   });
 
   test('sets GENIE_TEAM env var', () => {
