@@ -1,7 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import type { TmuxPane, TmuxSession, TmuxWindow } from './diagnostics.js';
 import { buildSessionTree, buildWorkspaceTree, getSessionTarget, resolvePreferredWindowIndex } from './session-tree.js';
-import type { TuiExecutor } from './types.js';
+import type { TreeNode, TuiExecutor } from './types.js';
+
+function flattenTree(nodes: TreeNode[]): TreeNode[] {
+  const out: TreeNode[] = [];
+  const walk = (n: TreeNode) => {
+    out.push(n);
+    for (const c of n.children) walk(c);
+  };
+  for (const n of nodes) walk(n);
+  return out;
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -75,10 +85,12 @@ describe('buildWorkspaceTree', () => {
     expect(tree[0].type).toBe('agent');
     expect(tree[0].label).toBe('sofia');
     expect(tree[0].wsAgentState).toBe('stopped');
+    expect(tree[0].kind).toBe('canonical');
     expect(tree[0].children).toHaveLength(0);
 
     expect(tree[1].label).toBe('vegapunk');
     expect(tree[1].wsAgentState).toBe('stopped');
+    expect(tree[1].kind).toBe('canonical');
   });
 
   test('running agents show with wsAgentState=running and windows as children', () => {
@@ -323,11 +335,14 @@ describe('buildWorkspaceTree', () => {
     expect(tree).toHaveLength(1);
     expect(tree[0].label).toBe('genie');
     expect(tree[0].type).toBe('agent');
+    expect(tree[0].kind).toBe('canonical');
     expect(tree[0].children).toHaveLength(2);
     expect(tree[0].children[0].label).toBe('qa');
     expect(tree[0].children[0].depth).toBe(1);
+    expect(tree[0].children[0].kind).toBe('subagent');
     expect(tree[0].children[1].label).toBe('fix');
     expect(tree[0].children[1].depth).toBe(1);
+    expect(tree[0].children[1].kind).toBe('subagent');
   });
 
   test('sub-agents with running sessions show correct state', () => {
@@ -372,6 +387,98 @@ describe('buildWorkspaceTree', () => {
     expect(tree[0].label).toBe('genie');
     expect(tree[1].type).toBe('session');
     expect(tree[1].label).toBe('mystery-agent');
+  });
+});
+
+// ─── kind distinction (G3) ───────────────────────────────────────────────────
+
+describe('buildWorkspaceTree — kind distinction (G3)', () => {
+  test('all top-level agent nodes carry kind="canonical"', () => {
+    const tree = buildWorkspaceTree({
+      agentNames: ['aegis', 'brain', 'felipe', 'genie'],
+      sessions: [],
+      executors: [],
+    });
+
+    expect(tree).toHaveLength(4);
+    for (const node of tree) {
+      expect(node.type).toBe('agent');
+      expect(node.kind).toBe('canonical');
+    }
+  });
+
+  test('all nested sub-agent nodes carry kind="subagent"', () => {
+    const tree = buildWorkspaceTree({
+      agentNames: ['felipe', 'felipe/scout', 'felipe/notes', 'genie', 'genie/devrel'],
+      sessions: [],
+      executors: [],
+    });
+
+    const felipe = tree.find((n) => n.label === 'felipe')!;
+    const genie = tree.find((n) => n.label === 'genie')!;
+
+    expect(felipe.kind).toBe('canonical');
+    expect(felipe.children).toHaveLength(2);
+    for (const child of felipe.children) {
+      expect(child.type).toBe('agent');
+      expect(child.kind).toBe('subagent');
+    }
+
+    expect(genie.kind).toBe('canonical');
+    expect(genie.children).toHaveLength(1);
+    expect(genie.children[0].kind).toBe('subagent');
+  });
+
+  test('no subagent appears at depth 0 in the flattened tree', () => {
+    const tree = buildWorkspaceTree({
+      agentNames: [
+        'felipe',
+        'felipe/scout',
+        'felipe/notes',
+        'genie',
+        'genie/devrel',
+        'genie/qa',
+        'aegis', // canonical with no children
+      ],
+      sessions: [],
+      executors: [],
+    });
+
+    const flat = flattenTree(tree);
+    const subAgents = flat.filter((n) => n.kind === 'subagent');
+    const topLevelAgents = flat.filter((n) => n.depth === 0 && n.type === 'agent');
+
+    expect(topLevelAgents.length).toBeGreaterThan(0);
+    for (const node of topLevelAgents) expect(node.kind).toBe('canonical');
+
+    expect(subAgents.length).toBeGreaterThan(0);
+    for (const node of subAgents) expect(node.depth).toBeGreaterThan(0);
+  });
+
+  test('canonical with running sub-agent — both carry correct kind', () => {
+    const qaWin0 = makeWindow({ sessionName: 'genie-qa', index: 0, name: 'zsh' });
+    const qaWin1 = makeWindow({
+      sessionName: 'genie-qa',
+      index: 1,
+      name: 'qa',
+      panes: [makePane({ sessionName: 'genie-qa', windowIndex: 1, paneId: '%5', command: 'claude', title: 'claude' })],
+    });
+    const qaSession = makeSession('genie-qa', [qaWin0, qaWin1]);
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['genie', 'genie/qa'],
+      sessions: [qaSession],
+      executors: [],
+    });
+
+    const parent = tree[0];
+    expect(parent.kind).toBe('canonical');
+    expect(parent.wsAgentState).toBe('stopped');
+
+    const qaChild = parent.children[0];
+    expect(qaChild.kind).toBe('subagent');
+    expect(qaChild.wsAgentState).toBe('running');
+    expect(qaChild.depth).toBe(1);
   });
 });
 
