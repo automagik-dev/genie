@@ -129,7 +129,7 @@ export function TeamCreate({ availableAgents, workspaceRoot, onConfirm, onCancel
         paddingX={3}
         paddingY={1}
         flexDirection="column"
-        width={64}
+        width="100%"
         gap={1}
       >
         <text>

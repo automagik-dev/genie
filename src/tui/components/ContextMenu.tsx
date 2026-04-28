@@ -93,7 +93,7 @@ export function ContextMenu({ items, onAction, onClose, positionY = 0 }: Context
         borderStyle="rounded"
         borderColor={palette.borderActive}
         backgroundColor={palette.bgRaised}
-        width={32}
+        width="100%"
         height={inputMode ? items.length + 5 : items.length + 2}
         flexDirection="column"
         onMouseDown={(e: { stopPropagation?: () => void }) => e.stopPropagation?.()}

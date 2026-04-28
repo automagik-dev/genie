@@ -220,7 +220,7 @@ export function SpawnTargetPicker({ agentName, sessions, onConfirm, onCancel }: 
         paddingX={2}
         paddingY={1}
         flexDirection="column"
-        width={60}
+        width="100%"
         gap={1}
       >
         <text>
