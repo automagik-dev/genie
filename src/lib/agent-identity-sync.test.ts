@@ -202,6 +202,23 @@ description: Wisdom agent
     expect(entry!.description).toBeUndefined();
   });
 
+  test('dir sync still registers frontmatter name mismatches by directory name', async () => {
+    createWorkspace(
+      'dir-sync-name-mismatch',
+      `---
+name: different-agent
+description: Directory sync remains permissive
+---`,
+    );
+
+    const result = await syncAgentDirectory(workspaceRoot);
+    expect(result.registered).toContain('dir-sync-name-mismatch');
+
+    const entry = await directory.get('dir-sync-name-mismatch');
+    expect(entry).not.toBeNull();
+    expect(entry!.description).toBe('Directory sync remains permissive');
+  });
+
   // ============================================================================
   // Sync unchanged — idempotent
   // ============================================================================

@@ -9,8 +9,11 @@
  *   handleLsCommand    - genie ls
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path';
 import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
+import { syncSingleAgentByName } from '../lib/agent-sync.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
@@ -20,6 +23,7 @@ import { emitEvent } from '../lib/emit.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import * as executorRegistry from '../lib/executor-registry.js';
 import type { TransportType as ExecutorTransport } from '../lib/executor-types.js';
+import { parseFrontmatter } from '../lib/frontmatter.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
 import { getOtelPort, startOtelReceiver } from '../lib/otel-receiver.js';
 import { injectResumeContext } from '../lib/protocol-router-spawn.js';
@@ -1691,10 +1695,81 @@ export interface SpawnOptions {
   sdkEffort?: string;
   /** SDK: resume a previous session by ID (--sdk-resume). */
   sdkResume?: string;
+  /** Disable spawn-time auto-registration from <workspace>/agents/<name>. */
+  noAutoSync?: boolean;
+  /** Commander backing field for --no-auto-sync. */
+  autoSync?: boolean;
+}
+
+export const _spawnAutoSyncDeps = {
+  resolveAgent: directory.resolve,
+  loadIdentity: directory.loadIdentity,
+  syncSingleAgentByName,
+  findWorkspace,
+  parseFrontmatter,
+  existsSync,
+  readFileSync,
+  stderr: (line: string) => console.error(line),
+};
+
+function autoSyncDisabled(options: Pick<SpawnOptions, 'autoSync' | 'noAutoSync'>): boolean {
+  return options.noAutoSync === true || options.autoSync === false || process.env.GENIE_DISABLE_AUTO_SYNC === '1';
+}
+
+function isWithinAgentsRoot(agentsRoot: string, agentDir: string): boolean {
+  const rel = relative(agentsRoot, agentDir);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+/**
+ * On first spawn, register a valid workspace agent directory on demand.
+ *
+ * This intentionally does not scan, watch, prune, or reconcile the directory.
+ * It only checks the exact requested <workspace>/agents/<name>/AGENTS.md and
+ * delegates the real upsert to syncSingleAgentByName.
+ */
+export async function tryAutoRegisterAgent(
+  name: string,
+  options: Pick<SpawnOptions, 'autoSync' | 'noAutoSync'>,
+): Promise<{ entry: directory.DirectoryEntry; builtin: boolean } | null> {
+  if (autoSyncDisabled(options)) return null;
+
+  const workspace = _spawnAutoSyncDeps.findWorkspace();
+  if (!workspace) return null;
+
+  const agentsRoot = join(workspace.root, 'agents');
+  const agentDir = resolvePath(agentsRoot, name);
+  if (!isWithinAgentsRoot(agentsRoot, agentDir)) return null;
+
+  const agentsMdPath = join(agentDir, 'AGENTS.md');
+  if (!_spawnAutoSyncDeps.existsSync(agentsMdPath)) return null;
+
+  let frontmatter: ReturnType<typeof parseFrontmatter>;
+  try {
+    frontmatter = _spawnAutoSyncDeps.parseFrontmatter(_spawnAutoSyncDeps.readFileSync(agentsMdPath, 'utf-8'));
+  } catch {
+    return null;
+  }
+
+  if (frontmatter.name !== name) return null;
+  if (typeof frontmatter.description !== 'string' || frontmatter.description.trim().length === 0) return null;
+
+  try {
+    const action = await _spawnAutoSyncDeps.syncSingleAgentByName(workspace.root, name);
+    if (action === 'not-found') return null;
+  } catch {
+    return null;
+  }
+
+  const resolved = await _spawnAutoSyncDeps.resolveAgent(name);
+  if (!resolved) return null;
+
+  _spawnAutoSyncDeps.stderr(`Auto-registered agent '${name}' from ${agentDir}`);
+  return resolved;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
-async function resolveAgentForSpawn(
+export async function resolveAgentForSpawn(
   name: string,
   options: SpawnOptions,
 ): Promise<{
@@ -1703,7 +1778,7 @@ async function resolveAgentForSpawn(
   identityPath: string | null;
   model: string | undefined;
 }> {
-  const resolved = await directory.resolve(name);
+  const resolved = (await _spawnAutoSyncDeps.resolveAgent(name)) ?? (await tryAutoRegisterAgent(name, options));
   if (!resolved) {
     console.error(`Error: Agent "${name}" not found in directory or built-ins.`);
     console.error(`  Register with: genie dir add ${name} --dir <path>`);
@@ -1718,7 +1793,7 @@ async function resolveAgentForSpawn(
   if (resolved.builtin) {
     identityPath = resolveBuiltinAgentPath(name);
   } else if (entry.dir) {
-    identityPath = directory.loadIdentity(entry);
+    identityPath = _spawnAutoSyncDeps.loadIdentity(entry);
   }
 
   const repoPath = resolveAgentWorkingDir(entry, options.cwd);
