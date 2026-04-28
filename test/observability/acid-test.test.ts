@@ -28,7 +28,7 @@ import { getConnection } from '../../src/lib/db.js';
 import { DB_AVAILABLE, setupTestDatabase } from '../../src/lib/test-db.js';
 import { ALL_SEEDERS, type FixtureResult, type Seeder } from './replay-dataset/index.js';
 
-const SQL_FILE = join(import.meta.dir, '..', '..', 'docs', 'observability-acid-tests.sql');
+const SQL_FILE = join(import.meta.dir, '..', '..', 'docs', '_internal', 'observability-acid-tests.sql');
 
 // ---------------------------------------------------------------------------
 // SQL extraction — strip psql-specific syntax so postgres.js accepts the body.
