@@ -1,0 +1,61 @@
+name: Audit @next tag pinning
+
+# Nightly + on-demand audit for the `release-race.next-tag-mismatch.detected`
+# v2 detector. Runs `scripts/audit-next-tag-pinning.sh` and reports drift
+# between what `npm view @automagik/genie@next` advertises and the most
+# recent merge commit on dev.
+#
+# This workflow is INFORMATIONAL ONLY. `continue-on-error: true` ensures a
+# detector fire never blocks unrelated workflows; the audit's purpose is to
+# surface drift, not to gate releases. Releases are gated by version.yml's
+# Invariant A skip path (`release-race.next-tag-pin-skipped.detected`),
+# which short-circuits publish before drift can happen.
+#
+# Scope: dev branch only. main publishes @latest (no @next interaction).
+#
+# Wish:  .genie/wishes/fix-next-tag-commit-pinning/WISH.md (Group 2)
+# Issue: #1303
+# Docs:  docs/_internal/detectors/release-race.md
+
+on:
+  schedule:
+    # Daily at 06:17 UTC — off-peak for most contributors, off the hour to
+    # avoid colliding with cron-rounded jobs.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: audit-next-tag-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: audit-next-tag-pinning
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+
+    steps:
+      - name: Checkout (with tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node (for npm)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # gh is preinstalled on GitHub-hosted runners; no install step needed.
+      - name: Run audit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+        run: bash scripts/audit-next-tag-pinning.sh
