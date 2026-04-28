@@ -11,6 +11,7 @@
  * - snake_case DB rows mapped to camelCase TypeScript interfaces
  */
 
+import { palette } from '../../packages/genie-tokens';
 import { getActor, recordAuditEvent } from './audit.js';
 import { getConnection } from './db.js';
 
@@ -128,7 +129,7 @@ function fillColumnDefaults(col: Partial<BoardColumn>, position: number): BoardC
     auto_advance: col.auto_advance ?? false,
     transitions: col.transitions ?? [],
     roles: col.roles ?? ['*'],
-    color: col.color ?? '#94a3b8',
+    color: col.color ?? palette.textDim,
     parallel: col.parallel ?? false,
     on_fail: col.on_fail ?? null,
     position,

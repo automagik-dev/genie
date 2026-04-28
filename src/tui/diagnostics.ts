@@ -9,7 +9,7 @@
 
 import { execSync } from 'node:child_process';
 import { tmuxBin } from '../lib/ensure-tmux.js';
-import type { TuiAssignment, TuiExecutor } from './types.js';
+import type { TuiAssignment, TuiExecutor, WorkState } from './types.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,6 +62,17 @@ export interface DiagnosticSnapshot {
   executors: TuiExecutor[];
   assignments: TuiAssignment[];
   gaps: DiagnosticGaps;
+  /**
+   * Per-agent work state keyed by display name. Populated from
+   * `loadAgentWorkStates()` which routes through `shouldResume()` —
+   * invincible-genie / Group 2.
+   */
+  workStates: Map<string, WorkState>;
+  /**
+   * Count of active derived-signal alerts (last hour). Drives the Nav
+   * header alert badge.
+   */
+  alertCount: number;
   timestamp: number;
 }
 
@@ -217,7 +228,7 @@ function detectGaps(executors: TuiExecutor[], sessions: TmuxSession[]): Diagnost
 
 /** Collect a complete diagnostic snapshot: executors from DB + tmux inventory + gaps. */
 export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
-  const { loadExecutors, loadAssignments } = await import('./db.js');
+  const { loadExecutors, loadAssignments, loadAgentWorkStates } = await import('./db.js');
 
   // Collect tmux inventory (shell) and executors (DB) in parallel
   const sessions = getTmuxInventory();
@@ -226,6 +237,24 @@ export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
   // Load assignments for active executors
   const executorIds = executors.map((e) => e.id);
   const assignments = await loadAssignments(executorIds);
+
+  // Load per-agent work-state via shouldResume() and active-signal count.
+  // Both are best-effort: if PG is degraded, we still ship a usable
+  // snapshot — just without work-state badges or the alert count.
+  let workStates = new Map<string, WorkState>();
+  let alertCount = 0;
+  try {
+    workStates = await loadAgentWorkStates();
+  } catch {
+    /* keep empty — Nav falls back to wsAgentState */
+  }
+  try {
+    const { listActiveDerivedSignals } = await import('../lib/derived-signals/index.js');
+    const signals = await listActiveDerivedSignals();
+    alertCount = signals.length;
+  } catch {
+    /* keep zero — Nav header just hides the badge */
+  }
 
   const gaps = detectGaps(executors, sessions);
 
@@ -250,6 +279,8 @@ export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
     executors,
     assignments,
     gaps,
+    workStates,
+    alertCount,
     timestamp: Date.now(),
   };
 }

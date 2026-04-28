@@ -8,7 +8,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
-import { detectWaveCompletion, ensureWorkPushed, parseRef, resolveWishPath } from './state.js';
+import { archiveWishNamedAgents, detectWaveCompletion, ensureWorkPushed, parseRef, resolveWishPath } from './state.js';
 
 // ============================================================================
 // Sample WISH.md with Execution Strategy for wave detection tests
@@ -351,5 +351,100 @@ describe('resolveWishPath()', () => {
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  // invincible-genie / Group 2 — DX gap: `genie wish status <slug>` from
+  // any cwd. The fallback walks `<workspaceRoot>/repos/<repo>/.genie/wishes/<slug>/WISH.md`.
+  it('should find wish via cross-repo workspace fallback', async () => {
+    const wsRoot = join('/tmp', `wish-resolve-ws-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const repoDir = join(wsRoot, 'repos', 'fake-genie');
+    const wishDir = join(repoDir, '.genie', 'wishes', 'cross-repo-slug');
+    await mkdir(wishDir, { recursive: true });
+    await writeFile(join(wishDir, 'WISH.md'), SIMPLE_WISH);
+
+    const fakeHome = join('/tmp', `wish-resolve-home-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await mkdir(fakeHome, { recursive: true });
+    await writeFile(join(fakeHome, 'config.json'), JSON.stringify({ workspaceRoot: wsRoot }));
+
+    const prevHome = process.env.GENIE_HOME;
+    process.env.GENIE_HOME = fakeHome;
+    try {
+      // From an unrelated tmp cwd: the cross-repo fallback should find the wish.
+      const unrelated = join('/tmp', `wish-resolve-from-${Date.now()}`);
+      await mkdir(unrelated, { recursive: true });
+      const result = resolveWishPath('cross-repo-slug', unrelated);
+      expect(result).toBe(join(wishDir, 'WISH.md'));
+      await rm(unrelated, { recursive: true, force: true });
+    } finally {
+      if (prevHome === undefined) {
+        // biome-ignore lint/performance/noDelete: process.env requires delete — assignment sets the string "undefined"
+        delete process.env.GENIE_HOME;
+      } else {
+        process.env.GENIE_HOME = prevHome;
+      }
+      await rm(wsRoot, { recursive: true, force: true });
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+});
+
+// ============================================================================
+// archiveWishNamedAgents — invincible-genie / Group 5 deletion
+// ============================================================================
+
+describe.skipIf(!DB_AVAILABLE)('archiveWishNamedAgents()', () => {
+  let cleanup: () => Promise<void>;
+
+  beforeAll(async () => {
+    cleanup = await setupTestDatabase();
+  });
+
+  afterAll(async () => {
+    await cleanup();
+  });
+
+  beforeEach(async () => {
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    await sql`DELETE FROM assignments`;
+    await sql`DELETE FROM executors`;
+    await sql`DELETE FROM agents`;
+  });
+
+  it('archives every agent row whose team matches the wish slug', async () => {
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+
+    await sql`
+      INSERT INTO agents (id, pane_id, session, started_at, repo_path, auto_resume, reports_to, team, state)
+      VALUES ('orphan-a', 'p1', 's', now(), '/tmp', true, NULL, 'design-system-severance', 'idle'),
+             ('orphan-b', 'p2', 's', now(), '/tmp', true, NULL, 'design-system-severance', 'idle'),
+             ('unrelated', 'p3', 's', now(), '/tmp', true, NULL, 'other-wish', 'idle')
+    `;
+
+    const archived = await archiveWishNamedAgents('design-system-severance');
+    expect(archived).toBe(2);
+
+    const orphans = await sql<{ id: string; auto_resume: boolean; state: string }[]>`
+      SELECT id, auto_resume, state FROM agents
+       WHERE team = 'design-system-severance'
+       ORDER BY id
+    `;
+    for (const row of orphans) {
+      expect(row.auto_resume).toBe(false);
+      expect(row.state).toBe('archived');
+    }
+
+    // Other-wish row is untouched.
+    const peer = await sql<{ auto_resume: boolean; state: string }[]>`
+      SELECT auto_resume, state FROM agents WHERE id = 'unrelated'
+    `;
+    expect(peer[0].auto_resume).toBe(true);
+    expect(peer[0].state).toBe('idle');
+  });
+
+  it('returns 0 when no rows match', async () => {
+    const archived = await archiveWishNamedAgents('no-such-slug');
+    expect(archived).toBe(0);
   });
 });

@@ -54,7 +54,8 @@
     "test/observability/emit-bench.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
-  "ignoreBinaries": ["which"],
+  "ignore": ["src/lib/design-tokens.ts"],
+  "ignoreBinaries": ["which", "scripts/verify-release.sh"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "@khal-os/brain",

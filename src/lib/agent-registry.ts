@@ -77,6 +77,12 @@ export interface Agent {
   reportsTo?: string | null;
   /** Agent title in org context (CPO, CTO, Research Lead). */
   title?: string | null;
+  /**
+   * Schema-derived permanence label (migration 049). Computed by the
+   * GENERATED column from id-shape + reports_to — never authored by
+   * consumers, never drifts. See migration 049 for the inference rule.
+   */
+  kind?: 'permanent' | 'task';
 }
 
 export interface WorkerTemplate {
@@ -127,6 +133,7 @@ interface AgentRow {
   current_executor_id: string | null;
   reports_to: string | null;
   title: string | null;
+  kind: 'permanent' | 'task' | null;
 }
 
 interface TemplateRow {
@@ -188,6 +195,7 @@ function rowToAgent(r: AgentRow): Agent {
   agent.currentExecutorId = r.current_executor_id ?? null;
   agent.reportsTo = r.reports_to ?? null;
   agent.title = r.title ?? null;
+  if (r.kind != null) agent.kind = r.kind;
   return agent;
 }
 
@@ -278,6 +286,80 @@ export async function list(): Promise<Agent[]> {
   const sql = await getConnection();
   const rows = await sql`SELECT * FROM agents`;
   return rows.map(rowToAgent);
+}
+
+/**
+ * Dedupe bare-name shadow rows for read/render call sites.
+ *
+ * The DB sometimes carries two rows for the same logical agent:
+ *   - a legacy "bare-name" row keyed by `id == display name`,
+ *     with `custom_name = NULL` and no executor link (a shadow); and
+ *   - a modern UUID-keyed row with `custom_name = display name`
+ *     and a live `current_executor_id`.
+ *
+ * Both surface in `genie ls` and `genie status` because the renderer keys
+ * by `customName ?? id`, which collides for the pair. Whichever the Map
+ * happens to overwrite last wins, often the dead shadow — so the live
+ * agent appears idle/dead while a real process is running.
+ *
+ * This dedup pairs rows with the same `(customName ?? id, team)` key and
+ * keeps the live one (`current_executor_id IS NOT NULL`), tie-breaking on
+ * most-recent `startedAt`. Row-shape only — fixes the spawn-time creation
+ * of shadows are out of scope here.
+ *
+ * Use this for *read/render* paths (`genie ls`, `genie status`, TUI). Do
+ * not use it for spawn lookups, reconcilers, or detectors — they need the
+ * full row set.
+ */
+function dedupeShadowRows<T>(
+  rows: T[],
+  opts: {
+    keyFor: (r: T) => string;
+    hasExecutor: (r: T) => boolean;
+    startedAt: (r: T) => string;
+  },
+): T[] {
+  const groups = new Map<string, T[]>();
+  for (const r of rows) {
+    const k = opts.keyFor(r);
+    const arr = groups.get(k);
+    if (arr) arr.push(r);
+    else groups.set(k, [r]);
+  }
+  const out: T[] = [];
+  for (const arr of groups.values()) {
+    if (arr.length === 1) {
+      out.push(arr[0]);
+      continue;
+    }
+    arr.sort((a, b) => {
+      const aExec = opts.hasExecutor(a) ? 1 : 0;
+      const bExec = opts.hasExecutor(b) ? 1 : 0;
+      if (aExec !== bExec) return bExec - aExec;
+      // Tie-break: most recent startedAt first (lexicographic on ISO).
+      return opts.startedAt(b).localeCompare(opts.startedAt(a));
+    });
+    out.push(arr[0]);
+  }
+  return out;
+}
+
+function shadowKey(customName: string | null | undefined, id: string, team: string | null | undefined): string {
+  return `${customName ?? id}\x00${team ?? ''}`;
+}
+
+/**
+ * Render-path variant of `list()` — drops bare-name shadow rows when a
+ * UUID-keyed peer with a live executor exists. See `dedupeShadowRows` for
+ * the pairing rule and call-site guidance.
+ */
+export async function listForRender(): Promise<Agent[]> {
+  const all = await list();
+  return dedupeShadowRows(all, {
+    keyFor: (a) => shadowKey(a.customName, a.id, a.team),
+    hasExecutor: (a) => a.currentExecutorId != null,
+    startedAt: (a) => a.startedAt,
+  });
 }
 
 /**
@@ -796,12 +878,13 @@ interface AgentIdentityRow {
   current_executor_id: string | null;
   reports_to: string | null;
   title: string | null;
+  kind: 'permanent' | 'task' | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
 
 function rowToAgentIdentity(r: AgentIdentityRow): AgentIdentity {
-  return {
+  const identity: AgentIdentity = {
     id: r.id,
     startedAt: ts(r.started_at),
     role: r.role ?? undefined,
@@ -817,6 +900,8 @@ function rowToAgentIdentity(r: AgentIdentityRow): AgentIdentity {
     createdAt: ts(r.created_at),
     updatedAt: ts(r.updated_at),
   };
+  if (r.kind != null) identity.kind = r.kind;
+  return identity;
 }
 
 /**
@@ -830,7 +915,7 @@ export async function findOrCreateAgent(name: string, team: string, role?: strin
   // Try to find existing agent by composite unique (custom_name, team)
   const existing = await sql<AgentIdentityRow[]>`
     SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
     FROM agents
     WHERE custom_name = ${name} AND team = ${team}
     LIMIT 1
@@ -849,7 +934,7 @@ export async function findOrCreateAgent(name: string, team: string, role?: strin
     ON CONFLICT (custom_name, team) WHERE custom_name IS NOT NULL AND team IS NOT NULL
     DO UPDATE SET updated_at = now()
     RETURNING id, started_at, role, custom_name, team, native_agent_id, native_color,
-              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+              native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
   `;
 
   return rowToAgentIdentity(rows[0]);
@@ -860,7 +945,7 @@ export async function getAgent(id: string): Promise<AgentIdentity | null> {
   const sql = await getConnection();
   const rows = await sql<AgentIdentityRow[]>`
     SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
     FROM agents WHERE id = ${id}
   `;
   return rows.length > 0 ? rowToAgentIdentity(rows[0]) : null;
@@ -871,7 +956,7 @@ export async function getAgentByName(name: string, team: string): Promise<AgentI
   const sql = await getConnection();
   const rows = await sql<AgentIdentityRow[]>`
     SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+           native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
     FROM agents WHERE custom_name = ${name} AND team = ${team}
     LIMIT 1
   `;
@@ -919,7 +1004,7 @@ export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdent
   if (filters?.team && filters?.role) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
       FROM agents
       WHERE team = ${filters.team} AND role = ${filters.role}
         AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
@@ -927,7 +1012,7 @@ export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdent
   } else if (filters?.team) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
       FROM agents
       WHERE team = ${filters.team}
         AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
@@ -935,7 +1020,7 @@ export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdent
   } else if (filters?.role) {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
       FROM agents
       WHERE role = ${filters.role}
         AND (${includeArchived} OR state IS DISTINCT FROM 'archived')
@@ -943,11 +1028,82 @@ export async function listAgents(filters?: ListAgentsFilter): Promise<AgentIdent
   } else {
     rows = await sql<AgentIdentityRow[]>`
       SELECT id, started_at, role, custom_name, team, native_agent_id, native_color,
-             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, created_at, updated_at
+             native_team_enabled, parent_session_id, current_executor_id, reports_to, title, kind, created_at, updated_at
       FROM agents
       WHERE (${includeArchived} OR state IS DISTINCT FROM 'archived')
     `;
   }
 
   return rows.map(rowToAgentIdentity);
+}
+
+/**
+ * Render-path variant of `listAgents()` — drops bare-name shadow rows so
+ * the `genie status` aggregator and other identity-only renderers don't
+ * surface ghost peers next to live agents. See `dedupeShadowRows` for
+ * the pairing rule.
+ */
+export async function listAgentsForRender(filters?: ListAgentsFilter): Promise<AgentIdentity[]> {
+  const all = await listAgents(filters);
+  return dedupeShadowRows(all, {
+    keyFor: (a) => shadowKey(a.customName, a.id, a.team),
+    hasExecutor: (a) => a.currentExecutorId != null,
+    startedAt: (a) => a.startedAt,
+  });
+}
+
+// ============================================================================
+// agents.kind audit (migration 049)
+// ============================================================================
+
+export interface AgentKindAuditRow {
+  id: string;
+  kind: 'permanent' | 'task' | null;
+  expected: 'permanent' | 'task';
+}
+
+export interface AgentKindAuditResult {
+  /** Total rows scanned. */
+  total: number;
+  /** Rows whose stored `kind` disagreed with the structural inference. */
+  drifted: AgentKindAuditRow[];
+}
+
+/**
+ * Audit `agents.kind` against the structural inference rule.
+ *
+ * Migration 049 declares `kind` as `GENERATED ALWAYS AS … STORED`, so on
+ * Postgres the column cannot drift — every INSERT/UPDATE recomputes it.
+ * This audit exists as belt-and-suspenders for two scenarios:
+ *
+ *   1. Backends that fall back to a CHECK + trigger implementation (if a
+ *      future Postgres version blocks GENERATED columns, or if a non-PG
+ *      adapter is added).
+ *   2. Defense-in-depth against schema-bypassing writes (a rogue tool
+ *      that issued raw SQL to set `kind` would still be caught here).
+ *
+ * Drift rows are logged as `agents.kind.audit_drift` audit events so the
+ * `genie status --debug` surface (Group 2 / 6) can render them. Returns
+ * the drift list so callers can render synchronously without reading
+ * `audit_events` back.
+ */
+export async function auditAgentKind(): Promise<AgentKindAuditResult> {
+  const sql = await getConnection();
+  const rows = await sql<{ id: string; kind: 'permanent' | 'task' | null; reports_to: string | null }[]>`
+    SELECT id, kind, reports_to FROM agents
+  `;
+  const drifted: AgentKindAuditRow[] = [];
+  for (const row of rows) {
+    const expected: 'permanent' | 'task' = row.id.startsWith('dir:') || row.reports_to === null ? 'permanent' : 'task';
+    if (row.kind !== expected) {
+      drifted.push({ id: row.id, kind: row.kind, expected });
+    }
+  }
+  for (const drift of drifted) {
+    recordAuditEvent('worker', drift.id, 'agents.kind.audit_drift', 'auditor', {
+      stored: drift.kind,
+      expected: drift.expected,
+    }).catch(() => {});
+  }
+  return { total: rows.length, drifted };
 }

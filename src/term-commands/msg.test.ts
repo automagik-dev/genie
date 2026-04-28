@@ -596,7 +596,7 @@ describe.skipIf(!DB_AVAILABLE)('buildTeamLeadCommand (shared module)', () => {
     expect(cmd).toContain('--agent-id');
     expect(cmd).toContain('--agent-name');
     expect(cmd).toContain('--team-name');
-    expect(cmd).toContain('--dangerously-skip-permissions');
+    expect(cmd).toContain('--permission-mode auto');
     expect(cmd).toContain('CLAUDECODE=1');
     expect(cmd).toContain('CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1');
   });

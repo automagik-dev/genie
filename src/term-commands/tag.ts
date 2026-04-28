@@ -7,6 +7,7 @@
  */
 
 import type { Command } from 'commander';
+import { palette } from '../../packages/genie-tokens';
 import type * as taskServiceTypes from '../lib/task-service.js';
 import { padRight } from '../lib/term-format.js';
 
@@ -53,7 +54,7 @@ export function registerTagCommands(program: Command): void {
   tag
     .command('create <name>')
     .description('Create a custom tag')
-    .option('--color <hex>', 'Tag color (hex)', '#9ca3af')
+    .option('--color <hex>', 'Tag color (hex)', palette.textDim)
     .option('--type <typeId>', 'Associate with a task type')
     .action(async (name: string, options: { color?: string; type?: string }) => {
       try {

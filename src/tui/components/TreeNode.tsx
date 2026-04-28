@@ -32,7 +32,7 @@ export const TreeNodeRow = memo(function TreeNodeRow({
     <box
       height={1}
       width="100%"
-      backgroundColor={selected ? palette.violet : undefined}
+      backgroundColor={selected ? palette.accentDim : undefined}
       onMouseDown={(event: { button?: number }) => {
         if (event.button === 2 && onContextMenu) {
           onSelect(node.id);
@@ -49,10 +49,10 @@ export const TreeNodeRow = memo(function TreeNodeRow({
           {expandIcon}{' '}
         </span>
         <span fg={color}>{icon} </span>
-        <span fg={selected ? '#ffffff' : palette.text}>{node.label}</span>
+        <span fg={selected ? palette.accentBright : palette.text}>{node.label}</span>
         {suffix ? <span fg={palette.textDim}>{suffix}</span> : null}
         {node.agentState ? <span fg={getStateColor(node.agentState)}> {node.agentState}</span> : null}
-        <span fg={palette.textMuted}>{` [${node.type}]`}</span>
+        {process.env.GENIE_TUI_DEBUG === '1' ? <span fg={palette.textMuted}>{` [${node.type}]`}</span> : null}
       </text>
     </box>
   );
@@ -77,6 +77,22 @@ function getNodeIcon(node: TreeNodeType): string {
 }
 
 function getAgentIcon(node: TreeNodeType): string {
+  // Prefer work-state (invincible-genie / Group 2 — TUI-2 deliverable) when
+  // populated; it captures the agent's relationship to its task. Fall back
+  // to process state when the diagnostics refresh hasn't loaded
+  // `shouldResume()` yet (PG degraded).
+  switch (node.workState) {
+    case 'in_flight':
+      return '\u25c6'; // ◆ resume-ready
+    case 'paused':
+      return '\u25d0'; // ◐ paused
+    case 'done':
+      return '\u2714'; // ✔ done
+    case 'stuck':
+      return '\u2718'; // ✘ stuck
+    default:
+      break;
+  }
   switch (node.wsAgentState) {
     case 'running':
       return '\u25cf'; // ●
@@ -108,9 +124,9 @@ function getNodeColor(node: TreeNodeType): string {
 
   switch (node.type) {
     case 'session':
-      return node.data.attached ? palette.emerald : palette.textDim;
+      return node.data.attached ? palette.success : palette.textDim;
     case 'window':
-      return node.data.active ? palette.cyan : palette.text;
+      return node.data.active ? palette.info : palette.text;
     case 'pane':
       return getPaneColor(node);
     default:
@@ -119,9 +135,29 @@ function getNodeColor(node: TreeNodeType): string {
 }
 
 function getAgentColor(node: TreeNodeType): string {
+  // Mirrors getAgentIcon — work-state first, process state fallback.
+  switch (node.workState) {
+    case 'in_flight':
+      // Was palette.emerald pre design-system rebase. Lumon-MDR migration
+      // hard-cut emerald/cyan aliases (theme.ts:5); accentBright is the
+      // semantic equivalent for "active, attention-getting" without
+      // re-introducing the dropped color name.
+      return palette.accentBright;
+    case 'paused':
+      return palette.textDim;
+    case 'done':
+      // Was palette.cyan pre design-system rebase. info is the semantic
+      // replacement: cool, distinct from success/accent, reads as
+      // "informational past state".
+      return palette.info;
+    case 'stuck':
+      return palette.error;
+    default:
+      break;
+  }
   switch (node.wsAgentState) {
     case 'running':
-      return palette.emerald;
+      return palette.success;
     case 'stopped':
       return palette.textDim;
     case 'error':
@@ -135,25 +171,33 @@ function getAgentColor(node: TreeNodeType): string {
 
 function getPaneColor(node: TreeNodeType): string {
   if (node.data.isDead) return palette.error;
-  if (node.agentState === 'working') return palette.cyan;
+  if (node.agentState === 'working') return palette.info;
   if (node.agentState === 'permission') return palette.warning;
   if (node.agentState === 'error') return palette.error;
   if (node.agentState === 'idle') return palette.textDim;
-  if (node.data.command === 'claude') return palette.cyan;
+  if (node.data.command === 'claude') return palette.info;
   return palette.textDim;
 }
 
-function getNodeSuffix(node: TreeNodeType): string {
-  if (node.type === 'agent') {
-    // Show retry hint for stuck agents (spawning with no live panes)
-    if (node.wsAgentState === 'spawning' && node.activePanes === 0) {
-      return ' [stuck — press R to retry]';
-    }
-    const wc = node.data.windowCount as number;
-    if (wc > 1) return ` (${wc} windows)`;
-    if (wc === 1) return ' (1 window)';
-    return '';
+function getAgentSuffix(node: TreeNodeType): string {
+  // Work-state hints (invincible-genie / Group 2). The stuck-spawn case
+  // already has a retry hint; extend it to the new work-state shapes
+  // so the operator sees the actionable verb inline.
+  if (node.workState === 'stuck') return ' [stuck — press R to retry]';
+  if (node.workState === 'paused') return ' [paused — auto-resume off]';
+  if (node.workState === 'done') return ' [done]';
+  // Show retry hint for stuck agents (spawning with no live panes)
+  if (node.wsAgentState === 'spawning' && node.activePanes === 0) {
+    return ' [stuck — press R to retry]';
   }
+  const wc = node.data.windowCount as number;
+  if (wc > 1) return ` (${wc} windows)`;
+  if (wc === 1) return ' (1 window)';
+  return '';
+}
+
+function getNodeSuffix(node: TreeNodeType): string {
+  if (node.type === 'agent') return getAgentSuffix(node);
   if (node.type === 'session' || node.type === 'pane') {
     const count = node.activePanes;
     if (count > 0) return ` ${icons.agent}${count}`;
@@ -164,7 +208,7 @@ function getNodeSuffix(node: TreeNodeType): string {
 function getStateColor(state: string): string {
   switch (state) {
     case 'working':
-      return palette.cyan;
+      return palette.info;
     case 'idle':
       return palette.textDim;
     case 'permission':

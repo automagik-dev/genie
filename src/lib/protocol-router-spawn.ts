@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import * as registry from './agent-registry.js';
 import type { WorkerTemplate } from './agent-registry.js';
+import { recordAuditEvent } from './audit.js';
 import * as nativeTeams from './claude-native-teams.js';
 import { getConnection } from './db.js';
 import * as executorRegistry from './executor-registry.js';
@@ -26,9 +27,10 @@ import {
   validateSpawnParams,
 } from './provider-adapters.js';
 import { getProvider } from './providers/registry.js';
+import { shouldResume } from './should-resume.js';
 import * as teamManager from './team-manager.js';
 import { genieTmuxCmd } from './tmux-wrapper.js';
-import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows, resolveRepoSession } from './tmux.js';
+import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, isPaneAlive, listWindows } from './tmux.js';
 import * as wishState from './wish-state.js';
 
 const execAsync = promisify(exec);
@@ -48,8 +50,12 @@ async function resolveParentSession(_repoPath: string, team: string): Promise<st
   const sanitized = nativeTeams.sanitizeTeamName(team);
   const leaderAgent = await registry.getAgentByName(leaderName, sanitized).catch(() => null);
   if (leaderAgent) {
-    const resumeId = await executorRegistry.getResumeSessionId(leaderAgent.id).catch(() => null);
-    if (resumeId) return resumeId;
+    // Route through the canonical chokepoint. We want the leader's session
+    // UUID for use as a parent_session_id — `shouldResume` exposes it
+    // regardless of the resume verdict (a paused or assignment-closed leader
+    // still anchors a valid parent session for new teammate spawns).
+    const decision = await shouldResume(leaderAgent.id).catch(() => null);
+    if (decision?.sessionId) return decision.sessionId;
   }
   return (await nativeTeams.discoverClaudeParentSessionId()) ?? `genie-${team}`;
 }
@@ -106,10 +112,31 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
  * Create executor record for an auto-spawned worker.
  * Best-effort: don't block auto-spawn if executor tracking fails.
  */
-/** Terminate the current active executor for an agent if it's still running. */
+/**
+ * Terminate the current active executor for an agent if it's still running.
+ *
+ * Defensive guard (Group 22): refuse to terminate when the executor's pane
+ * is still alive AND state is in a "doing work" set. This blocks the
+ * shadow-row send-path bug from killing live executors mid-task — when the
+ * resolver mis-routes due to bare-name+UUID dual rows, this guard catches
+ * the kill before it lands. Emits `tried_to_kill_live_executor` audit so
+ * the misroute is observable.
+ */
 async function terminateActiveExecutorIfRunning(agentId: string): Promise<void> {
   const currentExec = await executorRegistry.getCurrentExecutor(agentId);
   if (!currentExec || currentExec.state === 'terminated' || currentExec.state === 'done') return;
+
+  const liveStates = new Set(['running', 'idle', 'working', 'permission', 'question']);
+  if (currentExec.tmuxPaneId && liveStates.has(currentExec.state) && (await isPaneAlive(currentExec.tmuxPaneId))) {
+    recordAuditEvent('executor', currentExec.id, 'tried_to_kill_live_executor', process.env.GENIE_AGENT_NAME ?? 'cli', {
+      agent_id: agentId,
+      state: currentExec.state,
+      pane_id: currentExec.tmuxPaneId,
+      reason: 'live_pane_guard',
+    }).catch(() => {});
+    return;
+  }
+
   const providerImpl = getProvider(currentExec.provider);
   if (providerImpl) {
     try {
@@ -284,8 +311,35 @@ export async function spawnWorkerFromTemplate(
   const workerId = await generateWorkerId(team, template.role);
 
   const teamConfig = await teamManager.getTeam(team);
-  const session =
-    teamConfig?.tmuxSessionName ?? (await resolveRepoSession(repoPath)) ?? (await getCurrentSessionName()) ?? team;
+  // §19 v2 architectural rule: session_name = owning agent, strictly 1:1.
+  // When a leader hires a worker into their team, the worker MUST land in
+  // the leader's existing tmux session as a new window. Prior code chained
+  // `resolveRepoSession(repoPath)` ahead of `getCurrentSessionName()`, which
+  // for `--cwd <worktree>` spawns derived a basename that never matched any
+  // existing session — `ensureTeamWindow` then created an orphan auto-named
+  // session (e.g. `@55`, `@60`) the operator could not see in their TUI.
+  //
+  // Resolution order:
+  //   1. Caller is attached to tmux (`TMUX` env set) → use their session.
+  //      This honors the §19 v2 1:1 rule: the spawner's session is the
+  //      team-leader's own session, hires land there as new windows.
+  //   2. Caller is NOT in tmux (CLI/SDK/background) → use the team's
+  //      configured session if any.
+  //   3. Last resort: the literal team name.
+  //
+  // Why we gate step 1 on `TMUX` env: `getCurrentSessionName()` falls back
+  // to "first session from `tmux list-sessions`" when `TMUX` is unset
+  // (legacy hint-resolution path). For background spawns that fallback
+  // would silently route workers into an unrelated session, IGNORING the
+  // configured `teamConfig.tmuxSessionName`. The TMUX-env gate keeps
+  // current-session preference for the interactive case (which is what
+  // matters for the §19 1:1 rule) while letting non-interactive callers
+  // use their explicit team config. `resolveRepoSession` is removed from
+  // this hot path — the worker's `repoPath` controls its working dir,
+  // NOT its tmux session.
+  const inTmux = Boolean(process.env.TMUX);
+  const callerSession = inTmux ? await getCurrentSessionName() : null;
+  const session = callerSession ?? teamConfig?.tmuxSessionName ?? team;
   const { paneId, teamWindow } = await spawnPaneInSession(session, team, repoPath, fullCommand);
 
   const now = new Date().toISOString();
@@ -327,9 +381,22 @@ export async function spawnWorkerFromTemplate(
     /* best-effort: executor tracking is additive, don't block auto-spawn */
   }
 
-  if (isClaude) {
-    await registerNativeTeamMember(team, agentName, template, paneId, repoPath, spawnColor, resumeSessionId);
-  }
+  // Group 3 (codex-provider-parity): register ALL providers as native team
+  // members, not just claude. The native registry is what `genie send`'s
+  // bridge resolver (`resolveNativeMemberName`) queries to route messages
+  // through `~/.claude/teams/<team>/inboxes/<agent>.json`. Pre-fix, codex
+  // agents were never registered, so every `genie send --to <codex-agent>`
+  // emitted the warning `[genie send] Native inbox bridge: could not find
+  // native team member for "<name>"`. PG mailbox path worked as fallback,
+  // but native delivery silently failed.
+  //
+  // Note: `nativeTeamEnabled` on the agent registry row stays gated by
+  // isClaude — that flag controls claude-cli-specific protocol behaviors
+  // (--agent-id, --team-name, --agent-color flags) which codex's CLI
+  // doesn't understand. We register the codex agent in the native team
+  // namespace, but don't pretend it speaks the claude-cli teammate
+  // protocol.
+  await registerNativeTeamMember(team, agentName, template, paneId, repoPath, spawnColor, resumeSessionId);
 
   if (spawnColor) {
     await applyPaneColor(paneId, spawnColor, teamWindow?.windowId);

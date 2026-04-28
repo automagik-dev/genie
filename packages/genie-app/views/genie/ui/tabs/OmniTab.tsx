@@ -216,7 +216,7 @@ function SaveButton({ saving, saved, onSave }: { saving: boolean; saved: boolean
         fontSize: '12px',
         fontFamily: theme.fontFamily,
         backgroundColor: theme.violet,
-        color: '#fff',
+        color: theme.bg,
         border: 'none',
         borderRadius: theme.radiusSm,
         cursor: saving ? 'default' : 'pointer',

@@ -90,9 +90,18 @@ interface ScopeOptions {
  * with id shapes like `<team>-<role>` or UUID) whose `role` matches `name`.
  * Without this flag, `rm` only removes the `dir:<name>` row and returns a
  * warning message listing the live instance ids if any exist.
+ *
+ * `explicitPermanent`: when true, bypasses the heal-not-wipe guardrail that
+ * refuses to delete master agent rows (kind='permanent' AND repo_path is
+ * non-empty). Master agents own irreplaceable session UUIDs / workspace
+ * identity; data-loss here was the 2026-04-25 power-outage's worst gap
+ * (the `dir:email` row vanished mid-recovery via a watcher race in
+ * `agent-sync.ts:processWatchedAgent` → `directory.rm` → `DELETE FROM
+ * agents`). Default false — explicit operator confirmation required.
  */
 interface RmOptions extends ScopeOptions {
   force?: boolean;
+  explicitPermanent?: boolean;
 }
 
 /**
@@ -178,6 +187,17 @@ export async function add(
   // Build metadata JSONB from frontmatter fields
   const metadata = buildMetadata(full);
 
+  // Resolve canonical team — prefer the `team` field on the entry (template-
+  // pinned, per `lookupTemplateTeam` precedence), fall back to the entry's
+  // tmuxSession when set, else NULL. Without this, dir: rows historically
+  // landed with team=NULL and the session-sync hook's `getAgentByName(name,
+  // teamName)` lookup missed (the lookup is `WHERE custom_name=$1 AND
+  // team=$2`), so the agent's `claude_session_id` was never persisted —
+  // every native-team teammate (`dir:email` was the canonical victim)
+  // accumulated megabytes of JSONL on disk with zero DB rows. See the
+  // 2026-04-25 power-outage post-mortem.
+  const team = entry.team ?? entry.bridgeTmuxSession ?? null;
+
   // Store as a directory agent in PG with metadata.
   // state = NULL: directory records (id prefix `dir:`) are identity rows that
   // track state through their runtime/executor children, not the legacy `state`
@@ -187,9 +207,21 @@ export async function add(
   const { getConnection } = await import('./db.js');
   const sql = await getConnection();
   await sql`
-    INSERT INTO agents (id, role, custom_name, started_at, state, metadata)
-    VALUES (${`dir:${entry.name}`}, ${entry.name}, ${entry.name}, now(), ${null}, ${sql.json(metadata)})
-    ON CONFLICT (id) DO UPDATE SET metadata = ${sql.json(metadata)}
+    INSERT INTO agents (id, role, custom_name, team, repo_path, started_at, state, metadata)
+    VALUES (
+      ${`dir:${entry.name}`},
+      ${entry.name},
+      ${entry.name},
+      ${team},
+      ${entry.dir},
+      now(),
+      ${null},
+      ${sql.json(metadata)}
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      team = COALESCE(EXCLUDED.team, agents.team),
+      repo_path = COALESCE(NULLIF(EXCLUDED.repo_path, ''), agents.repo_path),
+      metadata = ${sql.json(metadata)}
   `;
 
   return full;
@@ -213,6 +245,54 @@ export async function add(
 export async function rm(name: string, options?: RmOptions): Promise<RmResult> {
   const { getConnection } = await import('./db.js');
   const sql = await getConnection();
+
+  // Heal-not-wipe guardrail (master-aware-spawn wish, Group 3).
+  //
+  // Refuse to delete agents rows that own a workspace identity: master rows
+  // satisfy `kind='permanent' AND repo_path IS NOT NULL AND repo_path != ''`.
+  // These hold irreplaceable claude session UUIDs and persistent workspace
+  // identity; silent deletion was the 2026-04-25 power-outage's worst gap
+  // (`dir:email` vanished mid-recovery via the agent-sync watcher race —
+  // `processWatchedAgent` saw a transient missing dir, called
+  // `directory.rm`, and the row was wiped without an audit trail).
+  //
+  // The watcher and `removeMissingAgents` paths in `agent-sync.ts` both
+  // reach this function with `options=undefined`; the guardrail short-
+  // circuits them regardless. Operators who *do* want to remove a master
+  // pass `--explicit-permanent` from the CLI.
+  if (!options?.explicitPermanent) {
+    const protectedRows: { id: string }[] = options?.force
+      ? await sql`
+          SELECT id FROM agents
+          WHERE (id = ${`dir:${name}`} OR role = ${name})
+            AND kind = 'permanent'
+            AND repo_path IS NOT NULL
+            AND repo_path <> ''
+        `
+      : await sql`
+          SELECT id FROM agents
+          WHERE id = ${`dir:${name}`}
+            AND kind = 'permanent'
+            AND repo_path IS NOT NULL
+            AND repo_path <> ''
+        `;
+    if (protectedRows.length > 0) {
+      const ids = protectedRows.map((r: { id: string }) => r.id).join(', ');
+      const { recordAuditEvent } = await import('./audit.js');
+      // Awaited: recordAuditEvent already swallows internal failures, but the
+      // INSERT round-trip MUST complete before we throw — otherwise the CLI
+      // process exits and the unawaited Promise is dropped, leaving a refusal
+      // with no audit trail (the very gap this guardrail exists to close).
+      await recordAuditEvent('agent', `dir:${name}`, 'directory.rm.refused', 'agent-directory', {
+        reason: 'protected_master_row',
+        protected_ids: protectedRows.map((r: { id: string }) => r.id),
+        force: options?.force ?? false,
+      }).catch(() => {});
+      throw new Error(
+        `Refused to delete master agent row(s) ${ids} (kind='permanent' with repo_path). These rows hold irreplaceable session identity. Use 'genie agent recover ${name}' to heal, or pass --explicit-permanent to force deletion.`,
+      );
+    }
+  }
 
   // 1. Canonical directory row: id = 'dir:<name>'
   const dirDelete = await sql`DELETE FROM agents WHERE id = ${`dir:${name}`}`;
@@ -255,7 +335,7 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
     const rows = await sql`
       SELECT role, metadata, created_at FROM agents
       WHERE role = ${name}
-      ORDER BY (CASE WHEN id LIKE 'dir:%' THEN 0 ELSE 1 END), started_at DESC
+      ORDER BY (CASE WHEN position('dir:' in id) = 1 THEN 0 ELSE 1 END), started_at DESC
       LIMIT 1
     `;
     if (rows.length > 0) {
@@ -358,7 +438,7 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
       FROM agents a
       LEFT JOIN executors e ON a.current_executor_id = e.id
       WHERE a.role IS NOT NULL
-      ORDER BY a.role, (CASE WHEN a.id LIKE 'dir:%' THEN 0 ELSE 1 END), a.started_at DESC
+      ORDER BY a.role, (CASE WHEN position('dir:' in a.id) = 1 THEN 0 ELSE 1 END), a.started_at DESC
     `;
     for (const row of rows) {
       const name = row.role as string;

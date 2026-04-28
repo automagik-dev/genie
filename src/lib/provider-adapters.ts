@@ -65,6 +65,23 @@ export interface SpawnParams {
   provider: ProviderName;
   team: string;
   role?: string;
+  /**
+   * Resolved agent template name (the `<name>` positional arg that
+   * resolves via `directory.resolve` to a built-in or user-registered
+   * agent definition). Used as Claude's `--agent <template>` flag —
+   * Claude looks up the agent definition by this name.
+   *
+   * Distinct from `role`, which is the IDENTITY override (operator's
+   * `--role <custom>` flag). When operator passes `--role custom-id`
+   * with a template `engineer`, the spawn must build:
+   *   --agent 'engineer'         (template — for definition lookup)
+   *   --agent-name 'custom-id'   (identity — for inbox/registry)
+   *
+   * Group 21 fix: previously `--agent` was sourced from `role`, which
+   * cascaded the custom identity into Claude's template lookup,
+   * producing phantom rows and 14M `resume.missing_session` events.
+   */
+  agentTemplate?: string;
   skill?: string;
   /** Agent ID this executor belongs to. Used by executor model (Groups 3+). */
   agentId?: string;
@@ -131,6 +148,7 @@ const spawnParamsSchema = z.object({
   provider: z.enum(['claude', 'codex', 'claude-sdk', 'app-pty']),
   team: z.string().min(1, 'Team name is required'),
   role: z.string().optional(),
+  agentTemplate: z.string().optional(),
   skill: z.string().optional(),
   agentId: z.string().optional(),
   executorId: z.string().uuid().optional(),
@@ -259,11 +277,10 @@ function appendNativeTeamFlags(
   if (nt.parentSessionId) parts.push('--parent-session-id', escapeShellArg(nt.parentSessionId));
   if (nt.agentType) parts.push('--agent-type', escapeShellArg(nt.agentType));
   if (nt.planModeRequired) parts.push('--plan-mode-required');
-  // Always set permission mode for native team workers. Without this, CC's native
-  // team layer routes tool approvals to the team lead (which is an AI agent that
-  // can't approve). --dangerously-skip-permissions alone isn't enough — the native
-  // team permission gate is a separate layer.
-  const effectivePermMode = nt.permissionMode ?? 'bypassPermissions';
+  // Always set permission mode for native team workers. `auto` gives tool-by-tool
+  // judgment; keeps team-leads unblocked while refusing genuinely destructive ops.
+  // `bypassPermissions` remains a valid opt-in via agent frontmatter.
+  const effectivePermMode = nt.permissionMode ?? 'auto';
   parts.push('--permission-mode', escapeShellArg(effectivePermMode));
 }
 
@@ -361,7 +378,16 @@ function appendSessionFlags(parts: string[], params: SpawnParams): void {
   } else if (params.sessionId) {
     parts.push('--session-id', escapeShellArg(params.sessionId));
   }
-  if (params.role) parts.push('--agent', escapeShellArg(params.role));
+  // Group 21 fix: --agent flag uses the resolved template (agentTemplate),
+  // NOT the identity override (role). Falls back to role only when no
+  // template field is set (legacy callers / built-in spawn paths that
+  // bypass buildSpawnParams). When role is custom AND no template is
+  // resolved, we still emit --agent <role> to preserve prior behavior;
+  // the agents.ts:buildSpawnParams call site is now responsible for
+  // setting agentTemplate to the verified template name so the right
+  // value reaches Claude's template lookup.
+  const claudeAgentFlag = params.agentTemplate ?? params.role;
+  if (claudeAgentFlag) parts.push('--agent', escapeShellArg(claudeAgentFlag));
   if (params.model) parts.push('--model', escapeShellArg(params.model));
   if (params.name) parts.push('--name', escapeShellArg(params.name));
 }
@@ -405,7 +431,7 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('claude');
 
   const claudeBinary = resolveShellBinary('claude') ?? 'claude';
-  const parts: string[] = [claudeBinary, '--dangerously-skip-permissions'];
+  const parts: string[] = [claudeBinary, '--permission-mode', escapeShellArg('auto')];
   const env = buildClaudeGenieEnv(params);
 
   appendOtelEnv(env, params);
@@ -443,6 +469,14 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
  * Uses `codex` with `--instructions` to inject skill-based task
  * instructions. Role is advisory metadata only (DEC-4).
  */
+/** Build the auto-generated codex prompt when no initialPrompt is supplied. */
+function buildCodexAutoPrompt(params: SpawnParams): string {
+  const promptParts = [`Genie worker. Team: ${params.team}.`];
+  if (params.role) promptParts.push(`Role: ${params.role}.`);
+  if (params.skill) promptParts.push(`Execute the ${params.skill} skill instructions.`);
+  return promptParts.join(' ');
+}
+
 export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('codex');
 
@@ -466,11 +500,16 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
     }
   }
 
-  // Build prompt from available context (skill + role are both optional)
-  const promptParts = [`Genie worker. Team: ${params.team}.`];
-  if (params.role) promptParts.push(`Role: ${params.role}.`);
-  if (params.skill) promptParts.push(`Execute the ${params.skill} skill instructions.`);
-  const prompt = promptParts.join(' ');
+  // Group 11 (codex-provider-parity): honor params.initialPrompt as the
+  // codex worker's first user message. Pre-fix, codex spawn ignored
+  // --prompt entirely — operators were stuck either editing --extra-args
+  // by hand or sending a follow-up via genie send (which until Group 3
+  // landed today, silently failed the native bridge for codex agents).
+  //
+  // When initialPrompt is provided, use it verbatim. When absent, fall
+  // back to the auto-generated "Genie worker. Team: X. Role: Y." string
+  // so spawn-without-prompt behavior is unchanged.
+  const prompt = params.initialPrompt ?? buildCodexAutoPrompt(params);
   parts.push(escapeShellArg(prompt));
 
   return {

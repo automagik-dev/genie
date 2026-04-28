@@ -41,13 +41,13 @@ const STATUS_CONFIG: Record<string, { color: string; label: string }> = {
   permission: { color: theme.warning, label: 'Permission' },
   question: { color: theme.warning, label: 'Question' },
   error: { color: theme.error, label: 'Error' },
-  done: { color: '#6b7280', label: 'Done' },
-  suspended: { color: '#6b7280', label: 'Suspended' },
-  offline: { color: '#6b7280', label: 'Offline' },
+  done: { color: theme.textMuted, label: 'Done' },
+  suspended: { color: theme.textMuted, label: 'Suspended' },
+  offline: { color: theme.textMuted, label: 'Offline' },
 };
 
 function stateColor(state: string): string {
-  return STATUS_CONFIG[state]?.color ?? '#6b7280';
+  return STATUS_CONFIG[state]?.color ?? theme.textMuted;
 }
 
 function stateLabel(state: string): string {
@@ -62,7 +62,7 @@ const STATUS_LEGEND = [
   { color: theme.emerald, label: 'Running' },
   { color: theme.warning, label: 'Spawning' },
   { color: theme.error, label: 'Error' },
-  { color: '#6b7280', label: 'Offline' },
+  { color: theme.textMuted, label: 'Offline' },
 ];
 
 // ============================================================================

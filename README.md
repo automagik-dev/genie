@@ -18,6 +18,19 @@
 
 <br />
 
+> [!IMPORTANT]
+> **Genie's npm distribution is being soft-deprecated** in favor of a cosign + SLSA-verified install through our own CDN.
+>
+> The canonical install going forward is:
+>
+> ```bash
+> curl -fsSL https://get.automagik.dev/genie | bash
+> ```
+>
+> Existing operators on `npm install -g @automagik/genie` continue to work — the npm package will become a thin postinstall shim that downloads and runs the verified installer. See [Security & Trust → Distribution Sovereignty](https://automagik.dev/genie/security/distribution-sovereignty) for the threat model and verification flow.
+
+<br />
+
 <!-- TODO: Record a 30s terminal demo with vhs/asciinema and uncomment:
 <p align="center">
   <img src=".github/assets/genie-demo.gif" alt="Genie demo" width="720" />
@@ -25,14 +38,7 @@
 -->
 
 <!-- METRICS:START -->
-**🚀 117 commits** this week · **6 releases** · **+22.7K LoC** · **6 contributors**
-
-| Metric | Value (7d) |
-|--------|-----------|
-| PRs merged | 142 (20/day) |
-| Avg merge time | 0.7h |
-| SHIP rate | 99% |
-| Releases (24h) | 0 |
+**🚀 113 commits** this week · **3 releases** · **+12.5K LoC** · **5 contributors**
 
 ![Commits per day (30d, all branches)](.genie/assets/commits-30d.svg)
 
@@ -193,10 +199,15 @@ CREATE ROLE omni_scope_enforcer LOGIN PASSWORD '…' IN ROLE executors_reader;
 Response shape (`state` / `outcome` / `closed_at`) is the stable boundary
 contract; removing or renaming fields is a coordinated breaking change.
 
+## Design
+
+Genie ships a single, dark-only color palette inspired by **Severance** — the Lumon MDR room. One source of truth (`packages/genie-tokens/`), three consumers (TUI, desktop app, tmux). See [docs/design-system.md](docs/design-system.md) for tokens, the Severance rationale, how to add a color, how to regenerate the tmux theme, and the visual snapshot workflow.
+
 ---
 
 <p align="center">
   <a href="https://docs.automagik.dev/genie"><strong>Docs</strong></a> &middot;
+  <a href="docs/design-system.md"><strong>Design</strong></a> &middot;
   <a href="https://github.com/automagik-dev/genie/releases/tag/v4.260402.18"><strong>v4 Release</strong></a> &middot;
   <a href="https://discord.gg/xcW8c7fF3R"><strong>Discord</strong></a> &middot;
   <a href="LICENSE"><strong>MIT License</strong></a>

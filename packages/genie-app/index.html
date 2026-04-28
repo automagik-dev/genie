@@ -8,17 +8,17 @@
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body, #root { height: 100%; width: 100%; overflow: hidden; }
       body {
-        background: #1a1028;
-        color: #e2e8f0;
-        font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+        background: var(--genie-bg);
+        color: var(--genie-text);
+        font-family: var(--genie-font);
         -webkit-font-smoothing: antialiased;
       }
       /* Prevent text selection on nav elements */
       [data-nav] { user-select: none; -webkit-user-select: none; }
       /* Scrollbar styling */
       ::-webkit-scrollbar { width: 6px; height: 6px; }
-      ::-webkit-scrollbar-track { background: #414868; }
-      ::-webkit-scrollbar-thumb { background: #7aa2f7; border-radius: 3px; }
+      ::-webkit-scrollbar-track { background: var(--genie-scroll-track); }
+      ::-webkit-scrollbar-thumb { background: var(--genie-scroll-thumb); border-radius: 3px; }
     </style>
   </head>
   <body>

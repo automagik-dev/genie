@@ -75,15 +75,44 @@ describe('buildClaudeCommand', () => {
     expect(result.meta.role).toBe('implementor');
   });
 
-  it('includes --dangerously-skip-permissions', () => {
+  it('includes --permission-mode auto', () => {
     const result = buildClaudeCommand({ provider: 'claude', team: 'work', role: 'implementor' });
-    expect(result.command).toContain('--dangerously-skip-permissions');
+    expect(result.command).toContain('--permission-mode');
+    expect(result.command).toContain("'auto'");
   });
 
   it('excludes --agent when no role specified', () => {
     const result = buildClaudeCommand({ provider: 'claude', team: 'work' });
-    expect(result.command).toContain('--dangerously-skip-permissions');
+    expect(result.command).toContain('--permission-mode');
     expect(result.command).not.toContain('--agent');
+  });
+
+  // Group 21 regression: --agent must use the resolved template name,
+  // NOT the operator's --role override. Prevents phantom-spawn cascade
+  // (custom name reaching Claude's template lookup → exit on missing
+  // template → 14M watchdog `resume.missing_session` events / 7d).
+  it('uses agentTemplate (not role) for --agent flag when both differ', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'custom-identity', // operator's --role override (registration name)
+      agentTemplate: 'engineer', // resolved template (verified on disk)
+    });
+    expect(result.command).toContain("--agent 'engineer'");
+    expect(result.command).not.toContain("--agent 'custom-identity'");
+    // Identity-shaped fields preserve the role override
+    expect(result.meta.role).toBe('custom-identity');
+  });
+
+  it('falls back to role for --agent when agentTemplate is unset', () => {
+    // Backward compatibility: callers that bypass buildSpawnParams (legacy
+    // paths) only set role. Behavior should match pre-Group-21 semantics.
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'engineer',
+    });
+    expect(result.command).toContain("--agent 'engineer'");
   });
 
   it('does not include hidden teammate flags', () => {
@@ -313,6 +342,36 @@ describe('buildCodexCommand', () => {
   it('includes role in prompt', () => {
     const result = buildCodexCommand({ provider: 'codex', team: 'work', skill: 'work', role: 'tester' });
     expect(result.command).toContain('Role: tester');
+  });
+
+  // Group 11 (codex-provider-parity): codex spawn must honor --prompt
+  // (params.initialPrompt) as the worker's first user message, not
+  // override it with the auto-generated "Genie worker. Team: X." string.
+  it('honors initialPrompt verbatim when provided (Group 11)', () => {
+    const customPrompt = 'Implement Group 7 of security-install-download-guard wish';
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      role: 'sec-install-guard-codex',
+      initialPrompt: customPrompt,
+    });
+    // Custom prompt is used verbatim
+    expect(result.command).toContain(customPrompt);
+    // Auto-generated prompt is NOT used when initialPrompt is supplied
+    expect(result.command).not.toContain('Genie worker. Team: work');
+  });
+
+  it('falls back to auto-prompt when initialPrompt is empty/absent', () => {
+    // Backward compat: spawn-without-prompt produces the same auto-string
+    // as before the Group 11 change.
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      role: 'tester',
+      skill: 'work',
+    });
+    expect(result.command).toContain('Genie worker. Team: work.');
+    expect(result.command).toContain('Role: tester.');
   });
 
   it('does not depend on agent-name routing', () => {

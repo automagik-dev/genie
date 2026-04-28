@@ -48,7 +48,7 @@ export function resolveWishPath(slug: string, cwd?: string): string | null {
   const cwdPath = join(base, '.genie', 'wishes', slug, 'WISH.md');
   if (existsSync(cwdPath)) return cwdPath;
 
-  // Fallback: check repo root via git-common-dir
+  // Fallback 1: check repo root via git-common-dir.
   try {
     const commonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
       encoding: 'utf-8',
@@ -61,10 +61,67 @@ export function resolveWishPath(slug: string, cwd?: string): string | null {
       if (existsSync(repoPath)) return repoPath;
     }
   } catch {
-    // Not in a git repo — no fallback available
+    // Not in a git repo — fall through to the cross-repo search.
   }
 
+  // Fallback 2: cross-repo search (DX gap caught 2026-04-26 — `genie wish
+  // status <slug>` should work from any cwd, not just the wish's repo
+  // root). Walks the workspace `repos/` siblings of the saved workspace
+  // root + the workspace root itself for `<slug>/WISH.md`.
+  return findWishInWorkspaceRepos(slug);
+}
+
+/**
+ * Search the user's known workspace roots for `<slug>/WISH.md`. Returns
+ * the first hit. Pure filesystem; no DB / network round trips.
+ *
+ * Search order:
+ *   1. The workspace root recorded in `~/.genie/config.json` (or `$GENIE_HOME/config.json`).
+ *   2. Sibling directories under `<workspaceRoot>/repos/` (where
+ *      `genie team create --repo <path>` and friends land their clones).
+ *   3. Sibling `.genie/wishes/<slug>` under each detected repo root.
+ */
+function findWishInWorkspaceRepos(slug: string): string | null {
+  try {
+    const home = process.env.GENIE_HOME ?? join(require('node:os').homedir(), '.genie');
+    const configPath = join(home, 'config.json');
+    if (!existsSync(configPath)) return null;
+
+    const raw = require('node:fs').readFileSync(configPath, 'utf-8');
+    const config = JSON.parse(raw);
+    const wsRoot = typeof config.workspaceRoot === 'string' ? config.workspaceRoot : null;
+    if (!wsRoot) return null;
+
+    const candidateRoots = collectRepoCandidates(wsRoot);
+    for (const root of candidateRoots) {
+      const candidate = join(root, '.genie', 'wishes', slug, 'WISH.md');
+      if (existsSync(candidate)) return candidate;
+    }
+  } catch {
+    // Swallow — fallback search is best-effort.
+  }
   return null;
+}
+
+/**
+ * Build the list of repo roots to scan: the workspace itself plus every
+ * direct child of `<wsRoot>/repos/`. Avoids deep recursion (a depth-1
+ * scan covers the repo-clone topology `genie team create` produces).
+ */
+function collectRepoCandidates(workspaceRoot: string): string[] {
+  const fs = require('node:fs') as typeof import('node:fs');
+  const candidates: string[] = [workspaceRoot];
+  const reposDir = join(workspaceRoot, 'repos');
+  try {
+    if (fs.existsSync(reposDir)) {
+      for (const entry of fs.readdirSync(reposDir, { withFileTypes: true })) {
+        if (entry.isDirectory()) candidates.push(join(reposDir, entry.name));
+      }
+    }
+  } catch {
+    // unreadable — skip the repos sibling
+  }
+  return candidates;
 }
 
 /**
@@ -206,6 +263,44 @@ async function autoCleanupTeam(): Promise<void> {
   }
 }
 
+/**
+ * Archive agent rows that share the wish slug as their `team`.
+ *
+ * Same orphan class as the team-config dirs (Group 4 deliverable 1) but in
+ * Postgres: when a wish ships, the wish-team-lead identity row keeps
+ * showing up in `genie ls` forever (e.g. `design-system-severance` lingered
+ * long after that wish merged). Once `wishState.isWishComplete(slug)`
+ * returns true, flip every `agents.team = <slug>` row to
+ * `auto_resume=false` and `state='archived'` so it stops haunting the
+ * default listing.
+ *
+ * Best-effort — failures don't block the done flow. The migration 050
+ * companion reaps any rows we miss here on the next boot.
+ */
+export async function archiveWishNamedAgents(slug: string): Promise<number> {
+  try {
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    const rows = await sql<{ id: string }[]>`
+      UPDATE agents
+      SET auto_resume = false,
+          state = 'archived',
+          last_state_change = now()
+      WHERE team = ${slug}
+        AND state IS DISTINCT FROM 'archived'
+      RETURNING id
+    `;
+    if (rows.length > 0) {
+      console.log(`   📦 Archived ${rows.length} wish-named agent row${rows.length === 1 ? '' : 's'} (team="${slug}")`);
+    }
+    return rows.length;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.warn(`   ⚠️ Could not archive wish-named agent rows: ${detail}`);
+    return 0;
+  }
+}
+
 // ============================================================================
 // Pane Auto-Kill
 // ============================================================================
@@ -338,6 +433,9 @@ export async function doneCommand(ref: string): Promise<void> {
     if (wishComplete) {
       console.log('   🎉 Wish fully complete — all groups done.');
       await autoCleanupTeam();
+      // Group 5 of invincible-genie: archive wish-named agent rows so they
+      // stop haunting `genie ls` / `genie status` after the wish ships.
+      await archiveWishNamedAgents(slug);
     }
 
     // Auto-kill the calling agent's tmux pane

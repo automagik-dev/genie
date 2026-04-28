@@ -64,9 +64,17 @@ export function registerDirNamespace(program: Command): void {
     .description('Remove an agent from the directory')
     .option('--global', 'Remove from global directory instead of project')
     .option('--force', 'Also remove runtime/spawn rows sharing this role (id shapes: <team>-<role>, UUID)')
-    .action(async (name: string, options: { global?: boolean; force?: boolean }) => {
+    .option(
+      '--explicit-permanent',
+      "Override the heal-not-wipe guardrail and delete master agent rows (kind='permanent' with repo_path). Use with care — these rows own irreplaceable session identity.",
+    )
+    .action(async (name: string, options: { global?: boolean; force?: boolean; explicitPermanent?: boolean }) => {
       try {
-        const result = await directory.rm(name, { global: options.global, force: options.force });
+        const result = await directory.rm(name, {
+          global: options.global,
+          force: options.force,
+          explicitPermanent: options.explicitPermanent,
+        });
 
         if (result.removed) {
           const scope = options.global ? 'global' : 'project';

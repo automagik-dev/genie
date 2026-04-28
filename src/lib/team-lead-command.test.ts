@@ -173,3 +173,50 @@ describe('buildTeamLeadCommand resume behavior', () => {
     expect(cmd).not.toContain('--resume');
   });
 });
+
+// ============================================================================
+// buildTeamLeadCommand — GENIE_AGENT_NAME / --agent-name parity
+// ============================================================================
+
+describe('buildTeamLeadCommand identity parity', () => {
+  // Regression: when GENIE_AGENT_NAME (env-side identity used by `genie send`
+  // to label the sender) diverged from --agent-name (flag-side identity that
+  // CC binds to the inbox poller), `genie send 'msg' --to <self>` fell
+  // through the existing `from === to` self-loop guards (msg.ts:555,
+  // protocol-router.ts:500) because `from` was the cwd basename while
+  // `to` was the resolved leader. The message landed in inboxes/<leader>.json
+  // and the operator's own CC instance polled it — echoing every send back
+  // as a teammate-message. Repro: parent claude pid had
+  // `GENIE_AGENT_NAME=workspace` while `--agent-name felipe` from the same
+  // launch.
+
+  test('GENIE_AGENT_NAME equals --agent-name (default leader = team)', () => {
+    const cmd = buildTeamLeadCommand('felipe', { promptMode: 'append' });
+    expect(cmd).toContain("GENIE_AGENT_NAME='felipe'");
+    expect(cmd).toContain("--agent-name 'felipe'");
+  });
+
+  test('GENIE_AGENT_NAME equals --agent-name when leaderName overrides team', () => {
+    const cmd = buildTeamLeadCommand('felipe', {
+      leaderName: 'felipe',
+      promptMode: 'append',
+    });
+    expect(cmd).toContain("GENIE_AGENT_NAME='felipe'");
+    expect(cmd).toContain("--agent-name 'felipe'");
+  });
+
+  test('GENIE_AGENT_NAME ignores cwd basename', () => {
+    // Even if the launching cwd's basename ("workspace", "src",
+    // "node_modules", anything) would have been the previous source of
+    // truth, the env var must still match the leader name.
+    const cmd = buildTeamLeadCommand('alpha-team', {
+      leaderName: 'alpha-leader',
+      promptMode: 'append',
+    });
+    // sanitizeTeamName strips/normalizes — both sides should use the
+    // sanitized form consistently.
+    expect(cmd).toContain("GENIE_AGENT_NAME='alpha-leader'");
+    expect(cmd).toContain("--agent-name 'alpha-leader'");
+    expect(cmd).not.toMatch(/GENIE_AGENT_NAME='[^']*workspace[^']*'/);
+  });
+});

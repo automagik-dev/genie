@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { palette, rotateHue } from '../../packages/genie-tokens';
 import { tmuxBin } from './ensure-tmux.js';
 import { shellQuote } from './team-lead-command.js';
 // tmux-wrapper imported dynamically inside executeTmux for test mockability
@@ -307,6 +308,18 @@ async function ensureMasterWindow(session: string, masterName: string): Promise<
  * eliminating the TOCTOU race of find-then-create.
  */
 async function ensureSessionExists(name: string): Promise<void> {
+  // §19 v3 belt-and-suspenders: refuse session names that mimic tmux ids.
+  // tmux uses `@N` for window-ids and `$N` for session-ids; allowing those
+  // shapes as session NAMES creates unsearchable ghost sessions (the `@60`
+  // trap that captured spawns all night on 2026-04-26 → 04-27). Even if a
+  // caller passes one of these by accident, refusing here short-circuits
+  // the cascade. Twin's evidence at
+  // `/tmp/genie-recover/twin-overnight/finding-001-ghost-session-at60.md`.
+  if (/^[@$]\d+$/.test(name)) {
+    throw new Error(
+      `Refused to create tmux session with id-shaped name "${name}". Names matching /^[@$]\\d+$/ collide with tmux's window-id (@N) and session-id ($N) notation, producing ghost sessions that cannot be safely targeted. Pass a human-readable session name (e.g. the team or agent name) instead.`,
+    );
+  }
   try {
     await executeTmux(`new-session -d -s "${name}" -e LC_ALL=C.UTF-8 -e LANG=C.UTF-8`);
   } catch (error) {
@@ -328,7 +341,7 @@ export async function ensureTeamWindow(
   session: string,
   teamName: string,
   workingDir?: string,
-): Promise<{ windowId: string; windowName: string; paneId: string; created: boolean }> {
+): Promise<{ windowId: string; windowName: string; sessionName: string; paneId: string; created: boolean }> {
   const maxRetries = 3;
   const baseDelayMs = 250;
 
@@ -366,7 +379,7 @@ async function ensureTeamWindowOnce(
   session: string,
   teamName: string,
   workingDir?: string,
-): Promise<{ windowId: string; windowName: string; paneId: string; created: boolean }> {
+): Promise<{ windowId: string; windowName: string; sessionName: string; paneId: string; created: boolean }> {
   // Atomic session creation — eliminates TOCTOU race
   await ensureSessionExists(session);
 
@@ -382,7 +395,7 @@ async function ensureTeamWindowOnce(
     await rehydratePaneColorHook(existing.id);
     const panes = await listPanes(existing.id);
     const paneId = panes.length > 0 ? panes[0].id : `${session}:${teamName}.0`;
-    return { windowId: existing.id, windowName: teamName, paneId, created: false };
+    return { windowId: existing.id, windowName: teamName, sessionName: session, paneId, created: false };
   }
 
   // Remember the current master window (lowest-index window) before creating
@@ -403,23 +416,19 @@ async function ensureTeamWindowOnce(
   await rehydratePaneColorHook(newWindow.id);
   const panes = await listPanes(newWindow.id);
   const paneId = panes.length > 0 ? panes[0].id : `${session}:${teamName}.0`;
-  return { windowId: newWindow.id, windowName: teamName, paneId, created: true };
+  return { windowId: newWindow.id, windowName: teamName, sessionName: session, paneId, created: true };
 }
 
 /**
  * Map agent color names to tmux hex colors for active border styling.
- * Palette matches ClaudeTeamColor from provider-adapters.
+ * Palette matches ClaudeTeamColor from provider-adapters. Hues are derived
+ * by rotating `palette.accent` so every window-bg stays palette-coherent
+ * (no hand-picked magic numbers).
  */
-const TMUX_COLOR_MAP: Record<string, string> = {
-  red: '#b83030',
-  blue: '#2a6cb8',
-  green: '#20a050',
-  yellow: '#b8a020',
-  purple: '#7830b8',
-  orange: '#b86820',
-  pink: '#b83078',
-  cyan: '#20a0a0',
-};
+const TMUX_COLOR_NAMES = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'pink', 'cyan'] as const;
+const TMUX_COLOR_MAP: Record<string, string> = Object.fromEntries(
+  TMUX_COLOR_NAMES.map((name, i) => [name, rotateHue(palette.accent, i * 45)]),
+);
 
 const PANE_COLOR_SCRIPT = `${require('node:os').homedir()}/.genie/tmux-pane-color.sh`;
 

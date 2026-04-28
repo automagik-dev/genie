@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '../../../lib/ipc';
+import { palette } from '../../../lib/theme';
 import type { ActivityViewProps, RuntimeEventKind } from '../../../lib/types';
 
 // ============================================================================
@@ -24,25 +25,25 @@ interface EventRow {
 type LoadState = 'loading' | 'ready' | 'error';
 
 // ============================================================================
-// Theme tokens
+// Theme tokens — sourced from genie-tokens via lib/theme
 // ============================================================================
 
 const t = {
-  bg: '#1a1028',
-  bgCard: '#241838',
-  bgCardHover: '#2e2048',
-  border: '#414868',
-  borderAccent: '#7c3aed',
-  text: '#e2e8f0',
-  textDim: '#94a3b8',
-  textMuted: '#64748b',
-  purple: '#a855f7',
-  violet: '#7c3aed',
-  cyan: '#22d3ee',
-  emerald: '#34d399',
-  warning: '#fbbf24',
-  error: '#f87171',
-  blue: '#60a5fa',
+  bg: palette.bg,
+  bgCard: palette.bgRaised,
+  bgCardHover: palette.bgHover,
+  border: palette.border,
+  borderAccent: palette.borderActive,
+  text: palette.text,
+  textDim: palette.textDim,
+  textMuted: palette.textMuted,
+  purple: palette.accentBright,
+  violet: palette.accent,
+  cyan: palette.info,
+  emerald: palette.success,
+  warning: palette.warning,
+  error: palette.error,
+  blue: palette.info,
 } as const;
 
 const KIND_COLORS: Record<string, string> = {
@@ -198,7 +199,7 @@ const styles = {
     whiteSpace: 'nowrap' as const,
   },
   errorBox: {
-    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+    backgroundColor: 'rgba(168, 56, 56, 0.12)',
     border: `1px solid ${t.error}`,
     borderRadius: '8px',
     padding: '16px',

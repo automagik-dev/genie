@@ -16,6 +16,8 @@ import {
   getTeamLeadEntry,
   list,
   listAgents,
+  listAgentsForRender,
+  listForRender,
   listTemplates,
   reconcileStaleSpawns,
   register,
@@ -875,6 +877,127 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       // Team scope + includeArchived returns the orphan
       expect((await listAgents({ team: 'disbanded-team', includeArchived: true })).length).toBe(1);
+    });
+  });
+
+  describe('listForRender / listAgentsForRender (bare-name shadow dedup)', () => {
+    /**
+     * Reproduces the live signal regression: PG carries a bare-name shadow
+     * row (legacy spawn path, no executor) alongside a UUID-keyed live row
+     * (modern spawn, executor running). Both surface in `genie ls` and
+     * `genie status`, with the dead shadow's signals clobbering the live
+     * row's. Render-path callers must collapse to the live row.
+     */
+    test('bare-name shadow + UUID live row → render returns the live row only', async () => {
+      // Bare-name shadow: id == display name, custom_name = NULL, no executor.
+      await register(
+        makeAgent({
+          id: 'engineer-w14',
+          role: 'engineer-w14',
+          team: 't1',
+          paneId: '%99',
+          state: 'idle',
+        }),
+      );
+
+      // UUID-keyed live row with attached executor.
+      const live = await findOrCreateAgent('engineer-w14', 't1', 'engineer-w14');
+      const exec = await createExecutor(live.id, 'claude', 'tmux', {
+        pid: 12345,
+        tmuxSession: 'genie',
+        tmuxPaneId: '%17',
+        repoPath: '/tmp/repo',
+        state: 'working',
+      });
+      await setCurrentExecutor(live.id, exec.id);
+
+      // Sanity: raw list() still sees both.
+      expect((await list()).length).toBe(2);
+      expect((await listAgents()).length).toBe(2);
+
+      // Render path collapses to the live (UUID) row.
+      const rendered = await listForRender();
+      expect(rendered.length).toBe(1);
+      expect(rendered[0].id).toBe(live.id);
+      expect(rendered[0].customName).toBe('engineer-w14');
+      expect(rendered[0].currentExecutorId).toBe(exec.id);
+
+      const renderedIdentities = await listAgentsForRender();
+      expect(renderedIdentities.length).toBe(1);
+      expect(renderedIdentities[0].id).toBe(live.id);
+      expect(renderedIdentities[0].currentExecutorId).toBe(exec.id);
+    });
+
+    test('bare-name row alone (no UUID peer) is preserved', async () => {
+      await register(
+        makeAgent({
+          id: 'engineer-orphan',
+          role: 'engineer-orphan',
+          team: 't1',
+          paneId: '%5',
+          state: 'idle',
+        }),
+      );
+
+      const rendered = await listForRender();
+      expect(rendered.length).toBe(1);
+      expect(rendered[0].id).toBe('engineer-orphan');
+
+      const identities = await listAgentsForRender();
+      expect(identities.length).toBe(1);
+      expect(identities[0].id).toBe('engineer-orphan');
+    });
+
+    test('UUID row alone (no bare-name peer) is preserved', async () => {
+      const live = await findOrCreateAgent('engineer-solo', 't1', 'engineer');
+
+      const rendered = await listForRender();
+      expect(rendered.length).toBe(1);
+      expect(rendered[0].id).toBe(live.id);
+      expect(rendered[0].customName).toBe('engineer-solo');
+
+      const identities = await listAgentsForRender();
+      expect(identities.length).toBe(1);
+      expect(identities[0].id).toBe(live.id);
+    });
+
+    test('multiple distinct agents are not deduped (per-customName, per-team)', async () => {
+      const a = await findOrCreateAgent('engineer-a', 't1', 'engineer');
+      const b = await findOrCreateAgent('engineer-b', 't1', 'engineer');
+      // Same display name in a different team must not collapse.
+      const c = await findOrCreateAgent('engineer-a', 't2', 'engineer');
+
+      const rendered = await listForRender();
+      expect(rendered.length).toBe(3);
+      expect(new Set(rendered.map((r) => r.id))).toEqual(new Set([a.id, b.id, c.id]));
+
+      const identities = await listAgentsForRender();
+      expect(identities.length).toBe(3);
+      expect(new Set(identities.map((r) => r.id))).toEqual(new Set([a.id, b.id, c.id]));
+    });
+
+    test('listAgentsForRender honours filters before deduping', async () => {
+      // Shadow + live in t1.
+      await register(
+        makeAgent({
+          id: 'engineer-w14',
+          role: 'engineer-w14',
+          team: 't1',
+          paneId: '%99',
+          state: 'idle',
+        }),
+      );
+      const liveT1 = await findOrCreateAgent('engineer-w14', 't1', 'engineer-w14');
+      const exec = await createExecutor(liveT1.id, 'claude', 'tmux', { repoPath: '/tmp/repo' });
+      await setCurrentExecutor(liveT1.id, exec.id);
+
+      // Unrelated agent in t2.
+      await findOrCreateAgent('engineer-w14', 't2', 'engineer');
+
+      // team=t1 → dedup yields the live UUID row only.
+      const t1 = await listAgentsForRender({ team: 't1' });
+      expect(t1.length).toBe(1);
+      expect(t1[0].id).toBe(liveT1.id);
     });
   });
 

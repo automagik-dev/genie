@@ -192,6 +192,14 @@ interface ListOptions {
   limit?: string;
   json?: boolean;
   follow?: boolean;
+  /**
+   * Use the enriched `genie_runtime_events` surface instead of the
+   * legacy `audit_events` table. Renamed from `--v2` in invincible-genie
+   * Group 5 (one schema, one surface). The `--v2` long-name remains a
+   * commander alias on the option below for one release.
+   */
+  enriched?: boolean;
+  /** Backward-compatible alias for `enriched`. Removed in next release. */
   v2?: boolean;
   kind?: string;
   severity?: string;
@@ -259,7 +267,13 @@ async function eventsListV2Command(options: ListOptions): Promise<void> {
 }
 
 async function eventsListCommand(options: ListOptions): Promise<void> {
-  if (options.v2) {
+  if (options.enriched || options.v2) {
+    if (options.v2 && !options.enriched) {
+      // Soft deprecation: warn once, then proceed. The `--v2` flag stays
+      // wired for one release so existing scripts don't break, but the
+      // canonical name is `--enriched`.
+      console.error('⚠️  `events list --v2` is deprecated; use `events list --enriched`.');
+    }
     return eventsListV2Command(options);
   }
   try {
@@ -701,7 +715,7 @@ export function registerEventsCommands(program: Command): void {
 
   events
     .command('list', { isDefault: true })
-    .description('List recent audit events (add --v2 for the enriched genie_runtime_events surface)')
+    .description('List recent audit events (add --enriched for the genie_runtime_events surface)')
     .option('--type <type>', 'Filter by event_type')
     .option('--entity <entity>', 'Filter by entity_type or entity_id')
     .option('--since <duration>', 'Time window (e.g., 1h, 30m, 2d)', '1h')
@@ -709,9 +723,10 @@ export function registerEventsCommands(program: Command): void {
     .option('--limit <n>', 'Max rows to return', '50')
     .option('--json', 'Output as JSON')
     .option('-f, --follow', 'Follow mode — real-time streaming (alias: genie events stream)')
-    .option('--v2', 'Use enriched genie_runtime_events surface with TraceId/SpanId/Severity/Duration columns')
-    .option('--kind <prefix>', 'Filter v2 rows by kind/subject prefix (e.g., mailbox, agent.lifecycle)')
-    .option('--severity <level>', 'Filter v2 rows by severity (debug|info|warn|error|fatal)')
+    .option('--enriched', 'Use enriched genie_runtime_events surface with TraceId/SpanId/Severity/Duration columns')
+    .option('--v2', '[DEPRECATED] alias for --enriched (removed next release)')
+    .option('--kind <prefix>', 'Filter enriched rows by kind/subject prefix (e.g., mailbox, agent.lifecycle)')
+    .option('--severity <level>', 'Filter enriched rows by severity (debug|info|warn|error|fatal)')
     .action(async (options: ListOptions) => {
       await eventsListCommand(options);
     });

@@ -258,7 +258,7 @@ describe.skipIf(!DB_AVAILABLE)('tui-spawn-dx integration (Group 8)', () => {
       SELECT a.id, e.claude_session_id
       FROM agents a
       LEFT JOIN executors e ON e.id = a.current_executor_id
-      WHERE a.team = ${team} AND a.id NOT LIKE 'dir:%'
+      WHERE a.team = ${team} AND a.kind = 'permanent'
     `;
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe('alice');

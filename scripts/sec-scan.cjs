@@ -259,6 +259,10 @@ const MAX_TEXT_SNIPPETS = 6;
 const MAX_SNIPPET_CHARS = 240;
 const MAX_TEMP_WALK_ENTRIES = 25000;
 const MAX_TEMP_FINDINGS = 200;
+const DEFAULT_TEMP_FILES_BUDGET = 500;
+const DEFAULT_TEMP_BYTES_BUDGET = 32 * 1024 * 1024;
+const DEFAULT_TEMP_WALL_BUDGET_MS = 2000;
+const TEMP_YIELD_INTERVAL = 128;
 const MAX_TIMELINE_EVENTS = 120;
 
 const TEMP_ARTIFACT_NAME_REGEX =
@@ -322,32 +326,32 @@ const TEXT_MATCHERS = [
   {
     label: 'install:npm @automagik/genie',
     category: 'install',
-    regex: /\bnpm\b[^\n]*\b(?:install|i|add|update|exec|ci)\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\bnpm\b[^\n]{0,200}\b(?:install|i|add|update|exec|ci)\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'install:pnpm @automagik/genie',
     category: 'install',
-    regex: /\bpnpm\b[^\n]*\b(?:add|install|update|up)\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\bpnpm\b[^\n]{0,200}\b(?:add|install|update|up)\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'install:yarn @automagik/genie',
     category: 'install',
-    regex: /\byarn\b[^\n]*\b(?:add|install|up|upgrade)\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\byarn\b[^\n]{0,200}\b(?:add|install|up|upgrade)\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'install:bun @automagik/genie',
     category: 'install',
-    regex: /\bbun\b[^\n]*\b(?:add|install|pm add)\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\bbun\b[^\n]{0,200}\b(?:add|install|pm add)\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'exec:npx @automagik/genie',
     category: 'execution',
-    regex: /\bnpx\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\bnpx\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'exec:bunx @automagik/genie',
     category: 'execution',
-    regex: /\bbunx\b[^\n]*@automagik\/genie(?:@[0-9.]+)?/i,
+    regex: /\bbunx\b[^\n]{0,200}@automagik\/genie(?:@[0-9.]+)?/i,
   },
   {
     label: 'exec:node_modules/@automagik/genie',
@@ -357,14 +361,480 @@ const TEXT_MATCHERS = [
   {
     label: 'exec:env-compat',
     category: 'execution',
-    regex: /\b(?:node|bun|bash|sh)\b[^\n]*env-compat\.(?:cjs|js)\b/i,
+    regex: /\b(?:node|bun|bash|sh)\b[^\n]{0,200}env-compat\.(?:cjs|js)\b/i,
   },
   {
-    label: 'network:curl-wget IOC',
+    // Hard evidence: curl/wget/fetch to the exact exfil endpoint path.
+    // This is what the CanisterWorm payload uses to upload stolen data
+    // (POST /v1/telemetry and POST /v1/drop). Matching these = compromise.
+    label: 'network:curl-wget IOC-exfil',
     category: 'network',
-    regex: /\b(?:curl|wget|fetch|Invoke-WebRequest)\b[^\n]*(?:telemetry\.api-monitor\.com|raw\.icp0\.io\/drop)/i,
+    regex:
+      /\b(?:curl|wget|fetch|Invoke-WebRequest)\b[^\n]{0,200}(?:telemetry\.api-monitor\.com\/v1\/(?:telemetry|drop)|raw\.icp0\.io\/drop)/i,
+  },
+  {
+    // Soft evidence: bare-host mention of the exfil domain WITHOUT the
+    // /v1/ path. Almost always an incident responder (or documentation)
+    // probing the host, not the payload itself — the payload never runs
+    // a bare `curl <host>` because there's no endpoint that would accept
+    // the uploaded payload. Classify as 'probe' so it shows in the
+    // report but doesn't elevate the suspicion score.
+    label: 'network:exfil-host-probe',
+    category: 'probe',
+    regex: /\b(?:curl|wget|fetch|Invoke-WebRequest)\b[^\n]{0,200}telemetry\.api-monitor\.com(?!\/v1\/)/i,
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Runtime context, ULID, envelope, signal handling, kill switch
+// ---------------------------------------------------------------------------
+
+const REPORT_VERSION = 1;
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const DEFAULT_PROGRESS_INTERVAL_MS = 2000;
+const DEFAULT_PROJECT_WALK_MAX_DEPTH = 8;
+const DEFAULT_PROJECT_WALK_MAX_ENTRIES = 50000;
+const _DEFAULT_WORKSPACE_WALK_MAX_DEPTH = 3;
+const _DEFAULT_WORKSPACE_WALK_MAX_ENTRIES = 2000;
+const REMOTE_FS_TYPES = new Set([
+  'nfs',
+  'nfs4',
+  'smbfs',
+  'smb2',
+  'smb3',
+  'cifs',
+  'afpfs',
+  'fuse.sshfs',
+  'fuse.rclone',
+  'fuse.gvfsd-fuse',
+  'fuse.netfs',
+  'drvfs',
+  '9p',
+  '9p2000',
+  '9p2000.L',
+  '9p2000.u',
+]);
+
+function generateUlid(timestampMs, randomBytesProvider) {
+  const provider = randomBytesProvider || ((n) => require('node:crypto').randomBytes(n));
+  let ts = Math.max(0, Math.floor(timestampMs));
+  let tsPart = '';
+  for (let i = 0; i < 10; i += 1) {
+    tsPart = ULID_ALPHABET[ts % 32] + tsPart;
+    ts = Math.floor(ts / 32);
+  }
+  const bytes = provider(16);
+  let randPart = '';
+  for (let i = 0; i < 16; i += 1) {
+    randPart += ULID_ALPHABET[bytes[i] % 32];
+  }
+  return tsPart + randPart;
+}
+
+function readScannerVersion() {
+  try {
+    const pkg = require('../package.json');
+    return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function createHostId(platformInfo) {
+  const input = [
+    platformInfo.platform,
+    platformInfo.arch,
+    platformInfo.release,
+    platformInfo.user || '',
+    hostname(),
+  ].join(':');
+  return createHash('sha256').update(input).digest('hex').slice(0, 16);
+}
+
+function createRuntime({
+  options,
+  clock,
+  platformInfo,
+  argv,
+  scannerVersion,
+  stderr,
+  randomBytesProvider,
+  resourceProvider,
+  hrtimeProvider,
+} = {}) {
+  const resolvedStderr = stderr || process.stderr;
+  const nowFn = clock && typeof clock.now === 'function' ? clock.now : () => Date.now();
+  const hrtimeFn =
+    typeof hrtimeProvider === 'function'
+      ? hrtimeProvider
+      : typeof process.hrtime?.bigint === 'function'
+        ? () => Number(process.hrtime.bigint())
+        : () => nowFn() * 1e6;
+  const resourceFn =
+    typeof resourceProvider === 'function'
+      ? resourceProvider
+      : typeof process.resourceUsage === 'function'
+        ? () => process.resourceUsage()
+        : () => null;
+  const startMs = nowFn();
+  const scanId = generateUlid(startMs, randomBytesProvider);
+  const hostId = createHostId(platformInfo);
+  const startedAt = new Date(startMs).toISOString();
+
+  const progressIntervalMs = Number.isFinite(options.progressIntervalMs)
+    ? Math.max(50, Math.floor(options.progressIntervalMs))
+    : DEFAULT_PROGRESS_INTERVAL_MS;
+  const progressEnabled = !options.quiet && !options.noProgress;
+  const progressJson = Boolean(options.progressJson);
+
+  let currentPhase = null;
+  const phaseHistory = [];
+  const capEvents = [];
+  const walkEvents = [];
+  const rootFingerprints = [];
+  const rootTimings = [];
+  let interrupted = false;
+  let interruptReason = null;
+  let tickerHandle = null;
+  let ticksEmitted = 0;
+  let finishedState = null;
+
+  function emit(event) {
+    if (!progressEnabled) return;
+    try {
+      if (progressJson) {
+        const payload = { ts_ms: nowFn(), scan_id: scanId, ...event };
+        resolvedStderr.write(`${JSON.stringify(payload)}\n`);
+        return;
+      }
+      const elapsed = ((nowFn() - startMs) / 1000).toFixed(1);
+      const phaseLabel = event.phase || (currentPhase ? currentPhase.id : 'startup');
+      const kindLabel = event.kind ? ` ${event.kind}` : '';
+      resolvedStderr.write(`[sec-scan +${elapsed}s] phase=${phaseLabel}${kindLabel}\n`);
+    } catch {
+      /* stderr closed or unavailable */
+    }
+  }
+
+  function startTicker() {
+    if (!progressEnabled || tickerHandle) return;
+    tickerHandle = setInterval(() => {
+      ticksEmitted += 1;
+      emit({ kind: 'tick' });
+    }, progressIntervalMs);
+    if (typeof tickerHandle.unref === 'function') tickerHandle.unref();
+  }
+
+  function stopTicker() {
+    if (!tickerHandle) return;
+    clearInterval(tickerHandle);
+    tickerHandle = null;
+  }
+
+  function startPhase(id) {
+    currentPhase = {
+      id,
+      startMs: nowFn(),
+      startHrNs: hrtimeFn(),
+      startResource: resourceFn(),
+      entries: 0,
+      bytes: 0,
+      errors: 0,
+      caps: 0,
+      skips: 0,
+    };
+    emit({ kind: 'phase.start', phase: id });
+  }
+
+  function computePhaseRecord(phase, extra = {}) {
+    const endMs = nowFn();
+    const elapsedMs = endMs - phase.startMs;
+    const wall_ns = Math.max(0, hrtimeFn() - phase.startHrNs);
+    const endResource = resourceFn();
+    let cpu_user_ns = null;
+    let cpu_sys_ns = null;
+    if (phase.startResource && endResource) {
+      cpu_user_ns = Math.max(0, (endResource.userCPUTime - phase.startResource.userCPUTime) * 1000);
+      cpu_sys_ns = Math.max(0, (endResource.systemCPUTime - phase.startResource.systemCPUTime) * 1000);
+    }
+    return {
+      id: phase.id,
+      elapsed_ms: elapsedMs,
+      wall_ns,
+      cpu_user_ns,
+      cpu_sys_ns,
+      entries: phase.entries,
+      bytes: phase.bytes,
+      errors: phase.errors,
+      caps: phase.caps,
+      skips: phase.skips,
+      ...extra,
+    };
+  }
+
+  function endPhase(id, extra = {}) {
+    if (!currentPhase || currentPhase.id !== id) {
+      emit({ kind: 'phase.end', phase: id, ...extra });
+      return;
+    }
+    const record = computePhaseRecord(currentPhase, extra);
+    phaseHistory.push(record);
+    emit({ kind: 'phase.end', phase: id, elapsed_ms: record.elapsed_ms });
+    currentPhase = null;
+  }
+
+  function recordCap(kind, detail = {}) {
+    const entry = { kind, phase: currentPhase ? currentPhase.id : null, ts_ms: nowFn(), ...detail };
+    capEvents.push(entry);
+    if (currentPhase) currentPhase.caps += 1;
+    walkEvents.push({
+      event: 'walk.capped',
+      phase: entry.phase,
+      ts_ms: entry.ts_ms,
+      cap_kind: kind,
+      ...detail,
+    });
+  }
+
+  function recordPhaseCapHit(reason, detail = {}) {
+    const phaseId = currentPhase ? currentPhase.id : null;
+    const ts = nowFn();
+    const breachedAtMs = currentPhase ? ts - currentPhase.startMs : null;
+    const entry = {
+      kind: 'phase.cap_hit',
+      phase: phaseId,
+      ts_ms: ts,
+      reason,
+      breached_at_ms: breachedAtMs,
+      ...detail,
+    };
+    capEvents.push(entry);
+    if (currentPhase) currentPhase.caps += 1;
+    walkEvents.push({
+      event: 'phase.cap_hit',
+      phase: phaseId,
+      ts_ms: ts,
+      reason,
+      breached_at_ms: breachedAtMs,
+      ...detail,
+    });
+    emit({ kind: 'phase.cap_hit', phase: phaseId, reason, ...detail });
+  }
+
+  function recordSkip(kind, detail = {}) {
+    walkEvents.push({
+      event: 'walk.skipped',
+      phase: currentPhase ? currentPhase.id : null,
+      ts_ms: nowFn(),
+      skip_reason: kind,
+      ...detail,
+    });
+    if (currentPhase) currentPhase.skips += 1;
+  }
+
+  function recordSymlinkCycle(detail = {}) {
+    walkEvents.push({
+      event: 'symlink.cycle',
+      phase: currentPhase ? currentPhase.id : null,
+      ts_ms: nowFn(),
+      ...detail,
+    });
+  }
+
+  function recordReaddirError(detail = {}) {
+    walkEvents.push({
+      event: 'walk.error',
+      phase: currentPhase ? currentPhase.id : null,
+      ts_ms: nowFn(),
+      ...detail,
+    });
+    if (currentPhase) currentPhase.errors += 1;
+  }
+
+  function addEntries(n) {
+    if (currentPhase && n > 0) currentPhase.entries += n;
+  }
+
+  function addBytes(n) {
+    if (currentPhase && n > 0) currentPhase.bytes += n;
+  }
+
+  function recordRootTiming(root, entry) {
+    rootTimings.push({ root, ...entry });
+  }
+
+  function setRootFingerprints(fingerprints) {
+    rootFingerprints.length = 0;
+    for (const fp of fingerprints || []) rootFingerprints.push(fp);
+  }
+
+  function markInterrupted(reason) {
+    if (interrupted) return;
+    interrupted = true;
+    interruptReason = reason || 'signal';
+    if (currentPhase) {
+      const record = computePhaseRecord(currentPhase, { interrupted: true });
+      phaseHistory.push(record);
+      currentPhase = null;
+    }
+  }
+
+  function isInterrupted() {
+    return interrupted;
+  }
+
+  function finish() {
+    if (finishedState) return finishedState;
+    stopTicker();
+    const finishedMs = nowFn();
+    finishedState = {
+      finishedAt: new Date(finishedMs).toISOString(),
+      elapsedMs: finishedMs - startMs,
+      phases: phaseHistory,
+      capEvents,
+      walkEvents,
+      rootFingerprints: rootFingerprints.slice(),
+      rootTimings: rootTimings.slice(),
+      interrupted,
+      interruptReason,
+      ticksEmitted,
+    };
+    return finishedState;
+  }
+
+  return {
+    scanId,
+    hostId,
+    startedAt,
+    scannerVersion,
+    platformInfo,
+    argv,
+    options,
+    clock: { now: nowFn },
+    startTicker,
+    stopTicker,
+    startPhase,
+    endPhase,
+    emit,
+    recordCap,
+    recordPhaseCapHit,
+    recordSkip,
+    recordSymlinkCycle,
+    recordReaddirError,
+    addEntries,
+    addBytes,
+    recordRootTiming,
+    setRootFingerprints,
+    markInterrupted,
+    isInterrupted,
+    finish,
+  };
+}
+
+function buildInvocation(argv, options) {
+  return {
+    argv: Array.isArray(argv) ? argv.slice(2) : [],
+    flags: {
+      json: Boolean(options.json),
+      allHomes: Boolean(options.allHomes),
+      homes: [...options.homes],
+      roots: [...options.roots],
+      progress: !options.noProgress && !options.quiet,
+      progressJson: Boolean(options.progressJson),
+      progressIntervalMs: Number.isFinite(options.progressIntervalMs)
+        ? options.progressIntervalMs
+        : DEFAULT_PROGRESS_INTERVAL_MS,
+      verbose: Boolean(options.verbose),
+      quiet: Boolean(options.quiet),
+      redact: Boolean(options.redact),
+      persist: options.persist !== false,
+      eventsFile: options.eventsFile || null,
+      impactSurface: Boolean(options.impactSurface),
+      phaseBudgets: { ...options.phaseBudgets },
+    },
+  };
+}
+
+function envelopeFromReport(runtime, report, { reason } = {}) {
+  const state = runtime.finish();
+  const cappedRoots = uniq(
+    state.capEvents
+      .map((event) => event.root || event.path || null)
+      .filter((value) => typeof value === 'string' && value.length > 0),
+  );
+  const skippedRoots = uniq(
+    (state.walkEvents || [])
+      .filter((event) => event.event === 'walk.skipped')
+      .map((event) => event.root || event.path || null)
+      .filter((value) => typeof value === 'string' && value.length > 0),
+  );
+  return {
+    reportVersion: REPORT_VERSION,
+    scan_id: runtime.scanId,
+    hostId: runtime.hostId,
+    scannerVersion: runtime.scannerVersion,
+    startedAt: runtime.startedAt,
+    finishedAt: state.finishedAt,
+    elapsedMs: state.elapsedMs,
+    invocation: buildInvocation(runtime.argv, runtime.options),
+    platform: runtime.platformInfo,
+    coverage: {
+      phases: state.phases,
+      capEvents: state.capEvents,
+      walkEvents: state.walkEvents || [],
+      rootFingerprints: state.rootFingerprints || [],
+      rootTimings: state.rootTimings || [],
+      cappedRoots,
+      skippedRoots,
+      interrupted: state.interrupted,
+      interruptReason: state.interruptReason || reason || null,
+      complete: !state.interrupted && state.capEvents.length === 0,
+    },
+    ...report,
+  };
+}
+
+function computeExitCode(envelope) {
+  const summary = envelope.summary || {};
+  const hasFindings = Boolean(summary.likelyCompromised || summary.likelyAffected || summary.observedOnly);
+  if (hasFindings) return 1;
+  if (envelope.coverage && envelope.coverage.complete === false) return 2;
+  return 0;
+}
+
+function installSignalHandlers(runtime, flush, { exitFn = (code) => process.exit(code) } = {}) {
+  let handled = false;
+  const onSignal = (signal) => {
+    if (handled) return;
+    handled = true;
+    try {
+      runtime.markInterrupted(`signal:${signal}`);
+      flush(`signal:${signal}`);
+    } catch {
+      /* best effort flush; fall through to exit 2 */
+    }
+    exitFn(2);
+  };
+  process.on('SIGINT', () => onSignal('SIGINT'));
+  process.on('SIGTERM', () => onSignal('SIGTERM'));
+  return onSignal;
+}
+
+function isKillSwitchEnabled(env = process.env) {
+  return env.GENIE_SEC_SCAN_DISABLED === '1';
+}
+
+function emitKillSwitchResponse(options, streams = {}) {
+  const reason = 'GENIE_SEC_SCAN_DISABLED=1';
+  const stdout = streams.stdout || process.stdout;
+  const stderr = streams.stderr || process.stderr;
+  if (options.json) {
+    stdout.write(`${JSON.stringify({ reportVersion: REPORT_VERSION, disabled: true, reason })}\n`);
+  } else {
+    stderr.write(`sec-scan disabled via ${reason}\n`);
+  }
+  return 0;
+}
 
 function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -376,6 +846,24 @@ function parseArgs(argv) {
     allHomes: false,
     roots: [],
     homes: [],
+    noProgress: false,
+    quiet: false,
+    verbose: false,
+    progressJson: false,
+    progressIntervalMs: DEFAULT_PROGRESS_INTERVAL_MS,
+    eventsFile: null,
+    redact: false,
+    persist: true,
+    impactSurface: false,
+    phaseBudgets: {},
+    help: false,
+  };
+
+  const requireValue = (arg, value) => {
+    if (value === undefined || value === null || value === '' || value.startsWith('--')) {
+      throw new Error(`${arg} requires a value`);
+    }
+    return value;
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -389,22 +877,75 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === '--root') {
-      const value = argv[i + 1];
-      if (!value) throw new Error('--root requires a path');
-      options.roots.push(resolve(value));
+      options.roots.push(resolve(requireValue(arg, argv[i + 1])));
       i += 1;
       continue;
     }
     if (arg === '--home') {
-      const value = argv[i + 1];
-      if (!value) throw new Error('--home requires a path');
-      options.homes.push(resolve(value));
+      options.homes.push(resolve(requireValue(arg, argv[i + 1])));
+      i += 1;
+      continue;
+    }
+    if (arg === '--no-progress') {
+      options.noProgress = true;
+      continue;
+    }
+    if (arg === '--quiet' || arg === '-q') {
+      options.quiet = true;
+      continue;
+    }
+    if (arg === '--verbose' || arg === '-v') {
+      options.verbose = true;
+      continue;
+    }
+    if (arg === '--progress-json') {
+      options.progressJson = true;
+      continue;
+    }
+    if (arg === '--progress-interval') {
+      const raw = Number(requireValue(arg, argv[i + 1]));
+      if (!Number.isFinite(raw) || raw < 0) throw new Error(`${arg} requires a non-negative number`);
+      options.progressIntervalMs = raw;
+      i += 1;
+      continue;
+    }
+    if (arg === '--events-file') {
+      options.eventsFile = resolve(requireValue(arg, argv[i + 1]));
+      i += 1;
+      continue;
+    }
+    if (arg === '--redact') {
+      options.redact = true;
+      continue;
+    }
+    if (arg === '--persist') {
+      options.persist = true;
+      continue;
+    }
+    if (arg === '--no-persist') {
+      options.persist = false;
+      continue;
+    }
+    if (arg === '--impact-surface') {
+      options.impactSurface = true;
+      continue;
+    }
+    if (arg === '--phase-budget') {
+      const entry = requireValue(arg, argv[i + 1]);
+      const eqIdx = entry.indexOf('=');
+      if (eqIdx <= 0) throw new Error(`${arg} requires name=ms format`);
+      const key = entry.slice(0, eqIdx).trim();
+      const ms = Number(entry.slice(eqIdx + 1));
+      if (!key || !Number.isFinite(ms) || ms < 0) {
+        throw new Error(`${arg} requires name=ms with non-negative ms`);
+      }
+      options.phaseBudgets[key] = ms;
       i += 1;
       continue;
     }
     if (arg === '--help' || arg === '-h') {
-      printHelp();
-      process.exit(0);
+      options.help = true;
+      continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -412,26 +953,42 @@ function parseArgs(argv) {
   return options;
 }
 
-function printHelp() {
-  console.log(
-    `
+function printHelp(stream) {
+  const out = stream || process.stdout;
+  out.write(
+    `${`
 Usage:
-  node scripts/sec-scan.cjs [--json] [--all-homes] [--home PATH] [--root PATH]
-  genie sec scan [--json] [--all-homes] [--home PATH] [--root PATH]
+  node scripts/sec-scan.cjs [options]
+  genie sec scan [options]
 
 Options:
-  --json        Print JSON only
-  --all-homes   Scan /root, /home/*, /Users/*, and WSL Windows homes when present
-  --home PATH   Add a specific home directory to scan
-  --root PATH   Add an application root to scan for lockfiles and node_modules installs
-  --help, -h    Show this help
+  --json                       Print JSON envelope to stdout
+  --all-homes                  Scan /root, /home/*, /Users/*, and WSL Windows homes
+  --home PATH                  Add a specific home directory (repeatable)
+  --root PATH                  Add an application root (repeatable)
+  --no-progress                Suppress progress output on stderr
+  --quiet, -q                  Suppress progress and banners on stderr
+  --verbose, -v                Emit extra diagnostics on stderr
+  --progress-json              Emit progress as NDJSON events to stderr
+  --progress-interval <ms>     Progress tick interval in milliseconds (default 2000)
+  --events-file <path.jsonl>   Append structured NDJSON events to a 0600-mode file
+  --redact                     Hash \$HOME-prefixed paths; scrub AWS/GitHub/npm/JWT patterns
+  --persist                    Persist report to \$GENIE_HOME/sec-scan/<scan_id>.json (default)
+  --no-persist                 Do not persist the report
+  --impact-surface             Scan for at-risk local material (secrets, wallets, browsers)
+  --phase-budget <name=ms>     Budget (ms) for a named phase; repeatable
+  --help, -h                   Show this help
+
+Exit codes:
+  0  clean and complete scan
+  1  findings present
+  2  clean but incomplete (caps hit or interrupted)
 
 Examples:
-  node scripts/sec-scan.cjs
   node scripts/sec-scan.cjs --json
-  genie sec scan --json
-  sudo node scripts/sec-scan.cjs --all-homes --root /srv --root /opt
-`.trim(),
+  genie sec scan --all-homes --redact --events-file /tmp/scan.jsonl
+  GENIE_SEC_SCAN_DISABLED=1 genie sec scan   # kill switch, exits 0
+`.trim()}\n`,
   );
 }
 
@@ -556,6 +1113,135 @@ function sortTimeline(events) {
     if (right.time) return 1;
     return left.summary.localeCompare(right.summary);
   });
+}
+
+function readLinuxMountInfo() {
+  const text = safeReadText('/proc/self/mountinfo');
+  if (!text) return [];
+  const entries = [];
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    const parts = line.split(' ');
+    const dashIdx = parts.indexOf('-');
+    if (dashIdx === -1 || parts.length < dashIdx + 3) continue;
+    const mountPoint = parts[4] || '';
+    if (!mountPoint) continue;
+    const devMajMin = parts[2] || '0:0';
+    const fsType = parts[dashIdx + 1] || 'unknown';
+    const source = parts[dashIdx + 2] || '';
+    entries.push({
+      mountPoint,
+      fsType,
+      source,
+      dev: devMajMin,
+    });
+  }
+  entries.sort((a, b) => b.mountPoint.length - a.mountPoint.length);
+  return entries;
+}
+
+function parseMacOsMountLine(line) {
+  const match = line.match(/^(.+?) on (.+?) \(([^)]+)\)$/);
+  if (!match) return null;
+  const opts = match[3].split(',').map((value) => value.trim());
+  return {
+    source: match[1],
+    mountPoint: match[2],
+    fsType: opts[0] || 'unknown',
+    options: opts,
+  };
+}
+
+function readMacOsMounts() {
+  const result = safeSpawn('mount', []);
+  if (!result || result.status !== 0) return [];
+  const entries = [];
+  for (const line of result.stdout.split('\n')) {
+    const parsed = parseMacOsMountLine(line);
+    if (parsed) entries.push(parsed);
+  }
+  entries.sort((a, b) => b.mountPoint.length - a.mountPoint.length);
+  return entries;
+}
+
+function mountInfoForPath(path, mountInfo) {
+  for (const entry of mountInfo) {
+    if (!entry.mountPoint) continue;
+    if (entry.mountPoint === path) return entry;
+    if (entry.mountPoint === '/' || path.startsWith(`${entry.mountPoint}/`)) return entry;
+  }
+  return null;
+}
+
+function isRemoteFsType(fsType) {
+  if (!fsType) return false;
+  const lower = fsType.toLowerCase();
+  if (REMOTE_FS_TYPES.has(lower)) return true;
+  if (lower.startsWith('fuse.')) return true;
+  if (lower.startsWith('9p')) return true;
+  return false;
+}
+
+function classifyRootFingerprint(path, platformInfo, stat, mountCache) {
+  const realpath = safeRealpath(path);
+  const fingerprint = {
+    root: path,
+    realpath,
+    fs_type: 'unknown',
+    is_remote: false,
+    mount_source: null,
+    dev: stat && typeof stat.dev === 'number' ? stat.dev : null,
+    cross_device: false,
+    mount_point: null,
+  };
+
+  if (platformInfo.platform === 'linux') {
+    mountCache.linux = mountCache.linux || readLinuxMountInfo();
+    const match = mountInfoForPath(realpath, mountCache.linux);
+    if (match) {
+      fingerprint.fs_type = match.fsType;
+      fingerprint.mount_source = match.source || null;
+      fingerprint.mount_point = match.mountPoint;
+      fingerprint.is_remote = isRemoteFsType(match.fsType);
+    }
+    if (platformInfo.isWSL) {
+      if (fingerprint.fs_type === 'drvfs' || fingerprint.fs_type.toLowerCase().startsWith('9p')) {
+        fingerprint.is_remote = true;
+      }
+    }
+  } else if (platformInfo.platform === 'darwin') {
+    mountCache.darwin = mountCache.darwin || readMacOsMounts();
+    const match = mountInfoForPath(realpath, mountCache.darwin);
+    if (match) {
+      fingerprint.fs_type = match.fsType;
+      fingerprint.mount_source = match.source || null;
+      fingerprint.mount_point = match.mountPoint;
+      fingerprint.is_remote = isRemoteFsType(match.fsType);
+    }
+  }
+
+  return fingerprint;
+}
+
+function computeRootFingerprints(paths, platformInfo) {
+  const cache = {};
+  const seen = new Map();
+  const fingerprints = [];
+  let baselineDev = null;
+
+  for (const path of paths) {
+    if (seen.has(path)) continue;
+    const stat = safeStat(path);
+    const fp = classifyRootFingerprint(path, platformInfo, stat, cache);
+    if (fp.dev != null) {
+      if (baselineDev === null) baselineDev = fp.dev;
+      else if (baselineDev !== fp.dev) fp.cross_device = true;
+    }
+    seen.set(path, fp);
+    fingerprints.push(fp);
+  }
+
+  return fingerprints;
 }
 
 function detectPlatform() {
@@ -708,6 +1394,34 @@ function findVersionsInText(text) {
   return found;
 }
 
+// Name-version correlated match. A tracked version string (e.g. "1.0.3")
+// may belong to MANY unrelated packages (tweetnacl@1.0.3, escape-html@1.0.3,
+// @inquirer/external-editor@1.0.3). findVersionsInText matches the bare
+// version and produces false positives on every unrelated package sharing
+// the same number. This variant only returns tuples `name@version` when
+// BOTH appear correlated in the text:
+//   - Form 1: the literal "name@version" substring (bun.lock, yarn.lock,
+//     pnpm-lock.yaml all use this).
+//   - Form 2: JSON-style '"name" ... "version": "X.Y.Z"' within 500 chars
+//     (package-lock.json, npm manifest).
+function findTrackedPackageVersionTuples(text) {
+  if (!text) return [];
+  const matches = new Set();
+  for (const pkg of TRACKED_PACKAGES) {
+    const escName = pkg.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (const version of pkg.versions) {
+      if (text.includes(`${pkg.name}@${version}`)) {
+        matches.add(`${pkg.name}@${version}`);
+        continue;
+      }
+      const escVersion = version.replace(/\./g, '\\.');
+      const pattern = new RegExp(`"${escName}"[^{]{0,50}\\{[^{}]{0,500}"version"\\s*:\\s*"${escVersion}"`, 's');
+      if (pattern.test(text)) matches.add(`${pkg.name}@${version}`);
+    }
+  }
+  return [...matches];
+}
+
 function collectTextIndicators(text) {
   const indicators = {
     versions: findVersionsInText(text),
@@ -716,6 +1430,7 @@ function collectTextIndicators(text) {
     installCommands: [],
     executionCommands: [],
     networkCommands: [],
+    probeMatches: [],
     allMatches: [],
   };
 
@@ -728,13 +1443,18 @@ function collectTextIndicators(text) {
     if (matcher.category === 'install') indicators.installCommands.push(matcher.label);
     if (matcher.category === 'execution') indicators.executionCommands.push(matcher.label);
     if (matcher.category === 'network') indicators.networkCommands.push(matcher.label);
+    // `probe` is informational-only: it means the text references an
+    // exfil host but WITHOUT the attacker's uploading path. Almost
+    // always a responder probing or documentation. Never elevates
+    // compromise severity.
+    if (matcher.category === 'probe') indicators.probeMatches.push(matcher.label);
   }
 
   for (const trackedPackage of TRACKED_PACKAGES) {
     const escapedName = escapeRegex(trackedPackage.name);
     if (
       new RegExp(
-        `\\b(?:npm|pnpm|yarn|bun)\\b[^\\n]*(?:install|i|add|update|up|upgrade|exec|ci|pm add)?[^\\n]*${escapedName}(?:@[0-9.]+)?`,
+        `\\b(?:npm|pnpm|yarn|bun)\\b[^\\n]{0,200}(?:install|i|add|update|up|upgrade|exec|ci|pm add)?[^\\n]{0,200}${escapedName}(?:@[0-9.]+)?`,
         'i',
       ).test(text)
     ) {
@@ -742,8 +1462,8 @@ function collectTextIndicators(text) {
     }
 
     if (
-      new RegExp(`\\b(?:npx|bunx)\\b[^\\n]*${escapedName}(?:@[0-9.]+)?`, 'i').test(text) ||
-      new RegExp(`${escapedName}[^\\n]*node_modules`, 'i').test(text)
+      new RegExp(`\\b(?:npx|bunx)\\b[^\\n]{0,200}${escapedName}(?:@[0-9.]+)?`, 'i').test(text) ||
+      new RegExp(`${escapedName}[^\\n]{0,200}node_modules`, 'i').test(text)
     ) {
       indicators.executionCommands.push(`exec:${trackedPackage.name}`);
     }
@@ -825,6 +1545,28 @@ function searchBufferForIocs(buffer) {
   return uniq(hits);
 }
 
+// An install finding is "hard evidence" only when the version matches the
+// compromised list OR a file hash matches a known malware hash. IOC-string
+// matches in file content are NOT hard evidence on their own — the scanner's
+// own source literally contains every IOC string as a detection pattern, so
+// scanning `@automagik/genie@<clean-version>` would always match itself
+// (the self-detection false positive fixed here).
+function hasHardInfectionEvidence(inspection) {
+  if (inspection.compromisedVersion) return true;
+  if (inspection.iocFileHashes.some((entry) => entry.knownMalwareHash === true)) return true;
+  return false;
+}
+
+// `@automagik/genie` is the scanner package itself. On CLEAN versions its
+// source files contain IOC strings as detection patterns — scanning its own
+// bytes therefore produces thousands of spurious `iocStrings` hits. Skip the
+// content walk entirely for clean versions of the scanner package.
+function shouldSkipContentWalk(packageName, version) {
+  if (packageName !== '@automagik/genie') return false;
+  if (!version) return false;
+  return !isTrackedCompromisedVersion(packageName, version);
+}
+
 function inspectPackageDirectory(packageDir) {
   const result = {
     path: packageDir,
@@ -835,6 +1577,7 @@ function inspectPackageDirectory(packageDir) {
     iocFiles: [],
     iocFileHashes: [],
     iocStrings: [],
+    contentWalkSkipped: false,
   };
 
   const packageJsonPath = join(packageDir, 'package.json');
@@ -867,6 +1610,11 @@ function inspectPackageDirectory(packageDir) {
       knownMalwareHash:
         typeof MALWARE_FILE_HASHES[relativeSuffix] === 'string' && MALWARE_FILE_HASHES[relativeSuffix] === fileHash,
     });
+  }
+
+  if (shouldSkipContentWalk(result.packageName, result.version)) {
+    result.contentWalkSkipped = true;
+    return result;
   }
 
   const stack = [packageDir];
@@ -920,38 +1668,157 @@ function parseNpmIndexEntry(line) {
   return safeJsonParse(jsonText);
 }
 
+function dedupKey(stat, path) {
+  if (stat && typeof stat.dev === 'number' && typeof stat.ino === 'number' && stat.ino !== 0) {
+    return `inode:${stat.dev}:${stat.ino}`;
+  }
+  return `path:${path}`;
+}
+
 function walkTreeFiles(roots, options, onFile) {
-  const stack = roots.filter((path) => safeExists(path)).map((path) => ({ path, depth: 0 }));
+  const runtime = options.runtime || null;
+  const maxDepth = options.maxDepth ?? Number.POSITIVE_INFINITY;
+  const maxEntries = options.maxEntries ?? Number.POSITIVE_INFINITY;
+  const skipDirs = options.skipDirs;
+  const scope = options.scope || null;
 
-  const seen = new Set();
-  let visitedEntries = 0;
+  const seenInodes = new Set();
+  let totalVisited = 0;
+  let capped = false;
 
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (seen.has(current.path)) continue;
-    seen.add(current.path);
+  for (const rootPath of roots) {
+    if (capped) break;
+    if (!safeExists(rootPath)) continue;
+    const rootStat = safeStat(rootPath);
+    if (!rootStat || !rootStat.isDirectory()) continue;
+    const rootKey = dedupKey(rootStat, rootPath);
+    if (seenInodes.has(rootKey)) {
+      if (runtime) {
+        runtime.recordSymlinkCycle({
+          root: rootPath,
+          path: rootPath,
+          dedup_key: rootKey,
+          reason: 'duplicate-root',
+          scope,
+        });
+      }
+      continue;
+    }
+    seenInodes.add(rootKey);
 
-    const entries = safeReaddir(current.path);
-    if (!entries) continue;
+    const rootStartMs = runtime ? runtime.clock.now() : 0;
+    let rootEntries = 0;
+    let rootReaddirErrors = 0;
+    const stack = [{ path: rootPath, depth: 0, root: rootPath }];
 
-    for (const entry of entries) {
-      if (visitedEntries >= (options.maxEntries ?? Number.POSITIVE_INFINITY)) return;
-      visitedEntries += 1;
-
-      const fullPath = join(current.path, entry.name);
-
-      if (entry.isDirectory()) {
-        if (current.depth >= (options.maxDepth ?? Number.POSITIVE_INFINITY)) continue;
-        if (options.skipDirs?.has(entry.name)) continue;
-        stack.push({ path: fullPath, depth: current.depth + 1 });
+    outer: while (stack.length > 0) {
+      const current = stack.pop();
+      const entries = safeReaddir(current.path);
+      if (!entries) {
+        rootReaddirErrors += 1;
+        if (runtime) {
+          runtime.recordReaddirError({
+            root: current.root,
+            path: current.path,
+            depth: current.depth,
+            error_class: 'readdir',
+            scope,
+          });
+        }
         continue;
       }
 
-      if (entry.isFile()) {
-        onFile(fullPath, entry, current.depth + 1);
+      for (const entry of entries) {
+        if (totalVisited >= maxEntries) {
+          if (runtime) {
+            runtime.recordCap('walk.max-entries', {
+              scope,
+              root: current.root,
+              path: current.path,
+              entries: totalVisited,
+              limit: maxEntries,
+            });
+          }
+          capped = true;
+          break outer;
+        }
+        totalVisited += 1;
+        rootEntries += 1;
+        if (runtime) runtime.addEntries(1);
+
+        const fullPath = join(current.path, entry.name);
+
+        if (entry.isDirectory()) {
+          if (current.depth >= maxDepth) {
+            if (runtime) {
+              runtime.recordSkip('max-depth', {
+                root: current.root,
+                path: fullPath,
+                depth: current.depth,
+                scope,
+              });
+            }
+            continue;
+          }
+          if (skipDirs?.has(entry.name)) {
+            if (runtime) {
+              runtime.recordSkip('skip-dir', {
+                root: current.root,
+                path: fullPath,
+                name: entry.name,
+                scope,
+              });
+            }
+            continue;
+          }
+          const childStat = safeStat(fullPath);
+          if (!childStat || !childStat.isDirectory()) {
+            if (!childStat && runtime) {
+              runtime.recordReaddirError({
+                root: current.root,
+                path: fullPath,
+                error_class: 'stat',
+                scope,
+              });
+            }
+            continue;
+          }
+          const key = dedupKey(childStat, fullPath);
+          if (seenInodes.has(key)) {
+            if (runtime) {
+              runtime.recordSymlinkCycle({
+                root: current.root,
+                path: fullPath,
+                dedup_key: key,
+                fs_device: childStat.dev,
+                scope,
+              });
+            }
+            continue;
+          }
+          seenInodes.add(key);
+          stack.push({ path: fullPath, depth: current.depth + 1, root: current.root });
+          continue;
+        }
+
+        if (entry.isFile()) {
+          onFile(fullPath, entry, current.depth + 1);
+        }
       }
     }
+
+    if (runtime) {
+      const elapsed = runtime.clock.now() - rootStartMs;
+      runtime.recordRootTiming(rootPath, {
+        elapsed_ms: elapsed,
+        scope,
+        entries: rootEntries,
+        readdir_errors: rootReaddirErrors,
+      });
+    }
   }
+
+  return { visitedEntries: totalVisited, capped };
 }
 
 function findTrackedPackageDirs(nodeModulesPath) {
@@ -1063,13 +1930,26 @@ function scanNpmCache(homePath, report) {
         }
       }
 
-      if (metadata.observedVersions.length > 0) {
+      // Only flag when the cached npm manifest's dist-tag points at a
+      // compromised version. The manifest ALWAYS lists every historical
+      // version by design; that list alone is not evidence of compromise —
+      // only "latest" or "next" resolving to a bad version means the user's
+      // next `npm install <pkg>` would pull the malware. If a tarball
+      // fetch for a compromised version is separately recorded, that goes
+      // through npmTarballFetches as 'affected' severity regardless.
+      const distTagsCompromised = metadata.distTags
+        ? Object.entries(metadata.distTags).filter(([, v]) => TRACKED_VERSION_SET.has(v))
+        : [];
+      if (metadata.observedVersions.length > 0 && distTagsCompromised.length > 0) {
+        metadata.compromisedDistTags = distTagsCompromised.map(([tag, version]) => ({ tag, version }));
         report.npmCacheMetadata.push(metadata);
         addTimeline(report, {
           time: metadata.observedAt || metadata.cacheRecordTime,
           category: 'npm-cache-metadata',
           severity: 'observed',
-          summary: `npm cache metadata recorded compromised versions ${metadata.observedVersions.join(', ')}`,
+          summary: `npm cache dist-tag points at compromised version: ${distTagsCompromised
+            .map(([tag, version]) => `${tag}=${version}`)
+            .join(', ')}`,
           path: cacheRoot,
         });
       }
@@ -1110,22 +1990,20 @@ function scanNpmCache(homePath, report) {
       const text = safeReadText(fullPath);
       if (!text || !TRACKED_PACKAGES.some(({ name }) => text.includes(name))) continue;
 
-      const versions = findVersionsInText(text);
+      // Name-version correlated match — the log may contain `1.0.3` because
+      // an unrelated transitive dep (escape-html, tweetnacl) resolved to that
+      // version during the same install. Only flag when the tracked name
+      // and a tracked version appear as a correlated tuple.
+      const versionTuples = findTrackedPackageVersionTuples(text);
       const indicators = collectTextIndicators(text);
-      if (
-        versions.length === 0 &&
-        indicators.installCommands.length === 0 &&
-        indicators.executionCommands.length === 0 &&
-        indicators.iocMatches.length === 0
-      ) {
-        continue;
-      }
+      const hardEvidence = versionTuples.length > 0 || indicators.iocMatches.length > 0;
+      if (!hardEvidence) continue;
 
       report.npmLogHits.push({
         home: homePath,
         path: fullPath,
         modifiedAt: isoTime(safeStat(fullPath)?.mtimeMs),
-        versions,
+        versions: versionTuples,
         installCommands: indicators.installCommands,
         executionCommands: indicators.executionCommands,
         iocMatches: indicators.iocMatches,
@@ -1178,7 +2056,7 @@ function scanBunCache(homePath, report) {
     if (!safeExists(bunGlobal)) continue;
 
     const inspection = inspectPackageDirectory(bunGlobal);
-    if (inspection.compromisedVersion || inspection.iocFiles.length > 0 || inspection.iocStrings.length > 0) {
+    if (hasHardInfectionEvidence(inspection)) {
       const finding = {
         kind: 'bun-global',
         home: homePath,
@@ -1227,9 +2105,7 @@ function scanGlobalInstallCandidates(homes, report) {
 
     for (const candidate of findTrackedPackageDirs(nodeModulesPath)) {
       const inspection = inspectPackageDirectory(candidate);
-      if (!inspection.compromisedVersion && inspection.iocFiles.length === 0 && inspection.iocStrings.length === 0) {
-        continue;
-      }
+      if (!hasHardInfectionEvidence(inspection)) continue;
 
       const finding = {
         kind: 'global-install',
@@ -1254,48 +2130,141 @@ function scanGlobalInstallCandidates(homes, report) {
   }
 }
 
-function walkProjectRoots(roots, onNodeModules, onLockfile) {
-  const stack = [...roots];
-  const seen = new Set();
+function walkProjectRoots(roots, options, onNodeModules, onLockfile) {
+  const runtime = options?.runtime || null;
+  const maxDepth = options?.maxDepth ?? DEFAULT_PROJECT_WALK_MAX_DEPTH;
+  const maxEntries = options?.maxEntries ?? DEFAULT_PROJECT_WALK_MAX_ENTRIES;
+  const scope = 'project-roots';
 
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (seen.has(current)) continue;
-    seen.add(current);
+  const seenInodes = new Set();
+  let totalVisited = 0;
+  let capped = false;
 
-    const entries = safeReaddir(current);
-    if (!entries) continue;
+  for (const rootPath of roots) {
+    if (capped) break;
+    const rootStat = safeStat(rootPath);
+    if (!rootStat || !rootStat.isDirectory()) continue;
+    const rootKey = dedupKey(rootStat, rootPath);
+    if (seenInodes.has(rootKey)) {
+      if (runtime) {
+        runtime.recordSymlinkCycle({
+          root: rootPath,
+          path: rootPath,
+          dedup_key: rootKey,
+          reason: 'duplicate-root',
+          scope,
+        });
+      }
+      continue;
+    }
+    seenInodes.add(rootKey);
 
-    for (const entry of entries) {
-      const fullPath = join(current, entry.name);
+    const rootStartMs = runtime ? runtime.clock.now() : 0;
+    let rootEntries = 0;
+    const stack = [{ path: rootPath, depth: 0, root: rootPath }];
 
-      if (entry.isDirectory()) {
-        if (entry.name === 'node_modules') {
-          onNodeModules(fullPath);
-          continue;
+    outer: while (stack.length > 0) {
+      const current = stack.pop();
+      const entries = safeReaddir(current.path);
+      if (!entries) {
+        if (runtime) {
+          runtime.recordReaddirError({
+            root: current.root,
+            path: current.path,
+            depth: current.depth,
+            error_class: 'readdir',
+            scope,
+          });
         }
-
-        if (WALK_SKIP_DIRS.has(entry.name)) continue;
-        stack.push(fullPath);
         continue;
       }
 
-      if (!entry.isFile()) continue;
-      if (!LOCKFILE_NAMES.has(entry.name)) continue;
-      onLockfile(fullPath);
+      for (const entry of entries) {
+        if (totalVisited >= maxEntries) {
+          if (runtime) {
+            runtime.recordCap('walk.max-entries', {
+              scope,
+              root: current.root,
+              path: current.path,
+              entries: totalVisited,
+              limit: maxEntries,
+            });
+          }
+          capped = true;
+          break outer;
+        }
+        totalVisited += 1;
+        rootEntries += 1;
+        if (runtime) runtime.addEntries(1);
+
+        const fullPath = join(current.path, entry.name);
+
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules') {
+            onNodeModules(fullPath);
+            continue;
+          }
+          if (WALK_SKIP_DIRS.has(entry.name)) {
+            if (runtime) {
+              runtime.recordSkip('skip-dir', { root: current.root, path: fullPath, name: entry.name, scope });
+            }
+            continue;
+          }
+          if (current.depth >= maxDepth) {
+            if (runtime) {
+              runtime.recordSkip('max-depth', { root: current.root, path: fullPath, depth: current.depth, scope });
+            }
+            continue;
+          }
+          const childStat = safeStat(fullPath);
+          if (!childStat || !childStat.isDirectory()) {
+            if (!childStat && runtime) {
+              runtime.recordReaddirError({ root: current.root, path: fullPath, error_class: 'stat', scope });
+            }
+            continue;
+          }
+          const key = dedupKey(childStat, fullPath);
+          if (seenInodes.has(key)) {
+            if (runtime) {
+              runtime.recordSymlinkCycle({
+                root: current.root,
+                path: fullPath,
+                dedup_key: key,
+                fs_device: childStat.dev,
+                scope,
+              });
+            }
+            continue;
+          }
+          seenInodes.add(key);
+          stack.push({ path: fullPath, depth: current.depth + 1, root: current.root });
+          continue;
+        }
+
+        if (!entry.isFile()) continue;
+        if (!LOCKFILE_NAMES.has(entry.name)) continue;
+        onLockfile(fullPath);
+      }
+    }
+
+    if (runtime) {
+      runtime.recordRootTiming(rootPath, {
+        elapsed_ms: runtime.clock.now() - rootStartMs,
+        scope,
+        entries: rootEntries,
+      });
     }
   }
 }
 
-function scanProjectRoots(roots, report) {
+function scanProjectRoots(roots, report, runtime) {
   walkProjectRoots(
     roots,
+    { runtime, maxDepth: DEFAULT_PROJECT_WALK_MAX_DEPTH, maxEntries: DEFAULT_PROJECT_WALK_MAX_ENTRIES },
     (nodeModulesPath) => {
       for (const packageDir of findTrackedPackageDirs(nodeModulesPath)) {
         const inspection = inspectPackageDirectory(packageDir);
-        if (!inspection.compromisedVersion && inspection.iocFiles.length === 0 && inspection.iocStrings.length === 0) {
-          continue;
-        }
+        if (!hasHardInfectionEvidence(inspection)) continue;
 
         const finding = {
           kind: 'local-install',
@@ -1324,28 +2293,30 @@ function scanProjectRoots(roots, report) {
 
       const text = safeReadText(lockfilePath);
       if (!text) return;
-      if (!TRACKED_PACKAGES.some(({ name }) => text.includes(name))) return;
 
-      const versions = findVersionsInText(text);
-      if (versions.length === 0) return;
+      // Correlated tuples only — raw version match produced false positives
+      // whenever an unrelated dep shared a version string with a tracked
+      // compromised version (tweetnacl@1.0.3 vs @openwebconcept/design-tokens@1.0.3).
+      const tuples = findTrackedPackageVersionTuples(text);
+      if (tuples.length === 0) return;
 
       report.lockfileFindings.push({
         path: lockfilePath,
         modifiedAt: isoTime(stat.mtimeMs),
-        versions,
+        versions: tuples,
       });
       addTimeline(report, {
         time: isoTime(stat.mtimeMs),
         category: 'lockfile',
         severity: 'observed',
-        summary: `lockfile references compromised versions ${versions.join(', ')}`,
+        summary: `lockfile references compromised ${tuples.join(', ')}`,
         path: lockfilePath,
       });
     },
   );
 }
 
-function scanShellProfiles(homes, report) {
+function scanShellProfiles(homes, report, runtime) {
   const directPaths = [];
   const directoryRoots = [];
 
@@ -1390,24 +2361,28 @@ function scanShellProfiles(homes, report) {
 
   for (const candidate of directoryRoots) {
     if (!safeExists(candidate.path)) continue;
-    walkTreeFiles([candidate.path], { maxDepth: 2, maxEntries: 1000, skipDirs: WALK_SKIP_DIRS }, (fullPath) => {
-      const finding = inspectTextEvidenceFile(fullPath);
-      if (!finding) return;
+    walkTreeFiles(
+      [candidate.path],
+      { maxDepth: 2, maxEntries: 1000, skipDirs: WALK_SKIP_DIRS, runtime, scope: 'shell-profiles' },
+      (fullPath) => {
+        const finding = inspectTextEvidenceFile(fullPath);
+        if (!finding) return;
 
-      report.shellProfileFindings.push({
-        kind: candidate.kind,
-        home: candidate.home,
-        ...finding,
-      });
+        report.shellProfileFindings.push({
+          kind: candidate.kind,
+          home: candidate.home,
+          ...finding,
+        });
 
-      addTimeline(report, {
-        time: finding.modifiedAt,
-        category: 'shell-profile',
-        severity: 'compromised',
-        summary: 'shell profile drop-in references suspicious package execution or IOC data',
-        path: finding.path,
-      });
-    });
+        addTimeline(report, {
+          time: finding.modifiedAt,
+          category: 'shell-profile',
+          severity: 'compromised',
+          summary: 'shell profile drop-in references suspicious package execution or IOC data',
+          path: finding.path,
+        });
+      },
+    );
   }
 }
 
@@ -1420,25 +2395,30 @@ function scanShellHistories(homes, report) {
       const finding = inspectTextEvidenceFile(fullPath);
       if (!finding) continue;
 
-      const exposure =
-        finding.executionCommands.length > 0 || finding.networkCommands.length > 0
-          ? 'execution'
-          : finding.installCommands.length > 0
-            ? 'install'
-            : 'reference';
+      // Hard evidence: network-IOC pattern (curl/wget to exfil host),
+      // raw IOC string match, or explicit compromised-version string in
+      // history. Pure `executionCommands`/`installCommands` name-match is
+      // ambient noise (triggered every time the user runs the scanner).
+      const hasHardEvidence =
+        finding.networkCommands.length > 0 || finding.iocMatches.length > 0 || finding.versions.length > 0;
+
+      const exposure = hasHardEvidence ? 'execution' : 'reference';
 
       report.shellHistoryFindings.push({
         kind: 'shell-history',
         home: homePath,
         exposure,
+        hardEvidence: hasHardEvidence,
         ...finding,
       });
 
       addTimeline(report, {
         time: finding.modifiedAt,
         category: 'shell-history',
-        severity: exposure === 'execution' ? 'compromised' : 'affected',
-        summary: `shell history shows ${exposure} evidence for suspicious package activity`,
+        severity: hasHardEvidence ? 'compromised' : 'observed',
+        summary: hasHardEvidence
+          ? 'shell history shows execution evidence for suspicious package activity'
+          : 'shell history references tracked package name (clean or unversioned) — informational',
         path: finding.path,
       });
     }
@@ -1501,7 +2481,7 @@ function buildPersistenceTargets(platformInfo, homes) {
   return targets;
 }
 
-function scanPersistenceLocations(platformInfo, homes, report) {
+function scanPersistenceLocations(platformInfo, homes, report, runtime) {
   const targets = buildPersistenceTargets(platformInfo, homes);
 
   for (const target of targets) {
@@ -1528,24 +2508,28 @@ function scanPersistenceLocations(platformInfo, homes, report) {
       continue;
     }
 
-    walkTreeFiles([target.path], { maxDepth: 3, maxEntries: 4000, skipDirs: WALK_SKIP_DIRS }, (fullPath) => {
-      const finding = inspectTextEvidenceFile(fullPath);
-      if (!finding) return;
+    walkTreeFiles(
+      [target.path],
+      { maxDepth: 3, maxEntries: 4000, skipDirs: WALK_SKIP_DIRS, runtime, scope: 'persistence' },
+      (fullPath) => {
+        const finding = inspectTextEvidenceFile(fullPath);
+        if (!finding) return;
 
-      report.persistenceFindings.push({
-        kind: target.kind,
-        home: target.home,
-        ...finding,
-      });
+        report.persistenceFindings.push({
+          kind: target.kind,
+          home: target.home,
+          ...finding,
+        });
 
-      addTimeline(report, {
-        time: finding.modifiedAt,
-        category: 'persistence',
-        severity: 'compromised',
-        summary: `${target.kind} contains suspicious persistence or IOC data`,
-        path: finding.path,
-      });
-    });
+        addTimeline(report, {
+          time: finding.modifiedAt,
+          category: 'persistence',
+          severity: 'compromised',
+          summary: `${target.kind} contains suspicious persistence or IOC data`,
+          path: finding.path,
+        });
+      },
+    );
   }
 }
 
@@ -1569,12 +2553,18 @@ function collectPythonPthScanRoots(homes, roots) {
   });
 }
 
-function scanPythonPthArtifacts(homes, roots, report) {
+function scanPythonPthArtifacts(homes, roots, report, runtime) {
   const pthRoots = collectPythonPthScanRoots(homes, roots);
 
   walkTreeFiles(
     pthRoots,
-    { maxDepth: 5, maxEntries: 12000, skipDirs: new Set([...WALK_SKIP_DIRS, 'node_modules']) },
+    {
+      maxDepth: 5,
+      maxEntries: 12000,
+      skipDirs: new Set([...WALK_SKIP_DIRS, 'node_modules']),
+      runtime,
+      scope: 'python-pth',
+    },
     (fullPath) => {
       if (!fullPath.endsWith('.pth')) return;
 
@@ -1597,7 +2587,7 @@ function scanPythonPthArtifacts(homes, roots, report) {
   );
 }
 
-function scanImpactSurface(homes, roots, report) {
+function scanImpactSurface(homes, roots, report, runtime) {
   const findings = [];
 
   for (const homePath of homes) {
@@ -1622,7 +2612,13 @@ function scanImpactSurface(homes, roots, report) {
       for (const extension of TARGETED_BROWSER_EXTENSION_IDS) {
         walkTreeFiles(
           [fullPath],
-          { maxDepth: 3, maxEntries: 1500, skipDirs: new Set([...WALK_SKIP_DIRS, 'Cache']) },
+          {
+            maxDepth: 3,
+            maxEntries: 1500,
+            skipDirs: new Set([...WALK_SKIP_DIRS, 'Cache']),
+            runtime,
+            scope: 'impact-surface',
+          },
           (candidatePath) => {
             if (!candidatePath.includes(`/Extensions/${extension.id}/`)) return;
             if (basename(candidatePath) !== 'manifest.json') return;
@@ -1664,6 +2660,229 @@ function scanImpactSurface(homes, roots, report) {
   report.impactSurfaceFindings = uniq(findings.map((entry) => JSON.stringify(entry))).map((entry) => JSON.parse(entry));
 }
 
+// ---------------------------------------------------------------------------
+// Breach-impact analysis — retrace the known CanisterWorm payload behavior
+// against what actually exists on this host.
+//
+// The `env-compat.cjs` payload is a postinstall script that runs under the
+// installing user's identity. Public research + the IOC strings the scanner
+// already matches (TEL_ENDPOINT, ICP_CANISTER_ID, pkg-telemetry, AES-256-CBC,
+// RSA-OAEP-SHA256, pypi-pth-exfil, etc.) give us a concrete list of targets:
+//
+//   1. Environment variables visible to `npm run postinstall` at install
+//      time (anything in process.env when `env-compat.cjs` executed). The
+//      scanner cannot read historical env state, but install-time env for
+//      shells is commonly .env files + shell profiles.
+//   2. Credential files under $HOME that the install-user could read.
+//   3. Browser login-data / cookie stores (chrome/brave/edge/chromium).
+//   4. Crypto wallets.
+//   5. SSH keys + known_hosts (for lateral movement).
+//   6. Session tokens in ~/.config/gh and ~/.config/gcloud and ~/.aws.
+//
+// This phase correlates the scanner's own impactSurfaceFindings (what EXISTS
+// on this host) with the known CanisterWorm targeting to produce
+// `breachImpact.likelyStolen` — a structured, actionable checklist for
+// credential rotation rather than a generic "rotate your tokens" line.
+//
+// Only fires if hard compromise evidence is present; otherwise the host is
+// not believed to have been exposed and we emit an empty/disabled report.
+// ---------------------------------------------------------------------------
+
+const CANISTERWORM_TARGETS = [
+  // Package registry tokens — highest priority (full supply-chain impact).
+  {
+    match: /(^|\/)\.npmrc$/,
+    category: 'npm-token',
+    severity: 'CRITICAL',
+    rotationUrl: 'https://www.npmjs.com/settings/~/tokens',
+    reason: 'env-compat.cjs reads ~/.npmrc to exfil auth tokens; compromised npm publish rights = supply-chain risk',
+  },
+  {
+    match: /\.config\/gh\/hosts\.yml$/,
+    category: 'github-pat',
+    severity: 'CRITICAL',
+    rotationUrl: 'https://github.com/settings/tokens',
+    reason:
+      'gh CLI tokens grant repo + workflow-secrets access; public research shows exfil to telemetry.api-monitor.com',
+  },
+  // Cloud IAM — infrastructure access.
+  {
+    match: /\.aws\/(credentials|config)$/,
+    category: 'aws-iam',
+    severity: 'CRITICAL',
+    rotationUrl: 'https://console.aws.amazon.com/iam/home#/security_credentials',
+    reason: 'AWS access keys enable infrastructure takeover',
+  },
+  {
+    match: /\.config\/gcloud\/(application_default_credentials|access_tokens)/,
+    category: 'gcp-iam',
+    severity: 'CRITICAL',
+    rotationUrl: 'https://console.cloud.google.com/iam-admin/serviceaccounts',
+    reason: 'GCP application-default credentials / access tokens enable project takeover',
+  },
+  {
+    match: /\.azure\//,
+    category: 'azure-iam',
+    severity: 'CRITICAL',
+    rotationUrl: 'https://portal.azure.com/#view/Microsoft_AAD_IAM/ActiveDirectoryMenuBlade/~/Overview',
+    reason: 'Azure CLI refresh tokens enable subscription access',
+  },
+  // AI provider keys (the payload specifically targets these per pkg-telemetry).
+  {
+    match: /(^|\/)\.env(\.|$)/,
+    category: 'dotenv',
+    severity: 'CRITICAL',
+    rotationUrl: null,
+    reason: 'env-compat.cjs reads .env files for ANTHROPIC_API_KEY / OPENAI_API_KEY / custom secrets',
+  },
+  // SSH — lateral movement.
+  {
+    match: /\.ssh\/(id_rsa|id_ed25519|id_ecdsa|config|known_hosts)/,
+    category: 'ssh-key',
+    severity: 'HIGH',
+    rotationUrl: null,
+    reason: 'SSH private keys + known_hosts enable lateral movement to other hosts',
+  },
+  // Browser login data — session cookies, stored passwords.
+  {
+    match:
+      /(Application Support|\.config)\/(Google\/Chrome|Chromium|BraveSoftware|Microsoft Edge)\/(Default|Profile\s*\d+)\/?/i,
+    category: 'browser-session',
+    severity: 'HIGH',
+    rotationUrl: null,
+    reason: 'browser Login Data + Cookies files contain session tokens that bypass 2FA on re-use',
+  },
+  // Crypto wallets.
+  {
+    match: /(Application Support|\.local\/share|\.config)\/(Ledger Live|Exodus|Electrum|MetaMask)/i,
+    category: 'crypto-wallet',
+    severity: 'CRITICAL',
+    rotationUrl: null,
+    reason: 'crypto wallet data allows direct fund theft if keystore passphrase is also captured',
+  },
+];
+
+function classifyCanisterWormTarget(path) {
+  for (const target of CANISTERWORM_TARGETS) {
+    if (target.match.test(path)) return target;
+  }
+  return null;
+}
+
+function hasHardCompromiseEvidence(report) {
+  if ((report.installFindings || []).length > 0) return true;
+  if ((report.bunCacheFindings || []).length > 0) return true;
+  if ((report.npmTarballFetches || []).length > 0) return true;
+  // Any temp-artifact with known malware hash.
+  for (const entry of report.tempArtifactFindings || []) {
+    if (entry.knownMalwareHash) return true;
+    if ((entry.iocMatches || []).length > 0) return true;
+  }
+  return false;
+}
+
+function scanBreachImpact(report) {
+  const hasEvidence = hasHardCompromiseEvidence(report);
+  const breachImpact = {
+    enabled: hasEvidence,
+    exfilChannel: {
+      host: 'telemetry.api-monitor.com',
+      paths: ['/v1/telemetry', '/v1/drop'],
+      observed: false,
+    },
+    compromiseWindow: null,
+    likelyStolen: [],
+    compromisedInstallPaths: [],
+    runningProcessesDuringWindow: [],
+    rotationChecklist: [],
+  };
+
+  if (!hasEvidence) {
+    report.breachImpact = breachImpact;
+    return;
+  }
+
+  // Determine compromise window from evidence timestamps.
+  const evidenceTimes = [];
+  for (const entry of report.installFindings || []) {
+    const t = entry.modifiedAt || null;
+    if (t) evidenceTimes.push(Date.parse(t));
+    breachImpact.compromisedInstallPaths.push(entry.path);
+  }
+  for (const entry of report.bunCacheFindings || []) {
+    const t = entry.modifiedAt || null;
+    if (t) evidenceTimes.push(Date.parse(t));
+  }
+  for (const entry of report.npmTarballFetches || []) {
+    const t = entry.time || entry.cacheRecordTime || null;
+    if (t) evidenceTimes.push(Date.parse(t));
+  }
+  const validTimes = evidenceTimes.filter((t) => Number.isFinite(t) && t > 0);
+  if (validTimes.length > 0) {
+    breachImpact.compromiseWindow = {
+      firstEvidence: new Date(Math.min(...validTimes)).toISOString(),
+      lastEvidence: new Date(Math.max(...validTimes)).toISOString(),
+    };
+  }
+
+  // Cross-reference impact-surface findings against known CanisterWorm targets.
+  // Every match is a credential the payload, running as the installing user,
+  // had read access to during the compromise window.
+  for (const entry of report.impactSurfaceFindings || []) {
+    const target = classifyCanisterWormTarget(entry.path);
+    if (!target) continue;
+    breachImpact.likelyStolen.push({
+      category: target.category,
+      severity: target.severity,
+      path: entry.path,
+      reason: target.reason,
+      rotationUrl: target.rotationUrl,
+    });
+  }
+
+  // Also include .env files discovered in scanImpactSurface (they're in
+  // impactSurfaceFindings with kind='secret-store').
+  for (const entry of report.impactSurfaceFindings || []) {
+    if (entry.kind !== 'secret-store') continue;
+    if (breachImpact.likelyStolen.some((s) => s.path === entry.path)) continue;
+    const target = classifyCanisterWormTarget(entry.path);
+    if (target) continue; // already classified above
+    breachImpact.likelyStolen.push({
+      category: 'dotenv',
+      severity: 'CRITICAL',
+      path: entry.path,
+      reason: 'env-compat.cjs reads .env files for API keys (ANTHROPIC, OPENAI, custom secrets)',
+      rotationUrl: null,
+    });
+  }
+
+  // Correlate live processes with the compromise window: any process whose
+  // elapsed time overlaps the window and which was spawned by the compromised
+  // install path is part of the breach footprint.
+  for (const entry of report.liveProcessFindings || []) {
+    if (!entry.matchedInstallPaths || entry.matchedInstallPaths.length === 0) continue;
+    breachImpact.runningProcessesDuringWindow.push({
+      pid: entry.pid,
+      elapsed: entry.elapsed,
+      command: (entry.command || '').slice(0, 160),
+    });
+  }
+
+  // Build a priority-sorted rotation checklist (deduped by category).
+  const severityRank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+  const byCategory = new Map();
+  for (const item of breachImpact.likelyStolen) {
+    const existing = byCategory.get(item.category);
+    if (!existing) byCategory.set(item.category, { ...item, paths: [item.path] });
+    else existing.paths.push(item.path);
+  }
+  breachImpact.rotationChecklist = [...byCategory.values()].sort(
+    (a, b) => (severityRank[a.severity] ?? 99) - (severityRank[b.severity] ?? 99),
+  );
+
+  report.breachImpact = breachImpact;
+}
+
 function collectTempRoots(platformInfo, homes, roots) {
   const tempRoots = new Set();
 
@@ -1679,11 +2898,11 @@ function collectTempRoots(platformInfo, homes, roots) {
   }
 
   for (const homePath of homes) {
+    // ~/.npm, ~/.npm/_npx, ~/.cache, ~/.bun intentionally omitted: dedicated
+    // scanNpmCache / scanBunCache phases cover them with tighter caps; walking
+    // them here surfaces hundreds of MB of content scans and bypasses
+    // WALK_SKIP_DIRS (skip-set only filters sub-entries, not chosen roots).
     for (const candidate of [
-      join(homePath, '.npm'),
-      join(homePath, '.npm', '_npx'),
-      join(homePath, '.cache'),
-      join(homePath, '.bun'),
       join(homePath, 'Library', 'Caches'),
       join(homePath, 'AppData', 'Local', 'Temp'),
       join(homePath, 'AppData', 'Local', 'npm-cache'),
@@ -1704,8 +2923,185 @@ function collectTempRoots(platformInfo, homes, roots) {
   });
 }
 
-function scanTempArtifacts(platformInfo, homes, roots, report) {
+function resolveTempBudgets(runtime) {
+  const budgets = runtime?.options?.phaseBudgets || {};
+  const filesOverride = Number(budgets['scanTempArtifacts.files']);
+  const bytesOverride = Number(budgets['scanTempArtifacts.bytes']);
+  const wallOverride = Number(budgets['scanTempArtifacts.wall_ms']);
+  // Back-compat: `--phase-budget scanTempArtifacts=N` is interpreted as the
+  // files-count cap (dominant failure mode for this phase).
+  const shorthandOverride = Number(budgets.scanTempArtifacts);
+  const files =
+    Number.isFinite(filesOverride) && filesOverride >= 0
+      ? filesOverride
+      : Number.isFinite(shorthandOverride) && shorthandOverride >= 0
+        ? shorthandOverride
+        : DEFAULT_TEMP_FILES_BUDGET;
+  const bytes = Number.isFinite(bytesOverride) && bytesOverride >= 0 ? bytesOverride : DEFAULT_TEMP_BYTES_BUDGET;
+  const wallMs = Number.isFinite(wallOverride) && wallOverride >= 0 ? wallOverride : DEFAULT_TEMP_WALL_BUDGET_MS;
+  return { files, bytes, wallMs };
+}
+
+function pushSizeCappedTempFinding(report, fullPath, stat, namedHits) {
+  const finding = {
+    path: fullPath,
+    realpath: safeRealpath(fullPath),
+    size: stat.size,
+    modifiedAt: isoTime(stat.mtimeMs),
+    nameMatches: namedHits,
+    sha256: null,
+    expectedSha256: expectedMalwareHashForBasename(basename(fullPath)),
+    knownMalwareHash: false,
+    iocMatches: [],
+    versions: [],
+    packageRefs: [],
+    executionCommands: [],
+    networkCommands: [],
+    snippets: [],
+    size_capped_not_hashed: true,
+  };
+  report.tempArtifactFindings.push(finding);
+  addTimeline(report, {
+    time: finding.modifiedAt,
+    category: 'temp-artifact',
+    severity: namedHits.some((value) => /env-compat\.(?:cjs|js)/i.test(value)) ? 'compromised' : 'affected',
+    summary: 'temp or cache artifact matched known-bad basename; size-capped, content not scanned',
+    path: fullPath,
+  });
+}
+
+function inspectTempFileSync(fullPath, report) {
+  const stat = safeStat(fullPath);
+  if (!stat || !stat.isFile()) return { bytesRead: 0, skipped: true };
+
+  const namedHits = collectNamedArtifactHits(fullPath);
+
+  // Size guard applies universally (hotfix: close DoS via name-regex fast path).
+  // Basename hits still surface a finding but content is NOT read/hashed.
+  if (stat.size > MAX_TEMP_CONTENT_SCAN_SIZE) {
+    if (namedHits.length > 0 && report.tempArtifactFindings.length < MAX_TEMP_FINDINGS) {
+      pushSizeCappedTempFinding(report, fullPath, stat, namedHits);
+    }
+    return { bytesRead: 0, skipped: true };
+  }
+
+  const buffer = safeReadFile(fullPath);
+  if (!buffer) return { bytesRead: 0, skipped: true };
+
+  const bytesRead = buffer.length;
+  const expanded = maybeGunzip(buffer);
+  const iocMatches = searchBufferForIocs(expanded);
+  const fileSha256 = sha256(expanded);
+  const expectedSha256 = expectedMalwareHashForBasename(basename(fullPath));
+
+  const text = expanded.toString('utf8');
+  const indicators = collectTextIndicators(text);
+  const versions = indicators.versions;
+  const packageRefs = indicators.packageRefs;
+  const executionCommands = indicators.executionCommands;
+  const networkCommands = indicators.networkCommands;
+  const snippets = extractInterestingSnippets(text);
+
+  if (
+    namedHits.length === 0 &&
+    iocMatches.length === 0 &&
+    versions.length === 0 &&
+    packageRefs.length === 0 &&
+    executionCommands.length === 0 &&
+    networkCommands.length === 0
+  ) {
+    return { bytesRead, skipped: false };
+  }
+
+  const finding = {
+    path: fullPath,
+    realpath: safeRealpath(fullPath),
+    size: stat.size,
+    modifiedAt: isoTime(stat.mtimeMs),
+    nameMatches: namedHits,
+    sha256: fileSha256,
+    expectedSha256,
+    knownMalwareHash: Boolean(expectedSha256 && expectedSha256 === fileSha256),
+    iocMatches,
+    versions,
+    packageRefs,
+    executionCommands,
+    networkCommands,
+    snippets,
+  };
+
+  report.tempArtifactFindings.push(finding);
+  addTimeline(report, {
+    time: finding.modifiedAt,
+    category: 'temp-artifact',
+    severity:
+      iocMatches.length > 0 ||
+      namedHits.some((value) => /env-compat\.(?:cjs|js)/i.test(value)) ||
+      Boolean(expectedSha256 && expectedSha256 === fileSha256)
+        ? 'compromised'
+        : 'affected',
+    summary: 'temp or cache artifact retained suspicious package evidence',
+    path: fullPath,
+  });
+  return { bytesRead, skipped: false };
+}
+
+async function processTempArtifactQueue(pending, report, runtime) {
+  const { files: filesBudget, bytes: bytesBudget, wallMs: wallBudget } = resolveTempBudgets(runtime);
+  let filesProcessed = 0;
+  let bytesProcessed = 0;
+  let capRecorded = false;
+  const startMs = Date.now();
+
+  const recordCapOnce = (reason, limit) => {
+    if (capRecorded) return;
+    capRecorded = true;
+    if (runtime && typeof runtime.recordPhaseCapHit === 'function') {
+      runtime.recordPhaseCapHit(reason, {
+        // `root` is what `envelopeFromReport` greps for in `coverage.cappedRoots`;
+        // without it a phase-budget breach does not surface in the coverage banner.
+        root: 'scanTempArtifacts',
+        limit,
+        entries_processed: filesProcessed,
+        bytes_processed: bytesProcessed,
+      });
+    }
+  };
+
+  for (const fullPath of pending) {
+    if (runtime && typeof runtime.isInterrupted === 'function' && runtime.isInterrupted()) break;
+    if (report.tempArtifactFindings.length >= MAX_TEMP_FINDINGS) break;
+    // Wall first — a single slow `readFileSync` (spinning disk, NFS, large
+    // near-limit file) can blow the other budgets' theoretical bounds; the
+    // wall-clock check is the definitive "stop" signal.
+    if (wallBudget > 0 && Date.now() - startMs >= wallBudget) {
+      recordCapOnce('wall_budget', wallBudget);
+      break;
+    }
+    if (filesProcessed >= filesBudget) {
+      recordCapOnce('files_budget', filesBudget);
+      break;
+    }
+    if (bytesProcessed >= bytesBudget) {
+      recordCapOnce('bytes_budget', bytesBudget);
+      break;
+    }
+
+    const { bytesRead } = inspectTempFileSync(fullPath, report);
+    filesProcessed += 1;
+    if (bytesRead > 0) bytesProcessed += bytesRead;
+    if (runtime && typeof runtime.addBytes === 'function' && bytesRead > 0) runtime.addBytes(bytesRead);
+
+    if (filesProcessed % TEMP_YIELD_INTERVAL === 0) {
+      await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    }
+  }
+  return { filesProcessed, bytesProcessed, capRecorded };
+}
+
+async function scanTempArtifacts(platformInfo, homes, roots, report, runtime) {
   const tempRoots = collectTempRoots(platformInfo, homes, roots);
+  const pending = [];
 
   walkTreeFiles(
     tempRoots,
@@ -1713,82 +3109,15 @@ function scanTempArtifacts(platformInfo, homes, roots, report) {
       maxDepth: 4,
       maxEntries: MAX_TEMP_WALK_ENTRIES,
       skipDirs: new Set([...WALK_SKIP_DIRS, 'node_modules']),
+      runtime,
+      scope: 'temp-artifacts',
     },
     (fullPath) => {
-      if (report.tempArtifactFindings.length >= MAX_TEMP_FINDINGS) return;
-
-      const stat = safeStat(fullPath);
-      if (!stat || !stat.isFile()) return;
-
-      const namedHits = collectNamedArtifactHits(fullPath);
-      let iocMatches = [];
-      let versions = [];
-      let packageRefs = [];
-      let executionCommands = [];
-      let networkCommands = [];
-      let snippets = [];
-
-      if (namedHits.length === 0 && stat.size > MAX_TEMP_CONTENT_SCAN_SIZE) return;
-
-      const buffer = safeReadFile(fullPath);
-      if (!buffer) return;
-
-      const expanded = maybeGunzip(buffer);
-      iocMatches = searchBufferForIocs(expanded);
-      const fileSha256 = sha256(expanded);
-      const expectedSha256 = expectedMalwareHashForBasename(basename(fullPath));
-
-      const text = expanded.toString('utf8');
-      const indicators = collectTextIndicators(text);
-      versions = indicators.versions;
-      packageRefs = indicators.packageRefs;
-      executionCommands = indicators.executionCommands;
-      networkCommands = indicators.networkCommands;
-      snippets = extractInterestingSnippets(text);
-
-      if (
-        namedHits.length === 0 &&
-        iocMatches.length === 0 &&
-        versions.length === 0 &&
-        packageRefs.length === 0 &&
-        executionCommands.length === 0 &&
-        networkCommands.length === 0
-      ) {
-        return;
-      }
-
-      const finding = {
-        path: fullPath,
-        realpath: safeRealpath(fullPath),
-        size: stat.size,
-        modifiedAt: isoTime(stat.mtimeMs),
-        nameMatches: namedHits,
-        sha256: fileSha256,
-        expectedSha256,
-        knownMalwareHash: Boolean(expectedSha256 && expectedSha256 === fileSha256),
-        iocMatches,
-        versions,
-        packageRefs,
-        executionCommands,
-        networkCommands,
-        snippets,
-      };
-
-      report.tempArtifactFindings.push(finding);
-      addTimeline(report, {
-        time: finding.modifiedAt,
-        category: 'temp-artifact',
-        severity:
-          iocMatches.length > 0 ||
-          namedHits.some((value) => /env-compat\.(?:cjs|js)/i.test(value)) ||
-          Boolean(expectedSha256 && expectedSha256 === fileSha256)
-            ? 'compromised'
-            : 'affected',
-        summary: 'temp or cache artifact retained suspicious package evidence',
-        path: fullPath,
-      });
+      pending.push(fullPath);
     },
   );
+
+  await processTempArtifactQueue(pending, report, runtime);
 }
 
 function scanLiveProcesses(report) {
@@ -1810,19 +3139,37 @@ function scanLiveProcesses(report) {
     if (!match) continue;
 
     const [, pid, ppid, user, elapsed, command] = match;
+
+    // Self-exclusion: the running scanner + any wrapping shell that invoked
+    // it (e.g. `bash -c "npx @automagik/genie sec scan …"`) will always
+    // match the tracked-package regexes in their own cmdline. Ignore both.
+    if (String(pid) === String(process.pid)) continue;
+    if (String(pid) === String(process.ppid)) continue;
+    if (command.includes('sec-scan.cjs') || command.includes('/sec-scan ')) continue;
+    if (
+      /\bgenie\s+sec\s+(scan|remediate|restore|rollback|verify-install|quarantine|print-cleanup-commands)\b/.test(
+        command,
+      )
+    ) {
+      continue;
+    }
+
     const indicators = collectTextIndicators(command);
     const namedHits = collectNamedArtifactHits(command);
     const matchedInstallPaths = suspectPaths.filter((path) => command.includes(path));
 
-    const isStrongHit =
+    // Hard evidence requires either an actual compromised version token in
+    // the cmdline OR an IOC string hit OR a network-IOC command. Pure name
+    // matches (e.g. `pgserve@1.1.10` where 1.1.10 is CLEAN) are NOT compromise
+    // evidence — they only tell us the package is running, which is normal.
+    const hasHardEvidence =
       indicators.iocMatches.length > 0 ||
-      indicators.executionCommands.length > 0 ||
       indicators.networkCommands.length > 0 ||
       indicators.versions.length > 0 ||
-      namedHits.length > 0 ||
       matchedInstallPaths.length > 0;
 
-    if (!isStrongHit) continue;
+    const hasWeakHit = hasHardEvidence || indicators.executionCommands.length > 0 || namedHits.length > 0;
+    if (!hasWeakHit) continue;
 
     report.liveProcessFindings.push({
       pid: Number(pid),
@@ -1836,13 +3183,16 @@ function scanLiveProcesses(report) {
       executionCommands: indicators.executionCommands,
       networkCommands: indicators.networkCommands,
       nameMatches: namedHits,
+      hardEvidence: hasHardEvidence,
     });
 
     addTimeline(report, {
       time: null,
       category: 'live-process',
-      severity: 'compromised',
-      summary: `live process ${pid} matches suspicious package execution indicators`,
+      severity: hasHardEvidence ? 'compromised' : 'observed',
+      summary: hasHardEvidence
+        ? `live process ${pid} matches suspicious package execution indicators`
+        : `live process ${pid} running tracked package name (clean or unversioned) — informational`,
       path: command,
     });
   }
@@ -1858,22 +3208,34 @@ function countStrongProfileEvidence(report) {
   ).length;
 }
 
+// Hard execution evidence in shell history = actual network-IOC (curl/wget
+// to exfil host) or raw IOC string or explicit compromised version. Pure
+// `executionCommands` matches (exec:@automagik/genie, exec:npx @automagik/genie)
+// fire every time the user runs the scanner itself or any other genie command
+// and are NOT compromise evidence. Same for `installCommands` — cleanup
+// activity (`npm uninstall -g @automagik/genie`) triggers them.
 function countExecutionHistoryEvidence(report) {
   return report.shellHistoryFindings.filter(
-    (finding) =>
-      finding.executionCommands.length > 0 || finding.networkCommands.length > 0 || finding.iocMatches.length > 0,
+    (finding) => finding.networkCommands.length > 0 || finding.iocMatches.length > 0 || finding.versions.length > 0,
   ).length;
 }
 
 function countInstallHistoryEvidence(report) {
-  return report.shellHistoryFindings.filter((finding) => finding.installCommands.length > 0).length;
+  // Same logic: only count install lines that explicitly reference a
+  // compromised version OR carry an IOC pattern. Bare install/uninstall
+  // commands on tracked package names are ambient noise.
+  return report.shellHistoryFindings.filter((finding) => finding.versions.length > 0 || finding.iocMatches.length > 0)
+    .length;
 }
 
+// Strong temp-artifact evidence = actual malware bytes / IOC strings /
+// env-compat artifact. Pure `executionCommands` (package-name execute
+// pattern) in a text file (log, audit json, registry) is NOT compromise —
+// dev tooling routinely writes package names into /tmp during tests.
 function countStrongTempEvidence(report) {
   return report.tempArtifactFindings.filter(
     (finding) =>
       finding.iocMatches.length > 0 ||
-      finding.executionCommands.length > 0 ||
       finding.knownMalwareHash ||
       finding.nameMatches.some((value) => /env-compat\.(?:cjs|js)/i.test(value)),
   ).length;
@@ -1928,7 +3290,8 @@ function summarize(report) {
   if (strongTempEvidence > 0) {
     compromiseReasons.push('temp or cache directories retain dropped env-compat artifacts or IOC strings');
   }
-  if (report.liveProcessFindings.length > 0) {
+  const hardEvidenceProcesses = report.liveProcessFindings.filter((entry) => entry.hardEvidence);
+  if (hardEvidenceProcesses.length > 0) {
     compromiseReasons.push('live processes match suspicious package execution indicators');
   }
   if (report.pythonPthFindings.length > 0) {
@@ -1947,9 +3310,14 @@ function summarize(report) {
   if (installHistoryEvidence > 0) {
     affectedReasons.push('shell history shows package installation commands');
   }
-  if (report.tempArtifactFindings.length > 0 && strongTempEvidence === 0) {
-    affectedReasons.push('temp or cache directories retain suspicious tarball or package references');
-  }
+  // Weak temp findings (name-only matches on /tmp text files like Claude
+  // session logs and bun task-output dumps) are NOT affected-grade evidence
+  // — they're just text files that happen to contain the string "pgserve"
+  // or "@automagik/genie". They still appear in the report for transparency
+  // but must not elevate status from OBSERVED ONLY to LIKELY AFFECTED.
+  // Only `strongTempEvidence` (IOC string, malware hash, env-compat name)
+  // pushes a compromise/affected reason, via the `compromiseReasons` branch
+  // above.
 
   const likelyCompromised = compromiseReasons.length > 0;
   const likelyAffected =
@@ -1968,7 +3336,7 @@ function summarize(report) {
   suspicionScore += Math.min(strongProfileEvidence * 20, 40);
   suspicionScore += Math.min(executionHistoryEvidence * 20, 40);
   suspicionScore += Math.min(strongTempEvidence * 20, 40);
-  suspicionScore += Math.min(report.liveProcessFindings.length * 25, 50);
+  suspicionScore += Math.min(hardEvidenceProcesses.length * 25, 50);
   suspicionScore += Math.min(report.pythonPthFindings.length * 25, 50);
   suspicionScore += Math.min(report.installFindings.length * 12, 24);
   suspicionScore += Math.min(report.npmTarballFetches.length * 8, 24);
@@ -2039,9 +3407,25 @@ function printTextFindingDetails(finding) {
   }
 }
 
+function printCoverageBanner(report) {
+  const coverage = report.coverage;
+  if (!coverage) return;
+  const capped = coverage.cappedRoots?.length || 0;
+  const skipped = coverage.skippedRoots?.length || 0;
+  const interrupted = Boolean(coverage.interrupted);
+  if (!capped && !skipped && !interrupted) return;
+  const pieces = [];
+  if (interrupted) pieces.push(`interrupted (${coverage.interruptReason || 'signal'})`);
+  if (capped) pieces.push(`${capped} capped roots`);
+  if (skipped) pieces.push(`${skipped} skipped roots`);
+  console.log(`⚠ INCOMPLETE SCAN: ${pieces.join(', ')}`);
+  console.log('');
+}
+
 function printHumanReport(report) {
   const { summary } = report;
 
+  printCoverageBanner(report);
   console.log('Genie Security Scan');
   console.log('');
   console.log(`Host: ${report.host}`);
@@ -2219,6 +3603,35 @@ function printHumanReport(report) {
     }
   }
 
+  const breach = report.breachImpact || { enabled: false };
+  if (breach.enabled && (breach.likelyStolen || []).length > 0) {
+    console.log('');
+    console.log('BREACH IMPACT — retracing CanisterWorm exfil behavior against this host:');
+    if (breach.compromiseWindow) {
+      console.log(
+        `  compromise window: ${breach.compromiseWindow.firstEvidence} .. ${breach.compromiseWindow.lastEvidence}`,
+      );
+    }
+    console.log(
+      `  exfil channel: ${breach.exfilChannel.host} ${breach.exfilChannel.paths.join(', ')}${breach.exfilChannel.observed ? '  (observed)' : '  (not observed in logs — channel targeting only)'}`,
+    );
+    console.log('');
+    console.log('  likely-stolen credentials (grouped, priority-sorted):');
+    for (const item of breach.rotationChecklist || []) {
+      console.log(`  [${item.severity}] ${item.category}`);
+      for (const p of item.paths || []) console.log(`    path: ${p}`);
+      console.log(`    why:  ${item.reason}`);
+      if (item.rotationUrl) console.log(`    rotate at: ${item.rotationUrl}`);
+    }
+    if ((breach.runningProcessesDuringWindow || []).length > 0) {
+      console.log('');
+      console.log('  processes that ran the compromised binary:');
+      for (const proc of breach.runningProcessesDuringWindow) {
+        console.log(`    pid=${proc.pid} elapsed=${proc.elapsed} cmd=${proc.command}`);
+      }
+    }
+  }
+
   if (report.npmCacheMetadata.length > 0) {
     console.log('');
     console.log('npm cache metadata observations:');
@@ -2280,16 +3693,90 @@ function printHumanReport(report) {
   }
 }
 
-function main() {
+function writeEnvelope(envelope, options, stdout) {
+  const out = stdout || process.stdout;
+  try {
+    if (options.json) {
+      out.write(`${JSON.stringify(envelope, null, 2)}\n`);
+    } else {
+      printHumanReport(envelope);
+    }
+  } catch {
+    /* stdout closed */
+  }
+}
+
+function emitSlowestRootsReport(envelope, options, stderr) {
+  if (!options.verbose) return;
+  if (options.quiet) return;
+  const coverage = envelope.coverage;
+  if (!coverage) return;
+  const timings = coverage.rootTimings || [];
+  if (timings.length === 0) return;
+  const fingerprintsByRoot = new Map();
+  for (const fp of coverage.rootFingerprints || []) {
+    fingerprintsByRoot.set(fp.root, fp);
+    if (fp.realpath) fingerprintsByRoot.set(fp.realpath, fp);
+  }
+  const sorted = [...timings]
+    .filter((entry) => typeof entry.elapsed_ms === 'number')
+    .sort((a, b) => b.elapsed_ms - a.elapsed_ms)
+    .slice(0, 5);
+  if (sorted.length === 0) return;
+  const out = stderr || process.stderr;
+  try {
+    out.write('[sec-scan] top 5 slowest roots:\n');
+    for (const entry of sorted) {
+      const fp = fingerprintsByRoot.get(entry.root) || {};
+      const mount = fp.fs_type || 'unknown';
+      const realpath = fp.realpath || entry.root;
+      out.write(`  ${entry.elapsed_ms.toFixed(0)}ms  ${mount}  ${realpath}\n`);
+    }
+  } catch {
+    /* stderr closed */
+  }
+}
+
+async function runPhase(runtime, id, scope, path, fn, report) {
+  runtime.startPhase(id);
+  try {
+    await fn();
+  } catch (error) {
+    addError(report, scope, path, error);
+  } finally {
+    runtime.endPhase(id);
+  }
+}
+
+async function main() {
   const options = parseArgs(process.argv);
+
+  if (options.help) {
+    printHelp();
+    return 0;
+  }
+
+  if (isKillSwitchEnabled()) {
+    return emitKillSwitchResponse(options);
+  }
+
   const platformInfo = detectPlatform();
+  const scannerVersion = readScannerVersion();
+  const runtime = createRuntime({
+    options,
+    platformInfo,
+    argv: process.argv,
+    scannerVersion,
+  });
+
   const homes = collectHomeDirs(options, platformInfo);
   const roots = collectScanRoots(options, homes);
+  runtime.setRootFingerprints(computeRootFingerprints(uniq([...homes, ...roots]), platformInfo));
 
   const report = {
     host: hostname(),
     platform: platformInfo,
-    scannedAt: new Date().toISOString(),
+    scannedAt: runtime.startedAt,
     cwd: process.cwd(),
     homes,
     roots,
@@ -2309,94 +3796,178 @@ function main() {
     tempArtifactFindings: [],
     liveProcessFindings: [],
     impactSurfaceFindings: [],
+    breachImpact: { enabled: false, likelyStolen: [], rotationChecklist: [] },
     timeline: [],
     errors: [],
   };
 
+  let flushed = false;
+  const flush = (reason) => {
+    if (flushed) return;
+    flushed = true;
+    try {
+      report.timeline = sortTimeline(report.timeline);
+      if (!report.summary) report.summary = summarize(report);
+    } catch {
+      /* partial report; continue */
+    }
+    const envelope = envelopeFromReport(runtime, report, { reason });
+    writeEnvelope(envelope, options);
+  };
+
+  installSignalHandlers(runtime, flush);
+  runtime.startTicker();
+
   for (const homePath of homes) {
-    try {
-      scanNpmCache(homePath, report);
-    } catch (error) {
-      addError(report, 'npm-cache', homePath, error);
-    }
-
-    try {
-      scanBunCache(homePath, report);
-    } catch (error) {
-      addError(report, 'bun-cache', homePath, error);
-    }
+    await runPhase(runtime, 'scanNpmCache', 'npm-cache', homePath, () => scanNpmCache(homePath, report), report);
+    await runPhase(runtime, 'scanBunCache', 'bun-cache', homePath, () => scanBunCache(homePath, report), report);
   }
 
-  try {
-    scanGlobalInstallCandidates(homes, report);
-  } catch (error) {
-    addError(report, 'global-installs', '(global)', error);
-  }
-
-  try {
-    scanProjectRoots(roots, report);
-  } catch (error) {
-    addError(report, 'project-roots', roots.join(', '), error);
-  }
-
-  try {
-    scanShellHistories(homes, report);
-  } catch (error) {
-    addError(report, 'shell-histories', homes.join(', '), error);
-  }
-
-  try {
-    scanShellProfiles(homes, report);
-  } catch (error) {
-    addError(report, 'shell-profiles', homes.join(', '), error);
-  }
-
-  try {
-    scanPersistenceLocations(platformInfo, homes, report);
-  } catch (error) {
-    addError(report, 'persistence', platformInfo.platform, error);
-  }
-
-  try {
-    scanPythonPthArtifacts(homes, roots, report);
-  } catch (error) {
-    addError(report, 'python-pth', '(python)', error);
-  }
-
-  try {
-    scanTempArtifacts(platformInfo, homes, roots, report);
-  } catch (error) {
-    addError(report, 'temp-artifacts', '(temp)', error);
-  }
-
-  try {
-    scanImpactSurface(homes, roots, report);
-  } catch (error) {
-    addError(report, 'impact-surface', '(surface)', error);
-  }
-
-  try {
-    scanLiveProcesses(report);
-  } catch (error) {
-    addError(report, 'live-processes', '(process table)', error);
-  }
+  await runPhase(
+    runtime,
+    'scanGlobalInstallCandidates',
+    'global-installs',
+    '(global)',
+    () => scanGlobalInstallCandidates(homes, report),
+    report,
+  );
+  await runPhase(
+    runtime,
+    'scanProjectRoots',
+    'project-roots',
+    roots.join(', '),
+    () => scanProjectRoots(roots, report, runtime),
+    report,
+  );
+  await runPhase(
+    runtime,
+    'scanShellHistories',
+    'shell-histories',
+    homes.join(', '),
+    () => scanShellHistories(homes, report),
+    report,
+  );
+  await runPhase(
+    runtime,
+    'scanShellProfiles',
+    'shell-profiles',
+    homes.join(', '),
+    () => scanShellProfiles(homes, report, runtime),
+    report,
+  );
+  await runPhase(
+    runtime,
+    'scanPersistenceLocations',
+    'persistence',
+    platformInfo.platform,
+    () => scanPersistenceLocations(platformInfo, homes, report, runtime),
+    report,
+  );
+  await runPhase(
+    runtime,
+    'scanPythonPthArtifacts',
+    'python-pth',
+    '(python)',
+    () => scanPythonPthArtifacts(homes, roots, report, runtime),
+    report,
+  );
+  await runPhase(
+    runtime,
+    'scanTempArtifacts',
+    'temp-artifacts',
+    '(temp)',
+    () => scanTempArtifacts(platformInfo, homes, roots, report, runtime),
+    report,
+  );
+  await runPhase(
+    runtime,
+    'scanImpactSurface',
+    'impact-surface',
+    '(surface)',
+    () => scanImpactSurface(homes, roots, report, runtime),
+    report,
+  );
+  await runPhase(
+    runtime,
+    'scanLiveProcesses',
+    'live-processes',
+    '(process table)',
+    () => scanLiveProcesses(report),
+    report,
+  );
+  await runPhase(
+    runtime,
+    'scanBreachImpact',
+    'breach-impact',
+    '(breach analysis)',
+    () => scanBreachImpact(report),
+    report,
+  );
 
   report.timeline = sortTimeline(report.timeline);
   report.summary = summarize(report);
 
-  if (options.json) {
-    console.log(JSON.stringify(report, null, 2));
-  } else {
-    printHumanReport(report);
-  }
+  flushed = true;
+  const envelope = envelopeFromReport(runtime, report);
+  writeEnvelope(envelope, options);
+  emitSlowestRootsReport(envelope, options);
 
-  process.exitCode =
-    report.summary.likelyAffected || report.summary.likelyCompromised ? 2 : report.summary.observedOnly ? 1 : 0;
+  const exitCode = computeExitCode(envelope);
+  if (exitCode !== 0) process.exitCode = exitCode;
+  return exitCode;
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`sec-scan.cjs failed: ${error.message}`);
-  process.exit(3);
+if (require.main === module) {
+  main().catch((error) => {
+    process.stderr.write(`sec-scan.cjs failed: ${error?.message ? error.message : error}\n`);
+    process.exit(3);
+  });
+} else {
+  module.exports = {
+    REPORT_VERSION,
+    DEFAULT_PROGRESS_INTERVAL_MS,
+    DEFAULT_PROJECT_WALK_MAX_DEPTH,
+    DEFAULT_PROJECT_WALK_MAX_ENTRIES,
+    REMOTE_FS_TYPES,
+    WALK_SKIP_DIRS,
+    generateUlid,
+    createHostId,
+    readScannerVersion,
+    createRuntime,
+    buildInvocation,
+    envelopeFromReport,
+    computeExitCode,
+    installSignalHandlers,
+    isKillSwitchEnabled,
+    emitKillSwitchResponse,
+    parseArgs,
+    printHelp,
+    main,
+    detectPlatform,
+    walkTreeFiles,
+    walkProjectRoots,
+    dedupKey,
+    readLinuxMountInfo,
+    parseMacOsMountLine,
+    readMacOsMounts,
+    mountInfoForPath,
+    isRemoteFsType,
+    classifyRootFingerprint,
+    computeRootFingerprints,
+    printCoverageBanner,
+    printHumanReport,
+    emitSlowestRootsReport,
+    collectTempRoots,
+    scanTempArtifacts,
+    processTempArtifactQueue,
+    inspectTempFileSync,
+    resolveTempBudgets,
+    runPhase,
+    MAX_TEMP_CONTENT_SCAN_SIZE,
+    MAX_TEMP_WALK_ENTRIES,
+    MAX_TEMP_FINDINGS,
+    DEFAULT_TEMP_FILES_BUDGET,
+    DEFAULT_TEMP_BYTES_BUDGET,
+    TEMP_YIELD_INTERVAL,
+  };
 }

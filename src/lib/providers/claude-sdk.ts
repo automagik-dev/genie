@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { HookCallbackMatcher, Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { ensureTeammateBypassPermissions } from '../claude-settings.js';
+import { ensureClaudeSettingsSafe } from '../claude-settings.js';
 import type {
   Executor,
   ExecutorProvider,
@@ -150,8 +150,8 @@ export class ClaudeSdkProvider implements ExecutorProvider {
     extraOptions?: Partial<Options>,
     sdkConfig?: SdkDirectoryConfig,
   ): { messages: Query; abortController: AbortController } {
-    // Defense-in-depth: ensure Claude Code global settings allow bypass
-    ensureTeammateBypassPermissions();
+    // Defense-in-depth: ensure Claude Code global settings are safe/valid
+    ensureClaudeSettingsSafe();
 
     const abortController = new AbortController();
 
@@ -213,15 +213,27 @@ export class ClaudeSdkProvider implements ExecutorProvider {
       abortController,
       ...(ctx.model && { model: ctx.model }),
       ...(resolvedSystemPrompt && { systemPrompt: resolvedSystemPrompt }),
+      // SDK 0.2.108+: emits `{type:'system', subtype:'status', status:'requesting'}`
+      // before each API request and surfaces partial assistant deltas. Our
+      // routeSdkMessage already handles `system` subtypes generically; turning
+      // this on gives observability into in-flight requests + partial output
+      // without code changes.
+      includePartialMessages: true,
+      // SDK 0.2.72+: periodic AI-generated progress summaries for running
+      // subagents (foreground and background), emitted on `task_progress`
+      // events via the new `summary` field. Lets `genie ls` / event timeline
+      // show what each spawned subagent is actually doing instead of a bare
+      // pid + duration.
+      agentProgressSummaries: true,
       // Layer 1: directory-level SDK config (lowest priority)
       ...translatedSdk,
       // Layer 2: runtime overrides (highest priority)
       ...extraOptions,
       // Hooks are always merged, never overwritten
       ...(hasHooks && { hooks: mergedHooks }),
-      // MUST come last — SDK executor always bypasses permissions.
+      // MUST come last — SDK executor runs under auto permission mode by default.
       // No spread above may override these.
-      permissionMode: 'bypassPermissions',
+      permissionMode: 'auto',
       allowDangerouslySkipPermissions: true,
     };
 

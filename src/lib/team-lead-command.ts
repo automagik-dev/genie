@@ -10,7 +10,7 @@
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { sanitizeTeamName } from './claude-native-teams.js';
 import { loadGenieConfigSync } from './genie-config.js';
 
@@ -40,7 +40,10 @@ interface BuildTeamLeadCommandOptions {
  *
  * Sets all required env vars (including GENIE_AGENT_NAME) and CLI flags.
  * CC requires --agent-id, --agent-name, and --team-name together.
- * The agent name is derived from basename(cwd) to match the folder name.
+ * The agent name is derived from the leader name (the same value
+ * passed as --agent-name) so genie CLI's sender identity matches CC's
+ * (#1434 — fixes echo loop where mismatch let `genie send 'msg' --to
+ * <self>` slip past the from===to self-loop guard).
  *
  * System prompt file is passed directly via --append-system-prompt-file
  * (or --system-prompt-file) — no intermediate copy step.
@@ -48,7 +51,6 @@ interface BuildTeamLeadCommandOptions {
 export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCommandOptions): string {
   const sanitized = sanitizeTeamName(teamName);
   const qTeam = shellQuote(sanitized);
-  const folderName = basename(process.cwd());
   const resolvedLeader = options?.leaderName ?? teamName;
   const sanitizedLeader = sanitizeTeamName(resolvedLeader);
   const parts = [
@@ -56,13 +58,13 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     'CLAUDECODE=1',
     'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
     `GENIE_TEAM=${qTeam}`,
-    `GENIE_AGENT_NAME=${shellQuote(folderName)}`,
+    `GENIE_AGENT_NAME=${shellQuote(sanitizedLeader)}`,
     'claude',
     `--agent-id ${shellQuote(`${sanitizedLeader}@${sanitized}`)}`,
     `--agent-name ${shellQuote(sanitizedLeader)}`,
     `--team-name ${qTeam}`,
     '--agent-type team-lead',
-    '--dangerously-skip-permissions',
+    '--permission-mode auto',
   ];
 
   // Session name for CC's /resume and terminal title

@@ -135,15 +135,66 @@ async function runCommandSilent(
 
 type InstallationType = 'source' | 'npm' | 'bun' | 'unknown';
 
-function detectFromBinaryPath(path: string): InstallationType | null {
-  if (path.includes('.bun')) return 'bun';
-  if (path.includes('node_modules')) return 'npm';
-  if (path === join(LOCAL_BIN, 'genie') || path.startsWith(GENIE_BIN)) return 'source';
+/**
+ * Detect installation type from the binary path returned by `which genie`.
+ *
+ * Group 7 fix: realpath the input first. The standard CLI install symlinks
+ * `~/.local/bin/genie → ~/.bun/bin/genie → ~/.bun/install/global/.../dist/genie.js`
+ * mean the literal `which` output is the symlink path, not the resolved target.
+ * Pre-fix, `~/.local/bin/genie` matched the `LOCAL_BIN` source-install branch
+ * even when the actual binary lived in `node_modules`, breaking
+ * `genie update --next` for bun-installed users with `ENOENT: posix_spawn 'git'`
+ * because the source-install path then tried to `git fetch` against a
+ * non-existent `~/.genie/src/` directory.
+ */
+export function detectFromBinaryPath(path: string): InstallationType | null {
+  // Resolve symlink chain so node_modules / .bun checks see the real target.
+  let resolved = path;
+  try {
+    resolved = require('node:fs').realpathSync(path);
+  } catch {
+    // Broken symlink or permission error — fall back to the literal path.
+  }
+
+  if (resolved.includes('.bun')) return 'bun';
+  if (resolved.includes('node_modules')) return 'npm';
+  // Source install: literal LOCAL_BIN path with no node_modules in resolved
+  // target, OR the binary lives under ~/.genie/bin/ directly.
+  if (path === join(LOCAL_BIN, 'genie') || resolved.startsWith(GENIE_BIN)) return 'source';
   return null;
 }
 
+/**
+ * Detect the genie installation type by inspecting the running binary first.
+ *
+ * Group 7 v2: binary path is ground truth. Previous order — config first, then
+ * GENIE_SRC/.git, then binary detection — was wrong: both upstream signals are
+ * stale hints from prior installs; the actual running binary's location is the
+ * only reliable source of truth.
+ *
+ * Felipe's `felipe-personal` machine reproduced this: bun-installed genie at
+ * `~/.bun/install/global/.../@automagik/genie` BUT `~/.genie/src/.git` existed
+ * from a legacy source clone. Pre-v2, detection returned 'source' on the stale
+ * clone, then `genie update` ran `git fetch` against a directory git couldn't
+ * even resolve (PATH didn't include git non-interactively), failing with
+ * `posix_spawn 'git': ENOENT` — total dead-end for the user.
+ *
+ * Order:
+ *   1. Detect from binary path via `which genie` + realpath chain.
+ *   2. Fall back to `config.installMethod` if binary detection is null.
+ *   3. Fall back to `GENIE_SRC/.git` legacy hint only when config is missing.
+ *   4. Final fallback: prefer bun if available, else npm.
+ */
 async function detectInstallationType(): Promise<InstallationType> {
-  // Check config first
+  // 1. Binary path is ground truth — runs FIRST.
+  const whichResult = await runCommandSilent('which', ['genie']);
+  if (whichResult.success) {
+    const detected = detectFromBinaryPath(whichResult.output.trim());
+    if (detected) return detected;
+  }
+
+  // 2. Cached config is a hint, not truth — used only when binary path
+  //    didn't classify (e.g. installed to a custom location).
   if (genieConfigExists()) {
     try {
       const config = await loadGenieConfig();
@@ -153,17 +204,12 @@ async function detectInstallationType(): Promise<InstallationType> {
     }
   }
 
-  // Check for source installation
+  // 3. Legacy `~/.genie/src/.git` hint — last-resort. Pre-v2 this fired
+  //    aggressively and broke bun installs that happened to have a stale
+  //    source clone in their home directory.
   if (existsSync(join(GENIE_SRC, '.git'))) return 'source';
 
-  // Detect from binary location
-  const result = await runCommandSilent('which', ['genie']);
-  if (!result.success) return 'unknown';
-
-  const detected = detectFromBinaryPath(result.output.trim());
-  if (detected) return detected;
-
-  // Default to bun for other paths if bun is available
+  // 4. Final fallback: prefer bun if available
   const hasBun = (await runCommandSilent('which', ['bun'])).success;
   return hasBun ? 'bun' : 'npm';
 }
@@ -440,6 +486,19 @@ function syncTmuxConf(tmuxScriptsSrc: string): void {
     }
   }
 
+  // Install .generated.theme.conf → ~/.genie/.generated.theme.conf (Severance palette,
+  // sourced by both tmux configs above). Generated from packages/genie-tokens.
+  const themeSrc = join(tmuxScriptsSrc, '.generated.theme.conf');
+  const themeDest = join(GENIE_HOME, '.generated.theme.conf');
+  if (existsSync(themeSrc)) {
+    try {
+      copyFileSync(themeSrc, themeDest);
+      success(`Installed tmux theme to ${themeDest}`);
+    } catch {
+      // Read/write failed — non-fatal
+    }
+  }
+
   // Install osc52-copy.sh → ~/.genie/scripts/osc52-copy.sh (clipboard helper for nested tmux)
   const osc52Src = join(tmuxScriptsSrc, 'osc52-copy.sh');
   const osc52Dest = join(GENIE_HOME, 'scripts', 'osc52-copy.sh');
@@ -464,7 +523,12 @@ function syncTmuxScripts(globalPkgDir: string): void {
 
   let scriptCount = 0;
   for (const entry of readdirSync(tmuxScriptsSrc)) {
-    if (entry.endsWith('.sh') || entry === 'genie.tmux.conf' || entry === 'tui-tmux.conf') {
+    if (
+      entry.endsWith('.sh') ||
+      entry === 'genie.tmux.conf' ||
+      entry === 'tui-tmux.conf' ||
+      entry === '.generated.theme.conf'
+    ) {
       const src = join(tmuxScriptsSrc, entry);
       const dest = join(scriptsDir, entry);
       copyFileSync(src, dest);
@@ -681,4 +745,22 @@ export async function updateCommand(options: { next?: boolean; stable?: boolean 
   }
 
   await syncPlugin(installType);
+  await runPostUpdateMaintenanceSafe();
+}
+
+/**
+ * Day-one users hit watchdog install + foreground backfill convergence on
+ * first `genie` after upgrade. Run maintenance NOW so `genie` (auto-start)
+ * can stay fast. Failures are surfaced but never block the update.
+ */
+async function runPostUpdateMaintenanceSafe(): Promise<void> {
+  try {
+    const { runPostUpdateMaintenance } = await import('./doctor.js');
+    console.log();
+    log('Running post-update maintenance...');
+    await runPostUpdateMaintenance();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    error(`Post-update maintenance skipped: ${msg}`);
+  }
 }

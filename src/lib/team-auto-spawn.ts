@@ -21,6 +21,7 @@ import {
   sanitizeTeamName,
 } from './claude-native-teams.js';
 import * as executorRegistry from './executor-registry.js';
+import { shouldResume } from './should-resume.js';
 import { buildTeamLeadCommand, shellQuote } from './team-lead-command.js';
 import * as tmux from './tmux.js';
 
@@ -185,9 +186,15 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
   // `--session-id` so the next respawn can find it through the executor row.
   const sanitized = sanitizeTeamName(teamName);
   const leaderAgent = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
-  const priorSessionId = await executorRegistry.getResumeSessionId(leaderAgent.id).catch(() => null);
+  // Canonical chokepoint — surfaces the leader's session UUID via the same
+  // DB→JSONL fallback chain every other resume site uses. We re-invoke the
+  // team-lead with `--resume <uuid>` whenever a prior session exists, even
+  // when `decision.resume === false` (e.g., assignment closed): the leader
+  // is permanent, so the session UUID itself is the durable anchor.
+  const priorDecision = await shouldResume(leaderAgent.id).catch(() => null);
+  const priorSessionId = priorDecision?.sessionId ?? null;
   const sessionId = priorSessionId ?? randomUUID();
-  const shouldResume = priorSessionId !== null;
+  const resumeLeader = priorSessionId !== null;
 
   // Create or heal native team structure. Upserts stale leadSessionId
   // (e.g. legacy "pending" literal) in place — no migration script needed.
@@ -209,7 +216,7 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
   if (teamWindow.created) {
     // Launch Claude Code in the new window.
     //
-    // Always pass the resolved UUID. When `shouldResume` is true we emit
+    // Always pass the resolved UUID. When `resumeLeader` is true we emit
     // `--resume <uuid>` (NOT `--resume <teamName>`), which prevents CC from
     // re-running its own fuzzy JSONL title match and picking an unrelated
     // session. Gap B from trace-stale-resume (task #6).
@@ -221,7 +228,7 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
       systemPromptFile: systemPromptFile ?? undefined,
       leaderName,
       sessionId,
-      resume: shouldResume,
+      resume: resumeLeader,
     });
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
 

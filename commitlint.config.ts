@@ -26,5 +26,18 @@ export default {
     (message: string) => message.startsWith('docs(wish): scaffold fix-pg-disk-rehydration'),
     (message: string) =>
       message.startsWith('docs(wish): correct SQL idiom in migration 045 sample + success criterion'),
+    // Historical exception: one fix(deps+doctor) commit (82e5d073) landed on
+    // dev before pre-commit hooks caught header-max-length. Subject is 110
+    // chars (a U+2192 → arrow narrowly puts it over 100). Reflowing would
+    // require rebasing dev, which we avoid. Ignoring unblocks the dev→main
+    // promotion PR. Do NOT reuse this exact subject — keep new headers ≤100.
+    (message: string) => message.startsWith('fix(deps+doctor): pin every runtime dep + bump pgserve 1.1.10'),
+    // Historical exception: docs(sec) round-2 fixes commit (#1385) landed on
+    // dev with a 110-char squash-merge subject. The original PR title was
+    // ~103 chars and GitHub appended `(#1385)` to push it over the limit.
+    // Reflowing would require rebasing dev. Ignoring unblocks the dev→main
+    // promotion PR. Do NOT reuse this exact subject — keep new headers ≤100
+    // accounting for GitHub's `(#NNN)` suffix on squash-merge.
+    (message: string) => message.startsWith('docs(sec): apply reviewer round-2 fixes — deprecation mechanism'),
   ],
 };
