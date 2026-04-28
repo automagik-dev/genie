@@ -1574,16 +1574,41 @@ async function getPaneSession(paneId: string): Promise<string | null> {
 async function resolveNativeTeam(
   team: string,
   _repoPath: string,
-  options: { provider: string; role?: string; color?: string; planMode?: boolean; permissionMode?: string },
+  options: {
+    provider: string;
+    role?: string;
+    color?: string;
+    planMode?: boolean;
+    permissionMode?: string;
+    /**
+     * When true, the spawn is identity-bearing (the caller passed
+     * `--role <custom>` AND it differs from the agent template). Identity
+     * spawns MUST NOT inherit `parent-session-id` from the team-lead, because
+     * Claude Code seeds the child session from the parent's jsonl — leaking
+     * the spawner's full conversation history into a worker that should have
+     * its own clean context. See `owner-vs-meeseeks-spawn` brainstorm
+     * (`.genie/brainstorms/owner-vs-meeseeks-spawn/DESIGN.md`).
+     */
+    isIdentitySpawn?: boolean;
+  },
 ): Promise<{ parentSessionId: string; spawnColor: ClaudeTeamColor; nativeTeam?: SpawnParams['nativeTeam'] }> {
   // Team parent session collapses into the team-lead agent's current executor
   // session (claude-resume-by-session-id wish, Group 5). The legacy
   // `teams.native_team_parent_session_id` column is no longer read here.
+  //
+  // owner-vs-meeseeks gate (2026-04-28): when the spawn is identity-bearing
+  // (`isIdentitySpawn === true`), skip the leader-session lookup so the new
+  // worker gets a fresh-context parent id (the `genie-${team}` fallback) and
+  // Claude Code does NOT seed it from the team-lead's jsonl. Empirical proof:
+  // `genie spawn genie --role genie-0ca8` (2026-04-27 23:45) produced a spawn
+  // script with `--parent-session-id <orchestrator-uuid>` and the new claude
+  // process inherited the orchestrator's full conversation (~2035 entries)
+  // until an explicit `/clear` reset it.
   const leaderName = await teamManager.resolveLeaderName(team);
   const sanitizedTeam = nativeTeams.sanitizeTeamName(team);
   const leaderAgent = await registry.getAgentByName(leaderName, sanitizedTeam).catch(() => null);
   let parentSessionId: string | undefined;
-  if (leaderAgent) {
+  if (leaderAgent && !options.isIdentitySpawn) {
     // Route through the canonical chokepoint. We want the leader's session
     // UUID for use as a parent_session_id — `shouldResume` exposes it
     // regardless of the resume verdict (a paused or assignment-closed leader
@@ -1780,10 +1805,16 @@ async function buildSpawnParams(
     windowTarget: options.window,
   };
 
+  // owner-vs-meeseeks gate: propagate the identity-spawn signal so
+  // resolveNativeTeam can skip leader-session inheritance for spawns that
+  // override `--role` (those carve out a new identity and must not seed
+  // their conversation from the team-lead's jsonl).
+  const isIdentitySpawn = options.role !== undefined && options.role !== name;
   const { parentSessionId, spawnColor, nativeTeam } = await resolveNativeTeam(team, agent.repoPath, {
     ...options,
     provider: resolvedProvider,
     role: name,
+    isIdentitySpawn,
   });
   if (nativeTeam) params.nativeTeam = nativeTeam;
 
