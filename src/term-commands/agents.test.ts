@@ -10,6 +10,7 @@ import * as directory from '../lib/agent-directory.js';
 import type { DirectoryEntry } from '../lib/agent-directory.js';
 import type { Agent } from '../lib/agent-registry.js';
 import * as registry from '../lib/agent-registry.js';
+import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as executorRegistry from '../lib/executor-registry.js';
 import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
@@ -23,6 +24,7 @@ import {
   pickParallelShortId,
   recoverSurgery,
   rejectDuplicateRole,
+  resolveAgentForSpawn,
   resolveAgentWorkingDir,
   resolveSpawnIdentity,
   resolveTeamName,
@@ -190,6 +192,24 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       // No wish state found, but has team — falls through to simple message
       expect(context).toBe("You were resumed. Check your team's current state with `genie status`.");
+    });
+  });
+
+  describe('resolveAgentForSpawn', () => {
+    test('uses built-in AGENTS.md identity when PG has a runtime row for the built-in role', async () => {
+      const { getConnection } = await import('../lib/db.js');
+      const sql = await getConnection();
+      await sql`
+        INSERT INTO agents (id, pane_id, session, repo_path, state, role, started_at, last_state_change, metadata)
+        VALUES ('runtime-qa', '%1', 's', '/tmp', 'working', 'qa', now(), now(), '{}')
+      `;
+
+      const expectedIdentityPath = resolveBuiltinAgentPath('qa');
+      const agent = await resolveAgentForSpawn('qa', {});
+
+      expect(expectedIdentityPath).not.toBeNull();
+      expect(agent.identityPath).toBe(expectedIdentityPath);
+      expect(agent.identityPath).toContain('/plugins/genie/agents/qa/AGENTS.md');
     });
   });
 });

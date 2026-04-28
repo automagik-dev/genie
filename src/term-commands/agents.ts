@@ -1694,7 +1694,7 @@ export interface SpawnOptions {
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
-async function resolveAgentForSpawn(
+export async function resolveAgentForSpawn(
   name: string,
   options: SpawnOptions,
 ): Promise<{
@@ -1719,6 +1719,9 @@ async function resolveAgentForSpawn(
     identityPath = resolveBuiltinAgentPath(name);
   } else if (entry.dir) {
     identityPath = directory.loadIdentity(entry);
+  }
+  if (!identityPath) {
+    identityPath = resolveBuiltinAgentPath(name);
   }
 
   const repoPath = resolveAgentWorkingDir(entry, options.cwd);
