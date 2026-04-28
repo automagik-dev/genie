@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { _deps, _resetSyncedSessions, sessionSync } from '../handlers/session-sync.js';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { _deps, _resetSyncedSessions, _setCacheFileForTest, sessionSync } from '../handlers/session-sync.js';
 import type { HookPayload } from '../types.js';
 
 /**
@@ -303,6 +306,135 @@ describe('session-sync handler', () => {
       await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new-uuid' });
 
       expect(emissions).toHaveLength(0);
+    });
+  });
+
+  // Mac-CPU fix E — disk-backed cache so cold-start hook forks skip DB calls
+  describe('Mac-CPU fix E — disk-backed session cache', () => {
+    let cacheDir: string;
+    let cacheFile: string;
+
+    beforeEach(() => {
+      cacheDir = join(tmpdir(), `genie-session-sync-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(cacheDir, { recursive: true });
+      cacheFile = join(cacheDir, 'session-sync.json');
+      _setCacheFileForTest(cacheFile);
+      _resetSyncedSessions();
+    });
+
+    afterEach(() => {
+      _setCacheFileForTest(null);
+      _resetSyncedSessions();
+      try {
+        rmSync(cacheDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    });
+
+    test('writes cache file after a successful session.reconciled', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      let updateCount = 0;
+      _deps.getAgentByName = async () => ({ currentExecutorId: 'exec-disk-1' });
+      _deps.getExecutor = async () => ({ claudeSessionId: 'old-uuid', state: 'running' });
+      _deps.updateClaudeSessionId = async () => {
+        updateCount += 1;
+      };
+      _deps.emitAuditEvent = async () => {};
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new-uuid' });
+
+      expect(updateCount).toBe(1);
+      expect(existsSync(cacheFile)).toBe(true);
+      const persisted = JSON.parse(readFileSync(cacheFile, 'utf-8'));
+      expect(persisted['exec-disk-1']).toBe('new-uuid');
+    });
+
+    test('cold-start fork loads cache from disk and skips DB calls', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      // Pre-seed the cache file as if a previous fork wrote it
+      writeFileSync(cacheFile, JSON.stringify({ 'exec-disk-2': 'cached-uuid' }));
+
+      let getAgentCalls = 0;
+      let getExecutorCalls = 0;
+      let updateCalls = 0;
+      _deps.getAgentByName = async () => {
+        getAgentCalls += 1;
+        return { currentExecutorId: 'exec-disk-2' };
+      };
+      _deps.getExecutor = async () => {
+        getExecutorCalls += 1;
+        return { claudeSessionId: 'cached-uuid', state: 'running' };
+      };
+      _deps.updateClaudeSessionId = async () => {
+        updateCalls += 1;
+      };
+      _deps.emitAuditEvent = async () => {};
+
+      // Simulate fresh fork
+      _resetSyncedSessions();
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'cached-uuid' });
+
+      // getAgentByName still runs (handler needs to resolve executor id), but
+      // getExecutor + updateClaudeSessionId should NOT (cache hit).
+      expect(getAgentCalls).toBe(1);
+      expect(getExecutorCalls).toBe(0);
+      expect(updateCalls).toBe(0);
+    });
+
+    test('disk cache miss falls through to DB and persists result', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      // Cache file exists but has DIFFERENT executor — current one is uncached
+      writeFileSync(cacheFile, JSON.stringify({ 'other-exec': 'other-uuid' }));
+
+      let getExecutorCalls = 0;
+      _deps.getAgentByName = async () => ({ currentExecutorId: 'exec-disk-3' });
+      _deps.getExecutor = async () => {
+        getExecutorCalls += 1;
+        return { claudeSessionId: 'live-uuid', state: 'running' };
+      };
+      _deps.updateClaudeSessionId = async () => {};
+      _deps.emitAuditEvent = async () => {};
+
+      _resetSyncedSessions();
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'live-uuid' });
+
+      expect(getExecutorCalls).toBe(1); // cache miss → DB hit
+      const persisted = JSON.parse(readFileSync(cacheFile, 'utf-8'));
+      // Both entries should now be present (existing + new)
+      expect(persisted['exec-disk-3']).toBe('live-uuid');
+      expect(persisted['other-exec']).toBe('other-uuid');
+    });
+
+    test('corrupt cache file is tolerated — falls back to DB', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      writeFileSync(cacheFile, 'not valid json {');
+
+      let getExecutorCalls = 0;
+      _deps.getAgentByName = async () => ({ currentExecutorId: 'exec-disk-4' });
+      _deps.getExecutor = async () => {
+        getExecutorCalls += 1;
+        return { claudeSessionId: 'some-uuid', state: 'running' };
+      };
+      _deps.updateClaudeSessionId = async () => {};
+      _deps.emitAuditEvent = async () => {};
+
+      _resetSyncedSessions();
+      const result = await sessionSync({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        session_id: 'some-uuid',
+      });
+      expect(result).toBeUndefined(); // never throws
+      expect(getExecutorCalls).toBe(1); // corrupt cache → DB hit
     });
   });
 });
