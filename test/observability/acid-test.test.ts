@@ -28,7 +28,18 @@ import { getConnection } from '../../src/lib/db.js';
 import { DB_AVAILABLE, setupTestDatabase } from '../../src/lib/test-db.js';
 import { ALL_SEEDERS, type FixtureResult, type Seeder } from './replay-dataset/index.js';
 
-const SQL_FILE = join(import.meta.dir, '..', '..', 'docs', 'observability-acid-tests.sql');
+// Path migrated from `docs/observability-acid-tests.sql` to
+// `docs/_internal/observability-acid-tests.sql` when docs/ became a symlink
+// into the automagik-dev/docs submodule (#1426). Mirrors the precedent set
+// by c0ea815a for state-machine.invariants.test.ts.
+const SQL_FILE = join(
+  import.meta.dir,
+  '..',
+  '..',
+  'docs',
+  '_internal',
+  'observability-acid-tests.sql',
+);
 
 // ---------------------------------------------------------------------------
 // SQL extraction — strip psql-specific syntax so postgres.js accepts the body.
