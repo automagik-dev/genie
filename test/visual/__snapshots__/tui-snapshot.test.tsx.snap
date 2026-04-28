@@ -110,17 +110,17 @@ exports[`visual: AgentPicker empty directory — "No agents registered" message 
                                                                                                     
                                                                                                     
                                                                                                     
-          ╭──────────────────────────────────────────────────────────────────────────────╮          
-          │                                                                              │          
-          │ Spawn here — new window in session simone                                    │          
-          │                                                                              │          
-          │ Filter:  (type to narrow)                                                    │          
-          │                                                                              │          
-          │ No agents registered                                                         │          
-          │                                                                              │          
-          ╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                  │
+│ Spawn here — new window in session simone                                                        │
+│                                                                                                  │
+│ Filter:  (type to narrow)                                                                        │
+│                                                                                                  │
+│ No agents registered                                                                             │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ── colour spans ──
-row 06: [fg=#7fc8a9 bg=#0f2638]"╭──────────────────────────────────────────────────────────────────────────────╮"
+row 06: [fg=#7fc8a9 bg=#0f2638]"╭──────────────────────────────────────────────────────────────────────────────────────────────────╮"
 row 07: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 08: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"Spawn here" [fg=#8a9499 bg=#0f2638]" — new window in session " [fg=#c9cfd4 bg=#0f2638]"simone" [fg=#7fc8a9 bg=#0f2638]"│"
 row 09: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
@@ -128,7 +128,7 @@ row 10: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#8a9499 bg=#0f2638]"Filter: " [fg=#5e6e
 row 11: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 12: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#5e6e74 bg=#0f2638]"No agents registered" [fg=#7fc8a9 bg=#0f2638]"│"
 row 13: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
-row 14: [fg=#7fc8a9 bg=#0f2638]"╰──────────────────────────────────────────────────────────────────────────────╯""
+row 14: [fg=#7fc8a9 bg=#0f2638]"╰──────────────────────────────────────────────────────────────────────────────────────────────────╯""
 `;
 
 exports[`visual: AgentPicker populated — three agents listed with first row selected 1`] = `
@@ -136,22 +136,22 @@ exports[`visual: AgentPicker populated — three agents listed with first row se
                                                                                                     
                                                                                                     
                                                                                                     
-          ╭──────────────────────────────────────────────────────────────────────────────╮          
-          │                                                                              │          
-          │ Spawn here — in window simone:1                                              │          
-          │                                                                              │          
-          │ Filter:  (type to narrow)                                                    │          
-          │                                                                              │          
-          │ ▸ engineer                                                                   │          
-          │   reviewer                                                                   │          
-          │   qa                                                                         │          
-          │                                                                              │          
-          │  ▶ 'spawn' 'engineer' '--session' 'simone' '--window' 'simone:1'             │          
-          │  Enter to run · Esc to cancel                                                │          
-          │                                                                              │          
-          ╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                  │
+│ Spawn here — in window simone:1                                                                  │
+│                                                                                                  │
+│ Filter:  (type to narrow)                                                                        │
+│                                                                                                  │
+│ ▸ engineer                                                                                       │
+│   reviewer                                                                                       │
+│   qa                                                                                             │
+│                                                                                                  │
+│  ▶ 'spawn' 'engineer' '--session' 'simone' '--window' 'simone:1'                                 │
+│  Enter to run · Esc to cancel                                                                    │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ── colour spans ──
-row 03: [fg=#7fc8a9 bg=#0f2638]"╭──────────────────────────────────────────────────────────────────────────────╮"
+row 03: [fg=#7fc8a9 bg=#0f2638]"╭──────────────────────────────────────────────────────────────────────────────────────────────────╮"
 row 04: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 05: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"Spawn here" [fg=#8a9499 bg=#0f2638]" — in window " [fg=#c9cfd4 bg=#0f2638]"simone:1" [fg=#7fc8a9 bg=#0f2638]"│"
 row 06: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
@@ -164,7 +164,7 @@ row 12: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 13: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"▶ " [fg=#c9cfd4 bg=#0f2638]"'spawn' 'engineer' '--session' 'simone' '--window' 'simone:1'" [fg=#7fc8a9 bg=#0f2638]"│"
 row 14: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#5e6e74 bg=#0f2638]"Enter to run · Esc to cancel" [fg=#7fc8a9 bg=#0f2638]"│"
 row 15: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
-row 16: [fg=#7fc8a9 bg=#0f2638]"╰──────────────────────────────────────────────────────────────────────────────╯""
+row 16: [fg=#7fc8a9 bg=#0f2638]"╰──────────────────────────────────────────────────────────────────────────────────────────────────╯""
 `;
 
 exports[`visual: AgentPicker filtered — typing "rev" narrows the list to "reviewer" 1`] = `
@@ -173,20 +173,20 @@ exports[`visual: AgentPicker filtered — typing "rev" narrows the list to "revi
                                                                                                     
                                                                                                     
                                                                                                     
-          ╭──────────────────────────────────────────────────────────────────────────────╮          
-          │                                                                              │          
-          │ Spawn here — in window simone:1                                              │          
-          │                                                                              │          
-          │ Filter: rev                                                                  │          
-          │                                                                              │          
-          │ ▸ reviewer                                                                   │          
-          │                                                                              │          
-          │  ▶ 'spawn' 'reviewer' '--session' 'simone' '--window' 'simone:1'             │          
-          │  Enter to run · Esc to cancel                                                │          
-          │                                                                              │          
-          ╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                  │
+│ Spawn here — in window simone:1                                                                  │
+│                                                                                                  │
+│ Filter: rev                                                                                      │
+│                                                                                                  │
+│ ▸ reviewer                                                                                       │
+│                                                                                                  │
+│  ▶ 'spawn' 'reviewer' '--session' 'simone' '--window' 'simone:1'                                 │
+│  Enter to run · Esc to cancel                                                                    │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ── colour spans ──
-row 04: [fg=#7fc8a9 bg=#0f2638]"╭──────────────────────────────────────────────────────────────────────────────╮"
+row 04: [fg=#7fc8a9 bg=#0f2638]"╭──────────────────────────────────────────────────────────────────────────────────────────────────╮"
 row 05: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 06: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"Spawn here" [fg=#8a9499 bg=#0f2638]" — in window " [fg=#c9cfd4 bg=#0f2638]"simone:1" [fg=#7fc8a9 bg=#0f2638]"│"
 row 07: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
@@ -197,7 +197,7 @@ row 11: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 12: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"▶ " [fg=#c9cfd4 bg=#0f2638]"'spawn' 'reviewer' '--session' 'simone' '--window' 'simone:1'" [fg=#7fc8a9 bg=#0f2638]"│"
 row 13: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#5e6e74 bg=#0f2638]"Enter to run · Esc to cancel" [fg=#7fc8a9 bg=#0f2638]"│"
 row 14: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
-row 15: [fg=#7fc8a9 bg=#0f2638]"╰──────────────────────────────────────────────────────────────────────────────╯""
+row 15: [fg=#7fc8a9 bg=#0f2638]"╰──────────────────────────────────────────────────────────────────────────────────────────────────╯""
 `;
 
 exports[`visual: QuitDialog default — overlay + bordered panel + "Quit genie?" prompt 1`] = `
@@ -237,50 +237,50 @@ exports[`visual: TeamCreate step 1 (name) — input field + cli preview line 1`]
                                                                                                     
                                                                                                     
                                                                                                     
-                  ┌──────────────────────────────────────────────────────────────┐                  
-                  │                                                              │                  
-                  │   New team — step 1 of 2                                     │                  
-                  │                                                              │                  
-                  │   Team name (git-branch-safe):                               │                  
-                  │                                                              │                  
-                  │   feat/auth-bug                                              │                  
-                  │                                                              │                  
-                  │    ▶ 'team' 'create' 'TEAM_NAME' '--repo' '/repo'            │                  
-                  │    Enter: next · Esc: cancel                                 │                  
-                  │                                                              │                  
-                  └──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                  │
+│   New team — step 1 of 2                                                                         │
+│                                                                                                  │
+│   Team name (git-branch-safe):                                                                   │
+│                                                                                                  │
+│   feat/auth-bug                                                                                  │
+│                                                                                                  │
+│    ▶ 'team' 'create' 'TEAM_NAME' '--repo' '/repo'                                                │
+│    Enter: next · Esc: cancel                                                                     │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ── colour spans ──
-row 06: [fg=#7fc8a9 bg=#0f2638]"┌──────────────────────────────────────────────────────────────┐"
+row 06: [fg=#7fc8a9 bg=#0f2638]"┌──────────────────────────────────────────────────────────────────────────────────────────────────┐"
 row 07: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 08: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"New team" [fg=#5e6e74 bg=#0f2638]" — step 1 of 2" [fg=#7fc8a9 bg=#0f2638]"│"
 row 09: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 10: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#8a9499 bg=#0f2638]"Team name (git-branch-safe):" [fg=#7fc8a9 bg=#0f2638]"│"
 row 11: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
-row 12: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#5e6e74 bg=#0a1d2a]"feat/auth-bug" [fg=#7fc8a9 bg=#0f2638]"│"
+row 12: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#5e6e74 bg=#0f2638]"feat/auth-bug" [fg=#7fc8a9 bg=#0f2638]"│"
 row 13: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 14: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"▶ " [fg=#c9cfd4 bg=#0f2638]"'team' 'create' 'TEAM_NAME' '--repo' '/repo'" [fg=#7fc8a9 bg=#0f2638]"│"
 row 15: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#5e6e74 bg=#0f2638]"Enter: next · Esc: cancel" [fg=#7fc8a9 bg=#0f2638]"│"
 row 16: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
-row 17: [fg=#7fc8a9 bg=#0f2638]"└──────────────────────────────────────────────────────────────┘""
+row 17: [fg=#7fc8a9 bg=#0f2638]"└──────────────────────────────────────────────────────────────────────────────────────────────────┘""
 `;
 
 exports[`visual: ContextMenu running agent menu — five items with bordered overlay 1`] = `
 "── visible chars ──
-╭──────────────────────────────╮                                                
-│ ▶ Clone  N                   │                                                
-│   New window  W              │                                                
-│   Spawn into…  I             │                                                
-│   Rename...  R               │                                                
-│   Remove  K                  │                                                
-╰──────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ▶ Clone  N                                                                   │
+│   New window  W                                                              │
+│   Spawn into…  I                                                             │
+│   Rename...  R                                                               │
+│   Remove  K                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
 ── colour spans ──
-row 00: [fg=#7fc8a9 bg=#0f2638]"╭──────────────────────────────╮"
+row 00: [fg=#7fc8a9 bg=#0f2638]"╭──────────────────────────────────────────────────────────────────────────────╮"
 row 01: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#9eddc1 bg=#5a9d82]"▶ Clone  N" [fg=#7fc8a9 bg=#0f2638]"│"
-row 02: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#ffffff bg=#1a1a1a]"   New window  W              " [fg=#7fc8a9 bg=#0f2638]"│"
-row 03: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#ffffff bg=#1a1a1a]"   Spawn into…  I             " [fg=#7fc8a9 bg=#0f2638]"│"
-row 04: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#ffffff bg=#1a1a1a]"   Rename...  R               " [fg=#7fc8a9 bg=#0f2638]"│"
-row 05: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#ffffff bg=#1a1a1a]"   Remove  K                  " [fg=#7fc8a9 bg=#0f2638]"│"
-row 06: [fg=#7fc8a9 bg=#0f2638]"╰──────────────────────────────╯""
+row 02: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#ffffff bg=#1a1a1a]"   New window  W                                                              " [fg=#7fc8a9 bg=#0f2638]"│"
+row 03: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#ffffff bg=#1a1a1a]"   Spawn into…  I                                                             " [fg=#7fc8a9 bg=#0f2638]"│"
+row 04: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#ffffff bg=#1a1a1a]"   Rename...  R                                                               " [fg=#7fc8a9 bg=#0f2638]"│"
+row 05: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#ffffff bg=#1a1a1a]"   Remove  K                                                                  " [fg=#7fc8a9 bg=#0f2638]"│"
+row 06: [fg=#7fc8a9 bg=#0f2638]"╰──────────────────────────────────────────────────────────────────────────────╯""
 `;
 
 exports[`visual: Nav (loading skeleton) cold start — header + collecting placeholder + footer 1`] = `
