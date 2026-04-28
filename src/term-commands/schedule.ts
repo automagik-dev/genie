@@ -41,6 +41,22 @@ interface CancelOptions {
   filter?: string;
 }
 
+export interface ScheduleCommandDeps {
+  getConnection: typeof getConnection;
+  shutdown: typeof shutdown;
+  exit: (code?: number) => never;
+  stdout: Pick<Console, 'log'>;
+  stderr: Pick<Console, 'error'>;
+}
+
+const defaultScheduleCommandDeps: ScheduleCommandDeps = {
+  getConnection,
+  shutdown,
+  exit: (code?: number): never => process.exit(code),
+  stdout: console,
+  stderr: console,
+};
+
 interface HistoryOptions {
   limit?: number;
 }
@@ -315,19 +331,29 @@ async function scheduleListCommand(options: ListOptions): Promise<void> {
 /**
  * `genie schedule cancel <name|id>`
  */
-async function scheduleCancelCommand(nameOrId: string, _options: CancelOptions): Promise<void> {
+export async function scheduleCancelCommand(
+  nameOrId: string,
+  _options: CancelOptions,
+  deps: ScheduleCommandDeps = defaultScheduleCommandDeps,
+): Promise<void> {
   try {
-    const sql = await getConnection();
+    const sql = await deps.getConnection();
 
     // Find schedule by name or id
     const schedules = await sql`
-      SELECT id, name FROM schedules
-      WHERE (name = ${nameOrId} OR id = ${nameOrId}) AND status = 'active'
+      SELECT id, name, status FROM schedules
+      WHERE (name = ${nameOrId} OR id = ${nameOrId}) AND status IN ('active', 'paused')
+      ORDER BY
+        CASE WHEN id = ${nameOrId} THEN 0 ELSE 1 END,
+        CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
+        created_at DESC,
+        id ASC
+      LIMIT 1
     `;
 
     if (schedules.length === 0) {
-      console.error(`Error: no active schedule found matching "${nameOrId}"`);
-      process.exit(1);
+      deps.stderr.error(`Error: no active or paused schedule found matching "${nameOrId}"`);
+      deps.exit(1);
     }
 
     const schedule = schedules[0];
@@ -343,15 +369,15 @@ async function scheduleCancelCommand(nameOrId: string, _options: CancelOptions):
         WHERE schedule_id = ${schedule.id} AND status = 'pending'
       `;
 
-      console.log(`Cancelled schedule "${schedule.name}"`);
-      console.log(`  Skipped ${skipped.count} pending trigger${Number(skipped.count) === 1 ? '' : 's'}`);
+      deps.stdout.log(`Cancelled schedule "${schedule.name}"`);
+      deps.stdout.log(`  Skipped ${skipped.count} pending trigger${Number(skipped.count) === 1 ? '' : 's'}`);
     });
 
-    await shutdown();
+    await deps.shutdown();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`Error: ${message}`);
-    process.exit(1);
+    deps.stderr.error(`Error: ${message}`);
+    deps.exit(1);
   }
 }
 

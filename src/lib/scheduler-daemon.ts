@@ -444,12 +444,13 @@ export async function claimDueTriggers(
   // Atomic claim: select + update in one transaction
   const claimed = await sql.begin(async (tx: SqlClient) => {
     const rows: TriggerRow[] = await tx`
-      SELECT id, schedule_id, due_at, status, idempotency_key, leased_by, leased_until
-      FROM triggers
-      WHERE status = 'pending' AND due_at <= ${now}
-      ORDER BY due_at ASC
-      FOR UPDATE SKIP LOCKED
+      SELECT t.id, t.schedule_id, t.due_at, t.status, t.idempotency_key, t.leased_by, t.leased_until
+      FROM triggers t
+      JOIN schedules s ON s.id = t.schedule_id
+      WHERE t.status = 'pending' AND t.due_at <= ${now} AND s.status = 'active'
+      ORDER BY t.due_at ASC
       LIMIT ${limit}
+      FOR UPDATE OF t SKIP LOCKED
     `;
 
     if (rows.length === 0) return [];
@@ -491,6 +492,17 @@ async function maybeCreateNextTrigger(
   schedule: ScheduleRow,
   now: Date,
 ): Promise<void> {
+  if (schedule.status !== 'active') {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'debug',
+      event: 'next_trigger_skipped_paused',
+      schedule_id: schedule.id,
+      schedule_status: schedule.status,
+    });
+    return;
+  }
+
   if (!schedule.cron_expression || schedule.cron_expression === '@once') return;
 
   let nextDueAt: Date | null = null;
