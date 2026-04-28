@@ -466,15 +466,83 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 /**
  * Build the launch command for a Codex worker.
  *
- * Uses `codex` with `--instructions` to inject skill-based task
- * instructions. Role is advisory metadata only (DEC-4).
+ * Uses `codex` with a positional prompt. Role is advisory metadata
+ * only (DEC-4).
  */
-/** Build the auto-generated codex prompt when no initialPrompt is supplied. */
+/** Build the auto-generated codex prompt when no prompt-bearing fields are supplied. */
 function buildCodexAutoPrompt(params: SpawnParams): string {
   const promptParts = [`Genie worker. Team: ${params.team}.`];
   if (params.role) promptParts.push(`Role: ${params.role}.`);
   if (params.skill) promptParts.push(`Execute the ${params.skill} skill instructions.`);
   return promptParts.join(' ');
+}
+
+const CODEX_PROMPT_DIR = '/tmp/genie-codex-prompts';
+const CODEX_PROMPT_FILE_FLAGS = new Set(['--append-system-prompt-file', '--system-prompt-file']);
+
+function sanitizeCodexPromptFileStem(stem: string): string {
+  const safe = stem.replace(/[^a-zA-Z0-9._-]/g, '-');
+  return safe || Date.now().toString(36);
+}
+
+function splitCodexExtraArgs(extraArgs: string[] | undefined): { forwarded: string[]; promptFiles: string[] } {
+  const forwarded: string[] = [];
+  const promptFiles: string[] = [];
+  const args = extraArgs ?? [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const equalsFlag = [...CODEX_PROMPT_FILE_FLAGS].find((flag) => arg.startsWith(`${flag}=`));
+
+    if (equalsFlag) {
+      const path = arg.slice(equalsFlag.length + 1);
+      if (!path) throw new Error(`Missing path for ${equalsFlag}`);
+      promptFiles.push(path);
+      continue;
+    }
+
+    if (CODEX_PROMPT_FILE_FLAGS.has(arg)) {
+      const path = args[i + 1];
+      if (!path) throw new Error(`Missing path after ${arg}`);
+      promptFiles.push(path);
+      i++;
+      continue;
+    }
+
+    forwarded.push(arg);
+  }
+
+  return { forwarded, promptFiles };
+}
+
+function buildCodexMergedPrompt(params: SpawnParams, extraPromptFiles: string[]): string | null {
+  const { readFileSync } = require('node:fs') as typeof import('node:fs');
+  const sections: string[] = [];
+
+  if (params.systemPromptFile !== undefined) {
+    sections.push(readFileSync(params.systemPromptFile, 'utf-8'));
+  }
+  if (params.systemPrompt !== undefined) {
+    sections.push(params.systemPrompt);
+  }
+  for (const promptFile of extraPromptFiles) {
+    sections.push(readFileSync(promptFile, 'utf-8'));
+  }
+  if (params.initialPrompt !== undefined) {
+    sections.push(params.initialPrompt);
+  }
+
+  return sections.length > 0 ? sections.join('\n\n') : null;
+}
+
+function writeCodexPromptFile(params: SpawnParams, content: string): string {
+  const { mkdirSync, writeFileSync } = require('node:fs') as typeof import('node:fs');
+  const { join } = require('node:path') as typeof import('node:path');
+  mkdirSync(CODEX_PROMPT_DIR, { recursive: true });
+  const stem = sanitizeCodexPromptFileStem(params.executorId ?? Date.now().toString(36));
+  const promptFile = join(CODEX_PROMPT_DIR, `${stem}.txt`);
+  writeFileSync(promptFile, content, 'utf-8');
+  return promptFile;
 }
 
 export function buildCodexCommand(params: SpawnParams): LaunchCommand {
@@ -485,7 +553,9 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   if (params.executorId) env.GENIE_EXECUTOR_ID = params.executorId;
   if (params.agentId) env.GENIE_AGENT_ID = params.agentId;
   if (params.role) env.GENIE_AGENT_NAME = params.role;
+  else if (params.name) env.GENIE_AGENT_NAME = params.name;
   if (params.team) env.GENIE_TEAM = params.team;
+  const { forwarded: extraArgs, promptFiles: extraPromptFiles } = splitCodexExtraArgs(params.extraArgs);
 
   // Full autonomous execution — no permission prompts
   parts.push('--yolo');
@@ -493,11 +563,11 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   // Inline mode for tmux compatibility (no alternate screen)
   parts.push('--no-alt-screen');
 
+  if (params.model) parts.push('--model', escapeShellArg(params.model));
+
   // Forward extra args before the positional prompt
-  if (params.extraArgs) {
-    for (const arg of params.extraArgs) {
-      parts.push(escapeShellArg(arg));
-    }
+  for (const arg of extraArgs) {
+    parts.push(escapeShellArg(arg));
   }
 
   // Group 11 (codex-provider-parity): honor params.initialPrompt as the
@@ -506,11 +576,23 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   // by hand or sending a follow-up via genie send (which until Group 3
   // landed today, silently failed the native bridge for codex agents).
   //
-  // When initialPrompt is provided, use it verbatim. When absent, fall
-  // back to the auto-generated "Genie worker. Team: X. Role: Y." string
-  // so spawn-without-prompt behavior is unchanged.
-  const prompt = params.initialPrompt ?? buildCodexAutoPrompt(params);
-  parts.push(escapeShellArg(prompt));
+  // Prompt-bearing fields are merged into a temp file and supplied through
+  // command substitution so AGENTS.md, inline system prompts, and first-turn
+  // prompts survive shell/tmux quoting. When none are supplied, keep the
+  // auto-generated "Genie worker. Team: X. Role: Y." fallback unchanged.
+  //
+  // Decision: prompt-bearing Codex spawns write the merged prompt file
+  // synchronously before returning this command. The file is named by
+  // executorId when available, otherwise by timestamp, and is left in /tmp
+  // for OS cleanup so tmux's later shell exec can `cat` it without a
+  // deletion race.
+  const mergedPrompt = buildCodexMergedPrompt(params, extraPromptFiles);
+  if (mergedPrompt !== null) {
+    const promptFile = writeCodexPromptFile(params, mergedPrompt);
+    parts.push(`"$(cat ${escapeShellArg(promptFile)})"`);
+  } else {
+    parts.push(escapeShellArg(buildCodexAutoPrompt(params)));
+  }
 
   return {
     command: parts.join(' '),

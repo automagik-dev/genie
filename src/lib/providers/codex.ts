@@ -131,5 +131,15 @@ function spawnContextToParams(ctx: SpawnContext): SpawnParams {
     agentId: ctx.agentId,
     executorId: ctx.executorId,
     extraArgs: ctx.extraArgs,
+    model: ctx.model,
+    systemPromptFile: ctx.systemPromptFile,
+    systemPrompt: ctx.systemPrompt,
+    promptMode: ctx.promptMode,
+    initialPrompt: ctx.initialPrompt,
+    name: ctx.name,
+    nativeTeam: ctx.nativeTeam,
+    otelPort: ctx.otelPort,
+    otelLogPrompts: ctx.otelLogPrompts,
+    otelWishSlug: ctx.otelWishSlug,
   };
 }
