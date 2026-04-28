@@ -177,17 +177,19 @@ jobs:
         # On dev context: publish the version we just bumped to as @next.
         run: npm publish --access public --tag ${{ steps.context.outputs.npm_tag }}
 
-      - name: Mark published version as deprecated (npm-distribution sunset)
-        # The npm distribution channel is being soft-deprecated in favor of
-        # the cosign + SLSA verified installer at get.automagik.dev/genie.
-        # Every published version carries an `npm warn deprecated` notice
-        # pointing operators at the canonical install path. Existing pinned
-        # versions continue to install (the postinstall shim handles the
-        # delegation in the next umbrella PR); this step just makes the
-        # sunset visible in npm's own UX.
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          version="$(node -p 'require("./package.json").version')"
-          npm deprecate "@automagik/genie@${version}" \
-            "@automagik/genie via npm is soft-deprecated. Canonical install: curl -fsSL https://get.automagik.dev/genie | bash (cosign + SLSA verified). See https://automagik.dev/genie/security/distribution-sovereignty for the threat model and verification flow."
+      # The post-publish `npm deprecate` step lived here through
+      # 4.260428.8 and was retired on 2026-04-28 — it depended on a
+      # classic NPM_TOKEN secret (OIDC trusted-publisher tokens are
+      # publish-only, can't deprecate), and even with valid auth it
+      # raced the registry's <1s post-publish indexing window. Both
+      # failure modes are documented at:
+      #   automagik.dev/genie/security/distribution-sovereignty
+      #
+      # The npm soft-deprecation message moves to the postinstall
+      # shim per the umbrella sovereignty plan: every install via
+      # npm prints the canonical-install redirect at install time,
+      # which is closer to the user (lives in the package, not the
+      # registry config) and works without long-lived secrets.
+      #
+      # NPM_TOKEN secret is no longer used anywhere in this repo.
+      # Safe to delete from automagik-dev/genie repo + org settings.
