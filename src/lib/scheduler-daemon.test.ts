@@ -2158,6 +2158,8 @@ describe('scheduler-daemon', () => {
         createdAt: '2026-04-17T12:00:00Z',
         read: false,
         deliveredAt: null,
+        source: 'agent',
+        meta: {},
         ...overrides,
       };
     }

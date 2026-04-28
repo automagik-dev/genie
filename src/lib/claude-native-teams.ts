@@ -65,6 +65,18 @@ export interface NativeInboxMessage {
   timestamp: string;
   color: string;
   read: boolean;
+  /**
+   * Source of the message — `'agent'` (peer worker, default), `'whatsapp'`,
+   * `'system'`, future external adapters, etc. Omitted entries are treated as
+   * `'agent'` so existing callers stay back-compat.
+   */
+  source?: string;
+  /**
+   * Channel envelope metadata — arbitrary key/value pairs propagated as
+   * attributes when the body is rendered into a `<channel …>` tag. Persisted
+   * verbatim so future readers can round-trip the data.
+   */
+  meta?: Record<string, string | number | boolean>;
 }
 
 // ============================================================================
