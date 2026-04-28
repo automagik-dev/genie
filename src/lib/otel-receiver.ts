@@ -80,6 +80,9 @@ interface OtlpMetricsPayload {
 // ============================================================================
 
 let server: ReturnType<typeof Bun.serve> | null = null;
+let boundOtelPort: number | null = null;
+
+const DEFAULT_OTEL_PORT_PROBE_MAX = 8;
 
 // ============================================================================
 // Helpers
@@ -139,6 +142,48 @@ function mapEventToEntityType(eventName: string): string {
   if (eventName.includes('user_prompt')) return 'otel_prompt';
   if (eventName.includes('tool_decision')) return 'otel_decision';
   return 'otel_event';
+}
+
+function parseValidPort(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isNaN(parsed) && parsed > 0 && parsed < 65536) return parsed;
+  return null;
+}
+
+function parseProbeMax(): number {
+  const parsed = Number.parseInt(process.env.GENIE_OTEL_PORT_PROBE_MAX ?? '', 10);
+  if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  return DEFAULT_OTEL_PORT_PROBE_MAX;
+}
+
+function getConfiguredOtelPort(): { port: number; explicit: boolean } {
+  const envPort = parseValidPort(process.env.GENIE_OTEL_PORT);
+  if (envPort !== null) return { port: envPort, explicit: true };
+  return { port: getActivePort() + 1, explicit: false };
+}
+
+function getCandidatePorts(startPort: number, explicit: boolean): number[] {
+  if (explicit) return [startPort];
+  const probeCount = Math.min(parseProbeMax(), Math.max(1, 65535 - startPort + 1));
+  return Array.from({ length: probeCount }, (_, index) => startPort + index);
+}
+
+function formatPortList(ports: number[]): string {
+  if (ports.length === 1) return String(ports[0]);
+  return `${ports[0]}-${ports[ports.length - 1]}`;
+}
+
+export function isPortBusyError(err: unknown): boolean {
+  if (err && typeof err === 'object' && 'code' in err && err.code === 'EADDRINUSE') return true;
+
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    message.includes('EADDRINUSE') ||
+    message.includes('address already in use') ||
+    /Failed to start server\. Is port \d+ in use\?/i.test(message) ||
+    /\bis in use\b/i.test(message)
+  );
 }
 
 // ============================================================================
@@ -296,12 +341,47 @@ async function flushToPg(rows: AuditRow[]): Promise<void> {
  * Get the OTel receiver port. Default: pgserve port + 1.
  */
 export function getOtelPort(): number {
-  const envPort = process.env.GENIE_OTEL_PORT;
-  if (envPort) {
-    const parsed = Number.parseInt(envPort, 10);
-    if (!Number.isNaN(parsed) && parsed > 0 && parsed < 65536) return parsed;
-  }
-  return getActivePort() + 1;
+  return boundOtelPort ?? getConfiguredOtelPort().port;
+}
+
+function serveOtelReceiver(port: number): ReturnType<typeof Bun.serve> {
+  return Bun.serve({
+    port,
+    hostname: '127.0.0.1',
+    fetch: async (req) => {
+      const url = new URL(req.url);
+
+      if (req.method === 'POST' && url.pathname === '/v1/logs') {
+        try {
+          const payload = (await req.json()) as OtlpLogsPayload;
+          const rows = processLogs(payload);
+          // Fire-and-forget — don't block the HTTP response
+          flushToPg(rows).catch(() => {});
+        } catch {
+          // Malformed payload — ignore
+        }
+        return new Response('', { status: 200 });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v1/metrics') {
+        try {
+          const payload = (await req.json()) as OtlpMetricsPayload;
+          const rows = processMetrics(payload);
+          flushToPg(rows).catch(() => {});
+        } catch {
+          // Malformed payload — ignore
+        }
+        return new Response('', { status: 200 });
+      }
+
+      // Health check
+      if (req.method === 'GET' && url.pathname === '/health') {
+        return Response.json({ status: 'ok', port });
+      }
+
+      return new Response('Not Found', { status: 404 });
+    },
+  });
 }
 
 /**
@@ -314,75 +394,43 @@ export function getOtelPort(): number {
 export async function startOtelReceiver(): Promise<boolean> {
   if (server) return true;
 
-  const port = getOtelPort();
+  const { port: startPort, explicit } = getConfiguredOtelPort();
+  const candidatePorts = getCandidatePorts(startPort, explicit);
 
-  try {
-    server = Bun.serve({
-      port,
-      hostname: '127.0.0.1',
-      fetch: async (req) => {
-        const url = new URL(req.url);
+  for (const port of candidatePorts) {
+    try {
+      server = serveOtelReceiver(port);
+      boundOtelPort = server.port ?? port;
+      return true;
+    } catch (err) {
+      if (isPortBusyError(err)) continue;
 
-        if (req.method === 'POST' && url.pathname === '/v1/logs') {
-          try {
-            const payload = (await req.json()) as OtlpLogsPayload;
-            const rows = processLogs(payload);
-            // Fire-and-forget — don't block the HTTP response
-            flushToPg(rows).catch(() => {});
-          } catch {
-            // Malformed payload — ignore
-          }
-          return new Response('', { status: 200 });
-        }
-
-        if (req.method === 'POST' && url.pathname === '/v1/metrics') {
-          try {
-            const payload = (await req.json()) as OtlpMetricsPayload;
-            const rows = processMetrics(payload);
-            flushToPg(rows).catch(() => {});
-          } catch {
-            // Malformed payload — ignore
-          }
-          return new Response('', { status: 200 });
-        }
-
-        // Health check
-        if (req.method === 'GET' && url.pathname === '/health') {
-          return Response.json({ status: 'ok', port });
-        }
-
-        return new Response('Not Found', { status: 404 });
-      },
-    });
-
-    return true;
-  } catch (err) {
-    // Port busy or other error — non-fatal
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes('EADDRINUSE') || message.includes('address already in use')) {
-      console.warn(`OTel receiver: port ${port} already in use — skipping (another instance may be running)`);
-    } else {
+      const message = err instanceof Error ? err.message : String(err);
       console.warn(`OTel receiver: failed to start on port ${port}: ${message}`);
+      return false;
     }
-    return false;
   }
+
+  if (explicit) {
+    console.warn(`OTel receiver: port ${startPort} already in use - skipping (another instance may be running)`);
+  } else {
+    console.warn(`OTel receiver: all probed ports busy (${formatPortList(candidatePorts)}) - skipping`);
+  }
+  return false;
 }
 
 /**
  * Stop the OTel receiver. Used in tests and graceful shutdown.
  *
  * Awaits `server.stop(true)` so the listening port is fully released before
- * the next start attempt. Without the await, back-to-back start/stop cycles
- * in tests (afterEach → next beforeEach) could race on the TCP port and
- * produce EADDRINUSE when parallel tests randomly collide within the
- * 7000-port window (57000-63999), which caused the intermittent push-event
- * CI failure on `POST /v1/logs handles empty payload`.
+ * the next start attempt. Also clears the remembered bound port so later
+ * callers fall back to the configured default or explicit override.
  */
 export async function stopOtelReceiver(): Promise<void> {
-  if (server) {
-    await server.stop(true);
-    server = null;
-  }
+  const activeServer = server;
+  server = null;
+  boundOtelPort = null;
+  if (activeServer) await activeServer.stop(true);
 }
 
 /**
