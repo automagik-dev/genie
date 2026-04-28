@@ -9,7 +9,7 @@ row 00: [fg=#7fc8a9 bg=#0f2638]"genie" [fg=#8a9499 bg=#0f2638]" vX.Y.Z""
 
 exports[`visual: SystemStatsView 10% load — mint accent across CPU/RAM/Load (no warning, no alarm) 1`] = `
 "── visible chars ──
- genie vX.Y.Z                      
+ genie vX.Y.Z                     
  CPU  10% [=-------] 8c                 
   hot #0 10%  #1 5%  #2 0%              
  RAM 1.6/16G [=-------]                 
@@ -24,7 +24,7 @@ row 04: [fg=#5e6e74 bg=#0f2638]"Load " [fg=#7fc8a9 bg=#0f2638]"10%" [fg=#8a9499 
 
 exports[`visual: SystemStatsView 50% load — still mint (recalibrated threshold is >70, not >50) 1`] = `
 "── visible chars ──
- genie vX.Y.Z                      
+ genie vX.Y.Z                     
  CPU  50% [====----] 8c                 
   hot #0 50%  #1 45%  #2 40%            
  RAM 8/16G [====----]                   
@@ -39,7 +39,7 @@ row 04: [fg=#5e6e74 bg=#0f2638]"Load " [fg=#7fc8a9 bg=#0f2638]"50%" [fg=#8a9499 
 
 exports[`visual: SystemStatsView 85% load — warning band (amber for the >70 threshold) 1`] = `
 "── visible chars ──
- genie vX.Y.Z                      
+ genie vX.Y.Z                     
  CPU  85% [=======-] 8c                 
   hot #0 85%  #1 80%  #2 75%            
  RAM 13.6/16G [=======-]                
@@ -54,7 +54,7 @@ row 04: [fg=#5e6e74 bg=#0f2638]"Load " [fg=#d4a574 bg=#0f2638]"85%" [fg=#8a9499 
 
 exports[`visual: SystemStatsView 95% load — alarm band (crimson for the >90 threshold) 1`] = `
 "── visible chars ──
- genie vX.Y.Z                      
+ genie vX.Y.Z                     
  CPU  95% [========] 8c                 
   hot #0 95%  #1 90%  #2 85%            
  RAM 15.2/16G [========]                
@@ -256,7 +256,7 @@ row 08: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"New team" [fg=#5e6e
 row 09: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 10: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#8a9499 bg=#0f2638]"Team name (git-branch-safe):" [fg=#7fc8a9 bg=#0f2638]"│"
 row 11: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
-row 12: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#5e6e74 bg=#0a1d2a]"feat/auth-bug" [fg=#7fc8a9 bg=#0f2638]"│"
+row 12: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#5e6e74 bg=#0f2638]"feat/auth-bug" [fg=#7fc8a9 bg=#0f2638]"│"
 row 13: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"│"
 row 14: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#7fc8a9 bg=#0f2638]"▶ " [fg=#c9cfd4 bg=#0f2638]"'team' 'create' 'TEAM_NAME' '--repo' '/repo'" [fg=#7fc8a9 bg=#0f2638]"│"
 row 15: [fg=#7fc8a9 bg=#0f2638]"│" [fg=#5e6e74 bg=#0f2638]"Enter: next · Esc: cancel" [fg=#7fc8a9 bg=#0f2638]"│"
@@ -303,7 +303,7 @@ exports[`visual: Nav (loading skeleton) cold start — header + collecting place
                                                   
                                                   
                                                   
- genie vX.Y.Z                                
+ genie vX.Y.Z                               
  ↑↓:nav ←→:expand Enter:attach ^T:new R:retry .:
 ── colour spans ──
 row 00: [fg=#7fc8a9 bg=#0f2638]"Sessions"
