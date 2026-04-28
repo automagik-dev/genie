@@ -18,6 +18,19 @@
 
 <br />
 
+> [!IMPORTANT]
+> **Genie's npm distribution is being soft-deprecated** in favor of a cosign + SLSA-verified install through our own CDN.
+>
+> The canonical install going forward is:
+>
+> ```bash
+> curl -fsSL https://get.automagik.dev/genie | bash
+> ```
+>
+> Existing operators on `npm install -g @automagik/genie` continue to work — the npm package will become a thin postinstall shim that downloads and runs the verified installer. See [Security & Trust → Distribution Sovereignty](https://automagik.dev/genie/security/distribution-sovereignty) for the threat model and verification flow.
+
+<br />
+
 <!-- TODO: Record a 30s terminal demo with vhs/asciinema and uncomment:
 <p align="center">
   <img src=".github/assets/genie-demo.gif" alt="Genie demo" width="720" />

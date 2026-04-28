@@ -176,3 +176,18 @@ jobs:
         # (no bump, matches the GitHub Release tag exactly).
         # On dev context: publish the version we just bumped to as @next.
         run: npm publish --access public --tag ${{ steps.context.outputs.npm_tag }}
+
+      - name: Mark published version as deprecated (npm-distribution sunset)
+        # The npm distribution channel is being soft-deprecated in favor of
+        # the cosign + SLSA verified installer at get.automagik.dev/genie.
+        # Every published version carries an `npm warn deprecated` notice
+        # pointing operators at the canonical install path. Existing pinned
+        # versions continue to install (the postinstall shim handles the
+        # delegation in the next umbrella PR); this step just makes the
+        # sunset visible in npm's own UX.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          npm deprecate "@automagik/genie@${version}" \
+            "@automagik/genie via npm is soft-deprecated. Canonical install: curl -fsSL https://get.automagik.dev/genie | bash (cosign + SLSA verified). See https://automagik.dev/genie/security/distribution-sovereignty for the threat model and verification flow."
