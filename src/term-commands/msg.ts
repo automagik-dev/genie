@@ -643,6 +643,243 @@ export async function printBridgeSuggestion(
 // Send Handler
 // ============================================================================
 
+export interface BroadcastDeliveryAudit {
+  agent: string;
+  delivered: boolean;
+  reason?: string;
+}
+
+export interface BroadcastHandleResult {
+  messageId: number;
+  conversationId: string;
+  team: string;
+  recipients: BroadcastDeliveryAudit[];
+}
+
+type NativeTeamsModule = typeof import('../lib/claude-native-teams.js');
+type BroadcastAgent = Awaited<ReturnType<typeof registryTypes.listAgents>>[number];
+type BroadcastTaskService = Pick<typeof taskServiceTypes, 'findOrCreateConversation' | 'addMember' | 'sendMessage'>;
+type BroadcastRegistry = Pick<typeof registryTypes, 'listAgents' | 'getAgentEffectiveState'>;
+type BroadcastNativeTeams = Pick<NativeTeamsModule, 'loadConfig' | 'sanitizeTeamName' | 'writeNativeInbox'>;
+
+interface BroadcastRosterEntry {
+  agent: string;
+  sanitized: string;
+  inboxName: string;
+  agentId?: string;
+  nativeColor?: string;
+  nativeActive?: boolean;
+}
+
+interface BroadcastNativeFanoutDeps {
+  listAgents: BroadcastRegistry['listAgents'];
+  getAgentEffectiveState: BroadcastRegistry['getAgentEffectiveState'];
+  loadConfig: BroadcastNativeTeams['loadConfig'];
+  sanitizeTeamName: BroadcastNativeTeams['sanitizeTeamName'];
+  writeNativeInbox: BroadcastNativeTeams['writeNativeInbox'];
+  now?: () => Date;
+}
+
+interface BroadcastHandlerDeps {
+  taskService?: BroadcastTaskService;
+  registry?: BroadcastRegistry;
+  nativeTeams?: BroadcastNativeTeams;
+  publishSubjectEvent?: typeof import('../lib/runtime-events.js').publishSubjectEvent;
+  repoPath?: string;
+  now?: () => Date;
+}
+
+function broadcastAgentName(agent: BroadcastAgent): string {
+  return agent.customName ?? agent.role ?? agent.id;
+}
+
+function mergeBroadcastRosterEntry(
+  bySanitized: Map<string, BroadcastRosterEntry>,
+  sanitized: string,
+  patch: Omit<BroadcastRosterEntry, 'sanitized'>,
+): void {
+  if (!sanitized) return;
+  const existing = bySanitized.get(sanitized);
+  bySanitized.set(sanitized, {
+    agent: existing?.agent ?? patch.agent,
+    sanitized,
+    inboxName: patch.inboxName ?? existing?.inboxName ?? sanitized,
+    agentId: existing?.agentId ?? patch.agentId,
+    nativeColor: existing?.nativeColor ?? patch.nativeColor,
+    nativeActive: existing?.nativeActive ?? patch.nativeActive,
+  });
+}
+
+async function resolveBroadcastRoster(
+  teamName: string,
+  deps: BroadcastNativeFanoutDeps,
+): Promise<BroadcastRosterEntry[]> {
+  const [agents, nativeConfig] = await Promise.all([
+    deps.listAgents({ team: teamName }).catch(() => [] as BroadcastAgent[]),
+    deps.loadConfig(teamName).catch(() => null),
+  ]);
+
+  const bySanitized = new Map<string, BroadcastRosterEntry>();
+
+  for (const agent of agents) {
+    const name = broadcastAgentName(agent);
+    const sanitized = deps.sanitizeTeamName(name);
+    mergeBroadcastRosterEntry(bySanitized, sanitized, {
+      agent: name,
+      inboxName: sanitized,
+      agentId: agent.id,
+      nativeColor: agent.nativeColor,
+    });
+  }
+
+  for (const member of nativeConfig?.members ?? []) {
+    const sanitized = deps.sanitizeTeamName(member.name);
+    mergeBroadcastRosterEntry(bySanitized, sanitized, {
+      agent: member.name,
+      inboxName: member.name,
+      nativeColor: member.color,
+      nativeActive: member.isActive,
+    });
+  }
+
+  return [...bySanitized.values()];
+}
+
+function makeBroadcastNativeMessage(
+  from: string,
+  body: string,
+  timestamp: string,
+  color: string,
+): import('../lib/claude-native-teams.js').NativeInboxMessage {
+  return {
+    from,
+    text: body,
+    summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
+    timestamp,
+    color,
+    read: false,
+  };
+}
+
+async function broadcastSkipReason(
+  entry: BroadcastRosterEntry,
+  deps: BroadcastNativeFanoutDeps,
+): Promise<string | null> {
+  if (entry.nativeActive === false) return 'offline';
+  if (!entry.agentId) return null;
+
+  const state = await deps.getAgentEffectiveState(entry.agentId).catch(() => 'offline' as const);
+  if (state === 'offline') return 'offline';
+  if (state === 'terminated') return 'terminated';
+  if (state === 'error') return 'dead';
+  if (state === 'done') return 'done';
+  return null;
+}
+
+export async function fanoutBroadcastToNativeInboxes(
+  teamName: string,
+  from: string,
+  body: string,
+  deps: BroadcastNativeFanoutDeps,
+): Promise<BroadcastDeliveryAudit[]> {
+  const sender = deps.sanitizeTeamName(from);
+  const roster = await resolveBroadcastRoster(teamName, deps);
+  const timestamp = (deps.now ?? (() => new Date()))().toISOString();
+  const recipients: BroadcastDeliveryAudit[] = [];
+
+  for (const entry of roster) {
+    if (entry.sanitized === sender) continue;
+
+    const skipReason = await broadcastSkipReason(entry, deps);
+    if (skipReason) {
+      recipients.push({ agent: entry.agent, delivered: false, reason: skipReason });
+      continue;
+    }
+
+    try {
+      await deps.writeNativeInbox(
+        teamName,
+        entry.inboxName,
+        makeBroadcastNativeMessage(from, body, timestamp, entry.nativeColor ?? 'blue'),
+      );
+      recipients.push({ agent: entry.agent, delivered: true });
+    } catch (err) {
+      recipients.push({
+        agent: entry.agent,
+        delivered: false,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return recipients;
+}
+
+export async function handleBroadcast(
+  body: string,
+  options: { from?: string; team?: string },
+  deps: BroadcastHandlerDeps = {},
+): Promise<BroadcastHandleResult> {
+  const ts = deps.taskService ?? (await getTaskService());
+  const registry = deps.registry ?? (await getRegistry());
+  const nativeTeams = deps.nativeTeams ?? (await import('../lib/claude-native-teams.js'));
+  const repoPath = deps.repoPath ?? process.cwd();
+  const from = options.from ?? (await detectSenderIdentity(options.team));
+  const teamName = await resolveTeamName(options.team, repoPath, from);
+  const senderActor = localActor(from);
+
+  const conv = await ts.findOrCreateConversation({
+    type: 'group',
+    name: `Team: ${teamName}`,
+    linkedEntity: 'team',
+    linkedEntityId: teamName,
+    createdBy: senderActor,
+    members: [senderActor],
+  });
+
+  await ts.addMember(conv.id, senderActor);
+  const msg = await ts.sendMessage(conv.id, senderActor, body);
+
+  const recipients = await fanoutBroadcastToNativeInboxes(teamName, from, body, {
+    listAgents: registry.listAgents,
+    getAgentEffectiveState: registry.getAgentEffectiveState,
+    loadConfig: nativeTeams.loadConfig,
+    sanitizeTeamName: nativeTeams.sanitizeTeamName,
+    writeNativeInbox: nativeTeams.writeNativeInbox,
+    now: deps.now,
+  });
+
+  // Emit runtime event for real-time observability (fire-and-forget)
+  try {
+    const publishSubjectEvent =
+      deps.publishSubjectEvent ?? (await import('../lib/runtime-events.js')).publishSubjectEvent;
+    await publishSubjectEvent(repoPath, 'genie.msg.broadcast', {
+      kind: 'message',
+      agent: from,
+      team: teamName,
+      direction: 'out',
+      peer: teamName,
+      text: body,
+      data: { messageId: msg.id, conversationId: conv.id, from, team: teamName, recipients },
+      source: 'mailbox',
+    });
+  } catch {
+    // Event log unavailable — silent degradation
+  }
+
+  const deliveredCount = recipients.filter((r) => r.delivered).length;
+  console.log(`Broadcast sent to team "${teamName}" (delivered to ${deliveredCount} of ${recipients.length} members).`);
+  console.log(`  Message ID: ${msg.id}`);
+  console.log(`  Conversation: ${conv.id}`);
+  for (const recipient of recipients) {
+    if (!recipient.delivered) {
+      console.log(`  ${recipient.agent}: ${recipient.reason ?? 'delivery failed'}`);
+    }
+  }
+
+  return { messageId: msg.id, conversationId: conv.id, team: teamName, recipients };
+}
+
 async function handleSend(
   body: string,
   options: { to: string; from?: string; team?: string; bridge?: boolean },
@@ -750,47 +987,7 @@ Examples:
     .option('--team <name>', 'Team name (auto-detected from context)')
     .action(async (body: string, options: { from?: string; team?: string }) => {
       try {
-        const ts = await getTaskService();
-        const repoPath = process.cwd();
-        const from = options.from ?? (await detectSenderIdentity());
-        const teamName = await resolveTeamName(options.team, repoPath, from);
-
-        const senderActor = localActor(from);
-
-        // Find or create team conversation
-        const conv = await ts.findOrCreateConversation({
-          type: 'group',
-          name: `Team: ${teamName}`,
-          linkedEntity: 'team',
-          linkedEntityId: teamName,
-          createdBy: senderActor,
-          members: [senderActor],
-        });
-
-        // Ensure sender is member
-        await ts.addMember(conv.id, senderActor);
-
-        const msg = await ts.sendMessage(conv.id, senderActor, body);
-
-        // Emit runtime event for real-time observability (fire-and-forget)
-        try {
-          const { publishSubjectEvent } = await import('../lib/runtime-events.js');
-          await publishSubjectEvent(repoPath, 'genie.msg.broadcast', {
-            kind: 'message',
-            agent: from,
-            direction: 'out',
-            peer: teamName,
-            text: body,
-            data: { messageId: msg.id, conversationId: conv.id, from, team: teamName },
-            source: 'mailbox',
-          });
-        } catch {
-          // Event log unavailable — silent degradation
-        }
-
-        console.log(`Broadcast sent to team "${teamName}".`);
-        console.log(`  Message ID: ${msg.id}`);
-        console.log(`  Conversation: ${conv.id}`);
+        await handleBroadcast(body, options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
