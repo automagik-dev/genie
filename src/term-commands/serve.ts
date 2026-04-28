@@ -32,6 +32,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { palette } from '../../packages/genie-tokens';
+import {
+  type BrainServerApi,
+  type StartedBrainVault,
+  resolveBrainVaults,
+  startResolvedBrainVaults,
+} from '../lib/brain-vaults.js';
 import { ensureTmux, tmuxBin } from '../lib/ensure-tmux.js';
 import { getProcessStartTime } from '../lib/process-identity.js';
 import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
@@ -209,6 +215,26 @@ const TUI_STYLE = {
   activeBorder: palette.borderActive,
   inactiveBorder: palette.border,
 };
+
+interface BrainStartupConfig {
+  brain?: {
+    embedded?: boolean;
+    paths?: string[];
+  };
+}
+
+interface StartBrainServerDeps {
+  loadConfig?: () => BrainStartupConfig;
+  importBrain?: () => Promise<BrainServerApi>;
+  getActivePort?: () => number | undefined;
+  resolveVaults?: typeof resolveBrainVaults;
+  startVaults?: typeof startResolvedBrainVaults;
+  setBrainHandles?: (brainHandles: StartedBrainVault[]) => void;
+  log?: (message: string) => void;
+  warn?: (message: string) => void;
+}
+
+type BrainStartupLogger = (message: string) => void;
 
 export function getTuiKeybindings(sessionName = TUI_SESSION): string[] {
   return [
@@ -487,7 +513,7 @@ export function ensureTuiSession(workspaceRoot?: string): void {
 interface DaemonHandles {
   schedulerHandle: { stop: () => void; done: Promise<void> } | null;
   agentWatcher: { close: () => void } | null;
-  brainHandle: { stop: () => Promise<void>; port: number } | null;
+  brainHandles: StartedBrainVault[];
   omniApprovalHandler: { stop: () => Promise<void> } | null;
   omniBridge: { stop: () => Promise<void> } | null;
   detectorScheduler: { stop: () => void } | null;
@@ -498,7 +524,7 @@ interface DaemonHandles {
 const handles: DaemonHandles = {
   schedulerHandle: null,
   agentWatcher: null,
-  brainHandle: null,
+  brainHandles: [],
   omniApprovalHandler: null,
   omniBridge: null,
   detectorScheduler: null,
@@ -672,52 +698,85 @@ function resolveServeMode(headless?: boolean): { skipTui: boolean; mode: 'headle
   return { skipTui, mode };
 }
 
-function resolveBrainPathFromWorkspace(): string | undefined {
-  try {
-    const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
-    const ws = findWorkspace();
-    if (ws?.root) {
-      const bp = join(ws.root, 'brain');
-      if (existsSync(bp) && existsSync(join(bp, 'brain.json'))) return bp;
-    }
-  } catch {
-    // No workspace — skip
-  }
-  return undefined;
+async function loadBrainStartupConfig(deps: StartBrainServerDeps): Promise<BrainStartupConfig> {
+  return deps.loadConfig?.() ?? (await import('../lib/genie-config.js')).loadGenieConfigSync();
 }
 
-async function startBrainServerIfEnabled(): Promise<void> {
+async function importBrainForStartup(deps: StartBrainServerDeps): Promise<BrainServerApi> {
+  if (deps.importBrain) return deps.importBrain();
+  // Dynamic import — brain is optional. Silently skip if not installed.
+  // @ts-expect-error — brain is enterprise-only, not in genie's deps
+  return import('@khal-os/brain');
+}
+
+async function getBrainStartupPgPort(deps: StartBrainServerDeps): Promise<number | undefined> {
+  return deps.getActivePort?.() ?? (await import('../lib/db.js')).getActivePort();
+}
+
+function assignBrainHandles(deps: StartBrainServerDeps, brainHandles: StartedBrainVault[]): void {
+  if (deps.setBrainHandles) {
+    deps.setBrainHandles(brainHandles);
+    return;
+  }
+  handles.brainHandles = brainHandles;
+}
+
+function isMissingBrainModule(message: string): boolean {
+  return message.includes('Cannot find') || message.includes('not found') || message.includes('MODULE_NOT_FOUND');
+}
+
+async function startBrainServer(
+  deps: StartBrainServerDeps,
+  config: BrainStartupConfig,
+  log: BrainStartupLogger,
+  warn: BrainStartupLogger,
+): Promise<StartedBrainVault[]> {
+  const brain = await importBrainForStartup(deps);
+  if (!brain.startEmbeddedBrainServer) return [];
+
+  const pgPort = await getBrainStartupPgPort(deps);
+  if (!pgPort) {
+    log('  Brain server: pgserve not available (skipped)');
+    return [];
+  }
+
+  const resolveVaults = deps.resolveVaults ?? resolveBrainVaults;
+  const startVaults = deps.startVaults ?? startResolvedBrainVaults;
+  const resolution = await resolveVaults({ brain, config, warn });
+  if (resolution.paths.length === 0) {
+    log(`  Brain server: no ${resolution.source} brain vaults found (skipped)`);
+    return [];
+  }
+
+  log(`  Starting brain server (${resolution.paths.length} ${resolution.source} vault(s))...`);
+  const brainHandles = await startVaults(resolution, brain, pgPort, { warn, log });
+  assignBrainHandles(deps, brainHandles);
+  if (brainHandles.length === 0) {
+    log('  Brain server: no vaults started');
+  }
+  return brainHandles;
+}
+
+export async function startBrainServerIfEnabled(deps: StartBrainServerDeps = {}): Promise<StartedBrainVault[]> {
   // Gated by `brain.embedded` config (default: true). Set `brain.embedded=false`
   // in ~/.genie/config.json to opt out — power-users can then run `brain serve`
   // standalone with custom settings (port, brain-path, @next dev channel).
-  const { loadGenieConfigSync } = await import('../lib/genie-config.js');
-  const brainEmbedded = loadGenieConfigSync().brain.embedded;
+  const config = await loadBrainStartupConfig(deps);
+  const brainEmbedded = config.brain?.embedded !== false;
+  const log = deps.log ?? console.log;
+  const warn = deps.warn ?? console.warn;
   if (!brainEmbedded) {
-    console.log('  Brain server: skipped (brain.embedded=false — managed externally)');
-    return;
+    log('  Brain server: skipped (brain.embedded=false — managed externally)');
+    return [];
   }
   try {
-    // Dynamic import — brain is optional. Silently skip if not installed.
-    // @ts-expect-error — brain is enterprise-only, not in genie's deps
-    const brain = await import('@khal-os/brain');
-    if (!brain.startEmbeddedBrainServer) return;
-    const { getActivePort } = await import('../lib/db.js');
-    const pgPort = getActivePort();
-    if (!pgPort) {
-      console.log('  Brain server: pgserve not available (skipped)');
-      return;
-    }
-    console.log('  Starting brain server...');
-    const brainPath = resolveBrainPathFromWorkspace();
-    if (!brainPath) {
-      console.log('  Brain server: no brain/ found in workspace (skipped)');
-      return;
-    }
-    const handle = await brain.startEmbeddedBrainServer({ brainPath, geniePgPort: pgPort });
-    handles.brainHandle = { stop: handle.stop, port: handle.port };
-    console.log(`  Brain server ready on port ${handle.port}`);
-  } catch {
+    return await startBrainServer(deps, config, log, warn);
+  } catch (err) {
     // Brain not installed — fine, skip silently
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isMissingBrainModule(msg)) return [];
+    warn(`  Brain server: failed: ${msg}`);
+    return [];
   }
 }
 
@@ -851,9 +910,11 @@ async function stopOmniAndBrainServices(): Promise<void> {
   void import('../lib/executor-read.js').then((m) => m.stopExecutorReadEndpoint().catch(() => {}));
   // Brain server: best-effort; signal handlers call process.exit() immediately
   // after shutdown(). The OS reclaims sockets/connections on process exit.
-  if (handles.brainHandle) {
-    await handles.brainHandle.stop().catch(() => {});
-    handles.brainHandle = null;
+  if (handles.brainHandles.length > 0) {
+    for (const handle of handles.brainHandles) {
+      await handle.stop().catch(() => {});
+    }
+    handles.brainHandles = [];
   }
 }
 
@@ -1146,7 +1207,13 @@ async function printBrainStatus(): Promise<void> {
   try {
     // @ts-expect-error — brain is enterprise-only, not in genie's deps
     const brain = await import('@khal-os/brain');
-    const brainPort = resolveBrainPortFromWorkspace(brain) ?? handles.brainHandle?.port ?? null;
+    if (handles.brainHandles.length > 0) {
+      for (const handle of handles.brainHandles) {
+        await probeBrainHealth(handle.port);
+      }
+      return;
+    }
+    const brainPort = resolveBrainPortFromWorkspace(brain);
     if (brainPort) {
       await probeBrainHealth(brainPort);
     } else {

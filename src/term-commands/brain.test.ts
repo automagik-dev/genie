@@ -142,4 +142,14 @@ describe('installBrain → brain install wizard chain', () => {
     expect(src).toMatch(/Install wizard skipped/);
     expect(src).toMatch(/brain install --apply --yes/);
   });
+
+  test('install autostart resolves configured and registered vaults', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { dirname, join } = require('node:path') as typeof import('node:path');
+    const src = readFileSync(join(dirname(import.meta.path), 'brain.ts'), 'utf-8');
+
+    expect(src).toContain('let installedBrain: BrainRegistryApi | null = null;');
+    expect(src).toContain('installedBrain = brain as BrainRegistryApi;');
+    expect(src).toContain('await findBrainVault({ brain: installedBrain });');
+  });
 });

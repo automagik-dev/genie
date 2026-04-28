@@ -89,6 +89,15 @@ const BrainConfigSchema = z.object({
    *   `genie brain install` becomes a no-op that points at the manual install command.
    */
   embedded: z.boolean().default(true),
+  /**
+   * Explicit brain vault paths to start with `genie serve`.
+   *
+   * - omitted - discover registered brains, then fall back to the legacy
+   *   workspace/root brain vault if the registry is empty.
+   * - non-empty array - start only these paths and do not consult the registry.
+   * - empty array - force registry discovery (with legacy fallback if empty).
+   */
+  paths: z.array(z.string()).optional(),
 });
 
 // Council preset configuration
