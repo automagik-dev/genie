@@ -60,6 +60,21 @@ WITNESSES=(
   ".github/cosign.pub"
 )
 
+# Optional witnesses: warn-if-absent now, will become required once they
+# ship. Keeps the pin discipline locked-in across all future channels even
+# if the file lands later in the umbrella sequence.
+#
+# - scripts/installer/install.sh  — ships in distribution-exodus PR-A7
+#                                   (aegis-distribution-sovereignty Wave 1).
+#                                   When present, must contain every
+#                                   CANONICAL line so operators reading the
+#                                   bootstrap script before piping to bash
+#                                   can cross-check the trust anchor against
+#                                   the other four witnesses.
+OPTIONAL_WITNESSES=(
+  "scripts/installer/install.sh"
+)
+
 # --- Helpers -----------------------------------------------------------------
 
 RED=''
@@ -110,10 +125,23 @@ fi
 # --- Per-witness substring match --------------------------------------------
 
 drift=0
-log "${BOLD}check-fingerprint-pinning${RESET} — asserting signing-identity pin across ${#WITNESSES[@]} witnesses"
+
+# Build the active witness set: required + any optional witnesses that exist
+# on disk. Missing optional witnesses are reported as warnings but do not
+# cause the script to fail.
+ACTIVE_WITNESSES=("${WITNESSES[@]}")
+for opt in "${OPTIONAL_WITNESSES[@]}"; do
+  if [ -f "${opt}" ]; then
+    ACTIVE_WITNESSES+=("${opt}")
+  else
+    warn "optional witness not yet present: ${opt} (will become required when the file ships)"
+  fi
+done
+
+log "${BOLD}check-fingerprint-pinning${RESET} — asserting signing-identity pin across ${#ACTIVE_WITNESSES[@]} witnesses"
 log ""
 
-for witness in "${WITNESSES[@]}"; do
+for witness in "${ACTIVE_WITNESSES[@]}"; do
   log "${BOLD}${witness}${RESET}"
   for line in "${CANONICAL[@]}"; do
     if grep -qF -- "${line}" "${witness}"; then
@@ -135,11 +163,11 @@ done
 # --- Result ------------------------------------------------------------------
 
 if [ "${drift}" -ne 0 ]; then
-  err "signing-identity pin has drifted across ${#WITNESSES[@]} witnesses"
+  err "signing-identity pin has drifted across ${#ACTIVE_WITNESSES[@]} witnesses"
   err "rotation procedure: docs/security/key-rotation.md"
   err "escalation contact: privacidade@namastex.ai"
   exit 1
 fi
 
-ok "signing-identity pin is byte-identical across all ${#WITNESSES[@]} witnesses"
+ok "signing-identity pin is byte-identical across all ${#ACTIVE_WITNESSES[@]} witnesses"
 exit 0
