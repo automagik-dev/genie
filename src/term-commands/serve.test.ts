@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,6 +9,7 @@ import {
   getTuiKeybindings,
   getTuiQuitBindingArgs,
   isStoppingLockActive,
+  startBrainServerIfEnabled,
   writeStoppingLockSync,
 } from './serve.js';
 
@@ -42,6 +43,127 @@ describe('getTuiKeybindings', () => {
       'genie-tui:0.0',
       'C-q',
     ]);
+  });
+});
+
+describe('brain startup integration', () => {
+  function makeVault(root: string, name: string): string {
+    const path = join(root, name);
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, 'brain.json'), '{}', 'utf-8');
+    return path;
+  }
+
+  function makeDir(root: string, name: string): string {
+    const path = join(root, name);
+    mkdirSync(path, { recursive: true });
+    return path;
+  }
+
+  async function eventually(predicate: () => boolean): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  test('skips brain import and startup when brain.embedded=false', async () => {
+    const importBrain = mock(async () => {
+      throw new Error('brain should not be imported');
+    });
+    const logs: string[] = [];
+    const warnings: string[] = [];
+    const log = mock((message: string) => logs.push(message));
+    const warn = mock((message: string) => warnings.push(message));
+    const setBrainHandles = mock(() => {});
+
+    const result = await startBrainServerIfEnabled({
+      loadConfig: () => ({ brain: { embedded: false } }),
+      importBrain,
+      getActivePort: () => 19642,
+      log,
+      warn,
+      setBrainHandles,
+    });
+
+    expect(result).toEqual([]);
+    expect(importBrain.mock.calls.length).toBe(0);
+    expect(setBrainHandles.mock.calls.length).toBe(0);
+    expect(logs[0]).toContain('brain.embedded=false');
+    expect(warnings.length).toBe(0);
+  });
+
+  test('warns when registry reports more brains than were started', async () => {
+    const root = join(tmpdir(), `genie-serve-brain-drift-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const valid = makeVault(root, 'valid');
+    const missing = makeDir(root, 'missing');
+    const stop = mock(async () => {});
+    const startEmbeddedBrainServer = mock(async () => ({ port: 4801, stop }));
+    const warnings: string[] = [];
+    const warn = mock((message: string) => warnings.push(message));
+
+    try {
+      const result = await startBrainServerIfEnabled({
+        loadConfig: () => ({ brain: { embedded: true } }),
+        importBrain: async () => ({
+          listBrains: mock(async () => [{ homePath: valid }, { homePath: missing }]),
+          startEmbeddedBrainServer,
+        }),
+        getActivePort: () => 19642,
+        log: mock(() => {}),
+        warn,
+        setBrainHandles: mock(() => {}),
+      });
+
+      expect(result.map((handle) => handle.brainPath)).toEqual([valid]);
+      expect(startEmbeddedBrainServer.mock.calls.length).toBe(1);
+      expect(warnings.some((message) => message.includes(`skipped registered vault ${missing}`))).toBe(true);
+      expect(warnings.some((message) => message.includes('registry drift: started 1/2'))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('schedules a later brain vault while an earlier start is pending', async () => {
+    const root = join(tmpdir(), `genie-serve-brain-parallel-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const first = makeVault(root, 'first');
+    const second = makeVault(root, 'second');
+    const stop = mock(async () => {});
+    const started: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+    const startEmbeddedBrainServer = mock(({ brainPath }: { brainPath: string }) => {
+      started.push(brainPath);
+      if (brainPath === first) {
+        return new Promise<{ port: number; stop: () => Promise<void> }>((resolve) => {
+          releaseFirst = () => resolve({ port: 4901, stop });
+        });
+      }
+      return Promise.resolve({ port: 4902, stop });
+    });
+
+    try {
+      const pending = startBrainServerIfEnabled({
+        loadConfig: () => ({ brain: { embedded: true } }),
+        importBrain: async () => ({
+          listBrains: mock(async () => [{ homePath: first }, { homePath: second }]),
+          startEmbeddedBrainServer,
+        }),
+        getActivePort: () => 19642,
+        log: mock(() => {}),
+        warn: mock(() => {}),
+        setBrainHandles: mock(() => {}),
+      });
+
+      await eventually(() => startEmbeddedBrainServer.mock.calls.length >= 2);
+      expect(started).toEqual([first, second]);
+
+      releaseFirst?.();
+      const result = await pending;
+      expect(result.map((handle) => handle.brainPath)).toEqual([first, second]);
+    } finally {
+      releaseFirst?.();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
