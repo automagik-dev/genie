@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Cold-runbook test — replays docs/incident-response/canisterworm.md against a
+# Cold-runbook test — replays docs/incident-response/canisterworm.mdx against a
 # sandboxed fixture so the runbook does not rot.
 #
 # What this script does:
-#   1. Parses docs/incident-response/canisterworm.md for every `genie sec …`
+#   1. Parses docs/incident-response/canisterworm.mdx for every `genie sec …`
 #      invocation inside fenced code blocks.
 #   2. Normalizes each invocation to its subcommand + flag surface and asserts
 #      `genie sec <subcommand> --help` exits 0 — catches renamed subcommands
@@ -18,7 +18,7 @@
 # Arguments:
 #   --sandbox <mode>   tmpdir (default) | docker | unshare
 #   --fixture <name>   canisterworm (default; currently the only fixture)
-#   --runbook <path>   override the runbook to parse (default: docs/incident-response/canisterworm.md)
+#   --runbook <path>   override the runbook to parse (default: docs/incident-response/canisterworm.mdx)
 #   --genie-bin <path> override which genie binary to test (default: dist/genie.js invoked via `bun`)
 #   --ci               tighter failure mode (no interactive prompts)
 #   --help, -h
@@ -74,7 +74,7 @@ else
 fi
 cd "${REPO_ROOT}"
 
-RUNBOOK_PATH="${RUNBOOK_PATH:-${REPO_ROOT}/docs/incident-response/canisterworm.md}"
+RUNBOOK_PATH="${RUNBOOK_PATH:-${REPO_ROOT}/docs/incident-response/canisterworm.mdx}"
 if [ ! -f "${RUNBOOK_PATH}" ]; then
   printf 'runbook not found: %s\n' "${RUNBOOK_PATH}" >&2
   exit 4

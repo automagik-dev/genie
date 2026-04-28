@@ -1,13 +1,13 @@
 name: Runbook Cold-Test
 
-# Replays docs/incident-response/canisterworm.md against a sandboxed fixture so
+# Replays docs/incident-response/canisterworm.mdx against a sandboxed fixture so
 # the playbook does not silently rot. The test parses every `genie sec …`
 # invocation out of the runbook, asserts each subcommand + flag still exists on
 # the current build of the CLI, seeds a CanisterWorm IOC fixture, and runs the
 # LIKELY AFFECTED branch end-to-end inside a clean runner.
 #
 # Runs on every PR that touches:
-#   - the runbook itself (docs/incident-response/canisterworm.md)
+#   - the runbook itself (docs/incident-response/canisterworm.mdx)
 #   - SECURITY.md (invariants + signing-identity pin live there)
 #   - the scanner payload (scripts/sec-scan.cjs)
 #   - the sec CLI surface (src/term-commands/sec.ts)
@@ -22,7 +22,9 @@ on:
   push:
     branches: [main, dev]
     paths:
-      - 'docs/incident-response/canisterworm.md'
+      # Submodule pointer for automagik-dev/docs (where canisterworm.mdx lives)
+      - '.docs-vendor'
+      - '.gitmodules'
       - 'SECURITY.md'
       - 'scripts/sec-scan.cjs'
       - 'scripts/sec-remediate.cjs'
@@ -32,7 +34,8 @@ on:
   pull_request:
     branches: [main, dev]
     paths:
-      - 'docs/incident-response/canisterworm.md'
+      - '.docs-vendor'
+      - '.gitmodules'
       - 'SECURITY.md'
       - 'scripts/sec-scan.cjs'
       - 'scripts/sec-remediate.cjs'
@@ -55,6 +58,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
