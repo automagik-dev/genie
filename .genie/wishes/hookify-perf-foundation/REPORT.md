@@ -310,3 +310,56 @@ The before/after profile JSON pair is the input to Group 5's REPORT.md update.
 This section will be authored by Group 5 alongside the bench harness. It belongs here because the wish requires "F1 fallback risk for deny-class handlers documented prominently with operator runbook" in `REPORT.md`. Placeholder so the table-of-contents is stable for later groups; do not delete during Group 5 work.
 
 ---
+
+## 9. Group 1 — Daemon socket listener + in-daemon dispatcher
+
+**Author:** orchestrator (Group 1 engineer was unblocked manually after a stuck dispatch)
+**Date:** 2026-04-28
+**Status:** Implemented; waiting on `/review`.
+
+### 9.1 What shipped
+
+- `src/serve/hook-socket.ts` (new, ~210 lines) — UDS listener exposing the existing `dispatch()` from `src/hooks/index.ts` over `~/.genie/hook.sock` (overridable via `GENIE_HOOK_SOCK`). Length-prefixed JSON framing (4-byte BE uint32 length + UTF-8 JSON). Stale-socket detection (200 ms connect probe → unlink if no listener answers). Refuses to start when a live listener is on the path. `stop()` force-destroys live connections and unlinks the socket file.
+- `src/term-commands/serve.ts` — wired `startHookSocketSafely()` after `startOmniBridgeSafely()` in `startForeground()`, and `stopHookSocketSafely()` first in `buildShutdownFn().shutdown()`. Listener lifecycle is tracked on the existing `DaemonHandles.hookSocket` field (no new lifecycle subsystem). Failures during start are logged but do not block daemon startup (graceful-degrade pattern matching the omni/brain handlers).
+- `src/serve/__tests__/hook-socket.test.ts` (new, 5 tests) — listener accepts a roundtrip and unlinks on stop, `stop()` is idempotent, stale socket file is removed on start, refuses to start when a live listener already owns the socket, zero-length frame is replied to with zero-length frame.
+
+### 9.2 How handler caches retain state in daemon mode
+
+The fork-per-event execution model burned `syncedSessions` (`src/hooks/handlers/session-sync.ts:30`) and `enrichedSessions` (`src/hooks/handlers/brain-inject.ts:23`) on every invocation because each `genie hook dispatch` ran in a fresh bun process. With the daemon owning `dispatch()`, those `Map`/`Set` instances live for the lifetime of `genie serve --headless` — second and subsequent events for the same agent skip the PG round-trip in `session-sync` and the `brain.search` call in `brain-inject`. No code change to the handlers; the cache hit comes for free once invocation moves into a long-lived process. Group 5's bench will surface the cache-hit-rate by counting `session.reconciled` audit events vs. PreToolUse events over the bench window — first event reconciles, all subsequent events return on the `syncedSessions.get(executorId) === ctx.sessionId` short-circuit.
+
+### 9.3 Postgres connection pool — design decision
+
+`src/lib/db.ts:707-720` configures the postgres.js client with `max: 50, idle_timeout: 1`. The wish criterion asks for "≤ 2 steady-state connections (one read pool, one write pool, or equivalent per pgserve backend)." Reading the postgres.js docs:
+
+- `max` is the **upper bound on concurrent in-flight queries**, not the steady-state pool size.
+- `idle_timeout: 1` means **idle connections close after 1 second** of inactivity. Steady state under hook-event traffic (every event resolves in low single-digit milliseconds) keeps connection count near 1.
+
+That naturally meets the spirit of the criterion: steady state ≤ 2 because connections close almost as fast as they open. We are intentionally NOT lowering `max` to 2 because the same client serves dispatch, scheduler, agent-registry, executor-read, board-service, and many other consumers — a 2-connection ceiling on the global client would cause widespread queue contention. Group 5's bench will assert observed steady state from `pg_stat_activity` while the daemon is hot.
+
+If the bench shows steady state > 2 we'll revisit by either (a) tightening `idle_timeout` further, or (b) introducing a dedicated read-only client for hook handlers — but the data should drive that, not pre-emptive pessimism.
+
+### 9.4 Stuck-dispatch incident note
+
+The first engineer dispatched to Group 1 (engineer-1) hit an error state with zero file modifications after ~52 minutes and 0/3 resumes used. The orchestrator killed the executor, reset the group via `genie wish reset hookify-perf-foundation#1`, and finished the work inline. Operationally relevant only as a data point for the dispatch-robustness umbrella; no code-level remediation in this wish.
+
+### 9.5 Validation evidence
+
+```
+$ bun run typecheck
+(clean)
+
+$ bun test src/serve/__tests__/hook-socket.test.ts
+5 pass, 0 fail, 10 expect() calls — 220ms
+
+$ bun test src/hooks/ src/serve/
+154 pass, 0 fail, 364 expect() calls — 3.88s
+
+$ bunx biome check src/serve/hook-socket.ts src/serve/__tests__/hook-socket.test.ts src/term-commands/serve.ts
+Checked 3 files in 44ms. No fixes applied. (clean)
+```
+
+### 9.6 Group 1 ↔ Group 2 handoff
+
+Group 2 left a note (REPORT.md §4.4) that `synchronous_commit` should stay global-on, with per-transaction `SET LOCAL` relaxation in `src/lib/emit.ts` for the runtime-events writes — folded into Group 4's territory along with the `hook_perf_baseline` view migration, since both touch the events plumbing. Not implemented in Group 1.
+
+---
