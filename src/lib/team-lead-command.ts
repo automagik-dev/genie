@@ -40,15 +40,10 @@ interface BuildTeamLeadCommandOptions {
  *
  * Sets all required env vars (including GENIE_AGENT_NAME) and CLI flags.
  * CC requires --agent-id, --agent-name, and --team-name together.
- * GENIE_AGENT_NAME must match the leader name (the value also passed as
- * --agent-name) so the genie CLI's sender identity (read from the env var)
- * agrees with CC's identity (read from the flag). When the two diverge,
- * `genie send 'msg' --to <self>` sends to its own inbox, the operator's
- * Claude Code instance polls that file, and the message echoes back as a
- * teammate-message — even though the existing `from === to` self-loop
- * guards (msg.ts:bridgeToNativeInbox, protocol-router.ts) should have
- * suppressed the delivery. The mismatch slipped past those guards
- * because the env-side and flag-side identities did not agree.
+ * The agent name is derived from the leader name (the same value
+ * passed as --agent-name) so genie CLI's sender identity matches CC's
+ * (#1434 — fixes echo loop where mismatch let `genie send 'msg' --to
+ * <self>` slip past the from===to self-loop guard).
  *
  * System prompt file is passed directly via --append-system-prompt-file
  * (or --system-prompt-file) — no intermediate copy step.
@@ -63,12 +58,6 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     'CLAUDECODE=1',
     'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
     `GENIE_TEAM=${qTeam}`,
-    // Keep GENIE_AGENT_NAME identical to --agent-name below — see doc
-    // comment above. Previously this used basename(process.cwd()), which
-    // diverged whenever the launching cwd's basename was not the leader
-    // name (e.g. cwd=/home/genie/workspace → "workspace" while leader
-    // is "felipe"), seeding `from=workspace` for every `genie send` call
-    // and bypassing the existing self-loop guards.
     `GENIE_AGENT_NAME=${shellQuote(sanitizedLeader)}`,
     'claude',
     `--agent-id ${shellQuote(`${sanitizedLeader}@${sanitized}`)}`,
