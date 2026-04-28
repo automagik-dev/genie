@@ -571,13 +571,20 @@ function useTeamCreateControls(opts: TeamCreateHookOptions): {
   return { showTeamCreate, handleOpenTeamCreate, handleTeamCreateConfirm, handleTeamCreateCancel };
 }
 
-/** Handle Enter key for agent nodes: spawn if stopped, attach if running. */
-function handleEnterAgent(
+/**
+ * Handle Enter key for agent nodes: spawn if stopped, attach if running.
+ *
+ * The `spawn` arg is dependency-injected so tests can verify the spawn-vs-attach
+ * decision without forking a real `genie` subprocess. Production callers should
+ * omit it to use the real {@link spawnAgent}.
+ */
+export function handleEnterAgent(
   node: TreeNode,
   onTmuxSessionSelect: (sessionName: string, windowIndex?: number) => void,
+  spawn: (name: string, onSelect?: (sessionName: string, windowIndex?: number) => void) => void = spawnAgent,
 ): void {
   if (node.wsAgentState !== 'running' && node.wsAgentState !== 'spawning') {
-    spawnAgent(agentNameFromNode(node), onTmuxSessionSelect);
+    spawn(agentNameFromNode(node), onTmuxSessionSelect);
   } else if (node.wsAgentState === 'running') {
     const target = getSessionTarget(node);
     if (target) onTmuxSessionSelect(target.sessionName, target.windowIndex);

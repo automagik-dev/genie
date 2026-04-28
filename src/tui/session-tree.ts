@@ -9,7 +9,7 @@
  */
 
 import type { DiagnosticSnapshot, TmuxPane, TmuxSession, TmuxWindow } from './diagnostics.js';
-import type { AgentState, TreeNode, TuiExecutor, WorkState } from './types.js';
+import type { AgentKind, AgentState, TreeNode, TuiExecutor, WorkState } from './types.js';
 
 /** The TUI's own session name — filtered from the tree to prevent self-attach loops */
 const TUI_SESSION = 'genie-tui';
@@ -90,6 +90,7 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
       executorsByAgent.get(name) ?? [],
       executorByPaneId,
       workStates.get(name),
+      'canonical',
     );
     appendSubAgentNodes(node, subsByParent.get(name), sessionByName, executorsByAgent, executorByPaneId, workStates);
     return node;
@@ -163,6 +164,7 @@ function appendSubAgentNodes(
       executorsByAgent.get(subName) ?? [],
       executorByPaneId,
       workStates.get(subName),
+      'subagent',
     );
     subNode.label = subLabel;
     subNode.depth = 1;
@@ -183,6 +185,7 @@ function buildAgentNode(
   agentExecutors: TuiExecutor[],
   executorByPaneId: Map<string, TuiExecutor>,
   workState: WorkState | undefined,
+  kind: AgentKind,
 ): TreeNode {
   const wsState = deriveWsAgentState(session, agentExecutors);
   const attachWindowIndex = session ? resolvePreferredWindowIndex(session, name) : undefined;
@@ -211,6 +214,7 @@ function buildAgentNode(
     activePanes: session ? countClaudePanes(session) : 0,
     agentState: agentExecutors.length > 0 ? deriveExecutorState(agentExecutors) : undefined,
     wsAgentState: wsState,
+    kind,
   };
   if (workState) node.workState = workState;
   return node;
