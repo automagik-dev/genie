@@ -4,7 +4,7 @@ name: Signing Identity Pin
 # four in-repo witnesses on every PR that touches any of them. A divergent
 # edit to a single witness indicates one of two things: (a) a legitimate
 # rotation missed a channel (operator needs to land the missing channels in
-# the same PR per docs/security/key-rotation.md), or (b) a tampered PR
+# the same PR per docs/security/key-rotation.mdx), or (b) a tampered PR
 # trying to move the pin. Either way, the PR must not merge until the
 # witnesses agree.
 #

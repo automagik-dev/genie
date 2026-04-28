@@ -16,7 +16,11 @@ on:
     branches: [main, dev]
     paths:
       - 'SECURITY.md'
-      - 'docs/**/*.md'
+      # Docs live in the .docs-vendor submodule (automagik-dev/docs); trigger
+      # on submodule pointer bumps so docs lint runs whenever genie picks up
+      # a new docs commit.
+      - '.docs-vendor'
+      - '.gitmodules'
       - '.markdownlint.json'
       - '.markdownlint-cli2.jsonc'
       - '.github/markdown-link-check.json'
@@ -25,7 +29,8 @@ on:
     branches: [main, dev]
     paths:
       - 'SECURITY.md'
-      - 'docs/**/*.md'
+      - '.docs-vendor'
+      - '.gitmodules'
       - '.markdownlint.json'
       - '.markdownlint-cli2.jsonc'
       - '.github/markdown-link-check.json'
@@ -43,6 +48,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -52,7 +59,7 @@ jobs:
         run: |
           bunx markdownlint-cli2 \
             "SECURITY.md" \
-            "docs/incident-response/canisterworm.md"
+            "docs/incident-response/canisterworm.mdx"
 
   link-check:
     name: markdown-link-check
@@ -61,6 +68,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -69,4 +78,4 @@ jobs:
       - name: Verify links in SECURITY.md + runbook
         run: |
           bunx markdown-link-check --config .github/markdown-link-check.json SECURITY.md
-          bunx markdown-link-check --config .github/markdown-link-check.json docs/incident-response/canisterworm.md
+          bunx markdown-link-check --config .github/markdown-link-check.json docs/incident-response/canisterworm.mdx

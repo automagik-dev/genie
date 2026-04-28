@@ -12,6 +12,36 @@ bun test             # All tests
 bun test src/lib/wish-state.test.ts  # Single file
 ```
 
+## Docs
+
+`docs/` is a symlink to `.docs-vendor/genie/` where `.docs-vendor` is a git submodule of `automagik-dev/docs` (Mintlify, public site at automagik.dev). Engineers see and edit `docs/` as if it were a regular subfolder of the genie repo — the submodule machinery is mostly invisible.
+
+- **Operator-facing pages** (e.g., `docs/installation.mdx`, `docs/security/key-rotation.mdx`, `docs/incident-response/canisterworm.mdx`) appear on the public Mintlify site at `automagik.dev/genie/...`.
+- **Engineering-internal pages** live under `docs/_internal/` (architecture deep-dives, observability internals, agent-frontmatter contracts, CLI reference dumps, spawn-flow runbooks, detector specs). These are excluded from the public Mintlify build via `**/_internal/` in `automagik-dev/docs/.mintignore` — visible inside the genie repo, hidden from public docs.
+
+**Workflow when editing docs:**
+
+```bash
+# Make changes (the symlink follows into .docs-vendor/genie/)
+$EDITOR docs/installation.mdx
+
+# Commit + push the docs change to automagik-dev/docs
+cd .docs-vendor
+git checkout -b feat/<topic>
+git add genie/installation.mdx
+git commit -m "docs(genie): ..."
+git push -u origin feat/<topic>
+gh pr create --base main
+
+# After the docs PR merges, bump the genie superproject pointer
+cd ..   # back to genie repo root
+git submodule update --remote .docs-vendor
+git add .docs-vendor
+git commit -m "chore: bump .docs-vendor to docs main"
+```
+
+CI in `automagik-dev/genie` runs `actions/checkout@v4` with `submodules: recursive` for any workflow that needs docs content (`docs-lint.yml`, `runbook-test.yml`); the rest of CI ignores the submodule.
+
 ## Architecture
 
 ```
