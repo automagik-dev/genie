@@ -10,7 +10,7 @@
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { sanitizeTeamName } from './claude-native-teams.js';
 import { loadGenieConfigSync } from './genie-config.js';
 
@@ -40,7 +40,15 @@ interface BuildTeamLeadCommandOptions {
  *
  * Sets all required env vars (including GENIE_AGENT_NAME) and CLI flags.
  * CC requires --agent-id, --agent-name, and --team-name together.
- * The agent name is derived from basename(cwd) to match the folder name.
+ * GENIE_AGENT_NAME must match the leader name (the value also passed as
+ * --agent-name) so the genie CLI's sender identity (read from the env var)
+ * agrees with CC's identity (read from the flag). When the two diverge,
+ * `genie send 'msg' --to <self>` sends to its own inbox, the operator's
+ * Claude Code instance polls that file, and the message echoes back as a
+ * teammate-message — even though the existing `from === to` self-loop
+ * guards (msg.ts:bridgeToNativeInbox, protocol-router.ts) should have
+ * suppressed the delivery. The mismatch slipped past those guards
+ * because the env-side and flag-side identities did not agree.
  *
  * System prompt file is passed directly via --append-system-prompt-file
  * (or --system-prompt-file) — no intermediate copy step.
@@ -48,7 +56,6 @@ interface BuildTeamLeadCommandOptions {
 export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCommandOptions): string {
   const sanitized = sanitizeTeamName(teamName);
   const qTeam = shellQuote(sanitized);
-  const folderName = basename(process.cwd());
   const resolvedLeader = options?.leaderName ?? teamName;
   const sanitizedLeader = sanitizeTeamName(resolvedLeader);
   const parts = [
@@ -56,7 +63,13 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     'CLAUDECODE=1',
     'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
     `GENIE_TEAM=${qTeam}`,
-    `GENIE_AGENT_NAME=${shellQuote(folderName)}`,
+    // Keep GENIE_AGENT_NAME identical to --agent-name below — see doc
+    // comment above. Previously this used basename(process.cwd()), which
+    // diverged whenever the launching cwd's basename was not the leader
+    // name (e.g. cwd=/home/genie/workspace → "workspace" while leader
+    // is "felipe"), seeding `from=workspace` for every `genie send` call
+    // and bypassing the existing self-loop guards.
+    `GENIE_AGENT_NAME=${shellQuote(sanitizedLeader)}`,
     'claude',
     `--agent-id ${shellQuote(`${sanitizedLeader}@${sanitized}`)}`,
     `--agent-name ${shellQuote(sanitizedLeader)}`,
