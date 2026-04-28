@@ -18,6 +18,24 @@ async function readStdin(): Promise<string> {
 }
 
 async function dispatchAction(): Promise<void> {
+  // Mac-CPU fix C — short-circuit DB boot for hook dispatch forks.
+  //
+  // The long-lived `genie serve` daemon owns migrations + seed (it ran
+  // them at startup). Each `genie hook dispatch` fork (hundreds/min on a
+  // busy Mac dev machine) is short-lived; making each fork re-run
+  // `runMigrations` + `needsSeed` (which loops all 92 ~/.claude/teams
+  // entries on every call) is the second-largest contributor to the
+  // .18 100%-CPU regression on Mac.
+  //
+  // Setting this env BEFORE `dispatch(stdin)` ensures the first
+  // `getConnection()` inside any handler skips migrations + seed.
+  // Handlers that need DB still get a working connection — they just
+  // skip the boot-time setup that the daemon already handled.
+  //
+  // Set unconditionally for the dispatch entrypoint; daemon and CLI
+  // code paths never enter this function.
+  process.env.GENIE_SKIP_DB_BOOT = '1';
+
   const stdin = await readStdin();
   if (!stdin.trim()) {
     process.exit(0);

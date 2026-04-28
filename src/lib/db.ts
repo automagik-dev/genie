@@ -663,13 +663,27 @@ async function healthCheckCachedClient() {
   }
 }
 
-/** Run post-connect setup (migrations, seed, retention). Skipped in test mode. */
+/**
+ * Run post-connect setup (migrations, seed, retention).
+ *
+ * Skipped when:
+ *   - `isTestMode` (test DB has its own setup path)
+ *   - `GENIE_SKIP_DB_BOOT=1` (set by `genie hook dispatch` — Mac CPU fix C)
+ *
+ * The `genie serve` daemon owns migrations + seed at startup; short-lived
+ * forks (especially hook dispatch, hundreds/minute on a busy Mac) must not
+ * re-run them. Doing so means every PreToolUse / UserPromptSubmit /
+ * PostToolUse cold-start re-issues the migration check + loops all 92
+ * `~/.claude/teams` entries via `needsSeed()`. That was the second-largest
+ * contributor to the .18 100%-CPU Mac regression.
+ */
 async function runPostConnectSetup(client: postgres.Sql, isTestMode: boolean, timings: { t0: number; t1: number }) {
   const _t2 = Date.now();
-  if (!isTestMode) await runMigrations(client);
+  const skipBoot = isTestMode || process.env.GENIE_SKIP_DB_BOOT === '1';
+  if (!skipBoot) await runMigrations(client);
   const _t3 = Date.now();
 
-  if (!isTestMode && needsSeed()) await runSeed(client);
+  if (!skipBoot && needsSeed()) await runSeed(client);
   const _t4 = Date.now();
 
   // Retention is no longer run from getConnection — it now lives on a
