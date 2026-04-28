@@ -28,6 +28,7 @@ import { auditContext } from './handlers/audit-context.js';
 import { autoSpawn } from './handlers/auto-spawn.js';
 import { brainInject } from './handlers/brain-inject.js';
 import { branchGuard } from './handlers/branch-guard.js';
+import { codexInboxDeliver } from './handlers/codex-inbox-deliver.js';
 import { freshness } from './handlers/freshness.js';
 import { identityInject } from './handlers/identity-inject.js';
 import { orchestrationGuard } from './handlers/orchestration-guard.js';
@@ -108,6 +109,12 @@ const handlers: Handler[] = [
     matcher: /^SendMessage$/,
     priority: 30,
     fn: emitMessageEvent,
+  },
+  {
+    name: 'codex-inbox-deliver',
+    event: 'UserPromptSubmit',
+    priority: 25,
+    fn: codexInboxDeliver,
   },
   {
     name: 'runtime-emit-user-prompt',
@@ -250,6 +257,17 @@ function buildBlockingResponse(
       output.updatedInput = currentInput;
     }
     response.hookSpecificOutput = output;
+  }
+
+  // UserPromptSubmit (claude + codex) accepts hookSpecificOutput.additionalContext
+  // to inject context into the model input for the upcoming turn. Pre-PR-B the
+  // dispatcher dropped this for non-PreToolUse blocking events; the codex
+  // inbox-deliver handler depends on it (see src/hooks/handlers/codex-inbox-deliver.ts).
+  if (hookEventName === 'UserPromptSubmit' && hasContext) {
+    response.hookSpecificOutput = {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext: contextMessages.join('\n'),
+    };
   }
 
   return response;
