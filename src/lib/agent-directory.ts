@@ -47,7 +47,7 @@ export interface DirectoryEntry {
   color?: string;
   /** AI provider: 'claude' | 'codex' | 'claude-sdk'. Resolved at spawn time. */
   provider?: string;
-  /** Permission config for SDK provider (allowlist-only). */
+  /** Claude permission config honored by SDK and canonical tmux spawn paths. */
   permissions?: {
     preset?: string;
     allow?: string[];

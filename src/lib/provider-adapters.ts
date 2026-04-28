@@ -172,6 +172,13 @@ const spawnParamsSchema = z.object({
   model: z.string().optional(),
   initialPrompt: z.string().optional(),
   name: z.string().optional(),
+  permissions: z
+    .object({
+      allow: z.array(z.string()).optional(),
+      deny: z.array(z.string()).optional(),
+    })
+    .optional(),
+  disallowedTools: z.array(z.string()).optional(),
   otelPort: z.number().optional(),
   otelLogPrompts: z.boolean().optional(),
   otelWishSlug: z.string().optional(),
@@ -416,6 +423,16 @@ function buildSettingsObject(params: SpawnParams): Record<string, unknown> {
   return settingsObj;
 }
 
+function warnIfAllowRulesAreBypassed(params: SpawnParams): void {
+  if (!params.permissions?.allow?.length) return;
+  if (params.nativeTeam?.permissionMode !== 'bypassPermissions') return;
+
+  const agentName = params.nativeTeam.agentName ?? params.role ?? params.name ?? 'unknown';
+  process.stderr.write(
+    `Warning: agent ${agentName} declares permissions.allow but permissionMode is bypassPermissions — allow rules are advisory under bypass (deny still enforced).\n`,
+  );
+}
+
 function appendDisallowedAndExtraArgs(parts: string[], params: SpawnParams): void {
   if (params.disallowedTools?.length) {
     for (const tool of params.disallowedTools) {
@@ -442,6 +459,8 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 
   appendSessionFlags(parts, params);
   appendSystemPromptFlags(parts, params);
+
+  warnIfAllowRulesAreBypassed(params);
 
   const settingsObj = buildSettingsObject(params);
   if (Object.keys(settingsObj).length > 0) {

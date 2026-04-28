@@ -2,7 +2,7 @@
  * Provider Adapters — Unit Tests
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   type SpawnParams,
   buildClaudeCommand,
@@ -39,6 +39,39 @@ function codexPromptPathFromCommand(command: string): string {
 function codexPromptContentFromCommand(command: string): string {
   const { readFileSync } = require('node:fs') as typeof import('node:fs');
   return readFileSync(codexPromptPathFromCommand(command), 'utf-8');
+}
+
+function extractShellFlagValue(command: string, flag: string): string | undefined {
+  const flagIndex = command.indexOf(flag);
+  if (flagIndex === -1) return undefined;
+
+  let index = flagIndex + flag.length;
+  while (command[index] === ' ') index++;
+
+  if (command[index] !== "'") {
+    const end = command.indexOf(' ', index);
+    return command.slice(index, end === -1 ? undefined : end);
+  }
+
+  index++;
+  let value = '';
+  while (index < command.length) {
+    if (command.slice(index, index + 4) === "'\\''") {
+      value += "'";
+      index += 4;
+      continue;
+    }
+    if (command[index] === "'") return value;
+    value += command[index];
+    index++;
+  }
+  return undefined;
+}
+
+function extractClaudeSettings(command: string): Record<string, unknown> {
+  const rawSettings = extractShellFlagValue(command, '--settings');
+  if (!rawSettings) throw new Error(`Missing --settings in command: ${command}`);
+  return JSON.parse(rawSettings) as Record<string, unknown>;
 }
 
 // ============================================================================
@@ -78,6 +111,18 @@ describe('validateSpawnParams', () => {
     const params: SpawnParams = { provider: 'claude', team: 'work' };
     const result = validateSpawnParams(params);
     expect(result.provider).toBe('claude');
+  });
+
+  it('preserves Claude permission fields through validation', () => {
+    const result = validateSpawnParams({
+      provider: 'claude',
+      team: 'work',
+      permissions: { allow: ['Read', 'Glob'], deny: ['Bash(rm *)'] },
+      disallowedTools: ['Edit', 'Write'],
+    });
+
+    expect(result.permissions).toEqual({ allow: ['Read', 'Glob'], deny: ['Bash(rm *)'] });
+    expect(result.disallowedTools).toEqual(['Edit', 'Write']);
   });
 });
 
@@ -159,6 +204,124 @@ describe('buildClaudeCommand', () => {
       extraArgs: ['--dangerously-skip-permissions'],
     });
     expect(result.command).toContain('--dangerously-skip-permissions');
+  });
+
+  describe('permissions forwarding', () => {
+    it('includes permissions.allow in --settings JSON', () => {
+      const result = buildClaudeCommand({
+        provider: 'claude',
+        team: 'work',
+        role: 'sandboxed',
+        permissions: { allow: ['Read', 'Glob'] },
+      });
+
+      const permissions = extractClaudeSettings(result.command).permissions as Record<string, unknown>;
+      expect(permissions.allow).toEqual(['Read', 'Glob']);
+      expect(permissions.deny).toBeUndefined();
+    });
+
+    it('includes permissions.allow and permissions.deny in --settings JSON', () => {
+      const result = buildClaudeCommand({
+        provider: 'claude',
+        team: 'work',
+        role: 'sandboxed',
+        permissions: { allow: ['Read', 'Glob'], deny: ['Bash(rm *)'] },
+      });
+
+      const permissions = extractClaudeSettings(result.command).permissions as Record<string, unknown>;
+      expect(permissions.allow).toEqual(['Read', 'Glob']);
+      expect(permissions.deny).toEqual(['Bash(rm *)']);
+    });
+
+    it('preserves permissions through buildLaunchCommand validation', () => {
+      const result = buildLaunchCommand({
+        provider: 'claude',
+        team: 'work',
+        role: 'sandboxed',
+        permissions: { allow: ['Read'], deny: ['Write'] },
+      });
+
+      const permissions = extractClaudeSettings(result.command).permissions as Record<string, unknown>;
+      expect(permissions).toEqual({ allow: ['Read'], deny: ['Write'] });
+    });
+
+    it('emits one --disallowedTools flag per input tool in order', () => {
+      const result = buildClaudeCommand({
+        provider: 'claude',
+        team: 'work',
+        role: 'sandboxed',
+        disallowedTools: ['Edit', 'Write', 'Agent'],
+      });
+
+      expect(result.command).toContain("--disallowedTools 'Edit' --disallowedTools 'Write' --disallowedTools 'Agent'");
+    });
+
+    it('omits permissions from --settings JSON when allow and deny are empty', () => {
+      const result = buildClaudeCommand({
+        provider: 'claude',
+        team: 'work',
+        role: 'sandboxed',
+        permissions: { allow: [], deny: [] },
+      });
+
+      expect(extractClaudeSettings(result.command).permissions).toBeUndefined();
+    });
+
+    it('does not hardcode forbidden permission bypass flag literals', () => {
+      const { readFileSync } = require('node:fs') as typeof import('node:fs');
+      const { fileURLToPath } = require('node:url') as typeof import('node:url');
+      const { dirname, join } = require('node:path') as typeof import('node:path');
+      const sourcePath = join(dirname(fileURLToPath(import.meta.url)), 'provider-adapters.ts');
+      const source = readFileSync(sourcePath, 'utf-8');
+
+      expect(source).not.toMatch(/['"]--dangerously-skip-permissions['"]/);
+      expect(source).not.toMatch(/['"]--permission-mode['"],\s*['"]bypassPermissions['"]/);
+    });
+
+    it('warns once when permissions.allow is paired with explicit bypassPermissions', () => {
+      const stderrWrite = spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        buildClaudeCommand({
+          provider: 'claude',
+          team: 'work',
+          role: 'sandboxed',
+          permissions: { allow: ['Read'] },
+          nativeTeam: {
+            enabled: true,
+            agentName: 'sandboxed',
+            permissionMode: 'bypassPermissions',
+          },
+        });
+
+        expect(stderrWrite).toHaveBeenCalledTimes(1);
+        expect(stderrWrite.mock.calls[0][0]).toBe(
+          'Warning: agent sandboxed declares permissions.allow but permissionMode is bypassPermissions — allow rules are advisory under bypass (deny still enforced).\n',
+        );
+      } finally {
+        stderrWrite.mockRestore();
+      }
+    });
+
+    it('does not warn when bypassPermissions has no allow rules to bypass', () => {
+      const stderrWrite = spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        buildClaudeCommand({
+          provider: 'claude',
+          team: 'work',
+          role: 'deny-only',
+          permissions: { deny: ['Write'] },
+          nativeTeam: {
+            enabled: true,
+            agentName: 'deny-only',
+            permissionMode: 'bypassPermissions',
+          },
+        });
+
+        expect(stderrWrite).not.toHaveBeenCalled();
+      } finally {
+        stderrWrite.mockRestore();
+      }
+    });
   });
 
   it('includes --model flag when model is set', () => {

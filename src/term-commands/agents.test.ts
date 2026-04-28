@@ -16,6 +16,7 @@ import * as wishState from '../lib/wish-state.js';
 import {
   OwnerSpawnCollisionError,
   RecoverAgentNotFoundError,
+  buildDirectoryPermissionSpawnParams,
   buildInitialSplitWindowCommand,
   buildResumeContext,
   buildWorkerStatusMap,
@@ -238,6 +239,61 @@ describe('resolveAgentWorkingDir', () => {
     };
 
     expect(resolveAgentWorkingDir(entry)).toBe('/tmp/agents/genie');
+  });
+});
+
+describe('buildDirectoryPermissionSpawnParams', () => {
+  function makeEntry(overrides: Partial<DirectoryEntry> = {}): DirectoryEntry {
+    return {
+      name: 'restricted',
+      dir: '/tmp/agents/restricted',
+      promptMode: 'append',
+      registeredAt: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  test('forwards non-empty permissions.allow and permissions.deny', () => {
+    const params = buildDirectoryPermissionSpawnParams(
+      makeEntry({
+        permissions: {
+          allow: ['Read', 'Glob'],
+          deny: ['Bash(rm *)'],
+        },
+      }),
+    );
+
+    expect(params.permissions).toEqual({ allow: ['Read', 'Glob'], deny: ['Bash(rm *)'] });
+  });
+
+  test('omits permissions when allow and deny are empty', () => {
+    const params = buildDirectoryPermissionSpawnParams(
+      makeEntry({
+        permissions: {
+          allow: [],
+          deny: [],
+        },
+      }),
+    );
+
+    expect(params.permissions).toBeUndefined();
+  });
+
+  test('forwards disallowedTools when configured', () => {
+    const params = buildDirectoryPermissionSpawnParams(
+      makeEntry({
+        disallowedTools: ['Edit', 'Write', 'Agent'],
+      }),
+    );
+
+    expect(params.disallowedTools).toEqual(['Edit', 'Write', 'Agent']);
+  });
+
+  test('leaves fields undefined when no permission config is present', () => {
+    const params = buildDirectoryPermissionSpawnParams(makeEntry());
+
+    expect(params.permissions).toBeUndefined();
+    expect(params.disallowedTools).toBeUndefined();
   });
 });
 
