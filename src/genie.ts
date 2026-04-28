@@ -428,6 +428,7 @@ program
   .option('--new-window', 'Create a new tmux window instead of splitting')
   .option('--window <target>', 'Tmux window to split into (e.g., genie:3)')
   .option('--no-auto-resume', 'Disable auto-resume on pane death')
+  .option('--no-auto-sync', 'Disable auto-registration from workspace agents directory')
   .option('--stream', 'Stream SDK messages to stdout in real-time (claude-sdk provider)')
   .option('--stream-format <format>', 'Streaming output format: text, json, ndjson (default: text)', 'text')
   .option('--sdk-max-turns <n>', 'SDK: max conversation turns', parseNumericFlag('--sdk-max-turns'))
@@ -446,6 +447,7 @@ Examples:
   genie spawn council--questioner --provider codex  # Use Codex provider`,
   )
   .action(async (name: string, options: SpawnOptions) => {
+    if (options.autoSync === false) options.noAutoSync = true;
     try {
       await handleWorkerSpawn(name, options);
     } catch (error) {
