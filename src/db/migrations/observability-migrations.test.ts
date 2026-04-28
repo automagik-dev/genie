@@ -196,6 +196,53 @@ describe.skipIf(!DB_AVAILABLE)('Group 1 observability migrations', () => {
     expect(deleteErr?.message).toMatch(/append-only/);
   });
 
+  test('maintain_partitions drains rows stuck in DEFAULT (regression: SQLSTATE 23514)', async () => {
+    const sql = await getConnection();
+
+    // Pick a far-future date that no rolling-window partition covers.
+    // create_partition uses session-TZ midnight, so the date string suffices.
+    const stuckDate = '2099-12-31';
+
+    // Pre-clean any leftovers from a previous test run.
+    await sql`DELETE FROM genie_runtime_events WHERE kind = 'partition.drain.test'`;
+
+    // Insert a row whose created_at falls outside every dated partition. It
+    // must route to genie_runtime_events_default.
+    await sql`
+      INSERT INTO genie_runtime_events (repo_path, kind, source, agent, text, created_at)
+      VALUES ('test', 'partition.drain.test', 'test', 'test', 'stuck', ${`${stuckDate} 12:00:00+00`}::TIMESTAMPTZ)
+    `;
+
+    const beforeDefault = await sql<{ n: number }[]>`
+      SELECT count(*)::INT AS n FROM genie_runtime_events_default
+       WHERE kind = 'partition.drain.test'
+    `;
+    expect(beforeDefault[0].n).toBe(1);
+
+    const result = await sql<
+      Array<{ r: { created_or_present: number; drained_from_default: number } }>
+    >`SELECT genie_runtime_events_maintain_partitions(2, 30)::jsonb AS r`;
+    expect(result[0].r.drained_from_default).toBeGreaterThanOrEqual(1);
+
+    const afterDefault = await sql<{ n: number }[]>`
+      SELECT count(*)::INT AS n FROM genie_runtime_events_default
+       WHERE kind = 'partition.drain.test'
+    `;
+    expect(afterDefault[0].n).toBe(0);
+
+    const inDated = await sql<{ relname: string }[]>`
+      SELECT tableoid::regclass::TEXT AS relname
+        FROM genie_runtime_events
+       WHERE kind = 'partition.drain.test'
+    `;
+    expect(inDated.length).toBe(1);
+    expect(inDated[0].relname).toMatch(/genie_runtime_events_p20991231$/);
+
+    // Cleanup so the dated partition created above doesn't haunt the rolling
+    // window or the retention sweep on subsequent runs.
+    await sql`DELETE FROM genie_runtime_events WHERE kind = 'partition.drain.test'`;
+  });
+
   test('Group 1 migrations are idempotent on re-apply', async () => {
     // Re-run each migration body against the already-migrated schema and
     // confirm the guarded statements are all no-ops.
