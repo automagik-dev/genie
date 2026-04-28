@@ -1,14 +1,14 @@
 /**
- * Session Filewatch — Event-driven JSONL capture via fs.watch.
+ * Session Filewatch — Event-driven JSONL capture via chokidar.
  *
- * Watches ~/.claude/projects/ recursively for JSONL changes.
+ * Watches ~/.claude/projects/ for JSONL changes.
  * Reacts only when a file is written — zero CPU when idle.
  * Reads incrementally from stored offset, debounced 500ms per file.
  */
 
-import { type FSWatcher, watch } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
+import { type FSWatcher, watch } from 'chokidar';
 
 import { buildWorkerMap, ingestFileFull, setLiveWorkPending } from './session-capture.js';
 
@@ -23,6 +23,7 @@ let watcher: FSWatcher | null = null;
 const offsetCache = new Map<string, number>();
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const DEBOUNCE_MS = 500;
+const WATCH_DEPTH = 4;
 
 /**
  * Sessions where ingest raised an unrecoverable (FK) error — logged once,
@@ -72,10 +73,11 @@ async function loadOffsets(sql: SqlClient): Promise<void> {
 // File event handler
 // ============================================================================
 
-function extractSessionInfo(
+export function extractSessionInfo(
   filePath: string,
 ): { sessionId: string; projectPath: string; parentSessionId: string | null; isSubagent: boolean } | null {
-  // Main: ~/.claude/projects/<hash>/sessions/<id>.jsonl
+  // Main: ~/.claude/projects/<hash>/<id>.jsonl
+  // Legacy main: ~/.claude/projects/<hash>/sessions/<id>.jsonl
   // Subagent: ~/.claude/projects/<hash>/<parent-id>/subagents/<id>.jsonl
   if (!filePath.endsWith('.jsonl')) return null;
 
@@ -93,8 +95,15 @@ function extractSessionInfo(
   }
 
   if (sessionsIdx > 0) {
-    // Main session
+    // Legacy main session
     const projectPath = parts.slice(0, sessionsIdx).join('/');
+    return { sessionId, projectPath, parentSessionId: null, isSubagent: false };
+  }
+
+  const projectIdx = parts.lastIndexOf('projects');
+  if (projectIdx >= 0 && parts.length === projectIdx + 3) {
+    // Main session
+    const projectPath = parts.slice(0, projectIdx + 2).join('/');
     return { sessionId, projectPath, parentSessionId: null, isSubagent: false };
   }
 
@@ -163,6 +172,55 @@ export async function handleFileChange(
   }
 }
 
+function shouldIgnoreWatchPath(path: string, stats?: { isFile: () => boolean }): boolean {
+  return stats?.isFile() === true && !path.endsWith('.jsonl');
+}
+
+function normalizeWatchEventPath(claudeDir: string, filePath: string): string {
+  return isAbsolute(filePath) ? filePath : resolve(claudeDir, filePath);
+}
+
+function scheduleFileChange(filePath: string, sql: SqlClient): void {
+  if (!filePath.endsWith('.jsonl')) return;
+
+  const existing = debounceTimers.get(filePath);
+  if (existing) clearTimeout(existing);
+
+  debounceTimers.set(
+    filePath,
+    setTimeout(() => {
+      debounceTimers.delete(filePath);
+      handleFileChange(filePath, sql).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[filewatch] unhandled error for ${filePath}: ${message}`);
+      });
+    }, DEBOUNCE_MS),
+  );
+}
+
+export function createJsonlWatcher(claudeDir: string, onJsonlChange: (filePath: string) => void): FSWatcher {
+  const jsonlWatcher = watch(claudeDir, {
+    ignoreInitial: true,
+    depth: WATCH_DEPTH,
+    ignored: shouldIgnoreWatchPath,
+    awaitWriteFinish: {
+      stabilityThreshold: DEBOUNCE_MS,
+      pollInterval: 100,
+    },
+    atomic: true,
+  });
+
+  const emitJsonlChange = (filePath: string): void => {
+    if (!filePath.endsWith('.jsonl')) return;
+    onJsonlChange(normalizeWatchEventPath(claudeDir, filePath));
+  };
+
+  jsonlWatcher.on('add', emitJsonlChange);
+  jsonlWatcher.on('change', emitJsonlChange);
+
+  return jsonlWatcher;
+}
+
 // ============================================================================
 // Start / Stop
 // ============================================================================
@@ -176,30 +234,11 @@ export async function startFilewatch(sql: SqlClient): Promise<boolean> {
   await loadOffsets(sql);
 
   try {
-    watcher = watch(claudeDir, { recursive: true }, (_eventType, filename) => {
-      if (!filename || !filename.endsWith('.jsonl')) return;
-
-      const fullPath = join(claudeDir, filename);
-
-      // Debounce per file — Claude writes multiple lines per turn
-      const existing = debounceTimers.get(fullPath);
-      if (existing) clearTimeout(existing);
-
-      debounceTimers.set(
-        fullPath,
-        setTimeout(() => {
-          debounceTimers.delete(fullPath);
-          handleFileChange(fullPath, sql).catch((err) => {
-            const message = err instanceof Error ? err.message : String(err);
-            console.error(`[filewatch] unhandled error for ${fullPath}: ${message}`);
-          });
-        }, DEBOUNCE_MS),
-      );
-    });
+    watcher = createJsonlWatcher(claudeDir, (fullPath) => scheduleFileChange(fullPath, sql));
 
     watcher.on('error', (err) => {
-      console.error('[filewatch] watcher error:', err.message);
-      // Could fall back to polling here in the future
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[filewatch] watcher error:', message);
     });
 
     console.log(`[filewatch] watching ${claudeDir} (${offsetCache.size} sessions cached)`);
@@ -213,7 +252,7 @@ export async function startFilewatch(sql: SqlClient): Promise<boolean> {
 
 export function stopFilewatch(): void {
   if (watcher) {
-    watcher.close();
+    void watcher.close();
     watcher = null;
   }
   for (const timer of debounceTimers.values()) {

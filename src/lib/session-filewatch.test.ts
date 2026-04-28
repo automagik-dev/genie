@@ -19,7 +19,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FilewatchDeps } from './session-filewatch.js';
-import { handleFileChange, isForeignKeyViolation, resetUnrecoverableSessions } from './session-filewatch.js';
+import {
+  extractSessionInfo,
+  handleFileChange,
+  isForeignKeyViolation,
+  resetUnrecoverableSessions,
+} from './session-filewatch.js';
 
 // ============================================================================
 // Test helpers
@@ -75,6 +80,44 @@ describe('isForeignKeyViolation', () => {
     expect(isForeignKeyViolation(new Error('ECONNRESET'))).toBe(false);
     expect(isForeignKeyViolation(null)).toBe(false);
     expect(isForeignKeyViolation('string error')).toBe(false);
+  });
+});
+
+// ============================================================================
+// extractSessionInfo — Claude JSONL path layouts
+// ============================================================================
+
+describe('extractSessionInfo', () => {
+  test('parses root-level Claude project JSONL paths', () => {
+    expect(extractSessionInfo('/tmp/claude/projects/project-hash/session-123.jsonl')).toEqual({
+      sessionId: 'session-123',
+      projectPath: '/tmp/claude/projects/project-hash',
+      parentSessionId: null,
+      isSubagent: false,
+    });
+  });
+
+  test('parses legacy sessions directory JSONL paths', () => {
+    expect(extractSessionInfo('/tmp/claude/projects/project-hash/sessions/session-456.jsonl')).toEqual({
+      sessionId: 'session-456',
+      projectPath: '/tmp/claude/projects/project-hash',
+      parentSessionId: null,
+      isSubagent: false,
+    });
+  });
+
+  test('parses subagent JSONL paths', () => {
+    expect(extractSessionInfo('/tmp/claude/projects/project-hash/parent-123/subagents/session-789.jsonl')).toEqual({
+      sessionId: 'session-789',
+      projectPath: '/tmp/claude/projects/project-hash',
+      parentSessionId: 'parent-123',
+      isSubagent: true,
+    });
+  });
+
+  test('rejects non-session JSONL paths outside projects', () => {
+    expect(extractSessionInfo('/tmp/claude/not-projects/session-123.jsonl')).toBeNull();
+    expect(extractSessionInfo('/tmp/claude/projects/project-hash/notes/session-123.jsonl')).toBeNull();
   });
 });
 
