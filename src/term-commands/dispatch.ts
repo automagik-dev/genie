@@ -28,6 +28,29 @@ import { isWideEmitEnabled } from '../lib/observability-flag.js';
 import * as protocolRouter from '../lib/protocol-router.js';
 import { getAmbient as getTraceContext } from '../lib/trace-context.js';
 import { parseWishRef, resolveWish } from '../lib/wish-resolve.js';
+import { detectSenderIdentity } from './msg.js';
+
+/**
+ * Build the sender identity for protocol-router messages emitted by dispatch
+ * commands (`genie brainstorm`, `wish`, `work`, `review`).
+ *
+ * These commands need to bypass hierarchy checks (the dispatcher is acting on
+ * behalf of the user/orchestrator, not as a peer of the recipient) — historically
+ * that bypass was implemented by hard-coding the literal sender `'cli'`. The
+ * downside: every dispatched message surfaces with sender `cli`, hiding the
+ * actual invoker (the human user, or — when `genie work` is fired from inside
+ * a team-lead session — the team-lead agent).
+ *
+ * The fix: prefix the bypass marker with the resolved invoker identity.
+ *   - From a true CLI invocation (no agent context):  `'cli'` (unchanged)
+ *   - From inside an agent session:                    `'cli:<agent-name>'`
+ *
+ * Bypass logic in `send.ts` / `msg.ts` matches both forms via prefix check.
+ */
+async function cliSender(): Promise<string> {
+  const origin = await detectSenderIdentity();
+  return origin === 'cli' ? 'cli' : `cli:${origin}`;
+}
 import type { GroupDefinition } from '../lib/wish-state.js';
 import * as wishState from '../lib/wish-state.js';
 import { handleWorkerSpawn } from './agents.js';
@@ -515,7 +538,7 @@ export async function brainstormCommand(agentName: string, slug: string): Promis
 
   // Deliver work prompt via mailbox as backup (durable, queued to disk)
   const repoPath = process.cwd();
-  const result = await protocolRouter.sendMessage(repoPath, 'cli', agentName, brainstormPrompt);
+  const result = await protocolRouter.sendMessage(repoPath, await cliSender(), agentName, brainstormPrompt);
   if (!result.delivered) {
     console.warn(`⚠ Backup delivery to ${agentName} failed: ${result.reason ?? 'unknown'}`);
   }
@@ -555,7 +578,7 @@ export async function wishCommand(agentName: string, slug: string): Promise<void
 
   // Deliver work prompt via mailbox as backup (durable, queued to disk)
   const repoPath = process.cwd();
-  const result = await protocolRouter.sendMessage(repoPath, 'cli', agentName, wishPrompt);
+  const result = await protocolRouter.sendMessage(repoPath, await cliSender(), agentName, wishPrompt);
   if (!result.delivered) {
     console.warn(`⚠ Backup delivery to ${agentName} failed: ${result.reason ?? 'unknown'}`);
   }
@@ -684,7 +707,7 @@ async function runWorkDispatch(
 
   // Deliver work prompt via mailbox as backup (durable, queued to disk)
   const repoPath = process.cwd();
-  const result = await protocolRouter.sendMessage(repoPath, 'cli', effectiveRole, workPrompt);
+  const result = await protocolRouter.sendMessage(repoPath, await cliSender(), effectiveRole, workPrompt);
   if (!result.delivered) {
     console.warn(`⚠ Backup delivery to ${effectiveRole} failed: ${result.reason ?? 'unknown'}`);
   }
@@ -763,7 +786,7 @@ export async function reviewCommand(agentName: string, ref: string): Promise<voi
 
   // Deliver work prompt via mailbox as backup (durable, queued to disk)
   const repoPath = process.cwd();
-  const result = await protocolRouter.sendMessage(repoPath, 'cli', agentName, reviewPrompt);
+  const result = await protocolRouter.sendMessage(repoPath, await cliSender(), agentName, reviewPrompt);
   if (!result.delivered) {
     console.warn(`⚠ Backup delivery to ${agentName} failed: ${result.reason ?? 'unknown'}`);
   }

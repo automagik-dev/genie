@@ -56,6 +56,22 @@ async function getMailbox(): Promise<typeof import('../lib/mailbox.js')> {
 // ============================================================================
 
 /**
+ * True when `sender` is the CLI dispatch-bypass marker.
+ *
+ * Two surface forms exist:
+ *   - `'cli'`              — true CLI invocation, no agent context
+ *   - `'cli:<origin>'`     — invoker had agent context (e.g. team-lead running
+ *                            `genie work`); origin is the agent name
+ *
+ * Both forms bypass hierarchy + scope checks. The prefixed form preserves the
+ * actual invoker so downstream consumers (inboxes, audit logs, native team UI)
+ * can attribute the message to a real source instead of an opaque `cli`.
+ */
+export function isCliSender(sender: string): boolean {
+  return sender === 'cli' || sender.startsWith('cli:');
+}
+
+/**
  * Auto-detect the sender identity based on execution context.
  *
  * Detection cascade:
@@ -145,7 +161,7 @@ const DEFAULT_REACHBACK_PREFIXES = ['council-'];
  * Returns an error message if scope is violated, null if OK.
  */
 export async function checkSendScope(_repoPath: string, sender: string, recipient: string): Promise<string | null> {
-  if (sender === 'cli') return null;
+  if (isCliSender(sender)) return null;
 
   const teamManager = await getTeamManager();
   const teams = await teamManager.listTeams();
@@ -287,7 +303,7 @@ export function resolveSenderTeams(
  * ancestor in the chain. Returns null when the sender belongs to no team.
  */
 export async function suggestRelayLeader(sender: string): Promise<{ leader: string; team: string } | null> {
-  if (sender === 'cli') return null;
+  if (isCliSender(sender)) return null;
   const teamManager = await getTeamManager();
   const teams = await teamManager.listTeams();
   const reachable = resolveSenderTeams(teams, sender);

@@ -21,6 +21,7 @@ import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import {
   checkSendScope,
   detectSenderIdentity,
+  isCliSender,
   printBridgeSuggestion,
   registerSendInboxCommands,
   resolveSenderTeams,
@@ -79,6 +80,35 @@ afterEach(() => {
       process.env[k] = v;
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// isCliSender — CLI dispatch-bypass marker recognition
+// ---------------------------------------------------------------------------
+
+describe('isCliSender', () => {
+  test('returns true for plain "cli" sender (true CLI invocation)', () => {
+    expect(isCliSender('cli')).toBe(true);
+  });
+
+  test('returns true for "cli:<origin>" prefixed sender (agent-context invocation)', () => {
+    expect(isCliSender('cli:tui-sidebar')).toBe(true);
+    expect(isCliSender('cli:felipe')).toBe(true);
+    expect(isCliSender('cli:team-lead@my-team')).toBe(true);
+  });
+
+  test('returns false for non-cli senders', () => {
+    expect(isCliSender('felipe')).toBe(false);
+    expect(isCliSender('engineer')).toBe(false);
+    expect(isCliSender('team-lead')).toBe(false);
+  });
+
+  test('returns false for tricky names that resemble but do not equal the marker', () => {
+    expect(isCliSender('clip')).toBe(false);
+    expect(isCliSender('CLI')).toBe(false); // case-sensitive
+    expect(isCliSender('')).toBe(false);
+    expect(isCliSender(':cli')).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -171,6 +201,11 @@ describe.skipIf(!DB_AVAILABLE)('checkSendScope', () => {
 
   test('cli sender has no scope restriction', async () => {
     const error = await checkSendScope(tempDir, 'cli', 'anyone');
+    expect(error).toBeNull();
+  });
+
+  test('cli:<origin> sender has no scope restriction (preserves bypass)', async () => {
+    const error = await checkSendScope(tempDir, 'cli:tui-sidebar', 'anyone');
     expect(error).toBeNull();
   });
 
@@ -474,6 +509,11 @@ describe.skipIf(!DB_AVAILABLE)('suggestRelayLeader', () => {
 
   test('returns null for cli sender', async () => {
     const result = await suggestRelayLeader('cli');
+    expect(result).toBeNull();
+  });
+
+  test('returns null for cli:<origin> prefixed sender', async () => {
+    const result = await suggestRelayLeader('cli:felipe');
     expect(result).toBeNull();
   });
 
