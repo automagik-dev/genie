@@ -86,7 +86,7 @@ Between 2026-04-21 (~22:14 UTC) and 2026-04-22 (~14:00 UTC), versions `4.260421.
 
 **Resources:**
 
-- 📖 [Incident response manual](./docs/incident-response/canisterworm.md)
+- 📖 [Incident response manual](./docs/incident-response/canisterworm.mdx)
 - 🌐 [Public advisory (English)](https://automagik.dev/security)
 - 🌐 [Aviso público (Português)](https://automagik.dev/seguranca)
 - 🛡️ [GitHub Security Advisories](https://github.com/automagik-dev/genie/security/advisories) for this repository
@@ -125,7 +125,7 @@ The security-tooling surface shipped with `@automagik/genie` is governed by four
 
 - **The scanner is read-only by design.** `genie sec scan`, `genie sec print-cleanup-commands`, and `genie sec quarantine list` inspect the host and emit findings — they never mutate state on the scanned target. `GENIE_SEC_SCAN_DISABLED=1` is honored as a global opt-out; the scanner never bypasses it.
 - **`genie sec remediate` is the only mutating verb.** Any future mutating subcommand MUST obey the same six-part contract: (1) dry-run default — `--apply` is opt-in; (2) frozen plan manifest — actions are materialized once and consented to once; (3) typed per-action consent — the operator acknowledges each mutation class verbatim, not a blanket yes/no; (4) quarantine-by-move — nothing is deleted without a recoverable copy under `$GENIE_SEC_QUARANTINE_DIR`; (5) signed-channel verification — `genie sec verify-install` must pass before `--apply` proceeds, or the invocation must use the `--unsafe-unverified <INCIDENT_ID>` escape hatch with a typed ack; (6) audit-log append-only — every action lands in `$GENIE_SEC_AUDIT_LOG` with a monotonic sequence number and cannot be rewritten in place.
-- **Distribution-channel risk is declared, not hidden.** `@automagik/genie` appears on the scanner's own IOC list for the CanisterWorm compromise window (see [Supported Versions](#supported-versions)). Operators are advised to (a) pin to a post-incident release from the current stable line, (b) run `genie sec verify-install` after install to confirm the binary matches the signed release identity, and (c) treat any `--unsafe-unverified` invocation as an incident — it must be recorded in the audit log with a typed `I_ACKNOWLEDGE_UNSIGNED_GENIE_<INCIDENT_ID>` ack and a matching post-mortem. "The prompt is annoying" is explicitly not a legitimate context for `--unsafe-unverified` — see [`docs/incident-response/canisterworm.md`](./docs/incident-response/canisterworm.md) for the allow-list.
+- **Distribution-channel risk is declared, not hidden.** `@automagik/genie` appears on the scanner's own IOC list for the CanisterWorm compromise window (see [Supported Versions](#supported-versions)). Operators are advised to (a) pin to a post-incident release from the current stable line, (b) run `genie sec verify-install` after install to confirm the binary matches the signed release identity, and (c) treat any `--unsafe-unverified` invocation as an incident — it must be recorded in the audit log with a typed `I_ACKNOWLEDGE_UNSIGNED_GENIE_<INCIDENT_ID>` ack and a matching post-mortem. "The prompt is annoying" is explicitly not a legitimate context for `--unsafe-unverified` — see [`docs/incident-response/canisterworm.md`](./docs/incident-response/canisterworm.mdx) for the allow-list.
 - **IOC-list freshness is tied to release cadence.** The scanner's IOC catalogue is baked into the shipped binary; there is no mutable online IOC feed to race against. Operators responding to a fresh advisory must upgrade to a release whose CHANGELOG references the new IOC set, then re-run `genie sec scan --all-homes --root /`. The incident runbook tells operators when to pin to a specific post-incident release.
 
 These invariants apply to every release from `4.260422.x` forward. Legacy lines (`4.260421.x`) predate the invariants and are listed under Supported Versions with appropriate status.
@@ -152,7 +152,7 @@ provenance source-uri:       github.com/automagik-dev/genie
 |---------|------------|---------|
 | In-repo canonical | [`SECURITY.md`](./SECURITY.md) (this file) | Ships with every release tarball; read-only after tag |
 | Project site | [`/.well-known/security.txt`](./.well-known/security.txt) | RFC 9116 discovery path served at the project site |
-| Out-of-band | [Pinned issue: `SIGNING_CERT_IDENTITY_*`](https://github.com/automagik-dev/genie/issues?q=is%3Aissue+label%3Apinned+label%3Asigning-identity) | Independent mirror; rotated via two-officer PR per [`docs/security/key-rotation.md`](./docs/security/key-rotation.md) |
+| Out-of-band | [Pinned issue: `SIGNING_CERT_IDENTITY_*`](https://github.com/automagik-dev/genie/issues?q=is%3Aissue+label%3Apinned+label%3Asigning-identity) | Independent mirror; rotated via two-officer PR per [`docs/security/key-rotation.md`](./docs/security/key-rotation.mdx) |
 
 A fourth in-repo witness — [`.github/cosign.pub`](./.github/cosign.pub) — carries the same values inside a NO-PINNED-KEY sentinel so tooling that naively reads a PEM file fails closed rather than trusting a fabricated key. The CI gate (`scripts/check-fingerprint-pinning.sh`) asserts all four witnesses agree on every PR that touches any of them.
 
@@ -228,9 +228,9 @@ diff <(curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/SEC
 ### If the pin has drifted
 
 1. **Do not run `genie sec remediate --apply`** on any host — you cannot distinguish a legitimate rotation from a compromise until the out-of-band channel is reconciled.
-2. Check the pinned GitHub issue: a legitimate rotation lands a new `SIGNING_CERT_IDENTITY_<YYYYMMDD>` issue co-authored by two Namastex security officers (verified GPG signatures). The rotation procedure lives in [`docs/security/key-rotation.md`](./docs/security/key-rotation.md).
+2. Check the pinned GitHub issue: a legitimate rotation lands a new `SIGNING_CERT_IDENTITY_<YYYYMMDD>` issue co-authored by two Namastex security officers (verified GPG signatures). The rotation procedure lives in [`docs/security/key-rotation.md`](./docs/security/key-rotation.mdx).
 3. Email `privacidade@namastex.ai` with the diverging channel, the observed value, and the expected value. Response SLA is two business hours (see [Reporting a Vulnerability](#reporting-a-vulnerability)).
-4. While triage is in flight, operators who must mutate a compromised host use the `--unsafe-unverified <INCIDENT_ID>` escape hatch documented in [`docs/incident-response/canisterworm.md`](./docs/incident-response/canisterworm.md). Every invocation lands in the audit log.
+4. While triage is in flight, operators who must mutate a compromised host use the `--unsafe-unverified <INCIDENT_ID>` escape hatch documented in [`docs/incident-response/canisterworm.md`](./docs/incident-response/canisterworm.mdx). Every invocation lands in the audit log.
 
 ---
 

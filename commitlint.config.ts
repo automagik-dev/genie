@@ -38,7 +38,6 @@ export default {
     // Reflowing would require rebasing dev. Ignoring unblocks the dev→main
     // promotion PR. Do NOT reuse this exact subject — keep new headers ≤100
     // accounting for GitHub's `(#NNN)` suffix on squash-merge.
-    (message: string) =>
-      message.startsWith('docs(sec): apply reviewer round-2 fixes — deprecation mechanism'),
+    (message: string) => message.startsWith('docs(sec): apply reviewer round-2 fixes — deprecation mechanism'),
   ],
 };
