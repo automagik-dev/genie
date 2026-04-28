@@ -14,6 +14,20 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Pin terminal width for the test process. test/visual/tui-snapshot.test.tsx
+# (and any future visual regression test) renders OpenTUI components without
+# forcing an explicit width — OpenTUI auto-detects from $COLUMNS. Local
+# developer terminals default to 80 cols (snapshots were captured at 80);
+# Blacksmith CI runners default to ~100+ cols, which produces wider card
+# borders and breaks every visual snapshot.
+#
+# Pin COLUMNS=80 at the workflow level so every job/step inherits the same
+# render width as the snapshots. Both `unit-tests > Visual regression` and
+# `pg-tests > Test` run test/visual/* and need the same value, so a single
+# workflow-level env is the right scope.
+env:
+  COLUMNS: "80"
+
 jobs:
   secrets-scan:
     name: Secrets Scan (GitGuardian)
