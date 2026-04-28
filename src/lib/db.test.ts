@@ -402,6 +402,34 @@ describe('retention cleanup', () => {
   });
 });
 
+describe('GENIE_SKIP_DB_BOOT (Mac CPU fix C — hook-dispatch coldstart)', () => {
+  test('runPostConnectSetup honors GENIE_SKIP_DB_BOOT alongside isTestMode', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // The skipBoot guard must combine isTestMode + the env var so the
+    // hook-dispatch entrypoint can short-circuit migrations + seed
+    expect(source).toContain("process.env.GENIE_SKIP_DB_BOOT === '1'");
+    expect(source).toMatch(/skipBoot\s*=\s*isTestMode\s*\|\|\s*process\.env\.GENIE_SKIP_DB_BOOT/);
+    // Both migrations and seed gated by skipBoot
+    expect(source).toMatch(/if \(!skipBoot\) await runMigrations/);
+    expect(source).toMatch(/if \(!skipBoot && needsSeed\(\)\) await runSeed/);
+  });
+
+  test('hook dispatch entrypoint sets GENIE_SKIP_DB_BOOT before invoking dispatch()', () => {
+    const dispatchSource = readFileSync(join(__dirname, '..', 'hooks', 'dispatch-command.ts'), 'utf-8');
+    // Env must be set inside dispatchAction (not at module load — that would
+    // affect the entire genie binary including the daemon path)
+    const dispatchActionIdx = dispatchSource.indexOf('async function dispatchAction');
+    expect(dispatchActionIdx).toBeGreaterThan(-1);
+    const fnBody = dispatchSource.slice(dispatchActionIdx, dispatchSource.indexOf('}', dispatchActionIdx + 100));
+    expect(fnBody).toContain("process.env.GENIE_SKIP_DB_BOOT = '1'");
+    // Must be set BEFORE dispatch(stdin) so the first getConnection() inside
+    // any handler skips migrations + seed
+    const envSetIdx = dispatchSource.indexOf("GENIE_SKIP_DB_BOOT = '1'");
+    const dispatchCallIdx = dispatchSource.indexOf('await dispatch(stdin)');
+    expect(envSetIdx).toBeLessThan(dispatchCallIdx);
+  });
+});
+
 describe('pool error recovery', () => {
   test('migration failure resets both sqlClient and activePort', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
