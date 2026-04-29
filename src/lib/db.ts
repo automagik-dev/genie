@@ -1,10 +1,20 @@
 /**
  * Database connection management for Genie.
  *
- * `genie serve` owns pgserve. CLI commands read the port file and connect.
- * If no serve process is running, the CLI auto-starts `genie serve --headless`.
- * Set GENIE_PG_NO_AUTOSTART=1 for read-only probes that must not spawn serve.
- * Self-healing: health checks on every connection, automatic recovery.
+ * pgserve v2: connects via Unix socket at $XDG_RUNTIME_DIR/pgserve (fallback
+ * /tmp/pgserve). The daemon authenticates the peer via SO_PEERCRED, derives
+ * the package.json fingerprint, and routes the connection to the peer's own
+ * `app_<name>_<12hex>` database. No port, user, or password is required on
+ * the consumer side — auto-fingerprint resolves the database server-side.
+ *
+ * Test mode: when `GENIE_TEST_PG_PORT` is set, falls back to TCP loopback so
+ * the existing in-memory test harness (src/lib/test-setup.ts) keeps working
+ * without a control socket. Production never sets that env var.
+ *
+ * Legacy daemon spawn / lockfile / serve.pid plumbing remains for the
+ * v1-style headless serve flow until consumers fully migrate to running
+ * `pgserve daemon` as a separate supervised process. Self-healing TCP path
+ * is retained as a fallback.
  */
 
 import { type ChildProcess, execSync, spawn } from 'node:child_process';
@@ -25,11 +35,231 @@ export type Sql = postgres.Sql;
 
 const DEFAULT_PORT = 19642;
 const DEFAULT_HOST = '127.0.0.1';
+/**
+ * Sentinel stored in `activePort` when the live connection is the v2 Unix
+ * socket. Lets `getActivePort()` callers (db status, otel/executor relative
+ * port math) detect socket mode without a separate flag, and prevents the
+ * default TCP port (19642) from leaking into diagnostics that should report
+ * "socket".
+ */
+const SOCKET_PORT_SENTINEL = 0;
 const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
 const DATA_DIR = join(GENIE_HOME, 'data', 'pgserve');
 const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
-const DB_NAME = 'genie';
+/**
+ * Default DB requested when connecting via Unix socket. The pgserve v2 daemon
+ * treats `postgres` (libpq's default) as "give me whatever DB belongs to my
+ * fingerprint" and silently routes to the peer's `app_<name>_<12hex>` DB.
+ * The actual resolved name is surfaced via the startup banner below.
+ */
+const DB_NAME = 'postgres';
+/**
+ * Truthy env-var values. Restored during rebase onto dev — `-X theirs`
+ * preferred pgserve-v2 changes wholesale and dropped the dev-side const,
+ * but `isPgAutostartDisabled` still references it. Single source of truth
+ * for env-var bool parsing.
+ */
 const TRUTHY_ENV = new Set(['1', 'true', 'yes', 'on']);
+
+/**
+ * Resolve the directory holding pgserve v2's control socket.
+ * Mirrors `resolveControlSocketDir()` in pgserve/src/daemon.js: prefers
+ * `$XDG_RUNTIME_DIR/pgserve` (the systemd / freedesktop convention),
+ * falls back to `/tmp/pgserve` on hosts without XDG_RUNTIME_DIR.
+ */
+export function resolvePgserveSocketDir(): string {
+  const xdg = process.env.XDG_RUNTIME_DIR;
+  const base = xdg && xdg.length > 0 ? xdg : '/tmp';
+  return join(base, 'pgserve');
+}
+
+/**
+ * Default database name requested on connect. pgserve v2's daemon-control
+ * accept hook routes `postgres` (and the libpq default `database = user`)
+ * into the peer's own fingerprinted DB. Test mode honors GENIE_TEST_DB_NAME.
+ */
+export function resolveDatabaseName(): string {
+  const testDbName = process.env.GENIE_TEST_DB_NAME;
+  if (testDbName && testDbName.length > 0) return testDbName;
+  return DB_NAME;
+}
+
+/** Path to the libpq compat socket inside the v2 daemon's socket dir. */
+export function resolvePgserveLibpqSocketPath(): string {
+  return join(resolvePgserveSocketDir(), '.s.PGSQL.5432');
+}
+
+/** Path to the v2 daemon's pid lock file. */
+export function resolvePgserveDaemonPidPath(): string {
+  return join(resolvePgserveSocketDir(), 'pgserve.pid');
+}
+
+interface DaemonState {
+  running: boolean;
+  pid: number | null;
+  socketPresent: boolean;
+  reason?: string;
+}
+
+/**
+ * Probe the v2 daemon. Returns running=true only when both the libpq socket
+ * file exists AND the recorded pid is alive. A pid file with no socket (or
+ * vice versa) is reported as a stale/partial state so the caller can decide
+ * whether to clean up and respawn.
+ */
+export function probePgserveDaemon(): DaemonState {
+  const socketPath = resolvePgserveLibpqSocketPath();
+  const pidPath = resolvePgserveDaemonPidPath();
+  const socketPresent = existsSync(socketPath);
+  let pid: number | null = null;
+  if (existsSync(pidPath)) {
+    try {
+      const raw = readFileSync(pidPath, 'utf-8').trim();
+      const parsed = Number.parseInt(raw, 10);
+      if (Number.isInteger(parsed) && parsed > 0) pid = parsed;
+    } catch {
+      /* unreadable */
+    }
+  }
+  if (pid !== null) {
+    try {
+      process.kill(pid, 0);
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      // EPERM means the process exists but we don't own it — still alive.
+      if (e.code !== 'EPERM') pid = null;
+    }
+  }
+  if (socketPresent && pid !== null) return { running: true, pid, socketPresent: true };
+  if (!socketPresent && pid === null) {
+    return { running: false, pid: null, socketPresent: false, reason: 'no daemon' };
+  }
+  return {
+    running: false,
+    pid,
+    socketPresent,
+    reason: socketPresent ? 'socket present but pid stale' : 'pid alive but no socket',
+  };
+}
+
+/** Resolve the v2 daemon binary path — local node_modules → global → PATH. */
+function findPgserveDaemonBin(): string | null {
+  try {
+    const resolved = require.resolve('pgserve/bin/pgserve-wrapper.cjs');
+    if (existsSync(resolved)) return resolved;
+  } catch {
+    /* not in local deps */
+  }
+  const globalBin = join(homedir(), '.bun', 'bin', 'pgserve');
+  if (existsSync(globalBin)) return globalBin;
+  try {
+    const fromPath = execSync('which pgserve', { encoding: 'utf-8', timeout: 3000 }).trim();
+    if (fromPath.length > 0) return fromPath;
+  } catch {
+    /* not on PATH */
+  }
+  return null;
+}
+
+/** Sleep helper used by readiness loops. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+let daemonStartPromise: Promise<void> | null = null;
+
+/**
+ * Discover-or-spawn the pgserve v2 daemon. Idempotent + single-flighted.
+ *
+ * Modes:
+ *   A. Daemon already running (PM2/systemd, or another genie process).
+ *      We do nothing — connect to the existing socket.
+ *   B. Stale state (pid file but no socket, or socket but dead pid).
+ *      We unlink the stale pid file and respawn.
+ *   C. Nothing running. We spawn `pgserve daemon` detached + unref'd so it
+ *      outlives the current genie invocation, then wait for the socket.
+ *
+ * If the pgserve binary cannot be resolved, throws a clear install-guidance
+ * error rather than auto-installing — that's the user's call.
+ *
+ * @public — wired up by the scheduler-daemon and `genie serve` boot path in
+ * downstream commits; exported here so those call-sites land cleanly.
+ */
+export async function getOrStartDaemon(): Promise<DaemonState> {
+  if (process.env.GENIE_PG_DISABLE_AUTOSTART === '1') {
+    return probePgserveDaemon();
+  }
+  const initial = probePgserveDaemon();
+  if (initial.running) return initial;
+
+  // CI: tests get TCP via GENIE_TEST_PG_PORT; non-test CI shouldn't autospawn.
+  if (process.env.CI === 'true' && process.env.GENIE_PG_ALLOW_CI_AUTOSTART !== '1') {
+    throw new Error(
+      'pgserve v2 daemon socket not present and CI=true. Either start `pgserve daemon` in the workflow or set GENIE_PG_ALLOW_CI_AUTOSTART=1 to opt in.',
+    );
+  }
+
+  const rootErr = checkRootGuard();
+  if (rootErr !== null) throw new Error(rootErr);
+
+  if (daemonStartPromise) {
+    await daemonStartPromise;
+    return probePgserveDaemon();
+  }
+
+  daemonStartPromise = (async () => {
+    // Clean up partial state before respawning.
+    if (initial.reason === 'pid alive but no socket' && initial.pid !== null) {
+      try {
+        process.kill(initial.pid, 'SIGTERM');
+      } catch {
+        /* already gone */
+      }
+      await sleep(500);
+    }
+    if (initial.reason === 'socket present but pid stale') {
+      try {
+        unlinkSync(resolvePgserveDaemonPidPath());
+      } catch {
+        /* gone */
+      }
+    }
+
+    const bin = findPgserveDaemonBin();
+    if (bin === null) {
+      throw new Error(
+        'pgserve binary not found. Install with `bun add pgserve@^2.0.0` (or `npm i pgserve@^2.0.0`), or start `pgserve daemon` manually before running genie.',
+      );
+    }
+
+    mkdirSync(resolvePgserveSocketDir(), { recursive: true, mode: 0o700 });
+
+    const child = spawn(bin, ['daemon'], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    });
+    child.unref();
+
+    const socketPath = resolvePgserveLibpqSocketPath();
+    const timeout = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 16000;
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (existsSync(socketPath)) return;
+      await sleep(250);
+    }
+    throw new Error(
+      `pgserve v2 daemon did not bind ${socketPath} within ${Math.round(timeout / 1000)}s. Try starting it manually: ${bin} daemon`,
+    );
+  })();
+
+  try {
+    await daemonStartPromise;
+  } finally {
+    daemonStartPromise = null;
+  }
+  return probePgserveDaemon();
+}
 
 /** Sanitize connection URLs for logging — never expose credentials */
 function maskCredentials(url: string): string {
@@ -179,7 +409,9 @@ async function isPostgresHealthy(port: number): Promise<boolean> {
           port,
           database: DB_NAME,
           username: 'postgres',
-          password: 'postgres',
+          // TCP probe credentials — env-overridable for non-default test daemons.
+          // The fallback is the in-memory pgserve test daemon's well-known default.
+          password: process.env.PGPASSWORD || 'postgres', // pragma: allowlist secret — pgserve unauthenticated test default
           max: 1,
           connect_timeout: 3,
           idle_timeout: 1,
@@ -271,6 +503,11 @@ let retentionRan = false;
  * daemon's own startup-then-timer path.
  */
 export async function runRetention(sql: postgres.Sql): Promise<void> {
+  // Intra-process double-fire guard the surrounding doc-block describes: the
+  // scheduler-daemon timer can fire while runPostConnectSetup() is still on
+  // the path that used to call this inline. Without this short-circuit the
+  // DELETE pass runs twice on the cold-start frame.
+  if (retentionRan) return;
   try {
     await sql.unsafe(`
       DELETE FROM heartbeats WHERE created_at < now() - interval '7 days';
@@ -775,25 +1012,73 @@ export async function getConnection() {
   }
 }
 
+/**
+ * Decide between Unix socket (pgserve v2 production path) and TCP loopback
+ * (legacy + test mode). Test mode is selected by GENIE_TEST_PG_PORT — that
+ * env var is set by src/lib/test-setup.ts (bun preload) which boots a
+ * dedicated `pgserve --ram` instance for the suite. Production never sets it.
+ */
+function shouldUseUnixSocket(): boolean {
+  if (process.env.GENIE_PG_FORCE_TCP === '1') return false;
+  if (process.env.GENIE_TEST_PG_PORT) return false;
+  return true;
+}
+
+let bannerPrinted = false;
+
+/**
+ * Print the resolved DB name once per process, on first successful connect.
+ * Surfaces pgserve v2's auto-fingerprint so devs can see the visible
+ * `app_<name>_<12hex>` database their genie process landed in.
+ */
+async function maybePrintBanner(client: postgres.Sql, isTestMode: boolean): Promise<void> {
+  if (bannerPrinted || isTestMode) return;
+  if (process.env.GENIE_QUIET === '1' || process.env.GENIE_NO_BANNER === '1') {
+    bannerPrinted = true;
+    return;
+  }
+  try {
+    const rows = await client.unsafe('SELECT current_database() AS db');
+    const db = rows[0]?.db;
+    if (typeof db === 'string' && db.length > 0) {
+      process.stderr.write(`[pgserve] connected to ${db}\n`);
+    }
+  } catch {
+    // Banner is best-effort — never fail a connection because of it.
+  }
+  bannerPrinted = true;
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
 async function _buildConnection(): Promise<any> {
   const _t0 = Date.now();
-  const port = await ensurePgserve();
+  const useSocket = shouldUseUnixSocket();
+  const port = useSocket ? 5432 : await ensurePgserve();
   const _t1 = Date.now();
   const pgModule = (await import('postgres')).default;
 
   // Per-test isolation now happens at the DATABASE level — setupTestDatabase()
   // clones `genie_template` and sets GENIE_TEST_DB_NAME. In production, this
-  // env var is never set, so we fall back to DB_NAME ('genie').
-  const testDbName = process.env.GENIE_TEST_DB_NAME;
-  const database = testDbName && testDbName.length > 0 ? testDbName : DB_NAME;
-  const isTestMode = Boolean(testDbName);
+  // env var is never set, so we fall back to DB_NAME ('postgres') and let
+  // pgserve v2's accept hook auto-resolve to the fingerprint's database.
+  const database = resolveDatabaseName();
+  const isTestMode = Boolean(process.env.GENIE_TEST_DB_NAME);
+
+  // Unix socket: postgres.js dials `<host>/.s.PGSQL.<port>` when host is an
+  // absolute path. pgserve v2 publishes a `.s.PGSQL.5432` libpq compat link
+  // alongside its control socket so off-the-shelf clients connect without
+  // knowing the daemon's actual socket name.
+  const host = useSocket ? resolvePgserveSocketDir() : DEFAULT_HOST;
   sqlClient = pgModule({
-    host: DEFAULT_HOST,
+    host,
     port,
     database,
     username: 'postgres',
-    password: 'postgres',
+    // Password unused on Unix socket (pgserve v2 authenticates via SO_PEERCRED).
+    // TCP path: honor PGPASSWORD when set, fall back to the in-memory test
+    // daemon's well-known default ('postgres'). The fallback is unauthenticated
+    // by design — the test pgserve runs in --ram mode on a per-suite TCP port.
+    password: useSocket ? '' : process.env.PGPASSWORD || 'postgres', // pragma: allowlist secret — pgserve unauthenticated test default
     max: 50,
     idle_timeout: 1,
     connect_timeout: 5,
@@ -805,6 +1090,15 @@ async function _buildConnection(): Promise<any> {
 
   try {
     await runPostConnectSetup(sqlClient, isTestMode, { t0: _t0, t1: _t1 });
+    await maybePrintBanner(sqlClient, isTestMode);
+    // Surface the resolved transport on the activePort singleton so diagnostics
+    // (db status, printPgserveHealth) report the truth. Socket mode uses the
+    // SOCKET_PORT_SENTINEL (0) since there is no TCP port to advertise; TCP
+    // mode already updates activePort via ensurePgserve().
+    if (useSocket) {
+      activePort = SOCKET_PORT_SENTINEL;
+      process.env.GENIE_PG_AVAILABLE = 'true';
+    }
   } catch (err) {
     const dying = sqlClient;
     sqlClient = null;
@@ -877,9 +1171,26 @@ export function getDataDir(): string {
 
 /**
  * Get the currently active port (or the configured default if not yet started).
+ *
+ * Returns `SOCKET_PORT_SENTINEL` (0) when the live connection is the v2 Unix
+ * socket — there is no TCP port in that mode. Callers that need a real TCP
+ * port for relative math (otel +1, executor +2) should consult `isSocketMode()`
+ * first and fall back to the legacy default port if true.
  */
 export function getActivePort(): number {
   return activePort ?? getPort();
+}
+
+/**
+ * True when the live connection is the v2 Unix socket. Returns false in TCP
+ * mode (legacy + test) and before the first connect.
+ *
+ * @public — consumed by diagnostic surfaces (db status, db url,
+ * printPgserveHealth) and the otel/executor relative-port fallback once their
+ * follow-up commits land. Exported here so those callers can plug in cleanly.
+ */
+export function isSocketMode(): boolean {
+  return activePort === SOCKET_PORT_SENTINEL;
 }
 
 /**

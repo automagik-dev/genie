@@ -66,6 +66,21 @@ jobs:
         with:
           bun-version: "1.3.11"
 
+      # package.json pins `pgserve: file:../pgserve` until Group 8 of pgserve-v2
+      # publishes pgserve@2.0.0 to npm. Bun install fails on CI without the
+      # sibling checkout. Cloning the v2 branch alongside satisfies the file:
+      # protocol the same way the smoke job's local sibling does.
+      #
+      # `bun install` inside the sibling is required too: pgserve's CLI is
+      # bin/pgserve-wrapper.cjs, which probes for the bun runtime in
+      # ../pgserve/node_modules/.bin/bun. Without that population, the
+      # spawn-test-pgserve preload throws "could not find bun runtime" and
+      # the whole PG suite collapses with ENOENT on /tmp/pgserve socket.
+      - name: Checkout pgserve v2 sibling
+        run: |
+          git clone --depth 1 --branch wish/pgserve-v2 https://github.com/namastexlabs/pgserve.git ../pgserve
+          (cd ../pgserve && bun install --no-save)
+
       - name: Install dependencies
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -142,6 +157,18 @@ jobs:
         with:
           bun-version: "1.3.11"
 
+      # See unit-tests for rationale — package.json pins `pgserve:
+      # file:../pgserve` until pgserve@2.0.0 is on npm, so CI must clone the
+      # v2 branch as a sibling before bun install can resolve. PG Tests in
+      # particular also needs the wrapper's bun runtime populated (see
+      # unit-tests note) — without `bun install` inside the sibling, the
+      # test-setup preload throws "could not start pgserve on any port" and
+      # the entire suite collapses with ENOENT on /tmp/pgserve.
+      - name: Checkout pgserve v2 sibling
+        run: |
+          git clone --depth 1 --branch wish/pgserve-v2 https://github.com/namastexlabs/pgserve.git ../pgserve
+          (cd ../pgserve && bun install --no-save)
+
       # Per-run scratch cache dir. Prior config used a persistent
       # ~/.bun/install/cache restored via actions/cache, which cross-
       # polluted runs on the self-hosted Blacksmith runner and was
@@ -184,6 +211,79 @@ jobs:
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
         run: bun test --timeout 15000 || bun test --timeout 15000
+
+  # Group 7 of the pgserve-v2 wish: smoke-test the v2 Unix-socket consumer
+  # path. Spawns pgserve daemon, runs `genie wish list` against it, asserts
+  # the round-trip succeeds and the routed DB is auto-fingerprinted (named
+  # `app_genie_<12hex>`). Skipped when pgserve@2 isn't resolvable yet —
+  # the dep is currently pinned to `file:../pgserve` until Group 8 publishes
+  # `pgserve@2.0.0` to npm.
+  pgserve-v2-smoke:
+    name: pgserve v2 smoke (Unix socket round-trip)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Resolve pgserve v2 (skip if unavailable)
+        id: pgserve_check
+        run: |
+          set -eo pipefail
+          if [ -d "../pgserve" ] && [ -f "../pgserve/bin/pgserve-wrapper.cjs" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "pgserve v2 sibling checkout found at ../pgserve"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::pgserve v2 not resolvable (no ../pgserve sibling). Smoke test skipped until Group 8 publishes pgserve@2.0.0 to npm."
+          fi
+
+      - name: Install dependencies
+        if: steps.pgserve_check.outputs.available == 'true'
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bun install
+
+      - name: Build
+        if: steps.pgserve_check.outputs.available == 'true'
+        run: bun run build
+
+      - name: Start pgserve v2 daemon
+        if: steps.pgserve_check.outputs.available == 'true'
+        run: |
+          set -eo pipefail
+          export XDG_RUNTIME_DIR="${RUNNER_TEMP}/xdg"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          ../pgserve/bin/pgserve-wrapper.cjs daemon &
+          # Wait up to 30s for the libpq socket to appear.
+          for i in $(seq 1 60); do
+            if [ -S "$XDG_RUNTIME_DIR/pgserve/.s.PGSQL.5432" ]; then
+              echo "pgserve daemon ready"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "::error::pgserve daemon did not bind libpq socket within 30s"
+          exit 1
+
+      - name: Smoke — genie wish list round-trip
+        if: steps.pgserve_check.outputs.available == 'true'
+        env:
+          GENIE_NO_BANNER: ""
+        run: |
+          set -eo pipefail
+          # Capture stderr to assert the banner printed the resolved DB.
+          OUT=$(./dist/genie.js wish list 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -E '\[pgserve\] connected to app_genie_[0-9a-f]{12}' \
+            || (echo "::error::Banner did not print fingerprinted DB name"; exit 1)
 
   # Umbrella status check. Branch protection is configured to require
   # "Quality Gate (typecheck + lint + test)" as a required status, so the

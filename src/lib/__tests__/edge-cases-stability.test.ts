@@ -325,19 +325,23 @@ describe('7.3 Security', () => {
     // pg_dump uses spawnSync with separate args, not shell string
     expect(source).toContain("spawnSync('pg_dump'");
 
-    // DB name passed via environment variable, not command string
-    expect(source).toContain('PGDATABASE: DB_NAME');
+    // DB name flows through PGDATABASE in the env block, not the args array.
+    // The env builder parameterises it via resolveDatabaseName() (or a
+    // caller-supplied name) so a hostile value never reaches argv.
+    expect(source).toContain('PGDATABASE:');
+    expect(source).toContain('resolveDatabaseName()');
   });
 
-  test('restore uses psql variable binding to avoid SQL injection on DB name', () => {
+  test('restore avoids SQL injection on DB name', () => {
     const source = readFileSync(join(__dirname, '..', 'db-backup.ts'), 'utf-8');
 
-    // Uses psql -v for variable binding
-    expect(source).toContain('-v');
-    expect(source).toContain('target_db=${DB_NAME}');
-
-    // Uses :"target_db" (psql quoted variable) for SQL identifiers
-    expect(source).toContain(':"target_db"');
+    // Restore now resolves the target DB server-side via current_database()
+    // — under pgserve v2 the daemon routes the connection to the peer's
+    // fingerprinted DB, so the client never has to interpolate a name at
+    // all. That is strictly safer than the previous psql `-v` /
+    // `:"target_db"` binding (which still required us to know + parameterise
+    // the name).
+    expect(source).toContain('current_database()');
 
     // Restore uses stdin piping, not shell interpolation
     expect(source).toContain('input: sql');
