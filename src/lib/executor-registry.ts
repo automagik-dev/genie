@@ -500,65 +500,39 @@ async function tryJsonlFallback(agentId: string, row: ResumeRow | null, actor: s
 }
 
 /**
- * In-process dedupe cache for `resume.missing_session` emissions. Keyed by
- * `${agentId}:${actor}:${reason}`; value is the last emit timestamp (ms).
+ * Test-only: no-op kept for back-compat with tests that asserted on dedupe
+ * behavior in PR #1528 (Wave 1). The dedupe was removed in the W1 hotfix
+ * because in-process maps don't survive CLI process boundaries — every
+ * `genie ls` / TUI tick is a fresh process and each emitted a fresh event,
+ * which made the 60s dedupe window ineffective in the observed storm path.
  *
- * Why: every TUI tick / `genie ls` / `genie agent show` / status read calls
- * `getResumeSessionId()` for orphan agents, and each call emitted a fresh
- * audit row. On one observed machine this produced 14M `resume.missing_session`
- * events in 7 days (one orphan, one TUI, one observer — multiplied across
- * every reader). The events are observability, not behavior, so coalescing
- * within a 60s window keeps the signal (operator sees the row is broken)
- * without the noise (one event per reader-tick).
+ * The architectural fix instead removes emission from the read path
+ * (`getResumeSessionId`) entirely. Emission now happens only from the
+ * scheduler's `attemptAgentResume` no-session branch — bounded to one
+ * event per orphan per scheduler tick by the long-running daemon.
  *
- * Closes #1461 — `shouldResume` status reads emit unbounded audit events.
+ * See PR #1530 (this hotfix) and #1528 (the original Wave 1 attempt).
  */
-const MISSING_SESSION_DEDUPE_WINDOW_MS = 60_000;
-const missingSessionLastEmit = new Map<string, number>();
-/** Cap the dedupe map so a long-running daemon with many orphans doesn't grow forever. */
-const MISSING_SESSION_DEDUPE_MAX_KEYS = 4096;
-
-function shouldEmitMissingSession(agentId: string, actor: string, reason: string): boolean {
-  const key = `${agentId}:${actor}:${reason}`;
-  const now = Date.now();
-  const last = missingSessionLastEmit.get(key);
-  if (last !== undefined && now - last < MISSING_SESSION_DEDUPE_WINDOW_MS) {
-    return false;
-  }
-  // LRU-ish trim: when over cap, drop the oldest 25% in one pass.
-  if (missingSessionLastEmit.size >= MISSING_SESSION_DEDUPE_MAX_KEYS) {
-    const entries = Array.from(missingSessionLastEmit.entries()).sort((a, b) => a[1] - b[1]);
-    const drop = Math.floor(entries.length / 4);
-    for (let i = 0; i < drop; i++) missingSessionLastEmit.delete(entries[i][0]);
-  }
-  missingSessionLastEmit.set(key, now);
-  return true;
-}
-
-/** Test-only: clear the dedupe cache. */
 export function _resetMissingSessionDedupeForTests(): void {
-  missingSessionLastEmit.clear();
+  /* noop — dedupe map removed in W1 hotfix */
 }
 
 /**
- * Emit the appropriate `resume.missing_session` event when both DB and JSONL miss.
+ * Record a `resume.missing_session` audit event. **Caller is responsible for
+ * rate-limiting** — this writes one row unconditionally. Used by the
+ * scheduler from `attemptAgentResume` (bounded to ≤1 emit per orphan per
+ * 60s tick by the daemon's tick cadence).
  *
- * Coalesces successive emissions for the same `(agentId, actor, reason)` within
- * `MISSING_SESSION_DEDUPE_WINDOW_MS` (60s) — see {@link shouldEmitMissingSession}.
+ * The READ path (`getResumeSessionId`) deliberately does NOT call this:
+ * status reads / TUI ticks / `genie ls` would otherwise produce one event
+ * per reader-process, which 14M-events-in-7-days confirmed is unbounded.
  */
-async function emitMissingSession(agentId: string, row: ResumeRow | null, actor: string): Promise<void> {
-  if (row === null || row.executor_id === null) {
-    if (!shouldEmitMissingSession(agentId, actor, 'no_executor')) return;
-    await recordAuditEvent('agent', agentId, 'resume.missing_session', actor, {
-      reason: 'no_executor',
-    });
-    return;
-  }
-  if (!shouldEmitMissingSession(agentId, actor, 'null_session')) return;
-  await recordAuditEvent('agent', agentId, 'resume.missing_session', actor, {
-    reason: 'null_session',
-    executorId: row.executor_id,
-  });
+export async function recordResumeMissingSession(
+  agentId: string,
+  actor: string,
+  details: { reason: 'no_executor' | 'null_session' | 'no_session_id'; executorId?: string | null },
+): Promise<void> {
+  await recordAuditEvent('agent', agentId, 'resume.missing_session', actor, details);
 }
 
 export async function getResumeSessionId(agentId: string): Promise<string | null> {
@@ -593,8 +567,13 @@ export async function getResumeSessionId(agentId: string): Promise<string | null
   const recovered = await tryJsonlFallback(agentId, row, actor);
   if (recovered) return recovered;
 
-  // Final miss — no DB session, no JSONL on disk.
-  await emitMissingSession(agentId, row, actor);
+  // Final miss — no DB session, no JSONL on disk. Returns null SILENTLY.
+  // Emission of `resume.missing_session` is the scheduler's responsibility
+  // (see `attemptAgentResume`). Pre-hotfix, this read path emitted on every
+  // call; under load that was 14M events/7-day for one orphan because every
+  // CLI invocation / TUI tick is a fresh process with no in-memory dedupe.
+  // The architectural fix is that the actor-that-attempts-the-resume emits,
+  // not the actor-that-queries-state.
   return null;
 }
 
