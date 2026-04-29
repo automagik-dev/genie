@@ -16,7 +16,7 @@
  *   afterAll(async () => { await cleanup(); });
  */
 
-import { ensurePgserve, resetConnection } from './db.js';
+import { ensurePgserve, getConnection, resetConnection } from './db.js';
 import { resumeEmitter, shutdownEmitter } from './emit.js';
 import { createTestDatabase, dropTestDatabase } from './test-setup.js';
 
@@ -48,6 +48,26 @@ function shardPrefix(): string {
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n <= 0) return 'test';
   return `test_shard${n}`;
+}
+
+function isConnectionEnded(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'CONNECTION_ENDED';
+}
+
+async function warmTestConnection(): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const sql = await getConnection();
+      await sql`SELECT 1`;
+      return;
+    } catch (err) {
+      if (attempt === 0 && isConnectionEnded(err)) {
+        await resetConnection();
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 /**
@@ -103,6 +123,10 @@ export async function setupTestDatabase(): Promise<() => Promise<void>> {
   // Point db.ts at the new database and force a rebuild.
   process.env.GENIE_TEST_DB_NAME = dbName;
   await resetConnection();
+  // Force the first connection while setup still owns the DB swap boundary.
+  // postgres.js can otherwise surface a stale socket as CONNECTION_ENDED to
+  // the first test body query after the singleton was reset.
+  await warmTestConnection();
   // Re-open admits now that the new DB is bound. shutdownEmitter() latched
   // `shuttingDown = true` so leaked background pollers from prior test files
   // couldn't re-arm the flusher mid-swap; with the new sqlClient in place,
