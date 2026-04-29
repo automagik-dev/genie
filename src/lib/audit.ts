@@ -357,6 +357,61 @@ export async function queryToolUsage(since: string, groupBy: 'tool' | 'agent' = 
   return rows as unknown as ToolUsageRow[];
 }
 
+export interface ToolUsageDetailRow {
+  created_at: Date | string;
+  entity_id: string;
+  event_type: string;
+  actor: string | null;
+  tool_name: string | null;
+  tool_input: unknown;
+  tool_parameters: unknown;
+  duration_ms: number | null;
+  error: string | null;
+  details: Record<string, unknown>;
+}
+
+export async function queryToolUsageDetail(
+  since: string,
+  opts: { limit?: number; tool?: string; agent?: string } = {},
+): Promise<ToolUsageDetailRow[]> {
+  const sql = await getConnection();
+  const sinceTs = parseSince(since);
+  const limit = Math.max(1, Math.min(10000, opts.limit ?? 500));
+
+  const toolFilter = opts.tool ? "AND COALESCE(details->>'tool_name', entity_id) = $2::text" : '';
+  const agentFilter = opts.agent ? `AND COALESCE(actor, 'unknown') = $${opts.tool ? 3 : 2}::text` : '';
+  const params: unknown[] = [sinceTs];
+  if (opts.tool) params.push(opts.tool);
+  if (opts.agent) params.push(opts.agent);
+
+  const rows = await sql.unsafe(
+    `SELECT
+       created_at,
+       entity_id,
+       event_type,
+       actor,
+       COALESCE(details->>'tool_name', entity_id) AS tool_name,
+       details->'tool_input'      AS tool_input,
+       details->'tool_parameters' AS tool_parameters,
+       NULLIF(details->>'duration_ms','')::numeric AS duration_ms,
+       details->>'error' AS error,
+       details
+     FROM audit_events
+     WHERE entity_type = 'otel_tool'
+       AND created_at >= $1::timestamptz
+       ${toolFilter}
+       ${agentFilter}
+     ORDER BY created_at DESC
+     LIMIT ${limit}`,
+    params,
+  );
+
+  return (rows as unknown as ToolUsageDetailRow[]).map((r) => ({
+    ...r,
+    details: typeof r.details === 'string' ? (JSON.parse(r.details) as Record<string, unknown>) : r.details,
+  }));
+}
+
 // ============================================================================
 // Timeline — all events for an entity, ordered by time
 // ============================================================================

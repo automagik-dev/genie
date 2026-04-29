@@ -14,6 +14,7 @@ import {
   querySummary,
   queryTimeline,
   queryToolUsage,
+  queryToolUsageDetail,
   recordAuditEvent,
 } from './audit.js';
 import { getConnection } from './db.js';
@@ -263,6 +264,55 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     test('groups by agent', async () => {
       const rows = await queryToolUsage('1h', 'agent');
       expect(Array.isArray(rows)).toBe(true);
+    });
+  });
+
+  describe('queryToolUsageDetail', () => {
+    test('returns per-row tool_input + tool_parameters (regression: #1259 bug 3)', async () => {
+      // Aggregate `queryToolUsage` drops per-call payloads. The detail
+      // variant must preserve both `tool_input` and `tool_parameters`
+      // verbatim so `events tools --detail --json` can surface them.
+      const uniqueTool = `BashDetail-${Date.now()}`;
+      const input = { command: "echo 'hello world'", cwd: '/tmp' };
+      const parameters = { timeout_ms: 5000 };
+      await recordAuditEvent('otel_tool', uniqueTool, 'tool_result', 'agent-detail', {
+        tool_name: uniqueTool,
+        duration_ms: '42',
+        tool_input: input,
+        tool_parameters: parameters,
+      });
+
+      const rows = await queryToolUsageDetail('1h', { tool: uniqueTool });
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      const row = rows.find((r) => r.tool_name === uniqueTool);
+      expect(row).toBeDefined();
+      expect(row?.tool_input).toEqual(input);
+      expect(row?.tool_parameters).toEqual(parameters);
+      expect(row?.actor).toBe('agent-detail');
+      expect(Number(row?.duration_ms)).toBe(42);
+    });
+
+    test('filters by agent', async () => {
+      const agent = `agent-filter-${Date.now()}`;
+      await recordAuditEvent('otel_tool', 'Read', 'tool_result', agent, {
+        tool_name: 'Read',
+        tool_input: { file_path: '/a' },
+      });
+      await recordAuditEvent('otel_tool', 'Read', 'tool_result', 'someone-else', {
+        tool_name: 'Read',
+        tool_input: { file_path: '/b' },
+      });
+
+      const rows = await queryToolUsageDetail('1h', { agent });
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      for (const r of rows) {
+        expect(r.actor).toBe(agent);
+      }
+    });
+
+    test('respects limit', async () => {
+      const rows = await queryToolUsageDetail('1h', { limit: 1 });
+      expect(rows.length).toBeLessThanOrEqual(1);
     });
   });
 
