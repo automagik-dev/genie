@@ -1136,6 +1136,10 @@ export function getActivePort(): number {
 /**
  * True when the live connection is the v2 Unix socket. Returns false in TCP
  * mode (legacy + test) and before the first connect.
+ *
+ * @public — consumed by diagnostic surfaces (db status, db url,
+ * printPgserveHealth) and the otel/executor relative-port fallback once their
+ * follow-up commits land. Exported here so those callers can plug in cleanly.
  */
 export function isSocketMode(): boolean {
   return activePort === SOCKET_PORT_SENTINEL;

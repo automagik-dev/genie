@@ -66,6 +66,7 @@
     "@vitejs/plugin-react",
     "vite",
     "@types/react-dom",
-    "esbuild"
+    "esbuild",
+    "pgserve"
   ]
 }
