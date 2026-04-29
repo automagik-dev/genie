@@ -821,7 +821,7 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     }
   }
 
-  await removeWorktree(config.worktreePath);
+  await cleanupTeamGitArtifacts(config);
   await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
 
   // Atomically reset wish groups + archive team in a single transaction
