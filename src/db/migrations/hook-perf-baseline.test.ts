@@ -48,7 +48,7 @@ describe.skipIf(!DB_AVAILABLE)('hook_perf_baseline view', () => {
   test('empty source data → view returns no rows (no error)', async () => {
     const sql = await getConnection();
     // Wipe any rows the migration runner might have left.
-    await sql`DELETE FROM genie_runtime_events WHERE kind = 'hook.delivery'`;
+    await sql`DELETE FROM genie_runtime_events WHERE subject = 'hook.delivery' OR kind = 'hook.delivery'`;
     const rows = (await sql`SELECT * FROM hook_perf_baseline`) as unknown[];
     expect(rows.length).toBe(0);
   });
@@ -58,11 +58,12 @@ describe.skipIf(!DB_AVAILABLE)('hook_perf_baseline view', () => {
     // Wipe and seed a known distribution: durations 1..101 ms for one
     // (event, tool, handler) tuple. Created 5 minutes ago so they fall
     // inside the 1h, 24h, AND 7d windows.
-    await sql`DELETE FROM genie_runtime_events WHERE kind = 'hook.delivery'`;
+    await sql`DELETE FROM genie_runtime_events WHERE subject = 'hook.delivery' OR kind = 'hook.delivery'`;
 
     const fiveMinAgo = new Date(Date.now() - 5 * 60_000);
     for (let i = 1; i <= 101; i++) {
       const data = sql.json({
+        _kind: 'span',
         event: 'PreToolUse',
         tool: 'Bash',
         hook_name: 'branch-guard',
@@ -70,9 +71,9 @@ describe.skipIf(!DB_AVAILABLE)('hook_perf_baseline view', () => {
       });
       await sql`
         INSERT INTO genie_runtime_events
-          (repo_path, kind, source, agent, text, data, created_at)
+          (repo_path, subject, kind, source, agent, text, data, created_at)
         VALUES
-          ('test', 'hook.delivery', 'hooks', 'test', '', ${data}, ${fiveMinAgo})
+          ('test', 'hook.delivery', 'system', 'hooks', 'test', '', ${data}, ${fiveMinAgo})
       `;
     }
 
@@ -120,7 +121,7 @@ describe.skipIf(!DB_AVAILABLE)('hook_perf_baseline view', () => {
 
   test('rolling windows correctly partition rows by created_at', async () => {
     const sql = await getConnection();
-    await sql`DELETE FROM genie_runtime_events WHERE kind = 'hook.delivery'`;
+    await sql`DELETE FROM genie_runtime_events WHERE subject = 'hook.delivery' OR kind = 'hook.delivery'`;
 
     // Two cohorts:
     //   - 50 rows at 30 minutes ago, duration 10ms → falls in 1h, 24h, 7d
@@ -130,6 +131,7 @@ describe.skipIf(!DB_AVAILABLE)('hook_perf_baseline view', () => {
 
     for (let i = 0; i < 50; i++) {
       const data = sql.json({
+        _kind: 'span',
         event: 'PreToolUse',
         tool: 'Read',
         hook_name: 'freshness',
@@ -137,13 +139,14 @@ describe.skipIf(!DB_AVAILABLE)('hook_perf_baseline view', () => {
       });
       await sql`
         INSERT INTO genie_runtime_events
-          (repo_path, kind, source, agent, text, data, created_at)
+          (repo_path, subject, kind, source, agent, text, data, created_at)
         VALUES
-          ('test', 'hook.delivery', 'hooks', 'test', '', ${data}, ${thirtyMinAgo})
+          ('test', 'hook.delivery', 'system', 'hooks', 'test', '', ${data}, ${thirtyMinAgo})
       `;
     }
     for (let i = 0; i < 50; i++) {
       const data = sql.json({
+        _kind: 'span',
         event: 'PreToolUse',
         tool: 'Read',
         hook_name: 'freshness',
@@ -151,9 +154,9 @@ describe.skipIf(!DB_AVAILABLE)('hook_perf_baseline view', () => {
       });
       await sql`
         INSERT INTO genie_runtime_events
-          (repo_path, kind, source, agent, text, data, created_at)
+          (repo_path, subject, kind, source, agent, text, data, created_at)
         VALUES
-          ('test', 'hook.delivery', 'hooks', 'test', '', ${data}, ${fiveDaysAgo})
+          ('test', 'hook.delivery', 'system', 'hooks', 'test', '', ${data}, ${fiveDaysAgo})
       `;
     }
 
@@ -186,27 +189,29 @@ describe.skipIf(!DB_AVAILABLE)('hook_perf_baseline view', () => {
 
   test('rows missing data.duration_ms are filtered out', async () => {
     const sql = await getConnection();
-    await sql`DELETE FROM genie_runtime_events WHERE kind = 'hook.delivery'`;
+    await sql`DELETE FROM genie_runtime_events WHERE subject = 'hook.delivery' OR kind = 'hook.delivery'`;
 
     // One valid row + one row missing duration_ms.
     const fiveMinAgo = new Date(Date.now() - 5 * 60_000);
     const validData = sql.json({
+      _kind: 'span',
       event: 'Stop',
       tool: '<none>',
       hook_name: 'runtime-emit-assistant-response',
       duration_ms: 42,
     });
     const missingDurData = sql.json({
+      _kind: 'span',
       event: 'Stop',
       tool: '<none>',
       hook_name: 'runtime-emit-assistant-response',
     });
     await sql`
       INSERT INTO genie_runtime_events
-        (repo_path, kind, source, agent, text, data, created_at)
+        (repo_path, subject, kind, source, agent, text, data, created_at)
       VALUES
-        ('test', 'hook.delivery', 'hooks', 'test', '', ${validData}, ${fiveMinAgo}),
-        ('test', 'hook.delivery', 'hooks', 'test', '', ${missingDurData}, ${fiveMinAgo})
+        ('test', 'hook.delivery', 'system', 'hooks', 'test', '', ${validData}, ${fiveMinAgo}),
+        ('test', 'hook.delivery', 'system', 'hooks', 'test', '', ${missingDurData}, ${fiveMinAgo})
     `;
 
     const rows = (await sql`
