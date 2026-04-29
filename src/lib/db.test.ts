@@ -368,6 +368,22 @@ describe('daemon-owned pgserve', () => {
     expect(connectionConfig).toContain('[PG_AUTH_FIELD]: pgWireCredential');
   });
 
+  test('socket connections use the pgserve startup timeout window', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const helperStart = source.indexOf('function resolvePgConnectTimeoutSeconds');
+    expect(helperStart).toBeGreaterThan(-1);
+    const helperBody = source.slice(helperStart, source.indexOf('\n/** Back-compat', helperStart));
+
+    expect(helperBody).toContain('process.env.GENIE_PG_CONNECT_TIMEOUT');
+    expect(helperBody).toContain('if (!useSocket) return 5');
+    expect(helperBody).toContain('Math.max(16, Math.ceil(resolvePgserveTimeoutMs() / 1000))');
+
+    const connectionStart = source.indexOf('sqlClient = pgModule({');
+    expect(connectionStart).toBeGreaterThan(-1);
+    const connectionConfig = source.slice(connectionStart, source.indexOf('  });', connectionStart));
+    expect(connectionConfig).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(useSocket)');
+  });
+
   test('socket connections ensure the v2 daemon before dialing libpq path', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     const fnStart = source.indexOf('async function _buildConnection');
@@ -412,6 +428,25 @@ describe('daemon-owned pgserve', () => {
     const sdkBody = source.slice(sdkStart, ensureStart);
     expect(sdkBody).toContain('resolveLocalPgserveEntry()');
     expect(sdkBody.indexOf('pathToFileURL(localEntry).href')).toBeLessThan(sdkBody.indexOf("import('pgserve')"));
+  });
+
+  test('daemon startup falls back to CLI when SDK ensure fails', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function tryEnsureDaemonWithSdk');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = source.slice(fnStart, source.indexOf('/** Sanitize connection URLs', fnStart));
+
+    const tryIdx = fnBody.indexOf('try {');
+    const ensureIdx = fnBody.indexOf('const state = await sdk.ensureDaemon');
+    const catchIdx = fnBody.indexOf('} catch {');
+    const cleanupIdx = fnBody.indexOf('cleanPartialDaemonState(probePgserveDaemon())');
+    const falseIdx = fnBody.indexOf('return false', catchIdx);
+
+    expect(tryIdx).toBeGreaterThan(-1);
+    expect(ensureIdx).toBeGreaterThan(tryIdx);
+    expect(catchIdx).toBeGreaterThan(ensureIdx);
+    expect(cleanupIdx).toBeGreaterThan(catchIdx);
+    expect(falseIdx).toBeGreaterThan(cleanupIdx);
   });
 });
 

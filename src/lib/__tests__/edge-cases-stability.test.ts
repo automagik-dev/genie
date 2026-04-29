@@ -84,8 +84,9 @@ describe('7.1 Concurrent Operations', () => {
     expect(source).toContain('max: 50');
     // Aggressive idle timeout (1s) to recycle unused connections
     expect(source).toContain('idle_timeout: 1');
-    // 5s connect timeout prevents hanging
-    expect(source).toContain('connect_timeout: 5');
+    // Socket mode gets the pgserve startup window; legacy TCP keeps the fast fallback.
+    expect(source).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(useSocket)');
+    expect(source).toContain('if (!useSocket) return 5');
   });
 
   // -------------------------------------------------------------------------
