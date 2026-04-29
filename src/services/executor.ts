@@ -25,7 +25,7 @@ export interface ExecutorSession {
    * Bridge consumers persist it to `genie_bridge_sessions` so observers can
    * trace a chat's full history across executor restarts.
    */
-  tmux?: { session: string; window: string; paneId: string; claudeSessionId?: string };
+  tmux?: { session: string; window: string; paneId: string; claudeSessionId?: string; processName?: string };
   sdk?: { claudeSessionId?: string; executorId?: string };
 }
 

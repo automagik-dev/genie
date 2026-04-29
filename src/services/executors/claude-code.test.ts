@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { buildOmniSpawnParams, resolveBridgeTmuxSession, sanitizeWindowName } from './claude-code.js';
+import {
+  buildOmniSpawnParams,
+  resolveBridgeTmuxSession,
+  resolveOmniPaneProcessName,
+  sanitizeWindowName,
+} from './claude-code.js';
 
 describe('sanitizeWindowName', () => {
   // --- Without chatName (fallback to JID) ---
@@ -305,5 +310,20 @@ describe('resolveBridgeTmuxSession', () => {
     // Sanitization targets only `/` and `:`; other chars are the caller's
     // concern. Dots and underscores are legal in tmux session names.
     expect(resolveBridgeTmuxSession('agent', 'with_underscore-and.dot', undefined)).toBe('with_underscore-and.dot');
+  });
+});
+
+describe('resolveOmniPaneProcessName', () => {
+  test('defaults to claude for unset or claude providers', () => {
+    expect(resolveOmniPaneProcessName(undefined)).toBe('claude');
+    expect(resolveOmniPaneProcessName('claude')).toBe('claude');
+  });
+
+  test('uses codex for codex-backed omni panes', () => {
+    expect(resolveOmniPaneProcessName('codex')).toBe('codex');
+  });
+
+  test('falls back to claude for unknown providers', () => {
+    expect(resolveOmniPaneProcessName('other-provider')).toBe('claude');
   });
 });
