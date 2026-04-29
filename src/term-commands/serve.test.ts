@@ -46,6 +46,18 @@ describe('getTuiKeybindings', () => {
   });
 });
 
+describe('pgserve failure containment', () => {
+  test('serve disables in-process pgserve retries after startup failure', () => {
+    const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function startPgserve');
+    expect(fnStart).toBeGreaterThan(-1);
+    const catchStart = source.indexOf('} catch (err) {', fnStart);
+    const retryGuard = source.indexOf("process.env.GENIE_PG_NO_AUTOSTART = '1'", catchStart);
+    expect(catchStart).toBeGreaterThan(-1);
+    expect(retryGuard).toBeGreaterThan(-1);
+  });
+});
+
 describe('brain startup integration', () => {
   function makeVault(root: string, name: string): string {
     const path = join(root, name);

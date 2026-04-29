@@ -788,3 +788,22 @@ describe('autoStartDaemon branched timeout messages', () => {
     expect(source).toContain('Stale ~/.genie/serve.pid');
   });
 });
+
+describe('pgserve failure containment', () => {
+  test('timeout cleanup targets the detached pgserve process group', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    expect(source).toContain('async function terminatePgserveTree');
+    expect(source).toContain('process.kill(-pid, signal)');
+
+    const fnStart = source.indexOf('async function startPgserveOnPort');
+    expect(fnStart).toBeGreaterThan(-1);
+    const terminateCall = source.indexOf('await terminatePgserveTree(child)', fnStart);
+    const selfHealCall = source.indexOf('selfHealPostgres(DATA_DIR)', fnStart);
+    const timeoutThrow = source.indexOf('pgserve failed to start on port', fnStart);
+    expect(terminateCall).toBeGreaterThan(-1);
+    expect(selfHealCall).toBeGreaterThan(-1);
+    expect(timeoutThrow).toBeGreaterThan(-1);
+    expect(terminateCall).toBeLessThan(timeoutThrow);
+    expect(selfHealCall).toBeLessThan(timeoutThrow);
+  });
+});
