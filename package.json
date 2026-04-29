@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "4.260429.38",
+  "version": "4.260429.39",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: the npm distribution is being soft-deprecated — the canonical install is `curl -fsSL https://get.automagik.dev/genie | bash` (cosign + SLSA verified). See https://automagik.dev/genie/security/distribution-sovereignty",
   "type": "module",
   "bin": {
