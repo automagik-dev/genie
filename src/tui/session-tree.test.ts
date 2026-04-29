@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { TmuxPane, TmuxSession, TmuxWindow } from './diagnostics.js';
+import { CLAUDE_CODE_ACTIVE_TITLE_PREFIX } from './pane-detection.js';
 import { buildSessionTree, buildWorkspaceTree, getSessionTarget, resolvePreferredWindowIndex } from './session-tree.js';
 import type { TreeNode, TuiExecutor } from './types.js';
+
+const CLAUDE_CODE_V2_TMUX_COMMAND = '2.1.123';
+const CLAUDE_CODE_V2_TMUX_TITLE = `${CLAUDE_CODE_ACTIVE_TITLE_PREFIX}genie-genie`;
 
 function flattenTree(nodes: TreeNode[]): TreeNode[] {
   const out: TreeNode[] = [];
@@ -261,6 +265,44 @@ describe('buildWorkspaceTree', () => {
     });
 
     expect(tree[0].wsAgentState).toBe('running');
+  });
+
+  test('Claude Code v2 pane title counts as a live agent pane', () => {
+    // Reproduces tmux output from Claude Code v2 on macOS:
+    // pane_current_command is the CLI version, while pane_title carries the agent name.
+    const win0 = makeWindow({ sessionName: 'genie', index: 0, name: 'zsh' });
+    const win1 = makeWindow({
+      sessionName: 'genie',
+      index: 1,
+      name: 'claude',
+      active: true,
+      panes: [
+        makePane({
+          sessionName: 'genie',
+          windowIndex: 1,
+          paneId: '%3',
+          command: CLAUDE_CODE_V2_TMUX_COMMAND,
+          title: CLAUDE_CODE_V2_TMUX_TITLE,
+        }),
+      ],
+    });
+    const executor = makeExecutor({
+      agentName: 'genie',
+      state: 'spawning',
+      tmuxPaneId: '%3',
+    });
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['genie'],
+      sessions: [makeSession('genie', [win0, win1])],
+      executors: [executor],
+    });
+
+    expect(tree[0].wsAgentState).toBe('running');
+    expect(tree[0].activePanes).toBe(1);
+    expect(tree[0].data.attachWindowIndex).toBe(1);
+    expect(tree[0].children[0].activePanes).toBe(1);
+    expect(tree[0].children[0].children[0].data.isClaudeLike).toBe(true);
   });
 
   test('permission executor state reflected on agentState', () => {
