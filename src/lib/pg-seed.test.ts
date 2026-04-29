@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getConnection } from './db.js';
@@ -347,6 +347,12 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       // Claude-native configs must NOT be renamed to .migrated (authoritative).
       expect(existsSync(join(teamDir, 'config.json'))).toBe(true);
       expect(existsSync(join(teamDir, 'config.json.migrated'))).toBe(false);
+
+      const marker = JSON.parse(require('node:fs').readFileSync(join(testHome, 'state', 'teams-seed-marker'), 'utf-8'));
+      expect(marker).toEqual({
+        teamsDir: join(testClaudeDir, 'teams'),
+        mtimeMs: String(statSync(join(testClaudeDir, 'teams')).mtimeMs),
+      });
     });
 
     test('seed imports mailbox/*.json into mailbox table', async () => {
@@ -480,6 +486,45 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       // Cleanup
       await sql`DELETE FROM agents WHERE id = 'seed-test-idempotent'`;
+    });
+
+    test('needsSeed uses fresh teams marker without scanning team entries', () => {
+      const fs = require('node:fs');
+      const workersPath = join(testHome, 'workers.json');
+      try {
+        fs.rmSync(workersPath, { force: true });
+      } catch {}
+      try {
+        fs.rmSync(`${workersPath}.migrated`, { force: true });
+      } catch {}
+
+      const teamsDir = join(testClaudeDir, 'teams');
+      fs.rmSync(teamsDir, { recursive: true, force: true });
+      mkdirSync(join(teamsDir, 'seed-team-cache'), { recursive: true });
+      writeFileSync(join(teamsDir, 'seed-team-cache', 'config.json'), JSON.stringify({ name: 'seed-team-cache' }));
+
+      const stateDir = join(testHome, 'state');
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(
+        join(stateDir, 'teams-seed-marker'),
+        `${JSON.stringify({ teamsDir, mtimeMs: String(statSync(teamsDir).mtimeMs) })}\n`,
+      );
+
+      const originalReaddirSync = fs.readdirSync;
+      let readdirCalls = 0;
+      fs.readdirSync = (...args: unknown[]) => {
+        readdirCalls += 1;
+        return originalReaddirSync(...args);
+      };
+
+      try {
+        const start = performance.now();
+        expect(needsSeed()).toBe(false);
+        expect(performance.now() - start).toBeLessThan(1);
+        expect(readdirCalls).toBe(0);
+      } finally {
+        fs.readdirSync = originalReaddirSync;
+      }
     });
 
     test('needsSeed returns false after migration (no workers.json, no claude teams)', () => {
