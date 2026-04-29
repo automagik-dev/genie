@@ -71,15 +71,44 @@ export interface Handler {
   fn: (payload: HookPayload) => Promise<HandlerResult>;
 }
 
-/** The hook events that CC settings.json supports for the dispatch command. */
-export const DISPATCHED_EVENTS: HookEventName[] = [
-  'PreToolUse',
-  'PostToolUse',
-  'SessionStart',
-  'SessionEnd',
-  'TeammateIdle',
-  'TaskCompleted',
-];
+/**
+ * Hook events that CC settings.json wires to `genie hook dispatch`, mapped
+ * to the per-event tool-name matcher.
+ *
+ * Mac-CPU fix D — narrow matchers + drop empty events.
+ *
+ * Previous DISPATCHED_EVENTS list wired SessionStart/SessionEnd/TeammateIdle/
+ * TaskCompleted with matcher='*' even though zero handlers exist for those
+ * events — every fire was a wasted `bun` cold-start (each start runs the full
+ * hook-dispatch entrypoint and PG init). Combined with PostToolUse:* (only
+ * `runtime-emit-msg` exists, and only matches `SendMessage`), the inject
+ * config was producing dozens of useless dispatcher invocations per user
+ * action on a busy dev machine.
+ *
+ * The matcher value is the CC-settings `matcher` field — `*` means all
+ * tools, otherwise an exact tool name (or pipe-separated list).
+ *
+ * To add a new dispatched event: register the handler in `index.ts` AND
+ * add the (event, matcher) pair here. To deprecate: remove from this map
+ * — `injectIntoFile` will prune existing entries on the next inject.
+ */
+export const DISPATCHED_EVENT_MATCHERS: Partial<Record<HookEventName, string>> = {
+  // PreToolUse handlers: branch-guard (Bash), orchestration-guard (Bash),
+  //   brain-inject (.*), freshness (Read), audit-context (Write|Edit),
+  //   identity-inject (SendMessage), auto-spawn (SendMessage),
+  //   runtime-emit-tool (.*), session-sync-tool (.*) — broad coverage.
+  PreToolUse: '*',
+  // PostToolUse handler: runtime-emit-msg matches `^SendMessage$` only.
+  // Wiring '*' caused the dispatcher to run on every Bash/Read/Write/Edit
+  // post-use even though those produce no event — pure waste.
+  PostToolUse: 'SendMessage',
+};
+
+/**
+ * Convenience array — derived from DISPATCHED_EVENT_MATCHERS.
+ * Kept so callers that need the event list (without matcher) are unchanged.
+ */
+export const DISPATCHED_EVENTS: HookEventName[] = Object.keys(DISPATCHED_EVENT_MATCHERS) as HookEventName[];
 
 const BLOCKING_EVENTS = new Set<string>([
   'PreToolUse',
