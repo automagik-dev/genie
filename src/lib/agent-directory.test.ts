@@ -180,6 +180,40 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       );
     });
 
+    test('add rejects symlinked AGENTS.md by default', async () => {
+      const { symlinkSync } = await import('node:fs');
+      // Real agent home with a real AGENTS.md
+      const realHome = join(testDir, 'real-home');
+      mkdirSync(realHome, { recursive: true });
+      writeFileSync(join(realHome, 'AGENTS.md'), '# real agent\n');
+      // Wrong home — operator points --dir at this; AGENTS.md is a symlink
+      // to the real home (mirrors the bug that caused the KHAL-V1-LAUNCH
+      // misregistration: /home/genie/workspace/AGENTS.md → agents/khal-os/AGENTS.md)
+      const wrongHome = join(testDir, 'wrong-home');
+      mkdirSync(wrongHome, { recursive: true });
+      symlinkSync(join(realHome, 'AGENTS.md'), join(wrongHome, 'AGENTS.md'));
+      await expect(directory.add({ name: 'symlink-bait', dir: wrongHome, promptMode: 'append' })).rejects.toThrow(
+        /symlink/i,
+      );
+    });
+
+    test('add accepts symlinked AGENTS.md when allowSymlink is set', async () => {
+      const { symlinkSync } = await import('node:fs');
+      const realHome2 = join(testDir, 'real-home-2');
+      mkdirSync(realHome2, { recursive: true });
+      writeFileSync(join(realHome2, 'AGENTS.md'), '# real agent 2\n');
+      const wrongHome2 = join(testDir, 'wrong-home-2');
+      mkdirSync(wrongHome2, { recursive: true });
+      symlinkSync(join(realHome2, 'AGENTS.md'), join(wrongHome2, 'AGENTS.md'));
+      // Power-user escape hatch: explicit opt-in via { allowSymlink: true }
+      const entry = await directory.add(
+        { name: 'symlink-allowed', dir: wrongHome2, promptMode: 'append' },
+        { allowSymlink: true },
+      );
+      expect(entry.name).toBe('symlink-allowed');
+      expect(entry.dir).toBe(wrongHome2);
+    });
+
     test('add rejects empty name', async () => {
       await expect(directory.add({ name: '', dir: agentDir, promptMode: 'append' })).rejects.toThrow(
         'name is required',
