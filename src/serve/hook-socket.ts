@@ -194,6 +194,14 @@ async function handleConnection(socket: Socket): Promise<void> {
  * Throws if a live listener is already on the path (refusing to race).
  */
 export async function startHookSocket(): Promise<HookSocketHandle> {
+  // Group 4 of hookify-perf-foundation: turn on the wide-emit flag for the
+  // hook subsystem by default in daemon mode so per-handler timing spans land
+  // in `genie_runtime_events` and feed the `hook_perf_baseline` view. If the
+  // operator has set GENIE_WIDE_EMIT explicitly we honor their value.
+  if (process.env.GENIE_WIDE_EMIT === undefined) {
+    process.env.GENIE_WIDE_EMIT = '1';
+  }
+
   const socketPath = defaultHookSocketPath();
   await mkdir(dirname(socketPath), { recursive: true });
 

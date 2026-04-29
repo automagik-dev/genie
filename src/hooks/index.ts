@@ -172,7 +172,9 @@ export async function runHandler(
   const span = isWideEmitEnabled()
     ? startSpan(
         'hook.delivery',
-        { hook_name: handler.name, agent_id: agentId, tool: payload.tool_name },
+        // event included so hook_perf_baseline view can group by it (Group 4 of
+        // hookify-perf-foundation). tool may be undefined for UserPromptSubmit / Stop.
+        { hook_name: handler.name, agent_id: agentId, tool: payload.tool_name, event: payload.hook_event_name },
         { source_subsystem: 'hooks', ctx: getTraceContext() ?? undefined, agent: agentId },
       )
     : null;
