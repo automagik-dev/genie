@@ -3,6 +3,18 @@ name: omni
 description: "Wire a Genie agent to an Omni channel in one canonical flow — register the agent, bind to an instance, verify the round-trip. Replaces the 5+ command legacy chain."
 allowed-tools: Bash(omni *), Bash(genie *)
 ---
+<!-- skills-lint:ignore -->
+<!--
+  This skill references `omni connect` and other omni subcommands that are
+  registered with omni's `advanced` / `standard` visibility categories and
+  don't surface in plain `omni --help` (which shows the curated `core`
+  subset only). The skills-lint script collects subcommands by parsing
+  `omni --help`, so it reports false positives for any non-core call.
+  The skill correctly declares allowed-tools for `omni *` and `genie *`.
+  Drop this marker once skills-lint learns to probe each subcommand
+  individually (or omni exposes a richer `--help --all` mode that
+  enumerates every visibility category).
+-->
 
 # /genie:omni — Canonical Genie ↔ Omni Wiring
 
