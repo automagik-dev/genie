@@ -291,10 +291,10 @@ let lastAutoStartPid: number | null = null;
 let spawnDaemon: () => void = () => {
   const bunPath = process.execPath ?? 'bun';
   const genieBin = process.argv[1] ?? 'genie';
-  const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless'], {
+  const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless', '--foreground'], {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env },
+    env: { ...process.env, GENIE_IS_DAEMON: '1' },
   });
   child.unref();
 };
@@ -306,10 +306,10 @@ export function __setSpawnDaemonForTest(fn: (() => void) | null): void {
     (() => {
       const bunPath = process.execPath ?? 'bun';
       const genieBin = process.argv[1] ?? 'genie';
-      const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless'], {
+      const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless', '--foreground'], {
         detached: true,
         stdio: 'ignore',
-        env: { ...process.env },
+        env: { ...process.env, GENIE_IS_DAEMON: '1' },
       });
       child.unref();
     });

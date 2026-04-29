@@ -1040,7 +1040,7 @@ function installGracefulExitHandlers(shutdown: () => Promise<void>, hasStarted: 
   });
 }
 
-async function startForeground(headless?: boolean): Promise<void> {
+async function startForeground(headless?: boolean, autoFix = true): Promise<void> {
   claimServePidOrExit();
   // Invalidate any stale port lockfile from an unclean prior shutdown — the
   // next ensurePgserve() call will rewrite it with the live port. Without
@@ -1051,6 +1051,21 @@ async function startForeground(headless?: boolean): Promise<void> {
   process.env.GENIE_IS_DAEMON = '1';
   // claimServePidOrExit already wrote `${pid}:${startTime}` atomically.
   console.log(`genie serve starting (PID ${process.pid}, mode: ${mode})`);
+
+  // Preconditions call getConnection(); the daemon marker must already be set
+  // so pgserve starts in this process instead of recursively auto-spawning serve.
+  try {
+    const preconditionsOk = await runStartPreconditions(autoFix);
+    if (!preconditionsOk) {
+      removeServePid();
+      process.exit(2);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`genie serve start preconditions failed: ${msg}`);
+    removeServePid();
+    process.exit(1);
+  }
 
   if (!skipTui) {
     await ensureTmux();
@@ -1087,7 +1102,7 @@ async function startForeground(headless?: boolean): Promise<void> {
 /** Start as a background daemon.
  *  @param headless If true, pass --headless to the foreground process.
  */
-async function startBackground(headless?: boolean): Promise<void> {
+async function startBackground(headless?: boolean, autoFix = true): Promise<void> {
   const existingEntry = readServePid();
   if (existingEntry && isProcessAlive(existingEntry.pid)) {
     console.log(`genie serve already running (PID ${existingEntry.pid})`);
@@ -1102,6 +1117,7 @@ async function startBackground(headless?: boolean): Promise<void> {
 
   const args = [genieBin, 'serve', '--foreground'];
   if (headless) args.push('--headless');
+  if (!autoFix) args.push('--no-fix');
 
   const child = spawn(bunPath, args, {
     detached: true,
@@ -1413,15 +1429,16 @@ interface ServeStartOptions {
  * (e.g. bridge-failure assertions) within a tight timing envelope. Production
  * code paths must never set this — `--no-fix` is the operator-facing escape.
  */
-async function runStartPreconditions(autoFix: boolean): Promise<void> {
-  if (process.env.GENIE_SKIP_PRECONDITIONS === '1') return;
+async function runStartPreconditions(autoFix: boolean): Promise<boolean> {
+  if (process.env.GENIE_SKIP_PRECONDITIONS === '1') return true;
   const { ensureServeReady } = await import('./serve/ensure-ready.js');
   const report = await ensureServeReady({ autoFix });
-  if (autoFix) return;
+  if (autoFix) return true;
   if (!report.ok) {
     console.error('genie serve start refused: one or more preconditions are not ok (--no-fix mode).');
-    process.exit(2);
+    return false;
   }
+  return true;
 }
 
 export function registerServeCommands(program: Command): void {
@@ -1437,11 +1454,10 @@ export function registerServeCommands(program: Command): void {
     .action(async (options: ServeStartOptions) => {
       // commander's `--no-fix` flips `options.fix` to false. Default is true.
       const autoFix = options.fix !== false;
-      await runStartPreconditions(autoFix);
       if (options.daemon) {
-        await startBackground(options.headless);
+        await startBackground(options.headless, autoFix);
       } else {
-        await startForeground(options.headless);
+        await startForeground(options.headless, autoFix);
       }
     });
 

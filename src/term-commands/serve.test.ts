@@ -425,6 +425,22 @@ describe('stopping sentinel', () => {
   });
 });
 
+describe('serve boot precondition ordering', () => {
+  test('marks foreground serve as daemon before running preconditions', () => {
+    const source = readFileSync(resolve(__dirname, 'serve.ts'), 'utf-8');
+    const startIdx = source.indexOf('async function startForeground');
+    const endIdx = source.indexOf('async function startBackground', startIdx);
+    const startForegroundSource = source.slice(startIdx, endIdx);
+
+    const daemonMarkerIdx = startForegroundSource.indexOf("process.env.GENIE_IS_DAEMON = '1'");
+    const preconditionsIdx = startForegroundSource.indexOf('await runStartPreconditions(autoFix)');
+
+    expect(daemonMarkerIdx).toBeGreaterThanOrEqual(0);
+    expect(preconditionsIdx).toBeGreaterThanOrEqual(0);
+    expect(daemonMarkerIdx).toBeLessThan(preconditionsIdx);
+  });
+});
+
 // ============================================================================
 // Atomic PID claim — Defect 2 (claimServePidOrExit race)
 //
