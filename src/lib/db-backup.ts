@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { homedir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { getActivePort, resolveDatabaseName, resolvePgserveSocketDir, resolveTcpPgPassword } from './db.js';
+import { DB_NAME, getActivePort, resolveDatabaseName, resolvePgserveSocketDir, resolveTcpPgPassword } from './db.js';
 import { resolveRepoPath } from './wish-state.js';
 
 const SNAPSHOT_FILE = 'snapshot.sql.gz';
@@ -77,7 +77,7 @@ function pgEnv(database?: string): Record<string, string | undefined> {
     ...process.env,
     PGHOST: '127.0.0.1',
     PGPORT: port,
-    PGUSER: 'postgres',
+    PGUSER: DB_NAME,
     PGPASSWORD: resolveTcpPgPassword(),
     PGDATABASE: resolvedDatabase,
   };
