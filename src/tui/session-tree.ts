@@ -9,6 +9,7 @@
  */
 
 import type { DiagnosticSnapshot, TmuxPane, TmuxSession, TmuxWindow } from './diagnostics.js';
+import { isClaudeLikePane } from './pane-detection.js';
 import type { AgentKind, AgentState, TreeNode, TuiExecutor, WorkState } from './types.js';
 
 /** The TUI's own session name — filtered from the tree to prevent self-attach loops */
@@ -109,8 +110,7 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
 
 export function resolvePreferredWindowIndex(session: TmuxSession, agentName?: string): number | undefined {
   const windows = [...session.windows].sort((a, b) => a.index - b.index);
-  const hasClaudePane = (window: TmuxWindow) =>
-    window.panes.some((pane) => !pane.isDead && (pane.command === 'claude' || pane.title.includes('claude')));
+  const hasClaudePane = (window: TmuxWindow) => window.panes.some(isClaudeLikePane);
 
   const preferred =
     windows.find((window) => window.active && hasClaudePane(window)) ??
@@ -123,9 +123,7 @@ export function resolvePreferredWindowIndex(session: TmuxSession, agentName?: st
 }
 
 function hasLiveClaudeWindow(session: TmuxSession): boolean {
-  return session.windows.some((window) =>
-    window.panes.some((pane) => !pane.isDead && (pane.command === 'claude' || pane.title.includes('claude'))),
-  );
+  return session.windows.some((window) => window.panes.some(isClaudeLikePane));
 }
 
 /** Separate scoped names (parent/sub) from top-level names. */
@@ -173,10 +171,7 @@ function appendSubAgentNodes(
 }
 
 function countClaudePanes(session: TmuxSession): number {
-  return session.windows.reduce(
-    (sum, w) => sum + w.panes.filter((p) => p.command === 'claude' || p.title.includes('claude')).length,
-    0,
-  );
+  return session.windows.reduce((sum, w) => sum + w.panes.filter(isClaudeLikePane).length, 0);
 }
 
 function buildAgentNode(
@@ -258,10 +253,7 @@ function deriveExecutorState(execs: TuiExecutor[]): TreeNode['agentState'] {
 // ─── Shared Node Builders ────────────────────────────────────────────────────
 
 function sessionToNode(session: TmuxSession, executorMap: Map<string, TuiExecutor>): TreeNode {
-  const claudePanes = session.windows.reduce(
-    (sum, w) => sum + w.panes.filter((p) => p.command === 'claude' || p.title.includes('claude')).length,
-    0,
-  );
+  const claudePanes = session.windows.reduce((sum, w) => sum + w.panes.filter(isClaudeLikePane).length, 0);
 
   return {
     id: `session:${session.name}`,
@@ -278,9 +270,7 @@ function sessionToNode(session: TmuxSession, executorMap: Map<string, TuiExecuto
 }
 
 function windowToNode(sessionName: string, window: TmuxWindow, executorMap: Map<string, TuiExecutor>): TreeNode {
-  const activePanes = window.panes.filter(
-    (p) => !p.isDead && (p.command === 'claude' || p.title.includes('claude')),
-  ).length;
+  const activePanes = window.panes.filter(isClaudeLikePane).length;
 
   return {
     id: `window:${sessionName}:${window.index}`,
@@ -303,7 +293,7 @@ function paneToNode(
   executorMap: Map<string, TuiExecutor>,
 ): TreeNode {
   const executor = executorMap.get(pane.paneId);
-  const isClaude = pane.command === 'claude' || pane.title.includes('claude');
+  const isClaude = isClaudeLikePane(pane);
 
   return {
     id: `pane:${pane.paneId}`,
@@ -314,6 +304,8 @@ function paneToNode(
     children: [],
     data: {
       command: pane.command,
+      title: pane.title,
+      isClaudeLike: isClaude,
       isDead: pane.isDead,
       pid: pane.pid,
       size: pane.size,

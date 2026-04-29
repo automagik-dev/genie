@@ -123,7 +123,7 @@ function getPaneIcon(node: TreeNodeType): string {
   if (node.agentState === 'idle') return '\u25cb'; // ○
   if (node.agentState === 'permission') return '\u26a0'; // ⚠
   if (node.agentState === 'error') return '\u2718'; // ✘
-  if (node.data.command === 'claude') return '\u25c6'; // ���
+  if (node.data.isClaudeLike) return '\u25c6'; // ◆
   return '\u25cb'; // ○
 }
 
@@ -187,7 +187,7 @@ function getPaneColor(node: TreeNodeType): string {
   if (node.agentState === 'permission') return palette.warning;
   if (node.agentState === 'error') return palette.error;
   if (node.agentState === 'idle') return palette.textDim;
-  if (node.data.command === 'claude') return palette.info;
+  if (node.data.isClaudeLike) return palette.info;
   return palette.textDim;
 }
 

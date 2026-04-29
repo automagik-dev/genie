@@ -104,7 +104,7 @@ export async function loadAgentWorkStates(): Promise<Map<string, WorkState>> {
         const work = reasonToWorkState(decision.reason);
         if (!work) continue;
         const name = a.customName ?? a.role ?? a.id;
-        out.set(name, work);
+        mergeWorkState(out, name, work);
       } catch {
         /* one bad row can't wedge the diagnostics refresh */
       }
@@ -112,6 +112,20 @@ export async function loadAgentWorkStates(): Promise<Map<string, WorkState>> {
   });
   await Promise.all(workers);
   return out;
+}
+
+const WORK_STATE_PRIORITY: Record<WorkState, number> = {
+  in_flight: 4,
+  paused: 3,
+  stuck: 2,
+  done: 1,
+};
+
+export function mergeWorkState(states: Map<string, WorkState>, name: string, next: WorkState): void {
+  const current = states.get(name);
+  if (!current || WORK_STATE_PRIORITY[next] > WORK_STATE_PRIORITY[current]) {
+    states.set(name, next);
+  }
 }
 
 function reasonToWorkState(reason: string): WorkState | undefined {

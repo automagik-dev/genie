@@ -9,6 +9,7 @@
 
 import { execSync } from 'node:child_process';
 import { tmuxBin } from '../lib/ensure-tmux.js';
+import { isClaudeLikePane } from './pane-detection.js';
 import type { TuiAssignment, TuiExecutor, WorkState } from './types.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -189,9 +190,7 @@ function isPidAlive(pid: number): boolean {
 
 /** Get all claude panes from all sessions flattened. */
 function allClaudePanes(sessions: TmuxSession[]): TmuxPane[] {
-  return sessions
-    .flatMap((s) => s.windows.flatMap((w) => w.panes))
-    .filter((p) => p.command === 'claude' || p.title.includes('claude'));
+  return sessions.flatMap((s) => s.windows.flatMap((w) => w.panes)).filter(isClaudeLikePane);
 }
 
 /**
