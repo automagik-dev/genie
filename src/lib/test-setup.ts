@@ -142,7 +142,7 @@ async function isPostgresHealthy(port: number): Promise<boolean> {
  * macOS with GENIE_TEST_MAC_RAM=1: pass `--data <ram-disk>/pgserve` so
  * pgserve writes to the hdiutil-backed RAM volume (Group 6).
  * macOS default / no shm: omit `--data` entirely — pgserve defaults to its
- * own ephemeral temp dir (see pgserve/bin/pglite-server.js lines 44-64),
+ * own ephemeral temp dir (see pgserve/bin/postgres-server.js lines 44-64),
  * and auto-cleans the dir on child exit.
  */
 function buildPgserveArgs(port: number, useRam: boolean, dataDir: string | null): string[] {
@@ -196,7 +196,7 @@ async function tryStartOnPort(port: number, useRam: boolean, dataDir: string | n
 
 /**
  * Recursively collect all descendant PIDs of a given root. Returns [root, ...children].
- * Used to walk the wrapper → pglite-server → postgres tree when reaping orphans.
+ * Used to walk the wrapper → postgres-server → postgres tree when reaping orphans.
  */
 function collectDescendants(rootPid: number): number[] {
   const all = new Set<number>([rootPid]);
