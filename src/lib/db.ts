@@ -100,6 +100,18 @@ export function resolvePgserveAuthPassword(): string {
   return password && password.length > 0 ? password : DB_NAME;
 }
 
+function resolvePgserveTimeoutMs(): number {
+  const parsed = Number(process.env.GENIE_PGSERVE_TIMEOUT);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 16000;
+}
+
+function resolvePgConnectTimeoutSeconds(useSocket: boolean): number {
+  const parsed = Number(process.env.GENIE_PG_CONNECT_TIMEOUT);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.ceil(parsed);
+  if (!useSocket) return 5;
+  return Math.max(16, Math.ceil(resolvePgserveTimeoutMs() / 1000));
+}
+
 /** Back-compat name for the legacy/test TCP path. */
 export function resolveTcpPgPassword(): string {
   return resolvePgserveAuthPassword();
@@ -409,7 +421,7 @@ function requirePgserveDaemonBin(): string {
 
 async function waitForDaemonSocket(bin: string): Promise<void> {
   const socketPath = resolvePgserveLibpqSocketPath();
-  const timeout = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 16000;
+  const timeout = resolvePgserveTimeoutMs();
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (existsSync(socketPath)) return;
@@ -425,14 +437,18 @@ async function tryEnsureDaemonWithSdk(): Promise<boolean> {
   if (sdk === null) return false;
   if (typeof sdk.ensureDaemon !== 'function') return false;
 
-  const timeoutMs = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 16000;
-  const state = await sdk.ensureDaemon({
-    dataDir: DATA_DIR,
-    logLevel: 'warn',
-    timeoutMs,
-    controlSocketDir: resolvePgserveSocketDir(),
-  });
-  return Boolean(state.running && (state.libpqSocketPresent ?? state.socketPresent ?? true));
+  try {
+    const state = await sdk.ensureDaemon({
+      dataDir: DATA_DIR,
+      logLevel: 'warn',
+      timeoutMs: resolvePgserveTimeoutMs(),
+      controlSocketDir: resolvePgserveSocketDir(),
+    });
+    return Boolean(state.running && (state.libpqSocketPresent ?? state.socketPresent ?? true));
+  } catch {
+    cleanPartialDaemonState(probePgserveDaemon());
+    return false;
+  }
 }
 
 /** Sanitize connection URLs for logging — never expose credentials */
@@ -1255,7 +1271,7 @@ async function _buildConnection(): Promise<any> {
     [PG_AUTH_FIELD]: pgWireCredential,
     max: 50,
     idle_timeout: 1,
-    connect_timeout: 5,
+    connect_timeout: resolvePgConnectTimeoutSeconds(useSocket),
     onnotice: () => {},
     connection: {
       client_min_messages: 'warning',
