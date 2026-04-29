@@ -87,14 +87,40 @@ function walk(dir: string): string[] {
 }
 
 /**
- * Enumerate every test file bun would load by default (src/ + scripts/). The
- * returned list is sorted alphabetically so shard assignment is reproducible
- * across runs, machines, and filesystems with non-deterministic readdir order.
+ * Test files that must NOT be packed into the parallel shards. Known to fail
+ * under parallel-runner contention (port races, fs races, mock teardown
+ * bleed) but pass cleanly when run serially with `bun test <file>`.
+ * Closes #1468.
+ *
+ * dog-fooder-b367 verdict 2026-04-29: scripts/sec-remediate.test.ts passes
+ * 38/38 in 5s alone but hangs (>90s) when packed with other files into a
+ * shard. Verified-green serial; verified-broken parallel.
+ *
+ * To restore parallel coverage for one of these files, fix the underlying
+ * contention and remove it from this set.
+ */
+export const EXCLUSIVE_TEST_FILES = new Set<string>(['scripts/sec-remediate.test.ts']);
+
+/**
+ * Enumerate every test file bun would load by default (src/ + scripts/),
+ * EXCLUDING files in EXCLUSIVE_TEST_FILES. The returned list is sorted
+ * alphabetically so shard assignment is reproducible across runs.
  */
 export function discoverTestFiles(root: string = ROOT): string[] {
   const files = [...walk(join(root, 'src')), ...walk(join(root, 'scripts'))];
   files.sort();
-  return files;
+  return files.filter((f) => {
+    const rel = f.startsWith(`${root}/`) ? f.slice(root.length + 1) : f;
+    return !EXCLUSIVE_TEST_FILES.has(rel);
+  });
+}
+
+/**
+ * Companion to `discoverTestFiles` — resolves EXCLUSIVE_TEST_FILES to
+ * absolute paths for callers (CI, ship gate) that run them serially.
+ */
+export function discoverExclusiveTestFiles(root: string = ROOT): string[] {
+  return Array.from(EXCLUSIVE_TEST_FILES, (rel) => join(root, rel)).filter((p) => existsSync(p));
 }
 
 /**
