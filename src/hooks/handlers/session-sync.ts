@@ -56,6 +56,17 @@ function effectiveCacheFile(): string {
 function loadDiskCache(): void {
   if (diskCacheLoaded) return;
   diskCacheLoaded = true;
+  // In test mode (any _deps mocked or NODE_ENV=test/BUN_ENV=test), skip the
+  // production disk cache file unless tests explicitly opted in via
+  // _setCacheFileForTest. This prevents pre-existing tests from picking up
+  // stale (executorId, sessionId) entries written by earlier real-mode
+  // session-sync runs and short-circuiting before they hit their fixtures.
+  const hasOverrides = Object.values(_deps).some((v) => v !== null);
+  // biome-ignore lint/suspicious/noExplicitAny: read test override
+  const testCacheOverridden = typeof (globalThis as Record<string, any>).__GENIE_SESSION_SYNC_CACHE_FILE === 'string';
+  if ((hasOverrides || process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test') && !testCacheOverridden) {
+    return;
+  }
   try {
     const cacheFile = effectiveCacheFile();
     if (!existsSync(cacheFile)) return;
@@ -85,6 +96,14 @@ function trimCache(): void {
 }
 
 function persistDiskCache(): void {
+  // Mirror loadDiskCache test-mode skip: never write the production cache
+  // from a test run unless the test explicitly opted in via _setCacheFileForTest.
+  const hasOverrides = Object.values(_deps).some((v) => v !== null);
+  // biome-ignore lint/suspicious/noExplicitAny: read test override
+  const testCacheOverridden = typeof (globalThis as Record<string, any>).__GENIE_SESSION_SYNC_CACHE_FILE === 'string';
+  if ((hasOverrides || process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test') && !testCacheOverridden) {
+    return;
+  }
   try {
     const cacheFile = effectiveCacheFile();
     mkdirSync(join(cacheFile, '..'), { recursive: true });
