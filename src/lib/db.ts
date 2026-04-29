@@ -106,6 +106,53 @@ function selfHealPostgres(dataDir: string): void {
   }
 }
 
+function signalPgserveTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  const pid = child.pid;
+  if (pid === undefined) {
+    try {
+      child.kill(signal);
+    } catch {
+      /* already dead */
+    }
+    return;
+  }
+
+  try {
+    if (process.platform === 'win32') {
+      child.kill(signal);
+    } else {
+      process.kill(-pid, signal);
+    }
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      /* already dead */
+    }
+  }
+}
+
+async function terminatePgserveTree(child: ChildProcess): Promise<void> {
+  signalPgserveTree(child, 'SIGTERM');
+
+  const exited = await new Promise<boolean>((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve(true);
+      return;
+    }
+    const timer = setTimeout(() => resolve(false), 1000);
+    timer.unref();
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+
+  if (!exited) {
+    signalPgserveTree(child, 'SIGKILL');
+  }
+}
+
 /** Resolved port from env or default */
 function getPort(): number {
   const envPort = process.env.GENIE_PG_PORT;
@@ -590,11 +637,9 @@ async function startPgserveOnPort(port: number): Promise<number> {
     await new Promise((r) => setTimeout(r, 500));
   }
 
-  try {
-    child.kill('SIGTERM');
-  } catch {
-    /* dead */
-  }
+  await terminatePgserveTree(child);
+  if (pgserveChild === child) pgserveChild = null;
+  selfHealPostgres(DATA_DIR);
   throw new Error(`pgserve failed to start on port ${port} (timeout after ${timeout / 1000}s)`);
 }
 
@@ -605,11 +650,7 @@ function registerExitHandler(): void {
 
   const cleanup = () => {
     if (pgserveChild) {
-      try {
-        pgserveChild.kill('SIGTERM');
-      } catch {
-        /* dead */
-      }
+      signalPgserveTree(pgserveChild, 'SIGTERM');
       pgserveChild = null;
     }
     if (ownsLockfile) {

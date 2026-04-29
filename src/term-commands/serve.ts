@@ -610,6 +610,8 @@ async function startPgserve(): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  pgserve failed: ${msg}`);
+    process.env.GENIE_PG_NO_AUTOSTART = '1';
+    console.error('  pgserve retries disabled for this serve process; fix pgserve and restart `genie serve`.');
   }
 }
 
