@@ -29,7 +29,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
 import { palette } from '../../packages/genie-tokens';
 import {
@@ -53,6 +53,10 @@ function genieHome(): string {
 
 function servePidPath(): string {
   return join(genieHome(), 'serve.pid');
+}
+
+function serveStartupStatusPath(): string {
+  return join(genieHome(), 'state', `serve-startup-${process.pid}-${Date.now()}.json`);
 }
 
 // TUI uses default tmux server (no separate socket or config)
@@ -533,6 +537,12 @@ const handles: DaemonHandles = {
   derivedSignals: null,
   hookSocket: null,
 };
+
+interface ServeStartupStatus {
+  ok: boolean;
+  code?: number;
+  lines?: string[];
+}
 
 /** Sync agent directory from workspace and start file watcher. */
 async function startAgentSync(): Promise<{ close: () => void } | null> {
@@ -1040,6 +1050,84 @@ function installGracefulExitHandlers(shutdown: () => Promise<void>, hasStarted: 
   });
 }
 
+function writeStartupStatus(status: ServeStartupStatus): void {
+  const statusPath = process.env.GENIE_SERVE_STARTUP_STATUS;
+  if (!statusPath) return;
+  try {
+    mkdirSync(dirname(statusPath), { recursive: true });
+    writeFileSync(statusPath, `${JSON.stringify(status)}\n`, 'utf-8');
+  } catch {
+    // Best effort; the parent still falls back to liveness checks.
+  }
+}
+
+function readStartupStatus(statusPath: string): ServeStartupStatus | null {
+  try {
+    const parsed = JSON.parse(readFileSync(statusPath, 'utf-8')) as Partial<ServeStartupStatus>;
+    if (typeof parsed.ok !== 'boolean') return null;
+    return {
+      ok: parsed.ok,
+      code: typeof parsed.code === 'number' ? parsed.code : undefined,
+      lines: Array.isArray(parsed.lines)
+        ? parsed.lines.filter((line): line is string => typeof line === 'string')
+        : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function waitForStartupStatus(
+  statusPath: string,
+  childPid: number,
+  timeoutMs: number,
+): Promise<ServeStartupStatus | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = readStartupStatus(statusPath);
+    if (status) return status;
+    if (!isProcessAlive(childPid)) return { ok: false, code: 1 };
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+function exitBackgroundStartFailed(): never {
+  console.error('Error: genie serve exited immediately.');
+  process.exit(1);
+}
+
+function exitStartupStatusFailure(status: ServeStartupStatus): never {
+  for (const line of status.lines ?? []) console.error(line);
+  process.exit(status.code ?? 1);
+}
+
+function exitStartupStatusMissing(childPid: number): never {
+  console.error('Error: genie serve did not report startup precondition status within 16s.');
+  try {
+    process.kill(childPid, 'SIGTERM');
+  } catch {
+    // Already gone.
+  }
+  process.exit(1);
+}
+
+async function confirmBackgroundStarted(childPid: number, startupStatusPath?: string): Promise<void> {
+  if (startupStatusPath) {
+    const status = await waitForStartupStatus(startupStatusPath, childPid, 16_000);
+    forceRemovePath(startupStatusPath);
+    if (status?.ok === false) exitStartupStatusFailure(status);
+    if (status?.ok !== true) exitStartupStatusMissing(childPid);
+    if (!isProcessAlive(childPid)) exitBackgroundStartFailed();
+    console.log(`genie serve started (PID ${childPid})`);
+    return;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  if (!isProcessAlive(childPid)) exitBackgroundStartFailed();
+  console.log(`genie serve started (PID ${childPid})`);
+}
+
 async function startForeground(headless?: boolean, autoFix = true): Promise<void> {
   claimServePidOrExit();
   // Invalidate any stale port lockfile from an unclean prior shutdown — the
@@ -1054,18 +1142,32 @@ async function startForeground(headless?: boolean, autoFix = true): Promise<void
 
   // Preconditions call getConnection(); the daemon marker must already be set
   // so pgserve starts in this process instead of recursively auto-spawning serve.
+  const preconditionLines: string[] = [];
+  const preconditionLog = process.env.GENIE_SERVE_STARTUP_STATUS
+    ? (line: string): void => {
+        preconditionLines.push(line);
+        console.log(line);
+      }
+    : undefined;
   try {
-    const preconditionsOk = await runStartPreconditions(autoFix);
+    const preconditionsOk = await runStartPreconditions(autoFix, preconditionLog);
     if (!preconditionsOk) {
+      writeStartupStatus({ ok: false, code: 2, lines: preconditionLines });
       removeServePid();
       process.exit(2);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`genie serve start preconditions failed: ${msg}`);
+    writeStartupStatus({
+      ok: false,
+      code: 1,
+      lines: [...preconditionLines, `genie serve start preconditions failed: ${msg}`],
+    });
     removeServePid();
     process.exit(1);
   }
+  writeStartupStatus({ ok: true });
 
   if (!skipTui) {
     await ensureTmux();
@@ -1114,6 +1216,7 @@ async function startBackground(headless?: boolean, autoFix = true): Promise<void
 
   const bunPath = process.execPath ?? 'bun';
   const genieBin = process.argv[1] ?? 'genie';
+  const startupStatusPath = autoFix ? undefined : serveStartupStatusPath();
 
   const args = [genieBin, 'serve', '--foreground'];
   if (headless) args.push('--headless');
@@ -1122,19 +1225,17 @@ async function startBackground(headless?: boolean, autoFix = true): Promise<void
   const child = spawn(bunPath, args, {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, GENIE_IS_DAEMON: '1' },
+    env: {
+      ...process.env,
+      GENIE_IS_DAEMON: '1',
+      ...(startupStatusPath ? { GENIE_SERVE_STARTUP_STATUS: startupStatusPath } : {}),
+    },
   });
 
   child.unref();
 
   if (child.pid) {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    if (isProcessAlive(child.pid)) {
-      console.log(`genie serve started (PID ${child.pid})`);
-    } else {
-      console.error('Error: genie serve exited immediately.');
-      process.exit(1);
-    }
+    await confirmBackgroundStarted(child.pid, startupStatusPath);
   } else {
     console.error('Error: failed to spawn genie serve');
     process.exit(1);
@@ -1143,8 +1244,12 @@ async function startBackground(headless?: boolean, autoFix = true): Promise<void
 
 /** Unlink serve.pid unconditionally, swallowing ENOENT and permission errors. */
 function forceRemoveServePid(): void {
+  forceRemovePath(servePidPath());
+}
+
+function forceRemovePath(path: string): void {
   try {
-    unlinkSync(servePidPath());
+    unlinkSync(path);
   } catch {}
 }
 
@@ -1429,13 +1534,15 @@ interface ServeStartOptions {
  * (e.g. bridge-failure assertions) within a tight timing envelope. Production
  * code paths must never set this — `--no-fix` is the operator-facing escape.
  */
-async function runStartPreconditions(autoFix: boolean): Promise<boolean> {
+async function runStartPreconditions(autoFix: boolean, log?: (line: string) => void): Promise<boolean> {
   if (process.env.GENIE_SKIP_PRECONDITIONS === '1') return true;
   const { ensureServeReady } = await import('./serve/ensure-ready.js');
-  const report = await ensureServeReady({ autoFix });
+  const report = await ensureServeReady({ autoFix, deps: log ? { log } : undefined });
   if (autoFix) return true;
   if (!report.ok) {
-    console.error('genie serve start refused: one or more preconditions are not ok (--no-fix mode).');
+    const message = 'genie serve start refused: one or more preconditions are not ok (--no-fix mode).';
+    if (log) log(message);
+    else console.error(message);
     return false;
   }
   return true;

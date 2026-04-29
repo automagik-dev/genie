@@ -217,6 +217,22 @@ describe('codex-inbox-deliver handler', () => {
     expect(elapsed).toBeLessThan(2_000);
   });
 
+  test('does not mark rows read when a timed-out fetch resolves later', async () => {
+    let markReadCalls = 0;
+    _deps.findCodexAgent = async () => makeAgent();
+    _deps.fetchUnread = () => new Promise((resolve) => setTimeout(() => resolve([makeMsg({ id: 'late-msg' })]), 650));
+    _deps.markReadBatch = async () => {
+      markReadCalls += 1;
+      return 1;
+    };
+
+    const result = await codexInboxDeliver(basePayload());
+    expect(result).toBeUndefined();
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(markReadCalls).toBe(0);
+  });
+
   test('swallows fetch errors and returns undefined (never crashes the dispatcher)', async () => {
     _deps.findCodexAgent = async () => makeAgent();
     _deps.fetchUnread = async () => {

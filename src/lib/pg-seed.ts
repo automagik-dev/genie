@@ -18,6 +18,18 @@ import { type NativeTeamConfig, loadAllNativeTeamConfigs } from './claude-native
 
 type Sql = postgres.Sql;
 
+interface TeamsSeedMarker {
+  teamsDir: string;
+  mtimeMs: string;
+  teamNames: string[];
+}
+
+interface SeedTeamsResult {
+  count: number;
+  teamNames: string[];
+  hadFailures: boolean;
+}
+
 // ============================================================================
 // Path helpers
 // ============================================================================
@@ -46,27 +58,44 @@ function teamsDirMtime(claudeTeamsDir: string): string | null {
   }
 }
 
-function hasFreshTeamsSeedMarker(claudeTeamsDir: string): boolean {
+function readFreshTeamsSeedMarker(claudeTeamsDir: string): TeamsSeedMarker | null {
   const mtimeMs = teamsDirMtime(claudeTeamsDir);
-  if (!mtimeMs) return false;
+  if (!mtimeMs) return null;
   try {
     const marker = JSON.parse(readFileSync(teamsSeedMarkerPath(), 'utf-8')) as {
       teamsDir?: string;
       mtimeMs?: string;
+      teamNames?: unknown;
     };
-    return marker.teamsDir === claudeTeamsDir && marker.mtimeMs === mtimeMs;
+    if (marker.teamsDir !== claudeTeamsDir || marker.mtimeMs !== mtimeMs || !Array.isArray(marker.teamNames)) {
+      return null;
+    }
+    return {
+      teamsDir: marker.teamsDir,
+      mtimeMs: marker.mtimeMs,
+      teamNames: marker.teamNames.filter((name): name is string => typeof name === 'string' && name.length > 0),
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
-async function writeTeamsSeedMarker(): Promise<void> {
+function hasFreshTeamsSeedMarker(claudeTeamsDir: string): boolean {
+  return readFreshTeamsSeedMarker(claudeTeamsDir) !== null;
+}
+
+async function writeTeamsSeedMarker(teamNames: string[]): Promise<void> {
   const claudeTeamsDir = claudeTeamsDirPath();
   const mtimeMs = teamsDirMtime(claudeTeamsDir);
   if (!mtimeMs) return;
   const markerPath = teamsSeedMarkerPath();
+  const marker: TeamsSeedMarker = {
+    teamsDir: claudeTeamsDir,
+    mtimeMs,
+    teamNames: [...new Set(teamNames)].sort(),
+  };
   await mkdir(join(getGenieHome(), 'state'), { recursive: true });
-  await writeFile(markerPath, `${JSON.stringify({ teamsDir: claudeTeamsDir, mtimeMs })}\n`, 'utf-8');
+  await writeFile(markerPath, `${JSON.stringify(marker)}\n`, 'utf-8');
 }
 
 /** Check if a source file needs migration (exists and not yet migrated). */
@@ -132,6 +161,24 @@ export function needsSeed(): boolean {
     return entries.some((e) => !e.startsWith('.'));
   } catch {
     return false;
+  }
+}
+
+/**
+ * Check whether the current database is missing team rows represented by a
+ * fresh disk seed marker. This catches pgserve data-dir resets, where the
+ * marker in GENIE_HOME survives but the `teams` table has been rebuilt empty.
+ */
+export async function needsSeededTeams(sql: Sql): Promise<boolean> {
+  const marker = readFreshTeamsSeedMarker(claudeTeamsDirPath());
+  if (!marker || marker.teamNames.length === 0) return false;
+  try {
+    const rows = await sql<Array<{ name: string }>>`
+      SELECT name FROM teams WHERE name = ANY(${marker.teamNames})
+    `;
+    return rows.length < marker.teamNames.length;
+  } catch {
+    return true;
   }
 }
 
@@ -334,20 +381,24 @@ async function upsertNativeTeam(sql: Sql, c: NativeTeamConfig): Promise<void> {
   `;
 }
 
-async function seedTeams(sql: Sql): Promise<number> {
+async function seedTeams(sql: Sql): Promise<SeedTeamsResult> {
   const configs = await loadAllNativeTeamConfigs();
+  const teamNames: string[] = [];
   let count = 0;
+  let hadFailures = false;
   for (const cfg of configs) {
     if (!cfg?.name) continue;
+    teamNames.push(cfg.name);
     try {
       await upsertNativeTeam(sql, cfg);
       count++;
     } catch (err) {
+      hadFailures = true;
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[pg-seed] Failed to seed team "${cfg.name}": ${msg}`);
     }
   }
-  return count;
+  return { count, teamNames, hadFailures };
 }
 
 // ============================================================================
@@ -519,7 +570,8 @@ export async function runSeed(sql: Sql, repoPath?: string): Promise<SeedResult> 
   result.agents = workers.agents;
   result.templates = workers.templates;
 
-  result.teams = await seedTeams(sql);
+  const teams = await seedTeams(sql);
+  result.teams = teams.count;
 
   if (repoPath) {
     result.mailboxMessages = await seedMailbox(sql, repoPath);
@@ -528,7 +580,7 @@ export async function runSeed(sql: Sql, repoPath?: string): Promise<SeedResult> 
 
   // Phase 2: Mark source files as migrated (only after all UPSERTs succeed)
   await markMigrated(repoPath);
-  await writeTeamsSeedMarker();
+  if (!teams.hadFailures) await writeTeamsSeedMarker(teams.teamNames);
 
   return result;
 }

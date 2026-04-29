@@ -12,7 +12,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
-import { needsSeed, runSeed } from './pg-seed.js';
+import { needsSeed, needsSeededTeams, runSeed } from './pg-seed.js';
 import { getProcessStartTime } from './process-identity.js';
 
 /**
@@ -683,7 +683,9 @@ async function runPostConnectSetup(client: postgres.Sql, isTestMode: boolean, ti
   if (!skipBoot) await runMigrations(client);
   const _t3 = Date.now();
 
-  if (!skipBoot && needsSeed()) await runSeed(client);
+  if (!skipBoot && (needsSeed() || (await needsSeededTeams(client)))) {
+    await runSeed(client);
+  }
   const _t4 = Date.now();
 
   // Retention is no longer run from getConnection — it now lives on a
