@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -102,6 +102,15 @@ describe('backup error handling', () => {
       process.env.GENIE_HOME = originalGenieHome;
     }
   }, 30_000);
+
+  test('socket pg_dump env includes pgserve auth credentials', () => {
+    const source = readFileSync(join(__dirname, 'db-backup.ts'), 'utf-8');
+    const socketBranch = source.slice(source.indexOf('if (useSocket)'), source.indexOf('// TCP path'));
+    expect(socketBranch).toContain('PGHOST: resolvePgserveSocketDir()');
+    expect(socketBranch).toContain('PGUSER: DB_NAME');
+    expect(socketBranch).toContain('PGPASSWORD: resolvePgserveAuthPassword()');
+    expect(socketBranch).toContain('PGDATABASE: resolvedDatabase');
+  });
 });
 
 // ============================================================================

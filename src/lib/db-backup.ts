@@ -5,9 +5,8 @@
  * Compression uses node:zlib, restore pipes through postgres.js.
  *
  * pgserve v2: connects via Unix socket at $XDG_RUNTIME_DIR/pgserve.
- * No port, no user, no password — the daemon authenticates via SO_PEERCRED
- * and routes the peer to its fingerprinted database automatically. The libpq
- * default `database = user` resolves to the fingerprint's DB.
+ * The daemon routes via SO_PEERCRED, then the proxied Postgres handshake uses
+ * pgserve's local role credentials.
  */
 
 import { type SpawnSyncReturns, spawnSync } from 'node:child_process';
@@ -15,7 +14,14 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { homedir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { DB_NAME, getActivePort, resolveDatabaseName, resolvePgserveSocketDir, resolveTcpPgPassword } from './db.js';
+import {
+  DB_NAME,
+  getActivePort,
+  resolveDatabaseName,
+  resolvePgserveAuthPassword,
+  resolvePgserveSocketDir,
+  resolveTcpPgPassword,
+} from './db.js';
 import { resolveRepoPath } from './wish-state.js';
 
 const SNAPSHOT_FILE = 'snapshot.sql.gz';
@@ -53,8 +59,8 @@ function assertOutsideRepo(snapshotPath: string, cwd?: string): void {
  *     PGHOST=127.0.0.1, PGPORT=<active port>, PGUSER/PGPASSWORD for the
  *     unauthenticated test daemon.
  *   - Otherwise → pgserve v2 Unix socket. PGHOST points at the socket dir,
- *     no PGPORT (libpq dials `<dir>/.s.PGSQL.5432`), no PGUSER/PGPASSWORD
- *     (SO_PEERCRED on the daemon side).
+ *     no PGPORT (libpq dials `<dir>/.s.PGSQL.5432`), PGUSER/PGPASSWORD answer
+ *     the embedded Postgres auth challenge after SO_PEERCRED routing.
  */
 function pgEnv(database?: string): Record<string, string | undefined> {
   const forceTcp = process.env.GENIE_PG_FORCE_TCP === '1';
@@ -66,6 +72,8 @@ function pgEnv(database?: string): Record<string, string | undefined> {
     return {
       ...process.env,
       PGHOST: resolvePgserveSocketDir(),
+      PGUSER: DB_NAME,
+      PGPASSWORD: resolvePgserveAuthPassword(),
       PGDATABASE: resolvedDatabase,
     };
   }
