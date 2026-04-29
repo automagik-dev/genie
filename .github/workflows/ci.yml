@@ -159,9 +159,15 @@ jobs:
 
       # See unit-tests for rationale — package.json pins `pgserve:
       # file:../pgserve` until pgserve@2.0.0 is on npm, so CI must clone the
-      # v2 branch as a sibling before bun install can resolve.
+      # v2 branch as a sibling before bun install can resolve. PG Tests in
+      # particular also needs the wrapper's bun runtime populated (see
+      # unit-tests note) — without `bun install` inside the sibling, the
+      # test-setup preload throws "could not start pgserve on any port" and
+      # the entire suite collapses with ENOENT on /tmp/pgserve.
       - name: Checkout pgserve v2 sibling
-        run: git clone --depth 1 --branch wish/pgserve-v2 https://github.com/namastexlabs/pgserve.git ../pgserve
+        run: |
+          git clone --depth 1 --branch wish/pgserve-v2 https://github.com/namastexlabs/pgserve.git ../pgserve
+          (cd ../pgserve && bun install --no-save)
 
       # Per-run scratch cache dir. Prior config used a persistent
       # ~/.bun/install/cache restored via actions/cache, which cross-
