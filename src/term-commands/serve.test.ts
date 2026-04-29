@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -47,6 +47,21 @@ describe('getTuiKeybindings', () => {
 });
 
 describe('pgserve failure containment', () => {
+  test('serve startup uses the pgserve v2 daemon path', () => {
+    const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function startPgserve');
+    const fnEnd = source.indexOf('/** Start the scheduler daemon', fnStart);
+    expect(fnStart).toBeGreaterThan(-1);
+    expect(fnEnd).toBeGreaterThan(fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    expect(body).toContain('getOrStartDaemon');
+    expect(body).toContain('resolvePgserveLibpqSocketPath');
+    expect(body).not.toContain('ensurePgserve');
+    expect(body).not.toContain('registerService');
+    expect(body).not.toContain('pgserve ready on port');
+  });
+
   test('serve disables in-process pgserve retries after startup failure', () => {
     const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
     const fnStart = source.indexOf('async function startPgserve');
@@ -63,13 +78,13 @@ describe('brain startup integration', () => {
     const path = join(root, name);
     mkdirSync(path, { recursive: true });
     writeFileSync(join(path, 'brain.json'), '{}', 'utf-8');
-    return path;
+    return realpathSync(path);
   }
 
   function makeDir(root: string, name: string): string {
     const path = join(root, name);
     mkdirSync(path, { recursive: true });
-    return path;
+    return realpathSync(path);
   }
 
   async function eventually(predicate: () => boolean): Promise<void> {
@@ -524,37 +539,26 @@ describe('atomic PID claim', () => {
 });
 
 // ============================================================================
-// Stale pgserve.port invalidation — Defect 3
+// pgserve v1/v2 coexistence
 //
-// An unclean prior shutdown leaves ~/.genie/pgserve.port pointing at a dead
-// port. startForeground() must remove that lockfile before pgserve is
-// brought up, so cached callers don't ECONNREFUSED forever.
+// pgserve@1.2.0 is the final v1 line and uses TCP/port lockfiles. pgserve v2
+// is portless. New serve startup must not delete legacy v1 artifacts unless
+// the operator explicitly forces legacy TCP mode.
 // ============================================================================
 
-describe('pgserve port lockfile invalidation', () => {
-  test('startForeground removes a pre-existing pgserve.port at boot', async () => {
-    // Seed a stale lockfile pointing at an unused port.
-    const stalePortPath = join(genieHome, 'pgserve.port');
-    writeFileSync(stalePortPath, '19642', 'utf-8');
-    expect(readFileSync(stalePortPath, 'utf-8').trim()).toBe('19642');
+describe('pgserve v1/v2 coexistence', () => {
+  test('serve only removes the legacy pgserve.port file when legacy TCP is forced', () => {
+    const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
+    const helperStart = source.indexOf('function removeLegacyPgservePortLockfileIfForcedTcp');
+    expect(helperStart).toBeGreaterThan(-1);
+    const helperEnd = source.indexOf('\n}\n', helperStart);
+    const helperBody = source.slice(helperStart, helperEnd);
 
-    const result = spawnServe({
-      GENIE_HOME: genieHome,
-      GENIE_NATS_URL: 'nats://127.0.0.1:1',
-      GENIE_OMNI_REQUIRED: undefined,
-    });
-    child = result.child;
+    expect(helperBody).toContain("process.env.GENIE_PG_FORCE_TCP !== '1'");
+    expect(helperBody).toContain("join(genieHome(), 'pgserve.port')");
 
-    // Wait until the stale value is gone (either deleted or rewritten by
-    // ensurePgserve to the new live port).
-    const cleared = await waitUntil(() => {
-      if (!existsSync(stalePortPath)) return true;
-      const current = readFileSync(stalePortPath, 'utf-8').trim();
-      return current !== '19642' && current !== '';
-    }, 15_000);
-    expect(cleared).toBe(true);
-
-    result.child.kill('SIGKILL');
-    await Promise.race([result.exit, waitFor(5_000)]);
-  }, 30_000);
+    const startForeground = source.slice(source.indexOf('async function startForeground'));
+    expect(startForeground).toContain('removeLegacyPgservePortLockfileIfForcedTcp();');
+    expect(startForeground).not.toContain('removePgservePortLockfile();');
+  });
 });

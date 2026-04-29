@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -19,13 +19,13 @@ function makeVault(name: string, brainJson = '{}'): string {
   const path = join(testDir, name);
   mkdirSync(path, { recursive: true });
   writeFileSync(join(path, 'brain.json'), brainJson, 'utf-8');
-  return path;
+  return realpathSync(path);
 }
 
 function makeDir(name: string): string {
   const path = join(testDir, name);
   mkdirSync(path, { recursive: true });
-  return path;
+  return realpathSync(path);
 }
 
 function deps(overrides: Parameters<typeof resolveBrainVaults>[0] = {}): Parameters<typeof resolveBrainVaults>[0] {

@@ -836,18 +836,34 @@ function printDoctorSummary(counts: { errors: boolean; warnings: boolean }): voi
   console.log();
 }
 
+function legacyPgserveRepairEnabled(): boolean {
+  return process.env.GENIE_PG_FORCE_TCP === '1' || process.env.GENIE_DOCTOR_FIX_LEGACY_PGSERVE === '1';
+}
+
 /**
- * `genie doctor --fix` — automated recovery for stale PG state.
- * Kills zombie postgres, cleans shared memory, removes stale files, restarts daemon.
+ * `genie doctor --fix` — automated recovery for daemon state.
+ *
+ * pgserve v2 is portless and must coexist with pgserve v1 (latest v1:
+ * 1.2.0). Default doctor repair therefore avoids broad pgserve/postgres
+ * process kills. Legacy TCP cleanup is opt-in via GENIE_PG_FORCE_TCP=1 or
+ * GENIE_DOCTOR_FIX_LEGACY_PGSERVE=1 and is scoped to Genie's legacy data dir.
  */
-async function killStalePostgres(): Promise<void> {
-  console.log('  Killing stale postgres processes...');
+async function killStalePostgres(genieHome: string): Promise<void> {
+  if (!legacyPgserveRepairEnabled()) {
+    console.log('  Skipping legacy pgserve v1 process cleanup (v1/v2 coexistence)');
+    return;
+  }
+
+  console.log('  Killing stale Genie legacy pgserve processes...');
   try {
     const { execSync } = await import('node:child_process');
-    execSync('pkill -9 -f "postgres.*pgserve" 2>/dev/null || true', { stdio: 'ignore', timeout: 5000 });
-    console.log('  \x1b[32m\u2713\x1b[0m Stale postgres processes killed');
+    const legacyDataDir = join(genieHome, 'data', 'pgserve');
+    const escaped = legacyDataDir.replace(/\//g, '\\/');
+    execSync(`pkill -9 -f "postgres.*${escaped}" 2>/dev/null || true`, { stdio: 'ignore', timeout: 5000 });
+    execSync(`pkill -9 -f "pgserve.*${escaped}" 2>/dev/null || true`, { stdio: 'ignore', timeout: 5000 });
+    console.log('  \x1b[32m\u2713\x1b[0m Stale Genie legacy pgserve processes killed');
   } catch {
-    console.log('  \x1b[33m!\x1b[0m Could not kill stale postgres processes');
+    console.log('  \x1b[33m!\x1b[0m Could not kill stale Genie legacy pgserve processes');
   }
 }
 
@@ -900,10 +916,14 @@ async function stopExistingDaemon(pidFile: string): Promise<void> {
 }
 
 function removeStaleFiles(genieHome: string, pidFile: string): void {
-  const portFile = join(genieHome, 'pgserve.port');
-  const postmasterPid = join(genieHome, 'data', 'pgserve', 'postmaster.pid');
+  const files = [pidFile];
+  if (legacyPgserveRepairEnabled()) {
+    files.push(join(genieHome, 'pgserve.port'), join(genieHome, 'data', 'pgserve', 'postmaster.pid'));
+  } else {
+    console.log('  Leaving legacy pgserve v1 port/data files untouched (v1/v2 coexistence)');
+  }
 
-  for (const file of [portFile, pidFile, postmasterPid]) {
+  for (const file of files) {
     if (existsSync(file)) {
       try {
         unlinkSync(file);
@@ -1065,10 +1085,11 @@ async function doctorFix(): Promise<void> {
   console.log('\n\x1b[1mGenie Doctor \u2014 Auto Fix\x1b[0m');
   console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m\n`);
 
-  await killStalePostgres();
+  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+
+  await killStalePostgres(genieHome);
   await cleanSharedMemory();
 
-  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
   const pidFile = join(genieHome, 'scheduler.pid');
 
   await stopExistingDaemon(pidFile);

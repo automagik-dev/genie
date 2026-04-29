@@ -219,14 +219,15 @@ export async function getOrStartDaemon(): Promise<DaemonState> {
   }
 
   daemonStartPromise = (async () => {
-    // Clean up partial state before respawning.
+    // Clean up partial state before respawning. Do not signal a pid from the
+    // v2 pid file when the socket is absent: during migration that pid may be
+    // stale/recycled, and pgserve v1 TCP daemons must be allowed to coexist.
     if (initial.reason === 'pid alive but no socket' && initial.pid !== null) {
       try {
-        process.kill(initial.pid, 'SIGTERM');
+        unlinkSync(resolvePgserveDaemonPidPath());
       } catch {
-        /* already gone */
+        /* gone */
       }
-      await sleep(500);
     }
     if (initial.reason === 'socket present but pid stale') {
       try {
@@ -1064,6 +1065,7 @@ async function maybePrintBanner(client: postgres.Sql, isTestMode: boolean): Prom
 async function _buildConnection(): Promise<any> {
   const _t0 = Date.now();
   const useSocket = shouldUseUnixSocket();
+  if (useSocket) await getOrStartDaemon();
   const port = useSocket ? 5432 : await ensurePgserve();
   const _t1 = Date.now();
   const pgModule = (await import('postgres')).default;
