@@ -29,14 +29,10 @@
   README). The legacy `genie serve` headless spawn path remains as a
   TCP fallback for environments that haven't adopted the daemon yet —
   set `GENIE_PG_FORCE_TCP=1` to opt back into TCP loopback.
-- **Pin during the rollout window.** The `pgserve` dependency is pinned
-  via local file path (`file:../pgserve`) for the duration of the
-  pgserve v2 wish (release-system-genie-pattern Group 8 publishes
-  `pgserve@2.0.0` to npm). Once published, the pin should be swapped to
-  `^2.0.0` — see `package.json` and the wish under
-  `.genie/wishes/pgserve-v2/WISH.md` (Group 7) for the migration plan.
-  TODO(pgserve@2.0.0): swap `package.json#dependencies.pgserve` from
-  `file:../pgserve` to `^2.0.0` once Group 8 publishes.
+- **`pgserve@2.0.0` consumed from npm.** The temporary local file pin
+  (`file:../pgserve`) has been swapped for the published `^2.0.0`
+  range now that pgserve v2 is on the registry. Genie tracks the
+  daemon's released artifact rather than a sibling working copy.
 
 ### Breaking — design system
 
