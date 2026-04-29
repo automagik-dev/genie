@@ -70,8 +70,16 @@ jobs:
       # publishes pgserve@2.0.0 to npm. Bun install fails on CI without the
       # sibling checkout. Cloning the v2 branch alongside satisfies the file:
       # protocol the same way the smoke job's local sibling does.
+      #
+      # `bun install` inside the sibling is required too: pgserve's CLI is
+      # bin/pgserve-wrapper.cjs, which probes for the bun runtime in
+      # ../pgserve/node_modules/.bin/bun. Without that population, the
+      # spawn-test-pgserve preload throws "could not find bun runtime" and
+      # the whole PG suite collapses with ENOENT on /tmp/pgserve socket.
       - name: Checkout pgserve v2 sibling
-        run: git clone --depth 1 --branch wish/pgserve-v2 https://github.com/namastexlabs/pgserve.git ../pgserve
+        run: |
+          git clone --depth 1 --branch wish/pgserve-v2 https://github.com/namastexlabs/pgserve.git ../pgserve
+          (cd ../pgserve && bun install --no-save)
 
       - name: Install dependencies
         env:
