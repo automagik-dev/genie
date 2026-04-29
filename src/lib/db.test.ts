@@ -687,6 +687,12 @@ describe('autoStartDaemon identity check', () => {
     expect(spawnCount).toBe(1);
   });
 
+  test('auto-start child is a foreground daemon before serve preconditions run', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    expect(source).toContain("'serve', 'start', '--headless', '--foreground'");
+    expect(source).toContain("GENIE_IS_DAEMON: '1'");
+  });
+
   test('returns early when serve.pid identity matches (live PID + matching start time)', async () => {
     const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
     const { getProcessStartTime } = await import('./process-identity.js');
