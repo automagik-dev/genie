@@ -1131,8 +1131,13 @@ export class OmniBridge {
       placeholder.session = session;
       placeholder.spawning = false;
 
-      // Record session in PG for crash recovery
+      // Record session in PG for crash recovery. Both executors expose a
+      // claude session id — sdk via `session.sdk.claudeSessionId`, tmux via
+      // `session.tmux.claudeSessionId` (added so the bridge can persist the
+      // per-chat conversation id and observers can trace history across
+      // executor restarts).
       if (this.sessionStore) {
+        const claudeSessionId = session.sdk?.claudeSessionId ?? session.tmux?.claudeSessionId;
         const pgId = await this.safePgCall(
           'session_create',
           (sql) =>
@@ -1142,7 +1147,7 @@ export class OmniBridge {
               agentName: message.agent,
               executorId: session.sdk?.executorId,
               tmuxPaneId: session.tmux?.paneId,
-              claudeSessionId: session.sdk?.claudeSessionId,
+              claudeSessionId,
             }),
           undefined,
           { chatId: message.chatId },

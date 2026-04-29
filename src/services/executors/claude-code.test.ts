@@ -180,6 +180,40 @@ describe('buildOmniSpawnParams', () => {
     expect(params.disallowedTools).toEqual(['Edit', 'Write', 'Agent']);
   });
 
+  test('emits resume (not sessionId) when resumeClaudeSessionId is set', () => {
+    // Operator-facing invariant: omni-spawned chats are permanent. When the
+    // bridge respawns a per-chat agent and we have a prior Claude session id
+    // for that (agent, chat), buildOmniSpawnParams must surface it as `resume`
+    // so buildLaunchCommand emits `--resume <id>` and Claude reattaches to
+    // the same JSONL transcript.
+    const priorClaudeSessionId = 'b25fb825-3695-4aa1-bcdf-7a4c20dc66c8';
+    const params = buildOmniSpawnParams(
+      'simone',
+      'chat123',
+      fakeEntry,
+      { OMNI_INSTANCE: 'inst-1', OMNI_SENDER_NAME: 'Stefani' },
+      'follow-up message',
+      priorClaudeSessionId,
+    );
+    expect(params.resume).toBe(priorClaudeSessionId);
+    // sessionId must be omitted on resume — they are mutually exclusive in
+    // buildLaunchCommand. A leftover sessionId would cause a noisy fallback
+    // when `resume` is consumed first.
+    expect(params.sessionId).toBeUndefined();
+  });
+
+  test('falls back to fresh sessionId when resumeClaudeSessionId is undefined', () => {
+    // Backward compat: existing callers (and the first-ever spawn for a chat)
+    // pass no resume id and must still get a generated sessionId for
+    // `--session-id <new-uuid>`. The newly-generated id is what gets
+    // persisted to executors.claude_session_id so the *next* respawn can
+    // resume it.
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {}, 'first message');
+    expect(params.resume).toBeUndefined();
+    expect(params.sessionId).toBeDefined();
+    expect(params.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
   test('omits permissions when entry has none (no false sense of security)', () => {
     const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
     expect(params.permissions).toBeUndefined();
