@@ -46,8 +46,21 @@ import { isBlockingEvent } from './types.js';
 // Handler Registry
 // ============================================================================
 
-const handlers: Handler[] = [
+/**
+ * Builtin handlers — registered before any external loader runs.
+ *
+ * `source: 'builtin'` and `manifest_path` point at this file so `genie hook list`
+ * can attribute every dispatched handler back to its source. The boot-scan
+ * loader (delivery #2 Group 1) appends external handlers to a fresh array and
+ * swaps it into `registryRef` via `setRegistry()` before `server.listen()`.
+ */
+const BUILTIN_MANIFEST_PATH = 'src/hooks/index.ts';
+
+const builtinHandlers: ReadonlyArray<Handler> = [
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'branch-guard',
     event: 'PreToolUse',
     matcher: /^Bash$/,
@@ -55,6 +68,9 @@ const handlers: Handler[] = [
     fn: branchGuard,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'orchestration-guard',
     event: 'PreToolUse',
     matcher: /^Bash$/,
@@ -62,6 +78,9 @@ const handlers: Handler[] = [
     fn: orchestrationGuard,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'brain-inject',
     event: 'PreToolUse',
     matcher: /.*/,
@@ -69,6 +88,9 @@ const handlers: Handler[] = [
     fn: brainInject,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'freshness',
     event: 'PreToolUse',
     matcher: /^Read$/,
@@ -76,6 +98,9 @@ const handlers: Handler[] = [
     fn: freshness,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'audit-context',
     event: 'PreToolUse',
     matcher: /^(Write|Edit)$/,
@@ -83,6 +108,9 @@ const handlers: Handler[] = [
     fn: auditContext,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'identity-inject',
     event: 'PreToolUse',
     matcher: /^SendMessage$/,
@@ -90,6 +118,9 @@ const handlers: Handler[] = [
     fn: identityInject,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'auto-spawn',
     event: 'PreToolUse',
     matcher: /^SendMessage$/,
@@ -97,6 +128,9 @@ const handlers: Handler[] = [
     fn: autoSpawn,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'runtime-emit-tool',
     event: 'PreToolUse',
     matcher: /.*/,
@@ -104,6 +138,9 @@ const handlers: Handler[] = [
     fn: emitToolCallEvent,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'runtime-emit-msg',
     event: 'PostToolUse',
     matcher: /^SendMessage$/,
@@ -111,24 +148,36 @@ const handlers: Handler[] = [
     fn: emitMessageEvent,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'codex-inbox-deliver',
     event: 'UserPromptSubmit',
     priority: 25,
     fn: codexInboxDeliver,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'runtime-emit-user-prompt',
     event: 'UserPromptSubmit',
     priority: 30,
     fn: emitUserPromptEvent,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'runtime-emit-assistant-response',
     event: 'Stop',
     priority: 30,
     fn: emitAssistantResponseEvent,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'session-sync-tool',
     event: 'PreToolUse',
     matcher: /.*/,
@@ -136,6 +185,9 @@ const handlers: Handler[] = [
     fn: sessionSync,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'session-sync-prompt',
     event: 'UserPromptSubmit',
     priority: 35,
@@ -143,12 +195,49 @@ const handlers: Handler[] = [
   },
 ];
 
+/**
+ * Live handler registry — read at dispatch time so `setRegistry()` swaps
+ * are picked up by in-flight invocations on their next call. Single-writer
+ * by convention: the loader / `genie hook reload` are the only legal
+ * mutators (Group 1 of the absorption wish locks this down).
+ *
+ * Frozen-by-construction: `ReadonlyArray<Handler>` plus deep-frozen elements
+ * via `Object.freeze` on the array. Mutating an element in place is a runtime
+ * error; producers MUST build a fresh array and call `setRegistry`.
+ */
+let registryRef: ReadonlyArray<Handler> = Object.freeze([...builtinHandlers]);
+
+/**
+ * Replace the live handler registry. Called by:
+ *   - the boot-scan loader after dynamic-importing trusted external hooks
+ *   - `genie hook reload` after a re-scan
+ *   - tests that need to install fixtures
+ *
+ * Single-writer guarantee is enforced at the CLI layer (a `genie hook reload`
+ * can't run concurrently with another reload). In-flight dispatches that
+ * already captured the previous reference finish on it; the next call to
+ * `dispatch()` / `resolveHandlers()` sees the new array.
+ */
+export function setRegistry(next: ReadonlyArray<Handler>): void {
+  registryRef = Object.freeze([...next]);
+}
+
+/**
+ * Read-only accessor for tests + `genie hook list`. Returns the current
+ * snapshot — the array reference is stable until the next `setRegistry` call.
+ */
+export function getRegistry(): ReadonlyArray<Handler> {
+  return registryRef;
+}
+
 // ============================================================================
 // Dispatch Logic
 // ============================================================================
 
 function resolveHandlers(event: string, toolName?: string): Handler[] {
-  return handlers
+  // Read registryRef at call time so setRegistry() swaps land on the next
+  // dispatch — in-flight calls finish on the previously captured snapshot.
+  return registryRef
     .filter((h) => {
       if (h.event !== event) return false;
       if (h.matcher && toolName && !h.matcher.test(toolName)) return false;

@@ -259,6 +259,9 @@ describe('UserPromptSubmit dispatch flow', () => {
 
 describe('runHandler crash behavior', () => {
   const crashingHandler: Handler = {
+    version: '1',
+    source: 'builtin',
+    manifest_path: 'src/hooks/__tests__/dispatch.test.ts',
     name: 'crashing-handler',
     event: 'PreToolUse',
     matcher: /^Bash$/,
@@ -289,6 +292,9 @@ describe('runHandler crash behavior', () => {
 
   test('successful handler returns its result unchanged', async () => {
     const okHandler: Handler = {
+      version: '1',
+      source: 'builtin',
+      manifest_path: 'src/hooks/__tests__/dispatch.test.ts',
       name: 'ok-handler',
       event: 'PreToolUse',
       matcher: /^Bash$/,
