@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, needsSeededTeams, runSeed } from './pg-seed.js';
@@ -187,8 +188,54 @@ function liveDaemonPid(pid: number | null): number | null {
   }
 }
 
-/** Resolve the v2 daemon binary path — local node_modules → global → PATH. */
+function findLocalPgserveRoot(): string | null {
+  const candidates = [
+    // Installed package layout: @automagik/genie/dist/genie.js ->
+    // @automagik/genie/node_modules/pgserve.
+    join(import.meta.dir, '..', 'node_modules', 'pgserve'),
+    // Source checkout layout: src/lib/db.ts -> ./node_modules/pgserve.
+    join(import.meta.dir, '..', '..', 'node_modules', 'pgserve'),
+  ];
+  for (const root of candidates) {
+    if (existsSync(join(root, 'package.json'))) return root;
+  }
+  return null;
+}
+
+function resolveLocalPgserveEntry(): string | null {
+  const root = findLocalPgserveRoot();
+  if (root === null) return null;
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8')) as { main?: string };
+    return join(root, pkg.main ?? 'src/index.js');
+  } catch {
+    return join(root, 'src/index.js');
+  }
+}
+
+async function importPgserveSdk(): Promise<PgserveSdk | null> {
+  const localEntry = resolveLocalPgserveEntry();
+  if (localEntry !== null && existsSync(localEntry)) {
+    try {
+      return (await import(pathToFileURL(localEntry).href)) as PgserveSdk;
+    } catch {
+      /* fall back to package resolution */
+    }
+  }
+  try {
+    return (await import('pgserve')) as PgserveSdk;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve the v2 daemon binary path — bundled dependency → global → PATH. */
 function findPgserveDaemonBin(): string | null {
+  const localRoot = findLocalPgserveRoot();
+  if (localRoot !== null) {
+    const localBin = join(localRoot, 'bin', 'pgserve-wrapper.cjs');
+    if (existsSync(localBin)) return localBin;
+  }
   try {
     const resolved = require.resolve('pgserve/bin/pgserve-wrapper.cjs');
     if (existsSync(resolved)) return resolved;
@@ -374,12 +421,8 @@ async function waitForDaemonSocket(bin: string): Promise<void> {
 }
 
 async function tryEnsureDaemonWithSdk(): Promise<boolean> {
-  let sdk: PgserveSdk;
-  try {
-    sdk = (await import('pgserve')) as PgserveSdk;
-  } catch {
-    return false;
-  }
+  const sdk = await importPgserveSdk();
+  if (sdk === null) return false;
   if (typeof sdk.ensureDaemon !== 'function') return false;
 
   const timeoutMs = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 16000;
