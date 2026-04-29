@@ -629,6 +629,72 @@ async function removeWorktree(worktreePath: string | undefined): Promise<void> {
   }
 }
 
+/**
+ * Clean up the worktree directory and source-repo branch for an archived team.
+ * Closes #1467.
+ *
+ * Conservative policy:
+ *  - Always remove the worktree directory (it's a `git clone --shared`, no
+ *    work is lost — anything committed lives on the branch in the source
+ *    repo).
+ *  - Only delete the source-repo branch when its tip equals the base branch
+ *    tip (zero new commits, i.e. an empty team or no work pushed). Branches
+ *    with real commits stay so any pushed work is preserved.
+ *
+ * Pre-fix, archiveTeam updated PG rows but left both artifacts behind, so
+ * every archived team accumulated a stale clone + branch in the source repo.
+ * The dog-fooder smoke (`team create … --no-spawn` + `team disband`) was the
+ * canonical empty-team repro.
+ */
+async function cleanupTeamGitArtifacts(config: {
+  name: string;
+  repo: string;
+  baseBranch: string;
+  worktreePath?: string;
+}): Promise<void> {
+  // 1. Remove the worktree directory if present
+  if (config.worktreePath) {
+    try {
+      // Use `git worktree remove` first (proper cleanup of git's worktree
+      // metadata); fall back to `rm -rf` if the worktree was created via
+      // `git clone --shared` (current path) which doesn't register as a
+      // git worktree from the source repo's perspective.
+      await $`git -C ${config.repo} worktree remove --force ${config.worktreePath}`.quiet();
+    } catch {
+      try {
+        await $`rm -rf ${config.worktreePath}`.quiet();
+      } catch {
+        // Best-effort — leave a stale dir rather than fail archive
+      }
+    }
+  }
+
+  // 2. Remove the branch from the source repo IFF it has no new commits
+  //    beyond baseBranch. Use rev-parse to compare tips.
+  try {
+    const branchTip = (await $`git -C ${config.repo} rev-parse ${config.name}`.quiet()).text().trim();
+    let baseTip = '';
+    try {
+      baseTip = (await $`git -C ${config.repo} rev-parse origin/${config.baseBranch}`.quiet()).text().trim();
+    } catch {
+      try {
+        baseTip = (await $`git -C ${config.repo} rev-parse ${config.baseBranch}`.quiet()).text().trim();
+      } catch {
+        // No base branch reachable — bail; preserving the team branch is
+        // safer than blind delete.
+        return;
+      }
+    }
+    if (branchTip && baseTip && branchTip === baseTip) {
+      // Empty team — branch points at base, safe to delete
+      await $`git -C ${config.repo} branch -D ${config.name}`.quiet();
+    }
+    // else: branch has commits beyond base — preserve any pushed work
+  } catch {
+    // Branch doesn't exist or rev-parse failed — nothing to clean
+  }
+}
+
 /** Clean up tmux session/window for a disbanded team. */
 async function cleanupTeamTmuxSession(tmuxSessionName: string, teamName: string): Promise<void> {
   if (!tmuxSessionName) return;
@@ -670,6 +736,16 @@ export async function archiveTeam(teamName: string): Promise<boolean> {
   }
 
   await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
+
+  // Closes #1467 — clean up the worktree directory and the source-repo branch
+  // (when it has no commits beyond baseBranch). Pre-fix, archiveTeam updated
+  // PG rows but left the worktree dir + the git branch behind, so every
+  // archived team accumulated git artifacts in the source repo. Conservative
+  // policy: always remove the worktree (it's a clone, no work is lost), and
+  // only delete the branch when its tip equals the base branch tip (i.e.,
+  // the team was empty / no work pushed). Branches with real commits stay
+  // so any pushed work is preserved.
+  await cleanupTeamGitArtifacts(config);
 
   const sql = await getConnection();
   let archivedAgents = 0;
@@ -917,6 +993,20 @@ export async function resolveLeaderName(teamName: string): Promise<string> {
 
 /** Set team lifecycle status. */
 export async function setTeamStatus(teamName: string, status: TeamStatus): Promise<void> {
+  // Closes #1467 (done path) — `team done` previously did just the DB UPDATE
+  // and left both the worktree dir and the source-repo branch behind. Mirror
+  // archiveTeam's git-artifact cleanup so terminal statuses (done / archived)
+  // both leave the source repo clean.
+  if (status === 'done' || status === 'archived') {
+    const config = await getTeam(teamName);
+    if (config) {
+      // Kill members + cleanup tmux to match archive behavior
+      await Promise.allSettled(config.members.map((member) => killWorkersByName(member, teamName)));
+      await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
+      await cleanupTeamGitArtifacts(config);
+    }
+  }
+
   const sql = await getConnection();
   const result = await sql`
     UPDATE teams SET status = ${status}
