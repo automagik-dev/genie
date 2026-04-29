@@ -192,6 +192,21 @@ describe('partition precondition', () => {
 // ============================================================================
 
 describe('runDoctorMaintenance — watchdog precondition', () => {
+  test('non-silent maintenance logs step progress before the final report', async () => {
+    const { deps, log } = buildDeps({
+      measureBackfillDrift: async () => ({ driftPct: 12.5, detail: '12.5%' }),
+      runBackfillSync: async () => ({ ranSync: true, driftPct: 0, detail: 'converged' }),
+    });
+
+    await runDoctorMaintenance({ deps });
+
+    expect(log).toContain('  Collecting observability health...');
+    expect(log).toContain('  Checking session backfill drift...');
+    expect(log).toContain('  Running session backfill convergence (can take minutes on large transcript history)...');
+    expect(log.some((line) => line.startsWith('    done session backfill convergence'))).toBe(true);
+    expect(log).toContain('  Preconditions:');
+  });
+
   test('watchdog warn → fixed via installWatchdog', async () => {
     let installCalls = 0;
     const { deps, audits } = buildDeps({

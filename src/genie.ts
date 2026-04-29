@@ -203,6 +203,7 @@ program
   .description('Update Genie CLI to the latest version')
   .option('--next', 'Switch to dev builds (npm @next tag)')
   .option('--stable', 'Switch to stable releases (npm @latest tag)')
+  .option('--skip-maintenance', 'Skip post-update maintenance (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
   .action(updateCommand);
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 
