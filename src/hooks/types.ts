@@ -60,8 +60,21 @@ export interface HookDecision {
 /** Result from a handler — either a decision or void (implicit allow). */
 export type HandlerResult = HookDecision | undefined;
 
-/** A registered handler in the chain. */
-export interface Handler {
+/** Source tier for a handler — determines load precedence. */
+export type HandlerSource = 'builtin' | 'team' | 'repo' | 'global' | 'absorbed';
+
+/**
+ * v1 Handler — the only version shipped in delivery #2 of the hookify umbrella.
+ *
+ * Future-proofed as a discriminated union on `version`. v2 (and later) will be
+ * a new variant of the union; v1 and v2 handlers run side-by-side in the same
+ * dispatch chain until v1 sunset is announced. The loader rejects unknown
+ * versions as `[BROKEN]`. Versioning the contract before any external consumers
+ * exist costs nothing today and is impossible to retrofit later.
+ */
+export interface HandlerV1 {
+  /** Discriminator — locked to '1' for this delivery. */
+  version: '1';
   name: string;
   event: HookEventName;
   /** Regex matched against tool_name (only for PreToolUse/PostToolUse). */
@@ -69,7 +82,30 @@ export interface Handler {
   /** Lower = runs first. */
   priority: number;
   fn: (payload: HookPayload) => Promise<HandlerResult>;
+  /**
+   * Source tier — set by the loader when registering. Builtin handlers (defined
+   * inside src/hooks/index.ts) are 'builtin'; loaded files are 'team' / 'repo' /
+   * 'global' depending on which tier the file lives in; generated absorption
+   * wrappers are 'absorbed'.
+   */
+  source: HandlerSource;
+  /**
+   * Filesystem path the handler was loaded from. For builtins, points at
+   * src/hooks/index.ts (the registration site). External handlers point at
+   * the actual `.ts` file. Surfaced by `genie hook list` for debugging.
+   */
+  manifest_path: string;
 }
+
+/**
+ * A registered handler in the chain.
+ *
+ * Today, this is `HandlerV1`; once v2 ships it becomes `HandlerV1 | HandlerV2`.
+ * Code that only reads `name`/`event`/`matcher`/`priority`/`fn` works against
+ * the union without changes (those fields exist in every version). Code that
+ * needs version-specific behavior must `switch` on `handler.version`.
+ */
+export type Handler = HandlerV1;
 
 /**
  * Hook events that CC settings.json wires to `genie hook dispatch`, mapped
