@@ -4,6 +4,7 @@
  */
 
 import type { Command } from 'commander';
+import { CrossProviderModelError, validateProviderModel } from '../../lib/provider-models.js';
 import { type SpawnOptions, handleWorkerSpawn } from '../agents.js';
 
 /** Commander option parser that rejects NaN for numeric flags. */
@@ -44,6 +45,19 @@ export function registerAgentSpawn(parent: Command): void {
     .action(async (name: string, options: SpawnOptions) => {
       if (options.prompt) options.initialPrompt = options.prompt;
       if (options.autoSync === false) options.noAutoSync = true;
+      // Council-recommended P0 — reject cross-provider model values at parse
+      // time so they never reach the underlying CLI. See provider-models.ts
+      // for the full rationale (council deliberation 2026-04-28: codex spawn
+      // forwarded `--model opus` and the agent died on startup).
+      try {
+        validateProviderModel({ provider: options.provider ?? null, model: options.model ?? null });
+      } catch (error) {
+        if (error instanceof CrossProviderModelError) {
+          console.error(`Error: ${error.message}`);
+          process.exit(1);
+        }
+        throw error;
+      }
       try {
         await handleWorkerSpawn(name, options);
       } catch (error) {

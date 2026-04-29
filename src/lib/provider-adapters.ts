@@ -14,6 +14,7 @@
 import { z } from 'zod';
 import { buildDispatchCommand } from '../hooks/inject.js';
 import { resolveBuiltinAgentPath } from './builtin-agents.js';
+import { sanitizeModelForProvider } from './provider-models.js';
 import {
   TRACE_ENV_VAR,
   TRACE_ID_ENV_VAR,
@@ -598,7 +599,13 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   // Inline mode for tmux compatibility (no alternate screen)
   parts.push('--no-alt-screen');
 
-  if (params.model) parts.push('--model', escapeShellArg(params.model));
+  // Sanitize model for codex — drops Claude-family names that may have flowed
+  // in from a directory entry registered against a different provider, falling
+  // back to the codex default (gpt-5.5). See provider-models.ts. Closes the
+  // 2026-04-28 council incident root cause: dir entry `model: opus` flowed
+  // into codex spawn as `--model opus` and killed the agent on startup.
+  const codexModel = sanitizeModelForProvider('codex', params.model);
+  if (codexModel) parts.push('--model', escapeShellArg(codexModel));
 
   // Forward extra args before the positional prompt
   for (const arg of extraArgs) {

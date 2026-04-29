@@ -2327,6 +2327,13 @@ async function resolveTeamAndResumeOrExit(
 }
 
 export async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<string> {
+  // Defense in depth — the CLI parser also validates, but programmatic
+  // callers (council orchestration, test fixtures, dogfood scripts) reach
+  // this function directly. Reject cross-provider model values here too.
+  // Council deliberation 2026-04-28 P0; see src/lib/provider-models.ts.
+  const { validateProviderModel } = await import('../lib/provider-models.js');
+  validateProviderModel({ provider: options.provider ?? null, model: options.model ?? null });
+
   // Effective role: suffixed name for registration/duplicate-check, original name for directory lookup
   let effectiveRole = options.role ?? name;
 
