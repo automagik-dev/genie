@@ -519,6 +519,8 @@ interface DaemonHandles {
   detectorScheduler: { stop: () => void } | null;
   /** Derived-signal rule engine (invincible-genie / Group 2). */
   derivedSignals: { stop: () => Promise<void> } | null;
+  /** UDS hook-dispatch listener — replaces fork-per-event hook execution. */
+  hookSocket: { stop: () => Promise<void>; path: string } | null;
 }
 
 const handles: DaemonHandles = {
@@ -529,6 +531,7 @@ const handles: DaemonHandles = {
   omniBridge: null,
   detectorScheduler: null,
   derivedSignals: null,
+  hookSocket: null,
 };
 
 /** Sync agent directory from workspace and start file watcher. */
@@ -951,12 +954,33 @@ function sigKillRegisteredServices(): void {
   }
 }
 
+async function startHookSocketSafely(): Promise<void> {
+  try {
+    const { startHookSocket } = await import('../serve/hook-socket.js');
+    handles.hookSocket = await startHookSocket();
+  } catch (err) {
+    console.warn(`  Hook socket: DISABLED — ${(err as Error).message}`);
+    handles.hookSocket = null;
+  }
+}
+
+async function stopHookSocketSafely(): Promise<void> {
+  if (!handles.hookSocket) return;
+  try {
+    await handles.hookSocket.stop();
+  } catch {
+    // best effort
+  }
+  handles.hookSocket = null;
+}
+
 function buildShutdownFn(headless?: boolean): { shutdown: () => Promise<void>; hasStarted: () => boolean } {
   let shutdownStarted = false;
   const shutdown = async (): Promise<void> => {
     if (shutdownStarted) return;
     shutdownStarted = true;
     console.log('\nShutting down genie serve...');
+    await stopHookSocketSafely();
     await stopSchedulerHandles();
     await stopOmniAndBrainServices();
     killRegisteredServices();
@@ -1034,6 +1058,7 @@ async function startForeground(headless?: boolean): Promise<void> {
   await startExecutorReadEndpointSafely();
   await startOmniApprovalHandlerSafely();
   await startOmniBridgeSafely();
+  await startHookSocketSafely();
 
   const stopMsg = headless ? 'Send SIGTERM to stop.' : 'Press Ctrl+C to stop.';
   console.log(`\ngenie serve is running (${mode}). ${stopMsg}`);

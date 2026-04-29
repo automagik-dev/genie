@@ -9,8 +9,8 @@
  * Trigger: source `.json` exists AND `.json.migrated` does NOT.
  */
 
-import { existsSync } from 'node:fs';
-import { readFile, readdir, rename } from 'node:fs/promises';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type postgres from 'postgres';
@@ -28,6 +28,45 @@ function getGenieHome(): string {
 
 function workersJsonPath(): string {
   return join(getGenieHome(), 'workers.json');
+}
+
+function claudeTeamsDirPath(): string {
+  return join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'teams');
+}
+
+function teamsSeedMarkerPath(): string {
+  return join(getGenieHome(), 'state', 'teams-seed-marker');
+}
+
+function teamsDirMtime(claudeTeamsDir: string): string | null {
+  try {
+    return String(statSync(claudeTeamsDir).mtimeMs);
+  } catch {
+    return null;
+  }
+}
+
+function hasFreshTeamsSeedMarker(claudeTeamsDir: string): boolean {
+  const mtimeMs = teamsDirMtime(claudeTeamsDir);
+  if (!mtimeMs) return false;
+  try {
+    const marker = JSON.parse(readFileSync(teamsSeedMarkerPath(), 'utf-8')) as {
+      teamsDir?: string;
+      mtimeMs?: string;
+    };
+    return marker.teamsDir === claudeTeamsDir && marker.mtimeMs === mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+async function writeTeamsSeedMarker(): Promise<void> {
+  const claudeTeamsDir = claudeTeamsDirPath();
+  const mtimeMs = teamsDirMtime(claudeTeamsDir);
+  if (!mtimeMs) return;
+  const markerPath = teamsSeedMarkerPath();
+  await mkdir(join(getGenieHome(), 'state'), { recursive: true });
+  await writeFile(markerPath, `${JSON.stringify({ teamsDir: claudeTeamsDir, mtimeMs })}\n`, 'utf-8');
 }
 
 /** Check if a source file needs migration (exists and not yet migrated). */
@@ -73,20 +112,21 @@ async function renameMatchingFiles(dir: string, filter: (filename: string) => bo
  *  - `~/.genie/workers.json` exists without a `.migrated` sibling (legacy
  *    one-time migration path — worker seed still uses markers), OR
  *  - Any Claude-native team config exists on disk at
- *    `~/.claude/teams/<name>/config.json`.
+ *    `~/.claude/teams/<name>/config.json` and the teams directory mtime differs
+ *    from the last successful seed marker.
  *
- * The Claude-native branch triggers on every boot when teams exist on disk.
- * That's intentional: `seedTeams` is idempotent (`ON CONFLICT DO NOTHING`) and
- * this is how we rehydrate PG after a `pgserve` reset. See Bug A in
- * `.genie/wishes/fix-pg-disk-rehydration/WISH.md`.
+ * The Claude-native branch is cached by `~/.genie/state/teams-seed-marker`.
+ * This avoids scanning every team directory on every daemon startup when the
+ * authoritative `~/.claude/teams` tree has not changed.
  */
 export function needsSeed(): boolean {
   if (needsMigration(workersJsonPath())) return true;
 
   // Claude-native team configs are authoritative — if any exist on disk,
   // run the seed so PG mirrors them. No `.migrated` markers here.
-  const claudeTeamsDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'teams');
+  const claudeTeamsDir = claudeTeamsDirPath();
   if (!existsSync(claudeTeamsDir)) return false;
+  if (hasFreshTeamsSeedMarker(claudeTeamsDir)) return false;
   try {
     const entries = require('node:fs').readdirSync(claudeTeamsDir) as string[];
     return entries.some((e) => !e.startsWith('.'));
@@ -488,6 +528,7 @@ export async function runSeed(sql: Sql, repoPath?: string): Promise<SeedResult> 
 
   // Phase 2: Mark source files as migrated (only after all UPSERTs succeed)
   await markMigrated(repoPath);
+  await writeTeamsSeedMarker();
 
   return result;
 }

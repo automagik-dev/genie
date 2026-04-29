@@ -188,6 +188,10 @@ program
   .option('--fix', 'Auto-fix: kill zombie postgres, clean shared memory, restart daemon')
   .option('--observability', 'Report partition health + GENIE_WIDE_EMIT flag state')
   .option(
+    '--perf',
+    'Report rolling per-handler P50/P99 from hook_perf_baseline + flag P99 regressions and recent fallback-log entries',
+  )
+  .option(
     '--fix-team-orphans',
     'Archive stale Claude-team config dirs missing config.json (paired with invincible-genie wish migration 050)',
   )

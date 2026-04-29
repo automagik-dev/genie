@@ -205,8 +205,18 @@ let exitHandlerRegistered = false;
 /** Whether retention cleanup has already run in this process */
 let retentionRan = false;
 
-/** Prune old rows from unbounded tables. Runs once per process, non-fatal. */
-async function runRetention(sql: postgres.Sql): Promise<void> {
+/**
+ * Prune old rows from unbounded tables. Non-fatal.
+ *
+ * Exported so `scheduler-daemon` can run this on a periodic timer instead of
+ * inside `runPostConnectSetup` (which fires on every fresh connection — i.e.
+ * every `genie hook dispatch` bun fork on a Mac dev machine, hundreds per
+ * minute, dominant CPU consumer per the .19 Mac-CPU root-cause analysis).
+ *
+ * The `retentionRan` flag still guards intra-process double-firing for the
+ * daemon's own startup-then-timer path.
+ */
+export async function runRetention(sql: postgres.Sql): Promise<void> {
   try {
     await sql.unsafe(`
       DELETE FROM heartbeats WHERE created_at < now() - interval '7 days';
@@ -653,21 +663,40 @@ async function healthCheckCachedClient() {
   }
 }
 
-/** Run post-connect setup (migrations, seed, retention). Skipped in test mode. */
+/**
+ * Run post-connect setup (migrations, seed, retention).
+ *
+ * Skipped when:
+ *   - `isTestMode` (test DB has its own setup path)
+ *   - `GENIE_SKIP_DB_BOOT=1` (set by `genie hook dispatch` — Mac CPU fix C)
+ *
+ * The `genie serve` daemon owns migrations + seed at startup; short-lived
+ * forks (especially hook dispatch, hundreds/minute on a busy Mac) must not
+ * re-run them. Doing so means every PreToolUse / UserPromptSubmit /
+ * PostToolUse cold-start re-issues the migration check + loops all 92
+ * `~/.claude/teams` entries via `needsSeed()`. That was the second-largest
+ * contributor to the .18 100%-CPU Mac regression.
+ */
 async function runPostConnectSetup(client: postgres.Sql, isTestMode: boolean, timings: { t0: number; t1: number }) {
   const _t2 = Date.now();
-  if (!isTestMode) await runMigrations(client);
+  const skipBoot = isTestMode || process.env.GENIE_SKIP_DB_BOOT === '1';
+  if (!skipBoot) await runMigrations(client);
   const _t3 = Date.now();
 
-  if (!isTestMode && needsSeed()) await runSeed(client);
+  if (!skipBoot && needsSeed()) await runSeed(client);
   const _t4 = Date.now();
 
-  if (!isTestMode && !retentionRan) await runRetention(client);
-  const _t5 = Date.now();
+  // Retention is no longer run from getConnection — it now lives on a
+  // periodic timer inside scheduler-daemon. Running it here meant every
+  // `genie hook dispatch` bun fork (hundreds/minute on a busy Mac) issued
+  // four DELETEs against unbounded tables, contributing to PG pool exhaustion
+  // ("sorry, too many clients already" in scheduler.log) and 100% CPU on Mac.
+  // See PR fix(db): drop runRetention from getConnection (Mac CPU fix A).
+  const _t5 = _t4;
 
   if (process.env.GENIE_PROFILE_DB) {
     console.error(
-      `[db-profile] pgserve=${timings.t1 - timings.t0}ms migrate=${_t3 - _t2}ms seed=${_t4 - _t3}ms retention=${_t5 - _t4}ms total=${_t5 - timings.t0}ms`,
+      `[db-profile] pgserve=${timings.t1 - timings.t0}ms migrate=${_t3 - _t2}ms seed=${_t4 - _t3}ms retention=skipped total=${_t5 - timings.t0}ms`,
     );
   }
 }

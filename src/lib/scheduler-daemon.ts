@@ -2201,6 +2201,11 @@ export function startDaemon(
   let eventRouterHandle: EventRouterHandle | null = null;
   let deliveryUnsub: (() => Promise<void>) | null = null;
   let deliveryRetryTimer: ReturnType<typeof setInterval> | null = null;
+  // Retention DELETEs moved here from db.ts:runPostConnectSetup so they run
+  // once per hour from the long-lived daemon process, NOT on every `genie
+  // hook dispatch` bun fork. See PR fix(db): drop runRetention from
+  // getConnection (Mac CPU hook-dispatch fix A).
+  let retentionTimer: ReturnType<typeof setInterval> | null = null;
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: stop() is a flat cleanup sequence for all daemon resources
   const stop = () => {
@@ -2247,6 +2252,10 @@ export function startDaemon(
     if (deliveryRetryTimer) {
       clearInterval(deliveryRetryTimer);
       deliveryRetryTimer = null;
+    }
+    if (retentionTimer) {
+      clearInterval(retentionTimer);
+      retentionTimer = null;
     }
     if (deliveryUnsub) {
       deliveryUnsub().catch(() => {});
@@ -2603,6 +2612,36 @@ export function startDaemon(
         deps.log({ timestamp: deps.now().toISOString(), level: 'error', event: 'mailbox_retry_error', error: message });
       }
     }, 60_000);
+
+    // Retention timer: once at daemon startup, then every hour. Runs the
+    // unbounded-table prune that previously fired inside getConnection (i.e.
+    // on every `genie hook dispatch` bun fork — hundreds/minute on Mac).
+    // Owned exclusively by the daemon now; safe because retention is
+    // idempotent + non-fatal.
+    const RETENTION_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+    const runDaemonRetention = async () => {
+      try {
+        const { getConnection, runRetention } = await import('./db.js');
+        const sql = await getConnection();
+        await runRetention(sql);
+        deps.log({
+          timestamp: deps.now().toISOString(),
+          level: 'debug',
+          event: 'retention_completed',
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        deps.log({
+          timestamp: deps.now().toISOString(),
+          level: 'error',
+          event: 'retention_error',
+          error: message,
+        });
+      }
+    };
+    // Fire once immediately so post-restart retention isn't delayed an hour
+    runDaemonRetention().catch(() => {});
+    retentionTimer = setInterval(runDaemonRetention, RETENTION_INTERVAL_MS);
 
     captureFallbackTimer = await initSessionCapture(deps, config);
 

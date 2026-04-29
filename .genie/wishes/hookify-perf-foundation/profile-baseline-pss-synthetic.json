@@ -1,0 +1,129 @@
+{
+  "_about": "Synthetic baseline captured against a disposable pgserve instance with pg_stat_statements pre-loaded. The live pgserve at port 19642 has shared_preload_libraries empty and could not be safely restarted while Group 1 work and other genie agents are using it (see REPORT.md §3 'Resolution path' for rationale). Workload mirrors the SQL shapes observed in profile-sample-30s.json (audit_events insert + indexed read; agents/executors small-table polls; teams idx scan; agents UPDATE). Replay script: /tmp/loadgen.ts (preserved for reproducibility, see REPORT.md §3.2).",
+  "instance": {
+    "host": "127.0.0.1",
+    "port": 19742,
+    "data_dir": "/tmp/pgserve-pss-baseline",
+    "shared_preload_libraries": "pg_stat_statements",
+    "pg_stat_statements_loaded": true,
+    "track_io_timing": "on",
+    "server_version": "PostgreSQL 18.2 on x86_64-pc-linux-gnu"
+  },
+  "workload": {
+    "kind": "synthetic — concurrent INSERT/SELECT/UPDATE mix",
+    "duration_seconds": 30,
+    "concurrent_workers": 8,
+    "operation_mix": {
+      "audit_events_insert": "~25%",
+      "audit_events_select_indexed": "~25%",
+      "agents_seq_scan_state_filter": "~20%",
+      "executors_seq_scan_state_filter": "~15%",
+      "teams_pk_lookup": "~10%",
+      "agents_update_pk": "~5%"
+    },
+    "totals": {
+      "inserts": 72699,
+      "selects": 203141,
+      "updates": 14339,
+      "total_operations": 290179,
+      "operations_per_second": 9672.6
+    }
+  },
+  "pg_stat_database": {
+    "datname": "genie",
+    "numbackends": 1,
+    "xact_commit": 290241,
+    "blks_hit": 31279349,
+    "blks_read": 9,
+    "cache_hit_ratio": "99.99997%",
+    "tup_returned": 160058672,
+    "tup_fetched": 54495539,
+    "tup_inserted": 73408,
+    "tup_updated": 14117,
+    "tup_deleted": 275,
+    "temp_files": 0,
+    "temp_bytes": 0
+  },
+  "top5_by_total_exec_time": [
+    {
+      "rank": 1,
+      "calls": 72586,
+      "total_ms": 68331.88,
+      "min_ms": 0.0085,
+      "mean_ms": 0.9414,
+      "max_ms": 6.806,
+      "stddev_ms": 0.5684,
+      "p50_estimate_ms": 0.9414,
+      "p99_estimate_ms": 2.2657,
+      "rows": 1441882,
+      "shared_blks_hit": 29128335,
+      "shared_blks_read": 0,
+      "query": "SELECT id, event_type, created_at FROM audit_events WHERE entity_type = $2 AND entity_id = $1 ORDER BY created_at DESC LIMIT $3"
+    },
+    {
+      "rank": 2,
+      "calls": 58195,
+      "total_ms": 11076.71,
+      "min_ms": 0.0249,
+      "mean_ms": 0.1903,
+      "max_ms": 2.3755,
+      "stddev_ms": 0.0902,
+      "p50_estimate_ms": 0.1903,
+      "p99_estimate_ms": 0.4006,
+      "rows": 1508461,
+      "shared_blks_hit": 1179402,
+      "shared_blks_read": 0,
+      "query": "SELECT id, state, team FROM agents WHERE state = $1"
+    },
+    {
+      "rank": 3,
+      "calls": 72699,
+      "total_ms": 3204.6,
+      "min_ms": 0.0169,
+      "mean_ms": 0.0441,
+      "max_ms": 1.8425,
+      "stddev_ms": 0.024,
+      "p50_estimate_ms": 0.0441,
+      "p99_estimate_ms": 0.1,
+      "rows": 72699,
+      "shared_blks_hit": 727146,
+      "shared_blks_read": 0,
+      "query": "INSERT INTO audit_events (entity_type, entity_id, event_type, actor, details) VALUES ($5, $1, $2, $3, $4)"
+    },
+    {
+      "rank": 4,
+      "calls": 43446,
+      "total_ms": 1242.84,
+      "min_ms": 0.0147,
+      "mean_ms": 0.0286,
+      "max_ms": 0.538,
+      "stddev_ms": 0.009,
+      "p50_estimate_ms": 0.0286,
+      "p99_estimate_ms": 0.0497,
+      "rows": 868920,
+      "shared_blks_hit": 43446,
+      "shared_blks_read": 0,
+      "query": "SELECT id, agent_id, state FROM executors WHERE state = $1"
+    },
+    {
+      "rank": 5,
+      "calls": 14339,
+      "total_ms": 675.01,
+      "min_ms": 0.0032,
+      "mean_ms": 0.0471,
+      "max_ms": 0.4049,
+      "stddev_ms": 0.0211,
+      "p50_estimate_ms": 0.0471,
+      "p99_estimate_ms": 0.0962,
+      "rows": 14048,
+      "shared_blks_hit": 116107,
+      "shared_blks_read": 0,
+      "query": "UPDATE agents SET state = $1 WHERE id = $2"
+    }
+  ],
+  "p50_p99_methodology": {
+    "p50_estimate": "mean_exec_time (Gaussian assumption — accurate when stddev/mean is small, which holds for SELECT/UPDATE/INSERT in this dataset; max ≈ 7× mean for the worst case rank-1 query, 12× for rank-3, indicating moderate right-tail skew not captured by Gaussian P50).",
+    "p99_estimate": "mean_exec_time + 2.33 * stddev_exec_time (Gaussian inverse). For heavy-tailed (right-skewed) latencies this UNDERESTIMATES the true P99 — actual P99 sits between this estimate and max_exec_time. A future bench harness (Group 5) using PERCENTILE_CONT over per-query timing spans (the same hook_perf_baseline view shape Group 4 will deliver) will produce true P50/P99.",
+    "caveat": "PG's pg_stat_statements only exposes calls, total/min/max/mean/stddev — it does not store per-call samples, so true percentiles cannot be computed from this view alone. The Gaussian estimates here are the best obtainable from pg_stat_statements; they are sufficient for the 'before' anchor but Group 5's harness MUST use spans for the 'after' comparison."
+  }
+}

@@ -190,11 +190,13 @@ function getGitDiff(): string {
  */
 export function parseWishGroups(content: string): GroupDefinition[] {
   const groups: GroupDefinition[] = [];
-  const groupPattern = /^### Group ([A-Za-z0-9]+):/gim;
+  const groupPattern = /^### Group ([A-Za-z0-9]+):[ \t]*(.*)$/gim;
 
   let match: RegExpExecArray | null = groupPattern.exec(content);
   while (match !== null) {
     const name = match[1];
+    const trimmedTitle = (match[2] ?? '').trim();
+    const title = trimmedTitle.length > 0 ? trimmedTitle : undefined;
     const start = match.index;
 
     // Find the next group heading or end of content
@@ -222,7 +224,9 @@ export function parseWishGroups(content: string): GroupDefinition[] {
       }
     }
 
-    groups.push({ name, dependsOn });
+    const groupDef: GroupDefinition = { name, dependsOn };
+    if (title !== undefined) groupDef.title = title;
+    groups.push(groupDef);
     match = groupPattern.exec(content);
   }
 

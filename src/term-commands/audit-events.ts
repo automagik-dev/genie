@@ -607,11 +607,38 @@ async function eventsToolsCommand(options: ToolsOptions): Promise<void> {
 
 interface TimelineOptions {
   json?: boolean;
+  limit?: string;
+  since?: string;
+}
+
+/**
+ * Parse a duration string like "10m", "24h", "7d", or "all" into milliseconds.
+ * Returns null for "all" (signal to disable the time filter — full history).
+ * Throws on invalid input.
+ */
+function parseTimelineSince(raw: string): number | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === 'all') return null;
+  const match = /^(\d+)\s*(s|m|h|d)$/.exec(trimmed);
+  if (!match) {
+    throw new Error(`invalid --since value "${raw}". Use e.g. 10m, 24h, 7d, or 'all' for full history.`);
+  }
+  const n = Number.parseInt(match[1], 10);
+  const unit = match[2];
+  const multipliers: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  return n * multipliers[unit];
 }
 
 async function eventsTimelineCommand(entityId: string, options: TimelineOptions): Promise<void> {
   try {
-    const rows = await queryTimeline(entityId);
+    const limit = options.limit ? Math.max(1, Number.parseInt(options.limit, 10)) : undefined;
+    if (options.limit !== undefined && Number.isNaN(Number(options.limit))) {
+      console.error(`Error: invalid --limit value "${options.limit}" (must be a positive integer)`);
+      process.exit(1);
+    }
+    const sinceMs = options.since !== undefined ? parseTimelineSince(options.since) : undefined;
+
+    const rows = await queryTimeline(entityId, { limit, sinceMs });
 
     if (options.json) {
       console.log(JSON.stringify(rows, null, 2));
@@ -815,8 +842,14 @@ export function registerEventsCommands(program: Command): void {
 
   events
     .command('timeline <entity-id>')
-    .description('Full event timeline for a task, agent, wish, or traceId')
+    .description('Event timeline for a task, agent, wish, traceId, or session_id (default: last 24h)')
     .option('--json', 'Output as JSON')
+    .option('--limit <n>', 'Max rows to return (default 200, hard cap 2000)')
+    .option(
+      '--since <duration>',
+      'Time window — e.g. 10m, 24h, 7d, or "all" for full history. Default: 24h. ' +
+        '"all" reverts to the unbounded scan and may time out on production-sized audit logs.',
+    )
     .action(async (entityId: string, options: TimelineOptions) => {
       await eventsTimelineCommand(entityId, options);
     });

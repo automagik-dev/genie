@@ -618,6 +618,42 @@ describe('parseWishGroups()', () => {
     const groups = parseWishGroups(content);
     expect(groups[3].dependsOn).toEqual(['1', '2', '3']);
   });
+
+  it('should capture group title from heading', () => {
+    const content = '### Group 1: Parser layer\n**depends-on:** none';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(1);
+    expect(groups[0].name).toBe('1');
+    expect(groups[0].title).toBe('Parser layer');
+    expect(groups[0].dependsOn).toEqual([]);
+  });
+
+  it('should handle missing title gracefully', () => {
+    const content = '### Group 1:\n**depends-on:** none';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(1);
+    expect(groups[0].name).toBe('1');
+    expect(groups[0].title).toBeUndefined();
+  });
+
+  it('should preserve title across multiple groups with deps', () => {
+    const content =
+      '### Group 1: Parser layer\n**depends-on:** none\n\n### Group 2: Task CLI wiring\n**depends-on:** Group 1';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(2);
+    expect(groups[0].title).toBe('Parser layer');
+    expect(groups[0].dependsOn).toEqual([]);
+    expect(groups[1].title).toBe('Task CLI wiring');
+    expect(groups[1].dependsOn).toEqual(['1']);
+  });
+
+  it('should not include title in groupsSignature', () => {
+    const a = parseWishGroups('### Group 1: Original title\n**depends-on:** none');
+    const b = parseWishGroups('### Group 1: Different title\n**depends-on:** none');
+    expect(a[0].title).toBe('Original title');
+    expect(b[0].title).toBe('Different title');
+    expect(wishState.computeGroupsSignature(a)).toBe(wishState.computeGroupsSignature(b));
+  });
 });
 
 // ============================================================================

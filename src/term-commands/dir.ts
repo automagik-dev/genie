@@ -99,9 +99,10 @@ export function registerDirNamespace(program: Command): void {
       }
     });
 
-  // dir ls [<name>]
+  // dir ls [<name>] (also: dir list — common alias)
   dir
     .command('ls [name]')
+    .alias('list')
     .description('List all agents or show single entry details')
     .option('--json', 'Output as JSON')
     .option('--builtins', 'Include built-in roles and council members')
