@@ -204,6 +204,40 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     await executeTmux(`send-keys -t '${paneId}' ${shellQuote(nudgeText)} Enter`);
   }
 
+  /**
+   * Build the launch command for a per-chat claude and inject it into the
+   * given tmux pane via send-keys. Returns the resolved Claude session id
+   * (resumed if `resumeClaudeSessionId` was set, else the freshly-generated
+   * one from `buildOmniSpawnParams.sessionId`) so the caller can persist it
+   * to the executor row for the next respawn.
+   *
+   * Extracted from `spawn()` so the spawn flow stays under the biome
+   * complexity ceiling and the launch path can be unit-tested in isolation.
+   */
+  private async launchClaudeInPane(
+    agentName: string,
+    chatId: string,
+    entry: DirectoryEntry,
+    env: Record<string, string>,
+    paneId: string,
+    initialMessage: string | undefined,
+    resumeClaudeSessionId: string | undefined,
+  ): Promise<string | undefined> {
+    const omniEnv: Record<string, string> = { ...env, GENIE_OMNI_CHAT_ID: chatId, GENIE_OMNI_AGENT: agentName };
+    const params = buildOmniSpawnParams(agentName, chatId, entry, omniEnv, initialMessage, resumeClaudeSessionId);
+    const claudeSessionId = resumeClaudeSessionId ?? params.sessionId ?? undefined;
+    const launch = buildLaunchCommand(params);
+
+    // Merge omni-specific env vars with those produced by buildLaunchCommand
+    const allEnv = { ...omniEnv, ...launch.env };
+    const envPrefix = Object.entries(allEnv)
+      .map(([k, v]) => `${k}=${shellQuote(v)}`)
+      .join(' ');
+    const cmd = envPrefix ? `${envPrefix} ${launch.command}` : launch.command;
+    await executeTmux(`send-keys -t '${paneId}' ${shellQuote(cmd)} Enter`);
+    return claudeSessionId;
+  }
+
   async spawn(
     agentName: string,
     chatId: string,
@@ -244,24 +278,26 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
       : null;
     const resumeClaudeSessionId = existingExecutor?.claudeSessionId ?? undefined;
 
-    let claudeSessionId: string | undefined = resumeClaudeSessionId;
-    if (created) {
-      const omniEnv: Record<string, string> = { ...env, GENIE_OMNI_CHAT_ID: chatId, GENIE_OMNI_AGENT: agentName };
-      const params = buildOmniSpawnParams(agentName, chatId, entry, omniEnv, initialMessage, resumeClaudeSessionId);
-      // The effective claude session id is the resume id when present, else
-      // the freshly-generated sessionId — we persist whichever was used so
-      // the next respawn finds the same id and can re-attach.
-      claudeSessionId = resumeClaudeSessionId ?? params.sessionId ?? undefined;
-      const launch = buildLaunchCommand(params);
+    // Decide whether the pane needs a fresh `claude` process.
+    //
+    // - `created` ⇒ we just made the window, definitely no claude in it yet.
+    // - `!created` ⇒ window already existed, but claude inside it may have
+    //   died (operator typed `/exit`, OOM, manual `kill`, etc.) leaving the
+    //   pane with a bare bash prompt. The bridge's `isAlive` probe correctly
+    //   spots this case (it AND-checks pane liveness with
+    //   `isPaneProcessRunning(paneId, 'claude')`), then routeMessage() drops
+    //   the in-memory entry and calls back into spawn(). Without this
+    //   second probe, `if (created)` would skip the launch and the message
+    //   would be injected into a dead pane (bash sees the prompt as a
+    //   command and errors). Probing here closes that gap so claude is
+    //   always relaunched with `--resume <id>` (per existingExecutor) and
+    //   the per-chat conversation continues where it left off.
+    const claudeRunning = !created && (await isPaneProcessRunning(paneId, 'claude'));
+    const needsLaunch = created || !claudeRunning;
 
-      // Merge omni-specific env vars with those produced by buildLaunchCommand
-      const allEnv = { ...omniEnv, ...launch.env };
-      const envPrefix = Object.entries(allEnv)
-        .map(([k, v]) => `${k}=${shellQuote(v)}`)
-        .join(' ');
-      const cmd = envPrefix ? `${envPrefix} ${launch.command}` : launch.command;
-      await executeTmux(`send-keys -t '${paneId}' ${shellQuote(cmd)} Enter`);
-    }
+    const claudeSessionId: string | undefined = needsLaunch
+      ? await this.launchClaudeInPane(agentName, chatId, entry, env, paneId, initialMessage, resumeClaudeSessionId)
+      : resumeClaudeSessionId;
 
     const sessionKey = `${agentName}:${chatId}`;
     const registration = await this.registerOrRelinkExecutor(
