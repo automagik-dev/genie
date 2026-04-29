@@ -181,12 +181,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       // Mirror the CLI handler: updateTask with priority + comment {actor, body}.
       const commentBody = 'elevating per quarterly recalibration';
-      const updated = await updateTask(
-        task.id,
-        { priority: 'urgent' },
-        REPO,
-        { actor, body: commentBody },
-      );
+      const updated = await updateTask(task.id, { priority: 'urgent' }, REPO, { actor, body: commentBody });
       expect(updated).not.toBeNull();
       expect(updated!.priority).toBe('urgent');
 
