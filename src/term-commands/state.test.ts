@@ -8,7 +8,15 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
-import { archiveWishNamedAgents, detectWaveCompletion, ensureWorkPushed, parseRef, resolveWishPath } from './state.js';
+import {
+  archiveWishNamedAgents,
+  detectWaveCompletion,
+  ensureWorkPushed,
+  parseRef,
+  parseWishLifecycleStatus,
+  resolveWishPath,
+  statusCommand,
+} from './state.js';
 
 // ============================================================================
 // Sample WISH.md with Execution Strategy for wave detection tests
@@ -81,6 +89,63 @@ describe('parseRef()', () => {
 
   it('should throw on missing hash', () => {
     expect(() => parseRef('nohash')).toThrow('Invalid reference');
+  });
+});
+
+describe('parseWishLifecycleStatus()', () => {
+  it('parses table and bold status markers', () => {
+    expect(parseWishLifecycleStatus('| **Status** | SHIPPED |')).toBe('SHIPPED');
+    expect(parseWishLifecycleStatus('**Status:** SHIPPED — 2026-04-29')).toBe('SHIPPED');
+  });
+});
+
+async function captureConsoleLog(fn: () => Promise<void>): Promise<string> {
+  const original = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => {
+    lines.push(args.join(' '));
+  };
+  try {
+    await fn();
+  } finally {
+    console.log = original;
+  }
+  return lines.join('\n');
+}
+
+describe('statusCommand()', () => {
+  it('prints terminal WISH.md status instead of auto-initializing shipped wishes', async () => {
+    const cwd = join('/tmp', `wish-status-shipped-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const wishDir = join(cwd, '.genie', 'wishes', 'shipped-wish');
+    await mkdir(wishDir, { recursive: true });
+    await writeFile(
+      join(wishDir, 'WISH.md'),
+      `# Wish: Shipped
+
+| Field | Value |
+|-------|-------|
+| **Status** | SHIPPED |
+
+## Execution Groups
+
+### Group 1: Done work
+
+**depends-on:** none
+`,
+    );
+
+    const previous = process.cwd();
+    process.chdir(cwd);
+    try {
+      const output = await captureConsoleLog(() => statusCommand('shipped-wish'));
+      expect(output).toContain('Status: SHIPPED');
+      expect(output).toContain('No active execution state initialized');
+      expect(output).not.toContain('Auto-initialized');
+      expect(output).not.toContain('ready');
+    } finally {
+      process.chdir(previous);
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });
 

@@ -8,7 +8,7 @@ import type { Command } from 'commander';
 import { formatTimestamp, padRight } from '../../lib/term-format.js';
 import * as wishState from '../../lib/wish-state.js';
 import { parseWishGroups } from '../dispatch.js';
-import { resolveWishPath } from '../state.js';
+import { getTerminalWishLifecycleStatus, printTerminalWishLifecycleStatus, resolveWishPath } from '../state.js';
 
 const STATUS_ICONS: Record<string, string> = {
   blocked: '🔒',
@@ -60,6 +60,12 @@ async function printActiveExecutors(slug: string): Promise<void> {
 }
 
 async function statusCommand(slug: string): Promise<void> {
+  const terminal = await getTerminalWishLifecycleStatus(slug);
+  if (terminal) {
+    printTerminalWishLifecycleStatus(slug, terminal);
+    return;
+  }
+
   let state = await wishState.getState(slug);
   if (!state) {
     const wishPath = resolveWishPath(slug);
