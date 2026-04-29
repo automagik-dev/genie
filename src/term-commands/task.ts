@@ -752,6 +752,39 @@ export function registerTaskCommands(program: Command): void {
       }
     });
 
+  // ── task priority ──
+  // Closes #1473 — priority was settable on `task create` but not editable
+  // afterward. PMs curating large boards (47+ high-priority cards) had no
+  // way to recalibrate without recreating cards (loses comments + history).
+  task
+    .command('priority <id> <level>')
+    .description('Set the priority of an existing task (urgent|high|normal|low)')
+    .option('--comment <msg>', 'Audit comment for the priority change')
+    .action(async (id: string, level: string, options: { comment?: string }) => {
+      try {
+        type PriorityLevel = 'urgent' | 'high' | 'normal' | 'low';
+        const validLevels: PriorityLevel[] = ['urgent', 'high', 'normal', 'low'];
+        if (!validLevels.includes(level as PriorityLevel)) {
+          console.error(`Error: invalid priority "${level}". Valid: ${validLevels.join(', ')}`);
+          process.exit(1);
+        }
+        const priority = level as PriorityLevel;
+        const ts = await getTaskService();
+        const actor = currentActor();
+        const comment = options.comment ? { actor, body: options.comment } : undefined;
+        const t = await ts.updateTask(id, { priority }, undefined, comment);
+        if (!t) {
+          console.error(`Error: Task not found: ${id}`);
+          process.exit(1);
+        }
+        const colorCode = PRIORITY_COLORS[level] ?? '';
+        console.log(`Task #${t.seq} priority set to ${colorCode}${level}${RESET}.`);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
+
   // ── task done ──
   task
     .command('done <id>')
