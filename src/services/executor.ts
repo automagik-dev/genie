@@ -18,7 +18,14 @@ export interface ExecutorSession {
   executorType: 'tmux' | 'sdk';
   createdAt: number;
   lastActivityAt: number;
-  tmux?: { session: string; window: string; paneId: string };
+  /**
+   * `claudeSessionId` is the persistent per-chat conversation id. The tmux
+   * executor sets it both on fresh spawns (newly-generated UUID passed via
+   * `--session-id`) and on resumed spawns (prior id passed via `--resume`).
+   * Bridge consumers persist it to `genie_bridge_sessions` so observers can
+   * trace a chat's full history across executor restarts.
+   */
+  tmux?: { session: string; window: string; paneId: string; claudeSessionId?: string };
   sdk?: { claudeSessionId?: string; executorId?: string };
 }
 
