@@ -225,7 +225,10 @@ async function detectInstallationType(): Promise<InstallationType> {
 }
 
 async function updateViaBun(channel: string): Promise<boolean> {
-  // Delete global lockfile — it pins old versions even with --force --no-cache
+  // Delete global lockfile so the tag resolves fresh. Avoid `--force --no-cache`
+  // here: on macOS Bun can sit at "Resolving dependencies" for a long time
+  // when reinstalling the same global package, even though a plain global add
+  // completes quickly after the stale lockfile is gone.
   try {
     require('node:fs').unlinkSync(join(homedir(), '.bun', 'install', 'global', 'bun.lock'));
   } catch {
@@ -233,7 +236,7 @@ async function updateViaBun(channel: string): Promise<boolean> {
   }
 
   log(`Updating via bun (channel: ${channel})...`);
-  const result = await runCommand('bun', ['add', '-g', '--force', '--no-cache', `@automagik/genie@${channel}`]);
+  const result = await runCommand('bun', ['add', '-g', `@automagik/genie@${channel}`]);
   if (!result.success) {
     error('Failed to update via bun');
     return false;
