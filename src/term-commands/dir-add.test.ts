@@ -8,15 +8,17 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import * as directory from '../lib/agent-directory.js';
 import { syncSingleAgentByName } from '../lib/agent-sync.js';
 import { type AgentConfig, parseAgentYaml, writeAgentYaml } from '../lib/agent-yaml.js';
 import { getConnection } from '../lib/db.js';
 import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
+import { registerDirNamespace } from './dir.js';
 
 describe.skipIf(!DB_AVAILABLE)(
   'dir add — scaffolds agent.yaml + body-only AGENTS.md (wish dir-sync-frontmatter-refresh group 5)',
@@ -114,6 +116,46 @@ TBD
       const entry = await directory.get('db-match-agent');
       expect(entry).not.toBeNull();
       expect(entry!.model).toBe('sonnet');
+    });
+
+    test('CLI registers explicit --dir outside workspace agents directory', async () => {
+      workspaceRoot = join(tmpdir(), `dir-add-cli-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const externalDir = join(tmpdir(), `dir-add-external-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const name = 'explicit-dir-agent';
+      mkdirSync(join(workspaceRoot, '.genie'), { recursive: true });
+      mkdirSync(externalDir, { recursive: true });
+      writeFileSync(join(workspaceRoot, '.genie', 'workspace.json'), JSON.stringify({ name: 'dir-add-test' }));
+      writeFileSync(join(externalDir, 'AGENTS.md'), 'Explicit --dir prompt.\n');
+
+      const previousCwd = process.cwd();
+      process.chdir(workspaceRoot);
+      try {
+        const program = new Command();
+        program.exitOverride();
+        program.configureOutput({ writeOut: () => {}, writeErr: () => {} });
+        registerDirNamespace(program);
+        await program.parseAsync([
+          'node',
+          'genie',
+          'dir',
+          'add',
+          name,
+          '--dir',
+          externalDir,
+          '--repo',
+          workspaceRoot,
+          '--model',
+          'codex',
+        ]);
+      } finally {
+        process.chdir(previousCwd);
+      }
+
+      const entry = await directory.get(name);
+      expect(entry).not.toBeNull();
+      expect(entry!.dir).toBe(externalDir);
+      expect(entry!.repo).toBe(workspaceRoot);
+      expect(entry!.model).toBe('codex');
     });
 
     test('permissions flags land in yaml + DB', async () => {
