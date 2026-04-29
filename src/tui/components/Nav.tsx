@@ -203,16 +203,53 @@ function renderAlertBadge(alertCount: number) {
   );
 }
 
-function computeNavCounts(
+/**
+ * Walk every agent node in the tree (top-level AND sub-agents) and count
+ * those matching `predicate`. The shallow `Array.filter` we used previously
+ * silently undercounted sub-agents — `genie/qa` lived as a child of `genie`
+ * and never reached the filter, so a workspace with 10 canonicals + 15 subs
+ * read as "Agents 0/10" instead of "Agents 0/25".
+ */
+function countAgents(nodes: TreeNode[], predicate: (n: TreeNode) => boolean): number {
+  let count = 0;
+  for (const n of nodes) {
+    if (n.type === 'agent' && predicate(n)) count++;
+    if (n.children.length > 0) count += countAgents(n.children, predicate);
+  }
+  return count;
+}
+
+/**
+ * Compute the running/total counter shown in the sidebar header.
+ *
+ * Workspace mode counts every agent in the tree (canonical + sub-agent) so the
+ * displayed total matches what the user can see by expanding the tree. The
+ * `0/0` regression that motivated this rewrite hit when `scanAgents` returned
+ * `[]` (stale `workspaceRoot`, transient FS error) while no tmux sessions
+ * existed yet — `buildWorkspaceTree` produced an empty tree and a non-recursive
+ * filter masked any orphan sessions. The fallback below exposes those orphan
+ * sessions so the user sees something instead of `0/0` when the workspace
+ * scan comes up empty but tmux has live panes.
+ *
+ * Exported for unit-test coverage — the missing test on this helper is
+ * exactly why the regression slipped through PR #1447's review.
+ */
+export function computeNavCounts(
   workspaceRoot: string | undefined,
   sessionTree: TreeNode[],
   diagnostics: DiagnosticSnapshot | null,
 ): { agentCount: number; runningCount: number } {
   if (workspaceRoot) {
-    return {
-      agentCount: sessionTree.filter((n) => n.type === 'agent').length,
-      runningCount: sessionTree.filter((n) => n.wsAgentState === 'running').length,
-    };
+    const agentCount = countAgents(sessionTree, () => true);
+    if (agentCount > 0) {
+      return {
+        agentCount,
+        runningCount: countAgents(sessionTree, (n) => n.wsAgentState === 'running'),
+      };
+    }
+    // Workspace mode but no agent nodes resolved (stale workspaceRoot, empty
+    // scan, or every node is an orphan session). Fall back to the live tmux
+    // inventory so the header still reflects the user's reality.
   }
   const paneSum =
     diagnostics?.sessions.reduce((sum, s) => sum + s.windows.reduce((ws, w) => ws + w.panes.length, 0), 0) ?? 0;
