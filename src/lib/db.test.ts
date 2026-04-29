@@ -367,6 +367,29 @@ describe('daemon-owned pgserve', () => {
     );
     expect(connectionConfig).toContain('[PG_AUTH_FIELD]: pgWireCredential');
   });
+
+  test('socket connections ensure the v2 daemon before dialing libpq path', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function _buildConnection');
+    expect(fnStart).toBeGreaterThan(-1);
+    const body = source.slice(fnStart, source.indexOf('\n}\n', fnStart));
+
+    const useSocketIdx = body.indexOf('const useSocket = shouldUseUnixSocket()');
+    const ensureIdx = body.indexOf('if (useSocket) await getOrStartDaemon()');
+    const portIdx = body.indexOf('const port = useSocket ? 5432 : await ensurePgserve()');
+
+    expect(useSocketIdx).toBeGreaterThan(-1);
+    expect(ensureIdx).toBeGreaterThan(useSocketIdx);
+    expect(portIdx).toBeGreaterThan(ensureIdx);
+  });
+
+  test('v2 daemon autostart uses persistent Genie data dir', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('export async function getOrStartDaemon');
+    expect(fnStart).toBeGreaterThan(-1);
+    const body = source.slice(fnStart, source.indexOf('\nfunction maskCredentials', fnStart));
+    expect(body).toContain("['daemon', '--data', DATA_DIR, '--log', 'warn']");
+  });
 });
 
 describe('retention cleanup', () => {

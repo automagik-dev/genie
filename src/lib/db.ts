@@ -126,6 +126,23 @@ interface DaemonState {
   reason?: string;
 }
 
+interface PgserveSdkDaemonState {
+  running: boolean;
+  pid: number | null;
+  libpqSocketPresent?: boolean;
+  socketPresent?: boolean;
+  reason?: string | null;
+}
+
+interface PgserveSdk {
+  ensureDaemon?: (options?: {
+    dataDir?: string;
+    logLevel?: string;
+    timeoutMs?: number;
+    controlSocketDir?: string;
+  }) => Promise<PgserveSdkDaemonState>;
+}
+
 /**
  * Probe the v2 daemon. Returns running=true only when both the libpq socket
  * file exists AND the recorded pid is alive. A pid file with no socket (or
@@ -214,8 +231,10 @@ let daemonStartPromise: Promise<void> | null = null;
  * downstream commits; exported here so those call-sites land cleanly.
  */
 export async function getOrStartDaemon(): Promise<DaemonState> {
-  if (process.env.GENIE_PG_DISABLE_AUTOSTART === '1') {
-    return probePgserveDaemon();
+  if (process.env.GENIE_PG_DISABLE_AUTOSTART === '1' || isPgAutostartDisabled()) {
+    const state = probePgserveDaemon();
+    if (state.running) return state;
+    throw new Error('pgserve daemon unavailable and PG autostart is disabled');
   }
   const initial = probePgserveDaemon();
   if (initial.running) return initial;
@@ -244,35 +263,7 @@ export async function getOrStartDaemon(): Promise<DaemonState> {
     return probePgserveDaemon();
   }
 
-  daemonStartPromise = (async () => {
-    cleanPartialDaemonState(initial);
-    const bin = findPgserveDaemonBin();
-    if (bin === null) {
-      throw new Error(
-        'pgserve binary not found. Install with `bun add pgserve@^2.0.0` (or `npm i pgserve@^2.0.0`), or start `pgserve daemon` manually before running genie.',
-      );
-    }
-
-    mkdirSync(resolvePgserveSocketDir(), { recursive: true, mode: 0o700 });
-
-    const child = spawn(bin, ['daemon'], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env },
-    });
-    child.unref();
-
-    const socketPath = resolvePgserveLibpqSocketPath();
-    const timeout = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 16000;
-    const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      if (existsSync(socketPath)) return;
-      await sleep(250);
-    }
-    throw new Error(
-      `pgserve v2 daemon did not bind ${socketPath} within ${Math.round(timeout / 1000)}s. Try starting it manually: ${bin} daemon`,
-    );
-  })();
+  daemonStartPromise = startPgserveDaemonOnce(initial);
 
   try {
     await daemonStartPromise;
@@ -344,6 +335,61 @@ function unlinkIfPresent(path: string): void {
   } catch {
     /* gone */
   }
+}
+
+async function startPgserveDaemonOnce(initial: DaemonState): Promise<void> {
+  cleanPartialDaemonState(initial);
+  if (await tryEnsureDaemonWithSdk()) return;
+  const bin = requirePgserveDaemonBin();
+  mkdirSync(resolvePgserveSocketDir(), { recursive: true, mode: 0o700 });
+
+  const child = spawn(bin, ['daemon', '--data', DATA_DIR, '--log', 'warn'], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env },
+  });
+  child.unref();
+  await waitForDaemonSocket(bin);
+}
+
+function requirePgserveDaemonBin(): string {
+  const bin = findPgserveDaemonBin();
+  if (bin !== null) return bin;
+  throw new Error(
+    'pgserve binary not found. Install with `bun add pgserve@^2.0.2` (or `npm i pgserve@^2.0.2`), or start `pgserve daemon` manually before running genie.',
+  );
+}
+
+async function waitForDaemonSocket(bin: string): Promise<void> {
+  const socketPath = resolvePgserveLibpqSocketPath();
+  const timeout = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 16000;
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (existsSync(socketPath)) return;
+    await sleep(250);
+  }
+  throw new Error(
+    `pgserve v2 daemon did not bind ${socketPath} within ${Math.round(timeout / 1000)}s. Try starting it manually: ${bin} daemon`,
+  );
+}
+
+async function tryEnsureDaemonWithSdk(): Promise<boolean> {
+  let sdk: PgserveSdk;
+  try {
+    sdk = (await import('pgserve')) as PgserveSdk;
+  } catch {
+    return false;
+  }
+  if (typeof sdk.ensureDaemon !== 'function') return false;
+
+  const timeoutMs = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 16000;
+  const state = await sdk.ensureDaemon({
+    dataDir: DATA_DIR,
+    logLevel: 'warn',
+    timeoutMs,
+    controlSocketDir: resolvePgserveSocketDir(),
+  });
+  return Boolean(state.running && (state.libpqSocketPresent ?? state.socketPresent ?? true));
 }
 
 /** Sanitize connection URLs for logging — never expose credentials */

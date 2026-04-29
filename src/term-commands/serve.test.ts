@@ -56,9 +56,10 @@ describe('pgserve failure containment', () => {
     const body = source.slice(fnStart, fnEnd);
 
     expect(body).toContain('getOrStartDaemon');
-    expect(body).toContain('resolvePgserveLibpqSocketPath');
+    expect(body).toContain('resolvePgserveSocketDir');
+    expect(body).toContain('getDataDir');
     expect(body).not.toContain('ensurePgserve');
-    expect(body).not.toContain('registerService');
+    expect(body).toContain("registerService('pgserve-owner'");
     expect(body).not.toContain('pgserve ready on port');
   });
 
@@ -70,6 +71,19 @@ describe('pgserve failure containment', () => {
     const retryGuard = source.indexOf("process.env.GENIE_PG_NO_AUTOSTART = '1'", catchStart);
     expect(catchStart).toBeGreaterThan(-1);
     expect(retryGuard).toBeGreaterThan(-1);
+  });
+
+  test('serve starts pgserve daemon instead of legacy TCP router', () => {
+    const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function startPgserve');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('/** Start the scheduler daemon', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    expect(body).toContain('getOrStartDaemon');
+    expect(body).toContain('pgserve daemon ready');
+    expect(body).not.toContain('ensurePgserve');
+    expect(body).not.toContain('pgserve ready on port');
   });
 });
 
@@ -142,9 +156,11 @@ describe('brain startup integration', () => {
         setBrainHandles: mock(() => {}),
       });
 
-      expect(result.map((handle) => handle.brainPath)).toEqual([valid]);
+      expect(result.map((handle) => handle.brainPath)).toEqual([realpathSync(valid)]);
       expect(startEmbeddedBrainServer.mock.calls.length).toBe(1);
-      expect(warnings.some((message) => message.includes(`skipped registered vault ${missing}`))).toBe(true);
+      expect(warnings.some((message) => message.includes(`skipped registered vault ${realpathSync(missing)}`))).toBe(
+        true,
+      );
       expect(warnings.some((message) => message.includes('registry drift: started 1/2'))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -182,11 +198,11 @@ describe('brain startup integration', () => {
       });
 
       await eventually(() => startEmbeddedBrainServer.mock.calls.length >= 2);
-      expect(started).toEqual([first, second]);
+      expect(started).toEqual([realpathSync(first), realpathSync(second)]);
 
       releaseFirst?.();
       const result = await pending;
-      expect(result.map((handle) => handle.brainPath)).toEqual([first, second]);
+      expect(result.map((handle) => handle.brainPath)).toEqual([realpathSync(first), realpathSync(second)]);
     } finally {
       releaseFirst?.();
       rmSync(root, { recursive: true, force: true });
