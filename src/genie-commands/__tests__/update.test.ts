@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectFromBinaryPath, detectGlobalInstalls } from '../update.js';
@@ -121,5 +121,13 @@ describe('updateCommand dual-install logic', () => {
     for (const method of result) {
       expect(method === 'npm' || method === 'bun').toBe(true);
     }
+  });
+
+  test('post-update maintenance does not auto-start pgserve', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain("withTemporaryEnv('GENIE_PG_NO_AUTOSTART', '1'");
+    expect(source).toContain('will not auto-start it');
+    expect(source).toContain('update-diagnostics-');
+    expect(source).toContain('Recent scheduler signals');
   });
 });

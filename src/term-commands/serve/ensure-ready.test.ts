@@ -80,6 +80,7 @@ function buildDeps(overrides: Partial<EnsureServeReadyDeps> = {}): {
     listOrphanedZombies: async () => [],
     scanTeamConfigOrphans: () => ({ active: [], stale: [] }),
     archiveStaleTeamConfigs: () => [],
+    platform: 'linux',
     recordAudit: async (eventType, name, details) => {
       audits.push({ eventType, name, details });
     },
@@ -220,6 +221,26 @@ describe('runDoctorMaintenance — watchdog precondition', () => {
     expect(installCalls).toBe(1);
     expect(report.results.find((r) => r.name === 'watchdog')?.status).toBe('fixed');
     expect(audits.find((a) => a.name === 'watchdog')?.eventType).toBe('serve.precondition.fixed');
+  });
+
+  test('watchdog is skipped on non-Linux platforms', async () => {
+    let installCalls = 0;
+    const { deps, audits } = buildDeps({
+      platform: 'darwin',
+      collectHealth: async () => fakeHealth({ watchdog: 'warn', watchdog_detail: 'units missing' }),
+      installWatchdog: async () => {
+        installCalls++;
+        return { filesWritten: ['/etc/systemd/system/genie-watchdog.timer'], filesSkipped: [] };
+      },
+    });
+
+    const report = await runDoctorMaintenance({ deps, silent: true });
+    const watchdog = report.results.find((r) => r.name === 'watchdog');
+    expect(watchdog?.status).toBe('skipped');
+    expect(watchdog?.detail).toContain('Linux/systemd only');
+    expect(installCalls).toBe(0);
+    expect(audits.find((a) => a.name === 'watchdog')).toBeUndefined();
+    expect(report.ok).toBe(true);
   });
 
   test('install throws (EACCES) → refused, not crashed', async () => {

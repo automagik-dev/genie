@@ -1,12 +1,16 @@
 import { execSync, spawn } from 'node:child_process';
 import {
   chmodSync,
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { chmod, copyFile, mkdir, unlink } from 'node:fs/promises';
@@ -19,6 +23,7 @@ const GENIE_SRC = join(GENIE_HOME, 'src');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
+const UPDATE_DIAGNOSTIC_SCHEMA_VERSION = 1;
 
 function log(message: string): void {
   console.log(`\x1b[32m▸\x1b[0m ${message}`);
@@ -39,6 +44,182 @@ function formatDuration(ms: number): string {
 
 function isTruthyEnv(value: string | undefined): boolean {
   return value !== undefined && TRUTHY.has(value.trim().toLowerCase());
+}
+
+async function withTemporaryEnv<T>(key: string, value: string, fn: () => Promise<T>): Promise<T> {
+  const previous = process.env[key];
+  process.env[key] = value;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = previous;
+    }
+  }
+}
+
+interface PluginSyncInfo {
+  version?: string;
+  globalPkgDir?: string;
+  cacheDir?: string;
+  skippedReason?: string;
+}
+
+interface UpdateDiagnosticsContext {
+  channel: string;
+  installType: InstallationType;
+  primaryMethod: 'npm' | 'bun';
+  globalInstalls: Array<'npm' | 'bun'>;
+  plugin: PluginSyncInfo;
+}
+
+interface RecentLogSignal {
+  level: string;
+  event: string;
+  count: number;
+  lastTimestamp?: string;
+  lastError?: string;
+}
+
+function safeExec(command: string, timeoutMs = 1500): string {
+  try {
+    return execSync(command, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+    }).trim();
+  } catch (err) {
+    const stdout = (err as { stdout?: unknown }).stdout;
+    if (typeof stdout === 'string' && stdout.trim()) return stdout.trim();
+    return '';
+  }
+}
+
+function safeRead(path: string, maxChars = 4000): string | null {
+  try {
+    const value = readFileSync(path, 'utf-8');
+    if (value.length <= maxChars) return value;
+    return value.slice(value.length - maxChars);
+  } catch {
+    return null;
+  }
+}
+
+function tailLines(path: string, maxBytes = 64_000, maxLines = 200): string[] {
+  let fd: number | null = null;
+  try {
+    const stat = statSync(path);
+    const bytesToRead = Math.min(stat.size, maxBytes);
+    const buffer = Buffer.alloc(bytesToRead);
+    fd = openSync(path, 'r');
+    readSync(fd, buffer, 0, bytesToRead, Math.max(0, stat.size - bytesToRead));
+    const tail = buffer.toString('utf-8');
+    return tail
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-maxLines);
+  } catch {
+    return [];
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+function summarizeJsonlSignals(path: string): RecentLogSignal[] {
+  const signals = new Map<string, RecentLogSignal>();
+  for (const line of tailLines(path)) {
+    try {
+      const event = JSON.parse(line) as { level?: unknown; event?: unknown; timestamp?: unknown; error?: unknown };
+      const level = typeof event.level === 'string' ? event.level : 'unknown';
+      if (level !== 'error' && level !== 'warn') continue;
+      const name = typeof event.event === 'string' ? event.event : 'unknown';
+      const key = `${level}:${name}`;
+      const existing = signals.get(key) ?? { level, event: name, count: 0 };
+      existing.count++;
+      if (typeof event.timestamp === 'string') existing.lastTimestamp = event.timestamp;
+      if (typeof event.error === 'string') existing.lastError = event.error;
+      signals.set(key, existing);
+    } catch {
+      // Non-JSON log lines are kept in the raw tail, not summarized here.
+    }
+  }
+  return [...signals.values()].sort((a, b) => b.count - a.count).slice(0, 10);
+}
+
+async function collectUpdateDiagnostics(
+  ctx: UpdateDiagnosticsContext,
+  maintenance: { outcome: 'completed' | 'failed'; durationMs: number; lines: string[]; error?: string },
+): Promise<{ path: string; signals: RecentLogSignal[] }> {
+  const logsDir = join(GENIE_HOME, 'logs');
+  mkdirSync(logsDir, { recursive: true });
+  const generatedAt = new Date().toISOString();
+  const safeStamp = generatedAt.replace(/[:.]/g, '-');
+  const path = join(logsDir, `update-diagnostics-${safeStamp}.json`);
+  const schedulerLog = join(logsDir, 'scheduler.log');
+  const tuiCrashLog = join(logsDir, 'tui-crash.log');
+  const signals = summarizeJsonlSignals(schedulerLog);
+
+  const diagnostics = {
+    schemaVersion: UPDATE_DIAGNOSTIC_SCHEMA_VERSION,
+    generatedAt,
+    update: ctx,
+    runtime: {
+      platform: process.platform,
+      arch: process.arch,
+      cwd: process.cwd(),
+      node: process.version,
+      bun: (await runCommandSilent('bun', ['--version'])).output.trim() || null,
+      npm: (await runCommandSilent('npm', ['--version'])).output.trim() || null,
+      genie: {
+        which: (await runCommandSilent('which', ['genie'])).output.trim() || null,
+        tuiDisabled: isTruthyEnv(process.env.GENIE_TUI_DISABLE),
+        updateSkipMaintenance: isTruthyEnv(process.env.GENIE_UPDATE_SKIP_MAINTENANCE),
+      },
+    },
+    paths: {
+      genieHome: GENIE_HOME,
+      logsDir,
+      servePid: safeRead(join(GENIE_HOME, 'serve.pid'), 200),
+      pgservePort: safeRead(join(GENIE_HOME, 'pgserve.port'), 200),
+      schedulerLog,
+      tuiCrashLog,
+    },
+    processSnapshot: {
+      genie:
+        safeExec(
+          "ps -axo pid,ppid,pgid,stat,pcpu,pmem,etime,command -r | rg -i 'dist/genie.js|/src/genie.ts|pgserve|postgres -D .*\\.genie/data/pgserve|tmux -L genie-tui|bun' || true",
+          2000,
+        ) || null,
+      tuiTmux: safeExec('tmux -L genie-tui ls 2>/dev/null || true', 1000) || null,
+    },
+    maintenance: {
+      ...maintenance,
+      pgAutostartDisabled: true,
+      legend: {
+        '[ok]': 'healthy',
+        '[fix]': 'fixed during maintenance',
+        '[--]': 'skipped/non-blocking',
+        '[!!]': 'operator action needed; update still completed',
+      },
+    },
+    recentLogSignals: {
+      scheduler: signals,
+      schedulerTail: tailLines(schedulerLog, 32_000, 80),
+      tuiCrashTail: tailLines(tuiCrashLog, 32_000, 80),
+    },
+  };
+
+  writeFileSync(path, `${JSON.stringify(diagnostics, null, 2)}\n`);
+  return { path, signals };
 }
 
 async function runCommand(
@@ -615,19 +796,19 @@ function syncSkillsSymlink(claudePlugins: string, version: string): void {
   }
 }
 
-async function syncPlugin(installType: InstallationType): Promise<void> {
+async function syncPlugin(installType: InstallationType): Promise<PluginSyncInfo> {
   log('Syncing Claude Code plugin...');
 
   const globalPkgDir = await resolveGlobalPkgDir(installType);
   if (!globalPkgDir) {
     log('Could not find installed package — skipping plugin sync');
-    return;
+    return { skippedReason: 'installed package not found' };
   }
 
   const pluginSrc = join(globalPkgDir, 'plugins', 'genie');
   if (!existsSync(pluginSrc)) {
     log('Plugin source not found in package — skipping plugin sync');
-    return;
+    return { globalPkgDir, skippedReason: 'plugin source not found in package' };
   }
 
   // Read version from installed package
@@ -637,7 +818,7 @@ async function syncPlugin(installType: InstallationType): Promise<void> {
     version = pkg.version;
   } catch {
     log('Could not read package version — skipping plugin sync');
-    return;
+    return { globalPkgDir, skippedReason: 'could not read package version' };
   }
 
   // Copy to Claude Code plugin cache
@@ -658,7 +839,7 @@ async function syncPlugin(installType: InstallationType): Promise<void> {
     }
   } catch (err) {
     error(`Failed to copy plugin: ${err}`);
-    return;
+    return { version, globalPkgDir, cacheDir, skippedReason: `failed to copy plugin: ${err}` };
   }
 
   updatePluginRegistry(claudePlugins, cacheDir, version);
@@ -668,6 +849,7 @@ async function syncPlugin(installType: InstallationType): Promise<void> {
   syncTmuxScripts(globalPkgDir);
 
   success(`Plugin synced to v${version}`);
+  return { version, globalPkgDir, cacheDir };
 }
 
 // ============================================================================
@@ -759,8 +941,14 @@ export async function updateCommand(
     }
   }
 
-  await syncPlugin(installType);
-  await runPostUpdateMaintenanceSafe(options);
+  const plugin = await syncPlugin(installType);
+  await runPostUpdateMaintenanceSafe(options, {
+    channel,
+    installType,
+    primaryMethod,
+    globalInstalls: [...globalInstalls].sort(),
+    plugin,
+  });
 }
 
 /**
@@ -768,23 +956,81 @@ export async function updateCommand(
  * first `genie` after upgrade. Run maintenance NOW so `genie` (auto-start)
  * can stay fast. Failures are surfaced but never block the update.
  */
-async function runPostUpdateMaintenanceSafe(options: { skipMaintenance?: boolean } = {}): Promise<void> {
+function printPostUpdateMaintenanceIntro(): void {
+  console.log();
+  log('Running post-update maintenance...');
+  console.log('  Purpose: make first launch after update fast and collect upgrade health signals.');
+  console.log(
+    '  Checks: runtime partitions, watchdog status, session backfill drift, zombie rows, team config orphans.',
+  );
+  console.log('  PG policy: read-only; uses an already-running pgserve when available and will not auto-start it.');
+  console.log('  Legend: [ok]=healthy, [fix]=fixed, [--]=skipped/non-blocking, [!!]=operator action needed.');
+}
+
+async function runMaintenanceWithCapturedLines(maintenanceLines: string[]): Promise<void> {
+  const { runPostUpdateMaintenance } = await import('./doctor.js');
+  await withTemporaryEnv('GENIE_PG_NO_AUTOSTART', '1', () =>
+    runPostUpdateMaintenance({
+      log: (line) => {
+        maintenanceLines.push(line);
+        console.log(line);
+      },
+    }),
+  );
+}
+
+function printDiagnosticsSummary(diagnostics: { path: string; signals: RecentLogSignal[] }): void {
+  log('Post-update diagnostics captured.');
+  console.log(`  Report: ${diagnostics.path}`);
+  console.log('  Include this file when opening a GitHub issue; it contains install metadata, step output,');
+  console.log('  local process state, and recent scheduler/TUI log signals.');
+  if (diagnostics.signals.length === 0) return;
+  console.log('  Recent scheduler signals:');
+  for (const signal of diagnostics.signals.slice(0, 3)) {
+    const errorDetail = signal.lastError ? ` — ${signal.lastError}` : '';
+    console.log(`    ${signal.level}:${signal.event} ×${signal.count}${errorDetail}`);
+  }
+}
+
+async function capturePostUpdateDiagnostics(
+  diagnosticsCtx: UpdateDiagnosticsContext | undefined,
+  maintenance: { outcome: 'completed' | 'failed'; durationMs: number; lines: string[]; error?: string },
+): Promise<void> {
+  if (!diagnosticsCtx) return;
+  try {
+    const diagnostics = await collectUpdateDiagnostics(diagnosticsCtx, maintenance);
+    printDiagnosticsSummary(diagnostics);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Post-update diagnostics capture failed (non-fatal): ${msg}`);
+  }
+}
+
+async function runPostUpdateMaintenanceSafe(
+  options: { skipMaintenance?: boolean } = {},
+  diagnosticsCtx?: UpdateDiagnosticsContext,
+): Promise<void> {
   if (options.skipMaintenance || isTruthyEnv(process.env.GENIE_UPDATE_SKIP_MAINTENANCE)) {
     log('Skipping post-update maintenance (requested).');
     return;
   }
+  const startedAt = Date.now();
+  const maintenanceLines: string[] = [];
+  let outcome: 'completed' | 'failed' = 'completed';
+  let maintenanceError: string | undefined;
   try {
-    const { runPostUpdateMaintenance } = await import('./doctor.js');
-    console.log();
-    log('Running post-update maintenance...');
-    console.log('  This checks watchdog install, runtime partitions, session backfill drift, and team config orphans.');
-    const startedAt = Date.now();
-    await runPostUpdateMaintenance({
-      log: (line) => console.log(line),
-    });
+    printPostUpdateMaintenanceIntro();
+    await runMaintenanceWithCapturedLines(maintenanceLines);
     success(`Post-update maintenance complete (${formatDuration(Date.now() - startedAt)}).`);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    error(`Post-update maintenance skipped: ${msg}`);
+    outcome = 'failed';
+    maintenanceError = err instanceof Error ? err.message : String(err);
+    error(`Post-update maintenance skipped: ${maintenanceError}`);
   }
+  await capturePostUpdateDiagnostics(diagnosticsCtx, {
+    outcome,
+    durationMs: Date.now() - startedAt,
+    lines: maintenanceLines,
+    error: maintenanceError,
+  });
 }
