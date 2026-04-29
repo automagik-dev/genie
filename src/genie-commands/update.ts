@@ -18,6 +18,7 @@ const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_SRC = join(GENIE_HOME, 'src');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
+const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 
 function log(message: string): void {
   console.log(`\x1b[32m▸\x1b[0m ${message}`);
@@ -29,6 +30,15 @@ function success(message: string): void {
 
 function error(message: string): void {
   console.log(`\x1b[31m✖\x1b[0m ${message}`);
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function isTruthyEnv(value: string | undefined): boolean {
+  return value !== undefined && TRUTHY.has(value.trim().toLowerCase());
 }
 
 async function runCommand(
@@ -689,7 +699,9 @@ async function persistChannel(channel: string): Promise<void> {
   }
 }
 
-export async function updateCommand(options: { next?: boolean; stable?: boolean } = {}): Promise<void> {
+export async function updateCommand(
+  options: { next?: boolean; stable?: boolean; skipMaintenance?: boolean } = {},
+): Promise<void> {
   console.log();
   console.log('\x1b[1m🧞 Genie CLI Update\x1b[0m');
   console.log('\x1b[2m────────────────────────────────────\x1b[0m');
@@ -745,7 +757,7 @@ export async function updateCommand(options: { next?: boolean; stable?: boolean 
   }
 
   await syncPlugin(installType);
-  await runPostUpdateMaintenanceSafe();
+  await runPostUpdateMaintenanceSafe(options);
 }
 
 /**
@@ -753,12 +765,21 @@ export async function updateCommand(options: { next?: boolean; stable?: boolean 
  * first `genie` after upgrade. Run maintenance NOW so `genie` (auto-start)
  * can stay fast. Failures are surfaced but never block the update.
  */
-async function runPostUpdateMaintenanceSafe(): Promise<void> {
+async function runPostUpdateMaintenanceSafe(options: { skipMaintenance?: boolean } = {}): Promise<void> {
+  if (options.skipMaintenance || isTruthyEnv(process.env.GENIE_UPDATE_SKIP_MAINTENANCE)) {
+    log('Skipping post-update maintenance (requested).');
+    return;
+  }
   try {
     const { runPostUpdateMaintenance } = await import('./doctor.js');
     console.log();
     log('Running post-update maintenance...');
-    await runPostUpdateMaintenance();
+    console.log('  This checks watchdog install, runtime partitions, session backfill drift, and team config orphans.');
+    const startedAt = Date.now();
+    await runPostUpdateMaintenance({
+      log: (line) => console.log(line),
+    });
+    success(`Post-update maintenance complete (${formatDuration(Date.now() - startedAt)}).`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     error(`Post-update maintenance skipped: ${msg}`);

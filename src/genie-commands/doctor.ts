@@ -1048,13 +1048,13 @@ function fixTmuxConfigs(): void {
   refreshTmuxConfFile(bundledDir, home, 'genie.tmux.conf', 'tmux.conf');
 }
 
-async function runMaintenancePreconditions(silent = false): Promise<void> {
+async function runMaintenancePreconditions(silent = false, log?: (line: string) => void): Promise<void> {
   // Heavy preconditions live here, NOT in `ensureServeReady`: watchdog install,
   // foreground backfill convergence, stale team-config archive. Boot is fast;
   // upgrades and explicit `doctor --fix` are where housekeeping happens.
   try {
     const { runDoctorMaintenance } = await import('../term-commands/serve/ensure-ready.js');
-    await runDoctorMaintenance({ silent });
+    await runDoctorMaintenance({ silent, deps: log ? { log } : undefined });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!silent) console.warn(`  Maintenance preconditions skipped: ${msg}`);
@@ -1096,6 +1096,11 @@ async function doctorFix(): Promise<void> {
  * shells-out / one-time-cost preconditions that day-one users would otherwise
  * hit on first `genie` after upgrade.
  */
-export async function runPostUpdateMaintenance(): Promise<void> {
-  await runMaintenancePreconditions(/* silent */ true);
+export interface PostUpdateMaintenanceOptions {
+  silent?: boolean;
+  log?: (line: string) => void;
+}
+
+export async function runPostUpdateMaintenance(options: PostUpdateMaintenanceOptions = {}): Promise<void> {
+  await runMaintenancePreconditions(options.silent ?? false, options.log);
 }
