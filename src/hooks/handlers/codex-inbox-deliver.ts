@@ -21,10 +21,12 @@
  *     custom_name) to match how `mailbox.send` writes `to_worker` (varies by
  *     delivery path — see `src/lib/protocol-router.ts`).
  *
- * Timeout: 500ms hard cap on the PG round-trip. Codex's hook timeout is 15s,
- * but we want sub-second so a slow DB never stalls a turn — bail with empty
- * additionalContext on timeout (no delivery this turn, message stays unread,
- * next turn retries).
+ * Timeout: 500ms hard cap on the read-only PG lookup. Codex's hook timeout is
+ * 15s, but we want sub-second so a slow DB never stalls a turn — bail with
+ * empty additionalContext on timeout (no delivery this turn, message stays
+ * unread, next turn retries). The timeout never races the mark-read write; once
+ * we start mutating mailbox rows we wait for the result and return the context
+ * in the same turn.
  *
  * Mark-read semantics: marked read BEFORE returning. If the mark fails, we
  * bail with no delivery (better to miss a turn than double-inject after a
@@ -59,6 +61,11 @@ export interface CodexAgentRef {
 type FindCodexAgentFn = (name: string, team?: string) => Promise<CodexAgentRef | null>;
 type FetchUnreadFn = (repoPath: string, workerKeys: string[]) => Promise<MailboxMessage[]>;
 type MarkReadBatchFn = (messageIds: string[]) => Promise<number>;
+
+interface PendingDelivery {
+  unread: MailboxMessage[];
+  markReadBatch: MarkReadBatchFn;
+}
 
 /**
  * Overridable deps for testing (mirrors the session-sync pattern). When left
@@ -155,12 +162,10 @@ function resolveContext(payload: HookPayload): { agentName: string; teamName?: s
 }
 
 /**
- * Render pending mailbox messages into a single newline-joined block of
- * channel envelopes. Returns `null` when there is nothing to deliver (no
- * codex agent matched, no pending rows, mark-read failed, or query timed
- * out) — the dispatcher then emits no additionalContext for this turn.
+ * Read pending mailbox messages without mutating state. This promise may still
+ * complete after `withTimeout` returns, so it must stay read-only.
  */
-async function deliverPendingMessages(agentName: string, teamName?: string): Promise<string | null> {
+async function loadPendingMessages(agentName: string, teamName?: string): Promise<PendingDelivery | null> {
   const deps = await resolveDeps();
   const agent = await deps.findCodexAgent(agentName, teamName);
   if (!agent || agent.provider !== 'codex') return null;
@@ -169,13 +174,23 @@ async function deliverPendingMessages(agentName: string, teamName?: string): Pro
   const unread = await deps.fetchUnread(agent.repoPath, keys);
   if (unread.length === 0) return null;
 
+  return { unread, markReadBatch: deps.markReadBatch };
+}
+
+/**
+ * Mark the loaded rows read and render them into a single newline-joined block
+ * of channel envelopes. Returns `null` when the mark-read guard fails.
+ */
+async function deliverPendingMessages(pending: PendingDelivery): Promise<string | null> {
   // Atomic batch mark-read BEFORE returning the body. Failure here means we
   // skip delivery this turn rather than risk double-injection on the next.
-  const ids = unread.map((m) => m.id);
-  const updated = await deps.markReadBatch(ids);
+  const ids = pending.unread.map((m) => m.id);
+  const updated = await pending.markReadBatch(ids);
   if (updated === 0) return null;
 
-  const envelopes = unread.map((m) => formatEnvelope({ source: m.source, from: m.from, meta: m.meta, body: m.body }));
+  const envelopes = pending.unread.map((m) =>
+    formatEnvelope({ source: m.source, from: m.from, meta: m.meta, body: m.body }),
+  );
   return envelopes.join('\n');
 }
 
@@ -184,11 +199,10 @@ export async function codexInboxDeliver(payload: HookPayload): Promise<HandlerRe
   if (!ctx) return;
 
   try {
-    const additionalContext = await withTimeout(
-      deliverPendingMessages(ctx.agentName, ctx.teamName),
-      QUERY_TIMEOUT_MS,
-      null,
-    );
+    const pending = await withTimeout(loadPendingMessages(ctx.agentName, ctx.teamName), QUERY_TIMEOUT_MS, null);
+    if (!pending) return;
+
+    const additionalContext = await deliverPendingMessages(pending);
     if (!additionalContext) return;
 
     return {

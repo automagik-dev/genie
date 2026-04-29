@@ -433,11 +433,23 @@ describe('serve boot precondition ordering', () => {
     const startForegroundSource = source.slice(startIdx, endIdx);
 
     const daemonMarkerIdx = startForegroundSource.indexOf("process.env.GENIE_IS_DAEMON = '1'");
-    const preconditionsIdx = startForegroundSource.indexOf('await runStartPreconditions(autoFix)');
+    const preconditionsIdx = startForegroundSource.indexOf('await runStartPreconditions(autoFix');
 
     expect(daemonMarkerIdx).toBeGreaterThanOrEqual(0);
     expect(preconditionsIdx).toBeGreaterThanOrEqual(0);
     expect(daemonMarkerIdx).toBeLessThan(preconditionsIdx);
+  });
+
+  test('daemon no-fix waits for child startup status before reporting success', () => {
+    const source = readFileSync(resolve(__dirname, 'serve.ts'), 'utf-8');
+    const startIdx = source.indexOf('async function startBackground');
+    const endIdx = source.indexOf('/** Unlink serve.pid', startIdx);
+    const startBackgroundSource = source.slice(startIdx, endIdx);
+
+    expect(startBackgroundSource).toContain('GENIE_SERVE_STARTUP_STATUS');
+    expect(startBackgroundSource).toContain('await confirmBackgroundStarted');
+    expect(source).toContain('await waitForStartupStatus');
+    expect(source).toContain('status?.ok === false');
   });
 });
 

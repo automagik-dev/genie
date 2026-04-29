@@ -411,7 +411,8 @@ describe('GENIE_SKIP_DB_BOOT (Mac CPU fix C — hook-dispatch coldstart)', () =>
     expect(source).toMatch(/skipBoot\s*=\s*isTestMode\s*\|\|\s*process\.env\.GENIE_SKIP_DB_BOOT/);
     // Both migrations and seed gated by skipBoot
     expect(source).toMatch(/if \(!skipBoot\) await runMigrations/);
-    expect(source).toMatch(/if \(!skipBoot && needsSeed\(\)\) await runSeed/);
+    expect(source).toMatch(/if \(!skipBoot && \(needsSeed\(\) \|\| \(await needsSeededTeams\(client\)\)\)\) \{/);
+    expect(source).toContain('await runSeed(client);');
   });
 
   test('hook dispatch entrypoint sets GENIE_SKIP_DB_BOOT before invoking dispatch()', () => {

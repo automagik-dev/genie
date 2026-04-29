@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getConnection } from './db.js';
-import { needsSeed, runSeed } from './pg-seed.js';
+import { needsSeed, needsSeededTeams, runSeed } from './pg-seed.js';
 import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 describe.skipIf(!DB_AVAILABLE)('pg', () => {
@@ -352,6 +352,7 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(marker).toEqual({
         teamsDir: join(testClaudeDir, 'teams'),
         mtimeMs: String(statSync(join(testClaudeDir, 'teams')).mtimeMs),
+        teamNames: ['seed-team-beta'],
       });
     });
 
@@ -507,7 +508,11 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       mkdirSync(stateDir, { recursive: true });
       writeFileSync(
         join(stateDir, 'teams-seed-marker'),
-        `${JSON.stringify({ teamsDir, mtimeMs: String(statSync(teamsDir).mtimeMs) })}\n`,
+        `${JSON.stringify({
+          teamsDir,
+          mtimeMs: String(statSync(teamsDir).mtimeMs),
+          teamNames: ['seed-team-cache'],
+        })}\n`,
       );
 
       const originalReaddirSync = fs.readdirSync;
@@ -525,6 +530,34 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       } finally {
         fs.readdirSync = originalReaddirSync;
       }
+    });
+
+    test('needsSeededTeams detects fresh marker rows missing after pgserve reset', async () => {
+      const sql = await getConnection();
+      const teamName = 'seed-team-reset-marker';
+      const teamsDir = join(testClaudeDir, 'teams');
+      const stateDir = join(testHome, 'state');
+      mkdirSync(join(teamsDir, teamName), { recursive: true });
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(join(teamsDir, teamName, 'config.json'), JSON.stringify({ name: teamName }));
+      writeFileSync(
+        join(stateDir, 'teams-seed-marker'),
+        `${JSON.stringify({
+          teamsDir,
+          mtimeMs: String(statSync(teamsDir).mtimeMs),
+          teamNames: [teamName],
+        })}\n`,
+      );
+
+      await sql`DELETE FROM teams WHERE name = ${teamName}`;
+      expect(await needsSeededTeams(sql)).toBe(true);
+
+      await sql`
+        INSERT INTO teams (name, repo, base_branch, worktree_path, members)
+        VALUES (${teamName}, '/tmp/repo', 'dev', '/tmp/repo', ${sql.json([])})
+      `;
+      expect(await needsSeededTeams(sql)).toBe(false);
+      await sql`DELETE FROM teams WHERE name = ${teamName}`;
     });
 
     test('needsSeed returns false after migration (no workers.json, no claude teams)', () => {
