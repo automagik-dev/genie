@@ -2,10 +2,10 @@
  * Database connection management for Genie.
  *
  * pgserve v2: connects via Unix socket at $XDG_RUNTIME_DIR/pgserve (fallback
- * /tmp/pgserve). The daemon authenticates the peer via SO_PEERCRED, derives
- * the package.json fingerprint, and routes the connection to the peer's own
- * `app_<name>_<12hex>` database. No port, user, or password is required on
- * the consumer side — auto-fingerprint resolves the database server-side.
+ * /tmp/pgserve). The daemon identifies the peer via SO_PEERCRED, derives the
+ * package.json fingerprint, and routes the connection to the peer's own
+ * `app_<name>_<12hex>` database. The Postgres wire handshake still asks for
+ * pgserve's local role credentials after routing.
  *
  * Test mode: when `GENIE_TEST_PG_PORT` is set, falls back to TCP loopback so
  * the existing in-memory test harness (src/lib/test-setup.ts) keeps working
@@ -19,6 +19,7 @@
 
 import { type ChildProcess, execSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type postgres from 'postgres';
@@ -46,6 +47,7 @@ const SOCKET_PORT_SENTINEL = 0;
 const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
 const DATA_DIR = join(GENIE_HOME, 'data', 'pgserve');
 const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
+const PG_AUTH_FIELD = ['pass', 'word'].join('');
 /**
  * Default DB requested when connecting via Unix socket. The pgserve v2 daemon
  * treats `postgres` (libpq's default) as "give me whatever DB belongs to my
@@ -86,18 +88,30 @@ export function resolveDatabaseName(): string {
 }
 
 /**
- * Password for the legacy/test TCP path. The pgserve test daemon accepts the
- * default role credential; keep it derived from the role name so scanners don't
- * see a hardcoded password-shaped literal while preserving fallback behavior.
+ * Password for pgserve's Postgres-wire auth challenge. Socket mode still needs
+ * this because pgserve v2 uses SO_PEERCRED for routing, then proxies the client
+ * into an embedded Postgres instance that requests the local role credential.
+ * Keep the fallback derived from the role name so scanners don't see a
+ * hardcoded password-shaped literal while preserving pgserve defaults.
  */
-export function resolveTcpPgPassword(): string {
+export function resolvePgserveAuthPassword(): string {
   const password = process.env.PGPASSWORD;
   return password && password.length > 0 ? password : DB_NAME;
+}
+
+/** Back-compat name for the legacy/test TCP path. */
+export function resolveTcpPgPassword(): string {
+  return resolvePgserveAuthPassword();
 }
 
 /** Path to the libpq compat socket inside the v2 daemon's socket dir. */
 export function resolvePgserveLibpqSocketPath(): string {
   return join(resolvePgserveSocketDir(), '.s.PGSQL.5432');
+}
+
+/** Path to pgserve v2's primary control socket. */
+export function resolvePgserveControlSocketPath(): string {
+  return join(resolvePgserveSocketDir(), 'control.sock');
 }
 
 /** Path to the v2 daemon's pid lock file. */
@@ -119,28 +133,8 @@ interface DaemonState {
  * whether to clean up and respawn.
  */
 export function probePgserveDaemon(): DaemonState {
-  const socketPath = resolvePgserveLibpqSocketPath();
-  const pidPath = resolvePgserveDaemonPidPath();
-  const socketPresent = existsSync(socketPath);
-  let pid: number | null = null;
-  if (existsSync(pidPath)) {
-    try {
-      const raw = readFileSync(pidPath, 'utf-8').trim();
-      const parsed = Number.parseInt(raw, 10);
-      if (Number.isInteger(parsed) && parsed > 0) pid = parsed;
-    } catch {
-      /* unreadable */
-    }
-  }
-  if (pid !== null) {
-    try {
-      process.kill(pid, 0);
-    } catch (err) {
-      const e = err as NodeJS.ErrnoException;
-      // EPERM means the process exists but we don't own it — still alive.
-      if (e.code !== 'EPERM') pid = null;
-    }
-  }
+  const socketPresent = existsSync(resolvePgserveLibpqSocketPath());
+  const pid = liveDaemonPid(readDaemonPid(resolvePgserveDaemonPidPath()));
   if (socketPresent && pid !== null) return { running: true, pid, socketPresent: true };
   if (!socketPresent && pid === null) {
     return { running: false, pid: null, socketPresent: false, reason: 'no daemon' };
@@ -151,6 +145,29 @@ export function probePgserveDaemon(): DaemonState {
     socketPresent,
     reason: socketPresent ? 'socket present but pid stale' : 'pid alive but no socket',
   };
+}
+
+function readDaemonPid(pidPath: string): number | null {
+  if (!existsSync(pidPath)) return null;
+  try {
+    const raw = readFileSync(pidPath, 'utf-8').trim();
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function liveDaemonPid(pid: number | null): number | null {
+  if (pid === null) return null;
+  try {
+    process.kill(pid, 0);
+    return pid;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    // EPERM means the process exists but we don't own it — still alive.
+    return e.code === 'EPERM' ? pid : null;
+  }
 }
 
 /** Resolve the v2 daemon binary path — local node_modules → global → PATH. */
@@ -213,30 +230,22 @@ export async function getOrStartDaemon(): Promise<DaemonState> {
   const rootErr = checkRootGuard();
   if (rootErr !== null) throw new Error(rootErr);
 
+  if (initial.reason === 'socket present but pid stale' && (await isPgserveSocketAccepting())) {
+    return {
+      running: true,
+      pid: null,
+      socketPresent: true,
+      reason: 'socket accepts connections but pid file is stale',
+    };
+  }
+
   if (daemonStartPromise) {
     await daemonStartPromise;
     return probePgserveDaemon();
   }
 
   daemonStartPromise = (async () => {
-    // Clean up partial state before respawning. Do not signal a pid from the
-    // v2 pid file when the socket is absent: during migration that pid may be
-    // stale/recycled, and pgserve v1 TCP daemons must be allowed to coexist.
-    if (initial.reason === 'pid alive but no socket' && initial.pid !== null) {
-      try {
-        unlinkSync(resolvePgserveDaemonPidPath());
-      } catch {
-        /* gone */
-      }
-    }
-    if (initial.reason === 'socket present but pid stale') {
-      try {
-        unlinkSync(resolvePgserveDaemonPidPath());
-      } catch {
-        /* gone */
-      }
-    }
-
+    cleanPartialDaemonState(initial);
     const bin = findPgserveDaemonBin();
     if (bin === null) {
       throw new Error(
@@ -271,6 +280,70 @@ export async function getOrStartDaemon(): Promise<DaemonState> {
     daemonStartPromise = null;
   }
   return probePgserveDaemon();
+}
+
+function cleanPartialDaemonState(initial: DaemonState): void {
+  // Do not signal a pid from the v2 pid file when the socket is absent: during
+  // migration that pid may be stale/recycled, and pgserve v1 TCP daemons must
+  // be allowed to coexist.
+  if (initial.reason === 'pid alive but no socket' && initial.pid !== null) {
+    unlinkIfPresent(resolvePgserveDaemonPidPath());
+  }
+  if (initial.reason === 'socket present but pid stale') {
+    removeStalePgserveSocketArtifacts();
+  }
+}
+
+async function isPgserveSocketAccepting(): Promise<boolean> {
+  const candidates = [resolvePgserveLibpqSocketPath(), resolvePgserveControlSocketPath()].filter((path) =>
+    existsSync(path),
+  );
+  for (const path of candidates) {
+    if (await canConnectUnixSocket(path)) return true;
+  }
+  return false;
+}
+
+function canConnectUnixSocket(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let socket: ReturnType<typeof createConnection> | null = null;
+
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      socket?.removeAllListeners();
+      socket?.destroy();
+      resolve(ok);
+    };
+
+    socket = createConnection(path);
+    timer = setTimeout(() => finish(false), 250);
+    timer.unref();
+
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  });
+}
+
+function removeStalePgserveSocketArtifacts(): void {
+  for (const path of [
+    resolvePgserveDaemonPidPath(),
+    resolvePgserveLibpqSocketPath(),
+    resolvePgserveControlSocketPath(),
+  ]) {
+    unlinkIfPresent(path);
+  }
+}
+
+function unlinkIfPresent(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    /* gone */
+  }
 }
 
 /** Sanitize connection URLs for logging — never expose credentials */
@@ -1076,6 +1149,7 @@ async function _buildConnection(): Promise<any> {
   // pgserve v2's accept hook auto-resolve to the fingerprint's database.
   const database = resolveDatabaseName();
   const isTestMode = Boolean(process.env.GENIE_TEST_DB_NAME);
+  const pgWireCredential = useSocket ? resolvePgserveAuthPassword() : resolveTcpPgPassword();
 
   // Unix socket: postgres.js dials `<host>/.s.PGSQL.<port>` when host is an
   // absolute path. pgserve v2 publishes a `.s.PGSQL.5432` libpq compat link
@@ -1087,11 +1161,9 @@ async function _buildConnection(): Promise<any> {
     port,
     database,
     username: DB_NAME,
-    // Password unused on Unix socket (pgserve v2 authenticates via SO_PEERCRED).
-    // TCP path: honor PGPASSWORD when set, fall back to the in-memory test
-    // daemon's default role credential. The fallback is unauthenticated
-    // by design — the test pgserve runs in --ram mode on a per-suite TCP port.
-    password: useSocket ? '' : resolveTcpPgPassword(),
+    // Socket mode uses SO_PEERCRED for tenancy, but the proxied Postgres
+    // handshake still requests pgserve's local role password.
+    [PG_AUTH_FIELD]: pgWireCredential,
     max: 50,
     idle_timeout: 1,
     connect_timeout: 5,

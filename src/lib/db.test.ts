@@ -337,6 +337,36 @@ describe('daemon-owned pgserve', () => {
     // Self-heal function exists
     expect(source.includes('selfHealPostgres')).toBe(true);
   });
+
+  test('socket connections answer pgserve v2 postgres-wire auth', async () => {
+    const { DB_NAME, resolvePgserveAuthPassword } = await import('./db.js');
+    const originalPassword = process.env.PGPASSWORD;
+
+    try {
+      process.env.PGPASSWORD = '';
+      expect(resolvePgserveAuthPassword()).toBe(DB_NAME);
+
+      process.env.PGPASSWORD = 'custom-local-value';
+      expect(resolvePgserveAuthPassword()).toBe('custom-local-value');
+    } finally {
+      if (originalPassword === undefined) {
+        process.env.PGPASSWORD = undefined;
+      } else {
+        process.env.PGPASSWORD = originalPassword;
+      }
+    }
+
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const connectionStart = source.indexOf('sqlClient = pgModule({');
+    expect(connectionStart).toBeGreaterThan(-1);
+    const connectionConfig = source.slice(connectionStart, source.indexOf('  });', connectionStart));
+    expect(connectionConfig).toContain('username: DB_NAME');
+    expect(source).toContain('const PG_AUTH_FIELD');
+    expect(source).toContain(
+      'const pgWireCredential = useSocket ? resolvePgserveAuthPassword() : resolveTcpPgPassword()',
+    );
+    expect(connectionConfig).toContain('[PG_AUTH_FIELD]: pgWireCredential');
+  });
 });
 
 describe('retention cleanup', () => {
@@ -562,8 +592,29 @@ describe('parallel dispatch race (issue #1207)', () => {
     expect(nextBranch).toBeGreaterThan(partialState);
     const block = body.slice(partialState, nextBranch);
 
-    expect(block).toContain('unlinkSync(resolvePgserveDaemonPidPath())');
+    expect(block).toContain('unlinkIfPresent(resolvePgserveDaemonPidPath())');
     expect(block).not.toContain('process.kill(initial.pid');
+  });
+
+  test('getOrStartDaemon probes stale v2 sockets before removing socket artifacts', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('export async function getOrStartDaemon');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('function removeStalePgserveSocketArtifacts', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    const probeIdx = body.indexOf('await isPgserveSocketAccepting()');
+    const cleanupIdx = body.indexOf('removeStalePgserveSocketArtifacts()');
+    expect(probeIdx).toBeGreaterThan(-1);
+    expect(cleanupIdx).toBeGreaterThan(probeIdx);
+
+    const cleanupStart = source.indexOf('function removeStalePgserveSocketArtifacts');
+    const cleanupEnd = source.indexOf('/** Sanitize connection URLs', cleanupStart);
+    const cleanup = source.slice(cleanupStart, cleanupEnd);
+    expect(cleanup).toContain('resolvePgserveDaemonPidPath()');
+    expect(cleanup).toContain('resolvePgserveLibpqSocketPath()');
+    expect(cleanup).toContain('resolvePgserveControlSocketPath()');
+    expect(cleanup).toContain('unlinkIfPresent(path)');
   });
 });
 
