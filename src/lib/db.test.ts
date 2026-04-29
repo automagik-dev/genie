@@ -390,6 +390,29 @@ describe('daemon-owned pgserve', () => {
     const body = source.slice(fnStart, source.indexOf('\nfunction maskCredentials', fnStart));
     expect(body).toContain("['daemon', '--data', DATA_DIR, '--log', 'warn']");
   });
+
+  test('daemon startup prefers Genie bundled pgserve over stale global pgserve', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+
+    const binStart = source.indexOf('function findPgserveDaemonBin');
+    expect(binStart).toBeGreaterThan(-1);
+    const binBody = source.slice(binStart, source.indexOf('\n/** Sleep helper', binStart));
+    const localBinIdx = binBody.indexOf("join(localRoot, 'bin', 'pgserve-wrapper.cjs')");
+    const requireResolveIdx = binBody.indexOf("require.resolve('pgserve/bin/pgserve-wrapper.cjs')");
+    const globalBinIdx = binBody.indexOf("join(homedir(), '.bun', 'bin', 'pgserve')");
+
+    expect(localBinIdx).toBeGreaterThan(-1);
+    expect(requireResolveIdx).toBeGreaterThan(localBinIdx);
+    expect(globalBinIdx).toBeGreaterThan(requireResolveIdx);
+
+    const sdkStart = source.indexOf('async function importPgserveSdk');
+    const ensureStart = source.indexOf('async function tryEnsureDaemonWithSdk');
+    expect(sdkStart).toBeGreaterThan(-1);
+    expect(ensureStart).toBeGreaterThan(sdkStart);
+    const sdkBody = source.slice(sdkStart, ensureStart);
+    expect(sdkBody).toContain('resolveLocalPgserveEntry()');
+    expect(sdkBody.indexOf('pathToFileURL(localEntry).href')).toBeLessThan(sdkBody.indexOf("import('pgserve')"));
+  });
 });
 
 describe('retention cleanup', () => {
