@@ -7,7 +7,12 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { CrossProviderModelError, validateProviderModel } from './provider-models.js';
+import {
+  CrossProviderModelError,
+  getProviderDefaultModel,
+  sanitizeModelForProvider,
+  validateProviderModel,
+} from './provider-models.js';
 
 describe('validateProviderModel', () => {
   describe('the bug that triggered the council', () => {
@@ -137,6 +142,78 @@ describe('validateProviderModel', () => {
 
     test('CODEX provider name (upper) treated same as codex', () => {
       expect(() => validateProviderModel({ provider: 'CODEX', model: 'opus' })).toThrow(CrossProviderModelError);
+    });
+  });
+});
+
+describe('getProviderDefaultModel', () => {
+  test('codex default is gpt-5.5', () => {
+    expect(getProviderDefaultModel('codex')).toBe('gpt-5.5');
+    expect(getProviderDefaultModel('CODEX')).toBe('gpt-5.5');
+  });
+  test('claude has no explicit default (defer to CLI)', () => {
+    expect(getProviderDefaultModel('claude')).toBeUndefined();
+    expect(getProviderDefaultModel('claude-sdk')).toBeUndefined();
+  });
+  test('unknown provider returns undefined', () => {
+    expect(getProviderDefaultModel('gemini')).toBeUndefined();
+    expect(getProviderDefaultModel(undefined)).toBeUndefined();
+    expect(getProviderDefaultModel(null)).toBeUndefined();
+  });
+});
+
+describe('sanitizeModelForProvider', () => {
+  describe('the directory-inheritance leak (council root cause)', () => {
+    test('codex + opus (claude-family inherited from dir entry) → coerced to gpt-5.5', () => {
+      // This is the exact bug: a dir entry registered with model:opus on
+      // claude provider gets re-spawned with --provider codex. Without
+      // sanitization, --model opus reaches the codex CLI and kills it.
+      expect(sanitizeModelForProvider('codex', 'opus')).toBe('gpt-5.5');
+    });
+
+    test('codex + sonnet → coerced to gpt-5.5', () => {
+      expect(sanitizeModelForProvider('codex', 'sonnet')).toBe('gpt-5.5');
+    });
+
+    test('codex + claude-opus-4-7 → coerced to gpt-5.5', () => {
+      expect(sanitizeModelForProvider('codex', 'claude-opus-4-7')).toBe('gpt-5.5');
+    });
+  });
+
+  describe('happy paths (no coercion)', () => {
+    test('codex + gpt-5.5 → gpt-5.5 unchanged', () => {
+      expect(sanitizeModelForProvider('codex', 'gpt-5.5')).toBe('gpt-5.5');
+    });
+
+    test('codex + gpt-4o → gpt-4o unchanged (we do not gatekeep within codex family)', () => {
+      expect(sanitizeModelForProvider('codex', 'gpt-4o')).toBe('gpt-4o');
+    });
+
+    test('claude + opus → opus unchanged', () => {
+      expect(sanitizeModelForProvider('claude', 'opus')).toBe('opus');
+    });
+  });
+
+  describe('default-injection cases', () => {
+    test('codex + no model → injects gpt-5.5 default', () => {
+      expect(sanitizeModelForProvider('codex', undefined)).toBe('gpt-5.5');
+      expect(sanitizeModelForProvider('codex', null)).toBe('gpt-5.5');
+      expect(sanitizeModelForProvider('codex', '')).toBe('gpt-5.5');
+    });
+
+    test('claude + no model → undefined (defer to CLI default)', () => {
+      expect(sanitizeModelForProvider('claude', undefined)).toBeUndefined();
+      expect(sanitizeModelForProvider('claude', null)).toBeUndefined();
+    });
+  });
+
+  describe('pass-through cases', () => {
+    test('unknown provider passes model through as-is', () => {
+      expect(sanitizeModelForProvider('gemini', 'opus')).toBe('opus');
+    });
+
+    test('unknown model name passes through (defer to underlying CLI)', () => {
+      expect(sanitizeModelForProvider('codex', 'whatever-future-model')).toBe('whatever-future-model');
     });
   });
 });

@@ -78,6 +78,53 @@ export class CrossProviderModelError extends Error {
 }
 
 /**
+ * Default model per provider. Returned when caller has not specified `--model`
+ * and we want to make the choice explicit at the launch-command layer (so
+ * codex spawns don't inherit a Claude default like `opus` from a directory
+ * entry that was first created against the claude provider).
+ *
+ * Codex CLI accepts only `gpt-5.5` (per user clarification 2026-04-28). Claude
+ * uses no explicit default — undefined leaves the choice to the Claude CLI.
+ */
+export function getProviderDefaultModel(provider: ProviderName | undefined | null): string | undefined {
+  const family = providerFamily(provider);
+  if (family === 'codex') return 'gpt-5.5';
+  return undefined; // claude / claude-sdk: defer to CLI default
+}
+
+/**
+ * Sanitize a model value for the resolved provider. If the model unambiguously
+ * belongs to a different provider family, log a warning to stderr and return
+ * the provider's default (or undefined if none). This is the launch-command-
+ * layer last line of defense for cases where `--provider` and `--model` flow
+ * in from different origins (e.g. `--provider codex` from CLI + `model: opus`
+ * inherited from a directory entry registered against the claude provider).
+ *
+ * Unlike `validateProviderModel` (which throws at parse time), this is silent-
+ * coercion at spawn time — the throwing version catches the explicit-CLI case;
+ * this catches the inheritance case.
+ */
+export function sanitizeModelForProvider(
+  provider: ProviderName | undefined | null,
+  model: string | undefined | null,
+): string | undefined {
+  if (!model) return getProviderDefaultModel(provider);
+  const requestedFamily = providerFamily(provider);
+  if (requestedFamily === null) return model; // unknown provider — pass through
+  const modelFamily = classifyModel(model);
+  if (modelFamily === null) return model; // unknown model — pass through
+  if (modelFamily === requestedFamily) return model; // happy path
+
+  // Cross-provider inheritance — coerce to default.
+  const def = getProviderDefaultModel(provider);
+  process.stderr.write(
+    `[genie] dropping cross-provider model "${model}" (${modelFamily} family) for provider "${provider}" ` +
+      `(${requestedFamily} family); using ${def ? `default "${def}"` : 'provider default'}.\n`,
+  );
+  return def;
+}
+
+/**
  * Validate that `--model` is plausible for `--provider`.
  *
  * Throws `CrossProviderModelError` with a clear, actionable message when the
