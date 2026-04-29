@@ -590,6 +590,17 @@ describe('root guard (issue #1226)', () => {
     expect(guardCall).toBeGreaterThan(-1);
     expect(guardCall).toBeLessThan(daemonBranch);
   });
+
+  test('_ensurePgserve honors GENIE_PG_NO_AUTOSTART before auto-start daemon', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function _ensurePgserve');
+    expect(fnStart).toBeGreaterThan(-1);
+    const noAutostartGuard = source.indexOf('isPgAutostartDisabled()', fnStart);
+    const autoStartCall = source.indexOf('await autoStartDaemon()', fnStart);
+    expect(noAutostartGuard).toBeGreaterThan(-1);
+    expect(autoStartCall).toBeGreaterThan(-1);
+    expect(noAutostartGuard).toBeLessThan(autoStartCall);
+  });
 });
 
 describe('migration directory resolution', () => {

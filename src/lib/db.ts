@@ -3,6 +3,7 @@
  *
  * `genie serve` owns pgserve. CLI commands read the port file and connect.
  * If no serve process is running, the CLI auto-starts `genie serve --headless`.
+ * Set GENIE_PG_NO_AUTOSTART=1 for read-only probes that must not spawn serve.
  * Self-healing: health checks on every connection, automatic recovery.
  */
 
@@ -28,6 +29,7 @@ const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
 const DATA_DIR = join(GENIE_HOME, 'data', 'pgserve');
 const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
 const DB_NAME = 'genie';
+const TRUTHY_ENV = new Set(['1', 'true', 'yes', 'on']);
 
 /** Sanitize connection URLs for logging — never expose credentials */
 function maskCredentials(url: string): string {
@@ -56,6 +58,11 @@ export function checkRootGuard(): string | null {
     'Run genie as a non-root user, or set GENIE_ALLOW_ROOT=1 to attempt anyway. ' +
     'See: https://github.com/automagik-dev/genie/issues/1226'
   );
+}
+
+function isPgAutostartDisabled(): boolean {
+  const value = process.env.GENIE_PG_NO_AUTOSTART;
+  return value !== undefined && TRUTHY_ENV.has(value.trim().toLowerCase());
 }
 
 /**
@@ -495,6 +502,11 @@ async function _ensurePgserve(): Promise<number> {
   if (process.env.CI === 'true') {
     process.env.GENIE_PG_AVAILABLE = 'false';
     throw new Error('pgserve not available in CI');
+  }
+
+  if (isPgAutostartDisabled()) {
+    process.env.GENIE_PG_AVAILABLE = 'false';
+    throw new Error('pgserve unavailable and GENIE_PG_NO_AUTOSTART=1');
   }
 
   const rootErr = checkRootGuard();

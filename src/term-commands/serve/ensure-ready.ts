@@ -112,6 +112,7 @@ export interface EnsureServeReadyDeps {
   listOrphanedZombies?: () => Promise<Array<{ id: string; lastStateChange: string }>>;
   scanTeamConfigOrphans?: () => OrphanScan;
   archiveStaleTeamConfigs?: (orphans: TeamConfigOrphan[]) => string[];
+  platform?: NodeJS.Platform;
   recordAudit?: (
     eventType: 'serve.precondition.fixed' | 'serve.precondition.refused',
     name: PreconditionName,
@@ -468,8 +469,15 @@ async function checkPartition(
 async function checkWatchdog(
   health: ObservabilityHealthReport,
   autoFix: boolean,
-  deps: Required<Pick<EnsureServeReadyDeps, 'installWatchdog'>>,
+  deps: Required<Pick<EnsureServeReadyDeps, 'installWatchdog' | 'platform'>>,
 ): Promise<PreconditionResult> {
+  if (deps.platform !== 'linux') {
+    return {
+      name: 'watchdog',
+      status: 'skipped',
+      detail: 'watchdog install is Linux/systemd only',
+    };
+  }
   if (health.watchdog === 'ok') {
     return { name: 'watchdog', status: 'ok' };
   }
@@ -603,6 +611,7 @@ function bindDefaults(deps: EnsureServeReadyDeps | undefined): Required<EnsureSe
     listOrphanedZombies: deps?.listOrphanedZombies ?? defaultListOrphanedZombies,
     scanTeamConfigOrphans: deps?.scanTeamConfigOrphans ?? defaultScanTeamConfigOrphans,
     archiveStaleTeamConfigs: deps?.archiveStaleTeamConfigs ?? defaultArchiveStaleTeamConfigs,
+    platform: deps?.platform ?? process.platform,
     recordAudit: deps?.recordAudit ?? defaultRecordAudit,
     log: deps?.log ?? ((line: string) => console.log(line)),
   };
