@@ -275,9 +275,11 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       const timeline = await queryTimeline(uniqueId);
       expect(timeline.length).toBe(3);
-      // Should be ordered ASC by time
-      expect(timeline[0].event_type).toBe('spawn');
-      expect(timeline[2].event_type).toBe('kill');
+      // Ordered DESC by time (newest first) — changed from ASC in #1466 fix
+      // so users see recent activity at the top without paging through
+      // historical noise.
+      expect(timeline[0].event_type).toBe('kill');
+      expect(timeline[2].event_type).toBe('spawn');
     });
 
     test('matches traceId in details', async () => {
@@ -314,6 +316,66 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     test('returns unique values', () => {
       const ids = new Set(Array.from({ length: 10 }, () => generateTraceId()));
       expect(ids.size).toBe(10);
+    });
+  });
+
+  // Closes #1466 — events timeline hangs on production-sized audit_events.
+  // Default behavior must apply a time window so idx_audit_created bounds
+  // the scan. Source contract is verified via static-text assertions
+  // (no PG dependency) so these run in the no-PG path too.
+  describe('queryTimeline contract — sibling fix #1466', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const auditSource = fs.readFileSync(path.join(__dirname, 'audit.ts'), 'utf-8');
+    const cmdSource = fs.readFileSync(path.join(__dirname, '..', 'term-commands', 'audit-events.ts'), 'utf-8');
+
+    test('queryTimeline accepts TimelineQueryOptions with limit + sinceMs', () => {
+      expect(auditSource).toContain('export interface TimelineQueryOptions');
+      expect(auditSource).toMatch(/limit\?:\s*number/);
+      expect(auditSource).toMatch(/sinceMs\?:\s*number\s*\|\s*null/);
+    });
+
+    test('queryTimeline default sinceMs is 24h (so production audit_events does not full-scan)', () => {
+      expect(auditSource).toContain('DEFAULT_TIMELINE_SINCE_MS');
+      expect(auditSource).toContain('24 * 60 * 60 * 1000');
+    });
+
+    test('queryTimeline default limit is 200, hard-capped at 2000', () => {
+      expect(auditSource).toContain('DEFAULT_TIMELINE_LIMIT = 200');
+      expect(auditSource).toContain('MAX_TIMELINE_LIMIT = 2000');
+    });
+
+    test('queryTimeline ORDER BY is DESC (newest first) so users see recent events', () => {
+      const fnIdx = auditSource.indexOf('export async function queryTimeline');
+      const fnEnd = auditSource.indexOf('\nexport ', fnIdx + 50);
+      const fnBody = auditSource.slice(fnIdx, fnEnd > 0 ? fnEnd : undefined);
+      expect(fnBody).toContain('ORDER BY created_at DESC');
+      expect(fnBody).not.toContain('ORDER BY created_at ASC');
+    });
+
+    test('queryTimeline bounded branch puts created_at predicate FIRST so idx_audit_created leads', () => {
+      // Slice to ONLY the bounded branch (after `if (sinceMs === null)` block)
+      // so the `entity_id = $1` we look for is the bounded one, not the
+      // unbounded fallback that comes earlier in the function body.
+      const fnIdx = auditSource.indexOf('export async function queryTimeline');
+      const boundedBranchStart = auditSource.indexOf('const sinceTs = new Date', fnIdx);
+      expect(boundedBranchStart).toBeGreaterThan(fnIdx);
+      const boundedBody = auditSource.slice(boundedBranchStart, boundedBranchStart + 1000);
+      const createdAtIdx = boundedBody.indexOf('created_at >= $2');
+      const orIdx = boundedBody.indexOf('entity_id = $1');
+      expect(createdAtIdx).toBeGreaterThan(0);
+      expect(orIdx).toBeGreaterThan(0);
+      expect(createdAtIdx).toBeLessThan(orIdx);
+    });
+
+    test('CLI exposes --limit and --since flags on events timeline', () => {
+      expect(cmdSource).toContain("'--limit <n>'");
+      expect(cmdSource).toContain("'--since <duration>'");
+    });
+
+    test('CLI parseTimelineSince supports "all" and unit suffixes', () => {
+      expect(cmdSource).toContain("if (trimmed === 'all') return null;");
+      expect(cmdSource).toMatch(/\(s\|m\|h\|d\)/);
     });
   });
 });

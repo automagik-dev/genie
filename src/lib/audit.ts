@@ -361,22 +361,79 @@ export async function queryToolUsage(since: string, groupBy: 'tool' | 'agent' = 
 // Timeline — all events for an entity, ordered by time
 // ============================================================================
 
-export async function queryTimeline(entityId: string): Promise<AuditEventRow[]> {
-  const sql = await getConnection();
+export interface TimelineQueryOptions {
+  /** Maximum rows to return. Default 200, hard-capped at 2000. */
+  limit?: number;
+  /**
+   * Time window in milliseconds (e.g., 24h = 86_400_000). When set, the
+   * query is bounded by `created_at >= now() - sinceMs` so the planner
+   * uses `idx_audit_created` as the leading index — essential for the
+   * unbounded-scan bug on large `audit_events` tables.
+   *
+   * Pass `null` to disable the time filter (full-history mode). On a
+   * 60M-row audit_events this falls back to the slow OR-over-4-columns
+   * scan and may time out — only use when explicitly needed.
+   */
+  sinceMs?: number | null;
+}
 
+const DEFAULT_TIMELINE_LIMIT = 200;
+const MAX_TIMELINE_LIMIT = 2000;
+const DEFAULT_TIMELINE_SINCE_MS = 24 * 60 * 60 * 1000; // 24h
+
+/**
+ * Fetch the event timeline for an entity (matched against entity_id, actor,
+ * trace_id, or session_id).
+ *
+ * Closes #1466 — previously this scanned `audit_events` with an OR over four
+ * columns and `ORDER BY created_at ASC LIMIT 500`. On a production-sized
+ * audit log (60M+ rows here), that pinned the connection until the planner
+ * walked enough of `idx_audit_created` to fill the LIMIT — which it never
+ * did within the 30s CLI timeout. Two of the four OR predicates are JSON
+ * path lookups (`details->>'traceId'`, `details->>'session_id'`) with no
+ * supporting index, compounding the cost.
+ *
+ * Fix: default to a 24h window with newest-first ORDER BY. The window
+ * filter lets the planner use `idx_audit_created` to bound the scan to
+ * recent rows BEFORE evaluating the OR. Caller can opt back into the slow
+ * full-history path with `sinceMs: null`.
+ */
+export async function queryTimeline(entityId: string, options: TimelineQueryOptions = {}): Promise<AuditEventRow[]> {
+  const sql = await getConnection();
+  const limit = Math.max(1, Math.min(MAX_TIMELINE_LIMIT, options.limit ?? DEFAULT_TIMELINE_LIMIT));
+  const sinceMs = options.sinceMs === undefined ? DEFAULT_TIMELINE_SINCE_MS : options.sinceMs;
+
+  if (sinceMs === null) {
+    // Full-history mode — slow on large audit_events. Documented escape hatch.
+    const rows = await sql.unsafe(
+      `SELECT id, entity_type, entity_id, event_type, actor, details, created_at
+       FROM audit_events
+       WHERE (entity_id = $1
+          OR actor = $1
+          OR details->>'traceId' = $1
+          OR details->>'session_id' = $1)
+         AND event_type != 'sdk.stream.partial'
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [entityId, limit],
+    );
+    return rows as unknown as AuditEventRow[];
+  }
+
+  const sinceTs = new Date(Date.now() - sinceMs);
   const rows = await sql.unsafe(
     `SELECT id, entity_type, entity_id, event_type, actor, details, created_at
      FROM audit_events
-     WHERE (entity_id = $1
-        OR actor = $1
-        OR details->>'traceId' = $1
-        OR details->>'session_id' = $1)
+     WHERE created_at >= $2
+       AND (entity_id = $1
+         OR actor = $1
+         OR details->>'traceId' = $1
+         OR details->>'session_id' = $1)
        AND event_type != 'sdk.stream.partial'
-     ORDER BY created_at ASC
-     LIMIT 500`,
-    [entityId],
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [entityId, sinceTs, limit],
   );
-
   return rows as unknown as AuditEventRow[];
 }
 
