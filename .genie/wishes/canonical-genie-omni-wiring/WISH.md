@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `canonical-genie-omni-wiring` |
 | **Date** | 2026-04-29 |
 | **Author** | genie-configure |
@@ -253,7 +253,47 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 ## Review Results
 
-_Populated by `/review` after execution completes._
+**Status:** SHIPPED — 2026-04-29
+**Verdict:** all 7 micro-deliveries merged across 3 repos.
+
+### Merged ledger
+
+| # | Repo | PR | Group | What it landed |
+|---|---|---|---|---|
+| 1 | `namastexlabs/genie-configure` | [#10](https://github.com/namastexlabs/genie-configure/pull/10) | Group 3 + /learn | brain map + runbook + ADR + cross-session rule + memory |
+| 2 | `automagik-dev/omni` | [#552](https://github.com/automagik-dev/omni/pull/552) | Group 2 (D3) | drop stale `genie omni start` hint from `omni connect` |
+| 3 | `automagik-dev/omni` | [#553](https://github.com/automagik-dev/omni/pull/553) | Group 5 (direct half) | `output.tip()` helper + nudge on `providers create --schema nats-genie` |
+| 4 | `automagik-dev/genie` | [#1514](https://github.com/automagik-dev/genie/pull/1514) | Group 1 (D1+D2) | symlink-aware AGENTS.md validation + `--skip-omni` warning |
+| 5 | `automagik-dev/genie` | [#1516](https://github.com/automagik-dev/genie/pull/1516) | Group 4 | `/genie:omni` skill markdown — single canonical wizard |
+| 6 | `automagik-dev/genie` | [#1518](https://github.com/automagik-dev/genie/pull/1518) | Group 1 (D4) | `dir edit --dir` relocation — no more chicken-and-egg |
+| 7 | `automagik-dev/omni` | [#554](https://github.com/automagik-dev/omni/pull/554) | Group 5 (indirect half) | nudge on `agents create` + `instances update --agent-provider` + `agent-routes create` |
+
+### Defects closed
+
+| ID | Defect | Resolution |
+|---|---|---|
+| D1 | Symlink loophole in `agent-directory.add()` | genie #1514 |
+| D2 | `--skip-omni` decoupled silently | genie #1514 |
+| D3 | Stale `genie omni start` hint | omni #552 |
+| D4 | `dir edit --dir` chicken-and-egg | genie #1518 |
+| D5 | Per-host fingerprint trust (Bearer→ed25519) | **DEFERRED** to follow-up wish — security review needed |
+| D6 | Brain had no record of cross-repo wiring | genie-configure #10 |
+
+### Acceptance criteria — final scorecard
+
+- [x] Symlinked AGENTS.md rejected by default; `--allow-symlink` accepted
+- [x] `genie dir edit foo --dir /new/path` succeeds when only NEW path has AGENTS.md
+- [x] `genie agent register foo --skip-omni` prints stderr WARNING with the exact `omni connect` recovery command
+- [x] `omni connect <inst> <name>` prints `genie serve …` instead of `genie omni start`
+- [x] `/genie:omni` skill exists at `plugins/genie/skills/omni/SKILL.md`
+- [x] `omni providers create --schema nats-genie` prints stderr nudge (#553)
+- [x] `omni agents create / instances update / agent-routes create` print stderr nudge when the resolved provider is `nats-genie` (#554)
+- [x] `genie-configure/brain/` contains the three new files (Configuration & Routing, Runbooks, _decisions)
+- [x] All existing tests pass; new tests cover symlink rejection, `--skip-omni` warning, `dir edit` new-path validation, the indirect-detection helper
+
+### Follow-up wish to file
+
+D5 — per-host ed25519 fingerprint trust between genie and omni. Tracked in `genie-configure/brain/_decisions/2026-04-29-canonical-wiring.md`. Independent from this wish; needs its own scope, security review, and migration plan.
 
 ---
 
