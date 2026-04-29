@@ -596,11 +596,12 @@ async function startAgentSync(): Promise<{ close: () => void } | null> {
 
 /** Start pgserve and register it in the service registry. */
 async function startPgserve(): Promise<void> {
-  console.log('  Starting pgserve...');
+  console.log('  Starting pgserve daemon...');
   try {
-    const { ensurePgserve } = await import('../lib/db.js');
-    const port = await ensurePgserve();
-    console.log(`  pgserve ready on port ${port}`);
+    const { getDataDir, getOrStartDaemon, resolvePgserveSocketDir } = await import('../lib/db.js');
+    const state = await getOrStartDaemon();
+    const pid = state.pid ? `, pid ${state.pid}` : '';
+    console.log(`  pgserve daemon ready on ${resolvePgserveSocketDir()} (data: ${getDataDir()}${pid})`);
     try {
       const { registerService } = await import('../lib/service-registry.js');
       registerService('pgserve-owner', process.pid);
@@ -611,6 +612,7 @@ async function startPgserve(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  pgserve failed: ${msg}`);
     process.env.GENIE_PG_NO_AUTOSTART = '1';
+    process.env.GENIE_PG_DISABLE_AUTOSTART = '1';
     console.error('  pgserve retries disabled for this serve process; fix pgserve and restart `genie serve`.');
   }
 }
@@ -1322,9 +1324,10 @@ async function stopServe(): Promise<void> {
 /** Check pgserve health and print status */
 async function printPgserveHealth(): Promise<void> {
   try {
-    const { isAvailable, getActivePort } = await import('../lib/db.js');
+    const { isAvailable, getActivePort, isSocketMode, resolvePgserveSocketDir } = await import('../lib/db.js');
     const dbOk = await isAvailable();
-    console.log(`  pgserve:    ${dbOk ? `healthy (port ${getActivePort()})` : 'unreachable'}`);
+    const where = isSocketMode() ? `socket ${resolvePgserveSocketDir()}` : `port ${getActivePort()}`;
+    console.log(`  pgserve:    ${dbOk ? `healthy (${where})` : 'unreachable'}`);
   } catch {
     console.log('  pgserve:    unavailable');
   }

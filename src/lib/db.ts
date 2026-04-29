@@ -112,6 +112,23 @@ interface DaemonState {
   reason?: string;
 }
 
+interface PgserveSdkDaemonState {
+  running: boolean;
+  pid: number | null;
+  libpqSocketPresent?: boolean;
+  socketPresent?: boolean;
+  reason?: string | null;
+}
+
+interface PgserveSdk {
+  ensureDaemon?: (options?: {
+    dataDir?: string;
+    logLevel?: string;
+    timeoutMs?: number;
+    controlSocketDir?: string;
+  }) => Promise<PgserveSdkDaemonState>;
+}
+
 /**
  * Probe the v2 daemon. Returns running=true only when both the libpq socket
  * file exists AND the recorded pid is alive. A pid file with no socket (or
@@ -119,28 +136,8 @@ interface DaemonState {
  * whether to clean up and respawn.
  */
 export function probePgserveDaemon(): DaemonState {
-  const socketPath = resolvePgserveLibpqSocketPath();
-  const pidPath = resolvePgserveDaemonPidPath();
-  const socketPresent = existsSync(socketPath);
-  let pid: number | null = null;
-  if (existsSync(pidPath)) {
-    try {
-      const raw = readFileSync(pidPath, 'utf-8').trim();
-      const parsed = Number.parseInt(raw, 10);
-      if (Number.isInteger(parsed) && parsed > 0) pid = parsed;
-    } catch {
-      /* unreadable */
-    }
-  }
-  if (pid !== null) {
-    try {
-      process.kill(pid, 0);
-    } catch (err) {
-      const e = err as NodeJS.ErrnoException;
-      // EPERM means the process exists but we don't own it — still alive.
-      if (e.code !== 'EPERM') pid = null;
-    }
-  }
+  const socketPresent = existsSync(resolvePgserveLibpqSocketPath());
+  const pid = liveDaemonPid(readDaemonPid(resolvePgserveDaemonPidPath()));
   if (socketPresent && pid !== null) return { running: true, pid, socketPresent: true };
   if (!socketPresent && pid === null) {
     return { running: false, pid: null, socketPresent: false, reason: 'no daemon' };
@@ -151,6 +148,29 @@ export function probePgserveDaemon(): DaemonState {
     socketPresent,
     reason: socketPresent ? 'socket present but pid stale' : 'pid alive but no socket',
   };
+}
+
+function readDaemonPid(pidPath: string): number | null {
+  if (!existsSync(pidPath)) return null;
+  try {
+    const raw = readFileSync(pidPath, 'utf-8').trim();
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function liveDaemonPid(pid: number | null): number | null {
+  if (pid === null) return null;
+  try {
+    process.kill(pid, 0);
+    return pid;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    // EPERM means the process exists but we don't own it — still alive.
+    return e.code === 'EPERM' ? pid : null;
+  }
 }
 
 /** Resolve the v2 daemon binary path — local node_modules → global → PATH. */
@@ -197,8 +217,10 @@ let daemonStartPromise: Promise<void> | null = null;
  * downstream commits; exported here so those call-sites land cleanly.
  */
 export async function getOrStartDaemon(): Promise<DaemonState> {
-  if (process.env.GENIE_PG_DISABLE_AUTOSTART === '1') {
-    return probePgserveDaemon();
+  if (process.env.GENIE_PG_DISABLE_AUTOSTART === '1' || isPgAutostartDisabled()) {
+    const state = probePgserveDaemon();
+    if (state.running) return state;
+    throw new Error('pgserve daemon unavailable and PG autostart is disabled');
   }
   const initial = probePgserveDaemon();
   if (initial.running) return initial;
@@ -218,51 +240,7 @@ export async function getOrStartDaemon(): Promise<DaemonState> {
     return probePgserveDaemon();
   }
 
-  daemonStartPromise = (async () => {
-    // Clean up partial state before respawning.
-    if (initial.reason === 'pid alive but no socket' && initial.pid !== null) {
-      try {
-        process.kill(initial.pid, 'SIGTERM');
-      } catch {
-        /* already gone */
-      }
-      await sleep(500);
-    }
-    if (initial.reason === 'socket present but pid stale') {
-      try {
-        unlinkSync(resolvePgserveDaemonPidPath());
-      } catch {
-        /* gone */
-      }
-    }
-
-    const bin = findPgserveDaemonBin();
-    if (bin === null) {
-      throw new Error(
-        'pgserve binary not found. Install with `bun add pgserve@^2.0.0` (or `npm i pgserve@^2.0.0`), or start `pgserve daemon` manually before running genie.',
-      );
-    }
-
-    mkdirSync(resolvePgserveSocketDir(), { recursive: true, mode: 0o700 });
-
-    const child = spawn(bin, ['daemon'], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env },
-    });
-    child.unref();
-
-    const socketPath = resolvePgserveLibpqSocketPath();
-    const timeout = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 16000;
-    const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      if (existsSync(socketPath)) return;
-      await sleep(250);
-    }
-    throw new Error(
-      `pgserve v2 daemon did not bind ${socketPath} within ${Math.round(timeout / 1000)}s. Try starting it manually: ${bin} daemon`,
-    );
-  })();
+  daemonStartPromise = startPgserveDaemonOnce(initial);
 
   try {
     await daemonStartPromise;
@@ -270,6 +248,79 @@ export async function getOrStartDaemon(): Promise<DaemonState> {
     daemonStartPromise = null;
   }
   return probePgserveDaemon();
+}
+
+async function startPgserveDaemonOnce(initial: DaemonState): Promise<void> {
+  if (await tryEnsureDaemonWithSdk()) return;
+  await cleanPartialDaemonState(initial);
+  const bin = requirePgserveDaemonBin();
+  mkdirSync(resolvePgserveSocketDir(), { recursive: true, mode: 0o700 });
+
+  const child = spawn(bin, ['daemon', '--data', DATA_DIR, '--log', 'warn'], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env },
+  });
+  child.unref();
+  await waitForDaemonSocket(bin);
+}
+
+function requirePgserveDaemonBin(): string {
+  const bin = findPgserveDaemonBin();
+  if (bin !== null) return bin;
+  throw new Error(
+    'pgserve binary not found. Install with `bun add pgserve@^2.0.0` (or `npm i pgserve@^2.0.0`), or start `pgserve daemon` manually before running genie.',
+  );
+}
+
+async function cleanPartialDaemonState(initial: DaemonState): Promise<void> {
+  if (initial.reason === 'pid alive but no socket' && initial.pid !== null) {
+    try {
+      process.kill(initial.pid, 'SIGTERM');
+    } catch {
+      /* already gone */
+    }
+    await sleep(500);
+  }
+  if (initial.reason === 'socket present but pid stale') {
+    try {
+      unlinkSync(resolvePgserveDaemonPidPath());
+    } catch {
+      /* gone */
+    }
+  }
+}
+
+async function waitForDaemonSocket(bin: string): Promise<void> {
+  const socketPath = resolvePgserveLibpqSocketPath();
+  const timeout = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 16000;
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (existsSync(socketPath)) return;
+    await sleep(250);
+  }
+  throw new Error(
+    `pgserve v2 daemon did not bind ${socketPath} within ${Math.round(timeout / 1000)}s. Try starting it manually: ${bin} daemon`,
+  );
+}
+
+async function tryEnsureDaemonWithSdk(): Promise<boolean> {
+  let sdk: PgserveSdk;
+  try {
+    sdk = (await import('pgserve')) as PgserveSdk;
+  } catch {
+    return false;
+  }
+  if (typeof sdk.ensureDaemon !== 'function') return false;
+
+  const timeoutMs = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 16000;
+  const state = await sdk.ensureDaemon({
+    dataDir: DATA_DIR,
+    logLevel: 'warn',
+    timeoutMs,
+    controlSocketDir: resolvePgserveSocketDir(),
+  });
+  return Boolean(state.running && (state.libpqSocketPresent ?? state.socketPresent ?? true));
 }
 
 /** Sanitize connection URLs for logging — never expose credentials */
@@ -1064,6 +1115,7 @@ async function maybePrintBanner(client: postgres.Sql, isTestMode: boolean): Prom
 async function _buildConnection(): Promise<any> {
   const _t0 = Date.now();
   const useSocket = shouldUseUnixSocket();
+  if (useSocket) await getOrStartDaemon();
   const port = useSocket ? 5432 : await ensurePgserve();
   const _t1 = Date.now();
   const pgModule = (await import('postgres')).default;
