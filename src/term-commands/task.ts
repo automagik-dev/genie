@@ -321,6 +321,28 @@ interface CreateOptions {
   gh?: string;
   externalId?: string;
   externalUrl?: string;
+  wish?: string;
+}
+
+const WISH_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Validate a wish slug from `--wish <slug>`. Rejects spaces, uppercase, leading
+ * hyphens, path traversal (`..`), absolute paths, and any other non-slug input.
+ * Throws on invalid; returns the slug on success.
+ */
+export function validateWishSlug(slug: string): string {
+  if (!WISH_SLUG_PATTERN.test(slug)) {
+    throw new Error(
+      `Invalid --wish slug: "${slug}". Slug must match /^[a-z0-9][a-z0-9-]*$/ (lowercase letters, digits, hyphens; no leading hyphen, no spaces, no path separators).`,
+    );
+  }
+  return slug;
+}
+
+/** Compute the wish-file path for a validated slug. */
+export function wishFileFromSlug(slug: string): string {
+  return `.genie/wishes/${slug}/WISH.md`;
 }
 
 /** Parse --gh owner/repo#N into { externalId, externalUrl }. */
@@ -375,6 +397,8 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
     externalUrl = parsed.externalUrl;
   }
 
+  const wishFile = options.wish ? wishFileFromSlug(validateWishSlug(options.wish)) : undefined;
+
   const task = await ts.createTask(
     {
       title,
@@ -389,6 +413,7 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
       boardId,
       externalId,
       externalUrl,
+      wishFile,
     },
     repoPath,
     projectId,
@@ -467,6 +492,7 @@ export function registerTaskCommands(program: Command): void {
     .option('--gh <owner/repo#N>', 'Link to GitHub issue (sets external_id + external_url)')
     .option('--external-id <id>', 'External tracker ID (e.g., JIRA-123)')
     .option('--external-url <url>', 'External tracker URL')
+    .option('--wish <slug>', 'Associate task with a wish (sets wish_file to .genie/wishes/<slug>/WISH.md)')
     .action(async (title: string, options: CreateOptions) => {
       try {
         await handleTaskCreate(title, options);
