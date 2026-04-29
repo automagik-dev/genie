@@ -7,13 +7,58 @@
  *   genie db query   — execute arbitrary SQL, print results as table
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Command } from 'commander';
 import { parseDuration } from '../lib/cron.js';
 import { backup, getSnapshotPath, restore } from '../lib/db-backup.js';
 import { getMigrationStatus, runMigrations } from '../lib/db-migrations.js';
-import { getActivePort, getConnection, getDataDir, isAvailable, shutdown } from '../lib/db.js';
+import {
+  getActivePort,
+  getConnection,
+  getDataDir,
+  isAvailable,
+  isSocketMode,
+  resolvePgserveLibpqSocketPath,
+  resolvePgserveSocketDir,
+  shutdown,
+} from '../lib/db.js';
 import { padRight } from '../lib/term-format.js';
+
+/**
+ * Walk up from `start` looking for a package.json. Mirrors pgserve v2's
+ * `findNearestPackageJson` lookup: the daemon uses the same algorithm to
+ * pick which `pgserve.persist` flag applies to the calling process. Used
+ * by `db status` so the printed `Persist:` value matches what the daemon
+ * actually honored.
+ */
+export function findNearestPackageJson(start: string): string | null {
+  let cwd = start;
+  while (true) {
+    const candidate = join(cwd, 'package.json');
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(cwd);
+    if (parent === cwd) return null;
+    cwd = parent;
+  }
+}
+
+/**
+ * Read `pgserve.persist` from the nearest package.json. Returns `true` only
+ * for an explicit opt-in. Anything else (missing file, missing field,
+ * non-boolean) is `false` — matches `readPersistFlag` in pgserve v2.
+ */
+export function readPersistFlag(start: string = process.cwd()): boolean {
+  const path = findNearestPackageJson(start);
+  if (path === null) return false;
+  try {
+    const pkg = JSON.parse(readFileSync(path, 'utf8')) as { pgserve?: { persist?: unknown } };
+    return pkg?.pgserve?.persist === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Print query results as an aligned table.
@@ -49,22 +94,36 @@ function printTable(rows: Record<string, unknown>[]): void {
 // ============================================================================
 
 /**
- * `genie db status` — show pgserve health, connection details, table counts.
+ * Extract the 12-hex fingerprint suffix from a pgserve v2 database name
+ * (`app_<sanitized-name>_<12hex>`). Returns null when the name doesn't
+ * match — e.g. test mode runs against bespoke template clones.
+ */
+export function extractFingerprintFromDbName(db: string): string | null {
+  const match = /_([0-9a-f]{12})$/.exec(db);
+  return match ? match[1] : null;
+}
+
+/**
+ * `genie db status` — show pgserve health, connection mode, and table counts.
+ *
+ * pgserve v2: surfaces socket path, the routed `app_<name>_<12hex>` database,
+ * the resolved fingerprint hex, and the package's `pgserve.persist` flag so
+ * developers can confirm the daemon is keeping their state across reaps.
+ * In legacy TCP mode the original port/host fields are still printed.
  */
 async function dbStatusCommand(): Promise<void> {
-  const port = getActivePort();
-  const dataDir = getDataDir();
-
   console.log('\nGenie Database Status');
   console.log('─'.repeat(50));
-  console.log(`  Port:     ${port}`);
-  console.log('  Host:     127.0.0.1');
-  console.log(`  Data dir: ${dataDir}`);
 
   const available = await isAvailable();
   if (!available) {
+    const socketPath = resolvePgserveLibpqSocketPath();
     console.log('  Status:   stopped');
-    console.log('\n  pgserve is not running. It will auto-start on first use.');
+    console.log(`  Socket:   ${socketPath} (not bound)`);
+    console.log('\n  pgserve daemon is not running. Start it with one of:');
+    console.log('    npx pgserve daemon                                            # foreground');
+    console.log('    pm2 start node_modules/pgserve/bin/pgserve-wrapper.cjs -- daemon   # background');
+    console.log('  Genie will also auto-start the daemon on first connect.');
     console.log('');
     return;
   }
@@ -73,6 +132,26 @@ async function dbStatusCommand(): Promise<void> {
 
   try {
     const sql = await getConnection();
+
+    if (isSocketMode()) {
+      const socketDir = resolvePgserveSocketDir();
+      const rows = await sql`SELECT current_database() AS db`;
+      const db = String(rows[0]?.db ?? '');
+      const fingerprint = extractFingerprintFromDbName(db);
+      const persist = readPersistFlag();
+
+      console.log('  Mode:     socket (pgserve v2)');
+      console.log(`  Socket:   ${socketDir}/.s.PGSQL.5432`);
+      console.log(`  Database: ${db}`);
+      console.log(`  Fingerprint: ${fingerprint ?? '(non-standard name)'}`);
+      console.log(`  Persist:  ${persist}${persist ? '' : ' (eligible for 24h TTL reap)'}`);
+    } else {
+      const port = getActivePort();
+      console.log('  Mode:     tcp (legacy)');
+      console.log('  Host:     127.0.0.1');
+      console.log(`  Port:     ${port}`);
+      console.log(`  Data dir: ${getDataDir()}`);
+    }
 
     // Database size
     const sizeResult = await sql`SELECT pg_size_pretty(pg_database_size(current_database())) AS size`;
@@ -99,6 +178,11 @@ async function dbStatusCommand(): Promise<void> {
         console.log(`    ${padRight(table.tablename, maxNameLen)}  ${count}`);
       }
     }
+
+    console.log('\n  Escape hatches:');
+    console.log('    GENIE_PG_FORCE_TCP=1                       force legacy TCP loopback');
+    console.log('    GENIE_NO_BANNER=1                          suppress connect banner');
+    console.log('    PGSERVE_DISABLE_FINGERPRINT_ENFORCEMENT=1  bypass per-fingerprint DB check');
 
     await shutdown();
   } catch (err) {
@@ -299,14 +383,26 @@ export function registerDbCommands(program: Command): void {
   db.command('url')
     .description('Print postgres connection URL for direct access')
     .option('--quiet', 'Print URL only, no trailing newline (for scripts)')
-    .action((options: { quiet?: boolean }) => {
-      const port = getActivePort();
-      const url = `postgres://postgres:postgres@127.0.0.1:${port}/genie`;
+    .action(async (options: { quiet?: boolean }) => {
+      // Probe so isSocketMode() reflects the live connection, not the default
+      // sentinel before the first connect. `db url` can run before any other
+      // genie command in this process (e.g. wrapped in `psql $(genie db url)`).
+      await isAvailable();
+      let url: string;
+      if (isSocketMode()) {
+        // libpq URI form for Unix socket: postgresql:///<db>?host=<dir>
+        const socketDir = resolvePgserveSocketDir();
+        url = `postgresql:///postgres?host=${socketDir}`;
+      } else {
+        const port = getActivePort();
+        url = `postgres://postgres:postgres@127.0.0.1:${port}/genie`;
+      }
       if (options.quiet) {
         process.stdout.write(url);
       } else {
         console.log(url);
       }
+      await shutdown();
     });
 
   db.command('prune-events')
