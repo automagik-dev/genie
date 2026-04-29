@@ -304,6 +304,7 @@ function paneToNode(
     children: [],
     data: {
       command: pane.command,
+      processCommand: pane.processCommand,
       title: pane.title,
       isClaudeLike: isClaude,
       isDead: pane.isDead,
