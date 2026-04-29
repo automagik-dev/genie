@@ -1,0 +1,60 @@
+# pgserve tuning — applied by scripts/pgserve-apply-tuning.ts
+#
+# Target: PostgreSQL 18.x (the version pgserve currently ships).
+# Hardware assumed (steady-state genie dev/CI box):
+#   80 vCPU, 64 GiB RAM, NVMe-backed storage (random_page_cost ≈ 1.1).
+# pgserve is a NON-DEDICATED workload — it shares the host with the
+# genie daemon, scheduler, TUI, and 5+ worktree spawns. The numbers below
+# are deliberately conservative: ~6 % of host RAM for shared_buffers, not
+# the textbook 25 %.
+#
+# Restart vs. reload:
+#   - shared_buffers, max_connections, shared_preload_libraries, wal_buffers
+#     require a FULL pgserve restart (`genie serve restart`).
+#   - Everything else takes effect with `pg_ctl -D <data> reload`.
+#
+# Per-setting rationale lives in
+# .genie/wishes/hookify-perf-foundation/REPORT.md.
+#
+# Rollback: `bun run scripts/pgserve-apply-tuning.ts --revert`
+# (also restores the latest .bak file the apply step wrote).
+
+# ----- Memory -----
+shared_buffers = 4GB                   # default 128MB — restart required
+effective_cache_size = 16GB            # planner hint; no allocation
+work_mem = 16MB                        # per-sort/hash; bounded by query parallelism
+maintenance_work_mem = 512MB           # VACUUM / CREATE INDEX speed
+hash_mem_multiplier = 2.0              # work_mem * 2.0 for hash ops (PG13+)
+
+# ----- WAL / checkpoints -----
+wal_compression = lz4                  # default off — append-heavy workload benefits
+wal_writer_flush_after = 2MB           # default 1MB — NVMe handles larger flushes
+max_wal_size = 4GB                     # default 1GB — fewer checkpoints under burst
+min_wal_size = 1GB                     # default 80MB — keep more WAL preallocated
+checkpoint_timeout = 15min             # default 5min — fewer checkpoints, less WAL churn
+checkpoint_completion_target = 0.9     # default 0.9 — kept; documented for clarity
+
+# ----- Durability tradeoff (NOT changed cluster-wide) -----
+# synchronous_commit stays 'on' globally for safety. The daemon's runtime-event
+# emit path (src/lib/emit.ts) is the only acceptable place to relax this, via
+# `SET LOCAL synchronous_commit = off` inside the emit transaction. That is a
+# code-level decision, not a cluster setting — see REPORT.md "Durability".
+# synchronous_commit = on              # (default — left intentionally)
+
+# ----- I/O & planner -----
+random_page_cost = 1.1                 # default 4 — NVMe; index scans were under-favoured
+effective_io_concurrency = 200         # default 1 — NVMe prefetch budget for bitmap scans
+jit = off                              # default on — short hook queries don't amortize JIT
+
+# ----- Stats / observability -----
+shared_preload_libraries = 'pg_stat_statements'   # restart required
+pg_stat_statements.max = 10000         # default 5000 — genie has varied query shapes
+pg_stat_statements.track = top         # default — top-level queries only
+track_io_timing = on                   # default off — accurate I/O cost breakdown
+track_activity_query_size = 4096       # default 1024 — preserve more of long queries
+log_min_duration_statement = 1000ms    # default off — slow-query log without flood
+
+# ----- Autovacuum tightening -----
+autovacuum_vacuum_scale_factor = 0.1   # default 0.2 — hot tables (genie_runtime_events) churn fast
+autovacuum_analyze_scale_factor = 0.05 # default 0.1
+autovacuum_naptime = 30s               # default 1min — react sooner to dead-tuple growth

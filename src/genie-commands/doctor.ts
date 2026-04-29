@@ -726,6 +726,7 @@ function runCheckSection(label: string, results: CheckResult[], counts: { errors
 export async function doctorCommand(options?: {
   fix?: boolean;
   observability?: boolean;
+  perf?: boolean;
   fixTeamOrphans?: boolean;
   dryRun?: boolean;
   json?: boolean;
@@ -742,6 +743,12 @@ export async function doctorCommand(options?: {
 
   if (options?.observability) {
     await runObservabilityCheck(Boolean(options.json));
+    return;
+  }
+
+  if (options?.perf) {
+    const { runPerfCheck } = await import('./perf-check.js');
+    await runPerfCheck(Boolean(options.json));
     return;
   }
 

@@ -2,6 +2,7 @@
   "$schema": "https://unpkg.com/knip@5.85.0/schema.json",
   "entry": [
     "src/hooks/dispatch-command.ts",
+    "src/hooks/dispatch-client.ts",
     "src/tui/render.tsx",
     "src/tui/tmux.ts",
     "src/lib/executor-types.ts",

@@ -12,6 +12,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DISPATCHED_EVENTS, DISPATCHED_EVENT_MATCHERS } from './types.js';
 
+// Re-export `homedir` symbol so the binary-candidates resolver below has a
+// stable import target — keeping the existing `homedir()` callsite intact in
+// `claudeConfigDir()`.
+
 interface HookEntry {
   type: string;
   command: string;
@@ -31,7 +35,35 @@ function escapeShellArg(arg: string): string {
   return `'${arg.replace(/'/g, "'\\''")}'`;
 }
 
+/**
+ * Candidate install locations for the compiled `genie-hook` binary, in
+ * preference order. Found at the first path that exists; falls back to the
+ * bun-based command when none resolves.
+ */
+function compiledBinaryCandidates(): string[] {
+  const candidates: string[] = [];
+  if (process.env.GENIE_HOOK_BIN) candidates.push(process.env.GENIE_HOOK_BIN);
+  const home = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+  candidates.push(join(home, 'bin', 'genie-hook'));
+  // Local-dev convenience: fall back to a build artifact under the repo root.
+  try {
+    const repoBin = fileURLToPath(new URL('../../dist/genie-hook', import.meta.url));
+    candidates.push(repoBin);
+  } catch {
+    // resolver failed — repo layout missing, ignore
+  }
+  return candidates;
+}
+
 export function buildDispatchCommand(): string {
+  // Prefer the compiled `genie-hook` binary when available — single-process
+  // invocation, sub-millisecond cold start, talks to ~/.genie/hook.sock.
+  for (const candidate of compiledBinaryCandidates()) {
+    if (existsSync(candidate)) return escapeShellArg(candidate);
+  }
+
+  // Dev/test/CI fallback: invoke the bundled bun source. Never fails CC even
+  // if the daemon socket is missing — `genie hook dispatch` runs in-process.
   const entrypoint = fileURLToPath(new URL('../genie.ts', import.meta.url));
   if (!existsSync(entrypoint)) return 'genie hook dispatch';
 
