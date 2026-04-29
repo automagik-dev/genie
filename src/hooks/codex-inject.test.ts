@@ -119,15 +119,20 @@ timeout = 15
     expect(await codexHooksInjected()).toBe(true);
   });
 
-  test('all six DISPATCHED_EVENTS are wired', () => {
-    // Sanity: the list matches what codex-rs/hooks/src/events/*.rs exposes
-    expect(CODEX_DISPATCHED_EVENTS).toEqual([
-      'PreToolUse',
-      'PostToolUse',
-      'UserPromptSubmit',
-      'SessionStart',
-      'Stop',
-      'PermissionRequest',
-    ]);
+  test('CODEX_DISPATCHED_EVENTS matches the handler-backed set (Fix D extension)', () => {
+    // Mac-CPU Fix D extension (#1513 follow-up): codex-side narrow now
+    // mirrors claude-side. SessionStart and PermissionRequest dropped
+    // because no handlers exist for them — wiring them with matcher='*'
+    // produced wasted bun cold-starts on every fire.
+    // dog-fooder-da66 verdict 2026-04-29 surfaced the codex-side leak.
+    const sorted = [...CODEX_DISPATCHED_EVENTS].sort();
+    expect(sorted as string[]).toEqual(['PostToolUse', 'PreToolUse', 'Stop', 'UserPromptSubmit']);
+  });
+
+  test('PostToolUse is wired with SendMessage matcher (not "*")', async () => {
+    await injectCodexHooks();
+    const config = readFileSync(join(tmp, 'config.toml'), 'utf-8');
+    const postSection = config.split('[[hooks.PostToolUse]]')[1] ?? '';
+    expect(postSection).toMatch(/matcher\s*=\s*"SendMessage"/);
   });
 });

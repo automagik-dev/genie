@@ -39,20 +39,22 @@ import { buildDispatchCommand } from './inject.js';
 const DISPATCH_TIMEOUT = 15;
 
 /**
- * Codex hook events we route through the dispatcher. Same events claude
- * uses, minus claude-specific ones (TeammateIdle, TaskCompleted, etc.).
+ * Codex hook events we route through the dispatcher.
  *
- * Source: codex-rs/hooks/src/events/*.rs (PreToolUse, PostToolUse,
- * UserPromptSubmit, SessionStart, Stop, PermissionRequest).
+ * Mac-CPU fix D extension (#1513 follow-up): narrowed to events that
+ * actually have handlers. Previously wired SessionStart and PermissionRequest
+ * with matcher='*' even though zero handlers exist for those events on the
+ * codex side — every fire was a wasted bun cold-start. dog-fooder-da66
+ * verdict 2026-04-29 surfaced this codex-side leak after Fix D #1479
+ * closed only the claude side.
+ *
+ * Derived from CODEX_DISPATCHED_EVENT_MATCHERS so the array and the
+ * matcher map can never drift.
  */
-export const CODEX_DISPATCHED_EVENTS = [
-  'PreToolUse',
-  'PostToolUse',
-  'UserPromptSubmit',
-  'SessionStart',
-  'Stop',
-  'PermissionRequest',
-] as const;
+import { CODEX_DISPATCHED_EVENT_MATCHERS } from './types.js';
+export const CODEX_DISPATCHED_EVENTS = Object.keys(CODEX_DISPATCHED_EVENT_MATCHERS) as ReadonlyArray<
+  keyof typeof CODEX_DISPATCHED_EVENT_MATCHERS
+>;
 
 function codexHomeDir(): string {
   return process.env.CODEX_HOME ?? join(homedir(), '.codex');
@@ -83,9 +85,9 @@ function buildCodexHookFragment(): string {
   lines.push('[hooks]');
   lines.push('feature_enabled = true');
   lines.push('');
-  for (const event of CODEX_DISPATCHED_EVENTS) {
+  for (const [event, matcher] of Object.entries(CODEX_DISPATCHED_EVENT_MATCHERS)) {
     lines.push(`[[hooks.${event}]]`);
-    lines.push('matcher = "*"');
+    lines.push(`matcher = ${escapeTomlString(matcher)}`);
     lines.push('');
     lines.push(`[[hooks.${event}.hooks]]`);
     lines.push('type = "command"');

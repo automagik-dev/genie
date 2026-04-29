@@ -105,6 +105,33 @@ export const DISPATCHED_EVENT_MATCHERS: Partial<Record<HookEventName, string>> =
 };
 
 /**
+ * Codex-side counterpart to DISPATCHED_EVENT_MATCHERS — wider because codex
+ * has additional handlers that don't exist on claude:
+ *   - codex-inbox-deliver runs on UserPromptSubmit
+ *   - runtime-emit-assistant-response runs on Stop
+ *
+ * Like DISPATCHED_EVENT_MATCHERS, only events that actually have a handler
+ * are wired. Pre-fix, codex-inject.ts wired 6 events (PreToolUse, PostToolUse,
+ * UserPromptSubmit, SessionStart, Stop, PermissionRequest) all with matcher='*'
+ * — including SessionStart and PermissionRequest which have no handlers,
+ * causing wasted bun cold-starts on every codex hook fire.
+ *
+ * dog-fooder-da66 verdict 2026-04-29 surfaced the codex-side leak after
+ * Fix D #1479 closed only the claude side.
+ */
+export const CODEX_DISPATCHED_EVENT_MATCHERS: Partial<Record<HookEventName, string>> = {
+  PreToolUse: '*',
+  // Same as claude — only runtime-emit-msg matches SendMessage.
+  PostToolUse: 'SendMessage',
+  // codex-inbox-deliver + runtime-emit-user-prompt + session-sync-prompt all run here.
+  UserPromptSubmit: '*',
+  // runtime-emit-assistant-response runs here.
+  Stop: '*',
+  // SessionStart, PermissionRequest dropped — no handlers (verified against
+  // src/hooks/index.ts handler registry as of 2026-04-29).
+};
+
+/**
  * Convenience array — derived from DISPATCHED_EVENT_MATCHERS.
  * Kept so callers that need the event list (without matcher) are unchanged.
  */
