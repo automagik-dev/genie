@@ -674,6 +674,14 @@ function claimServePidOrExit(): void {
       const existing = readServePid();
       if (existing && existing.startTime !== null && isProcessAlive(existing.pid)) {
         console.log(`genie serve already running (PID ${existing.pid})`);
+        // Closes #1490 — also probe the hook UDS health on the live daemon.
+        // Pre-fix, an "already running" daemon that pre-dated #1485 (or whose
+        // startHookSocketSafely silently failed under detached stdio) would
+        // never expose hook.sock, leaving every hook dispatch on the legacy
+        // F1 fork path with no operator signal that daemon-mode was inert.
+        // Now we surface the gap loudly so `genie serve restart` is the
+        // obvious remediation.
+        warnIfHookSocketMissing();
         process.exit(0);
       }
       // Stale (dead PID) or legacy (no startTime) — clear and retry once.
@@ -1199,6 +1207,45 @@ async function printPgserveHealth(): Promise<void> {
   }
 }
 
+/**
+ * Resolve the hook UDS path the same way startHookSocket does — env override
+ * first, fall back to ~/.genie/hook.sock. Closes #1490: warm-restart and
+ * status output need to agree on which socket they look for.
+ */
+function hookSocketPath(): string {
+  return process.env.GENIE_HOOK_SOCK ?? join(genieHome(), 'hook.sock');
+}
+
+/**
+ * Closes #1490 — log a clear warning when a live daemon is missing the hook
+ * UDS (and therefore daemon-mode hook dispatch is silently inert; every
+ * hook dispatch falls back to the legacy F1 bun fork). Called by both
+ * `claimServePidOrExit` (before exiting on "already running") and
+ * `printHookSocketStatus` (called by `genie serve status`).
+ */
+function warnIfHookSocketMissing(): void {
+  const sock = hookSocketPath();
+  if (existsSync(sock)) return;
+  const lines = [
+    `  WARNING: hook UDS not found at ${sock}.`,
+    '  Daemon-mode hook dispatch is INACTIVE — every hook will fall back',
+    '  to the legacy F1 bun-fork path (hookify-perf-foundation gains lost).',
+    '  Remediation: `genie serve stop && genie serve start` to refresh the',
+    '  daemon and re-create the socket.',
+  ];
+  console.warn(lines.join('\n'));
+}
+
+/** Print hook UDS status for `genie serve status`. */
+function printHookSocketStatus(): void {
+  const sock = hookSocketPath();
+  if (existsSync(sock)) {
+    console.log(`  hook UDS:   listening at ${sock}`);
+  } else {
+    console.log(`  hook UDS:   MISSING at ${sock} (F1 fallback active — see #1490)`);
+  }
+}
+
 function resolveBrainPortFromWorkspace(brain: { readServerInfo?: (p: string) => { port?: number } | null }):
   | number
   | null {
@@ -1251,6 +1298,7 @@ async function printBrainStatus(): Promise<void> {
 
 async function printPgserveStatus(): Promise<void> {
   await printPgserveHealth();
+  printHookSocketStatus();
   await printBrainStatus();
 }
 
