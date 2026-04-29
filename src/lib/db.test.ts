@@ -534,6 +534,37 @@ describe('parallel dispatch race (issue #1207)', () => {
     expect(catchBody).not.toMatch(/await\s+\w+\.end\(/);
     expect(catchBody).toMatch(/\.end\([^)]*\)\.catch\(/);
   });
+
+  test('_buildConnection starts pgserve v2 daemon before socket connect', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function _buildConnection');
+    expect(fnStart).toBeGreaterThan(-1);
+
+    const socketDecision = source.indexOf('const useSocket = shouldUseUnixSocket();', fnStart);
+    const daemonStart = source.indexOf('if (useSocket) await getOrStartDaemon();', fnStart);
+    const portDecision = source.indexOf('const port = useSocket ? 5432 : await ensurePgserve();', fnStart);
+
+    expect(socketDecision).toBeGreaterThan(-1);
+    expect(daemonStart).toBeGreaterThan(socketDecision);
+    expect(portDecision).toBeGreaterThan(daemonStart);
+  });
+
+  test('getOrStartDaemon does not kill a pid-file process when v2 socket is absent', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('export async function getOrStartDaemon');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('/** Sanitize connection URLs', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    const partialState = body.indexOf("initial.reason === 'pid alive but no socket'");
+    const nextBranch = body.indexOf("initial.reason === 'socket present but pid stale'", partialState);
+    expect(partialState).toBeGreaterThan(-1);
+    expect(nextBranch).toBeGreaterThan(partialState);
+    const block = body.slice(partialState, nextBranch);
+
+    expect(block).toContain('unlinkSync(resolvePgserveDaemonPidPath())');
+    expect(block).not.toContain('process.kill(initial.pid');
+  });
 });
 
 describe('root guard (issue #1226)', () => {

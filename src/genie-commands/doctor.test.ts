@@ -9,7 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkGenieAgentTemplate, checkLegacyAgentFrontmatter, findBundledTmuxConfigDir } from './doctor.js';
@@ -240,5 +240,33 @@ describe('findBundledTmuxConfigDir', () => {
     // relative to this module's URL.
     expect(dir).not.toBeNull();
     expect(dir).toMatch(/scripts[/\\]tmux$/);
+  });
+});
+
+describe('pgserve v1/v2 coexistence', () => {
+  test('doctor --fix does not broad-kill pgserve/postgres by default', () => {
+    const source = readFileSync(join(__dirname, 'doctor.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function killStalePostgres');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('async function cleanSharedMemory', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    expect(body).toContain('legacyPgserveRepairEnabled()');
+    expect(body).toContain('Skipping legacy pgserve v1 process cleanup');
+    expect(body).not.toContain('pkill -9 -f "postgres.*pgserve"');
+    expect(body).toContain("join(genieHome, 'data', 'pgserve')");
+  });
+
+  test('doctor --fix leaves legacy port/data files untouched unless legacy repair is enabled', () => {
+    const source = readFileSync(join(__dirname, 'doctor.ts'), 'utf-8');
+    const fnStart = source.indexOf('function removeStaleFiles');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('async function restartDaemon', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    expect(body).toContain('legacyPgserveRepairEnabled()');
+    expect(body).toContain('Leaving legacy pgserve v1 port/data files untouched');
+    expect(body).toContain("join(genieHome, 'pgserve.port')");
+    expect(body).toContain("join(genieHome, 'data', 'pgserve', 'postmaster.pid')");
   });
 });

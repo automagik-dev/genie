@@ -598,15 +598,9 @@ async function startAgentSync(): Promise<{ close: () => void } | null> {
 async function startPgserve(): Promise<void> {
   console.log('  Starting pgserve...');
   try {
-    const { ensurePgserve } = await import('../lib/db.js');
-    const port = await ensurePgserve();
-    console.log(`  pgserve ready on port ${port}`);
-    try {
-      const { registerService } = await import('../lib/service-registry.js');
-      registerService('pgserve-owner', process.pid);
-    } catch {
-      // Registry not available — non-fatal
-    }
+    const { getOrStartDaemon, resolvePgserveLibpqSocketPath } = await import('../lib/db.js');
+    const daemon = await getOrStartDaemon();
+    console.log(`  pgserve ready at ${resolvePgserveLibpqSocketPath()}${daemon.pid ? ` (pid ${daemon.pid})` : ''}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  pgserve failed: ${msg}`);
@@ -950,7 +944,8 @@ function killRegisteredServices(): void {
   }
 }
 
-function removePgservePortLockfile(): void {
+function removeLegacyPgservePortLockfileIfForcedTcp(): void {
+  if (process.env.GENIE_PG_FORCE_TCP !== '1') return;
   try {
     const lockfilePath = join(genieHome(), 'pgserve.port');
     if (existsSync(lockfilePath)) unlinkSync(lockfilePath);
@@ -1007,7 +1002,7 @@ function buildShutdownFn(headless?: boolean): { shutdown: () => Promise<void>; h
     // NEVER kill the agent tmux server — agent sessions are eternal and must
     // survive serve restarts. Only the TUI session is owned by serve.
     if (!headless) killTuiSession();
-    removePgservePortLockfile();
+    removeLegacyPgservePortLockfileIfForcedTcp();
     removeServePid();
     console.log('genie serve stopped.');
   };
@@ -1132,11 +1127,10 @@ async function confirmBackgroundStarted(childPid: number, startupStatusPath?: st
 
 async function startForeground(headless?: boolean, autoFix = true): Promise<void> {
   claimServePidOrExit();
-  // Invalidate any stale port lockfile from an unclean prior shutdown — the
-  // next ensurePgserve() call will rewrite it with the live port. Without
-  // this, callers (TUI, hooks) cache the dead port and hammer ECONNREFUSED
-  // until pgserve happens to reuse it.
-  removePgservePortLockfile();
+  // Default pgserve v2 uses a Unix socket and must coexist with legacy v1
+  // TCP daemons. Only touch ~/.genie/pgserve.port when the operator has
+  // explicitly forced the legacy TCP path.
+  removeLegacyPgservePortLockfileIfForcedTcp();
   const { skipTui, mode } = resolveServeMode(headless);
   process.env.GENIE_IS_DAEMON = '1';
   // claimServePidOrExit already wrote `${pid}:${startTime}` atomically.

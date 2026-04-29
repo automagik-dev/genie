@@ -27,10 +27,10 @@ import { startHookSocket } from '../../src/serve/hook-socket.js';
 let socketPath: string;
 
 beforeEach(() => {
-  socketPath = join(
-    tmpdir(),
-    `genie-daemon-outage-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.sock`,
-  );
+  // macOS sockaddr_un is capped around 104 bytes; tmpdir() expands to a long
+  // /var/folders/... path, so keep the socket path intentionally short.
+  const socketRoot = process.platform === 'darwin' ? '/tmp' : tmpdir();
+  socketPath = join(socketRoot, `genie-do-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.sock`);
   process.env.GENIE_HOOK_SOCK = socketPath;
 });
 

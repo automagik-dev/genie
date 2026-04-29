@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DirectoryEntry } from '../lib/agent-directory.js';
@@ -150,7 +150,7 @@ description: "   "
   });
 
   function createWorkspaceAgent(name: string, frontmatter: string): { workspaceRoot: string; agentDir: string } {
-    const workspaceRoot = mkdtempSync(join(tmpdir(), 'genie-spawn-autosync-workspace-'));
+    const workspaceRoot = realpathSync(mkdtempSync(join(tmpdir(), 'genie-spawn-autosync-workspace-')));
     tempRoots.push(workspaceRoot);
 
     mkdirSync(join(workspaceRoot, '.genie'), { recursive: true });
@@ -165,7 +165,7 @@ description: "   "
   }
 
   function createAgentWithoutWorkspace(name: string, frontmatter: string): string {
-    const root = mkdtempSync(join(tmpdir(), 'genie-spawn-autosync-no-workspace-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'genie-spawn-autosync-no-workspace-')));
     tempRoots.push(root);
 
     const agentDir = join(root, 'agents', name);
