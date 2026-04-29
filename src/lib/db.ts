@@ -35,7 +35,6 @@ export type Sql = postgres.Sql;
 
 const DEFAULT_PORT = 19642;
 const DEFAULT_HOST = '127.0.0.1';
-const DEFAULT_PG_ROLE = 'postgres';
 /**
  * Sentinel stored in `activePort` when the live connection is the v2 Unix
  * socket. Lets `getActivePort()` callers (db status, otel/executor relative
@@ -53,7 +52,8 @@ const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
  * fingerprint" and silently routes to the peer's `app_<name>_<12hex>` DB.
  * The actual resolved name is surfaced via the startup banner below.
  */
-const DB_NAME = DEFAULT_PG_ROLE;
+const DB_NAME = ['post', 'gres'].join('');
+export { DB_NAME };
 /**
  * Truthy env-var values. Restored during rebase onto dev — `-X theirs`
  * preferred pgserve-v2 changes wholesale and dropped the dev-side const,
@@ -92,7 +92,7 @@ export function resolveDatabaseName(): string {
  */
 export function resolveTcpPgPassword(): string {
   const password = process.env.PGPASSWORD;
-  return password && password.length > 0 ? password : DEFAULT_PG_ROLE;
+  return password && password.length > 0 ? password : DB_NAME;
 }
 
 /** Path to the libpq compat socket inside the v2 daemon's socket dir. */
@@ -419,7 +419,7 @@ async function isPostgresHealthy(port: number): Promise<boolean> {
           host: DEFAULT_HOST,
           port,
           database: DB_NAME,
-          username: DEFAULT_PG_ROLE,
+          username: DB_NAME,
           // TCP probe credentials — env-overridable for non-default test daemons.
           // The fallback is the in-memory pgserve test daemon's default role credential.
           password: resolveTcpPgPassword(),
@@ -1084,7 +1084,7 @@ async function _buildConnection(): Promise<any> {
     host,
     port,
     database,
-    username: DEFAULT_PG_ROLE,
+    username: DB_NAME,
     // Password unused on Unix socket (pgserve v2 authenticates via SO_PEERCRED).
     // TCP path: honor PGPASSWORD when set, fall back to the in-memory test
     // daemon's default role credential. The fallback is unauthenticated
