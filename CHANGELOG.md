@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Breaking — pgserve v2 (Unix socket, auto-fingerprint, no credentials)
+
+- **Switched to pgserve v2 daemon model.** Genie now connects to pgserve
+  via the well-known Unix control socket at
+  `$XDG_RUNTIME_DIR/pgserve/.s.PGSQL.5432` (fallback `/tmp/pgserve/...`)
+  instead of TCP loopback. The pgserve v2 daemon authenticates the peer
+  via `SO_PEERCRED`, derives a stable fingerprint from the nearest
+  ancestor `package.json` (`sha256(realpath + name + uid)[:12]`), and
+  routes the connection to that fingerprint's own
+  `app_<sanitized-name>_<12hex>` database. As a consumer, genie no
+  longer specifies a port, user, or password.
+- **`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD` env vars removed.** The only
+  variable still set when shelling out to `pg_dump` / `psql` is `PGHOST`,
+  pointing at the v2 socket directory. Auth happens at the kernel layer.
+- **`pgserve.persist: true` declared in `package.json`.** Genie holds
+  long-lived state (wishes, agents, events). The persist flag opts the
+  database out of pgserve v2's default 24h TTL reaper, so a restarted
+  daemon doesn't drop the wishes table after a quiet weekend.
+- **Visible fingerprint banner on boot.** First successful connection in
+  a process prints `[pgserve] connected to <db>` to stderr so
+  developers can see the routed database name (e.g.
+  `app_genie_a1b2c3d4e5f6`). Set `GENIE_NO_BANNER=1` to suppress.
+- **Migration note for self-hosted deployments.** pgserve v2 expects an
+  externally-supervised daemon (PM2 / systemd snippets in pgserve
+  README). The legacy `genie serve` headless spawn path remains as a
+  TCP fallback for environments that haven't adopted the daemon yet —
+  set `GENIE_PG_FORCE_TCP=1` to opt back into TCP loopback.
+- **Pin during the rollout window.** The `pgserve` dependency is pinned
+  via local file path (`file:../pgserve`) for the duration of the
+  pgserve v2 wish (release-system-genie-pattern Group 8 publishes
+  `pgserve@2.0.0` to npm). Once published, the pin should be swapped to
+  `^2.0.0` — see `package.json` and the wish under
+  `.genie/wishes/pgserve-v2/WISH.md` (Group 7) for the migration plan.
+  TODO(pgserve@2.0.0): swap `package.json#dependencies.pgserve` from
+  `file:../pgserve` to `^2.0.0` once Group 8 publishes.
+
 ### Breaking — design system
 
 - **Unified design system on the Severance Lumon-MDR palette.** All color

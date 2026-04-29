@@ -3,6 +3,11 @@
  *
  * No external dependencies beyond pg_dump (ships with pgserve).
  * Compression uses node:zlib, restore pipes through postgres.js.
+ *
+ * pgserve v2: connects via Unix socket at $XDG_RUNTIME_DIR/pgserve.
+ * No port, no user, no password — the daemon authenticates via SO_PEERCRED
+ * and routes the peer to its fingerprinted database automatically. The libpq
+ * default `database = user` resolves to the fingerprint's DB.
  */
 
 import { type SpawnSyncReturns, spawnSync } from 'node:child_process';
@@ -10,12 +15,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { homedir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { getActivePort } from './db.js';
+import { resolveDatabaseName, resolvePgserveSocketDir } from './db.js';
 import { resolveRepoPath } from './wish-state.js';
 
-const DB_NAME = 'genie';
-const DB_USER = 'postgres';
-const DB_HOST = '127.0.0.1';
 const SNAPSHOT_FILE = 'snapshot.sql.gz';
 
 /**
@@ -42,14 +44,11 @@ function assertOutsideRepo(snapshotPath: string, cwd?: string): void {
   }
 }
 
-function pgEnv(port: number): Record<string, string | undefined> {
+function pgEnv(database?: string): Record<string, string | undefined> {
   return {
     ...process.env,
-    PGHOST: DB_HOST,
-    PGPORT: String(port),
-    PGUSER: DB_USER,
-    PGPASSWORD: DB_USER,
-    PGDATABASE: DB_NAME,
+    PGHOST: resolvePgserveSocketDir(),
+    PGDATABASE: database ?? resolveDatabaseName(),
   };
 }
 
@@ -65,7 +64,6 @@ interface BackupResult {
  * Uses spawnSync so pg_dump exit code is checked directly — no shell pipeline.
  */
 export function backup(cwd?: string): BackupResult {
-  const port = getActivePort();
   const snapshotPath = getSnapshotPath(cwd);
   assertOutsideRepo(snapshotPath, cwd);
   const snapshotDir = snapshotPath.slice(0, snapshotPath.lastIndexOf('/'));
@@ -75,7 +73,7 @@ export function backup(cwd?: string): BackupResult {
 
   // pg_dump → stdout buffer, exit code checked directly
   const result: SpawnSyncReturns<Buffer> = spawnSync('pg_dump', ['--no-owner', '--no-acl'], {
-    env: pgEnv(port),
+    env: pgEnv(),
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 120_000,
     maxBuffer: 1024 * 1024 * 1024, // 1GB
@@ -99,7 +97,7 @@ export function backup(cwd?: string): BackupResult {
   let uncompressedBytes = 0;
   try {
     const sizeResult = spawnSync('psql', ['-t', '-A', '-c', 'SELECT pg_database_size(current_database())'], {
-      env: pgEnv(port),
+      env: pgEnv(),
       encoding: 'utf-8',
       timeout: 10_000,
     });
@@ -119,22 +117,22 @@ export function backup(cwd?: string): BackupResult {
  * Decompression uses node:zlib — no gunzip binary needed.
  */
 export function restore(snapshotFile?: string, cwd?: string): void {
-  const port = getActivePort();
   const filePath = snapshotFile ?? getSnapshotPath(cwd);
 
   if (!existsSync(filePath)) {
     throw new Error(`Snapshot not found: ${filePath}`);
   }
 
-  const env = pgEnv(port);
-  const adminEnv = { ...env, PGDATABASE: 'postgres' };
+  const dbName = resolveDatabaseName();
+  const env = pgEnv();
+  const adminEnv = pgEnv('postgres');
 
   // Terminate existing connections (use psql variable to avoid string interpolation)
   spawnSync(
     'psql',
     [
       '-v',
-      `target_db=${DB_NAME}`,
+      `target_db=${dbName}`,
       '-c',
       "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :'target_db' AND pid <> pg_backend_pid()",
     ],
@@ -146,7 +144,7 @@ export function restore(snapshotFile?: string, cwd?: string): void {
   );
 
   // Drop and recreate (use psql variable to avoid string interpolation)
-  const dropResult = spawnSync('psql', ['-v', `target_db=${DB_NAME}`, '-c', 'DROP DATABASE IF EXISTS :"target_db"'], {
+  const dropResult = spawnSync('psql', ['-v', `target_db=${dbName}`, '-c', 'DROP DATABASE IF EXISTS :"target_db"'], {
     env: adminEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 10_000,
@@ -155,7 +153,7 @@ export function restore(snapshotFile?: string, cwd?: string): void {
     throw new Error(`Failed to drop database: ${dropResult.stderr?.toString().trim()}`);
   }
 
-  const createResult = spawnSync('psql', ['-v', `target_db=${DB_NAME}`, '-c', 'CREATE DATABASE :"target_db"'], {
+  const createResult = spawnSync('psql', ['-v', `target_db=${dbName}`, '-c', 'CREATE DATABASE :"target_db"'], {
     env: adminEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 10_000,
@@ -169,7 +167,7 @@ export function restore(snapshotFile?: string, cwd?: string): void {
   const sql = gunzipSync(compressed);
 
   const restoreResult = spawnSync('psql', [], {
-    env: { ...env, PGDATABASE: DB_NAME },
+    env,
     input: sql,
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 300_000,

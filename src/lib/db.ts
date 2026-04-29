@@ -1,10 +1,20 @@
 /**
  * Database connection management for Genie.
  *
- * `genie serve` owns pgserve. CLI commands read the port file and connect.
- * If no serve process is running, the CLI auto-starts `genie serve --headless`.
- * Set GENIE_PG_NO_AUTOSTART=1 for read-only probes that must not spawn serve.
- * Self-healing: health checks on every connection, automatic recovery.
+ * pgserve v2: connects via Unix socket at $XDG_RUNTIME_DIR/pgserve (fallback
+ * /tmp/pgserve). The daemon authenticates the peer via SO_PEERCRED, derives
+ * the package.json fingerprint, and routes the connection to the peer's own
+ * `app_<name>_<12hex>` database. No port, user, or password is required on
+ * the consumer side — auto-fingerprint resolves the database server-side.
+ *
+ * Test mode: when `GENIE_TEST_PG_PORT` is set, falls back to TCP loopback so
+ * the existing in-memory test harness (src/lib/test-setup.ts) keeps working
+ * without a control socket. Production never sets that env var.
+ *
+ * Legacy daemon spawn / lockfile / serve.pid plumbing remains for the
+ * v1-style headless serve flow until consumers fully migrate to running
+ * `pgserve daemon` as a separate supervised process. Self-healing TCP path
+ * is retained as a fallback.
  */
 
 import { type ChildProcess, execSync, spawn } from 'node:child_process';
@@ -28,8 +38,36 @@ const DEFAULT_HOST = '127.0.0.1';
 const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
 const DATA_DIR = join(GENIE_HOME, 'data', 'pgserve');
 const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
-const DB_NAME = 'genie';
-const TRUTHY_ENV = new Set(['1', 'true', 'yes', 'on']);
+/**
+ * Default DB requested when connecting via Unix socket. The pgserve v2 daemon
+ * treats `postgres` (libpq's default) as "give me whatever DB belongs to my
+ * fingerprint" and silently routes to the peer's `app_<name>_<12hex>` DB.
+ * The actual resolved name is surfaced via the startup banner below.
+ */
+const DB_NAME = 'postgres';
+
+/**
+ * Resolve the directory holding pgserve v2's control socket.
+ * Mirrors `resolveControlSocketDir()` in pgserve/src/daemon.js: prefers
+ * `$XDG_RUNTIME_DIR/pgserve` (the systemd / freedesktop convention),
+ * falls back to `/tmp/pgserve` on hosts without XDG_RUNTIME_DIR.
+ */
+export function resolvePgserveSocketDir(): string {
+  const xdg = process.env.XDG_RUNTIME_DIR;
+  const base = xdg && xdg.length > 0 ? xdg : '/tmp';
+  return join(base, 'pgserve');
+}
+
+/**
+ * Default database name requested on connect. pgserve v2's daemon-control
+ * accept hook routes `postgres` (and the libpq default `database = user`)
+ * into the peer's own fingerprinted DB. Test mode honors GENIE_TEST_DB_NAME.
+ */
+export function resolveDatabaseName(): string {
+  const testDbName = process.env.GENIE_TEST_DB_NAME;
+  if (testDbName && testDbName.length > 0) return testDbName;
+  return DB_NAME;
+}
 
 /** Sanitize connection URLs for logging — never expose credentials */
 function maskCredentials(url: string): string {
@@ -734,25 +772,72 @@ export async function getConnection() {
   }
 }
 
+/**
+ * Decide between Unix socket (pgserve v2 production path) and TCP loopback
+ * (legacy + test mode). Test mode is selected by GENIE_TEST_PG_PORT — that
+ * env var is set by src/lib/test-setup.ts (bun preload) which boots a
+ * dedicated `pgserve --ram` instance for the suite. Production never sets it.
+ */
+function shouldUseUnixSocket(): boolean {
+  if (process.env.GENIE_PG_FORCE_TCP === '1') return false;
+  if (process.env.GENIE_TEST_PG_PORT) return false;
+  return true;
+}
+
+let bannerPrinted = false;
+
+/**
+ * Print the resolved DB name once per process, on first successful connect.
+ * Surfaces pgserve v2's auto-fingerprint so devs can see the visible
+ * `app_<name>_<12hex>` database their genie process landed in.
+ */
+async function maybePrintBanner(client: postgres.Sql, isTestMode: boolean): Promise<void> {
+  if (bannerPrinted || isTestMode) return;
+  if (process.env.GENIE_QUIET === '1' || process.env.GENIE_NO_BANNER === '1') {
+    bannerPrinted = true;
+    return;
+  }
+  try {
+    const rows = await client.unsafe('SELECT current_database() AS db');
+    const db = rows[0]?.db;
+    if (typeof db === 'string' && db.length > 0) {
+      process.stderr.write(`[pgserve] connected to ${db}\n`);
+    }
+  } catch {
+    // Banner is best-effort — never fail a connection because of it.
+  }
+  bannerPrinted = true;
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
 async function _buildConnection(): Promise<any> {
   const _t0 = Date.now();
-  const port = await ensurePgserve();
+  const useSocket = shouldUseUnixSocket();
+  const port = useSocket ? 5432 : await ensurePgserve();
   const _t1 = Date.now();
   const pgModule = (await import('postgres')).default;
 
   // Per-test isolation now happens at the DATABASE level — setupTestDatabase()
   // clones `genie_template` and sets GENIE_TEST_DB_NAME. In production, this
-  // env var is never set, so we fall back to DB_NAME ('genie').
+  // env var is never set, so we fall back to DB_NAME ('postgres') and let
+  // pgserve v2's accept hook auto-resolve to the fingerprint's database.
   const testDbName = process.env.GENIE_TEST_DB_NAME;
   const database = testDbName && testDbName.length > 0 ? testDbName : DB_NAME;
   const isTestMode = Boolean(testDbName);
+
+  // Unix socket: postgres.js dials `<host>/.s.PGSQL.<port>` when host is an
+  // absolute path. pgserve v2 publishes a `.s.PGSQL.5432` libpq compat link
+  // alongside its control socket so off-the-shelf clients connect without
+  // knowing the daemon's actual socket name.
+  const host = useSocket ? resolvePgserveSocketDir() : DEFAULT_HOST;
   sqlClient = pgModule({
-    host: DEFAULT_HOST,
+    host,
     port,
     database,
     username: 'postgres',
-    password: 'postgres',
+    // Password unused on Unix socket (pgserve v2 authenticates via SO_PEERCRED).
+    // Kept on the TCP path for the legacy in-memory test daemon.
+    password: useSocket ? '' : 'postgres',
     max: 50,
     idle_timeout: 1,
     connect_timeout: 5,
@@ -764,6 +849,7 @@ async function _buildConnection(): Promise<any> {
 
   try {
     await runPostConnectSetup(sqlClient, isTestMode, { t0: _t0, t1: _t1 });
+    await maybePrintBanner(sqlClient, isTestMode);
   } catch (err) {
     const dying = sqlClient;
     sqlClient = null;
