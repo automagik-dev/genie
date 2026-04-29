@@ -96,6 +96,67 @@ describe('findWorkspace', () => {
     const result = findWorkspace(testDir);
     expect(result!.agent).toBeUndefined();
   });
+
+  // Regression: a stray `~/.genie/workspace.json` (from a misfired `genie init`
+  // run from $HOME, or carried over during ops) used to hijack walk-up — every
+  // cwd that traverses HOME would resolve as a workspace rooted at HOME, then
+  // scanAgents would look for `$HOME/agents/` (which does not exist) and the
+  // TUI sidebar would silently surface "Agents 0/0". Observed and fixed
+  // 2026-04-29 — this test pins the behavior so the bug cannot reappear.
+  test('skips $HOME as workspace root even when $HOME/.genie/workspace.json exists', () => {
+    const fakeHome = join(testDir, 'fake-home');
+    mkdirSync(fakeHome, { recursive: true });
+    // Plant the rogue workspace.json directly inside fake $HOME — the exact
+    // file shape that hijacked production on 2026-04-29.
+    makeWorkspace(fakeHome, { name: 'rogue-from-home' });
+
+    // Walk up from a child of fake $HOME — without the fix, findWorkspace
+    // would return `{root: fakeHome, ...}` because it found the marker at
+    // `fakeHome/.genie/workspace.json`. With the fix, that candidate is
+    // skipped at HOME and walk-up continues past it.
+    const childOfHome = join(fakeHome, 'somewhere');
+    mkdirSync(childOfHome, { recursive: true });
+    const result = findWorkspace(childOfHome, { userHome: fakeHome });
+
+    // Either null (no real workspace anywhere up the chain) or — if walk-up
+    // bubbles into the test's ancestor tmp dirs and finds another marker —
+    // a root that is NOT $HOME. The contract this test pins: $HOME is never
+    // returned as a workspace root via walk-up.
+    if (result !== null) {
+      expect(result.root).not.toBe(fakeHome);
+    }
+  });
+
+  // Belt-and-suspenders: even if a previous (pre-fix) run persisted $HOME as
+  // workspaceRoot in the global config, the fallback path must not honor it.
+  test('refuses saved root that points to $HOME', () => {
+    const fakeHome = join(testDir, 'fake-home-saved');
+    mkdirSync(fakeHome, { recursive: true });
+    makeWorkspace(fakeHome, { name: 'rogue-from-home-saved' });
+
+    // Persist the rogue saved root in the isolated genie home's config.json.
+    const config = { workspaceRoot: fakeHome };
+    writeFileSync(join(fakeGenieHome, 'config.json'), JSON.stringify(config));
+
+    // Walk-up from a path that is NOT under any real workspace.
+    const cwd = join(testDir, 'unrelated');
+    mkdirSync(cwd, { recursive: true });
+    const result = findWorkspace(cwd, { userHome: fakeHome });
+
+    if (result !== null) {
+      expect(result.root).not.toBe(fakeHome);
+    }
+  });
+
+  // Sanity: a legitimate workspace at a normal path still resolves correctly
+  // when an unrelated $HOME is supplied. Guards against an over-zealous fix
+  // that accidentally drops valid markers.
+  test('does NOT skip legitimate non-$HOME workspace markers', () => {
+    makeWorkspace(testDir);
+    const result = findWorkspace(testDir, { userHome: '/non-existent-home' });
+    expect(result).not.toBeNull();
+    expect(result!.root).toBe(testDir);
+  });
 });
 
 describe('getWorkspaceConfig', () => {
