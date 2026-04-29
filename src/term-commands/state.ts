@@ -468,6 +468,47 @@ async function autoInitWishState(slug: string): Promise<Awaited<ReturnType<typeo
   return state;
 }
 
+const TERMINAL_WISH_STATUSES = new Set(['shipped', 'done', 'complete', 'completed', 'archived']);
+
+export interface TerminalWishLifecycleStatus {
+  status: string;
+  wishPath: string;
+}
+
+export function parseWishLifecycleStatus(content: string): string | null {
+  const patterns = [
+    /^\|\s*\*\*Status\*\*\s*\|\s*([^|]+?)\s*\|/im,
+    /^\*\*Status:\*\*\s*([A-Za-z][A-Za-z_-]*)/im,
+    /^Status:\s*([A-Za-z][A-Za-z_-]*)/im,
+  ];
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    const token = match?.[1]?.trim().match(/^[A-Za-z][A-Za-z_-]*/)?.[0];
+    if (token) return token.toUpperCase();
+  }
+  return null;
+}
+
+export async function getTerminalWishLifecycleStatus(slug: string): Promise<TerminalWishLifecycleStatus | null> {
+  const wishPath = resolveWishPath(slug);
+  if (!wishPath) return null;
+
+  const content = await readFile(wishPath, 'utf-8');
+  const status = parseWishLifecycleStatus(content);
+  if (!status || !TERMINAL_WISH_STATUSES.has(status.toLowerCase())) return null;
+  return { status, wishPath };
+}
+
+export function printTerminalWishLifecycleStatus(slug: string, terminal: TerminalWishLifecycleStatus): void {
+  console.log(`\nWish: ${slug}`);
+  console.log('─'.repeat(60));
+  console.log(`  Status: ${terminal.status}`);
+  console.log(`  Source: ${terminal.wishPath}`);
+  console.log('');
+  console.log('  No active execution state initialized for terminal wish status.');
+  console.log('');
+}
+
 async function printWishExecutors(slug: string): Promise<void> {
   try {
     const { registry, executorRegistry, assignmentRegistry } = await loadExecutorInfo();
@@ -502,6 +543,12 @@ async function printWishExecutors(slug: string): Promise<void> {
 
 export async function statusCommand(slug: string): Promise<void> {
   try {
+    const terminal = await getTerminalWishLifecycleStatus(slug);
+    if (terminal) {
+      printTerminalWishLifecycleStatus(slug, terminal);
+      return;
+    }
+
     const state = (await wishState.getState(slug)) ?? (await autoInitWishState(slug));
 
     console.log(`\nWish: ${state.wish}`);
