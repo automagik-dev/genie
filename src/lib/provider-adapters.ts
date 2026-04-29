@@ -409,12 +409,20 @@ function buildSettingsObject(params: SpawnParams): Record<string, unknown> {
   if (!params.skipHooks) {
     const dispatchCmd = buildDispatchCommand();
     const hookEntry = { type: 'command', command: dispatchCmd, timeout: 15 };
-    settingsObj.hooks = {
-      PreToolUse: [{ matcher: '*', hooks: [hookEntry] }],
-      PostToolUse: [{ matcher: '*', hooks: [hookEntry] }],
-      UserPromptSubmit: [{ hooks: [hookEntry] }],
-      Stop: [{ hooks: [hookEntry] }],
-    };
+    // Mac-CPU fix D, **completion** — Fix D #1479 narrowed the team-level
+    // settings.json matchers via DISPATCHED_EVENT_MATCHERS in `inject.ts`.
+    // This inline `--settings` codepath (passed directly to the claude CLI
+    // command at spawn time) was a SECOND injection layer that was missed
+    // and still hardcoded the wide matchers. dog-fooder-da66 verdict
+    // 2026-04-29 surfaced the discrepancy in
+    // state/phaseb-413-20260429T143731Z/. Source the matcher map so both
+    // layers stay aligned.
+    const { DISPATCHED_EVENT_MATCHERS } = require('../hooks/types.js') as typeof import('../hooks/types.js');
+    const hooks: Record<string, Array<{ matcher?: string; hooks: (typeof hookEntry)[] }>> = {};
+    for (const [event, matcher] of Object.entries(DISPATCHED_EVENT_MATCHERS)) {
+      hooks[event] = [{ matcher, hooks: [hookEntry] }];
+    }
+    settingsObj.hooks = hooks;
   }
   if (params.permissions) {
     const perms: Record<string, string[]> = {};
