@@ -3,6 +3,12 @@
     "default": true,
     "MD013": false,
     "MD033": false,
+    // MD034 (bare URLs) — disabled because incident-response runbooks
+    // (docs/incident-response/canisterworm.mdx) intentionally show literal
+    // URLs so on-call users know exactly where to go (no hover-to-check
+    // step on a wrapped link). Linting bare URLs out of vendored
+    // incident-response prose was blocking PR #1446 release dev→main.
+    "MD034": false,
     "MD036": false,
     "MD040": false,
     "MD041": false,
