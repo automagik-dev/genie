@@ -1504,6 +1504,21 @@ export async function attemptAgentResume(
       resume_attempts: newAttempts,
       max_resume_attempts: maxAttempts,
     });
+    // W1 hotfix: emit `resume.missing_session` from the SCHEDULER (not from
+    // every read-path call to getResumeSessionId). The scheduler tick is
+    // bounded — at most one emission per orphan per cycle (60s by default),
+    // independent of how many CLI / TUI processes are reading status.
+    // Pre-hotfix: every read emitted; under load that hit 14M events / 7d
+    // because each `genie ls` is a fresh process with no in-memory dedupe.
+    try {
+      const { recordResumeMissingSession } = await import('./executor-registry.js');
+      const actor = process.env.GENIE_AGENT_NAME ?? 'scheduler';
+      await recordResumeMissingSession(agentId, actor, {
+        reason: 'no_session_id',
+      });
+    } catch {
+      /* observability is best-effort — never block the resume path on audit failure */
+    }
     if (newAttempts >= maxAttempts) {
       await deps.updateAgent(agentId, { autoResume: false });
       deps.log({
