@@ -97,6 +97,37 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect((await get('bd-42'))!.paneColor).toBe('#ff0000');
     });
 
+    // #1463 — application-layer default for `auto_resume` MUST be false.
+    //
+    // Migration 044 already flipped the schema column default to false, but
+    // the registerAgent INSERT was overriding it with `${agent.autoResume ?? true}`,
+    // negating the migration. Every fresh spawn re-introduced the orphan-zombie
+    // pattern the migration was meant to fix.
+    //
+    // This test guards the application-layer default. It does NOT test the
+    // schema (covered by 044's own test suite); it tests the INSERT path.
+    test('register defaults autoResume=false when caller does not specify (#1463)', async () => {
+      await register(makeAgent({ id: 'default-auto-resume' }));
+      const sql = await getConnection();
+      const rows = await sql<{ auto_resume: boolean | null }[]>`
+        SELECT auto_resume FROM agents WHERE id = 'default-auto-resume'
+      `;
+      expect(rows[0].auto_resume).toBe(false);
+    });
+
+    test('register honors explicit autoResume=true (no silent override)', async () => {
+      // The flip is from `?? true` to `?? false`. Explicit `true` from a
+      // caller that genuinely wants auto-resume must still land. This guards
+      // against a regression where someone "fixes" the default by hard-coding
+      // false.
+      await register(makeAgent({ id: 'explicit-auto-resume', autoResume: true }));
+      const sql = await getConnection();
+      const rows = await sql<{ auto_resume: boolean | null }[]>`
+        SELECT auto_resume FROM agents WHERE id = 'explicit-auto-resume'
+      `;
+      expect(rows[0].auto_resume).toBe(true);
+    });
+
     // Regression: cross-team id collision must not silently adopt the stale
     // row. Pre-fix behaviour was `ON CONFLICT (id) DO UPDATE` leaving `team`
     // untouched, so a new spawn in team B re-using an id that still lived in

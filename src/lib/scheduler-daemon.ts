@@ -1477,21 +1477,48 @@ export async function attemptAgentResume(
     return 'skipped';
   }
 
+  const maxAttempts = agent.maxResumeAttempts ?? DEFAULT_MAX_RESUME_ATTEMPTS;
+  const attempts = agent.resumeAttempts ?? 0;
+
   // Must have a Claude session ID to resume (joined from
   // `executors.claude_session_id` via `agents.current_executor_id`).
+  //
+  // Closes #1462 — orphan agents (no currentSessionId) used to early-return
+  // here without incrementing `resume_attempts`, so the cap (3) never tripped
+  // and `auto_resume` never flipped to false. The result was a forever-loop
+  // emitting `resume.missing_session` audit events on every scheduler tick.
+  // Now we increment the counter and flip auto_resume=false at the cap, so
+  // the loop terminates after `maxAttempts` cycles even for orphans.
   if (!agent.currentSessionId) {
+    const newAttempts = attempts + 1;
+    await deps.updateAgent(agentId, {
+      resumeAttempts: newAttempts,
+      lastResumeAttempt: now.toISOString(),
+    });
     deps.log({
       timestamp: now.toISOString(),
       level: 'debug',
       event: 'agent_resume_skipped',
       agent_id: agentId,
       reason: 'no_session_id',
+      resume_attempts: newAttempts,
+      max_resume_attempts: maxAttempts,
     });
+    if (newAttempts >= maxAttempts) {
+      await deps.updateAgent(agentId, { autoResume: false });
+      deps.log({
+        timestamp: now.toISOString(),
+        level: 'warn',
+        event: 'agent_resume_exhausted',
+        agent_id: agentId,
+        resume_attempts: newAttempts,
+        max_resume_attempts: maxAttempts,
+        reason: 'no_session_id_orphan',
+      });
+      return 'exhausted';
+    }
     return 'skipped';
   }
-
-  const maxAttempts = agent.maxResumeAttempts ?? DEFAULT_MAX_RESUME_ATTEMPTS;
-  const attempts = agent.resumeAttempts ?? 0;
 
   // Retry budget exhausted — mark terminal so the scheduler filter excludes
   // the agent next cycle. Prior to this write, `attempts >= maxAttempts` rows

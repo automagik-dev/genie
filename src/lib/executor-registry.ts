@@ -499,14 +499,62 @@ async function tryJsonlFallback(agentId: string, row: ResumeRow | null, actor: s
   return recoveredSessionId;
 }
 
-/** Emit the appropriate `resume.missing_session` event when both DB and JSONL miss. */
+/**
+ * In-process dedupe cache for `resume.missing_session` emissions. Keyed by
+ * `${agentId}:${actor}:${reason}`; value is the last emit timestamp (ms).
+ *
+ * Why: every TUI tick / `genie ls` / `genie agent show` / status read calls
+ * `getResumeSessionId()` for orphan agents, and each call emitted a fresh
+ * audit row. On one observed machine this produced 14M `resume.missing_session`
+ * events in 7 days (one orphan, one TUI, one observer — multiplied across
+ * every reader). The events are observability, not behavior, so coalescing
+ * within a 60s window keeps the signal (operator sees the row is broken)
+ * without the noise (one event per reader-tick).
+ *
+ * Closes #1461 — `shouldResume` status reads emit unbounded audit events.
+ */
+const MISSING_SESSION_DEDUPE_WINDOW_MS = 60_000;
+const missingSessionLastEmit = new Map<string, number>();
+/** Cap the dedupe map so a long-running daemon with many orphans doesn't grow forever. */
+const MISSING_SESSION_DEDUPE_MAX_KEYS = 4096;
+
+function shouldEmitMissingSession(agentId: string, actor: string, reason: string): boolean {
+  const key = `${agentId}:${actor}:${reason}`;
+  const now = Date.now();
+  const last = missingSessionLastEmit.get(key);
+  if (last !== undefined && now - last < MISSING_SESSION_DEDUPE_WINDOW_MS) {
+    return false;
+  }
+  // LRU-ish trim: when over cap, drop the oldest 25% in one pass.
+  if (missingSessionLastEmit.size >= MISSING_SESSION_DEDUPE_MAX_KEYS) {
+    const entries = Array.from(missingSessionLastEmit.entries()).sort((a, b) => a[1] - b[1]);
+    const drop = Math.floor(entries.length / 4);
+    for (let i = 0; i < drop; i++) missingSessionLastEmit.delete(entries[i][0]);
+  }
+  missingSessionLastEmit.set(key, now);
+  return true;
+}
+
+/** Test-only: clear the dedupe cache. */
+export function _resetMissingSessionDedupeForTests(): void {
+  missingSessionLastEmit.clear();
+}
+
+/**
+ * Emit the appropriate `resume.missing_session` event when both DB and JSONL miss.
+ *
+ * Coalesces successive emissions for the same `(agentId, actor, reason)` within
+ * `MISSING_SESSION_DEDUPE_WINDOW_MS` (60s) — see {@link shouldEmitMissingSession}.
+ */
 async function emitMissingSession(agentId: string, row: ResumeRow | null, actor: string): Promise<void> {
   if (row === null || row.executor_id === null) {
+    if (!shouldEmitMissingSession(agentId, actor, 'no_executor')) return;
     await recordAuditEvent('agent', agentId, 'resume.missing_session', actor, {
       reason: 'no_executor',
     });
     return;
   }
+  if (!shouldEmitMissingSession(agentId, actor, 'null_session')) return;
   await recordAuditEvent('agent', agentId, 'resume.missing_session', actor, {
     reason: 'null_session',
     executorId: row.executor_id,
