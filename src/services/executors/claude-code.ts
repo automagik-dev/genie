@@ -185,6 +185,15 @@ export function buildOmniSpawnParams(
   };
 }
 
+/**
+ * Resolve the process name expected to be running under the tmux pane.
+ * The Omni tmux executor can launch Codex-backed directory entries too, so
+ * liveness probes must follow the provider instead of assuming Claude.
+ */
+export function resolveOmniPaneProcessName(provider: string | undefined): string {
+  return provider === 'codex' ? 'codex' : 'claude';
+}
+
 export class ClaudeCodeOmniExecutor implements IExecutor {
   private sessions = new Map<string, TmuxSessionState>();
   private safePgCall: SafePgCallFn | null = null;
@@ -202,6 +211,30 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     if (!paneId) return;
     const nudgeText = `[system] ${text}`;
     await executeTmux(`send-keys -t '${paneId}' ${shellQuote(nudgeText)} Enter`);
+  }
+
+  private async launchOmniProcessInPane(
+    agentName: string,
+    chatId: string,
+    entry: DirectoryEntry,
+    env: Record<string, string>,
+    paneId: string,
+    initialMessage: string | undefined,
+    resumeClaudeSessionId: string | undefined,
+  ): Promise<string | undefined> {
+    const omniEnv: Record<string, string> = { ...env, GENIE_OMNI_CHAT_ID: chatId, GENIE_OMNI_AGENT: agentName };
+    const params = buildOmniSpawnParams(agentName, chatId, entry, omniEnv, initialMessage, resumeClaudeSessionId);
+    const claudeSessionId = resumeClaudeSessionId ?? params.sessionId ?? undefined;
+    const launch = buildLaunchCommand(params);
+
+    // Merge omni-specific env vars with those produced by buildLaunchCommand.
+    const allEnv = { ...omniEnv, ...launch.env };
+    const envPrefix = Object.entries(allEnv)
+      .map(([k, v]) => `${k}=${shellQuote(v)}`)
+      .join(' ');
+    const cmd = envPrefix ? `${envPrefix} ${launch.command}` : launch.command;
+    await executeTmux(`send-keys -t '${paneId}' ${shellQuote(cmd)} Enter`);
+    return claudeSessionId;
   }
 
   async spawn(
@@ -244,24 +277,13 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
       : null;
     const resumeClaudeSessionId = existingExecutor?.claudeSessionId ?? undefined;
 
-    let claudeSessionId: string | undefined = resumeClaudeSessionId;
-    if (created) {
-      const omniEnv: Record<string, string> = { ...env, GENIE_OMNI_CHAT_ID: chatId, GENIE_OMNI_AGENT: agentName };
-      const params = buildOmniSpawnParams(agentName, chatId, entry, omniEnv, initialMessage, resumeClaudeSessionId);
-      // The effective claude session id is the resume id when present, else
-      // the freshly-generated sessionId — we persist whichever was used so
-      // the next respawn finds the same id and can re-attach.
-      claudeSessionId = resumeClaudeSessionId ?? params.sessionId ?? undefined;
-      const launch = buildLaunchCommand(params);
+    const processName = resolveOmniPaneProcessName(entry.provider);
+    const processRunning = !created && (await isPaneProcessRunning(paneId, processName));
+    const needsLaunch = created || !processRunning;
 
-      // Merge omni-specific env vars with those produced by buildLaunchCommand
-      const allEnv = { ...omniEnv, ...launch.env };
-      const envPrefix = Object.entries(allEnv)
-        .map(([k, v]) => `${k}=${shellQuote(v)}`)
-        .join(' ');
-      const cmd = envPrefix ? `${envPrefix} ${launch.command}` : launch.command;
-      await executeTmux(`send-keys -t '${paneId}' ${shellQuote(cmd)} Enter`);
-    }
+    const claudeSessionId: string | undefined = needsLaunch
+      ? await this.launchOmniProcessInPane(agentName, chatId, entry, env, paneId, initialMessage, resumeClaudeSessionId)
+      : resumeClaudeSessionId;
 
     const sessionKey = `${agentName}:${chatId}`;
     const registration = await this.registerOrRelinkExecutor(
@@ -290,7 +312,7 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
       executorType: 'tmux' as const,
       createdAt: now,
       lastActivityAt: now,
-      tmux: { session: tmuxSession, window: windowName, paneId, claudeSessionId },
+      tmux: { session: tmuxSession, window: windowName, paneId, claudeSessionId, processName },
     };
   }
 
@@ -481,7 +503,7 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     try {
       const paneAlive = await isPaneAlive(paneId);
       if (!paneAlive) return false;
-      return await isPaneProcessRunning(paneId, 'claude');
+      return await isPaneProcessRunning(paneId, session.tmux?.processName ?? 'claude');
     } catch {
       return false;
     }
