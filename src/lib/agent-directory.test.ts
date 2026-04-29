@@ -556,6 +556,28 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       await expect(directory.edit('editable', { dir: '/nonexistent/path' })).rejects.toThrow('does not exist');
     });
 
+    test('edit relocates agent to new dir even when old dir is unreadable (fixes D4 chicken-and-egg)', async () => {
+      // Operator scenario: agent was registered with --dir pointing at a
+      // wrong folder. Now they want to fix it. The OLD dir's AGENTS.md may
+      // not even exist anymore — `directory.edit` must validate the NEW
+      // dir without needing the OLD dir to be readable.
+      const sql = await getConnection();
+      await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:relocatable', 'relocatable', 'relocatable', now(), '{"dir":"/tmp/old-broken-dir","model":"opus"}')`;
+
+      // The OLD dir is not on disk at all. The NEW dir exists with a real AGENTS.md.
+      const newHome = join(testDir, 'new-home');
+      mkdirSync(newHome, { recursive: true });
+      writeFileSync(join(newHome, 'AGENTS.md'), '# relocated agent\n');
+
+      const updated = await directory.edit('relocatable', { dir: newHome });
+      expect(updated.dir).toBe(newHome);
+
+      // Verify PG metadata.dir was updated
+      const rows = await sql`SELECT metadata FROM agents WHERE id = 'dir:relocatable'`;
+      const metadata = rows[0].metadata as Record<string, unknown>;
+      expect(metadata.dir).toBe(newHome);
+    });
+
     test('edit persists model to PG metadata', async () => {
       const sql = await getConnection();
       await sql`INSERT INTO agents (id, role, custom_name, started_at, metadata) VALUES ('dir:meta-agent', 'meta-agent', 'meta-agent', now(), '{}')`;

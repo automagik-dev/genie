@@ -136,7 +136,11 @@ export function registerDirNamespace(program: Command): void {
     .option('--permission-preset <preset>', 'Permission preset: full, read-only, chat-only')
     .option('--allow <tools>', 'Comma-separated tool allow list (e.g. "Read,Glob,Grep,Bash")')
     .option('--bash-allow <patterns>', 'Comma-separated regex patterns for allowed bash commands')
-    .option('--global', 'Edit in global directory instead of project');
+    .option('--global', 'Edit in global directory instead of project')
+    .option(
+      '--allow-symlink',
+      'Accept a symlinked AGENTS.md at the new --dir (default: rejected — usually indicates --dir was pointed at the wrong folder)',
+    );
   registerSdkFlags(editCmd);
   editCmd.action(async (name: string, options: EditOptions) => {
     try {
@@ -286,6 +290,7 @@ interface EditOptions extends SdkDirOptions {
   allow?: string;
   bashAllow?: string;
   global?: boolean;
+  allowSymlink?: boolean;
 }
 
 function collectAgentConfigUpdates(options: EditOptions): Partial<AgentConfig> {
@@ -331,6 +336,42 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
     process.exit(1);
   }
   const agentDir = resolved.entry.dir;
+
+  // Relocation case: `--dir` is being changed. The yaml-first flow below
+  // anchors on the CURRENT entry.dir, which is exactly the field we're
+  // moving — reading agent.yaml from the OLD dir before the relocation
+  // applies makes no sense, and on a wrong-dir registration (where the OLD
+  // dir was the operator's mistake we're trying to fix), the chicken-and-egg
+  // makes recovery impossible without raw SQL.
+  //
+  // For relocation, skip the yaml-anchor migration and write the metadata
+  // patch directly to PG via `directory.edit`. `directory.edit` already
+  // validates the NEW dir's AGENTS.md (incl. symlink-safety per #1514) before
+  // persisting. The agent.yaml at the OLD dir is left in place — operators
+  // can delete it after verifying the move; future non-relocation `dir edit`
+  // calls will write fresh yaml at the NEW dir on the next yaml-anchored edit.
+  if (updates.dir) {
+    const newDir = resolvePath(updates.dir);
+    const updated = await directory.edit(
+      name,
+      { ...updates, dir: newDir },
+      { global: options.global, allowSymlink: options.allowSymlink },
+    );
+    recordAuditEvent('item', name, 'item_updated', getActor(), {
+      type: 'agent',
+      source: 'dir_edit',
+      relocation: { from: agentDir, to: newDir },
+    }).catch(() => {});
+    const scope = options.global ? 'global' : 'project';
+    console.log(`Agent "${name}" relocated to ${contractPath(newDir)} (${scope}).`);
+    if (existsSync(join(agentDir, 'agent.yaml'))) {
+      console.warn(
+        `Note: agent.yaml at ${contractPath(agentDir)} is now orphaned. Remove it after verifying the new home is correct.`,
+      );
+    }
+    printEntry(updated);
+    return;
+  }
 
   // If the agent hasn't been migrated yet, migrate first. After this the
   // canonical source is agents/<name>/agent.yaml and AGENTS.md loses its
