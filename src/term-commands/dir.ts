@@ -232,27 +232,30 @@ async function handleDirAdd(name: string, options: DirAddOptions): Promise<void>
   // Write agent.yaml atomically (locked).
   await writeAgentYaml(join(resolvedDir, 'agent.yaml'), config);
 
-  // Propagate to the DB via the same single-agent sync path used by `dir edit`.
+  const directoryEntry = {
+    name,
+    dir: resolvedDir,
+    repo: options.repo ? resolvePath(options.repo) : undefined,
+    promptMode,
+    model: options.model,
+    roles: normalizeRoles(options.roles),
+    ...(permissions && { permissions }),
+    ...(sdk && { sdk }),
+  };
+
+  // Propagate to the DB via the same single-agent sync path used by `dir edit`
+  // when the requested name is discoverable at workspace/agents/<name>. For
+  // explicit --dir paths outside that convention, register the row directly
+  // using the same payload instead of reporting success with no resolvable row.
   const ws = findWorkspace();
-  if (ws) {
-    await syncSingleAgentByName(ws.root, name);
-  } else {
-    // Not in a workspace — register a stub in the directory table so the
-    // agent is reachable even before the user runs `genie init`.
-    await directory.add(
-      {
-        name,
-        dir: resolvedDir,
-        repo: options.repo ? resolvePath(options.repo) : undefined,
-        promptMode,
-        model: options.model,
-        roles: normalizeRoles(options.roles),
-        ...(permissions && { permissions }),
-        ...(sdk && { sdk }),
-      },
-      { global: options.global },
-    );
-    console.warn('Not in a genie workspace — directory row created; run `genie dir sync` in a workspace to re-sync.');
+  const syncAction = ws ? await syncSingleAgentByName(ws.root, name) : 'not-found';
+  if (syncAction === 'not-found') {
+    await directory.add(directoryEntry, { global: options.global });
+    if (!ws) {
+      // Not in a workspace — register a stub in the directory table so the
+      // agent is reachable even before the user runs `genie init`.
+      console.warn('Not in a genie workspace — directory row created; run `genie dir sync` in a workspace to re-sync.');
+    }
   }
 
   recordAuditEvent('item', name, 'item_registered', getActor(), { type: 'agent', source: 'dir_add' }).catch(() => {});
