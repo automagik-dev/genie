@@ -66,6 +66,13 @@ jobs:
         with:
           bun-version: "1.3.11"
 
+      # package.json pins `pgserve: file:../pgserve` until Group 8 of pgserve-v2
+      # publishes pgserve@2.0.0 to npm. Bun install fails on CI without the
+      # sibling checkout. Cloning the v2 branch alongside satisfies the file:
+      # protocol the same way the smoke job's local sibling does.
+      - name: Checkout pgserve v2 sibling
+        run: git clone --depth 1 --branch wish/pgserve-v2 https://github.com/namastexlabs/pgserve.git ../pgserve
+
       - name: Install dependencies
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -142,6 +149,12 @@ jobs:
         with:
           bun-version: "1.3.11"
 
+      # See unit-tests for rationale — package.json pins `pgserve:
+      # file:../pgserve` until pgserve@2.0.0 is on npm, so CI must clone the
+      # v2 branch as a sibling before bun install can resolve.
+      - name: Checkout pgserve v2 sibling
+        run: git clone --depth 1 --branch wish/pgserve-v2 https://github.com/namastexlabs/pgserve.git ../pgserve
+
       # Per-run scratch cache dir. Prior config used a persistent
       # ~/.bun/install/cache restored via actions/cache, which cross-
       # polluted runs on the self-hosted Blacksmith runner and was
@@ -204,6 +217,16 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
+
+      # CI now actively clones the v2 branch as a sibling (see unit-tests).
+      # The probe step is kept so the smoke job stays self-contained — if the
+      # sibling somehow isn't present (manual rerun without re-cloning, branch
+      # rename, etc.), the smoke job still skips cleanly instead of erroring.
+      - name: Checkout pgserve v2 sibling
+        run: |
+          if [ ! -d "../pgserve" ]; then
+            git clone --depth 1 --branch wish/pgserve-v2 https://github.com/namastexlabs/pgserve.git ../pgserve
+          fi
 
       - name: Resolve pgserve v2 (skip if unavailable)
         id: pgserve_check

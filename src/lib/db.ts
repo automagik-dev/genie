@@ -354,7 +354,7 @@ async function isPostgresHealthy(port: number): Promise<boolean> {
           username: 'postgres',
           // TCP probe credentials — env-overridable for non-default test daemons.
           // The fallback is the in-memory pgserve test daemon's well-known default.
-          password: process.env.PGPASSWORD || 'postgres',
+          password: process.env.PGPASSWORD || 'postgres', // pragma: allowlist secret — pgserve unauthenticated test default
           max: 1,
           connect_timeout: 3,
           idle_timeout: 1,
@@ -1022,7 +1022,7 @@ async function _buildConnection(): Promise<any> {
     // TCP path: honor PGPASSWORD when set, fall back to the in-memory test
     // daemon's well-known default ('postgres'). The fallback is unauthenticated
     // by design — the test pgserve runs in --ram mode on a per-suite TCP port.
-    password: useSocket ? '' : process.env.PGPASSWORD || 'postgres',
+    password: useSocket ? '' : process.env.PGPASSWORD || 'postgres', // pragma: allowlist secret — pgserve unauthenticated test default
     max: 50,
     idle_timeout: 1,
     connect_timeout: 5,
