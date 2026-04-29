@@ -21,9 +21,23 @@ export interface TmuxPane {
   paneId: string;
   pid: number;
   command: string;
+  processCommand: string;
   title: string;
   size: string;
   isDead: boolean;
+}
+
+function getProcessCommandByPid(pids: number[]): Map<number, string> {
+  const uniquePids = [...new Set(pids.filter((pid) => Number.isFinite(pid) && pid > 0))];
+  if (uniquePids.length === 0) return new Map();
+  const output = execQuiet(`ps -p ${uniquePids.join(',')} -o pid=,command=`);
+  const commands = new Map<number, string>();
+  for (const line of output.split('\n')) {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (!match) continue;
+    commands.set(Number.parseInt(match[1], 10), match[2]);
+  }
+  return commands;
 }
 
 export interface TmuxWindow {
@@ -87,7 +101,10 @@ function execQuiet(cmd: string): string {
   }
 }
 
-function parsePaneLine(parts: string[]): {
+function parsePaneLine(
+  parts: string[],
+  processCommandByPid: Map<number, string>,
+): {
   sessionName: string;
   winIdxStr: string;
   session: Omit<TmuxSession, 'windows'>;
@@ -134,6 +151,7 @@ function parsePaneLine(parts: string[]): {
       paneId,
       pid: Number.parseInt(panePidStr, 10) || 0,
       command: paneCmd,
+      processCommand: processCommandByPid.get(Number.parseInt(panePidStr, 10) || 0) ?? '',
       title: paneTitle,
       size: paneSize,
       isDead: paneDead === '1',
@@ -149,15 +167,19 @@ function getTmuxInventory(): TmuxSession[] {
 
   if (!paneOutput) return [];
 
+  const paneLines = paneOutput.split('\n').filter(Boolean);
+  const panePids = paneLines
+    .map((line) => Number.parseInt(line.split('|')[7] ?? '', 10))
+    .filter((pid) => Number.isFinite(pid) && pid > 0);
+  const processCommandByPid = getProcessCommandByPid(panePids);
   const sessionMap = new Map<string, TmuxSession>();
   const windowMap = new Map<string, TmuxWindow>();
 
-  for (const line of paneOutput.split('\n')) {
-    if (!line) continue;
+  for (const line of paneLines) {
     const parts = line.split('|');
     if (parts.length < 15) continue;
 
-    const parsed = parsePaneLine(parts);
+    const parsed = parsePaneLine(parts, processCommandByPid);
 
     if (!sessionMap.has(parsed.sessionName)) {
       sessionMap.set(parsed.sessionName, { ...parsed.session, windows: [] });

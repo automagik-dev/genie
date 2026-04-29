@@ -4,7 +4,8 @@ import { CLAUDE_CODE_ACTIVE_TITLE_PREFIX } from './pane-detection.js';
 import { buildSessionTree, buildWorkspaceTree, getSessionTarget, resolvePreferredWindowIndex } from './session-tree.js';
 import type { TreeNode, TuiExecutor } from './types.js';
 
-const CLAUDE_CODE_V2_TMUX_COMMAND = '2.1.123';
+const CLAUDE_CODE_V2_TMUX_COMMAND = 'opaque-runtime-title';
+const CLAUDE_CODE_V2_PROCESS_COMMAND = '/Users/example/.local/bin/claude --agent-id genie@genie';
 const CLAUDE_CODE_V2_TMUX_TITLE = `${CLAUDE_CODE_ACTIVE_TITLE_PREFIX}genie-genie`;
 
 function flattenTree(nodes: TreeNode[]): TreeNode[] {
@@ -27,6 +28,7 @@ function makePane(overrides: Partial<TmuxPane> = {}): TmuxPane {
     paneId: '%0',
     pid: 1000,
     command: 'bash',
+    processCommand: '/bin/bash',
     title: 'bash',
     size: '80x24',
     isDead: false,
@@ -268,8 +270,8 @@ describe('buildWorkspaceTree', () => {
   });
 
   test('Claude Code v2 pane title counts as a live agent pane', () => {
-    // Reproduces tmux output from Claude Code v2 on macOS:
-    // pane_current_command is the CLI version, while pane_title carries the agent name.
+    // Reproduces Claude Code v2 on macOS: tmux may report a non-claude
+    // pane_current_command, while ps still shows the stable claude executable.
     const win0 = makeWindow({ sessionName: 'genie', index: 0, name: 'zsh' });
     const win1 = makeWindow({
       sessionName: 'genie',
@@ -282,6 +284,7 @@ describe('buildWorkspaceTree', () => {
           windowIndex: 1,
           paneId: '%3',
           command: CLAUDE_CODE_V2_TMUX_COMMAND,
+          processCommand: CLAUDE_CODE_V2_PROCESS_COMMAND,
           title: CLAUDE_CODE_V2_TMUX_TITLE,
         }),
       ],
