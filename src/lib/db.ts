@@ -53,6 +53,13 @@ const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
  * The actual resolved name is surfaced via the startup banner below.
  */
 const DB_NAME = 'postgres';
+/**
+ * Truthy env-var values. Restored during rebase onto dev — `-X theirs`
+ * preferred pgserve-v2 changes wholesale and dropped the dev-side const,
+ * but `isPgAutostartDisabled` still references it. Single source of truth
+ * for env-var bool parsing.
+ */
+const TRUTHY_ENV = new Set(['1', 'true', 'yes', 'on']);
 
 /**
  * Resolve the directory holding pgserve v2's control socket.
