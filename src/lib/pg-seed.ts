@@ -223,7 +223,11 @@ function toAgentRow(a: JsonRecord): JsonRecord {
     native_team_enabled: a.nativeTeamEnabled ?? false,
     parent_session_id: a.parentSessionId ?? null,
     suspended_at: a.suspendedAt ?? null,
-    auto_resume: a.autoResume ?? true,
+    // Default to false (matches schema default after migration 044). Auto-resume
+    // is opt-in: callers that want resilient agents must set autoResume=true
+    // explicitly. Closes #1463 — the previous `?? true` default created
+    // forever-zombie orphan rows because every fresh row inherited auto-resume.
+    auto_resume: a.autoResume ?? false,
     resume_attempts: a.resumeAttempts ?? 0,
     last_resume_attempt: a.lastResumeAttempt ?? null,
     max_resume_attempts: a.maxResumeAttempts ?? 3,

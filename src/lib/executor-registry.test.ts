@@ -1419,4 +1419,102 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
       expect(await isExecutorAlive(agentId)).toBe(true);
     });
   });
+
+  // ==========================================================================
+  // #1461 — `resume.missing_session` dedupe (60s window per agent+actor+reason)
+  //
+  // Pre-fix: every `getResumeSessionId()` call for an orphan agent emitted a
+  // fresh `resume.missing_session` audit row. Each TUI tick / `genie ls` /
+  // `genie agent show` for a missing-executor agent fired the event, producing
+  // 14M events / 7-day window on one observed machine.
+  //
+  // Fix: in-process dedupe map suppresses repeats within
+  // `MISSING_SESSION_DEDUPE_WINDOW_MS` (60s) keyed by
+  // `${agentId}:${actor}:${reason}`. Behavior is observability-only — the
+  // function still returns null and the operator still sees the row is broken.
+  // ==========================================================================
+  describe('#1461: resume.missing_session emission is deduped within a 60s window', () => {
+    let _resetMissingSessionDedupeForTests: () => void;
+    beforeAll(async () => {
+      const mod = (await import('./executor-registry.js')) as unknown as {
+        _resetMissingSessionDedupeForTests: () => void;
+      };
+      _resetMissingSessionDedupeForTests = mod._resetMissingSessionDedupeForTests;
+    });
+
+    beforeEach(() => {
+      // Each test starts with an empty dedupe cache so the assertion uses a
+      // single emission counter, not whatever drift the previous test left.
+      _resetMissingSessionDedupeForTests();
+    });
+
+    async function countMissingSessionEvents(agentId: string): Promise<number> {
+      const sql = await getConnection();
+      const rows = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count
+        FROM audit_events
+        WHERE entity_type = 'agent'
+          AND entity_id = ${agentId}
+          AND event_type = 'resume.missing_session'
+      `;
+      return rows[0].count;
+    }
+
+    test('first call emits, subsequent calls within window do not', async () => {
+      const agentId = await seedAgent();
+
+      // Five back-to-back reads (mimics TUI tick + status reads + scheduler).
+      for (let i = 0; i < 5; i++) {
+        expect(await getResumeSessionId(agentId)).toBeNull();
+      }
+
+      // Only the first emission landed.
+      expect(await countMissingSessionEvents(agentId)).toBe(1);
+    });
+
+    test('different agents do not dedupe against each other', async () => {
+      const agentA = await seedAgent('eng-a');
+      const agentB = await seedAgent('eng-b');
+
+      await getResumeSessionId(agentA);
+      await getResumeSessionId(agentB);
+      await getResumeSessionId(agentA); // Within window — no second emission.
+      await getResumeSessionId(agentB); // Within window — no second emission.
+
+      expect(await countMissingSessionEvents(agentA)).toBe(1);
+      expect(await countMissingSessionEvents(agentB)).toBe(1);
+    });
+
+    test('different reasons (no_executor vs null_session) dedupe independently', async () => {
+      // `null_session` reason: executor exists but has no claude_session_id.
+      const agentNullSess = await seedAgent('null-sess');
+      const exec = await createExecutor(agentNullSess, 'claude', 'tmux');
+      await setCurrentExecutor(agentNullSess, exec.id);
+
+      // `no_executor` reason: no executor at all.
+      const agentNoExec = await seedAgent('no-exec');
+
+      await getResumeSessionId(agentNullSess);
+      await getResumeSessionId(agentNullSess); // dedupe
+      await getResumeSessionId(agentNoExec);
+      await getResumeSessionId(agentNoExec); // dedupe
+
+      expect(await countMissingSessionEvents(agentNullSess)).toBe(1);
+      expect(await countMissingSessionEvents(agentNoExec)).toBe(1);
+    });
+
+    test('reset (simulating window expiry) re-enables emission', async () => {
+      const agentId = await seedAgent();
+
+      await getResumeSessionId(agentId);
+      await getResumeSessionId(agentId); // deduped
+
+      // Simulate the 60s window passing — clear the cache.
+      _resetMissingSessionDedupeForTests();
+
+      await getResumeSessionId(agentId); // new window — emits
+
+      expect(await countMissingSessionEvents(agentId)).toBe(2);
+    });
+  });
 });
