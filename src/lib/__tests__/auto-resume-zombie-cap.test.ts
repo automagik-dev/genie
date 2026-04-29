@@ -555,3 +555,97 @@ describe('#1462: orphan agents (no currentSessionId) increment counter and exhau
     expect(agentUpdates.length).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// W1 hotfix — `resume.missing_session` emission contract
+//
+// PR #1528 emitted from the read path (getResumeSessionId) with in-process
+// dedupe; that didn't survive CLI process boundaries (each `genie ls` is a
+// fresh process). PR #1530 (this) moves emission to the scheduler's
+// attemptAgentResume no-session branch — bounded to ≤1 emit per orphan per
+// scheduler tick (60s) by the daemon's tick rate.
+//
+// These tests use a real pgserve so we can verify audit rows landed
+// (createMockSql() returns [] for every query so audit writes are no-ops
+// there). We dispatch the actual function and read audit_events.
+// ---------------------------------------------------------------------------
+
+import { afterAll, beforeAll, beforeEach } from 'bun:test';
+import { findOrCreateAgent } from '../agent-registry.js';
+import { getConnection } from '../db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../test-db.js';
+
+describe.skipIf(!DB_AVAILABLE)('W1 hotfix: scheduler emits resume.missing_session for orphan path', () => {
+  let cleanupDb: () => Promise<void>;
+
+  beforeAll(async () => {
+    cleanupDb = await setupTestDatabase();
+  });
+
+  afterAll(async () => {
+    await cleanupDb();
+  });
+
+  beforeEach(async () => {
+    const sql = await getConnection();
+    await sql`DELETE FROM audit_events WHERE event_type = 'resume.missing_session'`;
+    await sql`DELETE FROM agents WHERE id LIKE 'w1-hotfix-%'`;
+  });
+
+  async function countMissingSessionEvents(agentId: string): Promise<number> {
+    const sql = await getConnection();
+    const rows = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count
+      FROM audit_events
+      WHERE entity_type = 'agent'
+        AND entity_id = ${agentId}
+        AND event_type = 'resume.missing_session'
+    `;
+    return rows[0].count;
+  }
+
+  test('attemptAgentResume on orphan with no session emits exactly one resume.missing_session per call', async () => {
+    const agent = await findOrCreateAgent('w1-hotfix-orphan-1', 'w1-hotfix-team', 'engineer');
+
+    const orphan = makeWorker({
+      id: agent.id,
+      currentSessionId: null,
+      resumeAttempts: 0,
+      maxResumeAttempts: 3,
+      autoResume: true,
+    });
+
+    const { deps } = createMockDeps({
+      getConnection: async () => await getConnection(),
+    });
+
+    expect(await countMissingSessionEvents(agent.id)).toBe(0);
+    await attemptAgentResume(deps, defaultConfig, orphan);
+    expect(await countMissingSessionEvents(agent.id)).toBe(1);
+  });
+
+  test('three sequential ticks produce three events (bounded by tick cadence, not unbounded)', async () => {
+    const agent = await findOrCreateAgent('w1-hotfix-orphan-3', 'w1-hotfix-team', 'engineer');
+    const { deps } = createMockDeps({
+      getConnection: async () => await getConnection(),
+    });
+
+    // Three scheduler ticks back-to-back. In production these are 60s apart
+    // by daemon cadence; the test compresses time. Each tick increments the
+    // counter and emits one event until exhaustion at attempt=3.
+    for (let attempts = 0; attempts < 3; attempts++) {
+      const orphan = makeWorker({
+        id: agent.id,
+        currentSessionId: null,
+        resumeAttempts: attempts,
+        maxResumeAttempts: 3,
+        autoResume: true,
+      });
+      await attemptAgentResume(deps, defaultConfig, orphan);
+    }
+
+    // Three ticks → three events. NOT 368 like the read-path storm da66
+    // measured pre-hotfix (PR #1528).
+    expect(await countMissingSessionEvents(agent.id)).toBe(3);
+  });
+});

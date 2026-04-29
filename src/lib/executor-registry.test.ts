@@ -11,6 +11,7 @@ import { completeAssignment, createAssignment, getActiveAssignment } from './ass
 import { getConnection } from './db.js';
 import {
   type CreateExecutorOpts,
+  _resetMissingSessionDedupeForTests,
   _resumeJsonlScannerDeps,
   createAndLinkExecutor,
   createExecutor,
@@ -354,19 +355,22 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
       expect(event!.details.sessionId).toBe('sess-happy');
     });
 
-    test('no current executor: returns null and emits resume.missing_session (no_executor)', async () => {
+    test('no current executor: returns null SILENTLY (no audit event from read path — W1 hotfix)', async () => {
       const agentId = await seedAgent();
       // No executor assigned → current_executor_id is null
 
       const sessionId = await getResumeSessionId(agentId);
       expect(sessionId).toBeNull();
 
+      // W1 hotfix: read path no longer emits resume.missing_session. The
+      // scheduler's attemptAgentResume owns emission so it's bounded to ≤1
+      // per orphan per scheduler tick. See PR #1530 (this hotfix) for why
+      // PR #1528's in-process dedupe was insufficient.
       const event = await latestAuditForAgent(agentId, 'resume.missing_session');
-      expect(event).not.toBeNull();
-      expect(event!.details.reason).toBe('no_executor');
+      expect(event).toBeNull();
     });
 
-    test('executor without session: returns null and emits resume.missing_session (null_session)', async () => {
+    test('executor without session: returns null SILENTLY (no audit event from read path — W1 hotfix)', async () => {
       const agentId = await seedAgent();
       const exec = await createExecutor(agentId, 'claude', 'tmux'); // no claudeSessionId
       await setCurrentExecutor(agentId, exec.id);
@@ -375,9 +379,7 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
       expect(sessionId).toBeNull();
 
       const event = await latestAuditForAgent(agentId, 'resume.missing_session');
-      expect(event).not.toBeNull();
-      expect(event!.details.reason).toBe('null_session');
-      expect(event!.details.executorId).toBe(exec.id);
+      expect(event).toBeNull();
     });
 
     test('multiple prior executors: only the current executor counts', async () => {
@@ -403,13 +405,12 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
       expect(event!.details.sessionId).toBe('sess-current');
     });
 
-    test('returns null for unknown agent and emits resume.missing_session', async () => {
+    test('returns null for unknown agent SILENTLY (no audit event from read path — W1 hotfix)', async () => {
       const sessionId = await getResumeSessionId('00000000-0000-0000-0000-000000000000');
       expect(sessionId).toBeNull();
 
       const event = await latestAuditForAgent('00000000-0000-0000-0000-000000000000', 'resume.missing_session');
-      expect(event).not.toBeNull();
-      expect(event!.details.reason).toBe('no_executor');
+      expect(event).toBeNull();
     });
 
     test('picks up session written after executor creation via updateClaudeSessionId', async () => {
@@ -503,7 +504,7 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
         }
       });
 
-      test('no executor + no JSONL on disk: still emits resume.missing_session (no_executor)', async () => {
+      test('no executor + no JSONL on disk: returns null SILENTLY (W1 hotfix — no read-path emission)', async () => {
         const cwd = '/tmp/no-jsonl-fixture';
         _resumeJsonlScannerDeps.scanForSession = async () => null;
 
@@ -513,9 +514,10 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
           const sessionId = await getResumeSessionId(agentId);
           expect(sessionId).toBeNull();
 
+          // W1 hotfix: read path no longer emits resume.missing_session.
+          // Scheduler emits via attemptAgentResume (bounded to 1/tick).
           const event = await latestAuditForAgent(agentId, 'resume.missing_session');
-          expect(event).not.toBeNull();
-          expect(event!.details.reason).toBe('no_executor');
+          expect(event).toBeNull();
 
           const recovered = await latestAuditForAgent(agentId, 'resume.recovered_via_jsonl');
           expect(recovered).toBeNull();
@@ -524,7 +526,7 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
         }
       });
 
-      test('agent with no repo_path: skips JSONL scan entirely', async () => {
+      test('agent with no repo_path: skips JSONL scan entirely (W1 hotfix — still no read-path emission)', async () => {
         let scannerCalls = 0;
         _resumeJsonlScannerDeps.scanForSession = async () => {
           scannerCalls++;
@@ -540,19 +542,19 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
           expect(scannerCalls).toBe(0); // scanner never invoked when cwd is null
 
           const event = await latestAuditForAgent(agentId, 'resume.missing_session');
-          expect(event).not.toBeNull();
-          expect(event!.details.reason).toBe('no_executor');
+          expect(event).toBeNull();
         } finally {
           resetScanner();
         }
       });
 
-      test('agent with cwd but null custom_name: scanner refuses (identity unknown)', async () => {
+      test('agent with cwd but null custom_name: scanner refuses, returns null silently (W1 hotfix)', async () => {
         // Legacy rows / partially-seeded agents where custom_name is NULL.
         // Returning newest JSONL would attach this agent to whatever
         // happened to be most-recent in the project dir — cross-agent
         // context corruption. Strict refusal is the right behavior; the
-        // outer caller emits resume.missing_session.
+        // scheduler (not this read path) is responsible for surfacing the
+        // missing-session signal via audit emission.
         const cwd = '/tmp/null-customname-fixture';
         let scannerCalls = 0;
         _resumeJsonlScannerDeps.scanForSession = async () => {
@@ -570,7 +572,7 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
           expect(scannerCalls).toBe(0); // gate fired before reaching scanner
 
           const event = await latestAuditForAgent(agentId, 'resume.missing_session');
-          expect(event).not.toBeNull();
+          expect(event).toBeNull();
         } finally {
           resetScanner();
         }
@@ -1421,33 +1423,25 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
   });
 
   // ==========================================================================
-  // #1461 — `resume.missing_session` dedupe (60s window per agent+actor+reason)
+  // #1461 — `resume.missing_session` is NOT emitted from the read path
   //
-  // Pre-fix: every `getResumeSessionId()` call for an orphan agent emitted a
-  // fresh `resume.missing_session` audit row. Each TUI tick / `genie ls` /
-  // `genie agent show` for a missing-executor agent fired the event, producing
-  // 14M events / 7-day window on one observed machine.
+  // PR #1528 (Wave 1) attempted to dedupe at the source via an in-process
+  // Map keyed by (agentId, actor, reason) with a 60s window. dog-fooder-da66
+  // verdict 2026-04-29 verified this insufficient: each CLI invocation /
+  // TUI tick is a fresh process with no shared in-memory state, so a
+  // synthetic orphan still produced 368 cli + 66 genie events in 67s.
   //
-  // Fix: in-process dedupe map suppresses repeats within
-  // `MISSING_SESSION_DEDUPE_WINDOW_MS` (60s) keyed by
-  // `${agentId}:${actor}:${reason}`. Behavior is observability-only — the
-  // function still returns null and the operator still sees the row is broken.
+  // PR #1530 (this hotfix) takes the architecturally correct approach: the
+  // read path emits ZERO events. Emission moves to the scheduler's
+  // `attemptAgentResume`, where it's bounded to ≤1 emit per orphan per
+  // scheduler tick (default 60s) by the long-running daemon's tick cadence.
+  // The READ path is observability-of-state, the WRITE path is
+  // observability-of-action; emission belongs to the latter.
+  //
+  // Tests below verify this contract: any number of reads on an orphan
+  // agent must produce ZERO `resume.missing_session` events.
   // ==========================================================================
-  describe('#1461: resume.missing_session emission is deduped within a 60s window', () => {
-    let _resetMissingSessionDedupeForTests: () => void;
-    beforeAll(async () => {
-      const mod = (await import('./executor-registry.js')) as unknown as {
-        _resetMissingSessionDedupeForTests: () => void;
-      };
-      _resetMissingSessionDedupeForTests = mod._resetMissingSessionDedupeForTests;
-    });
-
-    beforeEach(() => {
-      // Each test starts with an empty dedupe cache so the assertion uses a
-      // single emission counter, not whatever drift the previous test left.
-      _resetMissingSessionDedupeForTests();
-    });
-
+  describe('#1461: resume.missing_session is not emitted from getResumeSessionId (W1 hotfix)', () => {
     async function countMissingSessionEvents(agentId: string): Promise<number> {
       const sql = await getConnection();
       const rows = await sql<{ count: number }[]>`
@@ -1460,61 +1454,55 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
       return rows[0].count;
     }
 
-    test('first call emits, subsequent calls within window do not', async () => {
+    test('many back-to-back reads on an orphan agent produce ZERO events', async () => {
       const agentId = await seedAgent();
 
-      // Five back-to-back reads (mimics TUI tick + status reads + scheduler).
-      for (let i = 0; i < 5; i++) {
+      // 50 reads — mimicking sustained TUI ticks + status reads on an orphan.
+      // Pre-W1: 50 events. Post-W1 (PR #1528 in-process dedupe): 1 event per
+      // process. Post-hotfix (this PR): 0 events (read path is silent).
+      for (let i = 0; i < 50; i++) {
         expect(await getResumeSessionId(agentId)).toBeNull();
       }
 
-      // Only the first emission landed.
-      expect(await countMissingSessionEvents(agentId)).toBe(1);
+      expect(await countMissingSessionEvents(agentId)).toBe(0);
     });
 
-    test('different agents do not dedupe against each other', async () => {
-      const agentA = await seedAgent('eng-a');
-      const agentB = await seedAgent('eng-b');
+    test('reads on no-session executor produce ZERO events', async () => {
+      const agentId = await seedAgent('null-sess');
+      const exec = await createExecutor(agentId, 'claude', 'tmux'); // no claudeSessionId
+      await setCurrentExecutor(agentId, exec.id);
 
-      await getResumeSessionId(agentA);
-      await getResumeSessionId(agentB);
-      await getResumeSessionId(agentA); // Within window — no second emission.
-      await getResumeSessionId(agentB); // Within window — no second emission.
+      for (let i = 0; i < 20; i++) {
+        expect(await getResumeSessionId(agentId)).toBeNull();
+      }
 
-      expect(await countMissingSessionEvents(agentA)).toBe(1);
-      expect(await countMissingSessionEvents(agentB)).toBe(1);
+      expect(await countMissingSessionEvents(agentId)).toBe(0);
     });
 
-    test('different reasons (no_executor vs null_session) dedupe independently', async () => {
-      // `null_session` reason: executor exists but has no claude_session_id.
-      const agentNullSess = await seedAgent('null-sess');
-      const exec = await createExecutor(agentNullSess, 'claude', 'tmux');
-      await setCurrentExecutor(agentNullSess, exec.id);
+    test('happy path (resume.found) is still emitted — only the missing_session emission was removed', async () => {
+      const agentId = await seedAgent('happy');
+      const exec = await createExecutor(agentId, 'claude', 'tmux', { claudeSessionId: 'sess-happy-1' });
+      await setCurrentExecutor(agentId, exec.id);
 
-      // `no_executor` reason: no executor at all.
-      const agentNoExec = await seedAgent('no-exec');
+      expect(await getResumeSessionId(agentId)).toBe('sess-happy-1');
 
-      await getResumeSessionId(agentNullSess);
-      await getResumeSessionId(agentNullSess); // dedupe
-      await getResumeSessionId(agentNoExec);
-      await getResumeSessionId(agentNoExec); // dedupe
-
-      expect(await countMissingSessionEvents(agentNullSess)).toBe(1);
-      expect(await countMissingSessionEvents(agentNoExec)).toBe(1);
+      // Confirm we didn't accidentally silence the success-path audit too.
+      const sql = await getConnection();
+      const found = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count
+        FROM audit_events
+        WHERE entity_type = 'agent' AND entity_id = ${agentId} AND event_type = 'resume.found'
+      `;
+      expect(found[0].count).toBeGreaterThanOrEqual(1);
     });
 
-    test('reset (simulating window expiry) re-enables emission', async () => {
-      const agentId = await seedAgent();
-
-      await getResumeSessionId(agentId);
-      await getResumeSessionId(agentId); // deduped
-
-      // Simulate the 60s window passing — clear the cache.
+    test('reset helper is a no-op (kept for back-compat with PR #1528 tests)', () => {
+      // The dedupe map was removed entirely in this hotfix. The reset helper
+      // is kept as an exported no-op so any external/in-flight tests that
+      // imported it don't break their import resolution.
+      // biome-ignore lint/suspicious/noConsoleLog: explicit no-op verification
       _resetMissingSessionDedupeForTests();
-
-      await getResumeSessionId(agentId); // new window — emits
-
-      expect(await countMissingSessionEvents(agentId)).toBe(2);
+      expect(true).toBe(true);
     });
   });
 });
