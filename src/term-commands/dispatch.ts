@@ -217,6 +217,7 @@ export function parseWishGroups(content: string): GroupDefinition[] {
             d
               .trim()
               .replace(/^groups?\s*/i, '')
+              .replace(/^[a-z0-9-]+#/, '')
               .trim(),
           )
           .filter(Boolean);

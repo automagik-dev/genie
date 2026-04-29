@@ -592,6 +592,33 @@ describe('parseWishGroups()', () => {
     expect(groups[0].dependsOn).toEqual([]);
   });
 
+  it('should strip slug# prefix from depends-on (canonical form)', () => {
+    const content = '### Group 1: First\n**depends-on:** none\n\n### Group 2: Second\n**depends-on:** my-wish#1';
+    const groups = parseWishGroups(content);
+    expect(groups[1].dependsOn).toEqual(['1']);
+  });
+
+  it('should handle mixed bare and slug-prefixed dependencies', () => {
+    const content =
+      '### Group 1: First\n**depends-on:** none\n\n### Group 2: Second\n**depends-on:** none\n\n### Group 3: Third\n**depends-on:** 1, my-wish#2';
+    const groups = parseWishGroups(content);
+    expect(groups[2].dependsOn).toEqual(['1', '2']);
+  });
+
+  it('should strip slug# prefix when slug contains hyphens', () => {
+    const content =
+      '### Group 1: First\n**depends-on:** none\n\n### Group 2: Second\n**depends-on:** none\n\n### Group 3: Third\n**depends-on:** slug-with-hyphens#3';
+    const groups = parseWishGroups(content);
+    expect(groups[2].dependsOn).toEqual(['3']);
+  });
+
+  it('should handle three-way mix of bare, slug, and hyphenated-slug deps', () => {
+    const content =
+      '### Group 1: A\n**depends-on:** none\n\n### Group 2: B\n**depends-on:** none\n\n### Group 3: C\n**depends-on:** none\n\n### Group 4: D\n**depends-on:** 1, my-wish#2, release-system-genie-pattern#3';
+    const groups = parseWishGroups(content);
+    expect(groups[3].dependsOn).toEqual(['1', '2', '3']);
+  });
+
   it('should capture group title from heading', () => {
     const content = '### Group 1: Parser layer\n**depends-on:** none';
     const groups = parseWishGroups(content);
