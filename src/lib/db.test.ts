@@ -437,7 +437,12 @@ describe('pool error recovery', () => {
     // Find the post-connect setup call in getConnection()
     const catchIdx = source.indexOf('await runPostConnectSetup(');
     expect(catchIdx).toBeGreaterThan(-1);
-    const catchBlock = source.slice(catchIdx, catchIdx + 300);
+    // Widened from 300 chars — the success path between runPostConnectSetup
+    // and the catch block now also flips the activePort to the socket sentinel
+    // when in socket mode (see SOCKET_PORT_SENTINEL handling). The intent of
+    // the test is "both nulls live inside the failure-recovery block", not
+    // "within a fixed byte budget".
+    const catchBlock = source.slice(catchIdx, catchIdx + 1000);
     // Both must be null'd to force full reconnect
     expect(catchBlock).toContain('sqlClient = null');
     expect(catchBlock).toContain('activePort = null');
