@@ -218,16 +218,6 @@ jobs:
         with:
           bun-version: "1.3.11"
 
-      # CI now actively clones the v2 branch as a sibling (see unit-tests).
-      # The probe step is kept so the smoke job stays self-contained — if the
-      # sibling somehow isn't present (manual rerun without re-cloning, branch
-      # rename, etc.), the smoke job still skips cleanly instead of erroring.
-      - name: Checkout pgserve v2 sibling
-        run: |
-          if [ ! -d "../pgserve" ]; then
-            git clone --depth 1 --branch wish/pgserve-v2 https://github.com/namastexlabs/pgserve.git ../pgserve
-          fi
-
       - name: Resolve pgserve v2 (skip if unavailable)
         id: pgserve_check
         run: |

@@ -174,6 +174,9 @@ let daemonStartPromise: Promise<void> | null = null;
  *
  * If the pgserve binary cannot be resolved, throws a clear install-guidance
  * error rather than auto-installing — that's the user's call.
+ *
+ * @public — wired up by the scheduler-daemon and `genie serve` boot path in
+ * downstream commits; exported here so those call-sites land cleanly.
  */
 export async function getOrStartDaemon(): Promise<DaemonState> {
   if (process.env.GENIE_PG_DISABLE_AUTOSTART === '1') {
@@ -446,6 +449,11 @@ let retentionRan = false;
  * daemon's own startup-then-timer path.
  */
 export async function runRetention(sql: postgres.Sql): Promise<void> {
+  // Intra-process double-fire guard the surrounding doc-block describes: the
+  // scheduler-daemon timer can fire while runPostConnectSetup() is still on
+  // the path that used to call this inline. Without this short-circuit the
+  // DELETE pass runs twice on the cold-start frame.
+  if (retentionRan) return;
   try {
     await sql.unsafe(`
       DELETE FROM heartbeats WHERE created_at < now() - interval '7 days';
