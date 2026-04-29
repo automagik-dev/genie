@@ -172,6 +172,40 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(updated!.priority).toBe('high');
     });
 
+    // #1473 — priority subcommand wires through updateTask + optional comment.
+    // CLI surface: `genie task priority <id> <level> [--comment <msg>]`.
+    // This test exercises the exact path the CLI handler takes.
+    it('should set priority on existing task with optional comment (#1473)', async () => {
+      const task = await createTask({ title: 'Priority change target', priority: 'normal' }, REPO);
+      expect(task.priority).toBe('normal');
+
+      // Mirror the CLI handler: updateTask with priority + comment {actor, body}.
+      const commentBody = 'elevating per quarterly recalibration';
+      const updated = await updateTask(task.id, { priority: 'urgent' }, REPO, { actor, body: commentBody });
+      expect(updated).not.toBeNull();
+      expect(updated!.priority).toBe('urgent');
+
+      // Verify the audit comment landed in the task's conversation.
+      const conv = await findOrCreateConversation({
+        linkedEntity: 'task',
+        linkedEntityId: task.id,
+        name: `Task ${task.id}`,
+        createdBy: actor,
+        members: [actor],
+      });
+      const messages = await getMessages(conv.id);
+      const lastMsg = messages[messages.length - 1];
+      expect(lastMsg?.body).toBe(commentBody);
+    });
+
+    it('should accept all four priority levels via updateTask (#1473)', async () => {
+      const task = await createTask({ title: 'Priority cycle' }, REPO);
+      for (const level of ['urgent', 'high', 'normal', 'low'] as const) {
+        const updated = await updateTask(task.id, { priority: level }, REPO);
+        expect(updated!.priority).toBe(level);
+      }
+    });
+
     it('should block and unblock task', async () => {
       const task = await createTask({ title: 'Blockable' }, REPO);
       const blocked = await blockTask(task.id, 'waiting on API', actor, undefined, REPO);
