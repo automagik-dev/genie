@@ -459,6 +459,29 @@ export async function detectGlobalInstalls(): Promise<Set<'npm' | 'bun'>> {
 }
 
 async function updateSource(): Promise<void> {
+  // Pre-flight: GENIE_SRC must exist as a git checkout. Without this guard,
+  // node:child_process.spawn() bubbles up `ENOENT: posix_spawn 'git'` from
+  // the missing-cwd, which is misleading — operators read it as "git not
+  // installed" and waste time on the wrong fix. Fail loudly with the actual
+  // root cause and the path that's missing.
+  if (!existsSync(GENIE_SRC)) {
+    error(`Source install path not found: ${GENIE_SRC}`);
+    console.error('  Detection picked the source-install path, but the directory does not exist.');
+    console.error('  This usually means a stale install hint (config or ~/.genie/src/.git) is');
+    console.error('  pointing somewhere genuine. Either:');
+    console.error(`    1. Re-clone the source: git clone https://github.com/automagik-dev/genie ${GENIE_SRC}`);
+    console.error('    2. Update via package manager instead: genie update --next --via bun');
+    console.error('    3. Inspect detection: genie doctor --update-detection');
+    process.exit(1);
+  }
+  if (!existsSync(join(GENIE_SRC, '.git'))) {
+    error(`Source install path is not a git checkout: ${GENIE_SRC}`);
+    console.error(`  ${GENIE_SRC} exists but has no .git/. Cannot run \`git fetch\` from it.`);
+    console.error(`  Either delete ${GENIE_SRC} and re-clone, or update via package manager:`);
+    console.error('    genie update --next --via bun');
+    process.exit(1);
+  }
+
   // Get current version info before update
   const beforeInfo = await getGitInfo(GENIE_SRC);
   if (beforeInfo) {
