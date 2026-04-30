@@ -33,12 +33,41 @@ import { type Server, type Socket, createServer, connect as netConnect } from 'n
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { dispatch } from '../hooks/index.js';
+import { type LoadStatus, loadExternalHooks } from '../hooks/loader.js';
 
 export interface HookSocketHandle {
   /** Absolute path to the UDS file. */
   path: string;
   /** Stop the server and unlink the socket file. Idempotent. */
   stop: () => Promise<void>;
+  /** Per-file outcome from the boot-time loader scan. Empty when no external hooks are present. */
+  loaderOutcomes: ReadonlyArray<LoadStatus>;
+}
+
+/**
+ * Options accepted by `startHookSocket()`. The defaults preserve the pre-loader
+ * behavior — no external hooks discovered, no strict mode — so existing callers
+ * that don't pass options keep working unchanged.
+ */
+export interface StartHookSocketOptions {
+  /**
+   * Run the boot-scan loader against the three S3 tiers before listening.
+   * Defaults to `true` so daemons pick up trusted external hooks at startup.
+   * Set `false` in tests / one-shot scripts that don't want side-effects from
+   * the host's `~/.genie/hooks/` or `~/.claude/teams/<team>/hooks/` directories.
+   */
+  loadExternal?: boolean;
+  /**
+   * Repository root for the per-repo tier scan (`<repoRoot>/.genie/hooks/*.ts`).
+   * When omitted, the per-repo tier is skipped — team and global tiers still
+   * scanned. Pass the cwd of the running daemon.
+   */
+  repoRoot?: string;
+  /**
+   * Refuse to start when the loader finds two external hooks with the same
+   * `name` (any tier). Wired up to the `genie serve --strict-hooks` CLI flag.
+   */
+  strict?: boolean;
 }
 
 /** 1 MB cap on a single hook payload. CC payloads are normally a few KB. */
@@ -193,13 +222,31 @@ async function handleConnection(socket: Socket): Promise<void> {
  * Start the hook socket listener. Returns a handle with the path and a stop fn.
  * Throws if a live listener is already on the path (refusing to race).
  */
-export async function startHookSocket(): Promise<HookSocketHandle> {
+export async function startHookSocket(options: StartHookSocketOptions = {}): Promise<HookSocketHandle> {
   // Group 4 of hookify-perf-foundation: turn on the wide-emit flag for the
   // hook subsystem by default in daemon mode so per-handler timing spans land
   // in `genie_runtime_events` and feed the `hook_perf_baseline` view. If the
   // operator has set GENIE_WIDE_EMIT explicitly we honor their value.
   if (process.env.GENIE_WIDE_EMIT === undefined) {
     process.env.GENIE_WIDE_EMIT = '1';
+  }
+
+  // Group 1 of hookify-third-party-absorption (D5): boot-scan the three S3
+  // tiers BEFORE the server listens so the registry is single-writer at boot.
+  // Loader outcomes are surfaced through the returned handle for `genie doctor
+  // --hooks` (Group 2) and the daemon stdout summary below.
+  //
+  // The loader is fail-soft on external hooks: untrusted / broken / shadowed
+  // files are recorded in outcomes but the daemon ALWAYS starts. The only
+  // failure mode that aborts boot is `strict: true` + a same-name collision,
+  // wired up to `genie serve --strict-hooks`.
+  let loaderOutcomes: LoadStatus[] = [];
+  if (options.loadExternal !== false) {
+    loaderOutcomes = await loadExternalHooks({
+      repoRoot: options.repoRoot,
+      strict: options.strict,
+    });
+    summarizeLoaderOutcomes(loaderOutcomes);
   }
 
   const socketPath = defaultHookSocketPath();
@@ -264,5 +311,29 @@ export async function startHookSocket(): Promise<HookSocketHandle> {
     }
   };
 
-  return { path: socketPath, stop };
+  return { path: socketPath, stop, loaderOutcomes };
+}
+
+/**
+ * Print a one-line summary of loader outcomes to stdout so `genie serve` logs
+ * make it obvious whether external hooks are participating. Detailed per-file
+ * status is available via `genie hook list` (Group 2 surface).
+ */
+function summarizeLoaderOutcomes(outcomes: ReadonlyArray<LoadStatus>): void {
+  if (outcomes.length === 0) return;
+  let loaded = 0;
+  let untrusted = 0;
+  let broken = 0;
+  let shadowed = 0;
+  for (const outcome of outcomes) {
+    if (outcome.kind === 'loaded') loaded += 1;
+    else if (outcome.kind === 'untrusted') untrusted += 1;
+    else if (outcome.kind === 'broken') broken += 1;
+    else shadowed += 1;
+  }
+  const parts: string[] = [`hook-loader: ${loaded} loaded`];
+  if (untrusted > 0) parts.push(`${untrusted} untrusted`);
+  if (broken > 0) parts.push(`${broken} broken (quarantined)`);
+  if (shadowed > 0) parts.push(`${shadowed} shadowed`);
+  console.log(parts.join(', '));
 }
