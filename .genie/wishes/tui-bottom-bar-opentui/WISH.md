@@ -27,11 +27,11 @@ Replace the ASCII string bars in `src/tui/components/SystemStats.tsx` with prope
 
 **Wave 1 — Data layer (parallelizable)**
 
-Group 1.1 — `lib/tui-stats/hw.ts`
+Group 1 — `lib/tui-stats/hw.ts`
 - Wraps `systeminformation`. Exposes `getHwStats()` returning `{cpu, ram, swap, load, diskFree, diskIoMs}`.
 - Disk I/O latency derived from delta of `si.disksIO().rWaitTime/wWaitTime` across two consecutive ticks (3s apart). First tick returns `null`.
 
-Group 1.2 — `lib/tui-stats/pg.ts`
+Group 2 — `lib/tui-stats/pg.ts`
 - New `getServeStats()` per the SQL contract table in DESIGN §2 PgServe panel:
   - Active conn: `SELECT count(*) FROM pg_stat_activity WHERE state = 'active' AND backend_type = 'client backend'`
   - Pool max: `config.json::pgServeMaxConnections` if set; else `SHOW max_connections`
@@ -40,12 +40,12 @@ Group 1.2 — `lib/tui-stats/pg.ts`
   - Health: existing `lib/db.ts::isAvailable()`
 - Extension probe: `SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements'` cached for the TUI session.
 
-Group 1.3 — `lib/tui-stats/ops.ts`
+Group 3 — `lib/tui-stats/ops.ts`
 - Workers aggregate: `agent-registry.listAgents()` filtered + counted by state (`working`/`idle`/`error`).
 - Mailbox queue depth: PG mailbox table count.
 - Last event: most recent `genie_runtime_events` row → `{kind, ageSeconds}`.
 
-Group 1.4 — `lib/tui-stats/cost.ts`
+Group 4 — `lib/tui-stats/cost.ts`
 - ccusage adapter: shells out to `ccusage --json --window 60` (or equivalent), parses cents/min.
 - 60-sample circular ring buffer (~2KB) for 5-min rolling mean + σ.
 - `step()` alarm state machine per DESIGN "Hysteresis spec":
@@ -54,22 +54,22 @@ Group 1.4 — `lib/tui-stats/cost.ts`
 - Returns `{cents, alarmState, sparklineData[60]}`.
 - Degraded mode: ccusage missing → returns `{cents: null, alarmState: 'normal', sparklineData: []}` — components render dim placeholder.
 
-Group 1.5 — `lib/tui-stats/index.ts`
+Group 5 — `lib/tui-stats/index.ts`
 - Composes all four sources. Exposes a single `useStats(intervalMs)` React hook that polls every 3s and returns `{hw, pg, ops, cost}`.
 
 **Wave 2 — Components (parallelizable, depends on Wave 1)**
 
-Group 2.1 — `src/tui/components/BottomBar/Sparkline.tsx`
+Group 6 — `src/tui/components/BottomBar/Sparkline.tsx`
 - Reusable. `props: { data: number[]; width: number; color: string }`.
 - Renders via `FrameBuffer` using `▁▂▃▄▅▆▇█` block characters.
 - Reuses FrameBuffer instance across renders; only redraws when `data` changes.
 
-Group 2.2 — `src/tui/components/BottomBar/PulseRing.tsx`
+Group 7 — `src/tui/components/BottomBar/PulseRing.tsx`
 - Wraps `useTimeline` for opacity tween.
 - `props: { rate: 1 | 2; color: string; sampleHz: number; children: ReactNode }`.
 - `sampleHz` controls keyframe density; `rate` is the actual cycles/second (preserved at any sample rate).
 
-Group 2.3 — `src/tui/components/BottomBar/TokenBurnMeter.tsx` (the scene-stealer)
+Group 8 — `src/tui/components/BottomBar/TokenBurnMeter.tsx` (the scene-stealer)
 - Top-header layout: 4 lines (ascii-font cents/min + sub-line + sparkline).
 - Uses `<ascii-font font="tiny">` for the cents/min number; `Sparkline` below for 60s history.
 - Color routes through `PulseRing` — mint normal, crimson on alarm.
@@ -77,28 +77,28 @@ Group 2.3 — `src/tui/components/BottomBar/TokenBurnMeter.tsx` (the scene-steal
 - Static `$0.00/min · idle` (no pulse, no alarm) when `cents === 0`.
 - Static dim `—¢/min` (no pulse) when `cents === null` (ccusage missing).
 
-Group 2.4 — `src/tui/components/BottomBar/HwPanel.tsx`
+Group 9 — `src/tui/components/BottomBar/HwPanel.tsx`
 - Three lines: CPU/RAM/disk-free. New disk-IO-latency rendered as " io Xms" suffix on the disk line.
 - Uses recalibrated `pickColor` (>70 amber, >90 crimson) imported from `genie-tokens`.
 
-Group 2.5 — `src/tui/components/BottomBar/PgServePanel.tsx`
+Group 10 — `src/tui/components/BottomBar/PgServePanel.tsx`
 - Two lines: `●healthy 5/20 conn` and `q0 · p50 12ms`.
 - Health dot color: green/amber/crimson based on `isAvailable()` + p50 thresholds.
 - Degraded "PG offline" rendering when `isAvailable() === false`.
 
-Group 2.6 — `src/tui/components/BottomBar/GenieOpsPanel.tsx`
+Group 11 — `src/tui/components/BottomBar/GenieOpsPanel.tsx`
 - Two lines: worker aggregate + (queue + last event).
 - Worker glyphs: `●N working ○M idle ⊘K error`.
 - Last event format: `last: <kind> <age>s` where kind is event.kind and age is `now - event.timestamp` in seconds.
 
 **Wave 3 — Integration + verification (sequential)**
 
-Group 3.1 — `src/tui/components/SystemStats.tsx` rewrite
+Group 12 — `src/tui/components/SystemStats.tsx` rewrite
 - Becomes thin orchestrator: calls `useStats()`, renders the four panels in Layout A order (TokenBurnMeter → divider → GenieOpsPanel → divider → PgServePanel → divider → HwPanel).
 - Implements SSH heuristic + `GENIE_TUI_PULSE` parsing per DESIGN "SSH/throttle behavior".
 - Backward-compat: keeps the `SystemStats` exported component name; `Nav.tsx` import unchanged.
 
-Group 3.2 — Snapshot tests
+Group 13 — Snapshot tests
 - `test/visual/bottom-bar.snapshot.test.tsx` (or extends existing `design-system-severance` Group 6 harness).
 - Snapshots required:
   - idle / $0 burn
@@ -112,7 +112,7 @@ Group 3.2 — Snapshot tests
   - narrow-nav fallback (24 cols)
   - 4Hz SSH sample rate (pulse rate preserved)
 
-Group 3.3 — Documentation
+Group 14 — Documentation
 - Update `docs/design-system.md` (created by `design-system-severance` Group 7) to add a "Bottom bar" section describing the four panels, the SS-1 scene-stealer, and the SSH throttle environment variables.
 
 ### OUT
@@ -211,7 +211,7 @@ Group 3.3 — Documentation
 
 ## Execution Groups
 
-### Group 1.1: HW data source
+### Group 1: HW data source
 
 **Goal:** `lib/tui-stats/hw.ts` exposes `getHwStats()` with CPU/RAM/swap/load/diskFree/diskIoMs.
 
@@ -232,11 +232,11 @@ bun test src/lib/tui-stats/hw.test.ts
 bun -e "import { getHwStats } from './src/lib/tui-stats/hw.ts'; await getHwStats(); console.log(await getHwStats())"
 ```
 
-**depends-on:** Wave 0 (if triggered) or `design-system-severance` Group 1 (the `genie-tokens` package must exist).
+**depends-on:** design-system-severance/Group 1
 
 ---
 
-### Group 1.2: PgServe stats
+### Group 2: PgServe stats
 
 **Goal:** `lib/tui-stats/pg.ts` exposes `getServeStats()` per the SQL contract.
 
@@ -258,11 +258,11 @@ bun -e "import { getHwStats } from './src/lib/tui-stats/hw.ts'; await getHwStats
 bun test src/lib/tui-stats/pg.test.ts
 ```
 
-**depends-on:** Wave 0 / `design-system-severance` Group 1.
+**depends-on:** design-system-severance/Group 1
 
 ---
 
-### Group 1.3: Genie ops aggregate
+### Group 3: Genie ops aggregate
 
 **Goal:** `lib/tui-stats/ops.ts` exposes `getOpsStats()` returning workers + queue + last event.
 
@@ -282,11 +282,11 @@ bun test src/lib/tui-stats/pg.test.ts
 bun test src/lib/tui-stats/ops.test.ts
 ```
 
-**depends-on:** Wave 0 / `design-system-severance` Group 1.
+**depends-on:** design-system-severance/Group 1
 
 ---
 
-### Group 1.4: Cost adapter + hysteresis
+### Group 4: Cost adapter + hysteresis
 
 **Goal:** `lib/tui-stats/cost.ts` shells out to ccusage, maintains ring buffer, runs `step()` hysteresis state machine.
 
@@ -312,11 +312,11 @@ bun test src/lib/tui-stats/ops.test.ts
 bun test src/lib/tui-stats/cost.test.ts
 ```
 
-**depends-on:** Wave 0 / `design-system-severance` Group 1.
+**depends-on:** design-system-severance/Group 1
 
 ---
 
-### Group 1.5: Composition hook
+### Group 5: Composition hook
 
 **Goal:** `lib/tui-stats/index.ts` exposes `useStats(intervalMs: number)` that composes all four sources.
 
@@ -334,11 +334,11 @@ bun test src/lib/tui-stats/cost.test.ts
 bun test src/lib/tui-stats/index.test.ts
 ```
 
-**depends-on:** Groups 1.1, 1.2, 1.3, 1.4.
+**depends-on:** Group 1, Group 2, Group 3, Group 4.
 
 ---
 
-### Group 2.1: Sparkline component
+### Group 6: Sparkline component
 
 **Goal:** Reusable `BottomBar/Sparkline.tsx` rendering block-char sparklines via FrameBuffer.
 
@@ -357,11 +357,11 @@ bun test src/lib/tui-stats/index.test.ts
 bun test src/tui/components/BottomBar/__tests__/Sparkline.test.tsx
 ```
 
-**depends-on:** Wave 0 / `design-system-severance` Group 1.
+**depends-on:** design-system-severance/Group 1
 
 ---
 
-### Group 2.2: PulseRing component
+### Group 7: PulseRing component
 
 **Goal:** Reusable `BottomBar/PulseRing.tsx` wrapping `useTimeline` opacity tween.
 
@@ -379,11 +379,11 @@ bun test src/tui/components/BottomBar/__tests__/Sparkline.test.tsx
 bun test src/tui/components/BottomBar/__tests__/PulseRing.test.tsx
 ```
 
-**depends-on:** Wave 0 / `design-system-severance` Group 1.
+**depends-on:** design-system-severance/Group 1
 
 ---
 
-### Group 2.3: TokenBurnMeter (scene-stealer)
+### Group 8: TokenBurnMeter (scene-stealer)
 
 **Goal:** SS-1 top-header component with ascii-font + sparkline + width guard + degraded states.
 
@@ -404,11 +404,11 @@ bun test src/tui/components/BottomBar/__tests__/PulseRing.test.tsx
 bun test src/tui/components/BottomBar/__tests__/TokenBurnMeter.test.tsx
 ```
 
-**depends-on:** Groups 1.4, 1.5, 2.1, 2.2.
+**depends-on:** Group 4, Group 5, Group 6, Group 7.
 
 ---
 
-### Group 2.4: HwPanel
+### Group 9: HwPanel
 
 **Goal:** §1 system vitals with new disk-free + disk-IO-latency.
 
@@ -427,11 +427,11 @@ bun test src/tui/components/BottomBar/__tests__/TokenBurnMeter.test.tsx
 bun test src/tui/components/BottomBar/__tests__/HwPanel.test.tsx
 ```
 
-**depends-on:** Group 1.5.
+**depends-on:** Group 5.
 
 ---
 
-### Group 2.5: PgServePanel
+### Group 10: PgServePanel
 
 **Goal:** §2 with health pulse + conn/pool/queue/p50 + PG-offline degradation.
 
@@ -450,11 +450,11 @@ bun test src/tui/components/BottomBar/__tests__/HwPanel.test.tsx
 bun test src/tui/components/BottomBar/__tests__/PgServePanel.test.tsx
 ```
 
-**depends-on:** Group 1.5.
+**depends-on:** Group 5.
 
 ---
 
-### Group 2.6: GenieOpsPanel
+### Group 11: GenieOpsPanel
 
 **Goal:** §3 multi-track ops aggregate.
 
@@ -474,11 +474,11 @@ bun test src/tui/components/BottomBar/__tests__/PgServePanel.test.tsx
 bun test src/tui/components/BottomBar/__tests__/GenieOpsPanel.test.tsx
 ```
 
-**depends-on:** Group 1.5.
+**depends-on:** Group 5.
 
 ---
 
-### Group 3.1: SystemStats orchestrator rewrite
+### Group 12: SystemStats orchestrator rewrite
 
 **Goal:** Replace inline metrics rendering in `SystemStats.tsx` with the panel composition + SSH heuristic + env-var parsing.
 
@@ -500,11 +500,11 @@ bun test src/tui/components/BottomBar/__tests__/GenieOpsPanel.test.tsx
 bun test test/tui && bun run typecheck && bun run lint
 ```
 
-**depends-on:** Groups 2.1–2.6.
+**depends-on:** Group 6, Group 7, Group 8, Group 9, Group 10, Group 11.
 
 ---
 
-### Group 3.2: Snapshot test suite
+### Group 13: Snapshot test suite
 
 **Goal:** Ten named snapshot cases covering all behaviors.
 
@@ -522,11 +522,11 @@ bun test test/tui && bun run typecheck && bun run lint
 bun test test/visual/bottom-bar.snapshot.test.tsx
 ```
 
-**depends-on:** Group 3.1.
+**depends-on:** Group 12.
 
 ---
 
-### Group 3.3: Documentation
+### Group 14: Documentation
 
 **Goal:** Add "Bottom bar" section to `docs/design-system.md`.
 
@@ -549,13 +549,13 @@ markdownlint-cli2 docs/design-system.md
 grep -q "Bottom bar" docs/design-system.md
 ```
 
-**depends-on:** Groups 3.1, 3.2; depends on `design-system-severance` Group 7 having merged.
+**depends-on:** Group 12, Group 13, Group 7
 
 ---
 
 ## Dependencies
 
-- **depends-on:** `design-system-severance` Group 1 (HARD — `packages/genie-tokens/` must exist before any group in this wish runs). Wave 0 stub-token group exists as fallback if hard dep slips.
+- **depends-on:** design-system-severance/Group 1 Group 1 (HARD — `packages/genie-tokens/` must exist before any group in this wish runs). Wave 0 stub-token group exists as fallback if hard dep slips.
 - **soft-depends-on:** `session-cost-extraction` (PG cost source — ccusage adapter is the v1 path; v2 swap when extraction lands).
 - **adjacent:** `bare-genie-dashboard` (full-screen dashboard — non-overlapping; this wish's bar coexists with that wish's panels).
 - **blocks:** future wish `tui-bottom-bar-themes-v2` if/when theme variants land.
@@ -586,7 +586,7 @@ grep -q "Bottom bar" docs/design-system.md
 | Animation feels gimmicky if multiple components pulse | Medium | Snapshot test enforces single pulse element; reviewer rejects PRs adding more |
 | Hysteresis still flickers in pathological burn patterns | Low | Min-hold + frozen-baseline together cover known patterns; production telemetry can refine |
 | ccusage upstream format change | Low | Adapter pattern at `cost.ts` — single swap point |
-| Mailbox table schema differs from assumption | Low | Group 1.3 acceptance includes "verify current schema"; SQL adjusted at impl time |
+| Mailbox table schema differs from assumption | Low | Group 3 acceptance includes "verify current schema"; SQL adjusted at impl time |
 | Width guard's first-render dimension query unsupported by opentui | Medium | If unsupported, fall back to constant assumption (28 cols) + add a test to fail loudly when ascii-font width changes |
 
 ---
@@ -603,11 +603,11 @@ _Populated by `/review` after this wish is reviewed._
 packages/genie-tokens/                              [stub created in Wave 0 IF needed; otherwise pre-exists from design-system-severance]
 
 src/lib/tui-stats/                                  [NEW]
-├── hw.ts                                           [Group 1.1]
-├── pg.ts                                           [Group 1.2]
-├── ops.ts                                          [Group 1.3]
-├── cost.ts                                         [Group 1.4]
-├── index.ts                                        [Group 1.5]
+├── hw.ts                                           [Group 1]
+├── pg.ts                                           [Group 2]
+├── ops.ts                                          [Group 3]
+├── cost.ts                                         [Group 4]
+├── index.ts                                        [Group 5]
 └── __tests__/
     ├── hw.test.ts
     ├── pg.test.ts
@@ -616,12 +616,12 @@ src/lib/tui-stats/                                  [NEW]
     └── index.test.ts
 
 src/tui/components/BottomBar/                       [NEW]
-├── Sparkline.tsx                                   [Group 2.1]
-├── PulseRing.tsx                                   [Group 2.2]
-├── TokenBurnMeter.tsx                              [Group 2.3]
-├── HwPanel.tsx                                     [Group 2.4]
-├── PgServePanel.tsx                                [Group 2.5]
-├── GenieOpsPanel.tsx                               [Group 2.6]
+├── Sparkline.tsx                                   [Group 6]
+├── PulseRing.tsx                                   [Group 7]
+├── TokenBurnMeter.tsx                              [Group 8]
+├── HwPanel.tsx                                     [Group 9]
+├── PgServePanel.tsx                                [Group 10]
+├── GenieOpsPanel.tsx                               [Group 11]
 └── __tests__/
     ├── Sparkline.test.tsx
     ├── PulseRing.test.tsx
@@ -630,12 +630,12 @@ src/tui/components/BottomBar/                       [NEW]
     ├── PgServePanel.test.tsx
     └── GenieOpsPanel.test.tsx
 
-src/tui/components/SystemStats.tsx                  [REWRITE — Group 3.1, becomes thin orchestrator]
+src/tui/components/SystemStats.tsx                  [REWRITE — Group 12, becomes thin orchestrator]
 
-test/visual/bottom-bar.snapshot.test.tsx            [NEW — Group 3.2]
+test/visual/bottom-bar.snapshot.test.tsx            [NEW — Group 13]
 test/visual/__snapshots__/                          [NEW — 10 snapshot files]
 
-docs/design-system.md                               [MODIFY — Group 3.3, append "Bottom bar" section]
-CHANGELOG.md                                        [MODIFY — Group 3.3 entry]
-.github/workflows/lint.yml                          [MODIFY — Group 3.2 adds visual snapshot CI]
+docs/design-system.md                               [MODIFY — Group 14, append "Bottom bar" section]
+CHANGELOG.md                                        [MODIFY — Group 14 entry]
+.github/workflows/lint.yml                          [MODIFY — Group 13 adds visual snapshot CI]
 ```
