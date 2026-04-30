@@ -4,6 +4,7 @@
 import { type CliRendererConfig, createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { App } from './app.js';
+import { installOpenTui20Bridge } from './opentui-bridge.js';
 
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 const FALSY = new Set(['0', 'false', 'no', 'off']);
@@ -59,12 +60,16 @@ export async function renderNav(): Promise<void> {
   // macOS local ptys have repeatedly hit OpenTUI native hot loops. Keep the TUI
   // usable there, but default to a conservative renderer and allow env opt-ins.
   const renderer = await createCliRenderer(resolveTuiRendererConfig());
+  const disposeOpenTui20Bridge = installOpenTui20Bridge(renderer);
 
   createRoot(renderer).render(<App rightPane={rightPane} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />);
 
   // Keep process alive until renderer is destroyed (Ctrl+Q, SIGTERM, etc.)
   // Without this, bun exits immediately after render() returns.
   await new Promise<void>((resolve) => {
-    (renderer as unknown as { once: (event: string, fn: () => void) => void }).once('destroy', resolve);
+    (renderer as unknown as { once: (event: string, fn: () => void) => void }).once('destroy', () => {
+      disposeOpenTui20Bridge();
+      resolve();
+    });
   });
 }
