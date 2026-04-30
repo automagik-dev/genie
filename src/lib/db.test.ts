@@ -1134,13 +1134,16 @@ describe('cwd pin for stable pgserve identity (issue #1575)', () => {
     }
   });
 
-  test('_buildConnection sources strategy uses skipBoot for max + idle_timeout', () => {
+  test('_buildConnection sources strategy uses cliShortLived for max + idle_timeout', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    // Pool sizing is gated on skipBoot — short-lived CLI gets max:1 +
-    // idle_timeout:0 so the single fingerprinted connection persists
-    // across the cwd-restore in the finally block.
-    expect(source).toMatch(/max:\s*skipBoot\s*\?\s*1\s*:\s*50/);
-    expect(source).toMatch(/idle_timeout:\s*skipBoot\s*\?\s*0\s*:\s*1/);
+    // Pool sizing is gated on cliShortLived (NOT isTestMode — tests need
+    // concurrent connections; the pin/restore safety only matters when
+    // GENIE_SKIP_DB_BOOT=1 short-lived CLI subprocesses chdir back).
+    // Operational justification: v4.260430.20 saw script-mode CLI
+    // fingerprints accumulating 296+ pgserve backends each, saturating
+    // max_connections=1000. The gate caps that at 1 per subprocess.
+    expect(source).toMatch(/max:\s*cliShortLived\s*\?\s*1\s*:\s*50/);
+    expect(source).toMatch(/idle_timeout:\s*cliShortLived\s*\?\s*0\s*:\s*1/);
     // Forced SELECT 1 must run BEFORE runPostConnectSetup so pgserve
     // fingerprints under the pinned cwd.
     const selectIdx = source.indexOf('await sqlClient`SELECT 1`');

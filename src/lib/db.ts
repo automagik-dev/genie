@@ -1594,10 +1594,20 @@ async function _buildConnection(): Promise<any> {
   //   - Short-lived CLI (GENIE_SKIP_DB_BOOT=1): max:1 + idle_timeout:0 keep
   //     the single fingerprinted connection alive for the process lifetime,
   //     so we can chdir back immediately after the forced SELECT 1 below.
-  //   - Daemon / TUI: caller (genie serve) has already pinned cwd via
-  //     pinCwdToGeniePackageDir(); we keep max:50 so the connection pool
-  //     can scale, and we do NOT restore cwd after this routine.
-  const skipBoot = isTestMode || process.env.GENIE_SKIP_DB_BOOT === '1';
+  //   - Daemon / TUI / tests: caller (or test-setup) has already settled cwd
+  //     and we do NOT restore it after this routine, so max:50 is safe — every
+  //     pool connection fingerprints under the same stable cwd.
+  //
+  // NOTE: do NOT fold `isTestMode` into this gate. Tests run against a
+  // dedicated test pgserve (TCP or socket via test-setup) and frequently use
+  // concurrent transactions; max:1 deadlocks them. The test path skips the
+  // cwd restore (see `shouldRestoreCwd` below), so it never needs the
+  // single-conn safety. Operational evidence for keeping the gate (i.e. NOT
+  // dropping it entirely): on v4.260430.20, a small number of script-mode
+  // CLI fingerprints accumulated 296+ pgserve backends each, saturating
+  // max_connections=1000 — exactly the leak this gate caps at 1 per
+  // short-lived subprocess.
+  const cliShortLived = !daemonCwdPinned && !isTestMode && process.env.GENIE_SKIP_DB_BOOT === '1';
   const originalCwd = process.cwd();
   const pkgDir = resolveGeniePackageDir();
   const shouldRestoreCwd = !daemonCwdPinned && !isTestMode;
@@ -1628,8 +1638,8 @@ async function _buildConnection(): Promise<any> {
     // Pool sizing — see issue #1575 strategy block above. Short-lived CLI
     // gets a single persistent connection so the cwd pin can be released
     // immediately after fingerprinting.
-    max: skipBoot ? 1 : 50,
-    idle_timeout: skipBoot ? 0 : 1,
+    max: cliShortLived ? 1 : 50,
+    idle_timeout: cliShortLived ? 0 : 1,
     connect_timeout: resolvePgConnectTimeoutSeconds(useSocket),
     onnotice: () => {},
     connection: {

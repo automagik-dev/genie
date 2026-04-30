@@ -80,10 +80,15 @@ describe('7.1 Concurrent Operations', () => {
   test('connection pool config is sensible for concurrent operations', () => {
     const source = readFileSync(join(__dirname, '..', 'db.ts'), 'utf-8');
 
-    // max: 50 connections (serial CI; parallel test:parallel is a local-only tool)
-    expect(source).toContain('max: 50');
-    // Aggressive idle timeout (1s) to recycle unused connections
-    expect(source).toContain('idle_timeout: 1');
+    // max: 50 default for daemon/TUI/tests; short-lived CLI (GENIE_SKIP_DB_BOOT=1)
+    // drops to max:1 so the single fingerprinted connection survives the
+    // cwd restore (issue #1575). Operational justification (v4.260430.20):
+    // script-mode CLI fingerprints accumulated 296+ backends each,
+    // saturating pgserve max_connections=1000. Gate caps it at 1 per CLI.
+    expect(source).toContain('max: cliShortLived ? 1 : 50');
+    // Aggressive idle timeout (1s) for non-CLI; idle_timeout:0 keeps the single
+    // CLI connection alive for the process lifetime.
+    expect(source).toContain('idle_timeout: cliShortLived ? 0 : 1');
     // Socket mode gets the pgserve startup window; legacy TCP keeps the fast fallback.
     expect(source).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(useSocket)');
     expect(source).toContain('if (!useSocket) return 5');
