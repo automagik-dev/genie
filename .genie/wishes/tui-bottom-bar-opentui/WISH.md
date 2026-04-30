@@ -167,40 +167,34 @@ Group 14 — Documentation
 
 ## Execution Strategy
 
-### Wave 0 (conditional — only if hard dep slipped)
-
-| Group | Agent | Description |
-|-------|-------|-------------|
-| 0 | engineer | Ship `genie-tokens` stub (50 LOC, only the tokens this wish uses); deletes when full Severance wish merges |
-
 ### Wave 1 (parallel) — data layer
 
 | Group | Agent | Description |
 |-------|-------|-------------|
-| 1.1 | engineer | `lib/tui-stats/hw.ts` — systeminformation wrap + disk-IO-latency delta |
-| 1.2 | engineer | `lib/tui-stats/pg.ts` — `getServeStats()` per SQL contract + extension probe |
-| 1.3 | engineer | `lib/tui-stats/ops.ts` — workers aggregate + mailbox + last event |
-| 1.4 | engineer | `lib/tui-stats/cost.ts` — ccusage adapter + ring buffer + `step()` hysteresis |
-| 1.5 | engineer | `lib/tui-stats/index.ts` — `useStats(intervalMs)` composing hook |
+| 1 | engineer | `lib/tui-stats/hw.ts` — systeminformation wrap + disk-IO-latency delta |
+| 2 | engineer | `lib/tui-stats/pg.ts` — `getServeStats()` per SQL contract + extension probe |
+| 3 | engineer | `lib/tui-stats/ops.ts` — workers aggregate + mailbox + last event |
+| 4 | engineer | `lib/tui-stats/cost.ts` — ccusage adapter + ring buffer + `step()` hysteresis |
+| 5 | engineer | `lib/tui-stats/index.ts` — `useStats(intervalMs)` composing hook |
 
 ### Wave 2 (parallel, after Wave 1) — components
 
 | Group | Agent | Description |
 |-------|-------|-------------|
-| 2.1 | engineer | `BottomBar/Sparkline.tsx` — reusable FrameBuffer block-char sparkline |
-| 2.2 | engineer | `BottomBar/PulseRing.tsx` — useTimeline opacity wrapper, sampleHz vs rate split |
-| 2.3 | engineer | `BottomBar/TokenBurnMeter.tsx` — SS-1 scene-stealer + width guard + degraded states |
-| 2.4 | engineer | `BottomBar/HwPanel.tsx` — §1 with disk + IO latency |
-| 2.5 | engineer | `BottomBar/PgServePanel.tsx` — §2 with PG-offline degradation |
-| 2.6 | engineer | `BottomBar/GenieOpsPanel.tsx` — §3 multi-track aggregate |
+| 6 | engineer | `BottomBar/Sparkline.tsx` — reusable FrameBuffer block-char sparkline |
+| 7 | engineer | `BottomBar/PulseRing.tsx` — useTimeline opacity wrapper, sampleHz vs rate split |
+| 8 | engineer | `BottomBar/TokenBurnMeter.tsx` — SS-1 scene-stealer + width guard + degraded states |
+| 9 | engineer | `BottomBar/HwPanel.tsx` — §1 with disk + IO latency |
+| 10 | engineer | `BottomBar/PgServePanel.tsx` — §2 with PG-offline degradation |
+| 11 | engineer | `BottomBar/GenieOpsPanel.tsx` — §3 multi-track aggregate |
 
 ### Wave 3 (sequential, after Wave 2) — integration + verification
 
 | Group | Agent | Description |
 |-------|-------|-------------|
-| 3.1 | engineer | `SystemStats.tsx` rewrite — orchestrator + SSH heuristic + GENIE_TUI_PULSE parsing |
-| 3.2 | engineer | Snapshot tests — 10 named cases per success criteria |
-| 3.3 | engineer | Docs — `docs/design-system.md` "Bottom bar" section |
+| 12 | engineer | `SystemStats.tsx` rewrite — orchestrator + SSH heuristic + GENIE_TUI_PULSE parsing |
+| 13 | engineer | Snapshot tests — 10 named cases per success criteria |
+| 14 | engineer | Docs — `docs/design-system.md` "Bottom bar" section |
 | review | reviewer | Full execution review of all groups against success criteria |
 
 ### Wave 4 (after review SHIP)
