@@ -1002,3 +1002,127 @@ describe('agents.ts createTmuxPane refuse-no-target regression guard', () => {
     expect(source).toContain('trace-genie-spawn-wrong-window');
   });
 });
+
+/**
+ * P0 regression guard — #1589 phantom dispatch.
+ *
+ * Three architectural gaps allowed `genie work` to advance PG state without
+ * actually spawning a worker in the wish worktree:
+ *
+ *   1. dispatch.ts forwarded `team` but not `cwd`, and agents.ts:2393
+ *      silently overrode `agent.repoPath` with the team's worktree.
+ *   2. `awaitAgentReadiness` warned-and-proceeded on timeout, masking
+ *      silent spawn failures.
+ *   3. `wish status` displayed any team-mate sharing a role name as if
+ *      they were the wish's worker.
+ *
+ * Each guard below source-greps the fix into place so a future refactor
+ * cannot silently regress.
+ */
+describe('#1589 phantom-dispatch regression guards', () => {
+  let dispatchSrc: string;
+  let agentsSrc: string;
+  let stateSrc: string;
+  let taskStatusSrc: string;
+
+  beforeAll(async () => {
+    const { readFileSync } = await import('node:fs');
+    dispatchSrc = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+    agentsSrc = readFileSync(join(__dirname, 'agents.ts'), 'utf-8');
+    stateSrc = readFileSync(join(__dirname, 'state.ts'), 'utf-8');
+    taskStatusSrc = readFileSync(join(__dirname, 'task', 'status.ts'), 'utf-8');
+  });
+
+  describe('Group 1 — spawn cwd correction', () => {
+    it('all 4 dispatch.ts handleWorkerSpawn callsites forward cwd: process.cwd()', () => {
+      // Walk every `handleWorkerSpawn(agentName, { ... });` block in dispatch.ts
+      // and assert it contains `cwd: process.cwd()`. Without this, agents.ts
+      // overrides repoPath with the team worktree silently (#1589).
+      const callPattern = /await handleWorkerSpawn\([^)]+,\s*\{/g;
+      const callsites: { idx: number; block: string }[] = [];
+      let m: RegExpExecArray | null = callPattern.exec(dispatchSrc);
+      while (m !== null) {
+        const idx = m.index;
+        const closeIdx = dispatchSrc.indexOf('});', idx);
+        callsites.push({ idx, block: dispatchSrc.slice(idx, closeIdx) });
+        m = callPattern.exec(dispatchSrc);
+      }
+      expect(callsites.length).toBe(4); // brainstorm, wish, work, review
+      for (const { block } of callsites) {
+        expect(block).toContain('cwd: process.cwd()');
+      }
+    });
+
+    it('agents.ts team-worktree override is gated on !options.cwd', () => {
+      // The override at agents.ts:~2393 used to fire whenever
+      // teamConfig.worktreePath was set and agent.entry.dir was null. Now it
+      // must also check !options.cwd so explicit cwd from dispatch is honored.
+      const anchor = agentsSrc.indexOf('teamConfig?.worktreePath && !agent.entry?.dir');
+      expect(anchor).toBeGreaterThan(-1);
+      const lineEnd = agentsSrc.indexOf('\n', anchor);
+      const line = agentsSrc.slice(anchor, lineEnd);
+      expect(line).toContain('!options.cwd');
+    });
+  });
+
+  describe('Group 2 — observability', () => {
+    it('runWorkDispatch emits wish.dispatch.work audit event before spawn', () => {
+      const fnStart = dispatchSrc.indexOf('async function runWorkDispatch');
+      expect(fnStart).toBeGreaterThan(-1);
+      const fnEnd = dispatchSrc.indexOf('\nasync function ', fnStart + 1);
+      const body = dispatchSrc.slice(fnStart, fnEnd !== -1 ? fnEnd : dispatchSrc.length);
+      // Audit event call must appear and must precede handleWorkerSpawn.
+      const eventIdx = body.indexOf("'wish.dispatch.work'");
+      const spawnIdx = body.indexOf('await handleWorkerSpawn(');
+      expect(eventIdx).toBeGreaterThan(-1);
+      expect(spawnIdx).toBeGreaterThan(-1);
+      expect(eventIdx).toBeLessThan(spawnIdx);
+      // Event must carry the wish-correlation attributes used by `genie events`.
+      expect(body).toContain('wish_slug:');
+      expect(body).toContain('group_name:');
+      expect(body).toContain('agent_role:');
+    });
+
+    it('AgentReadinessTimeoutError is exported and thrown by awaitAgentReadiness in strict mode', () => {
+      expect(agentsSrc).toContain('export class AgentReadinessTimeoutError');
+      // Strict mode (default) throws; tolerateReadinessTimeout=true falls back to warn.
+      expect(agentsSrc).toContain('throw new AgentReadinessTimeoutError');
+      expect(agentsSrc).toContain('tolerateReadinessTimeout');
+    });
+
+    it('SpawnOptions and SpawnCtx both expose tolerateReadinessTimeout', () => {
+      // The opt-out must live on both the public SpawnOptions surface and the
+      // internal SpawnCtx (so launchTmuxSpawn can read it).
+      const optsAnchor = agentsSrc.indexOf('export interface SpawnOptions');
+      expect(optsAnchor).toBeGreaterThan(-1);
+      const optsClose = agentsSrc.indexOf('\n}\n', optsAnchor);
+      const optsBody = agentsSrc.slice(optsAnchor, optsClose);
+      expect(optsBody).toContain('tolerateReadinessTimeout?: boolean');
+
+      const ctxAnchor = agentsSrc.indexOf('interface SpawnCtx');
+      expect(ctxAnchor).toBeGreaterThan(-1);
+      const ctxClose = agentsSrc.indexOf('\n}\n', ctxAnchor);
+      const ctxBody = agentsSrc.slice(ctxAnchor, ctxClose);
+      expect(ctxBody).toContain('tolerateReadinessTimeout?: boolean');
+    });
+  });
+
+  describe('Group 3 — wish-status display correlation', () => {
+    it('state.ts printWishExecutors filters out executors whose assignment is for a different wish', () => {
+      const fnAnchor = stateSrc.indexOf('async function printWishExecutors');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = stateSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = stateSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : stateSrc.length);
+      // Must skip — not just relabel — non-matching wishes.
+      expect(body).toContain('if (assignment?.wishSlug !== slug) continue');
+    });
+
+    it('task/status.ts printActiveExecutors applies the same filter', () => {
+      const fnAnchor = taskStatusSrc.indexOf('async function printActiveExecutors');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = taskStatusSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = taskStatusSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : taskStatusSrc.length);
+      expect(body).toContain('if (assignment?.wishSlug !== slug) continue');
+    });
+  });
+});
