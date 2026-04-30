@@ -232,16 +232,21 @@ export function SpawnTargetPicker({ agentName, sessions, onConfirm, onCancel }: 
             <span fg={palette.textDim}>No tmux sessions available. Press Esc to cancel.</span>
           </text>
         ) : (
-          <box flexDirection="column">
-            {rows.map((row, i) => (
-              <text key={`${row.kind}:${row.sessionName}:${row.kind === 'window' ? row.windowIndex : ''}`}>
-                <span fg={i === selectedIndex ? palette.accent : palette.text}>
-                  {i === selectedIndex ? '> ' : '  '}
-                  {row.label}
-                </span>
-              </text>
-            ))}
-          </box>
+          <select
+            options={rows.map((row, i) => ({
+              name: row.label,
+              description: '',
+              value: `${row.kind}:${row.sessionName}:${row.kind === 'window' ? row.windowIndex : ''}:${i}`,
+            }))}
+            selectedIndex={selectedIndex}
+            showDescription={false}
+            // Visual-only: parent useKeyboard owns up/down/enter so the test
+            // harness sees state changes synchronously.
+            focused={false}
+            height={Math.min(rows.length, 12)}
+            selectedBackgroundColor={palette.accentDim}
+            selectedTextColor={palette.accentBright}
+          />
         )}
 
         {staleError ? (
