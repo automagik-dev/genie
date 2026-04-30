@@ -36,9 +36,9 @@ describe('injectCodexHooks', () => {
     } else {
       process.env.CODEX_HOME = originalCodexHome;
     }
-    if (originalGenieHome === undefined) delete process.env.GENIE_HOME;
+    if (originalGenieHome === undefined) process.env.GENIE_HOME = undefined;
     else process.env.GENIE_HOME = originalGenieHome;
-    if (originalHookBin === undefined) delete process.env.GENIE_HOOK_BIN;
+    if (originalHookBin === undefined) process.env.GENIE_HOOK_BIN = undefined;
     else process.env.GENIE_HOOK_BIN = originalHookBin;
     rmSync(tmp, { recursive: true, force: true });
   });

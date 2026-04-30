@@ -29,9 +29,9 @@ describe('hook injection', () => {
     } else {
       process.env.CLAUDE_CONFIG_DIR = undefined;
     }
-    if (originalHome === undefined) delete process.env.GENIE_HOME;
+    if (originalHome === undefined) process.env.GENIE_HOME = undefined;
     else process.env.GENIE_HOME = originalHome;
-    if (originalHookBin === undefined) delete process.env.GENIE_HOOK_BIN;
+    if (originalHookBin === undefined) process.env.GENIE_HOOK_BIN = undefined;
     else process.env.GENIE_HOOK_BIN = originalHookBin;
     await rm(testDir, { recursive: true, force: true });
   });
