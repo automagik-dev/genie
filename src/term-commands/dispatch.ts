@@ -23,6 +23,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { endSpan, startSpan } from '../lib/emit.js';
 import { isWideEmitEnabled } from '../lib/observability-flag.js';
 import * as protocolRouter from '../lib/protocol-router.js';
@@ -537,6 +538,9 @@ export async function brainstormCommand(agentName: string, slug: string): Promis
   const brainstormPrompt = `Brainstorm "${slug}". Your context is in the system prompt. Explore the idea, ask clarifying questions, and build toward a design.`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
+    // Pin spawn cwd to the dispatch cwd so the agent runs in the workspace the
+    // operator is dispatching from, not a team's default worktree (#1589).
+    cwd: process.cwd(),
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: brainstormPrompt,
   });
@@ -577,6 +581,9 @@ export async function wishCommand(agentName: string, slug: string): Promise<void
   const wishPrompt = `Create a wish from the design for "${slug}". Your context is in the system prompt. Write the WISH.md with execution groups, acceptance criteria, and validation commands.`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
+    // Pin spawn cwd to the dispatch cwd so the wish-author agent writes the
+    // WISH.md in the right repo, not a team's default worktree (#1589).
+    cwd: process.cwd(),
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: wishPrompt,
   });
@@ -695,6 +702,21 @@ async function runWorkDispatch(
   const effectiveRole = `${agentName}-${group}`;
   const leaderTarget = await resolveLeaderTarget();
   const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to ${leaderTarget}`;
+
+  // Emit dispatch.work audit event BEFORE spawn so the dispatch is observable
+  // in `genie events list` even if spawn no-ops or silently auto-resumes a
+  // stale executor (#1589). The worker.spawn event at agents.ts:2482 only fires
+  // when a fresh spawn reaches that line — auto-resume returns earlier and
+  // leaves the dispatch invisible to operators.
+  await recordAuditEvent('wish', slug, 'wish.dispatch.work', getActor(), {
+    wish_slug: slug,
+    group_name: group,
+    agent_name: agentName,
+    agent_role: effectiveRole,
+    wish_path: wishPath,
+    cwd: process.cwd(),
+  });
+
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     // P1 hotfix: forward the team context so spawn lands in the team's
@@ -705,6 +727,11 @@ async function runWorkDispatch(
     // the operator's pane). Authority:
     // ~/.genie/reports/trace-genie-spawn-wrong-window.md
     team: process.env.GENIE_TEAM,
+    // P0 (#1589): pin spawn cwd to the wish worktree (the dispatch cwd).
+    // Without this, agents.ts:2393 silently overrides agent.repoPath with
+    // teamConfig.worktreePath — meaning the engineer launches in the team's
+    // default worktree, not the wish's, and never executes the wish.
+    cwd: process.cwd(),
     role: effectiveRole,
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: workPrompt,
@@ -785,6 +812,10 @@ export async function reviewCommand(agentName: string, ref: string): Promise<voi
     // above). Review dispatch is also team-context — must not fall back to
     // operator's "current window".
     team: process.env.GENIE_TEAM,
+    // P0 (#1589): pin spawn cwd to the wish worktree so the reviewer reads
+    // the wish's files + git diff in the right repo, not the team's default
+    // worktree.
+    cwd: process.cwd(),
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: reviewPrompt,
   });

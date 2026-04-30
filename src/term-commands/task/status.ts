@@ -39,8 +39,12 @@ async function printActiveExecutors(slug: string): Promise<void> {
       if (!executor || executor.state === 'terminated' || executor.state === 'done') continue;
 
       const assignment = await assignmentRegistry.getActiveAssignment(executor.id);
-      const taskLabel =
-        assignment?.wishSlug === slug ? `Group ${assignment.groupNumber ?? '?'}` : (assignment?.wishSlug ?? '-');
+      // #1589: only surface executors actively assigned to this wish. Without
+      // this filter, any team-mate sharing a role name bleeds into "Active
+      // Executors" for every wish under the same team — masking phantom
+      // dispatches by displaying an unrelated agent as the apparent worker.
+      if (assignment?.wishSlug !== slug) continue;
+      const taskLabel = `Group ${assignment.groupNumber ?? '?'}`;
       const agentName = agent.customName ?? agent.role ?? agent.id.slice(0, 12);
       executorInfoLines.push(
         `  Agent: ${padRight(agentName, 16)} | Executor: ${executor.id.slice(0, 12)} (${executor.provider}) | State: ${padRight(executor.state, 10)} | Task: ${taskLabel}`,

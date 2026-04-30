@@ -550,6 +550,12 @@ interface SpawnCtx {
   agentIdentityId?: string;
   /** Pre-generated executor ID for the executor record. */
   executorId?: string;
+  /**
+   * When true, treat readiness-probe timeout as a warning (legacy behavior).
+   * When false / undefined, readiness timeout throws — surfacing silent
+   * dispatch failures (#1589). Default: strict.
+   */
+  tolerateReadinessTimeout?: boolean;
 }
 
 async function registerSpawnWorker(
@@ -981,14 +987,46 @@ async function finalizeTmuxSpawn(ctx: SpawnCtx, paneId: string, teamWindow: any,
   printSpawnInfo(ctx, paneId, workerEntry);
 }
 
-async function awaitAgentReadiness(paneId: string): Promise<void> {
+/**
+ * Error raised when an agent's readiness probe times out under strict mode.
+ *
+ * Strict mode is the default (#1589): the previous warn-and-proceed behavior
+ * silently masked phantom dispatches in `genie work` and `genie spawn`.
+ * Callers that legitimately want fire-and-forget semantics opt in via
+ * `SpawnOptions.tolerateReadinessTimeout: true`.
+ */
+export class AgentReadinessTimeoutError extends Error {
+  readonly role: string;
+  readonly paneId: string;
+  readonly elapsedMs: number;
+  constructor(role: string, paneId: string, elapsedMs: number) {
+    super(
+      `Agent "${role}" did not become ready within ${Math.round(
+        elapsedMs / 1000,
+      )}s (pane ${paneId}). This likely means the worker process exited before the readiness probe succeeded. Pass tolerateReadinessTimeout:true on SpawnOptions to fall back to warn-and-proceed.`,
+    );
+    this.name = 'AgentReadinessTimeoutError';
+    this.role = role;
+    this.paneId = paneId;
+    this.elapsedMs = elapsedMs;
+  }
+}
+
+async function awaitAgentReadiness(paneId: string, role: string, tolerateReadinessTimeout?: boolean): Promise<void> {
   if (paneId === 'inline') return;
   const result = await waitForAgentReady(paneId);
   if (result.ready) {
     console.log(`  ✓ Agent ready (${(result.elapsedMs / 1000).toFixed(1)}s)`);
-  } else {
-    console.log(`  ⚠ Agent readiness timeout (${Math.round(result.elapsedMs / 1000)}s) — proceeding anyway`);
+    return;
   }
+  if (tolerateReadinessTimeout) {
+    console.log(`  ⚠ Agent readiness timeout (${Math.round(result.elapsedMs / 1000)}s) — proceeding anyway`);
+    return;
+  }
+  // Strict mode (default since #1589): raise so dispatch surfaces the failure
+  // instead of silently appearing successful with no live worker.
+  console.error(`  ✗ Agent readiness timeout (${Math.round(result.elapsedMs / 1000)}s) — failing strict mode`);
+  throw new AgentReadinessTimeoutError(role, paneId, result.elapsedMs);
 }
 
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
@@ -1027,7 +1065,7 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   await notifySpawnJoin(ctx, paneId);
   await finalizeTmuxSpawn(ctx, paneId, teamWindow, workerEntry);
 
-  await awaitAgentReadiness(paneId);
+  await awaitAgentReadiness(paneId, ctx.validated.role ?? ctx.workerId, ctx.tolerateReadinessTimeout);
 
   // Transition executor + legacy worker from 'spawning' to 'running'
   if (ctx.executorId) {
@@ -1699,6 +1737,12 @@ export interface SpawnOptions {
   noAutoSync?: boolean;
   /** Commander backing field for --no-auto-sync. */
   autoSync?: boolean;
+  /**
+   * When true, treat readiness-probe timeout as a warning and proceed (legacy
+   * behavior). When false / undefined, readiness timeout throws — surfacing
+   * silent dispatch failures (#1589). Default: strict (throws).
+   */
+  tolerateReadinessTimeout?: boolean;
 }
 
 export const _spawnAutoSyncDeps = {
@@ -2389,8 +2433,15 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   // Only override for agents without their own registered directory — sub-agents
   // (e.g. genie/brain-engineer at .genie/agents/brain-engineer/) need their own
   // CWD to avoid loading a parent agent's AGENTS.md via directory-tree walk.
+  //
+  // Additional guard for #1589: when the caller already passed an explicit
+  // `cwd` (e.g. wish dispatch from `genie work` running inside the wish
+  // worktree), DO NOT clobber it with the team's worktree. The wish worktree is
+  // a deliberate, per-dispatch choice; the team worktree is a default for
+  // free-form spawn. `resolveAgentForSpawn` already honored options.cwd at line
+  // 1802 — this check prevents the team-override from undoing that.
   const teamConfig = await teamManager.getTeam(team);
-  if (teamConfig?.worktreePath && !agent.entry?.dir) {
+  if (teamConfig?.worktreePath && !agent.entry?.dir && !options.cwd) {
     agent = { ...agent, repoPath: teamConfig.worktreePath };
   }
 
@@ -2476,6 +2527,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     autoResume: options.autoResume,
     agentIdentityId: agentIdentity.id,
     executorId,
+    tolerateReadinessTimeout: options.tolerateReadinessTimeout,
   };
 
   // Audit event for worker spawn (fire-and-forget before launch returns)
