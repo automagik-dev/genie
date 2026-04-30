@@ -1106,3 +1106,68 @@ describe('pgserve failure containment', () => {
     expect(selfHealCall).toBeLessThan(timeoutThrow);
   });
 });
+
+describe('cwd pin for stable pgserve identity (issue #1575)', () => {
+  test('pinCwdToGeniePackageDir resolves to genie package and chdirs', async () => {
+    const { pinCwdToGeniePackageDir } = await import('./db.js');
+    const beforePinCwd = process.cwd();
+    const result = pinCwdToGeniePackageDir();
+    try {
+      // pinned should point at a directory whose package.json declares
+      // name === '@automagik/genie'. If null, fall back gracefully — the
+      // resolver gave up but the call still returns the previous cwd.
+      expect(result.previous).toBe(beforePinCwd);
+      if (result.pinned !== null) {
+        const pkg = JSON.parse(readFileSync(join(result.pinned, 'package.json'), 'utf-8')) as {
+          name?: string;
+        };
+        expect(pkg.name).toBe('@automagik/genie');
+        expect(process.cwd()).toBe(result.pinned);
+      }
+    } finally {
+      // Restore for downstream tests in the same process.
+      try {
+        process.chdir(beforePinCwd);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+
+  test('_buildConnection sources strategy uses cliShortLived for max + idle_timeout', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // Pool sizing is gated on cliShortLived (NOT isTestMode — tests need
+    // concurrent connections; the pin/restore safety only matters when
+    // GENIE_SKIP_DB_BOOT=1 short-lived CLI subprocesses chdir back).
+    // Operational justification: v4.260430.20 saw script-mode CLI
+    // fingerprints accumulating 296+ pgserve backends each, saturating
+    // max_connections=1000. The gate caps that at 1 per subprocess.
+    expect(source).toMatch(/max:\s*cliShortLived\s*\?\s*1\s*:\s*50/);
+    expect(source).toMatch(/idle_timeout:\s*cliShortLived\s*\?\s*0\s*:\s*1/);
+    // Forced SELECT 1 must run BEFORE runPostConnectSetup so pgserve
+    // fingerprints under the pinned cwd.
+    const selectIdx = source.indexOf('await sqlClient`SELECT 1`');
+    const setupIdx = source.indexOf('await runPostConnectSetup');
+    expect(selectIdx).toBeGreaterThan(-1);
+    expect(setupIdx).toBeGreaterThan(-1);
+    expect(selectIdx).toBeLessThan(setupIdx);
+    // chdir restore lives in the finally clause and is gated on
+    // !daemonCwdPinned so the daemon entrypoint's permanent pin survives.
+    expect(source).toMatch(/shouldRestoreCwd\s*=\s*!daemonCwdPinned/);
+  });
+
+  test('cleanup drains sqlClient and beforeExit calls shutdown (issue #1574)', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // Cleanup must drain the postgres.js pool best-effort on hard exit so
+    // server-side backends get Terminate frames before the kernel reaps
+    // sockets.
+    const cleanupIdx = source.indexOf('const cleanup = () => {');
+    expect(cleanupIdx).toBeGreaterThan(-1);
+    const cleanupBody = source.slice(cleanupIdx, source.indexOf('};', cleanupIdx));
+    expect(cleanupBody).toContain('sqlClient');
+    expect(cleanupBody).toMatch(/dying\.end\(\{\s*timeout:\s*1\s*\}\)/);
+    // beforeExit is the awaited drain path — fires on every clean exit.
+    expect(source).toContain("process.on('beforeExit'");
+    expect(source).toMatch(/process\.on\('beforeExit',\s*\(\)\s*=>\s*\{[\s\S]*?shutdown\(\)/);
+  });
+});
