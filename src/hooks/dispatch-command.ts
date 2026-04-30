@@ -15,8 +15,10 @@
  * Now: bun fork connects to `~/.genie/hook.sock` (the daemon's UDS) FIRST.
  * The daemon owns the PG pool; the fork stays stateless and never opens a
  * connection of its own. Only when the socket is missing/refused/timed-out
- * does the fork fall back to in-process dispatch (which still opens a pool;
- * acceptable as a degraded mode because the daemon is supposed to be up).
+ * does the fork fall back to "fail-open" (empty stdout = allow-by-default,
+ * audit entry to ~/.genie/hook-fallback.log) — operations never block on a
+ * daemon outage. The legacy in-process fallback (which DOES open a PG pool)
+ * is preserved behind GENIE_HOOK_FORCE_INPROC=1 for tests + debugging only.
  *
  * This is a strict perf improvement on the existing path AND a fix for the
  * #1574 PG leak — every "happy path" hook now does a 4-byte UDS roundtrip
@@ -54,12 +56,19 @@ async function dispatchAction(): Promise<void> {
   // enable in production).
   if (process.env.GENIE_HOOK_FORCE_INPROC !== '1') {
     const code = await runDispatchClient();
+    // Drain stdout BEFORE process.exit so the daemon's decision payload is
+    // fully delivered to CC. Calling process.exit() with stdout still
+    // buffered can truncate the write under load and silently downgrade
+    // `deny` decisions to allow-by-default — a real security gap caught
+    // in PR review (codex P1 finding on dispatch-command.ts). Drain is a
+    // no-op when the buffer is already empty (typical case), so this
+    // costs <1ms on the hot path.
+    await drainStdout();
     process.exit(code);
   }
 
   // Legacy in-process path — opt-in only. Reads stdin, dispatches against
-  // the local handler registry, writes stdout. Same code that ran before
-  // PR-#XXXX shipped the daemon-first hot path.
+  // the local handler registry, writes stdout.
   const stdin = await readStdin();
   if (!stdin.trim()) {
     process.exit(0);
@@ -69,6 +78,23 @@ async function dispatchAction(): Promise<void> {
   if (result) {
     process.stdout.write(result);
   }
+  await drainStdout();
+  process.exit(0);
+}
+
+/**
+ * Wait for stdout to flush — required before relying on process exit when the
+ * caller wrote a payload that mustn't be truncated. Resolves on the next
+ * 'drain' event, or immediately when the buffer is already empty.
+ */
+function drainStdout(): Promise<void> {
+  return new Promise((resolve) => {
+    // Bun + node accept an empty write whose callback fires after the buffer
+    // is flushed. This is the documented way to ensure data reaches the pipe
+    // before exit; avoids the race where process.exit truncates a deny
+    // decision into an empty allow.
+    process.stdout.write('', () => resolve());
+  });
 }
 
 export function registerHookNamespace(program: Command): void {
