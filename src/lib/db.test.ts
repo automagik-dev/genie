@@ -357,7 +357,10 @@ describe('daemon-owned pgserve', () => {
     }
 
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    const connectionStart = source.indexOf('sqlClient = pgModule({');
+    // Connection is bound to a local first so concurrent rebuilds can't
+    // make this caller observe a nulled `sqlClient` (trace finding from
+    // v4.260430.20). After construction the global is set for sharing.
+    const connectionStart = source.indexOf('const client = pgModule({');
     expect(connectionStart).toBeGreaterThan(-1);
     const connectionConfig = source.slice(connectionStart, source.indexOf('  });', connectionStart));
     expect(connectionConfig).toContain('username: DB_NAME');
@@ -366,6 +369,8 @@ describe('daemon-owned pgserve', () => {
       'const pgWireCredential = useSocket ? resolvePgserveAuthPassword() : resolveTcpPgPassword()',
     );
     expect(connectionConfig).toContain('[PG_AUTH_FIELD]: pgWireCredential');
+    // Sharing the global happens AFTER local construction.
+    expect(source).toContain('sqlClient = client');
   });
 
   test('socket connections use the pgserve startup timeout window', () => {
@@ -378,7 +383,7 @@ describe('daemon-owned pgserve', () => {
     expect(helperBody).toContain('if (!useSocket) return 5');
     expect(helperBody).toContain('Math.max(16, Math.ceil(resolvePgserveTimeoutMs() / 1000))');
 
-    const connectionStart = source.indexOf('sqlClient = pgModule({');
+    const connectionStart = source.indexOf('const client = pgModule({');
     expect(connectionStart).toBeGreaterThan(-1);
     const connectionConfig = source.slice(connectionStart, source.indexOf('  });', connectionStart));
     expect(connectionConfig).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(useSocket)');
@@ -392,7 +397,11 @@ describe('daemon-owned pgserve', () => {
 
     const useSocketIdx = body.indexOf('const useSocket = shouldUseUnixSocket()');
     const ensureIdx = body.indexOf('if (useSocket) await getOrStartDaemon()');
-    const portIdx = body.indexOf('const port = useSocket ? 5432 : await ensurePgserve()');
+    // Direct-postmaster path reads admin.json (when useSocket) for the
+    // postmaster's actual port, falls back to the libpq compat port (5432)
+    // when discovery is missing. Both forms must keep the daemon-ensure
+    // step ahead of port resolution.
+    const portIdx = body.search(/const port = useSocket \? \(discovery\?\.port \?\? 5432\) : await ensurePgserve\(\)/);
 
     expect(useSocketIdx).toBeGreaterThan(-1);
     expect(ensureIdx).toBeGreaterThan(useSocketIdx);
@@ -404,7 +413,14 @@ describe('daemon-owned pgserve', () => {
     const fnStart = source.indexOf('export async function getOrStartDaemon');
     expect(fnStart).toBeGreaterThan(-1);
     const body = source.slice(fnStart, source.indexOf('\nfunction maskCredentials', fnStart));
-    expect(body).toContain("'daemon', '--data', DATA_DIR, '--log', 'warn'");
+    // Spawn args carry --data DATA_DIR + --max-connections; latter lifts the
+    // postmaster ceiling above the historical 1000 cap (configurable via
+    // GENIE_PG_MAX_CONNECTIONS).
+    expect(body).toContain("'daemon'");
+    expect(body).toContain("'--data'");
+    expect(body).toContain('DATA_DIR');
+    expect(body).toContain("'--max-connections'");
+    expect(body).toContain('GENIE_PG_MAX_CONNECTIONS');
   });
 
   test('daemon startup prefers Genie bundled pgserve with active Bun runtime', () => {
@@ -784,7 +800,11 @@ describe('parallel dispatch race (issue #1207)', () => {
 
     const socketDecision = source.indexOf('const useSocket = shouldUseUnixSocket();', fnStart);
     const daemonStart = source.indexOf('if (useSocket) await getOrStartDaemon();', fnStart);
-    const portDecision = source.indexOf('const port = useSocket ? 5432 : await ensurePgserve();', fnStart);
+    // Direct-postmaster path: port comes from admin.json discovery when
+    // useSocket; falls back to libpq compat 5432 if discovery is missing.
+    const portDecision = source.search(
+      /const port = useSocket \? \(discovery\?\.port \?\? 5432\) : await ensurePgserve\(\)/,
+    );
 
     expect(socketDecision).toBeGreaterThan(-1);
     expect(daemonStart).toBeGreaterThan(socketDecision);
