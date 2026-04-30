@@ -1123,5 +1123,171 @@ export interface PostUpdateMaintenanceOptions {
 }
 
 export async function runPostUpdateMaintenance(options: PostUpdateMaintenanceOptions = {}): Promise<void> {
+  await reapStaleGenieProcessesSafe(options);
   await runMaintenancePreconditions(options.silent ?? false, options.log);
+}
+
+/**
+ * Walk a process's parent chain via /proc/<pid>/status. Returns the set of
+ * PIDs from `pid` up to init (1). Used by the stale-genie reaper to avoid
+ * killing ourselves or our caller (the npm/bun update wrapper or the user's
+ * shell).
+ */
+function getParentChain(pid: number): Set<number> {
+  const chain = new Set<number>();
+  let current = pid;
+  while (current > 1 && !chain.has(current)) {
+    chain.add(current);
+    try {
+      const status = readFileSync(`/proc/${current}/status`, 'utf-8');
+      const match = status.match(/^PPid:\s+(\d+)/m);
+      if (!match) break;
+      const next = Number.parseInt(match[1], 10);
+      if (!Number.isFinite(next) || next <= 0) break;
+      current = next;
+    } catch {
+      break;
+    }
+  }
+  return chain;
+}
+
+/**
+ * Identify candidate stale genie processes from /proc.
+ *
+ * A candidate is any process whose argv contains `dist/genie.js` AND is NOT
+ * in the exclude set. Caller is responsible for populating `exclude` with
+ * the current PID, parent chain, and the active serve-daemon PID.
+ *
+ * Exposed for unit tests.
+ */
+export function findStaleGenieCandidates(exclude: Set<number>): number[] {
+  if (process.platform !== 'linux') return [];
+  let entries: string[] = [];
+  try {
+    entries = readdirSync('/proc');
+  } catch {
+    return [];
+  }
+  const candidates: number[] = [];
+  for (const entry of entries) {
+    const pid = Number.parseInt(entry, 10);
+    if (!Number.isFinite(pid) || pid <= 1) continue;
+    if (exclude.has(pid)) continue;
+    let cmdline = '';
+    try {
+      cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf-8');
+    } catch {
+      continue; // permission denied, exited mid-scan, etc.
+    }
+    // Match the bun-bundle invocation form. Argv pieces are NUL-separated
+    // (file is read whole) so substring match is sufficient.
+    if (!cmdline.includes('dist/genie.js')) continue;
+    candidates.push(pid);
+  }
+  return candidates;
+}
+
+/**
+ * Reap stale genie processes left over from before this update. Runs as
+ * part of `runPostUpdateMaintenance`. Why: the in-memory binary loaded by
+ * a long-running `genie serve` / TUI / orphan subprocess is the OLD
+ * version. Connection-leak fixes (cwd-pin, drain-on-exit, cliShortLived
+ * gate) only protect NEW invocations — old processes keep holding leaked
+ * pgserve connections until they die or pgserve is restarted, which on
+ * busy hosts saturates `max_connections=1000` and locks out everything
+ * else with `sorry, too many clients already`.
+ *
+ * Safety:
+ *   - Excludes self (`process.pid`) and the entire parent chain so we
+ *     don't kill the npm/bun update wrapper or the user's shell.
+ *   - Excludes the active serve daemon (read from `~/.genie/serve.pid`)
+ *     because it owns active TUI sessions and the scheduler. Operators
+ *     who want to recycle the daemon should run `genie doctor --fix`
+ *     which has an explicit `stopExistingDaemon` step.
+ *   - Linux-only (relies on /proc). macOS/Windows skip with a notice.
+ *   - Opt out via `GENIE_UPDATE_NO_REAP=1`.
+ *   - Failures are non-fatal — the update flow continues.
+ */
+async function reapStaleGenieProcesses(opts: { log?: (line: string) => void } = {}): Promise<void> {
+  const log = opts.log ?? ((line: string) => console.log(line));
+  if (process.env.GENIE_UPDATE_NO_REAP === '1') {
+    log('  [--] Stale genie reap skipped (GENIE_UPDATE_NO_REAP=1)');
+    return;
+  }
+  if (process.platform !== 'linux') {
+    log('  [--] Stale genie reap: Linux-only (procfs); skipping on this platform');
+    return;
+  }
+
+  const exclude = getParentChain(process.pid);
+
+  // Exclude the active serve daemon (file format: "<pid>:<startTime>").
+  try {
+    const home = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+    const servePidPath = join(home, 'serve.pid');
+    if (existsSync(servePidPath)) {
+      const raw = readFileSync(servePidPath, 'utf-8').trim().split(':')[0];
+      const sp = Number.parseInt(raw, 10);
+      if (Number.isFinite(sp) && sp > 0) exclude.add(sp);
+    }
+  } catch {
+    // No serve.pid or unreadable — daemon isn't running, nothing to exclude.
+  }
+
+  const candidates = findStaleGenieCandidates(exclude);
+  if (candidates.length === 0) {
+    log('  [ok] No stale genie processes to reap');
+    return;
+  }
+
+  log(`  [fix] Reaping ${candidates.length} stale genie process(es): ${candidates.join(', ')}`);
+  for (const pid of candidates) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      // Already dead between scan and signal — fine.
+    }
+  }
+
+  // Give SIGTERM 2s to settle. Most genie processes have shutdown handlers
+  // (the same beforeExit handler we added in #1580) that drain pools and
+  // exit cleanly within a second.
+  await new Promise((r) => setTimeout(r, 2000));
+
+  const stragglers: number[] = [];
+  for (const pid of candidates) {
+    try {
+      process.kill(pid, 0); // signal 0 = liveness probe
+      stragglers.push(pid);
+    } catch {
+      // Gone after SIGTERM — good.
+    }
+  }
+  if (stragglers.length > 0) {
+    log(`  [fix] SIGKILL stragglers: ${stragglers.join(', ')}`);
+    for (const pid of stragglers) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // Race: died between probe and SIGKILL — fine.
+      }
+    }
+  }
+  log('  [ok] Stale genie reap complete');
+}
+
+/**
+ * Wrapper that swallows reap failures so the rest of post-update maintenance
+ * still runs. The reaper itself catches per-PID errors; this guards against
+ * unexpected throws (e.g. /proc readdir denied in unusual sandboxes).
+ */
+async function reapStaleGenieProcessesSafe(opts: PostUpdateMaintenanceOptions): Promise<void> {
+  try {
+    await reapStaleGenieProcesses({ log: opts.log });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const log = opts.log ?? ((line: string) => console.log(line));
+    log(`  [!!] Stale genie reap failed (non-blocking): ${msg}`);
+  }
 }

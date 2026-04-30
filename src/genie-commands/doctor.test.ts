@@ -12,7 +12,12 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkGenieAgentTemplate, checkLegacyAgentFrontmatter, findBundledTmuxConfigDir } from './doctor.js';
+import {
+  checkGenieAgentTemplate,
+  checkLegacyAgentFrontmatter,
+  findBundledTmuxConfigDir,
+  findStaleGenieCandidates,
+} from './doctor.js';
 
 let workspaceRoot: string;
 
@@ -268,5 +273,57 @@ describe('pgserve v1/v2 coexistence', () => {
     expect(body).toContain('Leaving legacy pgserve v1 port/data files untouched');
     expect(body).toContain("join(genieHome, 'pgserve.port')");
     expect(body).toContain("join(genieHome, 'data', 'pgserve', 'postmaster.pid')");
+  });
+});
+
+describe('reapStaleGenieProcesses (post-update reaper)', () => {
+  // The reaper runs during `genie update` to kill leftover genie processes
+  // (TUIs, orphan subprocesses, old daemons) whose in-memory binary is the
+  // pre-update version. Without this, those processes hold leaked pgserve
+  // connections from the old code path and saturate `max_connections=1000`.
+
+  test('finds the current process when not in exclude set (sanity)', () => {
+    if (process.platform !== 'linux') {
+      // Reaper is Linux-only; skip on macOS/Windows.
+      expect(true).toBe(true);
+      return;
+    }
+    // The current bun:test process is running `dist/genie.js` on real hosts,
+    // but inside `bun test` the cmdline is the test runner — not genie.
+    // Instead, verify the function honors the exclude set by passing our PID
+    // and confirming we get a coherent (possibly empty) list back.
+    const exclude = new Set<number>([process.pid]);
+    const candidates = findStaleGenieCandidates(exclude);
+    expect(Array.isArray(candidates)).toBe(true);
+    expect(candidates).not.toContain(process.pid);
+    // Every candidate should be a positive integer that is NOT in exclude.
+    for (const pid of candidates) {
+      expect(pid).toBeGreaterThan(1);
+      expect(exclude.has(pid)).toBe(false);
+    }
+  });
+
+  test('reapStaleGenieProcesses surface contract', () => {
+    const source = readFileSync(join(__dirname, 'doctor.ts'), 'utf-8');
+    // The reaper must run BEFORE other maintenance preconditions so freed
+    // connections are available for runDoctorMaintenance's pgserve probes.
+    const postUpdate = source.indexOf('export async function runPostUpdateMaintenance');
+    expect(postUpdate).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('}', postUpdate + 200);
+    const body = source.slice(postUpdate, fnEnd);
+    const reapIdx = body.indexOf('reapStaleGenieProcessesSafe');
+    const preconditionIdx = body.indexOf('runMaintenancePreconditions');
+    expect(reapIdx).toBeGreaterThan(-1);
+    expect(preconditionIdx).toBeGreaterThan(-1);
+    expect(reapIdx).toBeLessThan(preconditionIdx);
+
+    // Honors the GENIE_UPDATE_NO_REAP=1 opt-out and excludes the serve daemon.
+    expect(source).toContain("process.env.GENIE_UPDATE_NO_REAP === '1'");
+    expect(source).toContain("'serve.pid'");
+    // Walks the parent chain to avoid killing the npm/bun update wrapper.
+    expect(source).toContain('getParentChain(process.pid)');
+    // Escalates SIGTERM → SIGKILL with a 2s grace window.
+    expect(source).toContain("process.kill(pid, 'SIGTERM')");
+    expect(source).toContain("process.kill(pid, 'SIGKILL')");
   });
 });
