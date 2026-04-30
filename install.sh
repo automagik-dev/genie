@@ -709,6 +709,62 @@ CONFIG_EOF
 # tmux Installation and Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# pm2 Supervision (canonical-pgserve-pm2-supervision wave 2)
+#
+# Idempotent. Installs pm2 globally if missing, then runs `genie install` so
+# genie-serve survives shell exits and host reboots. Skipped when --no-pm2
+# is passed or when GENIE_INSTALL_PM2=0.
+#
+# Mirrors `omni install`'s ensure_pm2 + post-CLI step. The `genie install`
+# command is wave 2 of the canonical-pgserve-pm2-supervision wish; it shells
+# out to `pgserve install` first (idempotent) so all four pm2 services in
+# the canonical stack converge on the same hardened defaults.
+# ─────────────────────────────────────────────────────────────────────────────
+
+ensure_pm2() {
+    if check_command pm2; then
+        success "pm2 $(pm2 --version 2>/dev/null || echo '?')"
+        return 0
+    fi
+
+    log "Installing pm2..."
+    bun add -g pm2 >/dev/null 2>&1 || npm install -g pm2 >/dev/null 2>&1
+    if check_command pm2; then
+        success "pm2 installed"
+    else
+        warn "Could not install PM2 globally. Install manually: bun add -g pm2"
+        return 1
+    fi
+}
+
+install_pm2_supervision() {
+    if [[ "${GENIE_INSTALL_PM2:-1}" == "0" ]] || [[ "${INSTALL_PM2:-true}" == "false" ]]; then
+        info "Skipping pm2 supervision (GENIE_INSTALL_PM2=0 or --no-pm2)"
+        return 0
+    fi
+
+    header "Configuring pm2 supervision..."
+
+    if ! ensure_pm2; then
+        warn "Skipping pm2 supervision — pm2 install failed"
+        return 0
+    fi
+
+    if ! check_command genie; then
+        warn "genie not on PATH; skipping `genie install` (re-run after CLI install completes)"
+        return 0
+    fi
+
+    info "Running genie install (registers genie-serve under pm2 with hardened defaults)..."
+    if genie install; then
+        success "genie-serve registered under pm2"
+        info "Run 'pm2 save && pm2 startup' to persist across reboots"
+    else
+        warn "genie install failed — bridge will not survive shell exit. Re-run manually: genie install"
+    fi
+}
+
 install_tmux_if_needed() {
     if check_command tmux; then
         success "tmux found"
@@ -831,6 +887,9 @@ run_install() {
     # ─── Genie CLI Install/Update ───
     header "Installing Genie CLI..."
     install_genie_cli
+
+    # ─── pm2 Supervision (canonical-pgserve-pm2-supervision wave 2) ───
+    install_pm2_supervision
 
     # ─── Locate package directory ───
     if ! locate_package_dir; then
