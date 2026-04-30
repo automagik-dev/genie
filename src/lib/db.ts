@@ -21,7 +21,7 @@ import { type ChildProcess, execFileSync, execSync, spawn } from 'node:child_pro
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
@@ -158,6 +158,12 @@ interface PgserveSdk {
   }) => Promise<PgserveSdkDaemonState>;
 }
 
+interface PgserveDaemonCommand {
+  command: string;
+  argsPrefix: string[];
+  display: string;
+}
+
 /**
  * Probe the v2 daemon. Returns running=true only when both the libpq socket
  * file exists AND the recorded pid is alive. A pid file with no socket (or
@@ -243,23 +249,53 @@ async function importPgserveSdk(): Promise<PgserveSdk | null> {
   }
 }
 
-/** Resolve the v2 daemon binary path — bundled dependency → global → PATH. */
-function findPgserveDaemonBin(): string | null {
+/** Resolve the v2 daemon command — bundled dependency → global → PATH. */
+function findPgserveDaemonCommand(): PgserveDaemonCommand | null {
   const localRoot = findLocalPgserveRoot();
   if (localRoot !== null) {
-    const localBin = join(localRoot, 'bin', 'pgserve-wrapper.cjs');
-    if (existsSync(localBin)) return localBin;
+    const localCommand = resolvePgservePackageCommand(localRoot);
+    if (localCommand !== null) return localCommand;
   }
   try {
     const resolved = require.resolve('pgserve/bin/pgserve-wrapper.cjs');
-    if (existsSync(resolved)) return resolved;
+    const packageCommand = resolvePgservePackageCommand(join(dirname(resolved), '..'));
+    if (packageCommand !== null) return packageCommand;
   } catch {
     /* not in local deps */
   }
   const globalBin = join(homedir(), '.bun', 'bin', 'pgserve');
-  if (existsSync(globalBin)) return globalBin;
+  if (existsSync(globalBin)) return { command: globalBin, argsPrefix: [], display: globalBin };
   try {
     const fromPath = execSync('which pgserve', { encoding: 'utf-8', timeout: 3000 }).trim();
+    if (fromPath.length > 0) return { command: fromPath, argsPrefix: [], display: fromPath };
+  } catch {
+    /* not on PATH */
+  }
+  return null;
+}
+
+function resolvePgservePackageCommand(root: string): PgserveDaemonCommand | null {
+  const script = join(root, 'bin', 'postgres-server.js');
+  const bun = findBunRuntime();
+  if (existsSync(script) && bun !== null) {
+    return { command: bun, argsPrefix: [script], display: `${bun} ${script}` };
+  }
+
+  const wrapper = join(root, 'bin', 'pgserve-wrapper.cjs');
+  if (existsSync(wrapper)) return { command: wrapper, argsPrefix: [], display: wrapper };
+  return null;
+}
+
+function findBunRuntime(): string | null {
+  if (process.execPath && existsSync(process.execPath) && basename(process.execPath).startsWith('bun')) {
+    return process.execPath;
+  }
+
+  const homeBun = join(homedir(), '.bun', 'bin', process.platform === 'win32' ? 'bun.exe' : 'bun');
+  if (existsSync(homeBun)) return homeBun;
+
+  try {
+    const fromPath = execSync('which bun', { encoding: 'utf-8', timeout: 3000 }).trim();
     if (fromPath.length > 0) return fromPath;
   } catch {
     /* not on PATH */
@@ -455,38 +491,62 @@ function unlinkIfPresent(path: string): void {
 
 async function startPgserveDaemonOnce(initial: DaemonState): Promise<void> {
   cleanPartialDaemonState(initial);
-  if (await tryEnsureDaemonWithSdk()) return;
-  const bin = requirePgserveDaemonBin();
+  const daemonCommand = findPgserveDaemonCommand();
+  if (daemonCommand === null) {
+    if (await tryEnsureDaemonWithSdk()) return;
+    throw new Error(
+      'pgserve binary not found. Install with `bun add pgserve@^2.0.2` (or `npm i pgserve@^2.0.2`), or start `pgserve daemon` manually before running genie.',
+    );
+  }
   mkdirSync(resolvePgserveSocketDir(), { recursive: true, mode: 0o700 });
 
-  const child = spawn(bin, ['daemon', '--data', DATA_DIR, '--log', 'warn'], {
-    detached: true,
-    stdio: 'ignore',
-    env: { ...process.env },
-  });
-  child.unref();
-  await waitForDaemonSocket(bin);
-}
-
-function requirePgserveDaemonBin(): string {
-  const bin = findPgserveDaemonBin();
-  if (bin !== null) return bin;
-  throw new Error(
-    'pgserve binary not found. Install with `bun add pgserve@^2.0.2` (or `npm i pgserve@^2.0.2`), or start `pgserve daemon` manually before running genie.',
+  const child = spawn(
+    daemonCommand.command,
+    [...daemonCommand.argsPrefix, 'daemon', '--data', DATA_DIR, '--log', 'warn'],
+    {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    },
   );
+  try {
+    await waitForDaemonSocket(daemonCommand, child);
+    child.unref();
+  } catch (err) {
+    await terminatePgserveTree(child);
+    throw err;
+  }
 }
 
-async function waitForDaemonSocket(bin: string): Promise<void> {
+async function waitForDaemonSocket(daemonCommand: PgserveDaemonCommand, child?: ChildProcess): Promise<void> {
   const socketPath = resolvePgserveLibpqSocketPath();
   const timeout = resolvePgserveTimeoutMs();
   const deadline = Date.now() + timeout;
+  let childExit: string | null = null;
+  child?.once('exit', (code, signal) => {
+    childExit = signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`;
+  });
+
   while (Date.now() < deadline) {
     if (existsSync(socketPath) && (await isPgserveSocketResponsive())) return;
+    if (childExit !== null) {
+      throw new Error(
+        `pgserve v2 daemon exited before binding ${socketPath} (${childExit}). Try starting it manually: ${formatPgserveDaemonCommand(
+          daemonCommand,
+        )}`,
+      );
+    }
     await sleep(250);
   }
   throw new Error(
-    `pgserve v2 daemon did not bind ${socketPath} within ${Math.round(timeout / 1000)}s. Try starting it manually: ${bin} daemon`,
+    `pgserve v2 daemon did not bind ${socketPath} within ${Math.round(
+      timeout / 1000,
+    )}s. Try starting it manually: ${formatPgserveDaemonCommand(daemonCommand)}`,
   );
+}
+
+function formatPgserveDaemonCommand(daemonCommand: PgserveDaemonCommand): string {
+  return `${daemonCommand.display} daemon --data ${DATA_DIR} --log warn`;
 }
 
 async function tryEnsureDaemonWithSdk(): Promise<boolean> {
