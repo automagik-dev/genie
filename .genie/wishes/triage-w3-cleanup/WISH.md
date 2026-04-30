@@ -48,7 +48,7 @@ Drain the 35-issue triage-verified backlog produced by the 2026-04-30 fleet tria
 
 - [ ] All URGENT issues (3) closed by merged PR on `dev`: #1491 #1493 #1582
 - [ ] All HIGH issues that aren't already closed (10) closed by merged PR on `dev`: #1330 #1390 #1400 #1410 #1502 #1581 #1583 #1591 #1597 #1598
-- [ ] All NORMAL issues that aren't enhancement-track (10) closed by merged PR on `dev`: #1315 #1391 #1394 #1412 #1460 #1488 #1533 #1579 #1584 #1587 #1592 #1593 #1595 #1596
+- [ ] All NORMAL issues that aren't enhancement-track (14) closed by merged PR on `dev`: #1315 #1391 #1394 #1412 #1460 #1488 #1533 #1579 #1584 #1587 #1592 #1593 #1595 #1596
 - [ ] All LOW actionable issues (2) closed by merged PR on `dev`: #1392 #1470
 - [ ] Enhancement-track issues (4) get a wish-track pointer comment and stay open: #1300 #1368 #1396 #1451
 - [ ] NEEDS-DISCUSSION issues (2) remain open with a "needs reporter reconfirm" status: #1469 #1478
@@ -59,6 +59,18 @@ Drain the 35-issue triage-verified backlog produced by the 2026-04-30 fleet tria
 ## Execution Strategy
 
 Five waves keyed to priority + risk class. Within each wave, groups touch disjoint file sets and can run in parallel. Group 1 is sequential because all three deliverables share `src/hooks/` and `package.json`/postinstall plumbing.
+
+### Per-group prelude (mandatory, applies to every group)
+
+Before writing any fix code in a group, the executing engineer **must** complete this prelude:
+
+> **Deliverable 0 — Re-anchor to `dev`:** For every issue in the group, verify the cited file:line/SHA evidence still applies on `dev` HEAD. If a referenced commit has been merged or the cited code path has been refactored, update the deliverable scope (or move the issue to enhancement-track). The first-pass triage was anchored to `chore/pgserve-2.0.2` (97 commits behind dev) and produced two false STILL-OPEN-CONFIRMED verdicts (#1521, #1589) — this prelude prevents that recurrence.
+
+This prelude is implicit in every group's Deliverables list — treat it as Deliverable 0 even though it is not re-listed under each group below.
+
+### Cross-group file collisions (advisory)
+
+Several files are touched by multiple groups: `src/genie-commands/doctor.ts` (G1, G3, G5), `package.json` (G1, G4, G7, G9), `src/lib/team-manager.ts` (G3, G6), `src/term-commands/agents.ts` (G2, G6). The wave gating ensures collisions are sequential across waves, not parallel within a wave. Reviewers merging PRs across waves should rebase later-wave PRs onto the latest `dev` after earlier-wave PRs land, to avoid silent merge-conflict resolution losing intended hunks.
 
 ### Wave 1 (sequential — release-blockers)
 
@@ -109,8 +121,8 @@ Five waves keyed to priority + risk class. Within each wave, groups touch disjoi
 
 **Acceptance Criteria:**
 - [ ] Spawning agent `A` from agent `B` lands `[from: A]` in `B`'s inbox (not `[from: <orchestrator>]`); regression test in `src/hooks/__tests__/identity-attribution.test.ts`.
-- [ ] `bun run build` produces a binary ≤ 20 MB containing `genie-hook` (verifiable via `bun run build && du -m dist/genie && file dist/genie-hook`).
-- [ ] After `genie tui` and `genie serve` lifecycle (start/stop/start/stop/start), `pgrep -f bun-genie.js | wc -l` is bounded by `<expected concurrent worker count>`; reap function unit-tested.
+- [ ] `bun run build` produces a binary ≤ 20 MB containing `genie-hook` (verifiable via `bun run build && du -m dist/genie && [ -f dist/genie-hook ]`).
+- [ ] After `genie tui` and `genie serve` lifecycle (start/stop/start/stop/start), `pgrep -f bun-genie.js | wc -l` is no greater than the number of currently active agents per `genie ls --json` (i.e. zero orphans reparented to PID 1); reap function unit-tested.
 
 **Validation:**
 ```bash
@@ -118,6 +130,7 @@ cd /home/genie/.genie/worktrees/triage-w3-cleanup
 bun test src/hooks/__tests__/identity-attribution.test.ts \
   && bun run build \
   && [ "$(stat -c%s dist/genie)" -le 20971520 ] \
+  && [ -f dist/genie-hook ] \
   && bun test src/genie-commands/__tests__/reap-stale.test.ts \
   && make check
 ```
@@ -199,7 +212,8 @@ bun test src/term-commands/__tests__/team-master-scaffold.test.ts \
 **Validation:**
 ```bash
 cd /home/genie/.genie/worktrees/triage-w3-cleanup
-bun test src/lib/__tests__/test-postmaster-cleanup.test.ts \
+bun test src/tui/__tests__/safe-mode-fallback.test.ts \
+  && bun test src/lib/__tests__/test-postmaster-cleanup.test.ts \
   && bash scripts/test-flake-loop.sh 10 \
   && make check
 ```
@@ -214,7 +228,7 @@ bun test src/lib/__tests__/test-postmaster-cleanup.test.ts \
 
 **Deliverables:**
 1. **#1592** — `max_connections=10000` doesn't apply to an already-running pgserve daemon. Detect daemon-config drift in `getOrStartDaemon()`; either auto-restart OR emit a structured warning with a fixCommand.
-2. **#1593** — `pgserve install` fails on pm2 6 due to the upstream `--min-uptime` bug (#1588 sibling). Genie-side warn-and-continue (`install.ts:121`) is intact, but the floor remains `^2.0.0`/`^2.0.8`; coordinate the upstream pgserve fix and bump the floor.
+2. **#1593** — `pgserve install` fails on pm2 6 due to the upstream `--min-uptime` bug (#1588 sibling). Genie-side warn-and-continue (`install.ts:121`) is intact, but the floor remains `^2.0.0`/`^2.0.8`; coordinate the upstream pgserve fix and bump the floor. **Fallback if upstream is delayed:** ship a feature-detect that pins to a known-working pm2 version with a documented "if pm2 6 then warn + skip pgserve install" path, so the wish does not block on upstream.
 3. **#1595** — Migrate to postgres-native peer auth, dropping the `PG_AUTH_FIELD` + `resolvePgserveAuthPassword`/`resolveTcpPgPassword` machinery from `src/lib/db.ts`. Add a `pg_hba` migration step in `doctor.ts`.
 4. **#1596** — `src/lib/session-filewatch.ts:163` emits a generic FK-violation log without `err.constraint_name`. Surface the constraint name so on-call can identify the specific FK without re-running with debug.
 
@@ -398,7 +412,7 @@ gh issue view 1469 --comments | grep -q "reporter to reconfirm\|cannot reproduce
 
 ## QA Criteria
 
-- [ ] All 22 GH issues that fall within this wish's "fix-and-merge" scope are CLOSED with a commit/PR reference.
+- [ ] All 29 GH issues that fall within this wish's "fix-and-merge" scope are CLOSED with a commit/PR reference (3 URGENT + 10 HIGH + 14 NORMAL + 2 LOW).
 - [ ] All 4 enhancement-track issues are commented with explicit follow-on wish slugs.
 - [ ] All 2 NEEDS-DISCUSSION issues are commented with reconfirm requests.
 - [ ] `make check` passes on `dev` HEAD after the final merge.
@@ -466,6 +480,9 @@ src/genie-commands/__tests__/doctor-update-detection.test.ts  # Group 3 (#1583) 
 
 package.json                          # Group 4 (#1390 — opentui), Group 7 (#1391 #1394), Group 9 (#1392)
 src/tui/                              # Group 4 (#1390 — feature-detect path)
+
+src/tui/safe-mode.ts                  # Group 4 (#1390) — new feature-detect path
+src/tui/__tests__/safe-mode-fallback.test.ts  # Group 4 (#1390) — new
 
 scripts/test-postmaster-cleanup.ts    # Group 4 (#1597) — new
 src/lib/__tests__/test-postmaster-cleanup.test.ts  # Group 4 (#1597) — new
