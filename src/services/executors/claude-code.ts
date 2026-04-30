@@ -14,6 +14,7 @@ import * as directory from '../../lib/agent-directory.js';
 import type { DirectoryEntry } from '../../lib/agent-directory.js';
 import * as agents from '../../lib/agent-registry.js';
 import * as registry from '../../lib/executor-registry.js';
+import { signOmniRequest } from '../../lib/omni-signature.js';
 import { buildLaunchCommand } from '../../lib/provider-adapters.js';
 import type { SpawnParams } from '../../lib/provider-adapters.js';
 import { shellQuote } from '../../lib/team-lead-command.js';
@@ -111,9 +112,17 @@ async function lookupChatName(chatId: string, _instanceId: string): Promise<stri
     const apiKey = config.apiKey || '';
     if (!apiKey) return null;
 
-    const url = `${apiUrl}/api/v2/chats?externalId=${encodeURIComponent(chatId)}`;
+    const path = `/api/v2/chats?externalId=${encodeURIComponent(chatId)}`;
+    const url = `${apiUrl}${path}`;
+    // Sign the lookup when this host has run `genie omni handshake`. Falls
+    // back to bearer-only when no key is present, matching pre-fingerprint
+    // behavior. Required so the lookup keeps working when the targeted
+    // omni instance is locked down with `--require-genie-signature`.
+    const sigHeaders = signOmniRequest('GET', path, '');
+    const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+    if (sigHeaders) Object.assign(headers, sigHeaders);
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers,
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return null;
