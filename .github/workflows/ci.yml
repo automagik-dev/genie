@@ -124,14 +124,23 @@ jobs:
           fi
           echo "$FILES" | xargs bun test || echo "$FILES" | xargs bun test
 
-  # Long critical path: 56 PG-dependent test files across K=4 shards sharing a
-  # single pgserve daemon. Runs on an 8-vCPU runner so LPT packing saturates.
-  # Artifact-driven duration cache (downloaded before the run, regenerated +
-  # uploaded only on main-branch push) keeps shard balance within 15%.
+  # PG-dependent test files split across K=4 shards via GitHub Actions matrix.
+  # Each shard runs on its own 4-vCPU runner with its own pgserve daemon; no
+  # in-process parallelism = no risk of the moveTask() / sql.begin(tx) reentry
+  # deadlock that gates `scripts/test-parallel.ts` from CI use today (see
+  # .genie/wishes/pg-ci-v2-socket-leverage/WISH.md for the path-A rationale).
+  #
+  # Wall-clock target: ~K-fold reduction vs the previous serial 8-vCPU job.
+  # File-to-shard assignment is LPT-packed when `.genie/state/test-durations.json`
+  # is present, else round-robin. See `scripts/list-tests.ts --shard i/K`.
   pg-tests:
-    name: PG Tests (parallel shards)
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    name: PG Tests (matrix shard ${{ matrix.shard }}/4)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
 
     steps:
       - uses: actions/checkout@v4
@@ -146,54 +155,55 @@ jobs:
       # ~/.bun/install/cache restored via actions/cache, which cross-
       # polluted runs on the self-hosted Blacksmith runner and was
       # suspected of serving stale transpile artifacts on flaky runs.
-      # Scoping to ${{ runner.temp }}/<run-id>/<run-attempt> gives
+      # Scoping to ${{ runner.temp }}/<run-id>/<run-attempt>/<shard> gives
       # every attempt a clean cache without sacrificing dep download
       # speed (Blacksmith has fast registry access).
       - name: Install dependencies
         env:
-          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
         run: bun install
 
-      # Serial bun test. `test:parallel` (Group 7) exposes a latent codebase
-      # antipattern in moveTask() + similar where a sql.begin(tx) transaction
-      # re-acquires a connection from the pool — under parallel shards this
-      # self-deadlocks. Fixing that app-side is out of scope for this wish;
-      # `test:parallel` stays available as a local dev tool (package.json).
-      # CI uses serial `bun test` for determinism and green. See wish:
-      # .genie/wishes/pg-test-perf/WISH.md for the full story.
-      #
-      # `--timeout 15000`: Blacksmith cold-boot + pgserve bootstrap occasionally
-      # blows past bun test's default 5s budget inside a beforeEach, surfacing
-      # as a cascade of "hook timed out" errors that aren't real regressions.
-      # 15s absorbs that jitter without masking slow tests (a test that takes
-      # >15s is a real problem worth surfacing).
-      #
-      # `|| bun test --timeout 15000`: retry-once wrapper for pgserve
+      # Serial bun test inside this shard, with the file list pre-filtered to
+      # this shard's portion. The retry-once wrapper that the previous
+      # serial-on-8vCPU job carried was justified by pgserve@<2.0.5
       # backend imperfections (NOTIFY delivery gaps + post-INSERT read
-      # visibility gaps) enumerated in tracker #1335. Measured baseline flake
-      # rate is ~1/3626 per test; two consecutive flakes on the same test are
-      # ~1 in 10M, so a single retry masks the noise without hiding real
-      # regressions. Long-term fix is a pgserve backend audit (out of
-      # scope for wish pg-test-perf).
-      #
-      # The retry disables shared-daemon reuse because the first failed run may
-      # have left the pgserve process accepting TCP but timing out handshakes.
-      # Reusing that daemon contaminates the second run with stale databases and
-      # turns one backend failure into unrelated row-count failures.
-      #
-      # History: 7b23046e dropped a prior retry wrapper because hangs on the
-      # self-hosted runner produced orphaned bun processes. Mitigated now by
-      # Blacksmith ephemeral runners + `timeout-minutes: 15` (a hang is killed
-      # by the job timeout, not the `||`, so no orphan is produced).
-      - name: Test (serial, PG-backed)
+      # visibility under load). Those flakes are now caught by 2.0.5+
+      # supervision/recovery code (see pgserve#45 and the matching genie
+      # daemon-recovery code in src/lib/db.ts). Dropped here so a real
+      # regression surfaces red on first attempt instead of being papered
+      # over. Re-add as a feature-flagged opt-in if a new flake category
+      # emerges post-merge.
+      - name: Test (shard ${{ matrix.shard }}/4)
         env:
-          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-          GENIE_HOME: ${{ runner.temp }}/genie-pg-home-${{ github.run_id }}-${{ github.run_attempt }}
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
+          GENIE_HOME: ${{ runner.temp }}/genie-pg-home-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
         run: |
-          bun test --timeout 15000 || (
-            rm -f "$GENIE_HOME/data/test-pgserve.lock"
-            GENIE_TEST_PG_NO_REUSE=1 bun test --timeout 15000
-          )
+          set -euo pipefail
+          FILES=$(bun run scripts/list-tests.ts --pg --shard ${{ matrix.shard }}/4)
+          if [ -z "$FILES" ]; then
+            echo "::warning::No PG test files in shard ${{ matrix.shard }}/4 — skipping"
+            exit 0
+          fi
+          echo "Shard ${{ matrix.shard }}/4 — $(echo "$FILES" | wc -l) files"
+          echo "$FILES" | xargs bun test --timeout 15000
+
+  # Aggregate the matrix shards into a single status check so the umbrella
+  # `quality-gate` job can `needs: [unit-tests, pg-tests-aggregate]` instead
+  # of awkwardly listing every matrix combination.
+  pg-tests-aggregate:
+    name: PG Tests (matrix aggregate)
+    needs: pg-tests
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    if: always()
+    timeout-minutes: 2
+    steps:
+      - name: Verify all shards passed
+        run: |
+          R="${{ needs.pg-tests.result }}"
+          echo "pg-tests matrix result: $R"
+          if [ "$R" = "success" ]; then exit 0; fi
+          echo "One or more pg-tests matrix shards did not succeed" >&2
+          exit 1
 
   # Group 7 of the pgserve-v2 wish: smoke-test the v2 Unix-socket consumer
   # path. Spawns pgserve daemon, runs `genie task list` against it, asserts
@@ -260,7 +270,7 @@ jobs:
   # branch-protection configs silently accept.
   quality-gate:
     name: Quality Gate (typecheck + lint + test)
-    needs: [unit-tests, pg-tests]
+    needs: [unit-tests, pg-tests-aggregate]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     if: always()
     timeout-minutes: 2
@@ -269,9 +279,9 @@ jobs:
       - name: Verify sub-jobs
         run: |
           UNIT="${{ needs.unit-tests.result }}"
-          PG="${{ needs.pg-tests.result }}"
-          echo "unit-tests: $UNIT"
-          echo "pg-tests:   $PG"
+          PG="${{ needs.pg-tests-aggregate.result }}"
+          echo "unit-tests:         $UNIT"
+          echo "pg-tests-aggregate: $PG"
           if [ "$UNIT" = "success" ] && [ "$PG" = "success" ]; then
             echo "All sub-jobs passed"
             exit 0
