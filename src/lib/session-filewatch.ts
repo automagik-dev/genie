@@ -10,6 +10,7 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { type FSWatcher, watch } from 'chokidar';
 
+import { getConnection, resetConnection } from './db.js';
 import { buildWorkerMap, ingestFileFull, setLiveWorkPending } from './session-capture.js';
 
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
@@ -52,6 +53,21 @@ export function isForeignKeyViolation(err: unknown): boolean {
   if (typeof code === 'string' && code === '23503') return true;
   const message = err instanceof Error ? err.message : String(err);
   return message.toLowerCase().includes('foreign key constraint');
+}
+
+export function isTransientPgConnectionError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const code = (err as { code?: unknown }).code;
+  if (
+    typeof code === 'string' &&
+    ['CONNECTION_ENDED', 'CONNECTION_DESTROYED', 'CONNECT_TIMEOUT', 'ECONNRESET', 'EPIPE'].includes(code)
+  ) {
+    return true;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return /CONNECTION_ENDED|CONNECTION_DESTROYED|CONNECT_TIMEOUT|ECONNRESET|EPIPE|connection terminated|connection closed|server closed the connection/i.test(
+    message,
+  );
 }
 
 // ============================================================================
@@ -119,6 +135,8 @@ export interface FilewatchDeps {
   ingestFileFull: typeof ingestFileFull;
   setLiveWorkPending: typeof setLiveWorkPending;
   logError: (msg: string) => void;
+  getConnection?: typeof getConnection;
+  resetConnection?: typeof resetConnection;
 }
 
 const defaultDeps: FilewatchDeps = {
@@ -126,7 +144,101 @@ const defaultDeps: FilewatchDeps = {
   ingestFileFull,
   setLiveWorkPending,
   logError: (msg) => console.error(msg),
+  getConnection,
+  resetConnection,
 };
+
+type SessionInfo = NonNullable<ReturnType<typeof extractSessionInfo>>;
+
+async function ingestFileChange(
+  sql: SqlClient,
+  info: SessionInfo,
+  filePath: string,
+  storedOffset: number,
+  deps: FilewatchDeps,
+): Promise<number> {
+  const workerMap = await deps.buildWorkerMap(sql);
+  const result = await deps.ingestFileFull(sql, info.sessionId, filePath, info.projectPath, storedOffset, {
+    parentSessionId: info.parentSessionId,
+    isSubagent: info.isSubagent,
+    workerMap,
+  });
+  return result.newOffset;
+}
+
+function markSessionUnrecoverable(info: SessionInfo, filePath: string, message: string, deps: FilewatchDeps): void {
+  unrecoverableSessions.add(info.sessionId);
+  offsetCache.set(info.sessionId, Number.POSITIVE_INFINITY);
+  deps.logError(
+    `[filewatch] skipping ${filePath} — FK constraint violation (orphan session, parent not registered): ${message}`,
+  );
+}
+
+async function reconnectAfterTransientPgError(err: unknown, deps: FilewatchDeps): Promise<SqlClient | null> {
+  if (!isTransientPgConnectionError(err) || !deps.getConnection || !deps.resetConnection) return null;
+  try {
+    await deps.resetConnection();
+    return await deps.getConnection();
+  } catch {
+    return null;
+  }
+}
+
+async function tryIngestFileChange(
+  sql: SqlClient,
+  info: SessionInfo,
+  filePath: string,
+  storedOffset: number,
+  deps: FilewatchDeps,
+): Promise<{ ok: true; newOffset: number } | { ok: false; error: unknown }> {
+  try {
+    return { ok: true, newOffset: await ingestFileChange(sql, info, filePath, storedOffset, deps) };
+  } catch (err) {
+    return { ok: false, error: err };
+  }
+}
+
+function recordIngestFailure(
+  err: unknown,
+  info: SessionInfo,
+  filePath: string,
+  storedOffset: number,
+  deps: FilewatchDeps,
+): void {
+  const message = err instanceof Error ? err.message : String(err);
+  if (isForeignKeyViolation(err)) {
+    markSessionUnrecoverable(info, filePath, message, deps);
+    return;
+  }
+
+  // Transient error (connection reset, deadlock, etc.) — DO NOT advance
+  // offset. Retry on next write event preserves at-least-once semantics.
+  deps.logError(`[filewatch] error ingesting ${filePath} at offset ${storedOffset}: ${message}`);
+}
+
+async function ingestWithOneReconnect(
+  sql: SqlClient,
+  info: SessionInfo,
+  filePath: string,
+  storedOffset: number,
+  deps: FilewatchDeps,
+): Promise<void> {
+  const first = await tryIngestFileChange(sql, info, filePath, storedOffset, deps);
+  if (first.ok) {
+    offsetCache.set(info.sessionId, first.newOffset);
+    return;
+  }
+
+  const freshSql = await reconnectAfterTransientPgError(first.error, deps);
+  if (!freshSql) {
+    recordIngestFailure(first.error, info, filePath, storedOffset, deps);
+    return;
+  }
+
+  const second = await tryIngestFileChange(freshSql, info, filePath, storedOffset, deps);
+  if (second.ok) offsetCache.set(info.sessionId, second.newOffset);
+  else recordIngestFailure(second.error, info, filePath, storedOffset, deps);
+}
 
 export async function handleFileChange(
   filePath: string,
@@ -144,29 +256,7 @@ export async function handleFileChange(
 
   try {
     deps.setLiveWorkPending(true);
-    const workerMap = await deps.buildWorkerMap(sql);
-    const result = await deps.ingestFileFull(sql, info.sessionId, filePath, info.projectPath, storedOffset, {
-      parentSessionId: info.parentSessionId,
-      isSubagent: info.isSubagent,
-      workerMap,
-    });
-    offsetCache.set(info.sessionId, result.newOffset);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (isForeignKeyViolation(err)) {
-      // Unrecoverable at this layer — orphan subagent, parent not in sessions
-      // table. Pin offset to Infinity and mark the session so subsequent
-      // fs.watch events skip ingest entirely. Log once.
-      unrecoverableSessions.add(info.sessionId);
-      offsetCache.set(info.sessionId, Number.POSITIVE_INFINITY);
-      deps.logError(
-        `[filewatch] skipping ${filePath} — FK constraint violation (orphan session, parent not registered): ${message}`,
-      );
-    } else {
-      // Transient error (connection reset, deadlock, etc.) — DO NOT advance
-      // offset. Retry on next write event preserves at-least-once semantics.
-      deps.logError(`[filewatch] error ingesting ${filePath} at offset ${storedOffset}: ${message}`);
-    }
+    await ingestWithOneReconnect(sql, info, filePath, storedOffset, deps);
   } finally {
     deps.setLiveWorkPending(false);
   }
@@ -180,7 +270,7 @@ function normalizeWatchEventPath(claudeDir: string, filePath: string): string {
   return isAbsolute(filePath) ? filePath : resolve(claudeDir, filePath);
 }
 
-function scheduleFileChange(filePath: string, sql: SqlClient): void {
+function scheduleFileChange(filePath: string): void {
   if (!filePath.endsWith('.jsonl')) return;
 
   const existing = debounceTimers.get(filePath);
@@ -190,10 +280,12 @@ function scheduleFileChange(filePath: string, sql: SqlClient): void {
     filePath,
     setTimeout(() => {
       debounceTimers.delete(filePath);
-      handleFileChange(filePath, sql).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[filewatch] unhandled error for ${filePath}: ${message}`);
-      });
+      getConnection()
+        .then((freshSql) => handleFileChange(filePath, freshSql))
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[filewatch] unhandled error for ${filePath}: ${message}`);
+        });
     }, DEBOUNCE_MS),
   );
 }
@@ -234,7 +326,7 @@ export async function startFilewatch(sql: SqlClient): Promise<boolean> {
   await loadOffsets(sql);
 
   try {
-    watcher = createJsonlWatcher(claudeDir, (fullPath) => scheduleFileChange(fullPath, sql));
+    watcher = createJsonlWatcher(claudeDir, (fullPath) => scheduleFileChange(fullPath));
 
     watcher.on('error', (err) => {
       const message = err instanceof Error ? err.message : String(err);

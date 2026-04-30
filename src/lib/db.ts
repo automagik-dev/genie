@@ -1494,6 +1494,14 @@ export function getActivePort(): number {
 }
 
 /**
+ * Base TCP port for sidecar HTTP services that still need a real local port
+ * even when pgserve itself is connected through the v2 Unix socket.
+ */
+export function getAuxiliaryPortBase(): number {
+  return activePort === SOCKET_PORT_SENTINEL ? getPort() : getActivePort();
+}
+
+/**
  * True when the live connection is the v2 Unix socket. Returns false in TCP
  * mode (legacy + test) and before the first connect.
  *

@@ -11,7 +11,7 @@
  * Graceful: if port busy, logs warning and returns (non-fatal).
  */
 
-import { getActivePort } from './db.js';
+import { getAuxiliaryPortBase } from './db.js';
 
 // ============================================================================
 // Types — OTLP JSON protocol (subset we care about)
@@ -160,7 +160,7 @@ function parseProbeMax(): number {
 function getConfiguredOtelPort(): { port: number; explicit: boolean } {
   const envPort = parseValidPort(process.env.GENIE_OTEL_PORT);
   if (envPort !== null) return { port: envPort, explicit: true };
-  return { port: getActivePort() + 1, explicit: false };
+  return { port: getAuxiliaryPortBase() + 1, explicit: false };
 }
 
 function getCandidatePorts(startPort: number, explicit: boolean): number[] {
