@@ -19,7 +19,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { _internals } from '../install.js';
 
-const { HARDENED_DEFAULTS, PM2_PROCESS_NAME, buildPm2StartArgs } = _internals;
+const { HARDENED_DEFAULTS, PM2_PROCESS_NAME, buildPm2StartArgs, buildEcosystemConfigSource, getEcosystemConfigPath } =
+  _internals;
 
 describe('install._internals — canonical-stack constants', () => {
   test('process name is genie-serve', () => {
@@ -49,89 +50,101 @@ describe('install._internals — canonical-stack constants', () => {
   });
 });
 
-describe('buildPm2StartArgs — pm2 invocation locked down', () => {
-  test('emits all hardened pm2 flags in the right order', () => {
-    const args = buildPm2StartArgs('/usr/local/bin/genie');
-    expect(args[0]).toBe('start');
-    expect(args[1]).toBe('/usr/local/bin/genie');
-    // Sanity: the args list contains every hardening flag.
-    const flagsExpected = [
-      '--name',
-      '--interpreter',
-      '--max-restarts',
-      '--min-uptime',
-      '--restart-delay',
-      '--exp-backoff-restart-delay',
-      '--max-memory-restart',
-      '--kill-timeout',
-      '--log-date-format',
-      '--output',
-      '--error',
+describe('buildEcosystemConfigSource — pm2 ecosystem config locked down', () => {
+  // pm2 6 dropped CLI flags like --min-uptime / --max-restarts / --restart-delay
+  // / --max-memory-restart / --output / --error. Ecosystem-config form is the
+  // ONLY supported path on modern pm2. Tests assert the generated config text
+  // carries every hardening field as the canonical-stack contract requires.
+
+  test('config has the canonical pm2 app shape with hardening fields', () => {
+    const src = buildEcosystemConfigSource('/usr/local/bin/genie');
+    // Required fields the canonical stack contract pins.
+    const fieldsExpected = [
+      `"name": "${PM2_PROCESS_NAME}"`,
+      '"script":',
+      '"args":',
+      '"interpreter": "none"',
+      '"autorestart": true',
+      '"max_restarts":',
+      '"min_uptime":',
+      '"restart_delay":',
+      '"exp_backoff_restart_delay":',
+      '"max_memory_restart":',
+      '"kill_timeout":',
+      '"log_date_format":',
+      '"error_file":',
+      '"out_file":',
+      '"merge_logs": true',
+      '"time": true',
     ];
-    for (const flag of flagsExpected) {
-      expect(args).toContain(flag);
+    for (const field of fieldsExpected) {
+      expect(src).toContain(field);
     }
   });
 
-  test('uses --interpreter none for shebang resolution (NOT --interpreter bun)', () => {
+  test('uses interpreter:"none" for shebang resolution (NOT bun)', () => {
     // pm2's bun launcher errors out on top-level await with
     // "require() async module ... is unsupported. use await import()".
     // Validated empirically 2026-04-30. If anyone "fixes" this to
-    // --interpreter bun, the install will pass but the supervised process
-    // immediately crashes — exactly the silent dead-code class the
-    // host-fingerprint pipeline smoke test guards against.
-    const args = buildPm2StartArgs('/usr/local/bin/genie');
-    const interpreterIdx = args.indexOf('--interpreter');
-    expect(args[interpreterIdx + 1]).toBe('none');
-    expect(args).not.toContain('bun');
+    // interpreter:"bun", the install will pass but the supervised process
+    // immediately crashes.
+    const src = buildEcosystemConfigSource('/usr/local/bin/genie');
+    expect(src).toContain('"interpreter": "none"');
+    expect(src).not.toContain('"interpreter": "bun"');
   });
 
   test('forwards `serve start --headless --no-tui --no-interactive` to genie', () => {
     // pm2's child has no controlling terminal so a TUI would wedge.
     // Headless + no-tui + no-interactive matches the invocation pinned in
     // the wish's Decisions 4 & 5.
-    const args = buildPm2StartArgs('/usr/local/bin/genie');
-    const sepIdx = args.indexOf('--');
-    expect(sepIdx).toBeGreaterThan(0);
-    const scriptArgs = args.slice(sepIdx + 1);
-    expect(scriptArgs).toEqual(['serve', 'start', '--headless', '--no-tui', '--no-interactive']);
+    const src = buildEcosystemConfigSource('/usr/local/bin/genie');
+    expect(src).toContain('"args": "serve start --headless --no-tui --no-interactive"');
   });
 
-  test('process name is registered as "genie-serve"', () => {
-    const args = buildPm2StartArgs('/usr/local/bin/genie');
-    const nameIdx = args.indexOf('--name');
-    expect(args[nameIdx + 1]).toBe('genie-serve');
+  test('script points at the resolved genie binary path', () => {
+    const src = buildEcosystemConfigSource('/usr/local/bin/genie');
+    expect(src).toContain('"script": "/usr/local/bin/genie"');
   });
 
   test('memory ceiling matches HARDENED_DEFAULTS.maxMemory', () => {
-    const args = buildPm2StartArgs('/usr/local/bin/genie');
-    const memIdx = args.indexOf('--max-memory-restart');
-    expect(args[memIdx + 1]).toBe(HARDENED_DEFAULTS.maxMemory);
+    const src = buildEcosystemConfigSource('/usr/local/bin/genie');
+    expect(src).toContain(`"max_memory_restart": "${HARDENED_DEFAULTS.maxMemory}"`);
   });
 
   test('logs land in ~/.genie/logs/genie-serve-{out,error}.log', () => {
-    const args = buildPm2StartArgs('/usr/local/bin/genie');
-    const outIdx = args.indexOf('--output');
-    const errIdx = args.indexOf('--error');
-    expect(args[outIdx + 1]).toMatch(/genie-serve-out\.log$/);
-    expect(args[errIdx + 1]).toMatch(/genie-serve-error\.log$/);
+    const src = buildEcosystemConfigSource('/usr/local/bin/genie');
+    expect(src).toMatch(/"out_file": "[^"]*genie-serve-out\.log"/);
+    expect(src).toMatch(/"error_file": "[^"]*genie-serve-error\.log"/);
   });
 
-  test('numeric flags are stringified (pm2 child_process arg constraint)', () => {
-    const args = buildPm2StartArgs('/usr/local/bin/genie');
-    const numericFlags = [
-      '--max-restarts',
-      '--min-uptime',
-      '--restart-delay',
-      '--exp-backoff-restart-delay',
-      '--kill-timeout',
+  test('numeric fields are real numbers (not strings)', () => {
+    // Ecosystem config wants real numbers for these — pm2 stringifies
+    // internally. Strings would silently fail validation on some pm2
+    // versions or be coerced to NaN.
+    const src = buildEcosystemConfigSource('/usr/local/bin/genie');
+    const numericFields: Array<[string, number]> = [
+      ['max_restarts', HARDENED_DEFAULTS.maxRestarts],
+      ['min_uptime', HARDENED_DEFAULTS.minUptimeMs],
+      ['restart_delay', HARDENED_DEFAULTS.restartDelayMs],
+      ['exp_backoff_restart_delay', HARDENED_DEFAULTS.expBackoffRestartDelayMs],
+      ['kill_timeout', HARDENED_DEFAULTS.killTimeoutMs],
     ];
-    for (const flag of numericFlags) {
-      const idx = args.indexOf(flag);
-      const value = args[idx + 1];
-      expect(typeof value).toBe('string');
-      expect(value).toMatch(/^\d+$/);
+    for (const [field, value] of numericFields) {
+      expect(src).toContain(`"${field}": ${value}`);
     }
+  });
+});
+
+describe('buildPm2StartArgs — CLI invocation', () => {
+  // Thin smoke: the function writes the ecosystem config to disk and
+  // returns the pm2 start argv. Heavy content assertions live above.
+
+  test('returns ["start", <config-path>, "--update-env"]', () => {
+    const args = buildPm2StartArgs('/usr/local/bin/genie');
+    expect(args[0]).toBe('start');
+    expect(args[1]).toBe(getEcosystemConfigPath());
+    expect(args[2]).toBe('--update-env');
+    expect(args).toHaveLength(3);
   });
 });
 
