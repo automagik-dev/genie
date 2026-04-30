@@ -985,7 +985,10 @@ async function startHookSocketSafely(): Promise<void> {
     // daemon from a repo root get that repo's `.genie/hooks/` scanned.
     handles.hookSocket = await startHookSocket({
       strict: process.env.GENIE_STRICT_HOOKS === '1',
-      repoRoot: process.cwd(),
+      // Use operatorCwd (captured before daemon's cwd pin) so the per-repo
+      // hook tier scan still finds the operator's `.genie/hooks/` (issue
+      // #1575 — daemon pins cwd to genie's package dir).
+      repoRoot: operatorCwd,
     });
   } catch (err) {
     // Bubble up --strict-hooks failures so the operator sees the colliding
@@ -1145,7 +1148,20 @@ async function confirmBackgroundStarted(childPid: number, startupStatusPath?: st
   console.log(`genie serve started (PID ${childPid})`);
 }
 
+/**
+ * Operator's invocation cwd, captured BEFORE the daemon pins itself to
+ * genie's package directory (issue #1575). Used by the hook socket so the
+ * per-repo tier scan still finds the operator's repo `.genie/hooks/`.
+ */
+let operatorCwd: string = process.cwd();
+
 async function startForeground(headless?: boolean, autoFix = true): Promise<void> {
+  // Capture the operator's cwd FIRST — pinCwdToGeniePackageDir() below will
+  // chdir away for the daemon's lifetime so pgserve fingerprints us as the
+  // genie package (issue #1575). Anything that legitimately needs the
+  // operator's cwd (hook-socket repoRoot, future relative-path lookups)
+  // must read `operatorCwd`, not `process.cwd()`.
+  operatorCwd = process.cwd();
   claimServePidOrExit();
   // Default pgserve v2 uses a Unix socket and must coexist with legacy v1
   // TCP daemons. Only touch ~/.genie/pgserve.port when the operator has
@@ -1153,6 +1169,17 @@ async function startForeground(headless?: boolean, autoFix = true): Promise<void
   removeLegacyPgservePortLockfileIfForcedTcp();
   const { skipTui, mode } = resolveServeMode(headless);
   process.env.GENIE_IS_DAEMON = '1';
+  // Pin cwd to genie's package directory for the daemon's lifetime so every
+  // pgserve accept under this PID fingerprints to the same persistent DB
+  // (issue #1575). Must run BEFORE any getConnection() call (preconditions
+  // included). No-op if already pinned or if the package dir cannot be
+  // resolved.
+  try {
+    const { pinCwdToGeniePackageDir } = await import('../lib/db.js');
+    pinCwdToGeniePackageDir();
+  } catch {
+    // Non-fatal: db module load failure surfaces later via preconditions.
+  }
   // claimServePidOrExit already wrote `${pid}:${startTime}` atomically.
   console.log(`genie serve starting (PID ${process.pid}, mode: ${mode})`);
 

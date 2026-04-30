@@ -209,6 +209,68 @@ function liveDaemonPid(pid: number | null): number | null {
   }
 }
 
+/**
+ * Resolve the directory of genie's own `package.json` (issue #1575).
+ *
+ * Walks UP from `import.meta.dir` looking for the first `package.json` whose
+ * `name === '@automagik/genie'`. Mirrors `version.ts`'s strategy. Cached.
+ *
+ * Returns `null` if no genie package.json can be found within `MAX_WALK_DEPTH`
+ * — defensive fallback for unusual deployment layouts (tarballs, npm-link
+ * setups). Callers should treat null as "skip the cwd pin" rather than fail.
+ */
+function resolveGeniePackageDir(): string | null {
+  if (geniePackageDirCache !== undefined) return geniePackageDirCache;
+  const PACKAGE_NAME = '@automagik/genie';
+  const MAX_WALK_DEPTH = 10;
+  // import.meta.dir → src/lib/ in dev, dist/ when bundled. The package.json
+  // we want is one level up in either case (src/lib/.. = repo root in dev,
+  // dist/.. = installed package root in prod).
+  let current = dirname(import.meta.dir ?? __dirname);
+  for (let depth = 0; depth < MAX_WALK_DEPTH; depth++) {
+    const candidate = join(current, 'package.json');
+    try {
+      if (existsSync(candidate)) {
+        const pkg = JSON.parse(readFileSync(candidate, 'utf-8')) as { name?: string };
+        if (pkg?.name === PACKAGE_NAME) {
+          geniePackageDirCache = current;
+          return current;
+        }
+      }
+    } catch {
+      // Malformed package.json — keep walking.
+    }
+    const parent = dirname(current);
+    if (parent === current) break; // filesystem root
+    current = parent;
+  }
+  geniePackageDirCache = null;
+  return null;
+}
+
+/**
+ * Pin the process cwd to genie's package directory for the daemon's lifetime
+ * (issue #1575). Called by `genie serve` BEFORE any DB connection so all 50
+ * pool connections fingerprint identically against `app_<name>_<fp>` with
+ * `persist: true`. No-op if already pinned or if the package dir cannot be
+ * resolved. Returns the original cwd so the caller can use it for paths that
+ * must remain relative to the operator's invocation directory (e.g.
+ * `repoRoot` for the hook socket).
+ */
+export function pinCwdToGeniePackageDir(): { previous: string; pinned: string | null } {
+  const previous = process.cwd();
+  if (daemonCwdPinned) return { previous, pinned: previous };
+  const dir = resolveGeniePackageDir();
+  if (!dir) return { previous, pinned: null };
+  try {
+    if (process.cwd() !== dir) process.chdir(dir);
+    daemonCwdPinned = true;
+    return { previous, pinned: dir };
+  } catch {
+    return { previous, pinned: null };
+  }
+}
+
 function findLocalPgserveRoot(): string | null {
   const candidates = [
     // Installed package layout: @automagik/genie/dist/genie.js ->
@@ -881,6 +943,22 @@ let sqlClient: any = null;
 let activePort: number | null = null;
 let ensurePromise: Promise<number> | null = null;
 /**
+ * Cached genie package directory (issue #1575). The directory containing the
+ * `package.json` whose `name === '@automagik/genie'`. We chdir there before
+ * the postgres.js pool opens its first connection so pgserve's accept hook
+ * (which walks `/proc/<peer_pid>/cwd` upward looking for the nearest
+ * package.json) lands on OUR identity instead of whichever project the user
+ * happens to be cd'd into. Resolved once per process, then cached.
+ */
+let geniePackageDirCache: string | null | undefined = undefined;
+/**
+ * Set true when the daemon (`genie serve`) has explicitly chdir'd to
+ * `geniePackageDir` for its lifetime. When set, `_buildConnection` skips the
+ * try/finally restore so subsequent pool connections continue to fingerprint
+ * with the pinned cwd.
+ */
+let daemonCwdPinned = false;
+/**
  * Dedup concurrent rebuilds of sqlClient. N parallel getConnection() callers
  * observing a null/stale client would each race pgModule(...) and leak pools.
  * biome-ignore lint/suspicious/noExplicitAny: shared with sqlClient
@@ -1288,6 +1366,21 @@ function registerExitHandler(): void {
   exitHandlerRegistered = true;
 
   const cleanup = () => {
+    // Issue #1574 — best-effort drain of the postgres.js pool on hard exit.
+    // process.on('exit') is synchronous, so we cannot await; fire-and-forget
+    // the close so postgres.js sends Terminate frames over the wire before
+    // the kernel reclaims sockets. Without this, server-side backend
+    // processes linger as `idle` until tcp_keepalives_idle (often unlimited
+    // on a Unix socket) reaps them, accumulating into max_connections
+    // saturation under hook-fork load. shutdown() (below) is the awaited
+    // path and is now also wired to 'beforeExit'.
+    if (sqlClient) {
+      const dying = sqlClient;
+      sqlClient = null;
+      dying.end({ timeout: 1 }).catch(() => {
+        /* best-effort — see comment above */
+      });
+    }
     if (pgserveChild) {
       signalPgserveTree(pgserveChild, 'SIGTERM');
       pgserveChild = null;
@@ -1299,6 +1392,15 @@ function registerExitHandler(): void {
   };
 
   process.on('exit', cleanup);
+  // 'beforeExit' fires before the event loop drains AND supports async work,
+  // so the pool gets a real awaited drain on every clean exit. Critical for
+  // CLI subcommands (genie ls, genie wish status, etc.) that exit via
+  // process.exit(0) without explicitly calling shutdown().
+  process.on('beforeExit', () => {
+    shutdown().catch(() => {
+      /* best-effort — exit handler must not throw */
+    });
+  });
   process.on('SIGINT', () => {
     cleanup();
     process.exit(130);
@@ -1478,6 +1580,43 @@ async function _buildConnection(): Promise<any> {
   // alongside its control socket so off-the-shelf clients connect without
   // knowing the daemon's actual socket name.
   const host = useSocket ? resolvePgserveSocketDir() : DEFAULT_HOST;
+
+  // Issue #1575 — pin cwd to genie's package directory before postgres.js
+  // opens its first connection. pgserve v2 fingerprints peers by walking
+  // /proc/<peer_pid>/cwd upward looking for the nearest package.json; if our
+  // cwd has no ancestor package.json (CLI invoked from ~/) or sits inside a
+  // *different* project, the peer is misrouted to either an ephemeral
+  // `app_anon_<fp>` (GC-eligible → "database does not exist") or to that
+  // foreign project's DB. Pinning cwd to genie's own package dir guarantees
+  // we always land in `app_<@automagik/genie>_<fp>` with `persist: true`.
+  //
+  // Strategy:
+  //   - Short-lived CLI (GENIE_SKIP_DB_BOOT=1): max:1 + idle_timeout:0 keep
+  //     the single fingerprinted connection alive for the process lifetime,
+  //     so we can chdir back immediately after the forced SELECT 1 below.
+  //   - Daemon / TUI: caller (genie serve) has already pinned cwd via
+  //     pinCwdToGeniePackageDir(); we keep max:50 so the connection pool
+  //     can scale, and we do NOT restore cwd after this routine.
+  const skipBoot = isTestMode || process.env.GENIE_SKIP_DB_BOOT === '1';
+  const originalCwd = process.cwd();
+  const pkgDir = resolveGeniePackageDir();
+  const shouldRestoreCwd = !daemonCwdPinned && !isTestMode;
+  let pinned = false;
+  if (pkgDir && process.cwd() !== pkgDir) {
+    try {
+      process.chdir(pkgDir);
+      pinned = true;
+    } catch (err) {
+      // chdir failure is non-fatal — fall through with the wrong cwd. The
+      // peer will still get *some* fingerprint; only routing identity may
+      // be off. Surface as a stderr warning so operators can investigate.
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[pgserve] WARN: failed to pin cwd to ${pkgDir}: ${msg}\n`);
+    }
+  } else if (!pkgDir) {
+    process.stderr.write('[pgserve] WARN: could not resolve genie package dir; pgserve fingerprint may be unstable\n');
+  }
+
   sqlClient = pgModule({
     host,
     port,
@@ -1486,8 +1625,11 @@ async function _buildConnection(): Promise<any> {
     // Socket mode uses SO_PEERCRED for tenancy, but the proxied Postgres
     // handshake still requests pgserve's local role password.
     [PG_AUTH_FIELD]: pgWireCredential,
-    max: 50,
-    idle_timeout: 1,
+    // Pool sizing — see issue #1575 strategy block above. Short-lived CLI
+    // gets a single persistent connection so the cwd pin can be released
+    // immediately after fingerprinting.
+    max: skipBoot ? 1 : 50,
+    idle_timeout: skipBoot ? 0 : 1,
     connect_timeout: resolvePgConnectTimeoutSeconds(useSocket),
     onnotice: () => {},
     connection: {
@@ -1496,6 +1638,12 @@ async function _buildConnection(): Promise<any> {
   });
 
   try {
+    // Force one round-trip while cwd is still pinned so pgserve does its
+    // /proc walk under our package dir. postgres.js connections are lazy —
+    // without this query, pgserve never sees us until the next caller fires
+    // a real query, by which time we may have chdir'd back. A failure here
+    // falls through to the outer catch which tears down the half-built pool.
+    await sqlClient`SELECT 1`;
     await runPostConnectSetup(sqlClient, isTestMode, { t0: _t0, t1: _t1 });
     await maybePrintBanner(sqlClient, isTestMode);
     // Surface the resolved transport on the activePort singleton so diagnostics
@@ -1516,6 +1664,22 @@ async function _buildConnection(): Promise<any> {
       /* ignore */
     });
     throw err;
+  } finally {
+    // Issue #1575 — restore the user's cwd unless the daemon entrypoint has
+    // explicitly pinned for its lifetime. The fingerprinted connection is
+    // already established (SELECT 1 above forced pgserve's /proc walk under
+    // the pinned cwd); short-lived CLI processes use max:1 + idle_timeout:0
+    // so this same connection persists for the rest of the process and
+    // never re-fingerprints.
+    if (pinned && shouldRestoreCwd && process.cwd() !== originalCwd) {
+      try {
+        process.chdir(originalCwd);
+      } catch (err) {
+        // originalCwd may have been deleted while we were away — best-effort.
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[pgserve] WARN: failed to restore cwd to ${originalCwd}: ${msg}\n`);
+      }
+    }
   }
 
   return sqlClient;
