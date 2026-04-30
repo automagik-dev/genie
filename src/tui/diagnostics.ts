@@ -247,17 +247,35 @@ function detectGaps(executors: TuiExecutor[], sessions: TmuxSession[]): Diagnost
 
 // ─── Full Snapshot ────────────────────────────────────────────────────────────
 
-/** Collect a complete diagnostic snapshot: executors from DB + tmux inventory + gaps. */
+/** Collect a complete diagnostic snapshot: executors from DB + tmux inventory + gaps.
+ *
+ * Every PG-touching loader is fail-soft. Under transient pgserve saturation
+ * (`too many clients already`, `CONNECTION_ENDED`, etc.) the snapshot still
+ * renders with empty/stale data instead of crashing the TUI refresh — the
+ * Nav.tsx interval will retry every 2s. Single-error spam in the TUI console
+ * was the original symptom of /trace report 2026-04-30.
+ */
 export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
   const { loadExecutors, loadAssignments, loadAgentWorkStates } = await import('./db.js');
 
-  // Collect tmux inventory (shell) and executors (DB) in parallel
+  // Collect tmux inventory (shell, no DB) and executors (DB, fail-soft) in parallel
   const sessions = getTmuxInventory();
-  const executors = await loadExecutors();
 
-  // Load assignments for active executors
+  let executors: Awaited<ReturnType<typeof loadExecutors>> = [];
+  try {
+    executors = await loadExecutors();
+  } catch {
+    /* keep empty — Nav still renders with sessions only */
+  }
+
+  // Load assignments for active executors (DB, fail-soft)
   const executorIds = executors.map((e) => e.id);
-  const assignments = await loadAssignments(executorIds);
+  let assignments: Awaited<ReturnType<typeof loadAssignments>> = [];
+  try {
+    assignments = await loadAssignments(executorIds);
+  } catch {
+    /* keep empty — Nav hides assignment column */
+  }
 
   // Load per-agent work-state via shouldResume() and active-signal count.
   // Both are best-effort: if PG is degraded, we still ship a usable
@@ -280,19 +298,25 @@ export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
   const gaps = detectGaps(executors, sessions);
 
   // Auto-terminate dead-PID executors so stale rows don't block re-spawning.
+  // Fail-soft: under DB saturation, defer cleanup to the next refresh tick
+  // rather than crashing the snapshot.
   if (gaps.deadPidExecutors.length > 0) {
-    const { terminateExecutor } = await import('../lib/executor-registry.js');
-    const { getConnection } = await import('../lib/db.js');
-    const sql = await getConnection();
-    await Promise.allSettled(
-      gaps.deadPidExecutors.map(async (exec) => {
-        await terminateExecutor(exec.id);
-        // Clear the agent FK so the duplicate guard won't block new spawns
-        if (exec.agentId) {
-          await sql`UPDATE agents SET current_executor_id = NULL WHERE current_executor_id = ${exec.id}`;
-        }
-      }),
-    );
+    try {
+      const { terminateExecutor } = await import('../lib/executor-registry.js');
+      const { getConnection } = await import('../lib/db.js');
+      const sql = await getConnection();
+      await Promise.allSettled(
+        gaps.deadPidExecutors.map(async (exec) => {
+          await terminateExecutor(exec.id);
+          // Clear the agent FK so the duplicate guard won't block new spawns
+          if (exec.agentId) {
+            await sql`UPDATE agents SET current_executor_id = NULL WHERE current_executor_id = ${exec.id}`;
+          }
+        }),
+      );
+    } catch {
+      /* keep gaps surfaced — next refresh tick retries cleanup */
+    }
   }
 
   return {
