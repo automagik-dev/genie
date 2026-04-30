@@ -25,6 +25,8 @@ import {
   shutdown,
 } from '../lib/db.js';
 import { padRight } from '../lib/term-format.js';
+import { registerDbLsCommand } from './db-ls.js';
+import { registerDbMigrateV1Command } from './db-migrate-v1.js';
 
 /**
  * Walk up from `start` looking for a package.json. Mirrors pgserve v2's
@@ -417,4 +419,10 @@ export function registerDbCommands(program: Command): void {
     .description('Restore database from snapshot (default: .genie/snapshot.sql.gz)')
     .option('-y, --yes', 'Skip confirmation prompt')
     .action(dbRestoreCommand);
+
+  // v1 → v2 data migration (one-shot, idempotent)
+  registerDbMigrateV1Command(db);
+
+  // List all pgserve databases on this host
+  registerDbLsCommand(db);
 }

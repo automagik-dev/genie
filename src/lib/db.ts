@@ -27,6 +27,7 @@ import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, needsSeededTeams, runSeed } from './pg-seed.js';
 import { getProcessStartTime } from './process-identity.js';
+import { maybePromptV1Migration } from './v1-migration-prompt.js';
 
 /**
  * Re-export Sql type for callers that need to annotate sql connection parameters.
@@ -1288,6 +1289,11 @@ async function runPostConnectSetup(client: postgres.Sql, isTestMode: boolean, ti
   if (!skipBoot && (needsSeed() || (await needsSeededTeams(client)))) {
     await runSeed(client);
   }
+
+  // v1 → v2 auto-prompt: probes once per process for legacy v1 user DBs;
+  // silenced after a successful `genie db migrate-v1` records itself in
+  // _genie_migration_state. Best-effort: failures degrade silently.
+  if (!skipBoot) await maybePromptV1Migration(client);
   const _t4 = Date.now();
 
   // Retention is no longer run from getConnection — it now lives on a
