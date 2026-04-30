@@ -5,6 +5,7 @@
  * Checks prerequisites, configuration, and tmux connectivity.
  */
 
+import { execFileSync } from 'node:child_process';
 import {
   copyFileSync,
   existsSync,
@@ -1188,25 +1189,107 @@ export function findStaleGenieCandidates(exclude: Set<number>): number[] {
   return candidates;
 }
 
+interface Pm2ListEntry {
+  name?: string;
+  pid?: number;
+  pm2_env?: { status?: string; pm_exec_path?: string; created_at?: number };
+}
+
 /**
- * Reap stale genie processes left over from before this update. Runs as
- * part of `runPostUpdateMaintenance`. Why: the in-memory binary loaded by
- * a long-running `genie serve` / TUI / orphan subprocess is the OLD
- * version. Connection-leak fixes (cwd-pin, drain-on-exit, cliShortLived
- * gate) only protect NEW invocations — old processes keep holding leaked
- * pgserve connections until they die or pgserve is restarted, which on
- * busy hosts saturates `max_connections=1000` and locks out everything
- * else with `sorry, too many clients already`.
+ * Read pm2's process list. Returns empty when pm2 is not installed, not
+ * running, or returns malformed JSON. Any error path is non-fatal — the
+ * post-update cleanup must continue even when pm2 is absent.
+ */
+function safePm2List(): Pm2ListEntry[] {
+  try {
+    const out = execFileSync('pm2', ['jlist'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const parsed = JSON.parse(out);
+    return Array.isArray(parsed) ? (parsed as Pm2ListEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function safePm2Delete(name: string): boolean {
+  try {
+    execFileSync('pm2', ['delete', name], { timeout: 5000, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Drop pm2 entries that are stale post-update. Two cases:
  *
- * Safety:
+ *   1. **Broken legacy name** (`genie-serve.ecosystem`) — created by the
+ *      pre-fix install code that wrote the ecosystem config with a
+ *      non-`.config.cjs` filename, causing pm2 to run the config as a
+ *      regular script (no actual genie-serve, just a no-op restart-loop).
+ *   2. **Stale `pm_exec_path`** — entry's resolved script path doesn't
+ *      match the currently-installed `genie` binary (e.g. user moved
+ *      install method from npm to bun). pm2 supervises the wrong file.
+ *
+ * After cleanup, the next `genie install` will re-create the entry
+ * correctly. Safe to skip if pm2 isn't installed — pure operator hygiene.
+ */
+function cleanupStalePm2Entries(log: (line: string) => void): void {
+  const entries = safePm2List();
+  if (entries.length === 0) return; // pm2 absent or empty — nothing to clean
+
+  const stale: Array<{ name: string; reason: string }> = [];
+  for (const entry of entries) {
+    if (!entry.name) continue;
+    if (entry.name === 'genie-serve.ecosystem') {
+      stale.push({ name: entry.name, reason: 'legacy broken filename pattern' });
+    }
+    // Future heuristic: detect stale pm_exec_path. Skipped for now —
+    // requires path canonicalisation (npm vs bun vs symlinks) and the
+    // false-positive cost is "user has to re-run genie install".
+  }
+
+  for (const { name, reason } of stale) {
+    log(`  [fix] pm2 delete ${name} (${reason})`);
+    if (!safePm2Delete(name)) {
+      log(`  [!!] pm2 delete ${name} failed (non-blocking)`);
+    }
+  }
+}
+
+/**
+ * Reap stale genie processes + pm2 entries left over from before this
+ * update. Runs as part of `runPostUpdateMaintenance`. Why: the in-memory
+ * binary loaded by any long-running genie process (`genie serve`, TUIs,
+ * orphan subprocesses) is the OLD version — the connection-leak,
+ * direct-postmaster, and bind-to-local fixes shipped today only protect
+ * NEW invocations. Old processes keep holding leaked pgserve connections
+ * until they die, which on busy hosts saturates `max_connections` and
+ * locks out everything else with `sorry, too many clients already`.
+ *
+ * Behaviour
+ * ---------
+ *
+ *   - Kills all genie processes whose argv contains `dist/genie.js`,
+ *     **including the active serve daemon** read from `~/.genie/serve.pid`.
+ *     The daemon is the most-leaking process post-update; preserving it
+ *     defeats the purpose of the update. The next `genie *` invocation
+ *     will autospawn a fresh daemon on the new binary, OR pm2 will if
+ *     `genie install` ran successfully.
  *   - Excludes self (`process.pid`) and the entire parent chain so we
  *     don't kill the npm/bun update wrapper or the user's shell.
- *   - Excludes the active serve daemon (read from `~/.genie/serve.pid`)
- *     because it owns active TUI sessions and the scheduler. Operators
- *     who want to recycle the daemon should run `genie doctor --fix`
- *     which has an explicit `stopExistingDaemon` step.
+ *   - Cleans up stale pm2 entries (`genie-serve.ecosystem` legacy form
+ *     and any other obvious mismatches).
+ *
+ * Safety
+ * ------
+ *
  *   - Linux-only (relies on /proc). macOS/Windows skip with a notice.
- *   - Opt out via `GENIE_UPDATE_NO_REAP=1`.
+ *   - Opt out via `GENIE_UPDATE_NO_REAP=1` (preserve the daemon for
+ *     debugging — operator must manually `genie serve restart`).
  *   - Failures are non-fatal — the update flow continues.
  */
 async function reapStaleGenieProcesses(opts: { log?: (line: string) => void } = {}): Promise<void> {
@@ -1220,60 +1303,63 @@ async function reapStaleGenieProcesses(opts: { log?: (line: string) => void } = 
     return;
   }
 
+  // Exclude self + parent chain only. The active `genie serve` daemon is
+  // intentionally NOT excluded — its in-memory binary is stale post-update
+  // and it's the largest leak source. Killing it triggers autospawn of a
+  // fresh daemon under the new code on the next genie invocation.
   const exclude = getParentChain(process.pid);
-
-  // Exclude the active serve daemon (file format: "<pid>:<startTime>").
-  try {
-    const home = process.env.GENIE_HOME ?? join(homedir(), '.genie');
-    const servePidPath = join(home, 'serve.pid');
-    if (existsSync(servePidPath)) {
-      const raw = readFileSync(servePidPath, 'utf-8').trim().split(':')[0];
-      const sp = Number.parseInt(raw, 10);
-      if (Number.isFinite(sp) && sp > 0) exclude.add(sp);
-    }
-  } catch {
-    // No serve.pid or unreadable — daemon isn't running, nothing to exclude.
-  }
 
   const candidates = findStaleGenieCandidates(exclude);
   if (candidates.length === 0) {
     log('  [ok] No stale genie processes to reap');
-    return;
-  }
-
-  log(`  [fix] Reaping ${candidates.length} stale genie process(es): ${candidates.join(', ')}`);
-  for (const pid of candidates) {
-    try {
-      process.kill(pid, 'SIGTERM');
-    } catch {
-      // Already dead between scan and signal — fine.
-    }
-  }
-
-  // Give SIGTERM 2s to settle. Most genie processes have shutdown handlers
-  // (the same beforeExit handler we added in #1580) that drain pools and
-  // exit cleanly within a second.
-  await new Promise((r) => setTimeout(r, 2000));
-
-  const stragglers: number[] = [];
-  for (const pid of candidates) {
-    try {
-      process.kill(pid, 0); // signal 0 = liveness probe
-      stragglers.push(pid);
-    } catch {
-      // Gone after SIGTERM — good.
-    }
-  }
-  if (stragglers.length > 0) {
-    log(`  [fix] SIGKILL stragglers: ${stragglers.join(', ')}`);
-    for (const pid of stragglers) {
+  } else {
+    log(`  [fix] Reaping ${candidates.length} stale genie process(es) (incl. serve daemon): ${candidates.join(', ')}`);
+    for (const pid of candidates) {
       try {
-        process.kill(pid, 'SIGKILL');
+        process.kill(pid, 'SIGTERM');
       } catch {
-        // Race: died between probe and SIGKILL — fine.
+        // Already dead between scan and signal — fine.
       }
     }
+
+    // Give SIGTERM 2s to settle. Most genie processes have shutdown handlers
+    // (the same beforeExit handler we added in #1580) that drain pools and
+    // exit cleanly within a second.
+    await new Promise((r) => setTimeout(r, 2000));
+
+    const stragglers: number[] = [];
+    for (const pid of candidates) {
+      try {
+        process.kill(pid, 0); // signal 0 = liveness probe
+        stragglers.push(pid);
+      } catch {
+        // Gone after SIGTERM — good.
+      }
+    }
+    if (stragglers.length > 0) {
+      log(`  [fix] SIGKILL stragglers: ${stragglers.join(', ')}`);
+      for (const pid of stragglers) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          // Race: died between probe and SIGKILL — fine.
+        }
+      }
+    }
+
+    // Daemon was just killed — clear the stale pid file so the next
+    // genie invocation autospawns cleanly instead of probing a dead pid.
+    try {
+      const home = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+      const servePidPath = join(home, 'serve.pid');
+      if (existsSync(servePidPath)) unlinkSync(servePidPath);
+    } catch {
+      // serve.pid is stale-tolerant — next caller will recover.
+    }
   }
+
+  cleanupStalePm2Entries(log);
+
   log('  [ok] Stale genie reap complete');
 }
 

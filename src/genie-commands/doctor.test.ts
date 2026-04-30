@@ -317,13 +317,43 @@ describe('reapStaleGenieProcesses (post-update reaper)', () => {
     expect(preconditionIdx).toBeGreaterThan(-1);
     expect(reapIdx).toBeLessThan(preconditionIdx);
 
-    // Honors the GENIE_UPDATE_NO_REAP=1 opt-out and excludes the serve daemon.
+    // Honors the GENIE_UPDATE_NO_REAP=1 opt-out.
     expect(source).toContain("process.env.GENIE_UPDATE_NO_REAP === '1'");
-    expect(source).toContain("'serve.pid'");
     // Walks the parent chain to avoid killing the npm/bun update wrapper.
     expect(source).toContain('getParentChain(process.pid)');
     // Escalates SIGTERM → SIGKILL with a 2s grace window.
     expect(source).toContain("process.kill(pid, 'SIGTERM')");
     expect(source).toContain("process.kill(pid, 'SIGKILL')");
+    // Daemon-recycle contract: the active serve daemon (read from
+    // `~/.genie/serve.pid`) is INTENTIONALLY NOT excluded — its in-memory
+    // binary is stale post-update and it's the largest leak source. After
+    // SIGTERM/SIGKILL the stale serve.pid file gets unlinked so the next
+    // genie invocation autospawns cleanly.
+    const reapFnStart = source.indexOf('async function reapStaleGenieProcesses');
+    expect(reapFnStart).toBeGreaterThan(-1);
+    const reapFnBody = source.slice(reapFnStart, source.indexOf('\n}\n', reapFnStart));
+    // No exclude.add(serveDaemon) call — distinguishing this from the
+    // pre-#1588 reaper which preserved the daemon.
+    expect(reapFnBody).not.toMatch(/exclude\.add\(sp\)/);
+    // serve.pid file unlinked after reap to enable clean autospawn.
+    expect(reapFnBody).toContain("'serve.pid'");
+    expect(reapFnBody).toContain('unlinkSync(servePidPath)');
+    // pm2 cleanup runs after process reap.
+    expect(reapFnBody).toContain('cleanupStalePm2Entries(log)');
+  });
+
+  test('cleanupStalePm2Entries removes broken legacy genie-serve.ecosystem name', () => {
+    const source = readFileSync(join(__dirname, 'doctor.ts'), 'utf-8');
+    const fnStart = source.indexOf('function cleanupStalePm2Entries');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = source.slice(fnStart, source.indexOf('\n}\n', fnStart));
+    // The name pattern is the broken legacy form from the pre-fix install
+    // code (filename was `.ecosystem.cjs`, not `.config.cjs`, so pm2 ran
+    // the config as a regular script — restart-loop, no actual genie-serve).
+    expect(fnBody).toContain("'genie-serve.ecosystem'");
+    // pm2 calls are best-effort: failures are logged with [!!] but don't
+    // throw. Update flow continues.
+    expect(fnBody).toContain('safePm2Delete');
+    expect(source).toContain("execFileSync('pm2', ['delete'");
   });
 });
