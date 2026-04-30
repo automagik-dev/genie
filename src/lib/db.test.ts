@@ -529,6 +529,56 @@ describe('daemon-owned pgserve', () => {
     expect(recoverBody).toContain('process.kill(-pid, signal)');
     expect(recoverBody).toContain('process.kill(pid, signal)');
   });
+
+  test('orphan data-dir lock is evicted before respawning the v2 daemon', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+
+    const detectStart = source.indexOf('function detectOrphanDataDirLock');
+    expect(detectStart).toBeGreaterThan(-1);
+    const detectBody = source.slice(
+      detectStart,
+      source.indexOf('\nasync function evictOrphanDataDirHolder', detectStart),
+    );
+    // Reads <DATA_DIR>/postmaster.pid, validates the PID is alive and our process
+    expect(detectBody).toContain("join(DATA_DIR, 'postmaster.pid')");
+    expect(detectBody).toContain('liveDaemonPid(pid)');
+    expect(detectBody).toContain("'pgserve'");
+    expect(detectBody).toContain("'postgres-server.js'");
+    expect(detectBody).toContain('cmd.includes(DATA_DIR)');
+
+    const evictStart = source.indexOf('async function evictOrphanDataDirHolder');
+    expect(evictStart).toBeGreaterThan(-1);
+    const evictBody = source.slice(evictStart, source.indexOf('\nasync function waitForDaemonSocket', evictStart));
+    // Walks up to the pgserve daemon parent if the holder is the postgres backend
+    expect(evictBody).toContain("'-o', 'ppid='");
+    // Sends SIGTERM, escalates to SIGKILL, then clears stale postmaster.pid + sockets
+    expect(evictBody).toContain("signalPgserveDaemonPid(target, 'SIGTERM')");
+    expect(evictBody).toContain("signalPgserveDaemonPid(target, 'SIGKILL')");
+    expect(evictBody).toContain("unlinkIfPresent(join(DATA_DIR, 'postmaster.pid'))");
+    expect(evictBody).toContain('removeStalePgserveSocketArtifacts()');
+
+    // startPgserveDaemonOnce calls the orphan-eviction path before spawn
+    const spawnStart = source.indexOf('async function startPgserveDaemonOnce');
+    expect(spawnStart).toBeGreaterThan(-1);
+    const spawnBody = source.slice(spawnStart, source.indexOf('\nasync function waitForDaemonSocket', spawnStart));
+    const detectIdx = spawnBody.indexOf('detectOrphanDataDirLock()');
+    const evictIdx = spawnBody.indexOf('evictOrphanDataDirHolder');
+    const spawnIdx = spawnBody.indexOf('spawn(');
+    expect(detectIdx).toBeGreaterThan(-1);
+    expect(evictIdx).toBeGreaterThan(detectIdx);
+    expect(spawnIdx).toBeGreaterThan(evictIdx);
+  });
+
+  test('daemon-exit error names the data-dir holder when one is detected', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const waitStart = source.indexOf('async function waitForDaemonSocket');
+    expect(waitStart).toBeGreaterThan(-1);
+    const waitBody = source.slice(waitStart, source.indexOf('\nfunction formatPgserveDaemonCommand', waitStart));
+
+    expect(waitBody).toContain('detectOrphanDataDirLock()');
+    expect(waitBody).toContain('Data directory ${DATA_DIR} is held by PID');
+    expect(waitBody).toContain('genie serve restart');
+  });
 });
 
 describe('retention cleanup', () => {

@@ -492,6 +492,17 @@ function unlinkIfPresent(path: string): void {
 
 async function startPgserveDaemonOnce(initial: DaemonState): Promise<void> {
   cleanPartialDaemonState(initial);
+  // The data directory may be locked by an orphan from a prior daemon — for
+  // example, a pgserve upgrade left the previous version's daemon running on
+  // a different control-socket layout, or the daemon parent died while its
+  // postgres backend kept running. probePgserveDaemon() can't see those
+  // (no current libpq socket / pgserve.pid), so we'd otherwise spawn a fresh
+  // daemon whose postgres backend immediately exits with
+  //   FATAL: lock file "postmaster.pid" already exists
+  // surfaced upstream as the unhelpful "daemon exited before binding …".
+  const orphan = detectOrphanDataDirLock();
+  if (orphan !== null) await evictOrphanDataDirHolder(orphan);
+
   const daemonCommand = findPgserveDaemonCommand();
   if (daemonCommand === null) {
     if (await tryEnsureDaemonWithSdk()) return;
@@ -519,6 +530,79 @@ async function startPgserveDaemonOnce(initial: DaemonState): Promise<void> {
   }
 }
 
+interface OrphanDataDirHolder {
+  pid: number;
+  cmd: string;
+}
+
+/**
+ * Detect a live process holding `<DATA_DIR>/postmaster.pid` that
+ * `probePgserveDaemon` can't see — i.e., a pgserve daemon (or its postgres
+ * backend) from a previous version / a daemon whose libpq compat symlink
+ * was nuked. Only flags processes whose command line proves they belong to
+ * us (pgserve, postgres-server.js, or `postgres -D <DATA_DIR>`); unrelated
+ * postmasters on the same host are left alone.
+ */
+function detectOrphanDataDirLock(): OrphanDataDirHolder | null {
+  const pidFile = join(DATA_DIR, 'postmaster.pid');
+  if (!existsSync(pidFile)) return null;
+  let raw: string;
+  try {
+    raw = readFileSync(pidFile, 'utf-8');
+  } catch {
+    return null;
+  }
+  const firstLine = raw.split('\n', 1)[0]?.trim() ?? '';
+  const pid = Number.parseInt(firstLine, 10);
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (liveDaemonPid(pid) === null) return null;
+  let cmd: string;
+  try {
+    cmd = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+      encoding: 'utf-8',
+      timeout: 1000,
+    }).trim();
+  } catch {
+    return null;
+  }
+  const ours =
+    cmd.includes('pgserve') ||
+    cmd.includes('postgres-server.js') ||
+    (cmd.includes('postgres') && cmd.includes(DATA_DIR));
+  return ours ? { pid, cmd } : null;
+}
+
+/**
+ * Terminate the orphan that holds `<DATA_DIR>/postmaster.pid`. If the holder
+ * is the postgres backend, walk up to the pgserve daemon parent so we kill
+ * the whole tree; otherwise signal the holder directly. After the process
+ * exits we remove the stale postmaster.pid so the new daemon's first call
+ * to `pg_ctl start` doesn't trip on it.
+ */
+async function evictOrphanDataDirHolder(holder: OrphanDataDirHolder): Promise<void> {
+  let target = holder.pid;
+  try {
+    const ppidStr = execFileSync('ps', ['-p', String(holder.pid), '-o', 'ppid='], {
+      encoding: 'utf-8',
+      timeout: 1000,
+    }).trim();
+    const ppid = Number.parseInt(ppidStr, 10);
+    if (Number.isInteger(ppid) && ppid > 1) {
+      const pcmd = execFileSync('ps', ['-p', String(ppid), '-o', 'command='], {
+        encoding: 'utf-8',
+        timeout: 1000,
+      }).trim();
+      if (pcmd.includes('pgserve') || pcmd.includes('postgres-server.js')) target = ppid;
+    }
+  } catch {
+    /* fall back to direct holder */
+  }
+  await signalPgserveDaemonPid(target, 'SIGTERM');
+  if (liveDaemonPid(target) !== null) await signalPgserveDaemonPid(target, 'SIGKILL');
+  unlinkIfPresent(join(DATA_DIR, 'postmaster.pid'));
+  removeStalePgserveSocketArtifacts();
+}
+
 async function waitForDaemonSocket(daemonCommand: PgserveDaemonCommand, child?: ChildProcess): Promise<void> {
   const socketPath = resolvePgserveLibpqSocketPath();
   const timeout = resolvePgserveTimeoutMs();
@@ -531,8 +615,13 @@ async function waitForDaemonSocket(daemonCommand: PgserveDaemonCommand, child?: 
   while (Date.now() < deadline) {
     if (existsSync(socketPath) && (await isPgserveSocketResponsive())) return;
     if (childExit !== null) {
+      const holder = detectOrphanDataDirLock();
+      const holderHint =
+        holder !== null
+          ? ` Data directory ${DATA_DIR} is held by PID ${holder.pid} (${holder.cmd}); kill it (or run \`genie serve restart\`) and retry.`
+          : '';
       throw new Error(
-        `pgserve v2 daemon exited before binding ${socketPath} (${childExit}). Try starting it manually: ${formatPgserveDaemonCommand(
+        `pgserve v2 daemon exited before binding ${socketPath} (${childExit}).${holderHint} Try starting it manually: ${formatPgserveDaemonCommand(
           daemonCommand,
         )}`,
       );
