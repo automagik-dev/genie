@@ -2,8 +2,10 @@
 /** OpenTUI React renderer — separated from index.ts to isolate JSX */
 
 import { type CliRendererConfig, createCliRenderer } from '@opentui/core';
+import { KeymapProvider } from '@opentui/keymap/react';
 import { createRoot } from '@opentui/react';
 import { App } from './app.js';
+import { createTuiKeymap } from './keymap.js';
 import { installOpenTui20Bridge } from './opentui-bridge.js';
 
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
@@ -61,8 +63,13 @@ export async function renderNav(): Promise<void> {
   // usable there, but default to a conservative renderer and allow env opt-ins.
   const renderer = await createCliRenderer(resolveTuiRendererConfig());
   const disposeOpenTui20Bridge = installOpenTui20Bridge(renderer);
+  const keymap = createTuiKeymap(renderer);
 
-  createRoot(renderer).render(<App rightPane={rightPane} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />);
+  createRoot(renderer).render(
+    <KeymapProvider keymap={keymap}>
+      <App rightPane={rightPane} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />
+    </KeymapProvider>,
+  );
 
   // Keep process alive until renderer is destroyed (Ctrl+Q, SIGTERM, etc.)
   // Without this, bun exits immediately after render() returns.

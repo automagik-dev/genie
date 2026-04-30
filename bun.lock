@@ -8,6 +8,7 @@
         "@anthropic-ai/claude-agent-sdk": "0.2.119",
         "@inquirer/prompts": "7.10.1",
         "@opentui/core": "0.2.0",
+        "@opentui/keymap": "0.2.0",
         "@opentui/react": "0.2.0",
         "@tauri-apps/api": "2.10.1",
         "chokidar": "^5.0.0",
@@ -350,6 +351,8 @@
     "@opentui/core-win32-arm64": ["@opentui/core-win32-arm64@0.2.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-ImMjFPOWE8wcZQ2lUz1D418xonS/5EwnItUF1g5dbp1q9+A0vv2P3bxTenLwMqcYvG4wjO6gKT3n2QLnRd6qKg=="],
 
     "@opentui/core-win32-x64": ["@opentui/core-win32-x64@0.2.0", "", { "os": "win32", "cpu": "x64" }, "sha512-6yfYHTtJ4yzbl8kXCW3Pc4eWbZDYVw21GumwdNgkjJJ2JqQAQ861em0riEoucYAa5qPYYTiMUEw7X4Fv8lGwuQ=="],
+
+    "@opentui/keymap": ["@opentui/keymap@0.2.0", "", { "dependencies": { "@opentui/core": "0.2.0" }, "peerDependencies": { "@opentui/react": "0.2.0", "@opentui/solid": "0.2.0", "react": ">=19.0.0", "solid-js": "1.9.12" }, "optionalPeers": ["@opentui/react", "@opentui/solid", "react", "solid-js"] }, "sha512-pXAjVf2hnZM1r0zmOZEDwY9V/B55RnIJFwbvB78Pdy9732h9C/BknywOD/SAXyPJNC+jlDGo4QbPG/rDe695Aw=="],
 
     "@opentui/react": ["@opentui/react@0.2.0", "", { "dependencies": { "@opentui/core": "0.2.0", "react-reconciler": "^0.32.0" }, "peerDependencies": { "react": ">=19.0.0", "react-devtools-core": "^7.0.1", "ws": "^8.18.0" } }, "sha512-wXDpBoj3GQuQJG5MrIfyYRshU3bwaBYuSC6ThYiVHSDgt8PGhy2v2xPzFVvJZDSx7hp9gUaaNzWPsXIRLwrlCQ=="],
 

@@ -3,8 +3,10 @@
 
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { useKeyboard } from '@opentui/react';
+import { useBindings } from '@opentui/keymap/react';
+import { useRenderer } from '@opentui/react';
 import { useCallback, useState } from 'react';
+import { HelpOverlay } from './components/HelpOverlay.js';
 import { Nav } from './components/Nav.js';
 import { QuitDialog } from './components/QuitDialog.js';
 import { attachProjectWindow, newAgentWindow } from './tmux.js';
@@ -18,18 +20,9 @@ interface AppProps {
 }
 
 export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
+  const renderer = useRenderer();
   const [showQuit, setShowQuit] = useState(false);
-
-  // Ctrl+Q: show quit confirmation, double Ctrl+Q: quit immediately
-  useKeyboard((key) => {
-    if (key.ctrl && key.name === 'q') {
-      if (showQuit) {
-        handleQuit();
-      } else {
-        setShowQuit(true);
-      }
-    }
-  });
+  const [showHelp, setShowHelp] = useState(false);
 
   const handleQuit = useCallback(() => {
     // Best-effort: signal genie serve to stop
@@ -47,6 +40,50 @@ export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
     } catch {}
   }, []);
 
+  useBindings(
+    () => ({
+      commands: [
+        {
+          name: 'app.quit',
+          title: 'Quit',
+          desc: 'Show quit confirmation; press again to quit',
+          category: 'app',
+          run() {
+            if (showQuit) {
+              handleQuit();
+            } else {
+              setShowQuit(true);
+            }
+          },
+        },
+        {
+          name: 'app.help.toggle',
+          title: 'Toggle help overlay',
+          desc: 'Show/hide the keyboard shortcut overlay',
+          category: 'app',
+          run() {
+            setShowHelp((prev) => !prev);
+          },
+        },
+        {
+          name: 'app.console.toggle',
+          title: 'Toggle console overlay',
+          desc: 'Show/hide the OpenTUI console (logs)',
+          category: 'app',
+          run() {
+            renderer.console.toggle();
+          },
+        },
+      ],
+      bindings: [
+        { key: 'ctrl+q', cmd: 'app.quit' },
+        { key: 'f1', cmd: 'app.help.toggle' },
+        { key: '`', cmd: 'app.console.toggle' },
+      ],
+    }),
+    [renderer, showQuit, handleQuit],
+  );
+
   const handleTmuxSessionSelect = useCallback(
     (sessionName: string, windowIndex?: number) => {
       if (!rightPane) return;
@@ -55,6 +92,8 @@ export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
     [rightPane],
   );
 
+  const overlay = showHelp ? <HelpOverlay onClose={() => setShowHelp(false)} /> : null;
+
   return (
     <box width="100%" height="100%">
       <Nav
@@ -62,8 +101,9 @@ export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
         onNewAgentWindow={newAgentWindow}
         workspaceRoot={workspaceRoot}
         initialAgent={initialAgent}
-        keyboardDisabled={showQuit}
+        keyboardDisabled={showQuit || showHelp}
       />
+      {overlay}
       {showQuit ? <QuitDialog onConfirm={handleQuit} onCancel={() => setShowQuit(false)} /> : null}
     </box>
   );
