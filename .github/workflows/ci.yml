@@ -257,10 +257,15 @@ jobs:
           mkdir -p .genie
           printf '{"name":"ci-smoke"}\n' > .genie/workspace.json
           # Capture stderr to assert the banner printed the resolved DB.
+          # Post #1585 (direct-postmaster bypass), the banner reports the bare
+          # `postgres` database — we connect to the postmaster's own socket via
+          # admin.json discovery, skipping the daemon-control router and its
+          # auto-fingerprinted `app_<name>_<fp>` tenant routing. Accept either
+          # form so the smoke survives both old and new daemons during rollout.
           OUT=$(./dist/genie.js task list 2>&1)
           echo "$OUT"
-          echo "$OUT" | grep -E '\[pgserve\] connected to app__automagik_genie_[0-9a-f]{12}' \
-            || (echo "::error::Banner did not print fingerprinted DB name"; exit 1)
+          echo "$OUT" | grep -E '\[pgserve\] connected to (postgres|app__automagik_genie_[0-9a-f]{12})' \
+            || (echo "::error::Banner did not print a recognized resolved DB name"; exit 1)
 
   # Umbrella status check. Branch protection is configured to require
   # "Quality Gate (typecheck + lint + test)" as a required status, so the
