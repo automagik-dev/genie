@@ -470,6 +470,81 @@ async function capturePanePid(paneId: string): Promise<number | null> {
   }
 }
 
+/**
+ * Error raised when a tmux pane was created (createTmuxPane returned a paneId)
+ * but the pane has already vanished by the time we try to register / probe it,
+ * or the process inside the pane is already dead.
+ *
+ * This is the silent-failure surface called out by #1600: `tmux split-window`
+ * succeeds at the API but the launched script exits before any other spawn
+ * step runs, leaving the spawn pipeline thinking everything is fine while
+ * NO worker actually exists. Without this error, the dispatch reports success
+ * and operators have to discover the phantom via OS-level inspection.
+ *
+ * Mirrors `AgentReadinessTimeoutError` (added by #1599) so callers can
+ * distinguish the failure mode by class name.
+ */
+export class SpawnPaneVanishedError extends Error {
+  readonly paneId: string;
+  readonly expectedPid: number | null;
+  readonly reason: 'pane_not_in_list' | 'pid_dead' | 'tmux_query_failed';
+  constructor(paneId: string, expectedPid: number | null, reason: SpawnPaneVanishedError['reason']) {
+    super(
+      `Spawn pane "${paneId}" (pid=${expectedPid ?? 'unknown'}) vanished immediately after createTmuxPane returned. Reason: ${reason}. The launched script likely failed to exec the worker binary; check ~/.genie/spawn-scripts/ and tmux server log.`,
+    );
+    this.name = 'SpawnPaneVanishedError';
+    this.paneId = paneId;
+    this.expectedPid = expectedPid;
+    this.reason = reason;
+  }
+}
+
+/**
+ * Verify that a tmux pane just returned by `createTmuxPane` actually still
+ * exists and the process inside it is alive.
+ *
+ * Catches the silent-failure surface of #1600: tmux's `split-window -P` returns
+ * a pane_id atomically, but the script invoked inside that pane can exit
+ * immediately (bad exec, missing binary, malformed quoting, env var gating
+ * the launch). When the pane closes within the same tick, the rest of the
+ * spawn pipeline operates on a ghost — registry rows + audit events report
+ * success while no worker is alive.
+ *
+ * Throws `SpawnPaneVanishedError` if either:
+ *   - The paneId is not in `tmux list-panes -a -F '#{pane_id}'`.
+ *   - The expected PID is non-null and the process is already dead (`kill 0`
+ *     reports ESRCH).
+ *
+ * Inline spawns (`paneId === 'inline'`) are skipped — they bypass tmux entirely.
+ */
+function validateSpawnedPane(paneId: string, expectedPid: number | null): void {
+  if (paneId === 'inline') return;
+  const { execSync } = require('node:child_process');
+  let panes: string;
+  try {
+    panes = execSync(genieTmuxCmd(`list-panes -a -F '#{pane_id}'`), { encoding: 'utf-8' });
+  } catch {
+    throw new SpawnPaneVanishedError(paneId, expectedPid, 'tmux_query_failed');
+  }
+  const paneList = panes.split('\n').map((line) => line.trim());
+  if (!paneList.includes(paneId)) {
+    throw new SpawnPaneVanishedError(paneId, expectedPid, 'pane_not_in_list');
+  }
+  if (expectedPid !== null && expectedPid > 0) {
+    try {
+      // process.kill with signal 0 throws ESRCH if the process doesn't exist.
+      // Throws EPERM if it exists but we lack permission — which still proves liveness.
+      process.kill(expectedPid, 0);
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code === 'ESRCH') {
+        throw new SpawnPaneVanishedError(paneId, expectedPid, 'pid_dead');
+      }
+      // EPERM means the process exists but we can't signal it — that's fine, it's alive.
+    }
+  }
+}
+
 /** Resolve the executor transport type from provider and spawn transport. */
 function resolveExecutorTransport(provider: ProviderName, spawnTransport: 'tmux' | 'inline'): ExecutorTransport {
   if (provider === 'codex') return 'api';
@@ -1029,6 +1104,7 @@ async function awaitAgentReadiness(paneId: string, role: string, tolerateReadine
   throw new AgentReadinessTimeoutError(role, paneId, result.elapsedMs);
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: each branch is a distinct spawn-pipeline step (createTmuxPane / capturePanePid / validateSpawnedPane / awaitAgentReadiness) with structured worker.spawn.failed emissions per #1600 — splitting would obscure the linear flow
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   // Skip team-window creation for isolated-session spawns. When the caller asks
   // for `--new-window` with an explicit `--session <name>`, the agent runs in
@@ -1045,15 +1121,51 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
       ? null
       : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.sessionOverride);
 
+  // Failure-emission helper for #1600 — every catchable failure point inside
+  // this function fires a structured `worker.spawn.failed` event with a typed
+  // reason so operators can `genie events list --type worker.spawn.failed`
+  // and see exactly what broke instead of silence.
+  const emitFailed = (reason: string, extra: Record<string, unknown> = {}) => {
+    recordAuditEvent('worker', ctx.workerId, 'worker.spawn.failed', getActor(), {
+      reason,
+      worker_id: ctx.workerId,
+      agent_role: ctx.validated.role ?? ctx.workerId,
+      cwd: ctx.cwd,
+      executor_id: ctx.executorId,
+      ...extra,
+    }).catch(() => {});
+  };
+
   let paneId: string;
   try {
     paneId = createTmuxPane(ctx, teamWindow);
   } catch (err) {
-    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
+    const msg = err instanceof Error ? err.message : 'unknown error';
+    emitFailed('createTmuxPane_threw', { error: msg });
+    console.error(`Failed to create tmux pane: ${msg}`);
     return process.exit(1) as never;
   }
 
   const pid = await capturePanePid(paneId);
+
+  // #1600 silent-fail surface — `createTmuxPane` returned a paneId but the
+  // pane may have already exited (script failure inside the pane). Validate
+  // that the pane still exists in tmux's pane list AND the captured PID is
+  // alive. If either check fails, raise SpawnPaneVanishedError so the failure
+  // is loud, audit-logged, and surfaceable to operators.
+  try {
+    validateSpawnedPane(paneId, pid);
+  } catch (err) {
+    const reason = err instanceof SpawnPaneVanishedError ? err.reason : 'pane_validation_threw';
+    emitFailed('pane_vanished', {
+      pane_id: paneId,
+      pid,
+      vanish_reason: reason,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+
   await createTmuxExecutor(ctx, paneId, pid, teamWindow);
   await applySpawnLayout(ctx, teamWindow);
 
@@ -1065,13 +1177,35 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   await notifySpawnJoin(ctx, paneId);
   await finalizeTmuxSpawn(ctx, paneId, teamWindow, workerEntry);
 
-  await awaitAgentReadiness(paneId, ctx.validated.role ?? ctx.workerId, ctx.tolerateReadinessTimeout);
+  try {
+    await awaitAgentReadiness(paneId, ctx.validated.role ?? ctx.workerId, ctx.tolerateReadinessTimeout);
+  } catch (err) {
+    const reason = err instanceof AgentReadinessTimeoutError ? 'readiness_timeout' : 'readiness_probe_threw';
+    emitFailed(reason, {
+      pane_id: paneId,
+      pid,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 
   // Transition executor + legacy worker from 'spawning' to 'running'
   if (ctx.executorId) {
     await executorRegistry.updateExecutorState(ctx.executorId, 'running').catch(() => {});
   }
   await registry.update(ctx.workerId, { state: 'idle' }).catch(() => {});
+
+  // #1600 — emit terminal-state success event so `genie events list --type
+  // worker.spawn.ok` becomes a positive signal (existing `worker.spawn` is
+  // the attempt event; this is the success event).
+  recordAuditEvent('worker', ctx.workerId, 'worker.spawn.ok', getActor(), {
+    worker_id: ctx.workerId,
+    agent_role: ctx.validated.role ?? ctx.workerId,
+    pane_id: paneId,
+    pid,
+    cwd: ctx.cwd,
+    executor_id: ctx.executorId,
+  }).catch(() => {});
 
   return paneId;
 }

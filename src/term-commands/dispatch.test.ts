@@ -1126,3 +1126,145 @@ describe('#1589 phantom-dispatch regression guards', () => {
     });
   });
 });
+
+/**
+ * P0 regression guard — #1600 spawn pipeline silent fail.
+ *
+ * #1599 fixed cwd plumbing + observability + display filter, but `genie work`
+ * still phantom-dispatched on .24 because tmux split-window returned a paneId
+ * for a pane that exited immediately (script failure inside the pane), and
+ * the spawn pipeline reported success while no worker was alive.
+ *
+ * This wish made the silent surface visible:
+ *   - SpawnPaneVanishedError raised when the pane has vanished
+ *   - validateSpawnedPane checks pane existence + PID liveness post-spawn
+ *   - worker.spawn.failed / worker.spawn.ok terminal-state audit events
+ *   - wish.dispatch.failed at the wave-dispatch boundary
+ *
+ * Source-grep guards below ensure no future refactor silently regresses.
+ */
+describe('#1600 spawn-pipeline silent-fail regression guards', () => {
+  let agentsSrc: string;
+  let dispatchSrc: string;
+
+  beforeAll(async () => {
+    const { readFileSync } = await import('node:fs');
+    agentsSrc = readFileSync(join(__dirname, 'agents.ts'), 'utf-8');
+    dispatchSrc = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+  });
+
+  describe('Group 1 — post-spawn validation', () => {
+    it('SpawnPaneVanishedError class is exported with paneId, expectedPid, reason fields', () => {
+      expect(agentsSrc).toContain('export class SpawnPaneVanishedError');
+      const classAnchor = agentsSrc.indexOf('export class SpawnPaneVanishedError');
+      const classEnd = agentsSrc.indexOf('\n}\n', classAnchor);
+      const body = agentsSrc.slice(classAnchor, classEnd);
+      expect(body).toContain('readonly paneId');
+      expect(body).toContain('readonly expectedPid');
+      expect(body).toContain('readonly reason');
+      // Reason enum must cover the three known failure modes.
+      expect(body).toContain("'pane_not_in_list'");
+      expect(body).toContain("'pid_dead'");
+      expect(body).toContain("'tmux_query_failed'");
+    });
+
+    it('validateSpawnedPane is called from launchTmuxSpawn between capturePanePid and createTmuxExecutor', () => {
+      const fnAnchor = agentsSrc.indexOf('async function launchTmuxSpawn');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = agentsSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = agentsSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : agentsSrc.length);
+      // Order matters — capturePanePid → validateSpawnedPane → createTmuxExecutor.
+      const captureIdx = body.indexOf('capturePanePid(paneId)');
+      const validateIdx = body.indexOf('validateSpawnedPane(paneId, pid)');
+      const createIdx = body.indexOf('createTmuxExecutor(ctx, paneId, pid');
+      expect(captureIdx).toBeGreaterThan(-1);
+      expect(validateIdx).toBeGreaterThan(captureIdx);
+      expect(createIdx).toBeGreaterThan(validateIdx);
+    });
+
+    it('validateSpawnedPane uses tmux list-panes -a -F #{pane_id} and process.kill(pid, 0)', () => {
+      const fnAnchor = agentsSrc.indexOf('function validateSpawnedPane');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = agentsSrc.indexOf('\n}\n', fnAnchor);
+      const body = agentsSrc.slice(fnAnchor, fnEnd);
+      expect(body).toContain("list-panes -a -F '#{pane_id}'");
+      expect(body).toContain('process.kill(expectedPid, 0)');
+      // Inline spawns must be skipped — they bypass tmux entirely.
+      expect(body).toContain("paneId === 'inline'");
+    });
+  });
+
+  describe('Group 2 — worker.spawn.failed / worker.spawn.ok audit events', () => {
+    it('launchTmuxSpawn emits worker.spawn.failed on every catchable failure point', () => {
+      const fnAnchor = agentsSrc.indexOf('async function launchTmuxSpawn');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = agentsSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = agentsSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : agentsSrc.length);
+      // The function must define the emitFailed helper and call it for the
+      // three known surfaces. Counting "emitFailed(" calls keeps the assertion
+      // resilient to future reorderings.
+      expect(body).toContain('const emitFailed =');
+      expect(body).toContain("'worker.spawn.failed'");
+      const failedCalls = body.match(/emitFailed\(/g) ?? [];
+      // Three failure surfaces: createTmuxPane catch, pane_vanished, readiness.
+      expect(failedCalls.length).toBeGreaterThanOrEqual(3);
+      // Reason taxonomy must be present.
+      expect(body).toContain("'createTmuxPane_threw'");
+      expect(body).toContain("'pane_vanished'");
+    });
+
+    it('launchTmuxSpawn emits worker.spawn.ok as the terminal success event', () => {
+      const fnAnchor = agentsSrc.indexOf('async function launchTmuxSpawn');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = agentsSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = agentsSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : agentsSrc.length);
+      expect(body).toContain("'worker.spawn.ok'");
+      // The event must carry pane_id, pid, cwd, executor_id for correlation.
+      const okIdx = body.indexOf("'worker.spawn.ok'");
+      expect(okIdx).toBeGreaterThan(-1);
+      const okCallEnd = body.indexOf('}).catch', okIdx);
+      const okPayload = body.slice(okIdx, okCallEnd);
+      expect(okPayload).toContain('pane_id');
+      expect(okPayload).toContain('pid');
+      expect(okPayload).toContain('cwd');
+      expect(okPayload).toContain('executor_id');
+    });
+
+    it('the existing worker.spawn (attempt) event is preserved', () => {
+      // The attempt event at agents.ts:~2501 must still fire — analytics + the
+      // /work pipeline depend on it. The new .ok / .failed events are TERMINAL
+      // states, not replacements.
+      expect(agentsSrc).toContain("recordAuditEvent('worker', workerId, 'spawn'");
+    });
+  });
+
+  describe('Group 3 — wish.dispatch.failed surfacing', () => {
+    it('autoOrchestrateCommand emits wish.dispatch.failed per failed group', () => {
+      const fnAnchor = dispatchSrc.indexOf('async function autoOrchestrateCommand');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = dispatchSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = dispatchSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : dispatchSrc.length);
+      expect(body).toContain("'wish.dispatch.failed'");
+      // Payload must carry wish_slug, wave_name, group_name, agent_name,
+      // error_class, reason for downstream queryability.
+      const eventIdx = body.indexOf("'wish.dispatch.failed'");
+      const eventCallEnd = body.indexOf('}).catch', eventIdx);
+      const payload = body.slice(eventIdx, eventCallEnd);
+      expect(payload).toContain('wish_slug');
+      expect(payload).toContain('group_name');
+      expect(payload).toContain('error_class');
+      expect(payload).toContain('reason');
+    });
+
+    it('failure summary stderr includes the error class name', () => {
+      const fnAnchor = dispatchSrc.indexOf('async function autoOrchestrateCommand');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = dispatchSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = dispatchSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : dispatchSrc.length);
+      // The print uses [${errorClass}] prefix so operators can pattern-match
+      // SpawnPaneVanishedError / AgentReadinessTimeoutError without reading PG.
+      expect(body).toContain('errorClass');
+      expect(body).toContain('[${errorClass}]');
+    });
+  });
+});
