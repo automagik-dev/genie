@@ -39,9 +39,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (savedHookSock === undefined) delete process.env.GENIE_HOOK_SOCK;
+  if (savedHookSock === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOOK_SOCK');
   else process.env.GENIE_HOOK_SOCK = savedHookSock;
-  if (savedHome === undefined) delete process.env.GENIE_HOME;
+  if (savedHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
   else process.env.GENIE_HOME = savedHome;
   setRegistry(savedRegistry);
   rmSync(tmpRoot, { recursive: true, force: true });
