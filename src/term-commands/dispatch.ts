@@ -474,14 +474,16 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
   );
 
   const succeeded: string[] = [];
-  const failed: { group: string; reason: string }[] = [];
+  const failed: { group: string; agent: string; reason: string; errorClass: string }[] = [];
   results.forEach((r, i) => {
     const groupName = nextWave.groups[i].group;
+    const agent = nextWave.groups[i].agent;
     if (r.status === 'fulfilled') {
       succeeded.push(groupName);
     } else {
       const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
-      failed.push({ group: groupName, reason });
+      const errorClass = r.reason instanceof Error ? r.reason.constructor.name : 'string';
+      failed.push({ group: groupName, agent, reason, errorClass });
     }
   });
 
@@ -490,8 +492,23 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
   }
   if (failed.length > 0) {
     console.error(`\n❌ ${failed.length} group(s) failed to dispatch in ${nextWave.name}:`);
-    for (const { group, reason } of failed) {
-      console.error(`   • Group ${group}: ${reason}`);
+    for (const { group, agent, reason, errorClass } of failed) {
+      // #1600 — surface the error class so operators can pattern-match
+      // (SpawnPaneVanishedError, AgentReadinessTimeoutError, etc.) without
+      // reading the audit log.
+      console.error(`   • Group ${group} (${agent}): [${errorClass}] ${reason}`);
+      // #1600 — emit a structured wish-level audit event per failed group so
+      // dog-fooder smoke loops + post-merge dashboards can detect dispatch
+      // failures without scraping stderr. Pairs with worker.spawn.failed to
+      // give a complete failure trail (wish-level + worker-level).
+      recordAuditEvent('wish', actualSlug, 'wish.dispatch.failed', getActor(), {
+        wish_slug: actualSlug,
+        wave_name: nextWave.name,
+        group_name: group,
+        agent_name: agent,
+        error_class: errorClass,
+        reason,
+      }).catch(() => {});
     }
     console.error(`   Check state with: genie status ${slug}`);
     console.error('   Some groups may have mutated state before failing — rerun genie work to retry.');
