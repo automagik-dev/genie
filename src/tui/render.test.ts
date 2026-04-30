@@ -11,9 +11,21 @@ describe('resolveTuiRendererConfig', () => {
     expect(config.maxFps).toBe(12);
     expect(config.useMouse).toBe(true);
     expect(config.enableMouseMovement).toBe(false);
+    // Kitty keyboard stays opt-in on darwin (native input regressions); the
+    // console overlay surface is enabled (cheap when hidden) so the keymap
+    // backtick toggle is not a no-op. openConsoleOnError stays off on darwin
+    // to avoid surprise overlays at reduced FPS.
     expect(config.useKittyKeyboard).toBe(null);
+    expect(config.consoleMode).toBeUndefined();
+    expect(config.openConsoleOnError).toBe(false);
+  });
+
+  test('allows explicit macOS console + kitty opt-in', () => {
+    const config = resolveTuiRendererConfig({ GENIE_TUI_CONSOLE: '0', GENIE_TUI_KITTY_KEYBOARD: '1' }, 'darwin');
+
     expect(config.consoleMode).toBe('disabled');
     expect(config.openConsoleOnError).toBe(false);
+    expect(config.useKittyKeyboard).toBeUndefined();
   });
 
   test('allows explicit macOS mouse opt-out', () => {

@@ -39,6 +39,14 @@ export function resolveTuiRendererConfig(
   const maxFps = Math.max(configuredMaxFps, targetFps);
   const useMouse = readBool(env, 'GENIE_TUI_MOUSE', true);
   const enableMouseMovement = useMouse && readBool(env, 'GENIE_TUI_MOUSE_MOVEMENT', !isDarwin);
+  // consoleMode only controls the OVERLAY surface, not the render thread, so it
+  // does not contribute to the darwin CPU-spin we work around with useThread.
+  // Default to OpenTUI's `console-overlay` everywhere so backtick/F1 toggles work.
+  const consoleEnabled = readBool(env, 'GENIE_TUI_CONSOLE', true);
+  // useKittyKeyboard stays opt-in on darwin: it's a native input path that has
+  // historically interacted poorly with macOS local ptys. Non-darwin keeps the
+  // OpenTUI defaults (disambiguate + alternateKeys).
+  const kittyKeyboardOptIn = readBool(env, 'GENIE_TUI_KITTY_KEYBOARD', !isDarwin);
 
   return {
     exitOnCtrlC: false, // We handle Ctrl+C ourselves via useKeyboard
@@ -47,9 +55,9 @@ export function resolveTuiRendererConfig(
     maxFps,
     useMouse,
     enableMouseMovement,
-    useKittyKeyboard: isDarwin ? null : undefined,
-    consoleMode: isDarwin ? 'disabled' : undefined,
-    openConsoleOnError: !isDarwin,
+    useKittyKeyboard: kittyKeyboardOptIn ? undefined : null,
+    consoleMode: consoleEnabled ? undefined : 'disabled',
+    openConsoleOnError: consoleEnabled && !isDarwin,
   };
 }
 
