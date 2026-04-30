@@ -232,7 +232,7 @@ bun test src/lib/tui-stats/hw.test.ts
 bun -e "import { getHwStats } from './src/lib/tui-stats/hw.ts'; await getHwStats(); console.log(await getHwStats())"
 ```
 
-**depends-on:** design-system-severance/Group 1
+**depends-on:** none
 
 ---
 
@@ -258,7 +258,7 @@ bun -e "import { getHwStats } from './src/lib/tui-stats/hw.ts'; await getHwStats
 bun test src/lib/tui-stats/pg.test.ts
 ```
 
-**depends-on:** design-system-severance/Group 1
+**depends-on:** none
 
 ---
 
@@ -282,7 +282,7 @@ bun test src/lib/tui-stats/pg.test.ts
 bun test src/lib/tui-stats/ops.test.ts
 ```
 
-**depends-on:** design-system-severance/Group 1
+**depends-on:** none
 
 ---
 
@@ -312,7 +312,7 @@ bun test src/lib/tui-stats/ops.test.ts
 bun test src/lib/tui-stats/cost.test.ts
 ```
 
-**depends-on:** design-system-severance/Group 1
+**depends-on:** none
 
 ---
 
@@ -334,7 +334,7 @@ bun test src/lib/tui-stats/cost.test.ts
 bun test src/lib/tui-stats/index.test.ts
 ```
 
-**depends-on:** Group 1, Group 2, Group 3, Group 4.
+**depends-on:** Group 1, Group 2, Group 3, Group 4
 
 ---
 
@@ -357,7 +357,7 @@ bun test src/lib/tui-stats/index.test.ts
 bun test src/tui/components/BottomBar/__tests__/Sparkline.test.tsx
 ```
 
-**depends-on:** design-system-severance/Group 1
+**depends-on:** none
 
 ---
 
@@ -379,7 +379,7 @@ bun test src/tui/components/BottomBar/__tests__/Sparkline.test.tsx
 bun test src/tui/components/BottomBar/__tests__/PulseRing.test.tsx
 ```
 
-**depends-on:** design-system-severance/Group 1
+**depends-on:** none
 
 ---
 
@@ -404,7 +404,7 @@ bun test src/tui/components/BottomBar/__tests__/PulseRing.test.tsx
 bun test src/tui/components/BottomBar/__tests__/TokenBurnMeter.test.tsx
 ```
 
-**depends-on:** Group 4, Group 5, Group 6, Group 7.
+**depends-on:** Group 4, Group 5, Group 6, Group 7
 
 ---
 
@@ -427,7 +427,7 @@ bun test src/tui/components/BottomBar/__tests__/TokenBurnMeter.test.tsx
 bun test src/tui/components/BottomBar/__tests__/HwPanel.test.tsx
 ```
 
-**depends-on:** Group 5.
+**depends-on:** Group 5
 
 ---
 
@@ -450,7 +450,7 @@ bun test src/tui/components/BottomBar/__tests__/HwPanel.test.tsx
 bun test src/tui/components/BottomBar/__tests__/PgServePanel.test.tsx
 ```
 
-**depends-on:** Group 5.
+**depends-on:** Group 5
 
 ---
 
@@ -474,7 +474,7 @@ bun test src/tui/components/BottomBar/__tests__/PgServePanel.test.tsx
 bun test src/tui/components/BottomBar/__tests__/GenieOpsPanel.test.tsx
 ```
 
-**depends-on:** Group 5.
+**depends-on:** Group 5
 
 ---
 
@@ -500,7 +500,7 @@ bun test src/tui/components/BottomBar/__tests__/GenieOpsPanel.test.tsx
 bun test test/tui && bun run typecheck && bun run lint
 ```
 
-**depends-on:** Group 6, Group 7, Group 8, Group 9, Group 10, Group 11.
+**depends-on:** Group 6, Group 7, Group 8, Group 9, Group 10, Group 11
 
 ---
 
@@ -522,7 +522,7 @@ bun test test/tui && bun run typecheck && bun run lint
 bun test test/visual/bottom-bar.snapshot.test.tsx
 ```
 
-**depends-on:** Group 12.
+**depends-on:** Group 12
 
 ---
 
