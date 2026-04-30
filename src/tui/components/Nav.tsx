@@ -42,15 +42,29 @@ function useDiagnosticsRefresh(
 ): void {
   useEffect(() => {
     let active = true;
+    let lastErrorMessage: string | null = null;
+    let lastErrorLoggedAt = 0;
     async function refresh() {
       try {
         const snap = await collectDiagnostics();
         if (!active) return;
         setDiagnostics(snap);
+        // Reset the error-debounce on the first success after a saturation episode
+        lastErrorMessage = null;
         const signaledAgent = consumeInitialAgentSignal();
         if (signaledAgent) setRequestedInitialAgent(signaledAgent);
       } catch (err) {
-        console.error('TUI: diagnostics failed:', err);
+        // Quiet the 2s-tick spam under sustained pgserve saturation.
+        // Log only when the error message changes or once per 30s for the
+        // same message — operators still see something is wrong without
+        // having the panel buried under repeats.
+        const message = err instanceof Error ? err.message : String(err);
+        const now = Date.now();
+        if (message !== lastErrorMessage || now - lastErrorLoggedAt > 30_000) {
+          console.error('TUI: diagnostics failed:', message);
+          lastErrorMessage = message;
+          lastErrorLoggedAt = now;
+        }
       }
     }
     refresh();
