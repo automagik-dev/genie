@@ -135,6 +135,58 @@ export function resolvePgserveDaemonPidPath(): string {
   return join(resolvePgserveSocketDir(), 'pgserve.pid');
 }
 
+/**
+ * Discovery payload pgserve writes at `<controlSocketDir>/admin.json` after
+ * the postmaster is up. Lets clients reach the postmaster's socket directly
+ * (bypassing the daemon-control router) so we get raw postgres semantics —
+ * no SO_PEERCRED routing, no per-accept /proc walk, no router-side
+ * `max_connections=1000` ceiling. The router still owns connection-routed
+ * audit emission for clients that DO go through control.sock; we just
+ * don't.
+ */
+export interface PostmasterDiscovery {
+  socketDir: string;
+  port: number;
+  pid: number;
+}
+
+/**
+ * Read the postmaster's discovery file written by pgserve@2.x. Returns null
+ * if the file is missing, malformed, or points at a stale/dead postmaster.
+ *
+ * Schema (validated below): `{ socketDir: string, port: number, pid: number }`
+ * — see `node_modules/pgserve/src/admin-client.js:writeAdminDiscovery`.
+ */
+export function readPostmasterDiscovery(): PostmasterDiscovery | null {
+  const file = join(resolvePgserveSocketDir(), 'admin.json');
+  if (!existsSync(file)) return null;
+  let raw: string;
+  try {
+    raw = readFileSync(file, 'utf-8');
+  } catch {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const obj = parsed as Record<string, unknown>;
+  const socketDir = typeof obj.socketDir === 'string' && obj.socketDir.length > 0 ? obj.socketDir : null;
+  const port = typeof obj.port === 'number' && Number.isFinite(obj.port) && obj.port > 0 ? obj.port : null;
+  const pid = typeof obj.pid === 'number' && Number.isFinite(obj.pid) && obj.pid > 0 ? obj.pid : null;
+  if (!socketDir || !port) return null;
+  // Validate the postmaster socket file exists. If pgserve crashed without
+  // cleaning up admin.json, the file path will be stale.
+  if (!existsSync(join(socketDir, `.s.PGSQL.${port}`))) return null;
+  // pid is informational — we don't gate on liveness here because the daemon
+  // process supervises the postmaster lifecycle. Stale pid + present socket
+  // is impossible under normal operation.
+  return { socketDir, port, pid: pid ?? -1 };
+}
+
 interface DaemonState {
   running: boolean;
   pid: number | null;
@@ -574,9 +626,14 @@ async function startPgserveDaemonOnce(initial: DaemonState): Promise<void> {
   }
   mkdirSync(resolvePgserveSocketDir(), { recursive: true, mode: 0o700 });
 
+  // GENIE_PG_MAX_CONNECTIONS overrides the postmaster's max_connections.
+  // Default 10000 — see startPgserveOnPort for rationale (~10 MB RAM per
+  // backend, real load far lower than the cap, the connection problem we
+  // kept patching was the router, not postgres itself).
+  const maxConnections = process.env.GENIE_PG_MAX_CONNECTIONS ?? '10000';
   const child = spawn(
     daemonCommand.command,
-    [...daemonCommand.argsPrefix, 'daemon', '--data', DATA_DIR, '--log', 'warn'],
+    [...daemonCommand.argsPrefix, 'daemon', '--data', DATA_DIR, '--log', 'warn', '--max-connections', maxConnections],
     {
       detached: true,
       stdio: 'ignore',
@@ -1334,6 +1391,13 @@ async function startPgserveOnPort(port: number): Promise<number> {
       '--no-stats',
       '--no-cluster',
       '--pgvector',
+      // Lift the postmaster ceiling well past the historical 1000 cap.
+      // RAM cost is ~10 MB per backend — 10000 caps at ~100 GB worst-case
+      // (real usage is far lower; idle backends are slim). The connection
+      // problem we kept patching was the router, not postgres itself.
+      // Override via GENIE_PG_MAX_CONNECTIONS for tighter-RAM hosts.
+      '--max-connections',
+      process.env.GENIE_PG_MAX_CONNECTIONS ?? '10000',
     ],
     { detached: true, stdio: 'ignore' },
   );
@@ -1563,7 +1627,20 @@ async function _buildConnection(): Promise<any> {
   const _t0 = Date.now();
   const useSocket = shouldUseUnixSocket();
   if (useSocket) await getOrStartDaemon();
-  const port = useSocket ? 5432 : await ensurePgserve();
+  // Direct-postmaster path (bypasses pgserve's daemon-control router):
+  //   - Eliminates per-accept SO_PEERCRED + /proc walk latency.
+  //   - Talks to the postmaster's own Unix socket (auto-created at
+  //     <tmpdir>/pgserve-sock-<wrapper_pid>-<ts>/) — postgres-native, no
+  //     router cap. The postmaster's `max_connections` is what limits us
+  //     (configurable via genie's spawn args).
+  //   - Skips fingerprint-based DB routing — we explicitly select our DB
+  //     by name. Fewer moving parts; no surprise `database does not exist`
+  //     after GC of an `app_anon_*` tenant.
+  // Falls back to the libpq-compat symlink (still through the router) when
+  // admin.json is missing or stale. Keeps the legacy path alive for hosts
+  // that haven't refreshed the daemon since pgserve@2.0.x.
+  const discovery = useSocket ? readPostmasterDiscovery() : null;
+  const port = useSocket ? (discovery?.port ?? 5432) : await ensurePgserve();
   const _t1 = Date.now();
   const pgModule = (await import('postgres')).default;
 
@@ -1576,10 +1653,10 @@ async function _buildConnection(): Promise<any> {
   const pgWireCredential = useSocket ? resolvePgserveAuthPassword() : resolveTcpPgPassword();
 
   // Unix socket: postgres.js dials `<host>/.s.PGSQL.<port>` when host is an
-  // absolute path. pgserve v2 publishes a `.s.PGSQL.5432` libpq compat link
-  // alongside its control socket so off-the-shelf clients connect without
-  // knowing the daemon's actual socket name.
-  const host = useSocket ? resolvePgserveSocketDir() : DEFAULT_HOST;
+  // absolute path. When discovery is available, point at the postmaster's
+  // own socket dir (direct path, no router). Fallback uses pgserve v2's
+  // libpq compat symlink in the control socket dir (legacy router path).
+  const host = useSocket ? (discovery?.socketDir ?? resolvePgserveSocketDir()) : DEFAULT_HOST;
 
   // Issue #1575 — pin cwd to genie's package directory before postgres.js
   // opens its first connection. pgserve v2 fingerprints peers by walking
@@ -1627,7 +1704,13 @@ async function _buildConnection(): Promise<any> {
     process.stderr.write('[pgserve] WARN: could not resolve genie package dir; pgserve fingerprint may be unstable\n');
   }
 
-  sqlClient = pgModule({
+  // Bind to a local first so concurrent rebuilds (where another caller's
+  // healthCheckCachedClient may null `sqlClient` mid-build) cannot make
+  // this caller's getConnection() resolve to `null`. Trace finding from
+  // v4.260430.20 saturation report: scheduler reconciler crashed with
+  // "null is not a function" after returning the module-level sqlClient
+  // that had been nulled between assign and return.
+  const client = pgModule({
     host,
     port,
     database,
@@ -1646,6 +1729,7 @@ async function _buildConnection(): Promise<any> {
       client_min_messages: 'warning',
     },
   });
+  sqlClient = client;
 
   try {
     // Force one round-trip while cwd is still pinned so pgserve does its
@@ -1653,9 +1737,9 @@ async function _buildConnection(): Promise<any> {
     // without this query, pgserve never sees us until the next caller fires
     // a real query, by which time we may have chdir'd back. A failure here
     // falls through to the outer catch which tears down the half-built pool.
-    await sqlClient`SELECT 1`;
-    await runPostConnectSetup(sqlClient, isTestMode, { t0: _t0, t1: _t1 });
-    await maybePrintBanner(sqlClient, isTestMode);
+    await client`SELECT 1`;
+    await runPostConnectSetup(client, isTestMode, { t0: _t0, t1: _t1 });
+    await maybePrintBanner(client, isTestMode);
     // Surface the resolved transport on the activePort singleton so diagnostics
     // (db status, printPgserveHealth) report the truth. Socket mode uses the
     // SOCKET_PORT_SENTINEL (0) since there is no TCP port to advertise; TCP
@@ -1665,12 +1749,11 @@ async function _buildConnection(): Promise<any> {
       process.env.GENIE_PG_AVAILABLE = 'true';
     }
   } catch (err) {
-    const dying = sqlClient;
-    sqlClient = null;
+    if (sqlClient === client) sqlClient = null;
     activePort = null;
     // Fire-and-forget teardown — match healthCheckCachedClient so we never
     // block on a dying pool while other work is in flight.
-    dying?.end({ timeout: 2 }).catch(() => {
+    client.end({ timeout: 2 }).catch(() => {
       /* ignore */
     });
     throw err;
@@ -1692,7 +1775,7 @@ async function _buildConnection(): Promise<any> {
     }
   }
 
-  return sqlClient;
+  return client;
 }
 
 /**

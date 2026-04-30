@@ -160,16 +160,28 @@ async function processBackfillFile(
 }
 
 async function processAllFiles(
-  sql: SqlClient,
+  initialSql: SqlClient,
   allFiles: BackfillFile[],
   progress: BackfillProgress,
   workerMap: WorkerMap,
 ): Promise<void> {
+  // Re-acquire the connection per iteration via getConnection() instead of
+  // holding the captured `initialSql` reference. Why: when pgserve cycles a
+  // backend (saturation, idle timeout, daemon respawn), the original sql
+  // tag goes dead and every subsequent ingestFile(sql, …) call throws
+  // CONNECTION_ENDED with the same dead reference — producing the "hundreds
+  // of identical [backfill] error" log floods seen on v4.260430.20+.
+  // getConnection() health-checks and rebuilds transparently.
+  const { getConnection } = await import('./db.js');
+  // initialSql is consumed only to satisfy the type contract — every actual
+  // query inside the loop calls getConnection() afresh.
+  void initialSql;
   for (const file of allFiles) {
     if (!running) break;
     await yieldToLiveWork();
 
     try {
+      const sql = await getConnection();
       await processBackfillFile(sql, file, progress, workerMap);
     } catch (err) {
       progress.errors++;
@@ -178,7 +190,13 @@ async function processAllFiles(
     }
 
     if (progress.processedFiles % 50 === 0) {
-      await updateSyncState(sql, progress);
+      try {
+        const sql = await getConnection();
+        await updateSyncState(sql, progress);
+      } catch {
+        // Sync-state write failure is best-effort — don't break the loop;
+        // next 50-file boundary will retry.
+      }
     }
 
     await sleep(SLEEP_BETWEEN_FILES_MS);
