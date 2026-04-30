@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-04-28 12:39 UTC | Data range: 2026-03-13 to 2026-04-28
+> Last updated: 2026-04-30 12:27 UTC | Data range: 2026-03-13 to 2026-04-30
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 226 | 1.1K | 405 |
-| Releases | 3 | 143 | 0 |
-| LoC (net) | +33.0K | +144.1K | — |
-| Contributors | 5 | 12 | 9 |
+| Commits | 260 | 976 | 591 |
+| Releases | 3 | 97 | 0 |
+| LoC (net) | +37.0K | +146.4K | — |
+| Contributors | 5 | 12 | 11 |
 
 ---
 
@@ -31,17 +31,17 @@
 
 | Rank | Contributor | Commits (approx) |
 |-----:|-------------|------------------:|
-| 1 | Felipe Rosa | 248 |
-| 2 | github-actions[bot] | 213 |
-| 3 | Genie | 206 |
-| 4 | Claude | 164 |
+| 1 | Felipe Rosa | 228 |
+| 2 | github-actions[bot] | 193 |
+| 3 | Genie | 186 |
+| 4 | Claude | 129 |
 | 5 | Test User | 98 |
-| 6 | Luís Sousa | 44 |
-| 7 | Felipe | 37 |
+| 6 | Felipe | 37 |
+| 7 | Luís Sousa | 24 |
 | 8 | Genie (env-specialist) | 16 |
-| 9 | Cezar Vasconcelos | 15 |
-| 10 | namastex888 | 12 |
-| 11 | Zakir Jiwani | 6 |
+| 9 | namastex888 | 12 |
+| 10 | Zakir Jiwani | 6 |
+| 11 | Cezar Vasconcelos | 5 |
 | 12 | felipe rosa | 4 |
 
-*9 contributors since 2026-04-09*
+*11 contributors since 2026-04-09*
