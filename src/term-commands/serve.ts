@@ -980,8 +980,20 @@ function sigKillRegisteredServices(): void {
 async function startHookSocketSafely(): Promise<void> {
   try {
     const { startHookSocket } = await import('../serve/hook-socket.js');
-    handles.hookSocket = await startHookSocket();
+    // GENIE_STRICT_HOOKS is set by `genie serve --strict-hooks`. The repoRoot
+    // for the per-repo tier scan is the daemon's cwd — operators running the
+    // daemon from a repo root get that repo's `.genie/hooks/` scanned.
+    handles.hookSocket = await startHookSocket({
+      strict: process.env.GENIE_STRICT_HOOKS === '1',
+      repoRoot: process.cwd(),
+    });
   } catch (err) {
+    // Bubble up --strict-hooks failures so the operator sees the colliding
+    // hook names and can fix the deployment. Other failures (socket EADDRINUSE,
+    // etc.) keep the soft-disable behavior so the daemon stays up.
+    if (process.env.GENIE_STRICT_HOOKS === '1' && (err as Error).message.includes('--strict-hooks')) {
+      throw err;
+    }
     console.warn(`  Hook socket: DISABLED — ${(err as Error).message}`);
     handles.hookSocket = null;
   }
@@ -1521,6 +1533,13 @@ interface ServeStartOptions {
   foreground?: boolean;
   headless?: boolean;
   fix?: boolean;
+  /**
+   * Refuse to start when the boot-scan loader finds two external `.ts` hook
+   * files declaring the same `name`. Default behavior is to log a warning,
+   * keep the higher-precedence file, and continue. Operators who want a hard
+   * gate (e.g. CI / fleet rollouts) pass `--strict-hooks`.
+   */
+  strictHooks?: boolean;
 }
 
 /**
@@ -1563,9 +1582,16 @@ export function registerServeCommands(program: Command): void {
     .option('--foreground', 'Run in foreground (default)')
     .option('--headless', 'Run without TUI (services only: pgserve, scheduler, inbox-watcher)')
     .option('--no-fix', 'Refuse to start when any precondition is not ok (default: auto-fix)')
+    .option('--strict-hooks', 'Refuse to start on any same-name external hook collision (default: warn + continue)')
     .action(async (options: ServeStartOptions) => {
       // commander's `--no-fix` flips `options.fix` to false. Default is true.
       const autoFix = options.fix !== false;
+      // Propagate --strict-hooks to startHookSocketSafely via env so the
+      // signature stays narrow (the daemon-startup graph is deep). Read once
+      // by hook-socket.ts at boot; never mutated thereafter.
+      if (options.strictHooks) {
+        process.env.GENIE_STRICT_HOOKS = '1';
+      }
       if (options.daemon) {
         await startBackground(options.headless, autoFix);
       } else {

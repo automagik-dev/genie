@@ -49,9 +49,14 @@ export interface TrustFile {
   entries: TrustEntry[];
 }
 
-/** Default location of the trust file. Override in tests. */
+/**
+ * Default location of the trust file. Honors `GENIE_HOME` for tests + alt-home
+ * deployments (matches the convention `src/serve/hook-socket.ts` already uses
+ * for the UDS path); falls back to `~/.genie/hooks/trusted.json` otherwise.
+ */
 export function defaultTrustPath(): string {
-  return join(homedir(), '.genie', 'hooks', 'trusted.json');
+  const home = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+  return join(home, 'hooks', 'trusted.json');
 }
 
 /** Reasons the verifier rejects a file. Surfaced by `genie hook list`. */
