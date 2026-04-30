@@ -489,7 +489,8 @@ export function Nav({
           ))}
         </scrollbox>
       ) : (
-        <box flexGrow={1} justifyContent="center" alignItems="center">
+        <box flexGrow={1} justifyContent="center" alignItems="center" flexDirection="column" gap={1}>
+          <ascii-font text="GENIE" font="tiny" color={palette.accent} />
           <text fg={palette.textDim}>Collecting...</text>
         </box>
       )}

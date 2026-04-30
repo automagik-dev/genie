@@ -2,8 +2,10 @@
 /** OpenTUI React renderer — separated from index.ts to isolate JSX */
 
 import { type CliRendererConfig, createCliRenderer } from '@opentui/core';
+import { KeymapProvider } from '@opentui/keymap/react';
 import { createRoot } from '@opentui/react';
 import { App } from './app.js';
+import { createTuiKeymap } from './keymap.js';
 import { installOpenTui20Bridge } from './opentui-bridge.js';
 
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
@@ -37,6 +39,14 @@ export function resolveTuiRendererConfig(
   const maxFps = Math.max(configuredMaxFps, targetFps);
   const useMouse = readBool(env, 'GENIE_TUI_MOUSE', true);
   const enableMouseMovement = useMouse && readBool(env, 'GENIE_TUI_MOUSE_MOVEMENT', !isDarwin);
+  // consoleMode only controls the OVERLAY surface, not the render thread, so it
+  // does not contribute to the darwin CPU-spin we work around with useThread.
+  // Default to OpenTUI's `console-overlay` everywhere so backtick/F1 toggles work.
+  const consoleEnabled = readBool(env, 'GENIE_TUI_CONSOLE', true);
+  // useKittyKeyboard stays opt-in on darwin: it's a native input path that has
+  // historically interacted poorly with macOS local ptys. Non-darwin keeps the
+  // OpenTUI defaults (disambiguate + alternateKeys).
+  const kittyKeyboardOptIn = readBool(env, 'GENIE_TUI_KITTY_KEYBOARD', !isDarwin);
 
   return {
     exitOnCtrlC: false, // We handle Ctrl+C ourselves via useKeyboard
@@ -45,9 +55,9 @@ export function resolveTuiRendererConfig(
     maxFps,
     useMouse,
     enableMouseMovement,
-    useKittyKeyboard: isDarwin ? null : undefined,
-    consoleMode: isDarwin ? 'disabled' : undefined,
-    openConsoleOnError: !isDarwin,
+    useKittyKeyboard: kittyKeyboardOptIn ? undefined : null,
+    consoleMode: consoleEnabled ? undefined : 'disabled',
+    openConsoleOnError: consoleEnabled && !isDarwin,
   };
 }
 
@@ -61,8 +71,13 @@ export async function renderNav(): Promise<void> {
   // usable there, but default to a conservative renderer and allow env opt-ins.
   const renderer = await createCliRenderer(resolveTuiRendererConfig());
   const disposeOpenTui20Bridge = installOpenTui20Bridge(renderer);
+  const keymap = createTuiKeymap(renderer);
 
-  createRoot(renderer).render(<App rightPane={rightPane} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />);
+  createRoot(renderer).render(
+    <KeymapProvider keymap={keymap}>
+      <App rightPane={rightPane} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />
+    </KeymapProvider>,
+  );
 
   // Keep process alive until renderer is destroyed (Ctrl+Q, SIGTERM, etc.)
   // Without this, bun exits immediately after render() returns.

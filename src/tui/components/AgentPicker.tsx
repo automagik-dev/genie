@@ -2,19 +2,17 @@
 /**
  * AgentPicker — "Spawn here…" modal.
  *
- * Opened from a session-node or window-node in the Nav tree. The caller
- * supplies the target (session + optional window); the user picks an agent
- * from the directory, sees a live `CliPreviewLine` of the resolved `genie
- * spawn …` command, and Enter confirms.
+ * Opened from a session-node or window-node in the Nav tree. The user types
+ * to filter the agent directory and confirms with Enter. The CliPreviewLine
+ * component renders a live preview of the spawn argv so the preview and the
+ * executed command cannot drift.
  *
- * This is the reverse direction of Group 4 (SpawnTargetPicker): instead of
- * picking a target from a known agent, the target is fixed and we pick an
- * agent from the directory.
- *
- * Intent composition is delegated to `buildSpawnInvocation` (Group 3) via
- * the CliPreviewLine component; the intent we pass to `onConfirm` on Enter
- * is the exact same object rendered in the preview — the preview and the
- * executed argv cannot drift.
+ * Phase 4 of the OpenTUI 0.2 migration: the agent list now renders through
+ * the native <select> component (visual-only — parent useKeyboard still owns
+ * up/down/enter so we keep one input source of truth and the test harness
+ * sees state changes synchronously). <select> brings styled selection,
+ * automatic scrolling for long lists, and consistent visuals with the rest
+ * of the TUI.
  */
 
 import { useKeyboard } from '@opentui/react';
@@ -209,6 +207,12 @@ export function AgentPicker({ target, onConfirm, onCancel, loadAgents = defaultL
   const modeHint = target.window ? 'in window' : 'new window in session';
   const statusText = agents === null ? 'Loading agents…' : loadError !== null ? `Load failed: ${loadError}` : null;
 
+  const selectOptions = filtered.map((agent) => ({
+    name: agent.name,
+    description: '',
+    value: agent.name,
+  }));
+
   return (
     <box
       position="absolute"
@@ -250,16 +254,17 @@ export function AgentPicker({ target, onConfirm, onCancel, loadAgents = defaultL
             <span fg={palette.textMuted}>No agents registered</span>
           </text>
         ) : (
-          <box flexDirection="column">
-            {filtered.map((agent, i) => (
-              <text key={agent.name}>
-                <span fg={i === selectedIndex ? palette.accent : palette.textDim}>
-                  {i === selectedIndex ? '▸ ' : '  '}
-                </span>
-                <span fg={i === selectedIndex ? palette.accentBright : palette.textDim}>{agent.name}</span>
-              </text>
-            ))}
-          </box>
+          <select
+            options={selectOptions}
+            selectedIndex={selectedIndex}
+            showDescription={false}
+            // Visual-only: parent useKeyboard owns up/down to keep one input
+            // source of truth across the modal and stay test-harness friendly.
+            focused={false}
+            height={Math.min(filtered.length, 12)}
+            selectedBackgroundColor={palette.accentDim}
+            selectedTextColor={palette.accentBright}
+          />
         )}
 
         {previewIntent !== null ? <CliPreviewLine intent={previewIntent} /> : null}
