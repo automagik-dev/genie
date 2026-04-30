@@ -78,6 +78,8 @@ type PgserveLock = {
 
 let child: ChildProcess | null = null;
 let activeTestPort: number | null = null;
+const initialGenieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+const testPgserveLockPath = join(initialGenieHome, 'data', 'test-pgserve.lock');
 // Module-scoped admin client bound to the `postgres` maintenance DB. Opened
 // once after pgserve is healthy and reused by createTestDatabase /
 // dropTestDatabase / buildTemplateDatabase. Previously each call opened and
@@ -244,8 +246,7 @@ function killPidsLeavesFirst(pids: number[]): void {
 
 /** Resolve the lockfile path under GENIE_HOME (or ~/.genie). */
 function lockFilePath(): string {
-  const home = process.env.GENIE_HOME ?? join(homedir(), '.genie');
-  return join(home, 'data', 'test-pgserve.lock');
+  return testPgserveLockPath;
 }
 
 /** Read and validate the shared-daemon lockfile; returns null when missing or malformed. */
