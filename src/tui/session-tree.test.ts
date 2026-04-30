@@ -4,8 +4,6 @@ import { CLAUDE_CODE_ACTIVE_TITLE_PREFIX } from './pane-detection.js';
 import { buildSessionTree, buildWorkspaceTree, getSessionTarget, resolvePreferredWindowIndex } from './session-tree.js';
 import type { TreeNode, TuiExecutor } from './types.js';
 
-const CLAUDE_CODE_V2_TMUX_COMMAND = 'opaque-runtime-title';
-const CLAUDE_CODE_V2_PROCESS_COMMAND = '/Users/example/.local/bin/claude --agent-id genie@genie';
 const CLAUDE_CODE_V2_TMUX_TITLE = `${CLAUDE_CODE_ACTIVE_TITLE_PREFIX}genie-genie`;
 
 function flattenTree(nodes: TreeNode[]): TreeNode[] {
@@ -269,9 +267,9 @@ describe('buildWorkspaceTree', () => {
     expect(tree[0].wsAgentState).toBe('running');
   });
 
-  test('Claude Code v2 pane title counts as a live agent pane', () => {
-    // Reproduces Claude Code v2 on macOS: tmux may report a non-claude
-    // pane_current_command, while ps still shows the stable claude executable.
+  test('Claude Code v2 active pane title counts as a live agent pane', () => {
+    // Reproduces Claude Code v2 on macOS: tmux may report the runtime
+    // version as pane_current_command, while ps only sees the parent shell.
     const win0 = makeWindow({ sessionName: 'genie', index: 0, name: 'zsh' });
     const win1 = makeWindow({
       sessionName: 'genie',
@@ -283,8 +281,8 @@ describe('buildWorkspaceTree', () => {
           sessionName: 'genie',
           windowIndex: 1,
           paneId: '%3',
-          command: CLAUDE_CODE_V2_TMUX_COMMAND,
-          processCommand: CLAUDE_CODE_V2_PROCESS_COMMAND,
+          command: '2.1.123',
+          processCommand: '/bin/zsh',
           title: CLAUDE_CODE_V2_TMUX_TITLE,
         }),
       ],
@@ -305,7 +303,9 @@ describe('buildWorkspaceTree', () => {
     expect(tree[0].activePanes).toBe(1);
     expect(tree[0].data.attachWindowIndex).toBe(1);
     expect(tree[0].children[0].activePanes).toBe(1);
-    expect(tree[0].children[0].children[0].data.isClaudeLike).toBe(true);
+    const pane = tree[0].children[0].children[0];
+    expect(pane.data.isClaudeLike).toBe(true);
+    expect(pane.data.command).toBe('2.1.123');
   });
 
   test('permission executor state reflected on agentState', () => {
