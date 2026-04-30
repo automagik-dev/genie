@@ -404,22 +404,35 @@ describe('daemon-owned pgserve', () => {
     const fnStart = source.indexOf('export async function getOrStartDaemon');
     expect(fnStart).toBeGreaterThan(-1);
     const body = source.slice(fnStart, source.indexOf('\nfunction maskCredentials', fnStart));
-    expect(body).toContain("['daemon', '--data', DATA_DIR, '--log', 'warn']");
+    expect(body).toContain("'daemon', '--data', DATA_DIR, '--log', 'warn'");
   });
 
-  test('daemon startup prefers Genie bundled pgserve over stale global pgserve', () => {
+  test('daemon startup prefers Genie bundled pgserve with active Bun runtime', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
 
-    const binStart = source.indexOf('function findPgserveDaemonBin');
+    const binStart = source.indexOf('function findPgserveDaemonCommand');
     expect(binStart).toBeGreaterThan(-1);
     const binBody = source.slice(binStart, source.indexOf('\n/** Sleep helper', binStart));
-    const localBinIdx = binBody.indexOf("join(localRoot, 'bin', 'pgserve-wrapper.cjs')");
+    const localBinIdx = binBody.indexOf('resolvePgservePackageCommand(localRoot)');
     const requireResolveIdx = binBody.indexOf("require.resolve('pgserve/bin/pgserve-wrapper.cjs')");
     const globalBinIdx = binBody.indexOf("join(homedir(), '.bun', 'bin', 'pgserve')");
 
     expect(localBinIdx).toBeGreaterThan(-1);
     expect(requireResolveIdx).toBeGreaterThan(localBinIdx);
     expect(globalBinIdx).toBeGreaterThan(requireResolveIdx);
+
+    const packageStart = source.indexOf('function resolvePgservePackageCommand');
+    expect(packageStart).toBeGreaterThan(-1);
+    const packageBody = source.slice(packageStart, source.indexOf('\nfunction findBunRuntime', packageStart));
+    expect(packageBody).toContain("join(root, 'bin', 'postgres-server.js')");
+    expect(packageBody).toContain('argsPrefix: [script]');
+    expect(packageBody).toContain("join(root, 'bin', 'pgserve-wrapper.cjs')");
+
+    const bunStart = source.indexOf('function findBunRuntime');
+    expect(bunStart).toBeGreaterThan(-1);
+    const bunBody = source.slice(bunStart, source.indexOf('\n/** Sleep helper', bunStart));
+    expect(bunBody).toContain('process.execPath');
+    expect(bunBody).toContain('which bun');
 
     const sdkStart = source.indexOf('async function importPgserveSdk');
     const ensureStart = source.indexOf('async function tryEnsureDaemonWithSdk');
@@ -428,6 +441,17 @@ describe('daemon-owned pgserve', () => {
     const sdkBody = source.slice(sdkStart, ensureStart);
     expect(sdkBody).toContain('resolveLocalPgserveEntry()');
     expect(sdkBody.indexOf('pathToFileURL(localEntry).href')).toBeLessThan(sdkBody.indexOf("import('pgserve')"));
+  });
+
+  test('daemon startup surfaces child exit before socket timeout', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const waitStart = source.indexOf('async function waitForDaemonSocket');
+    expect(waitStart).toBeGreaterThan(-1);
+    const waitBody = source.slice(waitStart, source.indexOf('\nasync function tryEnsureDaemonWithSdk', waitStart));
+
+    expect(waitBody).toContain("child?.once('exit'");
+    expect(waitBody).toContain('pgserve v2 daemon exited before binding');
+    expect(waitBody).toContain('formatPgserveDaemonCommand(daemonCommand)');
   });
 
   test('daemon startup falls back to CLI when SDK ensure fails', () => {
