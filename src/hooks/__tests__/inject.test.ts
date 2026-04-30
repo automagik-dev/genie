@@ -9,9 +9,17 @@ import { DISPATCHED_EVENTS, DISPATCHED_EVENT_MATCHERS } from '../types.js';
 describe('hook injection', () => {
   const testDir = join(tmpdir(), `genie-hook-test-${Date.now()}`);
   const originalEnv = process.env.CLAUDE_CONFIG_DIR;
+  const originalHome = process.env.GENIE_HOME;
+  const originalHookBin = process.env.GENIE_HOOK_BIN;
 
   beforeEach(async () => {
     process.env.CLAUDE_CONFIG_DIR = testDir;
+    // Pin GENIE_HOME to a tmp dir so the inject layer's compiled-binary
+    // candidate (~/.genie/bin/genie-hook) doesn't resolve to a real binary
+    // produced by postinstall on the CI runner. These tests assert the
+    // bun-fork fallback shape; binary resolution is covered separately.
+    process.env.GENIE_HOME = join(testDir, 'genie-home');
+    process.env.GENIE_HOOK_BIN = join(testDir, 'genie-home', 'no-such-binary');
     await mkdir(testDir, { recursive: true });
   });
 
@@ -21,6 +29,10 @@ describe('hook injection', () => {
     } else {
       process.env.CLAUDE_CONFIG_DIR = undefined;
     }
+    if (originalHome === undefined) process.env.GENIE_HOME = undefined;
+    else process.env.GENIE_HOME = originalHome;
+    if (originalHookBin === undefined) process.env.GENIE_HOOK_BIN = undefined;
+    else process.env.GENIE_HOOK_BIN = originalHookBin;
     await rm(testDir, { recursive: true, force: true });
   });
 

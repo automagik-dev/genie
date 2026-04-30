@@ -14,11 +14,20 @@ import { CODEX_DISPATCHED_EVENTS, codexHooksInjected, injectCodexHooks } from '.
 describe('injectCodexHooks', () => {
   let tmp: string;
   let originalCodexHome: string | undefined;
+  let originalGenieHome: string | undefined;
+  let originalHookBin: string | undefined;
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), 'codex-inject-'));
     originalCodexHome = process.env.CODEX_HOME;
+    originalGenieHome = process.env.GENIE_HOME;
+    originalHookBin = process.env.GENIE_HOOK_BIN;
     process.env.CODEX_HOME = tmp;
+    // Pin GENIE_HOME so the compiled-binary candidate (~/.genie/bin/genie-hook)
+    // doesn't resolve to a real binary produced by postinstall on the CI
+    // runner; these tests assert the bun-fork fallback shape.
+    process.env.GENIE_HOME = join(tmp, 'genie-home');
+    process.env.GENIE_HOOK_BIN = join(tmp, 'genie-home', 'no-such-binary');
   });
 
   afterEach(() => {
@@ -27,6 +36,10 @@ describe('injectCodexHooks', () => {
     } else {
       process.env.CODEX_HOME = originalCodexHome;
     }
+    if (originalGenieHome === undefined) process.env.GENIE_HOME = undefined;
+    else process.env.GENIE_HOME = originalGenieHome;
+    if (originalHookBin === undefined) process.env.GENIE_HOOK_BIN = undefined;
+    else process.env.GENIE_HOOK_BIN = originalHookBin;
     rmSync(tmp, { recursive: true, force: true });
   });
 
