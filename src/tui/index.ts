@@ -126,10 +126,31 @@ async function recordTuiLaunchBreadcrumb(): Promise<void> {
 }
 
 /**
+ * Exit the TUI process when its controlling tty disappears. Without this,
+ * OpenTUI keeps its render loop alive after SSH disconnect / tmux pane teardown,
+ * leaving an orphaned `bun` reparented to PID 1 that holds its postgres pool
+ * open forever. Multiple stale TUIs eventually exhaust pgserve's
+ * `max_connections`, surfacing as `[filewatch] sorry, too many clients already`.
+ *
+ * Default Node/bun behavior terminates on SIGHUP, but OpenTUI's raw-mode stdin
+ * handling masks it — install an explicit handler. Mirror SIGINT/SIGTERM for
+ * symmetry with operator-driven shutdown.
+ */
+function installTuiExitSignals(): void {
+  const exitOnSignal = (signal: NodeJS.Signals) => {
+    process.exit(signal === 'SIGHUP' ? 0 : 128 + (signal === 'SIGINT' ? 2 : 15));
+  };
+  process.on('SIGHUP', exitOnSignal);
+  process.on('SIGINT', exitOnSignal);
+  process.on('SIGTERM', exitOnSignal);
+}
+
+/**
  * Render the TUI nav panel.
  * Called from genie.ts when GENIE_TUI_PANE=left.
  */
 export async function launchTui(): Promise<void> {
+  installTuiExitSignals();
   await recordTuiLaunchBreadcrumb();
   const { renderNav } = await import('./render.js');
   await renderNav();
