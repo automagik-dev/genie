@@ -17,7 +17,7 @@
  * is retained as a fallback.
  */
 
-import { type ChildProcess, execSync, spawn } from 'node:child_process';
+import { type ChildProcess, execFileSync, execSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
@@ -49,6 +49,8 @@ const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
 const DATA_DIR = join(GENIE_HOME, 'data', 'pgserve');
 const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
 const PG_AUTH_FIELD = ['pass', 'word'].join('');
+const PG_SSL_REQUEST_CODE = 80877103;
+const PGSERVE_GREET_TIMEOUT_MS = 1000;
 /**
  * Default DB requested when connecting via Unix socket. The pgserve v2 daemon
  * treats `postgres` (libpq's default) as "give me whatever DB belongs to my
@@ -292,11 +294,14 @@ let daemonStartPromise: Promise<void> | null = null;
 export async function getOrStartDaemon(): Promise<DaemonState> {
   if (process.env.GENIE_PG_DISABLE_AUTOSTART === '1' || isPgAutostartDisabled()) {
     const state = probePgserveDaemon();
-    if (state.running) return state;
+    if (state.running && (await isPgserveSocketResponsive())) return state;
     throw new Error('pgserve daemon unavailable and PG autostart is disabled');
   }
   const initial = probePgserveDaemon();
-  if (initial.running) return initial;
+  if (initial.running) {
+    if (await isPgserveSocketResponsive()) return initial;
+    await recoverUnresponsivePgserveDaemon(initial);
+  }
 
   // CI: tests get TCP via GENIE_TEST_PG_PORT; non-test CI shouldn't autospawn.
   if (process.env.CI === 'true' && process.env.GENIE_PG_ALLOW_CI_AUTOSTART !== '1') {
@@ -308,12 +313,12 @@ export async function getOrStartDaemon(): Promise<DaemonState> {
   const rootErr = checkRootGuard();
   if (rootErr !== null) throw new Error(rootErr);
 
-  if (initial.reason === 'socket present but pid stale' && (await isPgserveSocketAccepting())) {
+  if (initial.reason === 'socket present but pid stale' && (await isPgserveSocketResponsive())) {
     return {
       running: true,
       pid: null,
       socketPresent: true,
-      reason: 'socket accepts connections but pid file is stale',
+      reason: 'socket completes pgserve greeting but pid file is stale',
     };
   }
 
@@ -344,17 +349,64 @@ function cleanPartialDaemonState(initial: DaemonState): void {
   }
 }
 
-async function isPgserveSocketAccepting(): Promise<boolean> {
+async function recoverUnresponsivePgserveDaemon(state: DaemonState): Promise<void> {
+  if (state.pid !== null && isLikelyPgserveDaemonProcess(state.pid)) {
+    await signalPgserveDaemonPid(state.pid, 'SIGTERM');
+    if (liveDaemonPid(state.pid) !== null) await signalPgserveDaemonPid(state.pid, 'SIGKILL');
+  }
+  removeStalePgserveSocketArtifacts();
+}
+
+function isLikelyPgserveDaemonProcess(pid: number): boolean {
+  try {
+    const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+      encoding: 'utf-8',
+      timeout: 1000,
+    }).trim();
+    return (
+      command.includes('pgserve') ||
+      command.includes('postgres-server.js') ||
+      (command.includes('postgres') && command.includes(DATA_DIR))
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function signalPgserveDaemonPid(pid: number, signal: NodeJS.Signals): Promise<void> {
+  let signaled = false;
+  try {
+    process.kill(-pid, signal);
+    signaled = true;
+  } catch {
+    /* pid is not a process-group leader */
+  }
+  try {
+    process.kill(pid, signal);
+    signaled = true;
+  } catch {
+    /* process already exited */
+  }
+  if (!signaled) return;
+
+  const deadline = Date.now() + (signal === 'SIGTERM' ? 1000 : 250);
+  while (Date.now() < deadline) {
+    if (liveDaemonPid(pid) === null) return;
+    await sleep(50);
+  }
+}
+
+async function isPgserveSocketResponsive(): Promise<boolean> {
   const candidates = [resolvePgserveLibpqSocketPath(), resolvePgserveControlSocketPath()].filter((path) =>
     existsSync(path),
   );
   for (const path of candidates) {
-    if (await canConnectUnixSocket(path)) return true;
+    if (await canCompletePgserveGreet(path)) return true;
   }
   return false;
 }
 
-function canConnectUnixSocket(path: string): Promise<boolean> {
+function canCompletePgserveGreet(path: string): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -369,11 +421,16 @@ function canConnectUnixSocket(path: string): Promise<boolean> {
       resolve(ok);
     };
 
+    const request = Buffer.alloc(8);
+    request.writeUInt32BE(8, 0);
+    request.writeUInt32BE(PG_SSL_REQUEST_CODE, 4);
+
     socket = createConnection(path);
-    timer = setTimeout(() => finish(false), 250);
+    timer = setTimeout(() => finish(false), PGSERVE_GREET_TIMEOUT_MS);
     timer.unref();
 
-    socket.once('connect', () => finish(true));
+    socket.once('connect', () => socket?.write(request));
+    socket.once('data', (chunk) => finish(chunk[0] === 78 || chunk[0] === 83));
     socket.once('error', () => finish(false));
   });
 }
@@ -424,7 +481,7 @@ async function waitForDaemonSocket(bin: string): Promise<void> {
   const timeout = resolvePgserveTimeoutMs();
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (existsSync(socketPath)) return;
+    if (existsSync(socketPath) && (await isPgserveSocketResponsive())) return;
     await sleep(250);
   }
   throw new Error(
@@ -444,9 +501,14 @@ async function tryEnsureDaemonWithSdk(): Promise<boolean> {
       timeoutMs: resolvePgserveTimeoutMs(),
       controlSocketDir: resolvePgserveSocketDir(),
     });
-    return Boolean(state.running && (state.libpqSocketPresent ?? state.socketPresent ?? true));
+    if (!state.running || !(state.libpqSocketPresent ?? state.socketPresent ?? true)) return false;
+    if (await isPgserveSocketResponsive()) return true;
+    await recoverUnresponsivePgserveDaemon(probePgserveDaemon());
+    return false;
   } catch {
-    cleanPartialDaemonState(probePgserveDaemon());
+    const state = probePgserveDaemon();
+    if (state.running) await recoverUnresponsivePgserveDaemon(state);
+    else cleanPartialDaemonState(state);
     return false;
   }
 }

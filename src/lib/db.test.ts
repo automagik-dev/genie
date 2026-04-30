@@ -439,14 +439,71 @@ describe('daemon-owned pgserve', () => {
     const tryIdx = fnBody.indexOf('try {');
     const ensureIdx = fnBody.indexOf('const state = await sdk.ensureDaemon');
     const catchIdx = fnBody.indexOf('} catch {');
-    const cleanupIdx = fnBody.indexOf('cleanPartialDaemonState(probePgserveDaemon())');
+    const cleanupIdx = fnBody.indexOf('await recoverUnresponsivePgserveDaemon(state)');
     const falseIdx = fnBody.indexOf('return false', catchIdx);
 
     expect(tryIdx).toBeGreaterThan(-1);
     expect(ensureIdx).toBeGreaterThan(tryIdx);
     expect(catchIdx).toBeGreaterThan(ensureIdx);
     expect(cleanupIdx).toBeGreaterThan(catchIdx);
+    expect(fnBody).toContain('else cleanPartialDaemonState(state)');
     expect(falseIdx).toBeGreaterThan(cleanupIdx);
+  });
+
+  test('daemon startup verifies live pid sockets before trusting them', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('export async function getOrStartDaemon');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = source.slice(fnStart, source.indexOf('\nfunction cleanPartialDaemonState', fnStart));
+
+    const runningIdx = fnBody.indexOf('if (initial.running) {');
+    const responsiveIdx = fnBody.indexOf('await isPgserveSocketResponsive()', runningIdx);
+    const returnIdx = fnBody.indexOf('return initial', responsiveIdx);
+    const recoverIdx = fnBody.indexOf('await recoverUnresponsivePgserveDaemon(initial)', returnIdx);
+
+    expect(runningIdx).toBeGreaterThan(-1);
+    expect(responsiveIdx).toBeGreaterThan(runningIdx);
+    expect(returnIdx).toBeGreaterThan(responsiveIdx);
+    expect(recoverIdx).toBeGreaterThan(returnIdx);
+    expect(fnBody).toContain(
+      "initial.reason === 'socket present but pid stale' && (await isPgserveSocketResponsive())",
+    );
+  });
+
+  test('daemon startup waits for protocol greeting, not only socket file', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const waitStart = source.indexOf('async function waitForDaemonSocket');
+    expect(waitStart).toBeGreaterThan(-1);
+    const waitBody = source.slice(waitStart, source.indexOf('\nasync function tryEnsureDaemonWithSdk', waitStart));
+
+    expect(waitBody).toContain('existsSync(socketPath) && (await isPgserveSocketResponsive())');
+
+    const greetStart = source.indexOf('function canCompletePgserveGreet');
+    expect(greetStart).toBeGreaterThan(-1);
+    const greetBody = source.slice(
+      greetStart,
+      source.indexOf('\nfunction removeStalePgserveSocketArtifacts', greetStart),
+    );
+    expect(greetBody).toContain('request.writeUInt32BE(8, 0)');
+    expect(greetBody).toContain('request.writeUInt32BE(PG_SSL_REQUEST_CODE, 4)');
+    expect(greetBody).toContain("socket.once('data'");
+  });
+
+  test('unresponsive live v2 daemon is terminated before respawn', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const recoverStart = source.indexOf('async function recoverUnresponsivePgserveDaemon');
+    expect(recoverStart).toBeGreaterThan(-1);
+    const recoverBody = source.slice(
+      recoverStart,
+      source.indexOf('\nasync function isPgserveSocketResponsive', recoverStart),
+    );
+
+    expect(recoverBody).toContain('isLikelyPgserveDaemonProcess(state.pid)');
+    expect(recoverBody).toContain("await signalPgserveDaemonPid(state.pid, 'SIGTERM')");
+    expect(recoverBody).toContain("await signalPgserveDaemonPid(state.pid, 'SIGKILL')");
+    expect(recoverBody).toContain('removeStalePgserveSocketArtifacts()');
+    expect(recoverBody).toContain('process.kill(-pid, signal)');
+    expect(recoverBody).toContain('process.kill(pid, signal)');
   });
 });
 
@@ -677,14 +734,14 @@ describe('parallel dispatch race (issue #1207)', () => {
     expect(block).not.toContain('process.kill(initial.pid');
   });
 
-  test('getOrStartDaemon probes stale v2 sockets before removing socket artifacts', () => {
+  test('getOrStartDaemon greets stale v2 sockets before removing socket artifacts', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     const fnStart = source.indexOf('export async function getOrStartDaemon');
     expect(fnStart).toBeGreaterThan(-1);
     const fnEnd = source.indexOf('function removeStalePgserveSocketArtifacts', fnStart);
     const body = source.slice(fnStart, fnEnd);
 
-    const probeIdx = body.indexOf('await isPgserveSocketAccepting()');
+    const probeIdx = body.indexOf('await isPgserveSocketResponsive()');
     const cleanupIdx = body.indexOf('removeStalePgserveSocketArtifacts()');
     expect(probeIdx).toBeGreaterThan(-1);
     expect(cleanupIdx).toBeGreaterThan(probeIdx);
