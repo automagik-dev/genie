@@ -84,10 +84,15 @@ function mapAssignment(row: Record<string, unknown>): TuiAssignment {
  * Nav.tsx switch on `wsAgentState` with a unified work-state badge.
  */
 export async function loadAgentWorkStates(): Promise<Map<string, WorkState>> {
-  const { listAgents } = await import('../lib/agent-registry.js');
+  const { listAgentsForRender } = await import('../lib/agent-registry.js');
   const { shouldResume, BOOT_PASS_CONCURRENCY_CAP } = await import('../lib/should-resume.js');
 
-  const agents = await listAgents({ includeArchived: false });
+  // Render-path variant — drops bare-name shadow rows (`dir:*`, pre-UUID
+  // names) so the TUI work-state refresh stops feeding `shouldResume()`
+  // entity_ids that aren't real runtime agents. Each shadow row would
+  // otherwise emit `resume.missing_session` per refresh tick (Gap #1 of
+  // #1521 — `resume.lost_anchor` ghost alerts in idle workspaces).
+  const agents = await listAgentsForRender({ includeArchived: false });
   if (agents.length === 0) return new Map();
 
   const out = new Map<string, WorkState>();
