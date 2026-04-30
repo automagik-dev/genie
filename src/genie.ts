@@ -19,6 +19,7 @@ const _T_BOOT = Date.now();
 
 import { Command } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
+import { type InstallOptions, installCommand } from './genie-commands/install.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
@@ -181,6 +182,14 @@ program
   .option('--show', 'Show current configuration')
   .action(async (options: SetupOptions) => {
     await setupCommand(options);
+  });
+
+program
+  .command('install')
+  .description('Register genie-serve under pm2 with hardened defaults (canonical-pgserve-pm2-supervision wave 2)')
+  .option('--skip-pgserve', "Don't run `pgserve install` first (operators who manage pgserve themselves)")
+  .action(async (options: InstallOptions) => {
+    await installCommand(options);
   });
 
 program
