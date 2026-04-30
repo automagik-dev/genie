@@ -122,6 +122,12 @@ describe('tmux config — OSC 52 clipboard passthrough (#967)', () => {
     expect(hits.length).toBeGreaterThanOrEqual(1);
   });
 
+  test('tui-tmux.conf forwards click events to OpenTUI', () => {
+    expect(activeLinesIn(tuiConf, /MouseDown1Pane.*send-keys -M/).length).toBe(1);
+    expect(activeLinesIn(tuiConf, /MouseUp1Pane\s+if-shell.*send-keys -M/).length).toBe(1);
+    expect(activeLinesIn(tuiConf, /WheelDownPane\s+if-shell.*send-keys -M/).length).toBe(1);
+  });
+
   test('osc52-copy.sh helper script exists and is executable', () => {
     const scriptPath = resolve(import.meta.dirname, '../../scripts/tmux/osc52-copy.sh');
     expect(existsSync(scriptPath)).toBe(true);

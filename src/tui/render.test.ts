@@ -2,18 +2,25 @@ import { describe, expect, test } from 'bun:test';
 import { resolveTuiRendererConfig } from './render.js';
 
 describe('resolveTuiRendererConfig', () => {
-  test('uses conservative renderer defaults on macOS', () => {
+  test('uses click-only renderer defaults on macOS', () => {
     const config = resolveTuiRendererConfig({}, 'darwin');
 
     expect(config.exitOnCtrlC).toBe(false);
     expect(config.useThread).toBe(false);
     expect(config.targetFps).toBe(8);
     expect(config.maxFps).toBe(12);
-    expect(config.useMouse).toBe(false);
+    expect(config.useMouse).toBe(true);
     expect(config.enableMouseMovement).toBe(false);
     expect(config.useKittyKeyboard).toBe(null);
     expect(config.consoleMode).toBe('disabled');
     expect(config.openConsoleOnError).toBe(false);
+  });
+
+  test('allows explicit macOS mouse opt-out', () => {
+    const config = resolveTuiRendererConfig({ GENIE_TUI_MOUSE: '0' }, 'darwin');
+
+    expect(config.useMouse).toBe(false);
+    expect(config.enableMouseMovement).toBe(false);
   });
 
   test('allows explicit macOS mouse and FPS overrides', () => {

@@ -34,7 +34,7 @@ export function resolveTuiRendererConfig(
   const targetFps = readPositiveInt(env, 'GENIE_TUI_TARGET_FPS') ?? (isDarwin ? 8 : 30);
   const configuredMaxFps = readPositiveInt(env, 'GENIE_TUI_MAX_FPS') ?? (isDarwin ? 12 : 60);
   const maxFps = Math.max(configuredMaxFps, targetFps);
-  const useMouse = readBool(env, 'GENIE_TUI_MOUSE', !isDarwin);
+  const useMouse = readBool(env, 'GENIE_TUI_MOUSE', true);
   const enableMouseMovement = useMouse && readBool(env, 'GENIE_TUI_MOUSE_MOVEMENT', !isDarwin);
 
   return {
