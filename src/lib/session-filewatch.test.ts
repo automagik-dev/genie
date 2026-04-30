@@ -23,6 +23,7 @@ import {
   extractSessionInfo,
   handleFileChange,
   isForeignKeyViolation,
+  isTransientPgConnectionError,
   resetUnrecoverableSessions,
 } from './session-filewatch.js';
 
@@ -80,6 +81,25 @@ describe('isForeignKeyViolation', () => {
     expect(isForeignKeyViolation(new Error('ECONNRESET'))).toBe(false);
     expect(isForeignKeyViolation(null)).toBe(false);
     expect(isForeignKeyViolation('string error')).toBe(false);
+  });
+});
+
+describe('isTransientPgConnectionError', () => {
+  test('detects postgres.js socket/pool errors', () => {
+    expect(isTransientPgConnectionError(Object.assign(new Error('pool ended'), { code: 'CONNECTION_ENDED' }))).toBe(
+      true,
+    );
+    expect(isTransientPgConnectionError(new Error('write CONNECTION_DESTROYED /tmp/pgserve/.s.PGSQL.5432'))).toBe(true);
+    expect(isTransientPgConnectionError(new Error('write CONNECT_TIMEOUT /run/user/1000/pgserve/.s.PGSQL.5432'))).toBe(
+      true,
+    );
+  });
+
+  test('rejects unrelated errors', () => {
+    expect(isTransientPgConnectionError(Object.assign(new Error('foreign key constraint'), { code: '23503' }))).toBe(
+      false,
+    );
+    expect(isTransientPgConnectionError(null)).toBe(false);
   });
 });
 
@@ -193,5 +213,42 @@ describe('handleFileChange — FK violation', () => {
     await handleFileChange(filePath, fakeSql, deps);
     expect(ingestCallCount).toBe(2); // retried
     expect(errors.length).toBe(2);
+  });
+
+  test('transient PG connection error resets pool and retries once in same event', async () => {
+    const filePath = makeSubagentFile(tmpRoot, 'parent-123', 'flaky-session-c');
+    const firstSql = { name: 'old' };
+    const freshSql = { name: 'fresh' };
+    const ingestSqls: unknown[] = [];
+    let resetCalls = 0;
+    let getConnectionCalls = 0;
+    const errors: string[] = [];
+
+    const deps = makeDeps({
+      ingestFileFull: async (sql) => {
+        ingestSqls.push(sql);
+        if (ingestSqls.length === 1) {
+          throw Object.assign(new Error('write CONNECTION_ENDED /run/user/1000/pgserve/.s.PGSQL.5432'), {
+            code: 'CONNECTION_ENDED',
+          });
+        }
+        return { newOffset: 42, contentRowsInserted: 1, toolEventsInserted: 0 };
+      },
+      resetConnection: async () => {
+        resetCalls++;
+      },
+      getConnection: async () => {
+        getConnectionCalls++;
+        return freshSql as never;
+      },
+      logError: (msg) => errors.push(msg),
+    });
+
+    await handleFileChange(filePath, firstSql, deps);
+
+    expect(ingestSqls).toEqual([firstSql, freshSql]);
+    expect(resetCalls).toBe(1);
+    expect(getConnectionCalls).toBe(1);
+    expect(errors).toEqual([]);
   });
 });
