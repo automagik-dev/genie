@@ -13,7 +13,7 @@
  * used by consumers that prefer direct SQL over HTTP.
  */
 
-import { type Sql, getActivePort, getConnection } from './db.js';
+import { type Sql, getAuxiliaryPortBase, getConnection } from './db.js';
 import type { ExecutorState, TurnOutcome } from './executor-types.js';
 
 interface ExecutorStateReply {
@@ -55,7 +55,7 @@ export function getExecutorReadPort(): number {
     const parsed = Number.parseInt(envPort, 10);
     if (!Number.isNaN(parsed) && parsed > 0 && parsed < 65536) return parsed;
   }
-  return getActivePort() + 2;
+  return getAuxiliaryPortBase() + 2;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

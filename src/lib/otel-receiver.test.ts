@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { getActivePort } from './db.js';
+import { getAuxiliaryPortBase } from './db.js';
 import {
   getOtelPort,
   isOtelReceiverRunning,
@@ -112,7 +112,7 @@ describe('otel-receiver', () => {
   });
 
   test('getOtelPort returns pgserve port + 1 by default', () => {
-    expect(getOtelPort()).toBe(getActivePort() + 1);
+    expect(getOtelPort()).toBe(getAuxiliaryPortBase() + 1);
   });
 
   test('getOtelPort returns a valid default without env overrides', () => {
