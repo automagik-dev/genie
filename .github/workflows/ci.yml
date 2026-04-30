@@ -176,6 +176,11 @@ jobs:
       # regressions. Long-term fix is a pgserve backend audit (out of
       # scope for wish pg-test-perf).
       #
+      # The retry disables shared-daemon reuse because the first failed run may
+      # have left the pgserve process accepting TCP but timing out handshakes.
+      # Reusing that daemon contaminates the second run with stale databases and
+      # turns one backend failure into unrelated row-count failures.
+      #
       # History: 7b23046e dropped a prior retry wrapper because hangs on the
       # self-hosted runner produced orphaned bun processes. Mitigated now by
       # Blacksmith ephemeral runners + `timeout-minutes: 15` (a hang is killed
@@ -183,7 +188,12 @@ jobs:
       - name: Test (serial, PG-backed)
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-        run: bun test --timeout 15000 || bun test --timeout 15000
+          GENIE_HOME: ${{ runner.temp }}/genie-pg-home-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          bun test --timeout 15000 || (
+            rm -f "$GENIE_HOME/data/test-pgserve.lock"
+            GENIE_TEST_PG_NO_REUSE=1 bun test --timeout 15000
+          )
 
   # Group 7 of the pgserve-v2 wish: smoke-test the v2 Unix-socket consumer
   # path. Spawns pgserve daemon, runs `genie task list` against it, asserts
