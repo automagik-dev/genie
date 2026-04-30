@@ -5,11 +5,13 @@ import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { useBindings } from '@opentui/keymap/react';
 import { useRenderer } from '@opentui/react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { HelpOverlay } from './components/HelpOverlay.js';
 import { Nav } from './components/Nav.js';
 import { QuitDialog } from './components/QuitDialog.js';
 import { attachProjectWindow, newAgentWindow } from './tmux.js';
+
+const BASE_TERMINAL_TITLE = 'genie tui';
 
 interface AppProps {
   rightPane?: string;
@@ -23,6 +25,17 @@ export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
   const renderer = useRenderer();
   const [showQuit, setShowQuit] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [activeSession, setActiveSession] = useState<string | null>(null);
+
+  useEffect(() => {
+    const title = activeSession ? `${BASE_TERMINAL_TITLE} — ${activeSession}` : BASE_TERMINAL_TITLE;
+    try {
+      renderer.setTerminalTitle(title);
+    } catch {
+      // setTerminalTitle is best-effort — terminals without OSC 0/2 support
+      // silently no-op, but a thrown error must not break the TUI.
+    }
+  }, [renderer, activeSession]);
 
   const handleQuit = useCallback(() => {
     // Best-effort: signal genie serve to stop
@@ -86,6 +99,7 @@ export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
 
   const handleTmuxSessionSelect = useCallback(
     (sessionName: string, windowIndex?: number) => {
+      setActiveSession(sessionName);
       if (!rightPane) return;
       attachProjectWindow(rightPane, sessionName, windowIndex);
     },
