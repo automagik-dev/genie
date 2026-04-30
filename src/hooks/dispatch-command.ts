@@ -6,6 +6,7 @@
  */
 
 import type { Command } from 'commander';
+import { registerHookTrustCommand } from '../term-commands/hook/trust.js';
 import { dispatch } from './index.js';
 
 async function readStdin(): Promise<string> {
@@ -54,4 +55,11 @@ export function registerHookNamespace(program: Command): void {
     .command('dispatch')
     .description('Dispatch a CC hook event (reads JSON from stdin, writes decision to stdout)')
     .action(dispatchAction);
+
+  // Group 1 of hookify-third-party-absorption: trust subcommand. Subsequent
+  // groups extend this namespace with `list`, `scaffold`, `test`, `reload`,
+  // `quarantine`, `import`, `prune`. Registered synchronously so commander's
+  // parse pass sees it; the trust handler itself only runs when the user
+  // invokes `genie hook trust` so the dispatch hot path doesn't pay for it.
+  registerHookTrustCommand(hook);
 }
