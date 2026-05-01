@@ -7,7 +7,7 @@
 | **Date** | 2026-04-30 |
 | **Author** | felipe@namastex.ai |
 | **Appetite** | medium |
-| **Branch** | `wish/omni-activity-heartbeat` |
+| **Branch** | `wish-omni-heartbeat` (genie) / `wish/omni-activity-heartbeat` (omni) |
 | **Repos touched** | `automagik-genie/genie`, `automagik/omni` |
 | **Design** | _No brainstorm — direct wish_ |
 
