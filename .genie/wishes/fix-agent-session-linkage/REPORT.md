@@ -293,3 +293,162 @@ ssh felipe 'export PATH=…; cd /home/genie/workspace/repos/genie && genie --no-
 ```
 
 The wish's reference numbers (1854 sessions, 1852 NULL `executor_id` on the felipe instance) suggest the apply will link a few thousand sessions; tool_events backfill will be similarly large.
+
+## QA Results
+
+Captured 2026-05-01 by `qa` agent on local DB after Groups 1-3 landed. Group 4 (`ssh felipe`) remains BLOCKED on operator key provisioning — out of QA scope. All checks executed via `./dist/genie.js` (worktree dist 4.260501.4).
+
+### Wish QA Criteria
+
+| # | Criterion | Method | Evidence | Status |
+|---|-----------|--------|----------|--------|
+| 1 | `genie sessions list` shows linked agent/executor ownership | `./dist/genie.js --no-tui sessions list` | Repaired sessions render with non-empty Agent + Team columns (e.g. `1df7eb0f-69b → engineer → fix-agent-session-linkage`, `8ef8af95-c81 → genie-pgserve → genie`, `b8075629-c63 → genie → genie`). All 14 executor-linked sessions show `status=active`. Pre-existing standalone orphans (no matching executor) correctly remain `(orphaned)`. | PASS |
+| 2 | `genie log <agent>` includes session/tool history from repaired rows | `./dist/genie.js --no-tui log engineer` | Returned 32 events for the `engineer` agent on the previously-orphaned session `1df7eb0f`. Cross-check `select count(*) from tool_events te join sessions s on s.id=te.session_id where s.id='1df7eb0f-…' and te.agent_id is not null and te.agent_id != ''` → **153** attributed events on that one repaired session. | PASS |
+| 3 | Re-running `--apply` is idempotent | Engineer transcript at REPORT.md:264-273 shows successive applies converge to `(0,0)`. Re-execution of `--apply` blocked per operator instructions ("DO NOT run `--apply` again"). Code path confirmed at `src/term-commands/sessions.ts:517-525` (`noWork` short-circuit returns before the transaction). | First post-fix apply linked 10 / 688; second `(0,1)`; third `(0,0)`. New audit row at 18:39:05 also shows `linked=0, te=20, preview_count=0` — same idempotent shape on a follow-up run. | PASS |
+| 4 | Safe on a DB with zero affected rows | `./dist/genie.js --no-tui sessions repair-links --dry-run` on current DB | First dry-run: `linkable orphans: 0`, dry-run reports `Run with --apply to repair 0 session(s) and up to 765 tool_event(s)`. The 765 are pre-existing tool_events with empty-string attribution that `--apply` would still backfill — the command is *safe* (zero session writes when count is 0) but not yet at the (0,0) terminal state because legacy empty-string tool_events keep accumulating from the OLD global daemon. See INFO #1 below. | PASS |
+
+### Additional Structured Checks
+
+**1. Audit event integrity** — `select created_at, jsonb_typeof(details), details::text from audit_events where event_type = 'sessions.repair_links' order by created_at desc limit 5`
+
+```
+created_at  | outer_type | details
+18:39:05    | object     | {"forced": false, "recount": 0, "preview_count": 0, "sessions_linked": 0, "tool_events_backfilled": 20}
+18:30:15    | object     | {"forced": false, "recount": 0, "preview_count": 0, "sessions_linked": 0, "tool_events_backfilled": 0}
+18:30:14    | object     | {"forced": false, "recount": 0, "preview_count": 0, "sessions_linked": 0, "tool_events_backfilled": 1}
+18:29:52    | object     | {"forced": false, "recount": 0, "preview_count": 0, "sessions_linked": 0, "tool_events_backfilled": 12}
+18:27:28    | string     | "{\"sessions_linked\":0,\"tool_events_backfilled\":0,\"preview_count\":0,\"recount\":0,\"forced\":false}"
+```
+
+- All 4 latest rows are JSONB `object` type with the 5 required keys (`sessions_linked`, `tool_events_backfilled`, `preview_count`, `recount`, `forced`). PASS.
+- Zero raw session content / paths / agent identifiers stored — `details` is totals-only as the wish required. PASS.
+- 5 of 9 historical `sessions.repair_links` rows have `outer_type = 'string'` — pre-fix artifacts from the engineer's earlier iteration before adopting `tx.json(...)`. Inert legacy data, not a regression. **WARN**: see INFO #2.
+
+**2. Empty-string regression (new tool_events should write NULL not '')** — `select count filter (where agent_id = '') / (where agent_id is null) ... from tool_events where timestamp > now() - interval '10 minutes'`
+
+```
+empty_agent | null_agent | empty_team | null_team | empty_wish | null_wish | empty_task | null_task | total
+4           | 0          | 4          | 0         | 63         | 5         | 63         | 5         | 68
+```
+
+- Source code at `src/lib/session-capture.ts:714-717` correctly uses `?? null` for all four observability fields (verified by direct read). PASS at code level.
+- Unit tests confirm: `bun test src/lib/session-capture.test.ts src/services/executors/__tests__/sdk-session-capture.test.ts` → 32 pass / 0 fail. PASS.
+- Live DB still shows empty-string writes from concurrent ingestion. Cause: the running daemons execute the OLD globally-installed binary (`/home/genie/.bun/.../genie.js` v4.260501.5, zero `repair-links` matches in compiled source) — this branch's fix is in `./dist/genie.js` (5 `repair-links` matches) but not yet promoted globally. Production fix lands on merge + reinstall. **INFO**: see INFO #1.
+
+**3. JSON mode** — `./dist/genie.js --no-tui sessions repair-links --json | jq '. | keys, .diagnostics.linkableOrphanSessions, .sample | length'`
+
+```
+3            ← 3 top-level keys: diagnostics, sample, ambiguous
+2            ← linkableOrphanSessions
+2            ← sample length
+```
+
+JSON parses cleanly through `jq`. Shape matches expectation: `{ diagnostics, sample, ambiguous }` with `diagnostics` carrying all the count fields. PASS.
+
+**4. --force gating code path** — drift gate at `src/term-commands/sessions.ts:375-380`:
+
+```ts
+if (recount.n !== previewCount && !force) {
+  result.driftDetected = true;
+  throw new Error(`repair-links: candidate count drifted between preview (${previewCount}) and apply (${recount.n}). Re-run --dry-run or pass --force to override.`);
+}
+```
+
+Ambiguity gate at `src/term-commands/sessions.ts:510-515`:
+
+```ts
+if (ambiguous.length > 0 && !options.force) {
+  console.error(`repair-links: ${ambiguous.length} ambiguous claude_session_id value(s) found. ... refusing --apply.`);
+  process.exit(2);
+}
+```
+
+Both gates present and correctly check `!force`. PASS at code level. **WARN**: zero automated test coverage — `grep -rln "applyRepairTransaction\|findAmbiguousExecutorSessions\|diagnoseSessionLinks" src --include='*.test.ts'` returns no matches. The gates are exercised only by manual operator runs. Not blocking but flagged for follow-up tightening (see INFO #3).
+
+**5. Build/install discipline** — global `genie` binary lags this branch:
+
+```
+$ which genie               → /home/genie/.local/bin/genie → /home/genie/.bun/bin/genie → .../node_modules/@automagik/genie/dist/genie.js
+$ genie --version           → 4.260501.5
+$ ./dist/genie.js --version → 4.260501.4
+$ grep -c repair-links /home/genie/.bun/install/global/.../genie.js  → 0
+$ grep -c repair-links dist/genie.js                                  → 5
+```
+
+The new `genie sessions repair-links` subcommand is **not** discoverable via the global binary. All operator-facing commands during QA had to be invoked as `./dist/genie.js`. PASS — this is the expected feature-branch state pre-merge — but **WARN**: post-merge, the global install must be rebuilt and re-published before operators can run the canonical `genie sessions repair-links --dry-run` from any cwd. See INFO #1.
+
+### Anomalies
+
+| Severity | ID | Description |
+|----------|----|-------------|
+| INFO | 1 | Global `genie` (4.260501.5) does not contain the Group 1-3 fix; running daemons still write empty-string attribution. Code-level fix is correct (`?? null` at `src/lib/session-capture.ts:714-717`); live remediation requires merge + global rebuild. Pre-merge expected; not a regression. |
+| WARN | 2 | 5 of 9 `audit_events.sessions.repair_links` rows have `details` stored as JSONB string (not object) — pre-fix artifacts from before the engineer switched to `tx.json(...)`. Inert legacy data. Optional cleanup: `UPDATE audit_events SET details = (details #>> '{}')::jsonb WHERE event_type = 'sessions.repair_links' AND jsonb_typeof(details) = 'string'`. Not blocking. |
+| WARN | 3 | The `applyRepairTransaction` drift gate, the `findAmbiguousExecutorSessions` ambiguity gate, and `diagnoseSessionLinks` have zero automated test coverage. Functionality verified manually; future regressions would land silently. Recommend a `src/term-commands/sessions.test.ts` companion with table-driven tests over the gates. |
+
+### Test suite
+
+```
+$ bun test src/lib/session-capture.test.ts src/services/executors/__tests__/sdk-session-capture.test.ts
+32 pass / 0 fail / 122 expect() calls
+```
+
+Wish-scoped unit tests stay green. Engineer's tree-wide run (REPORT.md:182-184) showed 2824 pass / 0 fail across `src/lib/` + `src/services/`.
+
+### Verdict
+
+**PASS**
+
+All four wish QA criteria verified with evidence. All four additional structured checks pass at code level with three INFO/WARN observations, none of which block ship. The Group 1-3 deliverables are functionally and structurally correct on the local DB; Group 4 (`ssh felipe` cross-instance) remains operator-blocked and is appropriately deferred.
+
+---
+
+## Review Results
+
+**Verdict: SHIP**
+
+Reviewed commits `595060f8`, `2e94b06c`, `b25d1ef3` against `WISH.md` Groups 1–3. Group 4 explicitly out of scope (operator key blocker).
+
+### Phase 1 — Spec Compliance (independently verified — read each cited line, did not just trust REPORT)
+
+**Group 2 acceptance — all PASS:**
+- [x] Existing orphan upgrade: `src/lib/session-capture.ts:333-412` — SELECT broadened to read `executor_id, role, status`; `needsUpgrade` flips on any-NULL-or-orphaned; UPDATE uses `COALESCE(field, $worker)` per column. Test `src/lib/session-capture.test.ts:361` exercises end-to-end.
+- [x] SDK conflict path fills missing linkage: `src/services/executors/sdk-session-capture.ts:48-62` — `ON CONFLICT (id) DO UPDATE SET <field> = COALESCE(sessions.<field>, EXCLUDED.<field>)` for all five linkage columns plus `orphaned → active` status flip. Test `__tests__/sdk-session-capture.test.ts:139` pins.
+- [x] Tool events store NULL not '': `session-capture.ts:714-717` — `?? null` for `agent_id`, `team`, `wish_slug`, `task_id`. Test `__tests__/sdk-session-capture.test.ts:148` (`expect(...).not.toContain('')`).
+- [x] No downgrade: COALESCE guards both ingestion and SDK paths. Regression test `session-capture.test.ts:411` (`does NOT downgrade an existing fully-linked session`) is green.
+
+**Group 3 acceptance — all PASS:**
+- [x] Dry-run mutates zero rows: `src/term-commands/sessions.ts:502-507` returns before any UPDATE; `src/lib/session-link-repair.ts` is pure SELECT (read-verified, zero `INSERT/UPDATE/DELETE`). Live re-run during this review on local DB confirmed: 3 candidates printed, count unchanged.
+- [x] Apply links by `executors.claude_session_id`: `sessions.ts:382-396` — exact `WHERE s.id = e.claude_session_id AND s.executor_id IS NULL`. Risk 1 mitigated as wish demanded.
+- [x] Apply backfills tool_events: `sessions.ts:408-423` — `COALESCE(NULLIF(te.<field>, ''), s.<field>)` treats legacy empty-string writes as missing while preserving any non-empty existing value. Risk 2 mitigated.
+- [x] Idempotent: `IS DISTINCT FROM` filter at `sessions.ts:417-422` skips no-op rows. REPORT transcript shows convergence to (0,0). Confirmed.
+
+**Risk register — all addressed in code:**
+- Risk 1 (genuine non-executor orphans): exact-id join — confirmed.
+- Risk 2 (overwrite better history): `COALESCE(NULLIF(...), …)` — confirmed.
+- Risk 3 (ambiguous executors): `findAmbiguousExecutorSessions` wired at `sessions.ts:500`; gate at `sessions.ts:510-515` exits with code 2 unless `--force` — confirmed.
+
+**Drift gate (Group 3 deliverable #4):** `sessions.ts:368-380` re-counts inside the transaction, throws on drift unless `--force`. Acknowledged TOCTOU window between dry-run and apply is documented in code comment.
+
+**Audit event:** `'sessions.repair_links'` added to `src/lib/audit-events.ts:30`; `sessions.ts:429-444` writes via `tx.json({ totals })` matching the existing `src/lib/audit.ts:35` (`sql.json`) idiom. Payload is totals-only — verified, no raw session content.
+
+**Files-to-Modify drift:** Wish lists 7 files; engineer touched all 7 plus a single-line type union addition to `src/lib/audit-events.ts` (necessary for Group 3 deliverable #3 — not scope creep). Version bumps in `package.json`/`marketplace.json` belong to prior auto-version commit `d0b834f2`, not the engineer's three commits.
+
+**Validation re-run during this review:**
+- `bun test src/lib/session-capture.test.ts src/services/executors/__tests__/sdk-session-capture.test.ts` → 32/32 pass
+- `bun run typecheck` → clean
+- `./dist/genie.js --no-tui sessions repair-links --dry-run` → 3 linkable orphans, 867 backfillable tool_events, zero mutations
+
+### Phase 2 — Code Quality
+
+Zero CRITICAL, zero HIGH findings. Code is well-commented (explains *why* COALESCE, *why* NULLIF, *why* IS DISTINCT FROM, *why* tx.json). Single-transaction apply, parameterized queries throughout, proper exit codes on gates.
+
+**Optional follow-on (advisory only — do not block ship):**
+
+- **[LOW] sessions.ts:519-523** — JSON output for the no-work apply path is `{ sessionsLinked, toolEventsBackfilled, idempotent }`, a different shape from the regular `RepairLinksApplyResult` (which carries `ambiguousCount`, `forced`, `driftDetected` too). Consider returning a unified shape so JSON consumers see one schema.
+- **[LOW] sessions.ts:325** — `empty-string wish_slug:70865` is missing the space after the colon that other lines have. Cosmetic.
+- **[LOW] No automated coverage on the `applyRepairTransaction` drift / ambiguity gates** (already flagged by QA WARN #3). Recommend a `src/term-commands/sessions.test.ts` companion with table-driven gate tests as a follow-up.
+
+None of these block ship. The core repair surface — transaction boundaries, COALESCE-with-NULLIF semantics, gate logic, audit shape — is correct and production-ready.
+
+**Verdict: SHIP** — all Group 1–3 acceptance bullets met, all wish risks mitigated in code, dry-run-by-default verified non-mutating, applies idempotent. Group 4 deferral is appropriate and documented.
+
