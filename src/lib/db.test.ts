@@ -430,12 +430,17 @@ describe('daemon-owned pgserve', () => {
     expect(binStart).toBeGreaterThan(-1);
     const binBody = source.slice(binStart, source.indexOf('\n/** Sleep helper', binStart));
     const localBinIdx = binBody.indexOf('resolvePgservePackageCommand(localRoot)');
-    const requireResolveIdx = binBody.indexOf("require.resolve('pgserve/bin/pgserve-wrapper.cjs')");
     const globalBinIdx = binBody.indexOf("join(homedir(), '.bun', 'bin', 'pgserve')");
+    const pathBinIdx = binBody.indexOf("execSync('which pgserve'");
 
     expect(localBinIdx).toBeGreaterThan(-1);
-    expect(requireResolveIdx).toBeGreaterThan(localBinIdx);
-    expect(globalBinIdx).toBeGreaterThan(requireResolveIdx);
+    expect(globalBinIdx).toBeGreaterThan(localBinIdx);
+    expect(pathBinIdx).toBeGreaterThan(globalBinIdx);
+    // The `require.resolve('pgserve/bin/pgserve-wrapper.cjs')` path was
+    // removed when genie dropped pgserve as a runtime npm dep — the SAME
+    // search the require.resolve covered is now done by the local-node_modules
+    // walker (findLocalPgserveRoot) without needing pgserve in package.json.
+    expect(binBody).not.toContain("require.resolve('pgserve/bin/pgserve-wrapper.cjs')");
 
     const packageStart = source.indexOf('function resolvePgservePackageCommand');
     expect(packageStart).toBeGreaterThan(-1);
@@ -450,44 +455,41 @@ describe('daemon-owned pgserve', () => {
     expect(bunBody).toContain('process.execPath');
     expect(bunBody).toContain('which bun');
 
-    const sdkStart = source.indexOf('async function importPgserveSdk');
-    const ensureStart = source.indexOf('async function tryEnsureDaemonWithSdk');
-    expect(sdkStart).toBeGreaterThan(-1);
-    expect(ensureStart).toBeGreaterThan(sdkStart);
-    const sdkBody = source.slice(sdkStart, ensureStart);
-    expect(sdkBody).toContain('resolveLocalPgserveEntry()');
-    expect(sdkBody.indexOf('pathToFileURL(localEntry).href')).toBeLessThan(sdkBody.indexOf("import('pgserve')"));
+    // The pgserve SDK fallback path was removed (genie no longer carries
+    // `pgserve` as a runtime npm dep). Lock that out:
+    expect(source).not.toContain('importPgserveSdk');
+    expect(source).not.toContain('tryEnsureDaemonWithSdk');
+    expect(source).not.toContain("await import('pgserve')");
+    expect(source).not.toContain('resolveLocalPgserveEntry');
   });
 
   test('daemon startup surfaces child exit before socket timeout', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     const waitStart = source.indexOf('async function waitForDaemonSocket');
     expect(waitStart).toBeGreaterThan(-1);
-    const waitBody = source.slice(waitStart, source.indexOf('\nasync function tryEnsureDaemonWithSdk', waitStart));
+    // Use the next sibling function as the slice end. SDK function is gone,
+    // so use `maskCredentials` which is the next one defined in db.ts.
+    const waitBody = source.slice(waitStart, source.indexOf('\nfunction maskCredentials', waitStart));
 
     expect(waitBody).toContain("child?.once('exit'");
     expect(waitBody).toContain('pgserve v2 daemon exited before binding');
     expect(waitBody).toContain('formatPgserveDaemonCommand(daemonCommand)');
   });
 
-  test('daemon startup falls back to CLI when SDK ensure fails', () => {
+  test('binary-not-found error surfaces a clear install hint', () => {
+    // Replaces the old SDK-fallback test: startPgserveDaemonOnce() previously
+    // had `if (await tryEnsureDaemonWithSdk()) return;` before the throw.
+    // After the SDK removal, the error path is the throw directly.
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    const fnStart = source.indexOf('async function tryEnsureDaemonWithSdk');
+    const fnStart = source.indexOf('async function startPgserveDaemonOnce');
     expect(fnStart).toBeGreaterThan(-1);
-    const fnBody = source.slice(fnStart, source.indexOf('/** Sanitize connection URLs', fnStart));
+    const fnBody = source.slice(fnStart, source.indexOf('\nasync function evictOrphanDataDirHolder', fnStart));
 
-    const tryIdx = fnBody.indexOf('try {');
-    const ensureIdx = fnBody.indexOf('const state = await sdk.ensureDaemon');
-    const catchIdx = fnBody.indexOf('} catch {');
-    const cleanupIdx = fnBody.indexOf('await recoverUnresponsivePgserveDaemon(state)');
-    const falseIdx = fnBody.indexOf('return false', catchIdx);
-
-    expect(tryIdx).toBeGreaterThan(-1);
-    expect(ensureIdx).toBeGreaterThan(tryIdx);
-    expect(catchIdx).toBeGreaterThan(ensureIdx);
-    expect(cleanupIdx).toBeGreaterThan(catchIdx);
-    expect(fnBody).toContain('else cleanPartialDaemonState(state)');
-    expect(falseIdx).toBeGreaterThan(cleanupIdx);
+    expect(fnBody).toContain('pgserve binary not found');
+    expect(fnBody).toContain('bun add -g pgserve');
+    // Lock out reintroduction of the SDK fallback inline.
+    expect(fnBody).not.toContain('tryEnsureDaemonWithSdk');
+    expect(fnBody).not.toContain("import('pgserve')");
   });
 
   test('daemon startup verifies live pid sockets before trusting them', () => {
@@ -514,7 +516,8 @@ describe('daemon-owned pgserve', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     const waitStart = source.indexOf('async function waitForDaemonSocket');
     expect(waitStart).toBeGreaterThan(-1);
-    const waitBody = source.slice(waitStart, source.indexOf('\nasync function tryEnsureDaemonWithSdk', waitStart));
+    // SDK function removed; slice end is the next sibling function.
+    const waitBody = source.slice(waitStart, source.indexOf('\nfunction maskCredentials', waitStart));
 
     expect(waitBody).toContain('existsSync(socketPath) && (await isPgserveSocketResponsive())');
 

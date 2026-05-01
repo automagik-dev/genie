@@ -22,7 +22,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, needsSeededTeams, runSeed } from './pg-seed.js';
@@ -194,23 +193,6 @@ interface DaemonState {
   reason?: string;
 }
 
-interface PgserveSdkDaemonState {
-  running: boolean;
-  pid: number | null;
-  libpqSocketPresent?: boolean;
-  socketPresent?: boolean;
-  reason?: string | null;
-}
-
-interface PgserveSdk {
-  ensureDaemon?: (options?: {
-    dataDir?: string;
-    logLevel?: string;
-    timeoutMs?: number;
-    controlSocketDir?: string;
-  }) => Promise<PgserveSdkDaemonState>;
-}
-
 interface PgserveDaemonCommand {
   command: string;
   argsPrefix: string[];
@@ -337,49 +319,22 @@ function findLocalPgserveRoot(): string | null {
   return null;
 }
 
-function resolveLocalPgserveEntry(): string | null {
-  const root = findLocalPgserveRoot();
-  if (root === null) return null;
-  try {
-    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8')) as { main?: string };
-    return join(root, pkg.main ?? 'src/index.js');
-  } catch {
-    return join(root, 'src/index.js');
-  }
-}
-
-async function importPgserveSdk(): Promise<PgserveSdk | null> {
-  const localEntry = resolveLocalPgserveEntry();
-  if (localEntry !== null && existsSync(localEntry)) {
-    try {
-      return (await import(pathToFileURL(localEntry).href)) as PgserveSdk;
-    } catch {
-      /* fall back to package resolution */
-    }
-  }
-  try {
-    return (await import('pgserve')) as PgserveSdk;
-  } catch {
-    return null;
-  }
-}
-
-/** Resolve the v2 daemon command — bundled dependency → global → PATH. */
+/** Resolve the v2 daemon command — local node_modules → bun-global → PATH. */
 function findPgserveDaemonCommand(): PgserveDaemonCommand | null {
+  // Local node_modules check covers monorepo / yarn-link / npm install
+  // scenarios where pgserve is co-located but NOT a runtime npm dep of genie.
+  // The `findLocalPgserveRoot()` walker resolves `node_modules/pgserve` from
+  // import.meta.dir without going through `require.resolve('pgserve')`, so
+  // it doesn't need pgserve in package.json.
   const localRoot = findLocalPgserveRoot();
   if (localRoot !== null) {
     const localCommand = resolvePgservePackageCommand(localRoot);
     if (localCommand !== null) return localCommand;
   }
-  try {
-    const resolved = require.resolve('pgserve/bin/pgserve-wrapper.cjs');
-    const packageCommand = resolvePgservePackageCommand(join(dirname(resolved), '..'));
-    if (packageCommand !== null) return packageCommand;
-  } catch {
-    /* not in local deps */
-  }
+  // bun-global: the canonical install path (`bun add -g pgserve@^2.1.0`).
   const globalBin = join(homedir(), '.bun', 'bin', 'pgserve');
   if (existsSync(globalBin)) return { command: globalBin, argsPrefix: [], display: globalBin };
+  // PATH lookup: catches npm-global, system installs, etc.
   try {
     const fromPath = execSync('which pgserve', { encoding: 'utf-8', timeout: 3000 }).trim();
     if (fromPath.length > 0) return { command: fromPath, argsPrefix: [], display: fromPath };
@@ -619,9 +574,13 @@ async function startPgserveDaemonOnce(initial: DaemonState): Promise<void> {
 
   const daemonCommand = findPgserveDaemonCommand();
   if (daemonCommand === null) {
-    if (await tryEnsureDaemonWithSdk()) return;
+    // pgserve must be on PATH (preferred), bun-global at ~/.bun/bin/pgserve,
+    // or installed locally under node_modules/pgserve. The earlier SDK
+    // dynamic-require fallback was removed in favour of a pure binary-only
+    // path — genie no longer carries pgserve as a runtime npm dependency.
+    // See findPgserveDaemonCommand() for the binary search order.
     throw new Error(
-      'pgserve binary not found. Install with `bun add pgserve@^2.0.2` (or `npm i pgserve@^2.0.2`), or start `pgserve daemon` manually before running genie.',
+      'pgserve binary not found. Install with `bun add -g pgserve@^2.1.0` (or `npm i -g pgserve@^2.1.0`), or run `pgserve install` to register the canonical pm2-supervised daemon.',
     );
   }
   mkdirSync(resolvePgserveSocketDir(), { recursive: true, mode: 0o700 });
@@ -756,30 +715,6 @@ async function waitForDaemonSocket(daemonCommand: PgserveDaemonCommand, child?: 
 
 function formatPgserveDaemonCommand(daemonCommand: PgserveDaemonCommand): string {
   return `${daemonCommand.display} daemon --data ${DATA_DIR} --log warn`;
-}
-
-async function tryEnsureDaemonWithSdk(): Promise<boolean> {
-  const sdk = await importPgserveSdk();
-  if (sdk === null) return false;
-  if (typeof sdk.ensureDaemon !== 'function') return false;
-
-  try {
-    const state = await sdk.ensureDaemon({
-      dataDir: DATA_DIR,
-      logLevel: 'warn',
-      timeoutMs: resolvePgserveTimeoutMs(),
-      controlSocketDir: resolvePgserveSocketDir(),
-    });
-    if (!state.running || !(state.libpqSocketPresent ?? state.socketPresent ?? true)) return false;
-    if (await isPgserveSocketResponsive()) return true;
-    await recoverUnresponsivePgserveDaemon(probePgserveDaemon());
-    return false;
-  } catch {
-    const state = probePgserveDaemon();
-    if (state.running) await recoverUnresponsivePgserveDaemon(state);
-    else cleanPartialDaemonState(state);
-    return false;
-  }
 }
 
 /** Sanitize connection URLs for logging — never expose credentials */
@@ -1348,19 +1283,12 @@ async function _ensurePgserve(): Promise<number> {
   throwDaemonTimeout(outcomeAtStart, pidAtStart);
 }
 
-/** Resolve the pgserve CLI binary path — checks local dep, global, then PATH. */
+/** Resolve the pgserve CLI binary path — checks bun-global, then PATH. */
 function findPgserveBin(): string {
-  // 1. Local node_modules (pgserve is a dependency)
-  try {
-    const resolved = require.resolve('pgserve/bin/pgserve-wrapper.cjs');
-    if (existsSync(resolved)) return resolved;
-  } catch {
-    /* not found locally */
-  }
-  // 2. Global bun install
+  // 1. bun-global install (the canonical path: `bun add -g pgserve@^2.1.0`)
   const globalBin = join(homedir(), '.bun', 'bin', 'pgserve');
   if (existsSync(globalBin)) return globalBin;
-  // 3. PATH
+  // 2. PATH (catches npm-global, system installs)
   try {
     return execSync('which pgserve', { encoding: 'utf-8', timeout: 3000 }).trim();
   } catch {

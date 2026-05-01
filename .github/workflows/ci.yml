@@ -163,6 +163,16 @@ jobs:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
         run: bun install
 
+      # pgserve was dropped from genie's runtime npm deps in
+      # chore/drop-pgserve-sdk-runtime-dep — it's no longer at
+      # ./node_modules/.bin/pgserve. The test harness (bun preload via
+      # test-setup.ts) starts a pgserve daemon for fingerprint routing, so
+      # the binary must be on PATH. Install globally — this matches the
+      # canonical install path operators use in production
+      # (`bun add -g pgserve@^2.1.0`).
+      - name: Install pgserve globally (test harness needs the binary)
+        run: bun add -g pgserve@^2.1.0
+
       # Serial bun test inside this shard, with the file list pre-filtered to
       # this shard's portion. The retry-once wrapper that the previous
       # serial-on-8vCPU job carried was justified by pgserve@<2.0.5
@@ -228,6 +238,13 @@ jobs:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
         run: bun install
 
+      # pgserve was dropped from genie's runtime npm deps in chore/drop-pgserve-sdk-runtime-dep
+      # — it's no longer at ./node_modules/.bin/pgserve. Install it globally for
+      # the smoke test so it lives at ~/.bun/bin/pgserve, matching the canonical
+      # install path operators use in production (`bun add -g pgserve@^2.1.0`).
+      - name: Install pgserve globally (canonical install path)
+        run: bun add -g pgserve@^2.1.0
+
       - name: Build
         run: bun run build
 
@@ -237,7 +254,9 @@ jobs:
           export XDG_RUNTIME_DIR="${RUNNER_TEMP}/xdg"
           mkdir -p "$XDG_RUNTIME_DIR"
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-          ./node_modules/.bin/pgserve daemon --data "${RUNNER_TEMP}/pgserve-data" --log warn &
+          # `bun add -g` puts pgserve in ~/.bun/bin/. Use the absolute path so
+          # we don't depend on PATH ordering on the runner.
+          "$HOME/.bun/bin/pgserve" daemon --data "${RUNNER_TEMP}/pgserve-data" --log warn &
           # Wait up to 30s for the libpq socket to appear.
           for i in $(seq 1 60); do
             if [ -S "$XDG_RUNTIME_DIR/pgserve/.s.PGSQL.5432" ]; then
