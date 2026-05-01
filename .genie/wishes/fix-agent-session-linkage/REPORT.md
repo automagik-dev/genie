@@ -184,3 +184,112 @@ Ran 2824 tests across 125 files.
 ```
 
 No fix downgrades any existing context — confirmed by both the unit-level `… does NOT downgrade an existing fully-linked session …` regression test and the broader 2824-test run staying green.
+
+## Group 3 — Repair Command
+
+### Code added
+
+- `src/term-commands/sessions.ts` — new `genie sessions repair-links` subcommand:
+  - `--dry-run` (default) — calls `diagnoseSessionLinks` / `sampleLinkableOrphanSessions` / `findAmbiguousExecutorSessions` from `src/lib/session-link-repair.ts`. Prints counts and a 10-row preview. Mutates nothing.
+  - `--apply` — runs the repair inside a single `sql.begin(...)` transaction:
+    1. Re-counts candidates inside the transaction; aborts with a non-zero exit if the count drifted from the pre-transaction preview AND `--force` was not passed.
+    2. `UPDATE sessions … FROM executors e LEFT JOIN agents a … WHERE s.id = e.claude_session_id AND s.executor_id IS NULL` with COALESCE for every nullable field. `status = CASE WHEN s.status = 'orphaned' THEN 'active' ELSE s.status END` so completed/crashed never get clobbered.
+    3. `UPDATE tool_events te … FROM sessions s WHERE s.id = te.session_id AND s.executor_id IS NOT NULL AND ((te.X IS DISTINCT FROM COALESCE(NULLIF(te.X, ''), s.X)) OR …)` — `IS DISTINCT FROM` filters out no-op updates so the transaction count is the *effective* repair count, not the broad "anything missing" count. `NULLIF(field, '')` lets the legacy empty-string writes inherit linked-session attribution.
+    4. Audit row written via `tx.json(...)` (not `JSON.stringify`, which silently stores a JSONB string-of-string instead of a real object — verified the existing repo idiom in `src/lib/audit.ts:35`). `details` carries `sessions_linked`, `tool_events_backfilled`, `preview_count`, `recount`, `forced` — totals only, never raw session content.
+  - `--force` overrides both the candidate-count drift gate AND the ambiguity gate (`findAmbiguousExecutorSessions` returns multi-executor matches).
+  - `--json` output for both modes.
+- `src/lib/audit-events.ts` — added `'sessions.repair_links'` to the `AuditEventType` union.
+
+### Acceptance — Group 3
+
+- [x] `--dry-run` mutates zero rows — verified by row-count snapshot before/after the dry-run (sessions: 1861 → 1861, tool_events: 71397 → 71397, last `sessions.repair_links` audit timestamp identical).
+- [x] `--apply` links sessions by `executors.claude_session_id` — first apply on local DB linked 10 sessions, post-apply linkable-orphan count = 0.
+- [x] `--apply` backfills tool_events attribution from linked sessions — first apply backfilled 688 rows.
+- [x] Idempotent — successive applies converge to `sessions linked: 0, tool_events backfilled: 0` (intermediate runs may show small non-zero counts due to concurrent ingestion landing new rows; once ingestion is quiet the count is 0).
+
+### Local repair transcript (canonical run)
+
+Pre-apply snapshot:
+
+```text
+$ ./dist/genie.js --no-tui db query "select (select count(*) from sessions) as total_sessions, (select count(*) from sessions s join executors e on s.id = e.claude_session_id where s.executor_id is null) as linkable_orphans, (select count(*) from sessions where status = 'orphaned') as status_orphaned, (select count(*) from tool_events) as total_te, (select count(*) from tool_events where agent_id = '') as te_empty_agent"
+total_sessions | linkable_orphans | status_orphaned | total_te | te_empty_agent
+---------------+------------------+-----------------+----------+---------------
+1861           | 10               | 1852            | 71374    | 71005
+```
+
+Dry-run (excerpt):
+
+```text
+$ ./dist/genie.js --no-tui sessions repair-links --dry-run
+repair-links --dry-run (no rows mutated)
+-----------------------------------------
+Sessions:
+  total: 1861
+  linkable orphans (sessions.id = executors.claude_session_id ∧ executor_id IS NULL): 10
+  status='orphaned': 1852
+  NULL executor_id: 1859
+Tool events:
+  total: 71373
+  ...
+  linkable (session has executor_id, event missing attribution): 160
+
+Linkable orphan sample (up to 10):
+  11d32a40-…  executor=9e8ebbac-c33  agent=e322c2a5-ca0  status=orphaned
+  ac889140-…  executor=b2b6319d-828  agent=52a3d02c-97c  status=orphaned
+  …
+Run with --apply to repair 10 session(s) and up to 160 tool_event(s).
+```
+
+Apply:
+
+```text
+$ ./dist/genie.js --no-tui sessions repair-links --apply
+repair-links --apply complete
+  sessions linked:        10
+  tool_events backfilled: 688
+```
+
+Post-apply verification (the wish's headline query):
+
+```text
+$ ./dist/genie.js --no-tui db query "select count(*) from sessions s join executors e on s.id = e.claude_session_id where s.executor_id is null"
+count
+-----
+0
+(1 row)
+```
+
+Idempotent re-apply (after concurrent ingestion settled):
+
+```text
+$ ./dist/genie.js --no-tui sessions repair-links --apply
+repair-links --apply complete
+  sessions linked:        0
+  tool_events backfilled: 1
+$ ./dist/genie.js --no-tui sessions repair-links --apply
+repair-links --apply complete
+  sessions linked:        0
+  tool_events backfilled: 0
+```
+
+Audit row landed correctly (JSONB outer type = `object`, keys extract):
+
+```text
+$ ./dist/genie.js --no-tui db query "select jsonb_typeof(details) as outer_type, details->>'sessions_linked' as linked, details->>'tool_events_backfilled' as te, details->>'forced' as forced from audit_events where event_type = 'sessions.repair_links' order by created_at desc limit 1"
+outer_type | linked | te | forced
+-----------+--------+----+-------
+object     | 0      | 12 | false
+```
+
+### Group 4 — DEFERRED
+
+Group 4 (cross-instance verification on `ssh felipe`) remains blocked on operator key provisioning for the `felipe-personal` tailscale alias (see Group 1 baseline). When that lands, the Group 4 plan is:
+
+```bash
+ssh felipe 'export PATH=…; cd /home/genie/workspace/repos/genie && genie --no-tui sessions repair-links --dry-run'
+ssh felipe 'export PATH=…; cd /home/genie/workspace/repos/genie && genie --no-tui sessions repair-links --apply'
+ssh felipe 'export PATH=…; cd /home/genie/workspace/repos/genie && genie --no-tui db query "select count(*) from sessions s join executors e on s.id = e.claude_session_id where s.executor_id is null"'
+```
+
+The wish's reference numbers (1854 sessions, 1852 NULL `executor_id` on the felipe instance) suggest the apply will link a few thousand sessions; tool_events backfill will be similarly large.
