@@ -322,7 +322,7 @@ function printRepairDiagnostics(
   console.log(`  missing task_id (NULL or ''): ${diag.toolEventsMissingTask}`);
   console.log(`  empty-string agent_id: ${diag.toolEventsEmptyStringAgent}`);
   console.log(`  empty-string team:     ${diag.toolEventsEmptyStringTeam}`);
-  console.log(`  empty-string wish_slug:${diag.toolEventsEmptyStringWish}`);
+  console.log(`  empty-string wish_slug: ${diag.toolEventsEmptyStringWish}`);
   console.log(`  empty-string task_id:  ${diag.toolEventsEmptyStringTask}`);
   console.log(
     `  linkable (session has executor_id, event missing attribution): ${diag.toolEventsLinkableMissingAttribution}`,
@@ -348,8 +348,47 @@ function printRepairDiagnostics(
   }
 }
 
+/**
+ * Pure decision helpers for the apply-mode safety gates. Extracted so unit
+ * tests can exercise the gate logic without spinning up a DB or trapping
+ * `process.exit`. Used by `sessionsRepairLinksCommand` directly below.
+ */
+export function evaluateAmbiguityGate(
+  ambiguousCount: number,
+  force: boolean,
+): { blocked: boolean; message: string | null } {
+  if (ambiguousCount > 0 && !force) {
+    return {
+      blocked: true,
+      message: `repair-links: ${ambiguousCount} ambiguous claude_session_id value(s) found. Multiple executors claim the same session id — refusing --apply.\nRun with --dry-run to inspect, or pass --force to override.`,
+    };
+  }
+  return { blocked: false, message: null };
+}
+
+export function buildNoWorkResultIfApplicable(
+  diag: SessionLinkDiagnostics,
+  ambiguousCount: number,
+  force: boolean,
+): RepairLinksApplyResult | null {
+  if (diag.linkableOrphanSessions === 0 && diag.toolEventsLinkableMissingAttribution === 0) {
+    return {
+      sessionsLinked: 0,
+      toolEventsBackfilled: 0,
+      ambiguousCount,
+      forced: force,
+      driftDetected: false,
+    };
+  }
+  return null;
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
-async function applyRepairTransaction(sql: any, previewCount: number, force: boolean): Promise<RepairLinksApplyResult> {
+export async function applyRepairTransaction(
+  sql: any,
+  previewCount: number,
+  force: boolean,
+): Promise<RepairLinksApplyResult> {
   let result: RepairLinksApplyResult = {
     sessionsLinked: 0,
     toolEventsBackfilled: 0,
@@ -507,17 +546,17 @@ async function sessionsRepairLinksCommand(options: RepairLinksOptions): Promise<
   }
 
   // --apply path
-  if (ambiguous.length > 0 && !options.force) {
-    console.error(
-      `repair-links: ${ambiguous.length} ambiguous claude_session_id value(s) found. Multiple executors claim the same session id — refusing --apply.\nRun with --dry-run to inspect, or pass --force to override.`,
-    );
+  const force = options.force === true;
+  const ambiguityGate = evaluateAmbiguityGate(ambiguous.length, force);
+  if (ambiguityGate.blocked) {
+    console.error(ambiguityGate.message);
     process.exit(2);
   }
 
-  const noWork = diag.linkableOrphanSessions === 0 && diag.toolEventsLinkableMissingAttribution === 0;
-  if (noWork) {
+  const noWorkResult = buildNoWorkResultIfApplicable(diag, ambiguous.length, force);
+  if (noWorkResult) {
     if (options.json) {
-      console.log(JSON.stringify({ sessionsLinked: 0, toolEventsBackfilled: 0, idempotent: true }, null, 2));
+      console.log(JSON.stringify(noWorkResult, null, 2));
     } else {
       console.log('repair-links: nothing to repair (0 candidates).');
     }

@@ -452,3 +452,45 @@ None of these block ship. The core repair surface — transaction boundaries, CO
 
 **Verdict: SHIP** — all Group 1–3 acceptance bullets met, all wish risks mitigated in code, dry-run-by-default verified non-mutating, applies idempotent. Group 4 deferral is appropriate and documented.
 
+## Tightening Pass
+
+After review converged on three LOW findings (two from reviewer, one from qa) — all advisory — the following tightening commit landed before pushing.
+
+### Code changes
+
+- **`src/term-commands/sessions.ts`**
+  - Extracted `evaluateAmbiguityGate(ambiguousCount, force)` and `buildNoWorkResultIfApplicable(diag, ambiguousCount, force)` as exported pure functions so the gate decisions are unit-testable without `process.exit` / live DB.
+  - Promoted `applyRepairTransaction(sql, previewCount, force)` from internal to `export`ed for the same reason.
+  - Wired the new helpers into `sessionsRepairLinksCommand` — single source of truth, command stays thin.
+  - **Closes [LOW] sessions.ts:519-523** — no-work apply path now returns a full `RepairLinksApplyResult` shape (`sessionsLinked / toolEventsBackfilled / ambiguousCount / forced / driftDetected`) instead of the ad-hoc `{ sessionsLinked, toolEventsBackfilled, idempotent }`. JSON consumers see one schema regardless of whether work happened.
+  - **Closes [LOW] sessions.ts:325** — `empty-string wish_slug:` now has a space before its value, matching the other diagnostic lines.
+
+- **`src/term-commands/sessions.test.ts`** (NEW, 10 tests)
+  - **Drift gate** (3 tests): in-tx recount mismatch + no `--force` throws with the documented message and skips both UPDATEs; same scenario with `--force` proceeds and runs both UPDATEs + audit insert; matching recount runs cleanly without `--force`.
+  - **Ambiguity gate** (3 tests): `ambiguousCount > 0` + no `--force` blocks with the documented message; `--force` lifts the block; zero ambiguous sessions never blocks.
+  - **No-work short-circuit** (4 tests): zero linkable orphans + zero linkable tool_events returns the unified zero-valued `RepairLinksApplyResult` shape; `ambiguousCount` and `forced` are threaded through transparently; non-zero linkable orphans returns `null` (work pending); non-zero linkable tool_events returns `null` (work pending).
+  - Tests use a stubbed postgres.js `Sql` client (tagged-template + `.begin(cb)` + `.json(...)`) — no live DB required.
+
+### Validation
+
+```text
+$ bun test src/term-commands/sessions.test.ts
+ 10 pass
+ 0 fail
+ 25 expect() calls
+
+$ bun test src/lib/session-capture.test.ts src/services/executors/__tests__/sdk-session-capture.test.ts
+ 32 pass
+ 0 fail
+ 122 expect() calls
+
+$ bun run typecheck
+$ tsc --noEmit
+(clean)
+
+$ bunx biome check src/term-commands/sessions.ts src/term-commands/sessions.test.ts
+Found 5 warnings.   # pre-existing complexity warnings only — zero errors
+```
+
+Two of the three reviewer LOWs are now closed in code (`525-Inconsistent-JSON-shape`, `325-cosmetic-spacing`); the third (`No automated coverage on gates`) is closed by the new test file. QA WARN #3 (same finding) is also closed.
+
