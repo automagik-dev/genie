@@ -2416,6 +2416,7 @@ export async function resolveSpawnIdentity(
 }
 
 /** Resolve team name and auto-resume dead workers. Duplicate rejection moved to the state machine. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: 5-tier team resolution + ResumePaneVanishedError fall-through (#1602 Round 4) — tiers are linear and each branch is doc-blocked
 async function resolveTeamAndResume(
   effectiveRole: string,
   options: SpawnOptions,
@@ -2471,8 +2472,27 @@ async function resolveTeamAndResume(
     const executor = await executorRegistry.getCurrentExecutor(deadResumable.id);
     const sessionShort = executor?.claudeSessionId?.slice(0, 8) ?? 'unknown';
     console.log(`Resuming existing session for "${effectiveRole}" (session: ${sessionShort}...)`);
-    await resumeAgent(deadResumable);
-    return { team, teamWasExplicit, resumed: deadResumable.id };
+    try {
+      await resumeAgent(deadResumable);
+      return { team, teamWasExplicit, resumed: deadResumable.id };
+    } catch (err) {
+      // ROUND 4 / felipe Round 3 brief — resumeAgent now validates the resumed
+      // pane against tmux + the OS process; if the pane vanished, the resume
+      // is treated as a no-op and we fall through to a fresh spawn instead of
+      // returning a phantom paneId. Clear the stale executor record so the
+      // next dispatch doesn't loop on the same dead row.
+      if (err instanceof ResumePaneVanishedError) {
+        console.warn(
+          `⚠ Resume of "${effectiveRole}" produced a dead pane (${err.reason}). Clearing stale executor and falling through to fresh spawn.`,
+        );
+        if (executor?.id) {
+          await executorRegistry.updateExecutorState(executor.id, 'terminated').catch(() => {});
+        }
+        // Fall through to fresh-spawn path (no `resumed` key).
+        return { team, teamWasExplicit };
+      }
+      throw err;
+    }
   }
   // NOTE: rejectDuplicateRole is no longer called here. In the new state-machine
   // model, a live row with id=name IS the parallel-creation signal — handled by
@@ -3604,6 +3624,7 @@ function logResumeSuccess(
   }
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: linear resume pipeline (build → spawn → validate → emit) with post-resume pane validation per #1602 Round 4
 async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolean } = {}): Promise<void> {
   const resetAttempts = opts.resetAttempts !== false;
   const template = (await registry.listTemplates()).find((t) => t.id === (agent.role ?? agent.id));
@@ -3693,9 +3714,80 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
     await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
   }
 
+  // ROUND 4 / felipe Round 3 brief — validate the resumed pane has a live OS
+  // process before declaring success. Without this, the auto-resume path
+  // returns a phantom paneId (createTmuxPane returned successfully but the
+  // launched script exited immediately), and the caller's `if (resumed)
+  // return resumed;` short-circuits handleWorkerSpawn while no actual worker
+  // exists. This is the silent-fail surface that #1599 + #1601 instrumented
+  // around but didn't cover (resume goes through createResumeTmuxPaneOrExit,
+  // not launchTmuxSpawn).
+  recordAuditEvent('worker', agent.id, 'worker.resume.attempted', getActor(), {
+    worker_id: agent.id,
+    agent_role: agent.role ?? agent.id,
+    team: agent.team,
+    claude_session_id: params.resume,
+    pane_id: paneId,
+  }).catch(() => {});
+
+  // Capture pane PID and verify pane + process are both alive.
+  let resumedPid: number | null = null;
+  try {
+    if (paneId !== 'inline') {
+      const { execSync } = require('node:child_process');
+      const pidOutput = execSync(genieTmuxCmd(`display -t '${paneId}' -p '#{pane_pid}'`), {
+        encoding: 'utf-8',
+      }).trim();
+      const parsedPid = Number.parseInt(pidOutput, 10);
+      resumedPid = parsedPid > 0 ? parsedPid : null;
+
+      // Verify pane is still in tmux's pane list.
+      const panesOutput = execSync(genieTmuxCmd(`list-panes -a -F '#{pane_id}'`), { encoding: 'utf-8' });
+      const paneList = panesOutput.split('\n').map((line: string) => line.trim());
+      if (!paneList.includes(paneId)) {
+        throw new ResumePaneVanishedError(agent.id, paneId, resumedPid, 'pane_not_in_list');
+      }
+
+      // Verify the process is alive.
+      if (resumedPid !== null) {
+        try {
+          process.kill(resumedPid, 0);
+        } catch (err) {
+          const e = err as NodeJS.ErrnoException;
+          if (e.code === 'ESRCH') {
+            throw new ResumePaneVanishedError(agent.id, paneId, resumedPid, 'pid_dead');
+          }
+          // EPERM means the process exists but we can't signal it — alive.
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof ResumePaneVanishedError) {
+      recordAuditEvent('worker', agent.id, 'worker.resume.skipped', getActor(), {
+        worker_id: agent.id,
+        agent_role: agent.role ?? agent.id,
+        team: agent.team,
+        pane_id: paneId,
+        pid: resumedPid,
+        reason: err.reason,
+        error: err.message,
+      }).catch(() => {});
+      throw err;
+    }
+    throw err;
+  }
+
   recordAuditEvent('worker', agent.id, 'resumed', getActor(), {
     claudeSessionId: params.resume,
     team: agent.team,
+  }).catch(() => {});
+  recordAuditEvent('worker', agent.id, 'worker.resume.completed', getActor(), {
+    worker_id: agent.id,
+    agent_role: agent.role ?? agent.id,
+    team: agent.team,
+    pane_id: paneId,
+    pid: resumedPid,
+    claude_session_id: params.resume,
   }).catch(() => {});
   recordManualResumeTelemetry(shouldEmitTelemetry, 'agent.resume.succeeded', {
     entity_id: agent.id,
@@ -3705,6 +3797,30 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
   });
 
   logResumeSuccess(agent, params.resume, paneId, teamWindow);
+}
+
+/**
+ * Error raised by `resumeAgent` when the resumed tmux pane has vanished
+ * immediately after `createResumeTmuxPaneOrExit` returned. Mirrors
+ * SpawnPaneVanishedError (added separately by #1601) but for the resume code
+ * path — handled by resolveTeamAndResume by clearing the stale executor and
+ * falling through to fresh spawn.
+ */
+export class ResumePaneVanishedError extends Error {
+  readonly agentId: string;
+  readonly paneId: string;
+  readonly expectedPid: number | null;
+  readonly reason: 'pane_not_in_list' | 'pid_dead';
+  constructor(agentId: string, paneId: string, expectedPid: number | null, reason: ResumePaneVanishedError['reason']) {
+    super(
+      `Resumed pane "${paneId}" (pid=${expectedPid ?? 'unknown'}) for agent "${agentId}" vanished immediately after createTmuxPane returned. Reason: ${reason}. The launched resume script likely failed to exec the worker binary.`,
+    );
+    this.name = 'ResumePaneVanishedError';
+    this.agentId = agentId;
+    this.paneId = paneId;
+    this.expectedPid = expectedPid;
+    this.reason = reason;
+  }
 }
 
 type WorkerStatus = {

@@ -1107,6 +1107,69 @@ describe('#1589 phantom-dispatch regression guards', () => {
     });
   });
 
+  describe('Round 4 — auto-resume validates resumed pane is alive', () => {
+    let agentsSrcR4: string;
+    beforeAll(async () => {
+      const { readFileSync } = await import('node:fs');
+      agentsSrcR4 = readFileSync(join(__dirname, 'agents.ts'), 'utf-8');
+    });
+
+    it('ResumePaneVanishedError class is exported with reason taxonomy', () => {
+      // Resume short-circuit (felipe Round 3 brief): handleWorkerSpawn returns
+      // early on `if (resumed) return resumed;` after resumeAgent succeeds at
+      // tmux pane creation but before the actual worker process exists. The
+      // typed error lets the caller fall through to fresh spawn instead of
+      // returning a phantom paneId.
+      expect(agentsSrcR4).toContain('export class ResumePaneVanishedError');
+      const classAnchor = agentsSrcR4.indexOf('export class ResumePaneVanishedError');
+      const classEnd = agentsSrcR4.indexOf('\n}\n', classAnchor);
+      const body = agentsSrcR4.slice(classAnchor, classEnd);
+      expect(body).toContain('readonly agentId');
+      expect(body).toContain('readonly paneId');
+      expect(body).toContain('readonly expectedPid');
+      expect(body).toContain('readonly reason');
+      expect(body).toContain("'pane_not_in_list'");
+      expect(body).toContain("'pid_dead'");
+    });
+
+    it('resumeAgent emits worker.resume.attempted / .completed / .skipped audit events', () => {
+      const fnAnchor = agentsSrcR4.indexOf('async function resumeAgent');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      // resumeAgent is followed by `export class ResumePaneVanishedError`.
+      const fnEnd = agentsSrcR4.indexOf('\nexport class ResumePaneVanishedError', fnAnchor);
+      const body = agentsSrcR4.slice(fnAnchor, fnEnd !== -1 ? fnEnd : agentsSrcR4.length);
+      expect(body).toContain("'worker.resume.attempted'");
+      expect(body).toContain("'worker.resume.completed'");
+      expect(body).toContain("'worker.resume.skipped'");
+      // Validation must check both pane existence AND PID liveness.
+      expect(body).toContain("list-panes -a -F '#{pane_id}'");
+      expect(body).toContain('process.kill(resumedPid, 0)');
+      // Throw the typed error so resolveTeamAndResume can catch + fall through.
+      expect(body).toContain('throw new ResumePaneVanishedError');
+    });
+
+    it('resolveTeamAndResume catches ResumePaneVanishedError and falls through to fresh spawn', () => {
+      const fnAnchor = agentsSrcR4.indexOf('async function resolveTeamAndResume');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = agentsSrcR4.indexOf('\nasync function ', fnAnchor + 1);
+      const body = agentsSrcR4.slice(fnAnchor, fnEnd !== -1 ? fnEnd : agentsSrcR4.length);
+      // Try/catch around resumeAgent invocation.
+      expect(body).toContain('try {');
+      expect(body).toContain('await resumeAgent(deadResumable)');
+      // Catches the typed error specifically — not a generic catch.
+      expect(body).toContain('err instanceof ResumePaneVanishedError');
+      // Clears the stale executor so the next dispatch doesn't loop.
+      expect(body).toContain("updateExecutorState(executor.id, 'terminated')");
+      // Falls through by returning without `resumed` key. Verify the function
+      // body has a `return { team, teamWasExplicit };` (without `resumed`)
+      // somewhere inside the catch path.
+      const catchIdx = body.indexOf('err instanceof ResumePaneVanishedError');
+      const tailEnd = Math.min(body.length, catchIdx + 800);
+      const catchBlock = body.slice(catchIdx, tailEnd);
+      expect(catchBlock).toContain('return { team, teamWasExplicit };');
+    });
+  });
+
   describe('Group 3 — wish-status display correlation', () => {
     it('state.ts printWishExecutors filters out executors whose assignment is for a different wish', () => {
       const fnAnchor = stateSrc.indexOf('async function printWishExecutors');
