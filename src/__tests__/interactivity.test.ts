@@ -16,6 +16,7 @@ mock.module('@inquirer/prompts', () => ({
 const { isInteractive, ensureWorkspace, commandRequiresWorkspace, installWorkspaceCheck } = await import(
   '../lib/interactivity.js'
 );
+const { isTuiDisabled } = await import('../lib/tui-disable.js');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -402,5 +403,40 @@ describe('installWorkspaceCheck()', () => {
     } finally {
       exitSpy.mockRestore();
     }
+  });
+});
+
+// ─── isTuiDisabled() ────────────────────────────────────────────────────────
+
+describe('isTuiDisabled()', () => {
+  let originalTuiDisable: string | undefined;
+
+  beforeEach(() => {
+    originalTuiDisable = process.env.GENIE_TUI_DISABLE;
+    // biome-ignore lint/performance/noDelete: process.env requires delete — assignment sets the string "undefined"
+    delete process.env.GENIE_TUI_DISABLE;
+  });
+
+  afterEach(() => {
+    if (originalTuiDisable === undefined) {
+      // biome-ignore lint/performance/noDelete: process.env requires delete — assignment sets the string "undefined"
+      delete process.env.GENIE_TUI_DISABLE;
+    } else {
+      process.env.GENIE_TUI_DISABLE = originalTuiDisable;
+    }
+  });
+
+  test('returns true when stdout is not a TTY (pipe/redirect) even with env+argv unset', () => {
+    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+    process.argv = ['node', 'genie', 'ls'];
+
+    expect(isTuiDisabled()).toBe(true);
+  });
+
+  test('returns false when stdout is a TTY and env+argv unset', () => {
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    process.argv = ['node', 'genie', 'ls'];
+
+    expect(isTuiDisabled()).toBe(false);
   });
 });

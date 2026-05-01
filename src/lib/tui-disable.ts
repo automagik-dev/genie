@@ -14,6 +14,10 @@
  * Activation (any of):
  *   - `GENIE_TUI_DISABLE=1` (or any truthy value: 1/true/yes/on, case-insensitive)
  *   - `--no-tui` anywhere in process.argv
+ *   - stdout is not a TTY (piped/redirected) — auto-detected so non-interactive
+ *     contexts (`genie | head`, scripts, CI without --no-tui) never attempt to
+ *     attach the TUI. `--no-tui` becomes a manual override for edge cases
+ *     (e.g. `script -q` wrappers presenting a fake TTY).
  *
  * Callers MUST check this BEFORE any `import('./tui/...')` or
  * `import('@opentui/core')` — otherwise the native dylib loads and the spin
@@ -27,6 +31,7 @@ export function isTuiDisabled(): boolean {
   const envVal = process.env.GENIE_TUI_DISABLE;
   if (envVal && TRUTHY.has(envVal.trim().toLowerCase())) return true;
   if (process.argv.includes('--no-tui')) return true;
+  if (process.stdout.isTTY === false) return true;
   return false;
 }
 
