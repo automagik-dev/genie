@@ -133,6 +133,27 @@ describe('buildEcosystemConfigSource — pm2 ecosystem config locked down', () =
       expect(src).toContain(`"${field}": ${value}`);
     }
   });
+
+  test('omits env block when no databaseUrl provided (legacy fallback path)', () => {
+    // When canonical pgserve isn't available at install time, we omit the
+    // env block entirely so genie-serve can spawn its embedded pgserve as
+    // a fallback. Adding `env: {}` would override any DATABASE_URL the
+    // operator sets in their shell with an empty string.
+    const src = buildEcosystemConfigSource('/usr/local/bin/genie');
+    expect(src).not.toContain('"env":');
+    expect(src).not.toContain('DATABASE_URL');
+  });
+
+  test('bakes DATABASE_URL into env block when canonical pgserve url provided', () => {
+    // Canonical pgserve detected at install time → bake the URL into the
+    // pm2-stored env so genie-serve finds it on every restart without
+    // operators having to set DATABASE_URL in their shell. This is the
+    // wire that closes the wish's "shared backbone" loop for genie.
+    const url = 'postgresql://postgres:postgres@localhost:8432/genie';
+    const src = buildEcosystemConfigSource('/usr/local/bin/genie', url);
+    expect(src).toContain('"env":');
+    expect(src).toContain(`"DATABASE_URL": "${url}"`);
+  });
 });
 
 describe('buildPm2StartArgs — CLI invocation', () => {
