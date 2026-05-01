@@ -713,6 +713,97 @@ export function checkLegacyAgentFrontmatter(workspaceRoot?: string): CheckResult
 }
 
 /**
+ * Check canonical pgserve state — whether the pgserve binary is on PATH,
+ * registered under pm2, and listening on the canonical port. Mirrors omni
+ * doctor's `pgserve-canonical` check so both halves of the canonical-stack
+ * surface the same shared-backbone visibility.
+ *
+ * Three outcomes:
+ *   - pgserve missing → WARN with install hint (not FAIL because genie can
+ *     auto-spawn its own daemon as a fallback for fingerprint-routed CLI).
+ *   - pgserve installed but not under pm2 → WARN pointing at `pgserve install`.
+ *   - pgserve registered + reachable → PASS, surface the canonical URL so
+ *     operators can verify what genie-serve / omni-api are connecting to.
+ */
+async function checkPgserveCanonical(): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+
+  // Step 1: pgserve binary on PATH? Probe via `pgserve port` (NOT --version
+  // — that flag doesn't exist in pgserve@^2.1.0 and false-negatived in
+  // historical doctor implementations).
+  let canonicalPort: number | null = null;
+  try {
+    const out = execFileSync('pgserve', ['port'], {
+      encoding: 'utf8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const parsed = Number.parseInt(out.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 65535) {
+      canonicalPort = parsed;
+    }
+  } catch {
+    /* pgserve binary missing or non-zero exit — handled below */
+  }
+
+  if (canonicalPort === null) {
+    results.push({
+      name: 'pgserve binary',
+      status: 'warn',
+      message: 'not on PATH (or `pgserve port` failed)',
+      suggestion:
+        'Install canonical pgserve: bun add -g pgserve@^2.1.0 (then run `pgserve install` to register under pm2)',
+    });
+    return results;
+  }
+  results.push({
+    name: 'pgserve binary',
+    status: 'pass',
+    message: `canonical port ${canonicalPort}`,
+  });
+
+  // Step 2: pm2-supervised? Check via `pgserve status --json`.
+  try {
+    const status = execFileSync('pgserve', ['status', '--json'], {
+      encoding: 'utf8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const parsed = JSON.parse(status) as { installed?: boolean; status?: string };
+    if (parsed.installed === true && parsed.status === 'online') {
+      results.push({
+        name: 'pgserve under pm2',
+        status: 'pass',
+        message: `online — shared backbone for genie-serve + omni-api on :${canonicalPort}`,
+      });
+    } else if (parsed.installed === true) {
+      results.push({
+        name: 'pgserve under pm2',
+        status: 'warn',
+        message: `registered but status=${parsed.status ?? 'unknown'}`,
+        suggestion: 'Recover with: pm2 restart pgserve   (logs: ~/.pgserve/logs/)',
+      });
+    } else {
+      results.push({
+        name: 'pgserve under pm2',
+        status: 'warn',
+        message: 'binary present but not registered under pm2',
+        suggestion: 'Register canonical pgserve: pgserve install',
+      });
+    }
+  } catch {
+    results.push({
+      name: 'pgserve under pm2',
+      status: 'warn',
+      message: '`pgserve status` failed (pm2 unreachable?)',
+      suggestion: 'Verify pm2: pm2 list   |   Re-register: pgserve install',
+    });
+  }
+
+  return results;
+}
+
+/**
  * Main doctor command
  */
 function runCheckSection(label: string, results: CheckResult[], counts: { errors: boolean; warnings: boolean }): void {
@@ -765,6 +856,7 @@ export async function doctorCommand(options?: {
   runCheckSection('Tmux', await checkTmux(), counts);
   runCheckSection('Tmux Configs', checkTmuxConfigs(), counts);
   runCheckSection('Worker Profiles', await checkWorkerProfiles(), counts);
+  runCheckSection('Pgserve (canonical backbone)', await checkPgserveCanonical(), counts);
   runCheckSection('Omni Bridge', await checkBridge(), counts);
   runCheckSection('Agent Config', checkLegacyAgentFrontmatter(), counts);
   runCheckSection('Genie Specialist', checkGenieAgentTemplate(), counts);
