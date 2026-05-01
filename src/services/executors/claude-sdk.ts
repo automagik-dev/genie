@@ -30,6 +30,8 @@ interface SdkSessionState {
   dbSessionId: string | null;
   turnIndex: number;
   env: Record<string, string>;
+  /** Count of deliveries currently being processed for this session. */
+  inFlightDeliveries: number;
 }
 
 // ============================================================================
@@ -328,6 +330,7 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
       dbSessionId: null,
       turnIndex: 0,
       env,
+      inFlightDeliveries: 0,
     });
 
     if (registration?.executorId) {
@@ -427,12 +430,30 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
     }
 
     const previous = this.deliveryQueues.get(session.id) ?? Promise.resolve();
-    const current = previous.then(() => this._processDelivery(session, state, message));
+    const current = previous.then(async () => {
+      state.inFlightDeliveries += 1;
+      try {
+        await this._processDelivery(session, state, message);
+      } finally {
+        state.inFlightDeliveries = Math.max(0, state.inFlightDeliveries - 1);
+      }
+    });
 
     this.deliveryQueues.set(
       session.id,
       current.catch(() => {}),
     );
+  }
+
+  /**
+   * True when a streaming SDK query is currently being processed for this
+   * session. The agent-heartbeat publisher reads this on each tick to decide
+   * whether to emit a heartbeat.
+   */
+  async isBusy(session: ExecutorSession): Promise<boolean> {
+    const state = this.sessions.get(session.id);
+    if (!state) return false;
+    return state.running && state.inFlightDeliveries > 0;
   }
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: delivery pipeline with prompt assembly, MCP setup, and session capture

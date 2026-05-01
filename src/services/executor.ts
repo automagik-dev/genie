@@ -64,4 +64,15 @@ export interface IExecutor {
   setNatsPublish(fn: NatsPublishFn): void;
   /** Inject a nudge message into an active session (for turn timeout warnings). */
   injectNudge(session: ExecutorSession, text: string): Promise<void>;
+  /**
+   * Busy predicate used by the agent-heartbeat publisher.
+   *
+   * Returns `true` when the executor is actively producing work for this
+   * session — for the SDK that means a streaming query is in flight; for
+   * tmux that means the pane has produced new bytes since the last sample.
+   * Async because tmux samples the pane via a shell call. Implementations
+   * MUST swallow their own errors and return `false` rather than throwing,
+   * so the publisher loop can never crash on a transient failure.
+   */
+  isBusy(session: ExecutorSession): Promise<boolean>;
 }
