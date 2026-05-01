@@ -56,7 +56,7 @@
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignore": ["src/lib/design-tokens.ts"],
-  "ignoreBinaries": ["which", "scripts/verify-release.sh"],
+  "ignoreBinaries": ["which", "scripts/verify-release.sh", "pgserve"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "@khal-os/brain",
@@ -66,7 +66,6 @@
     "@vitejs/plugin-react",
     "vite",
     "@types/react-dom",
-    "esbuild",
-    "pgserve"
+    "esbuild"
   ]
 }
