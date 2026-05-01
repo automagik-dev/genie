@@ -426,7 +426,20 @@ describe('isTuiDisabled()', () => {
     }
   });
 
-  test('returns true when stdout is not a TTY (pipe/redirect) even with env+argv unset', () => {
+  test('returns true when stdout.isTTY is undefined (pipe — Node default for non-TTY stdout)', () => {
+    // This is the production case: Node sets `isTTY` to `undefined` (not
+    // `false`) when stdout is piped or redirected. Mirrors the
+    // `isInteractive()` undefined-pipe test above.
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+    process.argv = ['node', 'genie', 'ls'];
+
+    expect(isTuiDisabled()).toBe(true);
+  });
+
+  test('returns true when stdout.isTTY is explicitly false', () => {
+    // Defensive case — some test runners and shell wrappers may set isTTY
+    // to literal `false` instead of leaving it undefined. Both must trip
+    // the guard.
     Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
     process.argv = ['node', 'genie', 'ls'];
 

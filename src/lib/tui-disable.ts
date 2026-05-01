@@ -31,7 +31,10 @@ export function isTuiDisabled(): boolean {
   const envVal = process.env.GENIE_TUI_DISABLE;
   if (envVal && TRUTHY.has(envVal.trim().toLowerCase())) return true;
   if (process.argv.includes('--no-tui')) return true;
-  if (process.stdout.isTTY === false) return true;
+  // Node sets `process.stdout.isTTY` to `undefined` (not `false`) when stdout
+  // is piped/redirected — strict `=== false` would miss the common case.
+  // Falsy check matches `isInteractive()` in `src/lib/interactivity.ts:23`.
+  if (!process.stdout.isTTY) return true;
   return false;
 }
 
