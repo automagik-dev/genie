@@ -338,10 +338,59 @@ async function ensureSession(
   workerMap: Map<string, WorkerMatch>,
   opts?: { parentSessionId?: string | null; isSubagent?: boolean; fileSize?: number; mtime?: number },
 ): Promise<SessionContext> {
-  const existing =
-    await sql`SELECT agent_id, team, wish_slug, task_id, last_ingested_offset, total_turns FROM sessions WHERE id = ${sessionId}`;
+  const worker = workerMap.get(sessionId);
+  const existing = await sql`
+    SELECT executor_id, agent_id, team, wish_slug, task_id, role, status, last_ingested_offset, total_turns
+    FROM sessions WHERE id = ${sessionId}
+  `;
   if (existing.length > 0) {
     const row = existing[0];
+
+    // Upgrade path: row already exists (was inserted as orphaned because the
+    // worker wasn't yet known to ingestion), and now workerMap can fill in
+    // executor_id / agent_id / team / wish_slug / task_id / role. COALESCE
+    // protects any field that already has a non-null value — we never
+    // downgrade better context, only fill NULLs. Status flips
+    // 'orphaned' → 'active' iff the worker brings real attribution; we
+    // never overwrite 'completed' / 'crashed' / 'active'.
+    const needsUpgrade =
+      worker !== undefined &&
+      (row.executor_id === null ||
+        row.agent_id === null ||
+        row.team === null ||
+        row.wish_slug === null ||
+        row.task_id === null ||
+        row.role === null ||
+        row.status === 'orphaned');
+
+    if (needsUpgrade) {
+      const [upgraded] = await sql`
+        UPDATE sessions SET
+          executor_id = COALESCE(executor_id, ${worker.executorId ?? null}),
+          agent_id    = COALESCE(agent_id,    ${worker.agentId ?? null}),
+          team        = COALESCE(team,        ${worker.team ?? null}),
+          wish_slug   = COALESCE(wish_slug,   ${worker.wishSlug ?? null}),
+          task_id     = COALESCE(task_id,     ${worker.taskId ?? null}),
+          role        = COALESCE(role,        ${worker.role ?? null}),
+          status      = CASE
+            WHEN status = 'orphaned' AND ${worker.agentId ?? null}::text IS NOT NULL
+              THEN 'active'
+            ELSE status
+          END,
+          updated_at  = now()
+        WHERE id = ${sessionId}
+        RETURNING agent_id, team, wish_slug, task_id, last_ingested_offset, total_turns
+      `;
+      return {
+        agentId: upgraded.agent_id,
+        team: upgraded.team,
+        wishSlug: upgraded.wish_slug,
+        taskId: upgraded.task_id,
+        lastOffset: upgraded.last_ingested_offset ?? 0,
+        totalTurns: upgraded.total_turns ?? 0,
+      };
+    }
+
     return {
       agentId: row.agent_id,
       team: row.team,
@@ -352,7 +401,6 @@ async function ensureSession(
     };
   }
 
-  const worker = workerMap.get(sessionId);
   const parentSessionId = await resolveSafeParentId(sql, opts?.parentSessionId);
 
   await sql`
@@ -663,10 +711,10 @@ async function batchInsertToolEvents(sql: SqlClient, rows: ToolEventRow[]): Prom
       ${sql.array(rows.map((r) => r.is_error))}::bool[],
       ${sql.array(rows.map((r) => r.error_message ?? ''))}::text[],
       ${sql.array(rows.map((r) => r.duration_ms ?? 0))}::int[],
-      ${sql.array(rows.map((r) => r.agent_id ?? ''))}::text[],
-      ${sql.array(rows.map((r) => r.team ?? ''))}::text[],
-      ${sql.array(rows.map((r) => r.wish_slug ?? ''))}::text[],
-      ${sql.array(rows.map((r) => r.task_id ?? ''))}::text[]
+      ${sql.array(rows.map((r) => r.agent_id ?? null))}::text[],
+      ${sql.array(rows.map((r) => r.team ?? null))}::text[],
+      ${sql.array(rows.map((r) => r.wish_slug ?? null))}::text[],
+      ${sql.array(rows.map((r) => r.task_id ?? null))}::text[]
     )
     ON CONFLICT (session_id, tool_use_id) DO NOTHING
   `;

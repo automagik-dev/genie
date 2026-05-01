@@ -129,3 +129,58 @@ All three are pure SELECTs. No `INSERT/UPDATE/DELETE`. They are wired up to be t
 - [x] Test fails on current code because the session remains orphaned.
 - [x] Diagnostic query reports affected counts without mutating data.
 - [x] Baseline includes local `genie db query` evidence; **remote (`ssh felipe`) blocked** — see above.
+
+## Group 2 — Ingestion Fix
+
+### Code changes
+
+- `src/lib/session-capture.ts` (`ensureSession`):
+  - Replaced the early-return-on-existing-row path with a COALESCE-style upgrade.
+  - SELECT now reads `executor_id, role, status` in addition to the previous five columns so we can detect when an orphan can be linked.
+  - When `workerMap.get(sessionId)` returns context AND the existing row has any of `executor_id / agent_id / team / wish_slug / task_id / role` set to NULL (or `status = 'orphaned'`), we run `UPDATE … SET <field> = COALESCE(<field>, $worker_value), …, status = CASE WHEN status = 'orphaned' AND $agent IS NOT NULL THEN 'active' ELSE status END … RETURNING …` and return the upgraded row.
+  - Fully-linked rows are detected by `needsUpgrade === false` and skip the UPDATE entirely (zero churn for already-correct sessions). `completed` / `crashed` statuses are untouched.
+- `src/lib/session-capture.ts` (`batchInsertToolEvents`):
+  - `agent_id`, `team`, `wish_slug`, `task_id` array fallbacks changed from `?? ''` to `?? null`. The `::text[]` cast on the unnest still works — postgres.js passes JS `null` through as SQL `NULL`. The other fields (`sub_tool`, `tool_use_id`, `input_raw`, `output_raw`, `error_message`, `duration_ms`) are out of scope per the wish.
+- `src/services/executors/sdk-session-capture.ts` (`startSession`):
+  - `ON CONFLICT (id) DO NOTHING` → `ON CONFLICT (id) DO UPDATE SET agent_id = COALESCE(sessions.agent_id, EXCLUDED.agent_id), … status = CASE … END, updated_at = now()`.
+  - Same COALESCE protection: a previously-linked session never gets downgraded.
+  - Same status flip: `orphaned` → `active` only when the SDK call brings a non-null agent.
+
+### Acceptance — Group 2
+
+- [x] Both Group 1 failing tests now pass (orphan upgrade + SDK `ON CONFLICT DO UPDATE`).
+- [x] Pre-existing linked sessions are not downgraded — covered by the regression test added in Group 1 (`ingestion does NOT downgrade an existing fully-linked session (stays linked)`), now passing alongside the new bug fix.
+- [x] New tool_events store NULL for missing optional fields, not empty strings — covered by the Group 1 regression test on the SDK side (`does not write empty strings for missing observability fields`) plus the `?? null` change to `batchInsertToolEvents`.
+
+### Validation
+
+```text
+$ bun test src/lib/session-capture.test.ts src/services/executors/__tests__/sdk-session-capture.test.ts
+bun test v1.3.11 (af24e281)
+
+src/lib/session-capture.test.ts:
+[test-setup] reusing pgserve on port 20900 (pid 2140350)
+
+ 32 pass
+ 0 fail
+ 122 expect() calls
+Ran 32 tests across 2 files. [534.00ms]
+```
+
+```text
+$ bun run typecheck
+$ tsc --noEmit
+(clean — no errors)
+```
+
+Tree-wide regression check (informational, not in the wish's validation block):
+
+```text
+$ bun test src/lib/ src/services/
+ 2824 pass
+ 0 fail
+ 6997 expect() calls
+Ran 2824 tests across 125 files.
+```
+
+No fix downgrades any existing context — confirmed by both the unit-level `… does NOT downgrade an existing fully-linked session …` regression test and the broader 2824-test run staying green.

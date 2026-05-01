@@ -35,12 +35,30 @@ export async function startSession(
 ): Promise<string | null> {
   const sessionId = claudeSessionId ?? `sdk-${executorId}-${Date.now()}`;
 
+  // ON CONFLICT DO UPDATE (not DO NOTHING) so the session row gets its
+  // executor / agent / attribution filled even when ingestion has already
+  // inserted an orphaned placeholder for this id. COALESCE protects every
+  // field that already has a non-null value — we only ever fill NULLs,
+  // never overwrite better context. Status flips 'orphaned' → 'active'
+  // when the SDK call brings real attribution; we never overwrite
+  // 'completed' / 'crashed' / 'active'.
   const created = await safePgCall(
     'sdk-session-start',
     (sql) =>
       sql`INSERT INTO sessions (id, agent_id, executor_id, team, role, wish_slug, status, jsonl_path, project_path)
           VALUES (${sessionId}, ${agentId}, ${executorId}, ${team ?? null}, ${role ?? null}, ${wishSlug ?? null}, 'active', '', '')
-          ON CONFLICT (id) DO NOTHING
+          ON CONFLICT (id) DO UPDATE SET
+            agent_id    = COALESCE(sessions.agent_id,    EXCLUDED.agent_id),
+            executor_id = COALESCE(sessions.executor_id, EXCLUDED.executor_id),
+            team        = COALESCE(sessions.team,        EXCLUDED.team),
+            role        = COALESCE(sessions.role,        EXCLUDED.role),
+            wish_slug   = COALESCE(sessions.wish_slug,   EXCLUDED.wish_slug),
+            status      = CASE
+              WHEN sessions.status = 'orphaned' AND EXCLUDED.agent_id IS NOT NULL
+                THEN 'active'
+              ELSE sessions.status
+            END,
+            updated_at  = now()
           RETURNING id`,
     null,
     { executorId, chatId: '' },
