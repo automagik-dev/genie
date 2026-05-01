@@ -656,10 +656,20 @@ async function runWorkDispatch(
   wishPath: string,
   ref: string,
 ): Promise<void> {
+  // CRITICAL (#1600 Round 3): never call `process.exit(1)` from this function.
+  // `runWorkDispatch` is invoked from TWO callers:
+  //   1. `workDispatchCommand` (single-group CLI) — wraps in try/catch and the
+  //      outer CLI handler calls process.exit(1) with the error message.
+  //   2. `autoOrchestrateCommand` (wave dispatch via Promise.allSettled) —
+  //      collects rejections and reports per-group failures.
+  // If we exit() here from within a parallel wave, we kill the whole node
+  // process mid-dispatch — including SIBLING spawns that are mid-flight in
+  // handleWorkerSpawn. That's THE silent-fail surface from #1589/#1600:
+  // any group's startGroup failure (dependency not done, already in_progress)
+  // killed every other group's spawn before audit events could fire. Throw
+  // instead so the wave-dispatcher's allSettled boundary handles it.
   if (!existsSync(wishPath)) {
-    console.error(`❌ Wish not found: ${wishPath}`);
-    console.error(`   Create it first: genie wish <agent> ${slug}`);
-    process.exit(1);
+    throw new Error(`Wish not found: ${wishPath}. Create it first: genie wish <agent> ${slug}`);
   }
 
   const content = await readFile(wishPath, 'utf-8');
@@ -667,27 +677,23 @@ async function runWorkDispatch(
   // Extract the specific group section
   const groupSection = extractGroup(content, group);
   if (!groupSection) {
-    console.error(`❌ Group "${group}" not found in ${wishPath}`);
-    console.error('   Available groups:');
-    const groups = content.match(/^### Group [A-Za-z0-9]+:.*$/gm);
-    if (groups) {
-      for (const g of groups) console.error(`     ${g}`);
-    }
-    process.exit(1);
+    const availableGroups = content.match(/^### Group [A-Za-z0-9]+:.*$/gm);
+    const availableList = availableGroups ? availableGroups.join(', ') : '(none)';
+    throw new Error(`Group "${group}" not found in ${wishPath}. Available: ${availableList}`);
   }
 
   // Auto-initialize state if missing (prevents polling loop when no state exists)
   const groups = parseWishGroups(content);
   await wishState.getOrCreateState(slug, groups);
 
-  // Start group in state machine (enforces dependencies)
+  // Start group in state machine (enforces dependencies). Throw on failure
+  // (NOT exit) — see top-of-function comment.
   try {
     await wishState.startGroup(slug, group, agentName);
     console.log(`✅ Group "${group}" set to in_progress (assigned to ${agentName})`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`❌ ${message}`);
-    process.exit(1);
+    throw new Error(message);
   }
 
   // Build context with wish-level info + group section

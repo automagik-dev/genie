@@ -1238,6 +1238,39 @@ describe('#1600 spawn-pipeline silent-fail regression guards', () => {
     });
   });
 
+  describe('Group 4 — runWorkDispatch must never process.exit (kill-siblings prevention)', () => {
+    it('runWorkDispatch contains zero EXECUTABLE process.exit calls — they kill sibling spawns in Promise.allSettled', () => {
+      // ROOT CAUSE of the long-running #1589/#1600 phantom dispatch: when
+      // `autoOrchestrateCommand` runs `Promise.allSettled([runWorkDispatch, …])`
+      // for a parallel wave, ANY group's process.exit(1) terminates the entire
+      // node process — killing every sibling spawn mid-flight before audit
+      // events can fire. The fix: throw instead of exit. The single-group CLI
+      // caller `workDispatchCommand` already re-throws and the outer CLI
+      // handler does process.exit, so single-group semantics are preserved.
+      const fnAnchor = dispatchSrc.indexOf('async function runWorkDispatch');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      // Body ends at the next top-level `export async function` or `async function`.
+      // Use a regex that anchors on lines starting with `}` followed by a blank line then a docstring.
+      const afterFn = dispatchSrc.slice(fnAnchor + 1);
+      const nextFnRel = afterFn.search(/\nasync function |\nexport async function |\nexport function |\nfunction /);
+      const fnEnd = nextFnRel !== -1 ? fnAnchor + 1 + nextFnRel : dispatchSrc.length;
+      const body = dispatchSrc.slice(fnAnchor, fnEnd);
+      // Strip comments before checking — `process.exit(1)` may legitimately
+      // appear in JSDoc / inline comments explaining the OLD behavior.
+      const stripped = body
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+        .join('\n');
+      // Hard guarantee: zero EXECUTABLE process.exit calls in non-comment code.
+      expect(stripped).not.toContain('process.exit');
+      // Soft guarantee: the function explicitly throws on each error path so
+      // Promise.allSettled in autoOrchestrateCommand collects rejections.
+      const throwCount = (stripped.match(/throw new Error\(/g) ?? []).length;
+      // At minimum: wish-not-found, group-not-found, startGroup-failed.
+      expect(throwCount).toBeGreaterThanOrEqual(3);
+    });
+  });
+
   describe('Group 3 — wish.dispatch.failed surfacing', () => {
     it('autoOrchestrateCommand emits wish.dispatch.failed per failed group', () => {
       const fnAnchor = dispatchSrc.indexOf('async function autoOrchestrateCommand');
