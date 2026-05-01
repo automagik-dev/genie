@@ -461,6 +461,9 @@ function makeMockExecutor(overrides?: {
     setSafePgCall() {},
     setNatsPublish() {},
     async injectNudge() {},
+    async isBusy() {
+      return false;
+    },
   };
 
   return { executor, calls, makeSession };

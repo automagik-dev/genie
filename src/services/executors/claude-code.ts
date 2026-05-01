@@ -18,7 +18,14 @@ import { signOmniRequest } from '../../lib/omni-signature.js';
 import { buildLaunchCommand } from '../../lib/provider-adapters.js';
 import type { SpawnParams } from '../../lib/provider-adapters.js';
 import { shellQuote } from '../../lib/team-lead-command.js';
-import { ensureTeamWindow, executeTmux, isPaneAlive, isPaneProcessRunning, killWindow } from '../../lib/tmux.js';
+import {
+  capturePaneContent,
+  ensureTeamWindow,
+  executeTmux,
+  isPaneAlive,
+  isPaneProcessRunning,
+  killWindow,
+} from '../../lib/tmux.js';
 import type { ExecutorSession, IExecutor, OmniMessage, SafePgCallFn } from '../executor.js';
 import { buildTurnBasedPrompt } from './turn-based-prompt.js';
 
@@ -26,6 +33,12 @@ interface TmuxSessionState {
   executorId: string | null;
   agentId: string | null;
   repoPath: string | null;
+  /**
+   * Fingerprint of the most recent capture-pane sample. Used by `isBusy`
+   * to decide whether the pane has produced new bytes since the last check.
+   * `null` until the first sample lands.
+   */
+  lastPaneFingerprint: string | null;
 }
 
 /**
@@ -310,6 +323,7 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
       executorId: registration?.executorId ?? null,
       agentId: registration?.agentId ?? null,
       repoPath: entry.dir,
+      lastPaneFingerprint: null,
     });
     if (registration?.executorId) await this.updateState(registration.executorId, 'running', chatId);
 
@@ -516,5 +530,35 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * "Busy" = the pane has emitted new bytes since the last sample. We capture
+   * the latest 200 lines and fingerprint by `length:tail-128`, which is cheap
+   * and avoids hashing whole pane buffers. The first call always returns
+   * `true` (no prior fingerprint to compare against) — that matches the
+   * intent: the publisher just registered, and the agent is presumed busy
+   * until proven otherwise. Subsequent calls compare against the stored
+   * fingerprint and update it.
+   *
+   * Permission-prompt state IS effectively idle (the pane stops producing
+   * bytes), so this correctly emits no heartbeat in that case — the user
+   * gets nudged, which is the desired behavior per the wish risk table.
+   */
+  async isBusy(session: ExecutorSession): Promise<boolean> {
+    const state = this.sessions.get(session.id);
+    const paneId = session.tmux?.paneId;
+    if (!state || !paneId) return false;
+    let content: string;
+    try {
+      content = await capturePaneContent(paneId, 200, false);
+    } catch {
+      return false;
+    }
+    const fingerprint = `${content.length}:${content.slice(-128)}`;
+    const previous = state.lastPaneFingerprint;
+    state.lastPaneFingerprint = fingerprint;
+    if (previous === null) return true;
+    return previous !== fingerprint;
   }
 }
