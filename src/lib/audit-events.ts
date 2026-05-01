@@ -25,7 +25,9 @@ export type AuditEventType =
   // Resume (Group 7)
   | 'session.resumed'
   | 'session.resume_rejected'
-  | 'session.created_fresh';
+  | 'session.created_fresh'
+  // Sessions repair (fix-agent-session-linkage wish, Group 3)
+  | 'sessions.repair_links';
 
 // ============================================================================
 // Record helper
