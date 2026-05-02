@@ -3404,7 +3404,12 @@ export async function buildFullResumeParams(
     const errReason = decision.reason === 'unknown_agent' ? 'no_executor' : 'null_session';
     throw new MissingResumeSessionError(agent.id, undefined, errReason);
   }
-  const params = await buildResumeParams(agent, template, decision.sessionId);
+  // We're about to actually resume — emit the lifecycle event from the
+  // eventful helper. `shouldResume` itself stays silent so 242k/day
+  // status-tick storms don't recur. See observability-signal-normalization
+  // Group 1 + executor-registry.acquireResumeSessionForAttempt.
+  const sessionId = (await executorRegistry.acquireResumeSessionForAttempt(agent.id)) ?? decision.sessionId;
+  const params = await buildResumeParams(agent, template, sessionId);
 
   const resumeContext = await buildResumeContext(agent);
   if (resumeContext) {

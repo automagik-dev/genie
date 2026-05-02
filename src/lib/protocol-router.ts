@@ -318,7 +318,13 @@ export async function resolveResumeSessionId(
   if (worker && (await isExecutorResumable(worker))) {
     if (!decision.sessionId) throw new MissingResumeSessionError(worker.id, recipientId);
   }
-  return decision.sessionId;
+  if (!decision.sessionId) return undefined;
+  // Actual resume attempt — emit the lifecycle event via the eventful
+  // helper. `shouldResume` (read path) stays silent
+  // (observability-signal-normalization Group 1).
+  const { acquireResumeSessionForAttempt } = await import('./executor-registry.js');
+  const acquired = await acquireResumeSessionForAttempt(agentIdToProbe).catch(() => null);
+  return acquired ?? decision.sessionId;
 }
 
 async function handleSpawnError(err: unknown, worker: registry.Agent | null, recipientId: string): Promise<null> {

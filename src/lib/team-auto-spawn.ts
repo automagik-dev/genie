@@ -191,8 +191,17 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
   // team-lead with `--resume <uuid>` whenever a prior session exists, even
   // when `decision.resume === false` (e.g., assignment closed): the leader
   // is permanent, so the session UUID itself is the durable anchor.
+  //
+  // `shouldResume` is now a pure read (observability-signal-normalization
+  // Group 1) — it does not emit `resume.found`. When we actually intend to
+  // launch with `--resume <uuid>` we re-acquire via the eventful helper so
+  // the lifecycle event still lands in the audit log for forensic queries.
   const priorDecision = await shouldResume(leaderAgent.id).catch(() => null);
-  const priorSessionId = priorDecision?.sessionId ?? null;
+  let priorSessionId = priorDecision?.sessionId ?? null;
+  if (priorSessionId !== null) {
+    const acquired = await executorRegistry.acquireResumeSessionForAttempt(leaderAgent.id).catch(() => null);
+    priorSessionId = acquired ?? priorSessionId;
+  }
   const sessionId = priorSessionId ?? randomUUID();
   const resumeLeader = priorSessionId !== null;
 
