@@ -291,6 +291,7 @@ describe.skipIf(!DB_AVAILABLE)('agent-observability (PG)', () => {
     const sql = await getConnection();
     const agentId = randomUUID();
     const execId = randomUUID();
+    const sessionId = `tool-test-sess-${randomUUID()}`;
     await sql`
       INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, last_state_change)
       VALUES (${agentId}, 'p', 's', '/t', now(), 'idle', 'engineer', now())
@@ -300,17 +301,25 @@ describe.skipIf(!DB_AVAILABLE)('agent-observability (PG)', () => {
       VALUES (${execId}, ${agentId}, 'claude', 'tmux', 'idle', now())
     `;
     await sql`UPDATE agents SET current_executor_id = ${execId} WHERE id = ${agentId}`;
+    // tool_events.session_id is FK-constrained to sessions(id); insert the
+    // session row before any tool_events that reference it. Local pgserves
+    // with a damaged install can be permissive about this; CI's strict
+    // postgres rejects orphan tool_events outright (PR #1618 CI failure).
+    await sql`
+      INSERT INTO sessions (id, agent_id, project_path, jsonl_path, started_at, status)
+      VALUES (${sessionId}, ${agentId}, '/t', '/t/log.jsonl', now(), 'active')
+    `;
 
     // Two recent tool events, one of which is an error.
     await sql`
       INSERT INTO tool_events (session_id, turn_index, "timestamp", tool_name, agent_id, is_error)
-      VALUES ('s', 1, now(), 'Read', ${agentId}, false),
-             ('s', 2, now(), 'Bash', ${agentId}, true)
+      VALUES (${sessionId}, 1, now(), 'Read', ${agentId}, false),
+             (${sessionId}, 2, now(), 'Bash', ${agentId}, true)
     `;
     // One stale event from 2 days ago — must NOT count.
     await sql`
       INSERT INTO tool_events (session_id, turn_index, "timestamp", tool_name, agent_id, is_error)
-      VALUES ('s', 3, now() - INTERVAL '2 days', 'Read', ${agentId}, false)
+      VALUES (${sessionId}, 3, now() - INTERVAL '2 days', 'Read', ${agentId}, false)
     `;
 
     const snap = await getAgentObservability(agentId);
@@ -410,13 +419,19 @@ describe.skipIf(!DB_AVAILABLE)('agent-observability (PG)', () => {
     const eventsPerAgent = 10;
     for (let i = 0; i < agentCount; i++) {
       const id = `perf-agent-${i}-${randomUUID()}`;
+      const sessionId = `perf-sess-${i}-${randomUUID()}`;
       await sql`
         INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, custom_name, last_state_change)
         VALUES (${id}, ${`p-${i}`}, ${`s-${i}`}, '/t', now(), 'idle', 'engineer', ${`engineer-${i}`}, now())
       `;
+      // Sessions row first — tool_events.session_id is FK-constrained.
+      await sql`
+        INSERT INTO sessions (id, agent_id, project_path, jsonl_path, started_at, status)
+        VALUES (${sessionId}, ${id}, '/t', '/t/log.jsonl', now(), 'active')
+      `;
       // Insert tool events in one batch per agent for speed.
       const rows = Array.from({ length: eventsPerAgent }, (_, j) => ({
-        session_id: `s-${i}`,
+        session_id: sessionId,
         turn_index: j,
         timestamp: new Date().toISOString(),
         tool_name: 'Read',
