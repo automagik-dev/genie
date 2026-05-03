@@ -191,16 +191,21 @@ describe.skipIf(!DB_AVAILABLE)('agent-observability (PG)', () => {
     const sql = await getConnection();
     const agentId = randomUUID();
     const executorId = randomUUID();
+    // FK ordering: agents.current_executor_id references executors.id and
+    // executors.agent_id references agents.id, so insert the agent first
+    // with a NULL current_executor_id, then the executor, then UPDATE the
+    // agent to point at it. Mirrors the runtime spawn flow.
     await sql`
       INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, custom_name, team,
-                          current_executor_id, last_state_change, reports_to)
+                          last_state_change, reports_to)
       VALUES (${agentId}, ${'pane-1'}, ${'sess-1'}, ${'/tmp/repo'}, now(), 'working',
-              'engineer', 'engineer-test', 'team-test', ${executorId}, now(), 'lead-1')
+              'engineer', 'engineer-test', 'team-test', now(), 'lead-1')
     `;
     await sql`
       INSERT INTO executors (id, agent_id, provider, transport, state, started_at, claude_session_id)
       VALUES (${executorId}, ${agentId}, 'claude', 'tmux', 'working', now(), 'claude-sess-1')
     `;
+    await sql`UPDATE agents SET current_executor_id = ${executorId} WHERE id = ${agentId}`;
 
     const snap = await getAgentObservability('engineer-test');
     expect(snap).not.toBeNull();
@@ -222,13 +227,14 @@ describe.skipIf(!DB_AVAILABLE)('agent-observability (PG)', () => {
     const execA = randomUUID();
     const sessA = randomUUID();
     await sql`
-      INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, current_executor_id, last_state_change)
-      VALUES (${agentA}, 'p1', 's1', '/t', now(), 'working', 'engineer', ${execA}, now())
+      INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, last_state_change)
+      VALUES (${agentA}, 'p1', 's1', '/t', now(), 'working', 'engineer', now())
     `;
     await sql`
       INSERT INTO executors (id, agent_id, provider, transport, state, started_at, claude_session_id)
       VALUES (${execA}, ${agentA}, 'claude', 'tmux', 'working', now(), 'claude-A')
     `;
+    await sql`UPDATE agents SET current_executor_id = ${execA} WHERE id = ${agentA}`;
     await sql`
       INSERT INTO sessions (id, agent_id, executor_id, claude_session_id, project_path, jsonl_path, started_at, status)
       VALUES (${sessA}, ${agentA}, ${execA}, 'claude-A', '/t', '/t/log.jsonl', now(), 'active')
@@ -239,13 +245,14 @@ describe.skipIf(!DB_AVAILABLE)('agent-observability (PG)', () => {
     const execB = randomUUID();
     const sessB = randomUUID();
     await sql`
-      INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, current_executor_id, last_state_change)
-      VALUES (${agentB}, 'p2', 's2', '/t', now(), 'working', 'reviewer', ${execB}, now())
+      INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, last_state_change)
+      VALUES (${agentB}, 'p2', 's2', '/t', now(), 'working', 'reviewer', now())
     `;
     await sql`
       INSERT INTO executors (id, agent_id, provider, transport, state, started_at, claude_session_id)
       VALUES (${execB}, ${agentB}, 'claude', 'tmux', 'working', now(), 'claude-B')
     `;
+    await sql`UPDATE agents SET current_executor_id = ${execB} WHERE id = ${agentB}`;
     await sql`
       INSERT INTO sessions (id, agent_id, executor_id, claude_session_id, project_path, jsonl_path, started_at, status)
       VALUES (${sessB}, ${agentB}, NULL, 'claude-B', '/t', '/t/log.jsonl', now(), 'active')
@@ -264,13 +271,14 @@ describe.skipIf(!DB_AVAILABLE)('agent-observability (PG)', () => {
     const agentId = randomUUID();
     const execId = randomUUID();
     await sql`
-      INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, current_executor_id, last_state_change)
-      VALUES (${agentId}, 'p', 's', '/t', now(), 'idle', 'engineer', ${execId}, now())
+      INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, last_state_change)
+      VALUES (${agentId}, 'p', 's', '/t', now(), 'idle', 'engineer', now())
     `;
     await sql`
       INSERT INTO executors (id, agent_id, provider, transport, state, started_at)
       VALUES (${execId}, ${agentId}, 'claude', 'tmux', 'idle', now())
     `;
+    await sql`UPDATE agents SET current_executor_id = ${execId} WHERE id = ${agentId}`;
 
     // Two recent tool events, one of which is an error.
     await sql`

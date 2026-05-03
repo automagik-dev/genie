@@ -1,5 +1,6 @@
 /** PG executor/assignment queries — framework-agnostic, no UI imports */
 
+import { type AgentObservabilitySnapshot, loadAgentObservabilityMap } from '../lib/agent-observability.js';
 import type { ExecutorState, TransportType } from '../lib/executor-types.js';
 import type { ProviderName } from '../lib/provider-adapters.js';
 import type { TuiAssignment, TuiExecutor, WorkState } from './types.js';
@@ -139,4 +140,22 @@ function reasonToWorkState(reason: string): WorkState | undefined {
   if (reason === 'assignment_closed') return 'done';
   if (reason === 'no_session_id') return 'stuck';
   return undefined;
+}
+
+/**
+ * Load canonical agent observability snapshots keyed by display name.
+ *
+ * Wish 3 / agent-observability-snapshot Group 3 (TUI wiring). Returns the
+ * same snapshot the CLI's `genie agent observe` and the app's
+ * `agents.show` route serve, so the TUI badge can render health flags
+ * (`stale_executor`, `recent_failure`, `cost_spike`, …) without
+ * recomputing them from raw tables. Returns an empty map on DB error so
+ * the TUI never wedges on observability failures.
+ */
+export async function loadAgentObservabilityForTui(): Promise<Map<string, AgentObservabilitySnapshot>> {
+  try {
+    return await loadAgentObservabilityMap();
+  } catch {
+    return new Map();
+  }
 }

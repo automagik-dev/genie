@@ -196,6 +196,7 @@ describe('computeNavCounts', () => {
         deadPaneCount: 0,
       },
       workStates: new Map(),
+      observability: new Map(),
       alertCount: 0,
       timestamp: 0,
     } as Parameters<typeof computeNavCounts>[2];
@@ -248,6 +249,7 @@ describe('computeNavCounts', () => {
         deadPaneCount: 0,
       },
       workStates: new Map(),
+      observability: new Map(),
       alertCount: 0,
       timestamp: 0,
     } as Parameters<typeof computeNavCounts>[2];

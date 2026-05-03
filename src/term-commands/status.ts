@@ -14,6 +14,12 @@
  */
 
 import { collectObservabilityHealth } from '../genie-commands/observability-health.js';
+import {
+  AGENT_OBSERVABILITY_SCHEMA_VERSION,
+  type AgentObservabilitySnapshot,
+  type HealthFlag,
+  listAgentObservability,
+} from '../lib/agent-observability.js';
 import { auditAgentKind } from '../lib/agent-registry.js';
 import { listAgentsForRender } from '../lib/agent-registry.js';
 import {
@@ -230,10 +236,43 @@ async function renderDebugSection(): Promise<void> {
   }
 }
 
+interface ObservabilitySummary {
+  /** Schema version pin so consumers can detect drift. */
+  schemaVersion: number;
+  /** Underlying view powering the snapshots. */
+  view: string;
+  /** Total snapshot count after dedup. */
+  total: number;
+  /** Number of snapshots whose `health.degraded` is true. */
+  degraded: number;
+  /** Per-flag fan-out for quick triage. */
+  flagCounts: Partial<Record<HealthFlag, number>>;
+}
+
 interface StatusReport {
   agents: AgentStatusLine[];
   signals: DerivedSignal[];
   health?: HealthCheck[];
+  /** Canonical observability rollup from `v_agent_observability`. */
+  observability: ObservabilitySummary;
+}
+
+function summarizeObservability(snaps: AgentObservabilitySnapshot[]): ObservabilitySummary {
+  const flagCounts: Partial<Record<HealthFlag, number>> = {};
+  let degraded = 0;
+  for (const snap of snaps) {
+    if (snap.health.degraded) degraded++;
+    for (const flag of snap.health.flags) {
+      flagCounts[flag] = (flagCounts[flag] ?? 0) + 1;
+    }
+  }
+  return {
+    schemaVersion: AGENT_OBSERVABILITY_SCHEMA_VERSION,
+    view: 'v_agent_observability',
+    total: snaps.length,
+    degraded,
+    flagCounts,
+  };
 }
 
 /**
@@ -242,7 +281,13 @@ interface StatusReport {
  */
 async function buildReport(opts: StatusOptions): Promise<StatusReport> {
   const includeArchived = opts.all === true;
-  const [agents, signals] = await Promise.all([aggregateAgentDecisions(includeArchived), listActiveDerivedSignals()]);
+  const [agents, signals, observabilitySnaps] = await Promise.all([
+    aggregateAgentDecisions(includeArchived),
+    listActiveDerivedSignals(),
+    listAgentObservability().catch(
+      (): AgentObservabilitySnapshot[] => [], // never let observability surface failure wedge `genie status`
+    ),
+  ]);
 
   // The partition signal is polled on-demand because the underlying
   // state isn't in the audit stream; merge it in once per call.
@@ -254,7 +299,11 @@ async function buildReport(opts: StatusOptions): Promise<StatusReport> {
     signals.unshift(partitionSignal);
   }
 
-  const report: StatusReport = { agents, signals };
+  const report: StatusReport = {
+    agents,
+    signals,
+    observability: summarizeObservability(observabilitySnaps),
+  };
   if (opts.health) report.health = await collectHealthChecks();
   return report;
 }
@@ -294,12 +343,29 @@ export async function statusCommand(opts: StatusOptions = {}): Promise<void> {
 
   if (opts.debug) await renderDebugSection();
 
+  renderObservabilitySection(report.observability);
+
   console.log('');
   console.log(
     colorize(
-      `  rendered in ${Date.now() - t0}ms — ${report.agents.length} agents, ${report.signals.length} signals`,
+      `  rendered in ${Date.now() - t0}ms — ${report.agents.length} agents, ${report.signals.length} signals — observability schema v${report.observability.schemaVersion}`,
       'dim',
     ),
   );
   console.log('');
+}
+
+function renderObservabilitySection(summary: ObservabilitySummary): void {
+  console.log('');
+  console.log(colorize(`OBSERVABILITY (v_agent_observability v${summary.schemaVersion})`, 'bold'));
+  console.log('-'.repeat(60));
+  console.log(`  ${summary.total} snapshots, ${summary.degraded} degraded`);
+  const flags = Object.entries(summary.flagCounts).sort((a, b) => b[1] - a[1]);
+  if (flags.length === 0) {
+    console.log(colorize('  (no health flags raised)', 'dim'));
+    return;
+  }
+  for (const [flag, count] of flags) {
+    console.log(`  ${colorize('!', 'yellow')} ${flag.padEnd(22)} ${count}`);
+  }
 }
