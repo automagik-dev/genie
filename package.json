@@ -12,11 +12,13 @@
     "plugins/genie/",
     "scripts/postinstall-tmux.js",
     "scripts/postinstall-hook-binary.js",
+    "scripts/postinstall-migrations.js",
     "scripts/sec-scan.cjs",
     "scripts/sec-remediate.cjs",
     "scripts/sec-fix.cjs",
     "scripts/tmux/",
     "src/db/migrations/",
+    "src/migrations/",
     "templates/",
     "README.md",
     "LICENSE"
