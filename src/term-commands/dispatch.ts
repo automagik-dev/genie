@@ -18,6 +18,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -722,7 +723,7 @@ async function runWorkDispatch(
   console.log(`   Wish: ${wishPath}`);
   console.log(`   Group: ${group}`);
 
-  const effectiveRole = `${agentName}-${group}`;
+  const effectiveRole = `${agentName}-${group}-${randomUUID().slice(0, 4)}`;
   const leaderTarget = await resolveLeaderTarget();
   const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to ${leaderTarget}`;
 
