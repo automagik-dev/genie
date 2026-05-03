@@ -443,14 +443,11 @@ process.on('SIGINT', () => { server.close(); process.exit(0); });
 // Helper: Generate Worker ID (teams)
 // ============================================================================
 
-async function generateWorkerId(team: string, role?: string): Promise<string> {
-  const base = role ? `${team}-${role}` : team;
-  const existing = await registry.list();
-  if (!existing.some((w) => w.id === base)) return base;
-
-  // Use crypto.randomUUID() for the suffix to avoid race conditions
-  const suffix = crypto.randomUUID().slice(0, 8);
-  return `${base}-${suffix}`;
+async function generateWorkerId(_team: string, _role?: string): Promise<string> {
+  // Always return a UUID. agents.id constraint (migration 061) requires
+  // UUID shape or 'dir:%' prefix. Legacy team-role-suffix shape failed
+  // agents_id_shape_check on every new spawn after that migration.
+  return crypto.randomUUID();
 }
 
 // ============================================================================
