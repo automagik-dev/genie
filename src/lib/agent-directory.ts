@@ -438,7 +438,15 @@ async function lookupTemplateTeam(name: string): Promise<string | null> {
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
-    const rows = await sql`SELECT team FROM agent_templates WHERE id = ${name} LIMIT 1`;
+    // Migration 061 converted agent_templates.id from TEXT (= name) to UUID
+    // and added a separate `name` column. The old `WHERE id = ${name}` lookup
+    // tried to cast a bare name like "engineer" to UUID and failed with
+    // `invalid input syntax for type uuid` — caught downstream as a generic
+    // "lookupTemplateTeam failed" warning, but quietly returning null was
+    // enough to break the whole spawn pipeline (the team-resolution precedence
+    // chain falls into a path that ends in `agents_id_shape_check` violations).
+    // After 061: name is the canonical human key.
+    const rows = await sql`SELECT team FROM agent_templates WHERE name = ${name} LIMIT 1`;
     if (rows.length === 0) return null;
     const team = rows[0].team;
     return typeof team === 'string' && team.length > 0 ? team : null;
