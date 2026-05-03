@@ -85,6 +85,64 @@ let boundOtelPort: number | null = null;
 const DEFAULT_OTEL_PORT_PROBE_MAX = 8;
 
 // ============================================================================
+// Sensitive key redaction (wish observability-signal-normalization Group 3)
+// ============================================================================
+
+/**
+ * Sensitive OTel attribute keys that must NEVER land in `audit_events.details`.
+ *
+ * Claude Code's OTel pipeline tags every export with the operator's account /
+ * organization identity on resource attributes. Once any of these keys reach
+ * `audit_events`, every reader becomes part of the data-protection surface
+ * (Decision #4 of the wish). Drop them at the receiver boundary.
+ */
+const SENSITIVE_OTEL_KEYS: ReadonlySet<string> = new Set([
+  'user.email',
+  'user.id',
+  'user.account_id',
+  'user.account_uuid',
+  'organization.id',
+]);
+
+/**
+ * Resource attributes that ARE safe to copy into `details`. Everything else
+ * is dropped — including unknown keys that may carry PII in future Claude
+ * Code releases. Allowlist > blocklist for resource-level identity.
+ */
+const RESOURCE_ATTR_ALLOWLIST: ReadonlySet<string> = new Set([
+  'agent.name',
+  'agent.role',
+  'team.name',
+  'wish.slug',
+  'session.id',
+  'service.name',
+  'service.version',
+  'service.namespace',
+  'host.arch',
+  'os.type',
+]);
+
+/** Drop sensitive keys from any attribute object before it lands in details. */
+function dropSensitiveKeys<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    if (SENSITIVE_OTEL_KEYS.has(key)) continue;
+    result[key] = obj[key];
+  }
+  return result;
+}
+
+/** True when the key is one of the explicit sensitive identifiers. Exposed for tests. */
+export function isSensitiveOtelKey(key: string): boolean {
+  return SENSITIVE_OTEL_KEYS.has(key);
+}
+
+/** True when the key is allowed through the resource-attribute allowlist. Exposed for tests. */
+export function isAllowlistedResourceKey(key: string): boolean {
+  return RESOURCE_ATTR_ALLOWLIST.has(key);
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -108,7 +166,13 @@ function attrsToObject(attrs?: OtlpKeyValue[]): Record<string, unknown> {
   return obj;
 }
 
-/** Extract resource attributes (agent.name, team.name, session.id, etc.). */
+/**
+ * Extract resource attributes (agent.name, team.name, session.id, etc.).
+ *
+ * Applies the resource-attribute allowlist: every key that survives this
+ * function is on `RESOURCE_ATTR_ALLOWLIST`. Sensitive keys are dropped twice
+ * (allowlist filter + sensitive-key filter) for defense in depth.
+ */
 function extractResourceContext(resource?: OtlpResource): {
   agentName?: string;
   teamName?: string;
@@ -116,13 +180,19 @@ function extractResourceContext(resource?: OtlpResource): {
   sessionId?: string;
   agentRole?: string;
 } {
-  const attrs = attrsToObject(resource?.attributes);
+  const raw = attrsToObject(resource?.attributes);
+  const filtered: Record<string, unknown> = {};
+  for (const key of Object.keys(raw)) {
+    if (SENSITIVE_OTEL_KEYS.has(key)) continue;
+    if (!RESOURCE_ATTR_ALLOWLIST.has(key)) continue;
+    filtered[key] = raw[key];
+  }
   return {
-    agentName: attrs['agent.name'] as string | undefined,
-    teamName: attrs['team.name'] as string | undefined,
-    wishSlug: attrs['wish.slug'] as string | undefined,
-    sessionId: attrs['session.id'] as string | undefined,
-    agentRole: attrs['agent.role'] as string | undefined,
+    agentName: filtered['agent.name'] as string | undefined,
+    teamName: filtered['team.name'] as string | undefined,
+    wishSlug: filtered['wish.slug'] as string | undefined,
+    sessionId: filtered['session.id'] as string | undefined,
+    agentRole: filtered['agent.role'] as string | undefined,
   };
 }
 
@@ -190,7 +260,7 @@ export function isPortBusyError(err: unknown): boolean {
 // Event processing
 // ============================================================================
 
-interface AuditRow {
+export interface AuditRow {
   entity_type: string;
   entity_id: string;
   event_type: string;
@@ -213,13 +283,13 @@ function mergeContext(details: Record<string, unknown>, ctx: ReturnType<typeof e
 
 /** Convert a single OTel log record into an AuditRow. */
 function logRecordToRow(record: OtlpLogRecord, ctx: ReturnType<typeof extractResourceContext>): AuditRow {
-  const logAttrs = attrsToObject(record.attributes);
+  const logAttrs = dropSensitiveKeys(attrsToObject(record.attributes));
   const eventName = (logAttrs['event.name'] as string) ?? record.body?.stringValue ?? 'unknown';
   const details: Record<string, unknown> = { ...logAttrs, event_name: eventName };
   mergeContext(details, ctx);
   if (record.severityText) details.severity = record.severityText;
   if (record.body?.kvlistValue?.values) {
-    Object.assign(details, attrsToObject(record.body.kvlistValue.values));
+    Object.assign(details, dropSensitiveKeys(attrsToObject(record.body.kvlistValue.values)));
   }
   return {
     entity_type: mapEventToEntityType(eventName),
@@ -230,8 +300,8 @@ function logRecordToRow(record: OtlpLogRecord, ctx: ReturnType<typeof extractRes
   };
 }
 
-/** Process OTLP logs payload into audit_events rows. */
-function processLogs(payload: OtlpLogsPayload): AuditRow[] {
+/** Process OTLP logs payload into audit_events rows. Exported for unit tests. */
+export function processLogs(payload: OtlpLogsPayload): AuditRow[] {
   const rows: AuditRow[] = [];
   for (const resourceLog of payload.resourceLogs ?? []) {
     const ctx = extractResourceContext(resourceLog.resource);
@@ -263,7 +333,7 @@ function processSumGaugePoints(
   ctx: ReturnType<typeof extractResourceContext>,
 ): AuditRow[] {
   return dataPoints.map((dp) => {
-    const dpAttrs = attrsToObject(dp.attributes);
+    const dpAttrs = dropSensitiveKeys(attrsToObject(dp.attributes));
     const value = dp.asDouble ?? (dp.asInt !== undefined ? Number(dp.asInt) : undefined);
     const details: Record<string, unknown> = { metric_name: metricName, value, ...dpAttrs };
     if (unit) details.unit = unit;
@@ -280,7 +350,7 @@ function metricToRows(metric: OtlpMetric, ctx: ReturnType<typeof extractResource
   const rows = processSumGaugePoints(dataPoints, metricName, metric.unit, entityId, ctx);
 
   for (const dp of metric.histogram?.dataPoints ?? []) {
-    const dpAttrs = attrsToObject(dp.attributes);
+    const dpAttrs = dropSensitiveKeys(attrsToObject(dp.attributes));
     const details: Record<string, unknown> = {
       metric_name: metricName,
       sum: dp.sum,
@@ -294,8 +364,8 @@ function metricToRows(metric: OtlpMetric, ctx: ReturnType<typeof extractResource
   return rows;
 }
 
-/** Process OTLP metrics payload into audit_events rows. */
-function processMetrics(payload: OtlpMetricsPayload): AuditRow[] {
+/** Process OTLP metrics payload into audit_events rows. Exported for unit tests. */
+export function processMetrics(payload: OtlpMetricsPayload): AuditRow[] {
   const rows: AuditRow[] = [];
   for (const resourceMetric of payload.resourceMetrics ?? []) {
     const ctx = extractResourceContext(resourceMetric.resource);

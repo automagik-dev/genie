@@ -184,9 +184,8 @@ function registerHandlers(sql: any): void {
         FROM teams
       `,
       sql`
-        SELECT COALESCE(SUM((details->>'cost_usd')::numeric), 0) AS total_cost
-        FROM audit_events
-        WHERE event_type = 'claude_code.cost.usage'
+        SELECT COALESCE(SUM(cost_usd), 0) AS total_cost
+        FROM v_claude_usage_events
       `,
       sql`SELECT * FROM machine_snapshots ORDER BY created_at DESC LIMIT 1`,
     ]);
@@ -268,10 +267,10 @@ function registerHandlers(sql: any): void {
       SELECT s.id, s.status, s.total_turns, s.started_at, s.ended_at,
              a.custom_name AS agent_name,
              COALESCE(
-               (SELECT SUM((ae.details->>'cost_usd')::numeric)
-                FROM audit_events ae
-                WHERE ae.entity_id = e.id
-                  AND ae.event_type = 'claude_code.cost.usage'), 0
+               (SELECT SUM(v.cost_usd)
+                FROM v_claude_usage_events v
+                WHERE v.executor_id = e.id
+                   OR v.session_id = s.id), 0
              ) AS cost_usd
       FROM sessions s
       LEFT JOIN executors e ON s.executor_id = e.id
@@ -360,12 +359,11 @@ function registerHandlers(sql: any): void {
 
   reply(sub.costs.summary(ORG_ID), async () => {
     return sql`
-      SELECT details->>'model' AS model,
-             SUM((details->>'cost_usd')::numeric) AS total_cost,
+      SELECT model,
+             SUM(cost_usd) AS total_cost,
              COUNT(*) AS usage_count
-      FROM audit_events
-      WHERE event_type = 'claude_code.cost.usage'
-      GROUP BY 1
+      FROM v_claude_usage_events
+      GROUP BY model
       ORDER BY total_cost DESC
     `;
   });
@@ -373,15 +371,14 @@ function registerHandlers(sql: any): void {
   reply(sub.costs.sessions(ORG_ID), async (params: { limit?: number }) => {
     const limit = params.limit ?? 50;
     return sql`
-      SELECT ae.entity_id AS executor_id,
+      SELECT COALESCE(v.executor_id, v.session_id, v.entity_id) AS executor_id,
              a.custom_name AS agent_name,
-             SUM((ae.details->>'cost_usd')::numeric) AS cost_usd,
+             SUM(v.cost_usd) AS cost_usd,
              COUNT(*) AS events
-      FROM audit_events ae
-      LEFT JOIN executors e ON ae.entity_id = e.id
+      FROM v_claude_usage_events v
+      LEFT JOIN executors e ON v.executor_id = e.id
       LEFT JOIN agents a ON e.agent_id = a.id
-      WHERE ae.event_type = 'claude_code.cost.usage'
-      GROUP BY ae.entity_id, a.custom_name
+      GROUP BY 1, a.custom_name
       ORDER BY cost_usd DESC
       LIMIT ${limit}
     `;
@@ -389,33 +386,31 @@ function registerHandlers(sql: any): void {
 
   reply(sub.costs.tokens(ORG_ID), async () => {
     return sql`
-      SELECT details->>'model' AS model,
-             SUM((details->>'input_tokens')::bigint) AS input_tokens,
-             SUM((details->>'output_tokens')::bigint) AS output_tokens,
-             SUM(COALESCE((details->>'cache_read_tokens')::bigint, 0)) AS cache_read_tokens,
-             SUM(COALESCE((details->>'cache_write_tokens')::bigint, 0)) AS cache_write_tokens
-      FROM audit_events
-      WHERE event_type = 'claude_code.cost.usage'
-      GROUP BY 1
-      ORDER BY input_tokens DESC
+      SELECT model,
+             SUM(input_tokens) AS input_tokens,
+             SUM(output_tokens) AS output_tokens,
+             SUM(COALESCE(cache_read_tokens, 0)) AS cache_read_tokens,
+             SUM(COALESCE(cache_write_tokens, 0)) AS cache_write_tokens
+      FROM v_claude_usage_events
+      GROUP BY model
+      ORDER BY input_tokens DESC NULLS LAST
     `;
   });
 
   reply(sub.costs.efficiency(ORG_ID), async () => {
     return sql`
-      SELECT details->>'model' AS model,
-             SUM(COALESCE((details->>'cache_read_tokens')::bigint, 0)) AS cache_hits,
-             SUM(COALESCE((details->>'input_tokens')::bigint, 0)) AS total_input,
-             CASE WHEN SUM(COALESCE((details->>'input_tokens')::bigint, 0)) > 0
+      SELECT model,
+             SUM(COALESCE(cache_read_tokens, 0)) AS cache_hits,
+             SUM(COALESCE(input_tokens, 0)) AS total_input,
+             CASE WHEN SUM(COALESCE(input_tokens, 0)) > 0
                THEN ROUND(
-                 SUM(COALESCE((details->>'cache_read_tokens')::bigint, 0))::numeric /
-                 SUM(COALESCE((details->>'input_tokens')::bigint, 0))::numeric * 100, 2
+                 SUM(COALESCE(cache_read_tokens, 0))::numeric /
+                 SUM(COALESCE(input_tokens, 0))::numeric * 100, 2
                )
                ELSE 0
              END AS cache_hit_pct
-      FROM audit_events
-      WHERE event_type = 'claude_code.cost.usage'
-      GROUP BY 1
+      FROM v_claude_usage_events
+      GROUP BY model
       ORDER BY cache_hit_pct DESC
     `;
   });

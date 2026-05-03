@@ -221,10 +221,19 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   });
 
   describe('queryCostBreakdown', () => {
-    test('returns cost aggregation by agent', async () => {
-      await recordAuditEvent('otel_api', 'req-1', 'api_request', 'agent-a', { cost_usd: '0.05', model: 'opus' });
-      await recordAuditEvent('otel_api', 'req-2', 'api_request', 'agent-a', { cost_usd: '0.10', model: 'opus' });
-      await recordAuditEvent('otel_api', 'req-3', 'api_request', 'agent-b', { cost_usd: '0.03', model: 'sonnet' });
+    test('returns cost aggregation by agent (legacy cost_usd shape)', async () => {
+      await recordAuditEvent('otel_metric', 'sess-a', 'claude_code.cost.usage', 'agent-a', {
+        cost_usd: '0.05',
+        model: 'opus',
+      });
+      await recordAuditEvent('otel_metric', 'sess-a', 'claude_code.cost.usage', 'agent-a', {
+        cost_usd: '0.10',
+        model: 'opus',
+      });
+      await recordAuditEvent('otel_metric', 'sess-b', 'claude_code.cost.usage', 'agent-b', {
+        cost_usd: '0.03',
+        model: 'sonnet',
+      });
 
       const rows = await queryCostBreakdown('1h', 'agent');
       expect(rows.length).toBeGreaterThanOrEqual(1);
@@ -233,6 +242,32 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         expect(agentA.request_count).toBeGreaterThanOrEqual(2);
         expect(agentA.total_cost).toBeGreaterThan(0);
       }
+    });
+
+    test('aggregates OTel-shaped rows (details.value) via v_claude_usage_events', async () => {
+      // Regression: observability-signal-normalization Group 2.
+      // OTel `claude_code.cost.usage` metric data points land with cost under
+      // `details.value`, not `details.cost_usd`. The pre-058 query path
+      // silently summed these to zero. The view must surface them.
+      const agent = `otel-agent-${Date.now()}`;
+      await recordAuditEvent('otel_metric', `sess-${agent}-1`, 'claude_code.cost.usage', agent, {
+        value: 0.21,
+        metric_name: 'claude_code.cost.usage',
+        model: 'opus',
+      });
+      await recordAuditEvent('otel_metric', `sess-${agent}-2`, 'claude_code.cost.usage', agent, {
+        value: 0.07,
+        metric_name: 'claude_code.cost.usage',
+        model: 'opus',
+      });
+
+      const rows = await queryCostBreakdown('1h', 'agent');
+      const hit = rows.find((r) => r.group_key === agent);
+      expect(hit).toBeDefined();
+      expect(hit?.request_count).toBe(2);
+      // Float math — accept anything close to 0.28.
+      expect(hit?.total_cost).toBeGreaterThan(0.27);
+      expect(hit?.total_cost).toBeLessThan(0.29);
     });
 
     test('groups by model', async () => {
@@ -354,6 +389,59 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(typeof summary.tool_calls).toBe('number');
       expect(typeof summary.api_requests).toBe('number');
       expect(summary.total_events).toBeGreaterThan(0);
+    });
+
+    test('total_cost includes OTel value-shaped rows (regression: 058 view)', async () => {
+      // Pre-058, querySummary summed `details->>'cost_usd'` from `otel_api`
+      // rows only — OTel `claude_code.cost.usage` data points (which carry
+      // cost under `details.value`) were silently zeroed. With the
+      // v_claude_usage_events view both shapes contribute.
+      const tag = `summary-${Date.now()}`;
+      await recordAuditEvent('otel_metric', `sess-${tag}`, 'claude_code.cost.usage', tag, {
+        value: 1.25,
+        metric_name: 'claude_code.cost.usage',
+        model: 'opus',
+      });
+      const summary = await querySummary('1h');
+      expect(summary.total_cost).toBeGreaterThanOrEqual(1.25);
+    });
+  });
+
+  describe('v_claude_usage_events normalized view', () => {
+    // Direct exercise of the view contract that the app + CLI rely on.
+    test('matches app-style aggregate against the same fixture', async () => {
+      const tag = `view-${Date.now()}`;
+      // Mixed shapes: legacy cost_usd + OTel value, both under the canonical
+      // event_type. The app dashboard sums `cost_usd` from the view; the CLI
+      // does the same. Both must agree on the same fixture.
+      await recordAuditEvent('otel_metric', `sess-${tag}-1`, 'claude_code.cost.usage', tag, {
+        cost_usd: '0.40',
+        model: 'opus',
+        input_tokens: '1000',
+        output_tokens: '200',
+      });
+      await recordAuditEvent('otel_metric', `sess-${tag}-2`, 'claude_code.cost.usage', tag, {
+        value: 0.6,
+        metric_name: 'claude_code.cost.usage',
+        model: 'opus',
+        session_id: `sess-${tag}-2`,
+      });
+
+      const sql = await getConnection();
+      const appStyle = (await sql.unsafe(
+        `SELECT COALESCE(SUM(cost_usd), 0)::float AS total
+         FROM v_claude_usage_events
+         WHERE agent_id = $1`,
+        [tag],
+      )) as unknown as { total: number }[];
+      const cliStyle = await queryCostBreakdown('1h', 'agent');
+      const cliRow = cliStyle.find((r) => r.group_key === tag);
+
+      expect(cliRow).toBeDefined();
+      // Both surfaces walk the same view; totals match within float tolerance.
+      expect(Math.abs((cliRow?.total_cost ?? 0) - appStyle[0].total)).toBeLessThan(1e-6);
+      expect(cliRow?.total_cost).toBeGreaterThan(0.99);
+      expect(cliRow?.total_cost).toBeLessThan(1.01);
     });
   });
 

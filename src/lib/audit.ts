@@ -278,7 +278,7 @@ export function getActor(): string {
 }
 
 // ============================================================================
-// Cost Breakdown — aggregate cost_usd from otel_api events
+// Cost Breakdown — aggregate from v_claude_usage_events (normalized view)
 // ============================================================================
 
 export interface CostBreakdownRow {
@@ -295,22 +295,24 @@ export async function queryCostBreakdown(
   const sql = await getConnection();
   const sinceTs = parseSince(since);
 
+  // Reads from `v_claude_usage_events` (migration 058) so OTel rows that store
+  // cost under `details.value` and legacy rows that store it under
+  // `details.cost_usd` both contribute.
   const groupExpr =
     groupBy === 'agent'
-      ? "COALESCE(actor, 'unknown')"
+      ? "COALESCE(agent_id, 'unknown')"
       : groupBy === 'wish'
         ? "COALESCE(details->>'wish_slug', entity_id)"
-        : "COALESCE(details->>'model', 'unknown')";
+        : 'model';
 
   const rows = await sql.unsafe(
     `SELECT
        ${groupExpr} AS group_key,
-       COALESCE(SUM((details->>'cost_usd')::numeric), 0)::float AS total_cost,
+       COALESCE(SUM(cost_usd), 0)::float AS total_cost,
        COUNT(*)::int AS request_count,
-       COALESCE(AVG((details->>'cost_usd')::numeric), 0)::float AS avg_cost
-     FROM audit_events
-     WHERE entity_type = 'otel_api'
-       AND created_at >= $1::timestamptz
+       COALESCE(AVG(NULLIF(cost_usd, 0)), 0)::float AS avg_cost
+     FROM v_claude_usage_events
+     WHERE created_at >= $1::timestamptz
      GROUP BY ${groupExpr}
      ORDER BY total_cost DESC
      LIMIT 100`,
@@ -510,11 +512,16 @@ export async function querySummary(since: string): Promise<EventSummary> {
   const sql = await getConnection();
   const sinceTs = parseSince(since);
 
+  // total_cost reads from v_claude_usage_events (migration 058) so both OTel
+  // metric rows (details.value) and legacy rows (details.cost_usd) contribute.
   const rows = await sql.unsafe(
     `SELECT
        COUNT(*) FILTER (WHERE entity_type = 'worker' AND event_type = 'spawn')::int AS agents_spawned,
        COUNT(*) FILTER (WHERE entity_type = 'task' AND event_type = 'stage_change')::int AS tasks_moved,
-       COALESCE(SUM((details->>'cost_usd')::numeric) FILTER (WHERE entity_type = 'otel_api'), 0)::float AS total_cost,
+       COALESCE((
+         SELECT SUM(cost_usd)::float FROM v_claude_usage_events
+         WHERE created_at >= $1::timestamptz
+       ), 0)::float AS total_cost,
        COUNT(*) FILTER (WHERE event_type LIKE '%error%' OR (details ? 'error'))::int AS error_count,
        COUNT(*)::int AS total_events,
        COUNT(*) FILTER (WHERE entity_type = 'otel_tool')::int AS tool_calls,

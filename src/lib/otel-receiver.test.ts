@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { getAuxiliaryPortBase } from './db.js';
 import {
+  type AuditRow,
   getOtelPort,
+  isAllowlistedResourceKey,
   isOtelReceiverRunning,
   isPortBusyError,
+  isSensitiveOtelKey,
+  processLogs,
+  processMetrics,
   startOtelReceiver,
   stopOtelReceiver,
 } from './otel-receiver.js';
@@ -351,5 +356,199 @@ describe('otel-receiver', () => {
       body: '{}',
     });
     expect(res.status).toBe(404);
+  });
+});
+
+// ============================================================================
+// Sensitive key redaction — wish observability-signal-normalization Group 3
+// ============================================================================
+
+const SENSITIVE_KEYS = ['user.email', 'user.id', 'user.account_id', 'user.account_uuid', 'organization.id'] as const;
+
+function flattenDetails(rows: AuditRow[]): Set<string> {
+  const keys = new Set<string>();
+  for (const row of rows) for (const key of Object.keys(row.details)) keys.add(key);
+  return keys;
+}
+
+describe('OTel sensitive key redaction', () => {
+  test('isSensitiveOtelKey covers every documented identifier', () => {
+    for (const key of SENSITIVE_KEYS) expect(isSensitiveOtelKey(key)).toBe(true);
+    expect(isSensitiveOtelKey('agent.name')).toBe(false);
+    expect(isSensitiveOtelKey('model')).toBe(false);
+  });
+
+  test('isAllowlistedResourceKey only admits the documented safe keys', () => {
+    expect(isAllowlistedResourceKey('agent.name')).toBe(true);
+    expect(isAllowlistedResourceKey('team.name')).toBe(true);
+    expect(isAllowlistedResourceKey('session.id')).toBe(true);
+    expect(isAllowlistedResourceKey('service.name')).toBe(true);
+    // Sensitive keys never reach the allowlist
+    for (const key of SENSITIVE_KEYS) expect(isAllowlistedResourceKey(key)).toBe(false);
+    // Random unknown attribute is NOT allowlisted
+    expect(isAllowlistedResourceKey('terminal.type')).toBe(false);
+  });
+
+  test('processLogs drops sensitive keys from log record attributes', () => {
+    const rows = processLogs({
+      resourceLogs: [
+        {
+          resource: {
+            attributes: [
+              { key: 'agent.name', value: { stringValue: 'engineer-3' } },
+              // Resource-level sensitive identifiers MUST be dropped
+              { key: 'user.email', value: { stringValue: 'leak@example.com' } },
+              { key: 'user.id', value: { stringValue: 'res-user-1' } },
+              { key: 'organization.id', value: { stringValue: 'org-9' } },
+            ],
+          },
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  attributes: [
+                    { key: 'event.name', value: { stringValue: 'claude_code.user_prompt' } },
+                    { key: 'user.email', value: { stringValue: 'leak@example.com' } },
+                    { key: 'user.id', value: { stringValue: 'log-user-1' } },
+                    { key: 'user.account_id', value: { stringValue: 'acct-1' } },
+                    { key: 'user.account_uuid', value: { stringValue: 'acct-uuid-1' } },
+                    { key: 'organization.id', value: { stringValue: 'org-1' } },
+                    { key: 'prompt_length', value: { intValue: '42' } },
+                  ],
+                  body: { stringValue: 'pong' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(rows).toHaveLength(1);
+    const keys = flattenDetails(rows);
+    for (const sensitive of SENSITIVE_KEYS) expect(keys.has(sensitive)).toBe(false);
+    // Non-sensitive payload survives
+    expect(keys.has('prompt_length')).toBe(true);
+    expect(keys.has('event_name')).toBe(true);
+    expect(rows[0].actor).toBe('engineer-3');
+  });
+
+  test('processLogs drops sensitive keys from kvlist body values', () => {
+    const rows = processLogs({
+      resourceLogs: [
+        {
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  attributes: [{ key: 'event.name', value: { stringValue: 'claude_code.api_request' } }],
+                  body: {
+                    kvlistValue: {
+                      values: [
+                        { key: 'user.email', value: { stringValue: 'kv-leak@example.com' } },
+                        { key: 'duration_ms', value: { intValue: '120' } },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const keys = flattenDetails(rows);
+    expect(keys.has('user.email')).toBe(false);
+    expect(keys.has('duration_ms')).toBe(true);
+  });
+
+  test('processMetrics drops sensitive keys from data point attributes', () => {
+    const rows = processMetrics({
+      resourceMetrics: [
+        {
+          resource: {
+            attributes: [
+              { key: 'agent.name', value: { stringValue: 'engineer-3' } },
+              { key: 'user.email', value: { stringValue: 'leak@example.com' } },
+              { key: 'user.account_uuid', value: { stringValue: 'acct-uuid' } },
+            ],
+          },
+          scopeMetrics: [
+            {
+              metrics: [
+                {
+                  name: 'claude_code.cost.usage',
+                  sum: {
+                    dataPoints: [
+                      {
+                        asDouble: 0.05,
+                        attributes: [
+                          { key: 'model', value: { stringValue: 'opus' } },
+                          { key: 'user.email', value: { stringValue: 'leak@example.com' } },
+                          { key: 'user.id', value: { stringValue: 'metric-user-1' } },
+                          { key: 'organization.id', value: { stringValue: 'org-2' } },
+                        ],
+                      },
+                    ],
+                  },
+                },
+                {
+                  name: 'claude_code.token.usage',
+                  histogram: {
+                    dataPoints: [
+                      {
+                        sum: 100,
+                        count: 1,
+                        attributes: [
+                          { key: 'token_type', value: { stringValue: 'input' } },
+                          { key: 'user.account_id', value: { stringValue: 'hist-acct-1' } },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    const keys = flattenDetails(rows);
+    for (const sensitive of SENSITIVE_KEYS) expect(keys.has(sensitive)).toBe(false);
+    // Operational attributes still propagate
+    expect(keys.has('model')).toBe(true);
+    expect(keys.has('token_type')).toBe(true);
+    // Resource agent.name is still extracted via the allowlist path
+    expect(rows[0].actor).toBe('engineer-3');
+  });
+
+  test('non-allowlisted resource attributes (terminal.type, app.version) are not promoted into details', () => {
+    const rows = processLogs({
+      resourceLogs: [
+        {
+          resource: {
+            attributes: [
+              { key: 'agent.name', value: { stringValue: 'engineer-3' } },
+              { key: 'terminal.type', value: { stringValue: 'tmux' } },
+              { key: 'app.version', value: { stringValue: '4.260502.1' } },
+            ],
+          },
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  attributes: [{ key: 'event.name', value: { stringValue: 'claude_code.tool_result' } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const keys = flattenDetails(rows);
+    expect(keys.has('terminal.type')).toBe(false);
+    expect(keys.has('app.version')).toBe(false);
   });
 });
