@@ -150,7 +150,28 @@ describe.skipIf(!DB_AVAILABLE)('agent-observability (PG)', () => {
   });
 
   beforeEach(async () => {
+    // SAFETY: refuse to TRUNCATE unless setupTestDatabase() has wired the
+    // test-only env vars AND the connected database name matches the
+    // generated test-DB pattern. Catches the failure mode where
+    // setupTestDatabase() returned a no-op cleanup (because the worktree
+    // pgserve fixture failed to spawn) and getConnection() then yields a
+    // connection to the shared production daemon. A bare port range
+    // check is NOT enough — port 21900 in particular is the long-running
+    // RAM pgserve owned by the active Claude session; truncating it
+    // would clobber live agent state.
+    if (!process.env.GENIE_TEST_PG_PORT || !process.env.GENIE_TEST_DB_NAME) {
+      throw new Error(
+        'agent-observability PG suite refusing to truncate: GENIE_TEST_PG_PORT or GENIE_TEST_DB_NAME is unset, indicating setupTestDatabase() did not own the connection.',
+      );
+    }
     const sql = await getConnection();
+    const dbInfo = await sql<{ db: string }[]>`SELECT current_database() AS db`;
+    const dbName = String(dbInfo[0].db);
+    if (dbName !== process.env.GENIE_TEST_DB_NAME) {
+      throw new Error(
+        `agent-observability PG suite refusing to truncate: connected to "${dbName}" but expected "${process.env.GENIE_TEST_DB_NAME}".`,
+      );
+    }
     await sql`TRUNCATE agents, executors, sessions, tool_events, audit_events RESTART IDENTITY CASCADE`;
   });
 
