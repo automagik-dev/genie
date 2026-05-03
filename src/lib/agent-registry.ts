@@ -963,6 +963,168 @@ export async function getAgentByName(name: string, team: string): Promise<AgentI
   return rows.length > 0 ? rowToAgentIdentity(rows[0]) : null;
 }
 
+// ============================================================================
+// resolveAgentId — single canonical name → id resolver (Group 2 of
+// retire-session-names-id-only). Every CLI-boundary "name → row" lookup must
+// route through this function so the resolution order, audit trail, and tier
+// counters live in exactly one place.
+// ============================================================================
+
+/**
+ * Per-tier hit counter for the resolver. Wave 4 smoke matrix asserts
+ * `customName === 0 && role === 0` on hot paths — only `uuid` and `dir`
+ * tiers are permitted after CLI-boundary resolution. `miss` tracks
+ * unresolved inputs (and is what tells you a fallback path is broken
+ * before users notice).
+ */
+export interface AgentResolverCounters {
+  uuid: number;
+  dir: number;
+  customName: number;
+  role: number;
+  miss: number;
+}
+
+const resolverCounters: AgentResolverCounters = { uuid: 0, dir: 0, customName: 0, role: 0, miss: 0 };
+
+/** Snapshot of resolver tier counters since process start (or last reset). */
+export function getAgentResolverCounters(): AgentResolverCounters {
+  return { ...resolverCounters };
+}
+
+/**
+ * Reset counters. Test-only — production code should never reset live counters,
+ * because Wave 4's smoke assertions read them across phases.
+ */
+export function _resetAgentResolverCountersForTests(): void {
+  resolverCounters.uuid = 0;
+  resolverCounters.dir = 0;
+  resolverCounters.customName = 0;
+  resolverCounters.role = 0;
+  resolverCounters.miss = 0;
+}
+
+type ResolverTier = 'uuid' | 'dir' | 'customName' | 'role';
+
+/**
+ * Emit a resolver audit event. The input string is intentionally NOT logged —
+ * agent names occasionally embed PII (operator handles, ticket IDs, run-tag
+ * snippets), and the resolver is called on every CLI invocation. The tier +
+ * resolved_id + team are enough to diagnose drift; the input is recoverable
+ * from the calling command's command_start audit row.
+ */
+function emitAgentResolved(resolvedId: string, tier: ResolverTier, team?: string): void {
+  recordAuditEvent('agent', resolvedId, 'agent_resolved', process.env.GENIE_AGENT_NAME ?? 'resolver', {
+    matched_tier: tier,
+    team: team ?? null,
+  }).catch(() => {});
+}
+
+function emitAgentResolvedAmbiguous(tier: ResolverTier, candidateIds: string[], team?: string): void {
+  // entity_id = the first candidate so the row is queryable; the full set lives
+  // in details for forensic walks. We don't include the input — see emit() note.
+  recordAuditEvent('agent', candidateIds[0], 'agent_resolved_ambiguous', process.env.GENIE_AGENT_NAME ?? 'resolver', {
+    matched_tier: tier,
+    candidate_ids: candidateIds,
+    team: team ?? null,
+  }).catch(() => {});
+}
+
+function emitAgentNotResolved(team?: string): void {
+  recordAuditEvent('agent', 'unresolved', 'agent_not_resolved', process.env.GENIE_AGENT_NAME ?? 'resolver', {
+    team: team ?? null,
+  }).catch(() => {});
+}
+
+/**
+ * Resolve any human-supplied agent reference (UUID, `dir:<name>`, custom_name,
+ * role) to its canonical `agents.id`. Returns null when the input matches no
+ * row OR matches more than one row at a fuzzy tier (ambiguity).
+ *
+ * Resolution order (each tier short-circuits on hit; falls through on miss):
+ *   1. exact id          → tier `uuid` (UUID-shaped) or `dir` (`dir:` prefix)
+ *   2. synthesized `dir:<input>`         → tier `dir`
+ *   3. (custom_name, team) composite     → tier `customName` (skipped if team undefined)
+ *   4. role-fallback (`WHERE role = $1`) → tier `role`
+ *
+ * Fuzzy tiers (`customName`, `role`) require a unique match; multiple
+ * candidates emit `agent_resolved_ambiguous` and return null. Misses emit
+ * `agent_not_resolved`.
+ *
+ * Always best-effort: audit emits are swallowed so a transient DB hiccup on
+ * the audit_events INSERT can't break the resolver itself.
+ */
+export async function resolveAgentId(nameOrId: string, team?: string): Promise<string | null> {
+  if (!nameOrId) return null;
+  const sql = await getConnection();
+
+  // Tier 1: exact id (catches UUID and dir:<name> shapes).
+  const exactRows = await sql<{ id: string }[]>`SELECT id FROM agents WHERE id = ${nameOrId} LIMIT 1`;
+  if (exactRows.length > 0) {
+    const id = exactRows[0].id;
+    const tier: ResolverTier = id.startsWith('dir:') ? 'dir' : 'uuid';
+    if (tier === 'dir') resolverCounters.dir++;
+    else resolverCounters.uuid++;
+    emitAgentResolved(id, tier, team);
+    return id;
+  }
+
+  // Tier 2: synthesize dir:<input>.
+  const dirId = `dir:${nameOrId}`;
+  const dirRows = await sql<{ id: string }[]>`SELECT id FROM agents WHERE id = ${dirId} LIMIT 1`;
+  if (dirRows.length > 0) {
+    resolverCounters.dir++;
+    emitAgentResolved(dirRows[0].id, 'dir', team);
+    return dirRows[0].id;
+  }
+
+  // Tier 3: (custom_name, team). Requires team scope — without it the
+  // composite isn't unique and a single name can name many agents across
+  // teams. Skip and fall through to role-fallback when team is undefined.
+  if (team) {
+    const cnRows = await sql<{ id: string }[]>`
+      SELECT id FROM agents WHERE custom_name = ${nameOrId} AND team = ${team} LIMIT 2
+    `;
+    if (cnRows.length === 1) {
+      resolverCounters.customName++;
+      emitAgentResolved(cnRows[0].id, 'customName', team);
+      return cnRows[0].id;
+    }
+    if (cnRows.length > 1) {
+      emitAgentResolvedAmbiguous(
+        'customName',
+        cnRows.map((r: { id: string }) => r.id),
+        team,
+      );
+      resolverCounters.miss++;
+      return null;
+    }
+  }
+
+  // Tier 4: role-fallback. Global by design (matches the legacy
+  // resolveWorkerByName at agents.ts:2750) — `genie kill engineer` should
+  // find the only running engineer regardless of team.
+  const roleRows = await sql<{ id: string }[]>`SELECT id FROM agents WHERE role = ${nameOrId} LIMIT 2`;
+  if (roleRows.length === 1) {
+    resolverCounters.role++;
+    emitAgentResolved(roleRows[0].id, 'role', team);
+    return roleRows[0].id;
+  }
+  if (roleRows.length > 1) {
+    emitAgentResolvedAmbiguous(
+      'role',
+      roleRows.map((r: { id: string }) => r.id),
+      team,
+    );
+    resolverCounters.miss++;
+    return null;
+  }
+
+  resolverCounters.miss++;
+  emitAgentNotResolved(team);
+  return null;
+}
+
 /** Set the current executor FK on an agent. Pass null to clear. */
 export async function setCurrentExecutor(agentId: string, executorId: string | null): Promise<void> {
   const sql = await getConnection();
