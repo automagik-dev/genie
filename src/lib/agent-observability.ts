@@ -260,6 +260,28 @@ function numericOrZero(v: unknown): number {
 // ============================================================================
 
 /**
+ * True when the postgres error matches a known environment-specific defect
+ * that affects `v_claude_usage_events` aggregation rather than the
+ * canonical view itself. Surfaces the full data when production-pgserve is
+ * healthy; degrades cost/usage to zero (via `v_agent_observability_core`)
+ * when the local install is broken.
+ *
+ * Errors recognised:
+ *   - "could not open directory ... timezonesets" — pgserve install missing
+ *     timezone metadata. Recurring on per-worktree pgserves; documented in
+ *     wish 2 REPORT.md and wish 3 REPORT.md.
+ *   - `could not access file "plpgsql"` — sibling worktree-pgserve issue.
+ */
+function isCostAggregateEnvDefect(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes('timezonesets') || msg.includes('"plpgsql"');
+}
+
+/** Cost columns defaulted to zero when reading via `v_agent_observability_core`. */
+const ZERO_COST_COLUMNS =
+  ', 0::numeric AS recent_cost_usd, 0::bigint AS recent_input_tokens, 0::bigint AS recent_output_tokens';
+
+/**
  * Fetch the observability snapshot for one agent by id, custom name, or role.
  * Returns null when no agent matches.
  *
@@ -272,12 +294,22 @@ export async function getAgentObservability(identifier: string): Promise<AgentOb
   const sql = await getConnection();
   const preferTeam = process.env.GENIE_TEAM ?? null;
 
-  const queryResult = await sql<Record<string, unknown>[]>`
-    SELECT * FROM v_agent_observability
-    WHERE agent_id = ${identifier}
-       OR custom_name = ${identifier}
-       OR role = ${identifier}
-  `;
+  let queryResult: unknown;
+  try {
+    queryResult = await sql<Record<string, unknown>[]>`
+      SELECT * FROM v_agent_observability
+      WHERE agent_id = ${identifier}
+         OR custom_name = ${identifier}
+         OR role = ${identifier}
+    `;
+  } catch (err) {
+    if (!isCostAggregateEnvDefect(err)) throw err;
+    queryResult = await sql.unsafe(
+      `SELECT *${ZERO_COST_COLUMNS} FROM v_agent_observability_core
+       WHERE agent_id = $1 OR custom_name = $1 OR role = $1`,
+      [identifier],
+    );
+  }
   const rows = queryResult as unknown as Record<string, unknown>[];
 
   if (rows.length === 0) return null;
@@ -286,10 +318,19 @@ export async function getAgentObservability(identifier: string): Promise<AgentOb
   if (rows.length === 1) {
     row = rows[0];
   } else {
-    // Prefer exact id, then preferred-team match, then first.
+    // Resolution order:
+    //   1. UUID id match — caller passed the canonical UUID (and it isn't a
+    //      bare-name identifier that also matches a `dir:` shadow row).
+    //   2. row with a live executor — beats `dir:` shadow rows that share
+    //      the same role/name but never carry runtime state.
+    //   3. preferred-team match (when GENIE_TEAM is set).
+    //   4. first row (preserves the view's freshest-first ordering).
+    const looksLikeUuid = /^[0-9a-f]{8}-[0-9a-f]{4}/.test(identifier);
     row =
-      rows.find((r) => r.agent_id === identifier) ??
+      (looksLikeUuid ? rows.find((r) => r.agent_id === identifier) : undefined) ??
+      rows.find((r) => r.current_executor_id != null) ??
       (preferTeam ? rows.find((r) => r.team === preferTeam) : undefined) ??
+      rows.find((r) => r.agent_id === identifier) ??
       rows[0];
   }
 
@@ -309,21 +350,55 @@ export async function listAgentObservability(opts: ListAgentsOptions = {}): Prom
   const includeHarness = opts.includeHarness === true;
   const limit = opts.limit ?? 500;
 
-  const queryResult = includeHarness
-    ? await sql<Record<string, unknown>[]>`
-        SELECT * FROM v_agent_observability
-        ORDER BY COALESCE(executor_updated_at, agent_updated_at, agent_started_at) DESC NULLS LAST
-        LIMIT ${limit}
-      `
-    : await sql<Record<string, unknown>[]>`
-        SELECT * FROM v_agent_observability
-        WHERE classification = 'agent'
-        ORDER BY COALESCE(executor_updated_at, agent_updated_at, agent_started_at) DESC NULLS LAST
-        LIMIT ${limit}
-      `;
+  let queryResult: unknown;
+  try {
+    queryResult = includeHarness
+      ? await sql<Record<string, unknown>[]>`
+          SELECT * FROM v_agent_observability
+          ORDER BY COALESCE(executor_updated_at, agent_updated_at, agent_started_at) DESC NULLS LAST
+          LIMIT ${limit}
+        `
+      : await sql<Record<string, unknown>[]>`
+          SELECT * FROM v_agent_observability
+          WHERE classification = 'agent'
+          ORDER BY COALESCE(executor_updated_at, agent_updated_at, agent_started_at) DESC NULLS LAST
+          LIMIT ${limit}
+        `;
+  } catch (err) {
+    if (!isCostAggregateEnvDefect(err)) throw err;
+    const where = includeHarness ? '' : "WHERE classification = 'agent'";
+    queryResult = await sql.unsafe(
+      `SELECT *${ZERO_COST_COLUMNS} FROM v_agent_observability_core
+       ${where}
+       ORDER BY COALESCE(executor_updated_at, agent_updated_at, agent_started_at) DESC NULLS LAST
+       LIMIT $1`,
+      [limit],
+    );
+  }
   const rows = queryResult as unknown as Record<string, unknown>[];
 
-  return rows.map((r) => withHealth(mapRow(r)));
+  // Dedup bare-name shadow rows (the `dir:<name>` pattern from migration 049
+  // pre-UUID identity model). When two rows share the same display name and
+  // exactly one carries executor state, the runtime row wins. See
+  // src/lib/agent-registry.ts dedupeShadowRows for the canonical rule.
+  return dedupeSnapshots(rows.map((r) => withHealth(mapRow(r))));
+}
+
+function dedupeSnapshots(snaps: AgentObservabilitySnapshot[]): AgentObservabilitySnapshot[] {
+  const byKey = new Map<string, AgentObservabilitySnapshot>();
+  for (const snap of snaps) {
+    const key = `${snap.team ?? ''}|${snap.customName ?? snap.role ?? snap.agentId}`;
+    const prior = byKey.get(key);
+    if (!prior) {
+      byKey.set(key, snap);
+      continue;
+    }
+    // Prefer the row carrying live executor state.
+    const priorHasExec = prior.currentExecutorId != null;
+    const nextHasExec = snap.currentExecutorId != null;
+    if (nextHasExec && !priorHasExec) byKey.set(key, snap);
+  }
+  return [...byKey.values()];
 }
 
 /**
