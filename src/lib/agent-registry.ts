@@ -851,7 +851,25 @@ async function findTeamLeadBySession(
 
 export async function saveTemplate(template: WorkerTemplate): Promise<void> {
   const sql = await getConnection();
-  await sql`INSERT INTO agent_templates (id, provider, team, role, skill, cwd, extra_args, native_team_enabled, last_spawned_at) VALUES (${template.id}, ${template.provider}, ${template.team}, ${template.role ?? null}, ${template.skill ?? null}, ${template.cwd}, ${sql.json(template.extraArgs ?? [])}, ${template.nativeTeamEnabled ?? false}, ${template.lastSpawnedAt}) ON CONFLICT (id) DO UPDATE SET provider = EXCLUDED.provider, team = EXCLUDED.team, role = EXCLUDED.role, skill = EXCLUDED.skill, cwd = EXCLUDED.cwd, extra_args = EXCLUDED.extra_args, native_team_enabled = EXCLUDED.native_team_enabled, last_spawned_at = EXCLUDED.last_spawned_at`;
+  // Migration 061 retyped agent_templates.id from TEXT (= name) to UUID and
+  // added a separate `name` column. saveTemplate previously passed the bare
+  // role name (e.g. "engineer") as `id`, which now errors with `invalid input
+  // syntax for type uuid`. Use `(name, team)` as the upsert key (idx_agent_
+  // templates_name_team unique index from 061) so callers can keep passing
+  // a human name as `template.id` for back-compat. The UUID `id` is server-
+  // generated via DEFAULT gen_random_uuid().
+  await sql`
+    INSERT INTO agent_templates (name, provider, team, role, skill, cwd, extra_args, native_team_enabled, last_spawned_at)
+    VALUES (${template.id}, ${template.provider}, ${template.team}, ${template.role ?? null}, ${template.skill ?? null}, ${template.cwd}, ${sql.json(template.extraArgs ?? [])}, ${template.nativeTeamEnabled ?? false}, ${template.lastSpawnedAt})
+    ON CONFLICT (name, team) WHERE name IS NOT NULL AND team IS NOT NULL DO UPDATE SET
+      provider = EXCLUDED.provider,
+      role = EXCLUDED.role,
+      skill = EXCLUDED.skill,
+      cwd = EXCLUDED.cwd,
+      extra_args = EXCLUDED.extra_args,
+      native_team_enabled = EXCLUDED.native_team_enabled,
+      last_spawned_at = EXCLUDED.last_spawned_at
+  `;
 }
 
 export async function listTemplates(): Promise<WorkerTemplate[]> {
