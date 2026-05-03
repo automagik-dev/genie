@@ -169,6 +169,16 @@ Single-file bundle: `bun build` inlines all dependencies into `dist/genie.js` (~
 - Conventional commits (commitlint)
 - No `console.log` in source (biome rule, relaxed in tests)
 
+## Cognitive-complexity budget
+
+Biome's `noExcessiveCognitiveComplexity` is set to `maxAllowedComplexity: 25` (warn-level) for `src/**` and `packages/**`. Treat 25 as a ceiling for **linear** workflows, not a target.
+
+- Prefer linear code when a function reads as one workflow (CLI command body, orchestration step, request handler). Helpers extracted purely to reduce a score under 25 usually add indirection without clarity.
+- Split when there is a real boundary: a distinct policy decision, an IO concern, a state-machine transition, a presentation/data divide, or reused logic with at least two callers.
+- Only suppress with `biome-ignore lint/complexity/noExcessiveCognitiveComplexity:` when extraction would obscure a linear flow or break a tested invariant. The comment must explain the reason — never just "complexity".
+- Score >25 is review-triggering architecture debt, not a hard error. Track it in `.genie/wishes/complexity-budget-simplification/hotspots.md` and address via a separate refactor wish, not opportunistic edits.
+- Drift is enforced by `bun run lint:complexity-budget` (script in `scripts/complexity-budget.ts`). Raising any of the budget ceilings requires updating the script with a written justification.
+
 ## Gotchas
 
 - **File lock timeout force-removes are intentional** — prevents permanent deadlocks from crashed processes. The `open('wx')` after unlink is still atomic, so only one process wins.

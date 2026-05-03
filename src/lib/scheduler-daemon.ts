@@ -2249,7 +2249,6 @@ export function startDaemon(
   // getConnection (Mac CPU hook-dispatch fix A).
   let retentionTimer: ReturnType<typeof setInterval> | null = null;
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: stop() is a flat cleanup sequence for all daemon resources
   const stop = () => {
     running = false;
     if (pollTimeout) {

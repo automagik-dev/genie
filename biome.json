@@ -70,7 +70,10 @@
             "noMisleadingCharacterClass": "warn"
           },
           "complexity": {
-            "noExcessiveCognitiveComplexity": "warn",
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": { "maxAllowedComplexity": 25 }
+            },
             "noForEach": "warn"
           },
           "style": {
@@ -107,7 +110,10 @@
             "noArrayIndexKey": "warn"
           },
           "complexity": {
-            "noExcessiveCognitiveComplexity": "warn",
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": { "maxAllowedComplexity": 25 }
+            },
             "noForEach": "warn"
           },
           "style": {

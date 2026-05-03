@@ -101,7 +101,6 @@ function formatCost(usd: number): string {
  * Consecutive tool calls (role=assistant + toolName) are nested under the
  * preceding assistant message.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: turn grouping state machine
 function groupTurns(turns: TurnRow[]): MessageGroup[] {
   const groups: MessageGroup[] = [];
   let currentGroup: MessageGroup | null = null;
@@ -132,7 +131,6 @@ function groupTurns(turns: TurnRow[]): MessageGroup[] {
 /**
  * Build timeline density segments from turns.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: timeline segmentation state machine
 function buildTimelineSegments(turns: TurnRow[]): TimelineSegment[] {
   if (turns.length === 0) return [];
   const segments: TimelineSegment[] = [];
@@ -929,7 +927,6 @@ export function SessionsView({ windowId, meta: _meta }: AppComponentProps) {
 
   // ---- Keyboard navigation ----
   useEffect(() => {
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: multi-key keyboard handler dispatch
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
