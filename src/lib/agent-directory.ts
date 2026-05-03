@@ -101,6 +101,8 @@ export interface DirectoryEntry {
     allow?: string[];
     deny?: string[];
     bashAllowPatterns?: string[];
+    allowedTools?: string[];
+    permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto' | 'remoteApproval';
   };
   /** Tools the agent is NOT allowed to use (Claude Code --disallowedTools). */
   disallowedTools?: string[];
