@@ -385,20 +385,35 @@ export async function listAgentObservability(opts: ListAgentsOptions = {}): Prom
 }
 
 function dedupeSnapshots(snaps: AgentObservabilitySnapshot[]): AgentObservabilitySnapshot[] {
-  const byKey = new Map<string, AgentObservabilitySnapshot>();
+  // Two-pass collapse keyed on `<team>|<displayName>`:
+  //   pass 1 — index every snapshot by its display name (custom_name → role
+  //            → agent_id) so we can look up the canonical peer in O(1).
+  //   pass 2 — drop bare-name shadow rows (`dir:<name>` PK pre-UUID model)
+  //            ONLY when a non-shadow peer with the same display name is
+  //            also present. Two distinct task agents that happen to share
+  //            a `role` (e.g. two `engineer` rows) are NEVER collapsed —
+  //            each carries a unique UUID and its own runtime state.
+  const indexByDisplay = new Map<string, AgentObservabilitySnapshot[]>();
   for (const snap of snaps) {
-    const key = `${snap.team ?? ''}|${snap.customName ?? snap.role ?? snap.agentId}`;
-    const prior = byKey.get(key);
-    if (!prior) {
-      byKey.set(key, snap);
+    const display = snap.customName ?? snap.role ?? snap.agentId;
+    const key = `${snap.team ?? ''}|${display}`;
+    const bucket = indexByDisplay.get(key);
+    if (bucket) bucket.push(snap);
+    else indexByDisplay.set(key, [snap]);
+  }
+
+  const out: AgentObservabilitySnapshot[] = [];
+  for (const snap of snaps) {
+    if (!snap.agentId.startsWith('dir:')) {
+      out.push(snap);
       continue;
     }
-    // Prefer the row carrying live executor state.
-    const priorHasExec = prior.currentExecutorId != null;
-    const nextHasExec = snap.currentExecutorId != null;
-    if (nextHasExec && !priorHasExec) byKey.set(key, snap);
+    const display = snap.customName ?? snap.role ?? snap.agentId;
+    const peers = indexByDisplay.get(`${snap.team ?? ''}|${display}`) ?? [];
+    const hasNonShadowPeer = peers.some((p) => p !== snap && !p.agentId.startsWith('dir:'));
+    if (!hasNonShadowPeer) out.push(snap);
   }
-  return [...byKey.values()];
+  return out;
 }
 
 /**

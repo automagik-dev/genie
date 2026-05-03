@@ -376,6 +376,45 @@ describe.skipIf(!DB_AVAILABLE)('agent-observability (PG)', () => {
     expect(includeHarness.find((r) => r.agentId === harnessId)?.classification).toBe('harness');
   });
 
+  test('list keeps two distinct UUID agents that share a role (no over-dedup)', async () => {
+    // Regression for the dedup over-collapse: two task agents that happen to
+    // share `role='engineer'` but carry distinct UUIDs and no `custom_name`
+    // must both appear in the result. Earlier dedup keyed on
+    // `customName ?? role ?? agentId` and collapsed them to one row, which
+    // surfaced as PR #1618 CI failure on `list orders by freshest activity`.
+    const sql = await getConnection();
+    const a = randomUUID();
+    const b = randomUUID();
+    await sql`
+      INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, last_state_change)
+      VALUES (${a}, 'p', 's', '/t', now(), 'idle', 'engineer', now()),
+             (${b}, 'p', 's', '/t', now(), 'idle', 'engineer', now())
+    `;
+    const list = await listAgentObservability({ limit: 50 });
+    expect(list.find((r) => r.agentId === a)).toBeDefined();
+    expect(list.find((r) => r.agentId === b)).toBeDefined();
+  });
+
+  test('list collapses dir:foo shadow into UUID-keyed peer with same display name', async () => {
+    // Companion to the above: when one row IS a `dir:` shadow and a
+    // non-shadow peer with the same display name exists, the shadow drops
+    // out. Mirrors the production scenario `(dir:fix, role=fix)` +
+    // `(UUID, custom_name=fix, role=fix)` → one row in the fleet view.
+    const sql = await getConnection();
+    const uuid = randomUUID();
+    await sql`
+      INSERT INTO agents (id, pane_id, session, repo_path, started_at, state, role, custom_name, last_state_change)
+      VALUES (${uuid},      'p', 's', '/t', now(), 'idle', 'collapsible', 'collapsible', now()),
+             ('dir:collapsible', 'p', 's', '/t', now(), 'idle', 'collapsible', NULL, now())
+    `;
+    const list = await listAgentObservability({ limit: 50 });
+    const matches = list.filter(
+      (r) => r.customName === 'collapsible' || r.role === 'collapsible' || r.agentId === 'dir:collapsible',
+    );
+    expect(matches.length).toBe(1);
+    expect(matches[0].agentId).toBe(uuid);
+  });
+
   test('list orders by freshest activity and applies limit', async () => {
     const sql = await getConnection();
     const oldId = randomUUID();
