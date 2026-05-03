@@ -42,10 +42,21 @@ export function isTuiDisabled(): boolean {
  * Emit a one-line stderr notice explaining that a TUI path was skipped and why.
  * `context` is a short label for the call site (e.g. "renderer", "attach",
  * "serve"). Kept as a single helper so the message stays consistent.
+ *
+ * Reason precedence mirrors `isTuiDisabled()`: env > argv > non-TTY auto-detect.
+ * Pre-PR-1614 this only had two branches; the third was added so the auto-skip
+ * path (`genie | head`) doesn't misreport `--no-tui flag present` to users
+ * who never passed the flag.
  */
 export function noticeTuiSkipped(context: string): void {
   // Single line, stderr, no ANSI — easy to grep from logs and CI output.
-  const reason = process.env.GENIE_TUI_DISABLE ? 'GENIE_TUI_DISABLE is set' : '--no-tui flag present';
+  const envVal = process.env.GENIE_TUI_DISABLE;
+  const reason =
+    envVal && TRUTHY.has(envVal.trim().toLowerCase())
+      ? 'GENIE_TUI_DISABLE is set'
+      : process.argv.includes('--no-tui')
+        ? '--no-tui flag present'
+        : 'stdout is not a TTY';
   console.error(
     `genie: TUI ${context} skipped (${reason}). See https://github.com/automagik-dev/genie for status of the upstream OpenTUI kqueue spin on macOS.`,
   );
