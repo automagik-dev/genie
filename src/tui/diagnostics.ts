@@ -8,6 +8,7 @@
  */
 
 import { execSync } from 'node:child_process';
+import type { AgentObservabilitySnapshot } from '../lib/agent-observability.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import { isClaudeLikePane } from './pane-detection.js';
 import type { TuiAssignment, TuiExecutor, WorkState } from './types.js';
@@ -83,6 +84,14 @@ export interface DiagnosticSnapshot {
    * invincible-genie / Group 2.
    */
   workStates: Map<string, WorkState>;
+  /**
+   * Per-agent canonical observability snapshot keyed by display name.
+   * Populated from `loadAgentObservabilityForTui()` (wish 3
+   * agent-observability-snapshot Group 3). Lets badges read
+   * `health.flags`, `recentToolCount`, `recentCostUsd`, etc. without
+   * re-joining six tables.
+   */
+  observability: Map<string, AgentObservabilitySnapshot>;
   /**
    * Count of active derived-signal alerts (last hour). Drives the Nav
    * header alert badge.
@@ -256,7 +265,7 @@ function detectGaps(executors: TuiExecutor[], sessions: TmuxSession[]): Diagnost
  * was the original symptom of /trace report 2026-04-30.
  */
 export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
-  const { loadExecutors, loadAssignments, loadAgentWorkStates } = await import('./db.js');
+  const { loadExecutors, loadAssignments, loadAgentWorkStates, loadAgentObservabilityForTui } = await import('./db.js');
 
   // Collect tmux inventory (shell, no DB) and executors (DB, fail-soft) in parallel
   const sessions = getTmuxInventory();
@@ -282,11 +291,17 @@ export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
   // snapshot — just without work-state badges or the alert count.
   let workStates = new Map<string, WorkState>();
   let alertCount = 0;
+  let observability = new Map<string, AgentObservabilitySnapshot>();
   try {
     workStates = await loadAgentWorkStates();
   } catch {
     /* keep empty — Nav falls back to wsAgentState */
   }
+  // Wish 3 (agent-observability-snapshot): canonical per-agent snapshot
+  // exposed alongside workStates so badges can render health flags
+  // (`stale_executor`, `recent_failure`, `cost_spike`, …) without
+  // recomputing them. Failure path returns an empty map.
+  observability = await loadAgentObservabilityForTui();
   try {
     const { listActiveDerivedSignals } = await import('../lib/derived-signals/index.js');
     const signals = await listActiveDerivedSignals();
@@ -325,6 +340,7 @@ export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
     assignments,
     gaps,
     workStates,
+    observability,
     alertCount,
     timestamp: Date.now(),
   };

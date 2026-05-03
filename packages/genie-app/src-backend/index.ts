@@ -12,6 +12,11 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { type NatsConnection, StringCodec, connect } from 'nats';
+import {
+  AGENT_OBSERVABILITY_SCHEMA_VERSION,
+  getAgentObservability,
+  listAgentObservability,
+} from '../../../src/lib/agent-observability.js';
 import { getConnection } from '../../../src/lib/db.js';
 import { listPendingApprovals, resolveApproval } from '../../../src/lib/providers/claude-sdk-remote-approval.js';
 import { GENIE_SUBJECTS } from '../lib/subjects.js';
@@ -212,14 +217,30 @@ function registerHandlers(sql: any): void {
   });
 
   // ---- Agents ----
+  //
+  // The original list/show shapes are preserved for backward compatibility.
+  // Each response now also carries `_observability` populated from the
+  // canonical `v_agent_observability` projection (wish 3 Group 1) so the
+  // app, CLI, and TUI agree on health flags / executor state / cost.
 
   reply(sub.agents.list(ORG_ID), async () => {
-    return sql`
-      SELECT a.id, a.custom_name, a.role, a.team, a.title, a.state,
-             a.reports_to, a.current_executor_id, a.started_at
-      FROM agents a
-      ORDER BY a.team, a.custom_name
-    `;
+    const [legacy, observability] = await Promise.all([
+      sql`
+        SELECT a.id, a.custom_name, a.role, a.team, a.title, a.state,
+               a.reports_to, a.current_executor_id, a.started_at
+        FROM agents a
+        ORDER BY a.team, a.custom_name
+      `,
+      listAgentObservability({ includeHarness: true }).catch(() => []),
+    ]);
+    return {
+      _source: {
+        observabilitySchemaVersion: AGENT_OBSERVABILITY_SCHEMA_VERSION,
+        observabilityView: 'v_agent_observability',
+      },
+      agents: legacy,
+      _observability: observability,
+    };
   });
 
   reply(sub.agents.show(ORG_ID), async (params: { agent_id: string }) => {
@@ -231,7 +252,7 @@ function registerHandlers(sql: any): void {
     if (agents.length === 0) return { error: 'not_found' };
 
     const agent = agents[0];
-    const [executor, sessions, events] = await Promise.all([
+    const [executor, sessions, events, observability] = await Promise.all([
       agent.current_executor_id
         ? sql`SELECT * FROM executors WHERE id = ${agent.current_executor_id}`
         : Promise.resolve([]),
@@ -248,13 +269,19 @@ function registerHandlers(sql: any): void {
         WHERE agent = ${agent.custom_name ?? params.agent_id}
         ORDER BY id DESC LIMIT 50
       `,
+      getAgentObservability(params.agent_id).catch(() => null),
     ]);
 
     return {
+      _source: {
+        observabilitySchemaVersion: AGENT_OBSERVABILITY_SCHEMA_VERSION,
+        observabilityView: 'v_agent_observability',
+      },
       agent,
       executor: executor[0] ?? null,
       sessions,
       recent_events: events,
+      _observability: observability,
     };
   });
 

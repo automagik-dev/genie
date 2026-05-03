@@ -19,6 +19,12 @@
 
 import type { NatsConnection } from 'nats';
 import { StringCodec } from 'nats';
+import {
+  AGENT_OBSERVABILITY_SCHEMA_VERSION,
+  type AgentObservabilitySnapshot,
+  getAgentObservability,
+  listAgentObservability,
+} from '../../../src/lib/agent-observability.js';
 import { getConnection } from '../../../src/lib/db.js';
 import { GENIE_SUBJECTS } from '../lib/subjects.js';
 
@@ -156,9 +162,35 @@ export async function listAgents(): Promise<AgentRow[]> {
   `;
 }
 
+/**
+ * Combined agent listing — preserves the historical `AgentRow` shape used
+ * by the app's screen renderers AND attaches the canonical observability
+ * snapshot from `v_agent_observability`. Wish 3 (agent-observability-snapshot).
+ */
+export async function listAgentsWithObservability(): Promise<{
+  source: { observabilitySchemaVersion: number; observabilityView: string };
+  agents: AgentRow[];
+  observability: AgentObservabilitySnapshot[];
+}> {
+  const [agents, observability] = await Promise.all([
+    listAgents(),
+    listAgentObservability({ includeHarness: true }).catch(() => []),
+  ]);
+  return {
+    source: {
+      observabilitySchemaVersion: AGENT_OBSERVABILITY_SCHEMA_VERSION,
+      observabilityView: 'v_agent_observability',
+    },
+    agents,
+    observability,
+  };
+}
+
 export async function showAgent(id: string): Promise<{
   agent: AgentRow;
   executor: ExecutorRow | null;
+  observability: AgentObservabilitySnapshot | null;
+  source: { observabilitySchemaVersion: number; observabilityView: string };
 } | null> {
   const sql = await getConnection();
   const agents = await sql<AgentRow[]>`
@@ -180,7 +212,17 @@ export async function showAgent(id: string): Promise<{
     executor = executors[0] ?? null;
   }
 
-  return { agent, executor };
+  const observability = await getAgentObservability(id).catch(() => null);
+
+  return {
+    agent,
+    executor,
+    observability,
+    source: {
+      observabilitySchemaVersion: AGENT_OBSERVABILITY_SCHEMA_VERSION,
+      observabilityView: 'v_agent_observability',
+    },
+  };
 }
 
 export async function listTasks(boardId?: string): Promise<TaskRow[]> {
