@@ -29,7 +29,7 @@
     "build:plugin": "node scripts/build.js",
     "sync": "node scripts/sync.js",
     "build-and-sync": "npm run build:plugin && npm run sync",
-    "postinstall": "node scripts/postinstall-tmux.js && node scripts/postinstall-hook-binary.js",
+    "postinstall": "node scripts/postinstall-tmux.js && node scripts/postinstall-hook-binary.js && node scripts/postinstall-migrations.js",
     "prepack": "bun run build",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

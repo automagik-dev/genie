@@ -20,6 +20,7 @@ const _T_BOOT = Date.now();
 import { Command } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
 import { type InstallOptions, installCommand } from './genie-commands/install.js';
+import { migrateCommand } from './genie-commands/migrate.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
@@ -216,6 +217,15 @@ program
   .option('--stable', 'Switch to stable releases (npm @latest tag)')
   .option('--skip-maintenance', 'Skip post-update maintenance (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
   .action(updateCommand);
+program
+  .command('migrate')
+  .description('Apply pending genie host-migrations (auto-runs on install)')
+  .option('--dry-run', 'List pending migrations without executing')
+  .option('--quiet', 'Suppress per-step OK lines (used by postinstall)')
+  .option('--status', 'Show applied / pending / failed table')
+  .action(async (opts) => {
+    await migrateCommand({ dryRun: opts.dryRun, quiet: opts.quiet, status: opts.status });
+  });
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 
 const shortcuts = program.command('shortcuts').description('Manage tmux keyboard shortcuts');
