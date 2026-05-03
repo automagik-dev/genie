@@ -366,9 +366,29 @@ function deriveLeader(cfg: NativeTeamConfig): string | null {
  * encodes the array once into a proper jsonb array. ON CONFLICT DO NOTHING —
  * the seed is an idempotent backfill; `ensureTeamRow` owns the hot update
  * path and may refresh fields there.
+ *
+ * Migration 061 (`teams_members_uuid_check`) added a CHECK requiring every
+ * member entry to be either a UUID or `dir:`-prefixed. Legacy on-disk team
+ * configs predate the retire-session-names wish and contain bare agent
+ * names, which fail the constraint. We filter those at the seed boundary so
+ * upserts succeed (degraded but non-throwing). The retire-session-names wish
+ * is the proper data migration that will eventually rewrite on-disk configs;
+ * once that lands the dropped count goes to 0.
  */
+const MEMBER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function isValidTeamMember(s: string): boolean {
+  return MEMBER_UUID_RE.test(s) || s.startsWith('dir:');
+}
+
 async function upsertNativeTeam(sql: Sql, c: NativeTeamConfig): Promise<void> {
-  const memberNames = (c.members ?? []).map((m) => m.name).filter((n) => typeof n === 'string' && n.length > 0);
+  const rawMemberNames = (c.members ?? []).map((m) => m.name).filter((n) => typeof n === 'string' && n.length > 0);
+  const memberNames = rawMemberNames.filter(isValidTeamMember);
+  const dropped = rawMemberNames.length - memberNames.length;
+  if (dropped > 0) {
+    console.warn(
+      `[pg-seed] team "${c.name}": dropped ${dropped} legacy member name(s) failing migration 061 constraint (UUID or dir: prefix required); kept ${memberNames.length}`,
+    );
+  }
   await sql`
     INSERT INTO teams (
       name, repo, base_branch, worktree_path, leader,
