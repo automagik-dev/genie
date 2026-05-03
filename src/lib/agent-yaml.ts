@@ -250,6 +250,8 @@ export const AgentConfigSchema = z
         allow: z.array(z.string()).optional(),
         deny: z.array(z.string()).optional(),
         bashAllowPatterns: z.array(z.string()).optional(),
+        allowedTools: z.array(z.string()).optional(),
+        permissionMode: SdkPermissionModeSchema.optional(),
       })
       .strict()
       .optional(),
