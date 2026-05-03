@@ -338,11 +338,16 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(teams[0].worktree_path).toBe('/tmp/worktree/seed-team-beta');
       expect(teams[0].leader).toBe('engineer');
 
-      // Members must be a proper jsonb array (Bug D regression guard) and
-      // must be the bare name strings (rich members mapped to names).
+      // Members must be a proper jsonb array (Bug D regression guard).
+      // Migration 061 (`teams_members_uuid_check`) requires every member
+      // entry to be a UUID or `dir:`-prefixed; the legacy bare-name
+      // entries in this fixture get filtered at the seed boundary so the
+      // INSERT satisfies the constraint. The retire-session-names wish
+      // owns the on-disk normalization that will eventually emit UUIDs
+      // here; for now this test pins the legacy-drop behavior.
       const typeRow = await sql`SELECT jsonb_typeof(members) AS t FROM teams WHERE name = 'seed-team-beta'`;
       expect(typeRow[0].t).toBe('array');
-      expect(teams[0].members).toEqual(['engineer', 'reviewer']);
+      expect(teams[0].members).toEqual([]);
 
       // Claude-native configs must NOT be renamed to .migrated (authoritative).
       expect(existsSync(join(teamDir, 'config.json'))).toBe(true);
@@ -354,6 +359,105 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         mtimeMs: String(statSync(join(testClaudeDir, 'teams')).mtimeMs),
         teamNames: ['seed-team-beta'],
       });
+    });
+
+    test('seed roundtrips UUID + dir: prefixed members through migration 061 constraint', async () => {
+      const sql = await getConnection();
+      const teamDir = join(testClaudeDir, 'teams', 'seed-team-uuid');
+      mkdirSync(teamDir, { recursive: true });
+      // After retire-session-names ships, on-disk configs will emit UUID
+      // names. Seed must roundtrip those without filtering.
+      const memberA = '11111111-2222-3333-4444-555555555555';
+      const memberB = 'dir:engineer';
+      writeFileSync(
+        join(teamDir, 'config.json'),
+        JSON.stringify({
+          name: 'seed-team-uuid',
+          createdAt: Date.now(),
+          leadAgentId: `${memberA}@seed-team-uuid`,
+          members: [
+            {
+              agentId: `${memberA}@seed-team-uuid`,
+              name: memberA,
+              agentType: 'engineer',
+              joinedAt: Date.now(),
+              backendType: 'tmux',
+              color: 'blue',
+              planModeRequired: false,
+              isActive: true,
+            },
+            {
+              agentId: `${memberB}@seed-team-uuid`,
+              name: memberB,
+              agentType: 'engineer',
+              joinedAt: Date.now(),
+              backendType: 'tmux',
+              color: 'red',
+              planModeRequired: false,
+              isActive: true,
+            },
+          ],
+          repo: '/tmp/test-repo',
+          worktreePath: '/tmp/worktree/seed-team-uuid',
+          baseBranch: 'dev',
+          status: 'in_progress',
+        }),
+      );
+
+      const result = await runSeed(sql, testRepo);
+      expect(result.teams).toBeGreaterThanOrEqual(1);
+
+      const teams = await sql`SELECT * FROM teams WHERE name = 'seed-team-uuid'`;
+      expect(teams.length).toBe(1);
+      expect(teams[0].members).toEqual([memberA, memberB]);
+    });
+
+    test('seed mixes valid + legacy members and drops only legacy', async () => {
+      const sql = await getConnection();
+      const teamDir = join(testClaudeDir, 'teams', 'seed-team-mixed');
+      mkdirSync(teamDir, { recursive: true });
+      const validUuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+      writeFileSync(
+        join(teamDir, 'config.json'),
+        JSON.stringify({
+          name: 'seed-team-mixed',
+          createdAt: Date.now(),
+          leadAgentId: `${validUuid}@seed-team-mixed`,
+          members: [
+            {
+              agentId: `${validUuid}@seed-team-mixed`,
+              name: validUuid,
+              agentType: 'engineer',
+              joinedAt: Date.now(),
+              backendType: 'tmux',
+              color: 'blue',
+              planModeRequired: false,
+              isActive: true,
+            },
+            {
+              agentId: 'legacy-bare@seed-team-mixed',
+              name: 'legacy-bare',
+              agentType: 'engineer',
+              joinedAt: Date.now(),
+              backendType: 'tmux',
+              color: 'red',
+              planModeRequired: false,
+              isActive: true,
+            },
+          ],
+          repo: '/tmp/test-repo',
+          worktreePath: '/tmp/worktree/seed-team-mixed',
+          baseBranch: 'dev',
+        }),
+      );
+
+      const result = await runSeed(sql, testRepo);
+      expect(result.teams).toBeGreaterThanOrEqual(1);
+
+      const teams = await sql`SELECT * FROM teams WHERE name = 'seed-team-mixed'`;
+      expect(teams.length).toBe(1);
+      // Valid UUID kept, legacy bare name dropped.
+      expect(teams[0].members).toEqual([validUuid]);
     });
 
     test('seed imports mailbox/*.json into mailbox table', async () => {
