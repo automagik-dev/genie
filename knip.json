@@ -52,7 +52,8 @@
     "src/serve/detector-scheduler.ts",
     "src/term-commands/events-migrate.ts",
     "src/genie-commands/observability-health.ts",
-    "test/observability/emit-bench.ts"
+    "test/observability/emit-bench.ts",
+    "src/migrations/steps/*.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignore": ["src/lib/design-tokens.ts"],

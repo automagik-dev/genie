@@ -1,3 +1,19 @@
+## v4.x.x — Host Migrations
+
+**Added:** `genie migrate` CLI verb — versioned, applied-once host-state migrations that detect and fix drift between current host state and current code expectations (pm2 env blocks, embedded pgserve fantasmas, config drifts). Mirrors the DB-migrations pattern but for the HOST itself.
+
+**Added:** npm `postinstall` hook (`scripts/postinstall-migrations.js`) auto-runs `genie migrate --quiet` after `bun add -g @automagik/genie@latest`. Soft-fails so package install never breaks; manual `genie migrate` remains the explicit escape hatch.
+
+**Initial migrations shipped:**
+- `001-pm2-env-databaseurl-bake` — re-applies the bake-DATABASE_URL fix (commit 5567e202) on hosts with pm2 genie-serve env missing the variable
+- `002-kill-embedded-pgserve-legacy` — stops legacy embedded pgserve listening on non-canonical ports when canonical 8432 is healthy
+
+**Contract:** Users upgrading to genie@>=4.260503.x get host-state migrations applied transparently via postinstall. Manual `genie migrate` remains as the explicit escape hatch for forced re-runs.
+
+**Override:** Set `GENIE_SKIP_MIGRATIONS=1` to bypass the hook (CI / containers / install-only flows).
+
+**Tracking:** Applied migrations recorded in `~/.genie/migrations.json` (atomic write, file-based to avoid PG dependency during early-boot self-heal).
+
 # Changelog
 
 ## Unreleased
