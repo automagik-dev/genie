@@ -39,6 +39,7 @@ import {
   emitUserPromptEvent,
 } from './handlers/runtime-emit.js';
 import { sessionSync } from './handlers/session-sync.js';
+import { resolveAgentName, resolveTeamName } from './resolve-agent-name.js';
 import type { Handler, HandlerResult, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
@@ -264,14 +265,19 @@ export async function runHandler(
   const handlerPayload: HookPayload = { ...payload };
   if (currentInput) handlerPayload.tool_input = currentInput;
   const start = Date.now();
-  const agentId = process.env.GENIE_AGENT_NAME ?? 'unknown';
+  // Resolve agent identity from payload + executor env + session context, falling
+  // back to 'harness' for non-agent hook activity (CLI, daemon, tests). Avoids
+  // the previous `'unknown'` bucket that masked both unknown agents and harness
+  // work — wish observability-signal-normalization Group 3.
+  const agentId = resolveAgentName(handlerPayload);
+  const teamId = resolveTeamName(handlerPayload);
   const span = isWideEmitEnabled()
     ? startSpan(
         'hook.delivery',
         // event included so hook_perf_baseline view can group by it (Group 4 of
         // hookify-perf-foundation). tool may be undefined for UserPromptSubmit / Stop.
         { hook_name: handler.name, agent_id: agentId, tool: payload.tool_name, event: payload.hook_event_name },
-        { source_subsystem: 'hooks', ctx: getTraceContext() ?? undefined, agent: agentId },
+        { source_subsystem: 'hooks', ctx: getTraceContext() ?? undefined, agent: agentId, team: teamId },
       )
     : null;
   try {
@@ -285,7 +291,7 @@ export async function runHandler(
       endSpan(
         span,
         { hook_name: handler.name, agent_id: agentId, status: result?.decision === 'deny' ? 'rejected' : 'ok' },
-        { source_subsystem: 'hooks', agent: agentId },
+        { source_subsystem: 'hooks', agent: agentId, team: teamId },
       );
     }
     return result;
@@ -296,7 +302,7 @@ export async function runHandler(
       endSpan(
         span,
         { hook_name: handler.name, agent_id: agentId, status: 'error', stderr_excerpt: msg.slice(0, 1024) },
-        { source_subsystem: 'hooks', agent: agentId },
+        { source_subsystem: 'hooks', agent: agentId, team: teamId },
       );
     }
     if (isBlocking) {
