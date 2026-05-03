@@ -178,7 +178,6 @@ const styles = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap' as const,
   },
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: status color mapper
   statusBadge: (s: string) => ({
     display: 'inline-flex',
     alignItems: 'center',
@@ -259,7 +258,6 @@ const styles = {
 // Status Icon
 // ============================================================================
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: status icon dispatch
 function RunStatusIcon({ status }: { status: string }) {
   const icon =
     status === 'success'

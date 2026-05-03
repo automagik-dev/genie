@@ -20,11 +20,11 @@ import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 
-/** Budget ceilings — ratcheted from the Group 1 baseline (2026-05-03). */
+/** Budget ceilings — ratcheted from the post-cleanup baseline (2026-05-03). */
 export const BUDGET = {
   maxWarningCount: 7,
   maxScore: 42,
-  maxSuppressionCount: 19,
+  maxSuppressionCount: 8,
 } as const;
 
 export interface ComplexityWarning {

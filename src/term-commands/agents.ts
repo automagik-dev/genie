@@ -889,7 +889,6 @@ async function autoConfirmTrustPrompt(paneId: string): Promise<void> {
  * First agent in a newly created team window reuses the blank pane via send-keys.
  * Subsequent agents split-window into the same team window.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing tmux pane routing logic, split targets and launch modes are interdependent
 function createTmuxPane(ctx: SpawnCtx & { sessionOverride?: string }, teamWindow: TeamWindowInfo | null): string {
   const { execSync } = require('node:child_process');
   const useLaunchScript = ctx.validated.provider === 'claude' && Boolean(ctx.validated.nativeTeam?.enabled);
@@ -1104,7 +1103,6 @@ async function awaitAgentReadiness(paneId: string, role: string, tolerateReadine
   throw new AgentReadinessTimeoutError(role, paneId, result.elapsedMs);
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: each branch is a distinct spawn-pipeline step (createTmuxPane / capturePanePid / validateSpawnedPane / awaitAgentReadiness) with structured worker.spawn.failed emissions per #1600 — splitting would obscure the linear flow
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   // Skip team-window creation for isolated-session spawns. When the caller asks
   // for `--new-window` with an explicit `--session <name>`, the agent runs in
@@ -2416,7 +2414,6 @@ export async function resolveSpawnIdentity(
 }
 
 /** Resolve team name and auto-resume dead workers. Duplicate rejection moved to the state machine. */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: 5-tier team resolution + ResumePaneVanishedError fall-through (#1602 Round 4) — tiers are linear and each branch is doc-blocked
 async function resolveTeamAndResume(
   effectiveRole: string,
   options: SpawnOptions,
