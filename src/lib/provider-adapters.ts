@@ -109,8 +109,18 @@ export interface SpawnParams {
   initialPrompt?: string;
   /** Display name for the CC session (emits --name). Used in /resume and terminal title. */
   name?: string;
-  /** Claude Code permissions (allow/deny lists with Bash() patterns). Merged into --settings. */
-  permissions?: { allow?: string[]; deny?: string[] };
+  /**
+   * Claude Code permissions. `allow`/`deny` are merged into `--settings`
+   * Bash() pattern lists. `allowedTools` becomes `--allowedTools <list>`.
+   * `permissionMode` becomes `--permission-mode <mode>` (overrides the
+   * native-team default of `auto` when present).
+   */
+  permissions?: {
+    allow?: string[];
+    deny?: string[];
+    allowedTools?: string[];
+    permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto' | 'remoteApproval';
+  };
   /** Tools the agent is NOT allowed to use (emits --disallowedTools). */
   disallowedTools?: string[];
   /** OTel receiver port to inject as OTEL_EXPORTER_OTLP_ENDPOINT. Undefined = skip injection. */
@@ -178,6 +188,10 @@ const spawnParamsSchema = z.object({
     .object({
       allow: z.array(z.string()).optional(),
       deny: z.array(z.string()).optional(),
+      allowedTools: z.array(z.string()).optional(),
+      permissionMode: z
+        .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto', 'remoteApproval'])
+        .optional(),
     })
     .optional(),
   disallowedTools: z.array(z.string()).optional(),

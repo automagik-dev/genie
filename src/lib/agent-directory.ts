@@ -101,6 +101,8 @@ export interface DirectoryEntry {
     allow?: string[];
     deny?: string[];
     bashAllowPatterns?: string[];
+    allowedTools?: string[];
+    permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto' | 'remoteApproval';
   };
   /** Tools the agent is NOT allowed to use (Claude Code --disallowedTools). */
   disallowedTools?: string[];
@@ -433,6 +435,12 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
  * tmux/env fallback — and powers tier 2 of the team-resolution precedence.
  */
 async function lookupTemplateTeam(name: string): Promise<string | null> {
+  // Guard: agent_templates.id is UUID; non-UUID inputs (built-in role names like
+  // "engineer", "fix") cannot match by id and would crash PG with
+  // "invalid input syntax for type uuid". Returning null lets callers fall
+  // through to the next resolution tier instead of erroring spawns.
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_REGEX.test(name)) return null;
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();

@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: "Reviews criteria compliance AND code quality in one pass. Returns SHIP or FIX-FIRST with severity-tagged findings."
-model: haiku
+model: opus
 color: yellow
 promptMode: append
 tools: ["Read", "Glob", "Grep", "Bash"]
