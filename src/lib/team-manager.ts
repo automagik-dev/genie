@@ -396,6 +396,10 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
   }
 
   const sql = await getConnection();
+  // `sql.json(...)` (not `JSON.stringify`) so postgres.js encodes once into a
+  // proper jsonb array. `JSON.stringify([])` produces a jsonb STRING `"[]"`,
+  // which fails migration 061's `teams_members_uuid_check` (it calls
+  // `jsonb_typeof = 'array'` on the value). Same pattern as migration 045.
   await sql`
     INSERT INTO teams (
       name, repo, base_branch, worktree_path, leader,
@@ -405,13 +409,13 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
     ) VALUES (
       ${config.name}, ${config.repo}, ${config.baseBranch},
       ${config.worktreePath}, ${config.leader ?? null},
-      ${JSON.stringify(config.members)}, ${config.status},
+      ${sql.json(config.members)}, ${config.status},
       ${config.nativeTeamParentSessionId ?? null},
       ${config.nativeTeamsEnabled ?? false},
       ${config.tmuxSessionName ?? null}, ${config.wishSlug ?? null},
       ${config.spawner ?? null}, ${config.createdAt},
       ${config.parentTeam ?? null},
-      ${config.allowChildReachback ? JSON.stringify(config.allowChildReachback) : null}
+      ${config.allowChildReachback ? sql.json(config.allowChildReachback) : null}
     ) ON CONFLICT (name) DO NOTHING
   `;
 
@@ -909,13 +913,15 @@ async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
 /** Update team config in PG (full overwrite). */
 export async function updateTeamConfig(name: string, config: TeamConfig): Promise<void> {
   const sql = await getConnection();
+  // `sql.json(...)` mirrors the createTeam fix — see migration 061's
+  // `teams_members_uuid_check` and migration 045's encoding cleanup notes.
   await sql`
     UPDATE teams SET
       repo = ${config.repo},
       base_branch = ${config.baseBranch},
       worktree_path = ${config.worktreePath},
       leader = ${config.leader ?? null},
-      members = ${JSON.stringify(config.members)},
+      members = ${sql.json(config.members)},
       status = ${config.status},
       native_team_parent_session_id = ${config.nativeTeamParentSessionId ?? null},
       native_teams_enabled = ${config.nativeTeamsEnabled ?? false},
@@ -923,7 +929,7 @@ export async function updateTeamConfig(name: string, config: TeamConfig): Promis
       wish_slug = ${config.wishSlug ?? null},
       spawner = ${config.spawner ?? null},
       parent_team = ${config.parentTeam ?? null},
-      allow_child_reachback = ${config.allowChildReachback ? JSON.stringify(config.allowChildReachback) : null}
+      allow_child_reachback = ${config.allowChildReachback ? sql.json(config.allowChildReachback) : null}
     WHERE name = ${name}
   `;
 }
