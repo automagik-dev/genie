@@ -326,7 +326,7 @@ describe('visual: AgentPicker', () => {
 // ---------------------------------------------------------------------------
 
 describe('visual: QuitDialog', () => {
-  test('default — overlay + bordered panel + "Quit genie?" prompt', async () => {
+  test('default — overlay + bordered panel + "Close TUI?" prompt', async () => {
     testSetup = await testRender(<QuitDialog onConfirm={() => {}} onCancel={() => {}} />, {
       width: 80,
       height: 20,
