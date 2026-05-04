@@ -1,0 +1,43 @@
+-- 063_readd_fk_mailbox_from_worker.sql.gated
+--
+-- Wish: retire-session-names-id-only, G7 kill-switch (companion to 062).
+--
+-- Re-adds fk_mailbox_from_worker that 062 dropped as a temporary kill-switch
+-- to unblock dispatch while the broader G4-G7 caller flip was in flight.
+--
+-- ⚠️  GATED MIGRATION — DO NOT APPLY UNTIL REVIEWER CONFIRMS CALLERS ARE CLEAN ⚠️
+--   - This file ships in the same PR as 062 so the kill-switch and its
+--     reversal stay together in source control.
+--   - The .sql.gated extension keeps it OUT of the auto-runner — see
+--     src/lib/db-migrations.ts loadMigrationFiles which filters on `.sql`
+--     suffix only. The runner physically cannot pick this file up until
+--     an operator renames the file to drop the .gated suffix.
+--   - GATING PROCEDURE: after every dispatcher path (msg.ts, agent/send.ts,
+--     hooks/dispatch-client, codex-inbox-deliver) is reviewed-green and
+--     confirmed to write UUIDs into mailbox.from_worker, an operator runs:
+--       mv src/db/migrations/063_readd_fk_mailbox_from_worker.sql.gated \
+--          src/db/migrations/063_readd_fk_mailbox_from_worker.sql
+--       bun --bun src/genie.ts migrate apply
+--     Then commits the rename with a message like
+--     "chore(db): close kill-switch — re-add fk_mailbox_from_worker (063)".
+--
+-- Constraint shape mirrors the original 061 definition: NOT VALID, CASCADE
+-- on delete. NOT VALID skips back-filling against existing rows so the
+-- constraint applies only to subsequent INSERTs/UPDATEs — matches the
+-- heal-not-wipe pattern used throughout migration 061.
+--
+-- Idempotent: only re-adds when the constraint is missing. Safe to re-run.
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_mailbox_from_worker'
+  ) THEN
+    ALTER TABLE mailbox
+      ADD CONSTRAINT fk_mailbox_from_worker
+      FOREIGN KEY (from_worker) REFERENCES agents(id) ON DELETE CASCADE NOT VALID;
+    RAISE NOTICE '[063] re-added fk_mailbox_from_worker (kill-switch closed)';
+  ELSE
+    RAISE NOTICE '[063] fk_mailbox_from_worker already present — no-op';
+  END IF;
+END $$;
