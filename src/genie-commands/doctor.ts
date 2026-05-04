@@ -71,91 +71,55 @@ function printCheckResult(result: CheckResult): void {
   }
 }
 
+interface BinarySpec {
+  cmd: string;
+  displayName: string;
+  missingStatus: 'fail' | 'warn';
+  missingSuggestion: string;
+}
+
+const PREREQ_BINARIES: BinarySpec[] = [
+  {
+    cmd: 'tmux',
+    displayName: 'tmux',
+    missingStatus: 'fail',
+    missingSuggestion: 'Install with: brew install tmux (or apt install tmux)',
+  },
+  {
+    cmd: 'jq',
+    displayName: 'jq',
+    missingStatus: 'fail',
+    missingSuggestion: 'Install with: brew install jq (or apt install jq)',
+  },
+  {
+    cmd: 'bun',
+    displayName: 'bun',
+    missingStatus: 'fail',
+    missingSuggestion: 'Install with: curl -fsSL https://bun.sh/install | bash',
+  },
+  {
+    cmd: 'claude',
+    displayName: 'Claude Code',
+    missingStatus: 'warn',
+    missingSuggestion: 'Install with: npm install -g @anthropic-ai/claude-code',
+  },
+  // Codex is required for `genie spawn ... --provider codex` to work.
+  {
+    cmd: 'codex',
+    displayName: 'Codex CLI',
+    missingStatus: 'warn',
+    missingSuggestion: 'Install via OpenAI account; codex is optional unless using --provider codex',
+  },
+];
+
 /**
  * Check prerequisites (tmux, jq, bun, Claude Code)
  */
 async function checkPrerequisites(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
-  // Check tmux
-  const tmuxCheck = await checkCommand('tmux');
-  if (tmuxCheck.exists) {
-    results.push({
-      name: 'tmux',
-      status: 'pass',
-      message: tmuxCheck.version || '',
-    });
-  } else {
-    results.push({
-      name: 'tmux',
-      status: 'fail',
-      suggestion: 'Install with: brew install tmux (or apt install tmux)',
-    });
-  }
-
-  // Check jq
-  const jqCheck = await checkCommand('jq');
-  if (jqCheck.exists) {
-    results.push({
-      name: 'jq',
-      status: 'pass',
-      message: jqCheck.version || '',
-    });
-  } else {
-    results.push({
-      name: 'jq',
-      status: 'fail',
-      suggestion: 'Install with: brew install jq (or apt install jq)',
-    });
-  }
-
-  // Check bun
-  const bunCheck = await checkCommand('bun');
-  if (bunCheck.exists) {
-    results.push({
-      name: 'bun',
-      status: 'pass',
-      message: bunCheck.version || '',
-    });
-  } else {
-    results.push({
-      name: 'bun',
-      status: 'fail',
-      suggestion: 'Install with: curl -fsSL https://bun.sh/install | bash',
-    });
-  }
-
-  // Check Claude Code
-  const claudeCheck = await checkCommand('claude');
-  if (claudeCheck.exists) {
-    results.push({
-      name: 'Claude Code',
-      status: 'pass',
-      message: claudeCheck.version || '',
-    });
-  } else {
-    results.push({
-      name: 'Claude Code',
-      status: 'warn',
-      suggestion: 'Install with: npm install -g @anthropic-ai/claude-code',
-    });
-  }
-
-  // Check Codex (Group 6 of codex-provider-parity wish — was missing).
-  // Codex is required for `genie spawn ... --provider codex` to work.
-  const codexCheck = await checkCommand('codex');
-  if (codexCheck.exists) {
-    results.push({
-      name: 'Codex CLI',
-      status: 'pass',
-      message: codexCheck.version || '',
-    });
-  } else {
-    results.push({
-      name: 'Codex CLI',
-      status: 'warn',
-      suggestion: 'Install via OpenAI account; codex is optional unless using --provider codex',
-    });
+  for (const spec of PREREQ_BINARIES) {
+    results.push(await checkBinaryPrereq(spec));
   }
 
   // Non-interactive PATH check (Group 6 deliverable 1).
@@ -172,46 +136,56 @@ async function checkPrerequisites(): Promise<CheckResult[]> {
   // wasn't on the non-interactive PATH for that user.
   const requiredForSpawn = ['genie', 'bun', 'node', 'npm', 'git', 'claude', 'codex'] as const;
   for (const bin of requiredForSpawn) {
-    const interactivePath = await resolveBinaryInteractive(bin);
-    const nonInteractivePath = await resolveBinaryNonInteractive(bin);
-
-    if (interactivePath && nonInteractivePath) {
-      // OK in both shells — green.
-      results.push({
-        name: `Non-interactive PATH: ${bin}`,
-        status: 'pass',
-        message: nonInteractivePath,
-      });
-    } else if (interactivePath && !nonInteractivePath) {
-      // Available interactively but missing in non-interactive shells —
-      // spawn-scripts will fail. This is the actionable warning case.
-      results.push({
-        name: `Non-interactive PATH: ${bin}`,
-        status: 'warn',
-        message: 'interactive-only',
-        suggestion: `Move PATH export from ~/.bashrc to ~/.profile so spawn-scripts can resolve ${bin}. (Or use a stable symlink in ~/.local/bin.)`,
-      });
-    } else if (!interactivePath && bin !== 'codex') {
-      // Codex absence is already reported by the per-tool check above;
-      // skip the duplicate. For other tools, drop into the soft-warn branch.
-      // Not resolvable in non-interactive shell — soft warning only,
-      // because most of our spawn-scripts use absolute paths (resolved
-      // at spawn time via `which` from the parent shell). This still
-      // bites flows that shell out to bare names — `genie update`'s
-      // `git fetch` is the canonical failure case. Operator can ignore
-      // these for binaries they don't use; the warning is informational.
-      if (bin === 'genie' || bin === 'node' || bin === 'npm' || bin === 'git') {
-        results.push({
-          name: `Non-interactive PATH: ${bin}`,
-          status: 'warn',
-          message: 'not in non-interactive PATH',
-          suggestion: `Add ${bin} to ~/.profile (not just ~/.bashrc). Some flows (e.g. genie update) shell out to bare '${bin}' from non-interactive subprocesses.`,
-        });
-      }
-    }
+    const result = await checkNonInteractivePath(bin);
+    if (result) results.push(result);
   }
 
   return results;
+}
+
+async function checkBinaryPrereq(spec: BinarySpec): Promise<CheckResult> {
+  const check = await checkCommand(spec.cmd);
+  if (check.exists) {
+    return { name: spec.displayName, status: 'pass', message: check.version || '' };
+  }
+  return { name: spec.displayName, status: spec.missingStatus, suggestion: spec.missingSuggestion };
+}
+
+async function checkNonInteractivePath(bin: string): Promise<CheckResult | null> {
+  const interactivePath = await resolveBinaryInteractive(bin);
+  const nonInteractivePath = await resolveBinaryNonInteractive(bin);
+
+  if (interactivePath && nonInteractivePath) {
+    // OK in both shells — green.
+    return { name: `Non-interactive PATH: ${bin}`, status: 'pass', message: nonInteractivePath };
+  }
+  if (interactivePath && !nonInteractivePath) {
+    // Available interactively but missing in non-interactive shells —
+    // spawn-scripts will fail. This is the actionable warning case.
+    return {
+      name: `Non-interactive PATH: ${bin}`,
+      status: 'warn',
+      message: 'interactive-only',
+      suggestion: `Move PATH export from ~/.bashrc to ~/.profile so spawn-scripts can resolve ${bin}. (Or use a stable symlink in ~/.local/bin.)`,
+    };
+  }
+  // Codex absence is already reported by the per-tool check above; skip duplicate.
+  // For other tools, drop into the soft-warn branch.
+  // Not resolvable in non-interactive shell — soft warning only,
+  // because most of our spawn-scripts use absolute paths (resolved
+  // at spawn time via `which` from the parent shell). This still
+  // bites flows that shell out to bare names — `genie update`'s
+  // `git fetch` is the canonical failure case. Operator can ignore
+  // these for binaries they don't use; the warning is informational.
+  if (!interactivePath && (bin === 'genie' || bin === 'node' || bin === 'npm' || bin === 'git')) {
+    return {
+      name: `Non-interactive PATH: ${bin}`,
+      status: 'warn',
+      message: 'not in non-interactive PATH',
+      suggestion: `Add ${bin} to ~/.profile (not just ~/.bashrc). Some flows (e.g. genie update) shell out to bare '${bin}' from non-interactive subprocesses.`,
+    };
+  }
+  return null;
 }
 
 /**
