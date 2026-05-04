@@ -336,11 +336,15 @@ describe('reapStaleGenieProcesses (post-update reaper)', () => {
     // No exclude.add(serveDaemon) call — distinguishing this from the
     // pre-#1588 reaper which preserved the daemon.
     expect(reapFnBody).not.toMatch(/exclude\.add\(sp\)/);
-    // serve.pid file unlinked after reap to enable clean autospawn.
-    expect(reapFnBody).toContain("'serve.pid'");
-    expect(reapFnBody).toContain('unlinkSync(servePidPath)');
-    // pm2 cleanup runs after process reap.
+    // Post-refactor (#1653): serve.pid cleanup extracted to clearStaleServePidFile
+    // helper, called from reapStaleGenieProcesses. pm2 cleanup remains a direct call.
+    expect(reapFnBody).toContain('clearStaleServePidFile()');
     expect(reapFnBody).toContain('cleanupStalePm2Entries(log)');
+    const helperStart = source.indexOf('function clearStaleServePidFile');
+    expect(helperStart).toBeGreaterThan(-1);
+    const helperBody = source.slice(helperStart, source.indexOf('\n}\n', helperStart));
+    expect(helperBody).toContain("'serve.pid'");
+    expect(helperBody).toContain('unlinkSync(servePidPath)');
   });
 
   test('cleanupStalePm2Entries removes broken legacy genie-serve.ecosystem name', () => {
