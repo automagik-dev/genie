@@ -71,9 +71,7 @@ interface StubScenario {
 }
 
 interface StubSql {
-  // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql tagged template surface
-  (strings: TemplateStringsArray, ...values: unknown[]): any;
-  // biome-ignore lint/suspicious/noExplicitAny: postgres.js helper surface
+  (strings: TemplateStringsArray, ...values: unknown[]): unknown;
   begin: (cb: (tx: StubSql) => Promise<unknown>) => Promise<unknown>;
   json: (obj: unknown) => unknown;
   /** Captured SQL templates for assertion. */
@@ -83,8 +81,7 @@ interface StubSql {
 function makeStubSql(scenario: StubScenario): StubSql {
   const captured: string[] = [];
 
-  // biome-ignore lint/suspicious/noExplicitAny: postgres.js result shape varies
-  const dispatch = (strings: TemplateStringsArray, ..._values: unknown[]): any => {
+  const dispatch = (strings: TemplateStringsArray, ..._values: unknown[]): unknown => {
     const text = strings.join('?');
     captured.push(text);
 
