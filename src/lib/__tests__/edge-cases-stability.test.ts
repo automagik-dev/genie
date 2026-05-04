@@ -92,7 +92,9 @@ describe('7.1 Concurrent Operations', () => {
     // CLI connection alive for the process lifetime.
     expect(source).toContain('idle_timeout: cliShortLived ? 0 : 1');
     // Socket mode gets the pgserve startup window; legacy TCP keeps the fast fallback.
-    expect(source).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(useSocket)');
+    // Post-refactor (#1651): connect_timeout wired via transport.useSocket inside
+    // buildPgClientOptions; the helper itself still gates on the raw `useSocket` arg.
+    expect(source).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(transport.useSocket)');
     expect(source).toContain('if (!useSocket) return 5');
   });
 

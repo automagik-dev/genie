@@ -968,20 +968,8 @@ async function _buildConnection(): Promise<any> {
   const _t0 = Date.now();
   const useSocket = shouldUseUnixSocket();
   if (useSocket) await requirePgserveDaemon();
-  // Direct-postmaster path (bypasses pgserve's daemon-control router):
-  //   - Eliminates per-accept SO_PEERCRED + /proc walk latency.
-  //   - Talks to the postmaster's own Unix socket (auto-created at
-  //     <tmpdir>/pgserve-sock-<wrapper_pid>-<ts>/) — postgres-native, no
-  //     router cap. The postmaster's `max_connections` is what limits us
-  //     (configurable via genie's spawn args).
-  //   - Skips fingerprint-based DB routing — we explicitly select our DB
-  //     by name. Fewer moving parts; no surprise `database does not exist`
-  //     after GC of an `app_anon_*` tenant.
-  // Falls back to the libpq-compat symlink (still through the router) when
-  // admin.json is missing or stale. Keeps the legacy path alive for hosts
-  // that haven't refreshed the daemon since pgserve@2.0.x.
-  const discovery = useSocket ? readPostmasterDiscovery() : null;
-  const port = useSocket ? (discovery?.port ?? 5432) : await ensurePgserve();
+
+  const transport = await resolveTransport(useSocket);
   const _t1 = Date.now();
   const pgModule = (await import('postgres')).default;
 
@@ -991,59 +979,9 @@ async function _buildConnection(): Promise<any> {
   // pgserve v2's accept hook auto-resolve to the fingerprint's database.
   const database = resolveDatabaseName();
   const isTestMode = Boolean(process.env.GENIE_TEST_DB_NAME);
-  const pgWireCredential = useSocket ? resolvePgserveAuthPassword() : resolveTcpPgPassword();
-
-  // Unix socket: postgres.js dials `<host>/.s.PGSQL.<port>` when host is an
-  // absolute path. When discovery is available, point at the postmaster's
-  // own socket dir (direct path, no router). Fallback uses pgserve v2's
-  // libpq compat symlink in the control socket dir (legacy router path).
-  const host = useSocket ? (discovery?.socketDir ?? resolvePgserveSocketDir()) : DEFAULT_HOST;
-
-  // Issue #1575 — pin cwd to genie's package directory before postgres.js
-  // opens its first connection. pgserve v2 fingerprints peers by walking
-  // /proc/<peer_pid>/cwd upward looking for the nearest package.json; if our
-  // cwd has no ancestor package.json (CLI invoked from ~/) or sits inside a
-  // *different* project, the peer is misrouted to either an ephemeral
-  // `app_anon_<fp>` (GC-eligible → "database does not exist") or to that
-  // foreign project's DB. Pinning cwd to genie's own package dir guarantees
-  // we always land in `app_<@automagik/genie>_<fp>` with `persist: true`.
-  //
-  // Strategy:
-  //   - Short-lived CLI (GENIE_SKIP_DB_BOOT=1): max:1 + idle_timeout:0 keep
-  //     the single fingerprinted connection alive for the process lifetime,
-  //     so we can chdir back immediately after the forced SELECT 1 below.
-  //   - Daemon / TUI / tests: caller (or test-setup) has already settled cwd
-  //     and we do NOT restore it after this routine, so max:50 is safe — every
-  //     pool connection fingerprints under the same stable cwd.
-  //
-  // NOTE: do NOT fold `isTestMode` into this gate. Tests run against a
-  // dedicated test pgserve (TCP or socket via test-setup) and frequently use
-  // concurrent transactions; max:1 deadlocks them. The test path skips the
-  // cwd restore (see `shouldRestoreCwd` below), so it never needs the
-  // single-conn safety. Operational evidence for keeping the gate (i.e. NOT
-  // dropping it entirely): on v4.260430.20, a small number of script-mode
-  // CLI fingerprints accumulated 296+ pgserve backends each, saturating
-  // max_connections=1000 — exactly the leak this gate caps at 1 per
-  // short-lived subprocess.
   const cliShortLived = !daemonCwdPinned && !isTestMode && process.env.GENIE_SKIP_DB_BOOT === '1';
-  const originalCwd = process.cwd();
-  const pkgDir = resolveGeniePackageDir();
   const shouldRestoreCwd = !daemonCwdPinned && !isTestMode;
-  let pinned = false;
-  if (pkgDir && process.cwd() !== pkgDir) {
-    try {
-      process.chdir(pkgDir);
-      pinned = true;
-    } catch (err) {
-      // chdir failure is non-fatal — fall through with the wrong cwd. The
-      // peer will still get *some* fingerprint; only routing identity may
-      // be off. Surface as a stderr warning so operators can investigate.
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`[pgserve] WARN: failed to pin cwd to ${pkgDir}: ${msg}\n`);
-    }
-  } else if (!pkgDir) {
-    process.stderr.write('[pgserve] WARN: could not resolve genie package dir; pgserve fingerprint may be unstable\n');
-  }
+  const cwdPin = pinCwdForFingerprint();
 
   // Bind to a local first so concurrent rebuilds (where another caller's
   // healthCheckCachedClient may null `sqlClient` mid-build) cannot make
@@ -1051,25 +989,7 @@ async function _buildConnection(): Promise<any> {
   // v4.260430.20 saturation report: scheduler reconciler crashed with
   // "null is not a function" after returning the module-level sqlClient
   // that had been nulled between assign and return.
-  const client = pgModule({
-    host,
-    port,
-    database,
-    username: DB_NAME,
-    // Socket mode uses SO_PEERCRED for tenancy, but the proxied Postgres
-    // handshake still requests pgserve's local role password.
-    [PG_AUTH_FIELD]: pgWireCredential,
-    // Pool sizing — see issue #1575 strategy block above. Short-lived CLI
-    // gets a single persistent connection so the cwd pin can be released
-    // immediately after fingerprinting.
-    max: cliShortLived ? 1 : 50,
-    idle_timeout: cliShortLived ? 0 : 1,
-    connect_timeout: resolvePgConnectTimeoutSeconds(useSocket),
-    onnotice: () => {},
-    connection: {
-      client_min_messages: 'warning',
-    },
-  });
+  const client = pgModule(buildPgClientOptions(transport, database, cliShortLived));
   sqlClient = client;
 
   try {
@@ -1102,24 +1022,132 @@ async function _buildConnection(): Promise<any> {
     });
     throw err;
   } finally {
-    // Issue #1575 — restore the user's cwd unless the daemon entrypoint has
-    // explicitly pinned for its lifetime. The fingerprinted connection is
-    // already established (SELECT 1 above forced pgserve's /proc walk under
-    // the pinned cwd); short-lived CLI processes use max:1 + idle_timeout:0
-    // so this same connection persists for the rest of the process and
-    // never re-fingerprints.
-    if (pinned && shouldRestoreCwd && process.cwd() !== originalCwd) {
-      try {
-        process.chdir(originalCwd);
-      } catch (err) {
-        // originalCwd may have been deleted while we were away — best-effort.
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[pgserve] WARN: failed to restore cwd to ${originalCwd}: ${msg}\n`);
-      }
-    }
+    restoreCwdAfterFingerprint(cwdPin, shouldRestoreCwd);
   }
 
   return client;
+}
+
+interface Transport {
+  useSocket: boolean;
+  host: string;
+  port: number;
+  pgWireCredential: string;
+}
+
+async function resolveTransport(useSocket: boolean): Promise<Transport> {
+  // Direct-postmaster path (bypasses pgserve's daemon-control router):
+  //   - Eliminates per-accept SO_PEERCRED + /proc walk latency.
+  //   - Talks to the postmaster's own Unix socket (auto-created at
+  //     <tmpdir>/pgserve-sock-<wrapper_pid>-<ts>/) — postgres-native, no
+  //     router cap. The postmaster's `max_connections` is what limits us
+  //     (configurable via genie's spawn args).
+  //   - Skips fingerprint-based DB routing — we explicitly select our DB
+  //     by name. Fewer moving parts; no surprise `database does not exist`
+  //     after GC of an `app_anon_*` tenant.
+  // Falls back to the libpq-compat symlink (still through the router) when
+  // admin.json is missing or stale. Keeps the legacy path alive for hosts
+  // that haven't refreshed the daemon since pgserve@2.0.x.
+  const discovery = useSocket ? readPostmasterDiscovery() : null;
+  const port = useSocket ? (discovery?.port ?? 5432) : await ensurePgserve();
+  // Unix socket: postgres.js dials `<host>/.s.PGSQL.<port>` when host is an
+  // absolute path. When discovery is available, point at the postmaster's
+  // own socket dir (direct path, no router). Fallback uses pgserve v2's
+  // libpq compat symlink in the control socket dir (legacy router path).
+  const host = useSocket ? (discovery?.socketDir ?? resolvePgserveSocketDir()) : DEFAULT_HOST;
+  const pgWireCredential = useSocket ? resolvePgserveAuthPassword() : resolveTcpPgPassword();
+  return { useSocket, host, port, pgWireCredential };
+}
+
+interface CwdPin {
+  originalCwd: string;
+  pinned: boolean;
+}
+
+// Issue #1575 — pin cwd to genie's package directory before postgres.js
+// opens its first connection. pgserve v2 fingerprints peers by walking
+// /proc/<peer_pid>/cwd upward looking for the nearest package.json; if our
+// cwd has no ancestor package.json (CLI invoked from ~/) or sits inside a
+// *different* project, the peer is misrouted to either an ephemeral
+// `app_anon_<fp>` (GC-eligible → "database does not exist") or to that
+// foreign project's DB. Pinning cwd to genie's own package dir guarantees
+// we always land in `app_<@automagik/genie>_<fp>` with `persist: true`.
+//
+// Strategy:
+//   - Short-lived CLI (GENIE_SKIP_DB_BOOT=1): max:1 + idle_timeout:0 keep
+//     the single fingerprinted connection alive for the process lifetime,
+//     so we can chdir back immediately after the forced SELECT 1 below.
+//   - Daemon / TUI / tests: caller (or test-setup) has already settled cwd
+//     and we do NOT restore it after this routine, so max:50 is safe — every
+//     pool connection fingerprints under the same stable cwd.
+//
+// NOTE: do NOT fold `isTestMode` into this gate. Tests run against a
+// dedicated test pgserve (TCP or socket via test-setup) and frequently use
+// concurrent transactions; max:1 deadlocks them. The test path skips the
+// cwd restore (see `shouldRestoreCwd` below), so it never needs the
+// single-conn safety. Operational evidence for keeping the gate (i.e. NOT
+// dropping it entirely): on v4.260430.20, a small number of script-mode
+// CLI fingerprints accumulated 296+ pgserve backends each, saturating
+// max_connections=1000 — exactly the leak this gate caps at 1 per
+// short-lived subprocess.
+function pinCwdForFingerprint(): CwdPin {
+  const originalCwd = process.cwd();
+  const pkgDir = resolveGeniePackageDir();
+  if (!pkgDir) {
+    process.stderr.write('[pgserve] WARN: could not resolve genie package dir; pgserve fingerprint may be unstable\n');
+    return { originalCwd, pinned: false };
+  }
+  if (process.cwd() === pkgDir) return { originalCwd, pinned: false };
+  try {
+    process.chdir(pkgDir);
+    return { originalCwd, pinned: true };
+  } catch (err) {
+    // chdir failure is non-fatal — fall through with the wrong cwd. The
+    // peer will still get *some* fingerprint; only routing identity may
+    // be off. Surface as a stderr warning so operators can investigate.
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[pgserve] WARN: failed to pin cwd to ${pkgDir}: ${msg}\n`);
+    return { originalCwd, pinned: false };
+  }
+}
+
+function restoreCwdAfterFingerprint(cwdPin: CwdPin, shouldRestoreCwd: boolean): void {
+  // Issue #1575 — restore the user's cwd unless the daemon entrypoint has
+  // explicitly pinned for its lifetime. The fingerprinted connection is
+  // already established (SELECT 1 above forced pgserve's /proc walk under
+  // the pinned cwd); short-lived CLI processes use max:1 + idle_timeout:0
+  // so this same connection persists for the rest of the process and
+  // never re-fingerprints.
+  if (!cwdPin.pinned || !shouldRestoreCwd || process.cwd() === cwdPin.originalCwd) return;
+  try {
+    process.chdir(cwdPin.originalCwd);
+  } catch (err) {
+    // originalCwd may have been deleted while we were away — best-effort.
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[pgserve] WARN: failed to restore cwd to ${cwdPin.originalCwd}: ${msg}\n`);
+  }
+}
+
+function buildPgClientOptions(transport: Transport, database: string, cliShortLived: boolean) {
+  return {
+    host: transport.host,
+    port: transport.port,
+    database,
+    username: DB_NAME,
+    // Socket mode uses SO_PEERCRED for tenancy, but the proxied Postgres
+    // handshake still requests pgserve's local role password.
+    [PG_AUTH_FIELD]: transport.pgWireCredential,
+    // Pool sizing — see issue #1575 strategy block above. Short-lived CLI
+    // gets a single persistent connection so the cwd pin can be released
+    // immediately after fingerprinting.
+    max: cliShortLived ? 1 : 50,
+    idle_timeout: cliShortLived ? 0 : 1,
+    connect_timeout: resolvePgConnectTimeoutSeconds(transport.useSocket),
+    onnotice: () => {},
+    connection: {
+      client_min_messages: 'warning' as const,
+    },
+  };
 }
 
 /**
