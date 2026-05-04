@@ -478,8 +478,31 @@ async function checkWatchdog(
       detail: 'watchdog install is Linux/systemd only',
     };
   }
+  // Explicit opt-out for bundled installs and operators who manage the
+  // systemd unit out-of-band. Set GENIE_WATCHDOG_SKIP=1 to silence the
+  // precondition without affecting any other doctor checks.
+  if (process.env.GENIE_WATCHDOG_SKIP === '1') {
+    return {
+      name: 'watchdog',
+      status: 'skipped',
+      detail: 'GENIE_WATCHDOG_SKIP=1',
+    };
+  }
   if (health.watchdog === 'ok') {
     return { name: 'watchdog', status: 'ok' };
+  }
+  // Bundle-mode installs ship `dist/genie.js` only — `packages/watchdog/`
+  // is not inlined, so resolveWatchdogCliPath returns null. Without an
+  // override, the install will inevitably fail. Surface that as `skipped`
+  // (informational) instead of `refused` (warning), since the user can't
+  // recover without changing their install layout.
+  if (!process.env.GENIE_WATCHDOG_INSTALL_CMD && !resolveWatchdogCliPath()) {
+    return {
+      name: 'watchdog',
+      status: 'skipped',
+      detail:
+        'watchdog optional in this install — set GENIE_WATCHDOG_SKIP=1 to silence, or run from source repo to enable',
+    };
   }
   if (!autoFix) {
     return {

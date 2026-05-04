@@ -257,6 +257,34 @@ describe('runDoctorMaintenance — watchdog precondition', () => {
     expect(report.ok).toBe(false);
     expect(audits.find((a) => a.name === 'watchdog')?.eventType).toBe('serve.precondition.refused');
   });
+
+  test('GENIE_WATCHDOG_SKIP=1 → skipped, install not invoked, report ok', async () => {
+    const prev = process.env.GENIE_WATCHDOG_SKIP;
+    process.env.GENIE_WATCHDOG_SKIP = '1';
+    try {
+      let installCalls = 0;
+      const { deps, audits } = buildDeps({
+        collectHealth: async () => fakeHealth({ watchdog: 'warn', watchdog_detail: 'units missing' }),
+        installWatchdog: async () => {
+          installCalls++;
+          return { filesWritten: [], filesSkipped: [] };
+        },
+      });
+      const report = await runDoctorMaintenance({ deps, silent: true });
+      const wd = report.results.find((r) => r.name === 'watchdog');
+      expect(wd?.status).toBe('skipped');
+      expect(wd?.detail).toBe('GENIE_WATCHDOG_SKIP=1');
+      expect(installCalls).toBe(0);
+      expect(audits.find((a) => a.name === 'watchdog')).toBeUndefined();
+      expect(report.ok).toBe(true);
+    } finally {
+      if (prev === undefined) {
+        Reflect.deleteProperty(process.env, 'GENIE_WATCHDOG_SKIP');
+      } else {
+        process.env.GENIE_WATCHDOG_SKIP = prev;
+      }
+    }
+  });
 });
 
 // ============================================================================
