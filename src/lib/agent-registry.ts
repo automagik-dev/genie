@@ -669,6 +669,82 @@ export async function archiveExhaustedZombies(ttlHours = DEAD_PANE_ZOMBIE_TTL_HO
 }
 
 /**
+ * Default TTL (hours) for `genie prune --errored` mode. Shorter than
+ * `DEAD_PANE_ZOMBIE_TTL_HOURS` because `--errored` is opt-in: an operator
+ * who runs it has already decided the rows are noise. The 1h floor still
+ * gives a brief grace window to inspect freshly-failed agents.
+ */
+const EXHAUSTED_ERRORED_TTL_HOURS = 1;
+
+/**
+ * Archive any exhausted error-state agent older than the TTL, regardless
+ * of audit reason. Distinct from `archiveExhaustedZombies` which only
+ * touches reconciler-tagged dead-pane rows. Use this when you want a
+ * blanket sweep of inert error rows; use `auto_resume=true` to keep a
+ * row visible past the TTL.
+ *
+ * Audit reason: `errored_ttl_exhausted` (distinct from
+ * `dead_pane_zombie_ttl_exhausted` so forensics can tell which sweep
+ * archived the row).
+ *
+ * @param ttlHours - Minimum age in hours before archival (default: 1)
+ * @returns IDs of agents that were archived
+ */
+export async function archiveAllExhaustedErrored(ttlHours = EXHAUSTED_ERRORED_TTL_HOURS): Promise<string[]> {
+  try {
+    const sql = await getConnection();
+    const rows = await sql<{ id: string }[]>`
+      UPDATE agents a
+      SET state = 'archived', last_state_change = now()
+      WHERE a.state = 'error'
+        AND a.auto_resume = false
+        AND a.last_state_change < now() - make_interval(hours => ${ttlHours})
+      RETURNING id
+    `;
+    const auditPromises: Promise<void>[] = [];
+    for (const row of rows) {
+      console.error(`[prune] Archived exhausted errored ${row.id} (TTL ${ttlHours}h)`);
+      auditPromises.push(
+        recordAuditEvent('worker', row.id, 'state_changed', 'cli', {
+          state: 'archived',
+          reason: 'errored_ttl_exhausted',
+          ttl_hours: ttlHours,
+        }).catch(() => {}),
+      );
+    }
+    await Promise.allSettled(auditPromises);
+    return rows.map((r: { id: string }) => r.id);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Dry-run companion to `archiveAllExhaustedErrored` — lists rows that
+ * would be archived without mutating state.
+ */
+export async function listAllExhaustedErrored(
+  ttlHours = EXHAUSTED_ERRORED_TTL_HOURS,
+): Promise<Array<{ id: string; lastStateChange: string }>> {
+  try {
+    const sql = await getConnection();
+    const rows = await sql<{ id: string; last_state_change: string }[]>`
+      SELECT a.id, a.last_state_change FROM agents a
+      WHERE a.state = 'error'
+        AND a.auto_resume = false
+        AND a.last_state_change < now() - make_interval(hours => ${ttlHours})
+      ORDER BY a.last_state_change ASC
+    `;
+    return rows.map((r: { id: string; last_state_change: string }) => ({
+      id: r.id,
+      lastStateChange: r.last_state_change,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Count dead-pane zombies eligible for TTL archive without mutating them.
  * Used by `genie prune --zombies --dry-run`.
  */

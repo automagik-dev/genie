@@ -121,6 +121,22 @@ describe('reconcileStaleSpawns dead-pane pass', () => {
     const matches = source.split(archiveFilter).length - 1;
     expect(matches).toBeGreaterThanOrEqual(2);
   });
+
+  test('archiveAllExhaustedErrored: blanket sweep with distinct audit reason', () => {
+    // `genie prune --errored` must NOT carry the audit-reason filter that
+    // --zombies uses, otherwise it would behave identically to --zombies.
+    // It must also tag a distinct audit reason so forensics can tell which
+    // sweep archived a row.
+    const source = readFileSync(join(__dirname, '..', 'agent-registry.ts'), 'utf-8');
+
+    // Function exists with the documented 1h default.
+    expect(source).toContain('export async function archiveAllExhaustedErrored');
+    expect(source).toContain('EXHAUSTED_ERRORED_TTL_HOURS = 1');
+    // Distinct audit reason from the zombie sweep.
+    expect(source).toContain("reason: 'errored_ttl_exhausted'");
+    // List companion exists for --dry-run.
+    expect(source).toContain('export async function listAllExhaustedErrored');
+  });
 });
 
 // ---------------------------------------------------------------------------
