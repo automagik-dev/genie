@@ -254,4 +254,49 @@ describe('genie team CLI', () => {
       expect(existsSync(join(wishDir, 'WISH.md'))).toBe(true);
     }, 15_000);
   });
+
+  describe('team repair (filesystem-only, no PG dependency)', () => {
+    test('archives an orphan dir with no PG row to _archive/', async () => {
+      const { handleTeamRepair } = await import('./team.js');
+      const tmpRoot = `/tmp/team-repair-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      const teamName = `orphan-${Math.floor(Math.random() * 1e6)}`;
+      const orphanPath = join(tmpRoot, 'teams', teamName);
+      await mkdir(join(orphanPath, 'inboxes'), { recursive: true });
+      await writeFile(join(orphanPath, 'inboxes', 'sample.json'), '{}');
+
+      const prev = process.env.CLAUDE_CONFIG_DIR;
+      process.env.CLAUDE_CONFIG_DIR = tmpRoot;
+      try {
+        await handleTeamRepair(teamName, {});
+        expect(existsSync(orphanPath)).toBe(false);
+        const archiveRoot = join(tmpRoot, 'teams', '_archive');
+        const { readdirSync } = await import('node:fs');
+        const archived = readdirSync(archiveRoot).filter((d) => d.startsWith(`${teamName}-`));
+        expect(archived.length).toBe(1);
+      } finally {
+        if (prev === undefined) Reflect.deleteProperty(process.env, 'CLAUDE_CONFIG_DIR');
+        else process.env.CLAUDE_CONFIG_DIR = prev;
+        await rm(tmpRoot, { recursive: true, force: true });
+      }
+    });
+
+    test('dry-run lists destination without mutating', async () => {
+      const { handleTeamRepair } = await import('./team.js');
+      const tmpRoot = `/tmp/team-repair-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      const teamName = `orphan-${Math.floor(Math.random() * 1e6)}`;
+      const orphanPath = join(tmpRoot, 'teams', teamName);
+      await mkdir(orphanPath, { recursive: true });
+
+      const prev = process.env.CLAUDE_CONFIG_DIR;
+      process.env.CLAUDE_CONFIG_DIR = tmpRoot;
+      try {
+        await handleTeamRepair(teamName, { dryRun: true });
+        expect(existsSync(orphanPath)).toBe(true);
+      } finally {
+        if (prev === undefined) Reflect.deleteProperty(process.env, 'CLAUDE_CONFIG_DIR');
+        else process.env.CLAUDE_CONFIG_DIR = prev;
+        await rm(tmpRoot, { recursive: true, force: true });
+      }
+    });
+  });
 });
