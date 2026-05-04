@@ -39,13 +39,14 @@ async function showAgent(name: string, json?: boolean): Promise<void> {
   const registry = await import('../../lib/agent-registry.js');
   const executorRegistry = await import('../../lib/executor-registry.js');
 
-  // Lookup is global (matches `genie ls` semantics) — filtering by GENIE_TEAM
-  // made cross-team agents invisible when the env was set. If the name is
-  // ambiguous across teams, prefer the one matching GENIE_TEAM, then any match.
-  const agents = await registry.listAgents();
-  const matches = agents.filter((a) => a.customName === name || a.role === name || a.id === name);
-  const preferredTeam = process.env.GENIE_TEAM;
-  const agent = (preferredTeam && matches.find((a) => a.team === preferredTeam)) ?? matches[0];
+  // Wish retire-session-names-id-only G4: route every name → row lookup
+  // through the canonical resolver so resolution order, audit trail, and tier
+  // counters live in one place (agent-registry.ts). Team scope prefers the
+  // (custom_name, team) tier when GENIE_TEAM is set; falls through to
+  // role-fallback when not.
+  const team = process.env.GENIE_TEAM;
+  const id = await registry.resolveAgentId(name, team);
+  const agent = id ? await registry.getAgent(id) : null;
 
   if (!agent) {
     console.error(`Agent "${name}" not found.`);

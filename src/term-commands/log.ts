@@ -199,32 +199,29 @@ function formatHumanOutput(events: LogEvent[], label: string): string {
 
 /**
  * Resolve an agent identifier the same way `genie send` does (#1302):
- *   1. Exact UUID match via `registry.get`.
- *   2. Exact match on `customName` → `role` → `id`, team-scoped first when
- *      `teamName` is provided, then falling back to a global search. Native
- *      team agents carry a UUID id but a human `customName`, so skipping this
- *      step is what made `genie log <name>` miss agents that `genie send` finds.
- *   3. Legacy task-id lookup (`registry.findByTask`).
- *   4. Unique prefix match on `customName` / `role`. Multiple candidates throw
- *      an "Ambiguous" error that lists the alternatives instead of silently
- *      returning the first substring hit.
+ *   1. Canonical resolver `resolveAgentId(identifier, teamName)` — covers
+ *      exact id (UUID/dir), `dir:<input>`, `(custom_name, team)`, and global
+ *      role-fallback. This is the wish retire-session-names-id-only G4
+ *      chokepoint; resolution order, audit trail, and tier counters live in
+ *      `agent-registry.ts`.
+ *   2. Legacy task-id lookup (`registry.findByTask`) — kept for entries
+ *      registered via the older task-id pathway that aren't in `agents` yet.
+ *   3. Unique prefix match on `customName` / `role` (in-memory fallback).
+ *      Multiple candidates throw an "Ambiguous" error listing the alternatives
+ *      instead of silently returning the first substring hit.
  */
 export async function findAgent(identifier: string, teamName?: string): Promise<agentRegistry.Agent | null> {
-  const direct = await agentRegistry.get(identifier);
-  if (direct) return direct;
-
-  const all = await agentRegistry.list();
-  const teamPool = teamName ? all.filter((a) => a.team === teamName) : [];
-  const exact = (w: agentRegistry.Agent) => w.customName === identifier || w.role === identifier || w.id === identifier;
-
-  const teamExact = teamPool.find(exact);
-  if (teamExact) return teamExact;
-  const globalExact = all.find(exact);
-  if (globalExact) return globalExact;
+  const id = await agentRegistry.resolveAgentId(identifier, teamName);
+  if (id) {
+    const direct = await agentRegistry.get(id);
+    if (direct) return direct;
+  }
 
   const byTask = await agentRegistry.findByTask(identifier);
   if (byTask) return byTask;
 
+  const all = await agentRegistry.list();
+  const teamPool = teamName ? all.filter((a) => a.team === teamName) : [];
   const prefix = (w: agentRegistry.Agent) =>
     (w.customName !== undefined && w.customName !== identifier && w.customName.startsWith(identifier)) ||
     (w.role !== undefined && w.role !== identifier && w.role.startsWith(identifier));
