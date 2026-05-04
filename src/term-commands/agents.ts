@@ -636,15 +636,34 @@ async function registerSpawnWorker(
   windowInfo?: { windowId: string; windowName: string } | null,
 ): Promise<registry.Agent> {
   const nt = ctx.validated.nativeTeam;
+  // Wish retire-session-names-id-only Group 3 (P0 spawn unblock):
+  // `agents.id` MUST be UUID-or-`dir:<name>` per migration 061's
+  // `agents_id_shape_check`. Pre-G3 spawn wrote `id: ctx.workerId` (a bare
+  // name like "engineer-4d48"), which the constraint now rejects, breaking
+  // every `genie agent spawn` on the live host.
+  //
+  // Fix: route the durable identity UUID (`ctx.agentIdentityId`, set from
+  // `findOrCreateAgent` upstream) into `id`, and stash the human-readable
+  // workerId in `customName` for display/lookup. This collapses the prior
+  // dual-row pattern (UUID identity row + bare-name runtime row) into the
+  // single identity row that already exists. The `register()` ON CONFLICT
+  // (id) DO UPDATE clause then merges runtime fields (pane/session/state)
+  // into the same row instead of inserting a shadow.
+  //
+  // Fallback to `ctx.workerId` is intentional for the rare paths that don't
+  // populate `agentIdentityId` yet — those paths land bare-name rows that
+  // 061 will reject loudly, exactly as designed (we want them surfaced and
+  // patched, not silently bypassed).
   const workerEntry: registry.Agent = {
-    id: ctx.workerId,
+    id: ctx.agentIdentityId ?? ctx.workerId,
     paneId,
     session: ctx.validated.team,
     provider: ctx.validated.provider,
     transport: ctx.transport,
-    role: ctx.validated.role,
+    role: ctx.validated.role ?? ctx.workerId,
     skill: ctx.validated.skill,
     team: ctx.validated.team,
+    customName: ctx.workerId,
     worktree: null,
     startedAt: ctx.now,
     state: 'spawning',
