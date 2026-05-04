@@ -173,14 +173,17 @@ Four sequential waves, single agent per wave. Each wave's acceptance feeds the n
    - `GENIE_NO_SPLASH=1` — bypass the neon-genie startup animation.
    - `GENIE_TUI_SCREEN_MODE=alternate-screen|split-footer` — opentui screen mode (default `alternate-screen`).
 5. Smoke-run on darwin: `genie`, `GENIE_NO_SPLASH=1 genie`, `genie splash`, `genie splash --freeze 0.55`, `bun run src/tui/splash-shell-cli.tsx`.
+6. **Cleanup transitional artefacts from PR #1633** (the splash-foundation drop). Once `<GenieAppShell>` is mounted in production via `render.tsx` and visual snapshots are stable on dev, the standalone runners + legacy alias + duplicated ASCII reference are obsolete. Delete them in a dedicated cleanup commit (separate from the wireup commit so the closeout is auditable) — see the **Cleanup contract** section below for the exact list and triggers. After this step, the PR's "dirty" surface is reduced to only the production-bearing components.
 
 **Acceptance Criteria:**
 
-- [ ] Diff bounded: ~10 lines `render.tsx`, 2 lines `README.md`.
+- [ ] Diff bounded: ~10 lines `render.tsx`, 2 lines `README.md` for the wireup commit. Cleanup commit deletes the four transitional files + trims `knip.json`.
 - [ ] All visual tests pass; `bun run check` green.
 - [ ] Splash → real `<App>` handoff on darwin local pty has no observable terminal-state flicker.
 - [ ] `GENIE_TUI_SCREEN_MODE=split-footer genie` boots into split-footer mode (TUI top, scrollback bottom).
 - [ ] On darwin, `top -pid <genie>` < 30% CPU during splash.
+- [ ] Post-cleanup: `bun run dead-code` (knip) is green with **zero** entry-point overrides for splash files. `genie splash` subcommand still works. No reference in source or docs to the deleted files.
+- [ ] Post-cleanup: every file listed under "After Wave 1 wireup verified on dev" in the **Cleanup contract** is gone from the worktree.
 
 **depends-on:** none
 
@@ -379,7 +382,84 @@ _What must be verified on dev after wish merge. The QA agent runs each criterion
 | Darwin render-loop guardrail (`useThread:false`, `targetFps:8`) gives darwin users a slightly choppier animation than linux | Low | Acceptable trade-off — without it, CPU pins to 70%+. Documented in `splash-render.tsx`. |
 | Tmux deprecation breaks users on `GENIE_USE_TMUX=0` if `PtyRenderable` has unhandled edge cases (256-colour escape sequences claude emits during streaming, mouse-tracking sequences from interactive tools) | High | `GENIE_USE_TMUX=1` stays as the escape hatch through one full stable release. Wave 4 doesn't *remove* tmux — only flips the default. Removal is a separate decision after telemetry shows opentui-shell adoption is stable across all agent types. |
 | Native-team Claude Code integration (`claude-native-teams.ts`) breaks because it expects a tmux pane id rather than a synthetic opentui id when registering with Claude Code's experimental team CLI | Medium | Wave 3 sweep includes this file. If synthetic ids that don't match tmux's `%N` format break Claude Code's pane registration, generate ids that *look* like tmux pane ids (`%opentui-<n>`) but are clearly tagged. Acceptance includes a native-team smoke test. |
-| Existing standalone runners (`splash-cli.ts`, `splash-shell-cli.tsx`, `genie-launcher.tsx`) become tech-debt after the shell wire-up lands | Low | Keep them: `splash-cli.ts` and `splash-shell-cli.tsx` are visual-tuning entry points; `genie-launcher.tsx` is the legacy alias path. Re-evaluate at the next stable release. |
+| Existing standalone runners (`splash-cli.ts`, `splash-shell-cli.tsx`, `genie-launcher.tsx`) become tech-debt after the shell wire-up lands | Low | Captured in the **Cleanup contract** section below — deleted in a dedicated commit when Wave 1 wireup is verified on dev. Not re-evaluated; deletion is the contract. |
+
+---
+
+## Cleanup contract
+
+PR #1633 (the splash-foundation drop) intentionally landed several **transitional artefacts** to keep the foundation reviewable as a self-contained PR — standalone bun-run entry points, a legacy alias, a duplicated ASCII reference, and four extra `knip.json` entry-point overrides. These are technical debt the moment the wish's wireup waves obsolete them. The cleanup is part of the wish, not deferred to "someday" — each item below has a **trigger** that fires deletion in a dedicated cleanup commit.
+
+The **dedicated commit** rule matters: cleanups go in their own commit (not folded into the wireup commit) so reviewers can audit "what was deleted and why" separately from "what was wired up." A bisect that lands on the wireup commit alone still has the splash working; the cleanup commit is the closeout.
+
+### After Wave 1 wireup verified on dev
+
+Trigger: `<GenieAppShell>` is mounted in `src/tui/render.tsx`; visual snapshot suite (`test/visual/genie-splash.test.tsx`) green on dev for 24h; smoke-run of `genie` on darwin + linux shows the splash → real `<App>` handoff cleanly.
+
+| File | Reason for deletion |
+|------|---------------------|
+| `src/tui/splash-cli.ts` | Standalone bun-run wrapper around `renderSplash`. The `genie splash` subcommand (`src/genie.ts:230–246`) does the same thing as a first-class CLI surface. Bun runner is redundant once the subcommand is the documented entry point. |
+| `src/tui/splash-shell-cli.tsx` | Demo runner mounting `<GenieAppShell>` over a fake `<App>` to preview the overlay-handoff pattern. Once the real `<App>` mounts under `<GenieAppShell>` in `render.tsx`, the live mount IS the proof-of-concept; the demo is a duplicate. |
+| `src/tui/genie-launcher.tsx` | Stop-gap alias path (`alias genie='bun run …genie-launcher.tsx --'`) for users on a pre-shell-wireup binary. Obsolete the moment Wave 1 ships in dev. The file's own header comment already calls it a "stop-gap." |
+| `ascii.md` | Original ASCII reference for the genie figure. `src/tui/components/genie-art.ts` is the canonical art asset (the rendering pipeline reads from `GENIE_ART`, not from `ascii.md`). Before deletion, fold any tuning notes worth preserving into the `genie-art.ts` header. |
+| Knip entries: `src/tui/splash-cli.ts`, `src/tui/splash-shell-cli.tsx`, `src/tui/genie-launcher.tsx`, `src/tui/components/GenieAppShell.tsx` | The first three are deleted with the files above. The `GenieAppShell.tsx` entry can also be removed since the component is now reachable from `src/tui/render.tsx` — knip will see it through the regular import graph. |
+
+**Validation after the cleanup commit:**
+- `bun run dead-code` green with no splash-related entry-point overrides in `knip.json`.
+- `bun run check` green.
+- `genie splash` still renders the animation (the subcommand path doesn't depend on any of the deleted files; it imports `splash-render.tsx` directly).
+- `grep -rE "splash-cli|splash-shell-cli|genie-launcher|ascii\\.md" src/ test/ docs/ README.md` returns zero matches (no stale references).
+
+### After Wave 2 verified on dev
+
+Trigger: `PtyRenderable` + `pty-emulator.ts` lands; tests green; no manual cleanup expected here. Listed for completeness in case Wave 2 spike code (xterm-headless trial vs. fallback) ships behind feature flags that should be retired once a winner is picked.
+
+| File / artefact | Reason for deletion |
+|-----------------|---------------------|
+| (none expected) | Wave 2 ships the production primitives directly. If a feature-flag fallback ships (e.g., `GENIE_PTY_EMULATOR=vt100` for a fallback), retire the flag + dead branch within one stable release. |
+
+### After Wave 3 verified on dev
+
+Trigger: `<AgentLayout>` is the production multi-agent layout; `team-auto-spawn` mounts opentui composition roots; smoke validation shows `GENIE_USE_TMUX=0` is the working default; `agent-registry` synthetic ids working across all consumers.
+
+| File / artefact | Reason for deletion |
+|-----------------|---------------------|
+| Any feature-flag scaffolding inside `team-auto-spawn.ts` that branches on `GENIE_USE_TMUX !== "1"` | Trim to a single `if (process.env.GENIE_USE_TMUX === "1") { /* legacy */ }` guard so the opentui-shell path is the linear default; the legacy-tmux path is a clearly-tagged escape hatch, not a co-equal branch. |
+
+### After Wave 4 verified on dev (and one stable release of telemetry)
+
+Trigger: Wave 4 merged; default flipped to opentui shell; one full stable release elapsed with telemetry showing opentui-shell adoption is stable across all agent types (claude, codex, opencode, generic shells); decision recorded to retire `GENIE_USE_TMUX=1` entirely.
+
+| File / artefact | Reason for deletion |
+|-----------------|---------------------|
+| `src/tui/tmux.ts` (133 LoC) | Tmux runtime helpers (attach, navigate, pane management). No longer reachable once the legacy flag is removed. |
+| `src/tui/tmux-theme-sync.ts` + `src/tui/tmux-theme-sync.test.ts` + `src/tui/opentui-bridge.test.ts` references | Tmux theme sync. Deletes with tmux removal. |
+| `src/__tests__/tmux-config.test.ts` | Tmux config validation tests. |
+| `src/lib/team-auto-spawn.ts` legacy branches | Trim to opentui-shell only, OR delete entirely if `team-auto-spawn` becomes a thin wrapper around `<AgentLayout>` mount. |
+| `src/lib/ensure-tmux.ts` (referenced) | Tmux binary discovery. No callers after tmux modules deleted. |
+| `agent-registry` columns: `tmux_window` | Schema migration to drop. Synthetic ids no longer need a tmux-specific slot. |
+| `claude-native-teams.ts` references to tmux pane id format | Use synthetic `opentui:<root>:<region>` ids exclusively (or `%opentui-<n>` if Claude Code's CLI requires the `%N` shape — see Risks table). |
+| README + docs sweep | Final pass to remove `GENIE_USE_TMUX=1` documentation; `docs/_internal/architecture/opentui-shell.md` becomes the only architecture page. |
+
+**Validation after Wave 4 cleanup:**
+- `grep -rni "tmux" src/ test/ scripts/ README.md` returns only deliberately-retained references (e.g., historical changelog entries, archive comments). No live code paths.
+- `genie doctor` does not check for `tmux` binary at all.
+- `genie install` succeeds on a tmux-less host with no flags.
+- `bun run check` green.
+- Stable release telemetry continues to show no opentui-shell regressions for at least 30 days post-removal before the cleanup is considered final.
+
+### Cleanup audit log
+
+Each cleanup commit references the wave whose acceptance triggered it:
+
+```
+chore(cleanup): retire splash transitional artefacts (Wave 1 verified)
+chore(cleanup): retire xterm-headless fallback flag (Wave 2 verified)
+chore(cleanup): trim team-auto-spawn legacy branches (Wave 3 verified)
+chore(cleanup): retire tmux modules + agent-registry tmux_window (Wave 4 verified, 30d stable)
+```
+
+This makes the wish auditable end-to-end: at any point in time, `git log --grep='chore(cleanup)' --grep='Wave .* verified'` shows exactly which transitional artefacts have been retired and when.
 
 ---
 
