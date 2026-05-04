@@ -404,6 +404,23 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
 
   const boardId = await resolveBoardOption(options.board);
 
+  // Defense: validate --type against task_types before delegating to the FK
+  // trigger. A bare `tasks_type_id_fkey` violation is unhelpful; a clear hint
+  // listing valid types lets the user pick one and retry.
+  if (options.type) {
+    const taskType = await ts.getType(options.type);
+    if (!taskType) {
+      const types = await ts.listTypes();
+      const validIds = types.map((t) => t.id).join(', ') || '(none registered)';
+      console.error(
+        `Error: task type "${options.type}" does not exist.
+  Valid types: ${validIds}
+  Or omit --type to use the default ("software").`,
+      );
+      process.exit(1);
+    }
+  }
+
   // Resolve external linking: --gh takes priority over --external-id/--external-url
   let externalId: string | undefined = options.externalId;
   let externalUrl: string | undefined = options.externalUrl;
