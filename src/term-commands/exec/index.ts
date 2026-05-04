@@ -60,11 +60,12 @@ async function listExecutors(options: {
 
   let agentId: string | undefined;
   if (options.agent) {
-    const agents = await agentRegistry.listAgents({});
-    const match = agents.find(
-      (a) => a.customName === options.agent || a.role === options.agent || a.id === options.agent,
-    );
-    agentId = match?.id;
+    // Wish retire-session-names-id-only G4: canonical resolver for the
+    // --agent name → id translation. Team scope (GENIE_TEAM) lets the
+    // (custom_name, team) tier disambiguate same-named agents across teams.
+    const team = process.env.GENIE_TEAM;
+    const resolved = await agentRegistry.resolveAgentId(options.agent, team);
+    agentId = resolved ?? undefined;
     if (!agentId) {
       console.error(`Agent "${options.agent}" not found.`);
       process.exit(1);

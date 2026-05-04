@@ -29,8 +29,10 @@ describe('7.1 Concurrent Operations', () => {
     // Double-check pattern: re-verify after lock acquisition
     expect(source).toContain('another process may have spawned while we waited');
 
-    // Dead worker cleanup happens inside the lock
-    expect(source).toContain('cleanupDeadWorkers(recipientId');
+    // Dead worker cleanup happens inside the lock.
+    // Wish 175 G6 tightened the signature from `cleanupDeadWorkers(recipientId, team)`
+    // to `cleanupDeadWorkers(agentId)` — caller resolves at the CLI boundary.
+    expect(source).toContain('cleanupDeadWorkers(worker.id');
   });
 
   test('executor creation also uses advisory lock (code review)', () => {

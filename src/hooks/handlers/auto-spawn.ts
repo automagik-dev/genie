@@ -80,7 +80,12 @@ async function executeAutoSpawn(recipient: string, teamName: string): Promise<vo
   const directoryMod = await import('../../lib/agent-directory.js');
 
   const agents = await registryMod.list();
-  const existing = agents.find((a) => (a.role === recipient || a.id === recipient) && a.team === teamName);
+  // Match by id (UUID, post-061 canonical), role, or customName — recipients
+  // arrive as whatever the sender typed, and migration 061 made the registry
+  // UUID-keyed without renaming the role/customName columns.
+  const existing = agents.find(
+    (a) => (a.id === recipient || a.role === recipient || a.customName === recipient) && a.team === teamName,
+  );
   // Transport-aware liveness: a plain `isPaneAlive` check treats live SDK/
   // omni/inline recipients (synthetic paneIds like 'sdk', '', 'inline') as
   // dead and triggers a duplicate spawn on every message. Dispatch by

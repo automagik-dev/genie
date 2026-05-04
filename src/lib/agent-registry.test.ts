@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import {
   type Agent,
+  _resetAgentResolverCountersForTests,
   addSubPane,
   filterBySession,
   findByPane,
@@ -11,6 +13,7 @@ import {
   getAgent,
   getAgentByName,
   getAgentEffectiveState,
+  getAgentResolverCounters,
   getElapsedTime,
   getPane,
   getTeamLeadEntry,
@@ -22,6 +25,7 @@ import {
   reconcileStaleSpawns,
   register,
   removeSubPane,
+  resolveAgentId,
   saveTemplate,
   setCurrentExecutor,
   unregister,
@@ -1029,6 +1033,232 @@ describe.skip('pg — TODO retire-session-names #175: rewrite fixtures for UUID 
       const t1 = await listAgentsForRender({ team: 't1' });
       expect(t1.length).toBe(1);
       expect(t1[0].id).toBe(liveT1.id);
+    });
+  });
+
+  // ==========================================================================
+  // resolveAgentId — single canonical name → id resolver (Group 2 of
+  // retire-session-names-id-only).
+  // ==========================================================================
+
+  describe('resolveAgentId', () => {
+    beforeEach(() => {
+      _resetAgentResolverCountersForTests();
+    });
+
+    test('tier uuid: exact UUID id returns id and bumps uuid counter', async () => {
+      const agent = await findOrCreateAgent('engineer-uuid', 't1', 'engineer');
+
+      const resolved = await resolveAgentId(agent.id, 't1');
+      const counters = getAgentResolverCounters();
+
+      expect(resolved).toBe(agent.id);
+      expect(counters.uuid).toBe(1);
+      expect(counters.dir).toBe(0);
+      expect(counters.customName).toBe(0);
+      expect(counters.role).toBe(0);
+      expect(counters.miss).toBe(0);
+    });
+
+    test('tier dir: exact dir:<name> id returns id and bumps dir counter', async () => {
+      const sql = await getConnection();
+      // Insert a `dir:` master row directly. agent-directory.ts is the legitimate
+      // writer; here we shape the row by hand because the resolver only cares
+      // about id matching, not provenance.
+      const now = new Date().toISOString();
+      await sql`
+        INSERT INTO agents (id, started_at, state, repo_path, custom_name, team)
+        VALUES ('dir:engineer', ${now}, ${null}, '/tmp/test', 'engineer', NULL)
+      `;
+
+      const resolved = await resolveAgentId('dir:engineer');
+      expect(resolved).toBe('dir:engineer');
+      const counters = getAgentResolverCounters();
+      expect(counters.dir).toBe(1);
+      expect(counters.uuid).toBe(0);
+    });
+
+    test('tier dir: bare name synthesizes dir:<name> when a master row exists', async () => {
+      const sql = await getConnection();
+      const now = new Date().toISOString();
+      await sql`
+        INSERT INTO agents (id, started_at, state, repo_path, custom_name, team)
+        VALUES ('dir:reviewer', ${now}, ${null}, '/tmp/test', 'reviewer', NULL)
+      `;
+
+      const resolved = await resolveAgentId('reviewer');
+      expect(resolved).toBe('dir:reviewer');
+      expect(getAgentResolverCounters().dir).toBe(1);
+    });
+
+    test('tier customName: (custom_name, team) match returns the UUID id', async () => {
+      const a = await findOrCreateAgent('engineer-w14', 't1', 'engineer');
+      // Same display name in a different team must NOT collide.
+      await findOrCreateAgent('engineer-w14', 't2', 'engineer');
+
+      const resolved = await resolveAgentId('engineer-w14', 't1');
+      expect(resolved).toBe(a.id);
+      const counters = getAgentResolverCounters();
+      expect(counters.customName).toBe(1);
+      expect(counters.role).toBe(0);
+    });
+
+    test('tier role: role-fallback returns the unique match', async () => {
+      const sql = await getConnection();
+      const id = randomUUID();
+      const now = new Date().toISOString();
+      // No custom_name matches 'qa', and role='qa' matches exactly one row →
+      // resolver lands at the role tier.
+      await sql`
+        INSERT INTO agents (id, started_at, state, repo_path, role, team, custom_name)
+        VALUES (${id}, ${now}, ${null}, '/tmp/test', 'qa', 't1', NULL)
+      `;
+
+      const resolved = await resolveAgentId('qa', 't1');
+      expect(resolved).toBe(id);
+      const counters = getAgentResolverCounters();
+      expect(counters.role).toBe(1);
+      expect(counters.customName).toBe(0);
+    });
+
+    test('ambiguity: two custom_name peers in the same team return null + ambiguous audit', async () => {
+      const sql = await getConnection();
+      const now = new Date().toISOString();
+      const idA = randomUUID();
+      const idB = randomUUID();
+      // Two rows with same custom_name + team. The composite unique index is
+      // partial (only when both NOT NULL), so this can only happen if a writer
+      // bypassed findOrCreateAgent — exactly the scenario the resolver must
+      // surface, not paper over.
+      await sql`
+        INSERT INTO agents (id, started_at, state, repo_path, custom_name, team)
+        VALUES (${idA}, ${now}, ${null}, '/tmp/test', 'duped', 't1')
+      `;
+      await sql`
+        INSERT INTO agents (id, started_at, state, repo_path, custom_name, team)
+        VALUES (${idB}, ${now}, ${null}, '/tmp/test', 'duped', 't1')
+      `;
+
+      const resolved = await resolveAgentId('duped', 't1');
+      expect(resolved).toBeNull();
+      const counters = getAgentResolverCounters();
+      expect(counters.customName).toBe(0);
+      expect(counters.miss).toBe(1);
+
+      const events = await sql<{ details: Record<string, unknown>; entity_id: string }[]>`
+        SELECT entity_id, details FROM audit_events
+        WHERE event_type = 'agent_resolved_ambiguous'
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      expect(events.length).toBe(1);
+      expect(events[0].details.matched_tier).toBe('customName');
+      expect(events[0].details.team).toBe('t1');
+      expect(Array.isArray(events[0].details.candidate_ids)).toBe(true);
+      expect((events[0].details.candidate_ids as string[]).length).toBe(2);
+    });
+
+    test('ambiguity: two role peers return null + ambiguous audit', async () => {
+      const sql = await getConnection();
+      const now = new Date().toISOString();
+      // Two rows with role='engineer' globally; no custom_name='engineer' row
+      // exists, so resolver falls into the role tier with multiple candidates.
+      await sql`
+        INSERT INTO agents (id, started_at, state, repo_path, role, team, custom_name)
+        VALUES (${randomUUID()}, ${now}, ${null}, '/tmp/test', 'engineer', 't1', NULL)
+      `;
+      await sql`
+        INSERT INTO agents (id, started_at, state, repo_path, role, team, custom_name)
+        VALUES (${randomUUID()}, ${now}, ${null}, '/tmp/test', 'engineer', 't2', NULL)
+      `;
+
+      // Pass undefined team so Tier 3 (custom_name) is skipped and we land in
+      // Tier 4 with the two role candidates.
+      const resolved = await resolveAgentId('engineer');
+      expect(resolved).toBeNull();
+      const counters = getAgentResolverCounters();
+      expect(counters.role).toBe(0);
+      expect(counters.miss).toBe(1);
+
+      const events = await sql<{ details: Record<string, unknown> }[]>`
+        SELECT details FROM audit_events
+        WHERE event_type = 'agent_resolved_ambiguous'
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      expect(events.length).toBe(1);
+      expect(events[0].details.matched_tier).toBe('role');
+    });
+
+    test('missing: unknown name returns null and bumps miss counter + emits agent_not_resolved', async () => {
+      const resolved = await resolveAgentId('does-not-exist', 't1');
+      expect(resolved).toBeNull();
+      const counters = getAgentResolverCounters();
+      expect(counters.uuid).toBe(0);
+      expect(counters.dir).toBe(0);
+      expect(counters.customName).toBe(0);
+      expect(counters.role).toBe(0);
+      expect(counters.miss).toBe(1);
+
+      const sql = await getConnection();
+      const events = await sql<{ entity_id: string; details: Record<string, unknown> }[]>`
+        SELECT entity_id, details FROM audit_events
+        WHERE event_type = 'agent_not_resolved'
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      expect(events.length).toBe(1);
+      expect(events[0].entity_id).toBe('unresolved');
+      expect(events[0].details.team).toBe('t1');
+    });
+
+    test('missing: empty input returns null without touching the DB or counters', async () => {
+      expect(await resolveAgentId('', 't1')).toBeNull();
+      expect(getAgentResolverCounters().miss).toBe(0);
+    });
+
+    test('team scoping: same custom_name in two teams resolves correctly per team', async () => {
+      const a = await findOrCreateAgent('engineer-w14', 't1', 'engineer');
+      const b = await findOrCreateAgent('engineer-w14', 't2', 'engineer');
+
+      expect(await resolveAgentId('engineer-w14', 't1')).toBe(a.id);
+      expect(await resolveAgentId('engineer-w14', 't2')).toBe(b.id);
+      expect(getAgentResolverCounters().customName).toBe(2);
+    });
+
+    test('team undefined: skips Tier 3 (custom_name) and goes straight to role-fallback', async () => {
+      const sql = await getConnection();
+      const id = randomUUID();
+      const now = new Date().toISOString();
+      // A custom_name='solo' row would normally match Tier 3, BUT we pass no
+      // team, so Tier 3 is skipped and Tier 4 (role) runs. The role match
+      // succeeds because role='solo' is unique.
+      await sql`
+        INSERT INTO agents (id, started_at, state, repo_path, custom_name, team, role)
+        VALUES (${id}, ${now}, ${null}, '/tmp/test', 'solo', 't1', 'solo')
+      `;
+
+      const resolved = await resolveAgentId('solo');
+      expect(resolved).toBe(id);
+      const counters = getAgentResolverCounters();
+      expect(counters.customName).toBe(0);
+      expect(counters.role).toBe(1);
+    });
+
+    test('audit event on successful match carries matched_tier + team, omits input', async () => {
+      const agent = await findOrCreateAgent('engineer-audit', 't1', 'engineer');
+
+      const resolved = await resolveAgentId('engineer-audit', 't1');
+      expect(resolved).toBe(agent.id);
+
+      const sql = await getConnection();
+      const events = await sql<{ details: Record<string, unknown>; entity_id: string }[]>`
+        SELECT entity_id, details FROM audit_events
+        WHERE event_type = 'agent_resolved' AND entity_id = ${agent.id}
+        ORDER BY created_at DESC LIMIT 1
+      `;
+      expect(events.length).toBe(1);
+      expect(events[0].details.matched_tier).toBe('customName');
+      expect(events[0].details.team).toBe('t1');
+      // Input is intentionally NOT logged — agent names can carry PII.
+      expect(events[0].details.input).toBeUndefined();
     });
   });
 

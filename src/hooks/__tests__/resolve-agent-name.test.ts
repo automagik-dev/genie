@@ -23,16 +23,22 @@ function basePayload(overrides: Partial<HookPayload> = {}): HookPayload {
 
 describe('resolveAgentName cascade', () => {
   const originalAgent = process.env.GENIE_AGENT_NAME;
+  const originalAgentId = process.env.GENIE_AGENT_ID;
   const originalTeam = process.env.GENIE_TEAM;
   let scratchDir: string;
 
   beforeEach(() => {
+    // G7 — clear both id and name; the cascade tests exercise tiers that
+    // come AFTER the env reads, so leaving an inherited GENIE_AGENT_ID in
+    // place would short-circuit every "env unset" test.
+    process.env.GENIE_AGENT_ID = undefined;
     process.env.GENIE_AGENT_NAME = undefined;
     process.env.GENIE_TEAM = undefined;
     scratchDir = mkdtempSync(join(tmpdir(), 'resolve-agent-'));
   });
 
   afterEach(() => {
+    process.env.GENIE_AGENT_ID = originalAgentId;
     process.env.GENIE_AGENT_NAME = originalAgent;
     process.env.GENIE_TEAM = originalTeam;
     rmSync(scratchDir, { recursive: true, force: true });
@@ -45,6 +51,22 @@ describe('resolveAgentName cascade', () => {
   });
 
   test('GENIE_AGENT_NAME wins when teammate_name absent', () => {
+    process.env.GENIE_AGENT_NAME = 'env-agent';
+    expect(resolveAgentName(basePayload({ cwd: scratchDir }))).toBe('env-agent');
+  });
+
+  test('GENIE_AGENT_ID (UUID) wins over GENIE_AGENT_NAME when both env vars set', () => {
+    // G7 — post-061 the canonical agent identity is a UUID. The cascade
+    // returns the id so downstream PG calls FK-satisfy mailbox.from_worker.
+    process.env.GENIE_AGENT_ID = '11111111-2222-3333-4444-555555555555';
+    process.env.GENIE_AGENT_NAME = 'env-agent';
+    expect(resolveAgentName(basePayload({ cwd: scratchDir }))).toBe('11111111-2222-3333-4444-555555555555');
+  });
+
+  test('GENIE_AGENT_ID is ignored when not a UUID (falls through to NAME)', () => {
+    // G7 — readEnvAgentId guards the regex so non-UUID env values don't poison
+    // downstream FK writes. Non-UUID id → fall through to name.
+    process.env.GENIE_AGENT_ID = 'cli:something';
     process.env.GENIE_AGENT_NAME = 'env-agent';
     expect(resolveAgentName(basePayload({ cwd: scratchDir }))).toBe('env-agent');
   });

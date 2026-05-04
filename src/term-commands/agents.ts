@@ -636,26 +636,27 @@ async function registerSpawnWorker(
   windowInfo?: { windowId: string; windowName: string } | null,
 ): Promise<registry.Agent> {
   const nt = ctx.validated.nativeTeam;
-  // Wish retire-session-names-id-only Group 3 (P0 spawn unblock):
-  // `agents.id` MUST be UUID-or-`dir:<name>` per migration 061's
-  // `agents_id_shape_check`. Pre-G3 spawn wrote `id: ctx.workerId` (a bare
-  // name like "engineer-4d48"), which the constraint now rejects, breaking
-  // every `genie agent spawn` on the live host.
+  // Wish retire-session-names-id-only Group 3: spawn writes ONE row.
   //
-  // Fix: route the durable identity UUID (`ctx.agentIdentityId`, set from
-  // `findOrCreateAgent` upstream) into `id`, and stash the human-readable
-  // workerId in `customName` for display/lookup. This collapses the prior
-  // dual-row pattern (UUID identity row + bare-name runtime row) into the
-  // single identity row that already exists. The `register()` ON CONFLICT
-  // (id) DO UPDATE clause then merges runtime fields (pane/session/state)
-  // into the same row instead of inserting a shadow.
+  // `agents.id` is the durable identity UUID returned by `findOrCreateAgent`
+  // (propagated as `ctx.agentIdentityId`). The bare `ctx.workerId`
+  // ("engineer-4d48") is the human-readable label that lives on
+  // `custom_name` for display/lookup — it never enters the id column.
   //
-  // Fallback to `ctx.workerId` is intentional for the rare paths that don't
-  // populate `agentIdentityId` yet — those paths land bare-name rows that
-  // 061 will reject loudly, exactly as designed (we want them surfaced and
-  // patched, not silently bypassed).
+  // The previous fallback (`ctx.agentIdentityId ?? ctx.workerId`) used to
+  // double-write the row keyed by bare-name whenever a caller forgot to
+  // resolve the identity upstream — exactly the regression engine this wish
+  // retires. Migration 061's `agents_id_shape_check` rejects those inserts
+  // at the DB; we mirror the invariant in the application so the failure
+  // mode is "loud throw at the call site that forgot the identity step"
+  // instead of "opaque CHECK violation deeper in the SQL roundtrip."
+  if (!ctx.agentIdentityId) {
+    throw new Error(
+      `registerSpawnWorker: missing agentIdentityId for workerId=${JSON.stringify(ctx.workerId)} (team=${JSON.stringify(ctx.validated.team)}). The spawn pipeline MUST call registry.findOrCreateAgent before register() — see wish retire-session-names-id-only Group 3.`,
+    );
+  }
   const workerEntry: registry.Agent = {
-    id: ctx.agentIdentityId ?? ctx.workerId,
+    id: ctx.agentIdentityId,
     paneId,
     session: ctx.validated.team,
     provider: ctx.validated.provider,
@@ -1207,7 +1208,12 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<string> {
   if (ctx.executorId) {
     await executorRegistry.updateExecutorState(ctx.executorId, 'running').catch(() => {});
   }
-  await registry.update(ctx.workerId, { state: 'idle' }).catch(() => {});
+  // The row was inserted with id = ctx.agentIdentityId (UUID); updates must
+  // target that same key. Falling back to ctx.workerId would no-op silently
+  // because the bare-name row no longer exists.
+  if (ctx.agentIdentityId) {
+    await registry.update(ctx.agentIdentityId, { state: 'idle' }).catch(() => {});
+  }
 
   // #1600 — emit terminal-state success event so `genie events list --type
   // worker.spawn.ok` becomes a positive signal (existing `worker.spawn` is
@@ -1496,8 +1502,10 @@ async function runSdkQuery(
  * then findDeadResumable routed it back through tmux-only resume → crash.
  */
 async function rollbackSpawn(ctx: SpawnCtx, opts: { workerRegistered: boolean }): Promise<void> {
-  if (opts.workerRegistered) {
-    await registry.unregister(ctx.workerId).catch(() => {});
+  // Unregister by the same id the row was inserted under — the UUID identity,
+  // not the bare-name workerId (which now lives only on custom_name).
+  if (opts.workerRegistered && ctx.agentIdentityId) {
+    await registry.unregister(ctx.agentIdentityId).catch(() => {});
   }
   if (ctx.executorId) {
     await executorRegistry.updateExecutorState(ctx.executorId, 'error').catch(() => {});
@@ -1544,7 +1552,10 @@ async function launchSdkSpawn(
   if (ctx.executorId) {
     await executorRegistry.updateExecutorState(ctx.executorId, 'done').catch(() => {});
   }
-  await registry.unregister(ctx.workerId);
+  // The row was inserted under the UUID identity; unregister by the same key.
+  if (ctx.agentIdentityId) {
+    await registry.unregister(ctx.agentIdentityId);
+  }
   console.log(`\nAgent "${ctx.workerId}" SDK session ended.`);
   return ctx.workerId;
 }
@@ -1608,7 +1619,9 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<string> {
   if (ctx.agentIdentityId && ctx.executorId) {
     await executorRegistry.updateExecutorState(ctx.executorId, 'done').catch(() => {});
   }
-  await registry.unregister(ctx.workerId);
+  if (ctx.agentIdentityId) {
+    await registry.unregister(ctx.agentIdentityId);
+  }
   if (nt?.enabled && ctx.agentName) {
     await nativeTeams.clearNativeInbox(ctx.validated.team, ctx.agentName).catch(() => {});
     await nativeTeams.unregisterNativeMember(ctx.validated.team, ctx.agentName).catch(() => {});
@@ -2969,44 +2982,20 @@ export class RecoverAgentNotFoundError extends Error {
 /**
  * Resolve a name to an agent row for recovery. Distinct from
  * {@link resolveWorkerByName} because recover targets agents that may not be
- * runnable (no live pane) — we look up the row, not a live worker. Resolution
- * order:
- *   1. Exact id (`registry.get(name)`).
- *   2. Master-row form `dir:<name>` (the canonical master-agent shape).
- *   3. `custom_name = $1` SQL lookup. Permits matching native-team names.
- *   4. `role = $1` SQL lookup. Last-resort fallback for legacy rows.
+ * runnable (no live pane) — we look up the row, not a live worker.
  *
- * Throws {@link RecoverAgentNotFoundError} if nothing matches. Throws a plain
- * `Error` on multi-row ambiguity so the caller can disambiguate.
+ * Routes through the canonical {@link registry.resolveAgentId} resolver
+ * (wish #175 G2). Ambiguous matches surface as a null id (the resolver emits
+ * `agent_resolved_ambiguous` for forensic walks); we map both null id and a
+ * post-resolution row miss to {@link RecoverAgentNotFoundError} so the
+ * operator-facing exit code (2) and message stay unchanged.
  */
 async function resolveAgentForRecover(name: string): Promise<registry.Agent> {
-  const exact = await registry.get(name);
-  if (exact) return exact;
-
-  const masterRow = await registry.get(`dir:${name}`);
-  if (masterRow) return masterRow;
-
-  const { getConnection } = await import('../lib/db.js');
-  const sql = await getConnection();
-  const byCustomName = await sql`SELECT * FROM agents WHERE custom_name = ${name} LIMIT 2`;
-  if (byCustomName.length === 1) {
-    return (await registry.get(byCustomName[0].id)) as registry.Agent;
-  }
-  if (byCustomName.length > 1) {
-    const ids = byCustomName.map((r: { id: string }) => r.id).join(', ');
-    throw new Error(`Multiple agents with custom_name "${name}": ${ids}. Pass the full id (e.g. dir:${name}).`);
-  }
-
-  const byRole = await sql`SELECT * FROM agents WHERE role = ${name} LIMIT 2`;
-  if (byRole.length === 1) {
-    return (await registry.get(byRole[0].id)) as registry.Agent;
-  }
-  if (byRole.length > 1) {
-    const ids = byRole.map((r: { id: string }) => r.id).join(', ');
-    throw new Error(`Multiple agents with role "${name}": ${ids}. Pass the full id.`);
-  }
-
-  throw new RecoverAgentNotFoundError(name);
+  const id = await registry.resolveAgentId(name);
+  if (!id) throw new RecoverAgentNotFoundError(name);
+  const agent = await registry.get(id);
+  if (!agent) throw new RecoverAgentNotFoundError(name);
+  return agent;
 }
 
 /**

@@ -126,12 +126,20 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
     const sanitized = sanitizeTeamName(windowName);
     const leaderName = await resolveSessionLeaderName(windowName);
     const sanitizedLeader = sanitizeTeamName(leaderName);
+
+    // Wish retire-session-names-id-only Group 3: spawn writes ONE row.
+    // Resolve the durable identity UUID before registering runtime fields so
+    // the row's id matches `agents_id_shape_check` (migration 061). The
+    // bare-name display label (`<team>-<leader>`) lands on `custom_name`.
+    const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+
     await registry.register({
-      id: `${sanitized}-${sanitizedLeader}`,
+      id: agentIdentity.id,
       paneId,
       session: sessionName,
       team: windowName,
       role: leaderName,
+      customName: `${sanitized}-${sanitizedLeader}`,
       worktree: null,
       startedAt: now,
       state: 'working',
@@ -142,9 +150,6 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
       nativeTeamEnabled: true,
       nativeAgentId: `${sanitizedLeader}@${sanitized}`,
     });
-
-    // Executor model: create agent identity + executor for leader session
-    const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
 
     let pid: number | null = null;
     try {

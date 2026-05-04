@@ -81,6 +81,12 @@ export function isCliSender(sender: string): boolean {
  *   4. Fallback: 'cli'
  */
 export async function detectSenderIdentity(teamName?: string): Promise<string> {
+  // Prefer UUID id from env when present — satisfies migration 061 FK
+  // (mailbox.from_worker → agents.id) without name → id resolution at write time.
+  const envId = process.env.GENIE_AGENT_ID;
+  if (envId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(envId)) {
+    return envId;
+  }
   const envName = process.env.GENIE_AGENT_NAME;
   if (envName) return envName;
 
@@ -541,9 +547,14 @@ async function discoverCurrentTeam(
   const discovered = await nativeTeams.discoverTeamName().catch(() => null);
   if (discovered) return discovered;
 
+  // Wish retire-session-names-id-only G4: resolve the sender via the
+  // canonical name → id resolver. Without team scope here (we're discovering
+  // the team), the resolver falls through customName-tier and lands on
+  // role-fallback or exact-id; either is enough to fetch the sender's row.
   const registryMod = await getRegistry();
-  const workers = await registryMod.list();
-  const senderWorker = workers.find((w) => w.role === from || w.id === from || w.customName === from);
+  const senderId = await registryMod.resolveAgentId(from);
+  if (!senderId) return null;
+  const senderWorker = await registryMod.get(senderId);
   return senderWorker?.team ?? null;
 }
 

@@ -60,13 +60,28 @@ async function insertTeam(name: string, repo: string, members: string[], leader?
 // Helpers: save/restore env vars
 // ---------------------------------------------------------------------------
 
-const ENV_KEYS = ['GENIE_AGENT_NAME', 'TMUX_PANE', 'CLAUDE_CONFIG_DIR', 'GENIE_HOME', 'GENIE_TEAM'] as const;
+const ENV_KEYS = [
+  'GENIE_AGENT_ID',
+  'GENIE_AGENT_NAME',
+  'TMUX_PANE',
+  'CLAUDE_CONFIG_DIR',
+  'GENIE_HOME',
+  'GENIE_TEAM',
+] as const;
 let savedEnv: Record<string, string | undefined>;
 
 beforeEach(() => {
   savedEnv = {};
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k];
+  }
+  // Reset all sender-identity env vars to a known-clean state. detectSenderIdentity
+  // now consults GENIE_AGENT_ID first, so tests that exercise the legacy cascade
+  // (GENIE_AGENT_NAME / TMUX_PANE / 'cli' fallback) must clear it explicitly —
+  // otherwise the runner's own session env (GENIE_AGENT_ID set on every spawned
+  // worker) wins and every subcase resolves to the runner's UUID.
+  for (const k of ['GENIE_AGENT_ID', 'GENIE_AGENT_NAME', 'TMUX_PANE', 'GENIE_TEAM'] as const) {
+    delete process.env[k];
   }
   // Isolate from global registry to prevent cross-test contamination
   process.env.GENIE_HOME = `/tmp/msg-test-isolated-${Date.now()}`;
@@ -116,6 +131,25 @@ describe('isCliSender', () => {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!DB_AVAILABLE)('detectSenderIdentity', () => {
+  // Scenario 0 (post-061 FK lockdown): GENIE_AGENT_ID wins over GENIE_AGENT_NAME.
+  // mailbox.from_worker references agents.id; the UUID env var is the FK-safe
+  // path. Regression guard for the dispatcher unblock fix.
+  test('returns GENIE_AGENT_ID when set + UUID-shaped (overrides GENIE_AGENT_NAME)', async () => {
+    process.env.GENIE_AGENT_ID = '72881063-0c73-4f55-92d3-35c1ee56eea3';
+    process.env.GENIE_AGENT_NAME = 'genie-4';
+
+    const sender = await detectSenderIdentity('genie');
+    expect(sender).toBe('72881063-0c73-4f55-92d3-35c1ee56eea3');
+  });
+
+  test('falls through GENIE_AGENT_ID when value is not UUID-shaped', async () => {
+    process.env.GENIE_AGENT_ID = 'not-a-uuid';
+    process.env.GENIE_AGENT_NAME = 'team-lead';
+
+    const sender = await detectSenderIdentity('genie');
+    expect(sender).toBe('team-lead');
+  });
+
   // Scenario 1: Team-lead via Bash tool — GENIE_AGENT_NAME='team-lead'
   test('returns "team-lead" when GENIE_AGENT_NAME is set (team-lead via Bash tool)', async () => {
     process.env.GENIE_AGENT_NAME = 'team-lead';

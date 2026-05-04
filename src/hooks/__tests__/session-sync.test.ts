@@ -17,7 +17,12 @@ describe('session-sync handler', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    // G7 — parent shell exports GENIE_AGENT_ID when tests run inside a spawned
+    // agent context. Clear it so legacy tests exercise the (name, team)
+    // fallback path; new tests opt into the id path explicitly.
+    process.env.GENIE_AGENT_ID = undefined;
     _resetSyncedSessions();
+    _deps.getAgent = null;
     _deps.getAgentByName = null;
     _deps.getExecutor = null;
     _deps.updateClaudeSessionId = null;
@@ -27,6 +32,7 @@ describe('session-sync handler', () => {
   afterEach(() => {
     process.env = { ...originalEnv };
     _resetSyncedSessions();
+    _deps.getAgent = null;
     _deps.getAgentByName = null;
     _deps.getExecutor = null;
     _deps.updateClaudeSessionId = null;
@@ -306,6 +312,85 @@ describe('session-sync handler', () => {
       await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new-uuid' });
 
       expect(emissions).toHaveLength(0);
+    });
+  });
+
+  // G7 — hook env consumer flip. Migration 061 introduced fk_mailbox_from_worker
+  // → agents.id; the spawn flow exports both GENIE_AGENT_ID (UUID) and
+  // GENIE_AGENT_NAME. Hooks that touch the registry must prefer the UUID so
+  // `getAgent(id)` runs instead of an indirect `(name, team)` lookup.
+  describe('G7 env id preference (GENIE_AGENT_ID first)', () => {
+    const VALID_UUID = '11111111-2222-3333-4444-555555555555';
+
+    test('uses _deps.getAgent when GENIE_AGENT_ID is a UUID; never calls getAgentByName', async () => {
+      process.env.GENIE_AGENT_ID = VALID_UUID;
+      process.env.GENIE_AGENT_NAME = 'engineer-g7';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const calls: { fn: string; args: unknown[] }[] = [];
+      _deps.getAgent = async (id) => {
+        calls.push({ fn: 'getAgent', args: [id] });
+        return { currentExecutorId: 'exec-via-id' };
+      };
+      _deps.getAgentByName = async (name, team) => {
+        calls.push({ fn: 'getAgentByName', args: [name, team] });
+        return { currentExecutorId: 'should-not-be-used' };
+      };
+      _deps.getExecutor = async () => ({ claudeSessionId: 'old-uuid', state: 'running' });
+      _deps.updateClaudeSessionId = async () => {};
+      _deps.emitAuditEvent = async () => {};
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new-uuid' });
+
+      expect(calls).toEqual([{ fn: 'getAgent', args: [VALID_UUID] }]);
+    });
+
+    test('falls back to getAgentByName when GENIE_AGENT_ID is unset', async () => {
+      process.env.GENIE_AGENT_ID = undefined;
+      process.env.GENIE_AGENT_NAME = 'engineer-g7';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const calls: { fn: string; args: unknown[] }[] = [];
+      _deps.getAgent = async (id) => {
+        calls.push({ fn: 'getAgent', args: [id] });
+        return null;
+      };
+      _deps.getAgentByName = async (name, team) => {
+        calls.push({ fn: 'getAgentByName', args: [name, team] });
+        return { currentExecutorId: 'exec-via-name' };
+      };
+      _deps.getExecutor = async () => ({ claudeSessionId: 'old', state: 'running' });
+      _deps.updateClaudeSessionId = async () => {};
+      _deps.emitAuditEvent = async () => {};
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new' });
+
+      expect(calls).toEqual([{ fn: 'getAgentByName', args: ['engineer-g7', 'alpha'] }]);
+    });
+
+    test('falls back to getAgentByName when GENIE_AGENT_ID is a non-UUID string', async () => {
+      process.env.GENIE_AGENT_ID = 'not-a-uuid';
+      process.env.GENIE_AGENT_NAME = 'engineer-g7';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const calls: string[] = [];
+      _deps.getAgent = async () => {
+        calls.push('getAgent');
+        return null;
+      };
+      _deps.getAgentByName = async () => {
+        calls.push('getAgentByName');
+        return { currentExecutorId: 'exec-via-name' };
+      };
+      _deps.getExecutor = async () => ({ claudeSessionId: 'old', state: 'running' });
+      _deps.updateClaudeSessionId = async () => {};
+      _deps.emitAuditEvent = async () => {};
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new' });
+
+      // Non-UUID env id is silently dropped (readEnvAgentId guard); only the
+      // name path runs.
+      expect(calls).toEqual(['getAgentByName']);
     });
   });
 

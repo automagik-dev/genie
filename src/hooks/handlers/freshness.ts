@@ -11,6 +11,7 @@
 
 import { execSync } from 'node:child_process';
 import { statSync } from 'node:fs';
+import { readEnvAgentId, readEnvAgentName } from '../env-identity.js';
 import type { HandlerResult, HookPayload } from '../types.js';
 
 /** How recent (in seconds) a modification must be to trigger a warning. */
@@ -97,7 +98,12 @@ export async function freshness(payload: HookPayload): Promise<HandlerResult> {
   if (!filePath) return;
 
   const cwd = payload.cwd ?? process.cwd();
-  const currentAgent = process.env.GENIE_AGENT_NAME;
+  // Prefer GENIE_AGENT_ID (UUID) when present, but keep the name as a
+  // secondary self-identifier — git authors are usually human-readable, so
+  // we check both against commitInfo.author below.
+  const envAgentId = readEnvAgentId();
+  const envAgentName = readEnvAgentName();
+  const currentAgent = envAgentId ?? envAgentName;
 
   // Check disk modification time first (catches uncommitted changes)
   const diskAge = getFileModAge(filePath);
@@ -107,8 +113,11 @@ export async function freshness(payload: HookPayload): Promise<HandlerResult> {
   const commitInfo = getLastCommitInfo(filePath, cwd);
 
   if (commitInfo && commitInfo.age < STALENESS_THRESHOLD_SECS) {
-    // Skip warning if the current agent made the change
-    if (currentAgent && commitInfo.author.includes(currentAgent)) return;
+    // Skip warning if the current agent made the change. Match by either
+    // env value — git author is typically the human-readable name, but the
+    // UUID match catches CI / id-keyed identities.
+    if (envAgentId && commitInfo.author.includes(envAgentId)) return;
+    if (envAgentName && commitInfo.author.includes(envAgentName)) return;
     return buildCommitWarning(filePath, commitInfo);
   }
 
