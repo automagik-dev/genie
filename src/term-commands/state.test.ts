@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { execSync } from 'node:child_process';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { setupTestDatabase } from '../lib/test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
   archiveWishNamedAgents,
