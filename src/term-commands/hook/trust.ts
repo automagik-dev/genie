@@ -66,47 +66,31 @@ function writeTrustFile(path: string, file: TrustFile): void {
   renameSync(tmpPath, path);
 }
 
-async function trustAction(target: string | undefined, options: TrustOptions): Promise<void> {
-  const trustPath = defaultTrustPath();
-
-  if (!target) {
-    // List mode — print the current trust file.
-    const current = readTrustFile(trustPath);
-    if (current.entries.length === 0) {
-      console.log(`(trust file empty: ${trustPath})`);
-      return;
-    }
-    console.log(`Trusted hooks (${current.entries.length}, from ${trustPath}):`);
-    for (const entry of current.entries) {
-      const scope = entry.scope === 'repo' ? `repo:${entry.repoRemoteUrl ?? '?'}` : entry.scope;
-      console.log(`  ${entry.path}`);
-      console.log(`    scope:    ${scope}`);
-      console.log(`    sha256:   ${entry.sha256}`);
-      console.log(`    trusted:  ${entry.trustedAt}`);
-      if (entry.capabilities && entry.capabilities.length > 0) {
-        console.log(`    caps:     ${entry.capabilities.join(', ')}`);
-      }
-      if (entry.note) console.log(`    note:     ${entry.note}`);
-    }
+function runTrustList(trustPath: string): void {
+  const current = readTrustFile(trustPath);
+  if (current.entries.length === 0) {
+    console.log(`(trust file empty: ${trustPath})`);
     return;
   }
-
-  // Add mode.
-  const filePath = isAbsolute(target) ? target : resolve(process.cwd(), target);
-  if (!existsSync(filePath)) {
-    console.error(`Error: file not found: ${filePath}`);
-    process.exit(1);
+  console.log(`Trusted hooks (${current.entries.length}, from ${trustPath}):`);
+  for (const entry of current.entries) {
+    const scope = entry.scope === 'repo' ? `repo:${entry.repoRemoteUrl ?? '?'}` : entry.scope;
+    console.log(`  ${entry.path}`);
+    console.log(`    scope:    ${scope}`);
+    console.log(`    sha256:   ${entry.sha256}`);
+    console.log(`    trusted:  ${entry.trustedAt}`);
+    if (entry.capabilities && entry.capabilities.length > 0) {
+      console.log(`    caps:     ${entry.capabilities.join(', ')}`);
+    }
+    if (entry.note) console.log(`    note:     ${entry.note}`);
   }
-  if (!filePath.endsWith('.ts')) {
-    console.error(`Error: trust target must be a .ts file: ${filePath}`);
-    process.exit(1);
-  }
+}
 
-  // Determine scope. Default 'global' unless --repo or --team is passed.
-  let scope: TrustEntry['scope'];
-  let repoRemoteUrl: string | undefined;
+function resolveTrustScope(
+  filePath: string,
+  options: TrustOptions,
+): { scope: TrustEntry['scope']; repoRemoteUrl?: string } {
   if (options.repo) {
-    scope = 'repo';
     const repoRoot = findRepoRoot(dirname(filePath));
     if (!repoRoot) {
       console.error(`Error: --repo passed but no .git directory found above ${filePath}`);
@@ -117,42 +101,54 @@ async function trustAction(target: string | undefined, options: TrustOptions): P
       console.error(`Error: --repo passed but ${repoRoot} has no remote.origin.url`);
       process.exit(1);
     }
-    repoRemoteUrl = remote;
-  } else if (options.team) {
-    scope = 'team';
-  } else {
-    scope = 'global';
+    return { scope: 'repo', repoRemoteUrl: remote };
+  }
+  if (options.team) return { scope: 'team' };
+  return { scope: 'global' };
+}
+
+async function confirmTrustOrAbort(yes: boolean): Promise<void> {
+  if (yes || !process.stdin.isTTY) return;
+  process.stdout.write('Confirm? (y/N) ');
+  const buf = Buffer.alloc(8);
+  let read = 0;
+  try {
+    const fs = await import('node:fs');
+    read = fs.readSync(0, buf, 0, buf.length, null);
+  } catch {
+    console.error('Error: cannot read confirmation; pass --yes to trust non-interactively');
+    process.exit(1);
+  }
+  const answer = buf.subarray(0, read).toString().trim().toLowerCase();
+  if (answer !== 'y' && answer !== 'yes') {
+    console.log('Aborted.');
+    process.exit(1);
+  }
+}
+
+async function runTrustAdd(target: string, options: TrustOptions, trustPath: string): Promise<void> {
+  const filePath = isAbsolute(target) ? target : resolve(process.cwd(), target);
+  if (!existsSync(filePath)) {
+    console.error(`Error: file not found: ${filePath}`);
+    process.exit(1);
+  }
+  if (!filePath.endsWith('.ts')) {
+    console.error(`Error: trust target must be a .ts file: ${filePath}`);
+    process.exit(1);
   }
 
+  const { scope, repoRemoteUrl } = resolveTrustScope(filePath, options);
   const sha = sha256OfFile(filePath);
   const source = readFileSync(filePath, 'utf-8');
   const capabilities = parseCapabilities(source);
 
-  // Surface what we're about to trust.
   console.log(`About to trust: ${filePath}`);
   console.log(`  scope:    ${scope === 'repo' ? `repo:${repoRemoteUrl}` : scope}`);
   console.log(`  sha256:   ${sha}`);
   if (capabilities.length > 0) console.log(`  caps:     ${capabilities.join(', ')}`);
   if (options.note) console.log(`  note:     ${options.note}`);
 
-  if (!options.yes && process.stdin.isTTY) {
-    process.stdout.write('Confirm? (y/N) ');
-    // Synchronous-ish read; bun supports readSync on stdin fd 0.
-    const buf = Buffer.alloc(8);
-    let read = 0;
-    try {
-      const fs = await import('node:fs');
-      read = fs.readSync(0, buf, 0, buf.length, null);
-    } catch {
-      console.error('Error: cannot read confirmation; pass --yes to trust non-interactively');
-      process.exit(1);
-    }
-    const answer = buf.subarray(0, read).toString().trim().toLowerCase();
-    if (answer !== 'y' && answer !== 'yes') {
-      console.log('Aborted.');
-      process.exit(1);
-    }
-  }
+  await confirmTrustOrAbort(options.yes ?? false);
 
   const current = readTrustFile(trustPath);
   const newEntry: TrustEntry = {
@@ -171,6 +167,12 @@ async function trustAction(target: string | undefined, options: TrustOptions): P
   };
   writeTrustFile(trustPath, next);
   console.log(`Trusted ${filePath} → ${trustPath}`);
+}
+
+async function trustAction(target: string | undefined, options: TrustOptions): Promise<void> {
+  const trustPath = defaultTrustPath();
+  if (!target) return runTrustList(trustPath);
+  await runTrustAdd(target, options, trustPath);
 }
 
 export function registerHookTrustCommand(parent: Command): void {
