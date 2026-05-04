@@ -7,6 +7,7 @@
  * Priority: 10 (runs before auto-spawn)
  */
 
+import { readEnvAgentId, readEnvAgentName } from '../env-identity.js';
 import type { HandlerResult, HookPayload } from '../types.js';
 
 export async function identityInject(payload: HookPayload): Promise<HandlerResult> {
@@ -18,8 +19,13 @@ export async function identityInject(payload: HookPayload): Promise<HandlerResul
   const msgType = input.type as string | undefined;
   if (msgType && msgType !== 'message' && msgType !== 'broadcast') return;
 
-  // Resolve agent name from env (set by genie spawn via GENIE_AGENT_NAME)
-  const agentName = process.env.GENIE_AGENT_NAME;
+  // Read both env forms — UUID is the canonical post-061 identity, name is
+  // the human-readable alias spawn exports. Tag prefers the name for
+  // recipient UX ([from:engineer-g7] beats [from:<uuid>]); the id is only
+  // used as a last-resort identifier when the spawn flow didn't export a name.
+  const envAgentId = readEnvAgentId();
+  const envAgentName = readEnvAgentName();
+  const agentName = envAgentName ?? envAgentId;
   if (!agentName) return;
 
   // Support both genie-internal (content) and native CC (message) field names

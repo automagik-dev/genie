@@ -115,7 +115,11 @@ describe('genie hook dispatch', () => {
     expect(result).toBe('');
   });
 
-  test('identity-inject skips when GENIE_AGENT_NAME is unset', async () => {
+  test('identity-inject skips when both GENIE_AGENT_ID and GENIE_AGENT_NAME are unset', async () => {
+    // G7 — must clear BOTH env vars to suppress injection. Setting only the
+    // name to undefined is insufficient post-flip because readEnvAgentId
+    // falls back from a UUID env id when the name is missing.
+    process.env.GENIE_AGENT_ID = undefined;
     process.env.GENIE_AGENT_NAME = undefined;
 
     const payload = {
@@ -131,6 +135,69 @@ describe('genie hook dispatch', () => {
 
     const result = await dispatch(JSON.stringify(payload));
     expect(result).toBe('');
+  });
+
+  test('identity-inject prefers GENIE_AGENT_NAME for human-readable display when both env vars set', async () => {
+    // G7 — readEnvAgentId/readEnvAgentName both succeed; tag prefers name.
+    process.env.GENIE_AGENT_ID = '11111111-2222-3333-4444-555555555555';
+    process.env.GENIE_AGENT_NAME = 'test-worker';
+
+    const payload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'SendMessage',
+      tool_input: {
+        type: 'message',
+        recipient: 'team-lead',
+        content: 'env id + name set',
+        summary: 'test',
+      },
+    };
+
+    const result = await dispatch(JSON.stringify(payload));
+    const parsed = JSON.parse(result);
+    expect(parsed.updatedInput.content).toBe('[from:test-worker] env id + name set');
+  });
+
+  test('identity-inject falls back to GENIE_AGENT_ID when only the UUID is set', async () => {
+    // G7 — name unset; tag uses the env id (last-resort identifier).
+    process.env.GENIE_AGENT_ID = '11111111-2222-3333-4444-555555555555';
+    process.env.GENIE_AGENT_NAME = undefined;
+
+    const payload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'SendMessage',
+      tool_input: {
+        type: 'message',
+        recipient: 'team-lead',
+        content: 'only id set',
+        summary: 'test',
+      },
+    };
+
+    const result = await dispatch(JSON.stringify(payload));
+    const parsed = JSON.parse(result);
+    expect(parsed.updatedInput.content).toBe('[from:11111111-2222-3333-4444-555555555555] only id set');
+  });
+
+  test('identity-inject ignores GENIE_AGENT_ID when it is not a UUID', async () => {
+    // G7 — readEnvAgentId returns undefined for non-UUID; falls back to name.
+    process.env.GENIE_AGENT_ID = 'cli:something';
+    process.env.GENIE_AGENT_NAME = 'test-worker';
+
+    const payload = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'SendMessage',
+      tool_input: {
+        type: 'message',
+        recipient: 'team-lead',
+        content: 'bad id',
+        summary: 'test',
+      },
+    };
+
+    const result = await dispatch(JSON.stringify(payload));
+    const parsed = JSON.parse(result);
+    expect(parsed.updatedInput.content).toBe('[from:test-worker] bad id');
   });
 
   test('identity-inject works for broadcast type', async () => {

@@ -238,12 +238,16 @@ export async function runDispatchClient(): Promise<number> {
 
   // F1 fallback: emit allow (empty stdout) + append audit record.
   const summary = summarizePayload(payload);
+  // Prefer GENIE_AGENT_ID (UUID) — falls back to GENIE_AGENT_NAME only when
+  // env id is unset. Was previously labeled `agent_id` but populated with the
+  // bare name; post-061 the canonical agent id is the UUID.
+  const agentId = process.env.GENIE_AGENT_ID ?? process.env.GENIE_AGENT_NAME ?? null;
   appendFallback({
     ts: new Date().toISOString(),
     event: summary.event,
     tool: summary.tool,
     command: summary.command,
-    agent_id: process.env.GENIE_AGENT_NAME ?? null,
+    agent_id: agentId,
     reason: result.reason ?? 'unknown',
   });
   return 0;
