@@ -345,60 +345,10 @@ async function ensureSession(
   `;
   if (existing.length > 0) {
     const row = existing[0];
-
-    // Upgrade path: row already exists (was inserted as orphaned because the
-    // worker wasn't yet known to ingestion), and now workerMap can fill in
-    // executor_id / agent_id / team / wish_slug / task_id / role. COALESCE
-    // protects any field that already has a non-null value — we never
-    // downgrade better context, only fill NULLs. Status flips
-    // 'orphaned' → 'active' iff the worker brings real attribution; we
-    // never overwrite 'completed' / 'crashed' / 'active'.
-    const needsUpgrade =
-      worker !== undefined &&
-      (row.executor_id === null ||
-        row.agent_id === null ||
-        row.team === null ||
-        row.wish_slug === null ||
-        row.task_id === null ||
-        row.role === null ||
-        row.status === 'orphaned');
-
-    if (needsUpgrade) {
-      const [upgraded] = await sql`
-        UPDATE sessions SET
-          executor_id = COALESCE(executor_id, ${worker.executorId ?? null}),
-          agent_id    = COALESCE(agent_id,    ${worker.agentId ?? null}),
-          team        = COALESCE(team,        ${worker.team ?? null}),
-          wish_slug   = COALESCE(wish_slug,   ${worker.wishSlug ?? null}),
-          task_id     = COALESCE(task_id,     ${worker.taskId ?? null}),
-          role        = COALESCE(role,        ${worker.role ?? null}),
-          status      = CASE
-            WHEN status = 'orphaned' AND ${worker.agentId ?? null}::text IS NOT NULL
-              THEN 'active'
-            ELSE status
-          END,
-          updated_at  = now()
-        WHERE id = ${sessionId}
-        RETURNING agent_id, team, wish_slug, task_id, last_ingested_offset, total_turns
-      `;
-      return {
-        agentId: upgraded.agent_id,
-        team: upgraded.team,
-        wishSlug: upgraded.wish_slug,
-        taskId: upgraded.task_id,
-        lastOffset: upgraded.last_ingested_offset ?? 0,
-        totalTurns: upgraded.total_turns ?? 0,
-      };
+    if (shouldUpgradeOrphanedRow(row, worker)) {
+      return upgradeOrphanedRow(sql, sessionId, worker as WorkerMatch);
     }
-
-    return {
-      agentId: row.agent_id,
-      team: row.team,
-      wishSlug: row.wish_slug,
-      taskId: row.task_id,
-      lastOffset: row.last_ingested_offset ?? 0,
-      totalTurns: row.total_turns ?? 0,
-    };
+    return rowToContext(row);
   }
 
   const parentSessionId = await resolveSafeParentId(sql, opts?.parentSessionId);
@@ -409,6 +359,77 @@ async function ensureSession(
     ON CONFLICT (id) DO NOTHING
   `;
   return workerToContext(worker);
+}
+
+// Upgrade path: row already exists (was inserted as orphaned because the
+// worker wasn't yet known to ingestion), and now workerMap can fill in
+// executor_id / agent_id / team / wish_slug / task_id / role. COALESCE
+// protects any field that already has a non-null value — we never
+// downgrade better context, only fill NULLs. Status flips
+// 'orphaned' → 'active' iff the worker brings real attribution; we
+// never overwrite 'completed' / 'crashed' / 'active'.
+function shouldUpgradeOrphanedRow(row: SessionRow, worker: WorkerMatch | undefined): boolean {
+  if (worker === undefined) return false;
+  return (
+    row.executor_id === null ||
+    row.agent_id === null ||
+    row.team === null ||
+    row.wish_slug === null ||
+    row.task_id === null ||
+    row.role === null ||
+    row.status === 'orphaned'
+  );
+}
+
+async function upgradeOrphanedRow(sql: SqlClient, sessionId: string, worker: WorkerMatch): Promise<SessionContext> {
+  const [upgraded] = await sql`
+    UPDATE sessions SET
+      executor_id = COALESCE(executor_id, ${worker.executorId ?? null}),
+      agent_id    = COALESCE(agent_id,    ${worker.agentId ?? null}),
+      team        = COALESCE(team,        ${worker.team ?? null}),
+      wish_slug   = COALESCE(wish_slug,   ${worker.wishSlug ?? null}),
+      task_id     = COALESCE(task_id,     ${worker.taskId ?? null}),
+      role        = COALESCE(role,        ${worker.role ?? null}),
+      status      = CASE
+        WHEN status = 'orphaned' AND ${worker.agentId ?? null}::text IS NOT NULL
+          THEN 'active'
+        ELSE status
+      END,
+      updated_at  = now()
+    WHERE id = ${sessionId}
+    RETURNING agent_id, team, wish_slug, task_id, last_ingested_offset, total_turns
+  `;
+  return {
+    agentId: upgraded.agent_id,
+    team: upgraded.team,
+    wishSlug: upgraded.wish_slug,
+    taskId: upgraded.task_id,
+    lastOffset: upgraded.last_ingested_offset ?? 0,
+    totalTurns: upgraded.total_turns ?? 0,
+  };
+}
+
+function rowToContext(row: SessionRow): SessionContext {
+  return {
+    agentId: row.agent_id,
+    team: row.team,
+    wishSlug: row.wish_slug,
+    taskId: row.task_id,
+    lastOffset: row.last_ingested_offset ?? 0,
+    totalTurns: row.total_turns ?? 0,
+  };
+}
+
+interface SessionRow {
+  executor_id: string | null;
+  agent_id: string | null;
+  team: string | null;
+  wish_slug: string | null;
+  task_id: string | null;
+  role: string | null;
+  status: string;
+  last_ingested_offset: number | null;
+  total_turns: number | null;
 }
 
 // ============================================================================
