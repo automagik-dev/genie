@@ -236,21 +236,19 @@ async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Agent 
  * Ensure a worker is alive, auto-spawning from template if needed.
  * Handles suspended workers by resuming with --resume <session-id>.
  */
-/** Find a matching spawn template for the worker/recipient. */
-async function findSpawnTemplate(
-  worker: registry.Agent | null,
-  recipientId: string,
-): Promise<registry.WorkerTemplate | null> {
+/**
+ * Find a matching spawn template for a known worker.
+ *
+ * Identity-only match: requires a worker row carrying `(team, role)` —
+ * recipientId-as-role fuzz removed (wish #175 G6, decision row 2).
+ * Caller resolves name → id at the CLI boundary; if no worker row exists
+ * for the canonical id, return null and let the send path surface
+ * "unknown agent" rather than guessing.
+ */
+async function findSpawnTemplate(worker: registry.Agent | null): Promise<registry.WorkerTemplate | null> {
+  if (!worker || !worker.team || !worker.role) return null;
   const templates = await registry.listTemplates();
-  const candidates = [worker?.role, worker?.id, recipientId].filter((v): v is string => Boolean(v));
-  const uniqueCandidates = [...new Set(candidates)];
-  const workerTeam = worker?.team;
-  return (
-    templates.find((t) => {
-      if (workerTeam && t.team !== workerTeam) return false;
-      return uniqueCandidates.some((q) => t.id === q || t.role === q || `${t.team}:${t.role}` === q);
-    }) ?? null
-  );
+  return templates.find((t) => t.team === worker.team && t.role === worker.role) ?? null;
 }
 
 /** Attempt to spawn a worker from template inside an advisory-locked transaction. */
@@ -261,7 +259,6 @@ async function lockedSpawnWorker(
   resumeSessionId: string | undefined,
 ): Promise<{ worker: registry.Agent; respawned: boolean } | null> {
   const sql = await getConnection();
-  const workerTeam = worker?.team;
 
   const lockResult = await sql.begin(async (tx: typeof sql) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${recipientId}))`;
@@ -270,8 +267,10 @@ async function lockedSpawnWorker(
     const postLockLive = await findLiveWorkerFuzzy(recipientId);
     if (postLockLive) return { type: 'existing' as const, worker: postLockLive };
 
-    await cleanupDeadWorkers(recipientId, workerTeam);
-    if (worker) await registry.unregister(worker.id);
+    if (worker) {
+      await cleanupDeadWorkers(worker.id);
+      await registry.unregister(worker.id);
+    }
 
     const { spawnWorkerFromTemplate } = await import('./protocol-router-spawn.js');
     const spawnResult = await spawnWorkerFromTemplate(template, resumeSessionId);
@@ -298,32 +297,28 @@ async function lockedSpawnWorker(
  * whose last executor is in a non-terminal state (spawning/running/idle/
  * working/permission/question) are mid-task — we MUST resume them with
  * their session id. Silently spawning fresh would drop the conversation
- * history. Master agents (`kind='permanent'`, `dir:<name>` rows) lose
- * their runtime worker on reboot but retain a recoverable session UUID
- * via the chokepoint; probing `dir:<recipientId>` when no live worker
- * exists keeps team-lead "hires" on the master's persistent session
- * instead of forking a fresh UUID and orphaning conversation history.
- * Ephemeral spawns have no `dir:<name>` row, so the chokepoint returns
- * `unknown_agent` and the caller proceeds with a fresh `--session-id`.
- * Gap C from trace-stale-resume (task #6) + master-aware-spawn Group 1.
+ * history. Identity-only contract (wish #175 G6): caller must supply a
+ * non-null worker with a canonical id (UUID or `dir:<name>`); the
+ * `dir:${recipientId}` fallback for null workers is removed because
+ * name-as-id resolution belongs at the CLI boundary, not here.
+ * Gap C from trace-stale-resume (task #6).
  */
 export async function resolveResumeSessionId(
-  worker: registry.Agent | null,
+  worker: registry.Agent,
   template: registry.WorkerTemplate,
-  recipientId: string,
 ): Promise<string | undefined> {
   if (template.provider !== 'claude') return undefined;
-  const agentIdToProbe = worker?.id ?? `dir:${recipientId}`;
-  const decision = await shouldResume(agentIdToProbe);
-  if (worker && (await isExecutorResumable(worker))) {
-    if (!decision.sessionId) throw new MissingResumeSessionError(worker.id, recipientId);
+  if (!worker.id) throw new Error('resolveResumeSessionId: worker.id is required');
+  const decision = await shouldResume(worker.id);
+  if (await isExecutorResumable(worker)) {
+    if (!decision.sessionId) throw new MissingResumeSessionError(worker.id);
   }
   if (!decision.sessionId) return undefined;
   // Actual resume attempt — emit the lifecycle event via the eventful
   // helper. `shouldResume` (read path) stays silent
   // (observability-signal-normalization Group 1).
   const { acquireResumeSessionForAttempt } = await import('./executor-registry.js');
-  const acquired = await acquireResumeSessionForAttempt(agentIdToProbe).catch(() => null);
+  const acquired = await acquireResumeSessionForAttempt(worker.id).catch(() => null);
   return acquired ?? decision.sessionId;
 }
 
@@ -351,10 +346,15 @@ async function ensureWorkerAlive(
   if (await isExecutorCompleted(worker)) return null;
   if (!process.env.TMUX) return null;
 
-  const template = await findSpawnTemplate(worker, recipientId);
+  // Identity-only auto-spawn (wish #175 G6): we need a worker row with
+  // (team, role) to locate a template. Directory-only fallback (no worker
+  // row) is intentionally not supported here — caller resolves at CLI.
+  if (!worker) return null;
+
+  const template = await findSpawnTemplate(worker);
   if (!template) return null;
 
-  const resumeSessionId = await resolveResumeSessionId(worker, template, recipientId);
+  const resumeSessionId = await resolveResumeSessionId(worker, template);
 
   try {
     return await lockedSpawnWorker(recipientId, worker, template, resumeSessionId);
@@ -364,18 +364,17 @@ async function ensureWorkerAlive(
 }
 
 /**
- * Remove dead worker entries matching a role/ID to prevent ghost accumulation.
- * Only removes workers whose tmux panes are no longer alive.
+ * Remove the dead worker row identified by `agentId` to prevent ghost
+ * accumulation. Only removes the row when its tmux pane is no longer alive.
+ *
+ * Identity-only contract (wish #175 G6): match by canonical id only —
+ * role/team fuzz removed. Caller resolves at the CLI boundary.
  */
-async function cleanupDeadWorkers(recipientId: string, team?: string): Promise<void> {
-  const allWorkers = await registry.list();
-  for (const w of allWorkers) {
-    if (team && w.team !== team) continue;
-    const matches = w.role === recipientId || w.id === recipientId;
-    if (!matches) continue;
-    if (await _deps.isPaneAlive(w.paneId)) continue;
-    await registry.unregister(w.id);
-  }
+async function cleanupDeadWorkers(agentId: string): Promise<void> {
+  const w = await registry.get(agentId);
+  if (!w) return;
+  if (await _deps.isPaneAlive(w.paneId)) return;
+  await registry.unregister(w.id);
 }
 
 // ============================================================================
