@@ -90,6 +90,13 @@ async function checkHierarchy(from: string, to: string): Promise<{ allowed: bool
       return { allowed: true };
     }
 
+    // Top of hierarchy (no manager) can reach anyone in same team.
+    // Catches the "orchestrator → own subagent" case where reports_to wiring
+    // hasn't propagated yet (e.g. fresh spawn) but team scope is unambiguous.
+    if (!sender.reportsTo && sender.team && sender.team === recipient.team) {
+      return { allowed: true };
+    }
+
     const manager = sender.reportsTo ?? 'your manager';
     return {
       allowed: false,
