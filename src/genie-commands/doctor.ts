@@ -1419,54 +1419,62 @@ async function reapStaleGenieProcesses(opts: { log?: (line: string) => void } = 
   if (candidates.length === 0) {
     log('  [ok] No stale genie processes to reap');
   } else {
-    log(`  [fix] Reaping ${candidates.length} stale genie process(es) (incl. serve daemon): ${candidates.join(', ')}`);
-    for (const pid of candidates) {
-      try {
-        process.kill(pid, 'SIGTERM');
-      } catch {
-        // Already dead between scan and signal — fine.
-      }
-    }
-
-    // Give SIGTERM 2s to settle. Most genie processes have shutdown handlers
-    // (the same beforeExit handler we added in #1580) that drain pools and
-    // exit cleanly within a second.
-    await new Promise((r) => setTimeout(r, 2000));
-
-    const stragglers: number[] = [];
-    for (const pid of candidates) {
-      try {
-        process.kill(pid, 0); // signal 0 = liveness probe
-        stragglers.push(pid);
-      } catch {
-        // Gone after SIGTERM — good.
-      }
-    }
-    if (stragglers.length > 0) {
-      log(`  [fix] SIGKILL stragglers: ${stragglers.join(', ')}`);
-      for (const pid of stragglers) {
-        try {
-          process.kill(pid, 'SIGKILL');
-        } catch {
-          // Race: died between probe and SIGKILL — fine.
-        }
-      }
-    }
-
-    // Daemon was just killed — clear the stale pid file so the next
-    // genie invocation autospawns cleanly instead of probing a dead pid.
-    try {
-      const home = process.env.GENIE_HOME ?? join(homedir(), '.genie');
-      const servePidPath = join(home, 'serve.pid');
-      if (existsSync(servePidPath)) unlinkSync(servePidPath);
-    } catch {
-      // serve.pid is stale-tolerant — next caller will recover.
-    }
+    await reapCandidates(candidates, log);
+    clearStaleServePidFile();
   }
 
   cleanupStalePm2Entries(log);
 
   log('  [ok] Stale genie reap complete');
+}
+
+async function reapCandidates(candidates: number[], log: (line: string) => void): Promise<void> {
+  log(`  [fix] Reaping ${candidates.length} stale genie process(es) (incl. serve daemon): ${candidates.join(', ')}`);
+  for (const pid of candidates) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      // Already dead between scan and signal — fine.
+    }
+  }
+
+  // Give SIGTERM 2s to settle. Most genie processes have shutdown handlers
+  // (the same beforeExit handler we added in #1580) that drain pools and
+  // exit cleanly within a second.
+  await new Promise((r) => setTimeout(r, 2000));
+
+  const stragglers = candidates.filter(isPidAlive);
+  if (stragglers.length === 0) return;
+
+  log(`  [fix] SIGKILL stragglers: ${stragglers.join(', ')}`);
+  for (const pid of stragglers) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Race: died between probe and SIGKILL — fine.
+    }
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0); // signal 0 = liveness probe
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearStaleServePidFile(): void {
+  // Daemon was just killed — clear the stale pid file so the next
+  // genie invocation autospawns cleanly instead of probing a dead pid.
+  try {
+    const home = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+    const servePidPath = join(home, 'serve.pid');
+    if (existsSync(servePidPath)) unlinkSync(servePidPath);
+  } catch {
+    // serve.pid is stale-tolerant — next caller will recover.
+  }
 }
 
 /**
