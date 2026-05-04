@@ -383,8 +383,8 @@ export function buildNoWorkResultIfApplicable(
   return null;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
 export async function applyRepairTransaction(
+  // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type — caller is the test stub
   sql: any,
   previewCount: number,
   force: boolean,
@@ -397,7 +397,7 @@ export async function applyRepairTransaction(
     driftDetected: false,
   };
 
-  // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type
+  // biome-ignore lint/suspicious/noExplicitAny: postgres.js tx callback type
   await sql.begin(async (tx: any) => {
     // Re-count INSIDE the transaction so a concurrent ingestion changing the
     // candidate set between preview and apply trips the gate. With READ

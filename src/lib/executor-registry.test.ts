@@ -1599,7 +1599,6 @@ describe.skipIf(!DB_AVAILABLE)('executor-registry', () => {
       // The dedupe map was removed entirely in this hotfix. The reset helper
       // is kept as an exported no-op so any external/in-flight tests that
       // imported it don't break their import resolution.
-      // biome-ignore lint/suspicious/noConsoleLog: explicit no-op verification
       _resetMissingSessionDedupeForTests();
       expect(true).toBe(true);
     });
