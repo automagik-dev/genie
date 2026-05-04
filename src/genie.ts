@@ -226,6 +226,22 @@ program
   .action(async (opts) => {
     await migrateCommand({ dryRun: opts.dryRun, quiet: opts.quiet, status: opts.status });
   });
+program
+  .command('splash')
+  .description('Preview the install/startup splash animation (visual tuning)')
+  .option('-d, --duration <ms>', 'Total animation duration in ms', (v) => Number.parseInt(v, 10), 2400)
+  .option('-h, --hold <ms>', 'Hold the final frame this long before exit', (v) => Number.parseInt(v, 10), 600)
+  .option('-f, --freeze <progress>', 'Freeze at a specific progress (0..1) — skip the animation', (v) =>
+    Number.parseFloat(v),
+  )
+  .action(async (opts) => {
+    const { renderSplash } = await import('./tui/splash-render.js');
+    await renderSplash({
+      duration: Number.isFinite(opts.duration) ? opts.duration : undefined,
+      holdMs: Number.isFinite(opts.hold) ? opts.hold : undefined,
+      freezeAt: Number.isFinite(opts.freeze) ? opts.freeze : undefined,
+    });
+  });
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 
 const shortcuts = program.command('shortcuts').description('Manage tmux keyboard shortcuts');
