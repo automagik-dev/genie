@@ -604,10 +604,11 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
  * Default TTL (hours) after which an exhausted dead-pane zombie is archived.
  *
  * A zombie is any agent whose reconciler audit trail shows
- * `reason=dead_pane_zombie` AND whose `auto_resume` has been flipped to false
- * by the scheduler's exhaustion branch. Without this TTL, such rows stayed
- * visible in `genie ls` forever (#1293), holding registry slots and confusing
- * users into thinking the agent is still recoverable.
+ * `reason IN ('dead_pane_zombie', 'stale_spawn_dead_pane')` AND whose
+ * `auto_resume` has been flipped to false by the scheduler's exhaustion
+ * branch. Without this TTL, such rows stayed visible in `genie ls` forever
+ * (#1293), holding registry slots and confusing users into thinking the
+ * agent is still recoverable.
  */
 const DEAD_PANE_ZOMBIE_TTL_HOURS = 24;
 
@@ -619,8 +620,9 @@ const DEAD_PANE_ZOMBIE_TTL_HOURS = 24;
  *   2. Have `auto_resume = false` (retry budget exhausted)
  *   3. Were last transitioned > `ttlHours` ago
  *   4. Have at least one reconciler audit event tagged
- *      `reason = 'dead_pane_zombie'` (distinguishes them from other error
- *      causes the user might want to keep visible, e.g. manual error states).
+ *      `reason IN ('dead_pane_zombie', 'stale_spawn_dead_pane')` —
+ *      both reconciler reasons indicate a dead pane and are TTL-eligible.
+ *      Other error causes (manual error states, app errors) stay visible.
  *
  * Transitions matching rows to `state = 'archived'` so the default listing
  * filter hides them. An audit event is emitted per row for traceability.
@@ -642,7 +644,7 @@ export async function archiveExhaustedZombies(ttlHours = DEAD_PANE_ZOMBIE_TTL_HO
           WHERE e.entity_type = 'worker'
             AND e.entity_id = a.id
             AND e.event_type = 'state_changed'
-            AND e.details->>'reason' = 'dead_pane_zombie'
+            AND e.details->>'reason' IN ('dead_pane_zombie', 'stale_spawn_dead_pane')
         )
       RETURNING id
     `;
@@ -685,7 +687,7 @@ export async function listExhaustedZombies(
           WHERE e.entity_type = 'worker'
             AND e.entity_id = a.id
             AND e.event_type = 'state_changed'
-            AND e.details->>'reason' = 'dead_pane_zombie'
+            AND e.details->>'reason' IN ('dead_pane_zombie', 'stale_spawn_dead_pane')
         )
       ORDER BY a.last_state_change ASC
     `;
