@@ -236,16 +236,6 @@ describe('7.2 tmux Compatibility', () => {
     expect(source).toContain('DELETE FROM teams WHERE name =');
   });
 
-  test('removeWorktree falls back to rm for non-worktree clones', () => {
-    const source = readFileSync(join(__dirname, '..', 'team-manager.ts'), 'utf-8');
-
-    // Primary: git worktree remove
-    expect(source).toContain('git worktree remove --force');
-
-    // Fallback: rm for shared clones
-    expect(source).toContain('recursive: true, force: true');
-  });
-
   test('archiveTeam kills members BEFORE DB update to prevent zombie writes', () => {
     const source = readFileSync(join(__dirname, '..', 'team-manager.ts'), 'utf-8');
 

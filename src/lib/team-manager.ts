@@ -11,7 +11,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, rm, symlink } from 'node:fs/promises';
+import { mkdir, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path, { join } from 'node:path';
 import { $ } from 'bun';
@@ -616,21 +616,6 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
   }
 
   return true;
-}
-
-async function removeWorktree(worktreePath: string | undefined): Promise<void> {
-  if (!worktreePath || !existsSync(worktreePath)) return;
-  try {
-    // Use git worktree remove for proper cleanup of object store references
-    await $`git worktree remove --force ${worktreePath}`.quiet();
-  } catch {
-    // Fallback to rm for non-worktree clones (e.g., --shared clones)
-    try {
-      await rm(worktreePath, { recursive: true, force: true });
-    } catch {
-      // Best-effort
-    }
-  }
 }
 
 /**
