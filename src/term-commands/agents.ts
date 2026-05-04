@@ -2353,6 +2353,12 @@ export async function resolveSpawnIdentity(
   isAliveFn: (agent: { id: string; paneId: string }) => Promise<boolean> = (agent) =>
     executorRegistry.resolveWorkerLivenessByTransport(agent),
 ): Promise<SpawnIdentity> {
+  // Migration 061 + PR #1627: agents.id is UUID. Non-UUID names cannot match
+  // by id; skip the canonical-lookup query and return a fresh canonical with
+  // a generated UUID workerId. Keeps role-based dispatch working post-061.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name)) {
+    return { kind: 'canonical', workerId: uuidFactory(), sessionUuid: uuidFactory() };
+  }
   const { getConnection } = await import('../lib/db.js');
   const sql = await getConnection();
   // `agents.id` is the PRIMARY KEY (migrations/005_pg_state.sql), so the
