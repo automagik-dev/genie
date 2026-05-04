@@ -67,6 +67,26 @@ Or install manually:
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
 ```
 
+### Manual install (canonical pgserve first)
+
+If you'd rather lay the pieces down yourself, install canonical pgserve
+before genie. Genie is a consumer of the pm2-supervised pgserve daemon —
+it never spawns its own. See [docs/install.md](docs/install.md) for the
+rationale and migration tips.
+
+```bash
+# 1. Canonical pgserve (registers a pm2-supervised singleton)
+bun add -g pgserve@^2
+pgserve install
+
+# 2. Genie (will refuse to install if pgserve is unreachable)
+bun add -g @automagik/genie
+genie install
+
+# 3. Verify
+genie doctor
+```
+
 ## What you get
 
 ```

@@ -594,15 +594,23 @@ async function startAgentSync(): Promise<{ close: () => void } | null> {
   }
 }
 
-/** Start pgserve and register it in the service registry. */
-async function startPgserve(): Promise<void> {
-  console.log('  Starting pgserve daemon...');
+/**
+ * Probe the canonical pm2-supervised pgserve daemon. Genie is consumer-only
+ * after the canonical-cutover wish — `genie serve` no longer spawns or
+ * supervises pgserve. If the daemon is not reachable, log a clear
+ * canonical-install hint and disable subsequent autostart attempts so the
+ * rest of the serve boot doesn't loop on the same failure.
+ */
+async function requirePgserveReady(): Promise<void> {
+  console.log('  Probing canonical pgserve daemon...');
   try {
-    const { getDataDir, getOrStartDaemon, resolvePgserveSocketDir } = await import('../lib/db.js');
-    const state = await getOrStartDaemon();
-    const pid = state.pid ? `, pid ${state.pid}` : '';
-    console.log(`  pgserve daemon ready on ${resolvePgserveSocketDir()} (data: ${getDataDir()}${pid})`);
+    const { requirePgserveDaemon, resolvePgserveSocketDir } = await import('../lib/db.js');
+    await requirePgserveDaemon();
+    console.log(`  pgserve daemon ready (canonical, pm2-supervised) on ${resolvePgserveSocketDir()}`);
     try {
+      // Service registry entry stays for diagnostics — genie no longer OWNS
+      // pgserve, but observability tools still want to know which serve is
+      // talking to it. The role name reflects the consumer-only contract.
       const { registerService } = await import('../lib/service-registry.js');
       registerService('pgserve-owner', process.pid);
     } catch {
@@ -610,10 +618,14 @@ async function startPgserve(): Promise<void> {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`  pgserve failed: ${msg}`);
+    console.error(`  pgserve unreachable: ${msg}`);
+    console.error('  Recovery:');
+    console.error('    pm2 status              # is pgserve registered?');
+    console.error('    pm2 restart pgserve     # OR: autopg restart');
+    console.error('    pgserve install         # if not registered yet');
+    console.error('  See https://github.com/automagik-dev/genie/blob/main/docs/install.md');
     process.env.GENIE_PG_NO_AUTOSTART = '1';
     process.env.GENIE_PG_DISABLE_AUTOSTART = '1';
-    console.error('  pgserve retries disabled for this serve process; fix pgserve and restart `genie serve`.');
   }
 }
 
@@ -1216,7 +1228,7 @@ async function startForeground(headless?: boolean, autoFix = true): Promise<void
     await ensureTmux();
   }
 
-  await startPgserve();
+  await requirePgserveReady();
   await startBrainServerIfEnabled();
   if (!headless) logAgentSessionInfo();
   handles.agentWatcher = await startAgentSync();

@@ -19,8 +19,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { _internals } from '../install.js';
 
-const { HARDENED_DEFAULTS, PM2_PROCESS_NAME, buildPm2StartArgs, buildEcosystemConfigSource, getEcosystemConfigPath } =
-  _internals;
+const {
+  HARDENED_DEFAULTS,
+  PM2_PROCESS_NAME,
+  buildPm2StartArgs,
+  buildEcosystemConfigSource,
+  buildCanonicalPgserveHint,
+  getEcosystemConfigPath,
+} = _internals;
 
 describe('install._internals — canonical-stack constants', () => {
   test('process name is genie-serve', () => {
@@ -166,6 +172,43 @@ describe('buildPm2StartArgs — CLI invocation', () => {
     expect(args[1]).toBe(getEcosystemConfigPath());
     expect(args[2]).toBe('--update-env');
     expect(args).toHaveLength(3);
+  });
+});
+
+describe('buildCanonicalPgserveHint — pgserve fatal install hint (cutover G1)', () => {
+  // Genie has no embedded pgserve fallback after the canonical-cutover wish.
+  // Any pgserve install failure during `genie install` must surface as a
+  // fatal exit with a one-line copy-paste recovery hint. The exact wording
+  // is exercised by the install.sh smoke test on a clean container; here we
+  // just lock down the hint content shape so refactors don't drop the
+  // recovery commands or the canonical-stack rationale.
+
+  test('hint identifies the failure as a canonical pgserve registration failure', () => {
+    const text = buildCanonicalPgserveHint('pgserve binary not found in PATH');
+    expect(text).toContain('canonical pgserve registration failed');
+    expect(text).toContain('pgserve binary not found in PATH');
+  });
+
+  test('hint includes exit-code reason when surfaced', () => {
+    const text = buildCanonicalPgserveHint('exit code 17');
+    expect(text).toContain('(exit code 17)');
+  });
+
+  test('hint lists the three copy-paste recovery commands', () => {
+    const text = buildCanonicalPgserveHint('exit code 1');
+    expect(text).toContain('bun add -g pgserve@^2');
+    expect(text).toContain('pgserve install');
+    expect(text).toContain('genie install');
+  });
+
+  test('hint points at the canonical install docs URL', () => {
+    const text = buildCanonicalPgserveHint('exit code 1');
+    expect(text).toContain('https://github.com/automagik-dev/genie/blob/main/docs/install.md');
+  });
+
+  test('hint explains genie depends on pm2-supervised pgserve', () => {
+    const text = buildCanonicalPgserveHint('exit code 1');
+    expect(text).toContain('pm2-supervised pgserve');
   });
 });
 

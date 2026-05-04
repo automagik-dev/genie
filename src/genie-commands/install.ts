@@ -57,10 +57,6 @@ function ok(msg: string): void {
   process.stdout.write(`genie install: ${msg}\n`);
 }
 
-function note(msg: string): void {
-  process.stderr.write(`genie install: ${msg}\n`);
-}
-
 function fail(msg: string): never {
   process.stderr.write(`genie install: ${msg}\n`);
   process.exit(1);
@@ -107,31 +103,46 @@ function pgserveIsAvailable(): boolean {
 }
 
 /**
- * Best-effort: shell out to `pgserve install` so the canonical pgserve is
- * registered under pm2 before genie-serve depends on it. The command is
+ * Build the canonical-install hint message printed before exiting non-zero
+ * when pgserve is missing or its install fails. Exported via `_internals`
+ * for unit tests.
+ */
+function buildCanonicalPgserveHint(reason: string): string {
+  return [
+    `Error: canonical pgserve registration failed (${reason}).`,
+    'Genie depends on pm2-supervised pgserve. To proceed:',
+    '  bun add -g pgserve@^2',
+    '  pgserve install',
+    '  genie install',
+    'See https://github.com/automagik-dev/genie/blob/main/docs/install.md for details.',
+    '',
+  ].join('\n');
+}
+
+function failCanonicalPgserve(reason: string): never {
+  process.stderr.write(buildCanonicalPgserveHint(reason));
+  process.exit(1);
+}
+
+/**
+ * Hard prerequisite: shell out to `pgserve install` so the canonical pgserve
+ * is registered under pm2 before genie-serve depends on it. The command is
  * idempotent on the pgserve side, so running it on every `genie install`
  * is safe.
  *
- * Returns true on success or "already installed" exit. Returns false when
- * pgserve isn't installed globally — caller then decides whether to fail
- * or warn-and-continue. Today we warn-and-continue: genie can run without
- * pgserve (it has its own pgserve daemon embedded in `genie serve`), but
- * an operator wiring the canonical stack should install pgserve globally.
+ * Returns void on success. On any failure (binary missing, non-zero exit)
+ * prints the canonical install hint and exits the process with code 1.
+ * Genie has no embedded pgserve fallback after the canonical-cutover wish;
+ * a missing or broken pgserve must surface at install time, not at runtime.
  */
-function tryPgserveInstall(): boolean {
+function requirePgserveInstall(): void {
   if (!pgserveIsAvailable()) {
-    note(
-      'pgserve binary not found in PATH. Skipping the canonical pgserve hookup. ' +
-        'Install with: bun add -g pgserve  (then re-run genie install).',
-    );
-    return false;
+    failCanonicalPgserve('pgserve binary not found in PATH');
   }
   const result = spawnSync('pgserve', ['install'], { stdio: 'inherit' });
   if (result.status !== 0) {
-    note(`pgserve install exited with code ${result.status}. Continuing — genie-serve registration proceeds.`);
-    return false;
+    failCanonicalPgserve(`exit code ${result.status}`);
   }
-  return true;
 }
 
 /**
@@ -282,17 +293,18 @@ export async function installCommand(options: InstallOptions = {}): Promise<void
     fail('pm2 not found in PATH. Install with: bun add -g pm2  (or npm i -g pm2)');
   }
 
-  // Step 1 — canonical pgserve. Best-effort; we continue on failure
-  // because genie can boot its embedded pgserve as a fallback.
+  // Step 1 — canonical pgserve. Hard prerequisite: any failure here exits
+  // the installer with the canonical install hint. Genie has no embedded
+  // fallback after the canonical-cutover wish.
   let canonicalDatabaseUrl: string | undefined;
   if (!options.skipPgserve) {
-    if (tryPgserveInstall()) {
-      const port = tryPgservePort();
-      if (port !== null) {
-        canonicalDatabaseUrl = buildGenieDatabaseUrl(port);
-        ok(`canonical pgserve detected; genie-serve will connect to ${canonicalDatabaseUrl}`);
-      }
+    requirePgserveInstall();
+    const port = tryPgservePort();
+    if (port === null) {
+      failCanonicalPgserve('pgserve port could not be discovered (run: pgserve port)');
     }
+    canonicalDatabaseUrl = buildGenieDatabaseUrl(port);
+    ok(`canonical pgserve detected; genie-serve will connect to ${canonicalDatabaseUrl}`);
   }
 
   // Step 2 — pm2-supervise genie-serve.
@@ -325,6 +337,7 @@ export const _internals = {
   PM2_PROCESS_NAME,
   buildPm2StartArgs,
   buildEcosystemConfigSource,
+  buildCanonicalPgserveHint,
   getEcosystemConfigPath,
   resolveGenieBinary,
   pm2IsAvailable,
