@@ -43,14 +43,19 @@ import { detectSenderIdentity } from './msg.js';
  * actual invoker (the human user, or — when `genie work` is fired from inside
  * a team-lead session — the team-lead agent).
  *
- * The fix: prefix the bypass marker with the resolved invoker identity.
- *   - From a true CLI invocation (no agent context):  `'cli'` (unchanged)
- *   - From inside an agent session:                    `'cli:<agent-name>'`
- *
- * Bypass logic in `send.ts` / `msg.ts` matches both forms via prefix check.
+ * Cascade:
+ *   1. UUID origin (GENIE_AGENT_ID resolved by detectSenderIdentity) → return
+ *      UUID directly. Migration 063 re-adds fk_mailbox_from_worker; wrapping a
+ *      UUID as `cli:<uuid>` produces a non-FK-safe string and the mailbox
+ *      INSERT fails. The bare UUID is the agent's actual row id and preserves
+ *      attribution while satisfying the FK once the kill-switch is closed.
+ *   2. `'cli'` (true CLI invocation, no agent context) → unchanged.
+ *   3. Other origin (legacy GENIE_AGENT_NAME path) → `'cli:<name>'`. Bypass
+ *      logic in `send.ts` / `msg.ts` matches both forms via prefix check.
  */
 async function cliSender(): Promise<string> {
   const origin = await detectSenderIdentity();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(origin)) return origin;
   return origin === 'cli' ? 'cli' : `cli:${origin}`;
 }
 import type { GroupDefinition } from '../lib/wish-state.js';
