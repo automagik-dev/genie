@@ -2982,44 +2982,20 @@ export class RecoverAgentNotFoundError extends Error {
 /**
  * Resolve a name to an agent row for recovery. Distinct from
  * {@link resolveWorkerByName} because recover targets agents that may not be
- * runnable (no live pane) — we look up the row, not a live worker. Resolution
- * order:
- *   1. Exact id (`registry.get(name)`).
- *   2. Master-row form `dir:<name>` (the canonical master-agent shape).
- *   3. `custom_name = $1` SQL lookup. Permits matching native-team names.
- *   4. `role = $1` SQL lookup. Last-resort fallback for legacy rows.
+ * runnable (no live pane) — we look up the row, not a live worker.
  *
- * Throws {@link RecoverAgentNotFoundError} if nothing matches. Throws a plain
- * `Error` on multi-row ambiguity so the caller can disambiguate.
+ * Routes through the canonical {@link registry.resolveAgentId} resolver
+ * (wish #175 G2). Ambiguous matches surface as a null id (the resolver emits
+ * `agent_resolved_ambiguous` for forensic walks); we map both null id and a
+ * post-resolution row miss to {@link RecoverAgentNotFoundError} so the
+ * operator-facing exit code (2) and message stay unchanged.
  */
 async function resolveAgentForRecover(name: string): Promise<registry.Agent> {
-  const exact = await registry.get(name);
-  if (exact) return exact;
-
-  const masterRow = await registry.get(`dir:${name}`);
-  if (masterRow) return masterRow;
-
-  const { getConnection } = await import('../lib/db.js');
-  const sql = await getConnection();
-  const byCustomName = await sql`SELECT * FROM agents WHERE custom_name = ${name} LIMIT 2`;
-  if (byCustomName.length === 1) {
-    return (await registry.get(byCustomName[0].id)) as registry.Agent;
-  }
-  if (byCustomName.length > 1) {
-    const ids = byCustomName.map((r: { id: string }) => r.id).join(', ');
-    throw new Error(`Multiple agents with custom_name "${name}": ${ids}. Pass the full id (e.g. dir:${name}).`);
-  }
-
-  const byRole = await sql`SELECT * FROM agents WHERE role = ${name} LIMIT 2`;
-  if (byRole.length === 1) {
-    return (await registry.get(byRole[0].id)) as registry.Agent;
-  }
-  if (byRole.length > 1) {
-    const ids = byRole.map((r: { id: string }) => r.id).join(', ');
-    throw new Error(`Multiple agents with role "${name}": ${ids}. Pass the full id.`);
-  }
-
-  throw new RecoverAgentNotFoundError(name);
+  const id = await registry.resolveAgentId(name);
+  if (!id) throw new RecoverAgentNotFoundError(name);
+  const agent = await registry.get(id);
+  if (!agent) throw new RecoverAgentNotFoundError(name);
+  return agent;
 }
 
 /**
