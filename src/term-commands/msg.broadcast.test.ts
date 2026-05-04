@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { Command } from 'commander';
+import * as registry from '../lib/agent-registry.js';
 import type * as registryTypes from '../lib/agent-registry.js';
 import type { NativeInboxMessage, NativeTeamConfig } from '../lib/claude-native-teams.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
@@ -297,6 +298,11 @@ describe('genie send native inbox bridge regression', () => {
     spyOn(nativeTeams, 'writeNativeInbox').mockImplementation(async (team, agentName, message) => {
       writes.push({ team, agent: agentName, message });
     });
+    // resolveAgentIdStrict (wish 175 G4) runs at the CLI boundary to map a
+    // user-typed name → canonical agents.id. The unit test stubs the mailbox
+    // write so no FK is exercised; pre-resolve "bob" → "bob" so the strict
+    // helper doesn't throw on a name that has no agents row in this test.
+    spyOn(registry, 'resolveAgentIdStrict').mockResolvedValue('bob');
 
     captureConsoleLogs();
     const program = new Command();

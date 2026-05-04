@@ -913,8 +913,18 @@ async function handleSend(
     process.exit(1);
   }
 
+  // Wish retire-session-names-id-only G4: resolve recipient name → canonical
+  // agents.id BEFORE writing to mailbox.to_worker. Migration 061 enforces
+  // `mailbox.to_worker → agents.id`; passing a custom_name (which is what
+  // `genie spawn` displays as the AgentID) trips fk_mailbox_to_worker.
+  // Sender path (from) was already resolved via detectSenderIdentity which
+  // prefers GENIE_AGENT_ID; the recipient counterpart lives here.
+  const registryMod = await getRegistry();
+  const teamScope = options.team ?? process.env.GENIE_TEAM;
+  const toAgentId = await registryMod.resolveAgentIdStrict(to, teamScope);
+
   const senderActor = localActor(from);
-  const recipientActor = localActor(to);
+  const recipientActor = localActor(toAgentId);
 
   const conv = await ts.findOrCreateConversation({
     type: 'dm',
@@ -925,7 +935,7 @@ async function handleSend(
   await ts.addMember(conv.id, senderActor);
   await ts.addMember(conv.id, recipientActor);
 
-  const mailboxMessage = await mailbox.send(repoPath, from, to, body);
+  const mailboxMessage = await mailbox.send(repoPath, from, toAgentId, body);
   const msg = await ts.sendMessage(conv.id, senderActor, body);
 
   // Emit runtime event for real-time observability (fire-and-forget)
@@ -951,7 +961,9 @@ async function handleSend(
     return false;
   });
   if (bridged) {
-    await mailbox.markDelivered(repoPath, to, mailboxMessage.id).catch(() => {});
+    // markDelivered keys on (to_worker, message_id) — must use the same
+    // canonical id we wrote in mailbox.send above, not the user-typed name.
+    await mailbox.markDelivered(repoPath, toAgentId, mailboxMessage.id).catch(() => {});
   }
 
   console.log(`Message sent to "${to}".`);

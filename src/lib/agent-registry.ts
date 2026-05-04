@@ -1174,7 +1174,17 @@ function emitAgentNotResolved(team?: string): void {
  */
 export async function resolveAgentId(nameOrId: string, team?: string): Promise<string | null> {
   if (!nameOrId) return null;
-  const sql = await getConnection();
+  // Fail-soft when PG is unavailable (non-PG unit tests, pgserve outage).
+  // The resolver is best-effort by contract; callers that need a hard error
+  // use `resolveAgentIdStrict`, which surfaces the null as a readable error.
+  // PR #1639 follow-up: pre-fix, the resolver wiring crashed the non-PG unit
+  // test job because every call opened a PG connection.
+  let sql: Awaited<ReturnType<typeof getConnection>>;
+  try {
+    sql = await getConnection();
+  } catch {
+    return null;
+  }
 
   // Tier 1: exact id (catches UUID and dir:<name> shapes).
   const exactRows = await sql<{ id: string }[]>`SELECT id FROM agents WHERE id = ${nameOrId} LIMIT 1`;
@@ -1241,6 +1251,26 @@ export async function resolveAgentId(nameOrId: string, team?: string): Promise<s
   resolverCounters.miss++;
   emitAgentNotResolved(team);
   return null;
+}
+
+/**
+ * Strict variant of {@link resolveAgentId}: returns the canonical id or throws
+ * a clear error when the input doesn't match exactly one agent. Use this at
+ * the CLI boundary right before any write that targets `agents.id` (e.g.
+ * `mailbox.to_worker`, `mailbox.from_worker`) so the failure mode is a
+ * readable "no agent matches X" instead of an opaque foreign-key violation
+ * (wish retire-session-names-id-only Group 4).
+ *
+ * The thrown error includes the input verbatim and the team scope used so the
+ * operator can disambiguate quickly.
+ */
+export async function resolveAgentIdStrict(nameOrId: string, team?: string): Promise<string> {
+  const id = await resolveAgentId(nameOrId, team);
+  if (id) return id;
+  const teamHint = team ? ` (team scope: ${team})` : ' (no team scope — pass --team to disambiguate)';
+  throw new Error(
+    `No agent matches "${nameOrId}"${teamHint}. Resolution checked: exact id, dir:${nameOrId}, custom_name+team, role. Run \`genie ls\` to see live agents.`,
+  );
 }
 
 /** Set the current executor FK on an agent. Pass null to clear. */
