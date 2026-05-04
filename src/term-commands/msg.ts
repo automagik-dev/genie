@@ -547,9 +547,14 @@ async function discoverCurrentTeam(
   const discovered = await nativeTeams.discoverTeamName().catch(() => null);
   if (discovered) return discovered;
 
+  // Wish retire-session-names-id-only G4: resolve the sender via the
+  // canonical name → id resolver. Without team scope here (we're discovering
+  // the team), the resolver falls through customName-tier and lands on
+  // role-fallback or exact-id; either is enough to fetch the sender's row.
   const registryMod = await getRegistry();
-  const workers = await registryMod.list();
-  const senderWorker = workers.find((w) => w.role === from || w.id === from || w.customName === from);
+  const senderId = await registryMod.resolveAgentId(from);
+  if (!senderId) return null;
+  const senderWorker = await registryMod.get(senderId);
   return senderWorker?.team ?? null;
 }
 

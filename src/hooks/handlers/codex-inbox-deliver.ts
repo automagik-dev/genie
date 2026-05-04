@@ -95,14 +95,16 @@ async function resolveDeps(): Promise<{
 }
 
 async function defaultFindCodexAgent(name: string, team?: string): Promise<CodexAgentRef | null> {
+  // Wish retire-session-names-id-only G4: route the codex agent lookup
+  // through the canonical resolver. The provider/team filters stay at this
+  // call site (the resolver is provider-agnostic), but the name → id step
+  // moves into agent-registry where audit + tier counters live.
   const registry = await import('../../lib/agent-registry.js');
-  const agents = await registry.list();
-  const candidates = agents.filter((a) => a.provider === 'codex');
-  const matched = candidates.find((a) => {
-    if (team && a.team && a.team !== team) return false;
-    return a.id === name || a.role === name || a.customName === name;
-  });
-  if (!matched) return null;
+  const id = await registry.resolveAgentId(name, team);
+  if (!id) return null;
+  const matched = await registry.get(id);
+  if (!matched || matched.provider !== 'codex') return null;
+  if (team && matched.team && matched.team !== team) return null;
   return {
     id: matched.id,
     role: matched.role,
@@ -156,10 +158,11 @@ function resolveContext(payload: HookPayload): { agentName: string; teamName?: s
   // In test envs (without explicit deps) the dispatcher must not block on PG.
   if (!hasOverrides && (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test')) return null;
 
-  // Prefer GENIE_AGENT_ID (UUID) — defaultFindCodexAgent matches `a.id === name`
-  // first (line 102), so passing the UUID resolves directly without name fuzz.
-  // Falls through to GENIE_AGENT_NAME / payload.teammate_name when the env id
-  // is unset or non-UUID.
+  // Prefer GENIE_AGENT_ID (UUID) — `defaultFindCodexAgent` routes through
+  // `resolveAgentId`, whose Tier 1 (exact id) short-circuits on a UUID input
+  // without touching the customName/role fuzz tiers. Falls through to
+  // GENIE_AGENT_NAME / payload.teammate_name when the env id is unset or
+  // non-UUID.
   const agentName = readEnvAgentId() ?? readEnvAgentName() ?? (payload.teammate_name as string | undefined);
   if (!agentName) return null;
   const teamName = process.env.GENIE_TEAM ?? (payload.team_name as string | undefined);

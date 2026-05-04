@@ -68,10 +68,18 @@ async function checkHierarchy(from: string, to: string): Promise<{ allowed: bool
 
   try {
     const registry = await import('../../lib/agent-registry.js');
-    const agents = await registry.listAgents({});
 
-    const sender = agents.find((a) => a.customName === from || a.role === from || a.id === from);
-    const recipient = agents.find((a) => a.customName === to || a.role === to || a.id === to);
+    // Wish retire-session-names-id-only G4: resolve names via the canonical
+    // resolver. Team scope (GENIE_TEAM) lets the (custom_name, team) tier
+    // disambiguate same-named agents across teams; role-fallback covers the
+    // global `engineer`/`reviewer` shortcuts.
+    const team = process.env.GENIE_TEAM;
+    const [senderId, recipientId] = await Promise.all([
+      registry.resolveAgentId(from, team),
+      registry.resolveAgentId(to, team),
+    ]);
+    const sender = senderId ? await registry.getAgent(senderId) : null;
+    const recipient = recipientId ? await registry.getAgent(recipientId) : null;
 
     // If either isn't in the registry, allow (might be external or unregistered)
     if (!sender || !recipient) return { allowed: true };
