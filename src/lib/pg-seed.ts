@@ -426,19 +426,17 @@ async function upsertNativeTeam(sql: Sql, c: NativeTeamConfig): Promise<UpsertTe
   // Filter the leader column with the same UUID/dir CHECK that members use.
   // Pre-061 leaders may be bare `<name>` derived from `<name>@<team>` in
   // legacy `leadAgentId`. Storing them violates `fk_teams_leader`. Insert
-  // null when the legacy value can't pass the constraint and emit one audit
-  // event per affected team for drift detection.
+  // null when the legacy value can't pass the constraint.
   const rawLeader = deriveLeader(c);
   const safeLeader = rawLeader && isValidTeamMember(rawLeader) ? rawLeader : null;
   const leaderSanitized = rawLeader !== null && safeLeader === null;
-  if (leaderSanitized) {
-    await recordAuditEvent('team', c.name, 'leader_sanitized', 'pg-seed', {
-      dropped: rawLeader,
-      reason: 'fk_teams_leader_check',
-    });
-  }
 
-  await sql`
+  // RETURNING name surfaces only fresh inserts (ON CONFLICT DO NOTHING returns
+  // an empty set on conflict). We use that to gate the `leader_sanitized`
+  // audit event — emitting once on first seed instead of on every pg-seed
+  // pass keeps the audit volume proportional to actual drift, not CLI calls.
+  // (Pre-fix: ~110 events per invocation on hosts with legacy team configs.)
+  const inserted = await sql<{ name: string }[]>`
     INSERT INTO teams (
       name, repo, base_branch, worktree_path, leader,
       members, status, native_team_parent_session_id,
@@ -451,7 +449,15 @@ async function upsertNativeTeam(sql: Sql, c: NativeTeamConfig): Promise<UpsertTe
       ${c.tmuxSessionName ?? null}, ${c.wishSlug ?? null},
       ${new Date(c.createdAt ?? Date.now()).toISOString()}
     ) ON CONFLICT (name) DO NOTHING
+    RETURNING name
   `;
+
+  if (leaderSanitized && inserted.length > 0) {
+    await recordAuditEvent('team', c.name, 'leader_sanitized', 'pg-seed', {
+      dropped: rawLeader,
+      reason: 'fk_teams_leader_check',
+    });
+  }
 
   return { droppedMembers: dropped, leaderSanitized };
 }
