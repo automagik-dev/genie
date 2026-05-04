@@ -324,21 +324,6 @@ export async function requirePgserveDaemon(): Promise<DaemonState> {
 }
 
 /**
- * @deprecated Use `requirePgserveDaemon`. Kept as an alias for one release;
- * emits a one-line stderr deprecation notice on first use per process.
- */
-let getOrStartDaemonDeprecationWarned = false;
-export async function getOrStartDaemon(): Promise<DaemonState> {
-  if (!getOrStartDaemonDeprecationWarned) {
-    getOrStartDaemonDeprecationWarned = true;
-    process.stderr.write(
-      '[genie] DEPRECATION: getOrStartDaemon → requirePgserveDaemon. Genie is consumer-only after the canonical-pgserve cutover; this alias will be removed in a future release.\n',
-    );
-  }
-  return requirePgserveDaemon();
-}
-
-/**
  * Build the pm2-recovery hint surfaced when the canonical pgserve daemon is
  * not reachable. Exported via `_internals` for unit tests so the message
  * shape stays locked down across refactors.

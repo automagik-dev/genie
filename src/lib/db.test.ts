@@ -458,8 +458,10 @@ describe('daemon-owned pgserve', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     const fnStart = source.indexOf('export async function requirePgserveDaemon');
     expect(fnStart).toBeGreaterThan(-1);
-    // Slice up to the deprecated alias which immediately follows.
-    const fnEnd = source.indexOf('export async function getOrStartDaemon', fnStart);
+    // Slice up to the next defined function — `buildPgserveUnavailableHint`
+    // immediately follows `requirePgserveDaemon` after the cutover removed
+    // the pre-cutover `getOrStartDaemon` alias.
+    const fnEnd = source.indexOf('function buildPgserveUnavailableHint', fnStart);
     expect(fnEnd).toBeGreaterThan(fnStart);
     const body = source.slice(fnStart, fnEnd);
 
@@ -470,14 +472,10 @@ describe('daemon-owned pgserve', () => {
     // reachability without process work.
     expect(body).toContain('probePgserveDaemon');
     expect(body).toContain('isPgserveSocketResponsive');
-    // The deprecated getOrStartDaemon alias must also not introduce any
-    // spawn primitives — it just delegates to requirePgserveDaemon.
-    const aliasEnd = source.indexOf('function buildPgserveUnavailableHint', fnEnd);
-    expect(aliasEnd).toBeGreaterThan(fnEnd);
-    const aliasBody = source.slice(fnEnd, aliasEnd);
-    for (const banned of ['spawn(', 'execSync(', 'execFileSync(', 'spawnSync(', 'process.kill(']) {
-      expect(aliasBody).not.toContain(banned);
-    }
+    // Defence-in-depth: the pre-cutover `getOrStartDaemon` symbol is gone
+    // (the project's dead-code gate doesn't honour @deprecated; downstream
+    // callers must rename to requirePgserveDaemon). Lock out reintroduction.
+    expect(source).not.toContain('export async function getOrStartDaemon');
   });
 
   test('canonical pgserve UDS greeting probe is preserved', () => {

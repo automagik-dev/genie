@@ -32,8 +32,12 @@
 - **`getOrStartDaemon` → `requirePgserveDaemon`.** Probe-only: succeeds
   when the canonical socket is reachable, throws a pm2-recovery hint
   (`pm2 status` / `pm2 restart pgserve` / `pgserve install`) otherwise.
-  `getOrStartDaemon` is retained as a deprecated alias for one release
-  and emits a one-line stderr deprecation notice on first use.
+  The pre-cutover `getOrStartDaemon` symbol is **removed** in this
+  release (a deprecation alias was considered but the project's
+  `dead-code` (knip) gate doesn't honour `@deprecated`; downstream
+  callers should rename to `requirePgserveDaemon` — the new contract
+  is documented above and matches the throw-on-unreachable behaviour
+  the deleted Mode B/C paths intermittently produced anyway).
 - **`genie install` is now fatal on canonical pgserve failure.** No more
   warn-and-continue. Operators see a copy-paste recovery hint:
   ```
