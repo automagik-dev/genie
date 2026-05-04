@@ -9,8 +9,9 @@
  *   genie team disband <name>
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { copyFile, cp, mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import type { TeamConfig } from '../lib/team-manager.js';
@@ -241,6 +242,28 @@ Examples:
     .action(async (options: { dryRun?: boolean }) => {
       try {
         await handleTeamCleanup(options);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
+
+  // team repair
+  team
+    .command('repair <name>')
+    .description('Archive an orphaned team-config dir to ~/.claude/teams/_archive/')
+    .option('--dry-run', 'Show what would be archived without doing it')
+    .addHelpText(
+      'after',
+      `
+This command resolves the doctor's "team_config_orphans" warning by moving
+~/.claude/teams/<name>/ (which has no corresponding PG team row) into the
+_archive/ subdirectory. Inboxes are preserved on disk; nothing is deleted.`,
+    )
+    .action(async (name: string, options: { dryRun?: boolean }) => {
+      try {
+        await handleTeamRepair(name, options);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
@@ -561,4 +584,44 @@ async function handleTeamCleanup(options: { dryRun?: boolean }): Promise<void> {
   } else {
     console.log(`\n${verb} ${cleaned} window${cleaned === 1 ? '' : 's'}.`);
   }
+}
+
+// ============================================================================
+// Team Repair Handler — archives orphaned ~/.claude/teams/<name>/ to _archive/
+// ============================================================================
+
+function teamsBaseDir(): string {
+  return join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'teams');
+}
+
+export async function handleTeamRepair(name: string, options: { dryRun?: boolean }): Promise<void> {
+  const teamsDir = teamsBaseDir();
+  const orphanPath = join(teamsDir, name);
+
+  if (!existsSync(orphanPath) || !statSync(orphanPath).isDirectory()) {
+    console.log(`No team-config directory at ${orphanPath}. Nothing to repair.`);
+    return;
+  }
+
+  // Pre-flight: confirm the dir really is orphaned (no PG row). repair on a
+  // live team would destroy a working install — fail loud rather than archive.
+  const pgTeam = await teamManager.getTeam(name).catch(() => null);
+  if (pgTeam) {
+    console.error(`Error: team '${name}' still exists in the registry (status=${pgTeam.status}).`);
+    console.error('Refusing to archive a live team. Use `genie team disband` instead.');
+    process.exit(2);
+  }
+
+  const archiveRoot = join(teamsDir, '_archive');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const dest = join(archiveRoot, `${name}-${ts}`);
+
+  if (options.dryRun) {
+    console.log(`[dry-run] Would archive ${orphanPath} → ${dest}`);
+    return;
+  }
+
+  mkdirSync(archiveRoot, { recursive: true });
+  renameSync(orphanPath, dest);
+  console.log(`Archived ${orphanPath} → ${dest}`);
 }
