@@ -113,7 +113,23 @@ async function resolveBoardOption(boardName?: string): Promise<string | undefine
     return board.id;
   }
   const defaultId = await resolveDefaultBoardId();
-  return defaultId ?? undefined;
+  if (!defaultId) return undefined;
+  // Defense: validate the configured activeBoard still exists. A stale id (e.g.
+  // workspace config pointing at an archived board) used to surface as the
+  // opaque PG trigger error `Unknown board: <id>` from migration 008. Catch it
+  // here with an actionable hint instead.
+  const bs = await getBoardService();
+  const board = await bs.getBoard(defaultId);
+  if (!board) {
+    console.error(
+      `Error: configured activeBoard "${defaultId}" no longer exists.
+  Run \`genie board list\` to see available boards, then either:
+    - update .genie/config.json's "activeBoard" key, or
+    - pass --board <name> explicitly`,
+    );
+    process.exit(1);
+  }
+  return board.id;
 }
 
 // ============================================================================
