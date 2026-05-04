@@ -107,6 +107,20 @@ describe('reconcileStaleSpawns dead-pane pass', () => {
     // does not incorrectly mark agents as dead
     expect(source).toContain('// TmuxUnreachableError or other');
   });
+
+  test('TTL-archive reason filter accepts both stale_spawn and dead_pane reasons', () => {
+    // Without this, a `state=spawning` worker that the reconciler flips with
+    // `reason='stale_spawn_dead_pane'` never matches the archive filter,
+    // accumulating forever in `genie ls` even after auto_resume exhaustion.
+    const source = readFileSync(join(__dirname, '..', 'agent-registry.ts'), 'utf-8');
+
+    const archiveFilter = "e.details->>'reason' IN ('dead_pane_zombie', 'stale_spawn_dead_pane')";
+
+    // Both archive (mutating) and list (dry-run) queries must use the
+    // broadened filter, otherwise dry-run lies about what archive will do.
+    const matches = source.split(archiveFilter).length - 1;
+    expect(matches).toBeGreaterThanOrEqual(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
