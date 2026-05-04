@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 import type { BridgeStatusResult, PingOptions } from '../lib/bridge-status.js';
 import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-settings.js';
+import { isAvailable as isRuntimePgAvailable } from '../lib/db.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
 import { checkCommand } from '../lib/system-detect.js';
@@ -777,12 +778,27 @@ async function checkPgserveCanonical(): Promise<CheckResult[]> {
         message: `online — shared backbone for genie-serve + omni-api on :${canonicalPort}`,
       });
     } else if (parsed.installed === true) {
-      results.push({
-        name: 'pgserve under pm2',
-        status: 'warn',
-        message: `registered but status=${parsed.status ?? 'unknown'}`,
-        suggestion: 'Recover with: pm2 restart pgserve   (logs: ~/.pgserve/logs/)',
-      });
+      // pm2 has the entry but reports stopped. Under the consumer-only
+      // cutover model genie connects via the embedded socket regardless
+      // of pm2's view, so probe the runtime PG before warning. If the
+      // runtime is healthy, this is a stale pm2 registration — a cleanup
+      // hint, not a recovery action.
+      const runtimeReachable = await isRuntimePgAvailable();
+      if (runtimeReachable) {
+        results.push({
+          name: 'pgserve under pm2',
+          status: 'pass',
+          message: `pm2 entry status=${parsed.status ?? 'unknown'} but runtime PG reachable (consumer-only)`,
+          suggestion: 'Optional cleanup: pm2 delete pgserve  (the embedded backbone is the source of truth)',
+        });
+      } else {
+        results.push({
+          name: 'pgserve under pm2',
+          status: 'warn',
+          message: `registered but status=${parsed.status ?? 'unknown'}; runtime PG also unreachable`,
+          suggestion: 'Recover with: pm2 restart pgserve   (logs: ~/.pgserve/logs/)',
+        });
+      }
     } else {
       results.push({
         name: 'pgserve under pm2',
