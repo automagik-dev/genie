@@ -1174,7 +1174,17 @@ function emitAgentNotResolved(team?: string): void {
  */
 export async function resolveAgentId(nameOrId: string, team?: string): Promise<string | null> {
   if (!nameOrId) return null;
-  const sql = await getConnection();
+  // Fail-soft when PG is unavailable (non-PG unit tests, pgserve outage).
+  // The resolver is best-effort by contract; callers that need a hard error
+  // use `resolveAgentIdStrict`, which surfaces the null as a readable error.
+  // PR #1639 follow-up: pre-fix, the resolver wiring crashed the non-PG unit
+  // test job because every call opened a PG connection.
+  let sql: Awaited<ReturnType<typeof getConnection>>;
+  try {
+    sql = await getConnection();
+  } catch {
+    return null;
+  }
 
   // Tier 1: exact id (catches UUID and dir:<name> shapes).
   const exactRows = await sql<{ id: string }[]>`SELECT id FROM agents WHERE id = ${nameOrId} LIMIT 1`;
