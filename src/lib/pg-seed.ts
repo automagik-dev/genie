@@ -235,7 +235,25 @@ function toAgentRow(a: JsonRecord): JsonRecord {
   };
 }
 
+// Migration 061's `agents_id_shape_check` rejects bare-name agents.id inserts.
+// Legacy `~/.genie/workers.json` rows can carry bare-name ids (pre-UUID era).
+// Mirrors f0432322's boundary-filter pattern for teams.members JSONB.
+const UUID_OR_DIR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^dir:/i;
+
+function isAgentIdLegal(id: unknown): boolean {
+  return typeof id === 'string' && UUID_OR_DIR_RE.test(id);
+}
+
 async function upsertAgent(sql: Sql, a: JsonRecord): Promise<void> {
+  if (!isAgentIdLegal(a.id)) {
+    // Legacy bare-name row from pre-061 workers.json. Skip rather than fail
+    // the entire seed run. Operator can rebuild via `genie agent register`
+    // post-migration. Warning gives them traceability.
+    process.stderr.write(
+      `[pg-seed] skipping legacy bare-name agent row "${a.id}" — fails migration 061 agents_id_shape_check (UUID or dir: prefix required)\n`,
+    );
+    return;
+  }
   const r = toAgentRow(a);
   // NOTE: `r.sub_panes` is kept as a JS array (NativeTeamMember[]) and passed
   // via `sql.json()` so postgres.js encodes it once into a proper jsonb array.
@@ -271,9 +289,15 @@ async function upsertAgent(sql: Sql, a: JsonRecord): Promise<void> {
 async function upsertTemplate(sql: Sql, t: JsonRecord): Promise<void> {
   // extra_args stays a JS array until `sql.json()` encodes it once at bind
   // time. See migration 045 for the cleanup of pre-fix rows.
+  //
+  // Migration 061 retyped agent_templates.id from TEXT (= name) to UUID and
+  // added a separate `name` column with unique partial index `(name, team)`.
+  // Legacy `~/.genie/workers.json` carries bare-name template ids; insert via
+  // `name` column and let the server mint UUID id via DEFAULT gen_random_uuid().
+  // Mirrors agent-registry.ts:saveTemplate (the runtime upsert path).
   await sql`
     INSERT INTO agent_templates (
-      id, provider, team, role, skill, cwd,
+      name, provider, team, role, skill, cwd,
       extra_args, native_team_enabled, last_spawned_at
     ) VALUES (
       ${t.id}, ${t.provider ?? 'claude'}, ${t.team ?? ''},
@@ -281,7 +305,7 @@ async function upsertTemplate(sql: Sql, t: JsonRecord): Promise<void> {
       ${sql.json(t.extraArgs ?? [])},
       ${t.nativeTeamEnabled ?? false},
       ${t.lastSpawnedAt ?? new Date().toISOString()}
-    ) ON CONFLICT (id) DO NOTHING
+    ) ON CONFLICT (name, team) WHERE name IS NOT NULL AND team IS NOT NULL DO NOTHING
   `;
 }
 
