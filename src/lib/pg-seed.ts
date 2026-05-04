@@ -14,6 +14,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type postgres from 'postgres';
+import { recordAuditEvent } from './audit.js';
 import { type NativeTeamConfig, loadAllNativeTeamConfigs } from './claude-native-teams.js';
 
 type Sql = postgres.Sql;
@@ -248,10 +249,13 @@ async function upsertAgent(sql: Sql, a: JsonRecord): Promise<void> {
   if (!isAgentIdLegal(a.id)) {
     // Legacy bare-name row from pre-061 workers.json. Skip rather than fail
     // the entire seed run. Operator can rebuild via `genie agent register`
-    // post-migration. Warning gives them traceability.
-    process.stderr.write(
-      `[pg-seed] skipping legacy bare-name agent row "${a.id}" — fails migration 061 agents_id_shape_check (UUID or dir: prefix required)\n`,
-    );
+    // post-migration. Verbose trace gated behind DEBUG=pg-seed; the aggregate
+    // skip count is reported in seedWorkers' summary.
+    if (process.env.DEBUG?.includes('pg-seed')) {
+      process.stderr.write(
+        `[pg-seed] skipping legacy bare-name agent row "${a.id}" — fails migration 061 agents_id_shape_check (UUID or dir: prefix required)\n`,
+      );
+    }
     return;
   }
   const r = toAgentRow(a);
@@ -404,15 +408,36 @@ function isValidTeamMember(s: string): boolean {
   return MEMBER_UUID_RE.test(s) || s.startsWith('dir:');
 }
 
-async function upsertNativeTeam(sql: Sql, c: NativeTeamConfig): Promise<void> {
+interface UpsertTeamOutcome {
+  droppedMembers: number;
+  leaderSanitized: boolean;
+}
+
+async function upsertNativeTeam(sql: Sql, c: NativeTeamConfig): Promise<UpsertTeamOutcome> {
   const rawMemberNames = (c.members ?? []).map((m) => m.name).filter((n) => typeof n === 'string' && n.length > 0);
   const memberNames = rawMemberNames.filter(isValidTeamMember);
   const dropped = rawMemberNames.length - memberNames.length;
-  if (dropped > 0) {
+  if (dropped > 0 && process.env.DEBUG?.includes('pg-seed')) {
     console.warn(
       `[pg-seed] team "${c.name}": dropped ${dropped} legacy member name(s) failing migration 061 constraint (UUID or dir: prefix required); kept ${memberNames.length}`,
     );
   }
+
+  // Filter the leader column with the same UUID/dir CHECK that members use.
+  // Pre-061 leaders may be bare `<name>` derived from `<name>@<team>` in
+  // legacy `leadAgentId`. Storing them violates `fk_teams_leader`. Insert
+  // null when the legacy value can't pass the constraint and emit one audit
+  // event per affected team for drift detection.
+  const rawLeader = deriveLeader(c);
+  const safeLeader = rawLeader && isValidTeamMember(rawLeader) ? rawLeader : null;
+  const leaderSanitized = rawLeader !== null && safeLeader === null;
+  if (leaderSanitized) {
+    await recordAuditEvent('team', c.name, 'leader_sanitized', 'pg-seed', {
+      dropped: rawLeader,
+      reason: 'fk_teams_leader_check',
+    });
+  }
+
   await sql`
     INSERT INTO teams (
       name, repo, base_branch, worktree_path, leader,
@@ -420,31 +445,60 @@ async function upsertNativeTeam(sql: Sql, c: NativeTeamConfig): Promise<void> {
       native_teams_enabled, tmux_session_name, wish_slug, created_at
     ) VALUES (
       ${c.name}, ${c.repo ?? ''}, ${c.baseBranch ?? 'dev'},
-      ${c.worktreePath ?? ''}, ${deriveLeader(c)},
+      ${c.worktreePath ?? ''}, ${safeLeader},
       ${sql.json(memberNames)}, ${c.status ?? 'in_progress'},
       ${c.nativeTeamParentSessionId ?? null}, ${c.nativeTeamsEnabled ?? true},
       ${c.tmuxSessionName ?? null}, ${c.wishSlug ?? null},
       ${new Date(c.createdAt ?? Date.now()).toISOString()}
     ) ON CONFLICT (name) DO NOTHING
   `;
+
+  return { droppedMembers: dropped, leaderSanitized };
+}
+
+function buildSeedSummary(count: number, teamsWithDroppedMembers: number, leadersSanitized: number): string {
+  let summary = `[pg-seed] re-seeded ${count} team${count === 1 ? '' : 's'}`;
+  const notes: string[] = [];
+  if (teamsWithDroppedMembers > 0) {
+    notes.push(`${teamsWithDroppedMembers} had legacy member names dropped`);
+  }
+  if (leadersSanitized > 0) {
+    notes.push(`${leadersSanitized} leader${leadersSanitized === 1 ? '' : 's'} sanitized`);
+  }
+  if (notes.length > 0) {
+    summary += ` (${notes.join('; ')}; set DEBUG=pg-seed for detail)`;
+  }
+  return summary;
 }
 
 async function seedTeams(sql: Sql): Promise<SeedTeamsResult> {
   const configs = await loadAllNativeTeamConfigs();
   const teamNames: string[] = [];
   let count = 0;
+  let teamsWithDroppedMembers = 0;
+  let leadersSanitized = 0;
   let hadFailures = false;
   for (const cfg of configs) {
     if (!cfg?.name) continue;
     teamNames.push(cfg.name);
     try {
-      await upsertNativeTeam(sql, cfg);
+      const outcome = await upsertNativeTeam(sql, cfg);
       count++;
+      if (outcome.droppedMembers > 0) teamsWithDroppedMembers++;
+      if (outcome.leaderSanitized) leadersSanitized++;
     } catch (err) {
       hadFailures = true;
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[pg-seed] Failed to seed team "${cfg.name}": ${msg}`);
+      // Real seed failure — keep visible by default. `DEBUG=pg-seed-quiet`
+      // is the documented escape hatch when an operator explicitly wants
+      // a silent run (e.g. mass legacy-team backfill).
+      if (!process.env.DEBUG?.includes('pg-seed-quiet')) {
+        console.warn(`[pg-seed] Failed to seed team "${cfg.name}": ${msg}`);
+      }
     }
+  }
+  if (count > 0) {
+    process.stderr.write(`${buildSeedSummary(count, teamsWithDroppedMembers, leadersSanitized)}\n`);
   }
   return { count, teamNames, hadFailures };
 }
