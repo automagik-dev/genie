@@ -1109,6 +1109,17 @@ Examples:
     .action(async (conversationId: string, message: string, options: { replyTo?: string; from?: string }) => {
       try {
         const ts = await getTaskService();
+        // Defense: validate the conversation exists before INSERT. Without this,
+        // a bad/stale conversationId surfaces as the bare
+        // `messages_conversation_id_fkey` PG error. Surface a clear hint with
+        // the recovery path.
+        const conv = await ts.getConversation(conversationId);
+        if (!conv) {
+          console.error(
+            `Error: conversation "${conversationId}" not found.\n  Run \`genie chat list\` to see available conversations, or \`genie inbox\` to start one.`,
+          );
+          process.exit(1);
+        }
         const from = options.from ?? (await detectSenderIdentity());
         const actor = localActor(from);
         const replyTo = options.replyTo ? Number(options.replyTo) : undefined;
