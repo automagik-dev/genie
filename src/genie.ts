@@ -831,8 +831,15 @@ if (args.length === 0) {
   if (!isServeRunning()) {
     console.log('Starting genie serve...');
     await autoStartServe();
-  } else if (!isTuiSessionReady()) {
-    // Serve is alive but TUI tmux session died — recreate it
+  }
+  // Belt + suspenders: even after autoStartServe returns successfully, the TUI
+  // tmux session may not be present (autoStartServe's 15s poll exits silently
+  // when serve is up but the session creation lagged, and the post-update
+  // reaper kills the genie-tui server in lock-step with the daemon — the
+  // exact path that produced the "no sessions" attach failure right after
+  // `genie update --next`). Idempotently ensure the session exists before
+  // attempting attach.
+  if (!isTuiSessionReady()) {
     ensureTuiSession(ws.root);
   }
 
