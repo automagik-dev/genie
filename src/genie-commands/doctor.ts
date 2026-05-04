@@ -941,23 +941,21 @@ function legacyPgserveRepairEnabled(): boolean {
  * process kills. Legacy TCP cleanup is opt-in via GENIE_PG_FORCE_TCP=1 or
  * GENIE_DOCTOR_FIX_LEGACY_PGSERVE=1 and is scoped to Genie's legacy data dir.
  */
-async function killStalePostgres(genieHome: string): Promise<void> {
-  if (!legacyPgserveRepairEnabled()) {
-    console.log('  Skipping legacy pgserve v1 process cleanup (v1/v2 coexistence)');
-    return;
-  }
-
-  console.log('  Killing stale Genie legacy pgserve processes...');
-  try {
-    const { execSync } = await import('node:child_process');
-    const legacyDataDir = join(genieHome, 'data', 'pgserve');
-    const escaped = legacyDataDir.replace(/\//g, '\\/');
-    execSync(`pkill -9 -f "postgres.*${escaped}" 2>/dev/null || true`, { stdio: 'ignore', timeout: 5000 });
-    execSync(`pkill -9 -f "pgserve.*${escaped}" 2>/dev/null || true`, { stdio: 'ignore', timeout: 5000 });
-    console.log('  \x1b[32m\u2713\x1b[0m Stale Genie legacy pgserve processes killed');
-  } catch {
-    console.log('  \x1b[33m!\x1b[0m Could not kill stale Genie legacy pgserve processes');
-  }
+/**
+ * After the canonical-pgserve cutover, the doctor never shells out to pkill
+ * pgserve / postgres. The canonical daemon is supervised by pm2; any "heal"
+ * that touches the postgres process tree fights pm2's restart-on-crash and
+ * produces the "Could not kill stale postgres processes" failure mode that
+ * triggered the cutover wish. Recovery is hint-only: print the pm2 commands
+ * and let the operator run them.
+ */
+function printPgserveRecoveryHint(): void {
+  console.log('  \x1b[33m[!!] pgserve unreachable \u2014 canonical daemon may not be running.\x1b[0m');
+  console.log('    Recovery (run as the operator, not the doctor):');
+  console.log('      pm2 status              # is pgserve registered?');
+  console.log('      pm2 restart pgserve     # OR: autopg restart');
+  console.log('      pgserve install         # if not registered yet');
+  console.log('    See https://github.com/automagik-dev/genie/blob/main/docs/install.md');
 }
 
 async function cleanSharedMemory(): Promise<void> {
@@ -1180,7 +1178,7 @@ async function doctorFix(): Promise<void> {
 
   const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
 
-  await killStalePostgres(genieHome);
+  printPgserveRecoveryHint();
   await cleanSharedMemory();
 
   const pidFile = join(genieHome, 'scheduler.pid');

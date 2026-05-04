@@ -249,17 +249,18 @@ describe('findBundledTmuxConfigDir', () => {
 });
 
 describe('pgserve v1/v2 coexistence', () => {
-  test('doctor --fix does not broad-kill pgserve/postgres by default', () => {
+  test('doctor --fix never pkills pgserve/postgres after the canonical cutover', () => {
     const source = readFileSync(join(__dirname, 'doctor.ts'), 'utf-8');
-    const fnStart = source.indexOf('async function killStalePostgres');
-    expect(fnStart).toBeGreaterThan(-1);
-    const fnEnd = source.indexOf('async function cleanSharedMemory', fnStart);
-    const body = source.slice(fnStart, fnEnd);
-
-    expect(body).toContain('legacyPgserveRepairEnabled()');
-    expect(body).toContain('Skipping legacy pgserve v1 process cleanup');
-    expect(body).not.toContain('pkill -9 -f "postgres.*pgserve"');
-    expect(body).toContain("join(genieHome, 'data', 'pgserve')");
+    // killStalePostgres was removed entirely — pkill of pm2-supervised
+    // processes was the bug behind every "Could not kill stale postgres
+    // processes" failure. The doctor now prints a hint and exits.
+    expect(source).not.toContain('async function killStalePostgres');
+    expect(source).not.toContain('Killing stale Genie legacy pgserve processes');
+    expect(source).not.toContain('Could not kill stale Genie legacy pgserve processes');
+    expect(source).not.toMatch(/pkill -9 -f "(postgres|pgserve)\.\*/);
+    // Replacement: a hint-only function the operator follows manually.
+    expect(source).toContain('function printPgserveRecoveryHint');
+    expect(source).toContain('pm2 restart pgserve');
   });
 
   test('doctor --fix leaves legacy port/data files untouched unless legacy repair is enabled', () => {

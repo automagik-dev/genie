@@ -47,25 +47,28 @@ describe('getTuiKeybindings', () => {
 });
 
 describe('pgserve failure containment', () => {
-  test('serve startup uses the pgserve v2 daemon path', () => {
+  test('serve startup probes the canonical pgserve daemon (consumer-only)', () => {
     const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
-    const fnStart = source.indexOf('async function startPgserve');
+    const fnStart = source.indexOf('async function requirePgserveReady');
     const fnEnd = source.indexOf('/** Start the scheduler daemon', fnStart);
     expect(fnStart).toBeGreaterThan(-1);
     expect(fnEnd).toBeGreaterThan(fnStart);
     const body = source.slice(fnStart, fnEnd);
 
-    expect(body).toContain('getOrStartDaemon');
+    // Probe-only path uses the renamed `requirePgserveDaemon` API. The legacy
+    // `getOrStartDaemon`, the embedded TCP-router fallback (`ensurePgserve`),
+    // and the spawn-bound port banner are gone.
+    expect(body).toContain('requirePgserveDaemon');
     expect(body).toContain('resolvePgserveSocketDir');
-    expect(body).toContain('getDataDir');
     expect(body).not.toContain('ensurePgserve');
+    expect(body).not.toContain('getOrStartDaemon');
     expect(body).toContain("registerService('pgserve-owner'");
     expect(body).not.toContain('pgserve ready on port');
   });
 
   test('serve disables in-process pgserve retries after startup failure', () => {
     const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
-    const fnStart = source.indexOf('async function startPgserve');
+    const fnStart = source.indexOf('async function requirePgserveReady');
     expect(fnStart).toBeGreaterThan(-1);
     const catchStart = source.indexOf('} catch (err) {', fnStart);
     const retryGuard = source.indexOf("process.env.GENIE_PG_NO_AUTOSTART = '1'", catchStart);
@@ -73,15 +76,15 @@ describe('pgserve failure containment', () => {
     expect(retryGuard).toBeGreaterThan(-1);
   });
 
-  test('serve starts pgserve daemon instead of legacy TCP router', () => {
+  test('serve emits the canonical-cutover ready banner on success', () => {
     const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
-    const fnStart = source.indexOf('async function startPgserve');
+    const fnStart = source.indexOf('async function requirePgserveReady');
     expect(fnStart).toBeGreaterThan(-1);
     const fnEnd = source.indexOf('/** Start the scheduler daemon', fnStart);
     const body = source.slice(fnStart, fnEnd);
 
-    expect(body).toContain('getOrStartDaemon');
-    expect(body).toContain('pgserve daemon ready');
+    expect(body).toContain('requirePgserveDaemon');
+    expect(body).toContain('canonical, pm2-supervised');
     expect(body).not.toContain('ensurePgserve');
     expect(body).not.toContain('pgserve ready on port');
   });

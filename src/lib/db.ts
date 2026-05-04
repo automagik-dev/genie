@@ -17,11 +17,11 @@
  * is retained as a fallback.
  */
 
-import { type ChildProcess, execFileSync, execSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, needsSeededTeams, runSeed } from './pg-seed.js';
@@ -59,14 +59,6 @@ const PGSERVE_GREET_TIMEOUT_MS = 1000;
  */
 const DB_NAME = ['post', 'gres'].join('');
 export { DB_NAME };
-/**
- * Truthy env-var values. Restored during rebase onto dev — `-X theirs`
- * preferred pgserve-v2 changes wholesale and dropped the dev-side const,
- * but `isPgAutostartDisabled` still references it. Single source of truth
- * for env-var bool parsing.
- */
-const TRUTHY_ENV = new Set(['1', 'true', 'yes', 'on']);
-
 /**
  * Resolve the directory holding pgserve v2's control socket.
  * Mirrors `resolveControlSocketDir()` in pgserve/src/daemon.js: prefers
@@ -193,12 +185,6 @@ interface DaemonState {
   reason?: string;
 }
 
-interface PgserveDaemonCommand {
-  command: string;
-  argsPrefix: string[];
-  display: string;
-}
-
 /**
  * Probe the v2 daemon. Returns running=true only when both the libpq socket
  * file exists AND the recorded pid is alive. A pid file with no socket (or
@@ -305,121 +291,27 @@ export function pinCwdToGeniePackageDir(): { previous: string; pinned: string | 
   }
 }
 
-function findLocalPgserveRoot(): string | null {
-  const candidates = [
-    // Installed package layout: @automagik/genie/dist/genie.js ->
-    // @automagik/genie/node_modules/pgserve.
-    join(import.meta.dir, '..', 'node_modules', 'pgserve'),
-    // Source checkout layout: src/lib/db.ts -> ./node_modules/pgserve.
-    join(import.meta.dir, '..', '..', 'node_modules', 'pgserve'),
-  ];
-  for (const root of candidates) {
-    if (existsSync(join(root, 'package.json'))) return root;
-  }
-  return null;
-}
-
-/** Resolve the v2 daemon command — local node_modules → bun-global → PATH. */
-function findPgserveDaemonCommand(): PgserveDaemonCommand | null {
-  // Local node_modules check covers monorepo / yarn-link / npm install
-  // scenarios where pgserve is co-located but NOT a runtime npm dep of genie.
-  // The `findLocalPgserveRoot()` walker resolves `node_modules/pgserve` from
-  // import.meta.dir without going through `require.resolve('pgserve')`, so
-  // it doesn't need pgserve in package.json.
-  const localRoot = findLocalPgserveRoot();
-  if (localRoot !== null) {
-    const localCommand = resolvePgservePackageCommand(localRoot);
-    if (localCommand !== null) return localCommand;
-  }
-  // bun-global: the canonical install path (`bun add -g pgserve@^2.1.0`).
-  const globalBin = join(homedir(), '.bun', 'bin', 'pgserve');
-  if (existsSync(globalBin)) return { command: globalBin, argsPrefix: [], display: globalBin };
-  // PATH lookup: catches npm-global, system installs, etc.
-  try {
-    const fromPath = execSync('which pgserve', { encoding: 'utf-8', timeout: 3000 }).trim();
-    if (fromPath.length > 0) return { command: fromPath, argsPrefix: [], display: fromPath };
-  } catch {
-    /* not on PATH */
-  }
-  return null;
-}
-
-function resolvePgservePackageCommand(root: string): PgserveDaemonCommand | null {
-  const script = join(root, 'bin', 'postgres-server.js');
-  const bun = findBunRuntime();
-  if (existsSync(script) && bun !== null) {
-    return { command: bun, argsPrefix: [script], display: `${bun} ${script}` };
-  }
-
-  const wrapper = join(root, 'bin', 'pgserve-wrapper.cjs');
-  if (existsSync(wrapper)) return { command: wrapper, argsPrefix: [], display: wrapper };
-  return null;
-}
-
-function findBunRuntime(): string | null {
-  if (process.execPath && existsSync(process.execPath) && basename(process.execPath).startsWith('bun')) {
-    return process.execPath;
-  }
-
-  const homeBun = join(homedir(), '.bun', 'bin', process.platform === 'win32' ? 'bun.exe' : 'bun');
-  if (existsSync(homeBun)) return homeBun;
-
-  try {
-    const fromPath = execSync('which bun', { encoding: 'utf-8', timeout: 3000 }).trim();
-    if (fromPath.length > 0) return fromPath;
-  } catch {
-    /* not on PATH */
-  }
-  return null;
-}
-
-/** Sleep helper used by readiness loops. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-let daemonStartPromise: Promise<void> | null = null;
-
 /**
- * Discover-or-spawn the pgserve v2 daemon. Idempotent + single-flighted.
+ * Require the canonical (pm2-supervised) pgserve v2 daemon to be reachable.
  *
- * Modes:
- *   A. Daemon already running (PM2/systemd, or another genie process).
- *      We do nothing — connect to the existing socket.
- *   B. Stale state (pid file but no socket, or socket but dead pid).
- *      We unlink the stale pid file and respawn.
- *   C. Nothing running. We spawn `pgserve daemon` detached + unref'd so it
- *      outlives the current genie invocation, then wait for the socket.
+ * Genie is a consumer of canonical pgserve after the canonical-cutover wish
+ * — it never spawns or recovers the daemon. The daemon is owned by pm2 (via
+ * `pgserve install`); pm2 handles crash-restart and lifecycle.
  *
- * If the pgserve binary cannot be resolved, throws a clear install-guidance
- * error rather than auto-installing — that's the user's call.
+ * Returns the daemon state on success. Throws a clear pm2-recovery hint when
+ * the canonical socket is not responsive — operators run `pm2 status` /
+ * `pm2 restart pgserve` / `pgserve install` to recover.
  *
- * @public — wired up by the scheduler-daemon and `genie serve` boot path in
- * downstream commits; exported here so those call-sites land cleanly.
+ * @public — wired up by the scheduler-daemon and `genie serve` boot path.
  */
-export async function getOrStartDaemon(): Promise<DaemonState> {
-  if (process.env.GENIE_PG_DISABLE_AUTOSTART === '1' || isPgAutostartDisabled()) {
-    const state = probePgserveDaemon();
-    if (state.running && (await isPgserveSocketResponsive())) return state;
-    throw new Error('pgserve daemon unavailable and PG autostart is disabled');
-  }
-  const initial = probePgserveDaemon();
-  if (initial.running) {
-    if (await isPgserveSocketResponsive()) return initial;
-    await recoverUnresponsivePgserveDaemon(initial);
-  }
+export async function requirePgserveDaemon(): Promise<DaemonState> {
+  const state = probePgserveDaemon();
+  if (state.running && (await isPgserveSocketResponsive())) return state;
 
-  // CI: tests get TCP via GENIE_TEST_PG_PORT; non-test CI shouldn't autospawn.
-  if (process.env.CI === 'true' && process.env.GENIE_PG_ALLOW_CI_AUTOSTART !== '1') {
-    throw new Error(
-      'pgserve v2 daemon socket not present and CI=true. Either start `pgserve daemon` in the workflow or set GENIE_PG_ALLOW_CI_AUTOSTART=1 to opt in.',
-    );
-  }
-
-  const rootErr = checkRootGuard();
-  if (rootErr !== null) throw new Error(rootErr);
-
-  if (initial.reason === 'socket present but pid stale' && (await isPgserveSocketResponsive())) {
+  // Tolerate "socket present but pid stale" — pm2-supervised daemons can
+  // rotate pid without rotating the libpq compat socket; the greet-completion
+  // check above is authoritative for reachability.
+  if (state.reason === 'socket present but pid stale' && (await isPgserveSocketResponsive())) {
     return {
       running: true,
       pid: null,
@@ -428,78 +320,38 @@ export async function getOrStartDaemon(): Promise<DaemonState> {
     };
   }
 
-  if (daemonStartPromise) {
-    await daemonStartPromise;
-    return probePgserveDaemon();
-  }
-
-  daemonStartPromise = startPgserveDaemonOnce(initial);
-
-  try {
-    await daemonStartPromise;
-  } finally {
-    daemonStartPromise = null;
-  }
-  return probePgserveDaemon();
+  throw new Error(buildPgserveUnavailableHint(state));
 }
 
-function cleanPartialDaemonState(initial: DaemonState): void {
-  // Do not signal a pid from the v2 pid file when the socket is absent: during
-  // migration that pid may be stale/recycled, and pgserve v1 TCP daemons must
-  // be allowed to coexist.
-  if (initial.reason === 'pid alive but no socket' && initial.pid !== null) {
-    unlinkIfPresent(resolvePgserveDaemonPidPath());
-  }
-  if (initial.reason === 'socket present but pid stale') {
-    removeStalePgserveSocketArtifacts();
-  }
-}
-
-async function recoverUnresponsivePgserveDaemon(state: DaemonState): Promise<void> {
-  if (state.pid !== null && isLikelyPgserveDaemonProcess(state.pid)) {
-    await signalPgserveDaemonPid(state.pid, 'SIGTERM');
-    if (liveDaemonPid(state.pid) !== null) await signalPgserveDaemonPid(state.pid, 'SIGKILL');
-  }
-  removeStalePgserveSocketArtifacts();
-}
-
-function isLikelyPgserveDaemonProcess(pid: number): boolean {
-  try {
-    const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
-      encoding: 'utf-8',
-      timeout: 1000,
-    }).trim();
-    return (
-      command.includes('pgserve') ||
-      command.includes('postgres-server.js') ||
-      (command.includes('postgres') && command.includes(DATA_DIR))
+/**
+ * @deprecated Use `requirePgserveDaemon`. Kept as an alias for one release;
+ * emits a one-line stderr deprecation notice on first use per process.
+ */
+let getOrStartDaemonDeprecationWarned = false;
+export async function getOrStartDaemon(): Promise<DaemonState> {
+  if (!getOrStartDaemonDeprecationWarned) {
+    getOrStartDaemonDeprecationWarned = true;
+    process.stderr.write(
+      '[genie] DEPRECATION: getOrStartDaemon → requirePgserveDaemon. Genie is consumer-only after the canonical-pgserve cutover; this alias will be removed in a future release.\n',
     );
-  } catch {
-    return false;
   }
+  return requirePgserveDaemon();
 }
 
-async function signalPgserveDaemonPid(pid: number, signal: NodeJS.Signals): Promise<void> {
-  let signaled = false;
-  try {
-    process.kill(-pid, signal);
-    signaled = true;
-  } catch {
-    /* pid is not a process-group leader */
-  }
-  try {
-    process.kill(pid, signal);
-    signaled = true;
-  } catch {
-    /* process already exited */
-  }
-  if (!signaled) return;
-
-  const deadline = Date.now() + (signal === 'SIGTERM' ? 1000 : 250);
-  while (Date.now() < deadline) {
-    if (liveDaemonPid(pid) === null) return;
-    await sleep(50);
-  }
+/**
+ * Build the pm2-recovery hint surfaced when the canonical pgserve daemon is
+ * not reachable. Exported via `_internals` for unit tests so the message
+ * shape stays locked down across refactors.
+ */
+function buildPgserveUnavailableHint(state: DaemonState): string {
+  return [
+    `pgserve canonical daemon is not reachable (${state.reason ?? 'no daemon'}).`,
+    'Genie depends on the pm2-supervised pgserve singleton. Recovery:',
+    '  pm2 status              # is pgserve registered?',
+    '  pm2 restart pgserve     # OR: autopg restart',
+    '  pgserve install         # if not registered yet',
+    'See https://github.com/automagik-dev/genie/blob/main/docs/install.md for details.',
+  ].join('\n');
 }
 
 async function isPgserveSocketResponsive(): Promise<boolean> {
@@ -541,187 +393,6 @@ function canCompletePgserveGreet(path: string): Promise<boolean> {
   });
 }
 
-function removeStalePgserveSocketArtifacts(): void {
-  for (const path of [
-    resolvePgserveDaemonPidPath(),
-    resolvePgserveLibpqSocketPath(),
-    resolvePgserveControlSocketPath(),
-  ]) {
-    unlinkIfPresent(path);
-  }
-}
-
-function unlinkIfPresent(path: string): void {
-  try {
-    unlinkSync(path);
-  } catch {
-    /* gone */
-  }
-}
-
-async function startPgserveDaemonOnce(initial: DaemonState): Promise<void> {
-  cleanPartialDaemonState(initial);
-  // The data directory may be locked by an orphan from a prior daemon — for
-  // example, a pgserve upgrade left the previous version's daemon running on
-  // a different control-socket layout, or the daemon parent died while its
-  // postgres backend kept running. probePgserveDaemon() can't see those
-  // (no current libpq socket / pgserve.pid), so we'd otherwise spawn a fresh
-  // daemon whose postgres backend immediately exits with
-  //   FATAL: lock file "postmaster.pid" already exists
-  // surfaced upstream as the unhelpful "daemon exited before binding …".
-  const orphan = detectOrphanDataDirLock();
-  if (orphan !== null) await evictOrphanDataDirHolder(orphan);
-
-  const daemonCommand = findPgserveDaemonCommand();
-  if (daemonCommand === null) {
-    // pgserve must be on PATH (preferred), bun-global at ~/.bun/bin/pgserve,
-    // or installed locally under node_modules/pgserve. The earlier SDK
-    // dynamic-require fallback was removed in favour of a pure binary-only
-    // path — genie no longer carries pgserve as a runtime npm dependency.
-    // See findPgserveDaemonCommand() for the binary search order.
-    throw new Error(
-      'pgserve binary not found. Install with `bun add -g pgserve@^2.1.0` (or `npm i -g pgserve@^2.1.0`), or run `pgserve install` to register the canonical pm2-supervised daemon.',
-    );
-  }
-  mkdirSync(resolvePgserveSocketDir(), { recursive: true, mode: 0o700 });
-
-  // GENIE_PG_MAX_CONNECTIONS overrides the postmaster's max_connections.
-  // Default 10000 — see startPgserveOnPort for rationale (~10 MB RAM per
-  // backend, real load far lower than the cap, the connection problem we
-  // kept patching was the router, not postgres itself).
-  const maxConnections = process.env.GENIE_PG_MAX_CONNECTIONS ?? '10000';
-  const child = spawn(
-    daemonCommand.command,
-    [...daemonCommand.argsPrefix, 'daemon', '--data', DATA_DIR, '--log', 'warn', '--max-connections', maxConnections],
-    {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env },
-    },
-  );
-  try {
-    await waitForDaemonSocket(daemonCommand, child);
-    child.unref();
-  } catch (err) {
-    await terminatePgserveTree(child);
-    throw err;
-  }
-}
-
-interface OrphanDataDirHolder {
-  pid: number;
-  cmd: string;
-}
-
-/**
- * Detect a live process holding `<DATA_DIR>/postmaster.pid` that
- * `probePgserveDaemon` can't see — i.e., a pgserve daemon (or its postgres
- * backend) from a previous version / a daemon whose libpq compat symlink
- * was nuked. Only flags processes whose command line proves they belong to
- * us (pgserve, postgres-server.js, or `postgres -D <DATA_DIR>`); unrelated
- * postmasters on the same host are left alone.
- */
-function detectOrphanDataDirLock(): OrphanDataDirHolder | null {
-  const pidFile = join(DATA_DIR, 'postmaster.pid');
-  if (!existsSync(pidFile)) return null;
-  let raw: string;
-  try {
-    raw = readFileSync(pidFile, 'utf-8');
-  } catch {
-    return null;
-  }
-  const firstLine = raw.split('\n', 1)[0]?.trim() ?? '';
-  const pid = Number.parseInt(firstLine, 10);
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  if (liveDaemonPid(pid) === null) return null;
-  let cmd: string;
-  try {
-    cmd = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
-      encoding: 'utf-8',
-      timeout: 1000,
-    }).trim();
-  } catch {
-    return null;
-  }
-  const ours =
-    cmd.includes('pgserve') ||
-    cmd.includes('postgres-server.js') ||
-    (cmd.includes('postgres') && cmd.includes(DATA_DIR));
-  return ours ? { pid, cmd } : null;
-}
-
-/**
- * Terminate the orphan that holds `<DATA_DIR>/postmaster.pid`. If the holder
- * is the postgres backend, walk up to the pgserve daemon parent so we kill
- * the whole tree; otherwise signal the holder directly. After the process
- * exits we remove the stale postmaster.pid so the new daemon's first call
- * to `pg_ctl start` doesn't trip on it.
- */
-async function evictOrphanDataDirHolder(holder: OrphanDataDirHolder): Promise<void> {
-  let target = holder.pid;
-  try {
-    const ppidStr = execFileSync('ps', ['-p', String(holder.pid), '-o', 'ppid='], {
-      encoding: 'utf-8',
-      timeout: 1000,
-    }).trim();
-    const ppid = Number.parseInt(ppidStr, 10);
-    if (Number.isInteger(ppid) && ppid > 1) {
-      const pcmd = execFileSync('ps', ['-p', String(ppid), '-o', 'command='], {
-        encoding: 'utf-8',
-        timeout: 1000,
-      }).trim();
-      if (pcmd.includes('pgserve') || pcmd.includes('postgres-server.js')) target = ppid;
-    }
-  } catch {
-    /* fall back to direct holder */
-  }
-  await signalPgserveDaemonPid(target, 'SIGTERM');
-  if (liveDaemonPid(target) !== null) await signalPgserveDaemonPid(target, 'SIGKILL');
-  unlinkIfPresent(join(DATA_DIR, 'postmaster.pid'));
-  removeStalePgserveSocketArtifacts();
-}
-
-async function waitForDaemonSocket(daemonCommand: PgserveDaemonCommand, child?: ChildProcess): Promise<void> {
-  const socketPath = resolvePgserveLibpqSocketPath();
-  const timeout = resolvePgserveTimeoutMs();
-  const deadline = Date.now() + timeout;
-  let childExit: string | null = null;
-  child?.once('exit', (code, signal) => {
-    childExit = signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`;
-  });
-
-  while (Date.now() < deadline) {
-    if (existsSync(socketPath) && (await isPgserveSocketResponsive())) return;
-    if (childExit !== null) {
-      const holder = detectOrphanDataDirLock();
-      const holderHint =
-        holder !== null
-          ? ` Data directory ${DATA_DIR} is held by PID ${holder.pid} (${holder.cmd}); kill it (or run \`genie serve restart\`) and retry.`
-          : '';
-      throw new Error(
-        `pgserve v2 daemon exited before binding ${socketPath} (${childExit}).${holderHint} Try starting it manually: ${formatPgserveDaemonCommand(
-          daemonCommand,
-        )}`,
-      );
-    }
-    await sleep(250);
-  }
-  throw new Error(
-    `pgserve v2 daemon did not bind ${socketPath} within ${Math.round(
-      timeout / 1000,
-    )}s. Try starting it manually: ${formatPgserveDaemonCommand(daemonCommand)}`,
-  );
-}
-
-function formatPgserveDaemonCommand(daemonCommand: PgserveDaemonCommand): string {
-  return `${daemonCommand.display} daemon --data ${DATA_DIR} --log warn`;
-}
-
-/** Sanitize connection URLs for logging — never expose credentials */
-function maskCredentials(url: string): string {
-  return url.replace(/\/\/.*@/, '//***@');
-}
-
 /**
  * Detect whether pgserve would refuse to start because the current process
  * is running as uid 0 (root). PostgreSQL aborts with
@@ -744,99 +415,6 @@ export function checkRootGuard(): string | null {
     'Run genie as a non-root user, or set GENIE_ALLOW_ROOT=1 to attempt anyway. ' +
     'See: https://github.com/automagik-dev/genie/issues/1226'
   );
-}
-
-function isPgAutostartDisabled(): boolean {
-  const value = process.env.GENIE_PG_NO_AUTOSTART;
-  return value !== undefined && TRUTHY_ENV.has(value.trim().toLowerCase());
-}
-
-/**
- * Self-heal: kill stale postgres processes, clean shared memory, remove stale PID files.
- * Handles zombies (which can't be killed) by cleaning their artifacts instead.
- */
-function selfHealPostgres(dataDir: string): void {
-  try {
-    // Kill any stale postgres processes associated with pgserve data dir
-    execSync(`pkill -9 -f "postgres.*${dataDir.replace(/\//g, '\\/')}" 2>/dev/null || true`, {
-      stdio: 'ignore',
-      timeout: 5000,
-    });
-    // Also kill stale pgserve router/wrapper processes on the same data dir
-    execSync(`pkill -9 -f "pgserve.*${dataDir.replace(/\//g, '\\/')}" 2>/dev/null || true`, {
-      stdio: 'ignore',
-      timeout: 5000,
-    });
-  } catch {
-    // Best effort
-  }
-
-  // Remove stale postmaster.pid
-  const pidFile = join(dataDir, 'postmaster.pid');
-  if (existsSync(pidFile)) {
-    try {
-      unlinkSync(pidFile);
-    } catch {
-      // May still be locked
-    }
-  }
-
-  // Clean stale shared memory segments owned by this user
-  try {
-    execSync("ipcs -m 2>/dev/null | awk '$6 == 0 {print $2}' | xargs -I{} ipcrm -m {} 2>/dev/null || true", {
-      stdio: 'ignore',
-      timeout: 5000,
-    });
-  } catch {
-    // Best effort
-  }
-}
-
-function signalPgserveTree(child: ChildProcess, signal: NodeJS.Signals): void {
-  const pid = child.pid;
-  if (pid === undefined) {
-    try {
-      child.kill(signal);
-    } catch {
-      /* already dead */
-    }
-    return;
-  }
-
-  try {
-    if (process.platform === 'win32') {
-      child.kill(signal);
-    } else {
-      process.kill(-pid, signal);
-    }
-  } catch {
-    try {
-      child.kill(signal);
-    } catch {
-      /* already dead */
-    }
-  }
-}
-
-async function terminatePgserveTree(child: ChildProcess): Promise<void> {
-  signalPgserveTree(child, 'SIGTERM');
-
-  const exited = await new Promise<boolean>((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      resolve(true);
-      return;
-    }
-    const timer = setTimeout(() => resolve(false), 1000);
-    timer.unref();
-    child.once('exit', () => {
-      clearTimeout(timer);
-      resolve(true);
-    });
-  });
-
-  if (!exited) {
-    signalPgserveTree(child, 'SIGKILL');
-  }
 }
 
 /** Resolved port from env or default */
@@ -929,7 +507,6 @@ function removeLockfile(): void {
 }
 
 // Module-level singleton state
-let pgserveChild: ChildProcess | null = null;
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
 let sqlClient: any = null;
 let activePort: number | null = null;
@@ -1029,25 +606,6 @@ export async function ensurePgserve(): Promise<number> {
 }
 
 /**
- * Outcome of the most recent autoStartDaemon() call. Consumed by the branched
- * timeout error in _ensurePgserve so the user gets a message naming the
- * actual failure mode instead of a generic timeout.
- *
- *   - `missing`   — serve.pid absent; spawned a fresh serve
- *   - `stale`     — serve.pid existed but its PID was recycled or dead;
- *                   unlinked the file and spawned a fresh serve
- *   - `alive`     — serve.pid points at a live serve process whose kernel
- *                   start time still matches; did NOT respawn
- *
- * A module-level variable is acceptable here because autoStartDaemon is only
- * called from the single-flight _ensurePgserve path (guarded by ensurePromise).
- */
-type AutoStartOutcome = 'missing' | 'stale' | 'alive';
-let lastAutoStartOutcome: AutoStartOutcome | null = null;
-/** PID that was in serve.pid at the time of the most recent autoStartDaemon() call. */
-let lastAutoStartPid: number | null = null;
-
-/**
  * Spawn `genie serve start --headless` in the background.
  * Overridable for tests via {@link __setSpawnDaemonForTest}.
  */
@@ -1141,8 +699,6 @@ export async function autoStartDaemon(): Promise<void> {
   const raw = readPidFile(pidPath);
 
   if (!raw) {
-    lastAutoStartOutcome = 'missing';
-    lastAutoStartPid = null;
     spawnDaemon();
     return;
   }
@@ -1150,21 +706,15 @@ export async function autoStartDaemon(): Promise<void> {
   const parsed = parsePidFile(raw);
   if (!parsed) {
     unlinkQuiet(pidPath);
-    lastAutoStartOutcome = 'stale';
-    lastAutoStartPid = null;
     spawnDaemon();
     return;
   }
 
   if (isServeAlive(parsed.pid, parsed.recordedStartTime)) {
-    lastAutoStartOutcome = 'alive';
-    lastAutoStartPid = parsed.pid;
     return;
   }
 
   unlinkQuiet(pidPath);
-  lastAutoStartOutcome = 'stale';
-  lastAutoStartPid = parsed.pid;
   spawnDaemon();
 }
 
@@ -1200,54 +750,17 @@ async function tryExistingPort(port: number): Promise<number | null> {
   return null;
 }
 
-async function spawnPgserveDirect(port: number): Promise<number> {
-  mkdirSync(DATA_DIR, { recursive: true });
-  selfHealPostgres(DATA_DIR);
-  try {
-    const startedPort = await startPgserveOnPort(port);
-    registerExitHandler();
-    return startedPort;
-  } catch (err) {
-    process.env.GENIE_PG_AVAILABLE = 'false';
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`pgserve failed to start: ${maskCredentials(message)}`);
-  }
-}
-
-async function waitForDaemonPort(): Promise<number | null> {
-  const deadline = Date.now() + 16000;
-  while (Date.now() < deadline) {
-    const p = readLockfile();
-    if (p !== null && (await isPostgresHealthy(p))) {
-      activePort = p;
-      process.env.GENIE_PG_AVAILABLE = 'true';
-      return p;
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  return null;
-}
-
-function throwDaemonTimeout(outcomeAtStart: typeof lastAutoStartOutcome, pidAtStart: typeof lastAutoStartPid): never {
-  process.env.GENIE_PG_AVAILABLE = 'false';
-  const home = process.env.GENIE_HOME ?? GENIE_HOME;
-  const pidPath = join(home, 'serve.pid');
-  const hasPidFile = existsSync(pidPath);
-  const currentPort = readLockfile() ?? getPort();
-  if (outcomeAtStart === 'stale') {
-    throw new Error(
-      `Stale ~/.genie/serve.pid (PID ${pidAtStart ?? 'unknown'} was not our serve). Removed and retried — if this persists, run: genie serve start`,
-    );
-  }
-  if (!hasPidFile) {
-    throw new Error('genie serve not running. Run: genie serve start');
-  }
-  const pidLabel = pidAtStart ?? outcomeAtStart ?? 'unknown';
-  throw new Error(
-    `genie serve is running (PID ${pidLabel}) but pgserve did not respond on port ${currentPort} within 16s. Try: genie serve restart, or check ~/.genie/logs/scheduler.log`,
-  );
-}
-
+/**
+ * Ensure a pgserve TCP port is reachable. Reached only via `_buildConnection`
+ * when `shouldUseUnixSocket()` returns false — i.e. force-TCP mode
+ * (`GENIE_PG_FORCE_TCP=1`). Test mode (`GENIE_TEST_PG_PORT`) short-circuits in
+ * `ensurePgserve` before reaching this function.
+ *
+ * Genie no longer spawns pgserve — the canonical pm2-supervised pgserve
+ * speaks Unix sockets only. Force-TCP callers must already have a TCP-listening
+ * pgserve running on the configured port; otherwise we throw with a clear
+ * canonical-install hint.
+ */
 async function _ensurePgserve(): Promise<number> {
   if (activePort !== null) return activePort;
 
@@ -1255,101 +768,18 @@ async function _ensurePgserve(): Promise<number> {
   const existing = await tryExistingPort(port);
   if (existing !== null) return existing;
 
-  if (process.env.CI === 'true') {
-    process.env.GENIE_PG_AVAILABLE = 'false';
-    throw new Error('pgserve not available in CI');
-  }
-
-  if (isPgAutostartDisabled()) {
-    process.env.GENIE_PG_AVAILABLE = 'false';
-    throw new Error('pgserve unavailable and GENIE_PG_NO_AUTOSTART=1');
-  }
-
-  const rootErr = checkRootGuard();
-  if (rootErr !== null) {
-    process.env.GENIE_PG_AVAILABLE = 'false';
-    throw new Error(rootErr);
-  }
-
-  if (process.env.GENIE_IS_DAEMON === '1') {
-    return spawnPgserveDirect(port);
-  }
-
-  await autoStartDaemon();
-  const outcomeAtStart = lastAutoStartOutcome;
-  const pidAtStart = lastAutoStartPid;
-  const waited = await waitForDaemonPort();
-  if (waited !== null) return waited;
-  throwDaemonTimeout(outcomeAtStart, pidAtStart);
-}
-
-/** Resolve the pgserve CLI binary path — checks bun-global, then PATH. */
-function findPgserveBin(): string {
-  // 1. bun-global install (the canonical path: `bun add -g pgserve@^2.1.0`)
-  const globalBin = join(homedir(), '.bun', 'bin', 'pgserve');
-  if (existsSync(globalBin)) return globalBin;
-  // 2. PATH (catches npm-global, system installs)
-  try {
-    return execSync('which pgserve', { encoding: 'utf-8', timeout: 3000 }).trim();
-  } catch {
-    return 'pgserve';
-  }
-}
-
-/**
- * Start pgserve as a separate child process (like omni does).
- * Avoids the self-referencing proxy deadlock that occurs when the
- * MultiTenantRouter Bun TCP proxy runs in the same event loop as
- * the daemon that also connects to it.
- */
-async function startPgserveOnPort(port: number): Promise<number> {
-  mkdirSync(DATA_DIR, { recursive: true });
-
-  const child = spawn(
-    findPgserveBin(),
+  process.env.GENIE_PG_AVAILABLE = 'false';
+  throw new Error(
     [
-      '--port',
-      String(port),
-      '--host',
-      DEFAULT_HOST,
-      '--data',
-      DATA_DIR,
-      '--log',
-      'warn',
-      '--no-stats',
-      '--no-cluster',
-      '--pgvector',
-      // Lift the postmaster ceiling well past the historical 1000 cap.
-      // RAM cost is ~10 MB per backend — 10000 caps at ~100 GB worst-case
-      // (real usage is far lower; idle backends are slim). The connection
-      // problem we kept patching was the router, not postgres itself.
-      // Override via GENIE_PG_MAX_CONNECTIONS for tighter-RAM hosts.
-      '--max-connections',
-      process.env.GENIE_PG_MAX_CONNECTIONS ?? '10000',
-    ],
-    { detached: true, stdio: 'ignore' },
+      `pgserve TCP port ${port} is not reachable.`,
+      'Genie is consumer-only after the canonical-pgserve cutover; it does not spawn pgserve.',
+      'Force-TCP mode (GENIE_PG_FORCE_TCP=1) requires you to start a TCP-listening pgserve yourself.',
+      'Recommended: drop GENIE_PG_FORCE_TCP and let genie connect via the canonical Unix socket:',
+      '  pm2 status              # is pgserve registered?',
+      '  pm2 restart pgserve     # OR: autopg restart',
+      '  pgserve install         # if not registered yet',
+    ].join('\n'),
   );
-
-  child.unref();
-  pgserveChild = child;
-
-  const timeout = Number(process.env.GENIE_PGSERVE_TIMEOUT) || 30000;
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (await isPostgresHealthy(port)) {
-      activePort = port;
-      ownsLockfile = true;
-      process.env.GENIE_PG_AVAILABLE = 'true';
-      writeLockfile(port);
-      return port;
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-
-  await terminatePgserveTree(child);
-  if (pgserveChild === child) pgserveChild = null;
-  selfHealPostgres(DATA_DIR);
-  throw new Error(`pgserve failed to start on port ${port} (timeout after ${timeout / 1000}s)`);
 }
 
 /** Register process exit handler to clean up lockfile (once). */
@@ -1372,10 +802,6 @@ function registerExitHandler(): void {
       dying.end({ timeout: 1 }).catch(() => {
         /* best-effort — see comment above */
       });
-    }
-    if (pgserveChild) {
-      signalPgserveTree(pgserveChild, 'SIGTERM');
-      pgserveChild = null;
     }
     if (ownsLockfile) {
       removeLockfile();
@@ -1554,7 +980,7 @@ async function maybePrintBanner(client: postgres.Sql, isTestMode: boolean): Prom
 async function _buildConnection(): Promise<any> {
   const _t0 = Date.now();
   const useSocket = shouldUseUnixSocket();
-  if (useSocket) await getOrStartDaemon();
+  if (useSocket) await requirePgserveDaemon();
   // Direct-postmaster path (bypasses pgserve's daemon-control router):
   //   - Eliminates per-accept SO_PEERCRED + /proc walk latency.
   //   - Talks to the postmaster's own Unix socket (auto-created at
@@ -1666,6 +1092,9 @@ async function _buildConnection(): Promise<any> {
     // a real query, by which time we may have chdir'd back. A failure here
     // falls through to the outer catch which tears down the half-built pool.
     await client`SELECT 1`;
+    // Idempotent — wires beforeExit / SIGINT / SIGTERM so the pool drains on
+    // every clean exit, not only the (now-deleted) spawn-owned path.
+    registerExitHandler();
     await runPostConnectSetup(client, isTestMode, { t0: _t0, t1: _t1 });
     await maybePrintBanner(client, isTestMode);
     // Surface the resolved transport on the activePort singleton so diagnostics
