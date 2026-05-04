@@ -58,6 +58,12 @@ export async function maybePromptV1Migration(target: postgres.Sql): Promise<void
   if (detection.alreadyMigrated) return;
 
   const { tasks = 0, wishes = 0, teams = 0, sessions = 0 } = detection.v1Counts ?? {};
+
+  // v1 DB exists but is empty (e.g. pristine install whose schema was
+  // initialized but never written to). There is nothing to migrate, so
+  // suppress the banner — the operator has no actionable choice to make.
+  if (tasks === 0 && wishes === 0 && teams === 0 && sessions === 0) return;
+
   const tty = Boolean(process.stderr.isTTY);
 
   if (!tty) {
