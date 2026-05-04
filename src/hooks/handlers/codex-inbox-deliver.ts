@@ -41,6 +41,7 @@
 
 import { formatEnvelope } from '../../lib/channel-envelope.js';
 import type { MailboxMessage } from '../../lib/mailbox.js';
+import { readEnvAgentId, readEnvAgentName } from '../env-identity.js';
 import type { HandlerResult, HookPayload } from '../types.js';
 
 /** Hard timeout for the PG query — codex hook budget is 15s; we want sub-second. */
@@ -155,7 +156,11 @@ function resolveContext(payload: HookPayload): { agentName: string; teamName?: s
   // In test envs (without explicit deps) the dispatcher must not block on PG.
   if (!hasOverrides && (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test')) return null;
 
-  const agentName = process.env.GENIE_AGENT_NAME ?? (payload.teammate_name as string | undefined);
+  // Prefer GENIE_AGENT_ID (UUID) — defaultFindCodexAgent matches `a.id === name`
+  // first (line 102), so passing the UUID resolves directly without name fuzz.
+  // Falls through to GENIE_AGENT_NAME / payload.teammate_name when the env id
+  // is unset or non-UUID.
+  const agentName = readEnvAgentId() ?? readEnvAgentName() ?? (payload.teammate_name as string | undefined);
   if (!agentName) return null;
   const teamName = process.env.GENIE_TEAM ?? (payload.team_name as string | undefined);
   return { agentName, teamName };

@@ -3,7 +3,7 @@
  *
  * Cascade (first non-empty wins) per wish observability-signal-normalization Group 3:
  *   1. payload context (CC native team `teammate_name`)
- *   2. executor env (`GENIE_AGENT_NAME` set by `genie spawn`)
+ *   2. executor env (`GENIE_AGENT_ID` UUID, then `GENIE_AGENT_NAME`, both set by `genie spawn`)
  *   3. session context (`.claude/settings.local.json` agentName in cwd)
  *   4. cwd basename (project name)
  *   5. session_id prefix (last-resort identity)
@@ -18,6 +18,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { readEnvAgentId } from './env-identity.js';
 import type { HookPayload } from './types.js';
 
 /** Sentinel value emitted when no agent context can be derived. */
@@ -50,8 +51,13 @@ function nameFromCwd(cwd: string): string | undefined {
  */
 export function resolveAgentName(payload: HookPayload): string {
   const cwd = payload.cwd;
+  // GENIE_AGENT_ID (UUID) is the post-061 canonical identity; GENIE_AGENT_NAME
+  // is kept as a fallback for legacy spawn flows that haven't been updated to
+  // export the id. teammate_name (CC native) still wins because the harness
+  // payload is the most authoritative live signal.
   return (
     payload.teammate_name ||
+    readEnvAgentId() ||
     process.env.GENIE_AGENT_NAME ||
     (cwd && readAgentNameFromSettings(cwd)) ||
     (cwd && nameFromCwd(cwd)) ||

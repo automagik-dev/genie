@@ -9,7 +9,7 @@ import type { MailboxMessage } from '../../../lib/mailbox.js';
 import type { HookPayload } from '../../types.js';
 import { type CodexAgentRef, _deps, codexInboxDeliver } from '../codex-inbox-deliver.js';
 
-const ENV_KEYS = ['GENIE_AGENT_NAME', 'GENIE_TEAM', 'NODE_ENV', 'BUN_ENV'] as const;
+const ENV_KEYS = ['GENIE_AGENT_ID', 'GENIE_AGENT_NAME', 'GENIE_TEAM', 'NODE_ENV', 'BUN_ENV'] as const;
 
 function snapshotEnv(): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
@@ -72,7 +72,10 @@ describe('codex-inbox-deliver handler', () => {
     envSnapshot = snapshotEnv();
     // Tests bypass the test-env short-circuit by installing dep overrides;
     // clear the literal vars so resolveContext doesn't return null on
-    // missing GENIE_AGENT_NAME.
+    // missing GENIE_AGENT_NAME. GENIE_AGENT_ID stays cleared by default —
+    // legacy tests want the (name, team) path; tests for the env-id flip
+    // set it explicitly.
+    process.env.GENIE_AGENT_ID = undefined;
     process.env.GENIE_AGENT_NAME = 'codex-eng';
     process.env.GENIE_TEAM = 'genie';
     process.env.NODE_ENV = undefined;

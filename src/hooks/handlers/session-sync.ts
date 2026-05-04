@@ -23,6 +23,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readEnvAgentId, readEnvAgentName } from '../env-identity.js';
 import type { HandlerResult, HookPayload } from '../types.js';
 
 /**
@@ -133,6 +134,7 @@ type GetAgentByNameFn = (
   name: string,
   team: string,
 ) => Promise<{ id?: string; currentExecutorId?: string | null } | null>;
+type GetAgentFn = (id: string) => Promise<{ id?: string; currentExecutorId?: string | null } | null>;
 type GetExecutorFn = (id: string) => Promise<{ claudeSessionId?: string | null; state?: string | null } | null>;
 type UpdateClaudeSessionIdFn = (executorId: string, sessionId: string) => Promise<void>;
 type EmitAuditEventFn = (
@@ -150,11 +152,13 @@ type EmitAuditEventFn = (
  * reset them in `afterEach`.
  */
 export const _deps: {
+  getAgent: GetAgentFn | null;
   getAgentByName: GetAgentByNameFn | null;
   getExecutor: GetExecutorFn | null;
   updateClaudeSessionId: UpdateClaudeSessionIdFn | null;
   emitAuditEvent: EmitAuditEventFn | null;
 } = {
+  getAgent: null,
   getAgentByName: null,
   getExecutor: null,
   updateClaudeSessionId: null,
@@ -162,12 +166,14 @@ export const _deps: {
 };
 
 async function resolveDeps() {
+  const needsAgentMod = !_deps.getAgent || !_deps.getAgentByName;
   const [agentMod, execMod, audit] = await Promise.all([
-    _deps.getAgentByName ? null : import('../../lib/agent-registry.js'),
+    needsAgentMod ? import('../../lib/agent-registry.js') : null,
     _deps.getExecutor && _deps.updateClaudeSessionId ? null : import('../../lib/executor-registry.js'),
     _deps.emitAuditEvent ? null : import('../../lib/audit.js'),
   ]);
   return {
+    getAgent: _deps.getAgent ?? (agentMod as typeof import('../../lib/agent-registry.js')).getAgent,
     getAgentByName: _deps.getAgentByName ?? (agentMod as typeof import('../../lib/agent-registry.js')).getAgentByName,
     getExecutor: _deps.getExecutor ?? (execMod as typeof import('../../lib/executor-registry.js')).getExecutor,
     updateClaudeSessionId:
@@ -176,18 +182,31 @@ async function resolveDeps() {
   };
 }
 
-function shouldSkipSync(payload: HookPayload): { sessionId: string; agentName: string; teamName: string } | null {
+type SyncCtx = {
+  sessionId: string;
+  agentName: string;
+  agentId: string | undefined;
+  teamName: string;
+};
+
+function shouldSkipSync(payload: HookPayload): SyncCtx | null {
   const sessionId = payload.session_id;
   if (!sessionId || typeof sessionId !== 'string') return null;
 
   const hasOverrides = Object.values(_deps).some((v) => v !== null);
   if (!hasOverrides && (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test')) return null;
 
-  const agentName = process.env.GENIE_AGENT_NAME ?? (payload.teammate_name as string | undefined);
+  // Prefer GENIE_AGENT_ID (UUID) — post-061 the registry is keyed by UUID and
+  // a name → id resolution at the call site is one wasted round-trip when the
+  // spawn flow already exported the UUID. agentName is still captured so the
+  // audit event keeps a human-readable actor.
+  const agentId = readEnvAgentId();
+  const agentName = readEnvAgentName() ?? (payload.teammate_name as string | undefined);
   const teamName = process.env.GENIE_TEAM ?? (payload.team_name as string | undefined);
-  if (!agentName || !teamName) return null;
+  if (!teamName) return null;
+  if (!agentId && !agentName) return null;
 
-  return { sessionId, agentName, teamName };
+  return { sessionId, agentName: agentName ?? agentId ?? '', agentId, teamName };
 }
 
 /**
@@ -215,7 +234,9 @@ export async function sessionSync(payload: HookPayload): Promise<HandlerResult> 
     loadDiskCache();
 
     const deps = await resolveDeps();
-    const agent = await deps.getAgentByName(ctx.agentName, ctx.teamName);
+    const agent = ctx.agentId
+      ? await deps.getAgent(ctx.agentId)
+      : await deps.getAgentByName(ctx.agentName, ctx.teamName);
     const executorId = agent?.currentExecutorId;
     if (!executorId) return;
     if (syncedSessions.get(executorId) === ctx.sessionId) return;
