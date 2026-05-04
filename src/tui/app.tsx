@@ -2,7 +2,6 @@
 /** Root App component — Sessions nav + tmux right pane management */
 
 import { execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { useBindings } from '@opentui/keymap/react';
 import { useRenderer } from '@opentui/react';
 import { useCallback, useEffect, useState } from 'react';
@@ -38,16 +37,10 @@ export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
   }, [renderer, activeSession]);
 
   const handleQuit = useCallback(() => {
-    // Best-effort: signal genie serve to stop
-    try {
-      const genieHome = process.env.GENIE_HOME ?? `${process.env.HOME}/.genie`;
-      const pid = readFileSync(`${genieHome}/serve.pid`, 'utf-8').trim();
-      process.kill(Number.parseInt(pid, 10), 'SIGTERM');
-    } catch {
-      // PID file missing or unreadable — continue to tmux kill
-    }
-    // Always kill the TUI tmux server directly — the serve PID may be
-    // a zombie (defunct) that accepts signals but never acts on them.
+    // Detach-only semantics: close the TUI window but leave the serve daemon
+    // (and its pgserve, scheduler, hook socket, etc.) running. Next `genie`
+    // attach is a fast reconnect instead of a full cold boot. Use
+    // `genie serve stop` for explicit daemon shutdown.
     try {
       execSync('tmux -L genie-tui kill-server', { stdio: 'ignore' });
     } catch {}
@@ -58,8 +51,8 @@ export function App({ rightPane, workspaceRoot, initialAgent }: AppProps) {
       commands: [
         {
           name: 'app.quit',
-          title: 'Quit',
-          desc: 'Show quit confirmation; press again to quit',
+          title: 'Close TUI',
+          desc: 'Close TUI window (daemon keeps running — use `genie serve stop` to shut down)',
           category: 'app',
           run() {
             if (showQuit) {
