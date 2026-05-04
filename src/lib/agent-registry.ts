@@ -230,8 +230,30 @@ function buildLegacyTeamLeadEntryId(teamName: string): string {
   return `team-lead:${teamName}`;
 }
 
+/**
+ * Identity-shape gates enforced by migration 061's `agents_id_shape_check` —
+ * `agents.id` must be a UUID or the `dir:<name>` master-row prefix. Bare-name
+ * inserts get rejected at the database level and crash the spawn pipeline.
+ *
+ * This module-level constant is the application-side mirror so we can fail
+ * fast (with a useful error) BEFORE the SQL roundtrip. Wish
+ * retire-session-names-id-only Group 3 — the spawn primitive writes ONE row,
+ * keyed by the UUID identity from `findOrCreateAgent`. Bare-name shadow rows
+ * are gone.
+ */
+const REGISTER_ID_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dir:[A-Za-z0-9_-]+)$/i;
+
+function assertRegisterableId(id: string): void {
+  if (!REGISTER_ID_RE.test(id)) {
+    throw new Error(
+      `register: refusing to insert non-UUID/non-dir agent id ${JSON.stringify(id)}. Spawn callers must resolve the durable identity row via findOrCreateAgent first and pass that UUID — the bare-name shadow path was retired in wish retire-session-names-id-only Group 3 (migration 061 enforces the same shape at the DB).`,
+    );
+  }
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: flat field mapping
 export async function register(agent: Agent): Promise<void> {
+  assertRegisterableId(agent.id);
   const sql = await getConnection();
   const now = new Date().toISOString();
 

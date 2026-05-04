@@ -347,8 +347,14 @@ export async function spawnWorkerFromTemplate(
   const isClaude = template.provider === 'claude' || template.provider === 'claude-sdk';
   const effectiveSessionId = resumeSessionId ?? params.sessionId;
 
+  // Wish retire-session-names-id-only Group 3: spawn writes ONE row.
+  // Resolve the durable identity UUID first so register() runs against the
+  // same key the rest of the pipeline observes. The bare `workerId`
+  // (e.g. team-role-<short>) lands on `custom_name` for human-display only.
+  const autoSpawnIdentity = await registry.findOrCreateAgent(agentName, team, template.role);
+
   const workerEntry: registry.Agent = {
-    id: workerId,
+    id: autoSpawnIdentity.id,
     paneId,
     session,
     provider: template.provider,
@@ -356,6 +362,7 @@ export async function spawnWorkerFromTemplate(
     role: template.role,
     skill: template.skill,
     team,
+    customName: workerId,
     worktree: null,
     startedAt: now,
     state: 'spawning',
