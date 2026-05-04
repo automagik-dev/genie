@@ -18,6 +18,69 @@
 
 ## Unreleased
 
+### Breaking — pgserve canonical cutover (consumer-only, pm2-supervised)
+
+- **Genie no longer spawns pgserve.** The pre-canonical genie was a daemon
+  *owner*: `getOrStartDaemon` would spawn `pgserve daemon` as a detached
+  child, `selfHealPostgres` would `pkill -9` postgres backends to recover
+  from stuck state, and `genie serve start` treated pgserve startup as
+  part of its boot sequence. Canonical `pgserve@^2` is a pm2-supervised
+  singleton (`pgserve install` registers it) — every `pkill -9` from the
+  old self-heal triggered an immediate pm2 respawn, producing the
+  "Could not kill stale postgres processes" + "pgserve v2 daemon exited
+  before binding" fight-with-pm2 cycle that motivated this cutover.
+- **`getOrStartDaemon` → `requirePgserveDaemon`.** Probe-only: succeeds
+  when the canonical socket is reachable, throws a pm2-recovery hint
+  (`pm2 status` / `pm2 restart pgserve` / `pgserve install`) otherwise.
+  `getOrStartDaemon` is retained as a deprecated alias for one release
+  and emits a one-line stderr deprecation notice on first use.
+- **`genie install` is now fatal on canonical pgserve failure.** No more
+  warn-and-continue. Operators see a copy-paste recovery hint:
+  ```
+  Error: canonical pgserve registration failed (<reason>).
+  Genie depends on pm2-supervised pgserve. To proceed:
+    bun add -g pgserve@^2
+    pgserve install
+    genie install
+  ```
+- **`genie doctor --fix` no longer pkills postgres processes.** The old
+  `killStalePostgres` step is replaced by a hint-only
+  `printPgserveRecoveryHint` that prints pm2 commands and exits.
+  Operators run them manually if needed.
+- **`genie serve start` uses `requirePgserveReady` (probe-only).** On
+  success: `pgserve daemon ready (canonical, pm2-supervised) on
+  <socket>`. On failure: clear pm2-recovery hint + sets
+  `GENIE_PG_NO_AUTOSTART=1` so subsequent code doesn't loop on the same
+  failure.
+- **Deleted from `src/lib/db.ts`** (`~745 LOC` removed):
+  `startPgserveDaemonOnce`, `evictOrphanDataDirHolder`,
+  `detectOrphanDataDirLock`, `terminatePgserveTree`, `signalPgserveTree`,
+  `signalPgserveDaemonPid`, `recoverUnresponsivePgserveDaemon`,
+  `isLikelyPgserveDaemonProcess`, `cleanPartialDaemonState`,
+  `removeStalePgserveSocketArtifacts`, `unlinkIfPresent`,
+  `waitForDaemonSocket`, `formatPgserveDaemonCommand`,
+  `spawnPgserveDirect`, `startPgserveOnPort`, `findPgserveBin`,
+  `findPgserveDaemonCommand`, `findLocalPgserveRoot`,
+  `resolvePgservePackageCommand`, `findBunRuntime`,
+  `selfHealPostgres`, `waitForDaemonPort`, `throwDaemonTimeout`,
+  the `PgserveDaemonCommand` interface, and the
+  `lastAutoStartOutcome`/`lastAutoStartPid` tracking.
+- **Migration for pre-canonical operators:**
+  ```bash
+  # 1. Install canonical pgserve (pm2-supervised singleton)
+  bun add -g pgserve@^2
+  pgserve install                # registers under pm2; auto-detects host
+  # If you have existing data at ~/.genie/data/pgserve and want to keep
+  # it, point pgserve install at that data dir BEFORE the cutover:
+  pgserve install --data ~/.genie/data/pgserve
+
+  # 2. Re-run genie install (fails fatally if pgserve isn't ready)
+  genie install
+
+  # 3. Verify
+  genie doctor                   # all [ok] for pgserve preconditions
+  ```
+
 ### Breaking — pgserve v2 (Unix socket, auto-fingerprint, no credentials)
 
 - **Switched to pgserve v2 daemon model.** Genie now connects to pgserve

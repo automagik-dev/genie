@@ -819,14 +819,16 @@ function registerExitHandler(): void {
       /* best-effort — exit handler must not throw */
     });
   });
-  process.on('SIGINT', () => {
-    cleanup();
-    process.exit(130);
-  });
-  process.on('SIGTERM', () => {
-    cleanup();
-    process.exit(143);
-  });
+  // SIGINT/SIGTERM handlers are intentionally NOT installed here. Pre-cutover
+  // they only fired when genie was the daemon-OWNER (this helper used to be
+  // called from the now-deleted owner-side spawn path). Post-cutover the
+  // helper runs in every process that opens a pool connection, and a
+  // synchronous process.exit(...) here would race the scheduler-daemon's
+  // own async signal handlers — the failure mode the
+  // `serve lifecycle — bridge failure + shutdown` test surfaces. The
+  // 'beforeExit' + 'exit' wiring above still drains the pool on every
+  // clean exit; signal-driven shutdown is the responsibility of the
+  // process owner (scheduler-daemon, TUI), not this consumer-side helper.
 }
 
 // Migration marker file is legacy — kept for backward compat but no longer used for skip logic.

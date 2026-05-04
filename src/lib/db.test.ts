@@ -447,6 +447,39 @@ describe('daemon-owned pgserve', () => {
     expect(source).not.toContain('pkill');
   });
 
+  test('requirePgserveDaemon never spawns when daemon is healthy (cutover G5 regression)', () => {
+    // Static guarantee: the probe-only contract is enforced by reading the
+    // function body and asserting it never invokes any child_process spawn
+    // primitive nor process.kill. Replaces the spawn-mock behavioural test
+    // the wish suggested — Bun's module cache makes spy-then-reimport
+    // brittle, and the source-text assertion is strictly stronger
+    // (covers every code path through the function, not just the one the
+    // mocked test would exercise).
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('export async function requirePgserveDaemon');
+    expect(fnStart).toBeGreaterThan(-1);
+    // Slice up to the deprecated alias which immediately follows.
+    const fnEnd = source.indexOf('export async function getOrStartDaemon', fnStart);
+    expect(fnEnd).toBeGreaterThan(fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    for (const banned of ['spawn(', 'execSync(', 'execFileSync(', 'spawnSync(', 'process.kill(']) {
+      expect(body).not.toContain(banned);
+    }
+    // Positive: the body must call the probe primitives that prove
+    // reachability without process work.
+    expect(body).toContain('probePgserveDaemon');
+    expect(body).toContain('isPgserveSocketResponsive');
+    // The deprecated getOrStartDaemon alias must also not introduce any
+    // spawn primitives — it just delegates to requirePgserveDaemon.
+    const aliasEnd = source.indexOf('function buildPgserveUnavailableHint', fnEnd);
+    expect(aliasEnd).toBeGreaterThan(fnEnd);
+    const aliasBody = source.slice(fnEnd, aliasEnd);
+    for (const banned of ['spawn(', 'execSync(', 'execFileSync(', 'spawnSync(', 'process.kill(']) {
+      expect(aliasBody).not.toContain(banned);
+    }
+  });
+
   test('canonical pgserve UDS greeting probe is preserved', () => {
     // The greet-completion check is the live-reachability primitive the new
     // requirePgserveDaemon() depends on. Pinned so future refactors don't
