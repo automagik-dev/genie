@@ -359,18 +359,20 @@ describe('daemon-owned pgserve', () => {
     }
 
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    // Connection is bound to a local first so concurrent rebuilds can't
-    // make this caller observe a nulled `sqlClient` (trace finding from
-    // v4.260430.20). After construction the global is set for sharing.
-    const connectionStart = source.indexOf('const client = pgModule({');
-    expect(connectionStart).toBeGreaterThan(-1);
-    const connectionConfig = source.slice(connectionStart, source.indexOf('  });', connectionStart));
-    expect(connectionConfig).toContain('username: DB_NAME');
+    // Post-refactor (#1651): pgModule call delegates to buildPgClientOptions.
+    // Connection is still bound to a local first so concurrent rebuilds can't
+    // make this caller observe a nulled `sqlClient`.
+    expect(source).toContain('const client = pgModule(buildPgClientOptions(');
+    const optionsStart = source.indexOf('function buildPgClientOptions');
+    expect(optionsStart).toBeGreaterThan(-1);
+    const optionsBody = source.slice(optionsStart, source.indexOf('\n}\n', optionsStart));
+    expect(optionsBody).toContain('username: DB_NAME');
+    expect(optionsBody).toContain('[PG_AUTH_FIELD]: transport.pgWireCredential');
     expect(source).toContain('const PG_AUTH_FIELD');
+    // pgWireCredential resolution moved into resolveTransport.
     expect(source).toContain(
       'const pgWireCredential = useSocket ? resolvePgserveAuthPassword() : resolveTcpPgPassword()',
     );
-    expect(connectionConfig).toContain('[PG_AUTH_FIELD]: pgWireCredential');
     // Sharing the global happens AFTER local construction.
     expect(source).toContain('sqlClient = client');
   });
@@ -385,10 +387,11 @@ describe('daemon-owned pgserve', () => {
     expect(helperBody).toContain('if (!useSocket) return 5');
     expect(helperBody).toContain('Math.max(16, Math.ceil(resolvePgserveTimeoutMs() / 1000))');
 
-    const connectionStart = source.indexOf('const client = pgModule({');
-    expect(connectionStart).toBeGreaterThan(-1);
-    const connectionConfig = source.slice(connectionStart, source.indexOf('  });', connectionStart));
-    expect(connectionConfig).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(useSocket)');
+    // Post-refactor (#1651): connect_timeout is wired in buildPgClientOptions.
+    const optionsStart = source.indexOf('function buildPgClientOptions');
+    expect(optionsStart).toBeGreaterThan(-1);
+    const optionsBody = source.slice(optionsStart, source.indexOf('\n}\n', optionsStart));
+    expect(optionsBody).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(transport.useSocket)');
   });
 
   test('socket connections require the canonical daemon before dialing libpq path', () => {
@@ -402,14 +405,22 @@ describe('daemon-owned pgserve', () => {
     // only; never spawns). Locks out reintroduction of getOrStartDaemon as
     // the call-site here.
     const requireIdx = body.indexOf('if (useSocket) await requirePgserveDaemon()');
-    // Direct-postmaster path reads admin.json (when useSocket) for the
-    // postmaster's actual port, falls back to the libpq compat port (5432)
-    // when discovery is missing. The probe must happen before port resolution.
-    const portIdx = body.search(/const port = useSocket \? \(discovery\?\.port \?\? 5432\) : await ensurePgserve\(\)/);
+    // Post-refactor (#1651): port resolution moved into resolveTransport. The
+    // dispatcher must call requirePgserveDaemon BEFORE resolveTransport (which
+    // dials the postmaster's port).
+    const transportIdx = body.indexOf('await resolveTransport(useSocket)');
 
     expect(useSocketIdx).toBeGreaterThan(-1);
     expect(requireIdx).toBeGreaterThan(useSocketIdx);
-    expect(portIdx).toBeGreaterThan(requireIdx);
+    expect(transportIdx).toBeGreaterThan(requireIdx);
+
+    // The actual port-resolution pattern still exists, just inside resolveTransport.
+    const transportFnStart = source.indexOf('async function resolveTransport');
+    expect(transportFnStart).toBeGreaterThan(-1);
+    const transportBody = source.slice(transportFnStart, source.indexOf('\n}\n', transportFnStart));
+    expect(transportBody).toMatch(
+      /const port = useSocket \? \(discovery\?\.port \?\? 5432\) : await ensurePgserve\(\)/,
+    );
   });
 
   test('canonical-cutover removed every spawn helper from db.ts', () => {
