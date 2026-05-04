@@ -3721,7 +3721,15 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
 
   await notifySpawnJoin(ctx, paneId);
   // Inject resume context so the agent knows what wish/group it was working on
-  await injectResumeContext(ctx.cwd ?? agent.repoPath ?? process.cwd(), agent.id, agent.role ?? agent.id, params.team);
+  // First arg = canonical agents.id (mailbox.to_worker FK), second = display
+  // workerId for wish-state lookup (legacy assignees), third = role.
+  await injectResumeContext(
+    ctx.cwd ?? agent.repoPath ?? process.cwd(),
+    agent.id,
+    agent.id,
+    agent.role ?? agent.id,
+    params.team,
+  );
 
   if (ctx.spawnColor && paneId !== 'inline') {
     await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);

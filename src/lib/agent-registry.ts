@@ -1243,6 +1243,26 @@ export async function resolveAgentId(nameOrId: string, team?: string): Promise<s
   return null;
 }
 
+/**
+ * Strict variant of {@link resolveAgentId}: returns the canonical id or throws
+ * a clear error when the input doesn't match exactly one agent. Use this at
+ * the CLI boundary right before any write that targets `agents.id` (e.g.
+ * `mailbox.to_worker`, `mailbox.from_worker`) so the failure mode is a
+ * readable "no agent matches X" instead of an opaque foreign-key violation
+ * (wish retire-session-names-id-only Group 4).
+ *
+ * The thrown error includes the input verbatim and the team scope used so the
+ * operator can disambiguate quickly.
+ */
+export async function resolveAgentIdStrict(nameOrId: string, team?: string): Promise<string> {
+  const id = await resolveAgentId(nameOrId, team);
+  if (id) return id;
+  const teamHint = team ? ` (team scope: ${team})` : ' (no team scope — pass --team to disambiguate)';
+  throw new Error(
+    `No agent matches "${nameOrId}"${teamHint}. Resolution checked: exact id, dir:${nameOrId}, custom_name+team, role. Run \`genie ls\` to see live agents.`,
+  );
+}
+
 /** Set the current executor FK on an agent. Pass null to clear. */
 export async function setCurrentExecutor(agentId: string, executorId: string | null): Promise<void> {
   const sql = await getConnection();

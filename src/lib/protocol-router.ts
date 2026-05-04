@@ -436,6 +436,13 @@ async function deliverViaNativeInbox(
   to: string,
   body: string,
   teamName?: string,
+  /**
+   * Pre-resolved canonical agents.id for `to`, when sendMessage's caller
+   * already ran the resolver. We need the original `to` for native member
+   * lookup (matched by name) but a canonical id for `mailbox.to_worker`
+   * (FK lockdown — wish retire-session-names-id-only G4 / migration 061).
+   */
+  resolvedToId?: string | null,
 ): Promise<DeliveryResult | null> {
   const resolvedTeam = teamName ?? (await nativeTeams.discoverTeamName());
   if (!resolvedTeam) return null;
@@ -459,8 +466,14 @@ async function deliverViaNativeInbox(
   // so we write to "engineer.json" instead of "sofia-50ju-engineer.json"
   const inboxName = matchedMember.name ?? to;
 
+  // mailbox.to_worker MUST be a canonical agents.id. Prefer the resolved id
+  // passed in by sendMessage; fall back to resolving here for callers that
+  // didn't (none in production today, but keep the helper self-contained).
+  const mailboxTo = resolvedToId ?? (await registry.resolveAgentId(to, resolvedTeam).catch(() => null));
+  if (!mailboxTo) return null;
+
   try {
-    const message = await mailbox.send(repoPath, from, to, body);
+    const message = await mailbox.send(repoPath, from, mailboxTo, body);
     const nativeMsg: nativeTeams.NativeInboxMessage = {
       from,
       text: body,
@@ -470,8 +483,8 @@ async function deliverViaNativeInbox(
       read: false,
     };
     await nativeTeams.writeNativeInbox(resolvedTeam, inboxName, nativeMsg);
-    await mailbox.markDelivered(repoPath, to, message.id);
-    return { messageId: message.id, workerId: to, delivered: true };
+    await mailbox.markDelivered(repoPath, mailboxTo, message.id);
+    return { messageId: message.id, workerId: mailboxTo, delivered: true };
   } catch {
     return null;
   }
@@ -554,8 +567,19 @@ export async function sendMessage(
     return { messageId: '', workerId: to, delivered: true, reason: 'Self-delivery suppressed' };
   }
 
+  // Wish retire-session-names-id-only G4: best-effort resolve to canonical
+  // agents.id so any internal mailbox write that ends up keyed off `to`
+  // (notably `deliverViaNativeInbox`) lands on a row that satisfies the
+  // fk_mailbox_to_worker constraint. We swallow the null case on purpose:
+  // when the recipient is a role with no live worker yet (auto-spawn path)
+  // there is no agents row to resolve, and the existing fuzz matching +
+  // auto-spawn flow needs the original `to` to find a template. The live
+  // worker delivery path uses `worker.id` (already canonical) regardless.
+  const resolvedTo = await registry.resolveAgentId(to, teamName).catch(() => null);
+  const effectiveTo = resolvedTo ?? to;
+
   // 1. Find live workers using strict tiered matching (ID > role > team:role)
-  const liveMatches = await resolveRecipient(to);
+  const liveMatches = await resolveRecipient(effectiveTo);
   if (liveMatches.length === 1) {
     return deliverAfterPaneRecheck(repoPath, from, liveMatches[0], body, 'Pane died before delivery');
   }
@@ -568,18 +592,24 @@ export async function sendMessage(
     };
   }
 
-  // 2. No live match — directory-first resolution for auto-spawn
+  // 2. No live match — directory-first resolution for auto-spawn.
+  //    `findKnownWorker` accepts the canonical id when available so the
+  //    direct lookup hits without falling back to role fuzz; the directory
+  //    resolver still wants the human-typed `to` (built-in template names).
   const { resolve } = await import('./agent-directory.js');
   const dirResolved = await resolve(to);
-  const worker = await findKnownWorker(to);
+  const worker = await findKnownWorker(effectiveTo);
 
   if (dirResolved || worker) {
-    const result = await attemptAutoSpawnDelivery(repoPath, from, to, body, worker);
+    const result = await attemptAutoSpawnDelivery(repoPath, from, effectiveTo, body, worker);
     if (result) return result;
   }
 
-  // 3. Fallback: try native team inbox for agents not in worker registry
-  const nativeResult = await deliverViaNativeInbox(repoPath, from, to, body, teamName);
+  // 3. Fallback: try native team inbox for agents not in worker registry.
+  //    Pass both the original name (for member-by-name lookup) and the
+  //    resolved id (for mailbox.to_worker FK); they may differ when the user
+  //    typed a custom_name UUID instead of the canonical agents.id.
+  const nativeResult = await deliverViaNativeInbox(repoPath, from, to, body, teamName, resolvedTo);
   if (nativeResult) return nativeResult;
 
   return { messageId: '', workerId: to, delivered: false, reason: `Worker "${to}" not found or not alive` };

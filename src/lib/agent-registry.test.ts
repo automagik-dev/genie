@@ -1262,6 +1262,64 @@ describe.skip('pg — TODO retire-session-names #175: rewrite fixtures for UUID 
     });
   });
 
+  // resolveAgentIdStrict — wraps resolveAgentId with throw-on-null. Used at
+  // CLI boundaries that write to mailbox.to_worker (FK to agents.id) so the
+  // failure mode is a readable error, not an opaque foreign-key violation.
+  // Wish retire-session-names-id-only Group 4.
+  describe('resolveAgentIdStrict', () => {
+    test('returns canonical id when resolveAgentId hits', async () => {
+      const agent = await findOrCreateAgent('strict-cn', 't1', 'engineer');
+      // custom_name match (Tier 3 requires team scope)
+      const id = await (await import('./agent-registry.js')).resolveAgentIdStrict('strict-cn', 't1');
+      expect(id).toBe(agent.id);
+    });
+
+    test('throws with input + team scope hint on miss', async () => {
+      const mod = await import('./agent-registry.js');
+      let err: Error | null = null;
+      try {
+        await mod.resolveAgentIdStrict('definitely-no-agent-with-this-name', 't1');
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err).toBeTruthy();
+      expect(err?.message).toContain('definitely-no-agent-with-this-name');
+      expect(err?.message).toContain('team scope: t1');
+    });
+
+    test('hint mentions --team when team scope omitted', async () => {
+      const mod = await import('./agent-registry.js');
+      let err: Error | null = null;
+      try {
+        await mod.resolveAgentIdStrict('also-no-agent');
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err?.message).toContain('no team scope');
+      expect(err?.message).toContain('--team');
+    });
+
+    test('regression: closes fk_mailbox_to_worker — UUID-shaped custom_name resolves to canonical id', async () => {
+      // The original bug: spawn shows AgentID `<UUID-A>@team` but custom_name
+      // = UUID-A while id = UUID-B. `genie send --to UUID-A` wrote raw UUID-A
+      // to mailbox.to_worker → FK violation. The strict resolver must follow
+      // the custom_name → id lookup (Tier 3) and return UUID-B.
+      const fakeUuidA = '11111111-2222-3333-4444-555555555555';
+      const sql = await getConnection();
+      const realId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      await sql`
+        INSERT INTO agents (id, started_at, state, repo_path, custom_name, team, role)
+        VALUES (${realId}, ${now}, ${null}, '/tmp/test', ${fakeUuidA}, 'fk-team', 'engineer-fk')
+      `;
+
+      const mod = await import('./agent-registry.js');
+      const resolved = await mod.resolveAgentIdStrict(fakeUuidA, 'fk-team');
+      expect(resolved).toBe(realId);
+      expect(resolved).not.toBe(fakeUuidA);
+    });
+  });
+
   // ==========================================================================
   // Executor Registry
   // ==========================================================================
