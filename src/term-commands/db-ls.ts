@@ -46,74 +46,21 @@ interface LsOptions {
 }
 
 async function dbLsCommand(options: LsOptions): Promise<void> {
-  const available = await isAvailable();
-  if (!available) {
+  if (!(await isAvailable())) {
     console.error('Database is not running.');
     process.exit(1);
   }
 
   const v2 = await getConnection();
-  const portRows = await v2.unsafe('SHOW port');
-  const port = Number((portRows as Array<{ port: string }>)[0]?.port);
-  if (!Number.isFinite(port) || port <= 0) {
-    console.error('Could not resolve pgserve TCP port.');
-    await shutdown();
-    process.exit(1);
-  }
+  const port = await resolveAdminPort(v2);
 
   // Use TCP admin so we can see ALL DBs (not just the caller's fingerprint).
-  const admin = postgres({
-    host: PG_HOST,
-    port,
-    username: PG_USER,
-    password: PG_PASS,
-    database: 'postgres',
-    max: 1,
-    onnotice: () => {},
-    idle_timeout: 5,
-  });
+  const admin = openAdminClient(port);
 
   try {
     const rows = await loadAllDbs(admin);
-    let filtered = rows;
-    if (!options.all) filtered = filtered.filter((r) => !r.isSystem);
-    if (options.orphans) filtered = filtered.filter((r) => !r.isV2Pattern && !r.isSystem && !r.fingerprint);
-
-    if (options.counts) {
-      // Connect to each DB and probe genie tables
-      for (const row of filtered) {
-        if (row.isSystem) continue;
-        try {
-          const c = postgres({
-            host: PG_HOST,
-            port,
-            username: PG_USER,
-            password: PG_PASS,
-            database: row.name,
-            max: 1,
-            onnotice: () => {},
-            idle_timeout: 1,
-            connect_timeout: 3,
-          });
-          const probe = await c<{ relname: string; n_live_tup: bigint }[]>`
-            SELECT relname, n_live_tup FROM pg_stat_user_tables
-            WHERE schemaname='public' AND relname IN ('tasks','wishes','teams','sessions')
-          `;
-          const counts: NonNullable<DbRow['counts']> = {};
-          for (const p of probe) {
-            const n = Number(p.n_live_tup);
-            if (p.relname === 'tasks') counts.tasks = n;
-            else if (p.relname === 'wishes') counts.wishes = n;
-            else if (p.relname === 'teams') counts.teams = n;
-            else if (p.relname === 'sessions') counts.sessions = n;
-          }
-          row.counts = counts;
-          await c.end({ timeout: 1 });
-        } catch {
-          // Ignore — DB may not have genie schema; report blank counts
-        }
-      }
-    }
+    const filtered = applyFilters(rows, options);
+    if (options.counts) await enrichWithCounts(filtered, port);
 
     if (options.json) {
       console.log(JSON.stringify(filtered, null, 2));
@@ -125,6 +72,76 @@ async function dbLsCommand(options: LsOptions): Promise<void> {
   }
 
   await shutdown();
+}
+
+async function resolveAdminPort(v2: Awaited<ReturnType<typeof getConnection>>): Promise<number> {
+  const portRows = await v2.unsafe('SHOW port');
+  const port = Number((portRows as unknown as Array<{ port: string }>)[0]?.port);
+  if (!Number.isFinite(port) || port <= 0) {
+    console.error('Could not resolve pgserve TCP port.');
+    await shutdown();
+    process.exit(1);
+  }
+  return port;
+}
+
+function openAdminClient(port: number): postgres.Sql {
+  return postgres({
+    host: PG_HOST,
+    port,
+    username: PG_USER,
+    password: PG_PASS,
+    database: 'postgres',
+    max: 1,
+    onnotice: () => {},
+    idle_timeout: 5,
+  });
+}
+
+function applyFilters(rows: DbRow[], options: LsOptions): DbRow[] {
+  let filtered = rows;
+  if (!options.all) filtered = filtered.filter((r) => !r.isSystem);
+  if (options.orphans) filtered = filtered.filter((r) => !r.isV2Pattern && !r.isSystem && !r.fingerprint);
+  return filtered;
+}
+
+async function enrichWithCounts(rows: DbRow[], port: number): Promise<void> {
+  for (const row of rows) {
+    if (row.isSystem) continue;
+    await probeRowCounts(row, port);
+  }
+}
+
+async function probeRowCounts(row: DbRow, port: number): Promise<void> {
+  try {
+    const c = postgres({
+      host: PG_HOST,
+      port,
+      username: PG_USER,
+      password: PG_PASS,
+      database: row.name,
+      max: 1,
+      onnotice: () => {},
+      idle_timeout: 1,
+      connect_timeout: 3,
+    });
+    const probe = await c<{ relname: string; n_live_tup: bigint }[]>`
+      SELECT relname, n_live_tup FROM pg_stat_user_tables
+      WHERE schemaname='public' AND relname IN ('tasks','wishes','teams','sessions')
+    `;
+    const counts: NonNullable<DbRow['counts']> = {};
+    for (const p of probe) {
+      const n = Number(p.n_live_tup);
+      if (p.relname === 'tasks') counts.tasks = n;
+      else if (p.relname === 'wishes') counts.wishes = n;
+      else if (p.relname === 'teams') counts.teams = n;
+      else if (p.relname === 'sessions') counts.sessions = n;
+    }
+    row.counts = counts;
+    await c.end({ timeout: 1 });
+  } catch {
+    // Ignore — DB may not have genie schema; report blank counts
+  }
 }
 
 async function loadAllDbs(admin: postgres.Sql): Promise<DbRow[]> {
