@@ -29,10 +29,11 @@
  *   └────────────┴────────────────────────┘
  */
 
-import { appendFileSync, mkdirSync, statSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, statSync } from 'node:fs';
 import { type Socket, connect } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { redactTokenShapes } from './redaction.js';
 
 /** Default UDS path; identical resolver to the daemon side. */
 function defaultSocketPath(): string {
@@ -102,13 +103,44 @@ function summarizePayload(payload: Buffer): { event: string | null; tool: string
 }
 
 /**
+ * Ensure the fallback log file is mode 0600. One-time migration tightens any
+ * pre-existing log written under looser permissions (sentinel finding 2026-05-05).
+ * No-op if the file does not yet exist; new files are created with `mode: 0o600`
+ * via `appendFileSync` / `writeFileSync` options below.
+ */
+function ensureLogPermissions(path: string): void {
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(path);
+  } catch {
+    return; // file doesn't exist yet — perms applied at create time
+  }
+  const mode = st.mode & 0o777;
+  if (mode === 0o600) return;
+  try {
+    chmodSync(path, 0o600);
+    process.stderr.write(`[genie-hook] tightened ${path} permissions ${mode.toString(8)} -> 600\n`);
+  } catch {
+    // best effort — chmod may fail on exotic filesystems; never break the hook
+  }
+}
+
+/**
  * Append a structured fallback record. Best effort: never throws — if the file
  * can't be written we silently fail so the hook doesn't break CC.
+ *
+ * Security boundary: this log is read by `genie doctor` and operators triaging
+ * outages. We treat it as load-bearing for credential safety —
+ *   1) mode 0600 enforced on every create + tightened on first write after
+ *      upgrade from a looser-permissions install,
+ *   2) `record.command` is run through token-shape redaction at write time.
  */
 function appendFallback(record: FallbackRecord): void {
   const path = fallbackLogPath();
   try {
     mkdirSync(dirname(path), { recursive: true });
+    ensureLogPermissions(path);
+    const safe: FallbackRecord = { ...record, command: redactTokenShapes(record.command) };
     // Soft rotation: if we'd overflow the cap, truncate by overwriting with the new line.
     let writeFresh = false;
     try {
@@ -117,12 +149,12 @@ function appendFallback(record: FallbackRecord): void {
     } catch {
       // file doesn't exist yet — that's fine
     }
-    const line = `${JSON.stringify(record)}\n`;
+    const line = `${JSON.stringify(safe)}\n`;
     if (writeFresh) {
       const fsMod = require('node:fs') as typeof import('node:fs');
-      fsMod.writeFileSync(path, line);
+      fsMod.writeFileSync(path, line, { mode: 0o600 });
     } else {
-      appendFileSync(path, line);
+      appendFileSync(path, line, { mode: 0o600 });
     }
   } catch {
     // best effort — never let logging crash the client
