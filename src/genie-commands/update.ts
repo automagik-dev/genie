@@ -17,24 +17,327 @@ import { chmod, copyFile, mkdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { genieConfigExists, loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
+import { VERSION } from '../lib/version.js';
+import { type CleanupReport, cleanupLegacyArtifacts, parseSkipCleanupFlag } from './legacy-cleanup.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_SRC = join(GENIE_HOME, 'src');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
-const UPDATE_DIAGNOSTIC_SCHEMA_VERSION = 1;
+
+/**
+ * Diagnostics schema version. Bump on every additive change so consumers
+ * branch on `schemaVersion` rather than file presence.
+ *
+ * - v1 (pre-update-unify-stages): `update`, `runtime`, `paths`, `processSnapshot`,
+ *   `maintenance`, `recentLogSignals`.
+ * - v2 (this wish): adds `verify: VerifyResult` and `cleanups: CleanupReport`
+ *   blocks. Existing v1 fields preserved byte-identically.
+ *
+ * Genie's number diverges from omni's (omni stays at v1) per
+ * SHARED-DESIGN.md decision #4 — each repo evolves its own schema.
+ */
+const UPDATE_DIAGNOSTIC_SCHEMA_VERSION = 2;
+
+/** Verify probe deadline. Wish §10: 15s — genie's daemon stack (pgserve +
+ *  scheduler + tmux) takes longer to bounce than pm2-managed processes. */
+const VERIFY_PROBE_DEADLINE_MS = 15_000;
+const VERIFY_PROBE_POLL_INTERVAL_MS = 500;
+const FETCH_LATEST_TIMEOUT_MS = 5_000;
+
+// ============================================================================
+// Verify decision shape — shared with omni#update-unify-stages (SHARED-DESIGN §4.3).
+// `decideVerify` is a pure function so the tagged-union outcome can be unit-tested
+// in isolation from the daemon-probe side effects. The `auth-invalid` variant is
+// reserved for cross-CLI shape parity (omni has auth; genie does not) — it exists
+// in the type but `decideVerify` never returns it for genie inputs today.
+// ============================================================================
+
+export type VerifySkipReason = 'no-restart' | 'no-running-services' | 'no-verify-flag';
+
+export type VerifyResult =
+  | { kind: 'ok'; cliVersion: string; serverVersion: string | null }
+  | { kind: 'health-unreachable'; endpoint: string }
+  | { kind: 'version-mismatch'; cliVersion: string; serverVersion: string | null }
+  | { kind: 'auth-invalid' }
+  | { kind: 'skipped'; reason: VerifySkipReason };
+
+export interface ServerHealthBody {
+  version?: string | null;
+}
+
+export interface DecideVerifyArgs {
+  cliVersion: string;
+  serverHealthBody: ServerHealthBody | null;
+  endpoint: string;
+  skipReason?: VerifySkipReason | null;
+}
+
+/**
+ * Strip build metadata (anything after `+`) so a `4.260504.21+abc1234` CLI build
+ * compares equal to the `4.260504.21` registry-published string. Mirrors omni's
+ * `normalizeVersion` helper.
+ */
+export function normalizeVersion(value: string): string {
+  const trimmed = value.trim();
+  const plusIdx = trimmed.indexOf('+');
+  return plusIdx === -1 ? trimmed : trimmed.slice(0, plusIdx);
+}
+
+export function decideVerify(args: DecideVerifyArgs): VerifyResult {
+  if (args.skipReason) {
+    return { kind: 'skipped', reason: args.skipReason };
+  }
+  if (args.serverHealthBody === null) {
+    return { kind: 'health-unreachable', endpoint: args.endpoint };
+  }
+  const cliVersion = normalizeVersion(args.cliVersion);
+  const rawServerVersion = args.serverHealthBody.version ?? null;
+  const serverVersion = rawServerVersion === null ? null : normalizeVersion(rawServerVersion);
+  if (serverVersion === null || serverVersion !== cliVersion) {
+    return { kind: 'version-mismatch', cliVersion, serverVersion };
+  }
+  return { kind: 'ok', cliVersion, serverVersion };
+}
+
+// ============================================================================
+// Group 3 — pre-flight registry version check + confirmation prompt + `--yes`.
+// Both helpers are pure (the network call is split out) so the decision logic
+// is unit-testable independent of the registry round-trip.
+// ============================================================================
+
+/**
+ * Compare a current install to the registry-published version. Both inputs are
+ * normalized (build metadata stripped) before comparison so a `4.260504.21+sha`
+ * CLI build matches the `4.260504.21` registry string.
+ *
+ * Returns `true` only when both strings normalize equal AND `latestVersion`
+ * is non-null. A null/empty `latestVersion` (network failure, parse error)
+ * conservatively returns `false` so the caller proceeds with the update —
+ * never block on a transient registry hiccup.
+ */
+export function shortCircuitIfCurrent(currentVersion: string, latestVersion: string | null | undefined): boolean {
+  if (!latestVersion) return false;
+  return normalizeVersion(currentVersion) === normalizeVersion(latestVersion);
+}
+
+/**
+ * Resolve the registry-published version for a channel. Calls
+ * `bunx npm view @automagik/genie@<channel> version` (so we ride whatever
+ * registry config is already set up — npm/bun share the auth + registry
+ * config in practice). Returns `null` on any failure: missing tools, network
+ * timeout, parse error, empty stdout. Caller treats null as "proceed with
+ * install" — defensive against the operator being offline mid-update.
+ */
+export async function fetchLatestVersion(channel: string): Promise<string | null> {
+  const candidates = [
+    { cmd: 'npm', args: ['view', `@automagik/genie@${channel}`, 'version'] },
+    { cmd: 'bunx', args: ['npm', 'view', `@automagik/genie@${channel}`, 'version'] },
+  ];
+  for (const { cmd, args } of candidates) {
+    const result = await runCommandSilent(cmd, args, undefined, FETCH_LATEST_TIMEOUT_MS);
+    if (!result.success) continue;
+    const trimmed = result.output.trim();
+    if (!trimmed) continue;
+    // Take the last non-empty token — `npm view` may print the package name on
+    // some setups; the version is always the trailing token.
+    const lines = trimmed.split(/\r?\n/).filter(Boolean);
+    const lastLine = lines[lines.length - 1];
+    const tokens = lastLine.split(/\s+/);
+    const candidate = tokens[tokens.length - 1].replace(/^['"]|['"]$/g, '');
+    if (/^\d+\.\d+/.test(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * TTY confirmation prompt. Auto-confirms in non-TTY environments so CI
+ * pipelines never hang waiting for stdin. The `--yes` / `GENIE_UPDATE_YES`
+ * caller-side bypass is checked before this function runs (see
+ * `shouldAutoConfirm`); this helper is the actual stdin read.
+ */
+async function promptConfirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return true;
+  process.stdout.write(`${question} [Y/n] `);
+  return new Promise((resolve) => {
+    const onData = (chunk: Buffer) => {
+      process.stdin.removeListener('data', onData);
+      process.stdin.pause();
+      const answer = chunk.toString('utf-8').trim().toLowerCase();
+      // Empty (just Enter) defaults to yes.
+      if (answer === '' || answer === 'y' || answer === 'yes') resolve(true);
+      else resolve(false);
+    };
+    process.stdin.resume();
+    process.stdin.once('data', onData);
+  });
+}
+
+/** Bypass logic for the prompt: `--yes` flag OR `GENIE_UPDATE_YES` env. */
+function shouldAutoConfirm(opts: { yes?: boolean }): boolean {
+  if (opts.yes) return true;
+  return isTruthyEnv(process.env.GENIE_UPDATE_YES);
+}
+
+// ============================================================================
+// Group 4 — post-restart verify probe via genie doctor / pgserve health.
+// `runVerifyProbe` is the I/O wrapper; it polls until the deadline, then
+// hands the parsed health body to `decideVerify` (the pure decider above).
+// ============================================================================
+
+const VERIFY_PROBE_ENDPOINT = 'pgserve status --json + ~/.genie/serve.pid';
+
+interface VerifyProbeOptions {
+  cliVersion: string;
+  skipReason?: VerifySkipReason | null;
+  /**
+   * Test seam: synchronous read of the probe result. Production callers leave
+   * this undefined; tests inject a stub to exercise the I/O wrapping without a
+   * live daemon.
+   */
+  readHealth?: () => Promise<ServerHealthBody | null>;
+  /** Test seam: shorten the poll deadline. Production uses
+   *  `VERIFY_PROBE_DEADLINE_MS`. */
+  deadlineMs?: number;
+  /** Test seam: shorten the poll interval. Production uses
+   *  `VERIFY_PROBE_POLL_INTERVAL_MS`. */
+  intervalMs?: number;
+}
+
+/**
+ * Daemon health probe. Tries pgserve's `status --json` and falls back to the
+ * scheduler PID + serve.pid existence. Returns a `ServerHealthBody` with the
+ * detected version, or `null` when no daemon is reachable.
+ *
+ * Why we don't shell out to `genie doctor` directly: doctor's main flow is
+ * text-only (the `--json` mode covers `--observability` / `--fix-team-orphans`
+ * sub-flows, not the top-level health). A thin probe is faster and avoids the
+ * "doctor recurses into update which spawns doctor" pitfall.
+ */
+async function readServerHealth(): Promise<ServerHealthBody | null> {
+  // Step 1: pgserve must answer status (this is the canonical backbone check
+  // every other genie subsystem depends on). If pgserve is down, nothing else
+  // matters.
+  const pgServeStatus = await runCommandSilent('pgserve', ['status', '--json'], undefined, 3000);
+  if (!pgServeStatus.success) return null;
+
+  // Step 2: serve.pid must exist AND the pid must be alive. We don't actually
+  // need a JSON body — the running daemon IS our installed CLI (same package),
+  // so `version === VERSION` by construction. We surface the version field so
+  // `decideVerify` can compare normalized strings.
+  const pidPath = join(GENIE_HOME, 'serve.pid');
+  const rawPid = safeRead(pidPath, 32);
+  if (!rawPid) return null;
+  const pid = Number.parseInt(rawPid.trim(), 10);
+  if (!Number.isFinite(pid) || pid <= 0) return null;
+  try {
+    process.kill(pid, 0); // signal 0 = aliveness probe, throws if dead
+  } catch {
+    return null;
+  }
+  return { version: VERSION };
+}
+
+/**
+ * Poll `readHealth` until the deadline expires. First successful read wins;
+ * a stream of nulls returns `null` so `decideVerify` can emit
+ * `health-unreachable`.
+ */
+async function pollHealth(
+  readHealth: () => Promise<ServerHealthBody | null>,
+  deadlineMs: number,
+  intervalMs: number,
+): Promise<ServerHealthBody | null> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < deadlineMs) {
+    let body: ServerHealthBody | null = null;
+    try {
+      body = await readHealth();
+    } catch {
+      // Reader threw — treat as unreachable. Same outcome as a `null` read.
+    }
+    if (body !== null) return body;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return null;
+}
+
+export async function runVerifyProbe(opts: VerifyProbeOptions): Promise<VerifyResult> {
+  if (opts.skipReason) {
+    return decideVerify({
+      cliVersion: opts.cliVersion,
+      serverHealthBody: null,
+      endpoint: VERIFY_PROBE_ENDPOINT,
+      skipReason: opts.skipReason,
+    });
+  }
+  const reader = opts.readHealth ?? readServerHealth;
+  const deadline = opts.deadlineMs ?? VERIFY_PROBE_DEADLINE_MS;
+  const interval = opts.intervalMs ?? VERIFY_PROBE_POLL_INTERVAL_MS;
+  const body = await pollHealth(reader, deadline, interval);
+  return decideVerify({
+    cliVersion: opts.cliVersion,
+    serverHealthBody: body,
+    endpoint: VERIFY_PROBE_ENDPOINT,
+  });
+}
+
+/** Format the post-restart 3-line banner. Genie has no auth model, so the
+ *  auth row from omni's banner is omitted. */
+export function formatVerifyBanner(result: VerifyResult): string[] {
+  const lines: string[] = [];
+  switch (result.kind) {
+    case 'ok':
+      lines.push(`${colorize('\x1b[32m', '\x1b[0m', '✔')} CLI:    v${result.cliVersion}`);
+      lines.push(`${colorize('\x1b[32m', '\x1b[0m', '✔')} Server: v${result.serverVersion} (healthy)`);
+      break;
+    case 'health-unreachable':
+      lines.push(`${colorize('\x1b[33m', '\x1b[0m', '!')} CLI:    v${VERSION}`);
+      lines.push(`${colorize('\x1b[31m', '\x1b[0m', '✖')} Server: unreachable (probe: ${result.endpoint})`);
+      break;
+    case 'version-mismatch':
+      lines.push(`${colorize('\x1b[32m', '\x1b[0m', '✔')} CLI:    v${result.cliVersion}`);
+      lines.push(`${colorize('\x1b[31m', '\x1b[0m', '✖')} Server: v${result.serverVersion ?? 'unknown'} (mismatch)`);
+      break;
+    case 'auth-invalid':
+      lines.push(`${colorize('\x1b[31m', '\x1b[0m', '✖')} Auth: invalid`);
+      break;
+    case 'skipped':
+      lines.push(`${colorize('\x1b[32m', '\x1b[0m', '✔')} CLI:    v${VERSION}`);
+      lines.push(`${colorize('\x1b[2m', '\x1b[0m', `· Server: v… (skipped: ${result.reason})`)}`);
+      break;
+  }
+  return lines;
+}
+
+// ============================================================================
+// Output primitives — direct ANSI today; will migrate to output.ts (the
+// `output-primitives-unified` wish) in a follow-up so the whole CLI shares one
+// chalk/ora abstraction. NO_COLOR is honored here so behavior already matches
+// the post-migration contract (see `colorize` below).
+// ============================================================================
+
+function colorEnabled(): boolean {
+  if (process.env.NO_COLOR) return false;
+  if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') return true;
+  return Boolean(process.stdout.isTTY);
+}
+
+function colorize(open: string, close: string, text: string): string {
+  return colorEnabled() ? `${open}${text}${close}` : text;
+}
 
 function log(message: string): void {
-  console.log(`\x1b[32m▸\x1b[0m ${message}`);
+  console.log(`${colorize('\x1b[32m', '\x1b[0m', '▸')} ${message}`);
 }
 
 function success(message: string): void {
-  console.log(`\x1b[32m✔\x1b[0m ${message}`);
+  console.log(`${colorize('\x1b[32m', '\x1b[0m', '✔')} ${message}`);
 }
 
 function error(message: string): void {
-  console.log(`\x1b[31m✖\x1b[0m ${message}`);
+  console.log(`${colorize('\x1b[31m', '\x1b[0m', '✖')} ${message}`);
 }
 
 function formatDuration(ms: number): string {
@@ -73,6 +376,10 @@ interface UpdateDiagnosticsContext {
   primaryMethod: 'npm' | 'bun';
   globalInstalls: Array<'npm' | 'bun'>;
   plugin: PluginSyncInfo;
+  /** Latest registry version observed pre-flight, or null when fetch failed. */
+  latestVersion: string | null;
+  /** Local CLI version at the time the diagnostics file was written. */
+  cliVersion: string;
 }
 
 interface RecentLogSignal {
@@ -155,9 +462,15 @@ function summarizeJsonlSignals(path: string): RecentLogSignal[] {
   return [...signals.values()].sort((a, b) => b.count - a.count).slice(0, 10);
 }
 
+interface UpdateDiagnosticsExtras {
+  verify: VerifyResult;
+  cleanups: CleanupReport;
+}
+
 async function collectUpdateDiagnostics(
   ctx: UpdateDiagnosticsContext,
   maintenance: { outcome: 'completed' | 'failed'; durationMs: number; lines: string[]; error?: string },
+  extras: UpdateDiagnosticsExtras,
 ): Promise<{ path: string; signals: RecentLogSignal[] }> {
   const logsDir = join(GENIE_HOME, 'logs');
   mkdirSync(logsDir, { recursive: true });
@@ -170,7 +483,10 @@ async function collectUpdateDiagnostics(
 
   const diagnostics = {
     schemaVersion: UPDATE_DIAGNOSTIC_SCHEMA_VERSION,
+    cli: 'genie',
     generatedAt,
+    verify: extras.verify,
+    cleanups: extras.cleanups,
     update: ctx,
     runtime: {
       platform: process.platform,
@@ -907,14 +1223,36 @@ async function persistChannel(channel: string): Promise<void> {
   }
 }
 
-export async function updateCommand(
-  options: { next?: boolean; stable?: boolean; skipMaintenance?: boolean } = {},
-): Promise<void> {
+export interface UpdateCommandOptions {
+  next?: boolean;
+  stable?: boolean;
+  skipMaintenance?: boolean;
+  skipCleanup?: string;
+  /**
+   * Mirrors commander's `--no-sidecar-cleanup` convention: defaults to `true`
+   * (i.e. cleanup permitted), set to `false` when the flag is present. Accepted
+   * for cross-CLI portability with omni; genie's day-one registry is empty so
+   * the flag is logged and otherwise has no effect.
+   */
+  sidecarCleanup?: boolean;
+  /** `--yes` / `-y`. Skips the TTY confirmation. `GENIE_UPDATE_YES=1` env
+   *  has the same effect for CI / scripted callers. */
+  yes?: boolean;
+  /** `--no-restart`. Skips post-update maintenance AND the verify probe. */
+  restart?: boolean;
+  /** `--no-verify`. Runs maintenance but skips the post-restart probe. */
+  verify?: boolean;
+}
+
+export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
   console.log();
-  console.log('\x1b[1m🧞 Genie CLI Update\x1b[0m');
-  console.log('\x1b[2m────────────────────────────────────\x1b[0m');
+  console.log(`${colorize('\x1b[1m', '\x1b[0m', '🧞 Genie CLI Update')}`);
+  console.log(`${colorize('\x1b[2m', '\x1b[0m', '────────────────────────────────────')}`);
   console.log();
 
+  const cleanupSkipList = buildCleanupSkipList(options);
+  const noRestart = options.restart === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_RESTART);
+  const noVerify = options.verify === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_VERIFY);
   const channel = await resolveChannel(options);
 
   // Persist channel when explicitly switching
@@ -922,9 +1260,22 @@ export async function updateCommand(
     await persistChannel(channel);
   }
 
+  // Group 3: pre-flight version check. Short-circuit when already current.
+  const latestVersion = await fetchLatestVersion(channel);
+  if (shortCircuitIfCurrent(VERSION, latestVersion)) {
+    success(`Already up to date (v${normalizeVersion(VERSION)}, channel ${channel})`);
+    console.log();
+    return;
+  }
+
   const installType = await detectInstallationType();
   log(`Detected installation: ${installType}`);
   log(`Channel: ${channel}${channel === 'next' ? ' (dev builds)' : ' (stable)'}`);
+  if (latestVersion) {
+    log(`Update available: ${normalizeVersion(VERSION)} → ${normalizeVersion(latestVersion)}`);
+  } else {
+    log(`Registry version unavailable (proceeding with reinstall of channel ${channel})`);
+  }
   console.log();
 
   if (installType === 'unknown') {
@@ -932,10 +1283,24 @@ export async function updateCommand(
     console.log();
     console.log('Install method not configured. Please reinstall genie:');
     console.log(
-      '\x1b[36m  curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash\x1b[0m',
+      `${colorize('\x1b[36m', '\x1b[0m', '  curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash')}`,
     );
     console.log();
     process.exit(1);
+  }
+
+  // Group 3: confirmation prompt (TTY) / `--yes` / GENIE_UPDATE_YES bypass.
+  if (!shouldAutoConfirm(options)) {
+    const proceedQuestion = latestVersion
+      ? `Update v${normalizeVersion(VERSION)} → v${normalizeVersion(latestVersion)}?`
+      : `Reinstall channel "${channel}"?`;
+    const proceed = await promptConfirm(proceedQuestion);
+    if (!proceed) {
+      console.log();
+      log('Update declined.');
+      console.log();
+      return;
+    }
   }
 
   if (installType === 'source') {
@@ -965,13 +1330,39 @@ export async function updateCommand(
   }
 
   const plugin = await syncPlugin(installType);
-  await runPostUpdateMaintenanceSafe(options, {
-    channel,
-    installType,
-    primaryMethod,
-    globalInstalls: [...globalInstalls].sort(),
-    plugin,
-  });
+  const cleanupReport = await runLegacyCleanupSafe(cleanupSkipList);
+  await runPostUpdateMaintenanceSafe(
+    { ...options, noRestart, noVerify },
+    {
+      channel,
+      installType,
+      primaryMethod,
+      globalInstalls: [...globalInstalls].sort(),
+      plugin,
+      latestVersion,
+      cliVersion: VERSION,
+    },
+    cleanupReport,
+  );
+}
+
+function buildCleanupSkipList(options: UpdateCommandOptions): Set<string> {
+  const skipList = parseSkipCleanupFlag(options.skipCleanup);
+  if (options.sidecarCleanup === false) {
+    skipList.add('nats-reply-sidecar');
+    log('--no-sidecar-cleanup (no-op for genie, retained for cross-CLI portability)');
+  }
+  return skipList;
+}
+
+async function runLegacyCleanupSafe(skipList: Set<string>): Promise<CleanupReport> {
+  try {
+    return await cleanupLegacyArtifacts(skipList);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Legacy artifact cleanup failed (non-fatal): ${msg}`);
+    return { entries: [] };
+  }
 }
 
 /**
@@ -1018,10 +1409,11 @@ function printDiagnosticsSummary(diagnostics: { path: string; signals: RecentLog
 async function capturePostUpdateDiagnostics(
   diagnosticsCtx: UpdateDiagnosticsContext | undefined,
   maintenance: { outcome: 'completed' | 'failed'; durationMs: number; lines: string[]; error?: string },
+  extras: UpdateDiagnosticsExtras,
 ): Promise<void> {
   if (!diagnosticsCtx) return;
   try {
-    const diagnostics = await collectUpdateDiagnostics(diagnosticsCtx, maintenance);
+    const diagnostics = await collectUpdateDiagnostics(diagnosticsCtx, maintenance, extras);
     printDiagnosticsSummary(diagnostics);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1029,12 +1421,52 @@ async function capturePostUpdateDiagnostics(
   }
 }
 
+/**
+ * Print the 3-line verify banner. Genie has no auth row (no auth model), so
+ * the banner is 2 lines for ok / health-unreachable / version-mismatch and
+ * collapses to 1 line for skipped variants.
+ */
+function printVerifyBanner(result: VerifyResult): void {
+  console.log();
+  for (const line of formatVerifyBanner(result)) console.log(`  ${line}`);
+  console.log();
+}
+
+interface MaintenanceOptions {
+  skipMaintenance?: boolean;
+  noRestart?: boolean;
+  noVerify?: boolean;
+}
+
 async function runPostUpdateMaintenanceSafe(
-  options: { skipMaintenance?: boolean } = {},
-  diagnosticsCtx?: UpdateDiagnosticsContext,
+  options: MaintenanceOptions,
+  diagnosticsCtx: UpdateDiagnosticsContext,
+  cleanupReport: CleanupReport,
 ): Promise<void> {
+  // `--no-restart` short-circuits BOTH maintenance and verify. Diagnostics
+  // still get written (with a `skipped` verify variant) so operators have a
+  // record of every invocation.
+  if (options.noRestart) {
+    log('--no-restart: skipping maintenance and verify probe.');
+    const verify = await runVerifyProbe({ cliVersion: VERSION, skipReason: 'no-restart' });
+    printVerifyBanner(verify);
+    await capturePostUpdateDiagnostics(
+      diagnosticsCtx,
+      { outcome: 'completed', durationMs: 0, lines: [] },
+      { verify, cleanups: cleanupReport },
+    );
+    return;
+  }
+
   if (options.skipMaintenance || isTruthyEnv(process.env.GENIE_UPDATE_SKIP_MAINTENANCE)) {
     log('Skipping post-update maintenance (requested).');
+    const verify = await runVerifyProbe({ cliVersion: VERSION, skipReason: 'no-restart' });
+    printVerifyBanner(verify);
+    await capturePostUpdateDiagnostics(
+      diagnosticsCtx,
+      { outcome: 'completed', durationMs: 0, lines: [] },
+      { verify, cleanups: cleanupReport },
+    );
     return;
   }
   const startedAt = Date.now();
@@ -1050,10 +1482,28 @@ async function runPostUpdateMaintenanceSafe(
     maintenanceError = err instanceof Error ? err.message : String(err);
     error(`Post-update maintenance skipped: ${maintenanceError}`);
   }
-  await capturePostUpdateDiagnostics(diagnosticsCtx, {
-    outcome,
-    durationMs: Date.now() - startedAt,
-    lines: maintenanceLines,
-    error: maintenanceError,
-  });
+
+  // Group 4: verify probe AFTER maintenance. `--no-verify` produces the
+  // `skipped: no-verify-flag` variant so diagnostics still record the
+  // intentional bypass.
+  const verify = options.noVerify
+    ? await runVerifyProbe({ cliVersion: VERSION, skipReason: 'no-verify-flag' })
+    : await runVerifyProbe({ cliVersion: VERSION });
+  printVerifyBanner(verify);
+
+  await capturePostUpdateDiagnostics(
+    diagnosticsCtx,
+    {
+      outcome,
+      durationMs: Date.now() - startedAt,
+      lines: maintenanceLines,
+      error: maintenanceError,
+    },
+    { verify, cleanups: cleanupReport },
+  );
+
+  // Exit 1 on health-unreachable unless --no-verify was set (escape hatch).
+  if (verify.kind === 'health-unreachable' && !options.noVerify) {
+    process.exitCode = 1;
+  }
 }
