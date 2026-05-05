@@ -39,7 +39,7 @@ Trace must run in **isolation** — the subagent must not modify any source file
 
 ```bash
 # Spawn a tracer subagent (read-only investigation)
-genie agent spawn tracer
+genie agent spawn trace
 ```
 
 ## Task Lifecycle Integration (v4)
@@ -63,7 +63,7 @@ An engineer reports that `genie work` dispatches engineers but they sit idle. Th
 
 ```bash
 # 1. Spawn a tracer (read-only — no code changes)
-genie agent spawn tracer
+genie agent spawn trace
 
 # 2. Send the symptoms
 genie agent send 'Trace: genie work dispatches engineers but they start idle at the prompt. No task received. genie wish status shows in_progress but nothing happens. Check dispatch.ts workDispatchCommand and protocol-router.ts sendMessage.' --to tracer

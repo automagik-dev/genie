@@ -201,7 +201,7 @@ Report orchestrates multiple tools but must **never modify source code** — inv
 
 ```bash
 # Spawn a tracer subagent for investigation
-genie agent spawn tracer
+genie agent spawn trace
 ```
 
 Browser dispatch uses direct `agent-browser` commands alongside the trace subagent.
@@ -240,7 +240,7 @@ The report agent:
 # Agent asks: "What did you see?" → "Engineers show welcome screen but empty prompt"
 
 # 2. Run /trace
-genie agent spawn tracer
+genie agent spawn trace
 genie agent send 'Trace: genie work dispatches engineers but they start idle. Check dispatch.ts and protocol-router.ts.' --to tracer
 # Wait for diagnosis...
 

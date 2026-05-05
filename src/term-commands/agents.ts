@@ -2367,10 +2367,13 @@ export async function resolveSpawnIdentity(
     executorRegistry.resolveWorkerLivenessByTransport(agent),
 ): Promise<SpawnIdentity> {
   // Migration 061 + PR #1627: agents.id is UUID. Non-UUID names cannot match
-  // by id; skip the canonical-lookup query and return a fresh canonical with
-  // a generated UUID workerId. Keeps role-based dispatch working post-061.
+  // by id; skip the canonical-lookup query and return a fresh canonical.
+  // Preserve `name` as the human-readable workerId — the DB-level UUID is
+  // minted later by findOrCreateAgent (agent-registry.ts). Returning a
+  // fresh UUID here would clobber custom_name with a UUID and break every
+  // `--to <role>` resolver tier.
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name)) {
-    return { kind: 'canonical', workerId: uuidFactory(), sessionUuid: uuidFactory() };
+    return { kind: 'canonical', workerId: name, sessionUuid: uuidFactory() };
   }
   const { getConnection } = await import('../lib/db.js');
   const sql = await getConnection();
