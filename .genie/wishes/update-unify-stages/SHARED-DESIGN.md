@@ -180,6 +180,40 @@ Both write `~/.<cli>/logs/update-diagnostics-<iso>.json` with a versioned schema
 | Verify mismatch / auth-invalid / health-unreachable | 1 |
 | Maintenance failed (non-blocking) | 0, with banner warning |
 
+### 4.6 Transport discovery — shared shape (added 2026-05-05 per autopg-cutover transport-absorb)
+
+Consumers (genie + omni) connect to pgserve/autopg-server via a tagged-union transport resolver:
+
+```ts
+type PgserveTransport =
+  | { kind: 'unix'; socketDir: string; port: number }
+  | { kind: 'tcp'; host: string; port: number };
+
+async function resolvePgserveTransport(): Promise<PgserveTransport>;
+```
+
+**Probe order (UDS-first, TCP-fallback):**
+
+1. **Canonical Unix socket** at `$XDG_RUNTIME_DIR/<server>/.s.PGSQL.<port>` (or `/tmp/<server>/` fallback when XDG_RUNTIME_DIR unset). `<server>` is `pgserve` for legacy hosts, `autopg` for cutover hosts. Greet the postmaster (Postgres SSLRequest → expect 'N' or 'S' first byte) within `PGSERVE_GREET_TIMEOUT_MS` (1s) to confirm liveness. If reachable, return `{ kind: 'unix', socketDir, port }`.
+2. **TCP fallback** via the published discovery primitive: shell out to `<server> port` (read-only, returns the active TCP port number). Compose `{ kind: 'tcp', host: '127.0.0.1', port }`. Caller's libpq client dials `127.0.0.1:<port>`.
+3. **Both unreachable** → throw a typed error mentioning both probe attempts and the recovery hint (`pm2 status`, `<server> install`, `<server> daemon`).
+
+**Force-flag overrides** (legacy contract preserved, new flag added):
+- `GENIE_PG_FORCE_TCP=1` — skip UDS probe (legacy test/CI escape hatch).
+- `GENIE_PG_FORCE_SOCKET=1` — skip TCP fallback (UDS-only for diagnostics; new).
+- `OMNI_PG_FORCE_TCP=1` / `OMNI_PG_FORCE_SOCKET=1` — same shape for omni.
+
+**Server-side responsibility:**
+- pgserve@2.x daemon mode already writes `<canonical-socket-dir>/admin.json` post-greet — consumers read it for the live socketDir. Foreground/install mode (TCP-only, ephemeral pid-stamped socketDir) is the historical gap that broke this contract.
+- autopg-server (post-cutover) writes `admin.json` AND binds UDS at the canonical path from `autopg serve` (Group 11.5) — closes the gap for both transports under one supervised process.
+
+**Credential vs. transport split** — env files (`~/.<server>/<app>.env`) carry SCRAM credentials only (`PGUSER`, `PGPASSWORD`, `PGDATABASE`). Transport is discovered at runtime via the resolver above. Coupling them recreates the lockfile-drift problem this design kills.
+
+**Implementations:**
+- genie: `automagik-dev/genie #1667` — `src/lib/db.ts` `resolvePgserveTransport()` + `discoverTcpPgservePort()` + `PgserveTransport` tagged union.
+- omni: TODO sibling on omni's `update-unify-stages` follow-up (mirror the shape).
+- autopg-server: TODO Group 11.5 — `autopg serve` binds dual transports + writes `admin.json` so consumers' UDS probes succeed without globbing `/tmp/<server>-sock-<pid>-<ts>/`.
+
 ---
 
 ## 5. PR plan — `automagik-dev/genie` → `dev`
