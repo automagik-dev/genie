@@ -1260,6 +1260,16 @@ async function startForeground(headless?: boolean, autoFix = true): Promise<void
  *  @param headless If true, pass --headless to the foreground process.
  */
 async function startBackground(headless?: boolean, autoFix = true): Promise<void> {
+  // PM2-supervised mode: the calling process IS the supervised entry. Forking
+  // a detached --foreground child and exiting would trigger an
+  // unstable-restart loop (pm2 sees the parent exit, respawns it, repeat) AND
+  // leave the actual long-running daemon untracked by pm2. Instead, run the
+  // daemon in-process so pm2 tracks the real PID. Detection: pm2 sets `pm_id`
+  // on supervised processes (alongside `name`, `exec_mode`, etc.).
+  if (process.env.pm_id) {
+    return startForeground(headless, autoFix);
+  }
+
   const existingEntry = readServePid();
   if (existingEntry && isProcessAlive(existingEntry.pid)) {
     console.log(`genie serve already running (PID ${existingEntry.pid})`);
