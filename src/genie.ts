@@ -215,7 +215,12 @@ program
   .description('Update Genie CLI to the latest version')
   .option('--next', 'Switch to dev builds (npm @next tag)')
   .option('--stable', 'Switch to stable releases (npm @latest tag)')
+  .option('-y, --yes', 'Skip the TTY confirmation prompt (or set GENIE_UPDATE_YES=1)')
+  .option('--no-restart', 'Skip post-update maintenance AND the verify probe')
+  .option('--no-verify', 'Run maintenance but skip the post-restart verify probe')
   .option('--skip-maintenance', 'Skip post-update maintenance (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
+  .option('--skip-cleanup <names>', 'Comma-separated legacy-artifact cleanup names to skip')
+  .option('--no-sidecar-cleanup', 'Accepted for cross-CLI portability with omni (no-op for genie)')
   .action(updateCommand);
 program
   .command('migrate')
