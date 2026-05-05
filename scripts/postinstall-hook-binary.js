@@ -97,6 +97,12 @@ async function main() {
     return;
   }
 
+  // Local-compile path is exempt from binarySha256 pinning (we don't download
+  // the binary — we build it ourselves from sources we already trust). Log the
+  // exact source artifact so operators can verify by other means
+  // (sha256sum on the entry, or `genie doctor --verbose` post-install).
+  console.error(`[genie] hook-binary: compiling from ${ENTRY} via ${bun}`);
+
   // bun build --compile produces a platform-specific static binary that
   // includes a copy of the bun runtime + the bundled JS. Targets the user's
   // current platform; no cross-compile arguments needed.
