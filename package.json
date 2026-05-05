@@ -98,6 +98,13 @@
     "access": "public"
   },
   "trustedDependencies": ["@biomejs/biome", "bun"],
+  "binarySha256": {
+    "_comment": "SHA-256 pins for postinstall-downloaded binaries. Keys = exact tarball filename. Bootstrap procedure: docs/_internal/binary-sha-bootstrap.md. Drift detection: .github/workflows/binary-sha-drift.yml.",
+    "tmux-3.6a-linux-x86_64.tar.gz": "c0a772a5e6ca8f129b0111d10029a52e02bcbc8352d5a8c0d3de8466a1e59c2e",
+    "tmux-3.6a-linux-arm64.tar.gz": "bb5afd9d646df54a7d7c66e198aa22c7d293c7453534f1670f7c540534db8b5e",
+    "tmux-3.6a-macos-arm64.tar.gz": "12b5b9f8696e1286897d946649c0a80d0169dd76e018d34476a1fbd34de89a0f",
+    "tmux-3.6a-macos-x86_64.tar.gz": "b9b12eaeba43acf5671acf3857d947525440b544185a8db34ea557199a090251"
+  },
   "pgserve": {
     "persist": true
   }
