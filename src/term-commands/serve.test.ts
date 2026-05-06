@@ -46,8 +46,8 @@ describe('getTuiKeybindings', () => {
   });
 });
 
-describe('pgserve failure containment', () => {
-  test('serve startup probes the canonical pgserve daemon (consumer-only)', () => {
+describe('pgserve boot probe — UDS-first / TCP-fallback (post-#1667)', () => {
+  test('boot probe uses the unified resolvePgserveTransport resolver', () => {
     const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
     const fnStart = source.indexOf('async function requirePgserveReady');
     const fnEnd = source.indexOf('/** Start the scheduler daemon', fnStart);
@@ -55,18 +55,38 @@ describe('pgserve failure containment', () => {
     expect(fnEnd).toBeGreaterThan(fnStart);
     const body = source.slice(fnStart, fnEnd);
 
-    // Probe-only path uses the renamed `requirePgserveDaemon` API. The legacy
-    // `getOrStartDaemon`, the embedded TCP-router fallback (`ensurePgserve`),
-    // and the spawn-bound port banner are gone.
-    expect(body).toContain('requirePgserveDaemon');
-    expect(body).toContain('resolvePgserveSocketDir');
+    // Post-#1667: the boot probe must match the connection probe so a host
+    // running pgserve in foreground TCP mode (no canonical daemon UDS) gets
+    // the correct "ready on tcp" banner instead of the misleading
+    // "pgserve unreachable" warning the old `requirePgserveDaemon` printed.
+    expect(body).toContain('resolvePgserveTransport');
+    // Legacy hard-fail-on-UDS-only API must be gone from the boot path.
+    expect(body).not.toContain('requirePgserveDaemon');
+    // Legacy embedded TCP-router fallback and spawn-bound port banner stay
+    // gone (canonical-cutover regression locks).
     expect(body).not.toContain('ensurePgserve');
     expect(body).not.toContain('getOrStartDaemon');
-    expect(body).toContain("registerService('pgserve-owner'");
     expect(body).not.toContain('pgserve ready on port');
+    // Registry hook stays — observability tools still want to know which
+    // serve is talking to pgserve.
+    expect(body).toContain("registerService('pgserve-owner'");
   });
 
-  test('serve disables in-process pgserve retries after startup failure', () => {
+  test('boot probe branches on transport.kind for the ready banner', () => {
+    // Both transports must produce a ready banner (UDS-style vs TCP-style)
+    // so operators see the truth on hosts where only TCP is reachable.
+    const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function requirePgserveReady');
+    const fnEnd = source.indexOf('/** Start the scheduler daemon', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    expect(body).toContain("transport.kind === 'unix'");
+    expect(body).toContain('socketDir');
+    expect(body).toContain('.s.PGSQL.');
+    expect(body).toContain('tcp');
+  });
+
+  test('boot probe disables in-process pgserve retries after startup failure', () => {
     const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
     const fnStart = source.indexOf('async function requirePgserveReady');
     expect(fnStart).toBeGreaterThan(-1);
@@ -74,19 +94,6 @@ describe('pgserve failure containment', () => {
     const retryGuard = source.indexOf("process.env.GENIE_PG_NO_AUTOSTART = '1'", catchStart);
     expect(catchStart).toBeGreaterThan(-1);
     expect(retryGuard).toBeGreaterThan(-1);
-  });
-
-  test('serve emits the canonical-cutover ready banner on success', () => {
-    const source = readFileSync(join(__dirname, 'serve.ts'), 'utf-8');
-    const fnStart = source.indexOf('async function requirePgserveReady');
-    expect(fnStart).toBeGreaterThan(-1);
-    const fnEnd = source.indexOf('/** Start the scheduler daemon', fnStart);
-    const body = source.slice(fnStart, fnEnd);
-
-    expect(body).toContain('requirePgserveDaemon');
-    expect(body).toContain('canonical, pm2-supervised');
-    expect(body).not.toContain('ensurePgserve');
-    expect(body).not.toContain('pgserve ready on port');
   });
 });
 
