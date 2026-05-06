@@ -1152,10 +1152,15 @@ describe('resolvePgserveTransport (transport discovery)', () => {
     const originalPath = process.env.PATH;
     const originalForceTcp = process.env.GENIE_PG_FORCE_TCP;
     const originalForceSocket = process.env.GENIE_PG_FORCE_SOCKET;
+    const originalPgPort = process.env.GENIE_PG_PORT;
     process.env.PATH = '/nonexistent';
     process.env.GENIE_PG_FORCE_TCP = '1'; // skip UDS probe
     // biome-ignore lint/performance/noDelete: process.env requires actual unset
     delete process.env.GENIE_PG_FORCE_SOCKET;
+    // GENIE_PG_PORT must NOT be set — that path takes precedence over
+    // discovery and would let this test pass for the wrong reason.
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_PORT;
     try {
       const { resolvePgserveTransport } = await import('./db.js');
       await expect(resolvePgserveTransport()).rejects.toThrow(/pgserve is not reachable/);
@@ -1169,6 +1174,79 @@ describe('resolvePgserveTransport (transport discovery)', () => {
       // biome-ignore lint/performance/noDelete: process.env requires actual unset
       if (originalForceSocket === undefined) delete process.env.GENIE_PG_FORCE_SOCKET;
       else process.env.GENIE_PG_FORCE_SOCKET = originalForceSocket;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalPgPort === undefined) delete process.env.GENIE_PG_PORT;
+      else process.env.GENIE_PG_PORT = originalPgPort;
     }
+  });
+
+  test('GENIE_PG_PORT escape hatch returns tcp transport without invoking pgserve CLI', async () => {
+    // Codex review-finding on PR #1667: `GENIE_PG_FORCE_TCP=1 GENIE_PG_PORT=N`
+    // was the legacy escape hatch for hosts without the pgserve CLI on PATH.
+    // The new resolver must honor it before falling through to `pgserve port`
+    // discovery so this contract survives transport-discovery rollout.
+    const originalPath = process.env.PATH;
+    const originalForceTcp = process.env.GENIE_PG_FORCE_TCP;
+    const originalForceSocket = process.env.GENIE_PG_FORCE_SOCKET;
+    const originalPgPort = process.env.GENIE_PG_PORT;
+    process.env.PATH = '/nonexistent'; // no pgserve binary
+    process.env.GENIE_PG_FORCE_TCP = '1';
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_FORCE_SOCKET;
+    process.env.GENIE_PG_PORT = '12345';
+    try {
+      const { resolvePgserveTransport } = await import('./db.js');
+      const result = await resolvePgserveTransport();
+      expect(result).toEqual({ kind: 'tcp', host: '127.0.0.1', port: 12345 });
+    } finally {
+      if (originalPath !== undefined) process.env.PATH = originalPath;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      else delete process.env.PATH;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalForceTcp === undefined) delete process.env.GENIE_PG_FORCE_TCP;
+      else process.env.GENIE_PG_FORCE_TCP = originalForceTcp;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalForceSocket === undefined) delete process.env.GENIE_PG_FORCE_SOCKET;
+      else process.env.GENIE_PG_FORCE_SOCKET = originalForceSocket;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalPgPort === undefined) delete process.env.GENIE_PG_PORT;
+      else process.env.GENIE_PG_PORT = originalPgPort;
+    }
+  });
+
+  test('GENIE_PG_PORT with invalid value falls through to discovery', async () => {
+    // Out-of-range / non-numeric / empty values must not short-circuit to a
+    // bogus transport — caller falls back to discovery (which then fails on
+    // /nonexistent PATH and throws the both-unavailable hint).
+    const originalPath = process.env.PATH;
+    const originalForceTcp = process.env.GENIE_PG_FORCE_TCP;
+    const originalForceSocket = process.env.GENIE_PG_FORCE_SOCKET;
+    const originalPgPort = process.env.GENIE_PG_PORT;
+    process.env.PATH = '/nonexistent';
+    process.env.GENIE_PG_FORCE_TCP = '1';
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_FORCE_SOCKET;
+    for (const bogus of ['not-a-number', '0', '-1', '99999', '   ']) {
+      process.env.GENIE_PG_PORT = bogus;
+      try {
+        const { resolvePgserveTransport } = await import('./db.js');
+        await expect(resolvePgserveTransport()).rejects.toThrow(/pgserve is not reachable/);
+      } catch (err) {
+        // Re-throw with context so the failing input is obvious.
+        throw new Error(`GENIE_PG_PORT=${JSON.stringify(bogus)}: ${(err as Error).message}`);
+      }
+    }
+    if (originalPath !== undefined) process.env.PATH = originalPath;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    else delete process.env.PATH;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    if (originalForceTcp === undefined) delete process.env.GENIE_PG_FORCE_TCP;
+    else process.env.GENIE_PG_FORCE_TCP = originalForceTcp;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    if (originalForceSocket === undefined) delete process.env.GENIE_PG_FORCE_SOCKET;
+    else process.env.GENIE_PG_FORCE_SOCKET = originalForceSocket;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    if (originalPgPort === undefined) delete process.env.GENIE_PG_PORT;
+    else process.env.GENIE_PG_PORT = originalPgPort;
   });
 });

@@ -371,15 +371,19 @@ const TCP_DISCOVERY_TIMEOUT_MS = 5_000;
  * Order:
  *   1. Canonical UDS: probe `$XDG_RUNTIME_DIR/pgserve/.s.PGSQL.5432` and
  *      complete a Postgres greet to confirm liveness. Use it if reachable.
- *   2. TCP via `pgserve port`: shell out to the pgserve CLI's published
+ *   2. Explicit TCP port (`GENIE_PG_PORT`): legacy escape hatch — when set,
+ *      bypass discovery and dial `127.0.0.1:<port>` directly. Survives hosts
+ *      without `pgserve` on PATH and dev shells that pin a known port.
+ *   3. TCP via `pgserve port`: shell out to the pgserve CLI's published
  *      discovery primitive (no daemon-mode auth requirement). Use the
  *      returned port at `127.0.0.1`.
- *   3. Throw with a hint that mentions both probe attempts.
+ *   4. Throw with a hint that mentions every probe attempt.
  *
  * Force-flag overrides:
- *   - `GENIE_PG_FORCE_SOCKET=1` skips step 2 (UDS-only).
- *   - `GENIE_PG_FORCE_TCP=1` skips step 1 (TCP-only). This was the legacy
- *     test/CI escape hatch and is still honored verbatim.
+ *   - `GENIE_PG_FORCE_SOCKET=1` skips steps 2 + 3 (UDS-only).
+ *   - `GENIE_PG_FORCE_TCP=1` skips step 1 (TCP-only). Legacy escape hatch;
+ *     pairs with `GENIE_PG_PORT` to pin to a known port without invoking the
+ *     `pgserve` CLI. Still honored verbatim post-transport-discovery.
  */
 export async function resolvePgserveTransport(): Promise<PgserveTransport> {
   const forceTcp = process.env.GENIE_PG_FORCE_TCP === '1';
@@ -403,13 +407,39 @@ export async function resolvePgserveTransport(): Promise<PgserveTransport> {
     }
   }
 
+  // Step 2: explicit TCP port via GENIE_PG_PORT env. Legacy contract — set
+  // this to dial a known port without running `pgserve port` discovery.
+  // Useful on hosts where pgserve isn't on PATH (CI, dev shells, custom
+  // build environments) but a postgres listener is up at a known port.
+  const explicitPort = parseExplicitTcpPort(process.env.GENIE_PG_PORT);
+  if (explicitPort !== null) {
+    return { kind: 'tcp', host: DEFAULT_HOST, port: explicitPort };
+  }
+
+  // Step 3: discover the TCP port via `pgserve port` subcommand.
   const tcpPort = await discoverTcpPgservePort();
   if (tcpPort !== null) {
     return { kind: 'tcp', host: DEFAULT_HOST, port: tcpPort };
   }
 
-  // Both probes failed. Build a richer hint that mentions both attempts.
+  // Step 4: every probe failed. Build a hint that mentions all attempts.
   throw new Error(buildBothTransportsUnavailableHint(forceTcp, forceSocket));
+}
+
+/**
+ * Parse the `GENIE_PG_PORT` env var into a valid TCP port number. Returns
+ * null when unset, malformed, or out of the valid `1..65535` range.
+ *
+ * Pre-transport-discovery contract: callers used this to pin force-TCP mode
+ * to a known port when pgserve discovery wasn't available. Preserved here so
+ * `GENIE_PG_FORCE_TCP=1 GENIE_PG_PORT=12345 genie ...` keeps working without
+ * the `pgserve` CLI on PATH (codex review-finding on PR #1667).
+ */
+function parseExplicitTcpPort(raw: string | undefined): number | null {
+  if (raw === undefined || raw === '') return null;
+  const parsed = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) return null;
+  return parsed;
 }
 
 /**
@@ -433,8 +463,14 @@ async function discoverTcpPgservePort(): Promise<number | null> {
     }, TCP_DISCOVERY_TIMEOUT_MS);
     timer.unref();
 
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf-8');
+    // setEncoding('utf8') guarantees stdout chunks arrive as already-decoded
+    // strings — no risk of a multi-byte character splitting across two
+    // chunks. `pgserve port` only emits ASCII (a port number + newline) so
+    // the practical risk is zero, but the explicit encoding documents intent
+    // and matches Node best practice for stdout-as-string consumers.
+    proc.stdout?.setEncoding('utf8');
+    proc.stdout?.on('data', (chunk: string) => {
+      stdout += chunk;
     });
     proc.on('error', () => {
       if (settled) return;
