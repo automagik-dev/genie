@@ -9,6 +9,7 @@ import {
   readFileSync,
   readSync,
   readdirSync,
+  readlinkSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -60,11 +61,27 @@ export type VerifyResult =
   | { kind: 'ok'; cliVersion: string; serverVersion: string | null }
   | { kind: 'health-unreachable'; endpoint: string }
   | { kind: 'version-mismatch'; cliVersion: string; serverVersion: string | null }
+  | { kind: 'daemon-stale-inode'; cliVersion: string; diskVersion: string | null; pid: number; cwd: string }
   | { kind: 'auth-invalid' }
   | { kind: 'skipped'; reason: VerifySkipReason };
 
 export interface ServerHealthBody {
   version?: string | null;
+  /**
+   * Linux-only. `true` when `/proc/<pid>/cwd` ends with the kernel `(deleted)`
+   * marker — i.e. bun's package swap during update unlinked the directory the
+   * pm2 genie-serve process was launched from. The daemon is still serving
+   * pre-update bytes from the open inode and needs `pm2 restart genie-serve`
+   * (or our `restartServeIfStale` helper) to pick up the new code.
+   *
+   * Non-Linux: always `false` (no `/proc` to probe). On those platforms the
+   * verify probe falls back to optimistic same-version inference.
+   */
+  daemonInodeStale?: boolean;
+  /** Daemon pid surfaced for the `daemon-stale-inode` variant's banner. */
+  daemonPid?: number;
+  /** Raw `/proc/<pid>/cwd` readlink result, surfaced for diagnostics. */
+  daemonCwd?: string;
 }
 
 export interface DecideVerifyArgs {
@@ -95,6 +112,19 @@ export function decideVerify(args: DecideVerifyArgs): VerifyResult {
   const cliVersion = normalizeVersion(args.cliVersion);
   const rawServerVersion = args.serverHealthBody.version ?? null;
   const serverVersion = rawServerVersion === null ? null : normalizeVersion(rawServerVersion);
+  // Inode-stale wins over plain version-mismatch because it's a stronger
+  // signal: the daemon's running bytes don't match disk regardless of what
+  // the version string says. Operators get a more actionable banner
+  // ("run pm2 restart") instead of a generic mismatch.
+  if (args.serverHealthBody.daemonInodeStale === true) {
+    return {
+      kind: 'daemon-stale-inode',
+      cliVersion,
+      diskVersion: serverVersion,
+      pid: args.serverHealthBody.daemonPid ?? 0,
+      cwd: args.serverHealthBody.daemonCwd ?? '',
+    };
+  }
   if (serverVersion === null || serverVersion !== cliVersion) {
     return { kind: 'version-mismatch', cliVersion, serverVersion };
   }
@@ -215,6 +245,60 @@ interface VerifyProbeOptions {
  * sub-flows, not the top-level health). A thin probe is faster and avoids the
  * "doctor recurses into update which spawns doctor" pitfall.
  */
+/**
+ * Linux-only daemon-inode probe. After bun's package swap during update, the
+ * pm2 `genie-serve` process keeps running from a deleted directory inode; the
+ * kernel reports the cwd readlink as `<path> (deleted)`. That's our cheap,
+ * reliable signal that the daemon needs `pm2 restart genie-serve` to re-exec
+ * from the live bytes.
+ *
+ * Returns `null` on non-Linux (no `/proc`) or on readlink failure (race with
+ * pid reaping, EACCES, etc.). Callers MUST treat null as "can't determine"
+ * and fall through to the optimistic same-version inference rather than
+ * blocking the update.
+ */
+function readDaemonCwd(pid: number): { cwd: string; staleInode: boolean } | null {
+  if (process.platform !== 'linux') return null;
+  try {
+    const cwd = readlinkSync(`/proc/${pid}/cwd`);
+    return { cwd, staleInode: cwd.endsWith(' (deleted)') };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the on-disk `@automagik/genie` `package.json` version. We have no
+ * RPC channel to ask the running daemon "what's your VERSION constant" — so
+ * we read whatever's at the install dir and combine it with the inode-stale
+ * signal: when the cwd is NOT deleted, the daemon's runtime bytes equal the
+ * on-disk version; when it IS deleted, the version we read here is what the
+ * daemon SHOULD be running once restarted.
+ *
+ * Two candidate paths cover the two install topologies (bun-global, npm-global).
+ * Returns the calling CLI's compiled-in `VERSION` when no install metadata
+ * resolves — preserves the pre-fix tautology only as a last-resort fallback,
+ * not as the canonical source of truth.
+ */
+function readInstalledPackageVersion(): string | null {
+  const candidates: string[] = [
+    join(homedir(), '.bun', 'install', 'global', 'node_modules', '@automagik', 'genie', 'package.json'),
+  ];
+  const npmPrefix = safeExec('npm prefix -g', 1500);
+  if (npmPrefix) {
+    candidates.push(join(npmPrefix, 'lib', 'node_modules', '@automagik', 'genie', 'package.json'));
+  }
+  for (const path of candidates) {
+    try {
+      const pkg = JSON.parse(readFileSync(path, 'utf-8')) as { version?: unknown };
+      if (typeof pkg.version === 'string' && /^\d+\.\d+/.test(pkg.version)) return pkg.version;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
 async function readServerHealth(): Promise<ServerHealthBody | null> {
   // Step 1: pgserve must answer status (this is the canonical backbone check
   // every other genie subsystem depends on). If pgserve is down, nothing else
@@ -222,10 +306,7 @@ async function readServerHealth(): Promise<ServerHealthBody | null> {
   const pgServeStatus = await runCommandSilent('pgserve', ['status', '--json'], undefined, 3000);
   if (!pgServeStatus.success) return null;
 
-  // Step 2: serve.pid must exist AND the pid must be alive. We don't actually
-  // need a JSON body — the running daemon IS our installed CLI (same package),
-  // so `version === VERSION` by construction. We surface the version field so
-  // `decideVerify` can compare normalized strings.
+  // Step 2: serve.pid must exist AND the pid must be alive.
   const pidPath = join(GENIE_HOME, 'serve.pid');
   const rawPid = safeRead(pidPath, 32);
   if (!rawPid) return null;
@@ -236,7 +317,22 @@ async function readServerHealth(): Promise<ServerHealthBody | null> {
   } catch {
     return null;
   }
-  return { version: VERSION };
+
+  // Step 3: detect inode staleness on Linux + read the on-disk package version.
+  // Pre-fix this returned `{ version: VERSION }` (the calling CLI's compile-time
+  // constant) which made `verify` a tautology — it could not distinguish a
+  // post-update daemon running stale code from a healthy one. The new probe
+  // reads `/proc/<pid>/cwd` to detect the bun-package-swap-leaves-deleted-inode
+  // case, AND reads the disk package.json so the reported `version` reflects
+  // what's actually installed rather than what the calling CLI was compiled with.
+  const cwdInfo = readDaemonCwd(pid);
+  const diskVersion = readInstalledPackageVersion() ?? VERSION;
+  return {
+    version: diskVersion,
+    daemonInodeStale: cwdInfo?.staleInode ?? false,
+    daemonPid: pid,
+    daemonCwd: cwdInfo?.cwd,
+  };
 }
 
 /**
@@ -283,6 +379,88 @@ export async function runVerifyProbe(opts: VerifyProbeOptions): Promise<VerifyRe
   });
 }
 
+// ============================================================================
+// Group 6 (follow-up to update-unify-stages): pm2 genie-serve restart on stale
+// inode. After bun's package swap, the daemon is still mapped to the old
+// (deleted) `node_modules/@automagik/genie/.old-<hash>` directory. Without
+// this step, every `genie update` left the daemon serving pre-update bytes
+// until the operator manually ran `pm2 restart genie-serve` — the verify
+// probe couldn't even surface it because `readServerHealth` was a tautology.
+// ============================================================================
+
+interface Pm2GenieServe {
+  pid: number;
+  restartCount: number;
+}
+
+/**
+ * pm2 introspection: look for a `genie-serve` entry and return its current
+ * pid + restart counter. We shell out to `pm2 jlist` (the documented stable
+ * JSON output) instead of importing pm2 because pm2 is not bundled with
+ * genie — operators install it separately, and many environments (CI, source
+ * runs) don't have it at all.
+ *
+ * Returns `null` when pm2 is missing, errors out, or no `genie-serve` entry
+ * is registered. The caller treats null as "no pm2 supervision in play —
+ * nothing to restart".
+ */
+async function pm2GenieServe(): Promise<Pm2GenieServe | null> {
+  const result = await runCommandSilent('pm2', ['jlist'], undefined, 3000);
+  if (!result.success) return null;
+  try {
+    const list = JSON.parse(result.output) as Array<{
+      name?: string;
+      pid?: number;
+      pm2_env?: { restart_time?: number; status?: string };
+    }>;
+    const entry = list.find((p) => p.name === 'genie-serve');
+    if (!entry || typeof entry.pid !== 'number' || entry.pid <= 0) return null;
+    if (entry.pm2_env?.status !== 'online') return null;
+    return { pid: entry.pid, restartCount: entry.pm2_env?.restart_time ?? 0 };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Restart pm2 `genie-serve` when its current pid is mapped to a deleted
+ * inode (post-bun-package-swap state). No-op when:
+ * - pm2 is missing or has no `genie-serve` entry (source installs, CI)
+ * - the daemon is already on the live inode (no-op update, manual restart
+ *   already performed, non-Linux where we can't probe `/proc`)
+ * - the restart command itself fails (we surface the error and let verify
+ *   catch the still-stale state)
+ *
+ * Returns `{ oldPid, newPid }` on a successful restart with new pid observed,
+ * or `null` when no restart was needed/possible.
+ */
+export async function restartServeIfStale(): Promise<{ oldPid: number; newPid: number } | null> {
+  const before = await pm2GenieServe();
+  if (!before) return null;
+  const cwdInfo = readDaemonCwd(before.pid);
+  if (!cwdInfo || !cwdInfo.staleInode) return null;
+  log(`Restarting pm2 genie-serve (stale inode detected: ${cwdInfo.cwd})`);
+  const restartResult = await runCommandSilent('pm2', ['restart', 'genie-serve', '--update-env'], undefined, 10_000);
+  if (!restartResult.success) {
+    error('pm2 restart genie-serve failed; daemon will keep serving pre-update bytes until manually restarted');
+    return null;
+  }
+  // Poll pm2 for a new pid. We watch BOTH pid change (typical case) AND
+  // restart-count increment (covers the edge case where pm2 reuses a pid
+  // briefly during the restart cycle).
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const after = await pm2GenieServe();
+    if (after && (after.pid !== before.pid || after.restartCount > before.restartCount)) {
+      success(`pm2 genie-serve restarted (pid ${before.pid} → ${after.pid})`);
+      return { oldPid: before.pid, newPid: after.pid };
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  error('pm2 genie-serve restart did not produce a new pid within 10s — verify probe will surface the stale state');
+  return null;
+}
+
 /** Format the post-restart 3-line banner. Genie has no auth model, so the
  *  auth row from omni's banner is omitted. */
 export function formatVerifyBanner(result: VerifyResult): string[] {
@@ -299,6 +477,14 @@ export function formatVerifyBanner(result: VerifyResult): string[] {
     case 'version-mismatch':
       lines.push(`${colorize('\x1b[32m', '\x1b[0m', '✔')} CLI:    v${result.cliVersion}`);
       lines.push(`${colorize('\x1b[31m', '\x1b[0m', '✖')} Server: v${result.serverVersion ?? 'unknown'} (mismatch)`);
+      break;
+    case 'daemon-stale-inode':
+      lines.push(`${colorize('\x1b[32m', '\x1b[0m', '✔')} CLI:    v${result.cliVersion}`);
+      lines.push(
+        `${colorize('\x1b[31m', '\x1b[0m', '✖')} Server: stale inode (pid ${result.pid}, on-disk v${result.diskVersion ?? 'unknown'})`,
+      );
+      lines.push(`${colorize('\x1b[2m', '\x1b[0m', `  cwd: ${result.cwd}`)}`);
+      lines.push(`${colorize('\x1b[2m', '\x1b[0m', '  fix: pm2 restart genie-serve --update-env')}`);
       break;
     case 'auth-invalid':
       lines.push(`${colorize('\x1b[31m', '\x1b[0m', '✖')} Auth: invalid`);
@@ -1483,6 +1669,14 @@ async function runPostUpdateMaintenanceSafe(
     error(`Post-update maintenance skipped: ${maintenanceError}`);
   }
 
+  // Group 6 (follow-up): bun's package swap unlinks the old
+  // `node_modules/@automagik/genie` directory under the running pm2
+  // genie-serve process. Restart it BEFORE verifying so the daemon re-execs
+  // from the live bytes — otherwise the verify probe will (correctly) flag
+  // it as `daemon-stale-inode` and exit 1, leaving operators to fix it
+  // manually after every update.
+  await restartServeIfStaleSafe();
+
   // Group 4: verify probe AFTER maintenance. `--no-verify` produces the
   // `skipped: no-verify-flag` variant so diagnostics still record the
   // intentional bypass.
@@ -1502,8 +1696,27 @@ async function runPostUpdateMaintenanceSafe(
     { verify, cleanups: cleanupReport },
   );
 
-  // Exit 1 on health-unreachable unless --no-verify was set (escape hatch).
-  if (verify.kind === 'health-unreachable' && !options.noVerify) {
+  // Exit 1 on health-unreachable OR daemon-stale-inode unless --no-verify was
+  // set (escape hatch). Stale-inode is a real failure: the new binary is on
+  // disk but the daemon is still serving old bytes — every subsequent
+  // `genie ...` call hits the new code while the running scheduler / event
+  // router lag behind. Exit 1 forces CI / scripted updaters to notice and
+  // re-run with `pm2 restart genie-serve`.
+  if ((verify.kind === 'health-unreachable' || verify.kind === 'daemon-stale-inode') && !options.noVerify) {
     process.exitCode = 1;
+  }
+}
+
+/**
+ * Best-effort wrapper around `restartServeIfStale` so update never aborts
+ * because pm2 misbehaved. Failures inside the helper already log error()
+ * lines; here we just guarantee we never throw upward into the caller.
+ */
+async function restartServeIfStaleSafe(): Promise<void> {
+  try {
+    await restartServeIfStale();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Stale-serve restart skipped (non-fatal): ${msg}`);
   }
 }
