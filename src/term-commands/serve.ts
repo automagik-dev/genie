@@ -595,18 +595,32 @@ async function startAgentSync(): Promise<{ close: () => void } | null> {
 }
 
 /**
- * Probe the canonical pm2-supervised pgserve daemon. Genie is consumer-only
- * after the canonical-cutover wish — `genie serve` no longer spawns or
- * supervises pgserve. If the daemon is not reachable, log a clear
- * canonical-install hint and disable subsequent autostart attempts so the
- * rest of the serve boot doesn't loop on the same failure.
+ * Probe pgserve via the unified transport-discovery resolver (UDS-first,
+ * TCP-fallback). Genie is consumer-only after the canonical-cutover wish —
+ * `genie serve` no longer spawns or supervises pgserve. If neither transport
+ * is reachable, log a clear canonical-install hint and disable subsequent
+ * autostart attempts so the rest of the serve boot doesn't loop on the same
+ * failure.
+ *
+ * Pre-#1667: this function called `requirePgserveDaemon()` which only
+ * accepted the canonical Unix socket. On hosts where `pgserve install`
+ * registered foreground TCP mode (the supported install path post
+ * pgserve@^2.2), the boot probe would print a misleading
+ * "pgserve unreachable" error AND then real connections would still succeed
+ * via the resolver's TCP fallback — confusing operators into thinking
+ * something was broken when it wasn't. Now the boot probe matches the
+ * connection probe.
  */
 async function requirePgserveReady(): Promise<void> {
-  console.log('  Probing canonical pgserve daemon...');
+  console.log('  Probing pgserve transport...');
   try {
-    const { requirePgserveDaemon, resolvePgserveSocketDir } = await import('../lib/db.js');
-    await requirePgserveDaemon();
-    console.log(`  pgserve daemon ready (canonical, pm2-supervised) on ${resolvePgserveSocketDir()}`);
+    const { resolvePgserveTransport } = await import('../lib/db.js');
+    const transport = await resolvePgserveTransport();
+    if (transport.kind === 'unix') {
+      console.log(`  pgserve ready: unix socket ${transport.socketDir}/.s.PGSQL.${transport.port}`);
+    } else {
+      console.log(`  pgserve ready: tcp ${transport.host}:${transport.port}`);
+    }
     try {
       // Service registry entry stays for diagnostics — genie no longer OWNS
       // pgserve, but observability tools still want to know which serve is
@@ -619,11 +633,6 @@ async function requirePgserveReady(): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  pgserve unreachable: ${msg}`);
-    console.error('  Recovery:');
-    console.error('    pm2 status              # is pgserve registered?');
-    console.error('    pm2 restart pgserve     # OR: autopg restart');
-    console.error('    pgserve install         # if not registered yet');
-    console.error('  See https://github.com/automagik-dev/genie/blob/main/docs/install.md');
     process.env.GENIE_PG_NO_AUTOSTART = '1';
     process.env.GENIE_PG_DISABLE_AUTOSTART = '1';
   }
