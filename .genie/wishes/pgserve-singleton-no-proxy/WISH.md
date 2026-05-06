@@ -102,7 +102,8 @@ See `SHARED-DESIGN.md` §6 for the cross-repo decision table. genie-specific:
 | G4 | Migration 002 archives `~/.genie/data/pgserve` → `.legacy/` (Cat 2 prompted in interactive mode; auto in `--aggressive`) | Forensic preservation; never auto-delete. |
 | G5 | Vendored-pgserve assertion is warn-only (not refuse) | Stale node_modules cache is operator's fault, not actively harmful (we don't spawn it). Loud warning is enough. |
 | G6 | `application_name` carries tier identity (e.g., `signed:cosign:@automagik/genie`) | Visible in `pg_stat_activity` for ops debugging without needing pgserve_meta lookup. |
-| G7 | `--ignore-peer-mismatch` requires typed-ack `I_ACKNOWLEDGE_PEER_MISMATCH` | Reuses pattern from `--unsafe-unverified`; not a casual override. |
+| G7 | `--ignore-peer-mismatch` requires typed-ack `I_ACKNOWLEDGE_PEER_MISMATCH` | Reuses **pattern** from `--unsafe-unverified` (typed-ack guard). |
+| G8 | Two distinct typed-ack formats coexist: `--unsafe-unverified <INCIDENT_ID>` (regex `^[A-Z]+_[0-9]{4}_[0-9]{2}_[0-9]{2}$`, security-critical, requires audit-tracked incident reference) vs `--ignore-peer-mismatch` (fixed string `I_ACKNOWLEDGE_PEER_MISMATCH`, operational, peer-version drift). | Different cost-of-error: tampering risk requires incident traceability; peer mismatch is recoverable misordering. Two contracts, same `src/sec/unsafe-verify.ts` helper module exports both validators. |
 
 ## Success Criteria
 
@@ -173,7 +174,7 @@ See `SHARED-DESIGN.md` §6 for the cross-repo decision table. genie-specific:
 - [ ] `_buildConnection()` falls back to TCP 5432 when Unix socket unreachable.
 - [ ] `pgserve verify` is invoked exactly once per fingerprint per cache window.
 - [ ] `application_name` in `pg_stat_activity` matches resolved tier (e.g., `signed:cosign:@automagik/genie`).
-- [ ] `grep -rn '8432' src/` matches only test fixtures or comments referencing legacy.
+- [ ] `grep -rnE '\b8432\b' src/ | grep -v test | grep -v '//'` returns 0 hits (word-boundary match avoids false positives like `port=18432`).
 
 **Validation:**
 ```bash
@@ -195,6 +196,7 @@ grep -rn '8432' src/ | grep -v test | grep -v '//'
 2. Wire into `src/genie.ts` boot path: emit warning to stderr + audit event `rot.vendored-pgserve.detected` + continue.
 3. Audit event schema: `{ vendored_path, host_pgserve_version, timestamp }`.
 4. Regression test: synthetic node_modules fixture with vendored pgserve → assert warning + event fire.
+5. **Optional strict mode**: `GENIE_STRICT_VENDORED=refuse` env var (or `--strict-vendored-check` doctor flag) escalates the warning to a refuse-to-boot. Default = warn-only per Decision G5; strict mode is for paranoid CI / production hardening. Documented but not the default.
 
 **Acceptance Criteria:**
 - [ ] On host without vendored pgserve: zero overhead, no event.
@@ -236,6 +238,9 @@ bun test src/lib/__tests__/vendored-pgserve-check.test.ts
 - [ ] `--no-pm2-restart`: skips step 9 cleanly.
 - [ ] 5 active tasks fixture: prompt appears; `--yes` skips; declined exits 0.
 - [ ] Migration 002: legacy dir archived; second run no-op.
+- [ ] **Step 4 missing-peer behavior**: when `pgserve --version` exits non-zero or binary not on PATH, `genie update` step 4 refuses with remediation "Install pgserve first: see https://github.com/automagik/pgserve#install"; does NOT silently treat as satisfied.
+- [ ] **Step 9 → Step 11 idempotency**: after step 9 successfully restarts pm2 to filesystem version, step 11 doctor probe finds no version drift, exits 0 silently (no double-restart, no conflicting log noise).
+- [ ] **Migration 002 open-FD race**: with a fake `genie-serve` process holding an FD on `~/.genie/data/pgserve/postmaster.pid`, `mv ... .legacy/pgserve-<ts>/` succeeds via Linux rename-on-open; the running process keeps stale FDs until step 9 pm2 restart lands cleanly on the archived state. Verified by integration fixture that simulates the race.
 
 **Validation:**
 ```bash
@@ -430,6 +435,8 @@ src/lib/db.ts                                          # _buildConnection defaul
 src/genie.ts                                           # vendored-pgserve assertion at boot
 src/genie-commands/update.ts                           # 5 new pipeline steps; --ignore-peer-mismatch
 src/genie-commands/doctor.ts                           # --fix tiered modes
+src/genie-commands/__tests__/update.test.ts            # extend with peer-check + active-tasks + migration-002 + idempotency cases
+src/sec/unsafe-verify.ts                               # extend with peer-mismatch validator (separate from incident-id validator)
 package.json                                           # pgserve.identity_chain block; drop persist:true
 CHANGELOG.md
 docs/install.md

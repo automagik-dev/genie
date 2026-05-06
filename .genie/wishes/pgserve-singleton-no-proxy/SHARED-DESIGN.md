@@ -148,7 +148,9 @@ Steps marked NEW are what this wish adds.
 | `<cli> doctor --fix` | auto-mutate **category 1** (safe), prompt **category 2** (data-touching) | one prompt per category-2 mutation | Default invocation by `<cli> update` step 11 |
 | `<cli> doctor --fix --aggressive` | auto-mutate cat 1 + cat 2, refuse cat 3 (irreversible-destructive) | none | CI / automation / explicit operator opt-in |
 
-**Mutation categories**:
+**Mutation categories** (boundary rule):
+
+> **Cat 1 = reversible within 1 command** (e.g. pm2 restart can be re-run). **Cat 2 = data-touching but recoverable** (archives preserved in `.legacy/`, .bak backups, prompts before mutation). **Cat 3 = irreversible / destructive** (DROP DATABASE on populated, role privilege escalation). Refuses without `--unsafe-unverified <INCIDENT_ID>` typed-ack.
 
 | Category | Examples | Authority |
 |----------|----------|-----------|
@@ -163,6 +165,7 @@ Steps marked NEW are what this wish adds.
 - **Runtime check**: `<cli> serve` boot revalidates peer versions; refuses with same remediation if peer was downgraded or rolled back post-update. Reuses the canonical-cutover hard-error pattern.
 - **Override**: `<cli> update --ignore-peer-mismatch` typed-ack `I_ACKNOWLEDGE_PEER_MISMATCH` for debug/exotic flows.
 - **No orchestrator binary**: no `automagik update --all`. 3 sequential CLIs is fine; error messages guide ordering.
+- **Operator update order (locked)**: `pgserve update` → `genie update` → `omni update`. pgserve is the foundation; consumers come after. Each `<cli> update`'s pre-install peer check enforces this — if you run them out of order, the second one refuses with explicit remediation.
 
 ### 3.4 Rollback (manual)
 
