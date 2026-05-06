@@ -289,12 +289,81 @@ describe('decideVerify (Group 1)', () => {
       { kind: 'ok', cliVersion: '1.0.0', serverVersion: '1.0.0' },
       { kind: 'health-unreachable', endpoint: 'x' },
       { kind: 'version-mismatch', cliVersion: '1.0.0', serverVersion: '0.9.0' },
+      {
+        kind: 'daemon-stale-inode',
+        cliVersion: '1.0.0',
+        diskVersion: '1.0.0',
+        pid: 1234,
+        cwd: '/tmp/old (deleted)',
+      },
       { kind: 'auth-invalid' },
       { kind: 'skipped', reason: 'no-restart' },
       { kind: 'skipped', reason: 'no-running-services' },
       { kind: 'skipped', reason: 'no-verify-flag' },
     ];
-    expect(variants).toHaveLength(7);
+    expect(variants).toHaveLength(8);
+  });
+
+  test('daemonInodeStale=true returns daemon-stale-inode variant with pid + cwd surfaced', () => {
+    // Bug fix: pre-fix `readServerHealth` returned `{ version: VERSION }` (the
+    // calling CLI's compile-time constant) which made verify a tautology. With
+    // the new probe surfacing `daemonInodeStale`, decideVerify must short-circuit
+    // ahead of the version-equality check — even when the disk version happens
+    // to match the CLI version, a stale inode means the daemon is on pre-update
+    // bytes and operators need an actionable banner.
+    const result = decideVerify({
+      cliVersion: '4.260506.3',
+      serverHealthBody: {
+        version: '4.260506.3', // disk version matches CLI
+        daemonInodeStale: true,
+        daemonPid: 2831346,
+        daemonCwd: '/home/genie/.bun/install/global/node_modules/.old-F13E840E5DFD4535 (deleted)',
+      },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
+    });
+    expect(result).toEqual({
+      kind: 'daemon-stale-inode',
+      cliVersion: '4.260506.3',
+      diskVersion: '4.260506.3',
+      pid: 2831346,
+      cwd: '/home/genie/.bun/install/global/node_modules/.old-F13E840E5DFD4535 (deleted)',
+    });
+  });
+
+  test('daemonInodeStale=false with matching versions returns ok (regression lock)', () => {
+    // Lock-in: the post-restart happy path. After `restartServeIfStale`
+    // re-execs the daemon, /proc/<pid>/cwd no longer carries the (deleted)
+    // marker; decideVerify must return `ok` instead of incorrectly flagging
+    // the now-fresh daemon.
+    const result = decideVerify({
+      cliVersion: '4.260506.3',
+      serverHealthBody: {
+        version: '4.260506.3',
+        daemonInodeStale: false,
+        daemonPid: 9999,
+        daemonCwd: '/home/genie/.bun/install/global/node_modules/@automagik/genie',
+      },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
+    });
+    expect(result).toEqual({ kind: 'ok', cliVersion: '4.260506.3', serverVersion: '4.260506.3' });
+  });
+
+  test('daemonInodeStale takes precedence over version-mismatch (stronger signal wins)', () => {
+    // When BOTH signals fire (inode stale AND disk version differs from CLI),
+    // we surface the inode-stale variant because it carries the actionable
+    // remediation (`pm2 restart genie-serve`) — a plain version-mismatch
+    // banner would leave operators guessing which side is wrong.
+    const result = decideVerify({
+      cliVersion: '4.260506.3',
+      serverHealthBody: {
+        version: '4.260506.2',
+        daemonInodeStale: true,
+        daemonPid: 4242,
+        daemonCwd: '/some/path (deleted)',
+      },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
+    });
+    expect(result.kind).toBe('daemon-stale-inode');
   });
 });
 
@@ -476,6 +545,25 @@ describe('formatVerifyBanner (Group 4)', () => {
     expect(lines.some((l) => l.includes('0.9.0'))).toBe(true);
     expect(lines.some((l) => l.includes('mismatch'))).toBe(true);
   });
+
+  test('daemon-stale-inode banner surfaces pid, cwd, and the pm2 restart remediation', () => {
+    // Banner is the operator's only signal when they hit the bug — must
+    // contain the actionable command they should run, not just a vague
+    // "stale" warning. We pin the exact remediation string so a future edit
+    // can't silently degrade it.
+    const lines = formatVerifyBanner({
+      kind: 'daemon-stale-inode',
+      cliVersion: '4.260506.3',
+      diskVersion: '4.260506.3',
+      pid: 2831346,
+      cwd: '/home/genie/.bun/install/global/node_modules/.old-F13E840E5DFD4535 (deleted)',
+    });
+    expect(lines.some((l) => l.includes('4.260506.3'))).toBe(true);
+    expect(lines.some((l) => l.includes('2831346'))).toBe(true);
+    expect(lines.some((l) => l.includes('stale inode'))).toBe(true);
+    expect(lines.some((l) => l.includes('(deleted)'))).toBe(true);
+    expect(lines.some((l) => l.includes('pm2 restart genie-serve'))).toBe(true);
+  });
 });
 
 // ============================================================================
@@ -505,6 +593,48 @@ describe('Diagnostics schema (Group 5)', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).toContain('process.env.NO_COLOR');
     expect(source).toContain('colorEnabled');
+  });
+});
+
+// Group 6 (follow-up) — pm2 genie-serve restart on stale inode.
+// Source-shape locks; the actual pm2 round-trip is not unit-tested (it shells
+// out to a process supervisor that isn't installed in CI). The probe helper
+// is covered in `update-stale-inode.test.ts` via /proc fixtures.
+// ============================================================================
+
+describe('restartServeIfStale wiring (Group 6)', () => {
+  test('runPostUpdateMaintenanceSafe calls restartServeIfStaleSafe before runVerifyProbe', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const restartIdx = source.indexOf('await restartServeIfStaleSafe()');
+    const verifyIdx = source.indexOf('await runVerifyProbe({ cliVersion: VERSION })');
+    expect(restartIdx).toBeGreaterThan(-1);
+    expect(verifyIdx).toBeGreaterThan(-1);
+    // The order matters: restart must happen FIRST so the verify probe sees
+    // the live inode. Reversing this order would re-introduce the original
+    // bug (verify reports stale, but the restart never happened in this run).
+    expect(restartIdx).toBeLessThan(verifyIdx);
+  });
+
+  test('exit-code 1 path includes daemon-stale-inode (CI / scripted updaters notice)', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain("verify.kind === 'daemon-stale-inode'");
+    expect(source).toContain('process.exitCode = 1');
+  });
+
+  test('readDaemonCwd is Linux-gated (no /proc on darwin/windows)', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    // The probe must short-circuit on non-Linux so verify doesn't hang on a
+    // missing readlink — non-Linux operators just lose the inode-stale signal,
+    // they don't get a runtime error.
+    expect(source).toContain("process.platform !== 'linux'");
+    expect(source).toContain('readlinkSync(`/proc/${pid}/cwd`)');
+  });
+
+  test('pm2GenieServe parses jlist and filters to online genie-serve entry', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain("'pm2', ['jlist']");
+    expect(source).toContain("p.name === 'genie-serve'");
+    expect(source).toContain("status !== 'online'");
   });
 });
 
