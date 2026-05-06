@@ -596,7 +596,6 @@ describe('Diagnostics schema (Group 5)', () => {
   });
 });
 
-// ============================================================================
 // Group 6 (follow-up) — pm2 genie-serve restart on stale inode.
 // Source-shape locks; the actual pm2 round-trip is not unit-tested (it shells
 // out to a process supervisor that isn't installed in CI). The probe helper
@@ -636,5 +635,60 @@ describe('restartServeIfStale wiring (Group 6)', () => {
     expect(source).toContain("'pm2', ['jlist']");
     expect(source).toContain("p.name === 'genie-serve'");
     expect(source).toContain("status !== 'online'");
+  });
+});
+
+// ============================================================================
+// Skill-loading regression — `.orphaned_at` must NOT propagate through
+// `copyDirSync` into the active Claude Code cache. Multi-server bug
+// diagnosed 2026-05-06: a stray `plugins/genie/.orphaned_at` checked into
+// the repo since the initial commit was being copied verbatim into
+// `~/.claude/plugins/cache/automagik/genie/<version>/`, causing Claude Code
+// to mark the active plugin version orphaned and silently disable every
+// skill on every fresh install.
+// ============================================================================
+
+describe('Plugin sync — .orphaned_at filter (skills regression 2026-05-06)', () => {
+  test('FRAMEWORK_MARKER_FILES set contains .orphaned_at', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('FRAMEWORK_MARKER_FILES');
+    expect(source).toContain("'.orphaned_at'");
+  });
+
+  test('copyDirSync skips FRAMEWORK_MARKER_FILES entries', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const fnStart = source.indexOf('function copyDirSync');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+    // The skip MUST happen before the file/directory branch so the marker
+    // is filtered regardless of whether it's a file or accidental dir.
+    expect(body).toContain('FRAMEWORK_MARKER_FILES.has(entry.name)');
+    const skipIdx = body.indexOf('FRAMEWORK_MARKER_FILES.has(entry.name)');
+    const isDirIdx = body.indexOf('entry.isDirectory()');
+    expect(skipIdx).toBeGreaterThan(-1);
+    expect(isDirIdx).toBeGreaterThan(-1);
+    expect(skipIdx).toBeLessThan(isDirIdx);
+  });
+
+  test('repo source tree does NOT contain plugins/genie/.orphaned_at', () => {
+    // Locks out re-introduction. If a dev box accidentally commits
+    // .orphaned_at again (e.g. from running Claude Code locally on the
+    // genie source dir), this test fails with a clear message instead of
+    // the user-facing "skills don't load" symptom that took 3 months to
+    // diagnose the first time.
+    const repoRoot = join(__dirname, '..', '..', '..');
+    const orphanedMarkerPath = join(repoRoot, 'plugins', 'genie', '.orphaned_at');
+    expect(require('node:fs').existsSync(orphanedMarkerPath)).toBe(false);
+  });
+
+  test('.gitignore lists .orphaned_at', () => {
+    // Belt + suspenders: even if someone runs `git add -A` from a polluted
+    // working tree, the .gitignore entry should keep the marker out.
+    const repoRoot = join(__dirname, '..', '..', '..');
+    const gitignorePath = join(repoRoot, '.gitignore');
+    const contents = readFileSync(gitignorePath, 'utf-8');
+    // Match either bare `.orphaned_at` or path-anchored variants.
+    expect(contents).toMatch(/^\.orphaned_at$/m);
   });
 });

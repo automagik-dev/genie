@@ -1107,9 +1107,24 @@ async function symlinkOrCopy(src: string, dest: string): Promise<void> {
 // Plugin Sync — update Claude Code plugin cache after CLI update
 // ============================================================================
 
+/**
+ * Files that MUST NOT propagate from the source plugin tree into the active
+ * Claude Code cache. These are framework markers Claude Code writes to its
+ * own `~/.claude/plugins/cache/...` to mark plugin versions orphaned. If
+ * a stale tarball ships one (e.g. a dev box accidentally committed it; the
+ * 2026-05-06 multi-server regression diagnosed `plugins/genie/.orphaned_at`
+ * being checked in since the initial commit), `copyDirSync` would copy it
+ * into the active cache, Claude Code's loader would mark the active plugin
+ * orphaned, and skills would silently fail to load. Filter at the copy
+ * boundary so older binaries already deployed don't keep replaying the bug
+ * on every `genie update` until the source-side fix lands.
+ */
+const FRAMEWORK_MARKER_FILES = new Set(['.orphaned_at']);
+
 function copyDirSync(src: string, dest: string): void {
   mkdirSync(dest, { recursive: true });
   for (const entry of readdirSync(src, { withFileTypes: true })) {
+    if (FRAMEWORK_MARKER_FILES.has(entry.name)) continue;
     const srcPath = join(src, entry.name);
     const destPath = join(dest, entry.name);
     if (entry.isDirectory()) {
