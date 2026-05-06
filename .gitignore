@@ -92,4 +92,13 @@ yarn-error.log*
 # QA specs in .genie/qa/ are tracked (they are code)
 # QA results live in ~/.genie/qa/ (global, not per-repo)
 
+# Claude Code framework markers — written by Claude's plugin loader to its own
+# cache (~/.claude/plugins/cache/...) when a plugin version is marked
+# orphaned. They MUST NOT land in our source tree: `update.ts copyDirSync`
+# would carry them into the active cache dir, and Claude Code then treats
+# the active plugin as orphaned, breaking skill loading on every fresh
+# install. (Multi-server regression diagnosed 2026-05-06; see
+# fix/skills-orphaned-marker.)
+.orphaned_at
+
 core
