@@ -18,6 +18,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- TUI startup no longer crashes with opaque `output: [null, null, null]` when
+  an existing `genie-tui` session has unexpected layout. `startTuiTmuxServer`
+  now probes with `has-session` first, recovers corrupt sessions via
+  `kill-session` + fresh create (logging the original cause to
+  `~/.genie/logs/tui-crash.log`), and surfaces tmux's actual stderr
+  (e.g. `duplicate session: genie-tui`) in any error that does bubble up.
+  Wish: `genie-tui-startup-resilience`.
+
 ### Breaking — pgserve canonical cutover (consumer-only, pm2-supervised)
 
 - **Genie no longer spawns pgserve.** The pre-canonical genie was a daemon
