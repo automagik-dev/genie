@@ -19,6 +19,7 @@
 
 import { execSync, spawn, spawnSync } from 'node:child_process';
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -307,55 +308,60 @@ function setupTuiKeybindings(): void {
 }
 
 /**
- * Start the TUI tmux server with full session setup:
- * left pane (nav) + right pane (agent display).
- * If session already exists (serve restart), reuse it.
+ * Run a tmux command via execSync and re-throw with the captured stderr
+ * embedded in the message. Bun's execSync throws an `Error` whose default
+ * message is the unhelpful `output: [null, null, null]` when stdio is
+ * ignored — capturing stdout/stderr as strings gives us tmux's actual
+ * complaint (e.g. `duplicate session: genie-tui`).
  */
-function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
-  // Check if session already exists
+function runTuiTmuxCapturing(cmd: string): string {
   try {
-    execSync(tuiTmux(`has-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
-    // Session exists — reuse it, but ensure the split is healthy
-    const panes = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
-      .trim()
-      .split('\n');
-
-    if (panes.length >= 2) {
-      // Both panes exist — clear the right pane so it doesn't show stale content
-      // (e.g., a leftover TUI nav renderer from a crashed serve process)
-      try {
-        execSync(tuiTmux(`respawn-pane -k -t ${panes[1]} 'cat'`), { stdio: 'ignore' });
-      } catch {}
-      return { leftPane: panes[0], rightPane: panes[1] };
-    }
-
-    // Only 1 pane — re-create the split
-    const cols =
-      Number.parseInt(
-        execSync(tuiTmux(`display-message -t ${TUI_SESSION}:0 -p '#{window_width}'`), { encoding: 'utf-8' }).trim(),
-        10,
-      ) || 120;
-    execSync(tuiTmux(`split-window -h -t ${TUI_SESSION}:0 -l ${cols - NAV_WIDTH - 1}`), { stdio: 'ignore' });
-    const refreshed = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
-      .trim()
-      .split('\n');
-    applyTuiStyle();
-    setupTuiKeybindings();
-    try {
-      execSync(tuiTmux(`select-pane -t ${refreshed[0]}`), { stdio: 'ignore' });
-    } catch {}
-    return { leftPane: refreshed[0], rightPane: refreshed[1] || refreshed[0] };
-  } catch {
-    // Session doesn't exist — create it
+    return execSync(tuiTmux(cmd), { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    const e = err as { stderr?: string | Buffer; stdout?: string | Buffer; message?: string };
+    const stderr = typeof e.stderr === 'string' ? e.stderr : e.stderr?.toString('utf-8');
+    const stdout = typeof e.stdout === 'string' ? e.stdout : e.stdout?.toString('utf-8');
+    const detail = (stderr ?? stdout ?? e.message ?? 'unknown tmux error').trim();
+    throw new Error(`tmux ${cmd}: ${detail}`);
   }
+}
 
+/**
+ * Append a single line to ~/.genie/logs/tui-crash.log so the original
+ * inner-branch error survives the recovery `kill-session`. Best-effort:
+ * never throw from here — the whole point is that the user gets a working
+ * TUI even when logging fails.
+ *
+ * Prefix `[startTuiTmuxServer] <ISO timestamp> ` keeps these distinguishable
+ * from `sendTuiLaunchScript`'s native-panic appends to the same file.
+ */
+function logTuiStartupFailure(message: string): void {
+  try {
+    const home = genieHome();
+    const logsDir = join(home, 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    const crashLog = join(logsDir, 'tui-crash.log');
+    const line = `[startTuiTmuxServer] ${new Date().toISOString()} ${message.replace(/\s+/g, ' ').trim()}\n`;
+    appendFileSync(crashLog, line);
+  } catch {
+    // Logging is best-effort; a failed log must not block recovery.
+  }
+}
+
+/**
+ * Build a fresh genie-tui session from scratch: new-session, split-window,
+ * style, keybindings, focus left pane. Used both when no session existed
+ * and when a corrupt session was killed during recovery.
+ *
+ * Errors from `new-session` and `split-window` propagate up with tmux's
+ * stderr embedded — see `runTuiTmuxCapturing`.
+ */
+function freshCreateTuiSession(): { leftPane: string; rightPane: string } {
   const cols = 120;
   const rows = 40;
 
-  execSync(tuiTmux(`new-session -d -s ${TUI_SESSION} -x ${cols} -y ${rows}`), {
-    stdio: 'ignore',
-  });
-  execSync(tuiTmux(`split-window -h -t ${TUI_SESSION}:0 -l ${cols - NAV_WIDTH - 1}`), { stdio: 'ignore' });
+  runTuiTmuxCapturing(`new-session -d -s ${TUI_SESSION} -x ${cols} -y ${rows}`);
+  runTuiTmuxCapturing(`split-window -h -t ${TUI_SESSION}:0 -l ${cols - NAV_WIDTH - 1}`);
 
   const panes = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
     .trim()
@@ -370,6 +376,83 @@ function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
   } catch {}
 
   return { leftPane: panes[0], rightPane: panes[1] || panes[0] };
+}
+
+/**
+ * Start the TUI tmux server with full session setup:
+ * left pane (nav) + right pane (agent display).
+ * If session already exists (serve restart), reuse it.
+ *
+ * Control flow:
+ *   1. `has-session` probe in its own try/catch — non-existence is the ONLY
+ *      path into a fresh `new-session`. This avoids the historical bug
+ *      where any failure inside the repair branch fell through to
+ *      `new-session` and crashed with `duplicate session: genie-tui`.
+ *   2. If the session exists, run the repair branch in its own try. On
+ *      failure: log to ~/.genie/logs/tui-crash.log, kill the corrupt
+ *      session, and rebuild from scratch — the user just typed `genie`
+ *      and wants a working TUI.
+ *
+ * Exported so unit tests can exercise it directly without monkey-patching
+ * `child_process` globally.
+ */
+export function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
+  // Step 1: probe — the ONLY signal that decides "fresh create" vs "repair".
+  try {
+    execSync(tuiTmux(`has-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
+  } catch {
+    // Session genuinely doesn't exist — create it from scratch.
+    return freshCreateTuiSession();
+  }
+
+  // Step 2: session exists — try to repair / reuse. Any throw in this branch
+  // means the session is in a bad state we can't reason about: log, kill,
+  // and rebuild rather than bubbling an opaque error to the user.
+  try {
+    const panes = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
+      .trim()
+      .split('\n')
+      .filter((id) => id.length > 0);
+
+    if (panes.length >= 2) {
+      // Both panes exist — clear the right pane so it doesn't show stale content
+      // (e.g., a leftover TUI nav renderer from a crashed serve process)
+      try {
+        execSync(tuiTmux(`respawn-pane -k -t ${panes[1]} 'cat'`), { stdio: 'ignore' });
+      } catch {}
+      return { leftPane: panes[0], rightPane: panes[1] };
+    }
+
+    // 1 pane (or theoretically 0 — tmux sessions always have ≥1 pane, but
+    // defensively this falls into the same recreate-the-split path) → re-split.
+    const cols =
+      Number.parseInt(
+        execSync(tuiTmux(`display-message -t ${TUI_SESSION}:0 -p '#{window_width}'`), { encoding: 'utf-8' }).trim(),
+        10,
+      ) || 120;
+    runTuiTmuxCapturing(`split-window -h -t ${TUI_SESSION}:0 -l ${cols - NAV_WIDTH - 1}`);
+    const refreshed = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
+      .trim()
+      .split('\n');
+    applyTuiStyle();
+    setupTuiKeybindings();
+    try {
+      execSync(tuiTmux(`select-pane -t ${refreshed[0]}`), { stdio: 'ignore' });
+    } catch {}
+    return { leftPane: refreshed[0], rightPane: refreshed[1] || refreshed[0] };
+  } catch (err) {
+    // Repair failed — corrupt session in unknown state. Persist the original
+    // cause for forensics, then nuke and rebuild.
+    const message = err instanceof Error ? err.message : String(err);
+    logTuiStartupFailure(message);
+    try {
+      execSync(tuiTmux(`kill-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
+    } catch {
+      // If kill-session itself fails, freshCreateTuiSession() will re-throw
+      // a useful error via runTuiTmuxCapturing — let it surface.
+    }
+    return freshCreateTuiSession();
+  }
 }
 
 /**
