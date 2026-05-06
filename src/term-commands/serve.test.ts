@@ -1,17 +1,85 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import * as realChildProcess from 'node:child_process';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import {
+
+// ============================================================================
+// Smart child_process mock for startTuiTmuxServer tests.
+//
+// Bun's mock.module is process-global and leaks across test files. To keep
+// other tests in this file (and other files) safe, the default execSync
+// implementation falls through to the REAL child_process.execSync. Each test
+// in `describe('startTuiTmuxServer')` installs a per-test handler via
+// setExecSyncHandler(); the handler scripts responses for genie-tui tmux
+// commands and lets non-matching commands fall through to the real exec.
+//
+// `spawn` and `spawnSync` are preserved verbatim — the rest of this file's
+// tests rely on them.
+// ============================================================================
+
+type ExecSyncHandler = (
+  cmd: string,
+  opts?: { encoding?: BufferEncoding | 'buffer' } & Record<string, unknown>,
+) => string | Buffer;
+
+let _execSyncHandler: ExecSyncHandler | null = null;
+function setExecSyncHandler(handler: ExecSyncHandler | null): void {
+  _execSyncHandler = handler;
+}
+
+function isTuiTmuxCmd(cmd: string): boolean {
+  return cmd.includes('-L genie-tui');
+}
+
+// IMPORTANT: capture the REAL execSync / spawnSync as `const` references
+// BEFORE registering mock.module. Namespace imports (`* as realChildProcess`)
+// expose live bindings — after mock, `realChildProcess.execSync` would point
+// at the mocked function, causing infinite recursion when the mock falls
+// through to the "real" implementation. A const captured here freezes the
+// binding to the original function.
+const realExecSync: typeof realChildProcess.execSync = realChildProcess.execSync;
+const realSpawnSync: typeof realChildProcess.spawnSync = realChildProcess.spawnSync;
+const realSpawn: typeof realChildProcess.spawn = realChildProcess.spawn;
+
+mock.module('node:child_process', () => ({
+  ...realChildProcess,
+  execSync: (cmd: string, opts?: Parameters<typeof realChildProcess.execSync>[1]) => {
+    if (_execSyncHandler && isTuiTmuxCmd(cmd)) {
+      return _execSyncHandler(cmd, opts as Record<string, unknown>);
+    }
+    return realExecSync(cmd, opts);
+  },
+  spawn: realSpawn,
+  spawnSync: ((file: string, args?: readonly string[], opts?: Record<string, unknown>) => {
+    // While a startTuiTmuxServer test is active, swallow tmux invocations on
+    // the genie-tui socket so setupTuiKeybindings doesn't poke the real tmux
+    // server. Other spawnSync calls (e.g. installer probes) fall through.
+    if (_execSyncHandler && Array.isArray(args) && args.includes('-L') && args.includes('genie-tui')) {
+      return {
+        pid: 0,
+        output: [null, '', ''],
+        stdout: '',
+        stderr: '',
+        status: 0,
+        signal: null,
+      };
+    }
+    return realSpawnSync(file, args as readonly string[], opts as Parameters<typeof realChildProcess.spawnSync>[2]);
+  }) as typeof realChildProcess.spawnSync,
+}));
+
+const {
   autoStartServe,
   clearStoppingLock,
   getTuiKeybindings,
   getTuiQuitBindingArgs,
   isStoppingLockActive,
   startBrainServerIfEnabled,
+  startTuiTmuxServer,
   writeStoppingLockSync,
-} from './serve.js';
+} = await import('./serve.js');
 
 describe('getTuiKeybindings', () => {
   test('includes explicit left and right pane focus bindings', () => {
@@ -586,5 +654,197 @@ describe('pgserve v1/v2 coexistence', () => {
     const startForeground = source.slice(source.indexOf('async function startForeground'));
     expect(startForeground).toContain('removeLegacyPgservePortLockfileIfForcedTcp();');
     expect(startForeground).not.toContain('removePgservePortLockfile();');
+  });
+});
+
+// ============================================================================
+// startTuiTmuxServer — regression tests for the silent-fall-through bug
+//
+// The function used to wrap `has-session` + repair branch in a single
+// `try { ... } catch {}`, so any failure inside the repair branch fell
+// through to `new-session -d -s genie-tui` and crashed with the opaque
+// "duplicate session: genie-tui" / `output: [null, null, null]` error.
+//
+// G1 split the probe from the repair branch and added a kill-session +
+// fresh-create recovery path with forensic logging. These tests lock in
+// every reachable state.
+//
+// Mocking strategy: the file-level `mock.module('node:child_process', ...)`
+// intercepts only commands targeting the `-L genie-tui` socket while the
+// per-test handler is set; everything else falls through to the real
+// child_process module.
+// ============================================================================
+
+describe('startTuiTmuxServer', () => {
+  let tuiHome: string;
+  let originalGenieHome: string | undefined;
+
+  beforeEach(() => {
+    originalGenieHome = process.env.GENIE_HOME;
+    tuiHome = mkdtempSync(join(tmpdir(), 'genie-tui-server-'));
+    process.env.GENIE_HOME = tuiHome;
+  });
+
+  afterEach(() => {
+    setExecSyncHandler(null);
+    if (originalGenieHome === undefined) {
+      // biome-ignore lint/performance/noDelete: env vars must actually be removed
+      delete process.env.GENIE_HOME;
+    } else {
+      process.env.GENIE_HOME = originalGenieHome;
+    }
+    try {
+      rmSync(tuiHome, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  });
+
+  /**
+   * Build a recording handler whose `responder` decides — per matching tmux
+   * subcommand — what to return (or throw). Calls to non-tui-tmux commands
+   * never reach here because the file-level mock filters them out.
+   */
+  function recordHandler(
+    responder: (cmd: string) => { value?: string; error?: { stderr: string; message?: string } },
+  ): { handler: ExecSyncHandler; calls: string[] } {
+    const calls: string[] = [];
+    const handler: ExecSyncHandler = (cmd) => {
+      calls.push(cmd);
+      const out = responder(cmd);
+      if (out.error) {
+        // Mimic Bun/node execSync error shape: `.stderr` is a Buffer, but a
+        // string also satisfies runTuiTmuxCapturing's `.toString('utf-8')`
+        // path because that method only fires on Buffer.
+        const err = new Error(out.error.message ?? `Command failed: ${cmd}`) as Error & {
+          stderr?: string;
+          stdout?: string;
+        };
+        err.stderr = out.error.stderr;
+        err.stdout = '';
+        throw err;
+      }
+      return out.value ?? '';
+    };
+    return { handler, calls };
+  }
+
+  test('(a) session exists with 2 panes — returns early, no new-session', () => {
+    const { handler, calls } = recordHandler((cmd) => {
+      if (cmd.includes('has-session')) return { value: '' };
+      if (cmd.includes('list-panes')) return { value: '%0\n%1' };
+      if (cmd.includes('respawn-pane')) return { value: '' };
+      // Any tui-tmux command we didn't anticipate → empty no-op
+      return { value: '' };
+    });
+    setExecSyncHandler(handler);
+
+    const result = startTuiTmuxServer();
+
+    expect(result).toEqual({ leftPane: '%0', rightPane: '%1' });
+    expect(calls.some((c) => c.includes('new-session'))).toBe(false);
+    expect(calls.some((c) => c.includes('split-window'))).toBe(false);
+    expect(calls.some((c) => c.includes('has-session'))).toBe(true);
+    expect(calls.some((c) => c.includes('respawn-pane'))).toBe(true);
+  });
+
+  test('(b) session exists with 1 pane — split-window invoked once, no new-session', () => {
+    let listPanesCallCount = 0;
+    const { handler, calls } = recordHandler((cmd) => {
+      if (cmd.includes('has-session')) return { value: '' };
+      if (cmd.includes('list-panes')) {
+        listPanesCallCount += 1;
+        // First call sees only %0; after split, second call sees both panes.
+        return { value: listPanesCallCount === 1 ? '%0' : '%0\n%2' };
+      }
+      if (cmd.includes('display-message')) return { value: '120' };
+      if (cmd.includes('split-window')) return { value: '' };
+      return { value: '' };
+    });
+    setExecSyncHandler(handler);
+
+    const result = startTuiTmuxServer();
+
+    expect(result.leftPane).toBe('%0');
+    expect(result.rightPane).toBe('%2');
+    const splitCalls = calls.filter((c) => c.includes('split-window'));
+    expect(splitCalls.length).toBe(1);
+    expect(calls.some((c) => c.includes('new-session'))).toBe(false);
+  });
+
+  test('(c) has-session fails — fresh new-session + split-window each called once', () => {
+    const { handler, calls } = recordHandler((cmd) => {
+      if (cmd.includes('has-session')) {
+        return { error: { stderr: "can't find session: genie-tui", message: 'has-session failed' } };
+      }
+      if (cmd.includes('new-session')) return { value: '' };
+      if (cmd.includes('split-window')) return { value: '' };
+      if (cmd.includes('list-panes')) return { value: '%0\n%1' };
+      return { value: '' };
+    });
+    setExecSyncHandler(handler);
+
+    const result = startTuiTmuxServer();
+
+    expect(result).toEqual({ leftPane: '%0', rightPane: '%1' });
+    const newSessionCalls = calls.filter((c) => c.includes('new-session'));
+    const splitCalls = calls.filter((c) => c.includes('split-window'));
+    expect(newSessionCalls.length).toBe(1);
+    expect(splitCalls.length).toBe(1);
+  });
+
+  test('(d) repair branch throws — kill-session + fresh-create + crash log written', () => {
+    const repairFailureStderr = "can't find window";
+    let listPanesCallCount = 0;
+    let splitWindowCallCount = 0;
+    const { handler, calls } = recordHandler((cmd) => {
+      if (cmd.includes('has-session')) return { value: '' };
+      if (cmd.includes('list-panes')) {
+        listPanesCallCount += 1;
+        // 1st call: 1-pane state triggers repair branch.
+        // 2nd call (after kill + fresh new-session + split-window): 2 panes.
+        return { value: listPanesCallCount === 1 ? '%0' : '%0\n%1' };
+      }
+      if (cmd.includes('display-message')) return { value: '120' };
+      if (cmd.includes('split-window')) {
+        splitWindowCallCount += 1;
+        // 1st split-window is the repair-branch attempt → throw to trigger
+        // the recovery path. 2nd split-window comes from freshCreate after
+        // kill-session, and must succeed.
+        if (splitWindowCallCount === 1) {
+          return { error: { stderr: repairFailureStderr, message: 'Command failed' } };
+        }
+        return { value: '' };
+      }
+      if (cmd.includes('kill-session')) return { value: '' };
+      if (cmd.includes('new-session')) return { value: '' };
+      return { value: '' };
+    });
+    setExecSyncHandler(handler);
+
+    const result = startTuiTmuxServer();
+
+    expect(result).toEqual({ leftPane: '%0', rightPane: '%1' });
+    const killSessionCalls = calls.filter((c) => c.includes('kill-session'));
+    expect(killSessionCalls.length).toBe(1);
+
+    // Verify ordering: kill-session must come before new-session.
+    const killIdx = calls.findIndex((c) => c.includes('kill-session'));
+    const newIdx = calls.findIndex((c) => c.includes('new-session'));
+    expect(killIdx).toBeGreaterThan(-1);
+    expect(newIdx).toBeGreaterThan(killIdx);
+
+    const newSessionCalls = calls.filter((c) => c.includes('new-session'));
+    expect(newSessionCalls.length).toBe(1);
+
+    // Forensic log written with prefix + the original tmux stderr message.
+    const crashLogPath = join(tuiHome, 'logs', 'tui-crash.log');
+    expect(existsSync(crashLogPath)).toBe(true);
+    const logContents = readFileSync(crashLogPath, 'utf-8');
+    const lines = logContents.split('\n').filter((l) => l.length > 0);
+    expect(lines.length).toBeGreaterThan(0);
+    const lastLine = lines[lines.length - 1];
+    expect(lastLine).toContain('[startTuiTmuxServer]');
+    expect(lastLine).toContain(repairFailureStderr);
   });
 });
