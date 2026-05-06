@@ -339,6 +339,183 @@ function buildPgserveUnavailableHint(state: DaemonState): string {
   ].join('\n');
 }
 
+// ============================================================================
+// Transport discovery — Unix-socket first, TCP fallback.
+//
+// Genie historically required the canonical-daemon Unix socket at
+// `$XDG_RUNTIME_DIR/pgserve/.s.PGSQL.5432` (the daemon-mode listener) and
+// hard-failed when missing. After pgserve@^2.2 the `pgserve install` command
+// supervises FOREGROUND TCP mode (port 8432 by default; see
+// pgserve/src/cli-install.cjs:225-249 for the rationale: daemon mode requires
+// fingerprint+token auth which breaks plain libpq peers like genie+omni).
+//
+// This left genie self-defeating: the same install path that registered
+// pgserve also guaranteed the canonical UDS would never exist. To unify both
+// modes under one consumer, genie now tries the canonical UDS first
+// (preserves zero-config local-perf for hosts that opted into daemon mode),
+// then falls back to TCP discovered via `pgserve port`.
+//
+// `GENIE_PG_FORCE_TCP=1` skips the UDS probe entirely. `GENIE_PG_FORCE_SOCKET=1`
+// inverts: skip TCP fallback and require UDS. No flag → try both in order.
+// ============================================================================
+
+export type PgserveTransport =
+  | { kind: 'unix'; socketDir: string; port: number }
+  | { kind: 'tcp'; host: string; port: number };
+
+const TCP_DISCOVERY_TIMEOUT_MS = 5_000;
+
+/**
+ * Resolve the active pgserve transport with UDS preference and TCP fallback.
+ *
+ * Order:
+ *   1. Canonical UDS: probe `$XDG_RUNTIME_DIR/pgserve/.s.PGSQL.5432` and
+ *      complete a Postgres greet to confirm liveness. Use it if reachable.
+ *   2. Explicit TCP port (`GENIE_PG_PORT`): legacy escape hatch — when set,
+ *      bypass discovery and dial `127.0.0.1:<port>` directly. Survives hosts
+ *      without `pgserve` on PATH and dev shells that pin a known port.
+ *   3. TCP via `pgserve port`: shell out to the pgserve CLI's published
+ *      discovery primitive (no daemon-mode auth requirement). Use the
+ *      returned port at `127.0.0.1`.
+ *   4. Throw with a hint that mentions every probe attempt.
+ *
+ * Force-flag overrides:
+ *   - `GENIE_PG_FORCE_SOCKET=1` skips steps 2 + 3 (UDS-only).
+ *   - `GENIE_PG_FORCE_TCP=1` skips step 1 (TCP-only). Legacy escape hatch;
+ *     pairs with `GENIE_PG_PORT` to pin to a known port without invoking the
+ *     `pgserve` CLI. Still honored verbatim post-transport-discovery.
+ */
+export async function resolvePgserveTransport(): Promise<PgserveTransport> {
+  const forceTcp = process.env.GENIE_PG_FORCE_TCP === '1';
+  const forceSocket = process.env.GENIE_PG_FORCE_SOCKET === '1';
+
+  if (!forceTcp) {
+    const udsState = probePgserveDaemon();
+    if (udsState.running && (await isPgserveSocketResponsive())) {
+      const discovery = readPostmasterDiscovery();
+      return {
+        kind: 'unix',
+        socketDir: discovery?.socketDir ?? resolvePgserveSocketDir(),
+        port: discovery?.port ?? 5432,
+      };
+    }
+    if (udsState.reason === 'socket present but pid stale' && (await isPgserveSocketResponsive())) {
+      return { kind: 'unix', socketDir: resolvePgserveSocketDir(), port: 5432 };
+    }
+    if (forceSocket) {
+      throw new Error(buildPgserveUnavailableHint(udsState));
+    }
+  }
+
+  // Step 2: explicit TCP port via GENIE_PG_PORT env. Legacy contract — set
+  // this to dial a known port without running `pgserve port` discovery.
+  // Useful on hosts where pgserve isn't on PATH (CI, dev shells, custom
+  // build environments) but a postgres listener is up at a known port.
+  const explicitPort = parseExplicitTcpPort(process.env.GENIE_PG_PORT);
+  if (explicitPort !== null) {
+    return { kind: 'tcp', host: DEFAULT_HOST, port: explicitPort };
+  }
+
+  // Step 3: discover the TCP port via `pgserve port` subcommand.
+  const tcpPort = await discoverTcpPgservePort();
+  if (tcpPort !== null) {
+    return { kind: 'tcp', host: DEFAULT_HOST, port: tcpPort };
+  }
+
+  // Step 4: every probe failed. Build a hint that mentions all attempts.
+  throw new Error(buildBothTransportsUnavailableHint(forceTcp, forceSocket));
+}
+
+/**
+ * Parse the `GENIE_PG_PORT` env var into a valid TCP port number. Returns
+ * null when unset, malformed, or out of the valid `1..65535` range.
+ *
+ * Pre-transport-discovery contract: callers used this to pin force-TCP mode
+ * to a known port when pgserve discovery wasn't available. Preserved here so
+ * `GENIE_PG_FORCE_TCP=1 GENIE_PG_PORT=12345 genie ...` keeps working without
+ * the `pgserve` CLI on PATH (codex review-finding on PR #1667).
+ */
+function parseExplicitTcpPort(raw: string | undefined): number | null {
+  if (raw === undefined || raw === '') return null;
+  const parsed = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) return null;
+  return parsed;
+}
+
+/**
+ * Discover the TCP port a pgserve foreground/install-mode process is bound
+ * on by shelling out to `pgserve port` — pgserve's published discovery
+ * primitive (see pgserve/src/cli-install.cjs `pgserve port` subcommand).
+ *
+ * Returns null on any failure: missing binary, non-zero exit, parse error,
+ * timeout. Caller treats null as "no TCP fallback available".
+ */
+async function discoverTcpPgservePort(): Promise<number | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let stdout = '';
+    const proc = spawn('pgserve', ['port'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      proc.kill('SIGTERM');
+      resolve(null);
+    }, TCP_DISCOVERY_TIMEOUT_MS);
+    timer.unref();
+
+    // setEncoding('utf8') guarantees stdout chunks arrive as already-decoded
+    // strings — no risk of a multi-byte character splitting across two
+    // chunks. `pgserve port` only emits ASCII (a port number + newline) so
+    // the practical risk is zero, but the explicit encoding documents intent
+    // and matches Node best practice for stdout-as-string consumers.
+    proc.stdout?.setEncoding('utf8');
+    proc.stdout?.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    proc.on('error', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(null);
+    });
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+      const parsed = Number.parseInt(stdout.trim(), 10);
+      if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) {
+        resolve(null);
+        return;
+      }
+      resolve(parsed);
+    });
+  });
+}
+
+function buildBothTransportsUnavailableHint(forceTcp: boolean, forceSocket: boolean): string {
+  const lines = ['pgserve is not reachable on either transport.'];
+  if (!forceTcp) {
+    lines.push(`  • Unix socket probe: ${resolvePgserveLibpqSocketPath()} (not present or not responsive)`);
+  } else {
+    lines.push('  • Unix socket probe: skipped (GENIE_PG_FORCE_TCP=1)');
+  }
+  if (!forceSocket) {
+    lines.push('  • TCP discovery via `pgserve port`: failed (binary missing or no daemon)');
+  } else {
+    lines.push('  • TCP discovery: skipped (GENIE_PG_FORCE_SOCKET=1)');
+  }
+  lines.push('Recovery:');
+  lines.push('  pm2 status              # is pgserve registered?');
+  lines.push('  pgserve install         # register foreground TCP-mode pgserve under pm2');
+  lines.push('  pgserve daemon          # OR start daemon-mode (canonical UDS) standalone');
+  lines.push('See https://github.com/automagik-dev/genie/blob/main/docs/install.md for details.');
+  return lines.join('\n');
+}
+
 async function isPgserveSocketResponsive(): Promise<boolean> {
   const candidates = [resolvePgserveLibpqSocketPath(), resolvePgserveControlSocketPath()].filter((path) =>
     existsSync(path),
@@ -926,17 +1103,10 @@ export async function getConnection() {
   }
 }
 
-/**
- * Decide between Unix socket (pgserve v2 production path) and TCP loopback
- * (legacy + test mode). Test mode is selected by GENIE_TEST_PG_PORT — that
- * env var is set by src/lib/test-setup.ts (bun preload) which boots a
- * dedicated `pgserve --ram` instance for the suite. Production never sets it.
- */
-function shouldUseUnixSocket(): boolean {
-  if (process.env.GENIE_PG_FORCE_TCP === '1') return false;
-  if (process.env.GENIE_TEST_PG_PORT) return false;
-  return true;
-}
+// Note: `shouldUseUnixSocket` was the pre-transport-discovery toggle. It's
+// superseded by `resolvePgserveTransport()` (UDS-first / TCP-fallback) in
+// `_buildConnection`. Keeping the legacy env-var contract via `GENIE_PG_FORCE_TCP`
+// and `GENIE_PG_FORCE_SOCKET` inside the new resolver.
 
 let bannerPrinted = false;
 
@@ -966,10 +1136,30 @@ async function maybePrintBanner(client: postgres.Sql, isTestMode: boolean): Prom
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
 async function _buildConnection(): Promise<any> {
   const _t0 = Date.now();
-  const useSocket = shouldUseUnixSocket();
-  if (useSocket) await requirePgserveDaemon();
+  // Test mode (GENIE_TEST_PG_PORT) keeps the legacy in-process TCP path so
+  // src/lib/test-setup.ts's per-suite `pgserve --ram` instances stay
+  // observable without needing pgserve's CLI on PATH.
+  const useTestModeTcp = Boolean(process.env.GENIE_TEST_PG_PORT);
+  if (useTestModeTcp) {
+    const transport = await resolveTransport(false);
+    return await buildAndOpenConnection(transport, _t0);
+  }
 
-  const transport = await resolveTransport(useSocket);
+  // Production: try Unix socket first, fall back to TCP. The new
+  // `resolvePgserveTransport` handles both probes and force-flag overrides.
+  const probed = await resolvePgserveTransport();
+  const transport: Transport = {
+    useSocket: probed.kind === 'unix',
+    host: probed.kind === 'unix' ? probed.socketDir : probed.host,
+    port: probed.port,
+    pgWireCredential: probed.kind === 'unix' ? resolvePgserveAuthPassword() : resolveTcpPgPassword(),
+  };
+  return await buildAndOpenConnection(transport, _t0);
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type bleed-through
+async function buildAndOpenConnection(transport: Transport, _t0: number): Promise<any> {
+  const useSocket = transport.useSocket;
   const _t1 = Date.now();
   const pgModule = (await import('postgres')).default;
 
@@ -1007,11 +1197,14 @@ async function _buildConnection(): Promise<any> {
     // Surface the resolved transport on the activePort singleton so diagnostics
     // (db status, printPgserveHealth) report the truth. Socket mode uses the
     // SOCKET_PORT_SENTINEL (0) since there is no TCP port to advertise; TCP
-    // mode already updates activePort via ensurePgserve().
+    // discovery via `pgserve port` writes the discovered port directly so the
+    // legacy ensurePgserve path no longer owns this side effect.
     if (useSocket) {
       activePort = SOCKET_PORT_SENTINEL;
-      process.env.GENIE_PG_AVAILABLE = 'true';
+    } else {
+      activePort = transport.port;
     }
+    process.env.GENIE_PG_AVAILABLE = 'true';
   } catch (err) {
     if (sqlClient === client) sqlClient = null;
     activePort = null;

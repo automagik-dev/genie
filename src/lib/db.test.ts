@@ -394,33 +394,37 @@ describe('daemon-owned pgserve', () => {
     expect(optionsBody).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(transport.useSocket)');
   });
 
-  test('socket connections require the canonical daemon before dialing libpq path', () => {
+  test('production connections use UDS-first / TCP-fallback transport discovery', () => {
+    // Post-pgserve-transport-discovery: `_buildConnection` no longer hard-fails
+    // when the canonical UDS is missing. Instead it asks `resolvePgserveTransport()`
+    // for the live transport (UDS preferred, TCP via `pgserve port` as
+    // fallback). Test mode (GENIE_TEST_PG_PORT) keeps the legacy in-process
+    // TCP path because the test harness provisions its own pgserve --ram
+    // instance and exposes the port via env.
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     const fnStart = source.indexOf('async function _buildConnection');
     expect(fnStart).toBeGreaterThan(-1);
     const body = source.slice(fnStart, source.indexOf('\n}\n', fnStart));
 
-    const useSocketIdx = body.indexOf('const useSocket = shouldUseUnixSocket()');
-    // Post-cutover: the daemon-ensure step is `requirePgserveDaemon` (probe
-    // only; never spawns). Locks out reintroduction of getOrStartDaemon as
-    // the call-site here.
-    const requireIdx = body.indexOf('if (useSocket) await requirePgserveDaemon()');
-    // Post-refactor (#1651): port resolution moved into resolveTransport. The
-    // dispatcher must call requirePgserveDaemon BEFORE resolveTransport (which
-    // dials the postmaster's port).
-    const transportIdx = body.indexOf('await resolveTransport(useSocket)');
+    // Test-mode short-circuit: keeps the existing TCP path for unit tests.
+    expect(body).toContain('const useTestModeTcp = Boolean(process.env.GENIE_TEST_PG_PORT)');
+    expect(body).toContain('await resolveTransport(false)');
 
-    expect(useSocketIdx).toBeGreaterThan(-1);
-    expect(requireIdx).toBeGreaterThan(useSocketIdx);
-    expect(transportIdx).toBeGreaterThan(requireIdx);
+    // Production path: probe transports via the new resolver.
+    expect(body).toContain('await resolvePgserveTransport()');
 
-    // The actual port-resolution pattern still exists, just inside resolveTransport.
-    const transportFnStart = source.indexOf('async function resolveTransport');
-    expect(transportFnStart).toBeGreaterThan(-1);
-    const transportBody = source.slice(transportFnStart, source.indexOf('\n}\n', transportFnStart));
-    expect(transportBody).toMatch(
-      /const port = useSocket \? \(discovery\?\.port \?\? 5432\) : await ensurePgserve\(\)/,
-    );
+    // Resolver must contain both probe primitives.
+    const resolverStart = source.indexOf('export async function resolvePgserveTransport');
+    expect(resolverStart).toBeGreaterThan(-1);
+    const resolverBody = source.slice(resolverStart, source.indexOf('\n}\n', resolverStart));
+    expect(resolverBody).toContain('probePgserveDaemon()');
+    expect(resolverBody).toContain('isPgserveSocketResponsive()');
+    expect(resolverBody).toContain('discoverTcpPgservePort()');
+    // Force-flag overrides: both legacy GENIE_PG_FORCE_TCP and new
+    // GENIE_PG_FORCE_SOCKET must remain wired so operators can pin one
+    // transport for diagnostics.
+    expect(resolverBody).toContain("process.env.GENIE_PG_FORCE_TCP === '1'");
+    expect(resolverBody).toContain("process.env.GENIE_PG_FORCE_SOCKET === '1'");
   });
 
   test('canonical-cutover removed every spawn helper from db.ts', () => {
@@ -453,8 +457,26 @@ describe('daemon-owned pgserve', () => {
     ]) {
       expect(source).not.toContain(symbol);
     }
-    // Also lock out the pgserve binary spawn invocation in any form.
-    expect(source).not.toMatch(/spawn\(\s*[^)]*pgserve/);
+    // Lock out pgserve binary spawn invocation, EXCEPT the read-only discovery
+    // subcommands (`port`, `url`, `status`). Discovery is consumer-only —
+    // it doesn't own the daemon's lifecycle, just reads the published state.
+    // The post-pgserve-transport-discovery TCP fallback uses `pgserve port`.
+    //
+    // Forbidden patterns (daemon ownership):
+    //   spawn('pgserve', ['daemon', ...])    // owning the daemon process
+    //   spawn('pgserve', [<no subcommand>])  // bare pgserve (foreground TCP install)
+    //   spawn('pgserve', ['install', ...])   // pm2 registration (genie shouldn't own it)
+    //
+    // Allowed patterns (read-only discovery):
+    //   spawn('pgserve', ['port'])
+    //   spawn('pgserve', ['url'])
+    //   spawn('pgserve', ['status', '--json'])
+    const spawnPgserveMatches = source.matchAll(/spawn(?:Sync)?\(\s*['"]pgserve['"]\s*,\s*\[([^\]]*)\]/g);
+    for (const match of spawnPgserveMatches) {
+      const args = match[1];
+      const firstArg = args.match(/['"]([^'"]+)['"]/)?.[1] ?? '';
+      expect(['port', 'url', 'status']).toContain(firstArg);
+    }
     expect(source).not.toContain('pkill');
   });
 
@@ -682,11 +704,14 @@ describe('parallel dispatch race (issue #1207)', () => {
     expect(body).toMatch(/finally\s*\{[^}]*buildPromise\s*=\s*null/);
   });
 
-  test('_buildConnection fire-and-forget teardown on post-connect failure', () => {
+  test('buildAndOpenConnection fire-and-forget teardown on post-connect failure', () => {
     // Same pattern as healthCheckCachedClient — if runPostConnectSetup fails,
     // tear down the doomed client without blocking concurrent work.
+    // Post-pgserve-transport-discovery: the catch lives in `buildAndOpenConnection`
+    // (the post-resolution helper); `_buildConnection` is now just the
+    // dispatcher that picks UDS vs. TCP.
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    const fnStart = source.indexOf('async function _buildConnection');
+    const fnStart = source.indexOf('async function buildAndOpenConnection');
     expect(fnStart).toBeGreaterThan(-1);
     const fnEnd = source.indexOf('\n}\n', fnStart);
     const body = source.slice(fnStart, fnEnd);
@@ -700,23 +725,25 @@ describe('parallel dispatch race (issue #1207)', () => {
     expect(catchBody).toMatch(/\.end\([^)]*\)\.catch\(/);
   });
 
-  test('_buildConnection probes the canonical daemon before socket connect', () => {
+  test('_buildConnection dispatches via resolvePgserveTransport (UDS-first / TCP-fallback)', () => {
+    // Post-pgserve-transport-discovery: the dispatcher no longer probes the
+    // canonical daemon directly — it asks `resolvePgserveTransport()` for the
+    // live transport (UDS preferred, TCP via `pgserve port` fallback). This
+    // test locks the new contract; the old probe-then-libpq-path is enforced
+    // inside `resolvePgserveTransport` itself by 'source enforces probe order'.
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     const fnStart = source.indexOf('async function _buildConnection');
     expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
 
-    const socketDecision = source.indexOf('const useSocket = shouldUseUnixSocket();', fnStart);
-    // Post-cutover: probe-only `requirePgserveDaemon()`; never spawns.
-    const daemonProbe = source.indexOf('if (useSocket) await requirePgserveDaemon();', fnStart);
-    // Direct-postmaster path: port comes from admin.json discovery when
-    // useSocket; falls back to libpq compat 5432 if discovery is missing.
-    const portDecision = source.search(
-      /const port = useSocket \? \(discovery\?\.port \?\? 5432\) : await ensurePgserve\(\)/,
-    );
+    // Test-mode path remains for unit-test harness compatibility.
+    const testModeIdx = body.indexOf('Boolean(process.env.GENIE_TEST_PG_PORT)');
+    // Production dispatch: always through resolvePgserveTransport.
+    const dispatchIdx = body.indexOf('await resolvePgserveTransport()');
 
-    expect(socketDecision).toBeGreaterThan(-1);
-    expect(daemonProbe).toBeGreaterThan(socketDecision);
-    expect(portDecision).toBeGreaterThan(daemonProbe);
+    expect(testModeIdx).toBeGreaterThan(-1);
+    expect(dispatchIdx).toBeGreaterThan(testModeIdx);
   });
 });
 
@@ -1046,5 +1073,180 @@ describe('cwd pin for stable pgserve identity (issue #1575)', () => {
     // beforeExit is the awaited drain path — fires on every clean exit.
     expect(source).toContain("process.on('beforeExit'");
     expect(source).toMatch(/process\.on\('beforeExit',\s*\(\)\s*=>\s*\{[\s\S]*?shutdown\(\)/);
+  });
+});
+
+// ============================================================================
+// pgserve transport discovery (UDS-first / TCP-fallback).
+//
+// Behavioral tests for `resolvePgserveTransport` — exercises real
+// system behavior with controlled env-var overrides. The function itself
+// is hermetic (no side effects beyond reading env + filesystem + spawning
+// `pgserve port`); we don't mock — instead we set GENIE_PG_FORCE_TCP=1 to
+// pin the deterministic TCP path and assert the resulting shape.
+// ============================================================================
+
+describe('resolvePgserveTransport (transport discovery)', () => {
+  test('GENIE_PG_FORCE_TCP=1 + reachable pgserve port → tcp transport', async () => {
+    // This test only runs when `pgserve port` is reachable on the host. CI
+    // hosts without pgserve installed get a skipped/no-op assertion.
+    const previous = process.env.GENIE_PG_FORCE_TCP;
+    process.env.GENIE_PG_FORCE_TCP = '1';
+    try {
+      const { resolvePgserveTransport } = await import('./db.js');
+      const result = await resolvePgserveTransport().catch((err: Error) => err);
+      if (result instanceof Error) {
+        // No pgserve binary or daemon → resolver throws the both-unavailable
+        // hint. Assert the message shape so future copy edits are caught.
+        expect(result.message).toContain('pgserve is not reachable');
+        expect(result.message).toContain('Recovery:');
+        return;
+      }
+      // pgserve was discoverable on TCP — assert the shape.
+      expect(result.kind).toBe('tcp');
+      if (result.kind === 'tcp') {
+        expect(result.host).toBe('127.0.0.1');
+        expect(Number.isInteger(result.port)).toBe(true);
+        expect(result.port).toBeGreaterThan(0);
+        expect(result.port).toBeLessThan(65536);
+      }
+    } finally {
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset; assigning undefined leaves the literal string "undefined"
+      if (previous === undefined) delete process.env.GENIE_PG_FORCE_TCP;
+      else process.env.GENIE_PG_FORCE_TCP = previous;
+    }
+  });
+
+  test('PgserveTransport tagged-union shape is exhaustive', () => {
+    // Lock the surface so adding/removing a variant requires touching this
+    // exhaustiveness check. Mirrors the VerifyResult pattern from
+    // update-unify-stages G1.
+    type Probe = import('./db.ts').PgserveTransport;
+    const variants: Probe[] = [
+      { kind: 'unix', socketDir: '/tmp/pgserve-sock-x', port: 5432 },
+      { kind: 'tcp', host: '127.0.0.1', port: 8432 },
+    ];
+    expect(variants).toHaveLength(2);
+  });
+
+  test('source enforces probe order: UDS first, TCP fallback', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('export async function resolvePgserveTransport');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    const udsProbeIdx = body.indexOf('probePgserveDaemon()');
+    const tcpFallbackIdx = body.indexOf('discoverTcpPgservePort()');
+
+    expect(udsProbeIdx).toBeGreaterThan(-1);
+    expect(tcpFallbackIdx).toBeGreaterThan(-1);
+    // UDS probe must precede TCP fallback in the function body — that's the
+    // "native socket as default" contract.
+    expect(udsProbeIdx).toBeLessThan(tcpFallbackIdx);
+  });
+
+  test('discoverTcpPgservePort returns null when pgserve binary is absent', async () => {
+    // Force PATH to a directory with no pgserve binary so the spawn fails
+    // cleanly. Resolver falls back to throwing the both-unavailable hint.
+    const originalPath = process.env.PATH;
+    const originalForceTcp = process.env.GENIE_PG_FORCE_TCP;
+    const originalForceSocket = process.env.GENIE_PG_FORCE_SOCKET;
+    const originalPgPort = process.env.GENIE_PG_PORT;
+    process.env.PATH = '/nonexistent';
+    process.env.GENIE_PG_FORCE_TCP = '1'; // skip UDS probe
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_FORCE_SOCKET;
+    // GENIE_PG_PORT must NOT be set — that path takes precedence over
+    // discovery and would let this test pass for the wrong reason.
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_PORT;
+    try {
+      const { resolvePgserveTransport } = await import('./db.js');
+      await expect(resolvePgserveTransport()).rejects.toThrow(/pgserve is not reachable/);
+    } finally {
+      if (originalPath !== undefined) process.env.PATH = originalPath;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      else delete process.env.PATH;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalForceTcp === undefined) delete process.env.GENIE_PG_FORCE_TCP;
+      else process.env.GENIE_PG_FORCE_TCP = originalForceTcp;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalForceSocket === undefined) delete process.env.GENIE_PG_FORCE_SOCKET;
+      else process.env.GENIE_PG_FORCE_SOCKET = originalForceSocket;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalPgPort === undefined) delete process.env.GENIE_PG_PORT;
+      else process.env.GENIE_PG_PORT = originalPgPort;
+    }
+  });
+
+  test('GENIE_PG_PORT escape hatch returns tcp transport without invoking pgserve CLI', async () => {
+    // Codex review-finding on PR #1667: `GENIE_PG_FORCE_TCP=1 GENIE_PG_PORT=N`
+    // was the legacy escape hatch for hosts without the pgserve CLI on PATH.
+    // The new resolver must honor it before falling through to `pgserve port`
+    // discovery so this contract survives transport-discovery rollout.
+    const originalPath = process.env.PATH;
+    const originalForceTcp = process.env.GENIE_PG_FORCE_TCP;
+    const originalForceSocket = process.env.GENIE_PG_FORCE_SOCKET;
+    const originalPgPort = process.env.GENIE_PG_PORT;
+    process.env.PATH = '/nonexistent'; // no pgserve binary
+    process.env.GENIE_PG_FORCE_TCP = '1';
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_FORCE_SOCKET;
+    process.env.GENIE_PG_PORT = '12345';
+    try {
+      const { resolvePgserveTransport } = await import('./db.js');
+      const result = await resolvePgserveTransport();
+      expect(result).toEqual({ kind: 'tcp', host: '127.0.0.1', port: 12345 });
+    } finally {
+      if (originalPath !== undefined) process.env.PATH = originalPath;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      else delete process.env.PATH;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalForceTcp === undefined) delete process.env.GENIE_PG_FORCE_TCP;
+      else process.env.GENIE_PG_FORCE_TCP = originalForceTcp;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalForceSocket === undefined) delete process.env.GENIE_PG_FORCE_SOCKET;
+      else process.env.GENIE_PG_FORCE_SOCKET = originalForceSocket;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalPgPort === undefined) delete process.env.GENIE_PG_PORT;
+      else process.env.GENIE_PG_PORT = originalPgPort;
+    }
+  });
+
+  test('GENIE_PG_PORT with invalid value falls through to discovery', async () => {
+    // Out-of-range / non-numeric / empty values must not short-circuit to a
+    // bogus transport — caller falls back to discovery (which then fails on
+    // /nonexistent PATH and throws the both-unavailable hint).
+    const originalPath = process.env.PATH;
+    const originalForceTcp = process.env.GENIE_PG_FORCE_TCP;
+    const originalForceSocket = process.env.GENIE_PG_FORCE_SOCKET;
+    const originalPgPort = process.env.GENIE_PG_PORT;
+    process.env.PATH = '/nonexistent';
+    process.env.GENIE_PG_FORCE_TCP = '1';
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_FORCE_SOCKET;
+    for (const bogus of ['not-a-number', '0', '-1', '99999', '   ']) {
+      process.env.GENIE_PG_PORT = bogus;
+      try {
+        const { resolvePgserveTransport } = await import('./db.js');
+        await expect(resolvePgserveTransport()).rejects.toThrow(/pgserve is not reachable/);
+      } catch (err) {
+        // Re-throw with context so the failing input is obvious.
+        throw new Error(`GENIE_PG_PORT=${JSON.stringify(bogus)}: ${(err as Error).message}`);
+      }
+    }
+    if (originalPath !== undefined) process.env.PATH = originalPath;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    else delete process.env.PATH;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    if (originalForceTcp === undefined) delete process.env.GENIE_PG_FORCE_TCP;
+    else process.env.GENIE_PG_FORCE_TCP = originalForceTcp;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    if (originalForceSocket === undefined) delete process.env.GENIE_PG_FORCE_SOCKET;
+    else process.env.GENIE_PG_FORCE_SOCKET = originalForceSocket;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    if (originalPgPort === undefined) delete process.env.GENIE_PG_PORT;
+    else process.env.GENIE_PG_PORT = originalPgPort;
   });
 });
