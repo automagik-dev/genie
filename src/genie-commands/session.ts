@@ -113,20 +113,43 @@ export function buildClaudeCommand(
 }
 
 /**
+ * Testable dependency injection — overridable in tests to avoid mock.module
+ * leaking across the shared module cache. Mirrors `protocol-router-spawn._deps`.
+ */
+export const _deps = {
+  executeTmux: tmux.executeTmux as typeof tmux.executeTmux,
+  registerWorker: registry.register as typeof registry.register,
+  findOrCreateAgent: registry.findOrCreateAgent as typeof registry.findOrCreateAgent,
+  createAndLinkExecutor: executorRegistry.createAndLinkExecutor as typeof executorRegistry.createAndLinkExecutor,
+  resolveLeaderName: resolveSessionLeaderName as (team: string) => Promise<string>,
+};
+
+/**
  * Register the interactive genie session in `~/.genie/workers.json`.
  *
  * This allows spawned agents to resolve the team-lead for messaging
  * via the agent registry (e.g., for SendMessage bidirectional comms).
+ *
+ * `sessionId` is the Claude Code session UUID emitted to `--session-id`
+ * at launch. It MUST be persisted on the executor row so session-capture's
+ * filewatch (which joins `agents → executors WHERE claude_session_id IS NOT
+ * NULL`) ingests the leader's JSONL. Without it the JSONL becomes orphaned
+ * and `genie agent show <leader>` reports "No active executor" (#212).
  */
-async function registerSessionInRegistry(sessionName: string, windowName: string, workspaceDir: string): Promise<void> {
+export async function registerSessionInRegistry(
+  sessionName: string,
+  windowName: string,
+  workspaceDir: string,
+  sessionId?: string,
+): Promise<void> {
   try {
     const target = `${sessionName}:${windowName}`;
-    const paneId = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_id}'`)).trim();
+    const paneId = (await _deps.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_id}'`)).trim();
     const now = new Date().toISOString();
     const sanitized = sanitizeTeamName(windowName);
-    const leaderName = await resolveSessionLeaderName(windowName);
+    const leaderName = await _deps.resolveLeaderName(windowName);
     const sanitizedLeader = sanitizeTeamName(leaderName);
-    await registry.register({
+    await _deps.registerWorker({
       id: `${sanitized}-${sanitizedLeader}`,
       paneId,
       session: sessionName,
@@ -144,11 +167,11 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
     });
 
     // Executor model: create agent identity + executor for leader session
-    const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+    const agentIdentity = await _deps.findOrCreateAgent(leaderName, sanitized, leaderName);
 
     let pid: number | null = null;
     try {
-      const pidStr = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_pid}'`)).trim();
+      const pidStr = (await _deps.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_pid}'`)).trim();
       const parsed = Number.parseInt(pidStr, 10);
       if (parsed > 0) pid = parsed;
     } catch {
@@ -162,11 +185,12 @@ async function registerSessionInRegistry(sessionName: string, windowName: string
     // the parent process itself). Regular workers go through spawnAgent which
     // does 'spawning'→'running' explicitly; team-leads do not.
     // Fixes #1184.
-    await executorRegistry.createAndLinkExecutor(agentIdentity.id, 'claude', 'tmux', {
+    await _deps.createAndLinkExecutor(agentIdentity.id, 'claude', 'tmux', {
       pid,
       tmuxSession: sessionName,
       tmuxPaneId: paneId,
       tmuxWindow: windowName,
+      claudeSessionId: sessionId ?? null,
       state: 'running',
       repoPath: workspaceDir,
     });
@@ -270,7 +294,7 @@ async function createSession(
   }
 
   // Register interactive session so spawned agents can find the team-lead
-  await registerSessionInRegistry(sessionName, windowName, workspaceDir);
+  await registerSessionInRegistry(sessionName, windowName, workspaceDir, sessionId);
 }
 
 /**
@@ -354,7 +378,7 @@ async function focusTeamWindow(
     }
 
     // Register interactive session so spawned agents can find the team-lead
-    await registerSessionInRegistry(sessionName, windowName, workingDir);
+    await registerSessionInRegistry(sessionName, windowName, workingDir, sessionId);
   } else {
     // Window exists — check if Claude Code is still running
     const target = `${sessionName}:${windowName}`;
@@ -391,7 +415,7 @@ async function focusTeamWindow(
         // Best-effort guard
       }
 
-      await registerSessionInRegistry(sessionName, windowName, workingDir);
+      await registerSessionInRegistry(sessionName, windowName, workingDir, sessionId);
     }
     // else: Claude Code is still running — just select the window below
   }
