@@ -300,7 +300,7 @@ program
   .description('Close the current turn (inside an agent session) or mark a wish group done (team-lead, <slug>#<group>)')
   .option(
     '-r, --report <message>',
-    'One-line summary of what was completed (REQUIRED — your handoff note for the audit trail and orchestrator)',
+    'Full session handoff — what shipped, what is verified, what is left, surprises, decisions. REQUIRED. As long as it needs to be (multi-line OK; pass via heredoc).',
   )
   .action(async (ref: string | undefined, options: { report?: string }) => {
     const { doneAction } = await import('./term-commands/done.js');

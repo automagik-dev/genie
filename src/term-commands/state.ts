@@ -366,10 +366,12 @@ async function notifyWaveCompletion(
     const repoPath = process.cwd();
     const { leader, spawner } = await resolveNotificationTargets();
 
-    const reportLine = `\n   Report: ${report}`;
+    // Render the report as a fenced block so multi-line handoffs survive
+    // markdown / mailbox renderers without losing the line structure.
+    const reportBlock = `\n\n--- Handoff ---\n${report.trimEnd()}\n--- End handoff ---\n`;
     const message = wishComplete
-      ? `WISH COMPLETE — all groups done: [${waveResult.waveGroups.join(', ')}].${reportLine}\n   Team will be auto-cleaned. Run \`genie team done\` to confirm or override.`
-      : `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}].${reportLine}\n   Run /review or advance to next wave.`;
+      ? `WISH COMPLETE — all groups done: [${waveResult.waveGroups.join(', ')}].${reportBlock}\nTeam will be auto-cleaned. Run \`genie team done\` to confirm or override.`
+      : `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}].${reportBlock}\nRun /review or advance to next wave.`;
 
     // Notify leader
     const result = await protocolRouter.sendMessage(repoPath, 'cli', leader, message);
@@ -399,13 +401,17 @@ async function notifyWaveCompletion(
  */
 export async function doneCommand(ref: string, report: string): Promise<void> {
   if (!report?.trim()) {
-    throw new Error('doneCommand: report is required (one-line summary of what shipped in this group).');
+    throw new Error(
+      'doneCommand: report is required — full group handoff (what shipped, verified, left, surprises). Not a one-liner.',
+    );
   }
   try {
     const { slug, group } = parseRef(ref);
     const result = await wishState.completeGroup(slug, group);
     console.log(`✅ Group "${group}" marked as done in wish "${slug}"`);
-    console.log(`   Report: ${report}`);
+    console.log('--- Handoff ---');
+    console.log(report.trimEnd());
+    console.log('--- End handoff ---');
 
     if (result.completedAt) {
       console.log(`   Completed at: ${formatTimestamp(result.completedAt)}`);

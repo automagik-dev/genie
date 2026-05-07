@@ -63,17 +63,35 @@ interface DoneActionDeps {
 }
 
 /** User-facing nudge when --report is missing. Mandatory so every close
- * leaves a one-line trail in events + mailbox notifications, instead of
- * the silent "agent vanished" mystery. */
+ * leaves a full handoff trail in events + mailbox notifications, instead
+ * of the silent "agent vanished" mystery. The report is the orchestrator's
+ * primary view into what happened — make it count. */
 const REPORT_MISSING_HINT = [
-  '❌ genie done requires --report "<one-line summary of what you did>".',
-  '   This is your handoff note — it lands in the audit trail and the wave/wish-complete',
-  '   notification so the orchestrator (and humans) can see WHY a close happened',
-  '   without having to read your transcript.',
+  '❌ genie done requires --report "<session handoff>".',
   '',
-  '   Examples:',
-  "     genie done --report 'shipped auth bridge happy-path; CSRF deferred to followup'",
-  "     genie done dev-local-auth-bridge#3 --report 'group 3 done — fixtures + smoke'",
+  '   This is your handoff to the orchestrator. It lands in the audit trail and the',
+  '   wave/wish-complete notification, and is the ONLY summary anyone reading later',
+  '   will see without replaying your transcript. Write it like you are briefing the',
+  '   next person on call.',
+  '',
+  '   Cover:',
+  '     • What you attempted (the actual goal of this turn / group)',
+  '     • What shipped — files changed, PRs opened, migrations run, services touched',
+  '     • What is verified vs unverified (tests passed? smoke run? CI green?)',
+  '     • What is left, blocked, or deferred — and why',
+  '     • Surprises or decisions a future agent needs to know (data losses, infra',
+  '       quirks, hooks fired, anything non-obvious)',
+  '',
+  '   Length: as long as it needs to be. A one-liner is almost never enough.',
+  '   Multi-line is fine — pass via heredoc or a file:',
+  "     genie done --report \"$(cat <<'EOF'",
+  '       Goal: wire dev-local auth bridge for hv tenant.',
+  '       Shipped: PR #143 (fixtures), PR #144 (smoke). Both green on CI.',
+  "       Verified: 'make smoke' passed locally; tenant-A login round-trip OK.",
+  '       Left: CSRF rotation deferred to followup (issue #1245).',
+  '       Notes: had to bump core@1.260507.5 — desktop shell rebuild required.',
+  '     EOF',
+  '     )"',
 ].join('\n');
 
 /**
@@ -121,7 +139,9 @@ async function runAgentSessionPath(deps: DoneActionDeps, report: string): Promis
     console.log(`ℹ️  Executor ${result.executorId} already closed — no-op.`);
   } else {
     console.log(`✅ Turn closed: outcome=done, executor=${result.executorId}`);
-    console.log(`   Report: ${report}`);
+    console.log('--- Handoff ---');
+    console.log(report.trimEnd());
+    console.log('--- End handoff ---');
   }
 }
 

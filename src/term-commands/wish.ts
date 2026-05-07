@@ -459,16 +459,31 @@ export function registerWishCommands(program: Command): void {
     .description('Mark a wish group as done (format: <slug>#<group>)')
     .option(
       '-r, --report <message>',
-      'One-line summary of what was completed (REQUIRED — handoff note for audit trail and orchestrator)',
+      'Full group handoff — what shipped, what is verified, what is left, surprises, decisions. REQUIRED. Multi-line OK (pass via heredoc).',
     )
     .action(async (ref: string, options: { report?: string }) => {
       const report = options.report?.trim();
       if (!report) {
         console.error(
-          '❌ genie wish done requires --report "<one-line summary of what was completed>".\n' +
-            '   This is your handoff note — it lands in the audit trail and the wave/wish-complete\n' +
-            '   notification so the orchestrator can see WHY a close happened.\n' +
-            "   Example: genie wish done my-wish#3 --report 'group 3 done — fixtures + smoke'",
+          '❌ genie wish done requires --report "<group handoff>".\n' +
+            '\n' +
+            "   This is the orchestrator's handoff. It lands in the audit trail and the\n" +
+            '   wave/wish-complete notification — the ONLY summary anyone reading later\n' +
+            '   will see without replaying your transcript.\n' +
+            '\n' +
+            '   Cover: what was attempted, what shipped, what is verified vs unverified,\n' +
+            '   what is left or deferred, and any surprises or decisions a future agent\n' +
+            '   needs to know. Length: as long as it needs to be. Multi-line is fine.\n' +
+            '\n' +
+            '   Example (heredoc):\n' +
+            "     genie wish done my-wish#3 --report \"$(cat <<'EOF'\n" +
+            '       Goal: wire dev-local fixtures + smoke for group 3.\n' +
+            '       Shipped: PR #143 + PR #144, both merged to dev.\n' +
+            '       Verified: make smoke passed; tenant-A login round-trip OK.\n' +
+            '       Left: CSRF rotation deferred to issue #1245.\n' +
+            '       Notes: bumped core@1.260507.5 — desktop rebuild required.\n' +
+            '     EOF\n' +
+            '     )"',
         );
         process.exit(2);
       }
