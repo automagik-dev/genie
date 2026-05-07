@@ -160,6 +160,57 @@ describe.skipIf(!DB_AVAILABLE)('register ON CONFLICT preserves protocol fields (
     expect(row?.nativeColor).toBe('#123456');
     expect(row?.state).toBe('idle');
   });
+
+  test('register preserves non-default transport across heartbeat refresh (PR #1684 review)', async () => {
+    // Regression for the Gemini + Codex review finding on PR #1684:
+    // the pre-fix code wrote `${agent.transport ?? 'tmux'}` into VALUES, so
+    // EXCLUDED.transport was never NULL and the COALESCE silently rewrote any
+    // row registered with `transport: 'inline'` back to `'tmux'` on the first
+    // heartbeat-style refresh that omitted the field. Downstream
+    // `findDeadResumable` filters on `w.transport === 'tmux'`, so a clobbered
+    // row would be misclassified into the tmux-only resume path.
+    const identity = await findOrCreateAgent('test-bug3-inline', 'genie', 'fix');
+    const now = new Date().toISOString();
+    await register({
+      id: identity.id,
+      paneId: '%502',
+      session: 'genie',
+      worktree: null,
+      startedAt: now,
+      lastStateChange: now,
+      state: 'working',
+      repoPath: '/tmp/genie-bug3',
+      team: 'genie',
+      role: 'fix',
+      customName: 'test-bug3-inline',
+      provider: 'codex',
+      transport: 'inline',
+      nativeTeamEnabled: true,
+      nativeAgentId: 'test-bug3-inline@genie',
+    });
+
+    // Heartbeat-style refresh that omits transport. Must NOT rewrite to 'tmux'.
+    await register({
+      id: identity.id,
+      paneId: '%502',
+      session: 'genie',
+      worktree: null,
+      startedAt: now,
+      lastStateChange: new Date().toISOString(),
+      state: 'idle',
+      repoPath: '/tmp/genie-bug3',
+      team: 'genie',
+      role: 'fix',
+      customName: 'test-bug3-inline',
+      // transport intentionally omitted.
+      nativeTeamEnabled: true,
+    });
+
+    const row = await get(identity.id);
+    expect(row?.transport).toBe('inline');
+    expect(row?.provider).toBe('codex');
+    expect(row?.state).toBe('idle');
+  });
 });
 
 describe.skip('pg — TODO retire-session-names #175: rewrite fixtures for UUID agents.id', () => {
