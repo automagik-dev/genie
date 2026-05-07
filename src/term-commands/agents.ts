@@ -15,7 +15,7 @@ import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
 import { syncSingleAgentByName } from '../lib/agent-sync.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
-import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
+import { isBuiltinAgent, resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { type ResolveContext, resolveField } from '../lib/defaults.js';
@@ -27,7 +27,7 @@ import { parseFrontmatter } from '../lib/frontmatter.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
 import { getOtelPort, startOtelReceiver } from '../lib/otel-receiver.js';
 import { injectResumeContext } from '../lib/protocol-router-spawn.js';
-import { MissingResumeSessionError } from '../lib/protocol-router.js';
+import { MissingResumeSessionError, type MissingResumeSessionReason } from '../lib/protocol-router.js';
 import {
   type ClaudeTeamColor,
   type ProviderName,
@@ -1056,17 +1056,35 @@ async function finalizeTmuxSpawn(ctx: SpawnCtx, paneId: string, teamWindow: any,
     await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
   }
 
-  await registry.saveTemplate({
-    id: ctx.validated.role ?? ctx.workerId,
-    provider: ctx.validated.provider,
-    team: ctx.validated.team,
-    role: ctx.validated.role,
-    skill: ctx.validated.skill,
-    cwd: ctx.cwd,
-    extraArgs: ctx.extraArgs,
-    nativeTeamEnabled: workerEntry.nativeTeamEnabled,
-    lastSpawnedAt: new Date().toISOString(),
-  });
+  const templateId = ctx.validated.role ?? ctx.workerId;
+  // Built-ins (engineer, trace, qa, council--*, etc.) are SHARED across teams.
+  // Persisting an agent_templates row would pin the team of whichever team
+  // spawned them first, contaminating every later spawn (genie send / mailbox
+  // routing pick the wrong team). Skip the row entirely; runtime resolution
+  // uses GENIE_TEAM env or tmux discovery instead.
+  if (!isBuiltinAgent(templateId)) {
+    // Hierarchical names (`parent/child`) inherit the parent's team. Without
+    // this, `genie-omni/dog-fooder` saved with whatever ctx.validated.team
+    // happened to be (often the operator's session team), and downstream
+    // routing missed because the parent owns the canonical team binding.
+    let team = ctx.validated.team;
+    const slash = templateId.indexOf('/');
+    if (slash > 0) {
+      const parentTeam = await directory.lookupTemplateTeam(templateId.slice(0, slash));
+      if (parentTeam) team = parentTeam;
+    }
+    await registry.saveTemplate({
+      id: templateId,
+      provider: ctx.validated.provider,
+      team,
+      role: ctx.validated.role,
+      skill: ctx.validated.skill,
+      cwd: ctx.cwd,
+      extraArgs: ctx.extraArgs,
+      nativeTeamEnabled: workerEntry.nativeTeamEnabled,
+      lastSpawnedAt: new Date().toISOString(),
+    });
+  }
 
   if (ctx.otelRelayActive && paneId !== '%0') {
     registerOtelRelayPane(ctx.workerId, paneId, ctx.agentName, ctx.spawnColor, ctx.cwd);
@@ -2648,10 +2666,10 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     name,
   );
 
-  // Set CC session display name if not already set
-  if (!params.name) {
-    params.name = `${params.team}-${effectiveRole}`;
-  }
+  // NOTE: --name intentionally not synthesized. CC stores it as `customTitle`
+  // and then suggests `claude --resume "<customTitle>"` instead of the
+  // canonical UUID, breaking session resume (Felipe directive 2026-05-07).
+  // The session UUID flows through --session-id / --resume.
 
   // Executor model: find/create durable agent identity + concurrent guard.
   // Must happen BEFORE buildLaunchCommand so executorId/agentId propagate
@@ -3032,10 +3050,16 @@ export async function handleWorkerResume(
     // genie.ts surfaces it on stderr with exit 1 and tests can assert on
     // the instance. Previously we used console.error + process.exit(1),
     // which is hostile to unit testing and untyped at the boundary.
-    // Map the chokepoint reason onto the legacy MissingResumeSessionError
-    // enum — `no_executor` keeps its meaning, all other "we can't resume"
-    // outcomes collapse onto `no_session_id` (the legacy catch-all).
-    const errReason = decision.reason === 'unknown_agent' ? 'no_executor' : 'no_session_id';
+    // Map the chokepoint reason onto the MissingResumeSessionError enum:
+    //   unknown_agent        → no_executor
+    //   auto_resume_disabled → auto_resume_disabled (session intact, just paused)
+    //   everything else      → no_session_id (legacy catch-all)
+    const errReason: MissingResumeSessionReason =
+      decision.reason === 'unknown_agent'
+        ? 'no_executor'
+        : decision.reason === 'auto_resume_disabled'
+          ? 'auto_resume_disabled'
+          : 'no_session_id';
     throw new MissingResumeSessionError(w.id, undefined, errReason);
   }
   const _sessionId = decision.sessionId;
@@ -3416,7 +3440,8 @@ async function buildResumeParams(
     skill: template?.skill ?? agent.skill,
     extraArgs: template?.extraArgs,
     resume: resumeSessionId,
-    name: `${team}-${agentName}`,
+    // --name intentionally omitted (Felipe directive 2026-05-07): CC's
+    // customTitle leaked into the resume hint and clobbered the UUID.
     model: dirEntry?.model,
     systemPromptFile,
     promptMode,
@@ -3497,7 +3522,12 @@ export async function buildFullResumeParams(
   // `MissingResumeSessionError` so the caller surfaces the failure.
   const decision = await shouldResume(agent.id);
   if (!decision.resume || !decision.sessionId) {
-    const errReason = decision.reason === 'unknown_agent' ? 'no_executor' : 'null_session';
+    const errReason: MissingResumeSessionReason =
+      decision.reason === 'unknown_agent'
+        ? 'no_executor'
+        : decision.reason === 'auto_resume_disabled'
+          ? 'auto_resume_disabled'
+          : 'null_session';
     throw new MissingResumeSessionError(agent.id, undefined, errReason);
   }
   // We're about to actually resume — emit the lifecycle event from the
