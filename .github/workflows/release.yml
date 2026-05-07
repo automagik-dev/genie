@@ -110,10 +110,13 @@ jobs:
       - name: Pack release tarball
         id: pack
         run: |
-          # npm pack writes the tarball to CWD and prints its filename to stdout.
-          # --silent suppresses the progress banner that would otherwise pollute
-          # the step output value.
-          TARBALL=$(npm pack --silent)
+          # npm pack writes the tarball name to stdout as its final line, but
+          # the prepack hook (`bun run build`) ALSO writes to stdout (build
+          # banner + bundled-assets table). `--silent` only suppresses npm's
+          # own progress banner, not the prepack hook's output. Capturing
+          # the full stdout therefore yields a multi-line blob ending with
+          # the tarball name; `tail -n1` extracts the filename reliably.
+          TARBALL=$(npm pack --silent | tail -n1)
           if [ -z "${TARBALL}" ] || [ ! -f "${TARBALL}" ]; then
             echo "npm pack produced no tarball" >&2
             exit 1
