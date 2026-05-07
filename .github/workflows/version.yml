@@ -86,7 +86,7 @@ jobs:
           echo "prefix=4" >> "$GITHUB_OUTPUT"
           echo "Resolved: branch=${BRANCH}"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Pin to the SHA that triggered CI, not the moving branch HEAD,
           # so back-to-back merges never publish a sibling commit's build.
@@ -179,7 +179,7 @@ jobs:
         run: bun run build
 
       - name: Setup Node (for npm OIDC publish)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
