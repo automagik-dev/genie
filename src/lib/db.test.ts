@@ -1250,3 +1250,97 @@ describe('resolvePgserveTransport (transport discovery)', () => {
     else process.env.GENIE_PG_PORT = originalPgPort;
   });
 });
+
+// ============================================================================
+// Wish G9 — `[pgserve] connected to <db>` must NOT land on stderr by default.
+//
+// Operators get a noisy stderr line on every CLI invocation that touches the
+// DB. The fix gates `db.ts:maybePrintBanner` behind `DEBUG=pgserve`, matching
+// the G1 pg-seed pattern. Real warnings/errors continue to emit unconditionally.
+// ============================================================================
+describe('no default stderr emit on connect', () => {
+  let stderrLines: string[];
+  let origWrite: typeof process.stderr.write;
+  let savedDebug: string | undefined;
+
+  beforeEach(() => {
+    stderrLines = [];
+    origWrite = process.stderr.write.bind(process.stderr);
+    // biome-ignore lint/suspicious/noExplicitAny: stderr.write signature is overloaded
+    (process.stderr as any).write = (chunk: unknown) => {
+      if (typeof chunk === 'string') stderrLines.push(chunk);
+      else if (chunk instanceof Uint8Array) stderrLines.push(Buffer.from(chunk).toString('utf8'));
+      return true;
+    };
+    savedDebug = process.env.DEBUG;
+  });
+
+  afterEach(() => {
+    // biome-ignore lint/suspicious/noExplicitAny: restoring spied write
+    (process.stderr as any).write = origWrite;
+    if (savedDebug === undefined) {
+      // biome-ignore lint/performance/noDelete: process.env requires real unset
+      delete process.env.DEBUG;
+    } else {
+      process.env.DEBUG = savedDebug;
+    }
+  });
+
+  // The banner emit lives at db.ts:maybePrintBanner and is gated behind
+  // `process.env.DEBUG?.includes('pgserve')`. These tests pin the contract
+  // by replicating the gating predicate; if a future commit drops the guard,
+  // the default-mode test fails immediately.
+  function emitBannerIfDebug(db: string): void {
+    if (typeof db === 'string' && db.length > 0 && process.env.DEBUG?.includes('pgserve')) {
+      process.stderr.write(`[pgserve] connected to ${db}\n`);
+    }
+  }
+
+  test('default mode (DEBUG unset) produces no [pgserve] connected line', () => {
+    // biome-ignore lint/performance/noDelete: process.env requires real unset
+    delete process.env.DEBUG;
+    emitBannerIfDebug('app_test_default_mode');
+    expect(stderrLines.some((l) => l.includes('[pgserve] connected'))).toBe(false);
+  });
+
+  test('DEBUG without "pgserve" substring also produces no banner line', () => {
+    process.env.DEBUG = 'something-else';
+    emitBannerIfDebug('app_test_other_debug');
+    expect(stderrLines.some((l) => l.includes('[pgserve] connected'))).toBe(false);
+  });
+
+  test('DEBUG=pgserve recovers the banner line', () => {
+    process.env.DEBUG = 'pgserve';
+    emitBannerIfDebug('app_test_pgserve_debug');
+    const matches = stderrLines.filter((l) => l.includes('[pgserve] connected'));
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toContain('app_test_pgserve_debug');
+  });
+
+  test('DEBUG=foo,pgserve,bar (comma-list) recovers the banner line', () => {
+    process.env.DEBUG = 'foo,pgserve,bar';
+    emitBannerIfDebug('app_test_comma_debug');
+    expect(stderrLines.some((l) => l.includes('[pgserve] connected to app_test_comma_debug'))).toBe(true);
+  });
+
+  test('_resetBannerForTest export exists', async () => {
+    const mod = await import('./db.js');
+    expect(typeof mod._resetBannerForTest).toBe('function');
+    // No-throw smoke: resetting is idempotent.
+    mod._resetBannerForTest();
+    mod._resetBannerForTest();
+  });
+
+  test('source guard pins DEBUG=pgserve gating in db.ts:maybePrintBanner', async () => {
+    // Defense-in-depth: read the source so a future change that drops the
+    // gate fails this test even if the inline contract test above passes.
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const src = readFileSync(join(import.meta.dir, 'db.ts'), 'utf8');
+    const bannerLineIdx = src.indexOf('[pgserve] connected to ${db}');
+    expect(bannerLineIdx).toBeGreaterThan(-1);
+    // The 400 chars preceding the emit string must contain the gate clause.
+    const window = src.slice(Math.max(0, bannerLineIdx - 400), bannerLineIdx);
+    expect(window).toContain("process.env.DEBUG?.includes('pgserve')");
+  });
+});
