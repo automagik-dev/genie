@@ -89,6 +89,7 @@ The orchestrator then hands the report to `/fix`.
 - Never fix during trace — investigation only, always separate from correction.
 - Always reproduce before theorizing — if the failure can't be reproduced, the report must say so.
 - Evidence required — every root cause claim must include file paths, line numbers, and a causal chain.
+- **Verify exports before citing them.** Every function name in a "Recommended correction" must be confirmed via `grep -n "export.*<name>"` against the actual file. Never cite a function name from memory or from a stale convention — the codebase evolves and refactors rename or delete public API regularly. A trace report that hallucinates a function name (e.g. claiming `resolveAgentId` exists when only `getAgentByName` does) sends `/fix` down a path that fails type-check and wastes a fix loop. Closes #1674 Bug 5.
 - Hand off to `/fix` — trace produces a report, `/fix` applies the correction. Never combine them.
 - Read-only tools — trace subagent uses Read, Bash, Glob, Grep. No Write, no Edit.
 - If root cause spans multiple systems, report each separately with confidence levels.
