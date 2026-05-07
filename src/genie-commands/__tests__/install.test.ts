@@ -22,6 +22,8 @@ import { _internals } from '../install.js';
 const {
   HARDENED_DEFAULTS,
   PM2_PROCESS_NAME,
+  PM2_LOG_PREFIX,
+  LEGACY_PM2_PROCESS_NAMES,
   buildPm2StartArgs,
   buildEcosystemConfigSource,
   buildCanonicalPgserveHint,
@@ -29,8 +31,27 @@ const {
 } = _internals;
 
 describe('install._internals — canonical-stack constants', () => {
-  test('process name is genie-serve', () => {
-    expect(PM2_PROCESS_NAME).toBe('genie-serve');
+  test('canonical pm2 process name is "Genie" (renamed from "genie-serve")', () => {
+    // Rename rationale: capital-G "Genie" matches the project brand and is
+    // visually distinct from the lowercase `genie` CLI invocations operators
+    // see in the same `pm2 list` output. The legacy "genie-serve" name is
+    // preserved in LEGACY_PM2_PROCESS_NAMES so install + update auto-migrate
+    // pre-rename installs to the canonical name on the next cycle.
+    expect(PM2_PROCESS_NAME).toBe('Genie');
+  });
+
+  test('legacy pm2 names list includes "genie-serve" for auto-migration', () => {
+    // Add to this list, never remove: every legacy name ever shipped must
+    // remain detected for an operator's first post-rename update to clean up.
+    expect(LEGACY_PM2_PROCESS_NAMES).toContain('genie-serve');
+  });
+
+  test('logfile prefix preserves the historical "genie-serve" name', () => {
+    // The pm2 process name was renamed but the logfile prefix is intentionally
+    // pinned: operators have shell aliases / log-rotation rules referencing
+    // `genie-serve-{out,error}.log` and breaking those for cosmetic parity is
+    // not worth it. New installs share the same logfile path as legacy ones.
+    expect(PM2_LOG_PREFIX).toBe('genie-serve');
   });
 
   test('hardened defaults match the canonical pgserve/omni values', () => {
@@ -86,6 +107,15 @@ describe('buildEcosystemConfigSource — pm2 ecosystem config locked down', () =
     for (const field of fieldsExpected) {
       expect(src).toContain(field);
     }
+  });
+
+  test('config name is the canonical "Genie" (not the legacy "genie-serve")', () => {
+    // Lock-in: regression-prone area because the rename is recent. If a
+    // future refactor flips PM2_PROCESS_NAME back to lowercase or to any
+    // legacy alias, this test fires.
+    const src = buildEcosystemConfigSource('/usr/local/bin/genie');
+    expect(src).toContain('"name": "Genie"');
+    expect(src).not.toContain('"name": "genie-serve"');
   });
 
   test('uses interpreter:"none" for shebang resolution (NOT bun)', () => {

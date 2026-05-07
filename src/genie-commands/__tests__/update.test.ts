@@ -199,7 +199,6 @@ describe('normalizeVersion (Group 1)', () => {
 describe('decideVerify (Group 1)', () => {
   test('skipReason "no-restart" returns skipped variant regardless of other inputs', () => {
     const result = decideVerify({
-      cliVersion: '1.0.0',
       serverHealthBody: { version: '1.0.0' },
       endpoint: 'genie doctor --json',
       skipReason: 'no-restart',
@@ -209,7 +208,6 @@ describe('decideVerify (Group 1)', () => {
 
   test('skipReason "no-verify-flag" returns skipped variant', () => {
     const result = decideVerify({
-      cliVersion: '1.0.0',
       serverHealthBody: null,
       endpoint: 'genie doctor --json',
       skipReason: 'no-verify-flag',
@@ -219,7 +217,6 @@ describe('decideVerify (Group 1)', () => {
 
   test('skipReason "no-running-services" returns skipped variant', () => {
     const result = decideVerify({
-      cliVersion: '1.0.0',
       serverHealthBody: null,
       endpoint: 'genie doctor --json',
       skipReason: 'no-running-services',
@@ -229,69 +226,58 @@ describe('decideVerify (Group 1)', () => {
 
   test('null serverHealthBody (no skipReason) returns health-unreachable with endpoint', () => {
     const result = decideVerify({
-      cliVersion: '1.0.0',
       serverHealthBody: null,
       endpoint: 'genie doctor --json',
     });
     expect(result).toEqual({ kind: 'health-unreachable', endpoint: 'genie doctor --json' });
   });
 
-  test('mismatched versions return version-mismatch with normalized strings', () => {
+  test('healthy daemon returns ok carrying disk version + pid', () => {
+    // Truthful-verify rewrite: `version` on the result is the on-disk package
+    // version (what the next CLI invocation reads), NOT the calling CLI's
+    // compile-time constant. The +gitsha is stripped via normalizeVersion.
     const result = decideVerify({
-      cliVersion: '1.0.0',
-      serverHealthBody: { version: '0.9.0+abc' },
-      endpoint: 'genie doctor --json',
+      serverHealthBody: { version: '4.260507.2+abc1234', daemonInodeStale: false, daemonPid: 851758 },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
     });
-    expect(result).toEqual({
-      kind: 'version-mismatch',
-      cliVersion: '1.0.0',
-      serverVersion: '0.9.0',
-    });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', pid: 851758 });
   });
 
-  test('server reachable but version field absent returns version-mismatch with null serverVersion', () => {
+  test('healthy daemon with version field absent returns ok with null version', () => {
+    // Defensive: a malformed package.json (or unreadable disk) returns null
+    // version. ok is preserved because the inode is fresh; banner falls back
+    // to "version unknown" rather than promoting it to an error variant.
     const result = decideVerify({
-      cliVersion: '1.0.0',
-      serverHealthBody: {},
-      endpoint: 'genie doctor --json',
+      serverHealthBody: { daemonInodeStale: false, daemonPid: 851758 },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
     });
-    expect(result).toEqual({
-      kind: 'version-mismatch',
-      cliVersion: '1.0.0',
-      serverVersion: null,
-    });
+    expect(result).toEqual({ kind: 'ok', version: null, pid: 851758 });
   });
 
-  test('matching versions (after +gitsha strip) return ok variant', () => {
+  test('healthy daemon with no daemonInodeStale field treated as fresh inode', () => {
+    // Non-Linux platforms can't probe /proc, so `daemonInodeStale` is absent.
+    // We optimistically assume "no stale inode" — the field defaults to undefined
+    // (NOT true), so decideVerify falls through to ok.
     const result = decideVerify({
-      cliVersion: '1.0.0',
-      serverHealthBody: { version: '1.0.0+abc1234' },
-      endpoint: 'genie doctor --json',
+      serverHealthBody: { version: '4.260507.2' },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
     });
-    expect(result).toEqual({ kind: 'ok', cliVersion: '1.0.0', serverVersion: '1.0.0' });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', pid: null });
   });
 
-  test('matching versions both with +gitsha differ in metadata only → ok', () => {
-    const result = decideVerify({
-      cliVersion: '4.260504.21+abc1234',
-      serverHealthBody: { version: '4.260504.21+def5678' },
-      endpoint: 'genie doctor --json',
-    });
-    expect(result).toEqual({ kind: 'ok', cliVersion: '4.260504.21', serverVersion: '4.260504.21' });
-  });
-
-  test('VerifyResult tagged-union shape is exhaustive (auth-invalid variant reserved for shape parity)', () => {
-    // The auth-invalid variant exists in the type for cross-CLI shape parity with
-    // omni; decideVerify never returns it for genie inputs today. This test
-    // exists to lock the union shape — adding/removing a variant should
-    // require touching this exhaustiveness check.
+  test('VerifyResult tagged-union shape is exhaustive — version-mismatch removed (auth-invalid reserved for shape parity)', () => {
+    // The version-mismatch variant was removed in the truthful-verify rewrite:
+    // it compared the running CLI's frozen `VERSION` against post-update disk
+    // and was structurally guaranteed to fire on every real upgrade (false
+    // positive). The auth-invalid variant remains for cross-CLI shape parity
+    // with omni; decideVerify never returns it for genie inputs today. This
+    // test locks the union — adding/removing a variant should require
+    // touching this exhaustiveness check.
     const variants: VerifyResult[] = [
-      { kind: 'ok', cliVersion: '1.0.0', serverVersion: '1.0.0' },
+      { kind: 'ok', version: '1.0.0', pid: 1234 },
       { kind: 'health-unreachable', endpoint: 'x' },
-      { kind: 'version-mismatch', cliVersion: '1.0.0', serverVersion: '0.9.0' },
       {
         kind: 'daemon-stale-inode',
-        cliVersion: '1.0.0',
         diskVersion: '1.0.0',
         pid: 1234,
         cwd: '/tmp/old (deleted)',
@@ -301,20 +287,16 @@ describe('decideVerify (Group 1)', () => {
       { kind: 'skipped', reason: 'no-running-services' },
       { kind: 'skipped', reason: 'no-verify-flag' },
     ];
-    expect(variants).toHaveLength(8);
+    expect(variants).toHaveLength(7);
   });
 
   test('daemonInodeStale=true returns daemon-stale-inode variant with pid + cwd surfaced', () => {
-    // Bug fix: pre-fix `readServerHealth` returned `{ version: VERSION }` (the
-    // calling CLI's compile-time constant) which made verify a tautology. With
-    // the new probe surfacing `daemonInodeStale`, decideVerify must short-circuit
-    // ahead of the version-equality check — even when the disk version happens
-    // to match the CLI version, a stale inode means the daemon is on pre-update
-    // bytes and operators need an actionable banner.
+    // Inode-stale wins over the optimistic ok path. The kernel `(deleted)`
+    // marker on `/proc/<pid>/cwd` is direct proof the daemon is serving
+    // pre-update bytes and operators need `pm2 restart Genie`.
     const result = decideVerify({
-      cliVersion: '4.260506.3',
       serverHealthBody: {
-        version: '4.260506.3', // disk version matches CLI
+        version: '4.260507.2',
         daemonInodeStale: true,
         daemonPid: 2831346,
         daemonCwd: '/home/genie/.bun/install/global/node_modules/.old-F13E840E5DFD4535 (deleted)',
@@ -323,47 +305,51 @@ describe('decideVerify (Group 1)', () => {
     });
     expect(result).toEqual({
       kind: 'daemon-stale-inode',
-      cliVersion: '4.260506.3',
-      diskVersion: '4.260506.3',
+      diskVersion: '4.260507.2',
       pid: 2831346,
       cwd: '/home/genie/.bun/install/global/node_modules/.old-F13E840E5DFD4535 (deleted)',
     });
   });
 
-  test('daemonInodeStale=false with matching versions returns ok (regression lock)', () => {
+  test('daemonInodeStale=false (post-restart) returns ok carrying disk version', () => {
     // Lock-in: the post-restart happy path. After `restartServeIfStale`
     // re-execs the daemon, /proc/<pid>/cwd no longer carries the (deleted)
-    // marker; decideVerify must return `ok` instead of incorrectly flagging
-    // the now-fresh daemon.
+    // marker; decideVerify must return ok with the fresh on-disk version.
     const result = decideVerify({
-      cliVersion: '4.260506.3',
       serverHealthBody: {
-        version: '4.260506.3',
+        version: '4.260507.2',
         daemonInodeStale: false,
         daemonPid: 9999,
         daemonCwd: '/home/genie/.bun/install/global/node_modules/@automagik/genie',
       },
       endpoint: 'pgserve status --json + ~/.genie/serve.pid',
     });
-    expect(result).toEqual({ kind: 'ok', cliVersion: '4.260506.3', serverVersion: '4.260506.3' });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', pid: 9999 });
   });
 
-  test('daemonInodeStale takes precedence over version-mismatch (stronger signal wins)', () => {
-    // When BOTH signals fire (inode stale AND disk version differs from CLI),
-    // we surface the inode-stale variant because it carries the actionable
-    // remediation (`pm2 restart genie-serve`) — a plain version-mismatch
-    // banner would leave operators guessing which side is wrong.
+  test('disk version differing from anything else does NOT trip a mismatch (CLI-vs-disk comparison removed)', () => {
+    // Regression lock for the truthful-verify rewrite. Before the rewrite,
+    // any mismatch between the calling CLI's compile-time `VERSION` and the
+    // on-disk package.json triggered a `version-mismatch` banner — and that
+    // mismatch fired on EVERY actual upgrade, because bun's package swap
+    // happens while the calling CLI process is still alive (so its frozen
+    // VERSION is necessarily the OLD value when disk just got the NEW one).
+    // The rewrite drops the comparison entirely; ok is the right answer
+    // when the inode is fresh, regardless of what the calling CLI thinks
+    // its own version is.
     const result = decideVerify({
-      cliVersion: '4.260506.3',
       serverHealthBody: {
-        version: '4.260506.2',
-        daemonInodeStale: true,
-        daemonPid: 4242,
-        daemonCwd: '/some/path (deleted)',
+        // disk says 4.260507.2 — the post-update truth
+        version: '4.260507.2',
+        daemonInodeStale: false,
+        daemonPid: 851758,
       },
       endpoint: 'pgserve status --json + ~/.genie/serve.pid',
     });
-    expect(result.kind).toBe('daemon-stale-inode');
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.version).toBe('4.260507.2');
+    }
   });
 });
 
@@ -443,7 +429,6 @@ describe('runVerifyProbe (Group 4)', () => {
   test('skipReason "no-restart" returns skipped variant without polling', async () => {
     let calls = 0;
     const result = await runVerifyProbe({
-      cliVersion: '1.0.0',
       skipReason: 'no-restart',
       readHealth: async () => {
         calls++;
@@ -456,33 +441,32 @@ describe('runVerifyProbe (Group 4)', () => {
 
   test('skipReason "no-verify-flag" returns skipped variant', async () => {
     const result = await runVerifyProbe({
-      cliVersion: '1.0.0',
       skipReason: 'no-verify-flag',
       readHealth: async () => null,
     });
     expect(result).toEqual({ kind: 'skipped', reason: 'no-verify-flag' });
   });
 
-  test('reader returns body on first poll → ok', async () => {
+  test('reader returns body on first poll → ok with on-disk version + pid', async () => {
     const result = await runVerifyProbe({
-      cliVersion: '4.260504.21',
-      readHealth: async () => ({ version: '4.260504.21+abc' }),
+      readHealth: async () => ({ version: '4.260507.2+abc', daemonInodeStale: false, daemonPid: 851758 }),
     });
-    expect(result).toEqual({ kind: 'ok', cliVersion: '4.260504.21', serverVersion: '4.260504.21' });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', pid: 851758 });
   });
 
-  test('reader returns mismatched version → version-mismatch', async () => {
+  test('reader returns disk version differing from anything else → still ok (CLI-vs-disk comparison removed)', async () => {
+    // Pre-rewrite, this test asserted `version-mismatch` whenever the disk
+    // version differed from `cliVersion`. That branch is gone — disk truth
+    // is the only side that matters post-pm2-restart.
     const result = await runVerifyProbe({
-      cliVersion: '1.0.0',
-      readHealth: async () => ({ version: '0.9.0' }),
+      readHealth: async () => ({ version: '0.9.0', daemonInodeStale: false, daemonPid: 1234 }),
     });
-    expect(result).toEqual({ kind: 'version-mismatch', cliVersion: '1.0.0', serverVersion: '0.9.0' });
+    expect(result).toEqual({ kind: 'ok', version: '0.9.0', pid: 1234 });
   });
 
   test('reader returns null until deadline → health-unreachable with endpoint', async () => {
     let calls = 0;
     const result = await runVerifyProbe({
-      cliVersion: '1.0.0',
       readHealth: async () => {
         calls++;
         return null;
@@ -500,13 +484,12 @@ describe('runVerifyProbe (Group 4)', () => {
   test('reader exception is caught and treated as null read', async () => {
     let firstCall = true;
     const result = await runVerifyProbe({
-      cliVersion: '1.0.0',
       readHealth: async () => {
         if (firstCall) {
           firstCall = false;
           throw new Error('connection refused');
         }
-        return { version: '1.0.0' };
+        return { version: '1.0.0', daemonInodeStale: false, daemonPid: 1 };
       },
       deadlineMs: 200,
       intervalMs: 10,
@@ -517,13 +500,27 @@ describe('runVerifyProbe (Group 4)', () => {
 });
 
 describe('formatVerifyBanner (Group 4)', () => {
-  test('ok variant emits CLI + Server lines with healthy marker', () => {
-    const lines = formatVerifyBanner({ kind: 'ok', cliVersion: '1.0.0', serverVersion: '1.0.0' });
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain('CLI');
-    expect(lines[0]).toContain('1.0.0');
-    expect(lines[1]).toContain('Server');
-    expect(lines[1]).toContain('healthy');
+  test('ok variant emits a single Genie line with version + pid + healthy marker', () => {
+    const lines = formatVerifyBanner({ kind: 'ok', version: '4.260507.2', pid: 851758 });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Genie');
+    expect(lines[0]).toContain('4.260507.2');
+    expect(lines[0]).toContain('851758');
+    expect(lines[0]).toContain('healthy');
+  });
+
+  test('ok variant with null version falls back to "version unknown" instead of crashing', () => {
+    const lines = formatVerifyBanner({ kind: 'ok', version: null, pid: 851758 });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('version unknown');
+    expect(lines[0]).toContain('851758');
+  });
+
+  test('ok variant with null pid omits the pid suffix', () => {
+    const lines = formatVerifyBanner({ kind: 'ok', version: '4.260507.2', pid: null });
+    expect(lines[0]).toContain('4.260507.2');
+    expect(lines[0]).toContain('healthy');
+    expect(lines[0]).not.toMatch(/pid\s+\d/);
   });
 
   test('skipped variant collapses to single-line note with reason', () => {
@@ -533,17 +530,11 @@ describe('formatVerifyBanner (Group 4)', () => {
     expect(lines.some((l) => l.includes('no-restart'))).toBe(true);
   });
 
-  test('health-unreachable surfaces the probe endpoint', () => {
+  test('health-unreachable surfaces the probe endpoint and the pm2 fix command', () => {
     const lines = formatVerifyBanner({ kind: 'health-unreachable', endpoint: 'doctor --json' });
-    expect(lines.some((l) => l.includes('Server'))).toBe(true);
+    expect(lines.some((l) => l.includes('unreachable'))).toBe(true);
     expect(lines.some((l) => l.includes('doctor --json'))).toBe(true);
-  });
-
-  test('version-mismatch reports both versions', () => {
-    const lines = formatVerifyBanner({ kind: 'version-mismatch', cliVersion: '1.0.0', serverVersion: '0.9.0' });
-    expect(lines.some((l) => l.includes('1.0.0'))).toBe(true);
-    expect(lines.some((l) => l.includes('0.9.0'))).toBe(true);
-    expect(lines.some((l) => l.includes('mismatch'))).toBe(true);
+    expect(lines.some((l) => l.includes('pm2 restart Genie'))).toBe(true);
   });
 
   test('daemon-stale-inode banner surfaces pid, cwd, and the pm2 restart remediation', () => {
@@ -553,16 +544,17 @@ describe('formatVerifyBanner (Group 4)', () => {
     // can't silently degrade it.
     const lines = formatVerifyBanner({
       kind: 'daemon-stale-inode',
-      cliVersion: '4.260506.3',
-      diskVersion: '4.260506.3',
+      diskVersion: '4.260507.2',
       pid: 2831346,
       cwd: '/home/genie/.bun/install/global/node_modules/.old-F13E840E5DFD4535 (deleted)',
     });
-    expect(lines.some((l) => l.includes('4.260506.3'))).toBe(true);
+    expect(lines.some((l) => l.includes('4.260507.2'))).toBe(true);
     expect(lines.some((l) => l.includes('2831346'))).toBe(true);
-    expect(lines.some((l) => l.includes('stale inode'))).toBe(true);
+    expect(lines.some((l) => l.includes('stale'))).toBe(true);
     expect(lines.some((l) => l.includes('(deleted)'))).toBe(true);
-    expect(lines.some((l) => l.includes('pm2 restart genie-serve'))).toBe(true);
+    // Remediation references the canonical "Genie" pm2 process name (not
+    // the legacy "genie-serve"). Pinned because the rename is recent.
+    expect(lines.some((l) => l.includes('pm2 restart Genie'))).toBe(true);
   });
 });
 
@@ -606,7 +598,7 @@ describe('restartServeIfStale wiring (Group 6)', () => {
   test('runPostUpdateMaintenanceSafe calls restartServeIfStaleSafe before runVerifyProbe', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     const restartIdx = source.indexOf('await restartServeIfStaleSafe()');
-    const verifyIdx = source.indexOf('await runVerifyProbe({ cliVersion: VERSION })');
+    const verifyIdx = source.indexOf('await runVerifyProbe()');
     expect(restartIdx).toBeGreaterThan(-1);
     expect(verifyIdx).toBeGreaterThan(-1);
     // The order matters: restart must happen FIRST so the verify probe sees
@@ -630,11 +622,26 @@ describe('restartServeIfStale wiring (Group 6)', () => {
     expect(source).toContain('readlinkSync(`/proc/${pid}/cwd`)');
   });
 
-  test('pm2GenieServe parses jlist and filters to online genie-serve entry', () => {
+  test('pm2GenieServe matches both canonical "Genie" and legacy "genie-serve" names', () => {
+    // The rename `genie-serve` → `Genie` (4.260507) means update.ts must
+    // discover the entry by either name during the migration window. The
+    // candidate list comes from `install.ts.pm2ProcessNameCandidates()` and
+    // is iterated canonical-first so a freshly-renamed install picks `Genie`.
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).toContain("'pm2', ['jlist']");
-    expect(source).toContain("p.name === 'genie-serve'");
+    expect(source).toContain('pm2ProcessNameCandidates()');
     expect(source).toContain("status !== 'online'");
+  });
+
+  test('restartServeIfStale uses pm2 startOrReload with the regenerated ecosystem config', () => {
+    // After bun's package swap, the ecosystem config on disk needs to be
+    // regenerated so the `version` field in pm2 metadata reflects the new
+    // install. `pm2 startOrReload <config>` re-reads the file and reconciles
+    // by name — this is the only command that picks up `version` / `name`
+    // changes without manual delete-and-recreate.
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('regenerateEcosystemConfig()');
+    expect(source).toContain("'startOrReload'");
   });
 });
 

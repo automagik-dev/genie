@@ -698,7 +698,7 @@ export function checkLegacyAgentFrontmatter(workspaceRoot?: string): CheckResult
  *     auto-spawn its own daemon as a fallback for fingerprint-routed CLI).
  *   - pgserve installed but not under pm2 → WARN pointing at `pgserve install`.
  *   - pgserve registered + reachable → PASS, surface the canonical URL so
- *     operators can verify what genie-serve / omni-api are connecting to.
+ *     operators can verify what Genie / omni-api are connecting to.
  */
 async function checkPgserveCanonical(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
@@ -749,7 +749,7 @@ async function checkPgserveCanonical(): Promise<CheckResult[]> {
       results.push({
         name: 'pgserve under pm2',
         status: 'pass',
-        message: `online — shared backbone for genie-serve + omni-api on :${canonicalPort}`,
+        message: `online — shared backbone for Genie + omni-api on :${canonicalPort}`,
       });
     } else if (parsed.installed === true) {
       // pm2 has the entry but reports stopped. Under the consumer-only
