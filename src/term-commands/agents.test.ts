@@ -1482,4 +1482,58 @@ describe.skipIf(!DB_AVAILABLE)('kill dedup paired', () => {
 
     await sql`DELETE FROM agents WHERE team = ${TEAM_B}`;
   });
+
+  // Codex P1 (PR #1685): killing a UUID owned by TEAM-B must NOT delete a
+  // `dir:<name>` shadow that belongs to TEAM-A. The dir-shadow delete is
+  // gated by team; a UUID kill in another team leaves the surviving team's
+  // directory identity untouched.
+  test('UUID kill respects team scope when dir shadow lives in another team', async () => {
+    const TEAM_OTHER = 'g8-dedup-team-other';
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    await sql`DELETE FROM agents WHERE team = ${TEAM_OTHER}`;
+
+    const dirId = 'dir:g8-isolated';
+    const uuidOther = newUuid();
+    // Dir shadow lives in TEAM (the default test team).
+    await seed(dirId, null, TEAM);
+    // A UUID with the same custom_name lives in a DIFFERENT team.
+    await seed(uuidOther, 'g8-isolated', TEAM_OTHER);
+
+    const otherAgent = await loadAgent(uuidOther);
+    const paired = await killAgentWithDedup(otherAgent, false);
+
+    // No paired removal — the dir shadow belongs to a different team.
+    expect(paired).toEqual([]);
+    expect(await registry.get(uuidOther)).toBeNull();
+    // Critical: the dir shadow in TEAM survives; otherwise we'd orphan its identity.
+    expect(await registry.get(dirId)).not.toBeNull();
+
+    await sql`DELETE FROM agents WHERE team = ${TEAM_OTHER}`;
+  });
+
+  // Codex P2 (PR #1685): legacy dir shadows can carry `custom_name = <name>`
+  // alongside the `dir:` prefix. The paired lookup must exclude the matched
+  // dir row itself; otherwise we falsely report it as a paired removal and
+  // emit a spurious dedup_paired audit event for what is a single-row delete.
+  test('dir kill with no UUID twins reports zero paired even when dir.custom_name is set', async () => {
+    const dirId = 'dir:g8-self';
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    // Seed a dir shadow whose custom_name matches its display name (legacy shape).
+    await sql`DELETE FROM agents WHERE id = ${dirId}`;
+    await sql`
+      INSERT INTO agents (id, custom_name, team, pane_id, session, started_at, state, last_state_change, repo_path)
+      VALUES (${dirId}, 'g8-self', ${TEAM}, 'inline', 'genie',
+              now(), 'idle', now(), '/tmp/g8-self-fixture')
+    `;
+
+    const dir = await loadAgent(dirId);
+    const paired = await killAgentWithDedup(dir, false);
+
+    // The dir row is the only row that matched custom_name+team — but it must
+    // NOT appear in the paired list, since it's the matched row itself.
+    expect(paired).toEqual([]);
+    expect(await registry.get(dirId)).toBeNull();
+  });
 });

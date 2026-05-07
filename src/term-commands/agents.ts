@@ -2839,13 +2839,24 @@ export async function killAgentWithDedup(w: registry.Agent, keepPaired: boolean)
 
   if (isDirRow) {
     return await sql.begin(async (tx: typeof sql) => {
+      // Exclude the matched dir row itself from the paired lookup. Some legacy
+      // dir shadows carry `custom_name = <name>` (the bare-name field is set
+      // alongside the `dir:` prefix); without this filter we'd report the dir
+      // row as its own paired removal and emit a spurious dedup_paired event
+      // for what is really a single-row delete.
       const paired = (await tx<{ id: string }[]>`
         SELECT id FROM agents
-        WHERE custom_name = ${displayName} AND team IS NOT DISTINCT FROM ${team}
+        WHERE custom_name = ${displayName}
+          AND team IS NOT DISTINCT FROM ${team}
+          AND id <> ${w.id}
+          AND id NOT LIKE 'dir:%'
       `) as { id: string }[];
       await tx`DELETE FROM agents WHERE id = ${w.id}`;
       if (paired.length > 0) {
-        await tx`DELETE FROM agents WHERE custom_name = ${displayName} AND team IS NOT DISTINCT FROM ${team}`;
+        await tx`DELETE FROM agents
+          WHERE custom_name = ${displayName}
+            AND team IS NOT DISTINCT FROM ${team}
+            AND id NOT LIKE 'dir:%'`;
       }
       return paired.map((r: { id: string }) => r.id);
     });
@@ -2860,9 +2871,15 @@ export async function killAgentWithDedup(w: registry.Agent, keepPaired: boolean)
     `) as { id: string }[];
     if (remaining.length > 0) return [];
     const dirId = `dir:${displayName}`;
-    const removed = (await tx<{ id: string }[]>`DELETE FROM agents WHERE id = ${dirId} RETURNING id`) as {
-      id: string;
-    }[];
+    // Restrict the shadow delete to the killed UUID's team. A `dir:<name>` row
+    // owned by another team must not be removed when this team's UUID dies —
+    // killing the UUID here would otherwise orphan the surviving team's
+    // directory identity.
+    const removed = (await tx<{ id: string }[]>`
+      DELETE FROM agents
+      WHERE id = ${dirId} AND team IS NOT DISTINCT FROM ${team}
+      RETURNING id
+    `) as { id: string }[];
     return removed.map((r: { id: string }) => r.id);
   });
 }

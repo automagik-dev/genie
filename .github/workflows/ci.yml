@@ -271,6 +271,11 @@ jobs:
       - name: Smoke — genie task list round-trip
         env:
           GENIE_NO_BANNER: ""
+          # Wish G9 (PR #1685): the `[pgserve] connected to <db>` banner is
+          # silent by default to keep operator stderr clean on every CLI
+          # invocation. The smoke continues to assert the connection round-trip
+          # by enabling the debug banner explicitly — same coverage, opt-in.
+          DEBUG: pgserve
         run: |
           set -eo pipefail
           mkdir -p .genie
