@@ -13,7 +13,9 @@
  *   4. Native inbox fallback
  */
 
+import * as directory from './agent-directory.js';
 import * as registry from './agent-registry.js';
+import { isBuiltinAgent } from './builtin-agents.js';
 import * as nativeTeams from './claude-native-teams.js';
 import { getConnection } from './db.js';
 import { findExecutorByPane, getCurrentExecutor } from './executor-registry.js';
@@ -280,7 +282,20 @@ async function lockedSpawnWorker(
 
   if (lockResult.type === 'existing') return { worker: lockResult.worker, respawned: false };
 
-  await registry.saveTemplate({ ...template, lastSpawnedAt: new Date().toISOString() });
+  // Mirror finalizeTmuxSpawn's persistence guard: built-ins are SHARED — never
+  // pin them; subagents (`parent/child`) inherit the parent's team. Without
+  // these guards an auto-respawn refreshes `last_spawned_at` AND can stamp
+  // the wrong team back into agent_templates, defeating the fix at the
+  // primary spawn site.
+  if (!isBuiltinAgent(template.id)) {
+    let team = template.team;
+    const slash = template.id.indexOf('/');
+    if (slash > 0) {
+      const parentTeam = await directory.lookupTemplateTeam(template.id.slice(0, slash));
+      if (parentTeam) team = parentTeam;
+    }
+    await registry.saveTemplate({ ...template, team, lastSpawnedAt: new Date().toISOString() });
+  }
 
   const readyCheck = _deps.waitForWorkerReady ?? waitForWorkerReady;
   await readyCheck(lockResult.paneId);

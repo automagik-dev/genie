@@ -149,3 +149,13 @@ export function listRoleNames(): string[] {
 export function listCouncilNames(): string[] {
   return BUILTIN_COUNCIL_MEMBERS.map((m) => m.name);
 }
+
+/**
+ * Check if a name is a known built-in agent (role or council member).
+ * Built-ins are SHARED across teams — they must not carry sticky team pins
+ * in `agent_templates`, otherwise `lookupTemplateTeam` returns the team of
+ * whichever spawn happened to land first and contaminates every later spawn.
+ */
+export function isBuiltinAgent(name: string): boolean {
+  return ALL_BUILTINS.some((a) => a.name === name);
+}

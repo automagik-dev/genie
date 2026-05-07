@@ -12,7 +12,7 @@
 import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
 import { getActor, recordAuditEvent } from '../lib/audit.js';
-import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
+import { isBuiltinAgent, resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { type ResolveContext, resolveField } from '../lib/defaults.js';
@@ -955,17 +955,35 @@ async function finalizeTmuxSpawn(ctx: SpawnCtx, paneId: string, teamWindow: any,
     await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
   }
 
-  await registry.saveTemplate({
-    id: ctx.validated.role ?? ctx.workerId,
-    provider: ctx.validated.provider,
-    team: ctx.validated.team,
-    role: ctx.validated.role,
-    skill: ctx.validated.skill,
-    cwd: ctx.cwd,
-    extraArgs: ctx.extraArgs,
-    nativeTeamEnabled: workerEntry.nativeTeamEnabled,
-    lastSpawnedAt: new Date().toISOString(),
-  });
+  const templateId = ctx.validated.role ?? ctx.workerId;
+  // Built-ins (engineer, trace, qa, council--*, etc.) are SHARED across teams.
+  // Persisting an agent_templates row would pin the team of whichever team
+  // spawned them first, contaminating every later spawn (genie send / mailbox
+  // routing pick the wrong team). Skip the row entirely; runtime resolution
+  // uses GENIE_TEAM env or tmux discovery instead.
+  if (!isBuiltinAgent(templateId)) {
+    // Hierarchical names (`parent/child`) inherit the parent's team. Without
+    // this, `genie-omni/dog-fooder` saved with whatever ctx.validated.team
+    // happened to be (often the operator's session team), and downstream
+    // routing missed because the parent owns the canonical team binding.
+    let team = ctx.validated.team;
+    const slash = templateId.indexOf('/');
+    if (slash > 0) {
+      const parentTeam = await directory.lookupTemplateTeam(templateId.slice(0, slash));
+      if (parentTeam) team = parentTeam;
+    }
+    await registry.saveTemplate({
+      id: templateId,
+      provider: ctx.validated.provider,
+      team,
+      role: ctx.validated.role,
+      skill: ctx.validated.skill,
+      cwd: ctx.cwd,
+      extraArgs: ctx.extraArgs,
+      nativeTeamEnabled: workerEntry.nativeTeamEnabled,
+      lastSpawnedAt: new Date().toISOString(),
+    });
+  }
 
   if (ctx.otelRelayActive && paneId !== '%0') {
     registerOtelRelayPane(ctx.workerId, paneId, ctx.agentName, ctx.spawnColor, ctx.cwd);
