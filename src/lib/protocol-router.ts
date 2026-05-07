@@ -345,7 +345,21 @@ export async function resolveResumeSessionId(
   const agentIdToProbe = worker?.id ?? `dir:${recipientId}`;
   const decision = await shouldResume(agentIdToProbe);
   if (worker && (await isExecutorResumable(worker))) {
-    if (!decision.sessionId) throw new MissingResumeSessionError(worker.id, recipientId);
+    // CodeRabbit-flagged gap (PR #1693): the chokepoint may return
+    // `resume: false` with a sessionId still attached (e.g.
+    // `auto_resume_disabled` — operator explicitly paused). Without checking
+    // `decision.resume`, the spawn-side path would silently resume a paused
+    // worker. Propagate the chokepoint reason onto the error so operators
+    // see "auto_resume disabled — run recover" instead of "session lost".
+    if (!decision.resume || !decision.sessionId) {
+      const errReason: MissingResumeSessionReason =
+        decision.reason === 'unknown_agent'
+          ? 'no_executor'
+          : decision.reason === 'auto_resume_disabled'
+            ? 'auto_resume_disabled'
+            : 'null_session';
+      throw new MissingResumeSessionError(worker.id, recipientId, errReason);
+    }
   }
   return decision.sessionId;
 }

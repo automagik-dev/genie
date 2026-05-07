@@ -42,7 +42,12 @@ describe.skipIf(!DB_AVAILABLE)('migration 044 — Phase B: flip auto_resume + re
     await cleanup();
   });
 
-  test('fresh DB: agents.auto_resume column default is false after migration 044', async () => {
+  test('fresh DB: agents.auto_resume column default is true after migration 055', async () => {
+    // Migration 055 (PR #1693) flipped the column default from `false` to `true`.
+    // Felipe directive 2026-05-07: default-off was a bug shape — 52/53 agents
+    // had auto_resume=false, meaning no agent could resume without first
+    // running `genie agent recover`. The migration runner applies every
+    // migration under the test schema, so we observe the post-055 state.
     const sql = await getConnection();
     const rows = await sql<{ column_default: string | null }[]>`
       SELECT column_default
@@ -53,10 +58,12 @@ describe.skipIf(!DB_AVAILABLE)('migration 044 — Phase B: flip auto_resume + re
     `;
     expect(rows.length).toBe(1);
     // Postgres reports boolean defaults as 'true' / 'false' literal strings.
-    expect(rows[0].column_default).toBe('false');
+    expect(rows[0].column_default).toBe('true');
   });
 
-  test('fresh-INSERT agent row inherits auto_resume=false', async () => {
+  test('fresh-INSERT agent row inherits auto_resume=true (post-055 default)', async () => {
+    // Migration 055 flipped the default to true. Fresh inserts that don't
+    // explicitly set auto_resume now inherit the safe value.
     const sql = await getConnection();
     const id = `test-fresh-${Date.now()}`;
     await sql`
@@ -66,7 +73,7 @@ describe.skipIf(!DB_AVAILABLE)('migration 044 — Phase B: flip auto_resume + re
     const rows = await sql<{ auto_resume: boolean | null }[]>`
       SELECT auto_resume FROM agents WHERE id = ${id}
     `;
-    expect(rows[0].auto_resume).toBe(false);
+    expect(rows[0].auto_resume).toBe(true);
   });
 
   test('live row (last_state_change < 1h, non-terminal state) preserves auto_resume=true', async () => {
