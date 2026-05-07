@@ -67,8 +67,11 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     '--permission-mode auto',
   ];
 
-  // Session name for CC's /resume and terminal title
-  parts.push(`--name ${shellQuote(sanitized)}`);
+  // NOTE: --name intentionally omitted. CC stores --name as `customTitle` in
+  // the JSONL header and then composes its resume hint as
+  // `claude --resume "<customTitle>"` instead of the canonical UUID, breaking
+  // session resumption (Felipe directive 2026-05-07). Always use --session-id
+  // / --resume <uuid>.
 
   if (options?.sessionId) {
     const flag = options.resume ? '--resume' : '--session-id';

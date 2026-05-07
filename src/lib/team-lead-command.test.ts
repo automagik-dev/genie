@@ -142,7 +142,9 @@ describe('buildTeamLeadCommand resume behavior', () => {
     const cmd = buildTeamLeadCommand('test-team', { promptMode: 'append' });
     expect(cmd).not.toContain('--resume');
     expect(cmd).not.toContain('--session-id');
-    expect(cmd).toContain("--name 'test-team'");
+    // --name retired (Felipe directive 2026-05-07): CC's customTitle
+    // clobbered the UUID resume hint. Always use --session-id / --resume.
+    expect(cmd).not.toContain('--name ');
   });
 
   test('sessionId without resume emits --session-id <uuid>', () => {

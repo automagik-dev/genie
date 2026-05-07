@@ -348,6 +348,27 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
       if (templateTeam) entry.team = templateTeam;
       return { entry, builtin: false };
     }
+
+    // 1b. Fallback to custom_name when role didn't match. Spawned agents
+    // routinely have a custom_name (e.g. "felipe", "fix-resume-name-flag")
+    // that diverges from `role`; without this fallback, `genie agent
+    // recover felipe` failed at the resolver step even though the row was
+    // there (Felipe directive 2026-05-07).
+    const byCustomName = await sql`
+      SELECT role, custom_name, metadata, created_at FROM agents
+      WHERE custom_name = ${name}
+      ORDER BY (CASE WHEN position('dir:' in id) = 1 THEN 0 ELSE 1 END), started_at DESC
+      LIMIT 1
+    `;
+    if (byCustomName.length > 0) {
+      const row = byCustomName[0];
+      const meta = parseMetadata(row.metadata);
+      const createdAt =
+        row.created_at instanceof Date ? row.created_at.toISOString() : (row.created_at as string | undefined);
+      const entry = roleToEntry(typeof row.role === 'string' ? row.role : name, undefined, meta, createdAt);
+      if (templateTeam) entry.team = templateTeam;
+      return { entry, builtin: false };
+    }
   } catch {
     /* PG unavailable — fall through to built-ins */
   }
