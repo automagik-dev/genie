@@ -25,16 +25,20 @@ export interface PermissionConfig {
 // Presets
 // ============================================================================
 
+// AskUserQuestion is the user-prompt UI tool — restricting it forces agents to
+// route clarifications through the team-lead approval queue, which defeats the
+// tool's purpose. Every preset (including read/chat-only) keeps it in allow.
+// Closes #1688.
 export const PRESET_FULL: PermissionConfig = {
   allow: ['*'],
 };
 
 export const PRESET_READ_ONLY: PermissionConfig = {
-  allow: ['Read', 'Glob', 'Grep', 'WebFetch'],
+  allow: ['Read', 'Glob', 'Grep', 'WebFetch', 'AskUserQuestion'],
 };
 
 export const PRESET_CHAT_ONLY: PermissionConfig = {
-  allow: ['SendMessage', 'Read'],
+  allow: ['SendMessage', 'Read', 'AskUserQuestion'],
 };
 
 const PRESETS: Record<string, PermissionConfig> = {

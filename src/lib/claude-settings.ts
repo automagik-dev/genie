@@ -48,6 +48,14 @@ export function removeHookScript(): void {
 }
 
 /**
+ * Tools that genie always whitelists in `~/.claude/settings.json` and in
+ * spawned-agent inline `--settings`. AskUserQuestion is the only baseline today —
+ * without it, Claude Code routes the user-prompt UI through the team-lead
+ * approval queue, breaking the tool's reason for existing (closes #1688).
+ */
+export const GENIE_BASELINE_ALLOWED_TOOLS: readonly string[] = ['AskUserQuestion'];
+
+/**
  * Ensure ~/.claude/settings.json is in a safe, valid state for genie operation.
  *
  * Prior bug: the old `ensureTeammateBypassPermissions()` helper wrote
@@ -63,6 +71,9 @@ export function removeHookScript(): void {
  * - Keep: ensure `settings.skipDangerousModePermissionPrompt === true` so that
  *   agents spawned with `--dangerously-skip-permissions` (manual/legacy path)
  *   don't hit an interactive confirmation prompt.
+ * - Seed: ensure every tool in GENIE_BASELINE_ALLOWED_TOOLS is present in
+ *   `settings.permissions.allow`. Existing entries (and any unrelated permission
+ *   keys like `deny` / `defaultMode`) are preserved verbatim.
  * - Write back only if something changed.
  *
  * Idempotent — safe to call on every team setup.
@@ -95,9 +106,34 @@ export function ensureClaudeSettingsSafe(): void {
     changed = true;
   }
 
+  if (ensureBaselineAllowedTools(settings)) {
+    changed = true;
+  }
+
   if (changed) {
     writeFileSync(CLAUDE_SETTINGS_FILE, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8');
   }
+}
+
+/**
+ * Mutate `settings.permissions.allow` so every baseline tool is present.
+ * Returns true when the object was modified, false otherwise.
+ *
+ * Exported for unit testing — `ensureClaudeSettingsSafe` binds to the cached
+ * `~/.claude/settings.json` path at module load (a deliberate choice, since
+ * pivoting HOME at runtime would clobber any other test that resets HOME in
+ * its teardown). Tests exercise this pure helper directly.
+ */
+export function ensureBaselineAllowedTools(settings: Record<string, unknown>): boolean {
+  const permissions = (settings.permissions ?? {}) as Record<string, unknown>;
+  const existingAllow = Array.isArray(permissions.allow) ? (permissions.allow as unknown[]) : [];
+  const allowStrings = existingAllow.filter((entry): entry is string => typeof entry === 'string');
+  const missing = GENIE_BASELINE_ALLOWED_TOOLS.filter((tool) => !allowStrings.includes(tool));
+  if (missing.length === 0) return false;
+
+  permissions.allow = [...allowStrings, ...missing];
+  settings.permissions = permissions;
+  return true;
 }
 
 /**

@@ -209,7 +209,7 @@ describe('buildClaudeCommand', () => {
   });
 
   describe('permissions forwarding', () => {
-    it('includes permissions.allow in --settings JSON', () => {
+    it('includes permissions.allow in --settings JSON (with AskUserQuestion baseline)', () => {
       const result = buildClaudeCommand({
         provider: 'claude',
         team: 'work',
@@ -218,11 +218,11 @@ describe('buildClaudeCommand', () => {
       });
 
       const permissions = extractClaudeSettings(result.command).permissions as Record<string, unknown>;
-      expect(permissions.allow).toEqual(['Read', 'Glob']);
+      expect(permissions.allow).toEqual(['Read', 'Glob', 'AskUserQuestion']);
       expect(permissions.deny).toBeUndefined();
     });
 
-    it('includes permissions.allow and permissions.deny in --settings JSON', () => {
+    it('includes permissions.allow and permissions.deny in --settings JSON (with AskUserQuestion baseline)', () => {
       const result = buildClaudeCommand({
         provider: 'claude',
         team: 'work',
@@ -231,11 +231,11 @@ describe('buildClaudeCommand', () => {
       });
 
       const permissions = extractClaudeSettings(result.command).permissions as Record<string, unknown>;
-      expect(permissions.allow).toEqual(['Read', 'Glob']);
+      expect(permissions.allow).toEqual(['Read', 'Glob', 'AskUserQuestion']);
       expect(permissions.deny).toEqual(['Bash(rm *)']);
     });
 
-    it('preserves permissions through buildLaunchCommand validation', () => {
+    it('preserves permissions through buildLaunchCommand validation (with AskUserQuestion baseline)', () => {
       const result = buildLaunchCommand({
         provider: 'claude',
         team: 'work',
@@ -244,7 +244,7 @@ describe('buildClaudeCommand', () => {
       });
 
       const permissions = extractClaudeSettings(result.command).permissions as Record<string, unknown>;
-      expect(permissions).toEqual({ allow: ['Read'], deny: ['Write'] });
+      expect(permissions).toEqual({ allow: ['Read', 'AskUserQuestion'], deny: ['Write'] });
     });
 
     it('emits one --disallowedTools flag per input tool in order', () => {
@@ -258,7 +258,7 @@ describe('buildClaudeCommand', () => {
       expect(result.command).toContain("--disallowedTools 'Edit' --disallowedTools 'Write' --disallowedTools 'Agent'");
     });
 
-    it('omits permissions from --settings JSON when allow and deny are empty', () => {
+    it('emits the AskUserQuestion baseline even when explicit allow/deny are empty', () => {
       const result = buildClaudeCommand({
         provider: 'claude',
         team: 'work',
@@ -266,7 +266,36 @@ describe('buildClaudeCommand', () => {
         permissions: { allow: [], deny: [] },
       });
 
-      expect(extractClaudeSettings(result.command).permissions).toBeUndefined();
+      const permissions = extractClaudeSettings(result.command).permissions as Record<string, unknown>;
+      expect(permissions.allow).toEqual(['AskUserQuestion']);
+      expect(permissions.deny).toBeUndefined();
+    });
+
+    it('seeds AskUserQuestion baseline when no permissions are configured (closes #1688)', () => {
+      // Regression test for #1688 — without an explicit permissions block, spawned
+      // Claude Code agents had AskUserQuestion route through the team-lead approval
+      // queue (because the tool was not in the spawned agent's allow list), turning
+      // every clarification prompt into an operator popup. Baseline must always ship.
+      const result = buildClaudeCommand({
+        provider: 'claude',
+        team: 'work',
+        role: 'sandboxed',
+      });
+
+      const permissions = extractClaudeSettings(result.command).permissions as Record<string, unknown>;
+      expect(permissions.allow).toEqual(['AskUserQuestion']);
+    });
+
+    it('does not duplicate AskUserQuestion when the agent already lists it explicitly', () => {
+      const result = buildClaudeCommand({
+        provider: 'claude',
+        team: 'work',
+        role: 'sandboxed',
+        permissions: { allow: ['AskUserQuestion', 'Read'] },
+      });
+
+      const permissions = extractClaudeSettings(result.command).permissions as Record<string, unknown>;
+      expect(permissions.allow).toEqual(['AskUserQuestion', 'Read']);
     });
 
     it('does not hardcode forbidden permission bypass flag literals', () => {
