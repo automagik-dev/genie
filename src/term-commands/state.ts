@@ -358,6 +358,7 @@ async function resolveNotificationTargets(): Promise<{ leader: string; spawner?:
 async function notifyWaveCompletion(
   waveResult: { waveName: string; waveGroups: string[] },
   wishComplete: boolean,
+  report: string,
 ): Promise<void> {
   console.log(`   🌊 ${waveResult.waveName} complete! All groups done: ${waveResult.waveGroups.join(', ')}`);
   try {
@@ -365,9 +366,12 @@ async function notifyWaveCompletion(
     const repoPath = process.cwd();
     const { leader, spawner } = await resolveNotificationTargets();
 
+    // Render the report as a fenced block so multi-line handoffs survive
+    // markdown / mailbox renderers without losing the line structure.
+    const reportBlock = `\n\n--- Handoff ---\n${report.trimEnd()}\n--- End handoff ---\n`;
     const message = wishComplete
-      ? `WISH COMPLETE — all groups done: [${waveResult.waveGroups.join(', ')}]. Run \`genie team done\` to clean up.`
-      : `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}]. Run /review or advance to next wave.`;
+      ? `WISH COMPLETE — all groups done: [${waveResult.waveGroups.join(', ')}].${reportBlock}\nTeam will be auto-cleaned. Run \`genie team done\` to confirm or override.`
+      : `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}].${reportBlock}\nRun /review or advance to next wave.`;
 
     // Notify leader
     const result = await protocolRouter.sendMessage(repoPath, 'cli', leader, message);
@@ -395,11 +399,19 @@ async function notifyWaveCompletion(
  * `genie done <slug>#<group>` — complete a group, push work, notify team-lead
  * on wave completion, and auto-kill the calling agent's tmux pane.
  */
-export async function doneCommand(ref: string): Promise<void> {
+export async function doneCommand(ref: string, report: string): Promise<void> {
+  if (!report?.trim()) {
+    throw new Error(
+      'doneCommand: report is required — full group handoff (what shipped, verified, left, surprises). Not a one-liner.',
+    );
+  }
   try {
     const { slug, group } = parseRef(ref);
     const result = await wishState.completeGroup(slug, group);
     console.log(`✅ Group "${group}" marked as done in wish "${slug}"`);
+    console.log('--- Handoff ---');
+    console.log(report.trimEnd());
+    console.log('--- End handoff ---');
 
     if (result.completedAt) {
       console.log(`   Completed at: ${formatTimestamp(result.completedAt)}`);
@@ -426,7 +438,7 @@ export async function doneCommand(ref: string): Promise<void> {
     // Wave completion detection + team-lead notification
     const waveResult = await detectWaveCompletion(slug, group);
     if (waveResult) {
-      await notifyWaveCompletion(waveResult, wishComplete);
+      await notifyWaveCompletion(waveResult, wishComplete, report);
     }
 
     // If entire wish is complete, auto-trigger team cleanup

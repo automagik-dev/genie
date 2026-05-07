@@ -1,6 +1,7 @@
 /**
  * `genie done` command dispatch — agent-session path vs wish-group path
- * vs the Group 6 permanent-agent rejection guard.
+ * vs the Group 6 permanent-agent rejection guard, plus the mandatory
+ * --report nudge that gives every close a one-line audit trail.
  *
  * Uses injected deps (no DB) to isolate routing behavior.
  */
@@ -8,6 +9,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { TurnCloseResult } from '../lib/turn-close.js';
 import { PermanentAgentDoneRejected, doneAction } from './done.js';
+
+const REPORT = { report: 'shipped foo + bar; smoke green' };
 
 describe('doneAction dispatch', () => {
   const originalAgent = process.env.GENIE_AGENT_NAME;
@@ -20,11 +23,11 @@ describe('doneAction dispatch', () => {
     process.env.GENIE_AGENT_NAME = originalAgent;
   });
 
-  test('agent session + no ref → calls turnClose(outcome=done)', async () => {
+  test('agent session + no ref → calls turnClose(outcome=done) with report as reason', async () => {
     process.env.GENIE_AGENT_NAME = 'engineer-g2';
-    const calls: Array<{ outcome: string }> = [];
-    const turnCloseFn = async (opts: { outcome: string }): Promise<TurnCloseResult> => {
-      calls.push({ outcome: opts.outcome });
+    const calls: Array<{ outcome: string; reason?: string }> = [];
+    const turnCloseFn = async (opts: { outcome: string; reason?: string }): Promise<TurnCloseResult> => {
+      calls.push({ outcome: opts.outcome, reason: opts.reason });
       return { noop: false, executorId: 'exec-1', outcome: 'done', closedAt: new Date().toISOString() };
     };
     let wishCalls = 0;
@@ -33,28 +36,28 @@ describe('doneAction dispatch', () => {
     };
     const lookupCallingAgent = async () => ({ id: 'agent-task', kind: 'task' as const });
 
-    await doneAction(undefined, { turnCloseFn: turnCloseFn as never, wishDone, lookupCallingAgent });
+    await doneAction(undefined, REPORT, { turnCloseFn: turnCloseFn as never, wishDone, lookupCallingAgent });
 
-    expect(calls).toEqual([{ outcome: 'done' }]);
+    expect(calls).toEqual([{ outcome: 'done', reason: REPORT.report }]);
     expect(wishCalls).toBe(0);
   });
 
-  test('positional ref → delegates to wish-group doneCommand', async () => {
+  test('positional ref → delegates to wish-group doneCommand with report', async () => {
     process.env.GENIE_AGENT_NAME = 'engineer-g2';
     let turnCalls = 0;
     const turnCloseFn = async (): Promise<TurnCloseResult> => {
       turnCalls++;
       return { noop: false, executorId: 'x', outcome: 'done', closedAt: null };
     };
-    const wishRefs: string[] = [];
-    const wishDone = async (ref: string) => {
-      wishRefs.push(ref);
+    const wishCalls: Array<{ ref: string; report: string }> = [];
+    const wishDone = async (ref: string, report: string) => {
+      wishCalls.push({ ref, report });
     };
 
-    await doneAction('my-wish#2', { turnCloseFn: turnCloseFn as never, wishDone });
+    await doneAction('my-wish#2', REPORT, { turnCloseFn: turnCloseFn as never, wishDone });
 
     expect(turnCalls).toBe(0);
-    expect(wishRefs).toEqual(['my-wish#2']);
+    expect(wishCalls).toEqual([{ ref: 'my-wish#2', report: REPORT.report }]);
   });
 
   test('positional ref without GENIE_AGENT_NAME → still delegates to wish path', async () => {
@@ -63,15 +66,15 @@ describe('doneAction dispatch', () => {
       turnCalls++;
       return { noop: false, executorId: 'x', outcome: 'done', closedAt: null };
     };
-    const wishRefs: string[] = [];
-    const wishDone = async (ref: string) => {
-      wishRefs.push(ref);
+    const wishCalls: Array<{ ref: string; report: string }> = [];
+    const wishDone = async (ref: string, report: string) => {
+      wishCalls.push({ ref, report });
     };
 
-    await doneAction('other-wish#1', { turnCloseFn: turnCloseFn as never, wishDone });
+    await doneAction('other-wish#1', REPORT, { turnCloseFn: turnCloseFn as never, wishDone });
 
     expect(turnCalls).toBe(0);
-    expect(wishRefs).toEqual(['other-wish#1']);
+    expect(wishCalls).toEqual([{ ref: 'other-wish#1', report: REPORT.report }]);
   });
 
   test('no ref + no GENIE_AGENT_NAME → exits with error', async () => {
@@ -83,7 +86,7 @@ describe('doneAction dispatch', () => {
     }) as never;
 
     try {
-      await expect(doneAction(undefined)).rejects.toThrow(/process.exit stub/);
+      await expect(doneAction(undefined, REPORT)).rejects.toThrow(/process.exit stub/);
       expect(exitCode).toBe(2);
     } finally {
       process.exit = originalExit;
@@ -101,7 +104,61 @@ describe('doneAction dispatch', () => {
     const lookupCallingAgent = async () => ({ id: 'agent-task', kind: 'task' as const });
 
     // Should complete without throwing
-    await doneAction(undefined, { turnCloseFn: turnCloseFn as never, lookupCallingAgent });
+    await doneAction(undefined, REPORT, { turnCloseFn: turnCloseFn as never, lookupCallingAgent });
+  });
+
+  // ==========================================================================
+  // Mandatory --report nudge
+  // ==========================================================================
+
+  describe('mandatory --report', () => {
+    test('missing report → exits 2 with friendly hint, never calls turnClose or wishDone', async () => {
+      process.env.GENIE_AGENT_NAME = 'engineer-g2';
+      const originalExit = process.exit;
+      let exitCode: number | undefined;
+      process.exit = ((code?: number) => {
+        exitCode = code;
+        throw new Error('process.exit stub');
+      }) as never;
+
+      let turnCalls = 0;
+      const turnCloseFn = async (): Promise<TurnCloseResult> => {
+        turnCalls++;
+        return { noop: false, executorId: 'x', outcome: 'done', closedAt: null };
+      };
+      let wishCalls = 0;
+      const wishDone = async () => {
+        wishCalls++;
+      };
+
+      try {
+        await expect(doneAction(undefined, {}, { turnCloseFn: turnCloseFn as never, wishDone })).rejects.toThrow(
+          /process.exit stub/,
+        );
+        expect(exitCode).toBe(2);
+        expect(turnCalls).toBe(0);
+        expect(wishCalls).toBe(0);
+      } finally {
+        process.exit = originalExit;
+      }
+    });
+
+    test('whitespace-only report → treated as missing', async () => {
+      process.env.GENIE_AGENT_NAME = 'engineer-g2';
+      const originalExit = process.exit;
+      let exitCode: number | undefined;
+      process.exit = ((code?: number) => {
+        exitCode = code;
+        throw new Error('process.exit stub');
+      }) as never;
+
+      try {
+        await expect(doneAction(undefined, { report: '   \n  ' })).rejects.toThrow(/process.exit stub/);
+        expect(exitCode).toBe(2);
+      } finally {
+        process.exit = originalExit;
+      }
+    });
   });
 
   // ==========================================================================
@@ -126,13 +183,10 @@ describe('doneAction dispatch', () => {
       const lookupCallingAgent = async () => ({ id: 'team-lead-uuid', kind: 'permanent' as const });
 
       try {
-        await expect(doneAction(undefined, { turnCloseFn: turnCloseFn as never, lookupCallingAgent })).rejects.toThrow(
-          /process.exit stub/,
-        );
+        await expect(
+          doneAction(undefined, REPORT, { turnCloseFn: turnCloseFn as never, lookupCallingAgent }),
+        ).rejects.toThrow(/process.exit stub/);
         expect(exitCode).toBe(4);
-        // turnClose must NOT be reached on rejection — the side effects
-        // (state='done', current_executor_id=NULL) are exactly what the
-        // permanent-agent guard prevents.
         expect(turnCalls).toBe(0);
       } finally {
         process.exit = originalExit;
@@ -148,7 +202,7 @@ describe('doneAction dispatch', () => {
       };
       const lookupCallingAgent = async () => ({ id: 'engineer-g6-uuid', kind: 'task' as const });
 
-      await doneAction(undefined, { turnCloseFn: turnCloseFn as never, lookupCallingAgent });
+      await doneAction(undefined, REPORT, { turnCloseFn: turnCloseFn as never, lookupCallingAgent });
       expect(turnCalls).toBe(1);
     });
 
@@ -161,9 +215,7 @@ describe('doneAction dispatch', () => {
       };
       const lookupCallingAgent = async () => null;
 
-      await doneAction(undefined, { turnCloseFn: turnCloseFn as never, lookupCallingAgent });
-      // We could not prove permanence, so the existing turnClose path runs;
-      // its own ghost-executor recovery / error reporting takes over.
+      await doneAction(undefined, REPORT, { turnCloseFn: turnCloseFn as never, lookupCallingAgent });
       expect(turnCalls).toBe(1);
     });
 
@@ -176,9 +228,7 @@ describe('doneAction dispatch', () => {
       };
       const lookupCallingAgent = async () => ({ id: 'agent-degraded', kind: null });
 
-      await doneAction(undefined, { turnCloseFn: turnCloseFn as never, lookupCallingAgent });
-      // kind=null defaults to "let it through" — same posture as the
-      // shouldResume chokepoint, which treats unknown kind as task-bound.
+      await doneAction(undefined, REPORT, { turnCloseFn: turnCloseFn as never, lookupCallingAgent });
       expect(turnCalls).toBe(1);
     });
 
@@ -204,14 +254,14 @@ describe('doneAction dispatch', () => {
         lookupCalls++;
         return { id: 'team-lead-uuid', kind: 'permanent' as const };
       };
-      const wishRefs: string[] = [];
-      const wishDone = async (ref: string) => {
-        wishRefs.push(ref);
+      const wishCalls: Array<{ ref: string; report: string }> = [];
+      const wishDone = async (ref: string, report: string) => {
+        wishCalls.push({ ref, report });
       };
 
-      await doneAction('my-wish#3', { wishDone, lookupCallingAgent });
+      await doneAction('my-wish#3', REPORT, { wishDone, lookupCallingAgent });
       expect(lookupCalls).toBe(0);
-      expect(wishRefs).toEqual(['my-wish#3']);
+      expect(wishCalls).toEqual([{ ref: 'my-wish#3', report: REPORT.report }]);
     });
   });
 });
