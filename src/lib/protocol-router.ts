@@ -47,12 +47,28 @@ interface DeliveryResult {
  * of quietly proceeding with a fresh spawn.
  *
  * `reason` names which precondition failed:
- *   - `no_executor`   — agent has no `current_executor_id` (never spawned, or row pruned)
- *   - `null_session`  — executor row exists but `claude_session_id` is null
- *   - `no_session_id` — legacy alias kept for callers that read `agent.claudeSessionId`
- *                       directly before Group 1's single-reader helper lands.
+ *   - `no_executor`           — agent has no `current_executor_id` (never spawned, or row pruned)
+ *   - `null_session`          — executor row exists but `claude_session_id` is null (genuine session loss)
+ *   - `no_session_id`         — legacy alias kept for callers that read `agent.claudeSessionId`
+ *                                directly before Group 1's single-reader helper lands.
+ *   - `auto_resume_disabled`  — executor HAS a session_id, but `agents.auto_resume = false`
+ *                                (operator paused or scheduler exhausted retries). The session
+ *                                is intact — flip `auto_resume = true` via `genie agent recover`.
  */
-export type MissingResumeSessionReason = 'no_executor' | 'null_session' | 'no_session_id';
+export type MissingResumeSessionReason = 'no_executor' | 'null_session' | 'no_session_id' | 'auto_resume_disabled';
+
+function buildResumeErrorMessage(workerId: string, suffix: string, reason: MissingResumeSessionReason): string {
+  if (reason === 'auto_resume_disabled') {
+    return (
+      `Cannot resume worker "${workerId}"${suffix}: auto_resume is disabled, but the session UUID is intact ` +
+      `(reason: auto_resume_disabled). Run \`genie agent recover ${workerId} --yes\` to flip the flag and resume.`
+    );
+  }
+  return (
+    `Cannot resume worker "${workerId}"${suffix}: executor has no claude_session_id recorded (reason: ${reason}). ` +
+    `This usually means the worker predates the session-sync hook. Run \`genie reset ${workerId}\` or re-spawn the worker to recover.`
+  );
+}
 
 export class MissingResumeSessionError extends Error {
   readonly workerId: string;
@@ -62,9 +78,7 @@ export class MissingResumeSessionError extends Error {
 
   constructor(workerId: string, recipientId?: string, reason: MissingResumeSessionReason = 'null_session') {
     const suffix = recipientId ? ` (recipient "${recipientId}")` : '';
-    super(
-      `Cannot resume worker "${workerId}"${suffix}: executor has no claude_session_id recorded (reason: ${reason}). This usually means the worker predates the session-sync hook. Run \`genie reset ${workerId}\` or re-spawn the worker to recover.`,
-    );
+    super(buildResumeErrorMessage(workerId, suffix, reason));
     this.name = 'MissingResumeSessionError';
     this.workerId = workerId;
     this.entityId = workerId;

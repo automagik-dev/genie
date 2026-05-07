@@ -526,6 +526,37 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(legacyAlias.reason).toBe('no_session_id');
       expect(legacyAlias.message).toContain('no_session_id');
     });
+
+    // Felipe directive 2026-05-07: when an agent has auto_resume=false but
+    // its session UUID is intact, the error must NOT pretend the session is
+    // lost. Previously every "I can't resume" outcome collapsed onto
+    // null_session, and operators chased nonexistent missing-session bugs.
+    test('MissingResumeSessionError(reason=auto_resume_disabled) tells the operator the session is intact and to run recover', async () => {
+      const { MissingResumeSessionError } = await import('./protocol-router.js');
+
+      const paused = new MissingResumeSessionError('paused-agent', undefined, 'auto_resume_disabled');
+      expect(paused.reason).toBe('auto_resume_disabled');
+      expect(paused.entityId).toBe('paused-agent');
+      // Message MUST distinguish from the "session lost" case.
+      expect(paused.message).toContain('auto_resume is disabled');
+      expect(paused.message).toContain('session UUID is intact');
+      expect(paused.message).toContain('genie agent recover paused-agent');
+      // Must NOT mislead the operator into thinking the session is lost.
+      expect(paused.message).not.toContain('no claude_session_id recorded');
+      expect(paused.message).not.toContain('genie reset');
+    });
+
+    test('MissingResumeSessionError(reason=null_session) keeps the session-lost runbook hint', async () => {
+      const { MissingResumeSessionError } = await import('./protocol-router.js');
+
+      const lost = new MissingResumeSessionError('lost-agent', undefined, 'null_session');
+      expect(lost.reason).toBe('null_session');
+      // Genuine session-loss path keeps the legacy `genie reset` runbook hint.
+      expect(lost.message).toContain('no claude_session_id recorded');
+      expect(lost.message).toContain('genie reset lost-agent');
+      // And must NOT confuse itself with the auto_resume_disabled message.
+      expect(lost.message).not.toContain('auto_resume is disabled');
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -105,7 +105,13 @@ export interface SpawnParams {
   model?: string;
   /** Initial prompt to send as the first user message (Claude Code positional [prompt] arg). */
   initialPrompt?: string;
-  /** Display name for the CC session (emits --name). Used in /resume and terminal title. */
+  /**
+   * @deprecated 2026-05-07 — `--name` was retired because CC stored it as
+   * `customTitle` in the JSONL header and then composed `claude --resume
+   * "<customTitle>"` instead of the canonical UUID, breaking session resume.
+   * The field remains in the schema for backward compatibility but is no
+   * longer emitted on the launch command. Always use `sessionId` / `resume`.
+   */
   name?: string;
   /** Claude Code permissions (allow/deny lists with Bash() patterns). Merged into --settings. */
   permissions?: { allow?: string[]; deny?: string[] };
@@ -389,7 +395,10 @@ function appendSessionFlags(parts: string[], params: SpawnParams): void {
   const claudeAgentFlag = params.agentTemplate ?? params.role;
   if (claudeAgentFlag) parts.push('--agent', escapeShellArg(claudeAgentFlag));
   if (params.model) parts.push('--model', escapeShellArg(params.model));
-  if (params.name) parts.push('--name', escapeShellArg(params.name));
+  // NOTE: --name intentionally NOT emitted. CC stores --name as `customTitle`
+  // in the JSONL header and then suggests `claude --resume "<customTitle>"`
+  // instead of the canonical UUID, clobbering session resume (Felipe directive
+  // 2026-05-07). The session UUID flows through --session-id / --resume above.
 }
 
 // Inject hook dispatch + permissions via --settings (deep-merges with existing settings).

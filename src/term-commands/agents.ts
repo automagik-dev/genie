@@ -23,7 +23,7 @@ import type { TransportType as ExecutorTransport } from '../lib/executor-types.j
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
 import { getOtelPort, startOtelReceiver } from '../lib/otel-receiver.js';
 import { injectResumeContext } from '../lib/protocol-router-spawn.js';
-import { MissingResumeSessionError } from '../lib/protocol-router.js';
+import { MissingResumeSessionError, type MissingResumeSessionReason } from '../lib/protocol-router.js';
 import {
   type ClaudeTeamColor,
   type ProviderName,
@@ -2200,10 +2200,10 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     name,
   );
 
-  // Set CC session display name if not already set
-  if (!params.name) {
-    params.name = `${params.team}-${effectiveRole}`;
-  }
+  // NOTE: --name intentionally not synthesized. CC stores it as `customTitle`
+  // and then suggests `claude --resume "<customTitle>"` instead of the
+  // canonical UUID, breaking session resume (Felipe directive 2026-05-07).
+  // The session UUID flows through --session-id / --resume.
 
   // Executor model: find/create durable agent identity + concurrent guard.
   // Must happen BEFORE buildLaunchCommand so executorId/agentId propagate
@@ -2498,10 +2498,16 @@ export async function handleWorkerResume(
     // genie.ts surfaces it on stderr with exit 1 and tests can assert on
     // the instance. Previously we used console.error + process.exit(1),
     // which is hostile to unit testing and untyped at the boundary.
-    // Map the chokepoint reason onto the legacy MissingResumeSessionError
-    // enum — `no_executor` keeps its meaning, all other "we can't resume"
-    // outcomes collapse onto `no_session_id` (the legacy catch-all).
-    const errReason = decision.reason === 'unknown_agent' ? 'no_executor' : 'no_session_id';
+    // Map the chokepoint reason onto the MissingResumeSessionError enum:
+    //   unknown_agent        → no_executor
+    //   auto_resume_disabled → auto_resume_disabled (session intact, just paused)
+    //   everything else      → no_session_id (legacy catch-all)
+    const errReason: MissingResumeSessionReason =
+      decision.reason === 'unknown_agent'
+        ? 'no_executor'
+        : decision.reason === 'auto_resume_disabled'
+          ? 'auto_resume_disabled'
+          : 'no_session_id';
     throw new MissingResumeSessionError(w.id, undefined, errReason);
   }
   const _sessionId = decision.sessionId;
@@ -2906,7 +2912,8 @@ async function buildResumeParams(
     skill: template?.skill ?? agent.skill,
     extraArgs: template?.extraArgs,
     resume: resumeSessionId,
-    name: `${team}-${agentName}`,
+    // --name intentionally omitted (Felipe directive 2026-05-07): CC's
+    // customTitle leaked into the resume hint and clobbered the UUID.
     model: dirEntry?.model,
     systemPromptFile,
     promptMode,
@@ -2987,7 +2994,12 @@ export async function buildFullResumeParams(
   // `MissingResumeSessionError` so the caller surfaces the failure.
   const decision = await shouldResume(agent.id);
   if (!decision.resume || !decision.sessionId) {
-    const errReason = decision.reason === 'unknown_agent' ? 'no_executor' : 'null_session';
+    const errReason: MissingResumeSessionReason =
+      decision.reason === 'unknown_agent'
+        ? 'no_executor'
+        : decision.reason === 'auto_resume_disabled'
+          ? 'auto_resume_disabled'
+          : 'null_session';
     throw new MissingResumeSessionError(agent.id, undefined, errReason);
   }
   const params = await buildResumeParams(agent, template, decision.sessionId);
