@@ -21,6 +21,7 @@ import { Command } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
 import { type InstallOptions, installCommand } from './genie-commands/install.js';
 import { migrateCommand } from './genie-commands/migrate.js';
+import { type RecoverOrphansOptions, recoverOrphansCommand } from './genie-commands/recover-orphans.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
@@ -210,6 +211,17 @@ program
   .option('--dry-run', 'Pair with --fix-team-orphans to preview archive moves without mutating')
   .option('--json', 'Emit JSON instead of human output (pairs with --observability)')
   .action(doctorCommand);
+program
+  .command('recover-orphans')
+  .description('Attach orphaned Claude session JSONLs to executor rows so resume works')
+  .option('--dir <agent-dir>', 'Restrict the scan to one agent cwd (real path, not the encoded form)')
+  .option('--list', 'Dry-run — list orphaned JSONLs grouped by agent dir; never mutates')
+  .option('--apply', 'Mutate: attach orphans to executors. Requires --newest or --uuid.')
+  .option('--newest', 'Pair with --apply to auto-attach the newest orphan per agent dir')
+  .option('--uuid <session-id>', 'Pair with --apply to attach exactly one Claude session UUID')
+  .action(async (options: RecoverOrphansOptions) => {
+    await recoverOrphansCommand(options);
+  });
 program
   .command('update')
   .description('Update Genie CLI to the latest version')

@@ -365,6 +365,58 @@ describe('buildClaudeCommand', () => {
     expect(result.command).toContain("--model 'opus'");
   });
 
+  // Felipe directive 2026-05-07: --name was retired because CC stored it as
+  // `customTitle` in the JSONL header and then composed the resume hint as
+  // `claude --resume "<customTitle>"` instead of the canonical UUID, breaking
+  // session resume. Even when callers pass `name`, the launch command MUST
+  // NOT emit --name. Sessions are identified exclusively by --session-id /
+  // --resume <uuid>.
+  it('never emits --name even when params.name is set', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'implementor',
+      name: 'felipe',
+    });
+    expect(result.command).not.toContain('--name ');
+  });
+
+  it('never emits --name on a fresh-spawn command', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'implementor',
+    });
+    expect(result.command).not.toContain('--name ');
+  });
+
+  it('uses --session-id (not --name) for session identity on fresh spawn', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'implementor',
+      sessionId: '11111111-2222-3333-4444-555555555555',
+      name: 'should-be-ignored',
+    });
+    expect(result.command).toContain('--session-id');
+    expect(result.command).toContain("'11111111-2222-3333-4444-555555555555'");
+    expect(result.command).not.toContain('--name ');
+    expect(result.command).not.toContain("'should-be-ignored'");
+  });
+
+  it('uses --resume (not --name) for session identity on resume', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'implementor',
+      resume: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      name: 'felipe',
+    });
+    expect(result.command).toContain('--resume');
+    expect(result.command).toContain("'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'");
+    expect(result.command).not.toContain('--name ');
+  });
+
   it('includes --append-system-prompt-file by default when systemPromptFile is set', () => {
     const result = buildClaudeCommand({
       provider: 'claude',

@@ -259,13 +259,19 @@ export async function updateClaudeSessionId(executorId: string, sessionId: strin
 
 /**
  * Identity passed to the JSONL fallback scanner. Mirrors the canonical
- * `(team, custom_name)` columns on `agents`. Both fields must be non-null
- * to attempt a match — the fallback refuses to return another agent's
- * transcript when ownership is unknown.
+ * `(team, custom_name)` columns on `agents`. `customName` is required (the
+ * scanner refuses to return another agent's transcript when role identity
+ * is unknown). `team` may be null for legacy / orphan rows where no team
+ * was ever recorded — in that case the scanner matches on `agentName` alone
+ * and additionally accepts JSONL bodies whose `teamName` is null.
  */
 export interface ResumeFallbackIdentity {
-  /** Agent's `team` column. Populated by `findOrCreateAgent`. */
-  team: string;
+  /**
+   * Agent's `team` column. Populated by `findOrCreateAgent`. May be null
+   * for legacy/orphan rows; when null, the scanner relaxes to a customName
+   * match only.
+   */
+  team: string | null;
   /** Agent's `custom_name` column. The role-or-name part of the identity. */
   customName: string;
 }
@@ -432,7 +438,12 @@ async function defaultScanForSession(cwd: string, identity: ResumeFallbackIdenti
 
   for (const candidate of sorted) {
     const { teamName, agentName } = await readJsonlIdentity(candidate.full);
-    if (teamName !== identity.team || agentName !== identity.customName) continue;
+    if (agentName !== identity.customName) continue;
+    // Identity.team is allowed to be null for orphan / legacy rows
+    // (Felipe directive 2026-05-07): in that case match on agentName alone.
+    // When identity.team is set, require strict teamName equality so we
+    // don't attach team A's runtime to team B's transcript.
+    if (identity.team !== null && teamName !== identity.team) continue;
     return candidate.name.replace(/\.jsonl$/, '');
   }
   return null;
@@ -488,9 +499,11 @@ type ResumeSessionLookup = {
  * **Pure** — no emission. Audit emission belongs to the eventful path
  * ({@link acquireResumeSessionForAttempt}).
  *
- * Identity is `(team, custom_name)` and BOTH must be present — a missing
- * identity makes ownership unverifiable, and we refuse to attach an agent's
- * runtime to another agent's transcript.
+ * Identity is `(team, custom_name)`. `custom_name` is required (the scanner
+ * refuses to attach without role identity), but `team` may be null —
+ * legacy/orphan rows that never got a team assigned still resume off-disk
+ * by matching on `agentName` alone (Felipe directive 2026-05-07: previous
+ * strict-both check stranded rows where team got dropped).
  */
 async function tryJsonlFallback(row: ResumeRow | null): Promise<ResumeSessionLookup | null> {
   const cwd = row?.repo_path ?? null;
@@ -498,8 +511,8 @@ async function tryJsonlFallback(row: ResumeRow | null): Promise<ResumeSessionLoo
 
   const team = row?.team ?? null;
   const customName = row?.custom_name ?? null;
-  const identity: ResumeFallbackIdentity | null = team && customName ? { team, customName } : null;
-  if (!identity) return null;
+  if (!customName) return null;
+  const identity: ResumeFallbackIdentity = { team, customName };
 
   const scanner = _resumeJsonlScannerDeps.scanForSession ?? defaultScanForSession;
   const recoveredSessionId = await scanner(cwd, identity);

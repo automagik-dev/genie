@@ -412,24 +412,46 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
       }
       return { entry, builtin: false };
     }
+
+    // 1b. Fallback to custom_name when role didn't match. Spawned agents
+    // routinely have a custom_name (e.g. "felipe", "fix-resume-name-flag")
+    // that diverges from `role`; without this fallback, `genie agent
+    // recover felipe` failed at the resolver step even though the row was
+    // there (Felipe directive 2026-05-07).
+    const byCustomName = await sql`
+      SELECT role, custom_name, metadata, created_at FROM agents
+      WHERE custom_name = ${name}
+      ORDER BY (CASE WHEN position('dir:' in id) = 1 THEN 0 ELSE 1 END), started_at DESC
+      LIMIT 1
+    `;
+    if (byCustomName.length > 0) {
+      const row = byCustomName[0];
+      const meta = parseMetadata(row.metadata);
+      const createdAt =
+        row.created_at instanceof Date ? row.created_at.toISOString() : (row.created_at as string | undefined);
+      const entry = roleToEntry(typeof row.role === 'string' ? row.role : name, undefined, meta, createdAt);
+      if (templateTeam) entry.team = templateTeam;
+      return { entry, builtin: false };
+    }
   } catch {
     /* PG unavailable — fall through to built-ins */
   }
 
-  // 3. Check built-in roles
+  // 3. Check built-in roles. Built-ins are SHARED across teams — they MUST
+  //    NOT carry a sticky team pin from `agent_templates`. Whichever team
+  //    spawned `engineer` first would otherwise become the canonical team
+  //    for every subsequent spawn, breaking `genie send` / mailbox routing
+  //    on every other team. Let `resolveTeamName` tier 3 (GENIE_TEAM env)
+  //    and tier 4 (discoverTeamName) decide team for built-ins.
   const builtinRole = BUILTIN_ROLES.find((r: BuiltinAgent) => r.name === name);
   if (builtinRole) {
-    const entry = builtinToEntry(builtinRole);
-    if (templateTeam) entry.team = templateTeam;
-    return { entry, builtin: true };
+    return { entry: builtinToEntry(builtinRole), builtin: true };
   }
 
-  // 4. Check built-in council members
+  // 4. Check built-in council members — same SHARED-team rule as roles.
   const councilMember = BUILTIN_COUNCIL_MEMBERS.find((m: BuiltinAgent) => m.name === name);
   if (councilMember) {
-    const entry = builtinToEntry(councilMember);
-    if (templateTeam) entry.team = templateTeam;
-    return { entry, builtin: true };
+    return { entry: builtinToEntry(councilMember), builtin: true };
   }
 
   return null;
@@ -440,8 +462,13 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
  * Returns null when PG is unavailable, the row does not exist, or the team
  * column is empty. This is an authoritative PG lookup — NOT a synthetic
  * tmux/env fallback — and powers tier 2 of the team-resolution precedence.
+ *
+ * For hierarchical names (`parent/child`), if no exact match exists we fall
+ * back to the parent name — subagents inherit their parent's team. Without
+ * this, `genie-omni/dog-fooder` could not find `genie-omni`'s pinned team
+ * and downstream `genie send` / mailbox routing landed on the wrong team.
  */
-async function lookupTemplateTeam(name: string): Promise<string | null> {
+export async function lookupTemplateTeam(name: string): Promise<string | null> {
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
@@ -453,10 +480,24 @@ async function lookupTemplateTeam(name: string): Promise<string | null> {
     // enough to break the whole spawn pipeline (the team-resolution precedence
     // chain falls into a path that ends in `agents_id_shape_check` violations).
     // After 061: name is the canonical human key.
-    const rows = await sql`SELECT team FROM agent_templates WHERE name = ${name} LIMIT 1`;
-    if (rows.length === 0) return null;
-    const team = rows[0].team;
-    return typeof team === 'string' && team.length > 0 ? team : null;
+    const direct = await sql`SELECT team FROM agent_templates WHERE name = ${name} LIMIT 1`;
+    if (direct.length > 0) {
+      const team = direct[0].team;
+      if (typeof team === 'string' && team.length > 0) return team;
+    }
+    // Hierarchical names (`parent/child`) inherit the parent's team — without
+    // this, `genie-omni/dog-fooder` could not find `genie-omni`'s pinned team
+    // and downstream `genie send` / mailbox routing landed on the wrong team.
+    const slash = name.indexOf('/');
+    if (slash > 0) {
+      const parent = name.slice(0, slash);
+      const parentRows = await sql`SELECT team FROM agent_templates WHERE name = ${parent} LIMIT 1`;
+      if (parentRows.length > 0) {
+        const team = parentRows[0].team;
+        if (typeof team === 'string' && team.length > 0) return team;
+      }
+    }
+    return null;
   } catch (err) {
     // Previously silently swallowed — real PG failures (connection drops,
     // missing table) hid behind a null return and showed up as mysterious
