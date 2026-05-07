@@ -14,6 +14,7 @@
 import { z } from 'zod';
 import { buildDispatchCommand } from '../hooks/inject.js';
 import { resolveBuiltinAgentPath } from './builtin-agents.js';
+import { GENIE_BASELINE_ALLOWED_TOOLS } from './claude-settings.js';
 import { sanitizeModelForProvider } from './provider-models.js';
 import {
   TRACE_ENV_VAR,
@@ -438,12 +439,19 @@ function buildSettingsObject(params: SpawnParams): Record<string, unknown> {
     }
     settingsObj.hooks = hooks;
   }
-  if (params.permissions) {
-    const perms: Record<string, string[]> = {};
-    if (params.permissions.allow?.length) perms.allow = params.permissions.allow;
-    if (params.permissions.deny?.length) perms.deny = params.permissions.deny;
-    if (Object.keys(perms).length > 0) settingsObj.permissions = perms;
-  }
+  // Always seed GENIE_BASELINE_ALLOWED_TOOLS (AskUserQuestion) into the spawned
+  // agent's allow list. Without this, Claude Code routes the user-prompt UI
+  // through the team-lead approval queue and the agent blocks mid-loop waiting
+  // for the operator to approve a popup that asks them a question — closes #1688.
+  // Explicit allow/deny supplied by the agent are preserved verbatim; we only
+  // add baseline tools that are not already present.
+  const explicitAllow = params.permissions?.allow ?? [];
+  const explicitDeny = params.permissions?.deny ?? [];
+  const missingBaseline = GENIE_BASELINE_ALLOWED_TOOLS.filter((tool) => !explicitAllow.includes(tool));
+  const mergedAllow = [...explicitAllow, ...missingBaseline];
+  const perms: Record<string, string[]> = { allow: mergedAllow };
+  if (explicitDeny.length > 0) perms.deny = explicitDeny;
+  settingsObj.permissions = perms;
   return settingsObj;
 }
 
