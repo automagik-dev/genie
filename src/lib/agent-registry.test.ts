@@ -51,7 +51,116 @@ import {
   terminateExecutor,
   updateExecutorState,
 } from './executor-registry.js';
-import { setupTestDatabase } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
+
+// Regression — #1682. Keeps running while the bare-name fixtures below stay
+// `describe.skip`'d for wish #175. Uses real UUIDs so migration 061's
+// agents_id_shape_check accepts the inserts.
+describe.skipIf(!DB_AVAILABLE)('register ON CONFLICT preserves protocol fields (#1682)', () => {
+  let cleanup: () => Promise<void>;
+  beforeAll(async () => {
+    cleanup = await setupTestDatabase();
+  });
+  afterAll(async () => {
+    await cleanup();
+  });
+  beforeEach(async () => {
+    const sql = await getConnection();
+    await sql`DELETE FROM agents`;
+  });
+
+  test('register preserves nativeTeamEnabled + provider across findOrCreateAgent → register', async () => {
+    // Step 1: identity row created by findOrCreateAgent — nativeTeamEnabled
+    // defaults to false, provider/transport/native_agent_id default to NULL.
+    const identity = await findOrCreateAgent('test-bug3-fix', 'genie', 'fix');
+    const beforeRow = await get(identity.id);
+    expect(beforeRow?.nativeTeamEnabled ?? false).toBe(false);
+
+    // Step 2: spawn pipeline calls register() with the real protocol settings.
+    // Without the ON CONFLICT preservation patch, the SET clause would no-op
+    // these fields and routing would keep reading stale defaults.
+    const now = new Date().toISOString();
+    await register({
+      id: identity.id,
+      paneId: '%500',
+      session: 'genie',
+      worktree: null,
+      startedAt: now,
+      lastStateChange: now,
+      state: 'spawning',
+      repoPath: '/tmp/genie-bug3',
+      team: 'genie',
+      role: 'fix',
+      customName: 'test-bug3-fix',
+      provider: 'claude',
+      transport: 'tmux',
+      nativeTeamEnabled: true,
+      nativeAgentId: 'test-bug3-fix@genie',
+      nativeColor: '#abcdef',
+      parentSessionId: 'parent-sess-1',
+    });
+
+    const afterRow = await get(identity.id);
+    expect(afterRow).not.toBeNull();
+    // EXCLUDED: spawn intent is authoritative — must flip false→true.
+    expect(afterRow?.nativeTeamEnabled).toBe(true);
+    // COALESCE: identity row had NULL, register() supplies the real value.
+    expect(afterRow?.provider).toBe('claude');
+    expect(afterRow?.transport).toBe('tmux');
+    expect(afterRow?.nativeAgentId).toBe('test-bug3-fix@genie');
+    expect(afterRow?.nativeColor).toBe('#abcdef');
+    expect(afterRow?.parentSessionId).toBe('parent-sess-1');
+  });
+
+  test('register preserves established protocol fields when later caller omits them', async () => {
+    // First register — full protocol settings.
+    const identity = await findOrCreateAgent('test-bug3-respawn', 'genie', 'fix');
+    const now = new Date().toISOString();
+    await register({
+      id: identity.id,
+      paneId: '%501',
+      session: 'genie',
+      worktree: null,
+      startedAt: now,
+      lastStateChange: now,
+      state: 'working',
+      repoPath: '/tmp/genie-bug3',
+      team: 'genie',
+      role: 'fix',
+      customName: 'test-bug3-respawn',
+      provider: 'claude',
+      transport: 'tmux',
+      nativeTeamEnabled: true,
+      nativeAgentId: 'test-bug3-respawn@genie',
+      nativeColor: '#123456',
+    });
+
+    // Second register — heartbeat-style refresh that omits identity fields.
+    // COALESCE branches must preserve the established values.
+    await register({
+      id: identity.id,
+      paneId: '%501',
+      session: 'genie',
+      worktree: null,
+      startedAt: now,
+      lastStateChange: new Date().toISOString(),
+      state: 'idle',
+      repoPath: '/tmp/genie-bug3',
+      team: 'genie',
+      role: 'fix',
+      customName: 'test-bug3-respawn',
+      // provider/transport/nativeAgentId/nativeColor intentionally omitted.
+      nativeTeamEnabled: true,
+    });
+
+    const row = await get(identity.id);
+    expect(row?.provider).toBe('claude');
+    expect(row?.transport).toBe('tmux');
+    expect(row?.nativeAgentId).toBe('test-bug3-respawn@genie');
+    expect(row?.nativeColor).toBe('#123456');
+    expect(row?.state).toBe('idle');
+  });
+});
 
 describe.skip('pg — TODO retire-session-names #175: rewrite fixtures for UUID agents.id', () => {
   let cleanup: () => Promise<void>;
