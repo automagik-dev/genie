@@ -87,9 +87,9 @@ Genie 4.260504.2 ships a clean dispatch path (wish 175 closed the FK lockdown st
 
 | Group | Description | Reviewer verdict | Action required |
 |-------|-------------|------------------|-----------------|
-| 8 | `genie agent kill <id>` dedups shadow + UUID rows in one pass | FIX-FIRST (cosmetic — wrong file path) | Fix breadcrumb to `src/term-commands/agents.ts:2817 (handleWorkerKill)`; THEN dispatch |
-| 9 | Silence `[pgserve] connected to postgres` (was: stdout pollution; CORRECTED: stderr noise — `db.ts:1128` already uses `process.stderr.write`) | FIX-FIRST (premise wrong) | Reframe: stderr noise reduction, not jq-pipeline breakage. Drop the `expect parse error` validation. Fix is still defensible. |
-| 10 | Post-update verify reports correct post-install version | FIX-FIRST (design misaligned) | `runVerifyProbe` exists at `update.ts:362` and reads HTTP, NOT a binary. Actual surface: `opts.cliVersion` (passed by caller) is the `VERSION` constant from the OLD running process — needs re-read from freshly installed `package.json` post-install, OR re-exec into new binary before probe. Read `update.ts:362` first, then rewrite. |
+| 8 | `genie agent kill <id>` dedups shadow + UUID rows in one pass | **SHIPPED** (PR cli-hygiene-round-2) | done |
+| 9 | Gate `[pgserve] connected to postgres` behind `DEBUG=pgserve` + emit-discipline lint | **SHIPPED** (PR cli-hygiene-round-2) | done |
+| 10 | Post-update verify reports correct post-install version | DEFERRED pending /trace | `runVerifyProbe` exists at `update.ts:362` and reads HTTP, NOT a binary. Actual surface: `opts.cliVersion` (passed by caller) is the `VERSION` constant from the OLD running process — needs re-read from freshly installed `package.json` post-install, OR re-exec into new binary before probe. Read `update.ts:362` first, then rewrite. |
 | ~~G3 amendment~~ | ~~Gate scheduler retries on auto_resume=false~~ | **DROPPED** | Already implemented at `src/lib/scheduler-daemon.ts:1296` (and `:1469`, `:1812`). The events the QA pass observed come from the **reconciler** (`agent-registry.ts:542,568`) on one-time state transitions, NOT a retry loop. No fix needed. |
 
 ### Deferred
