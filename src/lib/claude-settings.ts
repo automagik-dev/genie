@@ -79,20 +79,13 @@ export const GENIE_BASELINE_ALLOWED_TOOLS: readonly string[] = ['AskUserQuestion
  * Idempotent — safe to call on every team setup.
  */
 export function ensureClaudeSettingsSafe(): void {
-  // Resolve paths at call time so tests (and any caller that pivots HOME) see
-  // the right ~/.claude/settings.json. Bun's os.homedir() caches at process
-  // start and ignores subsequent process.env.HOME changes, so we read HOME
-  // directly with homedir() as the production fallback (matches the existing
-  // pattern in sessionExists()).
-  const home = process.env.HOME ?? homedir();
-  const dir = join(home, '.claude');
-  const settingsFile = join(dir, 'settings.json');
+  const dir = join(homedir(), '.claude');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
   let settings: Record<string, unknown> = {};
-  if (existsSync(settingsFile)) {
+  if (existsSync(CLAUDE_SETTINGS_FILE)) {
     try {
-      settings = JSON.parse(readFileSync(settingsFile, 'utf-8'));
+      settings = JSON.parse(readFileSync(CLAUDE_SETTINGS_FILE, 'utf-8'));
     } catch {
       // Corrupted file — overwrite with safe defaults
     }
@@ -118,15 +111,20 @@ export function ensureClaudeSettingsSafe(): void {
   }
 
   if (changed) {
-    writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8');
+    writeFileSync(CLAUDE_SETTINGS_FILE, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8');
   }
 }
 
 /**
  * Mutate `settings.permissions.allow` so every baseline tool is present.
  * Returns true when the object was modified, false otherwise.
+ *
+ * Exported for unit testing — `ensureClaudeSettingsSafe` binds to the cached
+ * `~/.claude/settings.json` path at module load (a deliberate choice, since
+ * pivoting HOME at runtime would clobber any other test that resets HOME in
+ * its teardown). Tests exercise this pure helper directly.
  */
-function ensureBaselineAllowedTools(settings: Record<string, unknown>): boolean {
+export function ensureBaselineAllowedTools(settings: Record<string, unknown>): boolean {
   const permissions = (settings.permissions ?? {}) as Record<string, unknown>;
   const existingAllow = Array.isArray(permissions.allow) ? (permissions.allow as unknown[]) : [];
   const allowStrings = existingAllow.filter((entry): entry is string => typeof entry === 'string');

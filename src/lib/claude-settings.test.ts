@@ -1,114 +1,95 @@
 /**
- * Tests for claude-settings: ensureClaudeSettingsSafe baseline-allowlist seeding.
+ * Tests for claude-settings: ensureBaselineAllowedTools (#1688 baseline merge).
+ *
+ * The file-I/O wrapper `ensureClaudeSettingsSafe` binds to the cached
+ * `~/.claude/settings.json` path at module load. Pivoting HOME at runtime
+ * would clobber other tests that hard-reset HOME in their teardown
+ * (team-lead-command.test.ts is one such case), so the merge logic is
+ * exposed via `ensureBaselineAllowedTools` and tested directly.
  *
  * Run with: bun test src/lib/claude-settings.test.ts
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { GENIE_BASELINE_ALLOWED_TOOLS, ensureClaudeSettingsSafe } from './claude-settings.js';
+import { describe, expect, test } from 'bun:test';
+import { GENIE_BASELINE_ALLOWED_TOOLS, ensureBaselineAllowedTools } from './claude-settings.js';
 
-let TEST_HOME: string;
-let SETTINGS_PATH: string;
-let originalHome: string | undefined;
+describe('ensureBaselineAllowedTools — AskUserQuestion baseline (#1688)', () => {
+  test('seeds AskUserQuestion when settings has no permissions block', () => {
+    const settings: Record<string, unknown> = {};
+    const changed = ensureBaselineAllowedTools(settings);
 
-beforeEach(() => {
-  TEST_HOME = mkdtempSync(join(tmpdir(), 'genie-claude-settings-'));
-  SETTINGS_PATH = join(TEST_HOME, '.claude', 'settings.json');
-  originalHome = process.env.HOME;
-  process.env.HOME = TEST_HOME;
-});
-
-afterEach(() => {
-  if (originalHome === undefined) {
-    process.env.HOME = '';
-  } else {
-    process.env.HOME = originalHome;
-  }
-  rmSync(TEST_HOME, { recursive: true, force: true });
-});
-
-function readSettings(): Record<string, unknown> {
-  return JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8')) as Record<string, unknown>;
-}
-
-describe('ensureClaudeSettingsSafe AskUserQuestion baseline (#1688)', () => {
-  test('seeds AskUserQuestion into permissions.allow on a fresh install', () => {
-    ensureClaudeSettingsSafe();
-
-    expect(existsSync(SETTINGS_PATH)).toBe(true);
-    const settings = readSettings();
-    const permissions = settings.permissions as { allow?: string[] };
-    expect(permissions.allow).toEqual([...GENIE_BASELINE_ALLOWED_TOOLS]);
-    expect(permissions.allow).toContain('AskUserQuestion');
+    expect(changed).toBe(true);
+    expect(settings.permissions).toEqual({ allow: ['AskUserQuestion'] });
   });
 
-  test('appends AskUserQuestion when allow list exists but is missing it', () => {
-    mkdirSync(join(TEST_HOME, '.claude'), { recursive: true });
-    writeFileSync(
-      SETTINGS_PATH,
-      JSON.stringify({
-        permissions: { allow: ['Bash(git status)', 'Read'], deny: ['Read(//**/.env)'] },
-      }),
-    );
+  test('appends AskUserQuestion to existing allow array', () => {
+    const settings: Record<string, unknown> = {
+      permissions: { allow: ['Bash(git status)', 'Read'], deny: ['Read(//**/.env)'] },
+    };
+    const changed = ensureBaselineAllowedTools(settings);
 
-    ensureClaudeSettingsSafe();
-
-    const settings = readSettings();
-    const permissions = settings.permissions as { allow?: string[]; deny?: string[] };
-    expect(permissions.allow).toEqual(['Bash(git status)', 'Read', 'AskUserQuestion']);
-    // Existing deny rules must be preserved untouched.
-    expect(permissions.deny).toEqual(['Read(//**/.env)']);
+    expect(changed).toBe(true);
+    expect(settings.permissions).toEqual({
+      allow: ['Bash(git status)', 'Read', 'AskUserQuestion'],
+      deny: ['Read(//**/.env)'],
+    });
   });
 
   test('does not duplicate AskUserQuestion when already present', () => {
-    mkdirSync(join(TEST_HOME, '.claude'), { recursive: true });
-    writeFileSync(
-      SETTINGS_PATH,
-      JSON.stringify({
-        permissions: { allow: ['AskUserQuestion', 'Read'] },
-      }),
-    );
+    const settings: Record<string, unknown> = {
+      permissions: { allow: ['AskUserQuestion', 'Read'] },
+    };
+    const changed = ensureBaselineAllowedTools(settings);
 
-    ensureClaudeSettingsSafe();
-
-    const settings = readSettings();
-    const permissions = settings.permissions as { allow?: string[] };
-    expect(permissions.allow).toEqual(['AskUserQuestion', 'Read']);
+    expect(changed).toBe(false);
+    expect((settings.permissions as { allow: string[] }).allow).toEqual(['AskUserQuestion', 'Read']);
   });
 
-  test('preserves unrelated top-level keys (hooks, defaultMode, plugins)', () => {
-    mkdirSync(join(TEST_HOME, '.claude'), { recursive: true });
-    writeFileSync(
-      SETTINGS_PATH,
-      JSON.stringify({
-        cleanupPeriodDays: 99999,
-        permissions: { defaultMode: 'auto' },
-        hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'genie hook dispatch' }] }] },
-        plugins: { something: true },
-      }),
-    );
+  test('preserves unrelated permissions sub-keys (defaultMode, deny)', () => {
+    const settings: Record<string, unknown> = {
+      cleanupPeriodDays: 99999,
+      permissions: { defaultMode: 'auto', deny: ['Read(//**/.git/objects/**)'] },
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'genie hook dispatch' }] }] },
+    };
+    const changed = ensureBaselineAllowedTools(settings);
 
-    ensureClaudeSettingsSafe();
-
-    const settings = readSettings();
+    expect(changed).toBe(true);
     expect(settings.cleanupPeriodDays).toBe(99999);
     expect(settings.hooks).toBeDefined();
-    expect(settings.plugins).toEqual({ something: true });
-    const permissions = settings.permissions as { allow?: string[]; defaultMode?: string };
-    expect(permissions.defaultMode).toBe('auto');
-    expect(permissions.allow).toEqual(['AskUserQuestion']);
+    expect(settings.permissions).toEqual({
+      defaultMode: 'auto',
+      deny: ['Read(//**/.git/objects/**)'],
+      allow: ['AskUserQuestion'],
+    });
   });
 
-  test('is idempotent — second call leaves settings byte-identical', () => {
-    ensureClaudeSettingsSafe();
-    const first = readFileSync(SETTINGS_PATH, 'utf-8');
+  test('drops non-string entries from allow list when re-emitting', () => {
+    // Defensive: if a malformed allow array somehow reaches us, we filter to
+    // strings only before merging baseline. The result is stable + valid.
+    const settings: Record<string, unknown> = {
+      permissions: { allow: ['Read', 42, null, 'Glob'] as unknown[] },
+    };
+    const changed = ensureBaselineAllowedTools(settings);
 
-    ensureClaudeSettingsSafe();
-    const second = readFileSync(SETTINGS_PATH, 'utf-8');
+    expect(changed).toBe(true);
+    expect((settings.permissions as { allow: string[] }).allow).toEqual(['Read', 'Glob', 'AskUserQuestion']);
+  });
 
-    expect(second).toBe(first);
+  test('idempotent — second call on already-baselined settings is a no-op', () => {
+    const settings: Record<string, unknown> = {
+      permissions: { allow: ['AskUserQuestion'] },
+    };
+    expect(ensureBaselineAllowedTools(settings)).toBe(false);
+    expect((settings.permissions as { allow: string[] }).allow).toEqual(['AskUserQuestion']);
+  });
+});
+
+describe('GENIE_BASELINE_ALLOWED_TOOLS — invariants', () => {
+  test('AskUserQuestion is in the baseline (#1688 contract)', () => {
+    expect(GENIE_BASELINE_ALLOWED_TOOLS).toContain('AskUserQuestion');
+  });
+
+  test('baseline is non-empty', () => {
+    expect(GENIE_BASELINE_ALLOWED_TOOLS.length).toBeGreaterThan(0);
   });
 });
