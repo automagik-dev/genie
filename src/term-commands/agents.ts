@@ -3848,6 +3848,9 @@ export class ResumePaneVanishedError extends Error {
 }
 
 type WorkerStatus = {
+  /** Canonical agents.id (UUID or `dir:<name>`). Carried through so JSON
+   *  consumers of `genie ls --json` get a stable cross-team handle (#1674). */
+  id: string;
   state: string;
   team: string;
   resumeAttempts?: number;
@@ -3888,12 +3891,13 @@ export async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<M
     const name = w.customName ?? w.role ?? w.id;
     const { alive, state } = await resolveWorkerLiveness(w);
     if (alive) {
-      statusMap.set(name, { state, team: w.team || '-' });
+      statusMap.set(name, { id: w.id, state, team: w.team || '-' });
     } else if (w.state === 'suspended' || w.state === 'error') {
       const attempts = w.resumeAttempts ?? 0;
       const max = w.maxResumeAttempts ?? 3;
       const autoStr = w.autoResume === false ? 'off' : 'on';
       statusMap.set(name, {
+        id: w.id,
         state: `${w.state} (${attempts}/${max} resumes, auto-resume: ${autoStr})`,
         team: w.team || '-',
         resumeAttempts: attempts,
@@ -3931,6 +3935,10 @@ export async function handleLsCommand(options: {
   const sourceAgentNames = options.source ? await resolveAgentNamesBySource(options.source) : undefined;
 
   type LsEntry = {
+    /** Canonical agents.id (UUID or `dir:<name>`). Restored in #1674 — operators
+     *  rely on it as the cross-team send handle until the resolver tier order
+     *  for `<role>@<team>` lands (deferred to retire-session-names #175). */
+    id?: string;
     name: string;
     dir: string;
     status: string;
@@ -3946,6 +3954,7 @@ export async function handleLsCommand(options: {
   for (const entry of dirEntries) {
     const running = statusMap.get(entry.name);
     entries.push({
+      id: entry.id ?? running?.id,
       name: entry.name,
       dir: entry.dir || '-',
       status: running ? running.state : 'offline',
@@ -3961,6 +3970,7 @@ export async function handleLsCommand(options: {
   // Add built-in agents not in the directory (alive or suspended/error)
   for (const [name, info] of statusMap) {
     entries.push({
+      id: info.id,
       name,
       dir: '(built-in)',
       status: info.state,

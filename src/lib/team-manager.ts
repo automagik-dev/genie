@@ -895,17 +895,46 @@ async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
   }
 }
 
+/**
+ * UUID check used to gate writes to `teams.leader`. Mirrors `MEMBER_UUID_RE`
+ * in pg-seed.ts so the two write paths apply the same `fk_teams_leader_check`
+ * sanitizer. Migration 061 made `teams.leader` an FK to `agents.id`, and
+ * `agents.id` is always either a UUID or a `dir:`-prefixed string.
+ */
+const LEADER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Drop legacy bare-name leaders before writing — bare names always violate
+ * `fk_teams_leader` (no row in `agents` shares that id). Mirrors the pg-seed
+ * upsert guard so any code path that reaches `updateTeamConfig` with a stale
+ * leader value (e.g. an in-memory `TeamConfig` rehydrated from disk) degrades
+ * to NULL with an audit trail instead of throwing on the FK. Closes #1674.
+ */
+function sanitizeLeaderForWrite(teamName: string, leader: string | null | undefined): string | null {
+  if (leader == null || leader === '') return null;
+  if (LEADER_ID_RE.test(leader) || leader.startsWith('dir:')) return leader;
+  recordAuditEvent('team', teamName, 'leader_sanitized', getActor(), {
+    dropped: leader,
+    reason: 'fk_teams_leader_check',
+  }).catch(() => {});
+  return null;
+}
+
 /** Update team config in PG (full overwrite). */
 export async function updateTeamConfig(name: string, config: TeamConfig): Promise<void> {
   const sql = await getConnection();
   // `sql.json(...)` mirrors the createTeam fix — see migration 061's
   // `teams_members_uuid_check` and migration 045's encoding cleanup notes.
+  // `safeLeader` mirrors pg-seed.ts:431 fk_teams_leader_check sanitizer so any
+  // caller passing a stale bare-name leader degrades to NULL instead of
+  // tripping the FK constraint. Closes #1674.
+  const safeLeader = sanitizeLeaderForWrite(name, config.leader);
   await sql`
     UPDATE teams SET
       repo = ${config.repo},
       base_branch = ${config.baseBranch},
       worktree_path = ${config.worktreePath},
-      leader = ${config.leader ?? null},
+      leader = ${safeLeader},
       members = ${sql.json(config.members)},
       status = ${config.status},
       native_team_parent_session_id = ${config.nativeTeamParentSessionId ?? null},
