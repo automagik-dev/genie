@@ -457,8 +457,22 @@ export function registerWishCommands(program: Command): void {
   wish
     .command('done <ref>')
     .description('Mark a wish group as done (format: <slug>#<group>)')
-    .action(async (ref: string) => {
-      await doneCommand(ref);
+    .option(
+      '-r, --report <message>',
+      'One-line summary of what was completed (REQUIRED — handoff note for audit trail and orchestrator)',
+    )
+    .action(async (ref: string, options: { report?: string }) => {
+      const report = options.report?.trim();
+      if (!report) {
+        console.error(
+          '❌ genie wish done requires --report "<one-line summary of what was completed>".\n' +
+            '   This is your handoff note — it lands in the audit trail and the wave/wish-complete\n' +
+            '   notification so the orchestrator can see WHY a close happened.\n' +
+            "   Example: genie wish done my-wish#3 --report 'group 3 done — fixtures + smoke'",
+        );
+        process.exit(2);
+      }
+      await doneCommand(ref, report);
     });
 
   wish
