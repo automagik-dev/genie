@@ -298,9 +298,13 @@ registerApprovalCommands(program);
 program
   .command('done [ref]')
   .description('Close the current turn (inside an agent session) or mark a wish group done (team-lead, <slug>#<group>)')
-  .action(async (ref: string | undefined) => {
+  .option(
+    '-r, --report <message>',
+    'One-line summary of what was completed (REQUIRED — your handoff note for the audit trail and orchestrator)',
+  )
+  .action(async (ref: string | undefined, options: { report?: string }) => {
     const { doneAction } = await import('./term-commands/done.js');
-    await doneAction(ref);
+    await doneAction(ref, options);
   });
 
 program

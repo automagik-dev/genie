@@ -55,12 +55,26 @@ export interface CallingAgentLookup {
 
 interface DoneActionDeps {
   /** Wish-group-done fallback. Injected for tests. */
-  wishDone?: (ref: string) => Promise<void>;
+  wishDone?: (ref: string, report: string) => Promise<void>;
   /** Turn-close path. Injected for tests. */
   turnCloseFn?: typeof turnClose;
   /** Lookup the calling agent's id + kind. Injected for tests. */
   lookupCallingAgent?: () => Promise<CallingAgentLookup | null>;
 }
+
+/** User-facing nudge when --report is missing. Mandatory so every close
+ * leaves a one-line trail in events + mailbox notifications, instead of
+ * the silent "agent vanished" mystery. */
+const REPORT_MISSING_HINT = [
+  '❌ genie done requires --report "<one-line summary of what you did>".',
+  '   This is your handoff note — it lands in the audit trail and the wave/wish-complete',
+  '   notification so the orchestrator (and humans) can see WHY a close happened',
+  '   without having to read your transcript.',
+  '',
+  '   Examples:',
+  "     genie done --report 'shipped auth bridge happy-path; CSRF deferred to followup'",
+  "     genie done dev-local-auth-bridge#3 --report 'group 3 done — fixtures + smoke'",
+].join('\n');
 
 /**
  * Default lookup: resolve the calling agent's id + kind via GENIE_EXECUTOR_ID.
@@ -99,34 +113,45 @@ async function rejectIfPermanent(deps: DoneActionDeps): Promise<void> {
   }
 }
 
-async function runAgentSessionPath(deps: DoneActionDeps): Promise<void> {
+async function runAgentSessionPath(deps: DoneActionDeps, report: string): Promise<void> {
   await rejectIfPermanent(deps);
   const fn = deps.turnCloseFn ?? turnClose;
-  const result = await fn({ outcome: 'done' });
+  const result = await fn({ outcome: 'done', reason: report });
   if (result.noop) {
     console.log(`ℹ️  Executor ${result.executorId} already closed — no-op.`);
   } else {
     console.log(`✅ Turn closed: outcome=done, executor=${result.executorId}`);
+    console.log(`   Report: ${report}`);
   }
 }
 
-export async function doneAction(ref: string | undefined, deps: DoneActionDeps = {}): Promise<void> {
+export async function doneAction(
+  ref: string | undefined,
+  options: { report?: string },
+  deps: DoneActionDeps = {},
+): Promise<void> {
   const agentName = process.env.GENIE_AGENT_NAME;
+  const report = options.report?.trim();
+
+  if (!report) {
+    console.error(REPORT_MISSING_HINT);
+    process.exit(2);
+  }
 
   try {
     if (!ref && agentName) {
-      await runAgentSessionPath(deps);
+      await runAgentSessionPath(deps, report);
       return;
     }
 
     if (ref) {
       const fallback =
         deps.wishDone ??
-        (async (r: string) => {
+        (async (r: string, rpt: string) => {
           const { doneCommand } = await import('./state.js');
-          await doneCommand(r);
+          await doneCommand(r, rpt);
         });
-      await fallback(ref);
+      await fallback(ref, report);
       return;
     }
 
