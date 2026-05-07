@@ -731,6 +731,7 @@ export async function runRetention(sql: postgres.Sql): Promise<void> {
     // Non-fatal — log warning and continue, never block startup
     retentionRan = true; // Don't retry on next call
     const msg = retErr instanceof Error ? retErr.message : String(retErr);
+    // emit-discipline: ok — retention cleanup warning is a real diagnostic, not informational
     process.stderr.write(`[genie] retention cleanup warning: ${msg}\n`);
   }
 }
@@ -1078,6 +1079,7 @@ async function runPostConnectSetup(client: postgres.Sql, isTestMode: boolean, ti
   const _t5 = _t4;
 
   if (process.env.GENIE_PROFILE_DB) {
+    // emit-discipline: ok — explicit GENIE_PROFILE_DB opt-in (debug instrumentation)
     console.error(
       `[db-profile] pgserve=${timings.t1 - timings.t0}ms migrate=${_t3 - _t2}ms seed=${_t4 - _t3}ms retention=skipped total=${_t5 - timings.t0}ms`,
     );
@@ -1114,6 +1116,11 @@ let bannerPrinted = false;
  * Print the resolved DB name once per process, on first successful connect.
  * Surfaces pgserve v2's auto-fingerprint so devs can see the visible
  * `app_<name>_<12hex>` database their genie process landed in.
+ *
+ * Emit gating (wish G9): silenced by default to keep `genie ls --json` and
+ * other JSON-on-stdout pipelines quiet on stderr. Set `DEBUG=pgserve` to
+ * recover the legacy verbose banner. Real warnings/errors continue to emit
+ * unconditionally elsewhere.
  */
 async function maybePrintBanner(client: postgres.Sql, isTestMode: boolean): Promise<void> {
   if (bannerPrinted || isTestMode) return;
@@ -1124,13 +1131,22 @@ async function maybePrintBanner(client: postgres.Sql, isTestMode: boolean): Prom
   try {
     const rows = await client.unsafe('SELECT current_database() AS db');
     const db = rows[0]?.db;
-    if (typeof db === 'string' && db.length > 0) {
+    if (typeof db === 'string' && db.length > 0 && process.env.DEBUG?.includes('pgserve')) {
+      // emit-discipline: ok — DEBUG=pgserve gated, default silent
       process.stderr.write(`[pgserve] connected to ${db}\n`);
     }
   } catch {
     // Banner is best-effort — never fail a connection because of it.
   }
   bannerPrinted = true;
+}
+
+/**
+ * Test-only: reset the banner flag so a subsequent `maybePrintBanner` call (or
+ * full `getConnection` re-build) can re-emit. Production code never calls this.
+ */
+export function _resetBannerForTest(): void {
+  bannerPrinted = false;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
@@ -1287,6 +1303,7 @@ function pinCwdForFingerprint(): CwdPin {
   const originalCwd = process.cwd();
   const pkgDir = resolveGeniePackageDir();
   if (!pkgDir) {
+    // emit-discipline: ok — explicit WARN about unstable fingerprint, not informational
     process.stderr.write('[pgserve] WARN: could not resolve genie package dir; pgserve fingerprint may be unstable\n');
     return { originalCwd, pinned: false };
   }
@@ -1299,6 +1316,7 @@ function pinCwdForFingerprint(): CwdPin {
     // peer will still get *some* fingerprint; only routing identity may
     // be off. Surface as a stderr warning so operators can investigate.
     const msg = err instanceof Error ? err.message : String(err);
+    // emit-discipline: ok — explicit WARN about chdir failure affecting routing
     process.stderr.write(`[pgserve] WARN: failed to pin cwd to ${pkgDir}: ${msg}\n`);
     return { originalCwd, pinned: false };
   }
@@ -1317,6 +1335,7 @@ function restoreCwdAfterFingerprint(cwdPin: CwdPin, shouldRestoreCwd: boolean): 
   } catch (err) {
     // originalCwd may have been deleted while we were away — best-effort.
     const msg = err instanceof Error ? err.message : String(err);
+    // emit-discipline: ok — explicit WARN about cwd-restore failure
     process.stderr.write(`[pgserve] WARN: failed to restore cwd to ${cwdPin.originalCwd}: ${msg}\n`);
   }
 }

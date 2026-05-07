@@ -22,6 +22,7 @@ import {
   buildResumeContext,
   buildWorkerStatusMap,
   findDeadResumable,
+  killAgentWithDedup,
   pickParallelShortId,
   recoverSurgery,
   rejectDuplicateRole,
@@ -1334,5 +1335,205 @@ describe('RecoverAgentNotFoundError', () => {
     expect(err.recoverName).toBe('ghost-agent');
     expect(err.message).toContain('ghost-agent');
     expect(err.message).toContain('genie agent list');
+  });
+});
+
+// ============================================================================
+// Wish G8 — `genie agent kill` dedups shadow + UUID rows in one pass.
+//
+// Killing a `dir:<name>` shadow OR any of its UUID twins should clean both
+// halves of the logical agent atomically. The escape hatch `keepPaired`
+// preserves the legacy single-row behavior. When multiple UUID rows share a
+// name in the same team, killing one of them leaves the dir shadow alone
+// because the other UUID twins still anchor it.
+// ============================================================================
+describe.skipIf(!DB_AVAILABLE)('kill dedup paired', () => {
+  const TEAM = 'g8-dedup-team';
+
+  beforeEach(async () => {
+    if (!pgOk) return;
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    await sql`DELETE FROM agents WHERE team = ${TEAM} OR id LIKE 'dir:g8-%'`;
+  });
+
+  function newUuid(): string {
+    return crypto.randomUUID();
+  }
+
+  async function seed(id: string, customName: string | null, team: string | null): Promise<void> {
+    await registry.register({
+      id,
+      paneId: 'inline',
+      session: 'genie',
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: 'idle',
+      lastStateChange: new Date().toISOString(),
+      repoPath: `/tmp/g8-dedup-${id}-${Date.now()}`,
+      customName: customName ?? undefined,
+      team: team ?? undefined,
+      provider: 'claude',
+    });
+  }
+
+  async function countRows(team: string): Promise<number> {
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    const rows = await sql<{ count: string }[]>`
+      SELECT COUNT(*)::text AS count FROM agents WHERE team = ${team}
+    `;
+    return Number.parseInt(rows[0]?.count ?? '0', 10);
+  }
+
+  async function loadAgent(id: string): Promise<registry.Agent> {
+    const a = await registry.get(id);
+    if (!a) throw new Error(`fixture: ${id} not registered`);
+    return a;
+  }
+
+  test('kill dir → both halves removed', async () => {
+    const dirId = 'dir:g8-foo';
+    const uuid = newUuid();
+    await seed(dirId, null, TEAM);
+    await seed(uuid, 'g8-foo', TEAM);
+    expect(await countRows(TEAM)).toBe(2);
+
+    const dir = await loadAgent(dirId);
+    const paired = await killAgentWithDedup(dir, false);
+
+    expect(paired).toEqual([uuid]);
+    expect(await countRows(TEAM)).toBe(0);
+  });
+
+  test('kill UUID → dir shadow also removed when no other UUIDs share the name', async () => {
+    const dirId = 'dir:g8-bar';
+    const uuid = newUuid();
+    await seed(dirId, null, TEAM);
+    await seed(uuid, 'g8-bar', TEAM);
+    expect(await countRows(TEAM)).toBe(2);
+
+    const ag = await loadAgent(uuid);
+    const paired = await killAgentWithDedup(ag, false);
+
+    expect(paired).toEqual([dirId]);
+    expect(await countRows(TEAM)).toBe(0);
+  });
+
+  test('--keep-paired preserves the dir shadow when killing a UUID', async () => {
+    const dirId = 'dir:g8-baz';
+    const uuid = newUuid();
+    await seed(dirId, null, TEAM);
+    await seed(uuid, 'g8-baz', TEAM);
+    expect(await countRows(TEAM)).toBe(2);
+
+    const ag = await loadAgent(uuid);
+    const paired = await killAgentWithDedup(ag, true);
+
+    expect(paired).toEqual([]);
+    expect(await countRows(TEAM)).toBe(1);
+    expect(await registry.get(dirId)).not.toBeNull();
+    expect(await registry.get(uuid)).toBeNull();
+  });
+
+  test('--keep-paired preserves UUID twins when killing the dir shadow', async () => {
+    const dirId = 'dir:g8-keep';
+    const uuid = newUuid();
+    await seed(dirId, null, TEAM);
+    await seed(uuid, 'g8-keep', TEAM);
+    expect(await countRows(TEAM)).toBe(2);
+
+    const dir = await loadAgent(dirId);
+    const paired = await killAgentWithDedup(dir, true);
+
+    expect(paired).toEqual([]);
+    expect(await countRows(TEAM)).toBe(1);
+    expect(await registry.get(dirId)).toBeNull();
+    expect(await registry.get(uuid)).not.toBeNull();
+  });
+
+  // Note on schema: migration 061's `idx_agents_custom_name_team` unique
+  // constraint forbids two UUID rows from sharing (custom_name, team), so the
+  // "two UUIDs same name same team" scenario from the wish narrative is not
+  // reachable in practice. Cross-team siblings are the realistic case — the
+  // dedup logic must keep them isolated when one team's halves are killed.
+  test('cross-team siblings — killing TEAM-A halves leaves TEAM-B UUID intact', async () => {
+    const TEAM_B = 'g8-dedup-team-b';
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    await sql`DELETE FROM agents WHERE team = ${TEAM_B}`;
+
+    const dirId = 'dir:g8-cross';
+    const uuidA = newUuid();
+    const uuidB = newUuid();
+    // dir shadow + UUID twin in TEAM-A; another UUID with the same name in TEAM-B.
+    await seed(dirId, null, TEAM);
+    await seed(uuidA, 'g8-cross', TEAM);
+    await seed(uuidB, 'g8-cross', TEAM_B);
+
+    const dir = await loadAgent(dirId);
+    const paired = await killAgentWithDedup(dir, false);
+
+    expect(paired).toEqual([uuidA]);
+    expect(await registry.get(dirId)).toBeNull();
+    expect(await registry.get(uuidA)).toBeNull();
+    // Cross-team UUID survives — different team partition.
+    expect(await registry.get(uuidB)).not.toBeNull();
+
+    await sql`DELETE FROM agents WHERE team = ${TEAM_B}`;
+  });
+
+  // Codex P1 (PR #1685): killing a UUID owned by TEAM-B must NOT delete a
+  // `dir:<name>` shadow that belongs to TEAM-A. The dir-shadow delete is
+  // gated by team; a UUID kill in another team leaves the surviving team's
+  // directory identity untouched.
+  test('UUID kill respects team scope when dir shadow lives in another team', async () => {
+    const TEAM_OTHER = 'g8-dedup-team-other';
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    await sql`DELETE FROM agents WHERE team = ${TEAM_OTHER}`;
+
+    const dirId = 'dir:g8-isolated';
+    const uuidOther = newUuid();
+    // Dir shadow lives in TEAM (the default test team).
+    await seed(dirId, null, TEAM);
+    // A UUID with the same custom_name lives in a DIFFERENT team.
+    await seed(uuidOther, 'g8-isolated', TEAM_OTHER);
+
+    const otherAgent = await loadAgent(uuidOther);
+    const paired = await killAgentWithDedup(otherAgent, false);
+
+    // No paired removal — the dir shadow belongs to a different team.
+    expect(paired).toEqual([]);
+    expect(await registry.get(uuidOther)).toBeNull();
+    // Critical: the dir shadow in TEAM survives; otherwise we'd orphan its identity.
+    expect(await registry.get(dirId)).not.toBeNull();
+
+    await sql`DELETE FROM agents WHERE team = ${TEAM_OTHER}`;
+  });
+
+  // Codex P2 (PR #1685): legacy dir shadows can carry `custom_name = <name>`
+  // alongside the `dir:` prefix. The paired lookup must exclude the matched
+  // dir row itself; otherwise we falsely report it as a paired removal and
+  // emit a spurious dedup_paired audit event for what is a single-row delete.
+  test('dir kill with no UUID twins reports zero paired even when dir.custom_name is set', async () => {
+    const dirId = 'dir:g8-self';
+    const { getConnection } = await import('../lib/db.js');
+    const sql = await getConnection();
+    // Seed a dir shadow whose custom_name matches its display name (legacy shape).
+    await sql`DELETE FROM agents WHERE id = ${dirId}`;
+    await sql`
+      INSERT INTO agents (id, custom_name, team, pane_id, session, started_at, state, last_state_change, repo_path)
+      VALUES (${dirId}, 'g8-self', ${TEAM}, 'inline', 'genie',
+              now(), 'idle', now(), '/tmp/g8-self-fixture')
+    `;
+
+    const dir = await loadAgent(dirId);
+    const paired = await killAgentWithDedup(dir, false);
+
+    // The dir row is the only row that matched custom_name+team — but it must
+    // NOT appear in the paired list, since it's the matched row itself.
+    expect(paired).toEqual([]);
+    expect(await registry.get(dirId)).toBeNull();
   });
 });

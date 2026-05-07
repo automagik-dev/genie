@@ -2812,17 +2812,102 @@ async function resolveWorkerByName(name: string): Promise<registry.Agent> {
 // ============================================================================
 
 /**
+ * Atomically delete the matched agent row plus any paired half (`dir:` shadow
+ * ↔ UUID twin) for the same logical agent in the same team. Returns the IDs of
+ * any paired rows that were also removed.
+ *
+ * Pairing rules (see wish G8):
+ *   - matched id starts with `dir:` → also delete every UUID row with
+ *     `custom_name = <name>` AND same team.
+ *   - matched id is a UUID → also delete the `dir:<name>` shadow IFF no other
+ *     UUID rows for the same name+team remain.
+ *   - When `keepPaired` is true, only the matched row is removed (escape
+ *     hatch for forensic kills).
+ */
+export async function killAgentWithDedup(w: registry.Agent, keepPaired: boolean): Promise<string[]> {
+  const { getConnection } = await import('../lib/db.js');
+  const sql = await getConnection();
+
+  const isDirRow = w.id.startsWith('dir:');
+  const displayName = isDirRow ? w.id.slice(4) : (w.customName ?? null);
+  const team = w.team ?? null;
+
+  if (keepPaired || !displayName) {
+    await sql`DELETE FROM agents WHERE id = ${w.id}`;
+    return [];
+  }
+
+  if (isDirRow) {
+    return await sql.begin(async (tx: typeof sql) => {
+      // Exclude the matched dir row itself from the paired lookup. Some legacy
+      // dir shadows carry `custom_name = <name>` (the bare-name field is set
+      // alongside the `dir:` prefix); without this filter we'd report the dir
+      // row as its own paired removal and emit a spurious dedup_paired event
+      // for what is really a single-row delete.
+      const paired = (await tx<{ id: string }[]>`
+        SELECT id FROM agents
+        WHERE custom_name = ${displayName}
+          AND team IS NOT DISTINCT FROM ${team}
+          AND id <> ${w.id}
+          AND id NOT LIKE 'dir:%'
+      `) as { id: string }[];
+      await tx`DELETE FROM agents WHERE id = ${w.id}`;
+      if (paired.length > 0) {
+        await tx`DELETE FROM agents
+          WHERE custom_name = ${displayName}
+            AND team IS NOT DISTINCT FROM ${team}
+            AND id NOT LIKE 'dir:%'`;
+      }
+      return paired.map((r: { id: string }) => r.id);
+    });
+  }
+
+  return await sql.begin(async (tx: typeof sql) => {
+    await tx`DELETE FROM agents WHERE id = ${w.id}`;
+    const remaining = (await tx<{ id: string }[]>`
+      SELECT id FROM agents
+      WHERE custom_name = ${displayName} AND team IS NOT DISTINCT FROM ${team}
+      LIMIT 1
+    `) as { id: string }[];
+    if (remaining.length > 0) return [];
+    const dirId = `dir:${displayName}`;
+    // Restrict the shadow delete to the killed UUID's team. A `dir:<name>` row
+    // owned by another team must not be removed when this team's UUID dies —
+    // killing the UUID here would otherwise orphan the surviving team's
+    // directory identity.
+    const removed = (await tx<{ id: string }[]>`
+      DELETE FROM agents
+      WHERE id = ${dirId} AND team IS NOT DISTINCT FROM ${team}
+      RETURNING id
+    `) as { id: string }[];
+    return removed.map((r: { id: string }) => r.id);
+  });
+}
+
+/**
  * genie kill <name> — Force kill an agent by name.
  */
-export async function handleWorkerKill(name: string): Promise<void> {
+export async function handleWorkerKill(name: string, opts: { keepPaired?: boolean } = {}): Promise<void> {
   const w = await resolveWorkerByName(name);
 
   killWorkerPane(w);
   cleanupRelayFiles(w.id);
   await cleanupWorkerNativeTeam(w);
 
-  await registry.unregister(w.id);
-  console.log(`Agent "${w.id}" killed and unregistered (template preserved).`);
+  const pairedIds = await killAgentWithDedup(w, opts.keepPaired === true);
+
+  if (pairedIds.length > 0) {
+    const pairedList = pairedIds.map((id) => `"${id}"`).join(', ');
+    console.log(
+      `Agent "${w.id}" killed and unregistered (template preserved). Paired row(s) also removed: ${pairedList}.`,
+    );
+    recordAuditEvent('agent', w.id, 'kill.dedup_paired', getActor(), {
+      matched: w.id,
+      paired: pairedIds,
+    }).catch(() => {});
+  } else {
+    console.log(`Agent "${w.id}" killed and unregistered (template preserved).`);
+  }
 
   // Audit event for worker kill
   recordAuditEvent('worker', w.id, 'kill', getActor(), { name }).catch(() => {});
