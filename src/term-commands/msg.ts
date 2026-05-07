@@ -127,6 +127,35 @@ async function findMemberByPane(teamName: string, paneId: string): Promise<strin
 // ============================================================================
 
 /**
+ * Parse `<role>@<team>` cross-team addressing syntax.
+ *
+ * Returns the unqualified recipient + the team scope to use for resolution.
+ * If no `@` is present, returns the recipient as-is with `defaultTeam` (which
+ * is typically the sender's team or `process.env.GENIE_TEAM`). When `@` is
+ * present, the parsed team always wins — that's the entire point of the form:
+ * "address agent X in team Y from anywhere."
+ *
+ * Edge cases:
+ *  - `'team-lead@foo'` → `{ recipient: 'team-lead', team: 'foo' }`
+ *  - `'foo@'`          → `{ recipient: 'foo', team: defaultTeam }` (empty
+ *                        right-side falls through; treats as no @-suffix)
+ *  - `'foo@bar@baz'`   → `{ recipient: 'foo', team: 'bar@baz' }` (split on
+ *                        first @; team names allowed to contain @ are not
+ *                        canonical but we don't reject them here)
+ *  - UUID input        → returned as-is, never split (UUIDs don't contain @)
+ *
+ * Closes #1674 Bug 2a.
+ */
+export function parseAtSyntax(recipient: string, defaultTeam?: string): { recipient: string; team?: string } {
+  const atIdx = recipient.indexOf('@');
+  if (atIdx === -1) return { recipient, team: defaultTeam };
+  const role = recipient.slice(0, atIdx);
+  const team = recipient.slice(atIdx + 1);
+  if (!role || !team) return { recipient, team: defaultTeam };
+  return { recipient: role, team };
+}
+
+/**
  * Resolve the 'team-lead' alias to the actual leader name for a given team context.
  * Never returns 'team-lead' — falls back to teamName via resolveLeaderName().
  */
@@ -900,8 +929,12 @@ async function handleSend(
   const repoPath = process.cwd();
   const from = options.from ?? (await detectSenderIdentity(options.team));
 
-  // Resolve 'team-lead' alias to actual leader name
-  const to = await resolveLeaderAlias(options.to, options.team);
+  // Parse <role>@<team> cross-team addressing first — the parsed team always
+  // wins over the implicit team scope (sender's team or GENIE_TEAM). Closes
+  // #1674 Bug 2a. Then resolve the 'team-lead' alias to the actual leader
+  // name in the (possibly parsed) team context.
+  const parsed = parseAtSyntax(options.to, options.team);
+  const to = await resolveLeaderAlias(parsed.recipient, parsed.team);
 
   const scopeError = await checkSendScope(repoPath, from, to);
   if (scopeError) {
@@ -920,7 +953,9 @@ async function handleSend(
   // Sender path (from) was already resolved via detectSenderIdentity which
   // prefers GENIE_AGENT_ID; the recipient counterpart lives here.
   const registryMod = await getRegistry();
-  const teamScope = options.team ?? process.env.GENIE_TEAM;
+  // parsed.team wins over options.team / GENIE_TEAM so cross-team @-syntax sends
+  // resolve in the recipient's scope, not the sender's. Closes #1674 Bug 2a.
+  const teamScope = parsed.team ?? options.team ?? process.env.GENIE_TEAM;
   const toAgentId = await registryMod.resolveAgentIdStrict(to, teamScope);
 
   const senderActor = localActor(from);
@@ -954,8 +989,9 @@ async function handleSend(
     // Event log unavailable — silent degradation
   }
 
-  // Best-effort native inbox bridge
-  const bridged = await bridgeToNativeInbox(from, to, body, options.team).catch((err) => {
+  // Best-effort native inbox bridge — use the (possibly parsed) team scope so
+  // cross-team @-syntax sends route the bridge into the recipient's team.
+  const bridged = await bridgeToNativeInbox(from, to, body, teamScope).catch((err) => {
     const reason = err instanceof Error ? err.message : String(err);
     console.warn(`[genie send] Native inbox bridge failed: ${reason}`);
     return false;

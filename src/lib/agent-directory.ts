@@ -66,6 +66,13 @@ function describeFileType(stat: import('node:fs').Stats): string {
 export type PromptMode = 'system' | 'append';
 
 export interface DirectoryEntry {
+  /**
+   * Canonical PG `agents.id` — UUID (post-061) or `dir:<name>` (legacy).
+   * Optional because built-in agents and some synthesized entries have no
+   * row yet. Restored to JSON output by #1674 Bug 2b so operators have a
+   * stable cross-team handle for `genie send`/cross-context resolution.
+   */
+  id?: string;
   /** Globally unique agent name. */
   name: string;
   /** Agent folder — CWD at spawn, contains AGENTS.md. */
@@ -499,7 +506,7 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
     const rows = await sql`
-      SELECT DISTINCT ON (a.role) a.role, a.team, a.metadata, a.created_at, e.repo_path, e.provider
+      SELECT DISTINCT ON (a.role) a.id, a.role, a.team, a.metadata, a.created_at, e.repo_path, e.provider
       FROM agents a
       LEFT JOIN executors e ON a.current_executor_id = e.id
       WHERE a.role IS NOT NULL
@@ -512,6 +519,9 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
         const createdAt =
           row.created_at instanceof Date ? row.created_at.toISOString() : (row.created_at as string | undefined);
         const entry = roleToEntry(name, row.team as string, meta, createdAt);
+        // PG row's canonical id wins over any value baked into roleToEntry —
+        // the SELECT picked the dir:-prefixed shadow first when present.
+        entry.id = row.id as string;
         const repoPath = row.repo_path as string;
         if (repoPath) {
           entry.dir = repoPath;

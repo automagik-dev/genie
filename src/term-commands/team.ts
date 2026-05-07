@@ -359,9 +359,13 @@ async function spawnLeaderWithWish(
   config.tmuxSessionName = tmuxSession;
   await teamManager.updateTeamConfig(config.name, config);
 
-  // Leader name = team name (unique by definition, no collision with session agents)
+  // Leader name = team name (unique by definition, no collision with session agents).
+  // Do NOT write `config.leader` here — migration 061's `fk_teams_leader` requires
+  // teams.leader to point at an existing agents.id (UUID or `dir:` shape). The
+  // leader agent row is not created until handleWorkerSpawn below, so writing the
+  // team-name string up front trips the FK (#1674). Persist the spawner now and
+  // defer the leader-id write until after the spawn resolves the canonical UUID.
   const leaderAgent = config.name;
-  config.leader = leaderAgent;
   config.spawner = process.env.GENIE_AGENT_NAME || 'cli';
   await teamManager.updateTeamConfig(config.name, config);
 
@@ -406,6 +410,17 @@ async function spawnLeaderWithWish(
     session: tmuxSession,
     initialPrompt: kickoffPrompt,
   });
+
+  // Resolve the leader agent's canonical id now that the row exists, then
+  // persist it as `teams.leader`. Best-effort: if resolution fails the team
+  // remains functional without a tracked leader id, and the defensive guard
+  // in updateTeamConfig would null it anyway. Closes #1674.
+  const { getAgentByName } = await import('../lib/agent-registry.js');
+  const leader = await getAgentByName(leaderAgent, config.name).catch(() => null);
+  if (leader?.id) {
+    config.leader = leader.id;
+    await teamManager.updateTeamConfig(config.name, config);
+  }
 
   // initialPrompt is passed as CLI positional arg — no mailbox backup needed
   // (sending via both paths causes duplicate prompts in the agent's input)
