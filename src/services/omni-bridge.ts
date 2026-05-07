@@ -1152,7 +1152,7 @@ export class OmniBridge {
       session: null as unknown as ExecutorSession, // Will be set after spawn
       instanceId: message.instanceId,
       spawning: true,
-      buffer: [message], // Buffer the triggering message too
+      buffer: [], // Spawn delivers the triggering message via Claude's [prompt] CLI arg; deliver()-replay would race the TUI bootstrap
       idleTimer: null,
     };
     this.sessions.set(key, placeholder);
@@ -1228,8 +1228,8 @@ export class OmniBridge {
       console.log(`[omni-bridge] Session active: ${key} ${sessionTag}`);
     } catch (err) {
       console.error(`[omni-bridge] Failed to spawn session for ${key}:`, err);
-      // Re-queue buffered messages before deleting the placeholder
-      const lostMessages = placeholder.buffer;
+      // Re-queue the trigger (never reached the agent because spawn threw) plus any concurrent buffered messages
+      const lostMessages = [message, ...placeholder.buffer];
       if (lostMessages.length > 0) {
         console.warn(
           `[omni-bridge] Re-queuing ${lostMessages.length} buffered message(s) from failed spawn for ${key}`,
