@@ -44,7 +44,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Assert signing-identity pin agrees across all four witnesses
         run: bash scripts/check-fingerprint-pinning.sh
