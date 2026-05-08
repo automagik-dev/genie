@@ -23,48 +23,70 @@
 
 BEGIN;
 
--- 1. Backfill: subagent rows inherit their parent's team.
---    `child.id LIKE parent.id || '/%'` matches `parent/anything` whose parent
---    name has no slash itself (avoids matching grandparent/parent/child).
---    Skip when child.team already equals parent.team.
-UPDATE agent_templates AS child
-SET team = parent.team,
-    updated_at = now()
-FROM agent_templates AS parent
-WHERE child.id LIKE parent.id || '/%'
-  AND parent.id NOT LIKE '%/%'
-  AND child.team IS DISTINCT FROM parent.team;
+DO $$
+DECLARE
+  builtin_names text[] := ARRAY[
+    -- BUILTIN_ROLES (plugins/genie/agents/*/AGENTS.md, category=role)
+    'docs',
+    'engineer',
+    'fix',
+    'pm',
+    'qa',
+    'refactor',
+    'reviewer',
+    'team-lead',
+    'trace',
+    -- BUILTIN_COUNCIL_MEMBERS (plugins/genie/agents/council*, category=council)
+    'council',
+    'council--architect',
+    'council--benchmarker',
+    'council--deployer',
+    'council--ergonomist',
+    'council--measurer',
+    'council--operator',
+    'council--questioner',
+    'council--sentinel',
+    'council--simplifier',
+    'council--tracer'
+  ];
+  has_name_column boolean;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'agent_templates'
+      AND column_name = 'name'
+  ) INTO has_name_column;
 
--- 2. Wipe sticky pins for built-in roles + council members.
---    Built-ins are SHARED — runtime resolution (GENIE_TEAM env, tmux
---    discovery) decides the team per-spawn now. Keeping the rows would let
---    `lookupTemplateTeam` keep returning a stale team for the first caller
---    of every spawn until the rows are overwritten with a fresh team —
---    which the runtime fix now refuses to do.
-DELETE FROM agent_templates
-WHERE id IN (
-  -- BUILTIN_ROLES (plugins/genie/agents/*/AGENTS.md, category=role)
-  'docs',
-  'engineer',
-  'fix',
-  'pm',
-  'qa',
-  'refactor',
-  'reviewer',
-  'team-lead',
-  'trace',
-  -- BUILTIN_COUNCIL_MEMBERS (plugins/genie/agents/council*, category=council)
-  'council',
-  'council--architect',
-  'council--benchmarker',
-  'council--deployer',
-  'council--ergonomist',
-  'council--measurer',
-  'council--operator',
-  'council--questioner',
-  'council--sentinel',
-  'council--simplifier',
-  'council--tracer'
-);
+  IF has_name_column THEN
+    -- Post-061 schema: agent_templates.id is a UUID PK; name is the text
+    -- template key used by roles, built-ins, and parent/child hierarchy.
+    EXECUTE $sql$
+      UPDATE agent_templates AS child
+      SET team = parent.team,
+          updated_at = now()
+      FROM agent_templates AS parent
+      WHERE child.name LIKE parent.name || '/%'
+        AND parent.name NOT LIKE '%/%'
+        AND child.team IS DISTINCT FROM parent.team
+    $sql$;
+
+    EXECUTE 'DELETE FROM agent_templates WHERE name = ANY ($1)' USING builtin_names;
+  ELSE
+    -- Pre-061 / fresh-install ordering: id is still the text template key.
+    EXECUTE $sql$
+      UPDATE agent_templates AS child
+      SET team = parent.team,
+          updated_at = now()
+      FROM agent_templates AS parent
+      WHERE child.id LIKE parent.id || '/%'
+        AND parent.id NOT LIKE '%/%'
+        AND child.team IS DISTINCT FROM parent.team
+    $sql$;
+
+    EXECUTE 'DELETE FROM agent_templates WHERE id = ANY ($1)' USING builtin_names;
+  END IF;
+END $$;
 
 COMMIT;
