@@ -28,6 +28,23 @@ import * as tmux from './tmux.js';
 // Types
 // ============================================================================
 
+const AGENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidTeamMemberId(member: string): boolean {
+  return AGENT_ID_RE.test(member) || member.startsWith('dir:');
+}
+
+function sanitizeMembersForWrite(teamName: string, members: string[]): string[] {
+  const kept = members.filter(isValidTeamMemberId);
+  if (kept.length !== members.length) {
+    recordAuditEvent('team', teamName, 'members_sanitized', getActor(), {
+      dropped: members.filter((member) => !isValidTeamMemberId(member)),
+      reason: 'teams_members_uuid_check',
+    }).catch(() => {});
+  }
+  return kept;
+}
+
 /** Team lifecycle status. */
 export type TeamStatus = 'in_progress' | 'done' | 'blocked' | 'archived';
 
@@ -41,9 +58,9 @@ export interface TeamConfig {
   baseBranch: string;
   /** Absolute path to the git worktree directory. */
   worktreePath: string;
-  /** Agent name of the team leader (if assigned). */
+  /** Agent name or canonical id of the team leader (if assigned). */
   leader?: string;
-  /** Array of agent names that are members of this team. */
+  /** Canonical agent ids that are members of this team. */
   members: string[];
   /** Team lifecycle status. */
   status: TeamStatus;
@@ -492,6 +509,7 @@ function buildFallbackConfig(name: string, optsRepo: string | undefined): TeamCo
 async function insertTeamRow(config: TeamConfig, source: 'native-config' | 'cwd-fallback'): Promise<TeamConfig | null> {
   try {
     const sql = await getConnection();
+    const safeMembers = sanitizeMembersForWrite(config.name, config.members);
     await sql`
       INSERT INTO teams (
         name, repo, base_branch, worktree_path, leader,
@@ -500,7 +518,7 @@ async function insertTeamRow(config: TeamConfig, source: 'native-config' | 'cwd-
       ) VALUES (
         ${config.name}, ${config.repo}, ${config.baseBranch},
         ${config.worktreePath}, ${config.leader ?? null},
-        ${sql.json(config.members)}, ${config.status},
+        ${sql.json(safeMembers)}, ${config.status},
         ${config.nativeTeamsEnabled ?? false}, ${config.createdAt},
         ${config.tmuxSessionName ?? null},
         ${config.nativeTeamParentSessionId ?? null},
@@ -566,13 +584,16 @@ export async function hireAgent(teamName: string, agentName: string): Promise<st
   if (agentName === 'council') {
     // Hire all 10 council members
     const councilNames = BUILTIN_COUNCIL_MEMBERS.map((m) => m.name);
-    added = councilNames.filter((n) => !config.members.includes(n));
-    config.members.push(...added);
+    const targets = await Promise.all(councilNames.map((name) => resolveTeamMemberId(teamName, name)));
+    const addedTargets = targets.filter((target) => !config.members.includes(target.id));
+    config.members.push(...addedTargets.map((target) => target.id));
+    added = addedTargets.map((target) => target.name);
   } else {
-    if (config.members.includes(agentName)) {
+    const target = await resolveTeamMemberId(teamName, agentName);
+    if (config.members.includes(target.id)) {
       return []; // Already a member
     }
-    config.members.push(agentName);
+    config.members.push(target.id);
     added = [agentName];
   }
 
@@ -587,6 +608,16 @@ export async function hireAgent(teamName: string, agentName: string): Promise<st
   return added;
 }
 
+async function resolveTeamMemberId(teamName: string, agentName: string): Promise<{ name: string; id: string }> {
+  if (isValidTeamMemberId(agentName)) return { name: agentName, id: agentName };
+
+  const resolved = await registry.resolveAgentId(agentName, teamName);
+  if (resolved) return { name: agentName, id: resolved };
+
+  const identity = await registry.findOrCreateAgent(agentName, teamName, agentName);
+  return { name: agentName, id: identity.id };
+}
+
 /**
  * Remove an agent from a team's members list.
  * Returns true if the agent was removed, false if not found.
@@ -597,7 +628,9 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
     throw new Error(`Team "${teamName}" not found.`);
   }
 
-  const idx = config.members.indexOf(agentName);
+  const resolved = isValidTeamMemberId(agentName) ? agentName : await registry.resolveAgentId(agentName, teamName);
+  let idx = resolved ? config.members.indexOf(resolved) : -1;
+  if (idx === -1) idx = config.members.indexOf(agentName);
   if (idx === -1) return false;
 
   config.members.splice(idx, 1);
@@ -929,13 +962,14 @@ export async function updateTeamConfig(name: string, config: TeamConfig): Promis
   // caller passing a stale bare-name leader degrades to NULL instead of
   // tripping the FK constraint. Closes #1674.
   const safeLeader = sanitizeLeaderForWrite(name, config.leader);
+  const safeMembers = sanitizeMembersForWrite(name, config.members);
   await sql`
     UPDATE teams SET
       repo = ${config.repo},
       base_branch = ${config.baseBranch},
       worktree_path = ${config.worktreePath},
       leader = ${safeLeader},
-      members = ${sql.json(config.members)},
+      members = ${sql.json(safeMembers)},
       status = ${config.status},
       native_team_parent_session_id = ${config.nativeTeamParentSessionId ?? null},
       native_teams_enabled = ${config.nativeTeamsEnabled ?? false},
@@ -997,18 +1031,18 @@ export async function killTeamMembers(teamName: string): Promise<void> {
 }
 
 /**
- * Resolve the actual leader name for a team. Never returns 'team-lead'.
- * Resolution order: team config DB → teamName as fallback.
- * If DB is unreachable or team doesn't exist, returns teamName (never 'team-lead').
+ * Resolve the actual leader id for a team. Never returns 'team-lead' or the
+ * team name as a synthetic fallback; callers must handle teams whose leader
+ * has not been spawned/persisted yet.
  */
-export async function resolveLeaderName(teamName: string): Promise<string> {
+export async function resolveLeaderName(teamName: string): Promise<string | null> {
   try {
     const config = await getTeam(teamName);
     if (config?.leader && config.leader !== 'team-lead') return config.leader;
   } catch {
-    // DB unreachable — fall through to teamName
+    // DB unreachable — no authoritative leader.
   }
-  return teamName;
+  return null;
 }
 
 /** Set team lifecycle status. */

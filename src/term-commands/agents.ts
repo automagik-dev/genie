@@ -79,7 +79,7 @@ async function isPaneAliveOrDead(paneId: string): Promise<boolean> {
  * Never returns 'team-lead' — uses resolveLeaderName() which falls back to teamName.
  */
 async function resolveTeamLeaderName(teamNameOrDefault: string): Promise<string> {
-  return teamManager.resolveLeaderName(teamNameOrDefault);
+  return (await teamManager.resolveLeaderName(teamNameOrDefault)) ?? teamNameOrDefault;
 }
 
 /** Check if a process is alive by PID file. */
@@ -690,8 +690,12 @@ async function registerSpawnWorker(
   if (role !== 'council') {
     try {
       await teamManager.hireAgent(ctx.validated.team, role);
-    } catch {
-      // Team may not exist in team-manager (e.g., native-only teams) — that's fine
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('not found')) {
+        // Team may not exist in team-manager (e.g., native-only teams) — that's fine.
+        return workerEntry;
+      }
+      throw err;
     }
   }
 
@@ -1851,7 +1855,10 @@ async function resolveNativeTeam(
   // until an explicit `/clear` reset it.
   const leaderName = await teamManager.resolveLeaderName(team);
   const sanitizedTeam = nativeTeams.sanitizeTeamName(team);
-  const leaderAgent = await registry.getAgentByName(leaderName, sanitizedTeam).catch(() => null);
+  const leaderAgent = leaderName
+    ? ((await registry.getAgent(leaderName).catch(() => null)) ??
+      (await registry.getAgentByName(leaderName, sanitizedTeam).catch(() => null)))
+    : null;
   let parentSessionId: string | undefined;
   if (leaderAgent && !options.isIdentitySpawn) {
     // Route through the canonical chokepoint. We want the leader's session

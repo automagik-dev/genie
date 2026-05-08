@@ -356,7 +356,7 @@ async function resolveLeaderTarget(): Promise<string> {
 
   try {
     const { resolveLeaderName } = await import('../lib/team-manager.js');
-    return await resolveLeaderName(teamName);
+    return (await resolveLeaderName(teamName)) ?? teamName;
   } catch {
     return teamName;
   }

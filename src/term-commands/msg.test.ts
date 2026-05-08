@@ -24,6 +24,7 @@ import {
   isCliSender,
   printBridgeSuggestion,
   registerSendInboxCommands,
+  resolveLeaderAlias,
   resolveSenderTeams,
   suggestRelayLeader,
 } from './msg.js';
@@ -51,8 +52,8 @@ async function insertTeam(name: string, repo: string, members: string[], leader?
   const sql = await getConnection();
   await sql`
     INSERT INTO teams (name, repo, base_branch, worktree_path, leader, members, status, created_at)
-    VALUES (${name}, ${repo}, 'dev', ${join(repo, '.worktrees', name)}, ${leader ?? null}, ${JSON.stringify(members)}, 'in_progress', now())
-    ON CONFLICT (name) DO UPDATE SET members = ${JSON.stringify(members)}, leader = ${leader ?? null}
+    VALUES (${name}, ${repo}, 'dev', ${join(repo, '.worktrees', name)}, ${leader ?? null}, ${sql.json(members)}, 'in_progress', now())
+    ON CONFLICT (name) DO UPDATE SET members = ${sql.json(members)}, leader = ${leader ?? null}
   `;
 }
 
@@ -123,6 +124,45 @@ describe('isCliSender', () => {
     expect(isCliSender('CLI')).toBe(false); // case-sensitive
     expect(isCliSender('')).toBe(false);
     expect(isCliSender(':cli')).toBe(false);
+  });
+});
+
+describe.skipIf(!DB_AVAILABLE)('resolveLeaderAlias', () => {
+  test('does not use GENIE_TEAM as an implicit team-lead scope', async () => {
+    const previousTeam = process.env.GENIE_TEAM;
+    process.env.GENIE_TEAM = 'sender-team';
+
+    try {
+      const resolved = await resolveLeaderAlias('team-lead');
+
+      expect(resolved).toBe('team-lead');
+    } finally {
+      if (previousTeam === undefined) process.env.GENIE_TEAM = undefined;
+      else process.env.GENIE_TEAM = previousTeam;
+    }
+  });
+
+  test('resolves team-lead only when an explicit team has a persisted leader id', async () => {
+    const sql = await getConnection();
+    const leaderId = '11111111-1111-4111-8111-111111111111';
+    await sql`
+      INSERT INTO agents (id, pane_id, session, repo_path, state, team, role, custom_name, started_at)
+      VALUES (${leaderId}, '', '', '/tmp', 'idle', 'leader-alias-team', 'team-lead', 'team-lead', now())
+      ON CONFLICT (id) DO NOTHING
+    `;
+    await insertTeam('leader-alias-team', '/tmp/repo', [leaderId], leaderId);
+
+    const resolved = await resolveLeaderAlias('team-lead', 'leader-alias-team');
+
+    expect(resolved).toBe(leaderId);
+  });
+
+  test('throws a clear error when an explicit team has no leader', async () => {
+    await insertTeam('leaderless-alias-team', '/tmp/repo', []);
+
+    await expect(resolveLeaderAlias('team-lead', 'leaderless-alias-team')).rejects.toThrow(
+      'has no leader; cannot resolve "team-lead"',
+    );
   });
 });
 

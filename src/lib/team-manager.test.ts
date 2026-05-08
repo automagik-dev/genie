@@ -23,7 +23,7 @@ import {
   updateTeamConfig,
   validateBranchName,
 } from './team-manager.js';
-import { setupTestDatabase } from './test-db.js';
+import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 // ============================================================================
 // Test Setup
@@ -516,5 +516,74 @@ describe.skip('pg — TODO retire-session-names #175: rewrite fixtures for UUID 
         process.env.CLAUDE_CONFIG_DIR = undefined;
       });
     });
+  });
+});
+
+describe.skipIf(!DB_AVAILABLE)('team members after UUID identity migration', () => {
+  let cleanupSchema: () => Promise<void>;
+
+  beforeAll(async () => {
+    cleanupSchema = await setupTestDatabase();
+  });
+
+  afterAll(async () => {
+    if (cleanupSchema) await cleanupSchema();
+  });
+
+  async function seedTeam(name: string, members: string[] = [], leader?: string): Promise<void> {
+    const sql = await getConnection();
+    await sql`
+      INSERT INTO teams (name, repo, base_branch, worktree_path, leader, members, status, created_at)
+      VALUES (${name}, '/tmp/repo', 'dev', ${`/tmp/repo/.worktrees/${name}`}, ${leader ?? null}, ${sql.json(members)}, 'in_progress', now())
+      ON CONFLICT (name) DO UPDATE SET members = ${sql.json(members)}, leader = ${leader ?? null}
+    `;
+  }
+
+  test('hireAgent stores a UUID/dir member id instead of the bare requested name', async () => {
+    const team = `member-id-${Date.now()}`;
+    const name = `worker-${Date.now()}`;
+    await seedTeam(team);
+
+    const added = await hireAgent(team, name);
+
+    const config = await getTeam(team);
+    expect(added).toEqual([name]);
+    expect(config?.members).toHaveLength(1);
+    expect(config?.members[0]).not.toBe(name);
+    expect(config?.members[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^dir:/i);
+  });
+
+  test('duplicate hire resolves through the same canonical member id', async () => {
+    const team = `member-dup-${Date.now()}`;
+    const name = `worker-${Date.now()}`;
+    await seedTeam(team);
+
+    await hireAgent(team, name);
+    const added = await hireAgent(team, name);
+
+    const config = await getTeam(team);
+    expect(added).toEqual([]);
+    expect(config?.members).toHaveLength(1);
+  });
+
+  test('fireAgent removes a member by resolving the same bare name', async () => {
+    const team = `member-fire-${Date.now()}`;
+    const name = `worker-${Date.now()}`;
+    await seedTeam(team);
+    await hireAgent(team, name);
+
+    const removed = await fireAgent(team, name);
+
+    const config = await getTeam(team);
+    expect(removed).toBe(true);
+    expect(config?.members).toEqual([]);
+  });
+
+  test('resolveLeaderName returns null instead of masquerading as the team name', async () => {
+    const team = `leaderless-${Date.now()}`;
+    await seedTeam(team);
+
+    await expect(resolveLeaderName(team)).resolves.toBeNull();
+    await expect(resolveLeaderName(`missing-${team}`)).resolves.toBeNull();
   });
 });

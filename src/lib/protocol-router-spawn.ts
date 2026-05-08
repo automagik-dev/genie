@@ -48,7 +48,10 @@ async function resolveParentSession(_repoPath: string, team: string): Promise<st
   // `teams.native_team_parent_session_id` column is no longer read here.
   const leaderName = await teamManager.resolveLeaderName(team);
   const sanitized = nativeTeams.sanitizeTeamName(team);
-  const leaderAgent = await registry.getAgentByName(leaderName, sanitized).catch(() => null);
+  const leaderAgent = leaderName
+    ? ((await registry.getAgent(leaderName).catch(() => null)) ??
+      (await registry.getAgentByName(leaderName, sanitized).catch(() => null)))
+    : null;
   if (leaderAgent) {
     // Route through the canonical chokepoint. We want the leader's session
     // UUID for use as a parent_session_id — `shouldResume` exposes it
@@ -260,7 +263,7 @@ async function registerNativeTeamMember(
   let leaderInboxTarget: string;
   try {
     const { resolveLeaderName } = await import('./team-manager.js');
-    leaderInboxTarget = await resolveLeaderName(team);
+    leaderInboxTarget = (await resolveLeaderName(team)) ?? team;
   } catch {
     leaderInboxTarget = team;
   }

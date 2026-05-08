@@ -177,7 +177,7 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
 
   // Resolve the actual leader name from team config (never returns 'team-lead')
   const { resolveLeaderName } = await import('./team-manager.js');
-  const leaderName = await resolveLeaderName(teamName);
+  const leaderName = (await resolveLeaderName(teamName)) ?? teamName;
 
   // Resolve (or create) the team-lead agent identity first so executor lookups
   // are stable across respawns. If a prior executor has a captured Claude
