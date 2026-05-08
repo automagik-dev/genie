@@ -153,7 +153,10 @@ export async function registerSessionInRegistry(
     // Resolve the durable identity UUID before registering runtime fields so
     // the row's id matches `agents_id_shape_check` (migration 061). The
     // bare-name display label (`<team>-<leader>`) lands on `custom_name`.
-    const agentIdentity = await _deps.findOrCreateAgent(leaderName, sanitized, leaderName);
+    const agentIdentity = await _deps.findOrCreateAgent(leaderName, sanitized, {
+      role: leaderName,
+      reportsTo: registry.resolveSpawnOwner() ?? undefined,
+    });
 
     await _deps.registerWorker({
       id: agentIdentity.id,
@@ -291,7 +294,10 @@ async function createSession(
   try {
     const sanitized = sanitizeTeamName(windowName);
     const leaderName = await resolveSessionLeaderName(windowName);
-    const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+    const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, {
+      role: leaderName,
+      reportsTo: registry.resolveSpawnOwner() ?? undefined,
+    });
     await executorRegistry.terminateActiveExecutor(agentIdentity.id);
   } catch {
     // Best-effort — don't block session creation if guard fails
@@ -375,7 +381,10 @@ async function focusTeamWindow(
     try {
       const sanitized = sanitizeTeamName(windowName);
       const leaderName = await resolveSessionLeaderName(windowName);
-      const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+      const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, {
+        role: leaderName,
+        reportsTo: registry.resolveSpawnOwner() ?? undefined,
+      });
       await executorRegistry.terminateActiveExecutor(agentIdentity.id);
     } catch {
       // Best-effort guard
@@ -413,7 +422,10 @@ async function focusTeamWindow(
       try {
         const sanitized = sanitizeTeamName(windowName);
         const leaderName = await resolveSessionLeaderName(windowName);
-        const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+        const agentIdentity = await registry.findOrCreateAgent(leaderName, sanitized, {
+          role: leaderName,
+          reportsTo: registry.resolveSpawnOwner() ?? undefined,
+        });
         await executorRegistry.terminateActiveExecutor(agentIdentity.id);
       } catch {
         // Best-effort guard

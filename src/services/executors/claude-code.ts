@@ -284,7 +284,11 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     const agent = this.safePgCall
       ? await this.safePgCall(
           'tmux-find-or-create-agent',
-          () => agents.findOrCreateAgent(`${agentName}:${chatId}`, 'omni', 'omni'),
+          () =>
+            agents.findOrCreateAgent(`${agentName}:${chatId}`, 'omni', {
+              role: 'omni',
+              reportsTo: agents.resolveSpawnOwner() ?? undefined,
+            }),
           null,
           { chatId },
         )

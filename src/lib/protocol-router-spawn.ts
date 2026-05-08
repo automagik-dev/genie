@@ -176,7 +176,10 @@ async function createExecutorForAutoSpawn(
   teamWindow: { windowId: string; windowName: string } | null,
 ): Promise<void> {
   const agentName = template.role ?? 'worker';
-  const agentIdentity = await registry.findOrCreateAgent(agentName, template.team, template.role);
+  const agentIdentity = await registry.findOrCreateAgent(agentName, template.team, {
+    role: template.role,
+    reportsTo: registry.resolveSpawnOwner() ?? undefined,
+  });
 
   const sql = await getConnection();
   await sql.begin(async (tx: typeof sql) => {
@@ -351,7 +354,10 @@ export async function spawnWorkerFromTemplate(
   // Resolve the durable identity UUID first so register() runs against the
   // same key the rest of the pipeline observes. The bare `workerId`
   // (e.g. team-role-<short>) lands on `custom_name` for human-display only.
-  const autoSpawnIdentity = await registry.findOrCreateAgent(agentName, team, template.role);
+  const autoSpawnIdentity = await registry.findOrCreateAgent(agentName, team, {
+    role: template.role,
+    reportsTo: registry.resolveSpawnOwner() ?? undefined,
+  });
 
   const workerEntry: registry.Agent = {
     id: autoSpawnIdentity.id,

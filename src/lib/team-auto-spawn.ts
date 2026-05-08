@@ -185,7 +185,15 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
   // continuity. Otherwise mint a fresh UUID and pass it forward via
   // `--session-id` so the next respawn can find it through the executor row.
   const sanitized = sanitizeTeamName(teamName);
-  const leaderAgent = await registry.findOrCreateAgent(leaderName, sanitized, leaderName);
+  // Team leaders are persisted as `dir:<leader>` master rows when registered
+  // via `genie agent register`. The leader spawn here is keyed by the leader
+  // *role*, so its `reports_to` should point at the spawner that requested
+  // the team — typically the user's CLI session (no env id) or the upstream
+  // agent that called `genie team create`.
+  const leaderAgent = await registry.findOrCreateAgent(leaderName, sanitized, {
+    role: leaderName,
+    reportsTo: registry.resolveSpawnOwner() ?? undefined,
+  });
   // Canonical chokepoint — surfaces the leader's session UUID via the same
   // DB→JSONL fallback chain every other resume site uses. We re-invoke the
   // team-lead with `--resume <uuid>` whenever a prior session exists, even

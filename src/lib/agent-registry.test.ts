@@ -26,6 +26,7 @@ import {
   register,
   removeSubPane,
   resolveAgentId,
+  resolveSpawnOwner,
   saveTemplate,
   setCurrentExecutor,
   unregister,
@@ -210,6 +211,148 @@ describe.skipIf(!DB_AVAILABLE)('register ON CONFLICT preserves protocol fields (
     expect(row?.transport).toBe('inline');
     expect(row?.provider).toBe('codex');
     expect(row?.state).toBe('idle');
+  });
+});
+
+// ============================================================================
+// Wish agent-spawn-ownership-wireup Group 1 — findOrCreateAgent ownership.
+// ============================================================================
+//
+// `agents.kind` is a GENERATED column (migration 049) computed from
+// id-shape + reports_to. New UUID rows where reports_to IS NULL infer
+// kind='permanent', which is wrong by intent for spawned workers — the
+// fix is to thread spawner identity through findOrCreateAgent so the
+// row carries the right ownership at INSERT time.
+
+describe.skipIf(!DB_AVAILABLE)('findOrCreateAgent ownership wireup (wish G1)', () => {
+  let cleanup: () => Promise<void>;
+  beforeAll(async () => {
+    cleanup = await setupTestDatabase();
+  });
+  afterAll(async () => {
+    await cleanup();
+  });
+  beforeEach(async () => {
+    const sql = await getConnection();
+    await sql`DELETE FROM agents`;
+  });
+
+  test('Felipe quickie writes reports_to=dir:felipe and kind=task', async () => {
+    // Seed the dir:felipe master row so the FK resolves.
+    const sql = await getConnection();
+    const now = new Date().toISOString();
+    await sql`
+      INSERT INTO agents (id, custom_name, team, role, started_at, state, repo_path, pane_id, session, last_state_change)
+      VALUES ('dir:felipe', 'felipe', 'genie', 'human', ${now}, NULL, '/tmp/test', 'dir:felipe', 'genie', ${now})
+    `;
+
+    const identity = await findOrCreateAgent('quickie-job', 'genie', { reportsTo: 'dir:felipe' });
+    expect(identity.reportsTo).toBe('dir:felipe');
+    // GENERATED column resolves to 'task' for UUID rows whose reports_to is set.
+    expect(identity.kind).toBe('task');
+  });
+
+  test('team auto-spawn writes the team leader id as reports_to', async () => {
+    const sql = await getConnection();
+    const now = new Date().toISOString();
+    await sql`
+      INSERT INTO agents (id, custom_name, team, role, started_at, state, repo_path, pane_id, session, last_state_change)
+      VALUES ('dir:lead-bot', 'lead-bot', 'crew', 'leader', ${now}, NULL, '/tmp/test', 'dir:lead-bot', 'crew', ${now})
+    `;
+
+    const member = await findOrCreateAgent('worker-1', 'crew', { role: 'worker', reportsTo: 'dir:lead-bot' });
+    expect(member.reportsTo).toBe('dir:lead-bot');
+    expect(member.kind).toBe('task');
+    expect(member.role).toBe('worker');
+  });
+
+  test('explicit dir:<name> registration stays kind=permanent', async () => {
+    const sql = await getConnection();
+    const now = new Date().toISOString();
+    // dir:<name> rows are written by `genie agent register`, not findOrCreateAgent.
+    // Verify the GENERATED column infers 'permanent' for them regardless of reports_to.
+    await sql`
+      INSERT INTO agents (id, custom_name, team, role, started_at, state, repo_path, pane_id, session, last_state_change)
+      VALUES ('dir:operator', 'operator', 'genie', 'human', ${now}, NULL, '/tmp/test', 'dir:operator', 'genie', ${now})
+    `;
+    const rows = await sql<{ kind: string | null }[]>`SELECT kind FROM agents WHERE id = 'dir:operator'`;
+    expect(rows[0]?.kind).toBe('permanent');
+  });
+
+  test('idempotent re-find does not clobber a previously-set reports_to', async () => {
+    const sql = await getConnection();
+    const now = new Date().toISOString();
+    await sql`
+      INSERT INTO agents (id, custom_name, team, role, started_at, state, repo_path, pane_id, session, last_state_change)
+      VALUES ('dir:felipe', 'felipe', 'genie', 'human', ${now}, NULL, '/tmp/test', 'dir:felipe', 'genie', ${now})
+    `;
+    await sql`
+      INSERT INTO agents (id, custom_name, team, role, started_at, state, repo_path, pane_id, session, last_state_change)
+      VALUES ('dir:other', 'other', 'genie', 'human', ${now}, NULL, '/tmp/test', 'dir:other', 'genie', ${now})
+    `;
+
+    const first = await findOrCreateAgent('respawn-target', 'genie', { reportsTo: 'dir:felipe' });
+    expect(first.reportsTo).toBe('dir:felipe');
+
+    // Second call with a *different* owner must NOT overwrite the existing row.
+    const second = await findOrCreateAgent('respawn-target', 'genie', { reportsTo: 'dir:other' });
+    expect(second.id).toBe(first.id);
+    expect(second.reportsTo).toBe('dir:felipe');
+  });
+
+  test('omitting reportsTo writes NULL (back-compat — legacy 3-arg role still works)', async () => {
+    // Legacy 3-arg form: findOrCreateAgent(name, team, role).
+    const identity = await findOrCreateAgent('legacy-row', 'genie', 'engineer');
+    expect(identity.reportsTo).toBeNull();
+    expect(identity.role).toBe('engineer');
+    // UUID row with NULL reports_to → kind='permanent' (the bug this wish fixes
+    // for un-updated callers — but the behavior is preserved for back-compat).
+    expect(identity.kind).toBe('permanent');
+  });
+});
+
+describe('resolveSpawnOwner (wish G1)', () => {
+  const ENV_KEYS = ['GENIE_AGENT_ID'] as const;
+  const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
+
+  beforeEach(() => {
+    for (const k of ENV_KEYS) saved[k] = process.env[k];
+    for (const k of ENV_KEYS) delete process.env[k];
+  });
+  afterAll(() => {
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  test('explicit canonical id wins over env', () => {
+    process.env.GENIE_AGENT_ID = '11111111-2222-3333-4444-555555555555';
+    expect(resolveSpawnOwner({ explicit: 'dir:felipe' })).toBe('dir:felipe');
+  });
+
+  test('env GENIE_AGENT_ID returned when UUID-shaped', () => {
+    const uuid = '11111111-2222-3333-4444-555555555555';
+    process.env.GENIE_AGENT_ID = uuid;
+    expect(resolveSpawnOwner()).toBe(uuid);
+  });
+
+  test('env GENIE_AGENT_ID returned when dir:<name>-shaped', () => {
+    process.env.GENIE_AGENT_ID = 'dir:felipe';
+    expect(resolveSpawnOwner()).toBe('dir:felipe');
+  });
+
+  test('non-canonical env values are filtered out (bare names rejected)', () => {
+    process.env.GENIE_AGENT_ID = 'felipe';
+    expect(resolveSpawnOwner()).toBeNull();
+  });
+
+  test('parentSessionAgentId is the third-priority fallback', () => {
+    expect(resolveSpawnOwner({ parentSessionAgentId: 'dir:lead' })).toBe('dir:lead');
+  });
+
+  test('returns null when nothing resolves', () => {
+    expect(resolveSpawnOwner()).toBeNull();
   });
 });
 

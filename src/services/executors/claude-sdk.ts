@@ -361,7 +361,11 @@ export class ClaudeSdkOmniExecutor implements IExecutor {
 
     const agent = await this.safePgCall(
       'sdk-find-or-create-agent',
-      () => agents.findOrCreateAgent(agentName, 'omni', 'omni'),
+      () =>
+        agents.findOrCreateAgent(agentName, 'omni', {
+          role: 'omni',
+          reportsTo: agents.resolveSpawnOwner() ?? undefined,
+        }),
       null,
       { chatId },
     );

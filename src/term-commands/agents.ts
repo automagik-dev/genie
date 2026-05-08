@@ -2677,7 +2677,10 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   // turn-close verbs (genie done/blocked/failed).
   const nt = params.nativeTeam;
   const agentName = nt?.agentName ?? effectiveRole;
-  const agentIdentity = await registry.findOrCreateAgent(agentName, team, effectiveRole);
+  const agentIdentity = await registry.findOrCreateAgent(agentName, team, {
+    role: effectiveRole,
+    reportsTo: registry.resolveSpawnOwner() ?? undefined,
+  });
   await terminateActiveExecutorWithCleanup(agentIdentity.id);
   const executorId = crypto.randomUUID();
   params.agentId = agentIdentity.id;
@@ -3568,7 +3571,14 @@ async function createResumeExecutor(
   // here. Fall back to a fresh mint only if the caller forgot to seed them.
   const resumeAgentName = agent.role ?? agent.id;
   const resumeTeam = agent.team ?? params.team;
-  const agentId = params.agentId ?? (await registry.findOrCreateAgent(resumeAgentName, resumeTeam, agent.role)).id;
+  const agentId =
+    params.agentId ??
+    (
+      await registry.findOrCreateAgent(resumeAgentName, resumeTeam, {
+        role: agent.role,
+        reportsTo: registry.resolveSpawnOwner({ explicit: agent.reportsTo ?? null }) ?? undefined,
+      })
+    ).id;
   await terminateActiveExecutorWithCleanup(agentId);
 
   const pid = await capturePanePid(paneId);
@@ -3786,7 +3796,10 @@ async function resumeAgent(agent: registry.Agent, opts: { resetAttempts?: boolea
   // Mint executor identity BEFORE buildLaunchCommand so GENIE_EXECUTOR_ID /
   // GENIE_AGENT_ID propagate into the resumed child env. The same executorId
   // is later reused when createResumeExecutor INSERTs the executor row.
-  const agentIdentity = await registry.findOrCreateAgent(agent.role ?? agent.id, agent.team ?? params.team, agent.role);
+  const agentIdentity = await registry.findOrCreateAgent(agent.role ?? agent.id, agent.team ?? params.team, {
+    role: agent.role,
+    reportsTo: registry.resolveSpawnOwner({ explicit: agent.reportsTo ?? null }) ?? undefined,
+  });
   const executorId = crypto.randomUUID();
   params.agentId = agentIdentity.id;
   params.executorId = executorId;

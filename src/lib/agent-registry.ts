@@ -1046,11 +1046,84 @@ function rowToAgentIdentity(r: AgentIdentityRow): AgentIdentity {
 }
 
 /**
- * Find or create an agent by (custom_name, team) composite key.
- * If an agent with matching name+team exists, returns it.
- * Otherwise creates a new agent with a generated UUID.
+ * Options accepted by `findOrCreateAgent`. `role` was originally the third
+ * positional argument; it now lives on `opts` alongside the new `reportsTo`
+ * field so the call sites can pass spawner identity without growing a
+ * positional list of nullables. Both forms are supported (see overload).
  */
-export async function findOrCreateAgent(name: string, team: string, role?: string): Promise<AgentIdentity> {
+export interface FindOrCreateAgentOptions {
+  /** Optional role label persisted on the identity row's `role` column. */
+  role?: string;
+  /**
+   * Spawner identity — the canonical agent id (`uuid` or `dir:<name>`) of the
+   * caller that triggered this find-or-create. Persisted on `reports_to` for
+   * brand-new rows so the schema's `agents.kind` GENERATED column infers
+   * `'task'` for spawner-owned identities. Idempotent re-finds NEVER overwrite
+   * an existing `reports_to` — see test `does not clobber reports_to on
+   * idempotent re-find`.
+   *
+   * Wish agent-spawn-ownership-wireup Group 1.
+   */
+  reportsTo?: string;
+}
+
+/**
+ * Resolve the canonical agent id of the spawner that should own a new agent
+ * row. Resolution order (Decision 2 of wish agent-spawn-ownership-wireup):
+ *
+ *   1. explicit override via `opts.explicit` (caller already knows the owner)
+ *   2. `GENIE_AGENT_ID` env (set by `genie spawn` on every child env)
+ *   3. parent session's agent id from `opts.parentSessionAgentId`
+ *   4. `null` — the spawner cannot be resolved
+ *
+ * The returned value is either a UUID, a `dir:<name>` master row, or `null`.
+ * Bare names (custom_name) are intentionally NOT returned — `agents.reports_to`
+ * is FK-bound to `agents.id` (post-migration 061), so only canonical id shapes
+ * survive the INSERT.
+ */
+export function resolveSpawnOwner(
+  opts: { explicit?: string | null; parentSessionAgentId?: string | null } = {},
+): string | null {
+  if (opts.explicit && isCanonicalAgentId(opts.explicit)) return opts.explicit;
+
+  const envId = process.env.GENIE_AGENT_ID;
+  if (envId && isCanonicalAgentId(envId)) return envId;
+
+  if (opts.parentSessionAgentId && isCanonicalAgentId(opts.parentSessionAgentId)) {
+    return opts.parentSessionAgentId;
+  }
+
+  return null;
+}
+
+/**
+ * Test-only: shape check matching the database-level `agents_id_shape_check`
+ * constraint (migration 061). UUID v4-style or `dir:<name>` only — bare names
+ * cannot satisfy the FK on `reports_to`, so we filter them out before they
+ * land in the INSERT and crash with a foreign-key violation at runtime.
+ */
+function isCanonicalAgentId(id: string): boolean {
+  return REGISTER_ID_RE.test(id);
+}
+
+/**
+ * Find or create an agent by (custom_name, team) composite key.
+ * If an agent with matching name+team exists, returns it (idempotent — never
+ * overwrites the row's `reports_to`). Otherwise creates a new agent with a
+ * generated UUID and persists `opts.reportsTo` on `reports_to` so the
+ * GENERATED `kind` column resolves correctly.
+ *
+ * Back-compat: the legacy 3-arg form `findOrCreateAgent(name, team, role)`
+ * remains supported; `role` is forwarded into `opts`.
+ */
+export async function findOrCreateAgent(
+  name: string,
+  team: string,
+  roleOrOpts?: string | FindOrCreateAgentOptions,
+): Promise<AgentIdentity> {
+  const opts: FindOrCreateAgentOptions = typeof roleOrOpts === 'string' ? { role: roleOrOpts } : (roleOrOpts ?? {});
+  const role = opts.role;
+  const reportsTo = opts.reportsTo ?? null;
   const sql = await getConnection();
 
   // Try to find existing agent by composite unique (custom_name, team)
@@ -1067,11 +1140,15 @@ export async function findOrCreateAgent(name: string, team: string, role?: strin
   // state = NULL: identity records track state through their current executor,
   // not the legacy state column. NULL prevents reconcileStaleSpawns() from
   // falsely marking identity records as 'error'.
+  //
+  // reports_to: persisted on INSERT only. ON CONFLICT branch deliberately
+  // omits it from the SET clause so concurrent re-finds never clobber an
+  // existing owner.
   const id = randomUUID();
   const now = new Date().toISOString();
   const rows = await sql<AgentIdentityRow[]>`
-    INSERT INTO agents (id, custom_name, team, role, started_at, state, created_at, updated_at)
-    VALUES (${id}, ${name}, ${team}, ${role ?? null}, ${now}, ${null}, ${now}, ${now})
+    INSERT INTO agents (id, custom_name, team, role, reports_to, started_at, state, created_at, updated_at)
+    VALUES (${id}, ${name}, ${team}, ${role ?? null}, ${reportsTo}, ${now}, ${null}, ${now}, ${now})
     ON CONFLICT (custom_name, team) WHERE custom_name IS NOT NULL AND team IS NOT NULL
     DO UPDATE SET updated_at = now()
     RETURNING id, started_at, role, custom_name, team, native_agent_id, native_color,
