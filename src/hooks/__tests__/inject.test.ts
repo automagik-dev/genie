@@ -6,6 +6,20 @@ import { join } from 'node:path';
 import { injectTeamHooks, isTeamHooked } from '../inject.js';
 import { DISPATCHED_EVENTS, DISPATCHED_EVENT_MATCHERS } from '../types.js';
 
+/**
+ * True if `command` is a recognizable genie hook-dispatch command — either the
+ * legacy bun-fork form (`bun run .../src/genie.ts hook dispatch`) or the new
+ * compiled-binary form (`'.../genie-hook'`). Mirrors the production matcher in
+ * `inject.ts::isGenieDispatchCommand`. Tests should assert against this shape
+ * rather than a specific form so they pass on machines where the postinstall
+ * binary is or isn't present.
+ */
+function isRecognizedDispatchCommand(command: string): boolean {
+  if (command.includes('hook dispatch') && command.includes('src/genie.ts')) return true;
+  if (/(?:^|[/\\'"])genie-hook(?:['"]|\s|$)/.test(command)) return true;
+  return false;
+}
+
 describe('hook injection', () => {
   const testDir = join(tmpdir(), `genie-hook-test-${Date.now()}`);
   const originalEnv = process.env.CLAUDE_CONFIG_DIR;
@@ -48,8 +62,7 @@ describe('hook injection', () => {
 
     for (const event of DISPATCHED_EVENTS) {
       expect(settings.hooks[event]).toBeDefined();
-      expect(settings.hooks[event][0].hooks[0].command).toContain('hook dispatch');
-      expect(settings.hooks[event][0].hooks[0].command).toContain('src/genie.ts');
+      expect(isRecognizedDispatchCommand(settings.hooks[event][0].hooks[0].command)).toBe(true);
     }
   });
 
@@ -59,7 +72,7 @@ describe('hook injection', () => {
     expect(result).toBe(false); // already injected
   });
 
-  test('injectTeamHooks preserves existing settings', async () => {
+  test('injectTeamHooks preserves existing settings + appends baseline permissions', async () => {
     const teamDir = join(testDir, 'teams', 'test-team');
     await mkdir(teamDir, { recursive: true });
 
@@ -75,9 +88,58 @@ describe('hook injection', () => {
     await injectTeamHooks('test-team');
 
     const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
-    expect(settings.permissions.allow).toEqual(['Bash(*)']);
+    // Pre-existing entries preserved + GENIE_BASELINE_ALLOWED_TOOLS appended.
+    expect(settings.permissions.allow).toEqual(['Bash(*)', 'AskUserQuestion']);
     expect(settings.customField).toBe('preserved');
     expect(settings.hooks).toBeDefined();
+  });
+
+  describe('baseline permissions seeding (#1688 team-side gap)', () => {
+    test('seeds AskUserQuestion when team settings has no permissions block', async () => {
+      await injectTeamHooks('test-team');
+
+      const settingsPath = join(testDir, 'teams', 'test-team', 'settings.json');
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+
+      expect(settings.permissions).toBeDefined();
+      expect(settings.permissions.allow).toContain('AskUserQuestion');
+    });
+
+    test('does not duplicate AskUserQuestion across re-injections', async () => {
+      await injectTeamHooks('test-team');
+      await injectTeamHooks('test-team');
+      await injectTeamHooks('test-team');
+
+      const settingsPath = join(testDir, 'teams', 'test-team', 'settings.json');
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+
+      const askEntries = (settings.permissions.allow as string[]).filter((t) => t === 'AskUserQuestion');
+      expect(askEntries).toHaveLength(1);
+    });
+
+    test('seeds baseline even when hooks are already clean (write triggered by perms-change alone)', async () => {
+      // First inject: hooks fresh + baseline written. Then DELETE permissions
+      // block to simulate an upgrade path where a user (or older genie) wrote
+      // hooks but never seeded permissions. Re-inject must detect the missing
+      // baseline and write it back, even though hooks are already up-to-date.
+      await injectTeamHooks('test-team');
+      const settingsPath = join(testDir, 'teams', 'test-team', 'settings.json');
+      const after = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      after.permissions = undefined;
+      await writeFile(settingsPath, JSON.stringify(after));
+
+      const result = await injectTeamHooks('test-team');
+      expect(result).toBe(true); // a write happened (baseline seed)
+
+      const reseeded = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      expect(reseeded.permissions.allow).toContain('AskUserQuestion');
+    });
+
+    test('idempotent — second call with baseline already present returns false', async () => {
+      await injectTeamHooks('test-team');
+      const result = await injectTeamHooks('test-team');
+      expect(result).toBe(false);
+    });
   });
 
   test('injectTeamHooks upgrades legacy bare genie dispatch commands', async () => {
@@ -103,8 +165,7 @@ describe('hook injection', () => {
     const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
     for (const event of DISPATCHED_EVENTS) {
       const command = settings.hooks[event][0].hooks[0].command;
-      expect(command).toContain('hook dispatch');
-      expect(command).toContain('src/genie.ts');
+      expect(isRecognizedDispatchCommand(command)).toBe(true);
     }
   });
 
@@ -187,6 +248,41 @@ describe('hook injection', () => {
       expect(settings.hooks.PostToolUse).toBeDefined();
       // PostToolUse matcher must be narrowed
       expect(settings.hooks.PostToolUse[0].matcher).toBe('SendMessage');
+    });
+
+    test('injectIntoFile is idempotent when existing entries use compiled-binary form (regression)', async () => {
+      // Regression for the duplicate-hook bug: when settings.json already
+      // contains a genie entry written with the compiled-binary command
+      // (e.g. `'/home/.../genie-hook'`), re-running injection MUST recognize
+      // it as a genie entry and refuse to append another. Prior to this fix,
+      // `isGenieDispatchCommand` only matched the legacy `hook dispatch`
+      // substring → re-injection appended a new entry every run, producing 4+
+      // identical PreToolUse + PostToolUse entries in the wild.
+      const teamDir = join(testDir, 'teams', 'test-team');
+      await mkdir(teamDir, { recursive: true });
+      const settingsPath = join(teamDir, 'settings.json');
+
+      const compiledBinaryCmd = `'${join(testDir, 'genie-home', 'bin', 'genie-hook')}'`;
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: compiledBinaryCmd, timeout: 15 }] }],
+            PostToolUse: [
+              { matcher: 'SendMessage', hooks: [{ type: 'command', command: compiledBinaryCmd, timeout: 15 }] },
+            ],
+          },
+        }),
+      );
+
+      // Re-inject 3× — count of entries per event must remain 1, not grow.
+      await injectTeamHooks('test-team');
+      await injectTeamHooks('test-team');
+      await injectTeamHooks('test-team');
+
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      expect(settings.hooks.PreToolUse).toHaveLength(1);
+      expect(settings.hooks.PostToolUse).toHaveLength(1);
     });
 
     test('injectIntoFile preserves user-defined hooks under obsolete events', async () => {
