@@ -72,7 +72,7 @@ describe('hook injection', () => {
     expect(result).toBe(false); // already injected
   });
 
-  test('injectTeamHooks preserves existing settings', async () => {
+  test('injectTeamHooks preserves existing settings + appends baseline permissions', async () => {
     const teamDir = join(testDir, 'teams', 'test-team');
     await mkdir(teamDir, { recursive: true });
 
@@ -88,9 +88,58 @@ describe('hook injection', () => {
     await injectTeamHooks('test-team');
 
     const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
-    expect(settings.permissions.allow).toEqual(['Bash(*)']);
+    // Pre-existing entries preserved + GENIE_BASELINE_ALLOWED_TOOLS appended.
+    expect(settings.permissions.allow).toEqual(['Bash(*)', 'AskUserQuestion']);
     expect(settings.customField).toBe('preserved');
     expect(settings.hooks).toBeDefined();
+  });
+
+  describe('baseline permissions seeding (#1688 team-side gap)', () => {
+    test('seeds AskUserQuestion when team settings has no permissions block', async () => {
+      await injectTeamHooks('test-team');
+
+      const settingsPath = join(testDir, 'teams', 'test-team', 'settings.json');
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+
+      expect(settings.permissions).toBeDefined();
+      expect(settings.permissions.allow).toContain('AskUserQuestion');
+    });
+
+    test('does not duplicate AskUserQuestion across re-injections', async () => {
+      await injectTeamHooks('test-team');
+      await injectTeamHooks('test-team');
+      await injectTeamHooks('test-team');
+
+      const settingsPath = join(testDir, 'teams', 'test-team', 'settings.json');
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+
+      const askEntries = (settings.permissions.allow as string[]).filter((t) => t === 'AskUserQuestion');
+      expect(askEntries).toHaveLength(1);
+    });
+
+    test('seeds baseline even when hooks are already clean (write triggered by perms-change alone)', async () => {
+      // First inject: hooks fresh + baseline written. Then DELETE permissions
+      // block to simulate an upgrade path where a user (or older genie) wrote
+      // hooks but never seeded permissions. Re-inject must detect the missing
+      // baseline and write it back, even though hooks are already up-to-date.
+      await injectTeamHooks('test-team');
+      const settingsPath = join(testDir, 'teams', 'test-team', 'settings.json');
+      const after = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      after.permissions = undefined;
+      await writeFile(settingsPath, JSON.stringify(after));
+
+      const result = await injectTeamHooks('test-team');
+      expect(result).toBe(true); // a write happened (baseline seed)
+
+      const reseeded = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      expect(reseeded.permissions.allow).toContain('AskUserQuestion');
+    });
+
+    test('idempotent — second call with baseline already present returns false', async () => {
+      await injectTeamHooks('test-team');
+      const result = await injectTeamHooks('test-team');
+      expect(result).toBe(false);
+    });
   });
 
   test('injectTeamHooks upgrades legacy bare genie dispatch commands', async () => {
