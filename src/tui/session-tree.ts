@@ -45,6 +45,8 @@ interface WorkspaceTreeInput {
   sessions: TmuxSession[];
   /** Executors from PG */
   executors: TuiExecutor[];
+  /** Explicit team scope for resolving same-name executors across teams. */
+  teamScope?: string;
   /**
    * Per-agent work state derived from `shouldResume()` (invincible-genie /
    * Group 2). Optional — empty map means workState badges are hidden, the
@@ -56,6 +58,7 @@ interface WorkspaceTreeInput {
 /** Build workspace-aware tree: all agents from filesystem, enriched with tmux + executor state. */
 export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
   const { agentNames, sessions, executors } = input;
+  const teamScope = input.teamScope;
   const workStates = input.workStates ?? new Map<string, WorkState>();
 
   // Index tmux sessions by name
@@ -88,13 +91,21 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
     const agentExecutors = executorsByAgent.get(name) ?? [];
     const node = buildAgentNode(
       name,
-      resolveAgentSession(name, sessionByName, agentExecutors),
+      resolveAgentSession(name, sessionByName, agentExecutors, teamScope),
       agentExecutors,
       executorByPaneId,
       workStates.get(name),
       'canonical',
     );
-    appendSubAgentNodes(node, subsByParent.get(name), sessionByName, executorsByAgent, executorByPaneId, workStates);
+    appendSubAgentNodes(
+      node,
+      subsByParent.get(name),
+      sessionByName,
+      executorsByAgent,
+      executorByPaneId,
+      workStates,
+      teamScope,
+    );
     return node;
   });
 
@@ -153,6 +164,7 @@ function appendSubAgentNodes(
   executorsByAgent: Map<string, TuiExecutor[]>,
   executorByPaneId: Map<string, TuiExecutor>,
   workStates: Map<string, WorkState>,
+  teamScope: string | undefined,
 ): void {
   if (!subs) return;
   for (const subName of subs) {
@@ -160,7 +172,7 @@ function appendSubAgentNodes(
     const agentExecutors = executorsByAgent.get(subName) ?? [];
     const subNode = buildAgentNode(
       subName,
-      resolveAgentSession(subName, sessionByName, agentExecutors),
+      resolveAgentSession(subName, sessionByName, agentExecutors, teamScope),
       agentExecutors,
       executorByPaneId,
       workStates.get(subName),
@@ -176,13 +188,45 @@ function resolveAgentSession(
   name: string,
   sessionByName: Map<string, TmuxSession>,
   agentExecutors: TuiExecutor[],
+  teamScope?: string,
 ): TmuxSession | undefined {
+  const executorSessions = collectExecutorSessions(agentExecutors, sessionByName);
+  const scoped = teamScope
+    ? uniqueSessions(
+        executorSessions.filter((candidate) => candidate.exec.team === teamScope).map((candidate) => candidate.session),
+      )
+    : [];
+  if (scoped.length === 1) return scoped[0];
+
+  const unscoped = uniqueSessions(executorSessions.map((candidate) => candidate.session));
+  if (unscoped.length === 1) return unscoped[0];
+
+  return sessionByName.get(toSessionName(name));
+}
+
+function collectExecutorSessions(
+  agentExecutors: TuiExecutor[],
+  sessionByName: Map<string, TmuxSession>,
+): Array<{ exec: TuiExecutor; session: TmuxSession }> {
+  const candidates: Array<{ exec: TuiExecutor; session: TmuxSession }> = [];
   for (const exec of agentExecutors) {
     if (!exec.tmuxSession) continue;
     const session = sessionByName.get(exec.tmuxSession);
-    if (session) return session;
+    if (!session) continue;
+    if (exec.tmuxPaneId && !sessionHasPane(session, exec.tmuxPaneId)) continue;
+    candidates.push({ exec, session });
   }
-  return sessionByName.get(toSessionName(name));
+  return candidates;
+}
+
+function sessionHasPane(session: TmuxSession, paneId: string): boolean {
+  return session.windows.some((window) => window.panes.some((pane) => pane.paneId === paneId));
+}
+
+function uniqueSessions(sessions: TmuxSession[]): TmuxSession[] {
+  const byName = new Map<string, TmuxSession>();
+  for (const session of sessions) byName.set(session.name, session);
+  return [...byName.values()];
 }
 
 function collectClaimedAgentSessions(nodes: TreeNode[], sessionByName: Map<string, TmuxSession>): Set<string> {

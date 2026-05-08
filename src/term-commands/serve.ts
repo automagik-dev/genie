@@ -475,6 +475,7 @@ function sendTuiLaunchScript(leftPane: string, rightPane: string, workspaceRoot?
 
   const envVars = ['GENIE_TUI_PANE=left', `GENIE_TUI_RIGHT=${rightPane}`];
   if (workspaceRoot) envVars.push(`GENIE_TUI_WORKSPACE=${workspaceRoot}`);
+  if (process.env.GENIE_TEAM) envVars.push(`GENIE_TUI_TEAM=${process.env.GENIE_TEAM}`);
 
   const content = [
     '#!/bin/sh',
