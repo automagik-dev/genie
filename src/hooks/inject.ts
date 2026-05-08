@@ -10,6 +10,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureBaselineAllowedTools } from '../lib/claude-settings.js';
 import { DISPATCHED_EVENTS, DISPATCHED_EVENT_MATCHERS } from './types.js';
 
 // Re-export `homedir` symbol so the binary-candidates resolver below has a
@@ -72,7 +73,14 @@ export function buildDispatchCommand(): string {
 }
 
 function isGenieDispatchCommand(command: string | undefined): boolean {
-  return typeof command === 'string' && /(?:^|\s)hook\s+dispatch(?:\s|$)/.test(command);
+  if (typeof command !== 'string') return false;
+  // Legacy bun-fork or literal `genie hook dispatch`:
+  if (/(?:^|\s)hook\s+dispatch(?:\s|$)/.test(command)) return true;
+  // Compiled binary path — bare or shell-quoted: `genie-hook`, `/path/to/genie-hook`,
+  // `'/path/to/genie-hook'`, etc. Anchored at a path-or-quote boundary so substrings
+  // like `genie-hook-helper` don't false-positive.
+  if (/(?:^|[/\\'"])genie-hook(?:['"]|\s|$)/.test(command)) return true;
+  return false;
 }
 
 function claudeConfigDir(): string {
@@ -197,20 +205,28 @@ async function injectIntoFile(settingsPath: string): Promise<boolean> {
   const hooksConfig = buildHooksConfig();
   const existingHooks = settings.hooks as HooksConfig | undefined;
 
-  if (
-    existingHooks &&
-    allEventsAlreadyInjected(existingHooks, hooksConfig) &&
-    hasNoObsoleteGenieEntries(existingHooks)
-  ) {
+  const hooksAlreadyClean =
+    !!existingHooks && allEventsAlreadyInjected(existingHooks, hooksConfig) && hasNoObsoleteGenieEntries(existingHooks);
+
+  // Seed GENIE_BASELINE_ALLOWED_TOOLS (currently `AskUserQuestion`) into the
+  // team's settings.json. Without this, CC team mode reads team settings with
+  // no permissions block and routes baseline tool calls through the team-lead
+  // approval queue instead of surfacing them to the human — closes the team-
+  // side gap left after #1688's global-only fix in `ensureClaudeSettingsSafe`.
+  const permissionsChanged = ensureBaselineAllowedTools(settings);
+
+  if (hooksAlreadyClean && !permissionsChanged) {
     return false; // already injected and clean — nothing to do
   }
 
-  const mergedHooks: HooksConfig = existingHooks ? { ...existingHooks } : {};
-  pruneObsoleteGenieEntries(mergedHooks);
-  for (const event of DISPATCHED_EVENTS) {
-    upsertGenieEntry(mergedHooks, event, hooksConfig[event][0]);
+  if (!hooksAlreadyClean) {
+    const mergedHooks: HooksConfig = existingHooks ? { ...existingHooks } : {};
+    pruneObsoleteGenieEntries(mergedHooks);
+    for (const event of DISPATCHED_EVENTS) {
+      upsertGenieEntry(mergedHooks, event, hooksConfig[event][0]);
+    }
+    settings.hooks = mergedHooks;
   }
-  settings.hooks = mergedHooks;
 
   // Ensure parent directory exists
   const dir = join(settingsPath, '..');

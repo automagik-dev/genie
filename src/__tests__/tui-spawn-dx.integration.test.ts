@@ -49,9 +49,10 @@ async function seedTemplate(id: string, team: string): Promise<void> {
   const { getConnection } = await import('../lib/db.js');
   const sql = await getConnection();
   await sql`
-    INSERT INTO agent_templates (id, provider, team, cwd, last_spawned_at)
+    INSERT INTO agent_templates (name, provider, team, cwd, last_spawned_at)
     VALUES (${id}, 'claude', ${team}, '/tmp/seed', now())
-    ON CONFLICT (id) DO UPDATE SET team = EXCLUDED.team
+    ON CONFLICT (name, team) WHERE name IS NOT NULL AND team IS NOT NULL DO UPDATE SET
+      last_spawned_at = EXCLUDED.last_spawned_at
   `;
 }
 
