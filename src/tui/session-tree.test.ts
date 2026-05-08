@@ -308,6 +308,46 @@ describe('buildWorkspaceTree', () => {
     expect(pane.data.command).toBe('2.1.123');
   });
 
+  test('executor tmux session links a canonical agent running inside a team session', () => {
+    const shell = makeWindow({ sessionName: 'genie-bernardo', index: 0, name: 'zsh' });
+    const genieWindow = makeWindow({
+      sessionName: 'genie-bernardo',
+      index: 1,
+      name: 'genie',
+      active: true,
+      panes: [
+        makePane({
+          sessionName: 'genie-bernardo',
+          windowIndex: 1,
+          paneId: '%825',
+          command: 'claude',
+          title: 'claude',
+        }),
+      ],
+    });
+    const teamSession = makeSession('genie-bernardo', [shell, genieWindow]);
+    const executor = makeExecutor({
+      agentName: 'genie',
+      team: 'genie-bernardo',
+      tmuxSession: 'genie-bernardo',
+      tmuxPaneId: '%825',
+      state: 'idle',
+    });
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['genie'],
+      sessions: [teamSession],
+      executors: [executor],
+    });
+
+    expect(tree).toHaveLength(1);
+    expect(tree[0].label).toBe('genie');
+    expect(tree[0].wsAgentState).toBe('running');
+    expect(tree[0].data.sessionName).toBe('genie-bernardo');
+    expect(tree[0].data.attachWindowIndex).toBe(1);
+    expect(getSessionTarget(tree[0])).toEqual({ sessionName: 'genie-bernardo', windowIndex: 1 });
+  });
+
   test('permission executor state reflected on agentState', () => {
     const sofiaSession = makeSession('sofia');
     const executor = makeExecutor({

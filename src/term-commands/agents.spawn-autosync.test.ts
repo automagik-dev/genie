@@ -90,6 +90,35 @@ describe('spawn auto-sync', () => {
     expect(syncCalls).toEqual([{ root: workspaceRoot, name }]);
   });
 
+  test('auto-registers a post-migration agent.yaml agent without AGENTS.md frontmatter', async () => {
+    const name = 'autosync-yaml';
+    const { agentDir, workspaceRoot } = createWorkspaceAgent(
+      name,
+      '',
+      'description: Spawnable YAML agent\npromptMode: system\nmodel: opus\n',
+    );
+
+    const { result, errors } = await captureConsoleError(() => agents.resolveAgentForSpawn(name, {}));
+
+    expect(result.entry.name).toBe(name);
+    expect(result.entry.dir).toBe(agentDir);
+    expect(result.entry.description).toBe('Spawnable YAML agent');
+    expect(errors).toEqual([`Auto-registered agent '${name}' from ${agentDir}`]);
+    expect(syncCalls).toEqual([{ root: workspaceRoot, name }]);
+  });
+
+  test('auto-registers a scoped sub-agent from parent .genie/agents', async () => {
+    const name = 'genie/engineer';
+    const { agentDir, workspaceRoot } = createWorkspaceSubAgent(name, validFrontmatter(name));
+
+    const { result, errors } = await captureConsoleError(() => agents.resolveAgentForSpawn(name, {}));
+
+    expect(result.entry.name).toBe(name);
+    expect(result.entry.dir).toBe(agentDir);
+    expect(errors).toEqual([`Auto-registered agent '${name}' from ${agentDir}`]);
+    expect(syncCalls).toEqual([{ root: workspaceRoot, name }]);
+  });
+
   test('missing workspace preserves not-found behavior and creates no row', async () => {
     const name = 'autosync-no-workspace';
     createAgentWithoutWorkspace(name, validFrontmatter(name));
@@ -100,9 +129,9 @@ describe('spawn auto-sync', () => {
     expect(syncCalls).toEqual([]);
   });
 
-  test('invalid frontmatter preserves not-found behavior and creates no row', async () => {
+  test('frontmatter mismatch does not block directory-name auto-register', async () => {
     const mismatch = 'autosync-name-mismatch';
-    createWorkspaceAgent(
+    const { agentDir, workspaceRoot } = createWorkspaceAgent(
       mismatch,
       `---
 name: different-agent
@@ -110,22 +139,13 @@ description: Spawnable test agent
 ---`,
     );
 
-    await expectResolveNotFound(mismatch, {});
-    expect([...directoryRows.keys()]).toEqual([]);
-    expect(syncCalls).toEqual([]);
+    const { result, errors } = await captureConsoleError(() => agents.resolveAgentForSpawn(mismatch, {}));
 
-    const emptyDescription = 'autosync-empty-description';
-    createWorkspaceAgent(
-      emptyDescription,
-      `---
-name: ${emptyDescription}
-description: "   "
----`,
-    );
-
-    await expectResolveNotFound(emptyDescription, {});
-    expect([...directoryRows.keys()]).toEqual([]);
-    expect(syncCalls).toEqual([]);
+    expect(result.entry.name).toBe(mismatch);
+    expect(result.entry.dir).toBe(agentDir);
+    expect(errors).toEqual([`Auto-registered agent '${mismatch}' from ${agentDir}`]);
+    expect([...directoryRows.keys()]).toEqual([mismatch]);
+    expect(syncCalls).toEqual([{ root: workspaceRoot, name: mismatch }]);
   });
 
   test('GENIE_DISABLE_AUTO_SYNC=1 prevents auto-register', async () => {
@@ -149,7 +169,11 @@ description: "   "
     expect(syncCalls).toEqual([]);
   });
 
-  function createWorkspaceAgent(name: string, frontmatter: string): { workspaceRoot: string; agentDir: string } {
+  function createWorkspaceAgent(
+    name: string,
+    frontmatter: string,
+    agentYaml?: string,
+  ): { workspaceRoot: string; agentDir: string } {
     const workspaceRoot = realpathSync(mkdtempSync(join(tmpdir(), 'genie-spawn-autosync-workspace-')));
     tempRoots.push(workspaceRoot);
 
@@ -157,6 +181,29 @@ description: "   "
     writeFileSync(join(workspaceRoot, '.genie', 'workspace.json'), JSON.stringify({ name: 'autosync-test' }));
 
     const agentDir = join(workspaceRoot, 'agents', name);
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(agentDir, 'AGENTS.md'), `${frontmatter}\n# ${name}\n`, 'utf-8');
+    if (agentYaml !== undefined) {
+      writeFileSync(join(agentDir, 'agent.yaml'), agentYaml, 'utf-8');
+    }
+
+    process.chdir(workspaceRoot);
+    return { workspaceRoot, agentDir };
+  }
+
+  function createWorkspaceSubAgent(name: string, frontmatter: string): { workspaceRoot: string; agentDir: string } {
+    const [parent, sub] = name.split('/');
+    const workspaceRoot = realpathSync(mkdtempSync(join(tmpdir(), 'genie-spawn-autosync-workspace-')));
+    tempRoots.push(workspaceRoot);
+
+    mkdirSync(join(workspaceRoot, '.genie'), { recursive: true });
+    writeFileSync(join(workspaceRoot, '.genie', 'workspace.json'), JSON.stringify({ name: 'autosync-test' }));
+
+    const parentDir = join(workspaceRoot, 'agents', parent);
+    mkdirSync(parentDir, { recursive: true });
+    writeFileSync(join(parentDir, 'AGENTS.md'), `${validFrontmatter(parent)}\n# ${parent}\n`, 'utf-8');
+
+    const agentDir = join(parentDir, '.genie', 'agents', sub);
     mkdirSync(agentDir, { recursive: true });
     writeFileSync(join(agentDir, 'AGENTS.md'), `${frontmatter}\n# ${name}\n`, 'utf-8');
 
@@ -196,20 +243,33 @@ description: Spawnable test agent
   async function fakeSyncSingleAgentByName(root: string, name: string): Promise<string> {
     syncCalls.push({ root, name });
 
-    const agentDir = join(root, 'agents', name);
+    const agentDir = resolveAgentDir(root, name);
     const agentsMd = join(agentDir, 'AGENTS.md');
     if (!existsSync(agentsMd)) return 'not-found';
 
     const existed = directoryRows.has(name);
     const frontmatter = parseFrontmatter(readFileSync(agentsMd, 'utf-8'));
+    const description = frontmatter.description ?? readYamlDescription(join(agentDir, 'agent.yaml'));
     directoryRows.set(name, {
       name,
       dir: agentDir,
       promptMode: 'append',
       registeredAt: 'test',
-      description: frontmatter.description,
+      description,
     });
     return existed ? 'updated' : 'registered';
+  }
+
+  function resolveAgentDir(root: string, name: string): string {
+    const parts = name.split('/');
+    if (parts.length === 2) return join(root, 'agents', parts[0], '.genie', 'agents', parts[1]);
+    return join(root, 'agents', name);
+  }
+
+  function readYamlDescription(path: string): string | undefined {
+    if (!existsSync(path)) return undefined;
+    const match = readFileSync(path, 'utf-8').match(/^description:\s*["']?([^"'\n]+)["']?\s*$/m);
+    return match?.[1];
   }
 
   async function captureConsoleError<T>(fn: () => Promise<T>): Promise<{ result: T; errors: string[] }> {

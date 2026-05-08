@@ -85,10 +85,11 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
   const { topLevel, subsByParent } = groupAgentNames(agentNames);
 
   const nodes = topLevel.map((name) => {
+    const agentExecutors = executorsByAgent.get(name) ?? [];
     const node = buildAgentNode(
       name,
-      sessionByName.get(toSessionName(name)),
-      executorsByAgent.get(name) ?? [],
+      resolveAgentSession(name, sessionByName, agentExecutors),
+      agentExecutors,
       executorByPaneId,
       workStates.get(name),
       'canonical',
@@ -98,7 +99,7 @@ export function buildWorkspaceTree(input: WorkspaceTreeInput): TreeNode[] {
   });
 
   // Add orphan sessions (tmux sessions with no matching agent in filesystem)
-  const claimedSessions = new Set(agentNames.map(toSessionName));
+  const claimedSessions = collectClaimedAgentSessions(nodes, sessionByName);
   for (const [name, session] of sessionByName) {
     if (!claimedSessions.has(name)) {
       nodes.push(sessionToNode(session, executorByPaneId));
@@ -156,10 +157,11 @@ function appendSubAgentNodes(
   if (!subs) return;
   for (const subName of subs) {
     const subLabel = subName.slice(subName.indexOf('/') + 1);
+    const agentExecutors = executorsByAgent.get(subName) ?? [];
     const subNode = buildAgentNode(
       subName,
-      sessionByName.get(toSessionName(subName)),
-      executorsByAgent.get(subName) ?? [],
+      resolveAgentSession(subName, sessionByName, agentExecutors),
+      agentExecutors,
       executorByPaneId,
       workStates.get(subName),
       'subagent',
@@ -168,6 +170,34 @@ function appendSubAgentNodes(
     subNode.depth = 1;
     parent.children.push(subNode);
   }
+}
+
+function resolveAgentSession(
+  name: string,
+  sessionByName: Map<string, TmuxSession>,
+  agentExecutors: TuiExecutor[],
+): TmuxSession | undefined {
+  for (const exec of agentExecutors) {
+    if (!exec.tmuxSession) continue;
+    const session = sessionByName.get(exec.tmuxSession);
+    if (session) return session;
+  }
+  return sessionByName.get(toSessionName(name));
+}
+
+function collectClaimedAgentSessions(nodes: TreeNode[], sessionByName: Map<string, TmuxSession>): Set<string> {
+  const claimed = new Set<string>();
+  const visit = (node: TreeNode) => {
+    if (node.type === 'agent') {
+      const sessionName = node.data.sessionName;
+      if (typeof sessionName === 'string' && sessionByName.has(sessionName)) {
+        claimed.add(sessionName);
+      }
+    }
+    for (const child of node.children) visit(child);
+  };
+  for (const node of nodes) visit(node);
+  return claimed;
 }
 
 function countClaudePanes(session: TmuxSession): number {
@@ -201,7 +231,7 @@ function buildAgentNode(
     expanded: children.length > 0,
     children,
     data: {
-      sessionName: toSessionName(name),
+      sessionName: session?.name ?? toSessionName(name),
       windowCount: session ? session.windows.length : 0,
       attachWindowIndex,
       provider: agentExecutors[0]?.provider ?? null,
