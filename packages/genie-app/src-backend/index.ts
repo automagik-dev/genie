@@ -605,7 +605,20 @@ function registerHandlers(sql: any): void {
   });
 
   reply(sub.settings.templates(ORG_ID), async () => {
-    return sql`SELECT * FROM agent_templates ORDER BY last_spawned_at DESC`;
+    return sql`
+      SELECT
+        name AS id,
+        provider,
+        team,
+        role,
+        skill,
+        cwd,
+        extra_args,
+        native_team_enabled,
+        last_spawned_at
+      FROM agent_templates
+      ORDER BY last_spawned_at DESC
+    `;
   });
 
   reply(sub.settings.skills(ORG_ID), async () => {
@@ -639,7 +652,7 @@ function registerHandlers(sql: any): void {
       if (!params.id) return { error: 'id is required' };
       await sql`
       INSERT INTO agent_templates (
-        id, provider, team, role, skill, cwd,
+        name, provider, team, role, skill, cwd,
         extra_args, native_team_enabled, last_spawned_at
       ) VALUES (
         ${params.id},
@@ -648,18 +661,18 @@ function registerHandlers(sql: any): void {
         ${params.role ?? null},
         ${params.skill ?? null},
         ${params.cwd ?? ''},
-        ${JSON.stringify(params.extraArgs ?? [])},
+        ${sql.json(params.extraArgs ?? [])},
         ${params.nativeTeamEnabled ?? false},
         ${new Date().toISOString()}
       )
-      ON CONFLICT (id) DO UPDATE SET
+      ON CONFLICT (name, team) WHERE name IS NOT NULL AND team IS NOT NULL DO UPDATE SET
         provider = EXCLUDED.provider,
-        team = EXCLUDED.team,
         role = EXCLUDED.role,
         skill = EXCLUDED.skill,
         cwd = EXCLUDED.cwd,
         extra_args = EXCLUDED.extra_args,
-        native_team_enabled = EXCLUDED.native_team_enabled
+        native_team_enabled = EXCLUDED.native_team_enabled,
+        last_spawned_at = EXCLUDED.last_spawned_at
     `;
       return { ok: true };
     },

@@ -138,6 +138,7 @@ interface AgentRow {
 
 interface TemplateRow {
   id: string;
+  name?: string | null;
   provider: ProviderName;
   team: string;
   role: string | null;
@@ -201,7 +202,9 @@ function rowToAgent(r: AgentRow): Agent {
 
 function rowToTemplate(r: TemplateRow): WorkerTemplate {
   const tpl: WorkerTemplate = {
-    id: r.id,
+    // WorkerTemplate.id is the public template key ("engineer", "parent/child").
+    // After migration 061, agent_templates.id is only the UUID primary key.
+    id: r.name ?? r.id,
     provider: r.provider,
     team: r.team,
     cwd: r.cwd,

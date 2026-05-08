@@ -213,6 +213,46 @@ describe.skipIf(!DB_AVAILABLE)('register ON CONFLICT preserves protocol fields (
   });
 });
 
+describe.skipIf(!DB_AVAILABLE)('agent template identity after migration 061', () => {
+  let cleanup: () => Promise<void>;
+
+  beforeAll(async () => {
+    cleanup = await setupTestDatabase();
+  });
+
+  afterAll(async () => {
+    await cleanup();
+  });
+
+  beforeEach(async () => {
+    const sql = await getConnection();
+    await sql`DELETE FROM agent_templates`;
+  });
+
+  test('listTemplates exposes the template name, not the UUID primary key', async () => {
+    await saveTemplate({
+      id: 'engineer',
+      provider: 'claude',
+      team: 'genie',
+      role: 'engineer',
+      cwd: '/tmp/repo',
+      lastSpawnedAt: new Date().toISOString(),
+    });
+
+    const sql = await getConnection();
+    const rows = await sql<{ id: string; name: string }[]>`
+      SELECT id::text, name FROM agent_templates WHERE name = 'engineer'
+    `;
+    expect(rows.length).toBe(1);
+    expect(rows[0].id).not.toBe('engineer');
+
+    const templates = await listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0].id).toBe('engineer');
+    expect(templates[0].role).toBe('engineer');
+  });
+});
+
 describe.skip('pg — TODO retire-session-names #175: rewrite fixtures for UUID agents.id', () => {
   let cleanup: () => Promise<void>;
   beforeAll(async () => {

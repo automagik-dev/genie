@@ -196,7 +196,7 @@ describe.skip('pg — TODO retire-session-names #175: rewrite fixtures for UUID 
       // Clean up seeded data
       const sql = await getConnection();
       await sql`DELETE FROM agents WHERE id LIKE 'seed-test-%'`;
-      await sql`DELETE FROM agent_templates WHERE id LIKE 'seed-tpl-%'`;
+      await sql`DELETE FROM agent_templates WHERE name LIKE 'seed-tpl-%'`;
       await sql`DELETE FROM teams WHERE name LIKE 'seed-team-%'`;
       await sql`DELETE FROM mailbox WHERE id LIKE 'seed-msg-%'`;
       await sql`DELETE FROM team_chat WHERE id LIKE 'seed-chat-%'`;
@@ -277,7 +277,7 @@ describe.skip('pg — TODO retire-session-names #175: rewrite fixtures for UUID 
       expect(agents[0].team).toBe('seed-team-alpha');
 
       // Verify template in PG
-      const templates = await sql`SELECT * FROM agent_templates WHERE id = 'seed-tpl-1'`;
+      const templates = await sql`SELECT * FROM agent_templates WHERE name = 'seed-tpl-1'`;
       expect(templates.length).toBe(1);
       expect(templates[0].provider).toBe('claude');
 
