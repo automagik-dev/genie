@@ -9,9 +9,14 @@ const MIGRATION_PATH = join(import.meta.dir, '055_default_auto_resume_true.sql')
 
 async function runMigration(sql: Sql): Promise<void> {
   const sqlText = await readFile(MIGRATION_PATH, 'utf-8');
-  // The migration file starts/ends with BEGIN/COMMIT, so we cannot wrap it
-  // in another transaction here — postgres rejects nested BEGIN. Run directly.
-  await sql.unsafe(sqlText);
+  // Mirror runMigrations() in db-migrations.ts: wrap in sql.begin so the
+  // pool sees a single reserved connection. The migration file's own
+  // BEGIN/COMMIT becomes a no-op inside the outer transaction (postgres
+  // emits a "there is already a transaction in progress" warning and
+  // COMMIT closes the outer txn, same as production).
+  await sql.begin(async (tx) => {
+    await tx.unsafe(sqlText);
+  });
 }
 
 describe.skipIf(!DB_AVAILABLE)('migration 055 — default auto_resume true', () => {
