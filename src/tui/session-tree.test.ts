@@ -308,6 +308,166 @@ describe('buildWorkspaceTree', () => {
     expect(pane.data.command).toBe('2.1.123');
   });
 
+  test('executor tmux session links a canonical agent running inside a team session', () => {
+    const shell = makeWindow({ sessionName: 'genie-bernardo', index: 0, name: 'zsh' });
+    const genieWindow = makeWindow({
+      sessionName: 'genie-bernardo',
+      index: 1,
+      name: 'genie',
+      active: true,
+      panes: [
+        makePane({
+          sessionName: 'genie-bernardo',
+          windowIndex: 1,
+          paneId: '%825',
+          command: 'claude',
+          title: 'claude',
+        }),
+      ],
+    });
+    const teamSession = makeSession('genie-bernardo', [shell, genieWindow]);
+    const executor = makeExecutor({
+      agentName: 'genie',
+      team: 'genie-bernardo',
+      tmuxSession: 'genie-bernardo',
+      tmuxPaneId: '%825',
+      state: 'idle',
+    });
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['genie'],
+      sessions: [teamSession],
+      executors: [executor],
+    });
+
+    expect(tree).toHaveLength(1);
+    expect(tree[0].label).toBe('genie');
+    expect(tree[0].wsAgentState).toBe('running');
+    expect(tree[0].data.sessionName).toBe('genie-bernardo');
+    expect(tree[0].data.attachWindowIndex).toBe(1);
+    expect(getSessionTarget(tree[0])).toEqual({ sessionName: 'genie-bernardo', windowIndex: 1 });
+  });
+
+  test('same-name team executors do not bind a canonical node to the first arbitrary team session', () => {
+    const alphaWindow = makeWindow({
+      sessionName: 'genie-alpha',
+      index: 1,
+      name: 'genie',
+      panes: [
+        makePane({
+          sessionName: 'genie-alpha',
+          windowIndex: 1,
+          paneId: '%101',
+          command: 'claude',
+          title: 'claude',
+        }),
+      ],
+    });
+    const betaWindow = makeWindow({
+      sessionName: 'genie-beta',
+      index: 1,
+      name: 'genie',
+      panes: [
+        makePane({
+          sessionName: 'genie-beta',
+          windowIndex: 1,
+          paneId: '%202',
+          command: 'claude',
+          title: 'claude',
+        }),
+      ],
+    });
+    const execBeta = makeExecutor({
+      id: 'exec-beta',
+      agentName: 'genie',
+      team: 'genie-beta',
+      tmuxSession: 'genie-beta',
+      tmuxPaneId: '%202',
+      state: 'idle',
+    });
+    const execAlpha = makeExecutor({
+      id: 'exec-alpha',
+      agentName: 'genie',
+      team: 'genie-alpha',
+      tmuxSession: 'genie-alpha',
+      tmuxPaneId: '%101',
+      state: 'idle',
+    });
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['genie'],
+      sessions: [makeSession('genie-alpha', [alphaWindow]), makeSession('genie-beta', [betaWindow])],
+      executors: [execBeta, execAlpha],
+    });
+
+    expect(tree[0].label).toBe('genie');
+    expect(tree[0].data.sessionName).toBe('genie');
+    expect(tree[0].wsAgentState).toBe('stopped');
+    expect(tree.map((node) => node.label)).toEqual(['genie', 'genie-alpha', 'genie-beta']);
+  });
+
+  test('team scope disambiguates same-name team executors before attaching', () => {
+    const alphaWindow = makeWindow({
+      sessionName: 'genie-alpha',
+      index: 1,
+      name: 'genie',
+      active: true,
+      panes: [
+        makePane({
+          sessionName: 'genie-alpha',
+          windowIndex: 1,
+          paneId: '%101',
+          command: 'claude',
+          title: 'claude',
+        }),
+      ],
+    });
+    const betaWindow = makeWindow({
+      sessionName: 'genie-beta',
+      index: 1,
+      name: 'genie',
+      active: true,
+      panes: [
+        makePane({
+          sessionName: 'genie-beta',
+          windowIndex: 1,
+          paneId: '%202',
+          command: 'claude',
+          title: 'claude',
+        }),
+      ],
+    });
+    const execBeta = makeExecutor({
+      id: 'exec-beta',
+      agentName: 'genie',
+      team: 'genie-beta',
+      tmuxSession: 'genie-beta',
+      tmuxPaneId: '%202',
+      state: 'idle',
+    });
+    const execAlpha = makeExecutor({
+      id: 'exec-alpha',
+      agentName: 'genie',
+      team: 'genie-alpha',
+      tmuxSession: 'genie-alpha',
+      tmuxPaneId: '%101',
+      state: 'idle',
+    });
+
+    const tree = buildWorkspaceTree({
+      agentNames: ['genie'],
+      sessions: [makeSession('genie-alpha', [alphaWindow]), makeSession('genie-beta', [betaWindow])],
+      executors: [execBeta, execAlpha],
+      teamScope: 'genie-alpha',
+    });
+
+    expect(tree[0].label).toBe('genie');
+    expect(tree[0].data.sessionName).toBe('genie-alpha');
+    expect(tree[0].wsAgentState).toBe('running');
+    expect(getSessionTarget(tree[0])).toEqual({ sessionName: 'genie-alpha', windowIndex: 1 });
+    expect(tree.map((node) => node.label)).toEqual(['genie', 'genie-beta']);
+  });
+
   test('permission executor state reflected on agentState', () => {
     const sofiaSession = makeSession('sofia');
     const executor = makeExecutor({

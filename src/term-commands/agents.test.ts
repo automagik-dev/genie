@@ -12,6 +12,7 @@ import type { Agent } from '../lib/agent-registry.js';
 import * as registry from '../lib/agent-registry.js';
 import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as executorRegistry from '../lib/executor-registry.js';
+import type { AgentIdentity } from '../lib/executor-types.js';
 import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 import * as wishState from '../lib/wish-state.js';
 import {
@@ -1116,6 +1117,90 @@ describe.skip('spawn state machine — TODO retire-session-names #175: rewrite f
 // ============================================================================
 // buildWorkerStatusMap — native-team name visibility (#1302)
 // ============================================================================
+
+describe.skipIf(!DB_AVAILABLE)('findDeadResumable: UUID identity anchors', () => {
+  beforeEach(async () => {
+    await truncateAgentsSurface();
+  });
+
+  async function seedUuidAnchor(opts: {
+    name: string;
+    team: string;
+    sessionId: string;
+    paneId: string;
+    provider?: 'claude' | 'codex' | 'claude-sdk';
+    transport?: 'tmux' | 'api' | 'process';
+  }): Promise<AgentIdentity> {
+    const identity = await registry.findOrCreateAgent(opts.name, opts.team, opts.name);
+    await executorRegistry.createAndLinkExecutor(identity.id, opts.provider ?? 'claude', opts.transport ?? 'tmux', {
+      claudeSessionId: opts.sessionId,
+      tmuxPaneId: opts.paneId,
+      tmuxSession: opts.team,
+    });
+    return identity;
+  }
+
+  test('finds a dead UUID identity by current executor, even when agent row runtime fields are null', async () => {
+    const team = `team-uuid-resume-${Date.now()}`;
+    const identity = await seedUuidAnchor({
+      name: 'genie',
+      team,
+      sessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      paneId: '%dead',
+    });
+
+    const found = await findDeadResumable(team, 'genie', async (paneId) => {
+      expect(paneId).toBe('%dead');
+      return false;
+    });
+
+    expect(found?.id).toBe(identity.id);
+    expect(found?.customName).toBe('genie');
+    expect(found?.paneId).toBe('%dead');
+  });
+
+  test('alive UUID permanent identity still blocks duplicate owner spawn', async () => {
+    const team = `team-uuid-owner-${Date.now()}`;
+    const identity = await seedUuidAnchor({
+      name: 'genie',
+      team,
+      sessionId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+      paneId: '%live',
+    });
+
+    let caught: unknown = null;
+    try {
+      await findDeadResumable(team, 'genie', async (paneId) => {
+        expect(paneId).toBe('%live');
+        return true;
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(OwnerSpawnCollisionError);
+    const err = caught as OwnerSpawnCollisionError;
+    expect(err.conflictId).toBe(identity.id);
+    expect(err.conflictPaneId).toBe('%live');
+  });
+
+  test('uses executor transport as the resume authority', async () => {
+    const team = `team-uuid-process-${Date.now()}`;
+    await seedUuidAnchor({
+      name: 'genie',
+      team,
+      sessionId: 'cccccccc-dddd-eeee-ffff-000000000000',
+      paneId: '%process',
+      transport: 'process',
+    });
+
+    const found = await findDeadResumable(team, 'genie', async () => {
+      throw new Error('liveness should not be checked for non-tmux executors');
+    });
+
+    expect(found).toBeNull();
+  });
+});
 
 describe.skipIf(!DB_AVAILABLE)('buildWorkerStatusMap: customName keying', () => {
   // This describe builds Agent values in memory and never writes to PG, but

@@ -11,8 +11,9 @@
  */
 
 import { describe, expect, mock, test } from 'bun:test';
+import type { TmuxSession } from '../diagnostics.js';
 import { buildWorkspaceTree } from '../session-tree.js';
-import type { TreeNode } from '../types.js';
+import type { TreeNode, TuiExecutor } from '../types.js';
 import { computeNavCounts, handleEnterAgent } from './Nav.js';
 
 function makeAgentNode(overrides: Partial<TreeNode> = {}): TreeNode {
@@ -78,6 +79,75 @@ describe('handleEnterAgent — Enter on stopped agent (G2)', () => {
     expect(spawn).not.toHaveBeenCalled();
     expect(onTmuxSelect).toHaveBeenCalledTimes(1);
     expect(onTmuxSelect.mock.calls[0][0]).toBe('felipe');
+    expect(onTmuxSelect.mock.calls[0][1]).toBe(1);
+  });
+
+  test('running canonical agent inside a team session attaches instead of spawning', () => {
+    const teamSession: TmuxSession = {
+      name: 'genie-bernardo',
+      attached: false,
+      windowCount: 2,
+      created: 0,
+      windows: [
+        {
+          sessionName: 'genie-bernardo',
+          index: 0,
+          name: 'zsh',
+          active: false,
+          paneCount: 1,
+          panes: [],
+        },
+        {
+          sessionName: 'genie-bernardo',
+          index: 1,
+          name: 'genie',
+          active: true,
+          paneCount: 1,
+          panes: [
+            {
+              sessionName: 'genie-bernardo',
+              windowIndex: 1,
+              paneIndex: 0,
+              paneId: '%825',
+              pid: 123,
+              command: 'claude',
+              processCommand: '/home/genie/.local/bin/claude',
+              title: 'claude',
+              size: '120x40',
+              isDead: false,
+            },
+          ],
+        },
+      ],
+    };
+    const executor: TuiExecutor = {
+      id: 'exec-genie',
+      agentId: 'agent-genie',
+      agentName: 'genie',
+      provider: 'claude',
+      transport: 'tmux',
+      pid: 123,
+      tmuxSession: 'genie-bernardo',
+      tmuxPaneId: '%825',
+      state: 'idle',
+      metadata: {},
+      startedAt: new Date(0).toISOString(),
+      role: 'genie',
+      team: 'genie-bernardo',
+    };
+    const [node] = buildWorkspaceTree({
+      agentNames: ['genie'],
+      sessions: [teamSession],
+      executors: [executor],
+    });
+    const spawn = mock<(name: string) => void>(() => undefined);
+    const onTmuxSelect = mock<(s: string, w?: number) => void>(() => undefined);
+
+    handleEnterAgent(node, onTmuxSelect, spawn);
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(onTmuxSelect).toHaveBeenCalledTimes(1);
+    expect(onTmuxSelect.mock.calls[0][0]).toBe('genie-bernardo');
     expect(onTmuxSelect.mock.calls[0][1]).toBe(1);
   });
 

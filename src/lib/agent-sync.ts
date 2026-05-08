@@ -151,11 +151,32 @@ function discoverSubAgents(parentDir: string, parentName: string, agents: AgentI
   }
 }
 
-/** Discover a single agent by name. */
+function isSafeAgentName(name: string): boolean {
+  const parts = name.split('/');
+  return parts.length > 0 && parts.length <= 2 && parts.every((part) => part !== '' && part !== '.' && part !== '..');
+}
+
+/** Discover a single agent by name, including one-level scoped sub-agents. */
 function discoverSingleAgent(workspaceRoot: string, agentName: string): AgentInfo | null {
+  if (!isSafeAgentName(agentName)) return null;
+
+  const parts = agentName.split('/');
+  if (parts.length === 2) {
+    const [parentName, subName] = parts;
+    const parentDir = join(workspaceRoot, 'agents', parentName);
+    const subDir = join(parentDir, '.genie', 'agents', subName);
+    if (!existsSync(join(subDir, 'AGENTS.md'))) return null;
+
+    return {
+      name: agentName,
+      dir: subDir,
+      repoUrl: getGitRemoteUrl(parentDir),
+      productRepo: getRepoPathForAgent(parentDir),
+    };
+  }
+
   const agentDir = join(workspaceRoot, 'agents', agentName);
   if (!existsSync(join(agentDir, 'AGENTS.md'))) return null;
-
   return {
     name: agentName,
     dir: agentDir,

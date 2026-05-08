@@ -79,7 +79,7 @@ async function isPaneAliveOrDead(paneId: string): Promise<boolean> {
  * Never returns 'team-lead' — uses resolveLeaderName() which falls back to teamName.
  */
 async function resolveTeamLeaderName(teamNameOrDefault: string): Promise<string> {
-  return teamManager.resolveLeaderName(teamNameOrDefault);
+  return (await teamManager.resolveLeaderName(teamNameOrDefault)) ?? teamNameOrDefault;
 }
 
 /** Check if a process is alive by PID file. */
@@ -690,8 +690,12 @@ async function registerSpawnWorker(
   if (role !== 'council') {
     try {
       await teamManager.hireAgent(ctx.validated.team, role);
-    } catch {
-      // Team may not exist in team-manager (e.g., native-only teams) — that's fine
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('not found')) {
+        // Team may not exist in team-manager (e.g., native-only teams) — that's fine.
+        return workerEntry;
+      }
+      throw err;
     }
   }
 
@@ -1711,28 +1715,37 @@ export async function findDeadResumable(
   // the "has a session we can resume" predicate must traverse
   // `agents.current_executor_id → executors.claude_session_id`. Narrow by
   // cheap fields first, then consult the executor JOIN.
-  const prefiltered = existing.filter(
-    (w) => w.role === role && w.team === team && w.provider === 'claude' && w.transport === 'tmux',
-  );
+  const prefiltered = existing.filter((w) => (w.role === role || w.customName === role) && w.team === team);
   let candidate: registry.Agent | null = null;
+  let candidatePaneId: string | null = null;
   for (const w of prefiltered) {
     const executor = await executorRegistry.getCurrentExecutor(w.id);
-    if (executor?.claudeSessionId) {
+    const provider = executor?.provider ?? w.provider;
+    const transport = executor?.transport ?? w.transport;
+    if (executor?.claudeSessionId && provider === 'claude' && transport === 'tmux') {
       candidate = w;
+      candidatePaneId = executor.tmuxPaneId ?? w.paneId;
       break;
     }
   }
   if (!candidate) return null;
   // `isPaneAliveOrDead` swallows TmuxUnreachableError → dead, so a zombie
   // tmux socket doesn't crash the spawn path.
-  const alive = await isAliveFn(candidate.paneId);
+  const alive = candidatePaneId ? await isAliveFn(candidatePaneId) : false;
+  const resumableCandidate = candidatePaneId ? { ...candidate, paneId: candidatePaneId } : candidate;
   if (alive) {
-    if (candidate.kind === 'permanent') {
-      throw new OwnerSpawnCollisionError(role, team, candidate.id, candidate.paneId, candidate.state);
+    if (resumableCandidate.kind === 'permanent') {
+      throw new OwnerSpawnCollisionError(
+        role,
+        team,
+        resumableCandidate.id,
+        resumableCandidate.paneId,
+        resumableCandidate.state,
+      );
     }
     return null;
   }
-  return candidate;
+  return resumableCandidate;
 }
 
 /**
@@ -1842,7 +1855,10 @@ async function resolveNativeTeam(
   // until an explicit `/clear` reset it.
   const leaderName = await teamManager.resolveLeaderName(team);
   const sanitizedTeam = nativeTeams.sanitizeTeamName(team);
-  const leaderAgent = await registry.getAgentByName(leaderName, sanitizedTeam).catch(() => null);
+  const leaderAgent = leaderName
+    ? ((await registry.getAgent(leaderName).catch(() => null)) ??
+      (await registry.getAgentByName(leaderName, sanitizedTeam).catch(() => null)))
+    : null;
   let parentSessionId: string | undefined;
   if (leaderAgent && !options.isIdentitySpawn) {
     // Route through the canonical chokepoint. We want the leader's session
@@ -1944,12 +1960,28 @@ function isWithinAgentsRoot(agentsRoot: string, agentDir: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
+function resolveAutoRegisterAgentDir(workspaceRoot: string, name: string): string | null {
+  const parts = name.split('/');
+  if (parts.length < 1 || parts.length > 2) return null;
+  if (parts.some((part) => part === '' || part === '.' || part === '..')) return null;
+
+  const agentsRoot = join(workspaceRoot, 'agents');
+  const agentDir =
+    parts.length === 2
+      ? resolvePath(agentsRoot, parts[0], '.genie', 'agents', parts[1])
+      : resolvePath(agentsRoot, parts[0]);
+
+  return isWithinAgentsRoot(agentsRoot, agentDir) ? agentDir : null;
+}
+
 /**
  * On first spawn, register a valid workspace agent directory on demand.
  *
- * This intentionally does not scan, watch, prune, or reconcile the directory.
- * It only checks the exact requested <workspace>/agents/<name>/AGENTS.md and
- * delegates the real upsert to syncSingleAgentByName.
+ * This intentionally does not scan, watch, prune, or reconcile the directory;
+ * it only checks the requested on-disk agent path and delegates the real
+ * upsert to syncSingleAgentByName. That keeps spawn working for both
+ * post-migration agent.yaml agents and scoped sub-agents such as
+ * "genie/engineer".
  */
 export async function tryAutoRegisterAgent(
   name: string,
@@ -1960,22 +1992,11 @@ export async function tryAutoRegisterAgent(
   const workspace = _spawnAutoSyncDeps.findWorkspace();
   if (!workspace) return null;
 
-  const agentsRoot = join(workspace.root, 'agents');
-  const agentDir = resolvePath(agentsRoot, name);
-  if (!isWithinAgentsRoot(agentsRoot, agentDir)) return null;
+  const agentDir = resolveAutoRegisterAgentDir(workspace.root, name);
+  if (!agentDir) return null;
 
   const agentsMdPath = join(agentDir, 'AGENTS.md');
   if (!_spawnAutoSyncDeps.existsSync(agentsMdPath)) return null;
-
-  let frontmatter: ReturnType<typeof parseFrontmatter>;
-  try {
-    frontmatter = _spawnAutoSyncDeps.parseFrontmatter(_spawnAutoSyncDeps.readFileSync(agentsMdPath, 'utf-8'));
-  } catch {
-    return null;
-  }
-
-  if (frontmatter.name !== name) return null;
-  if (typeof frontmatter.description !== 'string' || frontmatter.description.trim().length === 0) return null;
 
   try {
     const action = await _spawnAutoSyncDeps.syncSingleAgentByName(workspace.root, name);

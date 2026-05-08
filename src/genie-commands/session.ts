@@ -75,7 +75,7 @@ interface SessionOptions {
 async function resolveSessionLeaderName(teamName: string): Promise<string> {
   try {
     const { resolveLeaderName } = await import('../lib/team-manager.js');
-    return await resolveLeaderName(teamName);
+    return (await resolveLeaderName(teamName)) ?? teamName;
   } catch {
     return teamName; // Fallback when DB is unavailable — never return 'team-lead'
   }
@@ -147,7 +147,7 @@ export async function registerSessionInRegistry(
     const paneId = (await _deps.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_id}'`)).trim();
     const now = new Date().toISOString();
     const sanitized = sanitizeTeamName(windowName);
-    const leaderName = await _deps.resolveLeaderName(windowName);
+    const leaderName = (await _deps.resolveLeaderName(windowName)) ?? windowName;
     const sanitizedLeader = sanitizeTeamName(leaderName);
     // Wish retire-session-names-id-only Group 3: spawn writes ONE row.
     // Resolve the durable identity UUID before registering runtime fields so
@@ -481,7 +481,7 @@ async function reconcileLeaderConfigs(): Promise<void> {
         const raw = readFileSync(configPath, 'utf-8');
         const config = JSON.parse(raw);
         if (config.leadAgentId?.startsWith('team-lead@')) {
-          const actualLeader = await resolveLeaderName(team);
+          const actualLeader = (await resolveLeaderName(team)) ?? team;
           const sanitized = sanitizeTeamName(team);
           config.leadAgentId = `${sanitizeTeamName(actualLeader)}@${sanitized}`;
           writeFileSync(configPath, JSON.stringify(config, null, 2));

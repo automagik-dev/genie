@@ -343,7 +343,7 @@ async function resolveNotificationTargets(): Promise<{ leader: string; spawner?:
     const leader = await teamManager.resolveLeaderName(teamName);
     const config = await teamManager.getTeam(teamName);
     return {
-      leader,
+      leader: leader ?? teamName,
       spawner: config?.spawner,
     };
   } catch {
