@@ -21,6 +21,7 @@ import { Command } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
 import { type InstallOptions, installCommand } from './genie-commands/install.js';
 import { migrateCommand } from './genie-commands/migrate.js';
+import { type RecoverOrphansOptions, recoverOrphansCommand } from './genie-commands/recover-orphans.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
