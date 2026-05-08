@@ -464,3 +464,188 @@ describe('Gap #2 regression — boot-mode terminal-executor check (turn-session-
     expect(resumedIds).not.toContain('sweep-spawning');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #1462 — orphan-no-session counter increment + cap-trip
+// ---------------------------------------------------------------------------
+//
+// Pre-fix: agents with `currentSessionId=null` early-returned 'skipped' from
+// `attemptAgentResume` WITHOUT incrementing `resume_attempts`. The cap (3)
+// never tripped, `auto_resume` never flipped, and the scheduler logged
+// `agent_resume_skipped reason=no_session_id` every tick forever. Combined
+// with the audit-write at protocol-router emit-site, this produced the
+// observed 14M `resume.missing_session` events / 7-day window.
+//
+// Fix: orphan path now increments `resume_attempts`, writes
+// `lastResumeAttempt`, and flips `auto_resume=false` once attempts hit the
+// cap — same exhaustion contract as the with-session attempt path.
+//
+describe('#1462: orphan agents (no currentSessionId) increment counter and exhaust at cap', () => {
+  test('first orphan tick: increments resume_attempts to 1 and stays auto_resume=true', async () => {
+    const orphan = makeWorker({
+      id: 'orphan-1',
+      currentSessionId: null,
+      resumeAttempts: 0,
+      maxResumeAttempts: 3,
+    });
+    const { deps, agentUpdates, logs } = createMockDeps({});
+
+    const result = await attemptAgentResume(deps, defaultConfig, orphan);
+
+    expect(result).toBe('skipped');
+
+    // Counter incremented to 1.
+    const counterUpdate = agentUpdates.find((u) => u.updates.resumeAttempts === 1);
+    expect(counterUpdate).toBeDefined();
+    expect(counterUpdate?.updates.lastResumeAttempt).toBeDefined();
+
+    // auto_resume NOT yet flipped (only at cap).
+    const autoResumeFlip = agentUpdates.find((u) => u.updates.autoResume === false);
+    expect(autoResumeFlip).toBeUndefined();
+
+    // Skip log includes the new attempt counter for observability.
+    const skipLog = logs.find((l) => l.event === 'agent_resume_skipped');
+    expect(skipLog?.reason).toBe('no_session_id');
+    expect(skipLog?.resume_attempts).toBe(1);
+  });
+
+  test('orphan at cap (attempts=2 → newAttempts=3): flips auto_resume=false and returns exhausted', async () => {
+    const orphan = makeWorker({
+      id: 'orphan-cap',
+      currentSessionId: null,
+      resumeAttempts: 2, // one tick away from the cap (max=3)
+      maxResumeAttempts: 3,
+    });
+    const { deps, agentUpdates, logs } = createMockDeps({});
+
+    const result = await attemptAgentResume(deps, defaultConfig, orphan);
+
+    expect(result).toBe('exhausted');
+
+    // Counter went to 3.
+    const counterUpdate = agentUpdates.find((u) => u.updates.resumeAttempts === 3);
+    expect(counterUpdate).toBeDefined();
+
+    // auto_resume flipped to false at the cap.
+    const autoResumeFlip = agentUpdates.find((u) => u.updates.autoResume === false);
+    expect(autoResumeFlip).toBeDefined();
+
+    // Exhaustion log fired with the orphan-specific reason tag.
+    const exhaustLog = logs.find((l) => l.event === 'agent_resume_exhausted');
+    expect(exhaustLog?.reason).toBe('no_session_id_orphan');
+    expect(exhaustLog?.resume_attempts).toBe(3);
+  });
+
+  test('after exhaustion + auto_resume=false: subsequent tick early-returns skipped without re-incrementing', async () => {
+    // After Tick N flipped auto_resume=false, Tick N+1 should hit the very
+    // first early-return (autoResume === false) and never touch the counter.
+    const orphan = makeWorker({
+      id: 'orphan-already-exhausted',
+      currentSessionId: null,
+      resumeAttempts: 3,
+      maxResumeAttempts: 3,
+      autoResume: false, // Already flipped by prior tick.
+    });
+    const { deps, agentUpdates } = createMockDeps({});
+
+    const result = await attemptAgentResume(deps, defaultConfig, orphan);
+
+    expect(result).toBe('skipped');
+    // No counter or auto_resume mutations — the loop terminates cleanly.
+    expect(agentUpdates.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W1 hotfix — `resume.missing_session` emission contract
+//
+// PR #1528 emitted from the read path (getResumeSessionId) with in-process
+// dedupe; that didn't survive CLI process boundaries (each `genie ls` is a
+// fresh process). PR #1530 (this) moves emission to the scheduler's
+// attemptAgentResume no-session branch — bounded to ≤1 emit per orphan per
+// scheduler tick (60s) by the daemon's tick rate.
+//
+// These tests use a real pgserve so we can verify audit rows landed
+// (createMockSql() returns [] for every query so audit writes are no-ops
+// there). We dispatch the actual function and read audit_events.
+// ---------------------------------------------------------------------------
+
+import { afterAll, beforeAll, beforeEach } from 'bun:test';
+import { findOrCreateAgent } from '../agent-registry.js';
+import { getConnection } from '../db.js';
+import { DB_AVAILABLE, setupTestDatabase } from '../test-db.js';
+
+describe.skipIf(!DB_AVAILABLE)('W1 hotfix: scheduler emits resume.missing_session for orphan path', () => {
+  let cleanupDb: () => Promise<void>;
+
+  beforeAll(async () => {
+    cleanupDb = await setupTestDatabase();
+  });
+
+  afterAll(async () => {
+    await cleanupDb();
+  });
+
+  beforeEach(async () => {
+    const sql = await getConnection();
+    await sql`DELETE FROM audit_events WHERE event_type = 'resume.missing_session'`;
+    await sql`DELETE FROM agents WHERE id LIKE 'w1-hotfix-%'`;
+  });
+
+  async function countMissingSessionEvents(agentId: string): Promise<number> {
+    const sql = await getConnection();
+    const rows = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count
+      FROM audit_events
+      WHERE entity_type = 'agent'
+        AND entity_id = ${agentId}
+        AND event_type = 'resume.missing_session'
+    `;
+    return rows[0].count;
+  }
+
+  test('attemptAgentResume on orphan with no session emits exactly one resume.missing_session per call', async () => {
+    const agent = await findOrCreateAgent('w1-hotfix-orphan-1', 'w1-hotfix-team', 'engineer');
+
+    const orphan = makeWorker({
+      id: agent.id,
+      currentSessionId: null,
+      resumeAttempts: 0,
+      maxResumeAttempts: 3,
+      autoResume: true,
+    });
+
+    const { deps } = createMockDeps({
+      getConnection: async () => await getConnection(),
+    });
+
+    expect(await countMissingSessionEvents(agent.id)).toBe(0);
+    await attemptAgentResume(deps, defaultConfig, orphan);
+    expect(await countMissingSessionEvents(agent.id)).toBe(1);
+  });
+
+  test('three sequential ticks produce three events (bounded by tick cadence, not unbounded)', async () => {
+    const agent = await findOrCreateAgent('w1-hotfix-orphan-3', 'w1-hotfix-team', 'engineer');
+    const { deps } = createMockDeps({
+      getConnection: async () => await getConnection(),
+    });
+
+    // Three scheduler ticks back-to-back. In production these are 60s apart
+    // by daemon cadence; the test compresses time. Each tick increments the
+    // counter and emits one event until exhaustion at attempt=3.
+    for (let attempts = 0; attempts < 3; attempts++) {
+      const orphan = makeWorker({
+        id: agent.id,
+        currentSessionId: null,
+        resumeAttempts: attempts,
+        maxResumeAttempts: 3,
+        autoResume: true,
+      });
+      await attemptAgentResume(deps, defaultConfig, orphan);
+    }
+
+    // Three ticks → three events. NOT 368 like the read-path storm da66
+    // measured pre-hotfix (PR #1528).
+    expect(await countMissingSessionEvents(agent.id)).toBe(3);
+  });
+});

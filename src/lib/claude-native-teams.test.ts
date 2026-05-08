@@ -458,6 +458,59 @@ describe('writeNativeInbox', () => {
     expect(content).toHaveLength(1);
     expect(content[0].text).toBe('Hello');
   });
+
+  test('persists source and meta when supplied', async () => {
+    await createTestTeamConfig('my-team', [{ agentId: 'engineer@my-team', name: 'engineer' }]);
+
+    const msg: NativeInboxMessage = {
+      from: '+5511999',
+      text: '<channel source="whatsapp" from="+5511999" phone="+5511999">hi genie</channel>',
+      summary: 'hi genie',
+      timestamp: '2026-03-24T10:00:00.000Z',
+      color: 'blue',
+      read: false,
+      source: 'whatsapp',
+      meta: { phone: '+5511999', conversationId: 'wa-abc' },
+    };
+
+    await writeNativeInbox('my-team', 'engineer', msg);
+
+    const sanitized = sanitizeTeamName('my-team');
+    const inboxFile = join(tempDir, 'teams', sanitized, 'inboxes', 'engineer.json');
+    const content = JSON.parse(await readFile(inboxFile, 'utf-8'));
+    expect(content[0].source).toBe('whatsapp');
+    expect(content[0].meta).toEqual({ phone: '+5511999', conversationId: 'wa-abc' });
+    expect(content[0].text).toContain('<channel source="whatsapp"');
+  });
+
+  test('legacy callers without source/meta produce the same shape as before', async () => {
+    await createTestTeamConfig('my-team', [{ agentId: 'engineer@my-team', name: 'engineer' }]);
+
+    const msg: NativeInboxMessage = {
+      from: 'team-lead',
+      text: 'plain text',
+      summary: 'plain text',
+      timestamp: '2026-03-24T10:00:00.000Z',
+      color: 'blue',
+      read: false,
+    };
+
+    await writeNativeInbox('my-team', 'engineer', msg);
+
+    const sanitized = sanitizeTeamName('my-team');
+    const inboxFile = join(tempDir, 'teams', sanitized, 'inboxes', 'engineer.json');
+    const content = JSON.parse(await readFile(inboxFile, 'utf-8'));
+    expect(content[0]).toEqual({
+      from: 'team-lead',
+      text: 'plain text',
+      summary: 'plain text',
+      timestamp: '2026-03-24T10:00:00.000Z',
+      color: 'blue',
+      read: false,
+    });
+    expect('source' in content[0]).toBe(false);
+    expect('meta' in content[0]).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

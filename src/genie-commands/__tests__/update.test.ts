@@ -5,10 +5,19 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { detectFromBinaryPath, detectGlobalInstalls } from '../update.js';
+import {
+  type VerifyResult,
+  decideVerify,
+  detectFromBinaryPath,
+  detectGlobalInstalls,
+  formatVerifyBanner,
+  normalizeVersion,
+  runVerifyProbe,
+  shortCircuitIfCurrent,
+} from '../update.js';
 
 // We can't easily mock runCommandSilent inside the module, so we test
 // detectGlobalInstalls by actually running the detection commands.
@@ -121,5 +130,572 @@ describe('updateCommand dual-install logic', () => {
     for (const method of result) {
       expect(method === 'npm' || method === 'bun').toBe(true);
     }
+  });
+
+  test('post-update maintenance does not auto-start pgserve', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain("withTemporaryEnv('GENIE_PG_NO_AUTOSTART', '1'");
+    expect(source).toContain('will not auto-start it');
+    expect(source).toContain('update-diagnostics-');
+    expect(source).toContain('Recent scheduler signals');
+  });
+});
+
+describe('updateCommand legacy-cleanup wiring (Group 2)', () => {
+  test('runUpdate calls cleanupLegacyArtifacts after install, before maintenance', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const cleanupIdx = source.indexOf('runLegacyCleanupSafe(cleanupSkipList)');
+    const maintenanceIdx = source.indexOf('runPostUpdateMaintenanceSafe(');
+    const syncPluginIdx = source.indexOf('await syncPlugin(installType)');
+    expect(cleanupIdx).toBeGreaterThan(-1);
+    expect(maintenanceIdx).toBeGreaterThan(-1);
+    expect(syncPluginIdx).toBeGreaterThan(-1);
+    expect(syncPluginIdx).toBeLessThan(cleanupIdx);
+    expect(cleanupIdx).toBeLessThan(maintenanceIdx);
+  });
+
+  test('--no-sidecar-cleanup adds nats-reply-sidecar to skipList and logs the notice', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain("skipList.add('nats-reply-sidecar')");
+    expect(source).toContain('no-op for genie, retained for cross-CLI portability');
+  });
+
+  test('--skip-cleanup parsed via parseSkipCleanupFlag', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('parseSkipCleanupFlag(options.skipCleanup)');
+  });
+});
+
+// ============================================================================
+// Group 1 — `decideVerify` + `VerifyResult` tagged-union + `normalizeVersion`.
+// Pure-function tests; every kind variant pinned. Shape mirrors omni's
+// SHARED-DESIGN §4.3 so reviewers/operators learn one mental model.
+// ============================================================================
+
+describe('normalizeVersion (Group 1)', () => {
+  test('strips +gitsha build metadata', () => {
+    expect(normalizeVersion('4.260504.21+abc1234')).toBe('4.260504.21');
+  });
+
+  test('returns input unchanged when no +metadata is present', () => {
+    expect(normalizeVersion('4.260504.21')).toBe('4.260504.21');
+  });
+
+  test('trims surrounding whitespace before parsing', () => {
+    expect(normalizeVersion('  4.260504.21+abc  ')).toBe('4.260504.21');
+    expect(normalizeVersion('\n4.260504.21\n')).toBe('4.260504.21');
+  });
+
+  test('preserves SemVer pre-release (-rc.N) tags; only build metadata after + is stripped', () => {
+    expect(normalizeVersion('1.0.0-rc.1+build.42')).toBe('1.0.0-rc.1');
+    expect(normalizeVersion('2.0.0-next.0')).toBe('2.0.0-next.0');
+  });
+
+  test('strips multi-segment build metadata after the first +', () => {
+    expect(normalizeVersion('4.260504.21+sha.deadbeef.dirty')).toBe('4.260504.21');
+  });
+});
+
+describe('decideVerify (Group 1)', () => {
+  test('skipReason "no-restart" returns skipped variant regardless of other inputs', () => {
+    const result = decideVerify({
+      serverHealthBody: { version: '1.0.0' },
+      endpoint: 'genie doctor --json',
+      skipReason: 'no-restart',
+    });
+    expect(result).toEqual({ kind: 'skipped', reason: 'no-restart' });
+  });
+
+  test('skipReason "no-verify-flag" returns skipped variant', () => {
+    const result = decideVerify({
+      serverHealthBody: null,
+      endpoint: 'genie doctor --json',
+      skipReason: 'no-verify-flag',
+    });
+    expect(result).toEqual({ kind: 'skipped', reason: 'no-verify-flag' });
+  });
+
+  test('skipReason "no-running-services" returns skipped variant', () => {
+    const result = decideVerify({
+      serverHealthBody: null,
+      endpoint: 'genie doctor --json',
+      skipReason: 'no-running-services',
+    });
+    expect(result).toEqual({ kind: 'skipped', reason: 'no-running-services' });
+  });
+
+  test('null serverHealthBody (no skipReason) returns health-unreachable with endpoint', () => {
+    const result = decideVerify({
+      serverHealthBody: null,
+      endpoint: 'genie doctor --json',
+    });
+    expect(result).toEqual({ kind: 'health-unreachable', endpoint: 'genie doctor --json' });
+  });
+
+  test('healthy daemon returns ok carrying disk version + pid', () => {
+    // Truthful-verify rewrite: `version` on the result is the on-disk package
+    // version (what the next CLI invocation reads), NOT the calling CLI's
+    // compile-time constant. The +gitsha is stripped via normalizeVersion.
+    const result = decideVerify({
+      serverHealthBody: { version: '4.260507.2+abc1234', daemonInodeStale: false, daemonPid: 851758 },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
+    });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', pid: 851758 });
+  });
+
+  test('healthy daemon with version field absent returns ok with null version', () => {
+    // Defensive: a malformed package.json (or unreadable disk) returns null
+    // version. ok is preserved because the inode is fresh; banner falls back
+    // to "version unknown" rather than promoting it to an error variant.
+    const result = decideVerify({
+      serverHealthBody: { daemonInodeStale: false, daemonPid: 851758 },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
+    });
+    expect(result).toEqual({ kind: 'ok', version: null, pid: 851758 });
+  });
+
+  test('healthy daemon with no daemonInodeStale field treated as fresh inode', () => {
+    // Non-Linux platforms can't probe /proc, so `daemonInodeStale` is absent.
+    // We optimistically assume "no stale inode" — the field defaults to undefined
+    // (NOT true), so decideVerify falls through to ok.
+    const result = decideVerify({
+      serverHealthBody: { version: '4.260507.2' },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
+    });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', pid: null });
+  });
+
+  test('VerifyResult tagged-union shape is exhaustive — version-mismatch removed (auth-invalid reserved for shape parity)', () => {
+    // The version-mismatch variant was removed in the truthful-verify rewrite:
+    // it compared the running CLI's frozen `VERSION` against post-update disk
+    // and was structurally guaranteed to fire on every real upgrade (false
+    // positive). The auth-invalid variant remains for cross-CLI shape parity
+    // with omni; decideVerify never returns it for genie inputs today. This
+    // test locks the union — adding/removing a variant should require
+    // touching this exhaustiveness check.
+    const variants: VerifyResult[] = [
+      { kind: 'ok', version: '1.0.0', pid: 1234 },
+      { kind: 'health-unreachable', endpoint: 'x' },
+      {
+        kind: 'daemon-stale-inode',
+        diskVersion: '1.0.0',
+        pid: 1234,
+        cwd: '/tmp/old (deleted)',
+      },
+      { kind: 'auth-invalid' },
+      { kind: 'skipped', reason: 'no-restart' },
+      { kind: 'skipped', reason: 'no-running-services' },
+      { kind: 'skipped', reason: 'no-verify-flag' },
+    ];
+    expect(variants).toHaveLength(7);
+  });
+
+  test('daemonInodeStale=true returns daemon-stale-inode variant with pid + cwd surfaced', () => {
+    // Inode-stale wins over the optimistic ok path. The kernel `(deleted)`
+    // marker on `/proc/<pid>/cwd` is direct proof the daemon is serving
+    // pre-update bytes and operators need `pm2 restart Genie`.
+    const result = decideVerify({
+      serverHealthBody: {
+        version: '4.260507.2',
+        daemonInodeStale: true,
+        daemonPid: 2831346,
+        daemonCwd: '/home/genie/.bun/install/global/node_modules/.old-F13E840E5DFD4535 (deleted)',
+      },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
+    });
+    expect(result).toEqual({
+      kind: 'daemon-stale-inode',
+      diskVersion: '4.260507.2',
+      pid: 2831346,
+      cwd: '/home/genie/.bun/install/global/node_modules/.old-F13E840E5DFD4535 (deleted)',
+    });
+  });
+
+  test('daemonInodeStale=false (post-restart) returns ok carrying disk version', () => {
+    // Lock-in: the post-restart happy path. After `restartServeIfStale`
+    // re-execs the daemon, /proc/<pid>/cwd no longer carries the (deleted)
+    // marker; decideVerify must return ok with the fresh on-disk version.
+    const result = decideVerify({
+      serverHealthBody: {
+        version: '4.260507.2',
+        daemonInodeStale: false,
+        daemonPid: 9999,
+        daemonCwd: '/home/genie/.bun/install/global/node_modules/@automagik/genie',
+      },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
+    });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', pid: 9999 });
+  });
+
+  test('disk version differing from anything else does NOT trip a mismatch (CLI-vs-disk comparison removed)', () => {
+    // Regression lock for the truthful-verify rewrite. Before the rewrite,
+    // any mismatch between the calling CLI's compile-time `VERSION` and the
+    // on-disk package.json triggered a `version-mismatch` banner — and that
+    // mismatch fired on EVERY actual upgrade, because bun's package swap
+    // happens while the calling CLI process is still alive (so its frozen
+    // VERSION is necessarily the OLD value when disk just got the NEW one).
+    // The rewrite drops the comparison entirely; ok is the right answer
+    // when the inode is fresh, regardless of what the calling CLI thinks
+    // its own version is.
+    const result = decideVerify({
+      serverHealthBody: {
+        // disk says 4.260507.2 — the post-update truth
+        version: '4.260507.2',
+        daemonInodeStale: false,
+        daemonPid: 851758,
+      },
+      endpoint: 'pgserve status --json + ~/.genie/serve.pid',
+    });
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.version).toBe('4.260507.2');
+    }
+  });
+});
+
+// ============================================================================
+// Group 3 — pre-flight version check + confirmation prompt + `--yes`.
+// `shortCircuitIfCurrent` is the pure decider; `fetchLatestVersion` is the
+// I/O wrapper covered separately by integration tests.
+// ============================================================================
+
+describe('shortCircuitIfCurrent (Group 3)', () => {
+  test('null/undefined latestVersion → false (proceed with install)', () => {
+    expect(shortCircuitIfCurrent('1.0.0', null)).toBe(false);
+    expect(shortCircuitIfCurrent('1.0.0', undefined)).toBe(false);
+  });
+
+  test('empty-string latestVersion → false (defensive against parse failure)', () => {
+    expect(shortCircuitIfCurrent('1.0.0', '')).toBe(false);
+  });
+
+  test('exact match returns true', () => {
+    expect(shortCircuitIfCurrent('4.260504.21', '4.260504.21')).toBe(true);
+  });
+
+  test('build metadata strip lets +gitsha CLI match registry-published version', () => {
+    expect(shortCircuitIfCurrent('4.260504.21+abc1234', '4.260504.21')).toBe(true);
+    expect(shortCircuitIfCurrent('4.260504.21', '4.260504.21+def5678')).toBe(true);
+    expect(shortCircuitIfCurrent('4.260504.21+abc', '4.260504.21+def')).toBe(true);
+  });
+
+  test('different versions return false', () => {
+    expect(shortCircuitIfCurrent('1.0.0', '1.0.1')).toBe(false);
+    expect(shortCircuitIfCurrent('1.0.0', '0.9.9')).toBe(false);
+  });
+
+  test('whitespace in inputs is normalized away', () => {
+    expect(shortCircuitIfCurrent('  1.0.0  ', '1.0.0\n')).toBe(true);
+  });
+});
+
+describe('updateCommand flag wiring (Group 3)', () => {
+  test('--yes flag plumbs through UpdateCommandOptions.yes', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('shouldAutoConfirm(options)');
+    expect(source).toContain('isTruthyEnv(process.env.GENIE_UPDATE_YES)');
+  });
+
+  test('CLI exposes -y / --yes / --no-restart / --no-verify flags', () => {
+    const source = readFileSync(join(__dirname, '..', '..', 'genie.ts'), 'utf-8');
+    expect(source).toContain('-y, --yes');
+    expect(source).toContain('--no-restart');
+    expect(source).toContain('--no-verify');
+  });
+
+  test('pre-flight version check runs BEFORE detectInstallationType', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const fetchIdx = source.indexOf('await fetchLatestVersion(channel)');
+    const detectIdx = source.indexOf('await detectInstallationType()');
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(detectIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeLessThan(detectIdx);
+  });
+
+  test('"Already up to date" exit logs version and channel', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('Already up to date');
+    expect(source).toContain('shortCircuitIfCurrent(VERSION, latestVersion)');
+  });
+});
+
+// ============================================================================
+// Group 4 — post-restart health probe + `--no-verify` + `--no-restart`.
+// Probe I/O is exercised via the test seam `readHealth` injection so the
+// suite never depends on a live daemon.
+// ============================================================================
+
+describe('runVerifyProbe (Group 4)', () => {
+  test('skipReason "no-restart" returns skipped variant without polling', async () => {
+    let calls = 0;
+    const result = await runVerifyProbe({
+      skipReason: 'no-restart',
+      readHealth: async () => {
+        calls++;
+        return { version: '1.0.0' };
+      },
+    });
+    expect(result).toEqual({ kind: 'skipped', reason: 'no-restart' });
+    expect(calls).toBe(0); // skip path never invokes the reader
+  });
+
+  test('skipReason "no-verify-flag" returns skipped variant', async () => {
+    const result = await runVerifyProbe({
+      skipReason: 'no-verify-flag',
+      readHealth: async () => null,
+    });
+    expect(result).toEqual({ kind: 'skipped', reason: 'no-verify-flag' });
+  });
+
+  test('reader returns body on first poll → ok with on-disk version + pid', async () => {
+    const result = await runVerifyProbe({
+      readHealth: async () => ({ version: '4.260507.2+abc', daemonInodeStale: false, daemonPid: 851758 }),
+    });
+    expect(result).toEqual({ kind: 'ok', version: '4.260507.2', pid: 851758 });
+  });
+
+  test('reader returns disk version differing from anything else → still ok (CLI-vs-disk comparison removed)', async () => {
+    // Pre-rewrite, this test asserted `version-mismatch` whenever the disk
+    // version differed from `cliVersion`. That branch is gone — disk truth
+    // is the only side that matters post-pm2-restart.
+    const result = await runVerifyProbe({
+      readHealth: async () => ({ version: '0.9.0', daemonInodeStale: false, daemonPid: 1234 }),
+    });
+    expect(result).toEqual({ kind: 'ok', version: '0.9.0', pid: 1234 });
+  });
+
+  test('reader returns null until deadline → health-unreachable with endpoint', async () => {
+    let calls = 0;
+    const result = await runVerifyProbe({
+      readHealth: async () => {
+        calls++;
+        return null;
+      },
+      deadlineMs: 50, // shortened via test seam
+      intervalMs: 10,
+    });
+    expect(result.kind).toBe('health-unreachable');
+    if (result.kind === 'health-unreachable') {
+      expect(result.endpoint).toContain('pgserve');
+    }
+    expect(calls).toBeGreaterThan(0);
+  });
+
+  test('reader exception is caught and treated as null read', async () => {
+    let firstCall = true;
+    const result = await runVerifyProbe({
+      readHealth: async () => {
+        if (firstCall) {
+          firstCall = false;
+          throw new Error('connection refused');
+        }
+        return { version: '1.0.0', daemonInodeStale: false, daemonPid: 1 };
+      },
+      deadlineMs: 200,
+      intervalMs: 10,
+    });
+    // Recovery path: first call throws, second call succeeds → ok.
+    expect(result.kind).toBe('ok');
+  });
+});
+
+describe('formatVerifyBanner (Group 4)', () => {
+  test('ok variant emits a single Genie line with version + pid + healthy marker', () => {
+    const lines = formatVerifyBanner({ kind: 'ok', version: '4.260507.2', pid: 851758 });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Genie');
+    expect(lines[0]).toContain('4.260507.2');
+    expect(lines[0]).toContain('851758');
+    expect(lines[0]).toContain('healthy');
+  });
+
+  test('ok variant with null version falls back to "version unknown" instead of crashing', () => {
+    const lines = formatVerifyBanner({ kind: 'ok', version: null, pid: 851758 });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('version unknown');
+    expect(lines[0]).toContain('851758');
+  });
+
+  test('ok variant with null pid omits the pid suffix', () => {
+    const lines = formatVerifyBanner({ kind: 'ok', version: '4.260507.2', pid: null });
+    expect(lines[0]).toContain('4.260507.2');
+    expect(lines[0]).toContain('healthy');
+    expect(lines[0]).not.toMatch(/pid\s+\d/);
+  });
+
+  test('skipped variant collapses to single-line note with reason', () => {
+    const lines = formatVerifyBanner({ kind: 'skipped', reason: 'no-restart' });
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.some((l) => l.includes('skipped'))).toBe(true);
+    expect(lines.some((l) => l.includes('no-restart'))).toBe(true);
+  });
+
+  test('health-unreachable surfaces the probe endpoint and the pm2 fix command', () => {
+    const lines = formatVerifyBanner({ kind: 'health-unreachable', endpoint: 'doctor --json' });
+    expect(lines.some((l) => l.includes('unreachable'))).toBe(true);
+    expect(lines.some((l) => l.includes('doctor --json'))).toBe(true);
+    expect(lines.some((l) => l.includes('pm2 restart Genie'))).toBe(true);
+  });
+
+  test('daemon-stale-inode banner surfaces pid, cwd, and the pm2 restart remediation', () => {
+    // Banner is the operator's only signal when they hit the bug — must
+    // contain the actionable command they should run, not just a vague
+    // "stale" warning. We pin the exact remediation string so a future edit
+    // can't silently degrade it.
+    const lines = formatVerifyBanner({
+      kind: 'daemon-stale-inode',
+      diskVersion: '4.260507.2',
+      pid: 2831346,
+      cwd: '/home/genie/.bun/install/global/node_modules/.old-F13E840E5DFD4535 (deleted)',
+    });
+    expect(lines.some((l) => l.includes('4.260507.2'))).toBe(true);
+    expect(lines.some((l) => l.includes('2831346'))).toBe(true);
+    expect(lines.some((l) => l.includes('stale'))).toBe(true);
+    expect(lines.some((l) => l.includes('(deleted)'))).toBe(true);
+    // Remediation references the canonical "Genie" pm2 process name (not
+    // the legacy "genie-serve"). Pinned because the rename is recent.
+    expect(lines.some((l) => l.includes('pm2 restart Genie'))).toBe(true);
+  });
+});
+
+// ============================================================================
+// Group 5 — diagnostics `verify` block + schema bump 1 → 2 + ora/chalk polish.
+// These are source-shape lock tests; behavior is exercised end-to-end via
+// the smoke flow on a real install (out of scope for unit tests).
+// ============================================================================
+
+describe('Diagnostics schema (Group 5)', () => {
+  test('schema version bumped to 2', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('UPDATE_DIAGNOSTIC_SCHEMA_VERSION = 2');
+  });
+
+  test('diagnostics object includes verify and cleanups blocks', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('verify: extras.verify');
+    expect(source).toContain('cleanups: extras.cleanups');
+  });
+
+  test('schema bump policy is documented in the file header', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('Bump on every additive change');
+  });
+
+  test('NO_COLOR honored via colorEnabled() helper', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('process.env.NO_COLOR');
+    expect(source).toContain('colorEnabled');
+  });
+});
+
+// Group 6 (follow-up) — pm2 genie-serve restart on stale inode.
+// Source-shape locks; the actual pm2 round-trip is not unit-tested (it shells
+// out to a process supervisor that isn't installed in CI). The probe helper
+// is covered in `update-stale-inode.test.ts` via /proc fixtures.
+// ============================================================================
+
+describe('restartServeIfStale wiring (Group 6)', () => {
+  test('runPostUpdateMaintenanceSafe calls restartServeIfStaleSafe before runVerifyProbe', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const restartIdx = source.indexOf('await restartServeIfStaleSafe()');
+    const verifyIdx = source.indexOf('await runVerifyProbe()');
+    expect(restartIdx).toBeGreaterThan(-1);
+    expect(verifyIdx).toBeGreaterThan(-1);
+    // The order matters: restart must happen FIRST so the verify probe sees
+    // the live inode. Reversing this order would re-introduce the original
+    // bug (verify reports stale, but the restart never happened in this run).
+    expect(restartIdx).toBeLessThan(verifyIdx);
+  });
+
+  test('exit-code 1 path includes daemon-stale-inode (CI / scripted updaters notice)', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain("verify.kind === 'daemon-stale-inode'");
+    expect(source).toContain('process.exitCode = 1');
+  });
+
+  test('readDaemonCwd is Linux-gated (no /proc on darwin/windows)', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    // The probe must short-circuit on non-Linux so verify doesn't hang on a
+    // missing readlink — non-Linux operators just lose the inode-stale signal,
+    // they don't get a runtime error.
+    expect(source).toContain("process.platform !== 'linux'");
+    expect(source).toContain('readlinkSync(`/proc/${pid}/cwd`)');
+  });
+
+  test('pm2GenieServe matches both canonical "Genie" and legacy "genie-serve" names', () => {
+    // The rename `genie-serve` → `Genie` (4.260507) means update.ts must
+    // discover the entry by either name during the migration window. The
+    // candidate list comes from `install.ts.pm2ProcessNameCandidates()` and
+    // is iterated canonical-first so a freshly-renamed install picks `Genie`.
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain("'pm2', ['jlist']");
+    expect(source).toContain('pm2ProcessNameCandidates()');
+    expect(source).toContain("status !== 'online'");
+  });
+
+  test('restartServeIfStale uses pm2 startOrReload with the regenerated ecosystem config', () => {
+    // After bun's package swap, the ecosystem config on disk needs to be
+    // regenerated so the `version` field in pm2 metadata reflects the new
+    // install. `pm2 startOrReload <config>` re-reads the file and reconciles
+    // by name — this is the only command that picks up `version` / `name`
+    // changes without manual delete-and-recreate.
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('regenerateEcosystemConfig()');
+    expect(source).toContain("'startOrReload'");
+  });
+});
+
+// ============================================================================
+// Skill-loading regression — `.orphaned_at` must NOT propagate through
+// `copyDirSync` into the active Claude Code cache. Multi-server bug
+// diagnosed 2026-05-06: a stray `plugins/genie/.orphaned_at` checked into
+// the repo since the initial commit was being copied verbatim into
+// `~/.claude/plugins/cache/automagik/genie/<version>/`, causing Claude Code
+// to mark the active plugin version orphaned and silently disable every
+// skill on every fresh install.
+// ============================================================================
+
+describe('Plugin sync — .orphaned_at filter (skills regression 2026-05-06)', () => {
+  test('FRAMEWORK_MARKER_FILES set contains .orphaned_at', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).toContain('FRAMEWORK_MARKER_FILES');
+    expect(source).toContain("'.orphaned_at'");
+  });
+
+  test('copyDirSync skips FRAMEWORK_MARKER_FILES entries', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const fnStart = source.indexOf('function copyDirSync');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+    // The skip MUST happen before the file/directory branch so the marker
+    // is filtered regardless of whether it's a file or accidental dir.
+    expect(body).toContain('FRAMEWORK_MARKER_FILES.has(entry.name)');
+    const skipIdx = body.indexOf('FRAMEWORK_MARKER_FILES.has(entry.name)');
+    const isDirIdx = body.indexOf('entry.isDirectory()');
+    expect(skipIdx).toBeGreaterThan(-1);
+    expect(isDirIdx).toBeGreaterThan(-1);
+    expect(skipIdx).toBeLessThan(isDirIdx);
+  });
+
+  test('repo source tree does NOT contain plugins/genie/.orphaned_at', () => {
+    // Locks out re-introduction. If a dev box accidentally commits
+    // .orphaned_at again (e.g. from running Claude Code locally on the
+    // genie source dir), this test fails with a clear message instead of
+    // the user-facing "skills don't load" symptom that took 3 months to
+    // diagnose the first time.
+    const repoRoot = join(__dirname, '..', '..', '..');
+    const orphanedMarkerPath = join(repoRoot, 'plugins', 'genie', '.orphaned_at');
+    expect(require('node:fs').existsSync(orphanedMarkerPath)).toBe(false);
+  });
+
+  test('.gitignore lists .orphaned_at', () => {
+    // Belt + suspenders: even if someone runs `git add -A` from a polluted
+    // working tree, the .gitignore entry should keep the marker out.
+    const repoRoot = join(__dirname, '..', '..', '..');
+    const gitignorePath = join(repoRoot, '.gitignore');
+    const contents = readFileSync(gitignorePath, 'utf-8');
+    // Match either bare `.orphaned_at` or path-anchored variants.
+    expect(contents).toMatch(/^\.orphaned_at$/m);
   });
 });

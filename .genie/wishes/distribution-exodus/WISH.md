@@ -16,11 +16,33 @@
 
 Genie ships through `npmjs.com`, a registry that has no enforcement of cosign signatures at install time and allows arbitrary `postinstall` scripts in transitive deps — the same pipe that was weaponized in the April 2026 CanisterWorm/TeamPCP incident. This wish closes the structural exposure by shipping genie via our own CDN with cosign + SLSA + SHA256 verification, mirroring Claude Code's `curl -fsSL https://claude.ai/install.sh | bash` pattern. After this wish, every install (including the deprecated npm path) flows through cosign-verified pipes; the npm package becomes a ≤50-LOC deprecation shim with a hard sunset date.
 
+## ⚠️ Council Amendment 2026-05-04 — Single-CDN day-1 (Fastly deferred)
+
+**Council deliberation (deployer + operator + sentinel + simplifier, unanimous, 2026-05-04) amends this wish from "Cloudflare primary + Fastly secondary + GitHub Releases tertiary" to "Cloudflare primary + GitHub Releases tertiary; defer Fastly."**
+
+Key reasoning (sentinel, novel finding): multi-CDN closes ZERO security attack classes that cosign+SLSA doesn't already close. **Worse**, multi-CDN as currently specified introduces a downgrade-attack class — Cloudflare serves binary-A (signed, valid), Fastly serves binary-B (signed, valid, but stale-with-CVE) due to a publish race or Fastly-only credential compromise; cosign verifier passes both. Mitigations exist (Rekor transparency log monitoring with alerts on unexpected entries, TUF-style timestamped version metadata so install.sh refuses stale-but-valid artifacts) but are NOT in this wish. Multi-CDN without downgrade defenses is net-negative for security.
+
+Per simplifier + operator: Fastly is fictional today (no account), Cloudflare's anycast across 250+ PoPs is itself the redundancy story, and Cloudflare + GitHub Releases is already a 2-provider story across uncorrelated failure domains.
+
+**Real ROI lives elsewhere (added to scope by this amendment):**
+- **Secondary DNS provider** with zone replication (Cloudflare DNS + NS1 or Route53). Protects against the failure mode multi-CDN can't fix (DNS provider outage, registrar takeover).
+- **Rekor transparency log monitoring** with alerts on unexpected entries — defends against the cosign-key-compromise attack class that multi-CDN cannot.
+- **Cosign signing key hardening** — least-privilege scope, required reviewers on publish workflow, audit on key access.
+- **Tested CF-down → GitHub Releases runbook** — quarterly DR drills.
+
+**Trigger to revisit Fastly:** A real Cloudflare outage that demonstrably blocks real genie users — measure first, build second. When Fastly is added, downgrade defenses (Rekor + TUF) ship FIRST.
+
+References below to "Fastly secondary," "Multi-CDN failover," "Cloudflare with Fastly origin pull failover," etc., are SUPERSEDED by this amendment. Read them as "Cloudflare + GitHub Releases" until the body is rewritten in Wave 1 final draft.
+
+---
+
 ## Preconditions
 
 - ✅ `genie-supply-chain-signing` shipped — cosign keyless OIDC + SLSA L3 + verify-install + `--unsafe-unverified` ack contract are landed and provide the signing primitives this wish extends to per-platform binaries.
 - DNS control over `automagik.dev` — required for `cdn.automagik.dev` and `get.automagik.dev` subdomains.
-- Cloudflare + Fastly accounts provisioned — multi-CDN failover from day 1 of CDN cutover.
+- **Cloudflare account provisioned** — already operated by the genie team. (~~Fastly~~ deferred per Council Amendment 2026-05-04.)
+- **Secondary DNS provider** with zone replication (e.g., Cloudflare DNS + NS1 or Route53) — added by Council Amendment as the high-ROI redundancy layer that multi-CDN cannot replace.
+- **GitHub repository releases enabled** — fallback path; no new credential surface (uses existing GitHub org auth).
 - `bun build --compile` validated as the static-binary toolchain on all 5 platform targets (Linux x86_64 glibc/musl, Linux arm64, macOS x86_64/arm64). Sub-project A Group 1 includes a feasibility gate; if `bun build --compile` cannot produce working binaries on any target, fallback is `pkg` or `nexe` (decision in Group 1).
 
 ## Scope
@@ -39,7 +61,7 @@ Genie ships through `npmjs.com`, a registry that has no enforcement of cosign si
 - Channels: `stable`, `beta`, `canary` — each with separate cosign signing identities; channel directory selects which identity verifies.
 - `manifest.json` schema (versioned): `{schema_version: 1, channel, version, platform, binary_url, sha256, cosign_sig_url, slsa_provenance_url, released_at, supersedes}`. JSON Schema committed at `docs/security/manifest.schema.json`.
 - Release workflow extends existing `genie-supply-chain-signing` cosign pipeline to sign per-platform binaries — today it signs the npm tarball; this wish adds 5 binary signatures + SLSA attestations per release.
-- Multi-CDN failover: Cloudflare primary, Fastly secondary, GitHub Releases tertiary serving byte-identical signed artifacts. DNS health-check based failover; install.sh falls through mirrors on connect-failure.
+- **CDN posture (post Council Amendment 2026-05-04):** Cloudflare primary + GitHub Releases tertiary serving byte-identical cosign+SLSA-signed artifacts. install.sh falls through to GitHub Releases on connect-failure or HTTP 5xx from Cloudflare. ~~Fastly secondary~~ deferred until a real CF outage demonstrably blocks real users; downgrade defenses (Rekor monitoring + TUF timestamps) ship before Fastly is added.
 - GitHub Releases attaches the same artifacts (`<platform>-genie`, `<platform>-genie.sig`, `<platform>-genie.cert`, `<platform>-provenance.intoto.jsonl`, `manifest.json`) to every tagged release.
 
 **install.sh bootstrap script (Group 3)**

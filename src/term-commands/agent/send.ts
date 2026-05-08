@@ -13,7 +13,7 @@
  */
 
 import type { Command } from 'commander';
-import { detectSenderIdentity } from '../msg.js';
+import { detectSenderIdentity, isCliSender } from '../msg.js';
 
 export function registerAgentSend(parent: Command): void {
   parent
@@ -57,21 +57,29 @@ async function isTeamLeader(agentName: string, teamName: string): Promise<boolea
 
 /**
  * Check hierarchy: sender can reach recipient if:
- * 1. sender is 'cli' (bypass)
+ * 1. sender is the CLI bypass marker — `'cli'` or `'cli:<origin>'` (see `isCliSender`)
  * 2. recipient reports_to sender (direct report)
  * 3. sender reports_to recipient (manager)
  * 4. they share the same manager (siblings — allowed for team coordination)
  */
 async function checkHierarchy(from: string, to: string): Promise<{ allowed: boolean; reason?: string }> {
-  if (from === 'cli') return { allowed: true };
+  if (isCliSender(from)) return { allowed: true };
   if (from === to) return { allowed: true };
 
   try {
     const registry = await import('../../lib/agent-registry.js');
-    const agents = await registry.listAgents({});
 
-    const sender = agents.find((a) => a.customName === from || a.role === from || a.id === from);
-    const recipient = agents.find((a) => a.customName === to || a.role === to || a.id === to);
+    // Wish retire-session-names-id-only G4: resolve names via the canonical
+    // resolver. Team scope (GENIE_TEAM) lets the (custom_name, team) tier
+    // disambiguate same-named agents across teams; role-fallback covers the
+    // global `engineer`/`reviewer` shortcuts.
+    const team = process.env.GENIE_TEAM;
+    const [senderId, recipientId] = await Promise.all([
+      registry.resolveAgentId(from, team),
+      registry.resolveAgentId(to, team),
+    ]);
+    const sender = senderId ? await registry.getAgent(senderId) : null;
+    const recipient = recipientId ? await registry.getAgent(recipientId) : null;
 
     // If either isn't in the registry, allow (might be external or unregistered)
     if (!sender || !recipient) return { allowed: true };
@@ -87,6 +95,13 @@ async function checkHierarchy(from: string, to: string): Promise<{ allowed: bool
 
     // Leader can reach anyone in their team
     if (sender.team && sender.team === recipient.team && (await isTeamLeader(from, sender.team))) {
+      return { allowed: true };
+    }
+
+    // Top of hierarchy (no manager) can reach anyone in same team.
+    // Catches the "orchestrator → own subagent" case where reports_to wiring
+    // hasn't propagated yet (e.g. fresh spawn) but team scope is unambiguous.
+    if (!sender.reportsTo && sender.team && sender.team === recipient.team) {
       return { allowed: true };
     }
 
@@ -125,9 +140,16 @@ async function handleDirectMessage(from: string, to: string, body: string, team?
   // Send via PG conversation + mailbox
   const taskService = await import('../../lib/task-service.js');
   const mailbox = await import('../../lib/mailbox.js');
+  const registry = await import('../../lib/agent-registry.js');
+
+  // Wish retire-session-names-id-only G4: resolve recipient → canonical
+  // agents.id before mailbox.send. Migration 061 enforces the FK; passing a
+  // custom_name (e.g. the displayed AgentID) trips fk_mailbox_to_worker.
+  const teamScope = team ?? process.env.GENIE_TEAM;
+  const toAgentId = await registry.resolveAgentIdStrict(to, teamScope);
 
   const senderActor = { actorType: 'local' as const, actorId: from };
-  const recipientActor = { actorType: 'local' as const, actorId: to };
+  const recipientActor = { actorType: 'local' as const, actorId: toAgentId };
 
   const conv = await taskService.findOrCreateConversation({
     type: 'dm',
@@ -138,7 +160,7 @@ async function handleDirectMessage(from: string, to: string, body: string, team?
   await taskService.addMember(conv.id, senderActor);
   await taskService.addMember(conv.id, recipientActor);
 
-  await mailbox.send(repoPath, from, to, body);
+  await mailbox.send(repoPath, from, toAgentId, body);
   const msg = await taskService.sendMessage(conv.id, senderActor, body);
 
   // Runtime event for observability

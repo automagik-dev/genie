@@ -278,7 +278,7 @@ export function getActor(): string {
 }
 
 // ============================================================================
-// Cost Breakdown — aggregate cost_usd from otel_api events
+// Cost Breakdown — aggregate from v_claude_usage_events (normalized view)
 // ============================================================================
 
 export interface CostBreakdownRow {
@@ -295,22 +295,24 @@ export async function queryCostBreakdown(
   const sql = await getConnection();
   const sinceTs = parseSince(since);
 
+  // Reads from `v_claude_usage_events` (migration 058) so OTel rows that store
+  // cost under `details.value` and legacy rows that store it under
+  // `details.cost_usd` both contribute.
   const groupExpr =
     groupBy === 'agent'
-      ? "COALESCE(actor, 'unknown')"
+      ? "COALESCE(agent_id, 'unknown')"
       : groupBy === 'wish'
         ? "COALESCE(details->>'wish_slug', entity_id)"
-        : "COALESCE(details->>'model', 'unknown')";
+        : 'model';
 
   const rows = await sql.unsafe(
     `SELECT
        ${groupExpr} AS group_key,
-       COALESCE(SUM((details->>'cost_usd')::numeric), 0)::float AS total_cost,
+       COALESCE(SUM(cost_usd), 0)::float AS total_cost,
        COUNT(*)::int AS request_count,
-       COALESCE(AVG((details->>'cost_usd')::numeric), 0)::float AS avg_cost
-     FROM audit_events
-     WHERE entity_type = 'otel_api'
-       AND created_at >= $1::timestamptz
+       COALESCE(AVG(NULLIF(cost_usd, 0)), 0)::float AS avg_cost
+     FROM v_claude_usage_events
+     WHERE created_at >= $1::timestamptz
      GROUP BY ${groupExpr}
      ORDER BY total_cost DESC
      LIMIT 100`,
@@ -357,26 +359,138 @@ export async function queryToolUsage(since: string, groupBy: 'tool' | 'agent' = 
   return rows as unknown as ToolUsageRow[];
 }
 
+export interface ToolUsageDetailRow {
+  created_at: Date | string;
+  entity_id: string;
+  event_type: string;
+  actor: string | null;
+  tool_name: string | null;
+  tool_input: unknown;
+  tool_parameters: unknown;
+  duration_ms: number | null;
+  error: string | null;
+  details: Record<string, unknown>;
+}
+
+export async function queryToolUsageDetail(
+  since: string,
+  opts: { limit?: number; tool?: string; agent?: string } = {},
+): Promise<ToolUsageDetailRow[]> {
+  const sql = await getConnection();
+  const sinceTs = parseSince(since);
+  const limit = Math.max(1, Math.min(10000, opts.limit ?? 500));
+
+  const toolFilter = opts.tool ? "AND COALESCE(details->>'tool_name', entity_id) = $2::text" : '';
+  const agentFilter = opts.agent ? `AND COALESCE(actor, 'unknown') = $${opts.tool ? 3 : 2}::text` : '';
+  const params: unknown[] = [sinceTs];
+  if (opts.tool) params.push(opts.tool);
+  if (opts.agent) params.push(opts.agent);
+
+  const rows = await sql.unsafe(
+    `SELECT
+       created_at,
+       entity_id,
+       event_type,
+       actor,
+       COALESCE(details->>'tool_name', entity_id) AS tool_name,
+       details->'tool_input'      AS tool_input,
+       details->'tool_parameters' AS tool_parameters,
+       NULLIF(details->>'duration_ms','')::numeric AS duration_ms,
+       details->>'error' AS error,
+       details
+     FROM audit_events
+     WHERE entity_type = 'otel_tool'
+       AND created_at >= $1::timestamptz
+       ${toolFilter}
+       ${agentFilter}
+     ORDER BY created_at DESC
+     LIMIT ${limit}`,
+    params,
+  );
+
+  return (rows as unknown as ToolUsageDetailRow[]).map((r) => ({
+    ...r,
+    details: typeof r.details === 'string' ? (JSON.parse(r.details) as Record<string, unknown>) : r.details,
+  }));
+}
+
 // ============================================================================
 // Timeline — all events for an entity, ordered by time
 // ============================================================================
 
-export async function queryTimeline(entityId: string): Promise<AuditEventRow[]> {
-  const sql = await getConnection();
+export interface TimelineQueryOptions {
+  /** Maximum rows to return. Default 200, hard-capped at 2000. */
+  limit?: number;
+  /**
+   * Time window in milliseconds (e.g., 24h = 86_400_000). When set, the
+   * query is bounded by `created_at >= now() - sinceMs` so the planner
+   * uses `idx_audit_created` as the leading index — essential for the
+   * unbounded-scan bug on large `audit_events` tables.
+   *
+   * Pass `null` to disable the time filter (full-history mode). On a
+   * 60M-row audit_events this falls back to the slow OR-over-4-columns
+   * scan and may time out — only use when explicitly needed.
+   */
+  sinceMs?: number | null;
+}
 
+const DEFAULT_TIMELINE_LIMIT = 200;
+const MAX_TIMELINE_LIMIT = 2000;
+const DEFAULT_TIMELINE_SINCE_MS = 24 * 60 * 60 * 1000; // 24h
+
+/**
+ * Fetch the event timeline for an entity (matched against entity_id, actor,
+ * trace_id, or session_id).
+ *
+ * Closes #1466 — previously this scanned `audit_events` with an OR over four
+ * columns and `ORDER BY created_at ASC LIMIT 500`. On a production-sized
+ * audit log (60M+ rows here), that pinned the connection until the planner
+ * walked enough of `idx_audit_created` to fill the LIMIT — which it never
+ * did within the 30s CLI timeout. Two of the four OR predicates are JSON
+ * path lookups (`details->>'traceId'`, `details->>'session_id'`) with no
+ * supporting index, compounding the cost.
+ *
+ * Fix: default to a 24h window with newest-first ORDER BY. The window
+ * filter lets the planner use `idx_audit_created` to bound the scan to
+ * recent rows BEFORE evaluating the OR. Caller can opt back into the slow
+ * full-history path with `sinceMs: null`.
+ */
+export async function queryTimeline(entityId: string, options: TimelineQueryOptions = {}): Promise<AuditEventRow[]> {
+  const sql = await getConnection();
+  const limit = Math.max(1, Math.min(MAX_TIMELINE_LIMIT, options.limit ?? DEFAULT_TIMELINE_LIMIT));
+  const sinceMs = options.sinceMs === undefined ? DEFAULT_TIMELINE_SINCE_MS : options.sinceMs;
+
+  if (sinceMs === null) {
+    // Full-history mode — slow on large audit_events. Documented escape hatch.
+    const rows = await sql.unsafe(
+      `SELECT id, entity_type, entity_id, event_type, actor, details, created_at
+       FROM audit_events
+       WHERE (entity_id = $1
+          OR actor = $1
+          OR details->>'traceId' = $1
+          OR details->>'session_id' = $1)
+         AND event_type != 'sdk.stream.partial'
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [entityId, limit],
+    );
+    return rows as unknown as AuditEventRow[];
+  }
+
+  const sinceTs = new Date(Date.now() - sinceMs);
   const rows = await sql.unsafe(
     `SELECT id, entity_type, entity_id, event_type, actor, details, created_at
      FROM audit_events
-     WHERE (entity_id = $1
-        OR actor = $1
-        OR details->>'traceId' = $1
-        OR details->>'session_id' = $1)
+     WHERE created_at >= $2
+       AND (entity_id = $1
+         OR actor = $1
+         OR details->>'traceId' = $1
+         OR details->>'session_id' = $1)
        AND event_type != 'sdk.stream.partial'
-     ORDER BY created_at ASC
-     LIMIT 500`,
-    [entityId],
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [entityId, sinceTs, limit],
   );
-
   return rows as unknown as AuditEventRow[];
 }
 
@@ -398,11 +512,16 @@ export async function querySummary(since: string): Promise<EventSummary> {
   const sql = await getConnection();
   const sinceTs = parseSince(since);
 
+  // total_cost reads from v_claude_usage_events (migration 058) so both OTel
+  // metric rows (details.value) and legacy rows (details.cost_usd) contribute.
   const rows = await sql.unsafe(
     `SELECT
        COUNT(*) FILTER (WHERE entity_type = 'worker' AND event_type = 'spawn')::int AS agents_spawned,
        COUNT(*) FILTER (WHERE entity_type = 'task' AND event_type = 'stage_change')::int AS tasks_moved,
-       COALESCE(SUM((details->>'cost_usd')::numeric) FILTER (WHERE entity_type = 'otel_api'), 0)::float AS total_cost,
+       COALESCE((
+         SELECT SUM(cost_usd)::float FROM v_claude_usage_events
+         WHERE created_at >= $1::timestamptz
+       ), 0)::float AS total_cost,
        COUNT(*) FILTER (WHERE event_type LIKE '%error%' OR (details ? 'error'))::int AS error_count,
        COUNT(*)::int AS total_events,
        COUNT(*) FILTER (WHERE entity_type = 'otel_tool')::int AS tool_calls,

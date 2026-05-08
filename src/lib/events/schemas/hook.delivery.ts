@@ -14,6 +14,16 @@ export const TYPE = 'hook.delivery' as const;
 export const KIND = 'span' as const;
 
 const HookNameSchema = tagTier(z.string().min(1).max(128), 'C', 'hook name — public');
+/**
+ * Hook event name (PreToolUse, PostToolUse, UserPromptSubmit, Stop, etc.).
+ * Stamped on every hook.delivery span by `runHandler` so the
+ * `hook_perf_baseline` view (introduced by #1485 hookify-perf-foundation)
+ * can group by event for tool-less events.
+ *
+ * Closes #1492 — strict schema previously rejected this key, leaving the
+ * baseline view empty regardless of dispatch activity.
+ */
+const HookEventSchema = tagTier(z.string().min(1).max(64), 'C', 'CC hook event name — public');
 const AgentIdSchema = tagTier(
   z
     .string()
@@ -41,6 +51,7 @@ export const schema = z
     hook_name: HookNameSchema,
     agent_id: AgentIdSchema,
     tool: ToolSchema,
+    event: HookEventSchema.optional(),
     status: StatusSchema,
     duration_ms: DurationSchema,
     exit_code: ExitCodeSchema,

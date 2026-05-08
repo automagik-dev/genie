@@ -11,6 +11,13 @@
 import type { Command } from 'commander';
 import { getConnection, isAvailable } from '../lib/db.js';
 import { getBackfillStatus } from '../lib/session-backfill.js';
+import {
+  type OrphanSessionSample,
+  type SessionLinkDiagnostics,
+  diagnoseSessionLinks,
+  findAmbiguousExecutorSessions,
+  sampleLinkableOrphanSessions,
+} from '../lib/session-link-repair.js';
 import { formatRelativeTimestamp as formatTimestamp, padRight } from '../lib/term-format.js';
 
 // ============================================================================
@@ -271,6 +278,302 @@ async function sessionsSearchCommand(query: string, options: { json?: boolean; l
   console.log(`\n(${rows.length} result${rows.length === 1 ? '' : 's'})`);
 }
 
+// ============================================================================
+// repair-links — diagnose and (with --apply) repair linkable orphan sessions.
+//
+// Reads from src/lib/session-link-repair.ts (pure-read diagnostics) and
+// performs the mutation in a single transaction with a re-count gate so a
+// concurrent ingestion that changes the candidate count between preview and
+// apply forces the operator to re-confirm with --force.
+// ============================================================================
+
+interface RepairLinksOptions {
+  apply?: boolean;
+  dryRun?: boolean;
+  force?: boolean;
+  json?: boolean;
+}
+
+interface RepairLinksApplyResult {
+  sessionsLinked: number;
+  toolEventsBackfilled: number;
+  ambiguousCount: number;
+  forced: boolean;
+  driftDetected: boolean;
+}
+
+function printRepairDiagnostics(
+  diag: SessionLinkDiagnostics,
+  sample: OrphanSessionSample[],
+  ambiguous: { claudeSessionId: string; executorIds: string[] }[],
+): void {
+  console.log('Sessions:');
+  console.log(`  total: ${diag.totalSessions}`);
+  console.log(
+    `  linkable orphans (sessions.id = executors.claude_session_id ∧ executor_id IS NULL): ${diag.linkableOrphanSessions}`,
+  );
+  console.log(`  status='orphaned': ${diag.statusOrphanedSessions}`);
+  console.log(`  NULL executor_id: ${diag.nullExecutorIdSessions}`);
+  console.log('Tool events:');
+  console.log(`  total: ${diag.totalToolEvents}`);
+  console.log(`  missing agent_id (NULL or ''): ${diag.toolEventsMissingAgent}`);
+  console.log(`  missing team    (NULL or ''): ${diag.toolEventsMissingTeam}`);
+  console.log(`  missing wish_slug (NULL or ''): ${diag.toolEventsMissingWish}`);
+  console.log(`  missing task_id (NULL or ''): ${diag.toolEventsMissingTask}`);
+  console.log(`  empty-string agent_id: ${diag.toolEventsEmptyStringAgent}`);
+  console.log(`  empty-string team:     ${diag.toolEventsEmptyStringTeam}`);
+  console.log(`  empty-string wish_slug: ${diag.toolEventsEmptyStringWish}`);
+  console.log(`  empty-string task_id:  ${diag.toolEventsEmptyStringTask}`);
+  console.log(
+    `  linkable (session has executor_id, event missing attribution): ${diag.toolEventsLinkableMissingAttribution}`,
+  );
+
+  if (sample.length > 0) {
+    console.log('\nLinkable orphan sample (up to 10):');
+    for (const s of sample) {
+      console.log(
+        `  ${s.sessionId}  executor=${s.executorId.slice(0, 12)}  agent=${(s.agentId ?? '-').slice(0, 12)}  status=${s.status ?? '-'}`,
+      );
+    }
+  }
+
+  if (ambiguous.length > 0) {
+    console.log(
+      `\n⚠️ Ambiguous claude_session_id values (${ambiguous.length}) — multiple executors claim the same session id:`,
+    );
+    for (const a of ambiguous) {
+      console.log(`  ${a.claudeSessionId} -> ${a.executorIds.join(', ')}`);
+    }
+    console.log('  --apply will refuse unless --force is passed.');
+  }
+}
+
+/**
+ * Pure decision helpers for the apply-mode safety gates. Extracted so unit
+ * tests can exercise the gate logic without spinning up a DB or trapping
+ * `process.exit`. Used by `sessionsRepairLinksCommand` directly below.
+ */
+export function evaluateAmbiguityGate(
+  ambiguousCount: number,
+  force: boolean,
+): { blocked: boolean; message: string | null } {
+  if (ambiguousCount > 0 && !force) {
+    return {
+      blocked: true,
+      message: `repair-links: ${ambiguousCount} ambiguous claude_session_id value(s) found. Multiple executors claim the same session id — refusing --apply.\nRun with --dry-run to inspect, or pass --force to override.`,
+    };
+  }
+  return { blocked: false, message: null };
+}
+
+export function buildNoWorkResultIfApplicable(
+  diag: SessionLinkDiagnostics,
+  ambiguousCount: number,
+  force: boolean,
+): RepairLinksApplyResult | null {
+  if (diag.linkableOrphanSessions === 0 && diag.toolEventsLinkableMissingAttribution === 0) {
+    return {
+      sessionsLinked: 0,
+      toolEventsBackfilled: 0,
+      ambiguousCount,
+      forced: force,
+      driftDetected: false,
+    };
+  }
+  return null;
+}
+
+export async function applyRepairTransaction(
+  // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type — caller is the test stub
+  sql: any,
+  previewCount: number,
+  force: boolean,
+): Promise<RepairLinksApplyResult> {
+  let result: RepairLinksApplyResult = {
+    sessionsLinked: 0,
+    toolEventsBackfilled: 0,
+    ambiguousCount: 0,
+    forced: force,
+    driftDetected: false,
+  };
+
+  // biome-ignore lint/suspicious/noExplicitAny: postgres.js tx callback type
+  await sql.begin(async (tx: any) => {
+    // Re-count INSIDE the transaction so a concurrent ingestion changing the
+    // candidate set between preview and apply trips the gate. With READ
+    // COMMITTED (postgres default) this still leaves a tiny TOCTOU window,
+    // but the gate catches the common case ("ingestion ran while operator
+    // was reading the dry-run output").
+    const [recount] = await tx`
+      SELECT count(*)::int AS n
+      FROM sessions s
+      JOIN executors e ON s.id = e.claude_session_id
+      WHERE s.executor_id IS NULL
+    `;
+
+    if (recount.n !== previewCount && !force) {
+      result.driftDetected = true;
+      throw new Error(
+        `repair-links: candidate count drifted between preview (${previewCount}) and apply (${recount.n}). Re-run --dry-run or pass --force to override.`,
+      );
+    }
+
+    const linkResult = await tx`
+      UPDATE sessions s SET
+        executor_id = e.id,
+        agent_id    = COALESCE(s.agent_id,    e.agent_id),
+        team        = COALESCE(s.team,        a.team),
+        wish_slug   = COALESCE(s.wish_slug,   a.wish_slug),
+        task_id     = COALESCE(s.task_id,     a.task_id),
+        role        = COALESCE(s.role,        a.role),
+        status      = CASE WHEN s.status = 'orphaned' THEN 'active' ELSE s.status END,
+        updated_at  = now()
+      FROM executors e
+      LEFT JOIN agents a ON e.agent_id = a.id
+      WHERE s.id = e.claude_session_id
+        AND s.executor_id IS NULL
+    `;
+
+    // Backfill tool_events from linked sessions. NULLIF(field, '') treats the
+    // legacy empty-string writes (wish decision #4) as missing so the linked
+    // session value can replace them. We never overwrite a non-empty,
+    // non-null value.
+    //
+    // Idempotency: the WHERE filters to rows where the post-COALESCE result
+    // would actually differ from the current value. Without this, a second
+    // --apply still "touches" rows where session.X is also NULL, producing
+    // a non-zero row count for a no-op update. IS DISTINCT FROM treats
+    // NULL = NULL as same, so unchanged rows are skipped.
+    const teResult = await tx`
+      UPDATE tool_events te SET
+        agent_id  = COALESCE(NULLIF(te.agent_id, ''),  s.agent_id),
+        team      = COALESCE(NULLIF(te.team, ''),      s.team),
+        wish_slug = COALESCE(NULLIF(te.wish_slug, ''), s.wish_slug),
+        task_id   = COALESCE(NULLIF(te.task_id, ''),   s.task_id)
+      FROM sessions s
+      WHERE s.id = te.session_id
+        AND s.executor_id IS NOT NULL
+        AND (
+          te.agent_id  IS DISTINCT FROM COALESCE(NULLIF(te.agent_id, ''),  s.agent_id)  OR
+          te.team      IS DISTINCT FROM COALESCE(NULLIF(te.team, ''),      s.team)      OR
+          te.wish_slug IS DISTINCT FROM COALESCE(NULLIF(te.wish_slug, ''), s.wish_slug) OR
+          te.task_id   IS DISTINCT FROM COALESCE(NULLIF(te.task_id, ''),   s.task_id)
+        )
+    `;
+
+    // Audit row records totals only — never raw session content. Use
+    // tx.json(...) so the JSONB column gets a real object, not a
+    // string-of-string (the JSON.stringify trap that postgres.js silently
+    // accepts as JSON-typed string).
+    await tx`
+      INSERT INTO audit_events (entity_type, entity_id, event_type, actor, details)
+      VALUES (
+        'sessions',
+        'repair-links',
+        'sessions.repair_links',
+        'cli',
+        ${tx.json({
+          sessions_linked: linkResult.count ?? 0,
+          tool_events_backfilled: teResult.count ?? 0,
+          preview_count: previewCount,
+          recount: recount.n,
+          forced: force,
+        })}
+      )
+    `;
+
+    result = {
+      sessionsLinked: linkResult.count ?? 0,
+      toolEventsBackfilled: teResult.count ?? 0,
+      ambiguousCount: 0,
+      forced: force,
+      driftDetected: false,
+    };
+  });
+
+  return result;
+}
+
+function renderDryRun(
+  diag: SessionLinkDiagnostics,
+  sample: OrphanSessionSample[],
+  ambiguous: { claudeSessionId: string; executorIds: string[] }[],
+  json: boolean,
+): void {
+  if (json) {
+    console.log(JSON.stringify({ diagnostics: diag, sample, ambiguous }, null, 2));
+    return;
+  }
+  console.log('repair-links --dry-run (no rows mutated)');
+  console.log('-----------------------------------------');
+  printRepairDiagnostics(diag, sample, ambiguous);
+  if (diag.linkableOrphanSessions === 0 && diag.toolEventsLinkableMissingAttribution === 0) {
+    console.log('\nNothing to repair.');
+  } else {
+    console.log(
+      `\nRun with --apply to repair ${diag.linkableOrphanSessions} session(s) and up to ${diag.toolEventsLinkableMissingAttribution} tool_event(s).`,
+    );
+  }
+}
+
+function renderApplyResult(result: RepairLinksApplyResult, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log('repair-links --apply complete');
+  console.log(`  sessions linked:        ${result.sessionsLinked}`);
+  console.log(`  tool_events backfilled: ${result.toolEventsBackfilled}`);
+  if (result.forced) console.log('  --force was used');
+}
+
+async function sessionsRepairLinksCommand(options: RepairLinksOptions): Promise<void> {
+  if (!(await isAvailable())) {
+    console.error('Database not available.');
+    process.exit(1);
+  }
+
+  const sql = await getConnection();
+  const diag = await diagnoseSessionLinks(sql);
+  const sample = await sampleLinkableOrphanSessions(sql, 10);
+  const ambiguous = await findAmbiguousExecutorSessions(sql);
+
+  // Default = dry-run. --apply explicitly enters mutation mode.
+  const apply = options.apply === true;
+  if (!apply) {
+    renderDryRun(diag, sample, ambiguous, options.json === true);
+    return;
+  }
+
+  // --apply path
+  const force = options.force === true;
+  const ambiguityGate = evaluateAmbiguityGate(ambiguous.length, force);
+  if (ambiguityGate.blocked) {
+    console.error(ambiguityGate.message);
+    process.exit(2);
+  }
+
+  const noWorkResult = buildNoWorkResultIfApplicable(diag, ambiguous.length, force);
+  if (noWorkResult) {
+    if (options.json) {
+      console.log(JSON.stringify(noWorkResult, null, 2));
+    } else {
+      console.log('repair-links: nothing to repair (0 candidates).');
+    }
+    return;
+  }
+
+  let result: RepairLinksApplyResult;
+  try {
+    result = await applyRepairTransaction(sql, diag.linkableOrphanSessions, options.force === true);
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(2);
+  }
+
+  renderApplyResult(result, options.json === true);
+}
+
 async function sessionsSyncStatusCommand(): Promise<void> {
   if (!(await isAvailable())) {
     console.error('Database not available.');
@@ -333,5 +636,16 @@ export function registerSessionsCommands(program: Command): void {
     .description('Check session backfill progress')
     .action(async () => {
       await sessionsSyncStatusCommand();
+    });
+
+  sessions
+    .command('repair-links')
+    .description('Diagnose and (with --apply) repair linkable orphan sessions + tool_events attribution')
+    .option('--dry-run', 'Preview only — never mutates rows (default)')
+    .option('--apply', 'Run the repair transaction')
+    .option('--force', 'Override the candidate-count drift gate and ambiguity gate')
+    .option('--json', 'Output as JSON')
+    .action(async (options: RepairLinksOptions) => {
+      await sessionsRepairLinksCommand(options);
     });
 }

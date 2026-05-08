@@ -252,21 +252,19 @@ async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Agent 
  * Ensure a worker is alive, auto-spawning from template if needed.
  * Handles suspended workers by resuming with --resume <session-id>.
  */
-/** Find a matching spawn template for the worker/recipient. */
-async function findSpawnTemplate(
-  worker: registry.Agent | null,
-  recipientId: string,
-): Promise<registry.WorkerTemplate | null> {
+/**
+ * Find a matching spawn template for a known worker.
+ *
+ * Identity-only match: requires a worker row carrying `(team, role)` —
+ * recipientId-as-role fuzz removed (wish #175 G6, decision row 2).
+ * Caller resolves name → id at the CLI boundary; if no worker row exists
+ * for the canonical id, return null and let the send path surface
+ * "unknown agent" rather than guessing.
+ */
+async function findSpawnTemplate(worker: registry.Agent | null): Promise<registry.WorkerTemplate | null> {
+  if (!worker || !worker.team || !worker.role) return null;
   const templates = await registry.listTemplates();
-  const candidates = [worker?.role, worker?.id, recipientId].filter((v): v is string => Boolean(v));
-  const uniqueCandidates = [...new Set(candidates)];
-  const workerTeam = worker?.team;
-  return (
-    templates.find((t) => {
-      if (workerTeam && t.team !== workerTeam) return false;
-      return uniqueCandidates.some((q) => t.id === q || t.role === q || `${t.team}:${t.role}` === q);
-    }) ?? null
-  );
+  return templates.find((t) => t.team === worker.team && t.role === worker.role) ?? null;
 }
 
 /** Attempt to spawn a worker from template inside an advisory-locked transaction. */
@@ -277,7 +275,6 @@ async function lockedSpawnWorker(
   resumeSessionId: string | undefined,
 ): Promise<{ worker: registry.Agent; respawned: boolean } | null> {
   const sql = await getConnection();
-  const workerTeam = worker?.team;
 
   const lockResult = await sql.begin(async (tx: typeof sql) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${recipientId}))`;
@@ -286,8 +283,10 @@ async function lockedSpawnWorker(
     const postLockLive = await findLiveWorkerFuzzy(recipientId);
     if (postLockLive) return { type: 'existing' as const, worker: postLockLive };
 
-    await cleanupDeadWorkers(recipientId, workerTeam);
-    if (worker) await registry.unregister(worker.id);
+    if (worker) {
+      await cleanupDeadWorkers(worker.id);
+      await registry.unregister(worker.id);
+    }
 
     const { spawnWorkerFromTemplate } = await import('./protocol-router-spawn.js');
     const spawnResult = await spawnWorkerFromTemplate(template, resumeSessionId);
@@ -327,24 +326,20 @@ async function lockedSpawnWorker(
  * whose last executor is in a non-terminal state (spawning/running/idle/
  * working/permission/question) are mid-task — we MUST resume them with
  * their session id. Silently spawning fresh would drop the conversation
- * history. Master agents (`kind='permanent'`, `dir:<name>` rows) lose
- * their runtime worker on reboot but retain a recoverable session UUID
- * via the chokepoint; probing `dir:<recipientId>` when no live worker
- * exists keeps team-lead "hires" on the master's persistent session
- * instead of forking a fresh UUID and orphaning conversation history.
- * Ephemeral spawns have no `dir:<name>` row, so the chokepoint returns
- * `unknown_agent` and the caller proceeds with a fresh `--session-id`.
- * Gap C from trace-stale-resume (task #6) + master-aware-spawn Group 1.
+ * history. Identity-only contract (wish #175 G6): caller must supply a
+ * non-null worker with a canonical id (UUID or `dir:<name>`); the
+ * `dir:${recipientId}` fallback for null workers is removed because
+ * name-as-id resolution belongs at the CLI boundary, not here.
+ * Gap C from trace-stale-resume (task #6).
  */
 export async function resolveResumeSessionId(
-  worker: registry.Agent | null,
+  worker: registry.Agent,
   template: registry.WorkerTemplate,
-  recipientId: string,
 ): Promise<string | undefined> {
   if (template.provider !== 'claude') return undefined;
-  const agentIdToProbe = worker?.id ?? `dir:${recipientId}`;
-  const decision = await shouldResume(agentIdToProbe);
-  if (worker && (await isExecutorResumable(worker))) {
+  if (!worker.id) throw new Error('resolveResumeSessionId: worker.id is required');
+  const decision = await shouldResume(worker.id);
+  if (await isExecutorResumable(worker)) {
     // CodeRabbit-flagged gap (PR #1693): the chokepoint may return
     // `resume: false` with a sessionId still attached (e.g.
     // `auto_resume_disabled` — operator explicitly paused). Without checking
@@ -358,10 +353,16 @@ export async function resolveResumeSessionId(
           : decision.reason === 'auto_resume_disabled'
             ? 'auto_resume_disabled'
             : 'null_session';
-      throw new MissingResumeSessionError(worker.id, recipientId, errReason);
+      throw new MissingResumeSessionError(worker.id, undefined, errReason);
     }
   }
-  return decision.sessionId;
+  if (!decision.sessionId) return undefined;
+  // Actual resume attempt — emit the lifecycle event via the eventful
+  // helper. `shouldResume` (read path) stays silent
+  // (observability-signal-normalization Group 1).
+  const { acquireResumeSessionForAttempt } = await import('./executor-registry.js');
+  const acquired = await acquireResumeSessionForAttempt(worker.id).catch(() => null);
+  return acquired ?? decision.sessionId;
 }
 
 async function handleSpawnError(err: unknown, worker: registry.Agent | null, recipientId: string): Promise<null> {
@@ -388,10 +389,15 @@ async function ensureWorkerAlive(
   if (await isExecutorCompleted(worker)) return null;
   if (!process.env.TMUX) return null;
 
-  const template = await findSpawnTemplate(worker, recipientId);
+  // Identity-only auto-spawn (wish #175 G6): we need a worker row with
+  // (team, role) to locate a template. Directory-only fallback (no worker
+  // row) is intentionally not supported here — caller resolves at CLI.
+  if (!worker) return null;
+
+  const template = await findSpawnTemplate(worker);
   if (!template) return null;
 
-  const resumeSessionId = await resolveResumeSessionId(worker, template, recipientId);
+  const resumeSessionId = await resolveResumeSessionId(worker, template);
 
   try {
     return await lockedSpawnWorker(recipientId, worker, template, resumeSessionId);
@@ -401,18 +407,17 @@ async function ensureWorkerAlive(
 }
 
 /**
- * Remove dead worker entries matching a role/ID to prevent ghost accumulation.
- * Only removes workers whose tmux panes are no longer alive.
+ * Remove the dead worker row identified by `agentId` to prevent ghost
+ * accumulation. Only removes the row when its tmux pane is no longer alive.
+ *
+ * Identity-only contract (wish #175 G6): match by canonical id only —
+ * role/team fuzz removed. Caller resolves at the CLI boundary.
  */
-async function cleanupDeadWorkers(recipientId: string, team?: string): Promise<void> {
-  const allWorkers = await registry.list();
-  for (const w of allWorkers) {
-    if (team && w.team !== team) continue;
-    const matches = w.role === recipientId || w.id === recipientId;
-    if (!matches) continue;
-    if (await _deps.isPaneAlive(w.paneId)) continue;
-    await registry.unregister(w.id);
-  }
+async function cleanupDeadWorkers(agentId: string): Promise<void> {
+  const w = await registry.get(agentId);
+  if (!w) return;
+  if (await _deps.isPaneAlive(w.paneId)) return;
+  await registry.unregister(w.id);
 }
 
 // ============================================================================
@@ -474,6 +479,13 @@ async function deliverViaNativeInbox(
   to: string,
   body: string,
   teamName?: string,
+  /**
+   * Pre-resolved canonical agents.id for `to`, when sendMessage's caller
+   * already ran the resolver. We need the original `to` for native member
+   * lookup (matched by name) but a canonical id for `mailbox.to_worker`
+   * (FK lockdown — wish retire-session-names-id-only G4 / migration 061).
+   */
+  resolvedToId?: string | null,
 ): Promise<DeliveryResult | null> {
   const resolvedTeam = teamName ?? (await nativeTeams.discoverTeamName());
   if (!resolvedTeam) return null;
@@ -497,8 +509,14 @@ async function deliverViaNativeInbox(
   // so we write to "engineer.json" instead of "sofia-50ju-engineer.json"
   const inboxName = matchedMember.name ?? to;
 
+  // mailbox.to_worker MUST be a canonical agents.id. Prefer the resolved id
+  // passed in by sendMessage; fall back to resolving here for callers that
+  // didn't (none in production today, but keep the helper self-contained).
+  const mailboxTo = resolvedToId ?? (await registry.resolveAgentId(to, resolvedTeam).catch(() => null));
+  if (!mailboxTo) return null;
+
   try {
-    const message = await mailbox.send(repoPath, from, to, body);
+    const message = await mailbox.send(repoPath, from, mailboxTo, body);
     const nativeMsg: nativeTeams.NativeInboxMessage = {
       from,
       text: body,
@@ -508,8 +526,8 @@ async function deliverViaNativeInbox(
       read: false,
     };
     await nativeTeams.writeNativeInbox(resolvedTeam, inboxName, nativeMsg);
-    await mailbox.markDelivered(repoPath, to, message.id);
-    return { messageId: message.id, workerId: to, delivered: true };
+    await mailbox.markDelivered(repoPath, mailboxTo, message.id);
+    return { messageId: message.id, workerId: mailboxTo, delivered: true };
   } catch {
     return null;
   }
@@ -592,8 +610,19 @@ export async function sendMessage(
     return { messageId: '', workerId: to, delivered: true, reason: 'Self-delivery suppressed' };
   }
 
+  // Wish retire-session-names-id-only G4: best-effort resolve to canonical
+  // agents.id so any internal mailbox write that ends up keyed off `to`
+  // (notably `deliverViaNativeInbox`) lands on a row that satisfies the
+  // fk_mailbox_to_worker constraint. We swallow the null case on purpose:
+  // when the recipient is a role with no live worker yet (auto-spawn path)
+  // there is no agents row to resolve, and the existing fuzz matching +
+  // auto-spawn flow needs the original `to` to find a template. The live
+  // worker delivery path uses `worker.id` (already canonical) regardless.
+  const resolvedTo = await registry.resolveAgentId(to, teamName).catch(() => null);
+  const effectiveTo = resolvedTo ?? to;
+
   // 1. Find live workers using strict tiered matching (ID > role > team:role)
-  const liveMatches = await resolveRecipient(to);
+  const liveMatches = await resolveRecipient(effectiveTo);
   if (liveMatches.length === 1) {
     return deliverAfterPaneRecheck(repoPath, from, liveMatches[0], body, 'Pane died before delivery');
   }
@@ -606,18 +635,24 @@ export async function sendMessage(
     };
   }
 
-  // 2. No live match — directory-first resolution for auto-spawn
+  // 2. No live match — directory-first resolution for auto-spawn.
+  //    `findKnownWorker` accepts the canonical id when available so the
+  //    direct lookup hits without falling back to role fuzz; the directory
+  //    resolver still wants the human-typed `to` (built-in template names).
   const { resolve } = await import('./agent-directory.js');
   const dirResolved = await resolve(to);
-  const worker = await findKnownWorker(to);
+  const worker = await findKnownWorker(effectiveTo);
 
   if (dirResolved || worker) {
-    const result = await attemptAutoSpawnDelivery(repoPath, from, to, body, worker);
+    const result = await attemptAutoSpawnDelivery(repoPath, from, effectiveTo, body, worker);
     if (result) return result;
   }
 
-  // 3. Fallback: try native team inbox for agents not in worker registry
-  const nativeResult = await deliverViaNativeInbox(repoPath, from, to, body, teamName);
+  // 3. Fallback: try native team inbox for agents not in worker registry.
+  //    Pass both the original name (for member-by-name lookup) and the
+  //    resolved id (for mailbox.to_worker FK); they may differ when the user
+  //    typed a custom_name UUID instead of the canonical agents.id.
+  const nativeResult = await deliverViaNativeInbox(repoPath, from, to, body, teamName, resolvedTo);
   if (nativeResult) return nativeResult;
 
   return { messageId: '', workerId: to, delivered: false, reason: `Worker "${to}" not found or not alive` };

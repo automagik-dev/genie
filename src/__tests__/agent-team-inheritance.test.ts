@@ -24,13 +24,17 @@ import * as directory from '../lib/agent-directory.js';
 import { isBuiltinAgent } from '../lib/builtin-agents.js';
 import { DB_AVAILABLE, setupTestDatabase } from '../lib/test-db.js';
 
-async function seedTemplate(id: string, team: string): Promise<void> {
+async function seedTemplate(name: string, team: string): Promise<void> {
   const { getConnection } = await import('../lib/db.js');
   const sql = await getConnection();
+  // Post-migration 061: agent_templates.id is UUID (auto-generated default),
+  // and `name` is the bare human-readable identifier. The unique index on
+  // (name, team) is partial (`WHERE name IS NOT NULL AND team IS NOT NULL`),
+  // so ON CONFLICT can't auto-target it. `beforeEach` TRUNCATEs the table,
+  // so a plain INSERT is sufficient here.
   await sql`
-    INSERT INTO agent_templates (id, provider, team, cwd, last_spawned_at)
-    VALUES (${id}, 'claude', ${team}, '/tmp/seed', now())
-    ON CONFLICT (id) DO UPDATE SET team = EXCLUDED.team, last_spawned_at = EXCLUDED.last_spawned_at
+    INSERT INTO agent_templates (name, provider, team, cwd, last_spawned_at)
+    VALUES (${name}, 'claude', ${team}, '/tmp/seed', now())
   `;
 }
 
@@ -112,21 +116,22 @@ describe.skipIf(!DB_AVAILABLE)('subagent team inheritance + built-in pinning', (
     await seedTemplate('genie-omni/dog-fooder', 'felipe'); // poisoned
     await seedTemplate('engineer', 'felipe'); // built-in poisoned
 
-    // Run the migration backfill steps inline (mirrors 054_fix_subagent_team_inheritance.sql)
+    // Run the migration backfill steps inline (mirrors 054_fix_subagent_team_inheritance.sql).
+    // Migration 054 originally ran against TEXT-id schema; post-061 we match on `name`.
     await sql`
       UPDATE agent_templates AS child
       SET team = parent.team, updated_at = now()
       FROM agent_templates AS parent
-      WHERE child.id LIKE parent.id || '/%'
-        AND parent.id NOT LIKE '%/%'
+      WHERE child.name LIKE parent.name || '/%'
+        AND parent.name NOT LIKE '%/%'
         AND child.team IS DISTINCT FROM parent.team
     `;
-    await sql`DELETE FROM agent_templates WHERE id = 'engineer'`;
+    await sql`DELETE FROM agent_templates WHERE name = 'engineer'`;
 
-    const subagent = await sql`SELECT team FROM agent_templates WHERE id = 'genie-omni/dog-fooder'`;
+    const subagent = await sql`SELECT team FROM agent_templates WHERE name = 'genie-omni/dog-fooder'`;
     expect(subagent[0].team).toBe('genie-omni');
 
-    const builtin = await sql`SELECT team FROM agent_templates WHERE id = 'engineer'`;
+    const builtin = await sql`SELECT team FROM agent_templates WHERE name = 'engineer'`;
     expect(builtin.length).toBe(0);
   });
 });

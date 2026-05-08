@@ -225,6 +225,75 @@ describe('permissions nested schema', () => {
     const flat = JSON.stringify(result.error.issues);
     expect(flat).toContain('unknown');
   });
+
+  test('accepts permissions.allowedTools as a string array', () => {
+    const result = AgentConfigSchema.safeParse({
+      permissions: {
+        allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.permissions?.allowedTools).toEqual(['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep']);
+    }
+  });
+
+  test('accepts permissions.permissionMode for every valid SDK enum value', () => {
+    for (const mode of ['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto', 'remoteApproval']) {
+      const result = AgentConfigSchema.safeParse({ permissions: { permissionMode: mode } });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.permissions?.permissionMode).toBe(mode as never);
+      }
+    }
+  });
+
+  test('rejects an unknown permissions.permissionMode value with a field-named error', () => {
+    const result = AgentConfigSchema.safeParse({
+      permissions: { permissionMode: 'sudo-mode' },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const flat = JSON.stringify(result.error.issues);
+    expect(flat).toContain('permissionMode');
+  });
+
+  test('rejects permissions.allowedTools when it is not an array of strings', () => {
+    const result = AgentConfigSchema.safeParse({
+      permissions: { allowedTools: 'Read,Write' },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const flat = JSON.stringify(result.error.issues);
+    expect(flat).toContain('allowedTools');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round-trip — new permission fields (allowedTools + permissionMode)
+// ---------------------------------------------------------------------------
+
+describe('permissions allowedTools + permissionMode round-trip', () => {
+  test('writes + reads allowedTools and permissionMode byte-stable', async () => {
+    const path = tmpYaml('perm-fields.yaml');
+    const input: AgentConfig = {
+      promptMode: 'append',
+      permissions: {
+        preset: 'full',
+        permissionMode: 'acceptEdits',
+        allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
+      },
+    };
+
+    await writeAgentYaml(path, input);
+    const onDisk = await readFile(path, 'utf-8');
+    expect(onDisk).toContain('preset: full');
+    expect(onDisk).toContain('permissionMode: acceptEdits');
+    expect(onDisk).toContain('allowedTools:');
+
+    const parsed = await parseAgentYaml(path);
+    expect(parsed).toEqual(input);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -230,8 +230,30 @@ function buildLegacyTeamLeadEntryId(teamName: string): string {
   return `team-lead:${teamName}`;
 }
 
+/**
+ * Identity-shape gates enforced by migration 061's `agents_id_shape_check` —
+ * `agents.id` must be a UUID or the `dir:<name>` master-row prefix. Bare-name
+ * inserts get rejected at the database level and crash the spawn pipeline.
+ *
+ * This module-level constant is the application-side mirror so we can fail
+ * fast (with a useful error) BEFORE the SQL roundtrip. Wish
+ * retire-session-names-id-only Group 3 — the spawn primitive writes ONE row,
+ * keyed by the UUID identity from `findOrCreateAgent`. Bare-name shadow rows
+ * are gone.
+ */
+const REGISTER_ID_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dir:[A-Za-z0-9_-]+)$/i;
+
+function assertRegisterableId(id: string): void {
+  if (!REGISTER_ID_RE.test(id)) {
+    throw new Error(
+      `register: refusing to insert non-UUID/non-dir agent id ${JSON.stringify(id)}. Spawn callers must resolve the durable identity row via findOrCreateAgent first and pass that UUID — the bare-name shadow path was retired in wish retire-session-names-id-only Group 3 (migration 061 enforces the same shape at the DB).`,
+    );
+  }
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: flat field mapping
 export async function register(agent: Agent): Promise<void> {
+  assertRegisterableId(agent.id);
   const sql = await getConnection();
   const now = new Date().toISOString();
 
@@ -268,7 +290,27 @@ export async function register(agent: Agent): Promise<void> {
     }
   }
 
-  await sql`INSERT INTO agents (id, pane_id, session, worktree, task_id, task_title, wish_slug, group_number, started_at, state, last_state_change, repo_path, window_name, window_id, role, custom_name, sub_panes, provider, transport, skill, team, tmux_window, native_agent_id, native_color, native_team_enabled, parent_session_id, suspended_at, auto_resume, resume_attempts, last_resume_attempt, max_resume_attempts, pane_color) VALUES (${agent.id}, ${agent.paneId}, ${agent.session}, ${agent.worktree ?? null}, ${agent.taskId ?? null}, ${agent.taskTitle ?? null}, ${agent.wishSlug ?? null}, ${agent.groupNumber ?? null}, ${agent.startedAt ?? now}, ${agent.state ?? 'spawning'}, ${agent.lastStateChange ?? now}, ${agent.repoPath}, ${agent.windowName ?? null}, ${agent.windowId ?? null}, ${agent.role ?? null}, ${agent.customName ?? null}, ${sql.json(agent.subPanes ?? [])}, ${agent.provider ?? null}, ${agent.transport ?? 'tmux'}, ${agent.skill ?? null}, ${agent.team ?? null}, ${agent.window ?? null}, ${agent.nativeAgentId ?? null}, ${agent.nativeColor ?? null}, ${agent.nativeTeamEnabled ?? false}, ${agent.parentSessionId ?? null}, ${agent.suspendedAt ?? null}, ${agent.autoResume ?? true}, ${agent.resumeAttempts ?? 0}, ${agent.lastResumeAttempt ?? null}, ${agent.maxResumeAttempts ?? 3}, ${agent.paneColor ?? null}) ON CONFLICT (id) DO UPDATE SET pane_id = EXCLUDED.pane_id, session = EXCLUDED.session, state = EXCLUDED.state, last_state_change = EXCLUDED.last_state_change, team = COALESCE(agents.team, EXCLUDED.team), role = COALESCE(agents.role, EXCLUDED.role), custom_name = COALESCE(agents.custom_name, EXCLUDED.custom_name), updated_at = now()`;
+  // ON CONFLICT preservation (#1682):
+  //   - `native_team_enabled` uses EXCLUDED — a respawn under different protocol
+  //     settings must be allowed to re-flag the row. Spawn intent is authoritative.
+  //     CALLER CONTRACT: every register() call must set this explicitly; the
+  //     `?? false` fallback in VALUES means an omitted field WILL clobber an
+  //     existing `true`. Heartbeat-style refreshers MUST carry the field.
+  //   - The other native_* / provider / transport fields use COALESCE — the
+  //     identity row created by `findOrCreateAgent` defaults them to NULL,
+  //     so the first real `register()` after spawn must populate them. Later
+  //     callers that omit these fields must NOT clobber the established values.
+  //     For `transport`, the VALUES clause inserts NULL when the caller omits
+  //     it; the DO UPDATE COALESCE chain ends in `'tmux'` so a fresh INSERT
+  //     with no transport still lands on the historical default, while a
+  //     refresh that omits transport preserves the established value
+  //     (e.g. `'inline'`). See PR #1684 review (Gemini + Codex flagged the
+  //     prior `?? 'tmux'` default, which made EXCLUDED.transport never NULL
+  //     and silently rewrote `'inline'` rows to `'tmux'`).
+  // Without this, the ON CONFLICT no-op left routing reading stale defaults
+  // (nativeTeamEnabled=false, provider=null), forcing claude workers down the
+  // injectToTmuxPane path instead of writeToNativeInbox.
+  await sql`INSERT INTO agents (id, pane_id, session, worktree, task_id, task_title, wish_slug, group_number, started_at, state, last_state_change, repo_path, window_name, window_id, role, custom_name, sub_panes, provider, transport, skill, team, tmux_window, native_agent_id, native_color, native_team_enabled, parent_session_id, suspended_at, auto_resume, resume_attempts, last_resume_attempt, max_resume_attempts, pane_color) VALUES (${agent.id}, ${agent.paneId}, ${agent.session}, ${agent.worktree ?? null}, ${agent.taskId ?? null}, ${agent.taskTitle ?? null}, ${agent.wishSlug ?? null}, ${agent.groupNumber ?? null}, ${agent.startedAt ?? now}, ${agent.state ?? 'spawning'}, ${agent.lastStateChange ?? now}, ${agent.repoPath}, ${agent.windowName ?? null}, ${agent.windowId ?? null}, ${agent.role ?? null}, ${agent.customName ?? null}, ${sql.json(agent.subPanes ?? [])}, ${agent.provider ?? null}, ${agent.transport ?? null}, ${agent.skill ?? null}, ${agent.team ?? null}, ${agent.window ?? null}, ${agent.nativeAgentId ?? null}, ${agent.nativeColor ?? null}, ${agent.nativeTeamEnabled ?? false}, ${agent.parentSessionId ?? null}, ${agent.suspendedAt ?? null}, ${agent.autoResume ?? false}, ${agent.resumeAttempts ?? 0}, ${agent.lastResumeAttempt ?? null}, ${agent.maxResumeAttempts ?? 3}, ${agent.paneColor ?? null}) ON CONFLICT (id) DO UPDATE SET pane_id = EXCLUDED.pane_id, session = EXCLUDED.session, state = EXCLUDED.state, last_state_change = EXCLUDED.last_state_change, team = COALESCE(agents.team, EXCLUDED.team), role = COALESCE(agents.role, EXCLUDED.role), custom_name = COALESCE(agents.custom_name, EXCLUDED.custom_name), native_team_enabled = EXCLUDED.native_team_enabled, native_agent_id = COALESCE(EXCLUDED.native_agent_id, agents.native_agent_id), native_color = COALESCE(EXCLUDED.native_color, agents.native_color), parent_session_id = COALESCE(EXCLUDED.parent_session_id, agents.parent_session_id), provider = COALESCE(EXCLUDED.provider, agents.provider), transport = COALESCE(EXCLUDED.transport, agents.transport, 'tmux'), updated_at = now()`;
 }
 
 export async function unregister(id: string): Promise<void> {
@@ -582,10 +624,11 @@ export async function reconcileStaleSpawns(thresholdSeconds = 60): Promise<strin
  * Default TTL (hours) after which an exhausted dead-pane zombie is archived.
  *
  * A zombie is any agent whose reconciler audit trail shows
- * `reason=dead_pane_zombie` AND whose `auto_resume` has been flipped to false
- * by the scheduler's exhaustion branch. Without this TTL, such rows stayed
- * visible in `genie ls` forever (#1293), holding registry slots and confusing
- * users into thinking the agent is still recoverable.
+ * `reason IN ('dead_pane_zombie', 'stale_spawn_dead_pane')` AND whose
+ * `auto_resume` has been flipped to false by the scheduler's exhaustion
+ * branch. Without this TTL, such rows stayed visible in `genie ls` forever
+ * (#1293), holding registry slots and confusing users into thinking the
+ * agent is still recoverable.
  */
 const DEAD_PANE_ZOMBIE_TTL_HOURS = 24;
 
@@ -597,8 +640,9 @@ const DEAD_PANE_ZOMBIE_TTL_HOURS = 24;
  *   2. Have `auto_resume = false` (retry budget exhausted)
  *   3. Were last transitioned > `ttlHours` ago
  *   4. Have at least one reconciler audit event tagged
- *      `reason = 'dead_pane_zombie'` (distinguishes them from other error
- *      causes the user might want to keep visible, e.g. manual error states).
+ *      `reason IN ('dead_pane_zombie', 'stale_spawn_dead_pane')` —
+ *      both reconciler reasons indicate a dead pane and are TTL-eligible.
+ *      Other error causes (manual error states, app errors) stay visible.
  *
  * Transitions matching rows to `state = 'archived'` so the default listing
  * filter hides them. An audit event is emitted per row for traceability.
@@ -620,7 +664,7 @@ export async function archiveExhaustedZombies(ttlHours = DEAD_PANE_ZOMBIE_TTL_HO
           WHERE e.entity_type = 'worker'
             AND e.entity_id = a.id
             AND e.event_type = 'state_changed'
-            AND e.details->>'reason' = 'dead_pane_zombie'
+            AND e.details->>'reason' IN ('dead_pane_zombie', 'stale_spawn_dead_pane')
         )
       RETURNING id
     `;
@@ -645,6 +689,82 @@ export async function archiveExhaustedZombies(ttlHours = DEAD_PANE_ZOMBIE_TTL_HO
 }
 
 /**
+ * Default TTL (hours) for `genie prune --errored` mode. Shorter than
+ * `DEAD_PANE_ZOMBIE_TTL_HOURS` because `--errored` is opt-in: an operator
+ * who runs it has already decided the rows are noise. The 1h floor still
+ * gives a brief grace window to inspect freshly-failed agents.
+ */
+const EXHAUSTED_ERRORED_TTL_HOURS = 1;
+
+/**
+ * Archive any exhausted error-state agent older than the TTL, regardless
+ * of audit reason. Distinct from `archiveExhaustedZombies` which only
+ * touches reconciler-tagged dead-pane rows. Use this when you want a
+ * blanket sweep of inert error rows; use `auto_resume=true` to keep a
+ * row visible past the TTL.
+ *
+ * Audit reason: `errored_ttl_exhausted` (distinct from
+ * `dead_pane_zombie_ttl_exhausted` so forensics can tell which sweep
+ * archived the row).
+ *
+ * @param ttlHours - Minimum age in hours before archival (default: 1)
+ * @returns IDs of agents that were archived
+ */
+export async function archiveAllExhaustedErrored(ttlHours = EXHAUSTED_ERRORED_TTL_HOURS): Promise<string[]> {
+  try {
+    const sql = await getConnection();
+    const rows = await sql<{ id: string }[]>`
+      UPDATE agents a
+      SET state = 'archived', last_state_change = now()
+      WHERE a.state = 'error'
+        AND a.auto_resume = false
+        AND a.last_state_change < now() - make_interval(hours => ${ttlHours})
+      RETURNING id
+    `;
+    const auditPromises: Promise<void>[] = [];
+    for (const row of rows) {
+      console.error(`[prune] Archived exhausted errored ${row.id} (TTL ${ttlHours}h)`);
+      auditPromises.push(
+        recordAuditEvent('worker', row.id, 'state_changed', 'cli', {
+          state: 'archived',
+          reason: 'errored_ttl_exhausted',
+          ttl_hours: ttlHours,
+        }).catch(() => {}),
+      );
+    }
+    await Promise.allSettled(auditPromises);
+    return rows.map((r: { id: string }) => r.id);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Dry-run companion to `archiveAllExhaustedErrored` — lists rows that
+ * would be archived without mutating state.
+ */
+export async function listAllExhaustedErrored(
+  ttlHours = EXHAUSTED_ERRORED_TTL_HOURS,
+): Promise<Array<{ id: string; lastStateChange: string }>> {
+  try {
+    const sql = await getConnection();
+    const rows = await sql<{ id: string; last_state_change: string }[]>`
+      SELECT a.id, a.last_state_change FROM agents a
+      WHERE a.state = 'error'
+        AND a.auto_resume = false
+        AND a.last_state_change < now() - make_interval(hours => ${ttlHours})
+      ORDER BY a.last_state_change ASC
+    `;
+    return rows.map((r: { id: string; last_state_change: string }) => ({
+      id: r.id,
+      lastStateChange: r.last_state_change,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Count dead-pane zombies eligible for TTL archive without mutating them.
  * Used by `genie prune --zombies --dry-run`.
  */
@@ -663,7 +783,7 @@ export async function listExhaustedZombies(
           WHERE e.entity_type = 'worker'
             AND e.entity_id = a.id
             AND e.event_type = 'state_changed'
-            AND e.details->>'reason' = 'dead_pane_zombie'
+            AND e.details->>'reason' IN ('dead_pane_zombie', 'stale_spawn_dead_pane')
         )
       ORDER BY a.last_state_change ASC
     `;
@@ -851,7 +971,25 @@ async function findTeamLeadBySession(
 
 export async function saveTemplate(template: WorkerTemplate): Promise<void> {
   const sql = await getConnection();
-  await sql`INSERT INTO agent_templates (id, provider, team, role, skill, cwd, extra_args, native_team_enabled, last_spawned_at) VALUES (${template.id}, ${template.provider}, ${template.team}, ${template.role ?? null}, ${template.skill ?? null}, ${template.cwd}, ${sql.json(template.extraArgs ?? [])}, ${template.nativeTeamEnabled ?? false}, ${template.lastSpawnedAt}) ON CONFLICT (id) DO UPDATE SET provider = EXCLUDED.provider, team = EXCLUDED.team, role = EXCLUDED.role, skill = EXCLUDED.skill, cwd = EXCLUDED.cwd, extra_args = EXCLUDED.extra_args, native_team_enabled = EXCLUDED.native_team_enabled, last_spawned_at = EXCLUDED.last_spawned_at`;
+  // Migration 061 retyped agent_templates.id from TEXT (= name) to UUID and
+  // added a separate `name` column. saveTemplate previously passed the bare
+  // role name (e.g. "engineer") as `id`, which now errors with `invalid input
+  // syntax for type uuid`. Use `(name, team)` as the upsert key (idx_agent_
+  // templates_name_team unique index from 061) so callers can keep passing
+  // a human name as `template.id` for back-compat. The UUID `id` is server-
+  // generated via DEFAULT gen_random_uuid().
+  await sql`
+    INSERT INTO agent_templates (name, provider, team, role, skill, cwd, extra_args, native_team_enabled, last_spawned_at)
+    VALUES (${template.id}, ${template.provider}, ${template.team}, ${template.role ?? null}, ${template.skill ?? null}, ${template.cwd}, ${sql.json(template.extraArgs ?? [])}, ${template.nativeTeamEnabled ?? false}, ${template.lastSpawnedAt})
+    ON CONFLICT (name, team) WHERE name IS NOT NULL AND team IS NOT NULL DO UPDATE SET
+      provider = EXCLUDED.provider,
+      role = EXCLUDED.role,
+      skill = EXCLUDED.skill,
+      cwd = EXCLUDED.cwd,
+      extra_args = EXCLUDED.extra_args,
+      native_team_enabled = EXCLUDED.native_team_enabled,
+      last_spawned_at = EXCLUDED.last_spawned_at
+  `;
 }
 
 export async function listTemplates(): Promise<WorkerTemplate[]> {
@@ -961,6 +1099,198 @@ export async function getAgentByName(name: string, team: string): Promise<AgentI
     LIMIT 1
   `;
   return rows.length > 0 ? rowToAgentIdentity(rows[0]) : null;
+}
+
+// ============================================================================
+// resolveAgentId — single canonical name → id resolver (Group 2 of
+// retire-session-names-id-only). Every CLI-boundary "name → row" lookup must
+// route through this function so the resolution order, audit trail, and tier
+// counters live in exactly one place.
+// ============================================================================
+
+/**
+ * Per-tier hit counter for the resolver. Wave 4 smoke matrix asserts
+ * `customName === 0 && role === 0` on hot paths — only `uuid` and `dir`
+ * tiers are permitted after CLI-boundary resolution. `miss` tracks
+ * unresolved inputs (and is what tells you a fallback path is broken
+ * before users notice).
+ */
+export interface AgentResolverCounters {
+  uuid: number;
+  dir: number;
+  customName: number;
+  role: number;
+  miss: number;
+}
+
+const resolverCounters: AgentResolverCounters = { uuid: 0, dir: 0, customName: 0, role: 0, miss: 0 };
+
+/** Snapshot of resolver tier counters since process start (or last reset). */
+export function getAgentResolverCounters(): AgentResolverCounters {
+  return { ...resolverCounters };
+}
+
+/**
+ * Reset counters. Test-only — production code should never reset live counters,
+ * because Wave 4's smoke assertions read them across phases.
+ */
+export function _resetAgentResolverCountersForTests(): void {
+  resolverCounters.uuid = 0;
+  resolverCounters.dir = 0;
+  resolverCounters.customName = 0;
+  resolverCounters.role = 0;
+  resolverCounters.miss = 0;
+}
+
+type ResolverTier = 'uuid' | 'dir' | 'customName' | 'role';
+
+/**
+ * Emit a resolver audit event. The input string is intentionally NOT logged —
+ * agent names occasionally embed PII (operator handles, ticket IDs, run-tag
+ * snippets), and the resolver is called on every CLI invocation. The tier +
+ * resolved_id + team are enough to diagnose drift; the input is recoverable
+ * from the calling command's command_start audit row.
+ */
+function emitAgentResolved(resolvedId: string, tier: ResolverTier, team?: string): void {
+  recordAuditEvent('agent', resolvedId, 'agent_resolved', process.env.GENIE_AGENT_NAME ?? 'resolver', {
+    matched_tier: tier,
+    team: team ?? null,
+  }).catch(() => {});
+}
+
+function emitAgentResolvedAmbiguous(tier: ResolverTier, candidateIds: string[], team?: string): void {
+  // entity_id = the first candidate so the row is queryable; the full set lives
+  // in details for forensic walks. We don't include the input — see emit() note.
+  recordAuditEvent('agent', candidateIds[0], 'agent_resolved_ambiguous', process.env.GENIE_AGENT_NAME ?? 'resolver', {
+    matched_tier: tier,
+    candidate_ids: candidateIds,
+    team: team ?? null,
+  }).catch(() => {});
+}
+
+function emitAgentNotResolved(team?: string): void {
+  recordAuditEvent('agent', 'unresolved', 'agent_not_resolved', process.env.GENIE_AGENT_NAME ?? 'resolver', {
+    team: team ?? null,
+  }).catch(() => {});
+}
+
+/**
+ * Resolve any human-supplied agent reference (UUID, `dir:<name>`, custom_name,
+ * role) to its canonical `agents.id`. Returns null when the input matches no
+ * row OR matches more than one row at a fuzzy tier (ambiguity).
+ *
+ * Resolution order (each tier short-circuits on hit; falls through on miss):
+ *   1. exact id          → tier `uuid` (UUID-shaped) or `dir` (`dir:` prefix)
+ *   2. synthesized `dir:<input>`         → tier `dir`
+ *   3. (custom_name, team) composite     → tier `customName` (skipped if team undefined)
+ *   4. role-fallback (`WHERE role = $1`) → tier `role`
+ *
+ * Fuzzy tiers (`customName`, `role`) require a unique match; multiple
+ * candidates emit `agent_resolved_ambiguous` and return null. Misses emit
+ * `agent_not_resolved`.
+ *
+ * Always best-effort: audit emits are swallowed so a transient DB hiccup on
+ * the audit_events INSERT can't break the resolver itself.
+ */
+export async function resolveAgentId(nameOrId: string, team?: string): Promise<string | null> {
+  if (!nameOrId) return null;
+  // Fail-soft when PG is unavailable (non-PG unit tests, pgserve outage).
+  // The resolver is best-effort by contract; callers that need a hard error
+  // use `resolveAgentIdStrict`, which surfaces the null as a readable error.
+  // PR #1639 follow-up: pre-fix, the resolver wiring crashed the non-PG unit
+  // test job because every call opened a PG connection.
+  let sql: Awaited<ReturnType<typeof getConnection>>;
+  try {
+    sql = await getConnection();
+  } catch {
+    return null;
+  }
+
+  // Tier 1: exact id (catches UUID and dir:<name> shapes).
+  const exactRows = await sql<{ id: string }[]>`SELECT id FROM agents WHERE id = ${nameOrId} LIMIT 1`;
+  if (exactRows.length > 0) {
+    const id = exactRows[0].id;
+    const tier: ResolverTier = id.startsWith('dir:') ? 'dir' : 'uuid';
+    if (tier === 'dir') resolverCounters.dir++;
+    else resolverCounters.uuid++;
+    emitAgentResolved(id, tier, team);
+    return id;
+  }
+
+  // Tier 2: synthesize dir:<input>.
+  const dirId = `dir:${nameOrId}`;
+  const dirRows = await sql<{ id: string }[]>`SELECT id FROM agents WHERE id = ${dirId} LIMIT 1`;
+  if (dirRows.length > 0) {
+    resolverCounters.dir++;
+    emitAgentResolved(dirRows[0].id, 'dir', team);
+    return dirRows[0].id;
+  }
+
+  // Tier 3: (custom_name, team). Requires team scope — without it the
+  // composite isn't unique and a single name can name many agents across
+  // teams. Skip and fall through to role-fallback when team is undefined.
+  if (team) {
+    const cnRows = await sql<{ id: string }[]>`
+      SELECT id FROM agents WHERE custom_name = ${nameOrId} AND team = ${team} LIMIT 2
+    `;
+    if (cnRows.length === 1) {
+      resolverCounters.customName++;
+      emitAgentResolved(cnRows[0].id, 'customName', team);
+      return cnRows[0].id;
+    }
+    if (cnRows.length > 1) {
+      emitAgentResolvedAmbiguous(
+        'customName',
+        cnRows.map((r: { id: string }) => r.id),
+        team,
+      );
+      resolverCounters.miss++;
+      return null;
+    }
+  }
+
+  // Tier 4: role-fallback. Global by design (matches the legacy
+  // resolveWorkerByName at agents.ts:2750) — `genie kill engineer` should
+  // find the only running engineer regardless of team.
+  const roleRows = await sql<{ id: string }[]>`SELECT id FROM agents WHERE role = ${nameOrId} LIMIT 2`;
+  if (roleRows.length === 1) {
+    resolverCounters.role++;
+    emitAgentResolved(roleRows[0].id, 'role', team);
+    return roleRows[0].id;
+  }
+  if (roleRows.length > 1) {
+    emitAgentResolvedAmbiguous(
+      'role',
+      roleRows.map((r: { id: string }) => r.id),
+      team,
+    );
+    resolverCounters.miss++;
+    return null;
+  }
+
+  resolverCounters.miss++;
+  emitAgentNotResolved(team);
+  return null;
+}
+
+/**
+ * Strict variant of {@link resolveAgentId}: returns the canonical id or throws
+ * a clear error when the input doesn't match exactly one agent. Use this at
+ * the CLI boundary right before any write that targets `agents.id` (e.g.
+ * `mailbox.to_worker`, `mailbox.from_worker`) so the failure mode is a
+ * readable "no agent matches X" instead of an opaque foreign-key violation
+ * (wish retire-session-names-id-only Group 4).
+ *
+ * The thrown error includes the input verbatim and the team scope used so the
+ * operator can disambiguate quickly.
+ */
+export async function resolveAgentIdStrict(nameOrId: string, team?: string): Promise<string> {
+  const id = await resolveAgentId(nameOrId, team);
+  if (id) return id;
+  const teamHint = team ? ` (team scope: ${team})` : ' (no team scope — pass --team to disambiguate)';
+  throw new Error(
+    `No agent matches "${nameOrId}"${teamHint}. Resolution checked: exact id, dir:${nameOrId}, custom_name+team, role. Run \`genie ls\` to see live agents.`,
+  );
 }
 
 /** Set the current executor FK on an agent. Pass null to clear. */

@@ -19,7 +19,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FilewatchDeps } from './session-filewatch.js';
-import { handleFileChange, isForeignKeyViolation, resetUnrecoverableSessions } from './session-filewatch.js';
+import {
+  extractSessionInfo,
+  handleFileChange,
+  isForeignKeyViolation,
+  isTransientPgConnectionError,
+  resetUnrecoverableSessions,
+} from './session-filewatch.js';
 
 // ============================================================================
 // Test helpers
@@ -75,6 +81,63 @@ describe('isForeignKeyViolation', () => {
     expect(isForeignKeyViolation(new Error('ECONNRESET'))).toBe(false);
     expect(isForeignKeyViolation(null)).toBe(false);
     expect(isForeignKeyViolation('string error')).toBe(false);
+  });
+});
+
+describe('isTransientPgConnectionError', () => {
+  test('detects postgres.js socket/pool errors', () => {
+    expect(isTransientPgConnectionError(Object.assign(new Error('pool ended'), { code: 'CONNECTION_ENDED' }))).toBe(
+      true,
+    );
+    expect(isTransientPgConnectionError(new Error('write CONNECTION_DESTROYED /tmp/pgserve/.s.PGSQL.5432'))).toBe(true);
+    expect(isTransientPgConnectionError(new Error('write CONNECT_TIMEOUT /run/user/1000/pgserve/.s.PGSQL.5432'))).toBe(
+      true,
+    );
+  });
+
+  test('rejects unrelated errors', () => {
+    expect(isTransientPgConnectionError(Object.assign(new Error('foreign key constraint'), { code: '23503' }))).toBe(
+      false,
+    );
+    expect(isTransientPgConnectionError(null)).toBe(false);
+  });
+});
+
+// ============================================================================
+// extractSessionInfo — Claude JSONL path layouts
+// ============================================================================
+
+describe('extractSessionInfo', () => {
+  test('parses root-level Claude project JSONL paths', () => {
+    expect(extractSessionInfo('/tmp/claude/projects/project-hash/session-123.jsonl')).toEqual({
+      sessionId: 'session-123',
+      projectPath: '/tmp/claude/projects/project-hash',
+      parentSessionId: null,
+      isSubagent: false,
+    });
+  });
+
+  test('parses legacy sessions directory JSONL paths', () => {
+    expect(extractSessionInfo('/tmp/claude/projects/project-hash/sessions/session-456.jsonl')).toEqual({
+      sessionId: 'session-456',
+      projectPath: '/tmp/claude/projects/project-hash',
+      parentSessionId: null,
+      isSubagent: false,
+    });
+  });
+
+  test('parses subagent JSONL paths', () => {
+    expect(extractSessionInfo('/tmp/claude/projects/project-hash/parent-123/subagents/session-789.jsonl')).toEqual({
+      sessionId: 'session-789',
+      projectPath: '/tmp/claude/projects/project-hash',
+      parentSessionId: 'parent-123',
+      isSubagent: true,
+    });
+  });
+
+  test('rejects non-session JSONL paths outside projects', () => {
+    expect(extractSessionInfo('/tmp/claude/not-projects/session-123.jsonl')).toBeNull();
+    expect(extractSessionInfo('/tmp/claude/projects/project-hash/notes/session-123.jsonl')).toBeNull();
   });
 });
 
@@ -150,5 +213,42 @@ describe('handleFileChange — FK violation', () => {
     await handleFileChange(filePath, fakeSql, deps);
     expect(ingestCallCount).toBe(2); // retried
     expect(errors.length).toBe(2);
+  });
+
+  test('transient PG connection error resets pool and retries once in same event', async () => {
+    const filePath = makeSubagentFile(tmpRoot, 'parent-123', 'flaky-session-c');
+    const firstSql = { name: 'old' };
+    const freshSql = { name: 'fresh' };
+    const ingestSqls: unknown[] = [];
+    let resetCalls = 0;
+    let getConnectionCalls = 0;
+    const errors: string[] = [];
+
+    const deps = makeDeps({
+      ingestFileFull: async (sql) => {
+        ingestSqls.push(sql);
+        if (ingestSqls.length === 1) {
+          throw Object.assign(new Error('write CONNECTION_ENDED /run/user/1000/pgserve/.s.PGSQL.5432'), {
+            code: 'CONNECTION_ENDED',
+          });
+        }
+        return { newOffset: 42, contentRowsInserted: 1, toolEventsInserted: 0 };
+      },
+      resetConnection: async () => {
+        resetCalls++;
+      },
+      getConnection: async () => {
+        getConnectionCalls++;
+        return freshSql as never;
+      },
+      logError: (msg) => errors.push(msg),
+    });
+
+    await handleFileChange(filePath, firstSql, deps);
+
+    expect(ingestSqls).toEqual([firstSql, freshSql]);
+    expect(resetCalls).toBe(1);
+    expect(getConnectionCalls).toBe(1);
+    expect(errors).toEqual([]);
   });
 });

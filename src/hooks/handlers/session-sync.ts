@@ -20,24 +20,121 @@
  * deny the tool use.
  */
 
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { readEnvAgentId, readEnvAgentName } from '../env-identity.js';
 import type { HandlerResult, HookPayload } from '../types.js';
 
 /**
- * Process-local cache: executorId → last session_id we've written.
- * Avoids redundant DB round-trips on every tool call once we've already
- * reconciled the current session.
+ * Cache: executorId → last session_id we've reconciled.
+ *
+ * Mac-CPU fix E — the cache now has TWO layers: process-local (Map) +
+ * disk-backed (~/.genie/cache/session-sync.json). Every `genie hook dispatch`
+ * is a fresh `bun` fork, so the in-memory Map alone caches nothing across
+ * forks. Disk-loading on first hit means a cold-start hook fork skips its
+ * 3 DB round-trips (getAgentByName + getExecutor + audit) when the
+ * (executorId, sessionId) pair is already-reconciled.
+ *
+ * Concurrency: writes are atomic (write-temp + rename). Two forks racing on
+ * the rename can lose the loser's update for OTHER executor entries —
+ * benign: worst case is occasional redundant DB syncs from later forks.
  */
 const syncedSessions = new Map<string, string>();
 
-/** Exposed for tests — clear the in-memory cache between assertions. */
+const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+const DEFAULT_CACHE_FILE = join(GENIE_HOME, 'cache', 'session-sync.json');
+
+let diskCacheLoaded = false;
+
+function effectiveCacheFile(): string {
+  // Test override — see _setCacheFileForTest.
+  // biome-ignore lint/suspicious/noExplicitAny: test override
+  const override = (globalThis as Record<string, any>).__GENIE_SESSION_SYNC_CACHE_FILE as string | null | undefined;
+  return typeof override === 'string' && override.length > 0 ? override : DEFAULT_CACHE_FILE;
+}
+
+function loadDiskCache(): void {
+  if (diskCacheLoaded) return;
+  diskCacheLoaded = true;
+  // In test mode (any _deps mocked or NODE_ENV=test/BUN_ENV=test), skip the
+  // production disk cache file unless tests explicitly opted in via
+  // _setCacheFileForTest. This prevents pre-existing tests from picking up
+  // stale (executorId, sessionId) entries written by earlier real-mode
+  // session-sync runs and short-circuiting before they hit their fixtures.
+  const hasOverrides = Object.values(_deps).some((v) => v !== null);
+  // biome-ignore lint/suspicious/noExplicitAny: read test override
+  const testCacheOverridden = typeof (globalThis as Record<string, any>).__GENIE_SESSION_SYNC_CACHE_FILE === 'string';
+  if ((hasOverrides || process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test') && !testCacheOverridden) {
+    return;
+  }
+  try {
+    const cacheFile = effectiveCacheFile();
+    if (!existsSync(cacheFile)) return;
+    const parsed = JSON.parse(readFileSync(cacheFile, 'utf-8')) as Record<string, string>;
+    for (const [executorId, sessionId] of Object.entries(parsed)) {
+      if (typeof sessionId === 'string' && sessionId.length > 0) {
+        syncedSessions.set(executorId, sessionId);
+      }
+    }
+  } catch {
+    // Corrupt or unreadable — fall back to empty cache (DB still authoritative).
+  }
+}
+
+/**
+ * Trim in-memory cache to MAX_CACHE_ENTRIES if it grows large. Removes the
+ * oldest insertion-order entries (Map preserves insertion order). Bounded
+ * size prevents the cache file from growing unboundedly across weeks of use.
+ */
+const MAX_CACHE_ENTRIES = 1000;
+function trimCache(): void {
+  while (syncedSessions.size > MAX_CACHE_ENTRIES) {
+    const oldest = syncedSessions.keys().next().value;
+    if (oldest === undefined) break;
+    syncedSessions.delete(oldest);
+  }
+}
+
+function persistDiskCache(): void {
+  // Mirror loadDiskCache test-mode skip: never write the production cache
+  // from a test run unless the test explicitly opted in via _setCacheFileForTest.
+  const hasOverrides = Object.values(_deps).some((v) => v !== null);
+  // biome-ignore lint/suspicious/noExplicitAny: read test override
+  const testCacheOverridden = typeof (globalThis as Record<string, any>).__GENIE_SESSION_SYNC_CACHE_FILE === 'string';
+  if ((hasOverrides || process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test') && !testCacheOverridden) {
+    return;
+  }
+  try {
+    const cacheFile = effectiveCacheFile();
+    mkdirSync(join(cacheFile, '..'), { recursive: true });
+    trimCache();
+    const obj = Object.fromEntries(syncedSessions);
+    const tmp = `${cacheFile}.tmp.${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(obj));
+    renameSync(tmp, cacheFile);
+  } catch {
+    // Best-effort — in-memory cache still works for the current process.
+  }
+}
+
+/** Exposed for tests — clear in-memory cache + force disk reload on next call. */
 export function _resetSyncedSessions(): void {
   syncedSessions.clear();
+  diskCacheLoaded = false;
+}
+
+/** Exposed for tests — override the cache file path. Pass null to restore default. */
+export function _setCacheFileForTest(path: string | null): void {
+  // biome-ignore lint/suspicious/noExplicitAny: test-only writable cache path override
+  (globalThis as Record<string, any>).__GENIE_SESSION_SYNC_CACHE_FILE = path;
 }
 
 type GetAgentByNameFn = (
   name: string,
   team: string,
 ) => Promise<{ id?: string; currentExecutorId?: string | null } | null>;
+type GetAgentFn = (id: string) => Promise<{ id?: string; currentExecutorId?: string | null } | null>;
 type GetExecutorFn = (id: string) => Promise<{ claudeSessionId?: string | null; state?: string | null } | null>;
 type UpdateClaudeSessionIdFn = (executorId: string, sessionId: string) => Promise<void>;
 type EmitAuditEventFn = (
@@ -55,11 +152,13 @@ type EmitAuditEventFn = (
  * reset them in `afterEach`.
  */
 export const _deps: {
+  getAgent: GetAgentFn | null;
   getAgentByName: GetAgentByNameFn | null;
   getExecutor: GetExecutorFn | null;
   updateClaudeSessionId: UpdateClaudeSessionIdFn | null;
   emitAuditEvent: EmitAuditEventFn | null;
 } = {
+  getAgent: null,
   getAgentByName: null,
   getExecutor: null,
   updateClaudeSessionId: null,
@@ -67,12 +166,14 @@ export const _deps: {
 };
 
 async function resolveDeps() {
+  const needsAgentMod = !_deps.getAgent || !_deps.getAgentByName;
   const [agentMod, execMod, audit] = await Promise.all([
-    _deps.getAgentByName ? null : import('../../lib/agent-registry.js'),
+    needsAgentMod ? import('../../lib/agent-registry.js') : null,
     _deps.getExecutor && _deps.updateClaudeSessionId ? null : import('../../lib/executor-registry.js'),
     _deps.emitAuditEvent ? null : import('../../lib/audit.js'),
   ]);
   return {
+    getAgent: _deps.getAgent ?? (agentMod as typeof import('../../lib/agent-registry.js')).getAgent,
     getAgentByName: _deps.getAgentByName ?? (agentMod as typeof import('../../lib/agent-registry.js')).getAgentByName,
     getExecutor: _deps.getExecutor ?? (execMod as typeof import('../../lib/executor-registry.js')).getExecutor,
     updateClaudeSessionId:
@@ -81,18 +182,31 @@ async function resolveDeps() {
   };
 }
 
-function shouldSkipSync(payload: HookPayload): { sessionId: string; agentName: string; teamName: string } | null {
+type SyncCtx = {
+  sessionId: string;
+  agentName: string;
+  agentId: string | undefined;
+  teamName: string;
+};
+
+function shouldSkipSync(payload: HookPayload): SyncCtx | null {
   const sessionId = payload.session_id;
   if (!sessionId || typeof sessionId !== 'string') return null;
 
   const hasOverrides = Object.values(_deps).some((v) => v !== null);
   if (!hasOverrides && (process.env.NODE_ENV === 'test' || process.env.BUN_ENV === 'test')) return null;
 
-  const agentName = process.env.GENIE_AGENT_NAME ?? (payload.teammate_name as string | undefined);
+  // Prefer GENIE_AGENT_ID (UUID) — post-061 the registry is keyed by UUID and
+  // a name → id resolution at the call site is one wasted round-trip when the
+  // spawn flow already exported the UUID. agentName is still captured so the
+  // audit event keeps a human-readable actor.
+  const agentId = readEnvAgentId();
+  const agentName = readEnvAgentName() ?? (payload.teammate_name as string | undefined);
   const teamName = process.env.GENIE_TEAM ?? (payload.team_name as string | undefined);
-  if (!agentName || !teamName) return null;
+  if (!teamName) return null;
+  if (!agentId && !agentName) return null;
 
-  return { sessionId, agentName, teamName };
+  return { sessionId, agentName: agentName ?? agentId ?? '', agentId, teamName };
 }
 
 /**
@@ -114,8 +228,15 @@ export async function sessionSync(payload: HookPayload): Promise<HandlerResult> 
     const ctx = shouldSkipSync(payload);
     if (!ctx) return;
 
+    // Mac-CPU fix E — disk cache lookup happens BEFORE any DB call so a
+    // cold-start hook fork can short-circuit on already-reconciled pairs
+    // without touching PG (was 3 round-trips per hook fork before).
+    loadDiskCache();
+
     const deps = await resolveDeps();
-    const agent = await deps.getAgentByName(ctx.agentName, ctx.teamName);
+    const agent = ctx.agentId
+      ? await deps.getAgent(ctx.agentId)
+      : await deps.getAgentByName(ctx.agentName, ctx.teamName);
     const executorId = agent?.currentExecutorId;
     if (!executorId) return;
     if (syncedSessions.get(executorId) === ctx.sessionId) return;
@@ -126,6 +247,7 @@ export async function sessionSync(payload: HookPayload): Promise<HandlerResult> 
     const oldSessionId = executor.claudeSessionId ?? null;
     if (oldSessionId === ctx.sessionId) {
       syncedSessions.set(executorId, ctx.sessionId);
+      persistDiskCache();
       return;
     }
 
@@ -149,6 +271,7 @@ export async function sessionSync(payload: HookPayload): Promise<HandlerResult> 
         reason: 'terminal_executor_is_recovery_anchor',
       });
       syncedSessions.set(executorId, ctx.sessionId);
+      persistDiskCache();
       return;
     }
 
@@ -160,6 +283,7 @@ export async function sessionSync(payload: HookPayload): Promise<HandlerResult> 
       team: ctx.teamName,
     });
     syncedSessions.set(executorId, ctx.sessionId);
+    persistDiskCache();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[session-sync] ${msg}`);

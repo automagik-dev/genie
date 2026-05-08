@@ -347,8 +347,14 @@ export async function spawnWorkerFromTemplate(
   const isClaude = template.provider === 'claude' || template.provider === 'claude-sdk';
   const effectiveSessionId = resumeSessionId ?? params.sessionId;
 
+  // Wish retire-session-names-id-only Group 3: spawn writes ONE row.
+  // Resolve the durable identity UUID first so register() runs against the
+  // same key the rest of the pipeline observes. The bare `workerId`
+  // (e.g. team-role-<short>) lands on `custom_name` for human-display only.
+  const autoSpawnIdentity = await registry.findOrCreateAgent(agentName, team, template.role);
+
   const workerEntry: registry.Agent = {
-    id: workerId,
+    id: autoSpawnIdentity.id,
     paneId,
     session,
     provider: template.provider,
@@ -356,6 +362,7 @@ export async function spawnWorkerFromTemplate(
     role: template.role,
     skill: template.skill,
     team,
+    customName: workerId,
     worktree: null,
     startedAt: now,
     state: 'spawning',
@@ -402,7 +409,11 @@ export async function spawnWorkerFromTemplate(
     await applyPaneColor(paneId, spawnColor, teamWindow?.windowId);
   }
 
-  await injectResumeContext(repoPath, workerId, agentName, team);
+  // injectResumeContext writes to mailbox; FK lockdown (migration 061)
+  // requires `to_worker` to match `agents.id` exactly. Pass the canonical
+  // identity id, not the bare-name `workerId` (which lives on `custom_name`).
+  // Wish retire-session-names-id-only G4.
+  await injectResumeContext(repoPath, autoSpawnIdentity.id, workerId, agentName, team);
   await tryAutoBrain(workerId, repoPath);
 
   return { worker: workerEntry, paneId, workerId };
@@ -467,13 +478,27 @@ async function getGitStatus(repoPath: string): Promise<string> {
  */
 export async function injectResumeContext(
   repoPath: string,
+  /**
+   * Canonical `agents.id`. Used as `mailbox.to_worker`, which is locked to
+   * `agents.id` by migration 061 (`fk_mailbox_to_worker`). Wish
+   * retire-session-names-id-only G4.
+   */
+  agentId: string,
+  /**
+   * Display-name workerId (e.g. `engineer-4d48`). Used to look up the wish
+   * group assigned to this agent — wish-state stores assignees by either the
+   * bare display name or the canonical id, so we try both.
+   */
   workerId: string,
   agentName: string,
   _team: string,
 ): Promise<void> {
   try {
-    // Query PG for any in_progress group assigned to this agent
+    // Query PG for any in_progress group assigned to this agent. Try the
+    // canonical id first (current convention), then the bare display name
+    // (legacy assignees), then the role.
     const match =
+      (await _deps.findAnyGroupByAssignee(agentId, repoPath)) ??
       (await _deps.findAnyGroupByAssignee(workerId, repoPath)) ??
       (await _deps.findAnyGroupByAssignee(agentName, repoPath));
     if (!match) return;
@@ -509,7 +534,7 @@ export async function injectResumeContext(
       .filter(Boolean)
       .join('\n');
 
-    await _deps.mailboxSend(repoPath, 'genie', workerId, resumePrompt);
+    await _deps.mailboxSend(repoPath, 'genie', agentId, resumePrompt);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[protocol-router] Resume context injection failed: ${msg}`);

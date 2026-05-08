@@ -78,6 +78,8 @@ type PgserveLock = {
 
 let child: ChildProcess | null = null;
 let activeTestPort: number | null = null;
+const initialGenieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+const testPgserveLockPath = join(initialGenieHome, 'data', 'test-pgserve.lock');
 // Module-scoped admin client bound to the `postgres` maintenance DB. Opened
 // once after pgserve is healthy and reused by createTestDatabase /
 // dropTestDatabase / buildTemplateDatabase. Previously each call opened and
@@ -142,7 +144,7 @@ async function isPostgresHealthy(port: number): Promise<boolean> {
  * macOS with GENIE_TEST_MAC_RAM=1: pass `--data <ram-disk>/pgserve` so
  * pgserve writes to the hdiutil-backed RAM volume (Group 6).
  * macOS default / no shm: omit `--data` entirely — pgserve defaults to its
- * own ephemeral temp dir (see pgserve/bin/pglite-server.js lines 44-64),
+ * own ephemeral temp dir (see pgserve/bin/postgres-server.js lines 44-64),
  * and auto-cleans the dir on child exit.
  */
 function buildPgserveArgs(port: number, useRam: boolean, dataDir: string | null): string[] {
@@ -196,7 +198,7 @@ async function tryStartOnPort(port: number, useRam: boolean, dataDir: string | n
 
 /**
  * Recursively collect all descendant PIDs of a given root. Returns [root, ...children].
- * Used to walk the wrapper → pglite-server → postgres tree when reaping orphans.
+ * Used to walk the wrapper → postgres-server → postgres tree when reaping orphans.
  */
 function collectDescendants(rootPid: number): number[] {
   const all = new Set<number>([rootPid]);
@@ -244,8 +246,7 @@ function killPidsLeavesFirst(pids: number[]): void {
 
 /** Resolve the lockfile path under GENIE_HOME (or ~/.genie). */
 function lockFilePath(): string {
-  const home = process.env.GENIE_HOME ?? join(homedir(), '.genie');
-  return join(home, 'data', 'test-pgserve.lock');
+  return testPgserveLockPath;
 }
 
 /** Read and validate the shared-daemon lockfile; returns null when missing or malformed. */

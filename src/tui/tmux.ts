@@ -80,6 +80,7 @@ export function attachProjectWindow(rightPane: string, targetSession: string, wi
 }
 
 export function attachTuiSession(): void {
+  runTuiTmux(['select-pane', '-t', `${SESSION_NAME}:0.0`]);
   if (process.env.TMUX) {
     // Already inside a tmux session — switch-client avoids nested attach
     runTuiTmux(['switch-client', '-t', SESSION_NAME], 'inherit');

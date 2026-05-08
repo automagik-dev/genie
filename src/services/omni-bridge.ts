@@ -8,6 +8,13 @@
  *   - Max concurrency (20 default, configurable)
  *   - Message buffering during spawn
  *   - Auto-respawn on window death
+ *
+ * Heartbeats: while a turn is open (between `turn.open` and `turn.done`/
+ * `turn.timeout`/`session.reset`), an `agent-heartbeat` HeartbeatPublisher
+ * emits `omni.agent.heartbeat.{instanceId}.{chatId}` on a ~30s cadence so
+ * omni's turn monitor sees the agent is still working and skips the
+ * 120s idle nudge. See `src/services/agent-heartbeat.ts` and the
+ * `omni-activity-heartbeat` wish.
  */
 
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
@@ -16,6 +23,7 @@ import { type NatsConnection, StringCodec, type Subscription, connect } from 'na
 import { BRIDGE_PING_SUBJECT, type BridgePong, getBridgePidfilePath } from '../lib/bridge-status.js';
 import type { Sql } from '../lib/db.js';
 import { resolveExecutorType } from '../lib/executor-config.js';
+import { HeartbeatPublisher } from './agent-heartbeat.js';
 import { BridgeSessionStore } from './bridge-session-store.js';
 import type { ExecutorSession, IExecutor, OmniMessage } from './executor.js';
 import { ClaudeCodeOmniExecutor } from './executors/claude-code.js';
@@ -163,6 +171,13 @@ export class OmniBridge {
   private sub: Subscription | null = null;
   private executor: IExecutor;
   private turnTracker = new TurnTracker();
+  /**
+   * Publishes `omni.agent.heartbeat.{instanceId}.{chatId}` while a turn is
+   * open so omni's turn monitor sees the agent is still working. Wired up
+   * in `wireExecutorHooks` once the NATS connection is live; lifecycle is
+   * driven by `routeTurnEvent` and `handleSessionReset`.
+   */
+  private heartbeatPublisher: HeartbeatPublisher | null = null;
 
   /**
    * Process-local runtime handles — NOT the source of truth for session identity.
@@ -296,9 +311,11 @@ export class OmniBridge {
     const sc = this.sc;
     const nc = this.nc;
     if (!nc) return;
-    this.executor.setNatsPublish((topic: string, payload: string) => {
+    const publish: (topic: string, payload: string) => void = (topic, payload) => {
       nc.publish(topic, sc.encode(payload));
-    });
+    };
+    this.executor.setNatsPublish(publish);
+    this.heartbeatPublisher = new HeartbeatPublisher({ publish });
   }
 
   /** Subscribe to omni.message.>, omni.turn.*.>, omni.session.reset.>. */
@@ -466,6 +483,10 @@ export class OmniBridge {
       clearInterval(this.idleCheckTimer);
       this.idleCheckTimer = null;
     }
+    // Defensive: drain every active heartbeat before tearing down sessions
+    // so an interval can never publish past `stop()`.
+    this.heartbeatPublisher?.stopAll();
+    this.heartbeatPublisher = null;
 
     await this.shutdownActiveSessions();
     this.unsubscribeChannels();
@@ -836,18 +857,55 @@ export class OmniBridge {
     switch (eventType) {
       case 'open':
         this.turnTracker.open(sessionKey, payload.turnId, payload.messageId);
+        this.startHeartbeat(sessionKey, payload);
         break;
       case 'done':
         this.turnTracker.close(sessionKey, payload.action);
+        this.heartbeatPublisher?.stop(sessionKey);
         await this.handleTurnDone(sessionKey);
         break;
       case 'nudge':
         await this.handleTurnNudge(sessionKey, payload.message);
         break;
       case 'timeout':
+        this.heartbeatPublisher?.stop(sessionKey);
         await this.handleTurnTimeout(sessionKey);
         break;
     }
+  }
+
+  /**
+   * Begin emitting `omni.agent.heartbeat.{instanceId}.{chatId}` for an open
+   * turn. The busy predicate is composed against the executor so the
+   * publisher skips ticks while the executor is settled (e.g. waiting on a
+   * permission prompt) — that lets omni's existing 120s nudge fire for
+   * genuinely-idle agents while suppressing it for actively-working ones.
+   *
+   * Defensive: if the session entry is gone by the time we publish, we
+   * report `false` and skip the tick — never let the publisher outlive
+   * its session.
+   */
+  private startHeartbeat(sessionKey: string, payload: Record<string, string>): void {
+    const publisher = this.heartbeatPublisher;
+    if (!publisher) return;
+    const entry = this.sessions.get(sessionKey);
+    if (!entry) return;
+    const turnId = payload.turnId;
+    if (!turnId) return;
+    publisher.start(sessionKey, {
+      instanceId: entry.instanceId,
+      chatId: entry.session?.chatId ?? '',
+      turnId,
+      isBusy: async () => {
+        const live = this.sessions.get(sessionKey);
+        if (!live?.session) return false;
+        try {
+          return await this.executor.isBusy(live.session);
+        } catch {
+          return false;
+        }
+      },
+    });
   }
 
   /**
@@ -966,6 +1024,7 @@ export class OmniBridge {
       entry.cancelled = true;
       entry.buffer = []; // Drop buffered messages — user explicitly reset.
       this.turnTracker.close(sessionKey, 'reset');
+      this.heartbeatPublisher?.stop(sessionKey);
       await this.removeSession(sessionKey);
       await this.drainQueue();
       return;
@@ -975,6 +1034,7 @@ export class OmniBridge {
 
     console.log(`[omni-bridge] Session reset for ${sessionKey}${actionTag}, evicting`);
     this.turnTracker.close(sessionKey, 'reset');
+    this.heartbeatPublisher?.stop(sessionKey);
     try {
       await this.executor.shutdown(entry.session);
     } catch (err) {
@@ -1006,6 +1066,7 @@ export class OmniBridge {
     if (!entry?.session) return;
     console.warn(`[omni-bridge] Turn timed out for ${sessionKey}, evicting session`);
     this.turnTracker.close(sessionKey, 'timeout');
+    this.heartbeatPublisher?.stop(sessionKey);
     try {
       await this.executor.shutdown(entry.session);
     } catch (err) {
@@ -1062,7 +1123,6 @@ export class OmniBridge {
   /**
    * Spawn a new agent session for a chat.
    */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: spawn orchestration with concurrent guard, env resolution, and error recovery
   private async spawnSession(message: OmniMessage): Promise<void> {
     const key = `${message.agent}:${message.chatId}`;
 
@@ -1092,7 +1152,7 @@ export class OmniBridge {
       session: null as unknown as ExecutorSession, // Will be set after spawn
       instanceId: message.instanceId,
       spawning: true,
-      buffer: [message], // Buffer the triggering message too
+      buffer: [], // Spawn delivers the triggering message via Claude's [prompt] CLI arg; deliver()-replay would race the TUI bootstrap
       idleTimer: null,
     };
     this.sessions.set(key, placeholder);
@@ -1131,8 +1191,13 @@ export class OmniBridge {
       placeholder.session = session;
       placeholder.spawning = false;
 
-      // Record session in PG for crash recovery
+      // Record session in PG for crash recovery. Both executors expose a
+      // claude session id — sdk via `session.sdk.claudeSessionId`, tmux via
+      // `session.tmux.claudeSessionId` (added so the bridge can persist the
+      // per-chat conversation id and observers can trace history across
+      // executor restarts).
       if (this.sessionStore) {
+        const claudeSessionId = session.sdk?.claudeSessionId ?? session.tmux?.claudeSessionId;
         const pgId = await this.safePgCall(
           'session_create',
           (sql) =>
@@ -1142,7 +1207,7 @@ export class OmniBridge {
               agentName: message.agent,
               executorId: session.sdk?.executorId,
               tmuxPaneId: session.tmux?.paneId,
-              claudeSessionId: session.sdk?.claudeSessionId,
+              claudeSessionId,
             }),
           undefined,
           { chatId: message.chatId },
@@ -1163,8 +1228,8 @@ export class OmniBridge {
       console.log(`[omni-bridge] Session active: ${key} ${sessionTag}`);
     } catch (err) {
       console.error(`[omni-bridge] Failed to spawn session for ${key}:`, err);
-      // Re-queue buffered messages before deleting the placeholder
-      const lostMessages = placeholder.buffer;
+      // Re-queue the trigger (never reached the agent because spawn threw) plus any concurrent buffered messages
+      const lostMessages = [message, ...placeholder.buffer];
       if (lostMessages.length > 0) {
         console.warn(
           `[omni-bridge] Re-queuing ${lostMessages.length} buffered message(s) from failed spawn for ${key}`,
@@ -1236,6 +1301,10 @@ export class OmniBridge {
   private async removeSession(key: string): Promise<void> {
     const entry = this.sessions.get(key);
     if (entry?.idleTimer) clearTimeout(entry.idleTimer);
+    // Belt-and-suspenders: every removeSession path must also drop the
+    // heartbeat for that key, so a tick can never publish for a vanished
+    // session entry.
+    this.heartbeatPublisher?.stop(key);
     // Close session in PG — await to prevent duplicate active rows
     const closeId = entry?.pgBridgeSessionId;
     if (closeId && this.sessionStore) {

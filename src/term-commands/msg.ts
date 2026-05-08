@@ -56,6 +56,22 @@ async function getMailbox(): Promise<typeof import('../lib/mailbox.js')> {
 // ============================================================================
 
 /**
+ * True when `sender` is the CLI dispatch-bypass marker.
+ *
+ * Two surface forms exist:
+ *   - `'cli'`              — true CLI invocation, no agent context
+ *   - `'cli:<origin>'`     — invoker had agent context (e.g. team-lead running
+ *                            `genie work`); origin is the agent name
+ *
+ * Both forms bypass hierarchy + scope checks. The prefixed form preserves the
+ * actual invoker so downstream consumers (inboxes, audit logs, native team UI)
+ * can attribute the message to a real source instead of an opaque `cli`.
+ */
+export function isCliSender(sender: string): boolean {
+  return sender === 'cli' || sender.startsWith('cli:');
+}
+
+/**
  * Auto-detect the sender identity based on execution context.
  *
  * Detection cascade:
@@ -65,6 +81,12 @@ async function getMailbox(): Promise<typeof import('../lib/mailbox.js')> {
  *   4. Fallback: 'cli'
  */
 export async function detectSenderIdentity(teamName?: string): Promise<string> {
+  // Prefer UUID id from env when present — satisfies migration 061 FK
+  // (mailbox.from_worker → agents.id) without name → id resolution at write time.
+  const envId = process.env.GENIE_AGENT_ID;
+  if (envId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(envId)) {
+    return envId;
+  }
   const envName = process.env.GENIE_AGENT_NAME;
   if (envName) return envName;
 
@@ -103,6 +125,35 @@ async function findMemberByPane(teamName: string, paneId: string): Promise<strin
 // ============================================================================
 // Leader Alias Resolution
 // ============================================================================
+
+/**
+ * Parse `<role>@<team>` cross-team addressing syntax.
+ *
+ * Returns the unqualified recipient + the team scope to use for resolution.
+ * If no `@` is present, returns the recipient as-is with `defaultTeam` (which
+ * is typically the sender's team or `process.env.GENIE_TEAM`). When `@` is
+ * present, the parsed team always wins — that's the entire point of the form:
+ * "address agent X in team Y from anywhere."
+ *
+ * Edge cases:
+ *  - `'team-lead@foo'` → `{ recipient: 'team-lead', team: 'foo' }`
+ *  - `'foo@'`          → `{ recipient: 'foo', team: defaultTeam }` (empty
+ *                        right-side falls through; treats as no @-suffix)
+ *  - `'foo@bar@baz'`   → `{ recipient: 'foo', team: 'bar@baz' }` (split on
+ *                        first @; team names allowed to contain @ are not
+ *                        canonical but we don't reject them here)
+ *  - UUID input        → returned as-is, never split (UUIDs don't contain @)
+ *
+ * Closes #1674 Bug 2a.
+ */
+export function parseAtSyntax(recipient: string, defaultTeam?: string): { recipient: string; team?: string } {
+  const atIdx = recipient.indexOf('@');
+  if (atIdx === -1) return { recipient, team: defaultTeam };
+  const role = recipient.slice(0, atIdx);
+  const team = recipient.slice(atIdx + 1);
+  if (!role || !team) return { recipient, team: defaultTeam };
+  return { recipient: role, team };
+}
 
 /**
  * Resolve the 'team-lead' alias to the actual leader name for a given team context.
@@ -145,7 +196,7 @@ const DEFAULT_REACHBACK_PREFIXES = ['council-'];
  * Returns an error message if scope is violated, null if OK.
  */
 export async function checkSendScope(_repoPath: string, sender: string, recipient: string): Promise<string | null> {
-  if (sender === 'cli') return null;
+  if (isCliSender(sender)) return null;
 
   const teamManager = await getTeamManager();
   const teams = await teamManager.listTeams();
@@ -287,7 +338,7 @@ export function resolveSenderTeams(
  * ancestor in the chain. Returns null when the sender belongs to no team.
  */
 export async function suggestRelayLeader(sender: string): Promise<{ leader: string; team: string } | null> {
-  if (sender === 'cli') return null;
+  if (isCliSender(sender)) return null;
   const teamManager = await getTeamManager();
   const teams = await teamManager.listTeams();
   const reachable = resolveSenderTeams(teams, sender);
@@ -525,9 +576,14 @@ async function discoverCurrentTeam(
   const discovered = await nativeTeams.discoverTeamName().catch(() => null);
   if (discovered) return discovered;
 
+  // Wish retire-session-names-id-only G4: resolve the sender via the
+  // canonical name → id resolver. Without team scope here (we're discovering
+  // the team), the resolver falls through customName-tier and lands on
+  // role-fallback or exact-id; either is enough to fetch the sender's row.
   const registryMod = await getRegistry();
-  const workers = await registryMod.list();
-  const senderWorker = workers.find((w) => w.role === from || w.id === from || w.customName === from);
+  const senderId = await registryMod.resolveAgentId(from);
+  if (!senderId) return null;
+  const senderWorker = await registryMod.get(senderId);
   return senderWorker?.team ?? null;
 }
 
@@ -627,6 +683,243 @@ export async function printBridgeSuggestion(
 // Send Handler
 // ============================================================================
 
+export interface BroadcastDeliveryAudit {
+  agent: string;
+  delivered: boolean;
+  reason?: string;
+}
+
+export interface BroadcastHandleResult {
+  messageId: number;
+  conversationId: string;
+  team: string;
+  recipients: BroadcastDeliveryAudit[];
+}
+
+type NativeTeamsModule = typeof import('../lib/claude-native-teams.js');
+type BroadcastAgent = Awaited<ReturnType<typeof registryTypes.listAgents>>[number];
+type BroadcastTaskService = Pick<typeof taskServiceTypes, 'findOrCreateConversation' | 'addMember' | 'sendMessage'>;
+type BroadcastRegistry = Pick<typeof registryTypes, 'listAgents' | 'getAgentEffectiveState'>;
+type BroadcastNativeTeams = Pick<NativeTeamsModule, 'loadConfig' | 'sanitizeTeamName' | 'writeNativeInbox'>;
+
+interface BroadcastRosterEntry {
+  agent: string;
+  sanitized: string;
+  inboxName: string;
+  agentId?: string;
+  nativeColor?: string;
+  nativeActive?: boolean;
+}
+
+interface BroadcastNativeFanoutDeps {
+  listAgents: BroadcastRegistry['listAgents'];
+  getAgentEffectiveState: BroadcastRegistry['getAgentEffectiveState'];
+  loadConfig: BroadcastNativeTeams['loadConfig'];
+  sanitizeTeamName: BroadcastNativeTeams['sanitizeTeamName'];
+  writeNativeInbox: BroadcastNativeTeams['writeNativeInbox'];
+  now?: () => Date;
+}
+
+interface BroadcastHandlerDeps {
+  taskService?: BroadcastTaskService;
+  registry?: BroadcastRegistry;
+  nativeTeams?: BroadcastNativeTeams;
+  publishSubjectEvent?: typeof import('../lib/runtime-events.js').publishSubjectEvent;
+  repoPath?: string;
+  now?: () => Date;
+}
+
+function broadcastAgentName(agent: BroadcastAgent): string {
+  return agent.customName ?? agent.role ?? agent.id;
+}
+
+function mergeBroadcastRosterEntry(
+  bySanitized: Map<string, BroadcastRosterEntry>,
+  sanitized: string,
+  patch: Omit<BroadcastRosterEntry, 'sanitized'>,
+): void {
+  if (!sanitized) return;
+  const existing = bySanitized.get(sanitized);
+  bySanitized.set(sanitized, {
+    agent: existing?.agent ?? patch.agent,
+    sanitized,
+    inboxName: patch.inboxName ?? existing?.inboxName ?? sanitized,
+    agentId: existing?.agentId ?? patch.agentId,
+    nativeColor: existing?.nativeColor ?? patch.nativeColor,
+    nativeActive: existing?.nativeActive ?? patch.nativeActive,
+  });
+}
+
+async function resolveBroadcastRoster(
+  teamName: string,
+  deps: BroadcastNativeFanoutDeps,
+): Promise<BroadcastRosterEntry[]> {
+  const [agents, nativeConfig] = await Promise.all([
+    deps.listAgents({ team: teamName }).catch(() => [] as BroadcastAgent[]),
+    deps.loadConfig(teamName).catch(() => null),
+  ]);
+
+  const bySanitized = new Map<string, BroadcastRosterEntry>();
+
+  for (const agent of agents) {
+    const name = broadcastAgentName(agent);
+    const sanitized = deps.sanitizeTeamName(name);
+    mergeBroadcastRosterEntry(bySanitized, sanitized, {
+      agent: name,
+      inboxName: sanitized,
+      agentId: agent.id,
+      nativeColor: agent.nativeColor,
+    });
+  }
+
+  for (const member of nativeConfig?.members ?? []) {
+    const sanitized = deps.sanitizeTeamName(member.name);
+    mergeBroadcastRosterEntry(bySanitized, sanitized, {
+      agent: member.name,
+      inboxName: member.name,
+      nativeColor: member.color,
+      nativeActive: member.isActive,
+    });
+  }
+
+  return [...bySanitized.values()];
+}
+
+function makeBroadcastNativeMessage(
+  from: string,
+  body: string,
+  timestamp: string,
+  color: string,
+): import('../lib/claude-native-teams.js').NativeInboxMessage {
+  return {
+    from,
+    text: body,
+    summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
+    timestamp,
+    color,
+    read: false,
+  };
+}
+
+async function broadcastSkipReason(
+  entry: BroadcastRosterEntry,
+  deps: BroadcastNativeFanoutDeps,
+): Promise<string | null> {
+  if (entry.nativeActive === false) return 'offline';
+  if (!entry.agentId) return null;
+
+  const state = await deps.getAgentEffectiveState(entry.agentId).catch(() => 'offline' as const);
+  if (state === 'offline') return 'offline';
+  if (state === 'terminated') return 'terminated';
+  if (state === 'error') return 'dead';
+  if (state === 'done') return 'done';
+  return null;
+}
+
+export async function fanoutBroadcastToNativeInboxes(
+  teamName: string,
+  from: string,
+  body: string,
+  deps: BroadcastNativeFanoutDeps,
+): Promise<BroadcastDeliveryAudit[]> {
+  const sender = deps.sanitizeTeamName(from);
+  const roster = await resolveBroadcastRoster(teamName, deps);
+  const timestamp = (deps.now ?? (() => new Date()))().toISOString();
+  const recipients: BroadcastDeliveryAudit[] = [];
+
+  for (const entry of roster) {
+    if (entry.sanitized === sender) continue;
+
+    const skipReason = await broadcastSkipReason(entry, deps);
+    if (skipReason) {
+      recipients.push({ agent: entry.agent, delivered: false, reason: skipReason });
+      continue;
+    }
+
+    try {
+      await deps.writeNativeInbox(
+        teamName,
+        entry.inboxName,
+        makeBroadcastNativeMessage(from, body, timestamp, entry.nativeColor ?? 'blue'),
+      );
+      recipients.push({ agent: entry.agent, delivered: true });
+    } catch (err) {
+      recipients.push({
+        agent: entry.agent,
+        delivered: false,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return recipients;
+}
+
+export async function handleBroadcast(
+  body: string,
+  options: { from?: string; team?: string },
+  deps: BroadcastHandlerDeps = {},
+): Promise<BroadcastHandleResult> {
+  const ts = deps.taskService ?? (await getTaskService());
+  const registry = deps.registry ?? (await getRegistry());
+  const nativeTeams = deps.nativeTeams ?? (await import('../lib/claude-native-teams.js'));
+  const repoPath = deps.repoPath ?? process.cwd();
+  const from = options.from ?? (await detectSenderIdentity(options.team));
+  const teamName = await resolveTeamName(options.team, repoPath, from);
+  const senderActor = localActor(from);
+
+  const conv = await ts.findOrCreateConversation({
+    type: 'group',
+    name: `Team: ${teamName}`,
+    linkedEntity: 'team',
+    linkedEntityId: teamName,
+    createdBy: senderActor,
+    members: [senderActor],
+  });
+
+  await ts.addMember(conv.id, senderActor);
+  const msg = await ts.sendMessage(conv.id, senderActor, body);
+
+  const recipients = await fanoutBroadcastToNativeInboxes(teamName, from, body, {
+    listAgents: registry.listAgents,
+    getAgentEffectiveState: registry.getAgentEffectiveState,
+    loadConfig: nativeTeams.loadConfig,
+    sanitizeTeamName: nativeTeams.sanitizeTeamName,
+    writeNativeInbox: nativeTeams.writeNativeInbox,
+    now: deps.now,
+  });
+
+  // Emit runtime event for real-time observability (fire-and-forget)
+  try {
+    const publishSubjectEvent =
+      deps.publishSubjectEvent ?? (await import('../lib/runtime-events.js')).publishSubjectEvent;
+    await publishSubjectEvent(repoPath, 'genie.msg.broadcast', {
+      kind: 'message',
+      agent: from,
+      team: teamName,
+      direction: 'out',
+      peer: teamName,
+      text: body,
+      data: { messageId: msg.id, conversationId: conv.id, from, team: teamName, recipients },
+      source: 'mailbox',
+    });
+  } catch {
+    // Event log unavailable — silent degradation
+  }
+
+  const deliveredCount = recipients.filter((r) => r.delivered).length;
+  console.log(`Broadcast sent to team "${teamName}" (delivered to ${deliveredCount} of ${recipients.length} members).`);
+  console.log(`  Message ID: ${msg.id}`);
+  console.log(`  Conversation: ${conv.id}`);
+  for (const recipient of recipients) {
+    if (!recipient.delivered) {
+      console.log(`  ${recipient.agent}: ${recipient.reason ?? 'delivery failed'}`);
+    }
+  }
+
+  return { messageId: msg.id, conversationId: conv.id, team: teamName, recipients };
+}
+
 async function handleSend(
   body: string,
   options: { to: string; from?: string; team?: string; bridge?: boolean },
@@ -636,8 +929,12 @@ async function handleSend(
   const repoPath = process.cwd();
   const from = options.from ?? (await detectSenderIdentity(options.team));
 
-  // Resolve 'team-lead' alias to actual leader name
-  const to = await resolveLeaderAlias(options.to, options.team);
+  // Parse <role>@<team> cross-team addressing first — the parsed team always
+  // wins over the implicit team scope (sender's team or GENIE_TEAM). Closes
+  // #1674 Bug 2a. Then resolve the 'team-lead' alias to the actual leader
+  // name in the (possibly parsed) team context.
+  const parsed = parseAtSyntax(options.to, options.team);
+  const to = await resolveLeaderAlias(parsed.recipient, parsed.team);
 
   const scopeError = await checkSendScope(repoPath, from, to);
   if (scopeError) {
@@ -649,8 +946,20 @@ async function handleSend(
     process.exit(1);
   }
 
+  // Wish retire-session-names-id-only G4: resolve recipient name → canonical
+  // agents.id BEFORE writing to mailbox.to_worker. Migration 061 enforces
+  // `mailbox.to_worker → agents.id`; passing a custom_name (which is what
+  // `genie spawn` displays as the AgentID) trips fk_mailbox_to_worker.
+  // Sender path (from) was already resolved via detectSenderIdentity which
+  // prefers GENIE_AGENT_ID; the recipient counterpart lives here.
+  const registryMod = await getRegistry();
+  // parsed.team wins over options.team / GENIE_TEAM so cross-team @-syntax sends
+  // resolve in the recipient's scope, not the sender's. Closes #1674 Bug 2a.
+  const teamScope = parsed.team ?? options.team ?? process.env.GENIE_TEAM;
+  const toAgentId = await registryMod.resolveAgentIdStrict(to, teamScope);
+
   const senderActor = localActor(from);
-  const recipientActor = localActor(to);
+  const recipientActor = localActor(toAgentId);
 
   const conv = await ts.findOrCreateConversation({
     type: 'dm',
@@ -661,7 +970,7 @@ async function handleSend(
   await ts.addMember(conv.id, senderActor);
   await ts.addMember(conv.id, recipientActor);
 
-  const mailboxMessage = await mailbox.send(repoPath, from, to, body);
+  const mailboxMessage = await mailbox.send(repoPath, from, toAgentId, body);
   const msg = await ts.sendMessage(conv.id, senderActor, body);
 
   // Emit runtime event for real-time observability (fire-and-forget)
@@ -680,14 +989,17 @@ async function handleSend(
     // Event log unavailable — silent degradation
   }
 
-  // Best-effort native inbox bridge
-  const bridged = await bridgeToNativeInbox(from, to, body, options.team).catch((err) => {
+  // Best-effort native inbox bridge — use the (possibly parsed) team scope so
+  // cross-team @-syntax sends route the bridge into the recipient's team.
+  const bridged = await bridgeToNativeInbox(from, to, body, teamScope).catch((err) => {
     const reason = err instanceof Error ? err.message : String(err);
     console.warn(`[genie send] Native inbox bridge failed: ${reason}`);
     return false;
   });
   if (bridged) {
-    await mailbox.markDelivered(repoPath, to, mailboxMessage.id).catch(() => {});
+    // markDelivered keys on (to_worker, message_id) — must use the same
+    // canonical id we wrote in mailbox.send above, not the user-typed name.
+    await mailbox.markDelivered(repoPath, toAgentId, mailboxMessage.id).catch(() => {});
   }
 
   console.log(`Message sent to "${to}".`);
@@ -734,47 +1046,7 @@ Examples:
     .option('--team <name>', 'Team name (auto-detected from context)')
     .action(async (body: string, options: { from?: string; team?: string }) => {
       try {
-        const ts = await getTaskService();
-        const repoPath = process.cwd();
-        const from = options.from ?? (await detectSenderIdentity());
-        const teamName = await resolveTeamName(options.team, repoPath, from);
-
-        const senderActor = localActor(from);
-
-        // Find or create team conversation
-        const conv = await ts.findOrCreateConversation({
-          type: 'group',
-          name: `Team: ${teamName}`,
-          linkedEntity: 'team',
-          linkedEntityId: teamName,
-          createdBy: senderActor,
-          members: [senderActor],
-        });
-
-        // Ensure sender is member
-        await ts.addMember(conv.id, senderActor);
-
-        const msg = await ts.sendMessage(conv.id, senderActor, body);
-
-        // Emit runtime event for real-time observability (fire-and-forget)
-        try {
-          const { publishSubjectEvent } = await import('../lib/runtime-events.js');
-          await publishSubjectEvent(repoPath, 'genie.msg.broadcast', {
-            kind: 'message',
-            agent: from,
-            direction: 'out',
-            peer: teamName,
-            text: body,
-            data: { messageId: msg.id, conversationId: conv.id, from, team: teamName },
-            source: 'mailbox',
-          });
-        } catch {
-          // Event log unavailable — silent degradation
-        }
-
-        console.log(`Broadcast sent to team "${teamName}".`);
-        console.log(`  Message ID: ${msg.id}`);
-        console.log(`  Conversation: ${conv.id}`);
+        await handleBroadcast(body, options);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
@@ -873,6 +1145,17 @@ Examples:
     .action(async (conversationId: string, message: string, options: { replyTo?: string; from?: string }) => {
       try {
         const ts = await getTaskService();
+        // Defense: validate the conversation exists before INSERT. Without this,
+        // a bad/stale conversationId surfaces as the bare
+        // `messages_conversation_id_fkey` PG error. Surface a clear hint with
+        // the recovery path.
+        const conv = await ts.getConversation(conversationId);
+        if (!conv) {
+          console.error(
+            `Error: conversation "${conversationId}" not found.\n  Run \`genie chat list\` to see available conversations, or \`genie inbox\` to start one.`,
+          );
+          process.exit(1);
+        }
         const from = options.from ?? (await detectSenderIdentity());
         const actor = localActor(from);
         const replyTo = options.replyTo ? Number(options.replyTo) : undefined;

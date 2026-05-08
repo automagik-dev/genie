@@ -27,6 +27,16 @@ export const TreeNodeRow = memo(function TreeNodeRow({
   const icon = getNodeIcon(node);
   const color = getNodeColor(node);
   const suffix = getNodeSuffix(node);
+  // Sub-agents render their label in a slightly muted tone so the
+  // canonical/sub relationship is visually obvious even when expanded.
+  // Indentation alone wasn't enough — the eye reads tone faster than depth.
+  // textDim still passes legibility against bg/bgRaised; textMuted would
+  // be too faded.
+  const labelColor = selected
+    ? palette.accentBright
+    : node.type === 'agent' && node.kind === 'subagent'
+      ? palette.textDim
+      : palette.text;
 
   return (
     <box
@@ -49,7 +59,7 @@ export const TreeNodeRow = memo(function TreeNodeRow({
           {expandIcon}{' '}
         </span>
         <span fg={color}>{icon} </span>
-        <span fg={selected ? palette.accentBright : palette.text}>{node.label}</span>
+        <span fg={labelColor}>{node.label}</span>
         {suffix ? <span fg={palette.textDim}>{suffix}</span> : null}
         {node.agentState ? <span fg={getStateColor(node.agentState)}> {node.agentState}</span> : null}
         {process.env.GENIE_TUI_DEBUG === '1' ? <span fg={palette.textMuted}>{` [${node.type}]`}</span> : null}
@@ -76,7 +86,7 @@ function getNodeIcon(node: TreeNodeType): string {
   }
 }
 
-function getAgentIcon(node: TreeNodeType): string {
+export function getAgentIcon(node: TreeNodeType): string {
   // Prefer work-state (invincible-genie / Group 2 — TUI-2 deliverable) when
   // populated; it captures the agent's relationship to its task. Fall back
   // to process state when the diagnostics refresh hasn't loaded
@@ -97,13 +107,13 @@ function getAgentIcon(node: TreeNodeType): string {
     case 'running':
       return '\u25cf'; // ●
     case 'stopped':
-      return '\u25cb'; // ○
+      return '\u25cc'; // ◌ dotted circle — registered but offline, spawnable
     case 'error':
       return '\u2298'; // ⊘
     case 'spawning':
       return '\u231b'; // ⏳
     default:
-      return '\u25cb'; // ○
+      return '\u25cc'; // ◌ unknown defaults to spawnable-stopped glyph
   }
 }
 
@@ -113,7 +123,7 @@ function getPaneIcon(node: TreeNodeType): string {
   if (node.agentState === 'idle') return '\u25cb'; // ○
   if (node.agentState === 'permission') return '\u26a0'; // ⚠
   if (node.agentState === 'error') return '\u2718'; // ✘
-  if (node.data.command === 'claude') return '\u25c6'; // ���
+  if (node.data.isClaudeLike) return '\u25c6'; // ◆
   return '\u25cb'; // ○
 }
 
@@ -134,7 +144,7 @@ function getNodeColor(node: TreeNodeType): string {
   }
 }
 
-function getAgentColor(node: TreeNodeType): string {
+export function getAgentColor(node: TreeNodeType): string {
   // Mirrors getAgentIcon — work-state first, process state fallback.
   switch (node.workState) {
     case 'in_flight':
@@ -159,7 +169,9 @@ function getAgentColor(node: TreeNodeType): string {
     case 'running':
       return palette.success;
     case 'stopped':
-      return palette.textDim;
+      // Legible against bg/bgRaised — registered canonical agents must be visible
+      // and spawnable even when offline (was palette.textDim, which faded into bg).
+      return palette.text;
     case 'error':
       return palette.error;
     case 'spawning':
@@ -175,14 +187,17 @@ function getPaneColor(node: TreeNodeType): string {
   if (node.agentState === 'permission') return palette.warning;
   if (node.agentState === 'error') return palette.error;
   if (node.agentState === 'idle') return palette.textDim;
-  if (node.data.command === 'claude') return palette.info;
+  if (node.data.isClaudeLike) return palette.info;
   return palette.textDim;
 }
 
-function getAgentSuffix(node: TreeNodeType): string {
+export function getAgentSuffix(node: TreeNodeType): string {
   // Work-state hints (invincible-genie / Group 2). The stuck-spawn case
   // already has a retry hint; extend it to the new work-state shapes
   // so the operator sees the actionable verb inline.
+  // Precedence: workState > stuck-spawn > stopped > windowCount.
+  // Stopped agents always have windowCount === 0, so the spawn hint can't
+  // collide with the (N windows) suffix.
   if (node.workState === 'stuck') return ' [stuck — press R to retry]';
   if (node.workState === 'paused') return ' [paused — auto-resume off]';
   if (node.workState === 'done') return ' [done]';
@@ -190,6 +205,7 @@ function getAgentSuffix(node: TreeNodeType): string {
   if (node.wsAgentState === 'spawning' && node.activePanes === 0) {
     return ' [stuck — press R to retry]';
   }
+  if (node.wsAgentState === 'stopped') return ' [Enter to start]';
   const wc = node.data.windowCount as number;
   if (wc > 1) return ` (${wc} windows)`;
   if (wc === 1) return ' (1 window)';

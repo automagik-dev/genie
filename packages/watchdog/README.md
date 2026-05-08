@@ -23,6 +23,20 @@ bun run src/cli.ts install
 systemctl enable --now genie-watchdog.timer
 ```
 
+## Skipping the install
+
+`genie doctor --fix` runs a watchdog install precondition. Two ways to opt out:
+
+```bash
+# Explicit skip — any install layout (managed-systemd, CI envs, dev hosts)
+GENIE_WATCHDOG_SKIP=1 genie doctor --fix
+```
+
+Bundled npm/CDN installs (where `packages/watchdog/` is not shipped) are
+auto-skipped — the precondition surfaces as informational rather than as a
+warning, and no install is attempted. Set `GENIE_WATCHDOG_INSTALL_CMD=<cmd>`
+if you have a custom install layout you want the precondition to invoke.
+
 ## Manual probe
 
 ```bash

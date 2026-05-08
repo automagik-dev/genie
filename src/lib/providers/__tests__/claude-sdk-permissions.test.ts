@@ -67,12 +67,12 @@ describe('Permission Presets', () => {
     expect(PRESET_FULL.allow).toEqual(['*']);
   });
 
-  it('PRESET_READ_ONLY allows Read/Glob/Grep/WebFetch only', () => {
-    expect(PRESET_READ_ONLY.allow).toEqual(['Read', 'Glob', 'Grep', 'WebFetch']);
+  it('PRESET_READ_ONLY allows Read/Glob/Grep/WebFetch + AskUserQuestion baseline (#1688)', () => {
+    expect(PRESET_READ_ONLY.allow).toEqual(['Read', 'Glob', 'Grep', 'WebFetch', 'AskUserQuestion']);
   });
 
-  it('PRESET_CHAT_ONLY allows SendMessage/Read only', () => {
-    expect(PRESET_CHAT_ONLY.allow).toEqual(['SendMessage', 'Read']);
+  it('PRESET_CHAT_ONLY allows SendMessage/Read + AskUserQuestion baseline (#1688)', () => {
+    expect(PRESET_CHAT_ONLY.allow).toEqual(['SendMessage', 'Read', 'AskUserQuestion']);
   });
 });
 

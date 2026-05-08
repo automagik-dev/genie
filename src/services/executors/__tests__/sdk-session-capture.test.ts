@@ -122,6 +122,41 @@ describe('sdk-session-capture', () => {
       const sessionId = await startSession(degraded, 'exec-3', 'sess-x', 'agent-3');
       expect(sessionId).toBeNull();
     });
+
+    // ----------------------------------------------------------------------
+    // Group 1 (fix-agent-session-linkage wish): orphan-upgrade reproduction
+    //
+    // Today the SDK insert uses `ON CONFLICT (id) DO NOTHING`. When session
+    // ingestion has already inserted an orphaned row for this id (executor
+    // not yet known), the SDK call drops the new linkage on the floor and
+    // the row stays orphaned forever — this is the exact bug live on the
+    // `felipe` DB (1854 sessions, 1852 with NULL executor_id) and locally
+    // (6 linkable orphans). Group 2 must change the conflict clause to
+    // `DO UPDATE` so missing executor_id / agent_id / team / wish_slug
+    // / role are filled in. These two tests pin that contract.
+    // ----------------------------------------------------------------------
+
+    it('uses ON CONFLICT DO UPDATE so existing orphan rows get linkage filled in', async () => {
+      // FAILS today (current SQL: `ON CONFLICT (id) DO NOTHING`).
+      // PASSES after Group 2 swaps to `ON CONFLICT (id) DO UPDATE SET ...`.
+      await startSession(safePgCall, 'exec-orphan-sdk', 'claude-orphan-sdk', 'agent-orphan-sdk');
+      const sql = calls[0].sqlStrings.join('?');
+      expect(sql).toContain('ON CONFLICT (id) DO UPDATE');
+      expect(sql).not.toContain('ON CONFLICT (id) DO NOTHING');
+    });
+
+    it('does not write empty strings for missing observability fields', async () => {
+      // Wish decision #4: nullable observability fields must be inserted as
+      // SQL NULL, not '', so partial indexes and `IS NULL` diagnostics work.
+      // The current code already does ${team ?? null} for these — this test
+      // pins that contract so a future regression does not silently drift back
+      // to empty-string writes (which is what tool_events currently has:
+      // 70713/71025 rows with empty agent/team/wish/task locally).
+      await startSession(safePgCall, 'exec-empty-check', 'sess-empty-check', null);
+      // null for omitted optional params must reach the SQL layer as null,
+      // never the empty string.
+      expect(calls[0].sqlValues).not.toContain('');
+    });
   });
 
   // --------------------------------------------------------------------------

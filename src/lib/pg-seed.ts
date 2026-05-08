@@ -9,14 +9,27 @@
  * Trigger: source `.json` exists AND `.json.migrated` does NOT.
  */
 
-import { existsSync } from 'node:fs';
-import { readFile, readdir, rename } from 'node:fs/promises';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type postgres from 'postgres';
+import { recordAuditEvent } from './audit.js';
 import { type NativeTeamConfig, loadAllNativeTeamConfigs } from './claude-native-teams.js';
 
 type Sql = postgres.Sql;
+
+interface TeamsSeedMarker {
+  teamsDir: string;
+  mtimeMs: string;
+  teamNames: string[];
+}
+
+interface SeedTeamsResult {
+  count: number;
+  teamNames: string[];
+  hadFailures: boolean;
+}
 
 // ============================================================================
 // Path helpers
@@ -28,6 +41,62 @@ function getGenieHome(): string {
 
 function workersJsonPath(): string {
   return join(getGenieHome(), 'workers.json');
+}
+
+function claudeTeamsDirPath(): string {
+  return join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'teams');
+}
+
+function teamsSeedMarkerPath(): string {
+  return join(getGenieHome(), 'state', 'teams-seed-marker');
+}
+
+function teamsDirMtime(claudeTeamsDir: string): string | null {
+  try {
+    return String(statSync(claudeTeamsDir).mtimeMs);
+  } catch {
+    return null;
+  }
+}
+
+function readFreshTeamsSeedMarker(claudeTeamsDir: string): TeamsSeedMarker | null {
+  const mtimeMs = teamsDirMtime(claudeTeamsDir);
+  if (!mtimeMs) return null;
+  try {
+    const marker = JSON.parse(readFileSync(teamsSeedMarkerPath(), 'utf-8')) as {
+      teamsDir?: string;
+      mtimeMs?: string;
+      teamNames?: unknown;
+    };
+    if (marker.teamsDir !== claudeTeamsDir || marker.mtimeMs !== mtimeMs || !Array.isArray(marker.teamNames)) {
+      return null;
+    }
+    return {
+      teamsDir: marker.teamsDir,
+      mtimeMs: marker.mtimeMs,
+      teamNames: marker.teamNames.filter((name): name is string => typeof name === 'string' && name.length > 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function hasFreshTeamsSeedMarker(claudeTeamsDir: string): boolean {
+  return readFreshTeamsSeedMarker(claudeTeamsDir) !== null;
+}
+
+async function writeTeamsSeedMarker(teamNames: string[]): Promise<void> {
+  const claudeTeamsDir = claudeTeamsDirPath();
+  const mtimeMs = teamsDirMtime(claudeTeamsDir);
+  if (!mtimeMs) return;
+  const markerPath = teamsSeedMarkerPath();
+  const marker: TeamsSeedMarker = {
+    teamsDir: claudeTeamsDir,
+    mtimeMs,
+    teamNames: [...new Set(teamNames)].sort(),
+  };
+  await mkdir(join(getGenieHome(), 'state'), { recursive: true });
+  await writeFile(markerPath, `${JSON.stringify(marker)}\n`, 'utf-8');
 }
 
 /** Check if a source file needs migration (exists and not yet migrated). */
@@ -73,25 +142,44 @@ async function renameMatchingFiles(dir: string, filter: (filename: string) => bo
  *  - `~/.genie/workers.json` exists without a `.migrated` sibling (legacy
  *    one-time migration path — worker seed still uses markers), OR
  *  - Any Claude-native team config exists on disk at
- *    `~/.claude/teams/<name>/config.json`.
+ *    `~/.claude/teams/<name>/config.json` and the teams directory mtime differs
+ *    from the last successful seed marker.
  *
- * The Claude-native branch triggers on every boot when teams exist on disk.
- * That's intentional: `seedTeams` is idempotent (`ON CONFLICT DO NOTHING`) and
- * this is how we rehydrate PG after a `pgserve` reset. See Bug A in
- * `.genie/wishes/fix-pg-disk-rehydration/WISH.md`.
+ * The Claude-native branch is cached by `~/.genie/state/teams-seed-marker`.
+ * This avoids scanning every team directory on every daemon startup when the
+ * authoritative `~/.claude/teams` tree has not changed.
  */
 export function needsSeed(): boolean {
   if (needsMigration(workersJsonPath())) return true;
 
   // Claude-native team configs are authoritative — if any exist on disk,
   // run the seed so PG mirrors them. No `.migrated` markers here.
-  const claudeTeamsDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'teams');
+  const claudeTeamsDir = claudeTeamsDirPath();
   if (!existsSync(claudeTeamsDir)) return false;
+  if (hasFreshTeamsSeedMarker(claudeTeamsDir)) return false;
   try {
     const entries = require('node:fs').readdirSync(claudeTeamsDir) as string[];
     return entries.some((e) => !e.startsWith('.'));
   } catch {
     return false;
+  }
+}
+
+/**
+ * Check whether the current database is missing team rows represented by a
+ * fresh disk seed marker. This catches pgserve data-dir resets, where the
+ * marker in GENIE_HOME survives but the `teams` table has been rebuilt empty.
+ */
+export async function needsSeededTeams(sql: Sql): Promise<boolean> {
+  const marker = readFreshTeamsSeedMarker(claudeTeamsDirPath());
+  if (!marker || marker.teamNames.length === 0) return false;
+  try {
+    const rows = await sql<Array<{ name: string }>>`
+      SELECT name FROM teams WHERE name = ANY(${marker.teamNames})
+    `;
+    return rows.length < marker.teamNames.length;
+  } catch {
+    return true;
   }
 }
 
@@ -136,7 +224,11 @@ function toAgentRow(a: JsonRecord): JsonRecord {
     native_team_enabled: a.nativeTeamEnabled ?? false,
     parent_session_id: a.parentSessionId ?? null,
     suspended_at: a.suspendedAt ?? null,
-    auto_resume: a.autoResume ?? true,
+    // Default to false (matches schema default after migration 044). Auto-resume
+    // is opt-in: callers that want resilient agents must set autoResume=true
+    // explicitly. Closes #1463 — the previous `?? true` default created
+    // forever-zombie orphan rows because every fresh row inherited auto-resume.
+    auto_resume: a.autoResume ?? false,
     resume_attempts: a.resumeAttempts ?? 0,
     last_resume_attempt: a.lastResumeAttempt ?? null,
     max_resume_attempts: a.maxResumeAttempts ?? 3,
@@ -144,7 +236,28 @@ function toAgentRow(a: JsonRecord): JsonRecord {
   };
 }
 
+// Migration 061's `agents_id_shape_check` rejects bare-name agents.id inserts.
+// Legacy `~/.genie/workers.json` rows can carry bare-name ids (pre-UUID era).
+// Mirrors f0432322's boundary-filter pattern for teams.members JSONB.
+const UUID_OR_DIR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^dir:/i;
+
+function isAgentIdLegal(id: unknown): boolean {
+  return typeof id === 'string' && UUID_OR_DIR_RE.test(id);
+}
+
 async function upsertAgent(sql: Sql, a: JsonRecord): Promise<void> {
+  if (!isAgentIdLegal(a.id)) {
+    // Legacy bare-name row from pre-061 workers.json. Skip rather than fail
+    // the entire seed run. Operator can rebuild via `genie agent register`
+    // post-migration. Verbose trace gated behind DEBUG=pg-seed; the aggregate
+    // skip count is reported in seedWorkers' summary.
+    if (process.env.DEBUG?.includes('pg-seed')) {
+      process.stderr.write(
+        `[pg-seed] skipping legacy bare-name agent row "${a.id}" — fails migration 061 agents_id_shape_check (UUID or dir: prefix required)\n`,
+      );
+    }
+    return;
+  }
   const r = toAgentRow(a);
   // NOTE: `r.sub_panes` is kept as a JS array (NativeTeamMember[]) and passed
   // via `sql.json()` so postgres.js encodes it once into a proper jsonb array.
@@ -180,9 +293,15 @@ async function upsertAgent(sql: Sql, a: JsonRecord): Promise<void> {
 async function upsertTemplate(sql: Sql, t: JsonRecord): Promise<void> {
   // extra_args stays a JS array until `sql.json()` encodes it once at bind
   // time. See migration 045 for the cleanup of pre-fix rows.
+  //
+  // Migration 061 retyped agent_templates.id from TEXT (= name) to UUID and
+  // added a separate `name` column with unique partial index `(name, team)`.
+  // Legacy `~/.genie/workers.json` carries bare-name template ids; insert via
+  // `name` column and let the server mint UUID id via DEFAULT gen_random_uuid().
+  // Mirrors agent-registry.ts:saveTemplate (the runtime upsert path).
   await sql`
     INSERT INTO agent_templates (
-      id, provider, team, role, skill, cwd,
+      name, provider, team, role, skill, cwd,
       extra_args, native_team_enabled, last_spawned_at
     ) VALUES (
       ${t.id}, ${t.provider ?? 'claude'}, ${t.team ?? ''},
@@ -190,7 +309,7 @@ async function upsertTemplate(sql: Sql, t: JsonRecord): Promise<void> {
       ${sql.json(t.extraArgs ?? [])},
       ${t.nativeTeamEnabled ?? false},
       ${t.lastSpawnedAt ?? new Date().toISOString()}
-    ) ON CONFLICT (id) DO NOTHING
+    ) ON CONFLICT (name, team) WHERE name IS NOT NULL AND team IS NOT NULL DO NOTHING
   `;
 }
 
@@ -275,39 +394,119 @@ function deriveLeader(cfg: NativeTeamConfig): string | null {
  * encodes the array once into a proper jsonb array. ON CONFLICT DO NOTHING —
  * the seed is an idempotent backfill; `ensureTeamRow` owns the hot update
  * path and may refresh fields there.
+ *
+ * Migration 061 (`teams_members_uuid_check`) added a CHECK requiring every
+ * member entry to be either a UUID or `dir:`-prefixed. Legacy on-disk team
+ * configs predate the retire-session-names wish and contain bare agent
+ * names, which fail the constraint. We filter those at the seed boundary so
+ * upserts succeed (degraded but non-throwing). The retire-session-names wish
+ * is the proper data migration that will eventually rewrite on-disk configs;
+ * once that lands the dropped count goes to 0.
  */
-async function upsertNativeTeam(sql: Sql, c: NativeTeamConfig): Promise<void> {
-  const memberNames = (c.members ?? []).map((m) => m.name).filter((n) => typeof n === 'string' && n.length > 0);
-  await sql`
+const MEMBER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function isValidTeamMember(s: string): boolean {
+  return MEMBER_UUID_RE.test(s) || s.startsWith('dir:');
+}
+
+interface UpsertTeamOutcome {
+  droppedMembers: number;
+  leaderSanitized: boolean;
+}
+
+async function upsertNativeTeam(sql: Sql, c: NativeTeamConfig): Promise<UpsertTeamOutcome> {
+  const rawMemberNames = (c.members ?? []).map((m) => m.name).filter((n) => typeof n === 'string' && n.length > 0);
+  const memberNames = rawMemberNames.filter(isValidTeamMember);
+  const dropped = rawMemberNames.length - memberNames.length;
+  if (dropped > 0 && process.env.DEBUG?.includes('pg-seed')) {
+    console.warn(
+      `[pg-seed] team "${c.name}": dropped ${dropped} legacy member name(s) failing migration 061 constraint (UUID or dir: prefix required); kept ${memberNames.length}`,
+    );
+  }
+
+  // Filter the leader column with the same UUID/dir CHECK that members use.
+  // Pre-061 leaders may be bare `<name>` derived from `<name>@<team>` in
+  // legacy `leadAgentId`. Storing them violates `fk_teams_leader`. Insert
+  // null when the legacy value can't pass the constraint.
+  const rawLeader = deriveLeader(c);
+  const safeLeader = rawLeader && isValidTeamMember(rawLeader) ? rawLeader : null;
+  const leaderSanitized = rawLeader !== null && safeLeader === null;
+
+  // RETURNING name surfaces only fresh inserts (ON CONFLICT DO NOTHING returns
+  // an empty set on conflict). We use that to gate the `leader_sanitized`
+  // audit event — emitting once on first seed instead of on every pg-seed
+  // pass keeps the audit volume proportional to actual drift, not CLI calls.
+  // (Pre-fix: ~110 events per invocation on hosts with legacy team configs.)
+  const inserted = await sql<{ name: string }[]>`
     INSERT INTO teams (
       name, repo, base_branch, worktree_path, leader,
       members, status, native_team_parent_session_id,
       native_teams_enabled, tmux_session_name, wish_slug, created_at
     ) VALUES (
       ${c.name}, ${c.repo ?? ''}, ${c.baseBranch ?? 'dev'},
-      ${c.worktreePath ?? ''}, ${deriveLeader(c)},
+      ${c.worktreePath ?? ''}, ${safeLeader},
       ${sql.json(memberNames)}, ${c.status ?? 'in_progress'},
       ${c.nativeTeamParentSessionId ?? null}, ${c.nativeTeamsEnabled ?? true},
       ${c.tmuxSessionName ?? null}, ${c.wishSlug ?? null},
       ${new Date(c.createdAt ?? Date.now()).toISOString()}
     ) ON CONFLICT (name) DO NOTHING
+    RETURNING name
   `;
+
+  if (leaderSanitized && inserted.length > 0) {
+    await recordAuditEvent('team', c.name, 'leader_sanitized', 'pg-seed', {
+      dropped: rawLeader,
+      reason: 'fk_teams_leader_check',
+    });
+  }
+
+  return { droppedMembers: dropped, leaderSanitized };
 }
 
-async function seedTeams(sql: Sql): Promise<number> {
+function buildSeedSummary(count: number, teamsWithDroppedMembers: number, leadersSanitized: number): string {
+  let summary = `[pg-seed] re-seeded ${count} team${count === 1 ? '' : 's'}`;
+  const notes: string[] = [];
+  if (teamsWithDroppedMembers > 0) {
+    notes.push(`${teamsWithDroppedMembers} had legacy member names dropped`);
+  }
+  if (leadersSanitized > 0) {
+    notes.push(`${leadersSanitized} leader${leadersSanitized === 1 ? '' : 's'} sanitized`);
+  }
+  if (notes.length > 0) {
+    summary += ` (${notes.join('; ')}; set DEBUG=pg-seed for detail)`;
+  }
+  return summary;
+}
+
+async function seedTeams(sql: Sql): Promise<SeedTeamsResult> {
   const configs = await loadAllNativeTeamConfigs();
+  const teamNames: string[] = [];
   let count = 0;
+  let teamsWithDroppedMembers = 0;
+  let leadersSanitized = 0;
+  let hadFailures = false;
   for (const cfg of configs) {
     if (!cfg?.name) continue;
+    teamNames.push(cfg.name);
     try {
-      await upsertNativeTeam(sql, cfg);
+      const outcome = await upsertNativeTeam(sql, cfg);
       count++;
+      if (outcome.droppedMembers > 0) teamsWithDroppedMembers++;
+      if (outcome.leaderSanitized) leadersSanitized++;
     } catch (err) {
+      hadFailures = true;
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[pg-seed] Failed to seed team "${cfg.name}": ${msg}`);
+      // Real seed failure — keep visible by default. `DEBUG=pg-seed-quiet`
+      // is the documented escape hatch when an operator explicitly wants
+      // a silent run (e.g. mass legacy-team backfill).
+      if (!process.env.DEBUG?.includes('pg-seed-quiet')) {
+        console.warn(`[pg-seed] Failed to seed team "${cfg.name}": ${msg}`);
+      }
     }
   }
-  return count;
+  if (count > 0) {
+    process.stderr.write(`${buildSeedSummary(count, teamsWithDroppedMembers, leadersSanitized)}\n`);
+  }
+  return { count, teamNames, hadFailures };
 }
 
 // ============================================================================
@@ -479,7 +678,8 @@ export async function runSeed(sql: Sql, repoPath?: string): Promise<SeedResult> 
   result.agents = workers.agents;
   result.templates = workers.templates;
 
-  result.teams = await seedTeams(sql);
+  const teams = await seedTeams(sql);
+  result.teams = teams.count;
 
   if (repoPath) {
     result.mailboxMessages = await seedMailbox(sql, repoPath);
@@ -488,6 +688,7 @@ export async function runSeed(sql: Sql, repoPath?: string): Promise<SeedResult> 
 
   // Phase 2: Mark source files as migrated (only after all UPSERTs succeed)
   await markMigrated(repoPath);
+  if (!teams.hadFailures) await writeTeamsSeedMarker(teams.teamNames);
 
   return result;
 }

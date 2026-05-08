@@ -13,6 +13,7 @@ import {
   type CostBreakdownRow,
   type ErrorPattern,
   type EventSummary,
+  type ToolUsageDetailRow,
   type ToolUsageRow,
   queryAuditEvents,
   queryCostBreakdown,
@@ -20,6 +21,7 @@ import {
   querySummary,
   queryTimeline,
   queryToolUsage,
+  queryToolUsageDetail,
 } from '../lib/audit.js';
 import { type V2EventRow, queryV2Batch } from '../lib/events/v2-query.js';
 import { getOtelPort } from '../lib/otel-receiver.js';
@@ -547,6 +549,49 @@ interface ToolsOptions {
   byTool?: boolean;
   byAgent?: boolean;
   json?: boolean;
+  detail?: boolean;
+  limit?: string;
+  tool?: string;
+  agent?: string;
+}
+
+function printToolsDetailTable(rows: ToolUsageDetailRow[]): void {
+  if (rows.length === 0) {
+    console.log('No tool invocations found.');
+    return;
+  }
+
+  const headers = ['Time', 'Tool', 'Agent', 'Duration', 'Input'];
+  const data = rows.map((r) => [
+    formatTimestamp(typeof r.created_at === 'string' ? r.created_at : r.created_at.toISOString()),
+    r.tool_name ?? r.entity_id,
+    r.actor ?? '-',
+    r.duration_ms != null ? `${Number(r.duration_ms).toFixed(0)}ms` : '-',
+    previewJson(r.tool_input ?? r.tool_parameters),
+  ]);
+
+  const widths = headers.map((h, i) => {
+    const colVals = data.map((row) => row[i]);
+    return Math.min(60, Math.max(h.length, ...colVals.map((v) => v.length)));
+  });
+
+  console.log(headers.map((h, i) => padRight(h, widths[i])).join(' | '));
+  console.log(widths.map((w) => '-'.repeat(w)).join('-+-'));
+  for (const row of data) {
+    console.log(row.map((v, i) => padRight(v.slice(0, widths[i]), widths[i])).join(' | '));
+  }
+
+  console.log(`\n(${rows.length} row${rows.length === 1 ? '' : 's'})`);
+}
+
+function previewJson(value: unknown): string {
+  if (value == null) return '-';
+  try {
+    const s = typeof value === 'string' ? value : JSON.stringify(value);
+    return s.replace(/\s+/g, ' ').slice(0, 60);
+  } catch {
+    return '-';
+  }
 }
 
 function printToolsTable(rows: ToolUsageRow[], groupBy: string): void {
@@ -579,9 +624,37 @@ function printToolsTable(rows: ToolUsageRow[], groupBy: string): void {
   console.log(`\n(${totalCalls} total tool calls)`);
 }
 
+async function eventsToolsDetailCommand(since: string, options: ToolsOptions): Promise<void> {
+  const limit = options.limit ? Number.parseInt(options.limit, 10) : undefined;
+  if (options.limit && (!Number.isFinite(limit) || (limit as number) <= 0)) {
+    console.error(`Invalid --limit value: ${options.limit}`);
+    process.exit(1);
+  }
+  const rows = await queryToolUsageDetail(since, {
+    limit,
+    tool: options.tool,
+    agent: options.agent,
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(rows, null, 2));
+    return;
+  }
+  printToolsDetailTable(rows);
+  printOtelScopeWarning({ empty: rows.length === 0 });
+}
+
 async function eventsToolsCommand(options: ToolsOptions): Promise<void> {
   try {
     const since = options.since ?? '24h';
+
+    // `--detail` surfaces individual otel_tool rows (with tool_input /
+    // tool_parameters) instead of the group-by aggregate — closes #1259 bug 3.
+    if (options.detail) {
+      await eventsToolsDetailCommand(since, options);
+      return;
+    }
+
     const groupBy: 'tool' | 'agent' = options.byAgent ? 'agent' : 'tool';
     const rows = await queryToolUsage(since, groupBy);
 
@@ -607,11 +680,38 @@ async function eventsToolsCommand(options: ToolsOptions): Promise<void> {
 
 interface TimelineOptions {
   json?: boolean;
+  limit?: string;
+  since?: string;
+}
+
+/**
+ * Parse a duration string like "10m", "24h", "7d", or "all" into milliseconds.
+ * Returns null for "all" (signal to disable the time filter — full history).
+ * Throws on invalid input.
+ */
+function parseTimelineSince(raw: string): number | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === 'all') return null;
+  const match = /^(\d+)\s*(s|m|h|d)$/.exec(trimmed);
+  if (!match) {
+    throw new Error(`invalid --since value "${raw}". Use e.g. 10m, 24h, 7d, or 'all' for full history.`);
+  }
+  const n = Number.parseInt(match[1], 10);
+  const unit = match[2];
+  const multipliers: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  return n * multipliers[unit];
 }
 
 async function eventsTimelineCommand(entityId: string, options: TimelineOptions): Promise<void> {
   try {
-    const rows = await queryTimeline(entityId);
+    const limit = options.limit ? Math.max(1, Number.parseInt(options.limit, 10)) : undefined;
+    if (options.limit !== undefined && Number.isNaN(Number(options.limit))) {
+      console.error(`Error: invalid --limit value "${options.limit}" (must be a positive integer)`);
+      process.exit(1);
+    }
+    const sinceMs = options.since !== undefined ? parseTimelineSince(options.since) : undefined;
+
+    const rows = await queryTimeline(entityId, { limit, sinceMs });
 
     if (options.json) {
       console.log(JSON.stringify(rows, null, 2));
@@ -808,6 +908,10 @@ export function registerEventsCommands(program: Command): void {
     .option('--since <duration>', 'Time window (e.g., 1h, 7d)', '24h')
     .option('--by-tool', 'Group by tool name (default)')
     .option('--by-agent', 'Group by agent')
+    .option('--detail', 'Return individual tool invocations (with tool_input / tool_parameters) instead of aggregates')
+    .option('--tool <name>', 'Filter --detail rows by tool name')
+    .option('--agent <name>', 'Filter --detail rows by agent/actor')
+    .option('--limit <n>', 'Max rows for --detail (default 500, max 10000)')
     .option('--json', 'Output as JSON')
     .action(async (options: ToolsOptions) => {
       await eventsToolsCommand(options);
@@ -815,8 +919,14 @@ export function registerEventsCommands(program: Command): void {
 
   events
     .command('timeline <entity-id>')
-    .description('Full event timeline for a task, agent, wish, or traceId')
+    .description('Event timeline for a task, agent, wish, traceId, or session_id (default: last 24h)')
     .option('--json', 'Output as JSON')
+    .option('--limit <n>', 'Max rows to return (default 200, hard cap 2000)')
+    .option(
+      '--since <duration>',
+      'Time window — e.g. 10m, 24h, 7d, or "all" for full history. Default: 24h. ' +
+        '"all" reverts to the unbounded scan and may time out on production-sized audit logs.',
+    )
     .action(async (entityId: string, options: TimelineOptions) => {
       await eventsTimelineCommand(entityId, options);
     });

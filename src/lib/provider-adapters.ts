@@ -13,6 +13,9 @@
 
 import { z } from 'zod';
 import { buildDispatchCommand } from '../hooks/inject.js';
+import { resolveBuiltinAgentPath } from './builtin-agents.js';
+import { GENIE_BASELINE_ALLOWED_TOOLS } from './claude-settings.js';
+import { sanitizeModelForProvider } from './provider-models.js';
 import {
   TRACE_ENV_VAR,
   TRACE_ID_ENV_VAR,
@@ -113,8 +116,18 @@ export interface SpawnParams {
    * longer emitted on the launch command. Always use `sessionId` / `resume`.
    */
   name?: string;
-  /** Claude Code permissions (allow/deny lists with Bash() patterns). Merged into --settings. */
-  permissions?: { allow?: string[]; deny?: string[] };
+  /**
+   * Claude Code permissions. `allow`/`deny` are merged into `--settings`
+   * Bash() pattern lists. `allowedTools` becomes `--allowedTools <list>`.
+   * `permissionMode` becomes `--permission-mode <mode>` (overrides the
+   * native-team default of `auto` when present).
+   */
+  permissions?: {
+    allow?: string[];
+    deny?: string[];
+    allowedTools?: string[];
+    permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto' | 'remoteApproval';
+  };
   /** Tools the agent is NOT allowed to use (emits --disallowedTools). */
   disallowedTools?: string[];
   /** OTel receiver port to inject as OTEL_EXPORTER_OTLP_ENDPOINT. Undefined = skip injection. */
@@ -178,6 +191,17 @@ const spawnParamsSchema = z.object({
   model: z.string().optional(),
   initialPrompt: z.string().optional(),
   name: z.string().optional(),
+  permissions: z
+    .object({
+      allow: z.array(z.string()).optional(),
+      deny: z.array(z.string()).optional(),
+      allowedTools: z.array(z.string()).optional(),
+      permissionMode: z
+        .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto', 'remoteApproval'])
+        .optional(),
+    })
+    .optional(),
+  disallowedTools: z.array(z.string()).optional(),
   otelPort: z.number().optional(),
   otelLogPrompts: z.boolean().optional(),
   otelWishSlug: z.string().optional(),
@@ -409,20 +433,45 @@ function buildSettingsObject(params: SpawnParams): Record<string, unknown> {
   if (!params.skipHooks) {
     const dispatchCmd = buildDispatchCommand();
     const hookEntry = { type: 'command', command: dispatchCmd, timeout: 15 };
-    settingsObj.hooks = {
-      PreToolUse: [{ matcher: '*', hooks: [hookEntry] }],
-      PostToolUse: [{ matcher: '*', hooks: [hookEntry] }],
-      UserPromptSubmit: [{ hooks: [hookEntry] }],
-      Stop: [{ hooks: [hookEntry] }],
-    };
+    // Mac-CPU fix D, **completion** — Fix D #1479 narrowed the team-level
+    // settings.json matchers via DISPATCHED_EVENT_MATCHERS in `inject.ts`.
+    // This inline `--settings` codepath (passed directly to the claude CLI
+    // command at spawn time) was a SECOND injection layer that was missed
+    // and still hardcoded the wide matchers. dog-fooder-da66 verdict
+    // 2026-04-29 surfaced the discrepancy in
+    // state/phaseb-413-20260429T143731Z/. Source the matcher map so both
+    // layers stay aligned.
+    const { DISPATCHED_EVENT_MATCHERS } = require('../hooks/types.js') as typeof import('../hooks/types.js');
+    const hooks: Record<string, Array<{ matcher?: string; hooks: (typeof hookEntry)[] }>> = {};
+    for (const [event, matcher] of Object.entries(DISPATCHED_EVENT_MATCHERS)) {
+      hooks[event] = [{ matcher, hooks: [hookEntry] }];
+    }
+    settingsObj.hooks = hooks;
   }
-  if (params.permissions) {
-    const perms: Record<string, string[]> = {};
-    if (params.permissions.allow?.length) perms.allow = params.permissions.allow;
-    if (params.permissions.deny?.length) perms.deny = params.permissions.deny;
-    if (Object.keys(perms).length > 0) settingsObj.permissions = perms;
-  }
+  // Always seed GENIE_BASELINE_ALLOWED_TOOLS (AskUserQuestion) into the spawned
+  // agent's allow list. Without this, Claude Code routes the user-prompt UI
+  // through the team-lead approval queue and the agent blocks mid-loop waiting
+  // for the operator to approve a popup that asks them a question — closes #1688.
+  // Explicit allow/deny supplied by the agent are preserved verbatim; we only
+  // add baseline tools that are not already present.
+  const explicitAllow = params.permissions?.allow ?? [];
+  const explicitDeny = params.permissions?.deny ?? [];
+  const missingBaseline = GENIE_BASELINE_ALLOWED_TOOLS.filter((tool) => !explicitAllow.includes(tool));
+  const mergedAllow = [...explicitAllow, ...missingBaseline];
+  const perms: Record<string, string[]> = { allow: mergedAllow };
+  if (explicitDeny.length > 0) perms.deny = explicitDeny;
+  settingsObj.permissions = perms;
   return settingsObj;
+}
+
+function warnIfAllowRulesAreBypassed(params: SpawnParams): void {
+  if (!params.permissions?.allow?.length) return;
+  if (params.nativeTeam?.permissionMode !== 'bypassPermissions') return;
+
+  const agentName = params.nativeTeam.agentName ?? params.role ?? params.name ?? 'unknown';
+  process.stderr.write(
+    `Warning: agent ${agentName} declares permissions.allow but permissionMode is bypassPermissions — allow rules are advisory under bypass (deny still enforced).\n`,
+  );
 }
 
 function appendDisallowedAndExtraArgs(parts: string[], params: SpawnParams): void {
@@ -436,7 +485,22 @@ function appendDisallowedAndExtraArgs(parts: string[], params: SpawnParams): voi
   }
 }
 
+function assertClaudeBuiltinHasIdentity(params: SpawnParams): void {
+  const templateName = params.agentTemplate ?? params.role;
+  if (!templateName) return;
+  // Resumes attach to an existing Claude conversation whose identity was set
+  // at session creation; ResumeContext does not carry prompt fields.
+  if (params.resume) return;
+  if (!resolveBuiltinAgentPath(templateName)) return;
+  if (params.systemPromptFile || params.systemPrompt) return;
+
+  throw new Error(
+    `Refusing to launch built-in agent "${templateName}" without AGENTS.md identity. Resolve systemPromptFile or systemPrompt before building the Claude command.`,
+  );
+}
+
 export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
+  assertClaudeBuiltinHasIdentity(params);
   preflightCheck('claude');
 
   const claudeBinary = resolveShellBinary('claude') ?? 'claude';
@@ -451,6 +515,8 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 
   appendSessionFlags(parts, params);
   appendSystemPromptFlags(parts, params);
+
+  warnIfAllowRulesAreBypassed(params);
 
   const settingsObj = buildSettingsObject(params);
   if (Object.keys(settingsObj).length > 0) {
@@ -475,15 +541,83 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 /**
  * Build the launch command for a Codex worker.
  *
- * Uses `codex` with `--instructions` to inject skill-based task
- * instructions. Role is advisory metadata only (DEC-4).
+ * Uses `codex` with a positional prompt. Role is advisory metadata
+ * only (DEC-4).
  */
-/** Build the auto-generated codex prompt when no initialPrompt is supplied. */
+/** Build the auto-generated codex prompt when no prompt-bearing fields are supplied. */
 function buildCodexAutoPrompt(params: SpawnParams): string {
   const promptParts = [`Genie worker. Team: ${params.team}.`];
   if (params.role) promptParts.push(`Role: ${params.role}.`);
   if (params.skill) promptParts.push(`Execute the ${params.skill} skill instructions.`);
   return promptParts.join(' ');
+}
+
+const CODEX_PROMPT_DIR = '/tmp/genie-codex-prompts';
+const CODEX_PROMPT_FILE_FLAGS = new Set(['--append-system-prompt-file', '--system-prompt-file']);
+
+function sanitizeCodexPromptFileStem(stem: string): string {
+  const safe = stem.replace(/[^a-zA-Z0-9._-]/g, '-');
+  return safe || Date.now().toString(36);
+}
+
+function splitCodexExtraArgs(extraArgs: string[] | undefined): { forwarded: string[]; promptFiles: string[] } {
+  const forwarded: string[] = [];
+  const promptFiles: string[] = [];
+  const args = extraArgs ?? [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const equalsFlag = [...CODEX_PROMPT_FILE_FLAGS].find((flag) => arg.startsWith(`${flag}=`));
+
+    if (equalsFlag) {
+      const path = arg.slice(equalsFlag.length + 1);
+      if (!path) throw new Error(`Missing path for ${equalsFlag}`);
+      promptFiles.push(path);
+      continue;
+    }
+
+    if (CODEX_PROMPT_FILE_FLAGS.has(arg)) {
+      const path = args[i + 1];
+      if (!path) throw new Error(`Missing path after ${arg}`);
+      promptFiles.push(path);
+      i++;
+      continue;
+    }
+
+    forwarded.push(arg);
+  }
+
+  return { forwarded, promptFiles };
+}
+
+function buildCodexMergedPrompt(params: SpawnParams, extraPromptFiles: string[]): string | null {
+  const { readFileSync } = require('node:fs') as typeof import('node:fs');
+  const sections: string[] = [];
+
+  if (params.systemPromptFile !== undefined) {
+    sections.push(readFileSync(params.systemPromptFile, 'utf-8'));
+  }
+  if (params.systemPrompt !== undefined) {
+    sections.push(params.systemPrompt);
+  }
+  for (const promptFile of extraPromptFiles) {
+    sections.push(readFileSync(promptFile, 'utf-8'));
+  }
+  if (params.initialPrompt !== undefined) {
+    sections.push(params.initialPrompt);
+  }
+
+  return sections.length > 0 ? sections.join('\n\n') : null;
+}
+
+function writeCodexPromptFile(params: SpawnParams, content: string): string {
+  const { mkdirSync, writeFileSync } = require('node:fs') as typeof import('node:fs');
+  const { join } = require('node:path') as typeof import('node:path');
+  mkdirSync(CODEX_PROMPT_DIR, { recursive: true });
+  const stem = sanitizeCodexPromptFileStem(params.executorId ?? Date.now().toString(36));
+  const promptFile = join(CODEX_PROMPT_DIR, `${stem}.txt`);
+  writeFileSync(promptFile, content, 'utf-8');
+  return promptFile;
 }
 
 export function buildCodexCommand(params: SpawnParams): LaunchCommand {
@@ -494,7 +628,9 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   if (params.executorId) env.GENIE_EXECUTOR_ID = params.executorId;
   if (params.agentId) env.GENIE_AGENT_ID = params.agentId;
   if (params.role) env.GENIE_AGENT_NAME = params.role;
+  else if (params.name) env.GENIE_AGENT_NAME = params.name;
   if (params.team) env.GENIE_TEAM = params.team;
+  const { forwarded: extraArgs, promptFiles: extraPromptFiles } = splitCodexExtraArgs(params.extraArgs);
 
   // Full autonomous execution — no permission prompts
   parts.push('--yolo');
@@ -502,11 +638,17 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   // Inline mode for tmux compatibility (no alternate screen)
   parts.push('--no-alt-screen');
 
+  // Sanitize model for codex — drops Claude-family names that may have flowed
+  // in from a directory entry registered against a different provider, falling
+  // back to the codex default (gpt-5.5). See provider-models.ts. Closes the
+  // 2026-04-28 council incident root cause: dir entry `model: opus` flowed
+  // into codex spawn as `--model opus` and killed the agent on startup.
+  const codexModel = sanitizeModelForProvider('codex', params.model);
+  if (codexModel) parts.push('--model', escapeShellArg(codexModel));
+
   // Forward extra args before the positional prompt
-  if (params.extraArgs) {
-    for (const arg of params.extraArgs) {
-      parts.push(escapeShellArg(arg));
-    }
+  for (const arg of extraArgs) {
+    parts.push(escapeShellArg(arg));
   }
 
   // Group 11 (codex-provider-parity): honor params.initialPrompt as the
@@ -515,11 +657,23 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   // by hand or sending a follow-up via genie send (which until Group 3
   // landed today, silently failed the native bridge for codex agents).
   //
-  // When initialPrompt is provided, use it verbatim. When absent, fall
-  // back to the auto-generated "Genie worker. Team: X. Role: Y." string
-  // so spawn-without-prompt behavior is unchanged.
-  const prompt = params.initialPrompt ?? buildCodexAutoPrompt(params);
-  parts.push(escapeShellArg(prompt));
+  // Prompt-bearing fields are merged into a temp file and supplied through
+  // command substitution so AGENTS.md, inline system prompts, and first-turn
+  // prompts survive shell/tmux quoting. When none are supplied, keep the
+  // auto-generated "Genie worker. Team: X. Role: Y." fallback unchanged.
+  //
+  // Decision: prompt-bearing Codex spawns write the merged prompt file
+  // synchronously before returning this command. The file is named by
+  // executorId when available, otherwise by timestamp, and is left in /tmp
+  // for OS cleanup so tmux's later shell exec can `cat` it without a
+  // deletion race.
+  const mergedPrompt = buildCodexMergedPrompt(params, extraPromptFiles);
+  if (mergedPrompt !== null) {
+    const promptFile = writeCodexPromptFile(params, mergedPrompt);
+    parts.push(`"$(cat ${escapeShellArg(promptFile)})"`);
+  } else {
+    parts.push(escapeShellArg(buildCodexAutoPrompt(params)));
+  }
 
   return {
     command: parts.join(' '),

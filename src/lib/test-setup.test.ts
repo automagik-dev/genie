@@ -116,6 +116,19 @@ describe('test-setup shared-daemon lockfile', () => {
     expect(typeof lock?.startedAt).toBe('number');
   });
 
+  test('lockfile path stays bound to the preload GENIE_HOME', async () => {
+    const { __testing } = await import('./test-setup.js');
+    const originalPath = __testing.lockFilePath();
+    const prev = process.env.GENIE_HOME;
+    try {
+      process.env.GENIE_HOME = '/tmp/genie-test-mutated-home';
+      expect(__testing.lockFilePath()).toBe(originalPath);
+    } finally {
+      if (prev === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+      else process.env.GENIE_HOME = prev;
+    }
+  });
+
   test('reuse case: lockfile pid is alive and lockfile is within max age', async () => {
     if (noReuse) return;
     const { __testing } = await import('./test-setup.js');

@@ -1,0 +1,78 @@
+name: Binary SHA Drift
+
+# Surfaces drift between pinned binarySha256 entries in package.json and the
+# actual SHA-256 of the upstream tarball. Runs on every PR that touches the
+# pin manifest or the postinstall scripts so version bumps are deliberate.
+#
+# Wish: dep-hygiene-and-resilience G4.
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'scripts/postinstall-tmux.js'
+      - 'scripts/postinstall-hook-binary.js'
+      - '.genie/wishes/dep-hygiene-and-resilience/binary-sha-bootstrap.md'
+      - '.github/workflows/binary-sha-drift.yml'
+  workflow_dispatch: {}
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify pinned SHA-256 against upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Extract every "<asset>": "<sha>" pair from package.json#binarySha256.
+          # We use jq to parse so the comment field "_comment" is naturally skipped
+          # (its value isn't a 64-hex string and our filter only emits matching pairs).
+          mapfile -t pairs < <(jq -r '
+            (.binarySha256 // {}) as $b
+            | $b | to_entries[]
+            | select(.value | test("^[a-f0-9]{64}$"; "i"))
+            | "\(.key)\t\(.value | ascii_downcase)"
+          ' package.json)
+
+          if [[ ${#pairs[@]} -eq 0 ]]; then
+            echo "::warning::No pinned binarySha256 entries found in package.json — nothing to verify."
+            exit 0
+          fi
+
+          fail=0
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+
+          for pair in "${pairs[@]}"; do
+            asset="${pair%%$'\t'*}"
+            pinned="${pair##*$'\t'}"
+
+            # Determine upstream URL based on asset name prefix. Currently only
+            # tmux-builds is wired up; extend this when other downloaders appear.
+            if [[ "$asset" == tmux-*.tar.gz ]]; then
+              # tmux-3.6a-linux-x86_64.tar.gz -> version 3.6a
+              ver="$(echo "$asset" | sed -E 's/^tmux-([^-]+)-.*/\1/')"
+              url="https://github.com/tmux/tmux-builds/releases/download/v${ver}/${asset}"
+            else
+              echo "::warning::Unknown asset prefix '$asset' — skipping (extend drift check to support it)."
+              continue
+            fi
+
+            echo "Checking $asset ..."
+            curl -sSL "$url" -o "$tmpdir/$asset"
+            actual="$(sha256sum "$tmpdir/$asset" | awk '{print $1}')"
+
+            if [[ "$actual" == "$pinned" ]]; then
+              echo "  SHA matches: ${actual:0:12}..."
+            else
+              echo "::error::SHA drift for $asset"
+              echo "  expected: $pinned"
+              echo "  upstream: $actual"
+              fail=1
+            fi
+          done
+
+          exit "$fail"

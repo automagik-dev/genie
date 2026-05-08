@@ -19,6 +19,7 @@
 
 import { execSync, spawn, spawnSync } from 'node:child_process';
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -29,9 +30,15 @@ import {
   writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
 import { palette } from '../../packages/genie-tokens';
+import {
+  type BrainServerApi,
+  type StartedBrainVault,
+  resolveBrainVaults,
+  startResolvedBrainVaults,
+} from '../lib/brain-vaults.js';
 import { ensureTmux, tmuxBin } from '../lib/ensure-tmux.js';
 import { getProcessStartTime } from '../lib/process-identity.js';
 import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
@@ -47,6 +54,10 @@ function genieHome(): string {
 
 function servePidPath(): string {
   return join(genieHome(), 'serve.pid');
+}
+
+function serveStartupStatusPath(): string {
+  return join(genieHome(), 'state', `serve-startup-${process.pid}-${Date.now()}.json`);
 }
 
 // TUI uses default tmux server (no separate socket or config)
@@ -210,6 +221,26 @@ const TUI_STYLE = {
   inactiveBorder: palette.border,
 };
 
+interface BrainStartupConfig {
+  brain?: {
+    embedded?: boolean;
+    paths?: string[];
+  };
+}
+
+interface StartBrainServerDeps {
+  loadConfig?: () => BrainStartupConfig;
+  importBrain?: () => Promise<BrainServerApi>;
+  getActivePort?: () => number | undefined;
+  resolveVaults?: typeof resolveBrainVaults;
+  startVaults?: typeof startResolvedBrainVaults;
+  setBrainHandles?: (brainHandles: StartedBrainVault[]) => void;
+  log?: (message: string) => void;
+  warn?: (message: string) => void;
+}
+
+type BrainStartupLogger = (message: string) => void;
+
 export function getTuiKeybindings(sessionName = TUI_SESSION): string[] {
   return [
     // Tab: toggle focus between left nav (pane 0) and right terminal (pane 1)
@@ -277,55 +308,60 @@ function setupTuiKeybindings(): void {
 }
 
 /**
- * Start the TUI tmux server with full session setup:
- * left pane (nav) + right pane (agent display).
- * If session already exists (serve restart), reuse it.
+ * Run a tmux command via execSync and re-throw with the captured stderr
+ * embedded in the message. Bun's execSync throws an `Error` whose default
+ * message is the unhelpful `output: [null, null, null]` when stdio is
+ * ignored — capturing stdout/stderr as strings gives us tmux's actual
+ * complaint (e.g. `duplicate session: genie-tui`).
  */
-function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
-  // Check if session already exists
+function runTuiTmuxCapturing(cmd: string): string {
   try {
-    execSync(tuiTmux(`has-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
-    // Session exists — reuse it, but ensure the split is healthy
-    const panes = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
-      .trim()
-      .split('\n');
-
-    if (panes.length >= 2) {
-      // Both panes exist — clear the right pane so it doesn't show stale content
-      // (e.g., a leftover TUI nav renderer from a crashed serve process)
-      try {
-        execSync(tuiTmux(`respawn-pane -k -t ${panes[1]} 'cat'`), { stdio: 'ignore' });
-      } catch {}
-      return { leftPane: panes[0], rightPane: panes[1] };
-    }
-
-    // Only 1 pane — re-create the split
-    const cols =
-      Number.parseInt(
-        execSync(tuiTmux(`display-message -t ${TUI_SESSION}:0 -p '#{window_width}'`), { encoding: 'utf-8' }).trim(),
-        10,
-      ) || 120;
-    execSync(tuiTmux(`split-window -h -t ${TUI_SESSION}:0 -l ${cols - NAV_WIDTH - 1}`), { stdio: 'ignore' });
-    const refreshed = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
-      .trim()
-      .split('\n');
-    applyTuiStyle();
-    setupTuiKeybindings();
-    try {
-      execSync(tuiTmux(`select-pane -t ${refreshed[0]}`), { stdio: 'ignore' });
-    } catch {}
-    return { leftPane: refreshed[0], rightPane: refreshed[1] || refreshed[0] };
-  } catch {
-    // Session doesn't exist — create it
+    return execSync(tuiTmux(cmd), { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    const e = err as { stderr?: string | Buffer; stdout?: string | Buffer; message?: string };
+    const stderr = typeof e.stderr === 'string' ? e.stderr : e.stderr?.toString('utf-8');
+    const stdout = typeof e.stdout === 'string' ? e.stdout : e.stdout?.toString('utf-8');
+    const detail = (stderr ?? stdout ?? e.message ?? 'unknown tmux error').trim();
+    throw new Error(`tmux ${cmd}: ${detail}`);
   }
+}
 
+/**
+ * Append a single line to ~/.genie/logs/tui-crash.log so the original
+ * inner-branch error survives the recovery `kill-session`. Best-effort:
+ * never throw from here — the whole point is that the user gets a working
+ * TUI even when logging fails.
+ *
+ * Prefix `[startTuiTmuxServer] <ISO timestamp> ` keeps these distinguishable
+ * from `sendTuiLaunchScript`'s native-panic appends to the same file.
+ */
+function logTuiStartupFailure(message: string): void {
+  try {
+    const home = genieHome();
+    const logsDir = join(home, 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    const crashLog = join(logsDir, 'tui-crash.log');
+    const line = `[startTuiTmuxServer] ${new Date().toISOString()} ${message.replace(/\s+/g, ' ').trim()}\n`;
+    appendFileSync(crashLog, line);
+  } catch {
+    // Logging is best-effort; a failed log must not block recovery.
+  }
+}
+
+/**
+ * Build a fresh genie-tui session from scratch: new-session, split-window,
+ * style, keybindings, focus left pane. Used both when no session existed
+ * and when a corrupt session was killed during recovery.
+ *
+ * Errors from `new-session` and `split-window` propagate up with tmux's
+ * stderr embedded — see `runTuiTmuxCapturing`.
+ */
+function freshCreateTuiSession(): { leftPane: string; rightPane: string } {
   const cols = 120;
   const rows = 40;
 
-  execSync(tuiTmux(`new-session -d -s ${TUI_SESSION} -x ${cols} -y ${rows}`), {
-    stdio: 'ignore',
-  });
-  execSync(tuiTmux(`split-window -h -t ${TUI_SESSION}:0 -l ${cols - NAV_WIDTH - 1}`), { stdio: 'ignore' });
+  runTuiTmuxCapturing(`new-session -d -s ${TUI_SESSION} -x ${cols} -y ${rows}`);
+  runTuiTmuxCapturing(`split-window -h -t ${TUI_SESSION}:0 -l ${cols - NAV_WIDTH - 1}`);
 
   const panes = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
     .trim()
@@ -340,6 +376,83 @@ function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
   } catch {}
 
   return { leftPane: panes[0], rightPane: panes[1] || panes[0] };
+}
+
+/**
+ * Start the TUI tmux server with full session setup:
+ * left pane (nav) + right pane (agent display).
+ * If session already exists (serve restart), reuse it.
+ *
+ * Control flow:
+ *   1. `has-session` probe in its own try/catch — non-existence is the ONLY
+ *      path into a fresh `new-session`. This avoids the historical bug
+ *      where any failure inside the repair branch fell through to
+ *      `new-session` and crashed with `duplicate session: genie-tui`.
+ *   2. If the session exists, run the repair branch in its own try. On
+ *      failure: log to ~/.genie/logs/tui-crash.log, kill the corrupt
+ *      session, and rebuild from scratch — the user just typed `genie`
+ *      and wants a working TUI.
+ *
+ * Exported so unit tests can exercise it directly without monkey-patching
+ * `child_process` globally.
+ */
+export function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
+  // Step 1: probe — the ONLY signal that decides "fresh create" vs "repair".
+  try {
+    execSync(tuiTmux(`has-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
+  } catch {
+    // Session genuinely doesn't exist — create it from scratch.
+    return freshCreateTuiSession();
+  }
+
+  // Step 2: session exists — try to repair / reuse. Any throw in this branch
+  // means the session is in a bad state we can't reason about: log, kill,
+  // and rebuild rather than bubbling an opaque error to the user.
+  try {
+    const panes = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
+      .trim()
+      .split('\n')
+      .filter((id) => id.length > 0);
+
+    if (panes.length >= 2) {
+      // Both panes exist — clear the right pane so it doesn't show stale content
+      // (e.g., a leftover TUI nav renderer from a crashed serve process)
+      try {
+        execSync(tuiTmux(`respawn-pane -k -t ${panes[1]} 'cat'`), { stdio: 'ignore' });
+      } catch {}
+      return { leftPane: panes[0], rightPane: panes[1] };
+    }
+
+    // 1 pane (or theoretically 0 — tmux sessions always have ≥1 pane, but
+    // defensively this falls into the same recreate-the-split path) → re-split.
+    const cols =
+      Number.parseInt(
+        execSync(tuiTmux(`display-message -t ${TUI_SESSION}:0 -p '#{window_width}'`), { encoding: 'utf-8' }).trim(),
+        10,
+      ) || 120;
+    runTuiTmuxCapturing(`split-window -h -t ${TUI_SESSION}:0 -l ${cols - NAV_WIDTH - 1}`);
+    const refreshed = execSync(tuiTmux(`list-panes -t ${TUI_SESSION}:0 -F '#{pane_id}'`), { encoding: 'utf-8' })
+      .trim()
+      .split('\n');
+    applyTuiStyle();
+    setupTuiKeybindings();
+    try {
+      execSync(tuiTmux(`select-pane -t ${refreshed[0]}`), { stdio: 'ignore' });
+    } catch {}
+    return { leftPane: refreshed[0], rightPane: refreshed[1] || refreshed[0] };
+  } catch (err) {
+    // Repair failed — corrupt session in unknown state. Persist the original
+    // cause for forensics, then nuke and rebuild.
+    const message = err instanceof Error ? err.message : String(err);
+    logTuiStartupFailure(message);
+    try {
+      execSync(tuiTmux(`kill-session -t ${TUI_SESSION}`), { stdio: 'ignore' });
+    } catch {
+      // If kill-session itself fails, freshCreateTuiSession() will re-throw
+      // a useful error via runTuiTmuxCapturing — let it surface.
+    }
+    return freshCreateTuiSession();
+  }
 }
 
 /**
@@ -487,23 +600,32 @@ export function ensureTuiSession(workspaceRoot?: string): void {
 interface DaemonHandles {
   schedulerHandle: { stop: () => void; done: Promise<void> } | null;
   agentWatcher: { close: () => void } | null;
-  brainHandle: { stop: () => Promise<void>; port: number } | null;
+  brainHandles: StartedBrainVault[];
   omniApprovalHandler: { stop: () => Promise<void> } | null;
   omniBridge: { stop: () => Promise<void> } | null;
   detectorScheduler: { stop: () => void } | null;
   /** Derived-signal rule engine (invincible-genie / Group 2). */
   derivedSignals: { stop: () => Promise<void> } | null;
+  /** UDS hook-dispatch listener — replaces fork-per-event hook execution. */
+  hookSocket: { stop: () => Promise<void>; path: string } | null;
 }
 
 const handles: DaemonHandles = {
   schedulerHandle: null,
   agentWatcher: null,
-  brainHandle: null,
+  brainHandles: [],
   omniApprovalHandler: null,
   omniBridge: null,
   detectorScheduler: null,
   derivedSignals: null,
+  hookSocket: null,
 };
+
+interface ServeStartupStatus {
+  ok: boolean;
+  code?: number;
+  lines?: string[];
+}
 
 /** Sync agent directory from workspace and start file watcher. */
 async function startAgentSync(): Promise<{ close: () => void } | null> {
@@ -555,14 +677,37 @@ async function startAgentSync(): Promise<{ close: () => void } | null> {
   }
 }
 
-/** Start pgserve and register it in the service registry. */
-async function startPgserve(): Promise<void> {
-  console.log('  Starting pgserve...');
+/**
+ * Probe pgserve via the unified transport-discovery resolver (UDS-first,
+ * TCP-fallback). Genie is consumer-only after the canonical-cutover wish —
+ * `genie serve` no longer spawns or supervises pgserve. If neither transport
+ * is reachable, log a clear canonical-install hint and disable subsequent
+ * autostart attempts so the rest of the serve boot doesn't loop on the same
+ * failure.
+ *
+ * Pre-#1667: this function called `requirePgserveDaemon()` which only
+ * accepted the canonical Unix socket. On hosts where `pgserve install`
+ * registered foreground TCP mode (the supported install path post
+ * pgserve@^2.2), the boot probe would print a misleading
+ * "pgserve unreachable" error AND then real connections would still succeed
+ * via the resolver's TCP fallback — confusing operators into thinking
+ * something was broken when it wasn't. Now the boot probe matches the
+ * connection probe.
+ */
+async function requirePgserveReady(): Promise<void> {
+  console.log('  Probing pgserve transport...');
   try {
-    const { ensurePgserve } = await import('../lib/db.js');
-    const port = await ensurePgserve();
-    console.log(`  pgserve ready on port ${port}`);
+    const { resolvePgserveTransport } = await import('../lib/db.js');
+    const transport = await resolvePgserveTransport();
+    if (transport.kind === 'unix') {
+      console.log(`  pgserve ready: unix socket ${transport.socketDir}/.s.PGSQL.${transport.port}`);
+    } else {
+      console.log(`  pgserve ready: tcp ${transport.host}:${transport.port}`);
+    }
     try {
+      // Service registry entry stays for diagnostics — genie no longer OWNS
+      // pgserve, but observability tools still want to know which serve is
+      // talking to it. The role name reflects the consumer-only contract.
       const { registerService } = await import('../lib/service-registry.js');
       registerService('pgserve-owner', process.pid);
     } catch {
@@ -570,7 +715,9 @@ async function startPgserve(): Promise<void> {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`  pgserve failed: ${msg}`);
+    console.error(`  pgserve unreachable: ${msg}`);
+    process.env.GENIE_PG_NO_AUTOSTART = '1';
+    process.env.GENIE_PG_DISABLE_AUTOSTART = '1';
   }
 }
 
@@ -645,6 +792,14 @@ function claimServePidOrExit(): void {
       const existing = readServePid();
       if (existing && existing.startTime !== null && isProcessAlive(existing.pid)) {
         console.log(`genie serve already running (PID ${existing.pid})`);
+        // Closes #1490 — also probe the hook UDS health on the live daemon.
+        // Pre-fix, an "already running" daemon that pre-dated #1485 (or whose
+        // startHookSocketSafely silently failed under detached stdio) would
+        // never expose hook.sock, leaving every hook dispatch on the legacy
+        // F1 fork path with no operator signal that daemon-mode was inert.
+        // Now we surface the gap loudly so `genie serve restart` is the
+        // obvious remediation.
+        warnIfHookSocketMissing();
         process.exit(0);
       }
       // Stale (dead PID) or legacy (no startTime) — clear and retry once.
@@ -672,52 +827,85 @@ function resolveServeMode(headless?: boolean): { skipTui: boolean; mode: 'headle
   return { skipTui, mode };
 }
 
-function resolveBrainPathFromWorkspace(): string | undefined {
-  try {
-    const { findWorkspace } = require('../lib/workspace.js') as typeof import('../lib/workspace.js');
-    const ws = findWorkspace();
-    if (ws?.root) {
-      const bp = join(ws.root, 'brain');
-      if (existsSync(bp) && existsSync(join(bp, 'brain.json'))) return bp;
-    }
-  } catch {
-    // No workspace — skip
-  }
-  return undefined;
+async function loadBrainStartupConfig(deps: StartBrainServerDeps): Promise<BrainStartupConfig> {
+  return deps.loadConfig?.() ?? (await import('../lib/genie-config.js')).loadGenieConfigSync();
 }
 
-async function startBrainServerIfEnabled(): Promise<void> {
+async function importBrainForStartup(deps: StartBrainServerDeps): Promise<BrainServerApi> {
+  if (deps.importBrain) return deps.importBrain();
+  // Dynamic import — brain is optional. Silently skip if not installed.
+  // @ts-expect-error — brain is enterprise-only, not in genie's deps
+  return import('@khal-os/brain');
+}
+
+async function getBrainStartupPgPort(deps: StartBrainServerDeps): Promise<number | undefined> {
+  return deps.getActivePort?.() ?? (await import('../lib/db.js')).getActivePort();
+}
+
+function assignBrainHandles(deps: StartBrainServerDeps, brainHandles: StartedBrainVault[]): void {
+  if (deps.setBrainHandles) {
+    deps.setBrainHandles(brainHandles);
+    return;
+  }
+  handles.brainHandles = brainHandles;
+}
+
+function isMissingBrainModule(message: string): boolean {
+  return message.includes('Cannot find') || message.includes('not found') || message.includes('MODULE_NOT_FOUND');
+}
+
+async function startBrainServer(
+  deps: StartBrainServerDeps,
+  config: BrainStartupConfig,
+  log: BrainStartupLogger,
+  warn: BrainStartupLogger,
+): Promise<StartedBrainVault[]> {
+  const brain = await importBrainForStartup(deps);
+  if (!brain.startEmbeddedBrainServer) return [];
+
+  const pgPort = await getBrainStartupPgPort(deps);
+  if (!pgPort) {
+    log('  Brain server: pgserve not available (skipped)');
+    return [];
+  }
+
+  const resolveVaults = deps.resolveVaults ?? resolveBrainVaults;
+  const startVaults = deps.startVaults ?? startResolvedBrainVaults;
+  const resolution = await resolveVaults({ brain, config, warn });
+  if (resolution.paths.length === 0) {
+    log(`  Brain server: no ${resolution.source} brain vaults found (skipped)`);
+    return [];
+  }
+
+  log(`  Starting brain server (${resolution.paths.length} ${resolution.source} vault(s))...`);
+  const brainHandles = await startVaults(resolution, brain, pgPort, { warn, log });
+  assignBrainHandles(deps, brainHandles);
+  if (brainHandles.length === 0) {
+    log('  Brain server: no vaults started');
+  }
+  return brainHandles;
+}
+
+export async function startBrainServerIfEnabled(deps: StartBrainServerDeps = {}): Promise<StartedBrainVault[]> {
   // Gated by `brain.embedded` config (default: true). Set `brain.embedded=false`
   // in ~/.genie/config.json to opt out — power-users can then run `brain serve`
   // standalone with custom settings (port, brain-path, @next dev channel).
-  const { loadGenieConfigSync } = await import('../lib/genie-config.js');
-  const brainEmbedded = loadGenieConfigSync().brain.embedded;
+  const config = await loadBrainStartupConfig(deps);
+  const brainEmbedded = config.brain?.embedded !== false;
+  const log = deps.log ?? console.log;
+  const warn = deps.warn ?? console.warn;
   if (!brainEmbedded) {
-    console.log('  Brain server: skipped (brain.embedded=false — managed externally)');
-    return;
+    log('  Brain server: skipped (brain.embedded=false — managed externally)');
+    return [];
   }
   try {
-    // Dynamic import — brain is optional. Silently skip if not installed.
-    // @ts-expect-error — brain is enterprise-only, not in genie's deps
-    const brain = await import('@khal-os/brain');
-    if (!brain.startEmbeddedBrainServer) return;
-    const { getActivePort } = await import('../lib/db.js');
-    const pgPort = getActivePort();
-    if (!pgPort) {
-      console.log('  Brain server: pgserve not available (skipped)');
-      return;
-    }
-    console.log('  Starting brain server...');
-    const brainPath = resolveBrainPathFromWorkspace();
-    if (!brainPath) {
-      console.log('  Brain server: no brain/ found in workspace (skipped)');
-      return;
-    }
-    const handle = await brain.startEmbeddedBrainServer({ brainPath, geniePgPort: pgPort });
-    handles.brainHandle = { stop: handle.stop, port: handle.port };
-    console.log(`  Brain server ready on port ${handle.port}`);
-  } catch {
+    return await startBrainServer(deps, config, log, warn);
+  } catch (err) {
     // Brain not installed — fine, skip silently
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isMissingBrainModule(msg)) return [];
+    warn(`  Brain server: failed: ${msg}`);
+    return [];
   }
 }
 
@@ -851,9 +1039,11 @@ async function stopOmniAndBrainServices(): Promise<void> {
   void import('../lib/executor-read.js').then((m) => m.stopExecutorReadEndpoint().catch(() => {}));
   // Brain server: best-effort; signal handlers call process.exit() immediately
   // after shutdown(). The OS reclaims sockets/connections on process exit.
-  if (handles.brainHandle) {
-    await handles.brainHandle.stop().catch(() => {});
-    handles.brainHandle = null;
+  if (handles.brainHandles.length > 0) {
+    for (const handle of handles.brainHandles) {
+      await handle.stop().catch(() => {});
+    }
+    handles.brainHandles = [];
   }
 }
 
@@ -866,7 +1056,8 @@ function killRegisteredServices(): void {
   }
 }
 
-function removePgservePortLockfile(): void {
+function removeLegacyPgservePortLockfileIfForcedTcp(): void {
+  if (process.env.GENIE_PG_FORCE_TCP !== '1') return;
   try {
     const lockfilePath = join(genieHome(), 'pgserve.port');
     if (existsSync(lockfilePath)) unlinkSync(lockfilePath);
@@ -890,19 +1081,55 @@ function sigKillRegisteredServices(): void {
   }
 }
 
+async function startHookSocketSafely(): Promise<void> {
+  try {
+    const { startHookSocket } = await import('../serve/hook-socket.js');
+    // GENIE_STRICT_HOOKS is set by `genie serve --strict-hooks`. The repoRoot
+    // for the per-repo tier scan is the daemon's cwd — operators running the
+    // daemon from a repo root get that repo's `.genie/hooks/` scanned.
+    handles.hookSocket = await startHookSocket({
+      strict: process.env.GENIE_STRICT_HOOKS === '1',
+      // Use operatorCwd (captured before daemon's cwd pin) so the per-repo
+      // hook tier scan still finds the operator's `.genie/hooks/` (issue
+      // #1575 — daemon pins cwd to genie's package dir).
+      repoRoot: operatorCwd,
+    });
+  } catch (err) {
+    // Bubble up --strict-hooks failures so the operator sees the colliding
+    // hook names and can fix the deployment. Other failures (socket EADDRINUSE,
+    // etc.) keep the soft-disable behavior so the daemon stays up.
+    if (process.env.GENIE_STRICT_HOOKS === '1' && (err as Error).message.includes('--strict-hooks')) {
+      throw err;
+    }
+    console.warn(`  Hook socket: DISABLED — ${(err as Error).message}`);
+    handles.hookSocket = null;
+  }
+}
+
+async function stopHookSocketSafely(): Promise<void> {
+  if (!handles.hookSocket) return;
+  try {
+    await handles.hookSocket.stop();
+  } catch {
+    // best effort
+  }
+  handles.hookSocket = null;
+}
+
 function buildShutdownFn(headless?: boolean): { shutdown: () => Promise<void>; hasStarted: () => boolean } {
   let shutdownStarted = false;
   const shutdown = async (): Promise<void> => {
     if (shutdownStarted) return;
     shutdownStarted = true;
     console.log('\nShutting down genie serve...');
+    await stopHookSocketSafely();
     await stopSchedulerHandles();
     await stopOmniAndBrainServices();
     killRegisteredServices();
     // NEVER kill the agent tmux server — agent sessions are eternal and must
     // survive serve restarts. Only the TUI session is owned by serve.
     if (!headless) killTuiSession();
-    removePgservePortLockfile();
+    removeLegacyPgservePortLockfileIfForcedTcp();
     removeServePid();
     console.log('genie serve stopped.');
   };
@@ -947,23 +1174,153 @@ function installGracefulExitHandlers(shutdown: () => Promise<void>, hasStarted: 
   });
 }
 
-async function startForeground(headless?: boolean): Promise<void> {
+function writeStartupStatus(status: ServeStartupStatus): void {
+  const statusPath = process.env.GENIE_SERVE_STARTUP_STATUS;
+  if (!statusPath) return;
+  try {
+    mkdirSync(dirname(statusPath), { recursive: true });
+    writeFileSync(statusPath, `${JSON.stringify(status)}\n`, 'utf-8');
+  } catch {
+    // Best effort; the parent still falls back to liveness checks.
+  }
+}
+
+function readStartupStatus(statusPath: string): ServeStartupStatus | null {
+  try {
+    const parsed = JSON.parse(readFileSync(statusPath, 'utf-8')) as Partial<ServeStartupStatus>;
+    if (typeof parsed.ok !== 'boolean') return null;
+    return {
+      ok: parsed.ok,
+      code: typeof parsed.code === 'number' ? parsed.code : undefined,
+      lines: Array.isArray(parsed.lines)
+        ? parsed.lines.filter((line): line is string => typeof line === 'string')
+        : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function waitForStartupStatus(
+  statusPath: string,
+  childPid: number,
+  timeoutMs: number,
+): Promise<ServeStartupStatus | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = readStartupStatus(statusPath);
+    if (status) return status;
+    if (!isProcessAlive(childPid)) return { ok: false, code: 1 };
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+function exitBackgroundStartFailed(): never {
+  console.error('Error: genie serve exited immediately.');
+  process.exit(1);
+}
+
+function exitStartupStatusFailure(status: ServeStartupStatus): never {
+  for (const line of status.lines ?? []) console.error(line);
+  process.exit(status.code ?? 1);
+}
+
+function exitStartupStatusMissing(childPid: number): never {
+  console.error('Error: genie serve did not report startup precondition status within 16s.');
+  try {
+    process.kill(childPid, 'SIGTERM');
+  } catch {
+    // Already gone.
+  }
+  process.exit(1);
+}
+
+async function confirmBackgroundStarted(childPid: number, startupStatusPath?: string): Promise<void> {
+  if (startupStatusPath) {
+    const status = await waitForStartupStatus(startupStatusPath, childPid, 16_000);
+    forceRemovePath(startupStatusPath);
+    if (status?.ok === false) exitStartupStatusFailure(status);
+    if (status?.ok !== true) exitStartupStatusMissing(childPid);
+    if (!isProcessAlive(childPid)) exitBackgroundStartFailed();
+    console.log(`genie serve started (PID ${childPid})`);
+    return;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  if (!isProcessAlive(childPid)) exitBackgroundStartFailed();
+  console.log(`genie serve started (PID ${childPid})`);
+}
+
+/**
+ * Operator's invocation cwd, captured BEFORE the daemon pins itself to
+ * genie's package directory (issue #1575). Used by the hook socket so the
+ * per-repo tier scan still finds the operator's repo `.genie/hooks/`.
+ */
+let operatorCwd: string = process.cwd();
+
+async function startForeground(headless?: boolean, autoFix = true): Promise<void> {
+  // Capture the operator's cwd FIRST — pinCwdToGeniePackageDir() below will
+  // chdir away for the daemon's lifetime so pgserve fingerprints us as the
+  // genie package (issue #1575). Anything that legitimately needs the
+  // operator's cwd (hook-socket repoRoot, future relative-path lookups)
+  // must read `operatorCwd`, not `process.cwd()`.
+  operatorCwd = process.cwd();
   claimServePidOrExit();
-  // Invalidate any stale port lockfile from an unclean prior shutdown — the
-  // next ensurePgserve() call will rewrite it with the live port. Without
-  // this, callers (TUI, hooks) cache the dead port and hammer ECONNREFUSED
-  // until pgserve happens to reuse it.
-  removePgservePortLockfile();
+  // Default pgserve v2 uses a Unix socket and must coexist with legacy v1
+  // TCP daemons. Only touch ~/.genie/pgserve.port when the operator has
+  // explicitly forced the legacy TCP path.
+  removeLegacyPgservePortLockfileIfForcedTcp();
   const { skipTui, mode } = resolveServeMode(headless);
   process.env.GENIE_IS_DAEMON = '1';
+  // Pin cwd to genie's package directory for the daemon's lifetime so every
+  // pgserve accept under this PID fingerprints to the same persistent DB
+  // (issue #1575). Must run BEFORE any getConnection() call (preconditions
+  // included). No-op if already pinned or if the package dir cannot be
+  // resolved.
+  try {
+    const { pinCwdToGeniePackageDir } = await import('../lib/db.js');
+    pinCwdToGeniePackageDir();
+  } catch {
+    // Non-fatal: db module load failure surfaces later via preconditions.
+  }
   // claimServePidOrExit already wrote `${pid}:${startTime}` atomically.
   console.log(`genie serve starting (PID ${process.pid}, mode: ${mode})`);
+
+  // Preconditions call getConnection(); the daemon marker must already be set
+  // so pgserve starts in this process instead of recursively auto-spawning serve.
+  const preconditionLines: string[] = [];
+  const preconditionLog = process.env.GENIE_SERVE_STARTUP_STATUS
+    ? (line: string): void => {
+        preconditionLines.push(line);
+        console.log(line);
+      }
+    : undefined;
+  try {
+    const preconditionsOk = await runStartPreconditions(autoFix, preconditionLog);
+    if (!preconditionsOk) {
+      writeStartupStatus({ ok: false, code: 2, lines: preconditionLines });
+      removeServePid();
+      process.exit(2);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`genie serve start preconditions failed: ${msg}`);
+    writeStartupStatus({
+      ok: false,
+      code: 1,
+      lines: [...preconditionLines, `genie serve start preconditions failed: ${msg}`],
+    });
+    removeServePid();
+    process.exit(1);
+  }
+  writeStartupStatus({ ok: true });
 
   if (!skipTui) {
     await ensureTmux();
   }
 
-  await startPgserve();
+  await requirePgserveReady();
   await startBrainServerIfEnabled();
   if (!headless) logAgentSessionInfo();
   handles.agentWatcher = await startAgentSync();
@@ -973,6 +1330,7 @@ async function startForeground(headless?: boolean): Promise<void> {
   await startExecutorReadEndpointSafely();
   await startOmniApprovalHandlerSafely();
   await startOmniBridgeSafely();
+  await startHookSocketSafely();
 
   const stopMsg = headless ? 'Send SIGTERM to stop.' : 'Press Ctrl+C to stop.';
   console.log(`\ngenie serve is running (${mode}). ${stopMsg}`);
@@ -993,7 +1351,17 @@ async function startForeground(headless?: boolean): Promise<void> {
 /** Start as a background daemon.
  *  @param headless If true, pass --headless to the foreground process.
  */
-async function startBackground(headless?: boolean): Promise<void> {
+async function startBackground(headless?: boolean, autoFix = true): Promise<void> {
+  // PM2-supervised mode: the calling process IS the supervised entry. Forking
+  // a detached --foreground child and exiting would trigger an
+  // unstable-restart loop (pm2 sees the parent exit, respawns it, repeat) AND
+  // leave the actual long-running daemon untracked by pm2. Instead, run the
+  // daemon in-process so pm2 tracks the real PID. Detection: pm2 sets `pm_id`
+  // on supervised processes (alongside `name`, `exec_mode`, etc.).
+  if (process.env.pm_id) {
+    return startForeground(headless, autoFix);
+  }
+
   const existingEntry = readServePid();
   if (existingEntry && isProcessAlive(existingEntry.pid)) {
     console.log(`genie serve already running (PID ${existingEntry.pid})`);
@@ -1005,26 +1373,26 @@ async function startBackground(headless?: boolean): Promise<void> {
 
   const bunPath = process.execPath ?? 'bun';
   const genieBin = process.argv[1] ?? 'genie';
+  const startupStatusPath = autoFix ? undefined : serveStartupStatusPath();
 
   const args = [genieBin, 'serve', '--foreground'];
   if (headless) args.push('--headless');
+  if (!autoFix) args.push('--no-fix');
 
   const child = spawn(bunPath, args, {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, GENIE_IS_DAEMON: '1' },
+    env: {
+      ...process.env,
+      GENIE_IS_DAEMON: '1',
+      ...(startupStatusPath ? { GENIE_SERVE_STARTUP_STATUS: startupStatusPath } : {}),
+    },
   });
 
   child.unref();
 
   if (child.pid) {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    if (isProcessAlive(child.pid)) {
-      console.log(`genie serve started (PID ${child.pid})`);
-    } else {
-      console.error('Error: genie serve exited immediately.');
-      process.exit(1);
-    }
+    await confirmBackgroundStarted(child.pid, startupStatusPath);
   } else {
     console.error('Error: failed to spawn genie serve');
     process.exit(1);
@@ -1033,8 +1401,12 @@ async function startBackground(headless?: boolean): Promise<void> {
 
 /** Unlink serve.pid unconditionally, swallowing ENOENT and permission errors. */
 function forceRemoveServePid(): void {
+  forceRemovePath(servePidPath());
+}
+
+function forceRemovePath(path: string): void {
   try {
-    unlinkSync(servePidPath());
+    unlinkSync(path);
   } catch {}
 }
 
@@ -1105,11 +1477,51 @@ async function stopServe(): Promise<void> {
 /** Check pgserve health and print status */
 async function printPgserveHealth(): Promise<void> {
   try {
-    const { isAvailable, getActivePort } = await import('../lib/db.js');
+    const { isAvailable, getActivePort, isSocketMode, resolvePgserveSocketDir } = await import('../lib/db.js');
     const dbOk = await isAvailable();
-    console.log(`  pgserve:    ${dbOk ? `healthy (port ${getActivePort()})` : 'unreachable'}`);
+    const where = isSocketMode() ? `socket ${resolvePgserveSocketDir()}` : `port ${getActivePort()}`;
+    console.log(`  pgserve:    ${dbOk ? `healthy (${where})` : 'unreachable'}`);
   } catch {
     console.log('  pgserve:    unavailable');
+  }
+}
+
+/**
+ * Resolve the hook UDS path the same way startHookSocket does — env override
+ * first, fall back to ~/.genie/hook.sock. Closes #1490: warm-restart and
+ * status output need to agree on which socket they look for.
+ */
+function hookSocketPath(): string {
+  return process.env.GENIE_HOOK_SOCK ?? join(genieHome(), 'hook.sock');
+}
+
+/**
+ * Closes #1490 — log a clear warning when a live daemon is missing the hook
+ * UDS (and therefore daemon-mode hook dispatch is silently inert; every
+ * hook dispatch falls back to the legacy F1 bun fork). Called by both
+ * `claimServePidOrExit` (before exiting on "already running") and
+ * `printHookSocketStatus` (called by `genie serve status`).
+ */
+function warnIfHookSocketMissing(): void {
+  const sock = hookSocketPath();
+  if (existsSync(sock)) return;
+  const lines = [
+    `  WARNING: hook UDS not found at ${sock}.`,
+    '  Daemon-mode hook dispatch is INACTIVE — every hook will fall back',
+    '  to the legacy F1 bun-fork path (hookify-perf-foundation gains lost).',
+    '  Remediation: `genie serve stop && genie serve start` to refresh the',
+    '  daemon and re-create the socket.',
+  ];
+  console.warn(lines.join('\n'));
+}
+
+/** Print hook UDS status for `genie serve status`. */
+function printHookSocketStatus(): void {
+  const sock = hookSocketPath();
+  if (existsSync(sock)) {
+    console.log(`  hook UDS:   listening at ${sock}`);
+  } else {
+    console.log(`  hook UDS:   MISSING at ${sock} (F1 fallback active — see #1490)`);
   }
 }
 
@@ -1146,7 +1558,13 @@ async function printBrainStatus(): Promise<void> {
   try {
     // @ts-expect-error — brain is enterprise-only, not in genie's deps
     const brain = await import('@khal-os/brain');
-    const brainPort = resolveBrainPortFromWorkspace(brain) ?? handles.brainHandle?.port ?? null;
+    if (handles.brainHandles.length > 0) {
+      for (const handle of handles.brainHandles) {
+        await probeBrainHealth(handle.port);
+      }
+      return;
+    }
+    const brainPort = resolveBrainPortFromWorkspace(brain);
     if (brainPort) {
       await probeBrainHealth(brainPort);
     } else {
@@ -1159,6 +1577,7 @@ async function printBrainStatus(): Promise<void> {
 
 async function printPgserveStatus(): Promise<void> {
   await printPgserveHealth();
+  printHookSocketStatus();
   await printBrainStatus();
 }
 
@@ -1255,6 +1674,13 @@ interface ServeStartOptions {
   foreground?: boolean;
   headless?: boolean;
   fix?: boolean;
+  /**
+   * Refuse to start when the boot-scan loader finds two external `.ts` hook
+   * files declaring the same `name`. Default behavior is to log a warning,
+   * keep the higher-precedence file, and continue. Operators who want a hard
+   * gate (e.g. CI / fleet rollouts) pass `--strict-hooks`.
+   */
+  strictHooks?: boolean;
 }
 
 /**
@@ -1273,15 +1699,18 @@ interface ServeStartOptions {
  * (e.g. bridge-failure assertions) within a tight timing envelope. Production
  * code paths must never set this — `--no-fix` is the operator-facing escape.
  */
-async function runStartPreconditions(autoFix: boolean): Promise<void> {
-  if (process.env.GENIE_SKIP_PRECONDITIONS === '1') return;
+async function runStartPreconditions(autoFix: boolean, log?: (line: string) => void): Promise<boolean> {
+  if (process.env.GENIE_SKIP_PRECONDITIONS === '1') return true;
   const { ensureServeReady } = await import('./serve/ensure-ready.js');
-  const report = await ensureServeReady({ autoFix });
-  if (autoFix) return;
+  const report = await ensureServeReady({ autoFix, deps: log ? { log } : undefined });
+  if (autoFix) return true;
   if (!report.ok) {
-    console.error('genie serve start refused: one or more preconditions are not ok (--no-fix mode).');
-    process.exit(2);
+    const message = 'genie serve start refused: one or more preconditions are not ok (--no-fix mode).';
+    if (log) log(message);
+    else console.error(message);
+    return false;
   }
+  return true;
 }
 
 export function registerServeCommands(program: Command): void {
@@ -1294,14 +1723,20 @@ export function registerServeCommands(program: Command): void {
     .option('--foreground', 'Run in foreground (default)')
     .option('--headless', 'Run without TUI (services only: pgserve, scheduler, inbox-watcher)')
     .option('--no-fix', 'Refuse to start when any precondition is not ok (default: auto-fix)')
+    .option('--strict-hooks', 'Refuse to start on any same-name external hook collision (default: warn + continue)')
     .action(async (options: ServeStartOptions) => {
       // commander's `--no-fix` flips `options.fix` to false. Default is true.
       const autoFix = options.fix !== false;
-      await runStartPreconditions(autoFix);
+      // Propagate --strict-hooks to startHookSocketSafely via env so the
+      // signature stays narrow (the daemon-startup graph is deep). Read once
+      // by hook-socket.ts at boot; never mutated thereafter.
+      if (options.strictHooks) {
+        process.env.GENIE_STRICT_HOOKS = '1';
+      }
       if (options.daemon) {
-        await startBackground(options.headless);
+        await startBackground(options.headless, autoFix);
       } else {
-        await startForeground(options.headless);
+        await startForeground(options.headless, autoFix);
       }
     });
 

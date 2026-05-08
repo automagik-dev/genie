@@ -12,6 +12,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { sanitizeTeamName } from './claude-native-teams.js';
+import { GENIE_BASELINE_ALLOWED_TOOLS } from './claude-settings.js';
 import { loadGenieConfigSync } from './genie-config.js';
 
 /** Shell-quote a string for safe embedding in shell commands. */
@@ -84,6 +85,15 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     const promptFlag = resolvedPromptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
     parts.push(`${promptFlag} ${shellQuote(options.systemPromptFile)}`);
   }
+
+  // Bake AskUserQuestion into the team-lead's allow list so the user-prompt UI
+  // never routes through the team-lead's own approval queue (which would mean
+  // the leader is approving its own request — a deadlock dressed up as a popup).
+  // Closes #1688.
+  const baselineSettings = JSON.stringify({
+    permissions: { allow: [...GENIE_BASELINE_ALLOWED_TOOLS] },
+  });
+  parts.push(`--settings ${shellQuote(baselineSettings)}`);
 
   return parts.join(' ');
 }

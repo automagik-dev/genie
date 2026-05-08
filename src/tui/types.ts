@@ -8,6 +8,19 @@ export type TreeNodeType = 'session' | 'window' | 'pane' | 'agent';
 export type AgentState = 'running' | 'stopped' | 'error' | 'spawning';
 
 /**
+ * Distinguishes top-level workspace agents (`canonical`) from scoped
+ * sub-agents (`subagent`, e.g. `felipe/scout`, `genie/devrel`). The kind
+ * is set explicitly when the tree is built so renderers and consumers
+ * never have to re-derive it from the agent name.
+ *
+ * Sub-agents are guaranteed to render only as nested children of their
+ * parent canonical (depth 1). The current `scanSubAgents`
+ * (`src/lib/workspace.ts`) only walks one level — if hierarchy ever
+ * extends, this enum and `appendSubAgentNodes` will need revisit.
+ */
+export type AgentKind = 'canonical' | 'subagent';
+
+/**
  * Work-state derived from `shouldResume()` (invincible-genie / Group 2).
  *
  * This is what the wish actually needs the user to see — process state
@@ -39,6 +52,12 @@ export interface TreeNode {
   agentState?: 'idle' | 'working' | 'permission' | 'error';
   /** Workspace agent lifecycle state */
   wsAgentState?: AgentState;
+  /**
+   * Distinguishes canonical workspace agents (top-level) from scoped
+   * sub-agents (nested under a canonical parent). Only set on `type:
+   * 'agent'` nodes; absent on session/window/pane rows.
+   */
+  kind?: AgentKind;
   /**
    * Work state derived from `shouldResume()` (invincible-genie / Group 2).
    * Distinct from `wsAgentState` — see {@link WorkState}.

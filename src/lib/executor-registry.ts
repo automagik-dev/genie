@@ -452,15 +452,15 @@ async function defaultScanForSession(cwd: string, identity: ResumeFallbackIdenti
 /**
  * Single-reader chokepoint for every resume decision.
  *
- * Joins `agents.current_executor_id → executors.claude_session_id` and emits
- * one of three audit events:
- *   - `resume.found` when a session UUID is available for reuse via the DB path.
- *   - `resume.recovered_via_jsonl` when DB lookup misses but the on-disk JSONL
- *     for the agent's cwd yields a usable session UUID — last-resort recovery
- *     after reconciler-driven `current_executor_id` nullification (the
- *     post-host-crash scenario where the executor row got archived).
- *   - `resume.missing_session` when neither path turns up a session (with
- *     `reason` tagged so operators can tell `no_executor` from `null_session`).
+ * Joins `agents.current_executor_id → executors.claude_session_id` and returns
+ * a session UUID via either the DB happy path or the on-disk JSONL fallback.
+ *
+ * **Pure read path — no audit emissions.** Status reads, TUI ticks, `genie ls`,
+ * and any boot-pass surface call this and must produce ZERO audit rows. Audit
+ * emission for `resume.found` and `resume.recovered_via_jsonl` lives in
+ * {@link acquireResumeSessionForAttempt}, which the actual resume sites
+ * (`buildFullResumeParams`, team-auto-spawn, protocol-router) call when they
+ * are about to use the UUID for a real resume.
  *
  * Returning `null` is load-bearing: callers that did NOT explicitly request a
  * resume (e.g., fresh spawns) treat `null` as "no prior session → start
@@ -476,10 +476,28 @@ type ResumeRow = {
 };
 
 /**
+ * Structured result of the pure resume-session lookup. The `source` field
+ * lets callers that *do* want to emit audit events distinguish DB-path hits
+ * from JSONL-fallback hits without re-running the join.
+ */
+type ResumeSessionLookup = {
+  sessionId: string;
+  source: 'db' | 'jsonl';
+  executorId: string | null;
+  cwd: string | null;
+  team: string | null;
+  customName: string | null;
+  /** Only populated for `source === 'jsonl'`. */
+  recoveredFrom: 'no_executor' | 'null_session' | null;
+};
+
+/**
  * Try the JSONL on-disk fallback for an agent whose DB resume read missed.
- * Returns the recovered session UUID if a matching JSONL is found, or null
- * if no cwd / no customName / no JSONL match. Emits
- * `resume.recovered_via_jsonl` on hit.
+ * Returns the structured lookup result if a matching JSONL is found, or null
+ * if no cwd / no identity / no JSONL match.
+ *
+ * **Pure** — no emission. Audit emission belongs to the eventful path
+ * ({@link acquireResumeSessionForAttempt}).
  *
  * Identity is `(team, custom_name)`. `custom_name` is required (the scanner
  * refuses to attach without role identity), but `team` may be null —
@@ -487,7 +505,7 @@ type ResumeRow = {
  * by matching on `agentName` alone (Felipe directive 2026-05-07: previous
  * strict-both check stranded rows where team got dropped).
  */
-async function tryJsonlFallback(agentId: string, row: ResumeRow | null, actor: string): Promise<string | null> {
+async function tryJsonlFallback(row: ResumeRow | null): Promise<ResumeSessionLookup | null> {
   const cwd = row?.repo_path ?? null;
   if (!cwd) return null;
 
@@ -500,33 +518,68 @@ async function tryJsonlFallback(agentId: string, row: ResumeRow | null, actor: s
   const recoveredSessionId = await scanner(cwd, identity);
   if (!recoveredSessionId) return null;
 
-  const reason = row && row.executor_id !== null ? 'null_session' : 'no_executor';
-  await recordAuditEvent('agent', agentId, 'resume.recovered_via_jsonl', actor, {
+  const recoveredFrom: 'no_executor' | 'null_session' =
+    row && row.executor_id !== null ? 'null_session' : 'no_executor';
+  return {
     sessionId: recoveredSessionId,
+    source: 'jsonl',
     executorId: row?.executor_id ?? null,
     cwd,
     team: identity.team,
     customName: identity.customName,
-    recoveredFrom: reason,
-  });
-  return recoveredSessionId;
+    recoveredFrom,
+  };
 }
 
-/** Emit the appropriate `resume.missing_session` event when both DB and JSONL miss. */
-async function emitMissingSession(agentId: string, row: ResumeRow | null, actor: string): Promise<void> {
-  if (row === null || row.executor_id === null) {
-    await recordAuditEvent('agent', agentId, 'resume.missing_session', actor, {
-      reason: 'no_executor',
-    });
-    return;
-  }
-  await recordAuditEvent('agent', agentId, 'resume.missing_session', actor, {
-    reason: 'null_session',
-    executorId: row.executor_id,
-  });
+/**
+ * Test-only: no-op kept for back-compat with tests that asserted on dedupe
+ * behavior in PR #1528 (Wave 1). The dedupe was removed in the W1 hotfix
+ * because in-process maps don't survive CLI process boundaries — every
+ * `genie ls` / TUI tick is a fresh process and each emitted a fresh event,
+ * which made the 60s dedupe window ineffective in the observed storm path.
+ *
+ * The architectural fix instead removes emission from the read path
+ * (`getResumeSessionId`) entirely. Emission now happens only from the
+ * scheduler's `attemptAgentResume` no-session branch — bounded to one
+ * event per orphan per scheduler tick by the long-running daemon.
+ *
+ * See PR #1530 (this hotfix) and #1528 (the original Wave 1 attempt).
+ */
+export function _resetMissingSessionDedupeForTests(): void {
+  /* noop — dedupe map removed in W1 hotfix */
 }
 
-export async function getResumeSessionId(agentId: string): Promise<string | null> {
+/**
+ * Record a `resume.missing_session` audit event. **Caller is responsible for
+ * rate-limiting** — this writes one row unconditionally. Used by the
+ * scheduler from `attemptAgentResume` (bounded to ≤1 emit per orphan per
+ * 60s tick by the daemon's tick cadence).
+ *
+ * The READ path (`getResumeSessionId`) deliberately does NOT call this:
+ * status reads / TUI ticks / `genie ls` would otherwise produce one event
+ * per reader-process, which 14M-events-in-7-days confirmed is unbounded.
+ */
+export async function recordResumeMissingSession(
+  agentId: string,
+  actor: string,
+  details: { reason: 'no_executor' | 'null_session' | 'no_session_id'; executorId?: string | null },
+): Promise<void> {
+  await recordAuditEvent('agent', agentId, 'resume.missing_session', actor, details);
+}
+
+/**
+ * Pure lookup of an agent's resume session UUID. Joins
+ * `agents.current_executor_id → executors.claude_session_id`; falls back to
+ * the on-disk JSONL scan when the DB miss is recoverable.
+ *
+ * **No audit emission.** Status reads, TUI ticks, `genie ls`, and the
+ * boot-pass surface all hit this — emitting from here is what produced the
+ * 242,553-rows-per-day `resume.found` storm on the felipe DB. Callers that
+ * are about to ATTEMPT a real resume (the actor-that-takes-action, not the
+ * actor-that-queries-state) call {@link acquireResumeSessionForAttempt}
+ * instead, which records the appropriate lifecycle event.
+ */
+async function lookupResumeSession(agentId: string): Promise<ResumeSessionLookup | null> {
   const sql = await getConnection();
   const rows = await sql<ResumeRow[]>`
     SELECT a.current_executor_id AS executor_id,
@@ -538,29 +591,85 @@ export async function getResumeSessionId(agentId: string): Promise<string | null
     LEFT JOIN executors e ON e.id = a.current_executor_id
     WHERE a.id = ${agentId}
   `;
-
-  const actor = process.env.GENIE_AGENT_NAME ?? 'cli';
   const row = rows[0] ?? null;
 
   // DB happy path: current executor has a session id.
   if (row && row.executor_id !== null && row.claude_session_id) {
-    await recordAuditEvent('agent', agentId, 'resume.found', actor, {
-      executorId: row.executor_id,
+    return {
       sessionId: row.claude_session_id,
-    });
-    return row.claude_session_id;
+      source: 'db',
+      executorId: row.executor_id,
+      cwd: row.repo_path,
+      team: row.team,
+      customName: row.custom_name,
+      recoveredFrom: null,
+    };
   }
 
   // DB miss — try JSONL fallback when we know the agent's cwd. Reconciler
   // crashes routinely null out `current_executor_id` after pane death, but
   // the conversation JSONL on disk is the durable artifact that
   // `claude --resume <uuid>` actually replays from.
-  const recovered = await tryJsonlFallback(agentId, row, actor);
-  if (recovered) return recovered;
+  return await tryJsonlFallback(row);
+}
 
-  // Final miss — no DB session, no JSONL on disk.
-  await emitMissingSession(agentId, row, actor);
-  return null;
+/**
+ * Pure read of an agent's resume session UUID — no audit emission.
+ *
+ * This is the single reader used by `shouldResume()` (and only
+ * `shouldResume()`, per state-machine invariant 3). All read-only surfaces
+ * — `genie status`, `genie ls`, TUI work-state refresh, boot-pass — funnel
+ * through `shouldResume`, so this lookup must remain silent: prior to this
+ * change every read emitted `resume.found` and the chain produced a 242k-row
+ * 24h audit storm on felipe's DB.
+ *
+ * Returns `null` when no session UUID can be located (no current executor,
+ * executor with no session id, or DB miss with no JSONL fallback). Callers
+ * that need an explicit lifecycle event for the resume *attempt* call
+ * {@link acquireResumeSessionForAttempt}, which records `resume.found` (DB
+ * path) or `resume.recovered_via_jsonl` (JSONL path) before returning.
+ */
+export async function getResumeSessionId(agentId: string): Promise<string | null> {
+  const lookup = await lookupResumeSession(agentId);
+  return lookup?.sessionId ?? null;
+}
+
+/**
+ * Eventful resume-attempt helper. Same lookup as {@link getResumeSessionId},
+ * plus emission of the appropriate lifecycle audit event:
+ *
+ *   - `resume.found` when the session came from the DB happy path.
+ *   - `resume.recovered_via_jsonl` when the session was rebuilt from the
+ *     on-disk JSONL fallback.
+ *
+ * Call this from sites that are about to actually use the UUID to resume a
+ * conversation — e.g., `buildFullResumeParams` (manual + scheduler-driven
+ * `genie agent resume`), `team-auto-spawn` (team-lead `--resume <uuid>`
+ * launch), and `protocol-router.resolveResumeSessionId` (spawn-attach with
+ * `--session-id <uuid>`). Read paths must NOT call this — use
+ * {@link getResumeSessionId} or `shouldResume()` instead.
+ */
+export async function acquireResumeSessionForAttempt(agentId: string, actor?: string): Promise<string | null> {
+  const lookup = await lookupResumeSession(agentId);
+  if (!lookup) return null;
+
+  const emitActor = actor ?? process.env.GENIE_AGENT_NAME ?? 'cli';
+  if (lookup.source === 'db') {
+    await recordAuditEvent('agent', agentId, 'resume.found', emitActor, {
+      executorId: lookup.executorId,
+      sessionId: lookup.sessionId,
+    });
+  } else {
+    await recordAuditEvent('agent', agentId, 'resume.recovered_via_jsonl', emitActor, {
+      sessionId: lookup.sessionId,
+      executorId: lookup.executorId,
+      cwd: lookup.cwd,
+      team: lookup.team,
+      customName: lookup.customName,
+      recoveredFrom: lookup.recoveredFrom,
+    });
+  }
+  return lookup.sessionId;
 }
 
 /**

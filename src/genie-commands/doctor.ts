@@ -5,6 +5,7 @@
  * Checks prerequisites, configuration, and tmux connectivity.
  */
 
+import { execFileSync } from 'node:child_process';
 import {
   copyFileSync,
   existsSync,
@@ -21,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 import type { BridgeStatusResult, PingOptions } from '../lib/bridge-status.js';
 import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-settings.js';
+import { isAvailable as isRuntimePgAvailable } from '../lib/db.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
 import { checkCommand } from '../lib/system-detect.js';
@@ -69,91 +71,55 @@ function printCheckResult(result: CheckResult): void {
   }
 }
 
+interface BinarySpec {
+  cmd: string;
+  displayName: string;
+  missingStatus: 'fail' | 'warn';
+  missingSuggestion: string;
+}
+
+const PREREQ_BINARIES: BinarySpec[] = [
+  {
+    cmd: 'tmux',
+    displayName: 'tmux',
+    missingStatus: 'fail',
+    missingSuggestion: 'Install with: brew install tmux (or apt install tmux)',
+  },
+  {
+    cmd: 'jq',
+    displayName: 'jq',
+    missingStatus: 'fail',
+    missingSuggestion: 'Install with: brew install jq (or apt install jq)',
+  },
+  {
+    cmd: 'bun',
+    displayName: 'bun',
+    missingStatus: 'fail',
+    missingSuggestion: 'Install with: curl -fsSL https://bun.sh/install | bash',
+  },
+  {
+    cmd: 'claude',
+    displayName: 'Claude Code',
+    missingStatus: 'warn',
+    missingSuggestion: 'Install with: npm install -g @anthropic-ai/claude-code',
+  },
+  // Codex is required for `genie spawn ... --provider codex` to work.
+  {
+    cmd: 'codex',
+    displayName: 'Codex CLI',
+    missingStatus: 'warn',
+    missingSuggestion: 'Install via OpenAI account; codex is optional unless using --provider codex',
+  },
+];
+
 /**
  * Check prerequisites (tmux, jq, bun, Claude Code)
  */
 async function checkPrerequisites(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
-  // Check tmux
-  const tmuxCheck = await checkCommand('tmux');
-  if (tmuxCheck.exists) {
-    results.push({
-      name: 'tmux',
-      status: 'pass',
-      message: tmuxCheck.version || '',
-    });
-  } else {
-    results.push({
-      name: 'tmux',
-      status: 'fail',
-      suggestion: 'Install with: brew install tmux (or apt install tmux)',
-    });
-  }
-
-  // Check jq
-  const jqCheck = await checkCommand('jq');
-  if (jqCheck.exists) {
-    results.push({
-      name: 'jq',
-      status: 'pass',
-      message: jqCheck.version || '',
-    });
-  } else {
-    results.push({
-      name: 'jq',
-      status: 'fail',
-      suggestion: 'Install with: brew install jq (or apt install jq)',
-    });
-  }
-
-  // Check bun
-  const bunCheck = await checkCommand('bun');
-  if (bunCheck.exists) {
-    results.push({
-      name: 'bun',
-      status: 'pass',
-      message: bunCheck.version || '',
-    });
-  } else {
-    results.push({
-      name: 'bun',
-      status: 'fail',
-      suggestion: 'Install with: curl -fsSL https://bun.sh/install | bash',
-    });
-  }
-
-  // Check Claude Code
-  const claudeCheck = await checkCommand('claude');
-  if (claudeCheck.exists) {
-    results.push({
-      name: 'Claude Code',
-      status: 'pass',
-      message: claudeCheck.version || '',
-    });
-  } else {
-    results.push({
-      name: 'Claude Code',
-      status: 'warn',
-      suggestion: 'Install with: npm install -g @anthropic-ai/claude-code',
-    });
-  }
-
-  // Check Codex (Group 6 of codex-provider-parity wish — was missing).
-  // Codex is required for `genie spawn ... --provider codex` to work.
-  const codexCheck = await checkCommand('codex');
-  if (codexCheck.exists) {
-    results.push({
-      name: 'Codex CLI',
-      status: 'pass',
-      message: codexCheck.version || '',
-    });
-  } else {
-    results.push({
-      name: 'Codex CLI',
-      status: 'warn',
-      suggestion: 'Install via OpenAI account; codex is optional unless using --provider codex',
-    });
+  for (const spec of PREREQ_BINARIES) {
+    results.push(await checkBinaryPrereq(spec));
   }
 
   // Non-interactive PATH check (Group 6 deliverable 1).
@@ -170,46 +136,56 @@ async function checkPrerequisites(): Promise<CheckResult[]> {
   // wasn't on the non-interactive PATH for that user.
   const requiredForSpawn = ['genie', 'bun', 'node', 'npm', 'git', 'claude', 'codex'] as const;
   for (const bin of requiredForSpawn) {
-    const interactivePath = await resolveBinaryInteractive(bin);
-    const nonInteractivePath = await resolveBinaryNonInteractive(bin);
-
-    if (interactivePath && nonInteractivePath) {
-      // OK in both shells — green.
-      results.push({
-        name: `Non-interactive PATH: ${bin}`,
-        status: 'pass',
-        message: nonInteractivePath,
-      });
-    } else if (interactivePath && !nonInteractivePath) {
-      // Available interactively but missing in non-interactive shells —
-      // spawn-scripts will fail. This is the actionable warning case.
-      results.push({
-        name: `Non-interactive PATH: ${bin}`,
-        status: 'warn',
-        message: 'interactive-only',
-        suggestion: `Move PATH export from ~/.bashrc to ~/.profile so spawn-scripts can resolve ${bin}. (Or use a stable symlink in ~/.local/bin.)`,
-      });
-    } else if (!interactivePath && bin !== 'codex') {
-      // Codex absence is already reported by the per-tool check above;
-      // skip the duplicate. For other tools, drop into the soft-warn branch.
-      // Not resolvable in non-interactive shell — soft warning only,
-      // because most of our spawn-scripts use absolute paths (resolved
-      // at spawn time via `which` from the parent shell). This still
-      // bites flows that shell out to bare names — `genie update`'s
-      // `git fetch` is the canonical failure case. Operator can ignore
-      // these for binaries they don't use; the warning is informational.
-      if (bin === 'genie' || bin === 'node' || bin === 'npm' || bin === 'git') {
-        results.push({
-          name: `Non-interactive PATH: ${bin}`,
-          status: 'warn',
-          message: 'not in non-interactive PATH',
-          suggestion: `Add ${bin} to ~/.profile (not just ~/.bashrc). Some flows (e.g. genie update) shell out to bare '${bin}' from non-interactive subprocesses.`,
-        });
-      }
-    }
+    const result = await checkNonInteractivePath(bin);
+    if (result) results.push(result);
   }
 
   return results;
+}
+
+async function checkBinaryPrereq(spec: BinarySpec): Promise<CheckResult> {
+  const check = await checkCommand(spec.cmd);
+  if (check.exists) {
+    return { name: spec.displayName, status: 'pass', message: check.version || '' };
+  }
+  return { name: spec.displayName, status: spec.missingStatus, suggestion: spec.missingSuggestion };
+}
+
+async function checkNonInteractivePath(bin: string): Promise<CheckResult | null> {
+  const interactivePath = await resolveBinaryInteractive(bin);
+  const nonInteractivePath = await resolveBinaryNonInteractive(bin);
+
+  if (interactivePath && nonInteractivePath) {
+    // OK in both shells — green.
+    return { name: `Non-interactive PATH: ${bin}`, status: 'pass', message: nonInteractivePath };
+  }
+  if (interactivePath && !nonInteractivePath) {
+    // Available interactively but missing in non-interactive shells —
+    // spawn-scripts will fail. This is the actionable warning case.
+    return {
+      name: `Non-interactive PATH: ${bin}`,
+      status: 'warn',
+      message: 'interactive-only',
+      suggestion: `Move PATH export from ~/.bashrc to ~/.profile so spawn-scripts can resolve ${bin}. (Or use a stable symlink in ~/.local/bin.)`,
+    };
+  }
+  // Codex absence is already reported by the per-tool check above; skip duplicate.
+  // For other tools, drop into the soft-warn branch.
+  // Not resolvable in non-interactive shell — soft warning only,
+  // because most of our spawn-scripts use absolute paths (resolved
+  // at spawn time via `which` from the parent shell). This still
+  // bites flows that shell out to bare names — `genie update`'s
+  // `git fetch` is the canonical failure case. Operator can ignore
+  // these for binaries they don't use; the warning is informational.
+  if (!interactivePath && (bin === 'genie' || bin === 'node' || bin === 'npm' || bin === 'git')) {
+    return {
+      name: `Non-interactive PATH: ${bin}`,
+      status: 'warn',
+      message: 'not in non-interactive PATH',
+      suggestion: `Add ${bin} to ~/.profile (not just ~/.bashrc). Some flows (e.g. genie update) shell out to bare '${bin}' from non-interactive subprocesses.`,
+    };
+  }
+  return null;
 }
 
 /**
@@ -712,6 +688,112 @@ export function checkLegacyAgentFrontmatter(workspaceRoot?: string): CheckResult
 }
 
 /**
+ * Check canonical pgserve state — whether the pgserve binary is on PATH,
+ * registered under pm2, and listening on the canonical port. Mirrors omni
+ * doctor's `pgserve-canonical` check so both halves of the canonical-stack
+ * surface the same shared-backbone visibility.
+ *
+ * Three outcomes:
+ *   - pgserve missing → WARN with install hint (not FAIL because genie can
+ *     auto-spawn its own daemon as a fallback for fingerprint-routed CLI).
+ *   - pgserve installed but not under pm2 → WARN pointing at `pgserve install`.
+ *   - pgserve registered + reachable → PASS, surface the canonical URL so
+ *     operators can verify what Genie / omni-api are connecting to.
+ */
+async function checkPgserveCanonical(): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+
+  // Step 1: pgserve binary on PATH? Probe via `pgserve port` (NOT --version
+  // — that flag doesn't exist in pgserve@^2.1.0 and false-negatived in
+  // historical doctor implementations).
+  let canonicalPort: number | null = null;
+  try {
+    const out = execFileSync('pgserve', ['port'], {
+      encoding: 'utf8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const parsed = Number.parseInt(out.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 65535) {
+      canonicalPort = parsed;
+    }
+  } catch {
+    /* pgserve binary missing or non-zero exit — handled below */
+  }
+
+  if (canonicalPort === null) {
+    results.push({
+      name: 'pgserve binary',
+      status: 'warn',
+      message: 'not on PATH (or `pgserve port` failed)',
+      suggestion:
+        'Install canonical pgserve: bun add -g pgserve@^2.1.0 (then run `pgserve install` to register under pm2)',
+    });
+    return results;
+  }
+  results.push({
+    name: 'pgserve binary',
+    status: 'pass',
+    message: `canonical port ${canonicalPort}`,
+  });
+
+  // Step 2: pm2-supervised? Check via `pgserve status --json`.
+  try {
+    const status = execFileSync('pgserve', ['status', '--json'], {
+      encoding: 'utf8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const parsed = JSON.parse(status) as { installed?: boolean; status?: string };
+    if (parsed.installed === true && parsed.status === 'online') {
+      results.push({
+        name: 'pgserve under pm2',
+        status: 'pass',
+        message: `online — shared backbone for Genie + omni-api on :${canonicalPort}`,
+      });
+    } else if (parsed.installed === true) {
+      // pm2 has the entry but reports stopped. Under the consumer-only
+      // cutover model genie connects via the embedded socket regardless
+      // of pm2's view, so probe the runtime PG before warning. If the
+      // runtime is healthy, this is a stale pm2 registration — a cleanup
+      // hint, not a recovery action.
+      const runtimeReachable = await isRuntimePgAvailable();
+      if (runtimeReachable) {
+        results.push({
+          name: 'pgserve under pm2',
+          status: 'pass',
+          message: `pm2 entry status=${parsed.status ?? 'unknown'} but runtime PG reachable (consumer-only)`,
+          suggestion: 'Optional cleanup: pm2 delete pgserve  (the embedded backbone is the source of truth)',
+        });
+      } else {
+        results.push({
+          name: 'pgserve under pm2',
+          status: 'warn',
+          message: `registered but status=${parsed.status ?? 'unknown'}; runtime PG also unreachable`,
+          suggestion: 'Recover with: pm2 restart pgserve   (logs: ~/.pgserve/logs/)',
+        });
+      }
+    } else {
+      results.push({
+        name: 'pgserve under pm2',
+        status: 'warn',
+        message: 'binary present but not registered under pm2',
+        suggestion: 'Register canonical pgserve: pgserve install',
+      });
+    }
+  } catch {
+    results.push({
+      name: 'pgserve under pm2',
+      status: 'warn',
+      message: '`pgserve status` failed (pm2 unreachable?)',
+      suggestion: 'Verify pm2: pm2 list   |   Re-register: pgserve install',
+    });
+  }
+
+  return results;
+}
+
+/**
  * Main doctor command
  */
 function runCheckSection(label: string, results: CheckResult[], counts: { errors: boolean; warnings: boolean }): void {
@@ -726,6 +808,7 @@ function runCheckSection(label: string, results: CheckResult[], counts: { errors
 export async function doctorCommand(options?: {
   fix?: boolean;
   observability?: boolean;
+  perf?: boolean;
   fixTeamOrphans?: boolean;
   dryRun?: boolean;
   json?: boolean;
@@ -745,6 +828,12 @@ export async function doctorCommand(options?: {
     return;
   }
 
+  if (options?.perf) {
+    const { runPerfCheck } = await import('./perf-check.js');
+    await runPerfCheck(Boolean(options.json));
+    return;
+  }
+
   console.log();
   console.log('\x1b[1mGenie Doctor\x1b[0m');
   console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
@@ -757,6 +846,7 @@ export async function doctorCommand(options?: {
   runCheckSection('Tmux', await checkTmux(), counts);
   runCheckSection('Tmux Configs', checkTmuxConfigs(), counts);
   runCheckSection('Worker Profiles', await checkWorkerProfiles(), counts);
+  runCheckSection('Pgserve (canonical backbone)', await checkPgserveCanonical(), counts);
   runCheckSection('Omni Bridge', await checkBridge(), counts);
   runCheckSection('Agent Config', checkLegacyAgentFrontmatter(), counts);
   runCheckSection('Genie Specialist', checkGenieAgentTemplate(), counts);
@@ -829,19 +919,33 @@ function printDoctorSummary(counts: { errors: boolean; warnings: boolean }): voi
   console.log();
 }
 
+function legacyPgserveRepairEnabled(): boolean {
+  return process.env.GENIE_PG_FORCE_TCP === '1' || process.env.GENIE_DOCTOR_FIX_LEGACY_PGSERVE === '1';
+}
+
 /**
- * `genie doctor --fix` — automated recovery for stale PG state.
- * Kills zombie postgres, cleans shared memory, removes stale files, restarts daemon.
+ * `genie doctor --fix` — automated recovery for daemon state.
+ *
+ * pgserve v2 is portless and must coexist with pgserve v1 (latest v1:
+ * 1.2.0). Default doctor repair therefore avoids broad pgserve/postgres
+ * process kills. Legacy TCP cleanup is opt-in via GENIE_PG_FORCE_TCP=1 or
+ * GENIE_DOCTOR_FIX_LEGACY_PGSERVE=1 and is scoped to Genie's legacy data dir.
  */
-async function killStalePostgres(): Promise<void> {
-  console.log('  Killing stale postgres processes...');
-  try {
-    const { execSync } = await import('node:child_process');
-    execSync('pkill -9 -f "postgres.*pgserve" 2>/dev/null || true', { stdio: 'ignore', timeout: 5000 });
-    console.log('  \x1b[32m\u2713\x1b[0m Stale postgres processes killed');
-  } catch {
-    console.log('  \x1b[33m!\x1b[0m Could not kill stale postgres processes');
-  }
+/**
+ * After the canonical-pgserve cutover, the doctor never shells out to pkill
+ * pgserve / postgres. The canonical daemon is supervised by pm2; any "heal"
+ * that touches the postgres process tree fights pm2's restart-on-crash and
+ * produces the "Could not kill stale postgres processes" failure mode that
+ * triggered the cutover wish. Recovery is hint-only: print the pm2 commands
+ * and let the operator run them.
+ */
+function printPgserveRecoveryHint(): void {
+  console.log('  \x1b[33m[!!] pgserve unreachable \u2014 canonical daemon may not be running.\x1b[0m');
+  console.log('    Recovery (run as the operator, not the doctor):');
+  console.log('      pm2 status              # is pgserve registered?');
+  console.log('      pm2 restart pgserve     # OR: autopg restart');
+  console.log('      pgserve install         # if not registered yet');
+  console.log('    See https://github.com/automagik-dev/genie/blob/main/docs/install.md');
 }
 
 async function cleanSharedMemory(): Promise<void> {
@@ -893,10 +997,14 @@ async function stopExistingDaemon(pidFile: string): Promise<void> {
 }
 
 function removeStaleFiles(genieHome: string, pidFile: string): void {
-  const portFile = join(genieHome, 'pgserve.port');
-  const postmasterPid = join(genieHome, 'data', 'pgserve', 'postmaster.pid');
+  const files = [pidFile];
+  if (legacyPgserveRepairEnabled()) {
+    files.push(join(genieHome, 'pgserve.port'), join(genieHome, 'data', 'pgserve', 'postmaster.pid'));
+  } else {
+    console.log('  Leaving legacy pgserve v1 port/data files untouched (v1/v2 coexistence)');
+  }
 
-  for (const file of [portFile, pidFile, postmasterPid]) {
+  for (const file of files) {
     if (existsSync(file)) {
       try {
         unlinkSync(file);
@@ -1041,13 +1149,13 @@ function fixTmuxConfigs(): void {
   refreshTmuxConfFile(bundledDir, home, 'genie.tmux.conf', 'tmux.conf');
 }
 
-async function runMaintenancePreconditions(silent = false): Promise<void> {
+async function runMaintenancePreconditions(silent = false, log?: (line: string) => void): Promise<void> {
   // Heavy preconditions live here, NOT in `ensureServeReady`: watchdog install,
   // foreground backfill convergence, stale team-config archive. Boot is fast;
   // upgrades and explicit `doctor --fix` are where housekeeping happens.
   try {
     const { runDoctorMaintenance } = await import('../term-commands/serve/ensure-ready.js');
-    await runDoctorMaintenance({ silent });
+    await runDoctorMaintenance({ silent, deps: log ? { log } : undefined });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!silent) console.warn(`  Maintenance preconditions skipped: ${msg}`);
@@ -1058,10 +1166,11 @@ async function doctorFix(): Promise<void> {
   console.log('\n\x1b[1mGenie Doctor \u2014 Auto Fix\x1b[0m');
   console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m\n`);
 
-  await killStalePostgres();
+  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+
+  printPgserveRecoveryHint();
   await cleanSharedMemory();
 
-  const genieHome = process.env.GENIE_HOME ?? join(homedir(), '.genie');
   const pidFile = join(genieHome, 'scheduler.pid');
 
   await stopExistingDaemon(pidFile);
@@ -1089,6 +1198,270 @@ async function doctorFix(): Promise<void> {
  * shells-out / one-time-cost preconditions that day-one users would otherwise
  * hit on first `genie` after upgrade.
  */
-export async function runPostUpdateMaintenance(): Promise<void> {
-  await runMaintenancePreconditions(/* silent */ true);
+export interface PostUpdateMaintenanceOptions {
+  silent?: boolean;
+  log?: (line: string) => void;
+}
+
+export async function runPostUpdateMaintenance(options: PostUpdateMaintenanceOptions = {}): Promise<void> {
+  await reapStaleGenieProcessesSafe(options);
+  await runMaintenancePreconditions(options.silent ?? false, options.log);
+}
+
+/**
+ * Walk a process's parent chain via /proc/<pid>/status. Returns the set of
+ * PIDs from `pid` up to init (1). Used by the stale-genie reaper to avoid
+ * killing ourselves or our caller (the npm/bun update wrapper or the user's
+ * shell).
+ */
+function getParentChain(pid: number): Set<number> {
+  const chain = new Set<number>();
+  let current = pid;
+  while (current > 1 && !chain.has(current)) {
+    chain.add(current);
+    try {
+      const status = readFileSync(`/proc/${current}/status`, 'utf-8');
+      const match = status.match(/^PPid:\s+(\d+)/m);
+      if (!match) break;
+      const next = Number.parseInt(match[1], 10);
+      if (!Number.isFinite(next) || next <= 0) break;
+      current = next;
+    } catch {
+      break;
+    }
+  }
+  return chain;
+}
+
+/**
+ * Identify candidate stale genie processes from /proc.
+ *
+ * A candidate is any process whose argv contains `dist/genie.js` AND is NOT
+ * in the exclude set. Caller is responsible for populating `exclude` with
+ * the current PID, parent chain, and the active serve-daemon PID.
+ *
+ * Exposed for unit tests.
+ */
+export function findStaleGenieCandidates(exclude: Set<number>): number[] {
+  if (process.platform !== 'linux') return [];
+  let entries: string[] = [];
+  try {
+    entries = readdirSync('/proc');
+  } catch {
+    return [];
+  }
+  const candidates: number[] = [];
+  for (const entry of entries) {
+    const pid = Number.parseInt(entry, 10);
+    if (!Number.isFinite(pid) || pid <= 1) continue;
+    if (exclude.has(pid)) continue;
+    let cmdline = '';
+    try {
+      cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf-8');
+    } catch {
+      continue; // permission denied, exited mid-scan, etc.
+    }
+    // Match the bun-bundle invocation form. Argv pieces are NUL-separated
+    // (file is read whole) so substring match is sufficient.
+    if (!cmdline.includes('dist/genie.js')) continue;
+    candidates.push(pid);
+  }
+  return candidates;
+}
+
+interface Pm2ListEntry {
+  name?: string;
+  pid?: number;
+  pm2_env?: { status?: string; pm_exec_path?: string; created_at?: number };
+}
+
+/**
+ * Read pm2's process list. Returns empty when pm2 is not installed, not
+ * running, or returns malformed JSON. Any error path is non-fatal — the
+ * post-update cleanup must continue even when pm2 is absent.
+ */
+function safePm2List(): Pm2ListEntry[] {
+  try {
+    const out = execFileSync('pm2', ['jlist'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const parsed = JSON.parse(out);
+    return Array.isArray(parsed) ? (parsed as Pm2ListEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function safePm2Delete(name: string): boolean {
+  try {
+    execFileSync('pm2', ['delete', name], { timeout: 5000, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Drop pm2 entries that are stale post-update. Two cases:
+ *
+ *   1. **Broken legacy name** (`genie-serve.ecosystem`) — created by the
+ *      pre-fix install code that wrote the ecosystem config with a
+ *      non-`.config.cjs` filename, causing pm2 to run the config as a
+ *      regular script (no actual genie-serve, just a no-op restart-loop).
+ *   2. **Stale `pm_exec_path`** — entry's resolved script path doesn't
+ *      match the currently-installed `genie` binary (e.g. user moved
+ *      install method from npm to bun). pm2 supervises the wrong file.
+ *
+ * After cleanup, the next `genie install` will re-create the entry
+ * correctly. Safe to skip if pm2 isn't installed — pure operator hygiene.
+ */
+function cleanupStalePm2Entries(log: (line: string) => void): void {
+  const entries = safePm2List();
+  if (entries.length === 0) return; // pm2 absent or empty — nothing to clean
+
+  const stale: Array<{ name: string; reason: string }> = [];
+  for (const entry of entries) {
+    if (!entry.name) continue;
+    if (entry.name === 'genie-serve.ecosystem') {
+      stale.push({ name: entry.name, reason: 'legacy broken filename pattern' });
+    }
+    // Future heuristic: detect stale pm_exec_path. Skipped for now —
+    // requires path canonicalisation (npm vs bun vs symlinks) and the
+    // false-positive cost is "user has to re-run genie install".
+  }
+
+  for (const { name, reason } of stale) {
+    log(`  [fix] pm2 delete ${name} (${reason})`);
+    if (!safePm2Delete(name)) {
+      log(`  [!!] pm2 delete ${name} failed (non-blocking)`);
+    }
+  }
+}
+
+/**
+ * Reap stale genie processes + pm2 entries left over from before this
+ * update. Runs as part of `runPostUpdateMaintenance`. Why: the in-memory
+ * binary loaded by any long-running genie process (`genie serve`, TUIs,
+ * orphan subprocesses) is the OLD version — the connection-leak,
+ * direct-postmaster, and bind-to-local fixes shipped today only protect
+ * NEW invocations. Old processes keep holding leaked pgserve connections
+ * until they die, which on busy hosts saturates `max_connections` and
+ * locks out everything else with `sorry, too many clients already`.
+ *
+ * Behaviour
+ * ---------
+ *
+ *   - Kills all genie processes whose argv contains `dist/genie.js`,
+ *     **including the active serve daemon** read from `~/.genie/serve.pid`.
+ *     The daemon is the most-leaking process post-update; preserving it
+ *     defeats the purpose of the update. The next `genie *` invocation
+ *     will autospawn a fresh daemon on the new binary, OR pm2 will if
+ *     `genie install` ran successfully.
+ *   - Excludes self (`process.pid`) and the entire parent chain so we
+ *     don't kill the npm/bun update wrapper or the user's shell.
+ *   - Cleans up stale pm2 entries (`genie-serve.ecosystem` legacy form
+ *     and any other obvious mismatches).
+ *
+ * Safety
+ * ------
+ *
+ *   - Linux-only (relies on /proc). macOS/Windows skip with a notice.
+ *   - Opt out via `GENIE_UPDATE_NO_REAP=1` (preserve the daemon for
+ *     debugging — operator must manually `genie serve restart`).
+ *   - Failures are non-fatal — the update flow continues.
+ */
+async function reapStaleGenieProcesses(opts: { log?: (line: string) => void } = {}): Promise<void> {
+  const log = opts.log ?? ((line: string) => console.log(line));
+  if (process.env.GENIE_UPDATE_NO_REAP === '1') {
+    log('  [--] Stale genie reap skipped (GENIE_UPDATE_NO_REAP=1)');
+    return;
+  }
+  if (process.platform !== 'linux') {
+    log('  [--] Stale genie reap: Linux-only (procfs); skipping on this platform');
+    return;
+  }
+
+  // Exclude self + parent chain only. The active `genie serve` daemon is
+  // intentionally NOT excluded — its in-memory binary is stale post-update
+  // and it's the largest leak source. Killing it triggers autospawn of a
+  // fresh daemon under the new code on the next genie invocation.
+  const exclude = getParentChain(process.pid);
+
+  const candidates = findStaleGenieCandidates(exclude);
+  if (candidates.length === 0) {
+    log('  [ok] No stale genie processes to reap');
+  } else {
+    await reapCandidates(candidates, log);
+    clearStaleServePidFile();
+  }
+
+  cleanupStalePm2Entries(log);
+
+  log('  [ok] Stale genie reap complete');
+}
+
+async function reapCandidates(candidates: number[], log: (line: string) => void): Promise<void> {
+  log(`  [fix] Reaping ${candidates.length} stale genie process(es) (incl. serve daemon): ${candidates.join(', ')}`);
+  for (const pid of candidates) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      // Already dead between scan and signal — fine.
+    }
+  }
+
+  // Give SIGTERM 2s to settle. Most genie processes have shutdown handlers
+  // (the same beforeExit handler we added in #1580) that drain pools and
+  // exit cleanly within a second.
+  await new Promise((r) => setTimeout(r, 2000));
+
+  const stragglers = candidates.filter(isPidAlive);
+  if (stragglers.length === 0) return;
+
+  log(`  [fix] SIGKILL stragglers: ${stragglers.join(', ')}`);
+  for (const pid of stragglers) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Race: died between probe and SIGKILL — fine.
+    }
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0); // signal 0 = liveness probe
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearStaleServePidFile(): void {
+  // Daemon was just killed — clear the stale pid file so the next
+  // genie invocation autospawns cleanly instead of probing a dead pid.
+  try {
+    const home = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+    const servePidPath = join(home, 'serve.pid');
+    if (existsSync(servePidPath)) unlinkSync(servePidPath);
+  } catch {
+    // serve.pid is stale-tolerant — next caller will recover.
+  }
+}
+
+/**
+ * Wrapper that swallows reap failures so the rest of post-update maintenance
+ * still runs. The reaper itself catches per-PID errors; this guards against
+ * unexpected throws (e.g. /proc readdir denied in unusual sandboxes).
+ */
+async function reapStaleGenieProcessesSafe(opts: PostUpdateMaintenanceOptions): Promise<void> {
+  try {
+    await reapStaleGenieProcesses({ log: opts.log });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const log = opts.log ?? ((line: string) => console.log(line));
+    log(`  [!!] Stale genie reap failed (non-blocking): ${msg}`);
+  }
 }

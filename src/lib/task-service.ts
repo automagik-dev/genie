@@ -1426,6 +1426,20 @@ export async function tagTask(idOrSeq: string, tagIds: string[], actor?: Actor, 
   const id = await resolveTaskId(idOrSeq, repo);
   if (!id) throw new Error(`Task not found: ${idOrSeq}`);
 
+  // Defense: validate each tag_id exists before INSERT. Without this, a typo
+  // surfaces as the bare `task_tags_tag_id_fkey` PG error. List available
+  // tags so the user can pick a real one.
+  const existing = await sql`SELECT id FROM tags WHERE id = ANY(${tagIds})`;
+  const existingIds = new Set(existing.map((r: { id: string }) => r.id));
+  const missing = tagIds.filter((t) => !existingIds.has(t));
+  if (missing.length > 0) {
+    const all = await sql`SELECT id FROM tags ORDER BY id`;
+    const available = all.map((r: { id: string }) => r.id).join(', ') || '(none registered)';
+    throw new Error(
+      `Tag(s) not found: ${missing.join(', ')}.\n  Available tags: ${available}\n  Create a tag first with \`genie tag create <id>\`.`,
+    );
+  }
+
   for (const tagId of tagIds) {
     await sql`
       INSERT INTO task_tags (task_id, tag_id, added_by_type, added_by_id)

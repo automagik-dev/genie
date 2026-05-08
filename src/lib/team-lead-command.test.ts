@@ -222,3 +222,27 @@ describe('buildTeamLeadCommand identity parity', () => {
     expect(cmd).not.toMatch(/GENIE_AGENT_NAME='[^']*workspace[^']*'/);
   });
 });
+
+// ============================================================================
+// buildTeamLeadCommand — AskUserQuestion baseline (#1688)
+// ============================================================================
+
+describe('buildTeamLeadCommand AskUserQuestion baseline', () => {
+  // Regression: without --settings carrying AskUserQuestion in permissions.allow,
+  // the team-lead's own user-prompt UI routed through Claude Code's approval
+  // queue, causing the operator to see "Waiting for team lead approval" for a
+  // tool whose entire purpose is to ask the operator a question.
+  test('emits --settings with AskUserQuestion in permissions.allow', () => {
+    const cmd = buildTeamLeadCommand('genie', { promptMode: 'append' });
+    const match = cmd.match(/--settings '((?:[^'\\]|\\.)*)'/);
+    expect(match).toBeTruthy();
+    const settings = JSON.parse(match![1]) as { permissions?: { allow?: string[] } };
+    expect(settings.permissions?.allow).toEqual(['AskUserQuestion']);
+  });
+
+  test('--settings is emitted even when no system prompt file is provided', () => {
+    const cmd = buildTeamLeadCommand('alpha-team', { promptMode: 'append' });
+    expect(cmd).toContain('--settings');
+    expect(cmd).toContain('AskUserQuestion');
+  });
+});

@@ -149,12 +149,19 @@ export async function registerSessionInRegistry(
     const sanitized = sanitizeTeamName(windowName);
     const leaderName = await _deps.resolveLeaderName(windowName);
     const sanitizedLeader = sanitizeTeamName(leaderName);
+    // Wish retire-session-names-id-only Group 3: spawn writes ONE row.
+    // Resolve the durable identity UUID before registering runtime fields so
+    // the row's id matches `agents_id_shape_check` (migration 061). The
+    // bare-name display label (`<team>-<leader>`) lands on `custom_name`.
+    const agentIdentity = await _deps.findOrCreateAgent(leaderName, sanitized, leaderName);
+
     await _deps.registerWorker({
-      id: `${sanitized}-${sanitizedLeader}`,
+      id: agentIdentity.id,
       paneId,
       session: sessionName,
       team: windowName,
       role: leaderName,
+      customName: `${sanitized}-${sanitizedLeader}`,
       worktree: null,
       startedAt: now,
       state: 'working',
@@ -165,9 +172,6 @@ export async function registerSessionInRegistry(
       nativeTeamEnabled: true,
       nativeAgentId: `${sanitizedLeader}@${sanitized}`,
     });
-
-    // Executor model: create agent identity + executor for leader session
-    const agentIdentity = await _deps.findOrCreateAgent(leaderName, sanitized, leaderName);
 
     let pid: number | null = null;
     try {

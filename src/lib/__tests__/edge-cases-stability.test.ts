@@ -29,8 +29,10 @@ describe('7.1 Concurrent Operations', () => {
     // Double-check pattern: re-verify after lock acquisition
     expect(source).toContain('another process may have spawned while we waited');
 
-    // Dead worker cleanup happens inside the lock
-    expect(source).toContain('cleanupDeadWorkers(recipientId');
+    // Dead worker cleanup happens inside the lock.
+    // Wish 175 G6 tightened the signature from `cleanupDeadWorkers(recipientId, team)`
+    // to `cleanupDeadWorkers(agentId)` — caller resolves at the CLI boundary.
+    expect(source).toContain('cleanupDeadWorkers(worker.id');
   });
 
   test('executor creation also uses advisory lock (code review)', () => {
@@ -80,12 +82,20 @@ describe('7.1 Concurrent Operations', () => {
   test('connection pool config is sensible for concurrent operations', () => {
     const source = readFileSync(join(__dirname, '..', 'db.ts'), 'utf-8');
 
-    // max: 50 connections (serial CI; parallel test:parallel is a local-only tool)
-    expect(source).toContain('max: 50');
-    // Aggressive idle timeout (1s) to recycle unused connections
-    expect(source).toContain('idle_timeout: 1');
-    // 5s connect timeout prevents hanging
-    expect(source).toContain('connect_timeout: 5');
+    // max: 50 default for daemon/TUI/tests; short-lived CLI (GENIE_SKIP_DB_BOOT=1)
+    // drops to max:1 so the single fingerprinted connection survives the
+    // cwd restore (issue #1575). Operational justification (v4.260430.20):
+    // script-mode CLI fingerprints accumulated 296+ backends each,
+    // saturating pgserve max_connections=1000. Gate caps it at 1 per CLI.
+    expect(source).toContain('max: cliShortLived ? 1 : 50');
+    // Aggressive idle timeout (1s) for non-CLI; idle_timeout:0 keeps the single
+    // CLI connection alive for the process lifetime.
+    expect(source).toContain('idle_timeout: cliShortLived ? 0 : 1');
+    // Socket mode gets the pgserve startup window; legacy TCP keeps the fast fallback.
+    // Post-refactor (#1651): connect_timeout wired via transport.useSocket inside
+    // buildPgClientOptions; the helper itself still gates on the raw `useSocket` arg.
+    expect(source).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(transport.useSocket)');
+    expect(source).toContain('if (!useSocket) return 5');
   });
 
   // -------------------------------------------------------------------------
@@ -228,16 +238,6 @@ describe('7.2 tmux Compatibility', () => {
     expect(source).toContain('DELETE FROM teams WHERE name =');
   });
 
-  test('removeWorktree falls back to rm for non-worktree clones', () => {
-    const source = readFileSync(join(__dirname, '..', 'team-manager.ts'), 'utf-8');
-
-    // Primary: git worktree remove
-    expect(source).toContain('git worktree remove --force');
-
-    // Fallback: rm for shared clones
-    expect(source).toContain('recursive: true, force: true');
-  });
-
   test('archiveTeam kills members BEFORE DB update to prevent zombie writes', () => {
     const source = readFileSync(join(__dirname, '..', 'team-manager.ts'), 'utf-8');
 
@@ -325,19 +325,23 @@ describe('7.3 Security', () => {
     // pg_dump uses spawnSync with separate args, not shell string
     expect(source).toContain("spawnSync('pg_dump'");
 
-    // DB name passed via environment variable, not command string
-    expect(source).toContain('PGDATABASE: DB_NAME');
+    // DB name flows through PGDATABASE in the env block, not the args array.
+    // The env builder parameterises it via resolveDatabaseName() (or a
+    // caller-supplied name) so a hostile value never reaches argv.
+    expect(source).toContain('PGDATABASE:');
+    expect(source).toContain('resolveDatabaseName()');
   });
 
-  test('restore uses psql variable binding to avoid SQL injection on DB name', () => {
+  test('restore avoids SQL injection on DB name', () => {
     const source = readFileSync(join(__dirname, '..', 'db-backup.ts'), 'utf-8');
 
-    // Uses psql -v for variable binding
-    expect(source).toContain('-v');
-    expect(source).toContain('target_db=${DB_NAME}');
-
-    // Uses :"target_db" (psql quoted variable) for SQL identifiers
-    expect(source).toContain(':"target_db"');
+    // Restore now resolves the target DB server-side via current_database()
+    // — under pgserve v2 the daemon routes the connection to the peer's
+    // fingerprinted DB, so the client never has to interpolate a name at
+    // all. That is strictly safer than the previous psql `-v` /
+    // `:"target_db"` binding (which still required us to know + parameterise
+    // the name).
+    expect(source).toContain('current_database()');
 
     // Restore uses stdin piping, not shell interpolation
     expect(source).toContain('input: sql');

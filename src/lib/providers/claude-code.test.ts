@@ -46,6 +46,7 @@ function makeSpawnContext(overrides: Partial<SpawnContext> = {}): SpawnContext {
     team: 'test-team',
     role: 'engineer',
     cwd: '/home/genie/project',
+    systemPromptFile: '/path/to/AGENTS.md',
     ...overrides,
   };
 }
@@ -119,6 +120,7 @@ describe('ClaudeCodeProvider', () => {
         team: ctx.team,
         role: ctx.role,
         model: ctx.model,
+        systemPromptFile: ctx.systemPromptFile,
       });
       // Both should contain the same key components
       expect(providerResult.command).toContain("--agent 'reviewer'");

@@ -16,6 +16,7 @@ mock.module('@inquirer/prompts', () => ({
 const { isInteractive, ensureWorkspace, commandRequiresWorkspace, installWorkspaceCheck } = await import(
   '../lib/interactivity.js'
 );
+const { isTuiDisabled, noticeTuiSkipped } = await import('../lib/tui-disable.js');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -402,5 +403,112 @@ describe('installWorkspaceCheck()', () => {
     } finally {
       exitSpy.mockRestore();
     }
+  });
+});
+
+// ─── isTuiDisabled() ────────────────────────────────────────────────────────
+
+describe('isTuiDisabled()', () => {
+  let originalTuiDisable: string | undefined;
+
+  beforeEach(() => {
+    originalTuiDisable = process.env.GENIE_TUI_DISABLE;
+    // biome-ignore lint/performance/noDelete: process.env requires delete — assignment sets the string "undefined"
+    delete process.env.GENIE_TUI_DISABLE;
+  });
+
+  afterEach(() => {
+    if (originalTuiDisable === undefined) {
+      // biome-ignore lint/performance/noDelete: process.env requires delete — assignment sets the string "undefined"
+      delete process.env.GENIE_TUI_DISABLE;
+    } else {
+      process.env.GENIE_TUI_DISABLE = originalTuiDisable;
+    }
+  });
+
+  test('returns true when stdout.isTTY is undefined (pipe — Node default for non-TTY stdout)', () => {
+    // This is the production case: Node sets `isTTY` to `undefined` (not
+    // `false`) when stdout is piped or redirected. Mirrors the
+    // `isInteractive()` undefined-pipe test above.
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+    process.argv = ['node', 'genie', 'ls'];
+
+    expect(isTuiDisabled()).toBe(true);
+  });
+
+  test('returns true when stdout.isTTY is explicitly false', () => {
+    // Defensive case — some test runners and shell wrappers may set isTTY
+    // to literal `false` instead of leaving it undefined. Both must trip
+    // the guard.
+    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+    process.argv = ['node', 'genie', 'ls'];
+
+    expect(isTuiDisabled()).toBe(true);
+  });
+
+  test('returns false when stdout is a TTY and env+argv unset', () => {
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    process.argv = ['node', 'genie', 'ls'];
+
+    expect(isTuiDisabled()).toBe(false);
+  });
+});
+
+// ─── noticeTuiSkipped() reason precedence ───────────────────────────────────
+
+describe('noticeTuiSkipped()', () => {
+  let originalTuiDisable: string | undefined;
+  let errorSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    originalTuiDisable = process.env.GENIE_TUI_DISABLE;
+    // biome-ignore lint/performance/noDelete: process.env requires delete — assignment sets the string "undefined"
+    delete process.env.GENIE_TUI_DISABLE;
+    errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+    if (originalTuiDisable === undefined) {
+      // biome-ignore lint/performance/noDelete: process.env requires delete — assignment sets the string "undefined"
+      delete process.env.GENIE_TUI_DISABLE;
+    } else {
+      process.env.GENIE_TUI_DISABLE = originalTuiDisable;
+    }
+  });
+
+  test('reports `GENIE_TUI_DISABLE is set` when env wins', () => {
+    process.env.GENIE_TUI_DISABLE = '1';
+    process.argv = ['node', 'genie', '--no-tui', 'ls']; // env should still win
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+
+    noticeTuiSkipped('attach');
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toContain('GENIE_TUI_DISABLE is set');
+  });
+
+  test('reports `--no-tui flag present` when argv wins (env unset)', () => {
+    process.argv = ['node', 'genie', '--no-tui', 'ls'];
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+
+    noticeTuiSkipped('attach');
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toContain('--no-tui flag present');
+  });
+
+  test('reports `stdout is not a TTY` when only the auto-detect path fires', () => {
+    // No env, no --no-tui — only the new TTY auto-detect should trip. The
+    // pre-fix code would have misreported `--no-tui flag present` here
+    // because the reason calculation lacked a third branch.
+    process.argv = ['node', 'genie', 'ls'];
+    Object.defineProperty(process.stdout, 'isTTY', { value: undefined, configurable: true });
+
+    noticeTuiSkipped('attach');
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toContain('stdout is not a TTY');
+    expect(errorSpy.mock.calls[0]?.[0]).not.toContain('--no-tui flag present');
   });
 });

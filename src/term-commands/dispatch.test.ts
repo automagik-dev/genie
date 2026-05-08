@@ -591,6 +591,69 @@ describe('parseWishGroups()', () => {
     const groups = parseWishGroups(content);
     expect(groups[0].dependsOn).toEqual([]);
   });
+
+  it('should strip slug# prefix from depends-on (canonical form)', () => {
+    const content = '### Group 1: First\n**depends-on:** none\n\n### Group 2: Second\n**depends-on:** my-wish#1';
+    const groups = parseWishGroups(content);
+    expect(groups[1].dependsOn).toEqual(['1']);
+  });
+
+  it('should handle mixed bare and slug-prefixed dependencies', () => {
+    const content =
+      '### Group 1: First\n**depends-on:** none\n\n### Group 2: Second\n**depends-on:** none\n\n### Group 3: Third\n**depends-on:** 1, my-wish#2';
+    const groups = parseWishGroups(content);
+    expect(groups[2].dependsOn).toEqual(['1', '2']);
+  });
+
+  it('should strip slug# prefix when slug contains hyphens', () => {
+    const content =
+      '### Group 1: First\n**depends-on:** none\n\n### Group 2: Second\n**depends-on:** none\n\n### Group 3: Third\n**depends-on:** slug-with-hyphens#3';
+    const groups = parseWishGroups(content);
+    expect(groups[2].dependsOn).toEqual(['3']);
+  });
+
+  it('should handle three-way mix of bare, slug, and hyphenated-slug deps', () => {
+    const content =
+      '### Group 1: A\n**depends-on:** none\n\n### Group 2: B\n**depends-on:** none\n\n### Group 3: C\n**depends-on:** none\n\n### Group 4: D\n**depends-on:** 1, my-wish#2, release-system-genie-pattern#3';
+    const groups = parseWishGroups(content);
+    expect(groups[3].dependsOn).toEqual(['1', '2', '3']);
+  });
+
+  it('should capture group title from heading', () => {
+    const content = '### Group 1: Parser layer\n**depends-on:** none';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(1);
+    expect(groups[0].name).toBe('1');
+    expect(groups[0].title).toBe('Parser layer');
+    expect(groups[0].dependsOn).toEqual([]);
+  });
+
+  it('should handle missing title gracefully', () => {
+    const content = '### Group 1:\n**depends-on:** none';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(1);
+    expect(groups[0].name).toBe('1');
+    expect(groups[0].title).toBeUndefined();
+  });
+
+  it('should preserve title across multiple groups with deps', () => {
+    const content =
+      '### Group 1: Parser layer\n**depends-on:** none\n\n### Group 2: Task CLI wiring\n**depends-on:** Group 1';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(2);
+    expect(groups[0].title).toBe('Parser layer');
+    expect(groups[0].dependsOn).toEqual([]);
+    expect(groups[1].title).toBe('Task CLI wiring');
+    expect(groups[1].dependsOn).toEqual(['1']);
+  });
+
+  it('should not include title in groupsSignature', () => {
+    const a = parseWishGroups('### Group 1: Original title\n**depends-on:** none');
+    const b = parseWishGroups('### Group 1: Different title\n**depends-on:** none');
+    expect(a[0].title).toBe('Original title');
+    expect(b[0].title).toBe('Different title');
+    expect(wishState.computeGroupsSignature(a)).toBe(wishState.computeGroupsSignature(b));
+  });
 });
 
 // ============================================================================
@@ -937,5 +1000,367 @@ describe('agents.ts createTmuxPane refuse-no-target regression guard', () => {
     // Grep for the refusal block inside the createTmuxPane body.
     expect(source).toContain('refusing to split with no target');
     expect(source).toContain('trace-genie-spawn-wrong-window');
+  });
+});
+
+/**
+ * P0 regression guard — #1589 phantom dispatch.
+ *
+ * Three architectural gaps allowed `genie work` to advance PG state without
+ * actually spawning a worker in the wish worktree:
+ *
+ *   1. dispatch.ts forwarded `team` but not `cwd`, and agents.ts:2393
+ *      silently overrode `agent.repoPath` with the team's worktree.
+ *   2. `awaitAgentReadiness` warned-and-proceeded on timeout, masking
+ *      silent spawn failures.
+ *   3. `wish status` displayed any team-mate sharing a role name as if
+ *      they were the wish's worker.
+ *
+ * Each guard below source-greps the fix into place so a future refactor
+ * cannot silently regress.
+ */
+describe('#1589 phantom-dispatch regression guards', () => {
+  let dispatchSrc: string;
+  let agentsSrc: string;
+  let stateSrc: string;
+  let taskStatusSrc: string;
+
+  beforeAll(async () => {
+    const { readFileSync } = await import('node:fs');
+    dispatchSrc = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+    agentsSrc = readFileSync(join(__dirname, 'agents.ts'), 'utf-8');
+    stateSrc = readFileSync(join(__dirname, 'state.ts'), 'utf-8');
+    taskStatusSrc = readFileSync(join(__dirname, 'task', 'status.ts'), 'utf-8');
+  });
+
+  describe('Group 1 — spawn cwd correction', () => {
+    it('all 4 dispatch.ts handleWorkerSpawn callsites forward cwd: process.cwd()', () => {
+      // Walk every `handleWorkerSpawn(agentName, { ... });` block in dispatch.ts
+      // and assert it contains `cwd: process.cwd()`. Without this, agents.ts
+      // overrides repoPath with the team worktree silently (#1589).
+      const callPattern = /await handleWorkerSpawn\([^)]+,\s*\{/g;
+      const callsites: { idx: number; block: string }[] = [];
+      let m: RegExpExecArray | null = callPattern.exec(dispatchSrc);
+      while (m !== null) {
+        const idx = m.index;
+        const closeIdx = dispatchSrc.indexOf('});', idx);
+        callsites.push({ idx, block: dispatchSrc.slice(idx, closeIdx) });
+        m = callPattern.exec(dispatchSrc);
+      }
+      expect(callsites.length).toBe(4); // brainstorm, wish, work, review
+      for (const { block } of callsites) {
+        expect(block).toContain('cwd: process.cwd()');
+      }
+    });
+
+    it('agents.ts team-worktree override is gated on !options.cwd', () => {
+      // The override at agents.ts:~2393 used to fire whenever
+      // teamConfig.worktreePath was set and agent.entry.dir was null. Now it
+      // must also check !options.cwd so explicit cwd from dispatch is honored.
+      const anchor = agentsSrc.indexOf('teamConfig?.worktreePath && !agent.entry?.dir');
+      expect(anchor).toBeGreaterThan(-1);
+      const lineEnd = agentsSrc.indexOf('\n', anchor);
+      const line = agentsSrc.slice(anchor, lineEnd);
+      expect(line).toContain('!options.cwd');
+    });
+  });
+
+  describe('Group 2 — observability', () => {
+    it('runWorkDispatch emits wish.dispatch.work audit event before spawn', () => {
+      const fnStart = dispatchSrc.indexOf('async function runWorkDispatch');
+      expect(fnStart).toBeGreaterThan(-1);
+      const fnEnd = dispatchSrc.indexOf('\nasync function ', fnStart + 1);
+      const body = dispatchSrc.slice(fnStart, fnEnd !== -1 ? fnEnd : dispatchSrc.length);
+      // Audit event call must appear and must precede handleWorkerSpawn.
+      const eventIdx = body.indexOf("'wish.dispatch.work'");
+      const spawnIdx = body.indexOf('await handleWorkerSpawn(');
+      expect(eventIdx).toBeGreaterThan(-1);
+      expect(spawnIdx).toBeGreaterThan(-1);
+      expect(eventIdx).toBeLessThan(spawnIdx);
+      // Event must carry the wish-correlation attributes used by `genie events`.
+      expect(body).toContain('wish_slug:');
+      expect(body).toContain('group_name:');
+      expect(body).toContain('agent_role:');
+    });
+
+    it('AgentReadinessTimeoutError is exported and thrown by awaitAgentReadiness in strict mode', () => {
+      expect(agentsSrc).toContain('export class AgentReadinessTimeoutError');
+      // Strict mode (default) throws; tolerateReadinessTimeout=true falls back to warn.
+      expect(agentsSrc).toContain('throw new AgentReadinessTimeoutError');
+      expect(agentsSrc).toContain('tolerateReadinessTimeout');
+    });
+
+    it('SpawnOptions and SpawnCtx both expose tolerateReadinessTimeout', () => {
+      // The opt-out must live on both the public SpawnOptions surface and the
+      // internal SpawnCtx (so launchTmuxSpawn can read it).
+      const optsAnchor = agentsSrc.indexOf('export interface SpawnOptions');
+      expect(optsAnchor).toBeGreaterThan(-1);
+      const optsClose = agentsSrc.indexOf('\n}\n', optsAnchor);
+      const optsBody = agentsSrc.slice(optsAnchor, optsClose);
+      expect(optsBody).toContain('tolerateReadinessTimeout?: boolean');
+
+      const ctxAnchor = agentsSrc.indexOf('interface SpawnCtx');
+      expect(ctxAnchor).toBeGreaterThan(-1);
+      const ctxClose = agentsSrc.indexOf('\n}\n', ctxAnchor);
+      const ctxBody = agentsSrc.slice(ctxAnchor, ctxClose);
+      expect(ctxBody).toContain('tolerateReadinessTimeout?: boolean');
+    });
+  });
+
+  describe('Round 4 — auto-resume validates resumed pane is alive', () => {
+    let agentsSrcR4: string;
+    beforeAll(async () => {
+      const { readFileSync } = await import('node:fs');
+      agentsSrcR4 = readFileSync(join(__dirname, 'agents.ts'), 'utf-8');
+    });
+
+    it('ResumePaneVanishedError class is exported with reason taxonomy', () => {
+      // Resume short-circuit (felipe Round 3 brief): handleWorkerSpawn returns
+      // early on `if (resumed) return resumed;` after resumeAgent succeeds at
+      // tmux pane creation but before the actual worker process exists. The
+      // typed error lets the caller fall through to fresh spawn instead of
+      // returning a phantom paneId.
+      expect(agentsSrcR4).toContain('export class ResumePaneVanishedError');
+      const classAnchor = agentsSrcR4.indexOf('export class ResumePaneVanishedError');
+      const classEnd = agentsSrcR4.indexOf('\n}\n', classAnchor);
+      const body = agentsSrcR4.slice(classAnchor, classEnd);
+      expect(body).toContain('readonly agentId');
+      expect(body).toContain('readonly paneId');
+      expect(body).toContain('readonly expectedPid');
+      expect(body).toContain('readonly reason');
+      expect(body).toContain("'pane_not_in_list'");
+      expect(body).toContain("'pid_dead'");
+    });
+
+    it('resumeAgent emits worker.resume.attempted / .completed / .skipped audit events', () => {
+      const fnAnchor = agentsSrcR4.indexOf('async function resumeAgent');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      // resumeAgent is followed by `export class ResumePaneVanishedError`.
+      const fnEnd = agentsSrcR4.indexOf('\nexport class ResumePaneVanishedError', fnAnchor);
+      const body = agentsSrcR4.slice(fnAnchor, fnEnd !== -1 ? fnEnd : agentsSrcR4.length);
+      expect(body).toContain("'worker.resume.attempted'");
+      expect(body).toContain("'worker.resume.completed'");
+      expect(body).toContain("'worker.resume.skipped'");
+      // Validation must check both pane existence AND PID liveness.
+      expect(body).toContain("list-panes -a -F '#{pane_id}'");
+      expect(body).toContain('process.kill(resumedPid, 0)');
+      // Throw the typed error so resolveTeamAndResume can catch + fall through.
+      expect(body).toContain('throw new ResumePaneVanishedError');
+    });
+
+    it('resolveTeamAndResume catches ResumePaneVanishedError and falls through to fresh spawn', () => {
+      const fnAnchor = agentsSrcR4.indexOf('async function resolveTeamAndResume');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = agentsSrcR4.indexOf('\nasync function ', fnAnchor + 1);
+      const body = agentsSrcR4.slice(fnAnchor, fnEnd !== -1 ? fnEnd : agentsSrcR4.length);
+      // Try/catch around resumeAgent invocation.
+      expect(body).toContain('try {');
+      expect(body).toContain('await resumeAgent(deadResumable)');
+      // Catches the typed error specifically — not a generic catch.
+      expect(body).toContain('err instanceof ResumePaneVanishedError');
+      // Clears the stale executor so the next dispatch doesn't loop.
+      expect(body).toContain("updateExecutorState(executor.id, 'terminated')");
+      // Falls through by returning without `resumed` key. Verify the function
+      // body has a `return { team, teamWasExplicit };` (without `resumed`)
+      // somewhere inside the catch path.
+      const catchIdx = body.indexOf('err instanceof ResumePaneVanishedError');
+      const tailEnd = Math.min(body.length, catchIdx + 800);
+      const catchBlock = body.slice(catchIdx, tailEnd);
+      expect(catchBlock).toContain('return { team, teamWasExplicit };');
+    });
+  });
+
+  describe('Group 3 — wish-status display correlation', () => {
+    it('state.ts printWishExecutors filters out executors whose assignment is for a different wish', () => {
+      const fnAnchor = stateSrc.indexOf('async function printWishExecutors');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = stateSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = stateSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : stateSrc.length);
+      // Must skip — not just relabel — non-matching wishes.
+      expect(body).toContain('if (assignment?.wishSlug !== slug) continue');
+    });
+
+    it('task/status.ts printActiveExecutors applies the same filter', () => {
+      const fnAnchor = taskStatusSrc.indexOf('async function printActiveExecutors');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = taskStatusSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = taskStatusSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : taskStatusSrc.length);
+      expect(body).toContain('if (assignment?.wishSlug !== slug) continue');
+    });
+  });
+});
+
+/**
+ * P0 regression guard — #1600 spawn pipeline silent fail.
+ *
+ * #1599 fixed cwd plumbing + observability + display filter, but `genie work`
+ * still phantom-dispatched on .24 because tmux split-window returned a paneId
+ * for a pane that exited immediately (script failure inside the pane), and
+ * the spawn pipeline reported success while no worker was alive.
+ *
+ * This wish made the silent surface visible:
+ *   - SpawnPaneVanishedError raised when the pane has vanished
+ *   - validateSpawnedPane checks pane existence + PID liveness post-spawn
+ *   - worker.spawn.failed / worker.spawn.ok terminal-state audit events
+ *   - wish.dispatch.failed at the wave-dispatch boundary
+ *
+ * Source-grep guards below ensure no future refactor silently regresses.
+ */
+describe('#1600 spawn-pipeline silent-fail regression guards', () => {
+  let agentsSrc: string;
+  let dispatchSrc: string;
+
+  beforeAll(async () => {
+    const { readFileSync } = await import('node:fs');
+    agentsSrc = readFileSync(join(__dirname, 'agents.ts'), 'utf-8');
+    dispatchSrc = readFileSync(join(__dirname, 'dispatch.ts'), 'utf-8');
+  });
+
+  describe('Group 1 — post-spawn validation', () => {
+    it('SpawnPaneVanishedError class is exported with paneId, expectedPid, reason fields', () => {
+      expect(agentsSrc).toContain('export class SpawnPaneVanishedError');
+      const classAnchor = agentsSrc.indexOf('export class SpawnPaneVanishedError');
+      const classEnd = agentsSrc.indexOf('\n}\n', classAnchor);
+      const body = agentsSrc.slice(classAnchor, classEnd);
+      expect(body).toContain('readonly paneId');
+      expect(body).toContain('readonly expectedPid');
+      expect(body).toContain('readonly reason');
+      // Reason enum must cover the three known failure modes.
+      expect(body).toContain("'pane_not_in_list'");
+      expect(body).toContain("'pid_dead'");
+      expect(body).toContain("'tmux_query_failed'");
+    });
+
+    it('validateSpawnedPane is called from launchTmuxSpawn between capturePanePid and createTmuxExecutor', () => {
+      const fnAnchor = agentsSrc.indexOf('async function launchTmuxSpawn');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = agentsSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = agentsSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : agentsSrc.length);
+      // Order matters — capturePanePid → validateSpawnedPane → createTmuxExecutor.
+      const captureIdx = body.indexOf('capturePanePid(paneId)');
+      const validateIdx = body.indexOf('validateSpawnedPane(paneId, pid)');
+      const createIdx = body.indexOf('createTmuxExecutor(ctx, paneId, pid');
+      expect(captureIdx).toBeGreaterThan(-1);
+      expect(validateIdx).toBeGreaterThan(captureIdx);
+      expect(createIdx).toBeGreaterThan(validateIdx);
+    });
+
+    it('validateSpawnedPane uses tmux list-panes -a -F #{pane_id} and process.kill(pid, 0)', () => {
+      const fnAnchor = agentsSrc.indexOf('function validateSpawnedPane');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = agentsSrc.indexOf('\n}\n', fnAnchor);
+      const body = agentsSrc.slice(fnAnchor, fnEnd);
+      expect(body).toContain("list-panes -a -F '#{pane_id}'");
+      expect(body).toContain('process.kill(expectedPid, 0)');
+      // Inline spawns must be skipped — they bypass tmux entirely.
+      expect(body).toContain("paneId === 'inline'");
+    });
+  });
+
+  describe('Group 2 — worker.spawn.failed / worker.spawn.ok audit events', () => {
+    it('launchTmuxSpawn emits worker.spawn.failed on every catchable failure point', () => {
+      const fnAnchor = agentsSrc.indexOf('async function launchTmuxSpawn');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = agentsSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = agentsSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : agentsSrc.length);
+      // The function must define the emitFailed helper and call it for the
+      // three known surfaces. Counting "emitFailed(" calls keeps the assertion
+      // resilient to future reorderings.
+      expect(body).toContain('const emitFailed =');
+      expect(body).toContain("'worker.spawn.failed'");
+      const failedCalls = body.match(/emitFailed\(/g) ?? [];
+      // Three failure surfaces: createTmuxPane catch, pane_vanished, readiness.
+      expect(failedCalls.length).toBeGreaterThanOrEqual(3);
+      // Reason taxonomy must be present.
+      expect(body).toContain("'createTmuxPane_threw'");
+      expect(body).toContain("'pane_vanished'");
+    });
+
+    it('launchTmuxSpawn emits worker.spawn.ok as the terminal success event', () => {
+      const fnAnchor = agentsSrc.indexOf('async function launchTmuxSpawn');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = agentsSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = agentsSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : agentsSrc.length);
+      expect(body).toContain("'worker.spawn.ok'");
+      // The event must carry pane_id, pid, cwd, executor_id for correlation.
+      const okIdx = body.indexOf("'worker.spawn.ok'");
+      expect(okIdx).toBeGreaterThan(-1);
+      const okCallEnd = body.indexOf('}).catch', okIdx);
+      const okPayload = body.slice(okIdx, okCallEnd);
+      expect(okPayload).toContain('pane_id');
+      expect(okPayload).toContain('pid');
+      expect(okPayload).toContain('cwd');
+      expect(okPayload).toContain('executor_id');
+    });
+
+    it('the existing worker.spawn (attempt) event is preserved', () => {
+      // The attempt event at agents.ts:~2501 must still fire — analytics + the
+      // /work pipeline depend on it. The new .ok / .failed events are TERMINAL
+      // states, not replacements.
+      expect(agentsSrc).toContain("recordAuditEvent('worker', workerId, 'spawn'");
+    });
+  });
+
+  describe('Group 4 — runWorkDispatch must never process.exit (kill-siblings prevention)', () => {
+    it('runWorkDispatch contains zero EXECUTABLE process.exit calls — they kill sibling spawns in Promise.allSettled', () => {
+      // ROOT CAUSE of the long-running #1589/#1600 phantom dispatch: when
+      // `autoOrchestrateCommand` runs `Promise.allSettled([runWorkDispatch, …])`
+      // for a parallel wave, ANY group's process.exit(1) terminates the entire
+      // node process — killing every sibling spawn mid-flight before audit
+      // events can fire. The fix: throw instead of exit. The single-group CLI
+      // caller `workDispatchCommand` already re-throws and the outer CLI
+      // handler does process.exit, so single-group semantics are preserved.
+      const fnAnchor = dispatchSrc.indexOf('async function runWorkDispatch');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      // Body ends at the next top-level `export async function` or `async function`.
+      // Use a regex that anchors on lines starting with `}` followed by a blank line then a docstring.
+      const afterFn = dispatchSrc.slice(fnAnchor + 1);
+      const nextFnRel = afterFn.search(/\nasync function |\nexport async function |\nexport function |\nfunction /);
+      const fnEnd = nextFnRel !== -1 ? fnAnchor + 1 + nextFnRel : dispatchSrc.length;
+      const body = dispatchSrc.slice(fnAnchor, fnEnd);
+      // Strip comments before checking — `process.exit(1)` may legitimately
+      // appear in JSDoc / inline comments explaining the OLD behavior.
+      const stripped = body
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+        .join('\n');
+      // Hard guarantee: zero EXECUTABLE process.exit calls in non-comment code.
+      expect(stripped).not.toContain('process.exit');
+      // Soft guarantee: the function explicitly throws on each error path so
+      // Promise.allSettled in autoOrchestrateCommand collects rejections.
+      const throwCount = (stripped.match(/throw new Error\(/g) ?? []).length;
+      // At minimum: wish-not-found, group-not-found, startGroup-failed.
+      expect(throwCount).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  describe('Group 3 — wish.dispatch.failed surfacing', () => {
+    it('autoOrchestrateCommand emits wish.dispatch.failed per failed group', () => {
+      const fnAnchor = dispatchSrc.indexOf('async function autoOrchestrateCommand');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = dispatchSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = dispatchSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : dispatchSrc.length);
+      expect(body).toContain("'wish.dispatch.failed'");
+      // Payload must carry wish_slug, wave_name, group_name, agent_name,
+      // error_class, reason for downstream queryability.
+      const eventIdx = body.indexOf("'wish.dispatch.failed'");
+      const eventCallEnd = body.indexOf('}).catch', eventIdx);
+      const payload = body.slice(eventIdx, eventCallEnd);
+      expect(payload).toContain('wish_slug');
+      expect(payload).toContain('group_name');
+      expect(payload).toContain('error_class');
+      expect(payload).toContain('reason');
+    });
+
+    it('failure summary stderr includes the error class name', () => {
+      const fnAnchor = dispatchSrc.indexOf('async function autoOrchestrateCommand');
+      expect(fnAnchor).toBeGreaterThan(-1);
+      const fnEnd = dispatchSrc.indexOf('\nasync function ', fnAnchor + 1);
+      const body = dispatchSrc.slice(fnAnchor, fnEnd !== -1 ? fnEnd : dispatchSrc.length);
+      // The print uses [${errorClass}] prefix so operators can pattern-match
+      // SpawnPaneVanishedError / AgentReadinessTimeoutError without reading PG.
+      expect(body).toContain('errorClass');
+      expect(body).toContain('[${errorClass}]');
+    });
   });
 });

@@ -21,6 +21,17 @@ name: Version
 # Auth: npm OIDC Trusted Publishing. The package's only Trusted
 # Publisher entry on npmjs.com is this file (version.yml). All
 # other workflows defer to this one for npm publishing.
+#
+# SHA-pin invariant (Invariant A — correctness over completeness):
+# Version always tags the commit that passed CI, never branch HEAD.
+# Per-branch concurrency with cancel-in-progress means older runs
+# supersede when dev advances during a Version run (back-to-back
+# merges). When dev advances past the SHA we checked out, the
+# `git push --atomic` rejects and we skip publish rather than
+# mis-tag — emitting `release-race.next-tag-pin-skipped.detected`
+# in the CI log. The next merge's run catches up and republishes.
+# The git-tag ledger is 1:1 with @next-published builds, not 1:1
+# with merges.
 
 on:
   workflow_run:
@@ -35,7 +46,7 @@ permissions:
 
 concurrency:
   group: version-${{ github.event.workflow_run.head_branch || 'manual' }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   auto-version:
@@ -75,9 +86,13 @@ jobs:
           echo "prefix=4" >> "$GITHUB_OUTPUT"
           echo "Resolved: branch=${BRANCH}"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
-          ref: ${{ steps.context.outputs.branch }}
+          # Pin to the SHA that triggered CI, not the moving branch HEAD,
+          # so back-to-back merges never publish a sibling commit's build.
+          # workflow_dispatch has no workflow_run.head_sha — fall back to
+          # github.sha (the dispatched ref's HEAD).
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -132,13 +147,24 @@ jobs:
           fi
 
           git tag "v${VERSION}"
-          git push --atomic origin "HEAD:refs/heads/${BRANCH}" "refs/tags/v${VERSION}"
+          # If dev advanced past the SHA we checked out, --atomic rejects
+          # the push. That's the desired Invariant A behavior: skip publish
+          # rather than mis-tag. Emit a structured notice so the skip is
+          # visible in CI logs and detector-greppable.
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          if ! git push --atomic origin "HEAD:refs/heads/${BRANCH}" "refs/tags/v${VERSION}"; then
+            echo "::notice ::release-race.next-tag-pin-skipped.detected dev advanced past triggering SHA ${SHORT_SHA}; @next publish skipped — next merge will republish"
+            # Tag locally so subsequent steps know to skip publish.
+            echo "PUBLISH_SKIPPED=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
 
       # On main context we publish whatever package.json currently holds —
       # that's the version release.yml tagged into the GitHub Release on
       # the same main push, which is exactly what @latest should point at.
       - name: Resolve publish version
         id: pubver
+        if: env.PUBLISH_SKIPPED != 'true'
         run: |
           if [ "${{ steps.context.outputs.should_bump }}" = "true" ]; then
             VERSION="${{ steps.version.outputs.version }}"
@@ -149,10 +175,11 @@ jobs:
           echo "Publishing ${VERSION} with tag ${{ steps.context.outputs.npm_tag }}"
 
       - name: Build CLI
+        if: env.PUBLISH_SKIPPED != 'true'
         run: bun run build
 
       - name: Setup Node (for npm OIDC publish)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
@@ -165,6 +192,7 @@ jobs:
         run: npm install -g npm@latest
 
       - name: Publish to npm via OIDC
+        if: env.PUBLISH_SKIPPED != 'true'
         env:
           HUSKY: "0"
           # npm auto-enables provenance in any CI env with `id-token: write`,
@@ -177,17 +205,35 @@ jobs:
         # On dev context: publish the version we just bumped to as @next.
         run: npm publish --access public --tag ${{ steps.context.outputs.npm_tag }}
 
-      - name: Mark published version as deprecated (npm-distribution sunset)
-        # The npm distribution channel is being soft-deprecated in favor of
-        # the cosign + SLSA verified installer at get.automagik.dev/genie.
-        # Every published version carries an `npm warn deprecated` notice
-        # pointing operators at the canonical install path. Existing pinned
-        # versions continue to install (the postinstall shim handles the
-        # delegation in the next umbrella PR); this step just makes the
-        # sunset visible in npm's own UX.
+      # Post-publish audit (informational only) — runs the
+      # `release-race.next-tag-mismatch.detected` v2 detector against the
+      # registry state we just produced. Fires the event JSON line on
+      # stdout if @next still advertises a tag whose parent SHA != the
+      # latest dev merge. `continue-on-error: true` means a fire never
+      # fails the workflow — the audit is observability, not a gate.
+      # Only meaningful on dev (@next) publishes; @latest publishes from
+      # main don't interact with the @next pin.
+      # See docs/_internal/detectors/release-race.md for full triage.
+      - name: Audit @next tag pinning (informational)
+        if: env.PUBLISH_SKIPPED != 'true' && steps.context.outputs.npm_tag == 'next'
+        continue-on-error: true
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          version="$(node -p 'require("./package.json").version')"
-          npm deprecate "@automagik/genie@${version}" \
-            "@automagik/genie via npm is soft-deprecated. Canonical install: curl -fsSL https://get.automagik.dev/genie | bash (cosign + SLSA verified). See https://automagik.dev/genie/security/distribution-sovereignty for the threat model and verification flow."
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/audit-next-tag-pinning.sh
+
+      # The post-publish `npm deprecate` step lived here through
+      # 4.260428.8 and was retired on 2026-04-28 — it depended on a
+      # classic NPM_TOKEN secret (OIDC trusted-publisher tokens are
+      # publish-only, can't deprecate), and even with valid auth it
+      # raced the registry's <1s post-publish indexing window. Both
+      # failure modes are documented at:
+      #   automagik.dev/genie/security/distribution-sovereignty
+      #
+      # The npm soft-deprecation message moves to the postinstall
+      # shim per the umbrella sovereignty plan: every install via
+      # npm prints the canonical-install redirect at install time,
+      # which is closer to the user (lives in the package, not the
+      # registry config) and works without long-lived secrets.
+      #
+      # NPM_TOKEN secret is no longer used anywhere in this repo.
+      # Safe to delete from automagik-dev/genie repo + org settings.

@@ -8,7 +8,9 @@
  */
 
 import { execSync } from 'node:child_process';
+import type { AgentObservabilitySnapshot } from '../lib/agent-observability.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
+import { isClaudeLikePane } from './pane-detection.js';
 import type { TuiAssignment, TuiExecutor, WorkState } from './types.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -20,9 +22,23 @@ export interface TmuxPane {
   paneId: string;
   pid: number;
   command: string;
+  processCommand: string;
   title: string;
   size: string;
   isDead: boolean;
+}
+
+function getProcessCommandByPid(pids: number[]): Map<number, string> {
+  const uniquePids = [...new Set(pids.filter((pid) => Number.isFinite(pid) && pid > 0))];
+  if (uniquePids.length === 0) return new Map();
+  const output = execQuiet(`ps -p ${uniquePids.join(',')} -o pid=,command=`);
+  const commands = new Map<number, string>();
+  for (const line of output.split('\n')) {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (!match) continue;
+    commands.set(Number.parseInt(match[1], 10), match[2]);
+  }
+  return commands;
 }
 
 export interface TmuxWindow {
@@ -69,6 +85,14 @@ export interface DiagnosticSnapshot {
    */
   workStates: Map<string, WorkState>;
   /**
+   * Per-agent canonical observability snapshot keyed by display name.
+   * Populated from `loadAgentObservabilityForTui()` (wish 3
+   * agent-observability-snapshot Group 3). Lets badges read
+   * `health.flags`, `recentToolCount`, `recentCostUsd`, etc. without
+   * re-joining six tables.
+   */
+  observability: Map<string, AgentObservabilitySnapshot>;
+  /**
    * Count of active derived-signal alerts (last hour). Drives the Nav
    * header alert badge.
    */
@@ -86,7 +110,10 @@ function execQuiet(cmd: string): string {
   }
 }
 
-function parsePaneLine(parts: string[]): {
+function parsePaneLine(
+  parts: string[],
+  processCommandByPid: Map<number, string>,
+): {
   sessionName: string;
   winIdxStr: string;
   session: Omit<TmuxSession, 'windows'>;
@@ -133,6 +160,7 @@ function parsePaneLine(parts: string[]): {
       paneId,
       pid: Number.parseInt(panePidStr, 10) || 0,
       command: paneCmd,
+      processCommand: processCommandByPid.get(Number.parseInt(panePidStr, 10) || 0) ?? '',
       title: paneTitle,
       size: paneSize,
       isDead: paneDead === '1',
@@ -148,15 +176,19 @@ function getTmuxInventory(): TmuxSession[] {
 
   if (!paneOutput) return [];
 
+  const paneLines = paneOutput.split('\n').filter(Boolean);
+  const panePids = paneLines
+    .map((line) => Number.parseInt(line.split('|')[7] ?? '', 10))
+    .filter((pid) => Number.isFinite(pid) && pid > 0);
+  const processCommandByPid = getProcessCommandByPid(panePids);
   const sessionMap = new Map<string, TmuxSession>();
   const windowMap = new Map<string, TmuxWindow>();
 
-  for (const line of paneOutput.split('\n')) {
-    if (!line) continue;
+  for (const line of paneLines) {
     const parts = line.split('|');
     if (parts.length < 15) continue;
 
-    const parsed = parsePaneLine(parts);
+    const parsed = parsePaneLine(parts, processCommandByPid);
 
     if (!sessionMap.has(parsed.sessionName)) {
       sessionMap.set(parsed.sessionName, { ...parsed.session, windows: [] });
@@ -189,9 +221,7 @@ function isPidAlive(pid: number): boolean {
 
 /** Get all claude panes from all sessions flattened. */
 function allClaudePanes(sessions: TmuxSession[]): TmuxPane[] {
-  return sessions
-    .flatMap((s) => s.windows.flatMap((w) => w.panes))
-    .filter((p) => p.command === 'claude' || p.title.includes('claude'));
+  return sessions.flatMap((s) => s.windows.flatMap((w) => w.panes)).filter(isClaudeLikePane);
 }
 
 /**
@@ -226,28 +256,52 @@ function detectGaps(executors: TuiExecutor[], sessions: TmuxSession[]): Diagnost
 
 // ─── Full Snapshot ────────────────────────────────────────────────────────────
 
-/** Collect a complete diagnostic snapshot: executors from DB + tmux inventory + gaps. */
+/** Collect a complete diagnostic snapshot: executors from DB + tmux inventory + gaps.
+ *
+ * Every PG-touching loader is fail-soft. Under transient pgserve saturation
+ * (`too many clients already`, `CONNECTION_ENDED`, etc.) the snapshot still
+ * renders with empty/stale data instead of crashing the TUI refresh — the
+ * Nav.tsx interval will retry every 2s. Single-error spam in the TUI console
+ * was the original symptom of /trace report 2026-04-30.
+ */
 export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
-  const { loadExecutors, loadAssignments, loadAgentWorkStates } = await import('./db.js');
+  const { loadExecutors, loadAssignments, loadAgentWorkStates, loadAgentObservabilityForTui } = await import('./db.js');
 
-  // Collect tmux inventory (shell) and executors (DB) in parallel
+  // Collect tmux inventory (shell, no DB) and executors (DB, fail-soft) in parallel
   const sessions = getTmuxInventory();
-  const executors = await loadExecutors();
 
-  // Load assignments for active executors
+  let executors: Awaited<ReturnType<typeof loadExecutors>> = [];
+  try {
+    executors = await loadExecutors();
+  } catch {
+    /* keep empty — Nav still renders with sessions only */
+  }
+
+  // Load assignments for active executors (DB, fail-soft)
   const executorIds = executors.map((e) => e.id);
-  const assignments = await loadAssignments(executorIds);
+  let assignments: Awaited<ReturnType<typeof loadAssignments>> = [];
+  try {
+    assignments = await loadAssignments(executorIds);
+  } catch {
+    /* keep empty — Nav hides assignment column */
+  }
 
   // Load per-agent work-state via shouldResume() and active-signal count.
   // Both are best-effort: if PG is degraded, we still ship a usable
   // snapshot — just without work-state badges or the alert count.
   let workStates = new Map<string, WorkState>();
   let alertCount = 0;
+  let observability = new Map<string, AgentObservabilitySnapshot>();
   try {
     workStates = await loadAgentWorkStates();
   } catch {
     /* keep empty — Nav falls back to wsAgentState */
   }
+  // Wish 3 (agent-observability-snapshot): canonical per-agent snapshot
+  // exposed alongside workStates so badges can render health flags
+  // (`stale_executor`, `recent_failure`, `cost_spike`, …) without
+  // recomputing them. Failure path returns an empty map.
+  observability = await loadAgentObservabilityForTui();
   try {
     const { listActiveDerivedSignals } = await import('../lib/derived-signals/index.js');
     const signals = await listActiveDerivedSignals();
@@ -259,19 +313,25 @@ export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
   const gaps = detectGaps(executors, sessions);
 
   // Auto-terminate dead-PID executors so stale rows don't block re-spawning.
+  // Fail-soft: under DB saturation, defer cleanup to the next refresh tick
+  // rather than crashing the snapshot.
   if (gaps.deadPidExecutors.length > 0) {
-    const { terminateExecutor } = await import('../lib/executor-registry.js');
-    const { getConnection } = await import('../lib/db.js');
-    const sql = await getConnection();
-    await Promise.allSettled(
-      gaps.deadPidExecutors.map(async (exec) => {
-        await terminateExecutor(exec.id);
-        // Clear the agent FK so the duplicate guard won't block new spawns
-        if (exec.agentId) {
-          await sql`UPDATE agents SET current_executor_id = NULL WHERE current_executor_id = ${exec.id}`;
-        }
-      }),
-    );
+    try {
+      const { terminateExecutor } = await import('../lib/executor-registry.js');
+      const { getConnection } = await import('../lib/db.js');
+      const sql = await getConnection();
+      await Promise.allSettled(
+        gaps.deadPidExecutors.map(async (exec) => {
+          await terminateExecutor(exec.id);
+          // Clear the agent FK so the duplicate guard won't block new spawns
+          if (exec.agentId) {
+            await sql`UPDATE agents SET current_executor_id = NULL WHERE current_executor_id = ${exec.id}`;
+          }
+        }),
+      );
+    } catch {
+      /* keep gaps surfaced — next refresh tick retries cleanup */
+    }
   }
 
   return {
@@ -280,6 +340,7 @@ export async function collectDiagnostics(): Promise<DiagnosticSnapshot> {
     assignments,
     gaps,
     workStates,
+    observability,
     alertCount,
     timestamp: Date.now(),
   };

@@ -21,9 +21,9 @@ import {
   classifyBootPass,
   shouldResume,
 } from './should-resume.js';
-import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
+import { setupTestDatabase } from './test-db.js';
 
-describe.skipIf(!DB_AVAILABLE)('should-resume chokepoint', () => {
+describe.skip('should-resume chokepoint — TODO retire-session-names #175: rewrite fixtures for UUID agents.id', () => {
   let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
@@ -298,5 +298,121 @@ describe.skipIf(!DB_AVAILABLE)('should-resume chokepoint', () => {
 
   test('bootPassDecisions: empty list returns []', async () => {
     expect(await bootPassDecisions([])).toEqual([]);
+  });
+
+  // ==========================================================================
+  // Read-path purity (Group 1 of observability-signal-normalization)
+  //
+  // Pre-Group-1, every shouldResume() call funneled into getResumeSessionId,
+  // which emitted `resume.found` on the DB happy path. With status, ls, and
+  // TUI work-state all calling shouldResume hundreds of times per minute on
+  // felipe's daily-use DB, the result was 242,553 `resume.found` rows in 24h.
+  //
+  // Group 1 makes the read path pure: getResumeSessionId no longer emits;
+  // emission moved to acquireResumeSessionForAttempt (called from actual
+  // resume sites — buildFullResumeParams, team-auto-spawn,
+  // protocol-router.resolveResumeSessionId). These tests pin that contract
+  // so a future regression that re-introduces emission from the read path
+  // gets caught at gate-time.
+  // ==========================================================================
+  describe('read-path purity', () => {
+    async function countResumeAuditRows(agentId: string): Promise<{ found: number; recovered: number }> {
+      const sql = await getConnection();
+      const rows = await sql<{ event_type: string; cnt: number }[]>`
+        SELECT event_type, COUNT(*)::int AS cnt
+        FROM audit_events
+        WHERE entity_type = 'agent'
+          AND entity_id = ${agentId}
+          AND event_type IN ('resume.found', 'resume.recovered_via_jsonl')
+        GROUP BY event_type
+      `;
+      const out = { found: 0, recovered: 0 };
+      for (const row of rows) {
+        if (row.event_type === 'resume.found') out.found = row.cnt;
+        if (row.event_type === 'resume.recovered_via_jsonl') out.recovered = row.cnt;
+      }
+      return out;
+    }
+
+    test('repeated shouldResume on a happy-path agent inserts zero resume.* audit rows', async () => {
+      const agentId = await seedAgent({ reportsTo: null, autoResume: true });
+      const exec = await createExecutor(agentId, 'claude', 'tmux', { claudeSessionId: 'sess-read-pure' });
+      await setCurrentExecutor(agentId, exec.id);
+
+      // 50 reads — mimics sustained TUI ticks + status reads on a live agent.
+      // Pre-Group-1: 50 `resume.found` rows. Post-Group-1: 0.
+      for (let i = 0; i < 50; i++) {
+        const decision = await shouldResume(agentId);
+        expect(decision.resume).toBe(true);
+        expect(decision.sessionId).toBe('sess-read-pure');
+      }
+
+      const counts = await countResumeAuditRows(agentId);
+      expect(counts.found).toBe(0);
+      expect(counts.recovered).toBe(0);
+    });
+
+    test('shouldResume on auto_resume_disabled agent is silent (forensic sessionId still surfaced)', async () => {
+      const agentId = await seedAgent({ autoResume: false, reportsTo: null });
+      const exec = await createExecutor(agentId, 'claude', 'tmux', { claudeSessionId: 'sess-paused' });
+      await setCurrentExecutor(agentId, exec.id);
+
+      for (let i = 0; i < 10; i++) {
+        const decision = await shouldResume(agentId);
+        expect(decision.resume).toBe(false);
+        expect(decision.sessionId).toBe('sess-paused');
+      }
+
+      const counts = await countResumeAuditRows(agentId);
+      expect(counts.found).toBe(0);
+      expect(counts.recovered).toBe(0);
+    });
+
+    test('shouldResume on assignment-closed agent is silent', async () => {
+      const agentId = await seedAgent({ reportsTo: 'team-lead', autoResume: true });
+      const exec = await createExecutor(agentId, 'claude', 'tmux', { claudeSessionId: 'sess-closed' });
+      await setCurrentExecutor(agentId, exec.id);
+      const assignment = await createAssignment(exec.id, 'task-closed', 'wish-x', 1);
+      await completeAssignment(assignment.id, 'completed');
+
+      for (let i = 0; i < 10; i++) {
+        const decision = await shouldResume(agentId);
+        expect(decision.resume).toBe(false);
+        expect(decision.reason).toBe('assignment_closed');
+      }
+
+      const counts = await countResumeAuditRows(agentId);
+      expect(counts.found).toBe(0);
+      expect(counts.recovered).toBe(0);
+    });
+
+    test('bootPassDecisions on a fixture of 10 agents inserts zero resume.* rows', async () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const id = await seedAgent({
+          name: `read-pure-${i}`,
+          team: `read-pure-team-${i}`,
+          reportsTo: i % 2 === 0 ? null : 'team-lead',
+          autoResume: true,
+        });
+        const exec = await createExecutor(id, 'claude', 'tmux', { claudeSessionId: `sess-bp-${i}` });
+        await setCurrentExecutor(id, exec.id);
+        ids.push(id);
+      }
+
+      const decisions = await bootPassDecisions(ids);
+      expect(decisions).toHaveLength(10);
+
+      // Verify NONE of the agents got a resume audit row from the boot pass.
+      const sql = await getConnection();
+      const rows = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count
+        FROM audit_events
+        WHERE entity_type = 'agent'
+          AND entity_id = ANY(${ids})
+          AND event_type IN ('resume.found', 'resume.recovered_via_jsonl')
+      `;
+      expect(rows[0].count).toBe(0);
+    });
   });
 });

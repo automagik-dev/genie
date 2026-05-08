@@ -113,7 +113,23 @@ async function resolveBoardOption(boardName?: string): Promise<string | undefine
     return board.id;
   }
   const defaultId = await resolveDefaultBoardId();
-  return defaultId ?? undefined;
+  if (!defaultId) return undefined;
+  // Defense: validate the configured activeBoard still exists. A stale id (e.g.
+  // workspace config pointing at an archived board) used to surface as the
+  // opaque PG trigger error `Unknown board: <id>` from migration 008. Catch it
+  // here with an actionable hint instead.
+  const bs = await getBoardService();
+  const board = await bs.getBoard(defaultId);
+  if (!board) {
+    console.error(
+      `Error: configured activeBoard "${defaultId}" no longer exists.
+  Run \`genie board list\` to see available boards, then either:
+    - update .genie/config.json's "activeBoard" key, or
+    - pass --board <name> explicitly`,
+    );
+    process.exit(1);
+  }
+  return board.id;
 }
 
 // ============================================================================
@@ -321,6 +337,28 @@ interface CreateOptions {
   gh?: string;
   externalId?: string;
   externalUrl?: string;
+  wish?: string;
+}
+
+const WISH_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Validate a wish slug from `--wish <slug>`. Rejects spaces, uppercase, leading
+ * hyphens, path traversal (`..`), absolute paths, and any other non-slug input.
+ * Throws on invalid; returns the slug on success.
+ */
+export function validateWishSlug(slug: string): string {
+  if (!WISH_SLUG_PATTERN.test(slug)) {
+    throw new Error(
+      `Invalid --wish slug: "${slug}". Slug must match /^[a-z0-9][a-z0-9-]*$/ (lowercase letters, digits, hyphens; no leading hyphen, no spaces, no path separators).`,
+    );
+  }
+  return slug;
+}
+
+/** Compute the wish-file path for a validated slug. */
+export function wishFileFromSlug(slug: string): string {
+  return `.genie/wishes/${slug}/WISH.md`;
 }
 
 /** Parse --gh owner/repo#N into { externalId, externalUrl }. */
@@ -366,6 +404,23 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
 
   const boardId = await resolveBoardOption(options.board);
 
+  // Defense: validate --type against task_types before delegating to the FK
+  // trigger. A bare `tasks_type_id_fkey` violation is unhelpful; a clear hint
+  // listing valid types lets the user pick one and retry.
+  if (options.type) {
+    const taskType = await ts.getType(options.type);
+    if (!taskType) {
+      const types = await ts.listTypes();
+      const validIds = types.map((t) => t.id).join(', ') || '(none registered)';
+      console.error(
+        `Error: task type "${options.type}" does not exist.
+  Valid types: ${validIds}
+  Or omit --type to use the default ("software").`,
+      );
+      process.exit(1);
+    }
+  }
+
   // Resolve external linking: --gh takes priority over --external-id/--external-url
   let externalId: string | undefined = options.externalId;
   let externalUrl: string | undefined = options.externalUrl;
@@ -374,6 +429,8 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
     externalId = parsed.externalId;
     externalUrl = parsed.externalUrl;
   }
+
+  const wishFile = options.wish ? wishFileFromSlug(validateWishSlug(options.wish)) : undefined;
 
   const task = await ts.createTask(
     {
@@ -389,6 +446,7 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
       boardId,
       externalId,
       externalUrl,
+      wishFile,
     },
     repoPath,
     projectId,
@@ -467,6 +525,7 @@ export function registerTaskCommands(program: Command): void {
     .option('--gh <owner/repo#N>', 'Link to GitHub issue (sets external_id + external_url)')
     .option('--external-id <id>', 'External tracker ID (e.g., JIRA-123)')
     .option('--external-url <url>', 'External tracker URL')
+    .option('--wish <slug>', 'Associate task with a wish (sets wish_file to .genie/wishes/<slug>/WISH.md)')
     .action(async (title: string, options: CreateOptions) => {
       try {
         await handleTaskCreate(title, options);
@@ -746,6 +805,39 @@ export function registerTaskCommands(program: Command): void {
         const actor = currentActor();
         const t = await ts.unblockTask(id, actor, options.comment);
         console.log(`Task #${t.seq} unblocked.`);
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    });
+
+  // ── task priority ──
+  // Closes #1473 — priority was settable on `task create` but not editable
+  // afterward. PMs curating large boards (47+ high-priority cards) had no
+  // way to recalibrate without recreating cards (loses comments + history).
+  task
+    .command('priority <id> <level>')
+    .description('Set the priority of an existing task (urgent|high|normal|low)')
+    .option('--comment <msg>', 'Audit comment for the priority change')
+    .action(async (id: string, level: string, options: { comment?: string }) => {
+      try {
+        type PriorityLevel = 'urgent' | 'high' | 'normal' | 'low';
+        const validLevels: PriorityLevel[] = ['urgent', 'high', 'normal', 'low'];
+        if (!validLevels.includes(level as PriorityLevel)) {
+          console.error(`Error: invalid priority "${level}". Valid: ${validLevels.join(', ')}`);
+          process.exit(1);
+        }
+        const priority = level as PriorityLevel;
+        const ts = await getTaskService();
+        const actor = currentActor();
+        const comment = options.comment ? { actor, body: options.comment } : undefined;
+        const t = await ts.updateTask(id, { priority }, undefined, comment);
+        if (!t) {
+          console.error(`Error: Task not found: ${id}`);
+          process.exit(1);
+        }
+        const colorCode = PRIORITY_COLORS[level] ?? '';
+        console.log(`Task #${t.seq} priority set to ${colorCode}${level}${RESET}.`);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);

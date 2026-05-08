@@ -14,10 +14,18 @@ import * as directory from '../../lib/agent-directory.js';
 import type { DirectoryEntry } from '../../lib/agent-directory.js';
 import * as agents from '../../lib/agent-registry.js';
 import * as registry from '../../lib/executor-registry.js';
+import { signOmniRequest } from '../../lib/omni-signature.js';
 import { buildLaunchCommand } from '../../lib/provider-adapters.js';
 import type { SpawnParams } from '../../lib/provider-adapters.js';
 import { shellQuote } from '../../lib/team-lead-command.js';
-import { ensureTeamWindow, executeTmux, isPaneAlive, isPaneProcessRunning, killWindow } from '../../lib/tmux.js';
+import {
+  capturePaneContent,
+  ensureTeamWindow,
+  executeTmux,
+  isPaneAlive,
+  isPaneProcessRunning,
+  killWindow,
+} from '../../lib/tmux.js';
 import type { ExecutorSession, IExecutor, OmniMessage, SafePgCallFn } from '../executor.js';
 import { buildTurnBasedPrompt } from './turn-based-prompt.js';
 
@@ -25,6 +33,12 @@ interface TmuxSessionState {
   executorId: string | null;
   agentId: string | null;
   repoPath: string | null;
+  /**
+   * Fingerprint of the most recent capture-pane sample. Used by `isBusy`
+   * to decide whether the pane has produced new bytes since the last check.
+   * `null` until the first sample lands.
+   */
+  lastPaneFingerprint: string | null;
 }
 
 /**
@@ -111,9 +125,17 @@ async function lookupChatName(chatId: string, _instanceId: string): Promise<stri
     const apiKey = config.apiKey || '';
     if (!apiKey) return null;
 
-    const url = `${apiUrl}/api/v2/chats?externalId=${encodeURIComponent(chatId)}`;
+    const path = `/api/v2/chats?externalId=${encodeURIComponent(chatId)}`;
+    const url = `${apiUrl}${path}`;
+    // Sign the lookup when this host has run `genie omni handshake`. Falls
+    // back to bearer-only when no key is present, matching pre-fingerprint
+    // behavior. Required so the lookup keeps working when the targeted
+    // omni instance is locked down with `--require-genie-signature`.
+    const sigHeaders = signOmniRequest('GET', path, '');
+    const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+    if (sigHeaders) Object.assign(headers, sigHeaders);
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers,
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return null;
@@ -129,6 +151,14 @@ async function lookupChatName(chatId: string, _instanceId: string): Promise<stri
 
 /**
  * Build SpawnParams from omni bridge context so we can delegate to buildLaunchCommand().
+ *
+ * @param resumeClaudeSessionId — when set, emits `--resume <id>` instead of
+ *   `--session-id <new-uuid>`. Used by the omni bridge to attach a freshly-
+ *   spawned tmux pane to the same Claude conversation that handled this chat
+ *   before a crash/restart, so per-chat history persists across executor death.
+ *   The two flags are mutually exclusive in `buildLaunchCommand` (see
+ *   provider-adapters.ts) — `resume` wins when both are set, but we omit
+ *   `sessionId` when resuming for clarity.
  */
 export function buildOmniSpawnParams(
   agentName: string,
@@ -136,6 +166,7 @@ export function buildOmniSpawnParams(
   entry: DirectoryEntry,
   env: Record<string, string>,
   initialMessage?: string,
+  resumeClaudeSessionId?: string,
 ): SpawnParams {
   const instanceId = env.OMNI_INSTANCE ?? '';
   const senderName = env.OMNI_SENDER_NAME ?? 'whatsapp-user';
@@ -159,7 +190,8 @@ export function buildOmniSpawnParams(
     provider: (entry.provider as SpawnParams['provider']) ?? 'claude',
     team: agentName,
     role: agentName,
-    sessionId: randomUUID(),
+    sessionId: resumeClaudeSessionId ? undefined : randomUUID(),
+    resume: resumeClaudeSessionId,
     model: entry.model,
     promptMode: entry.promptMode,
     systemPromptFile: join(entry.dir, 'AGENTS.md'),
@@ -173,6 +205,15 @@ export function buildOmniSpawnParams(
       color: (entry.color as 'blue' | undefined) ?? undefined,
     },
   };
+}
+
+/**
+ * Resolve the process name expected to be running under the tmux pane.
+ * The Omni tmux executor can launch Codex-backed directory entries too, so
+ * liveness probes must follow the provider instead of assuming Claude.
+ */
+export function resolveOmniPaneProcessName(provider: string | undefined): string {
+  return provider === 'codex' ? 'codex' : 'claude';
 }
 
 export class ClaudeCodeOmniExecutor implements IExecutor {
@@ -194,6 +235,30 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     await executeTmux(`send-keys -t '${paneId}' ${shellQuote(nudgeText)} Enter`);
   }
 
+  private async launchOmniProcessInPane(
+    agentName: string,
+    chatId: string,
+    entry: DirectoryEntry,
+    env: Record<string, string>,
+    paneId: string,
+    initialMessage: string | undefined,
+    resumeClaudeSessionId: string | undefined,
+  ): Promise<string | undefined> {
+    const omniEnv: Record<string, string> = { ...env, GENIE_OMNI_CHAT_ID: chatId, GENIE_OMNI_AGENT: agentName };
+    const params = buildOmniSpawnParams(agentName, chatId, entry, omniEnv, initialMessage, resumeClaudeSessionId);
+    const claudeSessionId = resumeClaudeSessionId ?? params.sessionId ?? undefined;
+    const launch = buildLaunchCommand(params);
+
+    // Merge omni-specific env vars with those produced by buildLaunchCommand.
+    const allEnv = { ...omniEnv, ...launch.env };
+    const envPrefix = Object.entries(allEnv)
+      .map(([k, v]) => `${k}=${shellQuote(v)}`)
+      .join(' ');
+    const cmd = envPrefix ? `${envPrefix} ${launch.command}` : launch.command;
+    await executeTmux(`send-keys -t '${paneId}' ${shellQuote(cmd)} Enter`);
+    return claudeSessionId;
+  }
+
   async spawn(
     agentName: string,
     chatId: string,
@@ -209,34 +274,56 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     const windowName = sanitizeWindowName(chatId, chatName ?? undefined);
     const { paneId, created } = await ensureTeamWindow(tmuxSession, windowName, entry.dir);
 
-    if (created) {
-      const omniEnv: Record<string, string> = { ...env, GENIE_OMNI_CHAT_ID: chatId, GENIE_OMNI_AGENT: agentName };
-      const params = buildOmniSpawnParams(agentName, chatId, entry, omniEnv, initialMessage);
-      const launch = buildLaunchCommand(params);
+    // Find-or-create the per-chat agent record up front so we can look up any
+    // prior executor for this (agent, chat) pair BEFORE building the launch
+    // command. If a prior executor exists with a recorded Claude session id,
+    // we pass it as `--resume` so the freshly-spawned tmux pane attaches to
+    // the same conversation history. This is the key invariant requested by
+    // operators: "omni-bridged sessions are permanent until explicitly closed".
+    const instanceId = env.OMNI_INSTANCE ?? '';
+    const agent = this.safePgCall
+      ? await this.safePgCall(
+          'tmux-find-or-create-agent',
+          () => agents.findOrCreateAgent(`${agentName}:${chatId}`, 'omni', 'omni'),
+          null,
+          { chatId },
+        )
+      : null;
+    const existingExecutor = agent
+      ? ((await this.safePgCall?.(
+          'tmux-find-existing-executor',
+          () => registry.findLatestByMetadata({ agentId: agent.id, source: 'omni', chatId }),
+          null,
+          { chatId },
+        )) ?? null)
+      : null;
+    const resumeClaudeSessionId = existingExecutor?.claudeSessionId ?? undefined;
 
-      // Merge omni-specific env vars with those produced by buildLaunchCommand
-      const allEnv = { ...omniEnv, ...launch.env };
-      const envPrefix = Object.entries(allEnv)
-        .map(([k, v]) => `${k}=${shellQuote(v)}`)
-        .join(' ');
-      const cmd = envPrefix ? `${envPrefix} ${launch.command}` : launch.command;
-      await executeTmux(`send-keys -t '${paneId}' ${shellQuote(cmd)} Enter`);
-    }
+    const processName = resolveOmniPaneProcessName(entry.provider);
+    const processRunning = !created && (await isPaneProcessRunning(paneId, processName));
+    const needsLaunch = created || !processRunning;
+
+    const claudeSessionId: string | undefined = needsLaunch
+      ? await this.launchOmniProcessInPane(agentName, chatId, entry, env, paneId, initialMessage, resumeClaudeSessionId)
+      : resumeClaudeSessionId;
 
     const sessionKey = `${agentName}:${chatId}`;
-    const registration = await this.registerInWorldA(
-      agentName,
+    const registration = await this.registerOrRelinkExecutor(
+      agent,
+      existingExecutor,
       chatId,
-      env.OMNI_INSTANCE ?? '',
+      instanceId,
       tmuxSession,
       windowName,
       paneId,
       entry.dir,
+      claudeSessionId,
     );
     this.sessions.set(sessionKey, {
       executorId: registration?.executorId ?? null,
       agentId: registration?.agentId ?? null,
       repoPath: entry.dir,
+      lastPaneFingerprint: null,
     });
     if (registration?.executorId) await this.updateState(registration.executorId, 'running', chatId);
 
@@ -248,27 +335,40 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
       executorType: 'tmux' as const,
       createdAt: now,
       lastActivityAt: now,
-      tmux: { session: tmuxSession, window: windowName, paneId },
+      tmux: { session: tmuxSession, window: windowName, paneId, claudeSessionId, processName },
     };
   }
 
-  private async registerInWorldA(
-    agentName: string,
+  /**
+   * Persist (or relink) the executor row for this per-chat omni session.
+   *
+   * - If an existing executor row was found by `findLatestByMetadata`, we
+   *   relink it to the same agent (in case current_executor_id drifted),
+   *   refresh its tmux pane/window pointers (a respawn lands in a new pane),
+   *   and persist the resolved Claude session id when the row was missing
+   *   one (e.g., legacy rows from before this fix). The row's identity
+   *   (executor.id) and history are preserved.
+   * - Otherwise, create a fresh executor row carrying the freshly-generated
+   *   Claude session id, so the *next* respawn finds it via
+   *   `findLatestByMetadata` and re-attaches via `--resume`.
+   *
+   * Either path makes per-chat sessions permanent across executor death:
+   * the bridge always finds the same `claude_session_id` for a given
+   * `(agent_id, chat_id)`, and Claude's `--resume` reloads the JSONL
+   * transcript transparently.
+   */
+  private async registerOrRelinkExecutor(
+    agent: { id: string } | null,
+    existingExecutor: { id: string; claudeSessionId?: string | null } | null,
     chatId: string,
     instanceId: string,
     tmuxSession: string,
     tmuxWindow: string,
     tmuxPaneId: string,
     repoPath: string,
+    claudeSessionId: string | undefined,
   ): Promise<{ executorId: string; agentId: string } | null> {
-    if (!this.safePgCall) return null;
-    const agent = await this.safePgCall(
-      'tmux-find-or-create-agent',
-      () => agents.findOrCreateAgent(`${agentName}:${chatId}`, 'omni', 'omni'),
-      null,
-      { chatId },
-    );
-    if (!agent) return null;
+    if (!this.safePgCall || !agent) return null;
 
     // Update agent record with pane_id and repo_path. Used by inter-agent
     // SendMessage (protocol-router) and observability — not by omni-turn
@@ -292,6 +392,49 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
       { chatId },
     );
 
+    // RELINK PATH — reuse the prior executor row so the per-chat session id
+    // (claude_session_id) and audit history are preserved across crashes.
+    if (existingExecutor) {
+      await this.safePgCall(
+        'tmux-relink-executor',
+        () => registry.relinkExecutorToAgent(existingExecutor.id, agent.id),
+        undefined,
+        { executorId: existingExecutor.id, chatId },
+      );
+      // Refresh tmux pane pointers — a respawn lands in a new pane.
+      await this.safePgCall(
+        'tmux-refresh-executor-pane',
+        async () => {
+          const sql = await import('../../lib/db.js').then((m) => m.getConnection());
+          await sql`
+            UPDATE executors
+            SET tmux_session = ${tmuxSession},
+                tmux_window = ${tmuxWindow},
+                tmux_pane_id = ${tmuxPaneId},
+                ended_at = NULL,
+                state = 'running',
+                updated_at = now()
+            WHERE id = ${existingExecutor.id}
+          `;
+        },
+        undefined,
+        { executorId: existingExecutor.id, chatId },
+      );
+      // Backfill claude_session_id on legacy rows (pre-fix executors created
+      // without one). Idempotent — `updateClaudeSessionId` is a single UPDATE.
+      if (claudeSessionId && !existingExecutor.claudeSessionId) {
+        await this.safePgCall(
+          'tmux-backfill-claude-session-id',
+          () => registry.updateClaudeSessionId(existingExecutor.id, claudeSessionId),
+          undefined,
+          { executorId: existingExecutor.id, chatId },
+        );
+      }
+      return { executorId: existingExecutor.id, agentId: agent.id };
+    }
+
+    // CREATE PATH — fresh chat (no prior executor). Persist the
+    // claude_session_id so the next respawn finds it.
     const executor = await this.safePgCall(
       'tmux-create-executor',
       () =>
@@ -300,6 +443,7 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
           tmuxWindow,
           tmuxPaneId,
           tmuxWindowId: null,
+          claudeSessionId,
           metadata: { source: 'omni', chat_id: chatId, instance_id: instanceId },
         }),
       null,
@@ -382,9 +526,39 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     try {
       const paneAlive = await isPaneAlive(paneId);
       if (!paneAlive) return false;
-      return await isPaneProcessRunning(paneId, 'claude');
+      return await isPaneProcessRunning(paneId, session.tmux?.processName ?? 'claude');
     } catch {
       return false;
     }
+  }
+
+  /**
+   * "Busy" = the pane has emitted new bytes since the last sample. We capture
+   * the latest 200 lines and fingerprint by `length:tail-128`, which is cheap
+   * and avoids hashing whole pane buffers. The first call always returns
+   * `true` (no prior fingerprint to compare against) — that matches the
+   * intent: the publisher just registered, and the agent is presumed busy
+   * until proven otherwise. Subsequent calls compare against the stored
+   * fingerprint and update it.
+   *
+   * Permission-prompt state IS effectively idle (the pane stops producing
+   * bytes), so this correctly emits no heartbeat in that case — the user
+   * gets nudged, which is the desired behavior per the wish risk table.
+   */
+  async isBusy(session: ExecutorSession): Promise<boolean> {
+    const state = this.sessions.get(session.id);
+    const paneId = session.tmux?.paneId;
+    if (!state || !paneId) return false;
+    let content: string;
+    try {
+      content = await capturePaneContent(paneId, 200, false);
+    } catch {
+      return false;
+    }
+    const fingerprint = `${content.length}:${content.slice(-128)}`;
+    const previous = state.lastPaneFingerprint;
+    state.lastPaneFingerprint = fingerprint;
+    if (previous === null) return true;
+    return previous !== fingerprint;
   }
 }

@@ -14,6 +14,7 @@
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { checkConnectionEmitDiscipline } from '../tools/lint/emit-discipline-connection.ts';
 
 const REPO_ROOT = new URL('..', import.meta.url).pathname;
 const SRC_ROOT = join(REPO_ROOT, 'src');
@@ -113,6 +114,14 @@ function checkSchemaDiscipline(): void {
 
 checkNoRawInsert();
 checkSchemaDiscipline();
+
+// Wish G9: lint informational stderr/console.error in connection/bootstrap
+// modules. New entries must be either gated behind a debug flag or carry an
+// explicit `// emit-discipline: ok — <reason>` exemption. See
+// tools/lint/emit-discipline-connection.ts for the rule body and module list.
+for (const f of checkConnectionEmitDiscipline(REPO_ROOT)) {
+  findings.push({ path: f.path, line: f.line, message: f.message });
+}
 
 if (findings.length > 0) {
   process.stderr.write(`\nemit-discipline lint: ${findings.length} violation(s)\n\n`);

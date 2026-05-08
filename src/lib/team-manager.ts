@@ -11,7 +11,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, rm, symlink } from 'node:fs/promises';
+import { mkdir, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path, { join } from 'node:path';
 import { $ } from 'bun';
@@ -396,6 +396,10 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
   }
 
   const sql = await getConnection();
+  // `sql.json(...)` (not `JSON.stringify`) so postgres.js encodes once into a
+  // proper jsonb array. `JSON.stringify([])` produces a jsonb STRING `"[]"`,
+  // which fails migration 061's `teams_members_uuid_check` (it calls
+  // `jsonb_typeof = 'array'` on the value). Same pattern as migration 045.
   await sql`
     INSERT INTO teams (
       name, repo, base_branch, worktree_path, leader,
@@ -405,13 +409,13 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
     ) VALUES (
       ${config.name}, ${config.repo}, ${config.baseBranch},
       ${config.worktreePath}, ${config.leader ?? null},
-      ${JSON.stringify(config.members)}, ${config.status},
+      ${sql.json(config.members)}, ${config.status},
       ${config.nativeTeamParentSessionId ?? null},
       ${config.nativeTeamsEnabled ?? false},
       ${config.tmuxSessionName ?? null}, ${config.wishSlug ?? null},
       ${config.spawner ?? null}, ${config.createdAt},
       ${config.parentTeam ?? null},
-      ${config.allowChildReachback ? JSON.stringify(config.allowChildReachback) : null}
+      ${config.allowChildReachback ? sql.json(config.allowChildReachback) : null}
     ) ON CONFLICT (name) DO NOTHING
   `;
 
@@ -614,18 +618,69 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
   return true;
 }
 
-async function removeWorktree(worktreePath: string | undefined): Promise<void> {
-  if (!worktreePath || !existsSync(worktreePath)) return;
-  try {
-    // Use git worktree remove for proper cleanup of object store references
-    await $`git worktree remove --force ${worktreePath}`.quiet();
-  } catch {
-    // Fallback to rm for non-worktree clones (e.g., --shared clones)
+/**
+ * Clean up the worktree directory and source-repo branch for an archived team.
+ * Closes #1467.
+ *
+ * Conservative policy:
+ *  - Always remove the worktree directory (it's a `git clone --shared`, no
+ *    work is lost — anything committed lives on the branch in the source
+ *    repo).
+ *  - Only delete the source-repo branch when its tip equals the base branch
+ *    tip (zero new commits, i.e. an empty team or no work pushed). Branches
+ *    with real commits stay so any pushed work is preserved.
+ *
+ * Pre-fix, archiveTeam updated PG rows but left both artifacts behind, so
+ * every archived team accumulated a stale clone + branch in the source repo.
+ * The dog-fooder smoke (`team create … --no-spawn` + `team disband`) was the
+ * canonical empty-team repro.
+ */
+async function cleanupTeamGitArtifacts(config: {
+  name: string;
+  repo: string;
+  baseBranch: string;
+  worktreePath?: string;
+}): Promise<void> {
+  // 1. Remove the worktree directory if present
+  if (config.worktreePath) {
     try {
-      await rm(worktreePath, { recursive: true, force: true });
+      // Use `git worktree remove` first (proper cleanup of git's worktree
+      // metadata); fall back to `rm -rf` if the worktree was created via
+      // `git clone --shared` (current path) which doesn't register as a
+      // git worktree from the source repo's perspective.
+      await $`git -C ${config.repo} worktree remove --force ${config.worktreePath}`.quiet();
     } catch {
-      // Best-effort
+      try {
+        await $`rm -rf ${config.worktreePath}`.quiet();
+      } catch {
+        // Best-effort — leave a stale dir rather than fail archive
+      }
     }
+  }
+
+  // 2. Remove the branch from the source repo IFF it has no new commits
+  //    beyond baseBranch. Use rev-parse to compare tips.
+  try {
+    const branchTip = (await $`git -C ${config.repo} rev-parse ${config.name}`.quiet()).text().trim();
+    let baseTip = '';
+    try {
+      baseTip = (await $`git -C ${config.repo} rev-parse origin/${config.baseBranch}`.quiet()).text().trim();
+    } catch {
+      try {
+        baseTip = (await $`git -C ${config.repo} rev-parse ${config.baseBranch}`.quiet()).text().trim();
+      } catch {
+        // No base branch reachable — bail; preserving the team branch is
+        // safer than blind delete.
+        return;
+      }
+    }
+    if (branchTip && baseTip && branchTip === baseTip) {
+      // Empty team — branch points at base, safe to delete
+      await $`git -C ${config.repo} branch -D ${config.name}`.quiet();
+    }
+    // else: branch has commits beyond base — preserve any pushed work
+  } catch {
+    // Branch doesn't exist or rev-parse failed — nothing to clean
   }
 }
 
@@ -670,6 +725,16 @@ export async function archiveTeam(teamName: string): Promise<boolean> {
   }
 
   await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
+
+  // Closes #1467 — clean up the worktree directory and the source-repo branch
+  // (when it has no commits beyond baseBranch). Pre-fix, archiveTeam updated
+  // PG rows but left the worktree dir + the git branch behind, so every
+  // archived team accumulated git artifacts in the source repo. Conservative
+  // policy: always remove the worktree (it's a clone, no work is lost), and
+  // only delete the branch when its tip equals the base branch tip (i.e.,
+  // the team was empty / no work pushed). Branches with real commits stay
+  // so any pushed work is preserved.
+  await cleanupTeamGitArtifacts(config);
 
   const sql = await getConnection();
   let archivedAgents = 0;
@@ -745,7 +810,7 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     }
   }
 
-  await removeWorktree(config.worktreePath);
+  await cleanupTeamGitArtifacts(config);
   await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
 
   // Atomically reset wish groups + archive team in a single transaction
@@ -830,16 +895,47 @@ async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
   }
 }
 
+/**
+ * UUID check used to gate writes to `teams.leader`. Mirrors `MEMBER_UUID_RE`
+ * in pg-seed.ts so the two write paths apply the same `fk_teams_leader_check`
+ * sanitizer. Migration 061 made `teams.leader` an FK to `agents.id`, and
+ * `agents.id` is always either a UUID or a `dir:`-prefixed string.
+ */
+const LEADER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Drop legacy bare-name leaders before writing — bare names always violate
+ * `fk_teams_leader` (no row in `agents` shares that id). Mirrors the pg-seed
+ * upsert guard so any code path that reaches `updateTeamConfig` with a stale
+ * leader value (e.g. an in-memory `TeamConfig` rehydrated from disk) degrades
+ * to NULL with an audit trail instead of throwing on the FK. Closes #1674.
+ */
+function sanitizeLeaderForWrite(teamName: string, leader: string | null | undefined): string | null {
+  if (leader == null || leader === '') return null;
+  if (LEADER_ID_RE.test(leader) || leader.startsWith('dir:')) return leader;
+  recordAuditEvent('team', teamName, 'leader_sanitized', getActor(), {
+    dropped: leader,
+    reason: 'fk_teams_leader_check',
+  }).catch(() => {});
+  return null;
+}
+
 /** Update team config in PG (full overwrite). */
 export async function updateTeamConfig(name: string, config: TeamConfig): Promise<void> {
   const sql = await getConnection();
+  // `sql.json(...)` mirrors the createTeam fix — see migration 061's
+  // `teams_members_uuid_check` and migration 045's encoding cleanup notes.
+  // `safeLeader` mirrors pg-seed.ts:431 fk_teams_leader_check sanitizer so any
+  // caller passing a stale bare-name leader degrades to NULL instead of
+  // tripping the FK constraint. Closes #1674.
+  const safeLeader = sanitizeLeaderForWrite(name, config.leader);
   await sql`
     UPDATE teams SET
       repo = ${config.repo},
       base_branch = ${config.baseBranch},
       worktree_path = ${config.worktreePath},
-      leader = ${config.leader ?? null},
-      members = ${JSON.stringify(config.members)},
+      leader = ${safeLeader},
+      members = ${sql.json(config.members)},
       status = ${config.status},
       native_team_parent_session_id = ${config.nativeTeamParentSessionId ?? null},
       native_teams_enabled = ${config.nativeTeamsEnabled ?? false},
@@ -847,7 +943,7 @@ export async function updateTeamConfig(name: string, config: TeamConfig): Promis
       wish_slug = ${config.wishSlug ?? null},
       spawner = ${config.spawner ?? null},
       parent_team = ${config.parentTeam ?? null},
-      allow_child_reachback = ${config.allowChildReachback ? JSON.stringify(config.allowChildReachback) : null}
+      allow_child_reachback = ${config.allowChildReachback ? sql.json(config.allowChildReachback) : null}
     WHERE name = ${name}
   `;
 }
@@ -917,6 +1013,20 @@ export async function resolveLeaderName(teamName: string): Promise<string> {
 
 /** Set team lifecycle status. */
 export async function setTeamStatus(teamName: string, status: TeamStatus): Promise<void> {
+  // Closes #1467 (done path) — `team done` previously did just the DB UPDATE
+  // and left both the worktree dir and the source-repo branch behind. Mirror
+  // archiveTeam's git-artifact cleanup so terminal statuses (done / archived)
+  // both leave the source repo clean.
+  if (status === 'done' || status === 'archived') {
+    const config = await getTeam(teamName);
+    if (config) {
+      // Kill members + cleanup tmux to match archive behavior
+      await Promise.allSettled(config.members.map((member) => killWorkersByName(member, teamName)));
+      await cleanupTeamTmuxSession(config.tmuxSessionName ?? teamName, teamName);
+      await cleanupTeamGitArtifacts(config);
+    }
+  }
+
   const sql = await getConnection();
   const result = await sql`
     UPDATE teams SET status = ${status}

@@ -40,7 +40,7 @@ jobs:
       tarball: ${{ steps.pack.outputs.tarball }}
       hashes: ${{ steps.hash.outputs.hashes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -221,7 +221,7 @@ jobs:
       actions: read       # read workflow run metadata for the attestation
       id-token: write     # mint the OIDC token that signs the provenance
       contents: write     # upload provenance.intoto.jsonl as a release asset
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: ${{ needs.release.outputs.hashes }}
       provenance-name: provenance.intoto.jsonl

@@ -55,12 +55,44 @@ export interface CallingAgentLookup {
 
 interface DoneActionDeps {
   /** Wish-group-done fallback. Injected for tests. */
-  wishDone?: (ref: string) => Promise<void>;
+  wishDone?: (ref: string, report: string) => Promise<void>;
   /** Turn-close path. Injected for tests. */
   turnCloseFn?: typeof turnClose;
   /** Lookup the calling agent's id + kind. Injected for tests. */
   lookupCallingAgent?: () => Promise<CallingAgentLookup | null>;
 }
+
+/** User-facing nudge when --report is missing. Mandatory so every close
+ * leaves a full handoff trail in events + mailbox notifications, instead
+ * of the silent "agent vanished" mystery. The report is the orchestrator's
+ * primary view into what happened — make it count. */
+const REPORT_MISSING_HINT = [
+  '❌ genie done requires --report "<session handoff>".',
+  '',
+  '   This is your handoff to the orchestrator. It lands in the audit trail and the',
+  '   wave/wish-complete notification, and is the ONLY summary anyone reading later',
+  '   will see without replaying your transcript. Write it like you are briefing the',
+  '   next person on call.',
+  '',
+  '   Cover:',
+  '     • What you attempted (the actual goal of this turn / group)',
+  '     • What shipped — files changed, PRs opened, migrations run, services touched',
+  '     • What is verified vs unverified (tests passed? smoke run? CI green?)',
+  '     • What is left, blocked, or deferred — and why',
+  '     • Surprises or decisions a future agent needs to know (data losses, infra',
+  '       quirks, hooks fired, anything non-obvious)',
+  '',
+  '   Length: as long as it needs to be. A one-liner is almost never enough.',
+  '   Multi-line is fine — pass via heredoc or a file:',
+  "     genie done --report \"$(cat <<'EOF'",
+  '       Goal: wire dev-local auth bridge for hv tenant.',
+  '       Shipped: PR #143 (fixtures), PR #144 (smoke). Both green on CI.',
+  "       Verified: 'make smoke' passed locally; tenant-A login round-trip OK.",
+  '       Left: CSRF rotation deferred to followup (issue #1245).',
+  '       Notes: had to bump core@1.260507.5 — desktop shell rebuild required.',
+  '     EOF',
+  '     )"',
+].join('\n');
 
 /**
  * Default lookup: resolve the calling agent's id + kind via GENIE_EXECUTOR_ID.
@@ -99,34 +131,47 @@ async function rejectIfPermanent(deps: DoneActionDeps): Promise<void> {
   }
 }
 
-async function runAgentSessionPath(deps: DoneActionDeps): Promise<void> {
+async function runAgentSessionPath(deps: DoneActionDeps, report: string): Promise<void> {
   await rejectIfPermanent(deps);
   const fn = deps.turnCloseFn ?? turnClose;
-  const result = await fn({ outcome: 'done' });
+  const result = await fn({ outcome: 'done', reason: report });
   if (result.noop) {
     console.log(`ℹ️  Executor ${result.executorId} already closed — no-op.`);
   } else {
     console.log(`✅ Turn closed: outcome=done, executor=${result.executorId}`);
+    console.log('--- Handoff ---');
+    console.log(report.trimEnd());
+    console.log('--- End handoff ---');
   }
 }
 
-export async function doneAction(ref: string | undefined, deps: DoneActionDeps = {}): Promise<void> {
+export async function doneAction(
+  ref: string | undefined,
+  options: { report?: string },
+  deps: DoneActionDeps = {},
+): Promise<void> {
   const agentName = process.env.GENIE_AGENT_NAME;
+  const report = options.report?.trim();
+
+  if (!report) {
+    console.error(REPORT_MISSING_HINT);
+    process.exit(2);
+  }
 
   try {
     if (!ref && agentName) {
-      await runAgentSessionPath(deps);
+      await runAgentSessionPath(deps, report);
       return;
     }
 
     if (ref) {
       const fallback =
         deps.wishDone ??
-        (async (r: string) => {
+        (async (r: string, rpt: string) => {
           const { doneCommand } = await import('./state.js');
-          await doneCommand(r);
+          await doneCommand(r, rpt);
         });
-      await fallback(ref);
+      await fallback(ref, report);
       return;
     }
 

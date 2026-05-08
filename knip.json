@@ -2,6 +2,7 @@
   "$schema": "https://unpkg.com/knip@5.85.0/schema.json",
   "entry": [
     "src/hooks/dispatch-command.ts",
+    "src/hooks/dispatch-client.ts",
     "src/tui/render.tsx",
     "src/tui/tmux.ts",
     "src/lib/executor-types.ts",
@@ -51,11 +52,12 @@
     "src/serve/detector-scheduler.ts",
     "src/term-commands/events-migrate.ts",
     "src/genie-commands/observability-health.ts",
-    "test/observability/emit-bench.ts"
+    "test/observability/emit-bench.ts",
+    "src/migrations/steps/*.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
   "ignore": ["src/lib/design-tokens.ts"],
-  "ignoreBinaries": ["which", "scripts/verify-release.sh"],
+  "ignoreBinaries": ["which", "scripts/verify-release.sh", "pgserve"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "@khal-os/brain",

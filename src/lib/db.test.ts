@@ -334,15 +334,202 @@ describe('daemon-owned pgserve', () => {
     expect(source.includes('MAX_PORT_RETRIES')).toBe(false);
     // Uses real postgres health check, not TCP-only
     expect(source.includes('isPostgresHealthy')).toBe(true);
-    // Self-heal function exists
-    expect(source.includes('selfHealPostgres')).toBe(true);
+    // selfHealPostgres was deleted in the canonical-pgserve cutover — pkill of
+    // pm2-supervised processes was the bug behind every "Could not kill stale
+    // postgres processes" failure. Lock the function out of reintroduction.
+    expect(source.includes('selfHealPostgres')).toBe(false);
+  });
+
+  test('socket connections answer pgserve v2 postgres-wire auth', async () => {
+    const { DB_NAME, resolvePgserveAuthPassword } = await import('./db.js');
+    const originalPassword = process.env.PGPASSWORD;
+
+    try {
+      process.env.PGPASSWORD = '';
+      expect(resolvePgserveAuthPassword()).toBe(DB_NAME);
+
+      process.env.PGPASSWORD = 'custom-local-value';
+      expect(resolvePgserveAuthPassword()).toBe('custom-local-value');
+    } finally {
+      if (originalPassword === undefined) {
+        process.env.PGPASSWORD = undefined;
+      } else {
+        process.env.PGPASSWORD = originalPassword;
+      }
+    }
+
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // Post-refactor (#1651): pgModule call delegates to buildPgClientOptions.
+    // Connection is still bound to a local first so concurrent rebuilds can't
+    // make this caller observe a nulled `sqlClient`.
+    expect(source).toContain('const client = pgModule(buildPgClientOptions(');
+    const optionsStart = source.indexOf('function buildPgClientOptions');
+    expect(optionsStart).toBeGreaterThan(-1);
+    const optionsBody = source.slice(optionsStart, source.indexOf('\n}\n', optionsStart));
+    expect(optionsBody).toContain('username: DB_NAME');
+    expect(optionsBody).toContain('[PG_AUTH_FIELD]: transport.pgWireCredential');
+    expect(source).toContain('const PG_AUTH_FIELD');
+    // pgWireCredential resolution moved into resolveTransport.
+    expect(source).toContain(
+      'const pgWireCredential = useSocket ? resolvePgserveAuthPassword() : resolveTcpPgPassword()',
+    );
+    // Sharing the global happens AFTER local construction.
+    expect(source).toContain('sqlClient = client');
+  });
+
+  test('socket connections use the pgserve startup timeout window', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const helperStart = source.indexOf('function resolvePgConnectTimeoutSeconds');
+    expect(helperStart).toBeGreaterThan(-1);
+    const helperBody = source.slice(helperStart, source.indexOf('\n/** Back-compat', helperStart));
+
+    expect(helperBody).toContain('process.env.GENIE_PG_CONNECT_TIMEOUT');
+    expect(helperBody).toContain('if (!useSocket) return 5');
+    expect(helperBody).toContain('Math.max(16, Math.ceil(resolvePgserveTimeoutMs() / 1000))');
+
+    // Post-refactor (#1651): connect_timeout is wired in buildPgClientOptions.
+    const optionsStart = source.indexOf('function buildPgClientOptions');
+    expect(optionsStart).toBeGreaterThan(-1);
+    const optionsBody = source.slice(optionsStart, source.indexOf('\n}\n', optionsStart));
+    expect(optionsBody).toContain('connect_timeout: resolvePgConnectTimeoutSeconds(transport.useSocket)');
+  });
+
+  test('production connections use UDS-first / TCP-fallback transport discovery', () => {
+    // Post-pgserve-transport-discovery: `_buildConnection` no longer hard-fails
+    // when the canonical UDS is missing. Instead it asks `resolvePgserveTransport()`
+    // for the live transport (UDS preferred, TCP via `pgserve port` as
+    // fallback). Test mode (GENIE_TEST_PG_PORT) keeps the legacy in-process
+    // TCP path because the test harness provisions its own pgserve --ram
+    // instance and exposes the port via env.
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function _buildConnection');
+    expect(fnStart).toBeGreaterThan(-1);
+    const body = source.slice(fnStart, source.indexOf('\n}\n', fnStart));
+
+    // Test-mode short-circuit: keeps the existing TCP path for unit tests.
+    expect(body).toContain('const useTestModeTcp = Boolean(process.env.GENIE_TEST_PG_PORT)');
+    expect(body).toContain('await resolveTransport(false)');
+
+    // Production path: probe transports via the new resolver.
+    expect(body).toContain('await resolvePgserveTransport()');
+
+    // Resolver must contain both probe primitives.
+    const resolverStart = source.indexOf('export async function resolvePgserveTransport');
+    expect(resolverStart).toBeGreaterThan(-1);
+    const resolverBody = source.slice(resolverStart, source.indexOf('\n}\n', resolverStart));
+    expect(resolverBody).toContain('probePgserveDaemon()');
+    expect(resolverBody).toContain('isPgserveSocketResponsive()');
+    expect(resolverBody).toContain('discoverTcpPgservePort()');
+    // Force-flag overrides: both legacy GENIE_PG_FORCE_TCP and new
+    // GENIE_PG_FORCE_SOCKET must remain wired so operators can pin one
+    // transport for diagnostics.
+    expect(resolverBody).toContain("process.env.GENIE_PG_FORCE_TCP === '1'");
+    expect(resolverBody).toContain("process.env.GENIE_PG_FORCE_SOCKET === '1'");
+  });
+
+  test('canonical-cutover removed every spawn helper from db.ts', () => {
+    // Locks out reintroduction of the daemon-owner code paths the cutover
+    // wish removed. Genie is consumer-only post-cutover; all helpers below
+    // must remain absent from db.ts source.
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    for (const symbol of [
+      'startPgserveDaemonOnce',
+      'spawnPgserveDirect',
+      'startPgserveOnPort',
+      'findPgserveBin',
+      'findPgserveDaemonCommand',
+      'resolvePgservePackageCommand',
+      'findBunRuntime',
+      'findLocalPgserveRoot',
+      'evictOrphanDataDirHolder',
+      'detectOrphanDataDirLock',
+      'terminatePgserveTree',
+      'signalPgserveTree',
+      'signalPgserveDaemonPid',
+      'recoverUnresponsivePgserveDaemon',
+      'isLikelyPgserveDaemonProcess',
+      'cleanPartialDaemonState',
+      'waitForDaemonSocket',
+      'waitForDaemonPort',
+      'throwDaemonTimeout',
+      'formatPgserveDaemonCommand',
+      'selfHealPostgres',
+    ]) {
+      expect(source).not.toContain(symbol);
+    }
+    // Lock out pgserve binary spawn invocation, EXCEPT the read-only discovery
+    // subcommands (`port`, `url`, `status`). Discovery is consumer-only —
+    // it doesn't own the daemon's lifecycle, just reads the published state.
+    // The post-pgserve-transport-discovery TCP fallback uses `pgserve port`.
+    //
+    // Forbidden patterns (daemon ownership):
+    //   spawn('pgserve', ['daemon', ...])    // owning the daemon process
+    //   spawn('pgserve', [<no subcommand>])  // bare pgserve (foreground TCP install)
+    //   spawn('pgserve', ['install', ...])   // pm2 registration (genie shouldn't own it)
+    //
+    // Allowed patterns (read-only discovery):
+    //   spawn('pgserve', ['port'])
+    //   spawn('pgserve', ['url'])
+    //   spawn('pgserve', ['status', '--json'])
+    const spawnPgserveMatches = source.matchAll(/spawn(?:Sync)?\(\s*['"]pgserve['"]\s*,\s*\[([^\]]*)\]/g);
+    for (const match of spawnPgserveMatches) {
+      const args = match[1];
+      const firstArg = args.match(/['"]([^'"]+)['"]/)?.[1] ?? '';
+      expect(['port', 'url', 'status']).toContain(firstArg);
+    }
+    expect(source).not.toContain('pkill');
+  });
+
+  test('requirePgserveDaemon never spawns when daemon is healthy (cutover G5 regression)', () => {
+    // Static guarantee: the probe-only contract is enforced by reading the
+    // function body and asserting it never invokes any child_process spawn
+    // primitive nor process.kill. Replaces the spawn-mock behavioural test
+    // the wish suggested — Bun's module cache makes spy-then-reimport
+    // brittle, and the source-text assertion is strictly stronger
+    // (covers every code path through the function, not just the one the
+    // mocked test would exercise).
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('export async function requirePgserveDaemon');
+    expect(fnStart).toBeGreaterThan(-1);
+    // Slice up to the next defined function — `buildPgserveUnavailableHint`
+    // immediately follows `requirePgserveDaemon` after the cutover removed
+    // the pre-cutover `getOrStartDaemon` alias.
+    const fnEnd = source.indexOf('function buildPgserveUnavailableHint', fnStart);
+    expect(fnEnd).toBeGreaterThan(fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    for (const banned of ['spawn(', 'execSync(', 'execFileSync(', 'spawnSync(', 'process.kill(']) {
+      expect(body).not.toContain(banned);
+    }
+    // Positive: the body must call the probe primitives that prove
+    // reachability without process work.
+    expect(body).toContain('probePgserveDaemon');
+    expect(body).toContain('isPgserveSocketResponsive');
+    // Defence-in-depth: the pre-cutover `getOrStartDaemon` symbol is gone
+    // (the project's dead-code gate doesn't honour @deprecated; downstream
+    // callers must rename to requirePgserveDaemon). Lock out reintroduction.
+    expect(source).not.toContain('export async function getOrStartDaemon');
+  });
+
+  test('canonical pgserve UDS greeting probe is preserved', () => {
+    // The greet-completion check is the live-reachability primitive the new
+    // requirePgserveDaemon() depends on. Pinned so future refactors don't
+    // accidentally drop the protocol-aware probe in favour of a bare
+    // existsSync() that fooled stale-socket scenarios pre-cutover.
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const greetStart = source.indexOf('function canCompletePgserveGreet');
+    expect(greetStart).toBeGreaterThan(-1);
+    const greetBody = source.slice(greetStart, source.indexOf('\n}\n', greetStart));
+    expect(greetBody).toContain('request.writeUInt32BE(8, 0)');
+    expect(greetBody).toContain('request.writeUInt32BE(PG_SSL_REQUEST_CODE, 4)');
+    expect(greetBody).toContain("socket.once('data'");
   });
 });
 
 describe('retention cleanup', () => {
-  test('retention DELETEs are present in getConnection()', () => {
+  test('retention DELETEs are present in runRetention()', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    // All 4 retention policies present
+    // All 4 retention policies still defined in the runRetention function
     expect(source).toContain("DELETE FROM heartbeats WHERE created_at < now() - interval '7 days'");
     expect(source).toContain("DELETE FROM machine_snapshots WHERE created_at < now() - interval '30 days'");
     expect(source).toContain(
@@ -351,10 +538,27 @@ describe('retention cleanup', () => {
     expect(source).toContain("DELETE FROM genie_runtime_events WHERE created_at < now() - interval '14 days'");
   });
 
-  test('retention is guarded by retentionRan flag', () => {
+  test('runRetention is exported for daemon-side timer', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // runRetention must be exported so scheduler-daemon can call it on its
+    // periodic timer (was inline-private when it ran from runPostConnectSetup).
+    expect(source).toContain('export async function runRetention');
+  });
+
+  test('runPostConnectSetup no longer invokes runRetention (Mac CPU fix A)', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // The hook-dispatch cold-start fanout path must NOT trigger retention;
+    // every `genie hook dispatch` bun fork would otherwise issue 4 DELETEs.
+    // Scheduler-daemon now owns the periodic call.
+    const setupFnIdx = source.indexOf('async function runPostConnectSetup');
+    expect(setupFnIdx).toBeGreaterThan(-1);
+    const setupFn = source.slice(setupFnIdx, source.indexOf('\nexport async function getConnection'));
+    expect(setupFn).not.toContain('await runRetention(');
+  });
+
+  test('retentionRan flag still exists for daemon intra-process guard', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     expect(source).toContain('let retentionRan = false');
-    expect(source).toContain('!retentionRan');
     expect(source).toContain('retentionRan = true');
   });
 
@@ -373,6 +577,45 @@ describe('retention cleanup', () => {
     expect(migration).toContain('DELETE FROM audit_events');
     expect(migration).toContain('DELETE FROM genie_runtime_events');
   });
+
+  test('scheduler-daemon owns the periodic retention timer', () => {
+    const daemonSource = readFileSync(join(__dirname, 'scheduler-daemon.ts'), 'utf-8');
+    expect(daemonSource).toContain('retentionTimer');
+    expect(daemonSource).toContain('runRetention');
+    // 1-hour cadence
+    expect(daemonSource).toContain('60 * 60 * 1000');
+    // Cleanup on stop()
+    expect(daemonSource).toContain('clearInterval(retentionTimer)');
+  });
+});
+
+describe('GENIE_SKIP_DB_BOOT (Mac CPU fix C — hook-dispatch coldstart)', () => {
+  test('runPostConnectSetup honors GENIE_SKIP_DB_BOOT alongside isTestMode', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // The skipBoot guard must combine isTestMode + the env var so the
+    // hook-dispatch entrypoint can short-circuit migrations + seed
+    expect(source).toContain("process.env.GENIE_SKIP_DB_BOOT === '1'");
+    expect(source).toMatch(/skipBoot\s*=\s*isTestMode\s*\|\|\s*process\.env\.GENIE_SKIP_DB_BOOT/);
+    // Both migrations and seed gated by skipBoot
+    expect(source).toMatch(/if \(!skipBoot\) await runMigrations/);
+    expect(source).toMatch(/if \(!skipBoot && \(needsSeed\(\) \|\| \(await needsSeededTeams\(client\)\)\)\) \{/);
+    expect(source).toContain('await runSeed(client);');
+  });
+
+  test('hook dispatch entrypoint sets GENIE_SKIP_DB_BOOT before invoking dispatch()', () => {
+    const dispatchSource = readFileSync(join(__dirname, '..', 'hooks', 'dispatch-command.ts'), 'utf-8');
+    // Env must be set inside dispatchAction (not at module load — that would
+    // affect the entire genie binary including the daemon path)
+    const dispatchActionIdx = dispatchSource.indexOf('async function dispatchAction');
+    expect(dispatchActionIdx).toBeGreaterThan(-1);
+    const fnBody = dispatchSource.slice(dispatchActionIdx, dispatchSource.indexOf('}', dispatchActionIdx + 100));
+    expect(fnBody).toContain("process.env.GENIE_SKIP_DB_BOOT = '1'");
+    // Must be set BEFORE dispatch(stdin) so the first getConnection() inside
+    // any handler skips migrations + seed
+    const envSetIdx = dispatchSource.indexOf("GENIE_SKIP_DB_BOOT = '1'");
+    const dispatchCallIdx = dispatchSource.indexOf('await dispatch(stdin)');
+    expect(envSetIdx).toBeLessThan(dispatchCallIdx);
+  });
 });
 
 describe('pool error recovery', () => {
@@ -381,7 +624,12 @@ describe('pool error recovery', () => {
     // Find the post-connect setup call in getConnection()
     const catchIdx = source.indexOf('await runPostConnectSetup(');
     expect(catchIdx).toBeGreaterThan(-1);
-    const catchBlock = source.slice(catchIdx, catchIdx + 300);
+    // Widened from 300 chars — the success path between runPostConnectSetup
+    // and the catch block now also flips the activePort to the socket sentinel
+    // when in socket mode (see SOCKET_PORT_SENTINEL handling). The intent of
+    // the test is "both nulls live inside the failure-recovery block", not
+    // "within a fixed byte budget".
+    const catchBlock = source.slice(catchIdx, catchIdx + 1000);
     // Both must be null'd to force full reconnect
     expect(catchBlock).toContain('sqlClient = null');
     expect(catchBlock).toContain('activePort = null');
@@ -456,11 +704,14 @@ describe('parallel dispatch race (issue #1207)', () => {
     expect(body).toMatch(/finally\s*\{[^}]*buildPromise\s*=\s*null/);
   });
 
-  test('_buildConnection fire-and-forget teardown on post-connect failure', () => {
+  test('buildAndOpenConnection fire-and-forget teardown on post-connect failure', () => {
     // Same pattern as healthCheckCachedClient — if runPostConnectSetup fails,
     // tear down the doomed client without blocking concurrent work.
+    // Post-pgserve-transport-discovery: the catch lives in `buildAndOpenConnection`
+    // (the post-resolution helper); `_buildConnection` is now just the
+    // dispatcher that picks UDS vs. TCP.
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    const fnStart = source.indexOf('async function _buildConnection');
+    const fnStart = source.indexOf('async function buildAndOpenConnection');
     expect(fnStart).toBeGreaterThan(-1);
     const fnEnd = source.indexOf('\n}\n', fnStart);
     const body = source.slice(fnStart, fnEnd);
@@ -472,6 +723,27 @@ describe('parallel dispatch race (issue #1207)', () => {
     expect(catchBody.indexOf('sqlClient = null')).toBeLessThan(catchBody.indexOf('.end('));
     expect(catchBody).not.toMatch(/await\s+\w+\.end\(/);
     expect(catchBody).toMatch(/\.end\([^)]*\)\.catch\(/);
+  });
+
+  test('_buildConnection dispatches via resolvePgserveTransport (UDS-first / TCP-fallback)', () => {
+    // Post-pgserve-transport-discovery: the dispatcher no longer probes the
+    // canonical daemon directly — it asks `resolvePgserveTransport()` for the
+    // live transport (UDS preferred, TCP via `pgserve port` fallback). This
+    // test locks the new contract; the old probe-then-libpq-path is enforced
+    // inside `resolvePgserveTransport` itself by 'source enforces probe order'.
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function _buildConnection');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    // Test-mode path remains for unit-test harness compatibility.
+    const testModeIdx = body.indexOf('Boolean(process.env.GENIE_TEST_PG_PORT)');
+    // Production dispatch: always through resolvePgserveTransport.
+    const dispatchIdx = body.indexOf('await resolvePgserveTransport()');
+
+    expect(testModeIdx).toBeGreaterThan(-1);
+    expect(dispatchIdx).toBeGreaterThan(testModeIdx);
   });
 });
 
@@ -524,16 +796,12 @@ describe('root guard (issue #1226)', () => {
     expect(checkRootGuard()).toBeNull();
   });
 
-  test('_ensurePgserve invokes checkRootGuard before spawn paths', () => {
-    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    // The guard call must live inside _ensurePgserve, before the GENIE_IS_DAEMON branch
-    const fnStart = source.indexOf('async function _ensurePgserve');
-    expect(fnStart).toBeGreaterThan(-1);
-    const daemonBranch = source.indexOf("GENIE_IS_DAEMON === '1'", fnStart);
-    const guardCall = source.indexOf('checkRootGuard()', fnStart);
-    expect(guardCall).toBeGreaterThan(-1);
-    expect(guardCall).toBeLessThan(daemonBranch);
-  });
+  // The pre-cutover `_ensurePgserve invokes checkRootGuard before spawn paths`
+  // and `_ensurePgserve honors GENIE_PG_NO_AUTOSTART before auto-start daemon`
+  // tests were removed when the canonical-pgserve cutover deleted both
+  // _ensurePgserve's spawn branch (GENIE_IS_DAEMON) and the autoStartDaemon
+  // path. checkRootGuard's behaviour is exercised directly by the three
+  // tests above; the old source-text ordering tests are no longer applicable.
 });
 
 describe('migration directory resolution', () => {
@@ -632,6 +900,12 @@ describe('autoStartDaemon identity check', () => {
     expect(spawnCount).toBe(1);
   });
 
+  test('auto-start child is a foreground daemon before serve preconditions run', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    expect(source).toContain("'serve', 'start', '--headless', '--foreground'");
+    expect(source).toContain("GENIE_IS_DAEMON: '1'");
+  });
+
   test('returns early when serve.pid identity matches (live PID + matching start time)', async () => {
     const { autoStartDaemon, __setSpawnDaemonForTest } = await import('./db.js');
     const { getProcessStartTime } = await import('./process-identity.js');
@@ -704,14 +978,369 @@ describe('autoStartDaemon identity check', () => {
 });
 
 // ===========================================================================
-// Branched timeout error messages (Bug 5)
+// canonical-pgserve cutover: hint surfaces (replaces the deleted "branched
+// timeout messages" + "pgserve failure containment" suites — both were
+// asserting on spawn-path code that no longer exists in db.ts).
 // ===========================================================================
 
-describe('autoStartDaemon branched timeout messages', () => {
-  test('db.ts source contains each branch label', () => {
+describe('canonical-pgserve cutover hint surface', () => {
+  test('_ensurePgserve emits the canonical pm2-recovery hint on TCP-mode failure', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
-    expect(source).toContain('genie serve not running. Run: genie serve start');
-    expect(source).toContain('pgserve did not respond on port');
-    expect(source).toContain('Stale ~/.genie/serve.pid');
+    const fnStart = source.indexOf('async function _ensurePgserve');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+    expect(body).toContain('canonical-pgserve cutover');
+    expect(body).toContain('pm2 status');
+    expect(body).toContain('pm2 restart pgserve');
+    expect(body).toContain('pgserve install');
+  });
+
+  test('requirePgserveDaemon throws with a pm2-recovery hint when the canonical socket is dead', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    expect(source).toContain('export async function requirePgserveDaemon');
+    expect(source).toContain('buildPgserveUnavailableHint');
+    const hintStart = source.indexOf('function buildPgserveUnavailableHint');
+    expect(hintStart).toBeGreaterThan(-1);
+    const hintEnd = source.indexOf('\n}\n', hintStart);
+    const hintBody = source.slice(hintStart, hintEnd);
+    expect(hintBody).toContain('pm2 status');
+    expect(hintBody).toContain('pm2 restart pgserve');
+    expect(hintBody).toContain('pgserve install');
+    expect(hintBody).toContain('docs/install.md');
+  });
+});
+
+describe('cwd pin for stable pgserve identity (issue #1575)', () => {
+  test('pinCwdToGeniePackageDir resolves to genie package and chdirs', async () => {
+    const { pinCwdToGeniePackageDir } = await import('./db.js');
+    const beforePinCwd = process.cwd();
+    const result = pinCwdToGeniePackageDir();
+    try {
+      // pinned should point at a directory whose package.json declares
+      // name === '@automagik/genie'. If null, fall back gracefully — the
+      // resolver gave up but the call still returns the previous cwd.
+      expect(result.previous).toBe(beforePinCwd);
+      if (result.pinned !== null) {
+        const pkg = JSON.parse(readFileSync(join(result.pinned, 'package.json'), 'utf-8')) as {
+          name?: string;
+        };
+        expect(pkg.name).toBe('@automagik/genie');
+        expect(process.cwd()).toBe(result.pinned);
+      }
+    } finally {
+      // Restore for downstream tests in the same process.
+      try {
+        process.chdir(beforePinCwd);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+
+  test('_buildConnection sources strategy uses cliShortLived for max + idle_timeout', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // Pool sizing is gated on cliShortLived (NOT isTestMode — tests need
+    // concurrent connections; the pin/restore safety only matters when
+    // GENIE_SKIP_DB_BOOT=1 short-lived CLI subprocesses chdir back).
+    // Operational justification: v4.260430.20 saw script-mode CLI
+    // fingerprints accumulating 296+ pgserve backends each, saturating
+    // max_connections=1000. The gate caps that at 1 per subprocess.
+    expect(source).toMatch(/max:\s*cliShortLived\s*\?\s*1\s*:\s*50/);
+    expect(source).toMatch(/idle_timeout:\s*cliShortLived\s*\?\s*0\s*:\s*1/);
+    // Forced SELECT 1 must run BEFORE runPostConnectSetup so pgserve
+    // fingerprints under the pinned cwd.
+    const selectIdx = source.indexOf('await sqlClient`SELECT 1`');
+    const setupIdx = source.indexOf('await runPostConnectSetup');
+    expect(selectIdx).toBeGreaterThan(-1);
+    expect(setupIdx).toBeGreaterThan(-1);
+    expect(selectIdx).toBeLessThan(setupIdx);
+    // chdir restore lives in the finally clause and is gated on
+    // !daemonCwdPinned so the daemon entrypoint's permanent pin survives.
+    expect(source).toMatch(/shouldRestoreCwd\s*=\s*!daemonCwdPinned/);
+  });
+
+  test('cleanup drains sqlClient and beforeExit calls shutdown (issue #1574)', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    // Cleanup must drain the postgres.js pool best-effort on hard exit so
+    // server-side backends get Terminate frames before the kernel reaps
+    // sockets.
+    const cleanupIdx = source.indexOf('const cleanup = () => {');
+    expect(cleanupIdx).toBeGreaterThan(-1);
+    const cleanupBody = source.slice(cleanupIdx, source.indexOf('};', cleanupIdx));
+    expect(cleanupBody).toContain('sqlClient');
+    expect(cleanupBody).toMatch(/dying\.end\(\{\s*timeout:\s*1\s*\}\)/);
+    // beforeExit is the awaited drain path — fires on every clean exit.
+    expect(source).toContain("process.on('beforeExit'");
+    expect(source).toMatch(/process\.on\('beforeExit',\s*\(\)\s*=>\s*\{[\s\S]*?shutdown\(\)/);
+  });
+});
+
+// ============================================================================
+// pgserve transport discovery (UDS-first / TCP-fallback).
+//
+// Behavioral tests for `resolvePgserveTransport` — exercises real
+// system behavior with controlled env-var overrides. The function itself
+// is hermetic (no side effects beyond reading env + filesystem + spawning
+// `pgserve port`); we don't mock — instead we set GENIE_PG_FORCE_TCP=1 to
+// pin the deterministic TCP path and assert the resulting shape.
+// ============================================================================
+
+describe('resolvePgserveTransport (transport discovery)', () => {
+  test('GENIE_PG_FORCE_TCP=1 + reachable pgserve port → tcp transport', async () => {
+    // This test only runs when `pgserve port` is reachable on the host. CI
+    // hosts without pgserve installed get a skipped/no-op assertion.
+    const previous = process.env.GENIE_PG_FORCE_TCP;
+    process.env.GENIE_PG_FORCE_TCP = '1';
+    try {
+      const { resolvePgserveTransport } = await import('./db.js');
+      const result = await resolvePgserveTransport().catch((err: Error) => err);
+      if (result instanceof Error) {
+        // No pgserve binary or daemon → resolver throws the both-unavailable
+        // hint. Assert the message shape so future copy edits are caught.
+        expect(result.message).toContain('pgserve is not reachable');
+        expect(result.message).toContain('Recovery:');
+        return;
+      }
+      // pgserve was discoverable on TCP — assert the shape.
+      expect(result.kind).toBe('tcp');
+      if (result.kind === 'tcp') {
+        expect(result.host).toBe('127.0.0.1');
+        expect(Number.isInteger(result.port)).toBe(true);
+        expect(result.port).toBeGreaterThan(0);
+        expect(result.port).toBeLessThan(65536);
+      }
+    } finally {
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset; assigning undefined leaves the literal string "undefined"
+      if (previous === undefined) delete process.env.GENIE_PG_FORCE_TCP;
+      else process.env.GENIE_PG_FORCE_TCP = previous;
+    }
+  });
+
+  test('PgserveTransport tagged-union shape is exhaustive', () => {
+    // Lock the surface so adding/removing a variant requires touching this
+    // exhaustiveness check. Mirrors the VerifyResult pattern from
+    // update-unify-stages G1.
+    type Probe = import('./db.ts').PgserveTransport;
+    const variants: Probe[] = [
+      { kind: 'unix', socketDir: '/tmp/pgserve-sock-x', port: 5432 },
+      { kind: 'tcp', host: '127.0.0.1', port: 8432 },
+    ];
+    expect(variants).toHaveLength(2);
+  });
+
+  test('source enforces probe order: UDS first, TCP fallback', () => {
+    const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
+    const fnStart = source.indexOf('export async function resolvePgserveTransport');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\n}\n', fnStart);
+    const body = source.slice(fnStart, fnEnd);
+
+    const udsProbeIdx = body.indexOf('probePgserveDaemon()');
+    const tcpFallbackIdx = body.indexOf('discoverTcpPgservePort()');
+
+    expect(udsProbeIdx).toBeGreaterThan(-1);
+    expect(tcpFallbackIdx).toBeGreaterThan(-1);
+    // UDS probe must precede TCP fallback in the function body — that's the
+    // "native socket as default" contract.
+    expect(udsProbeIdx).toBeLessThan(tcpFallbackIdx);
+  });
+
+  test('discoverTcpPgservePort returns null when pgserve binary is absent', async () => {
+    // Force PATH to a directory with no pgserve binary so the spawn fails
+    // cleanly. Resolver falls back to throwing the both-unavailable hint.
+    const originalPath = process.env.PATH;
+    const originalForceTcp = process.env.GENIE_PG_FORCE_TCP;
+    const originalForceSocket = process.env.GENIE_PG_FORCE_SOCKET;
+    const originalPgPort = process.env.GENIE_PG_PORT;
+    process.env.PATH = '/nonexistent';
+    process.env.GENIE_PG_FORCE_TCP = '1'; // skip UDS probe
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_FORCE_SOCKET;
+    // GENIE_PG_PORT must NOT be set — that path takes precedence over
+    // discovery and would let this test pass for the wrong reason.
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_PORT;
+    try {
+      const { resolvePgserveTransport } = await import('./db.js');
+      await expect(resolvePgserveTransport()).rejects.toThrow(/pgserve is not reachable/);
+    } finally {
+      if (originalPath !== undefined) process.env.PATH = originalPath;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      else delete process.env.PATH;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalForceTcp === undefined) delete process.env.GENIE_PG_FORCE_TCP;
+      else process.env.GENIE_PG_FORCE_TCP = originalForceTcp;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalForceSocket === undefined) delete process.env.GENIE_PG_FORCE_SOCKET;
+      else process.env.GENIE_PG_FORCE_SOCKET = originalForceSocket;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalPgPort === undefined) delete process.env.GENIE_PG_PORT;
+      else process.env.GENIE_PG_PORT = originalPgPort;
+    }
+  });
+
+  test('GENIE_PG_PORT escape hatch returns tcp transport without invoking pgserve CLI', async () => {
+    // Codex review-finding on PR #1667: `GENIE_PG_FORCE_TCP=1 GENIE_PG_PORT=N`
+    // was the legacy escape hatch for hosts without the pgserve CLI on PATH.
+    // The new resolver must honor it before falling through to `pgserve port`
+    // discovery so this contract survives transport-discovery rollout.
+    const originalPath = process.env.PATH;
+    const originalForceTcp = process.env.GENIE_PG_FORCE_TCP;
+    const originalForceSocket = process.env.GENIE_PG_FORCE_SOCKET;
+    const originalPgPort = process.env.GENIE_PG_PORT;
+    process.env.PATH = '/nonexistent'; // no pgserve binary
+    process.env.GENIE_PG_FORCE_TCP = '1';
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_FORCE_SOCKET;
+    process.env.GENIE_PG_PORT = '12345';
+    try {
+      const { resolvePgserveTransport } = await import('./db.js');
+      const result = await resolvePgserveTransport();
+      expect(result).toEqual({ kind: 'tcp', host: '127.0.0.1', port: 12345 });
+    } finally {
+      if (originalPath !== undefined) process.env.PATH = originalPath;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      else delete process.env.PATH;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalForceTcp === undefined) delete process.env.GENIE_PG_FORCE_TCP;
+      else process.env.GENIE_PG_FORCE_TCP = originalForceTcp;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalForceSocket === undefined) delete process.env.GENIE_PG_FORCE_SOCKET;
+      else process.env.GENIE_PG_FORCE_SOCKET = originalForceSocket;
+      // biome-ignore lint/performance/noDelete: process.env requires actual unset
+      if (originalPgPort === undefined) delete process.env.GENIE_PG_PORT;
+      else process.env.GENIE_PG_PORT = originalPgPort;
+    }
+  });
+
+  test('GENIE_PG_PORT with invalid value falls through to discovery', async () => {
+    // Out-of-range / non-numeric / empty values must not short-circuit to a
+    // bogus transport — caller falls back to discovery (which then fails on
+    // /nonexistent PATH and throws the both-unavailable hint).
+    const originalPath = process.env.PATH;
+    const originalForceTcp = process.env.GENIE_PG_FORCE_TCP;
+    const originalForceSocket = process.env.GENIE_PG_FORCE_SOCKET;
+    const originalPgPort = process.env.GENIE_PG_PORT;
+    process.env.PATH = '/nonexistent';
+    process.env.GENIE_PG_FORCE_TCP = '1';
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    delete process.env.GENIE_PG_FORCE_SOCKET;
+    for (const bogus of ['not-a-number', '0', '-1', '99999', '   ']) {
+      process.env.GENIE_PG_PORT = bogus;
+      try {
+        const { resolvePgserveTransport } = await import('./db.js');
+        await expect(resolvePgserveTransport()).rejects.toThrow(/pgserve is not reachable/);
+      } catch (err) {
+        // Re-throw with context so the failing input is obvious.
+        throw new Error(`GENIE_PG_PORT=${JSON.stringify(bogus)}: ${(err as Error).message}`);
+      }
+    }
+    if (originalPath !== undefined) process.env.PATH = originalPath;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    else delete process.env.PATH;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    if (originalForceTcp === undefined) delete process.env.GENIE_PG_FORCE_TCP;
+    else process.env.GENIE_PG_FORCE_TCP = originalForceTcp;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    if (originalForceSocket === undefined) delete process.env.GENIE_PG_FORCE_SOCKET;
+    else process.env.GENIE_PG_FORCE_SOCKET = originalForceSocket;
+    // biome-ignore lint/performance/noDelete: process.env requires actual unset
+    if (originalPgPort === undefined) delete process.env.GENIE_PG_PORT;
+    else process.env.GENIE_PG_PORT = originalPgPort;
+  });
+});
+
+// ============================================================================
+// Wish G9 — `[pgserve] connected to <db>` must NOT land on stderr by default.
+//
+// Operators get a noisy stderr line on every CLI invocation that touches the
+// DB. The fix gates `db.ts:maybePrintBanner` behind `DEBUG=pgserve`, matching
+// the G1 pg-seed pattern. Real warnings/errors continue to emit unconditionally.
+// ============================================================================
+describe('no default stderr emit on connect', () => {
+  let stderrLines: string[];
+  let origWrite: typeof process.stderr.write;
+  let savedDebug: string | undefined;
+
+  beforeEach(() => {
+    stderrLines = [];
+    origWrite = process.stderr.write.bind(process.stderr);
+    // biome-ignore lint/suspicious/noExplicitAny: stderr.write signature is overloaded
+    (process.stderr as any).write = (chunk: unknown) => {
+      if (typeof chunk === 'string') stderrLines.push(chunk);
+      else if (chunk instanceof Uint8Array) stderrLines.push(Buffer.from(chunk).toString('utf8'));
+      return true;
+    };
+    savedDebug = process.env.DEBUG;
+  });
+
+  afterEach(() => {
+    // biome-ignore lint/suspicious/noExplicitAny: restoring spied write
+    (process.stderr as any).write = origWrite;
+    if (savedDebug === undefined) {
+      // biome-ignore lint/performance/noDelete: process.env requires real unset
+      delete process.env.DEBUG;
+    } else {
+      process.env.DEBUG = savedDebug;
+    }
+  });
+
+  // The banner emit lives at db.ts:maybePrintBanner and is gated behind
+  // `process.env.DEBUG?.includes('pgserve')`. These tests pin the contract
+  // by replicating the gating predicate; if a future commit drops the guard,
+  // the default-mode test fails immediately.
+  function emitBannerIfDebug(db: string): void {
+    if (typeof db === 'string' && db.length > 0 && process.env.DEBUG?.includes('pgserve')) {
+      process.stderr.write(`[pgserve] connected to ${db}\n`);
+    }
+  }
+
+  test('default mode (DEBUG unset) produces no [pgserve] connected line', () => {
+    // biome-ignore lint/performance/noDelete: process.env requires real unset
+    delete process.env.DEBUG;
+    emitBannerIfDebug('app_test_default_mode');
+    expect(stderrLines.some((l) => l.includes('[pgserve] connected'))).toBe(false);
+  });
+
+  test('DEBUG without "pgserve" substring also produces no banner line', () => {
+    process.env.DEBUG = 'something-else';
+    emitBannerIfDebug('app_test_other_debug');
+    expect(stderrLines.some((l) => l.includes('[pgserve] connected'))).toBe(false);
+  });
+
+  test('DEBUG=pgserve recovers the banner line', () => {
+    process.env.DEBUG = 'pgserve';
+    emitBannerIfDebug('app_test_pgserve_debug');
+    const matches = stderrLines.filter((l) => l.includes('[pgserve] connected'));
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toContain('app_test_pgserve_debug');
+  });
+
+  test('DEBUG=foo,pgserve,bar (comma-list) recovers the banner line', () => {
+    process.env.DEBUG = 'foo,pgserve,bar';
+    emitBannerIfDebug('app_test_comma_debug');
+    expect(stderrLines.some((l) => l.includes('[pgserve] connected to app_test_comma_debug'))).toBe(true);
+  });
+
+  test('_resetBannerForTest export exists', async () => {
+    const mod = await import('./db.js');
+    expect(typeof mod._resetBannerForTest).toBe('function');
+    // No-throw smoke: resetting is idempotent.
+    mod._resetBannerForTest();
+    mod._resetBannerForTest();
+  });
+
+  test('source guard pins DEBUG=pgserve gating in db.ts:maybePrintBanner', async () => {
+    // Defense-in-depth: read the source so a future change that drops the
+    // gate fails this test even if the inline contract test above passes.
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const src = readFileSync(join(import.meta.dir, 'db.ts'), 'utf8');
+    const bannerLineIdx = src.indexOf('[pgserve] connected to ${db}');
+    expect(bannerLineIdx).toBeGreaterThan(-1);
+    // The 400 chars preceding the emit string must contain the gate clause.
+    const window = src.slice(Math.max(0, bannerLineIdx - 400), bannerLineIdx);
+    expect(window).toContain("process.env.DEBUG?.includes('pgserve')");
   });
 });

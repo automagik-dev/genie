@@ -8,7 +8,7 @@ import type { Command } from 'commander';
 import { formatTimestamp, padRight } from '../../lib/term-format.js';
 import * as wishState from '../../lib/wish-state.js';
 import { parseWishGroups } from '../dispatch.js';
-import { resolveWishPath } from '../state.js';
+import { getTerminalWishLifecycleStatus, printTerminalWishLifecycleStatus, resolveWishPath } from '../state.js';
 
 const STATUS_ICONS: Record<string, string> = {
   blocked: '🔒',
@@ -39,8 +39,12 @@ async function printActiveExecutors(slug: string): Promise<void> {
       if (!executor || executor.state === 'terminated' || executor.state === 'done') continue;
 
       const assignment = await assignmentRegistry.getActiveAssignment(executor.id);
-      const taskLabel =
-        assignment?.wishSlug === slug ? `Group ${assignment.groupNumber ?? '?'}` : (assignment?.wishSlug ?? '-');
+      // #1589: only surface executors actively assigned to this wish. Without
+      // this filter, any team-mate sharing a role name bleeds into "Active
+      // Executors" for every wish under the same team — masking phantom
+      // dispatches by displaying an unrelated agent as the apparent worker.
+      if (assignment?.wishSlug !== slug) continue;
+      const taskLabel = `Group ${assignment.groupNumber ?? '?'}`;
       const agentName = agent.customName ?? agent.role ?? agent.id.slice(0, 12);
       executorInfoLines.push(
         `  Agent: ${padRight(agentName, 16)} | Executor: ${executor.id.slice(0, 12)} (${executor.provider}) | State: ${padRight(executor.state, 10)} | Task: ${taskLabel}`,
@@ -60,6 +64,12 @@ async function printActiveExecutors(slug: string): Promise<void> {
 }
 
 async function statusCommand(slug: string): Promise<void> {
+  const terminal = await getTerminalWishLifecycleStatus(slug);
+  if (terminal) {
+    printTerminalWishLifecycleStatus(slug, terminal);
+    return;
+  }
+
   let state = await wishState.getState(slug);
   if (!state) {
     const wishPath = resolveWishPath(slug);

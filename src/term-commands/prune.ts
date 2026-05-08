@@ -1,27 +1,48 @@
 /**
  * genie prune — bulk cleanup of stale or exhausted registry entries.
  *
- * Subcommands/flags:
- *   genie prune --zombies           Archive exhausted dead-pane zombies
- *   genie prune --zombies --dry-run List zombies that would be archived
- *   genie prune --ttl-hours <n>     Override the default 24h TTL
+ * Targets (mutually exclusive — pick one per invocation):
+ *   --zombies   Reconciler-tagged dead-pane zombies (24h default TTL).
+ *               Conservative: only matches rows with audit reason
+ *               'dead_pane_zombie' or 'stale_spawn_dead_pane'.
+ *   --errored   Any exhausted error-state row regardless of reason
+ *               (1h default TTL). Opt-in sweep — set auto_resume=true
+ *               on rows you want to keep visible past the TTL.
  *
- * A "dead-pane zombie" is an agent whose reconciler audit trail tagged
- * it `reason=dead_pane_zombie` (tmux pane vanished mid-run) AND whose
- * auto-resume budget was subsequently exhausted (auto_resume=false).
- * Once that happens the row is inert: it never resumes and clutters
- * `genie ls`. See issue #1293.
+ * Flags:
+ *   --dry-run            List targets without mutating
+ *   --ttl-hours <n>      Override the mode default
+ *
+ * See issue #1293 for the original zombie cleanup story.
  */
 
 import type { Command } from 'commander';
-import { archiveExhaustedZombies, listExhaustedZombies } from '../lib/agent-registry.js';
+import {
+  archiveAllExhaustedErrored,
+  archiveExhaustedZombies,
+  listAllExhaustedErrored,
+  listExhaustedZombies,
+} from '../lib/agent-registry.js';
 import { isAvailable, shutdown } from '../lib/db.js';
 
 interface PruneOptions {
   zombies?: boolean;
+  errored?: boolean;
   dryRun?: boolean;
   ttlHours?: number;
 }
+
+type PruneMode = 'zombies' | 'errored';
+
+const DEFAULT_TTL_HOURS: Record<PruneMode, number> = {
+  zombies: 24,
+  errored: 1,
+};
+
+const TARGET_LABEL: Record<PruneMode, string> = {
+  zombies: 'zombie agent',
+  errored: 'errored agent',
+};
 
 function parsePositiveInt(value: string, name: string): number {
   const parsed = Number.parseInt(value, 10);
@@ -31,40 +52,55 @@ function parsePositiveInt(value: string, name: string): number {
   return parsed;
 }
 
-async function runDryRun(ttlHours: number): Promise<void> {
-  const zombies = await listExhaustedZombies(ttlHours);
-  if (zombies.length === 0) {
-    console.log(`No exhausted zombies older than ${ttlHours}h.`);
+async function listTargets(mode: PruneMode, ttlHours: number): Promise<Array<{ id: string; lastStateChange: string }>> {
+  return mode === 'zombies' ? listExhaustedZombies(ttlHours) : listAllExhaustedErrored(ttlHours);
+}
+
+async function archiveTargets(mode: PruneMode, ttlHours: number): Promise<string[]> {
+  return mode === 'zombies' ? archiveExhaustedZombies(ttlHours) : archiveAllExhaustedErrored(ttlHours);
+}
+
+async function runDryRun(mode: PruneMode, ttlHours: number): Promise<void> {
+  const rows = await listTargets(mode, ttlHours);
+  if (rows.length === 0) {
+    console.log(`No exhausted ${TARGET_LABEL[mode]}s older than ${ttlHours}h.`);
     return;
   }
-  const plural = zombies.length === 1 ? '' : 's';
-  console.log(`Would archive ${zombies.length} zombie agent${plural} older than ${ttlHours}h:`);
-  for (const z of zombies) {
-    console.log(`  ${z.id}  (last state change: ${z.lastStateChange})`);
+  const plural = rows.length === 1 ? '' : 's';
+  console.log(`Would archive ${rows.length} ${TARGET_LABEL[mode]}${plural} older than ${ttlHours}h:`);
+  for (const r of rows) {
+    console.log(`  ${r.id}  (last state change: ${r.lastStateChange})`);
   }
 }
 
-async function runArchive(ttlHours: number): Promise<void> {
-  const ids = await archiveExhaustedZombies(ttlHours);
+async function runArchive(mode: PruneMode, ttlHours: number): Promise<void> {
+  const ids = await archiveTargets(mode, ttlHours);
   if (ids.length === 0) {
-    console.log(`No exhausted zombies older than ${ttlHours}h. Nothing to archive.`);
+    console.log(`No exhausted ${TARGET_LABEL[mode]}s older than ${ttlHours}h. Nothing to archive.`);
     return;
   }
   const plural = ids.length === 1 ? '' : 's';
-  console.log(`Archived ${ids.length} zombie agent${plural} older than ${ttlHours}h:`);
+  console.log(`Archived ${ids.length} ${TARGET_LABEL[mode]}${plural} older than ${ttlHours}h:`);
   for (const id of ids) {
     console.log(`  ${id}`);
   }
 }
 
-async function pruneCommand(options: PruneOptions): Promise<void> {
-  if (!options.zombies) {
-    console.error('Error: no prune target specified. Use `--zombies`.');
-    console.error('See `genie prune --help` for available targets.');
+function resolveMode(options: PruneOptions): PruneMode {
+  if (options.zombies && options.errored) {
+    console.error('Error: --zombies and --errored are mutually exclusive.');
     process.exit(2);
   }
+  if (options.zombies) return 'zombies';
+  if (options.errored) return 'errored';
+  console.error('Error: no prune target specified. Use `--zombies` or `--errored`.');
+  console.error('See `genie prune --help` for available targets.');
+  process.exit(2);
+}
 
-  const ttlHours = options.ttlHours ?? 24;
+async function pruneCommand(options: PruneOptions): Promise<void> {
+  const mode = resolveMode(options);
+  const ttlHours = options.ttlHours ?? DEFAULT_TTL_HOURS[mode];
 
   if (!(await isAvailable())) {
     console.error('Database is not running. Start it with: genie db status');
@@ -72,7 +108,7 @@ async function pruneCommand(options: PruneOptions): Promise<void> {
   }
 
   try {
-    await (options.dryRun ? runDryRun(ttlHours) : runArchive(ttlHours));
+    await (options.dryRun ? runDryRun(mode, ttlHours) : runArchive(mode, ttlHours));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Prune failed: ${message}`);
@@ -86,9 +122,13 @@ export function registerPruneCommands(program: Command): void {
   program
     .command('prune')
     .description('Bulk cleanup of stale or exhausted registry entries')
-    .option('--zombies', 'Archive dead-pane zombies whose auto-resume retries are exhausted')
+    .option('--zombies', 'Archive reconciler-tagged dead-pane zombies (24h default TTL)')
+    .option(
+      '--errored',
+      'Archive any exhausted error-state agent regardless of reason (1h default TTL; set auto_resume=true to keep a row visible)',
+    )
     .option('--dry-run', 'List targets that would be affected without mutating')
-    .option('--ttl-hours <hours>', 'Minimum age in hours before a zombie is eligible for archive (default: 24)', (v) =>
+    .option('--ttl-hours <hours>', 'Override the mode default TTL in hours (24 for --zombies, 1 for --errored)', (v) =>
       parsePositiveInt(v, '--ttl-hours'),
     )
     .action(pruneCommand);

@@ -80,6 +80,7 @@ function buildDeps(overrides: Partial<EnsureServeReadyDeps> = {}): {
     listOrphanedZombies: async () => [],
     scanTeamConfigOrphans: () => ({ active: [], stale: [] }),
     archiveStaleTeamConfigs: () => [],
+    platform: 'linux',
     recordAudit: async (eventType, name, details) => {
       audits.push({ eventType, name, details });
     },
@@ -192,6 +193,21 @@ describe('partition precondition', () => {
 // ============================================================================
 
 describe('runDoctorMaintenance — watchdog precondition', () => {
+  test('non-silent maintenance logs step progress before the final report', async () => {
+    const { deps, log } = buildDeps({
+      measureBackfillDrift: async () => ({ driftPct: 12.5, detail: '12.5%' }),
+      runBackfillSync: async () => ({ ranSync: true, driftPct: 0, detail: 'converged' }),
+    });
+
+    await runDoctorMaintenance({ deps });
+
+    expect(log).toContain('  Collecting observability health...');
+    expect(log).toContain('  Checking session backfill drift...');
+    expect(log).toContain('  Running session backfill convergence (can take minutes on large transcript history)...');
+    expect(log.some((line) => line.startsWith('    done session backfill convergence'))).toBe(true);
+    expect(log).toContain('  Preconditions:');
+  });
+
   test('watchdog warn → fixed via installWatchdog', async () => {
     let installCalls = 0;
     const { deps, audits } = buildDeps({
@@ -207,6 +223,26 @@ describe('runDoctorMaintenance — watchdog precondition', () => {
     expect(audits.find((a) => a.name === 'watchdog')?.eventType).toBe('serve.precondition.fixed');
   });
 
+  test('watchdog is skipped on non-Linux platforms', async () => {
+    let installCalls = 0;
+    const { deps, audits } = buildDeps({
+      platform: 'darwin',
+      collectHealth: async () => fakeHealth({ watchdog: 'warn', watchdog_detail: 'units missing' }),
+      installWatchdog: async () => {
+        installCalls++;
+        return { filesWritten: ['/etc/systemd/system/genie-watchdog.timer'], filesSkipped: [] };
+      },
+    });
+
+    const report = await runDoctorMaintenance({ deps, silent: true });
+    const watchdog = report.results.find((r) => r.name === 'watchdog');
+    expect(watchdog?.status).toBe('skipped');
+    expect(watchdog?.detail).toContain('Linux/systemd only');
+    expect(installCalls).toBe(0);
+    expect(audits.find((a) => a.name === 'watchdog')).toBeUndefined();
+    expect(report.ok).toBe(true);
+  });
+
   test('install throws (EACCES) → refused, not crashed', async () => {
     const { deps, audits } = buildDeps({
       collectHealth: async () => fakeHealth({ watchdog: 'warn' }),
@@ -220,6 +256,34 @@ describe('runDoctorMaintenance — watchdog precondition', () => {
     expect(wd?.detail).toContain('EACCES');
     expect(report.ok).toBe(false);
     expect(audits.find((a) => a.name === 'watchdog')?.eventType).toBe('serve.precondition.refused');
+  });
+
+  test('GENIE_WATCHDOG_SKIP=1 → skipped, install not invoked, report ok', async () => {
+    const prev = process.env.GENIE_WATCHDOG_SKIP;
+    process.env.GENIE_WATCHDOG_SKIP = '1';
+    try {
+      let installCalls = 0;
+      const { deps, audits } = buildDeps({
+        collectHealth: async () => fakeHealth({ watchdog: 'warn', watchdog_detail: 'units missing' }),
+        installWatchdog: async () => {
+          installCalls++;
+          return { filesWritten: [], filesSkipped: [] };
+        },
+      });
+      const report = await runDoctorMaintenance({ deps, silent: true });
+      const wd = report.results.find((r) => r.name === 'watchdog');
+      expect(wd?.status).toBe('skipped');
+      expect(wd?.detail).toBe('GENIE_WATCHDOG_SKIP=1');
+      expect(installCalls).toBe(0);
+      expect(audits.find((a) => a.name === 'watchdog')).toBeUndefined();
+      expect(report.ok).toBe(true);
+    } finally {
+      if (prev === undefined) {
+        Reflect.deleteProperty(process.env, 'GENIE_WATCHDOG_SKIP');
+      } else {
+        process.env.GENIE_WATCHDOG_SKIP = prev;
+      }
+    }
   });
 });
 

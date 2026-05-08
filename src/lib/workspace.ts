@@ -79,18 +79,35 @@ const WORKSPACE_MARKER = '.genie/workspace.json';
  * Falls back to the registered workspace root from ~/.genie/config.json.
  * Returns workspace root + optional agent name, or null if not in a workspace.
  */
-export function findWorkspace(cwd?: string): WorkspaceInfo | null {
+export function findWorkspace(cwd?: string, opts?: { userHome?: string }): WorkspaceInfo | null {
   const startDir = resolve(cwd ?? process.cwd());
   let current = startDir;
+  // `userHome` is injectable for tests — `homedir()` in some Bun builds caches
+  // its return value at process start and ignores subsequent `process.env.HOME`
+  // changes, which makes the regression test for the rogue-`~/.genie/workspace.json`
+  // hijack hard to express through env mutation alone.
 
   // 1. Walk-up from cwd
+  const userHome = opts?.userHome ?? homedir();
   while (true) {
-    const candidate = join(current, WORKSPACE_MARKER);
-    if (existsSync(candidate)) {
-      // Persist workspace root for global access
-      saveWorkspaceRoot(current);
-      const agent = detectAgent(startDir, current);
-      return { root: current, agent: agent ?? undefined };
+    // Skip the user's home directory — `~/.genie/` is genie's GLOBAL config
+    // dir (daemon socket, logs, saved workspace root, version files), NOT a
+    // workspace marker. A stray `~/.genie/workspace.json` (legacy from a
+    // misfired `genie init` run from $HOME, or carried over during an ops
+    // sync) would otherwise hijack walk-up: every cwd that traverses HOME
+    // resolves as a workspace rooted at HOME, then scanAgents looks for
+    // `$HOME/agents/` (which does not exist) and the TUI sidebar surfaces
+    // the silent "Agents 0/0" / "no agents in left menu" bug — observed on
+    // 2026-04-29 (issue #<TODO> — root-caused via /proc env inspection;
+    // user's TUI showed empty sidebar despite 10 canonical agents on disk).
+    if (current !== userHome) {
+      const candidate = join(current, WORKSPACE_MARKER);
+      if (existsSync(candidate)) {
+        // Persist workspace root for global access
+        saveWorkspaceRoot(current);
+        const agent = detectAgent(startDir, current);
+        return { root: current, agent: agent ?? undefined };
+      }
     }
     const parent = dirname(current);
     if (parent === current) break; // reached filesystem root
@@ -99,7 +116,10 @@ export function findWorkspace(cwd?: string): WorkspaceInfo | null {
 
   // 2. Fall back to registered workspace root
   const savedRoot = loadWorkspaceRoot();
-  if (savedRoot && existsSync(join(savedRoot, WORKSPACE_MARKER))) {
+  // Same guard: the saved root must not be $HOME — if a previous buggy walk-up
+  // persisted `$HOME` (pre-this-fix), refuse to honor it. Self-heal will clear
+  // it from config on the first call that misses the marker check.
+  if (savedRoot && savedRoot !== userHome && existsSync(join(savedRoot, WORKSPACE_MARKER))) {
     const agent = detectAgent(startDir, savedRoot);
     return { root: savedRoot, agent: agent ?? undefined };
   }

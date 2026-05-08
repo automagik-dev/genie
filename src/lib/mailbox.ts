@@ -28,6 +28,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { formatEnvelope } from './channel-envelope.js';
 import type { NativeInboxMessage } from './claude-native-teams.js';
 import { getConnection } from './db.js';
 import { endSpan, startSpan } from './emit.js';
@@ -53,6 +54,17 @@ export interface MailboxMessage {
   read: boolean;
   /** ISO timestamp when message was delivered to pane (null if pending). */
   deliveredAt: string | null;
+  /**
+   * Channel source — `'agent'` (peer worker, default), `'whatsapp'`,
+   * `'system'`, future external adapters. Persisted on the row so readers
+   * can route/render messages by origin without inspecting the body.
+   */
+  source: string;
+  /**
+   * Channel envelope metadata — free-form k/v pairs. Round-trips through PG
+   * JSONB and is rendered as `<channel …>` attributes when source !== 'agent'.
+   */
+  meta: Record<string, unknown>;
 }
 
 // ============================================================================
@@ -67,6 +79,8 @@ interface MailboxRow {
   created_at: Date | string;
   read: boolean;
   delivered_at: Date | string | null;
+  source?: string | null;
+  meta?: Record<string, unknown> | null;
 }
 
 function generateMessageId(): string {
@@ -87,6 +101,8 @@ function rowToMessage(row: MailboxRow): MailboxMessage {
         ? row.delivered_at.toISOString()
         : String(row.delivered_at)
       : null,
+    source: typeof row.source === 'string' && row.source.length > 0 ? row.source : 'agent',
+    meta: row.meta && typeof row.meta === 'object' ? (row.meta as Record<string, unknown>) : {},
   };
 }
 
@@ -100,14 +116,37 @@ function normalizeWorkerIds(worker: string | string[]): string[] {
 // ============================================================================
 
 /**
+ * Optional channel-envelope attribution for {@link send}.
+ *
+ * - `source` — origin tag persisted on the row. Defaults to `'agent'` when
+ *   omitted, which keeps every existing caller back-compat with the
+ *   pre-channel renderer (plain body, no `<channel …>` wrap).
+ * - `meta` — arbitrary key/value map stored as JSONB. Round-trips verbatim
+ *   so channel-aware UIs can re-attach attributes (whatsapp phone, telegram
+ *   chat id, system nudge kind, …) on the read side.
+ */
+export interface SendOptions {
+  source?: string;
+  meta?: Record<string, unknown>;
+}
+
+/**
  * Write a message to a worker's mailbox.
  * This persists BEFORE any delivery attempt (DEC-7).
  * PG trigger auto-fires NOTIFY genie_mailbox_delivery.
  */
-export async function send(repoPath: string, from: string, to: string, body: string): Promise<MailboxMessage> {
+export async function send(
+  repoPath: string,
+  from: string,
+  to: string,
+  body: string,
+  opts?: SendOptions,
+): Promise<MailboxMessage> {
   const sql = await getConnection();
   const id = generateMessageId();
   const now = new Date().toISOString();
+  const source = opts?.source && opts.source.length > 0 ? opts.source : 'agent';
+  const meta: Record<string, unknown> = opts?.meta ?? {};
 
   const span = isWideEmitEnabled()
     ? startSpan(
@@ -120,8 +159,8 @@ export async function send(repoPath: string, from: string, to: string, body: str
   let outcome: 'delivered' | 'queued' | 'rejected' = 'queued';
   try {
     await sql`
-      INSERT INTO mailbox (id, from_worker, to_worker, body, repo_path, read, delivered_at, created_at)
-      VALUES (${id}, ${from}, ${to}, ${body}, ${repoPath}, false, ${null}, ${now})
+      INSERT INTO mailbox (id, from_worker, to_worker, body, repo_path, read, delivered_at, created_at, source, meta)
+      VALUES (${id}, ${from}, ${to}, ${body}, ${repoPath}, false, ${null}, ${now}, ${source}, ${sql.json(meta)})
     `;
     outcome = 'queued';
   } catch (err) {
@@ -144,6 +183,8 @@ export async function send(repoPath: string, from: string, to: string, body: str
     createdAt: now,
     read: false,
     deliveredAt: null,
+    source,
+    meta,
   };
 
   // Mirror mailbox writes into the PG runtime event log for follow/QA flows.
@@ -259,19 +300,52 @@ export async function markRead(messageId: string): Promise<boolean> {
 
 /**
  * Convert a Genie mailbox message to Claude Code's native inbox format.
+ *
+ * For default-source (`'agent'`) messages, the body is passed through
+ * verbatim and `source`/`meta` are omitted — preserving back-compat with
+ * peer-to-peer worker delivery (existing JSON inboxes keep the exact same
+ * shape they had before PR A).
+ *
+ * For non-default sources (`'whatsapp'`, `'system'`, future adapters), the
+ * body is wrapped in a `<channel …>` envelope so the receiving Claude can
+ * react to the origin without parsing free text, and `source`/`meta` are
+ * persisted onto the inbox row so JSON readers round-trip the attribution.
  */
 export function toNativeInboxMessage(msg: MailboxMessage, color = 'blue'): NativeInboxMessage {
   // Truncate body to create a summary (5-10 words)
   const words = msg.body.split(/\s+/);
   const summary = words.slice(0, 8).join(' ') + (words.length > 8 ? '...' : '');
 
+  const source = msg.source && msg.source.length > 0 ? msg.source : 'agent';
+  const isDefault = source === 'agent';
+
+  if (isDefault) {
+    return {
+      from: msg.from,
+      text: msg.body,
+      summary,
+      timestamp: msg.createdAt,
+      color,
+      read: false,
+    };
+  }
+
+  const meta: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(msg.meta ?? {})) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      meta[key] = value;
+    }
+  }
+
   return {
     from: msg.from,
-    text: msg.body,
+    text: formatEnvelope({ source, from: msg.from, meta: msg.meta, body: msg.body }),
     summary,
     timestamp: msg.createdAt,
     color,
     read: false,
+    source,
+    meta,
   };
 }
 

@@ -6,10 +6,58 @@
  * Built-in agent definitions remain in code (builtin-agents.ts).
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUILTIN_COUNCIL_MEMBERS, BUILTIN_ROLES, type BuiltinAgent } from './builtin-agents.js';
 import type { SdkDirectoryConfig } from './sdk-directory-types.js';
+
+/**
+ * Validate that `<dir>/AGENTS.md` is a real, regular file inside `<dir>` —
+ * NOT a symlink that points elsewhere.
+ *
+ * Why: `existsSync()` follows symlinks. A directory containing a symlinked
+ * `AGENTS.md` (e.g. `/home/genie/workspace/AGENTS.md → agents/khal-os/AGENTS.md`)
+ * passes the lazy check even though it isn't a real agent home — the cwd
+ * lacks the agent's brain, runbooks, init.sh, etc. Operators registering with
+ * `--dir <symlinked-parent>` end up with an agent that spawns in the wrong
+ * cwd and can't find its own resources.
+ *
+ * `lstatSync().isFile()` returns false for symlinks, so we reject them by
+ * default. Operators who *intentionally* symlink (e.g. shared template
+ * across multiple per-chat agent dirs) opt in via `allowSymlink: true`.
+ */
+function validateAgentsMd(dir: string, allowSymlink: boolean): void {
+  const agentsPath = join(dir, 'AGENTS.md');
+  if (!existsSync(agentsPath)) {
+    throw new Error(`AGENTS.md not found in ${dir}. Each agent directory must contain an AGENTS.md file.`);
+  }
+  if (allowSymlink) return;
+  // existsSync above guarantees the path resolves; lstatSync with the default
+  // throwIfNoEntry=true semantics never returns undefined here, but the TS
+  // overload includes that case. Guard explicitly so strict-null typecheck
+  // stays happy without a non-null assertion.
+  const stat = lstatSync(agentsPath);
+  if (!stat) {
+    throw new Error(`AGENTS.md in ${dir} disappeared between exists check and stat.`);
+  }
+  if (stat.isSymbolicLink()) {
+    throw new Error(
+      `AGENTS.md in ${dir} is a symlink. Refusing to register: a symlinked AGENTS.md usually means --dir was pointed at a containing folder rather than the agent's real home (the cwd will be wrong and the agent's brain/runbooks won't be visible). Pass --allow-symlink to override if this is intentional.`,
+    );
+  }
+  if (!stat.isFile()) {
+    throw new Error(`AGENTS.md in ${dir} is not a regular file (got ${describeFileType(stat)}).`);
+  }
+}
+
+function describeFileType(stat: import('node:fs').Stats): string {
+  if (stat.isDirectory()) return 'directory';
+  if (stat.isBlockDevice()) return 'block device';
+  if (stat.isCharacterDevice()) return 'character device';
+  if (stat.isFIFO()) return 'FIFO';
+  if (stat.isSocket()) return 'socket';
+  return 'unknown special file';
+}
 
 // ============================================================================
 // Types
@@ -18,6 +66,13 @@ import type { SdkDirectoryConfig } from './sdk-directory-types.js';
 export type PromptMode = 'system' | 'append';
 
 export interface DirectoryEntry {
+  /**
+   * Canonical PG `agents.id` — UUID (post-061) or `dir:<name>` (legacy).
+   * Optional because built-in agents and some synthesized entries have no
+   * row yet. Restored to JSON output by #1674 Bug 2b so operators have a
+   * stable cross-team handle for `genie send`/cross-context resolution.
+   */
+  id?: string;
   /** Globally unique agent name. */
   name: string;
   /** Agent folder — CWD at spawn, contains AGENTS.md. */
@@ -47,12 +102,14 @@ export interface DirectoryEntry {
   color?: string;
   /** AI provider: 'claude' | 'codex' | 'claude-sdk'. Resolved at spawn time. */
   provider?: string;
-  /** Permission config for SDK provider (allowlist-only). */
+  /** Claude permission config honored by SDK and canonical tmux spawn paths. */
   permissions?: {
     preset?: string;
     allow?: string[];
     deny?: string[];
     bashAllowPatterns?: string[];
+    allowedTools?: string[];
+    permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto' | 'remoteApproval';
   };
   /** Tools the agent is NOT allowed to use (Claude Code --disallowedTools). */
   disallowedTools?: string[];
@@ -81,6 +138,13 @@ export interface ScopedDirectoryEntry extends DirectoryEntry {
 
 interface ScopeOptions {
   global?: boolean;
+  /**
+   * When true, accept a symlinked `<dir>/AGENTS.md`. By default, registration
+   * rejects symlinks because they almost always indicate `--dir` was pointed
+   * at a containing folder instead of the agent's real home. Power users with
+   * an intentional symlink layout opt in explicitly.
+   */
+  allowSymlink?: boolean;
 }
 
 /**
@@ -153,7 +217,7 @@ export function getProjectRoot(): string {
  */
 export async function add(
   entry: Omit<DirectoryEntry, 'registeredAt'>,
-  _options?: ScopeOptions,
+  options?: ScopeOptions,
 ): Promise<DirectoryEntry> {
   if (!entry.name || entry.name.trim() === '') {
     throw new Error('Agent name is required.');
@@ -167,10 +231,7 @@ export async function add(
     throw new Error(`Directory does not exist: ${entry.dir}`);
   }
 
-  const agentsPath = join(entry.dir, 'AGENTS.md');
-  if (!existsSync(agentsPath)) {
-    throw new Error(`AGENTS.md not found in ${entry.dir}. Each agent directory must contain an AGENTS.md file.`);
-  }
+  validateAgentsMd(entry.dir, options?.allowSymlink ?? false);
 
   const full: DirectoryEntry = {
     ...entry,
@@ -346,6 +407,9 @@ export async function resolve(name: string): Promise<ResolvedAgent | null> {
           : (rows[0].created_at as string | undefined);
       const entry = roleToEntry(name, undefined, meta, createdAt);
       if (templateTeam) entry.team = templateTeam;
+      if (isKnownBuiltinName(name) && entry.dir.trim() === '') {
+        return { entry, builtin: true };
+      }
       return { entry, builtin: false };
     }
 
@@ -408,15 +472,26 @@ export async function lookupTemplateTeam(name: string): Promise<string | null> {
   try {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
-    const direct = await sql`SELECT team FROM agent_templates WHERE id = ${name} LIMIT 1`;
+    // Migration 061 converted agent_templates.id from TEXT (= name) to UUID
+    // and added a separate `name` column. The old `WHERE id = ${name}` lookup
+    // tried to cast a bare name like "engineer" to UUID and failed with
+    // `invalid input syntax for type uuid` — caught downstream as a generic
+    // "lookupTemplateTeam failed" warning, but quietly returning null was
+    // enough to break the whole spawn pipeline (the team-resolution precedence
+    // chain falls into a path that ends in `agents_id_shape_check` violations).
+    // After 061: name is the canonical human key.
+    const direct = await sql`SELECT team FROM agent_templates WHERE name = ${name} LIMIT 1`;
     if (direct.length > 0) {
       const team = direct[0].team;
       if (typeof team === 'string' && team.length > 0) return team;
     }
+    // Hierarchical names (`parent/child`) inherit the parent's team — without
+    // this, `genie-omni/dog-fooder` could not find `genie-omni`'s pinned team
+    // and downstream `genie send` / mailbox routing landed on the wrong team.
     const slash = name.indexOf('/');
     if (slash > 0) {
       const parent = name.slice(0, slash);
-      const parentRows = await sql`SELECT team FROM agent_templates WHERE id = ${parent} LIMIT 1`;
+      const parentRows = await sql`SELECT team FROM agent_templates WHERE name = ${parent} LIMIT 1`;
       if (parentRows.length > 0) {
         const team = parentRows[0].team;
         if (typeof team === 'string' && team.length > 0) return team;
@@ -472,7 +547,7 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
     const { getConnection } = await import('./db.js');
     const sql = await getConnection();
     const rows = await sql`
-      SELECT DISTINCT ON (a.role) a.role, a.team, a.metadata, a.created_at, e.repo_path, e.provider
+      SELECT DISTINCT ON (a.role) a.id, a.role, a.team, a.metadata, a.created_at, e.repo_path, e.provider
       FROM agents a
       LEFT JOIN executors e ON a.current_executor_id = e.id
       WHERE a.role IS NOT NULL
@@ -485,6 +560,9 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
         const createdAt =
           row.created_at instanceof Date ? row.created_at.toISOString() : (row.created_at as string | undefined);
         const entry = roleToEntry(name, row.team as string, meta, createdAt);
+        // PG row's canonical id wins over any value baked into roleToEntry —
+        // the SELECT picked the dir:-prefixed shadow first when present.
+        entry.id = row.id as string;
         const repoPath = row.repo_path as string;
         if (repoPath) {
           entry.dir = repoPath;
@@ -535,16 +613,13 @@ export async function edit(
       | 'bridgeTmuxSession'
     >
   >,
-  _options?: ScopeOptions,
+  options?: ScopeOptions,
 ): Promise<DirectoryEntry> {
   if (updates.dir) {
     if (!existsSync(updates.dir)) {
       throw new Error(`Directory does not exist: ${updates.dir}`);
     }
-    const agentsPath = join(updates.dir, 'AGENTS.md');
-    if (!existsSync(agentsPath)) {
-      throw new Error(`AGENTS.md not found in ${updates.dir}.`);
-    }
+    validateAgentsMd(updates.dir, options?.allowSymlink ?? false);
   }
 
   const existing = await get(name);
@@ -608,6 +683,10 @@ function builtinToEntry(agent: BuiltinAgent): DirectoryEntry {
     roles: [],
     registeredAt: '(built-in)',
   };
+}
+
+function isKnownBuiltinName(name: string): boolean {
+  return [...BUILTIN_ROLES, ...BUILTIN_COUNCIL_MEMBERS].some((agent) => agent.name === name);
 }
 
 /** Convert a PG agent role to a synthetic DirectoryEntry, enriched with metadata.

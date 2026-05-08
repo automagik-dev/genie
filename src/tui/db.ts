@@ -1,5 +1,6 @@
 /** PG executor/assignment queries — framework-agnostic, no UI imports */
 
+import { type AgentObservabilitySnapshot, loadAgentObservabilityMap } from '../lib/agent-observability.js';
 import type { ExecutorState, TransportType } from '../lib/executor-types.js';
 import type { ProviderName } from '../lib/provider-adapters.js';
 import type { TuiAssignment, TuiExecutor, WorkState } from './types.js';
@@ -84,10 +85,15 @@ function mapAssignment(row: Record<string, unknown>): TuiAssignment {
  * Nav.tsx switch on `wsAgentState` with a unified work-state badge.
  */
 export async function loadAgentWorkStates(): Promise<Map<string, WorkState>> {
-  const { listAgents } = await import('../lib/agent-registry.js');
+  const { listAgentsForRender } = await import('../lib/agent-registry.js');
   const { shouldResume, BOOT_PASS_CONCURRENCY_CAP } = await import('../lib/should-resume.js');
 
-  const agents = await listAgents({ includeArchived: false });
+  // Render-path variant — drops bare-name shadow rows (`dir:*`, pre-UUID
+  // names) so the TUI work-state refresh stops feeding `shouldResume()`
+  // entity_ids that aren't real runtime agents. Each shadow row would
+  // otherwise emit `resume.missing_session` per refresh tick (Gap #1 of
+  // #1521 — `resume.lost_anchor` ghost alerts in idle workspaces).
+  const agents = await listAgentsForRender({ includeArchived: false });
   if (agents.length === 0) return new Map();
 
   const out = new Map<string, WorkState>();
@@ -104,7 +110,7 @@ export async function loadAgentWorkStates(): Promise<Map<string, WorkState>> {
         const work = reasonToWorkState(decision.reason);
         if (!work) continue;
         const name = a.customName ?? a.role ?? a.id;
-        out.set(name, work);
+        mergeWorkState(out, name, work);
       } catch {
         /* one bad row can't wedge the diagnostics refresh */
       }
@@ -114,10 +120,42 @@ export async function loadAgentWorkStates(): Promise<Map<string, WorkState>> {
   return out;
 }
 
+const WORK_STATE_PRIORITY: Record<WorkState, number> = {
+  in_flight: 4,
+  paused: 3,
+  stuck: 2,
+  done: 1,
+};
+
+export function mergeWorkState(states: Map<string, WorkState>, name: string, next: WorkState): void {
+  const current = states.get(name);
+  if (!current || WORK_STATE_PRIORITY[next] > WORK_STATE_PRIORITY[current]) {
+    states.set(name, next);
+  }
+}
+
 function reasonToWorkState(reason: string): WorkState | undefined {
   if (reason === 'ok') return 'in_flight';
   if (reason === 'auto_resume_disabled') return 'paused';
   if (reason === 'assignment_closed') return 'done';
   if (reason === 'no_session_id') return 'stuck';
   return undefined;
+}
+
+/**
+ * Load canonical agent observability snapshots keyed by display name.
+ *
+ * Wish 3 / agent-observability-snapshot Group 3 (TUI wiring). Returns the
+ * same snapshot the CLI's `genie agent observe` and the app's
+ * `agents.show` route serve, so the TUI badge can render health flags
+ * (`stale_executor`, `recent_failure`, `cost_spike`, …) without
+ * recomputing them from raw tables. Returns an empty map on DB error so
+ * the TUI never wedges on observability failures.
+ */
+export async function loadAgentObservabilityForTui(): Promise<Map<string, AgentObservabilitySnapshot>> {
+  try {
+    return await loadAgentObservabilityMap();
+  } catch {
+    return new Map();
+  }
 }

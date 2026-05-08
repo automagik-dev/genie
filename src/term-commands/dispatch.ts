@@ -18,16 +18,46 @@
  */
 
 import { execSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import { getActor, recordAuditEvent } from '../lib/audit.js';
 import { endSpan, startSpan } from '../lib/emit.js';
 import { isWideEmitEnabled } from '../lib/observability-flag.js';
 import * as protocolRouter from '../lib/protocol-router.js';
 import { getAmbient as getTraceContext } from '../lib/trace-context.js';
 import { parseWishRef, resolveWish } from '../lib/wish-resolve.js';
+import { detectSenderIdentity } from './msg.js';
+
+/**
+ * Build the sender identity for protocol-router messages emitted by dispatch
+ * commands (`genie brainstorm`, `wish`, `work`, `review`).
+ *
+ * These commands need to bypass hierarchy checks (the dispatcher is acting on
+ * behalf of the user/orchestrator, not as a peer of the recipient) — historically
+ * that bypass was implemented by hard-coding the literal sender `'cli'`. The
+ * downside: every dispatched message surfaces with sender `cli`, hiding the
+ * actual invoker (the human user, or — when `genie work` is fired from inside
+ * a team-lead session — the team-lead agent).
+ *
+ * Cascade:
+ *   1. UUID origin (GENIE_AGENT_ID resolved by detectSenderIdentity) → return
+ *      UUID directly. Migration 063 re-adds fk_mailbox_from_worker; wrapping a
+ *      UUID as `cli:<uuid>` produces a non-FK-safe string and the mailbox
+ *      INSERT fails. The bare UUID is the agent's actual row id and preserves
+ *      attribution while satisfying the FK once the kill-switch is closed.
+ *   2. `'cli'` (true CLI invocation, no agent context) → unchanged.
+ *   3. Other origin (legacy GENIE_AGENT_NAME path) → `'cli:<name>'`. Bypass
+ *      logic in `send.ts` / `msg.ts` matches both forms via prefix check.
+ */
+async function cliSender(): Promise<string> {
+  const origin = await detectSenderIdentity();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(origin)) return origin;
+  return origin === 'cli' ? 'cli' : `cli:${origin}`;
+}
 import type { GroupDefinition } from '../lib/wish-state.js';
 import * as wishState from '../lib/wish-state.js';
 import { handleWorkerSpawn } from './agents.js';
@@ -167,11 +197,13 @@ function getGitDiff(): string {
  */
 export function parseWishGroups(content: string): GroupDefinition[] {
   const groups: GroupDefinition[] = [];
-  const groupPattern = /^### Group ([A-Za-z0-9]+):/gim;
+  const groupPattern = /^### Group ([A-Za-z0-9]+):[ \t]*(.*)$/gim;
 
   let match: RegExpExecArray | null = groupPattern.exec(content);
   while (match !== null) {
     const name = match[1];
+    const trimmedTitle = (match[2] ?? '').trim();
+    const title = trimmedTitle.length > 0 ? trimmedTitle : undefined;
     const start = match.index;
 
     // Find the next group heading or end of content
@@ -192,13 +224,16 @@ export function parseWishGroups(content: string): GroupDefinition[] {
             d
               .trim()
               .replace(/^groups?\s*/i, '')
+              .replace(/^[a-z0-9-]+#/, '')
               .trim(),
           )
           .filter(Boolean);
       }
     }
 
-    groups.push({ name, dependsOn });
+    const groupDef: GroupDefinition = { name, dependsOn };
+    if (title !== undefined) groupDef.title = title;
+    groups.push(groupDef);
     match = groupPattern.exec(content);
   }
 
@@ -445,14 +480,16 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
   );
 
   const succeeded: string[] = [];
-  const failed: { group: string; reason: string }[] = [];
+  const failed: { group: string; agent: string; reason: string; errorClass: string }[] = [];
   results.forEach((r, i) => {
     const groupName = nextWave.groups[i].group;
+    const agent = nextWave.groups[i].agent;
     if (r.status === 'fulfilled') {
       succeeded.push(groupName);
     } else {
       const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
-      failed.push({ group: groupName, reason });
+      const errorClass = r.reason instanceof Error ? r.reason.constructor.name : 'string';
+      failed.push({ group: groupName, agent, reason, errorClass });
     }
   });
 
@@ -461,8 +498,23 @@ async function autoOrchestrateCommand(slug: string): Promise<void> {
   }
   if (failed.length > 0) {
     console.error(`\n❌ ${failed.length} group(s) failed to dispatch in ${nextWave.name}:`);
-    for (const { group, reason } of failed) {
-      console.error(`   • Group ${group}: ${reason}`);
+    for (const { group, agent, reason, errorClass } of failed) {
+      // #1600 — surface the error class so operators can pattern-match
+      // (SpawnPaneVanishedError, AgentReadinessTimeoutError, etc.) without
+      // reading the audit log.
+      console.error(`   • Group ${group} (${agent}): [${errorClass}] ${reason}`);
+      // #1600 — emit a structured wish-level audit event per failed group so
+      // dog-fooder smoke loops + post-merge dashboards can detect dispatch
+      // failures without scraping stderr. Pairs with worker.spawn.failed to
+      // give a complete failure trail (wish-level + worker-level).
+      recordAuditEvent('wish', actualSlug, 'wish.dispatch.failed', getActor(), {
+        wish_slug: actualSlug,
+        wave_name: nextWave.name,
+        group_name: group,
+        agent_name: agent,
+        error_class: errorClass,
+        reason,
+      }).catch(() => {});
     }
     console.error(`   Check state with: genie status ${slug}`);
     console.error('   Some groups may have mutated state before failing — rerun genie work to retry.');
@@ -509,13 +561,16 @@ export async function brainstormCommand(agentName: string, slug: string): Promis
   const brainstormPrompt = `Brainstorm "${slug}". Your context is in the system prompt. Explore the idea, ask clarifying questions, and build toward a design.`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
+    // Pin spawn cwd to the dispatch cwd so the agent runs in the workspace the
+    // operator is dispatching from, not a team's default worktree (#1589).
+    cwd: process.cwd(),
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: brainstormPrompt,
   });
 
   // Deliver work prompt via mailbox as backup (durable, queued to disk)
   const repoPath = process.cwd();
-  const result = await protocolRouter.sendMessage(repoPath, 'cli', agentName, brainstormPrompt);
+  const result = await protocolRouter.sendMessage(repoPath, await cliSender(), agentName, brainstormPrompt);
   if (!result.delivered) {
     console.warn(`⚠ Backup delivery to ${agentName} failed: ${result.reason ?? 'unknown'}`);
   }
@@ -549,13 +604,16 @@ export async function wishCommand(agentName: string, slug: string): Promise<void
   const wishPrompt = `Create a wish from the design for "${slug}". Your context is in the system prompt. Write the WISH.md with execution groups, acceptance criteria, and validation commands.`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
+    // Pin spawn cwd to the dispatch cwd so the wish-author agent writes the
+    // WISH.md in the right repo, not a team's default worktree (#1589).
+    cwd: process.cwd(),
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: wishPrompt,
   });
 
   // Deliver work prompt via mailbox as backup (durable, queued to disk)
   const repoPath = process.cwd();
-  const result = await protocolRouter.sendMessage(repoPath, 'cli', agentName, wishPrompt);
+  const result = await protocolRouter.sendMessage(repoPath, await cliSender(), agentName, wishPrompt);
   if (!result.delivered) {
     console.warn(`⚠ Backup delivery to ${agentName} failed: ${result.reason ?? 'unknown'}`);
   }
@@ -604,10 +662,20 @@ async function runWorkDispatch(
   wishPath: string,
   ref: string,
 ): Promise<void> {
+  // CRITICAL (#1600 Round 3): never call `process.exit(1)` from this function.
+  // `runWorkDispatch` is invoked from TWO callers:
+  //   1. `workDispatchCommand` (single-group CLI) — wraps in try/catch and the
+  //      outer CLI handler calls process.exit(1) with the error message.
+  //   2. `autoOrchestrateCommand` (wave dispatch via Promise.allSettled) —
+  //      collects rejections and reports per-group failures.
+  // If we exit() here from within a parallel wave, we kill the whole node
+  // process mid-dispatch — including SIBLING spawns that are mid-flight in
+  // handleWorkerSpawn. That's THE silent-fail surface from #1589/#1600:
+  // any group's startGroup failure (dependency not done, already in_progress)
+  // killed every other group's spawn before audit events could fire. Throw
+  // instead so the wave-dispatcher's allSettled boundary handles it.
   if (!existsSync(wishPath)) {
-    console.error(`❌ Wish not found: ${wishPath}`);
-    console.error(`   Create it first: genie wish <agent> ${slug}`);
-    process.exit(1);
+    throw new Error(`Wish not found: ${wishPath}. Create it first: genie wish <agent> ${slug}`);
   }
 
   const content = await readFile(wishPath, 'utf-8');
@@ -615,27 +683,23 @@ async function runWorkDispatch(
   // Extract the specific group section
   const groupSection = extractGroup(content, group);
   if (!groupSection) {
-    console.error(`❌ Group "${group}" not found in ${wishPath}`);
-    console.error('   Available groups:');
-    const groups = content.match(/^### Group [A-Za-z0-9]+:.*$/gm);
-    if (groups) {
-      for (const g of groups) console.error(`     ${g}`);
-    }
-    process.exit(1);
+    const availableGroups = content.match(/^### Group [A-Za-z0-9]+:.*$/gm);
+    const availableList = availableGroups ? availableGroups.join(', ') : '(none)';
+    throw new Error(`Group "${group}" not found in ${wishPath}. Available: ${availableList}`);
   }
 
   // Auto-initialize state if missing (prevents polling loop when no state exists)
   const groups = parseWishGroups(content);
   await wishState.getOrCreateState(slug, groups);
 
-  // Start group in state machine (enforces dependencies)
+  // Start group in state machine (enforces dependencies). Throw on failure
+  // (NOT exit) — see top-of-function comment.
   try {
     await wishState.startGroup(slug, group, agentName);
     console.log(`✅ Group "${group}" set to in_progress (assigned to ${agentName})`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`❌ ${message}`);
-    process.exit(1);
+    throw new Error(message);
   }
 
   // Build context with wish-level info + group section
@@ -664,9 +728,24 @@ async function runWorkDispatch(
   console.log(`   Wish: ${wishPath}`);
   console.log(`   Group: ${group}`);
 
-  const effectiveRole = `${agentName}-${group}`;
+  const effectiveRole = `${agentName}-${group}-${randomUUID().slice(0, 4)}`;
   const leaderTarget = await resolveLeaderTarget();
   const workPrompt = `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to ${leaderTarget}`;
+
+  // Emit dispatch.work audit event BEFORE spawn so the dispatch is observable
+  // in `genie events list` even if spawn no-ops or silently auto-resumes a
+  // stale executor (#1589). The worker.spawn event at agents.ts:2482 only fires
+  // when a fresh spawn reaches that line — auto-resume returns earlier and
+  // leaves the dispatch invisible to operators.
+  await recordAuditEvent('wish', slug, 'wish.dispatch.work', getActor(), {
+    wish_slug: slug,
+    group_name: group,
+    agent_name: agentName,
+    agent_role: effectiveRole,
+    wish_path: wishPath,
+    cwd: process.cwd(),
+  });
+
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     // P1 hotfix: forward the team context so spawn lands in the team's
@@ -677,6 +756,11 @@ async function runWorkDispatch(
     // the operator's pane). Authority:
     // ~/.genie/reports/trace-genie-spawn-wrong-window.md
     team: process.env.GENIE_TEAM,
+    // P0 (#1589): pin spawn cwd to the wish worktree (the dispatch cwd).
+    // Without this, agents.ts:2393 silently overrides agent.repoPath with
+    // teamConfig.worktreePath — meaning the engineer launches in the team's
+    // default worktree, not the wish's, and never executes the wish.
+    cwd: process.cwd(),
     role: effectiveRole,
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: workPrompt,
@@ -684,7 +768,7 @@ async function runWorkDispatch(
 
   // Deliver work prompt via mailbox as backup (durable, queued to disk)
   const repoPath = process.cwd();
-  const result = await protocolRouter.sendMessage(repoPath, 'cli', effectiveRole, workPrompt);
+  const result = await protocolRouter.sendMessage(repoPath, await cliSender(), effectiveRole, workPrompt);
   if (!result.delivered) {
     console.warn(`⚠ Backup delivery to ${effectiveRole} failed: ${result.reason ?? 'unknown'}`);
   }
@@ -757,13 +841,17 @@ export async function reviewCommand(agentName: string, ref: string): Promise<voi
     // above). Review dispatch is also team-context — must not fall back to
     // operator's "current window".
     team: process.env.GENIE_TEAM,
+    // P0 (#1589): pin spawn cwd to the wish worktree so the reviewer reads
+    // the wish's files + git diff in the right repo, not the team's default
+    // worktree.
+    cwd: process.cwd(),
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: reviewPrompt,
   });
 
   // Deliver work prompt via mailbox as backup (durable, queued to disk)
   const repoPath = process.cwd();
-  const result = await protocolRouter.sendMessage(repoPath, 'cli', agentName, reviewPrompt);
+  const result = await protocolRouter.sendMessage(repoPath, await cliSender(), agentName, reviewPrompt);
   if (!result.delivered) {
     console.warn(`⚠ Backup delivery to ${agentName} failed: ${result.reason ?? 'unknown'}`);
   }

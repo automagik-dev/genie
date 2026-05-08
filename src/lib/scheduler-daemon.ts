@@ -444,12 +444,13 @@ export async function claimDueTriggers(
   // Atomic claim: select + update in one transaction
   const claimed = await sql.begin(async (tx: SqlClient) => {
     const rows: TriggerRow[] = await tx`
-      SELECT id, schedule_id, due_at, status, idempotency_key, leased_by, leased_until
-      FROM triggers
-      WHERE status = 'pending' AND due_at <= ${now}
-      ORDER BY due_at ASC
-      FOR UPDATE SKIP LOCKED
+      SELECT t.id, t.schedule_id, t.due_at, t.status, t.idempotency_key, t.leased_by, t.leased_until
+      FROM triggers t
+      JOIN schedules s ON s.id = t.schedule_id
+      WHERE t.status = 'pending' AND t.due_at <= ${now} AND s.status = 'active'
+      ORDER BY t.due_at ASC
       LIMIT ${limit}
+      FOR UPDATE OF t SKIP LOCKED
     `;
 
     if (rows.length === 0) return [];
@@ -491,6 +492,17 @@ async function maybeCreateNextTrigger(
   schedule: ScheduleRow,
   now: Date,
 ): Promise<void> {
+  if (schedule.status !== 'active') {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'debug',
+      event: 'next_trigger_skipped_paused',
+      schedule_id: schedule.id,
+      schedule_status: schedule.status,
+    });
+    return;
+  }
+
   if (!schedule.cron_expression || schedule.cron_expression === '@once') return;
 
   let nextDueAt: Date | null = null;
@@ -1465,21 +1477,63 @@ export async function attemptAgentResume(
     return 'skipped';
   }
 
+  const maxAttempts = agent.maxResumeAttempts ?? DEFAULT_MAX_RESUME_ATTEMPTS;
+  const attempts = agent.resumeAttempts ?? 0;
+
   // Must have a Claude session ID to resume (joined from
   // `executors.claude_session_id` via `agents.current_executor_id`).
+  //
+  // Closes #1462 — orphan agents (no currentSessionId) used to early-return
+  // here without incrementing `resume_attempts`, so the cap (3) never tripped
+  // and `auto_resume` never flipped to false. The result was a forever-loop
+  // emitting `resume.missing_session` audit events on every scheduler tick.
+  // Now we increment the counter and flip auto_resume=false at the cap, so
+  // the loop terminates after `maxAttempts` cycles even for orphans.
   if (!agent.currentSessionId) {
+    const newAttempts = attempts + 1;
+    await deps.updateAgent(agentId, {
+      resumeAttempts: newAttempts,
+      lastResumeAttempt: now.toISOString(),
+    });
     deps.log({
       timestamp: now.toISOString(),
       level: 'debug',
       event: 'agent_resume_skipped',
       agent_id: agentId,
       reason: 'no_session_id',
+      resume_attempts: newAttempts,
+      max_resume_attempts: maxAttempts,
     });
+    // W1 hotfix: emit `resume.missing_session` from the SCHEDULER (not from
+    // every read-path call to getResumeSessionId). The scheduler tick is
+    // bounded — at most one emission per orphan per cycle (60s by default),
+    // independent of how many CLI / TUI processes are reading status.
+    // Pre-hotfix: every read emitted; under load that hit 14M events / 7d
+    // because each `genie ls` is a fresh process with no in-memory dedupe.
+    try {
+      const { recordResumeMissingSession } = await import('./executor-registry.js');
+      const actor = process.env.GENIE_AGENT_NAME ?? 'scheduler';
+      await recordResumeMissingSession(agentId, actor, {
+        reason: 'no_session_id',
+      });
+    } catch {
+      /* observability is best-effort — never block the resume path on audit failure */
+    }
+    if (newAttempts >= maxAttempts) {
+      await deps.updateAgent(agentId, { autoResume: false });
+      deps.log({
+        timestamp: now.toISOString(),
+        level: 'warn',
+        event: 'agent_resume_exhausted',
+        agent_id: agentId,
+        resume_attempts: newAttempts,
+        max_resume_attempts: maxAttempts,
+        reason: 'no_session_id_orphan',
+      });
+      return 'exhausted';
+    }
     return 'skipped';
   }
-
-  const maxAttempts = agent.maxResumeAttempts ?? DEFAULT_MAX_RESUME_ATTEMPTS;
-  const attempts = agent.resumeAttempts ?? 0;
 
   // Retry budget exhausted — mark terminal so the scheduler filter excludes
   // the agent next cycle. Prior to this write, `attempts >= maxAttempts` rows
@@ -2189,8 +2243,12 @@ export function startDaemon(
   let eventRouterHandle: EventRouterHandle | null = null;
   let deliveryUnsub: (() => Promise<void>) | null = null;
   let deliveryRetryTimer: ReturnType<typeof setInterval> | null = null;
+  // Retention DELETEs moved here from db.ts:runPostConnectSetup so they run
+  // once per hour from the long-lived daemon process, NOT on every `genie
+  // hook dispatch` bun fork. See PR fix(db): drop runRetention from
+  // getConnection (Mac CPU hook-dispatch fix A).
+  let retentionTimer: ReturnType<typeof setInterval> | null = null;
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: stop() is a flat cleanup sequence for all daemon resources
   const stop = () => {
     running = false;
     if (pollTimeout) {
@@ -2235,6 +2293,10 @@ export function startDaemon(
     if (deliveryRetryTimer) {
       clearInterval(deliveryRetryTimer);
       deliveryRetryTimer = null;
+    }
+    if (retentionTimer) {
+      clearInterval(retentionTimer);
+      retentionTimer = null;
     }
     if (deliveryUnsub) {
       deliveryUnsub().catch(() => {});
@@ -2591,6 +2653,36 @@ export function startDaemon(
         deps.log({ timestamp: deps.now().toISOString(), level: 'error', event: 'mailbox_retry_error', error: message });
       }
     }, 60_000);
+
+    // Retention timer: once at daemon startup, then every hour. Runs the
+    // unbounded-table prune that previously fired inside getConnection (i.e.
+    // on every `genie hook dispatch` bun fork — hundreds/minute on Mac).
+    // Owned exclusively by the daemon now; safe because retention is
+    // idempotent + non-fatal.
+    const RETENTION_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+    const runDaemonRetention = async () => {
+      try {
+        const { getConnection, runRetention } = await import('./db.js');
+        const sql = await getConnection();
+        await runRetention(sql);
+        deps.log({
+          timestamp: deps.now().toISOString(),
+          level: 'debug',
+          event: 'retention_completed',
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        deps.log({
+          timestamp: deps.now().toISOString(),
+          level: 'error',
+          event: 'retention_error',
+          error: message,
+        });
+      }
+    };
+    // Fire once immediately so post-restart retention isn't delayed an hour
+    runDaemonRetention().catch(() => {});
+    retentionTimer = setInterval(runDaemonRetention, RETENTION_INTERVAL_MS);
 
     captureFallbackTimer = await initSessionCapture(deps, config);
 

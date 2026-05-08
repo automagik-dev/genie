@@ -19,6 +19,8 @@ const _T_BOOT = Date.now();
 
 import { Command } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
+import { type InstallOptions, installCommand } from './genie-commands/install.js';
+import { migrateCommand } from './genie-commands/migrate.js';
 import { type RecoverOrphansOptions, recoverOrphansCommand } from './genie-commands/recover-orphans.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
@@ -63,6 +65,8 @@ import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerMetricsCommands } from './term-commands/metrics.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerNotifyCommands } from './term-commands/notify.js';
+import { registerObserveCommands } from './term-commands/observe.js';
+import { registerOmniNamespace } from './term-commands/omni/handshake.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import { registerProjectCommands } from './term-commands/project.js';
 import { registerPruneCommands } from './term-commands/prune.js';
@@ -184,10 +188,22 @@ program
   });
 
 program
+  .command('install')
+  .description('Register genie-serve under pm2 with hardened defaults (canonical-pgserve-pm2-supervision wave 2)')
+  .option('--skip-pgserve', "Don't run `pgserve install` first (operators who manage pgserve themselves)")
+  .action(async (options: InstallOptions) => {
+    await installCommand(options);
+  });
+
+program
   .command('doctor')
   .description('Run diagnostic checks on genie installation')
   .option('--fix', 'Auto-fix: kill zombie postgres, clean shared memory, restart daemon')
   .option('--observability', 'Report partition health + GENIE_WIDE_EMIT flag state')
+  .option(
+    '--perf',
+    'Report rolling per-handler P50/P99 from hook_perf_baseline + flag P99 regressions and recent fallback-log entries',
+  )
   .option(
     '--fix-team-orphans',
     'Archive stale Claude-team config dirs missing config.json (paired with invincible-genie wish migration 050)',
@@ -211,7 +227,22 @@ program
   .description('Update Genie CLI to the latest version')
   .option('--next', 'Switch to dev builds (npm @next tag)')
   .option('--stable', 'Switch to stable releases (npm @latest tag)')
+  .option('-y, --yes', 'Skip the TTY confirmation prompt (or set GENIE_UPDATE_YES=1)')
+  .option('--no-restart', 'Skip post-update maintenance AND the verify probe')
+  .option('--no-verify', 'Run maintenance but skip the post-restart verify probe')
+  .option('--skip-maintenance', 'Skip post-update maintenance (or set GENIE_UPDATE_SKIP_MAINTENANCE=1)')
+  .option('--skip-cleanup <names>', 'Comma-separated legacy-artifact cleanup names to skip')
+  .option('--no-sidecar-cleanup', 'Accepted for cross-CLI portability with omni (no-op for genie)')
   .action(updateCommand);
+program
+  .command('migrate')
+  .description('Apply pending genie host-migrations (auto-runs on install)')
+  .option('--dry-run', 'List pending migrations without executing')
+  .option('--quiet', 'Suppress per-step OK lines (used by postinstall)')
+  .option('--status', 'Show applied / pending / failed table')
+  .action(async (opts) => {
+    await migrateCommand({ dryRun: opts.dryRun, quiet: opts.quiet, status: opts.status });
+  });
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 
 const shortcuts = program.command('shortcuts').description('Manage tmux keyboard shortcuts');
@@ -242,6 +273,8 @@ registerInitCommands(program);
 registerTeamNamespace(program);
 registerDirNamespace(program);
 registerAgentCommands(program);
+registerObserveCommands(program);
+registerOmniNamespace(program);
 registerSendInboxCommands(program);
 registerStateCommands(program);
 registerDispatchCommands(program);
@@ -277,9 +310,13 @@ registerApprovalCommands(program);
 program
   .command('done [ref]')
   .description('Close the current turn (inside an agent session) or mark a wish group done (team-lead, <slug>#<group>)')
-  .action(async (ref: string | undefined) => {
+  .option(
+    '-r, --report <message>',
+    'Full session handoff — what shipped, what is verified, what is left, surprises, decisions. REQUIRED. As long as it needs to be (multi-line OK; pass via heredoc).',
+  )
+  .action(async (ref: string | undefined, options: { report?: string }) => {
     const { doneAction } = await import('./term-commands/done.js');
-    await doneAction(ref);
+    await doneAction(ref, options);
   });
 
 program
@@ -440,6 +477,7 @@ program
   .option('--new-window', 'Create a new tmux window instead of splitting')
   .option('--window <target>', 'Tmux window to split into (e.g., genie:3)')
   .option('--no-auto-resume', 'Disable auto-resume on pane death')
+  .option('--no-auto-sync', 'Disable auto-registration from workspace agents directory')
   .option('--stream', 'Stream SDK messages to stdout in real-time (claude-sdk provider)')
   .option('--stream-format <format>', 'Streaming output format: text, json, ndjson (default: text)', 'text')
   .option('--sdk-max-turns <n>', 'SDK: max conversation turns', parseNumericFlag('--sdk-max-turns'))
@@ -458,6 +496,7 @@ Examples:
   genie spawn council--questioner --provider codex  # Use Codex provider`,
   )
   .action(async (name: string, options: SpawnOptions) => {
+    if (options.autoSync === false) options.noAutoSync = true;
     try {
       await handleWorkerSpawn(name, options);
     } catch (error) {
@@ -813,8 +852,15 @@ if (args.length === 0) {
   if (!isServeRunning()) {
     console.log('Starting genie serve...');
     await autoStartServe();
-  } else if (!isTuiSessionReady()) {
-    // Serve is alive but TUI tmux session died — recreate it
+  }
+  // Belt + suspenders: even after autoStartServe returns successfully, the TUI
+  // tmux session may not be present (autoStartServe's 15s poll exits silently
+  // when serve is up but the session creation lagged, and the post-update
+  // reaper kills the genie-tui server in lock-step with the daemon — the
+  // exact path that produced the "no sessions" attach failure right after
+  // `genie update --next`). Idempotently ensure the session exists before
+  // attempting attach.
+  if (!isTuiSessionReady()) {
     ensureTuiSession(ws.root);
   }
 

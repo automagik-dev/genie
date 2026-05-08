@@ -68,6 +68,41 @@ export interface DispatchSilentDropState {
   readonly drops: ReadonlyArray<DispatchSilentDropRow>;
 }
 
+interface BroadcastRecipientAudit {
+  readonly agent?: unknown;
+  readonly delivered?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function sanitizeAgentName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+}
+
+/**
+ * Extract the broadcast-time delivered recipient snapshot.
+ *
+ * `null` means "pre-fix event shape, fall back to the live roster". `[]`
+ * means "post-fix event shape with no delivered recipients", which is a
+ * clean no-op for self-broadcasts or fully skipped/offline rosters.
+ */
+export function extractDeliveredBroadcastRecipients(data: unknown): string[] | null {
+  if (!isRecord(data)) return null;
+  const recipients = data.recipients;
+  if (!Array.isArray(recipients)) return null;
+
+  const delivered: string[] = [];
+  for (const recipient of recipients as BroadcastRecipientAudit[]) {
+    if (!isRecord(recipient)) continue;
+    if (recipient.delivered !== true) continue;
+    if (typeof recipient.agent !== 'string' || recipient.agent.length === 0) continue;
+    delivered.push(recipient.agent);
+  }
+  return [...new Set(delivered)];
+}
+
 interface DispatchSilentDropDeps {
   readonly loadState: () => Promise<DispatchSilentDropState>;
   /** Injected clock — tests freeze time; prod uses `Date.now`. */
@@ -85,13 +120,12 @@ interface DispatchSilentDropDeps {
  * with multiple broadcasts in flight.
  */
 /** Quick check: has the member's user.prompt subject fired since the broadcast? */
-async function memberHasRespondedSince(
+async function promptSubjectFiredSince(
   sql: Awaited<ReturnType<typeof getConnection>>,
-  member: { id: string; customName?: string; role?: string },
+  agentName: string,
   sinceIso: string,
 ): Promise<boolean> {
-  const name = member.customName ?? member.role ?? member.id;
-  const promptSubject = `genie.user.${name}.prompt`;
+  const promptSubject = `genie.user.${agentName}.prompt`;
   const rows = await sql<Array<{ id: number }>>`
     SELECT id FROM genie_runtime_events
     WHERE subject = ${promptSubject}
@@ -101,15 +135,38 @@ async function memberHasRespondedSince(
   return rows.length > 0;
 }
 
+/** Quick check: has the member's user.prompt subject fired since the broadcast? */
+async function memberHasRespondedSince(
+  sql: Awaited<ReturnType<typeof getConnection>>,
+  member: { id: string; customName?: string; role?: string },
+  sinceIso: string,
+): Promise<boolean> {
+  const name = member.customName ?? member.role ?? member.id;
+  return promptSubjectFiredSince(sql, name, sinceIso);
+}
+
+function memberMatchesRecipientSnapshot(
+  member: { id: string; customName?: string; role?: string },
+  recipients: ReadonlySet<string>,
+): boolean {
+  const candidates = [member.id, member.customName, member.role].filter((v): v is string => Boolean(v));
+  return candidates.some((candidate) => recipients.has(candidate) || recipients.has(sanitizeAgentName(candidate)));
+}
+
 /** Return the ids of running team members who didn't respond to the broadcast. */
 async function findIdleMembers(
   sql: Awaited<ReturnType<typeof getConnection>>,
   team: string,
   broadcastAt: string,
+  recipientSnapshot?: ReadonlyArray<string>,
 ): Promise<string[]> {
   const members = await listAgents({ team });
+  const recipientSet = recipientSnapshot
+    ? new Set(recipientSnapshot.flatMap((name) => [name, sanitizeAgentName(name)]))
+    : null;
   const idle: string[] = [];
   for (const member of members) {
+    if (recipientSet && !memberMatchesRecipientSnapshot(member, recipientSet)) continue;
     const exec = await getCurrentExecutor(member.id);
     if (exec?.state !== 'running') continue;
     const responded = await memberHasRespondedSince(sql, member, broadcastAt);
@@ -124,8 +181,8 @@ async function defaultLoadState(): Promise<DispatchSilentDropState> {
   const cutoffBroadcast = new Date(nowMs - MIN_SILENT_WINDOW_MS).toISOString();
   const cutoffLookback = new Date(nowMs - BROADCAST_LOOKBACK_MS).toISOString();
 
-  const broadcasts = await sql<Array<{ id: number; team: string | null; created_at: Date | string }>>`
-    SELECT id, team, created_at FROM genie_runtime_events
+  const broadcasts = await sql<Array<{ id: number; team: string | null; data: unknown; created_at: Date | string }>>`
+    SELECT id, team, data, created_at FROM genie_runtime_events
     WHERE subject = 'genie.msg.broadcast'
       AND created_at < ${cutoffBroadcast}
       AND created_at > ${cutoffLookback}
@@ -138,7 +195,9 @@ async function defaultLoadState(): Promise<DispatchSilentDropState> {
   for (const b of broadcasts) {
     if (b.team === null) continue;
     const broadcastAt = b.created_at instanceof Date ? b.created_at.toISOString() : String(b.created_at);
-    const idleMembers = await findIdleMembers(sql, b.team, broadcastAt);
+    const recipientSnapshot = extractDeliveredBroadcastRecipients(b.data);
+    if (recipientSnapshot && recipientSnapshot.length === 0) continue;
+    const idleMembers = await findIdleMembers(sql, b.team, broadcastAt, recipientSnapshot ?? undefined);
     if (idleMembers.length === 0) continue;
     drops.push({
       team: b.team,

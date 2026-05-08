@@ -68,7 +68,29 @@ function createMockSql(data: {
       return data.runs ?? [];
     }
     if (query.includes('FROM triggers') && query.includes('FOR UPDATE')) {
-      return data.triggers ?? [];
+      const now = values.find((v) => v instanceof Date) as Date | undefined;
+      const limit = values.find((v) => typeof v === 'number') as number | undefined;
+      const activeScheduleIds = new Set(
+        data.schedules
+          ? data.schedules.filter((s) => s.status === 'active').map((s) => String(s.id))
+          : (data.triggers ?? []).map((t) => String(t.schedule_id)),
+      );
+
+      const dueTriggers = (data.triggers ?? [])
+        .filter((t) => t.status === 'pending')
+        .filter((t) => activeScheduleIds.has(String(t.schedule_id)))
+        .filter((t) => {
+          if (!now) return true;
+          const dueAt = t.due_at instanceof Date ? t.due_at : new Date(String(t.due_at));
+          return dueAt.getTime() <= now.getTime();
+        })
+        .sort((a, b) => {
+          const aDueAt = a.due_at instanceof Date ? a.due_at : new Date(String(a.due_at));
+          const bDueAt = b.due_at instanceof Date ? b.due_at : new Date(String(b.due_at));
+          return aDueAt.getTime() - bDueAt.getTime();
+        });
+
+      return typeof limit === 'number' ? dueTriggers.slice(0, limit) : dueTriggers;
     }
     if (query.includes('UPDATE triggers') && query.includes('leased_until <')) {
       // Reclaim expired leases — return triggers that match
@@ -215,15 +237,76 @@ describe('scheduler-daemon', () => {
           leased_until: null,
         },
       ];
-      const { deps, logs } = createMockDeps({ triggers });
+      const schedules = [{ id: 'sched-1', status: 'active' }];
+      const { deps, logs, mock } = createMockDeps({ triggers, schedules });
       const result = await claimDueTriggers(deps, defaultConfig, 'daemon-1');
 
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('trig-1');
+      const claimQuery = mock.queries.find((q) => q.query.includes('FROM triggers') && q.query.includes('FOR UPDATE'));
+      expect(claimQuery?.query).toContain('JOIN schedules');
+      expect(claimQuery?.query).toContain("s.status = 'active'");
+      expect(claimQuery?.query).toContain('FOR UPDATE OF t SKIP LOCKED');
 
       const claimLog = logs.find((l) => l.event === 'triggers_claimed');
       expect(claimLog).toBeDefined();
       expect(claimLog?.count).toBe(1);
+    });
+
+    test('does not claim due triggers for paused schedules', async () => {
+      const triggers = [
+        {
+          id: 'trig-paused',
+          schedule_id: 'sched-paused',
+          due_at: new Date('2026-03-20T11:00:00Z'),
+          status: 'pending',
+          idempotency_key: null,
+          leased_by: null,
+          leased_until: null,
+        },
+      ];
+      const schedules = [{ id: 'sched-paused', status: 'paused' }];
+      const { deps, mock } = createMockDeps({ triggers, schedules });
+      const result = await claimDueTriggers(deps, defaultConfig, 'daemon-1');
+
+      expect(result).toEqual([]);
+      const leaseQuery = mock.queries.find(
+        (q) => q.query.includes('UPDATE triggers') && q.query.includes('leased_until'),
+      );
+      expect(leaseQuery).toBeUndefined();
+    });
+
+    test('paused due triggers do not consume claim capacity before active triggers', async () => {
+      const triggers = [
+        {
+          id: 'trig-paused',
+          schedule_id: 'sched-paused',
+          due_at: new Date('2026-03-20T11:00:00Z'),
+          status: 'pending',
+          idempotency_key: null,
+          leased_by: null,
+          leased_until: null,
+        },
+        {
+          id: 'trig-active',
+          schedule_id: 'sched-active',
+          due_at: new Date('2026-03-20T11:01:00Z'),
+          status: 'pending',
+          idempotency_key: null,
+          leased_by: null,
+          leased_until: null,
+        },
+      ];
+      const schedules = [
+        { id: 'sched-paused', status: 'paused' },
+        { id: 'sched-active', status: 'active' },
+      ];
+      const config = { ...defaultConfig, maxConcurrent: 1 };
+      const { deps } = createMockDeps({ triggers, schedules });
+      const result = await claimDueTriggers(deps, config, 'daemon-1');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('trig-active');
     });
 
     test('respects concurrency cap', async () => {
@@ -258,13 +341,12 @@ describe('scheduler-daemon', () => {
         leased_by: null,
         leased_until: null,
       }));
-      const { deps } = createMockDeps({ triggers, runningCount: 3 });
+      const schedules = [{ id: 'sched-1', status: 'active' }];
+      const { deps } = createMockDeps({ triggers, schedules, runningCount: 3 });
       const config = { ...defaultConfig, maxConcurrent: 5 };
       const result = await claimDueTriggers(deps, config, 'daemon-1');
 
-      // Should claim min(available=2, 5) = 2 — but our mock returns all triggers
-      // The LIMIT is enforced at the SQL level; here we verify the query was made
-      expect(result.length).toBeGreaterThan(0);
+      expect(result).toHaveLength(2);
     });
   });
 
@@ -451,6 +533,40 @@ describe('scheduler-daemon', () => {
       const nextTriggerLog = logs.find((l) => l.event === 'next_trigger_created');
       expect(nextTriggerLog).toBeDefined();
       expect(nextTriggerLog?.schedule_id).toBe('sched-1');
+    });
+
+    test('does not create next trigger for paused recurring schedule', async () => {
+      const trigger = {
+        id: 'trig-1',
+        schedule_id: 'sched-1',
+        due_at: new Date('2026-03-20T11:50:00Z'),
+        status: 'executing',
+        idempotency_key: null,
+        leased_by: 'daemon-1',
+        leased_until: new Date('2026-03-20T12:05:00Z'),
+      };
+      const schedules = [
+        {
+          id: 'sched-1',
+          name: 'paused-task',
+          command: 'genie spawn reviewer',
+          run_spec: {},
+          status: 'paused',
+          cron_expression: '@every 10m',
+        },
+      ];
+
+      const { deps, mock, logs } = createMockDeps({ schedules });
+      await fireTrigger(deps, trigger, 'daemon-1');
+
+      expect(mock.insertedTriggers).toHaveLength(0);
+      const nextTriggerLog = logs.find((l) => l.event === 'next_trigger_created');
+      expect(nextTriggerLog).toBeUndefined();
+      const skippedLog = logs.find((l) => l.event === 'next_trigger_skipped_paused');
+      expect(skippedLog).toBeDefined();
+      expect(skippedLog?.level).toBe('debug');
+      expect(skippedLog?.schedule_id).toBe('sched-1');
+      expect(skippedLog?.schedule_status).toBe('paused');
     });
 
     test('creates next trigger for cron schedule', async () => {
@@ -2158,6 +2274,8 @@ describe('scheduler-daemon', () => {
         createdAt: '2026-04-17T12:00:00Z',
         read: false,
         deliveredAt: null,
+        source: 'agent',
+        meta: {},
         ...overrides,
       };
     }

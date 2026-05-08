@@ -45,6 +45,8 @@ describe('formatBrief', () => {
           createdAt: '2026-03-28T14:26:00.000Z',
           read: false,
           deliveredAt: null,
+          source: 'agent',
+          meta: {},
         },
         {
           id: 'msg-2',
@@ -54,6 +56,8 @@ describe('formatBrief', () => {
           createdAt: '2026-03-28T14:30:00.000Z',
           read: false,
           deliveredAt: null,
+          source: 'agent',
+          meta: {},
         },
       ],
       taskMessages: [],

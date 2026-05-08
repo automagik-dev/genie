@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
+import { type BrainRegistryApi, findBrainVault } from '../lib/brain-vaults.js';
 
 const BRAIN_PKG = '@khal-os/brain';
 const BRAIN_REPO = 'khal-os/brain';
@@ -71,15 +72,6 @@ function resolveBrainBin(): string | undefined {
     if (existsSync(c)) return c;
   }
   return undefined;
-}
-
-/** Search for a brain vault (brain.json) in common locations. Returns path or null. */
-function findBrainVault(): string | null {
-  const candidates = [process.cwd(), join(process.cwd(), 'brain'), join(homedir(), 'brain')];
-  for (const dir of candidates) {
-    if (existsSync(join(dir, 'brain.json'))) return dir;
-  }
-  return null;
 }
 
 interface ActiveBrainConfig {
@@ -431,8 +423,10 @@ async function installBrain(): Promise<boolean> {
     console.log('');
 
     // Auto-run migrations
+    let installedBrain: BrainRegistryApi | null = null;
     try {
       const brain = await import(BRAIN_PKG);
+      installedBrain = brain as BrainRegistryApi;
       if (brain.runAllMigrations) {
         console.log('  Running brain migrations...');
         await brain.runAllMigrations();
@@ -445,7 +439,7 @@ async function installBrain(): Promise<boolean> {
     await runBrainInstallWizard();
 
     // Auto-start daemon if a vault is found
-    const vaultPath = findBrainVault();
+    const vaultPath = await findBrainVault({ brain: installedBrain });
     if (vaultPath) {
       startBrainDaemon(vaultPath);
     } else {

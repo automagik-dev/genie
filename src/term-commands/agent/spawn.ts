@@ -4,6 +4,7 @@
  */
 
 import type { Command } from 'commander';
+import { CrossProviderModelError, validateProviderModel } from '../../lib/provider-models.js';
 import { type SpawnOptions, handleWorkerSpawn } from '../agents.js';
 
 /** Commander option parser that rejects NaN for numeric flags. */
@@ -34,6 +35,7 @@ export function registerAgentSpawn(parent: Command): void {
     .option('--new-window', 'Create a new tmux window instead of splitting')
     .option('--window <target>', 'Tmux window to split into (e.g., genie:3)')
     .option('--no-auto-resume', 'Disable auto-resume on pane death')
+    .option('--no-auto-sync', 'Disable auto-registration from workspace agents directory')
     .option('--prompt <prompt>', 'Initial prompt (first user message)')
     .option('--sdk-max-turns <n>', 'SDK: max conversation turns', parseNumericFlag('--sdk-max-turns'))
     .option('--sdk-max-budget <usd>', 'SDK: max budget in USD', parseNumericFlag('--sdk-max-budget'))
@@ -42,6 +44,20 @@ export function registerAgentSpawn(parent: Command): void {
     .option('--sdk-resume <session-id>', 'SDK: resume a previous session by ID')
     .action(async (name: string, options: SpawnOptions) => {
       if (options.prompt) options.initialPrompt = options.prompt;
+      if (options.autoSync === false) options.noAutoSync = true;
+      // Council-recommended P0 — reject cross-provider model values at parse
+      // time so they never reach the underlying CLI. See provider-models.ts
+      // for the full rationale (council deliberation 2026-04-28: codex spawn
+      // forwarded `--model opus` and the agent died on startup).
+      try {
+        validateProviderModel({ provider: options.provider ?? null, model: options.model ?? null });
+      } catch (error) {
+        if (error instanceof CrossProviderModelError) {
+          console.error(`Error: ${error.message}`);
+          process.exit(1);
+        }
+        throw error;
+      }
       try {
         await handleWorkerSpawn(name, options);
       } catch (error) {

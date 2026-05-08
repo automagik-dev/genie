@@ -10,6 +10,7 @@
 
 import { generateTraceId, getActor, recordAuditEvent } from './audit.js';
 import { loadGenieConfig } from './genie-config.js';
+import { signOmniRequest } from './omni-signature.js';
 
 // ============================================================================
 // Types
@@ -115,10 +116,19 @@ export async function registerAgentInOmni(
       headers.Authorization = `Bearer ${apiKey}`;
     }
 
+    // Per omni-host-fingerprint-trust wish (Group 3): if this host has
+    // registered via `genie omni handshake`, attach the ed25519 signature
+    // headers so omni can verify the request came from a known host. Bearer
+    // stays as the auth source until Group 6's --require-genie-signature
+    // flag is on; the signature is informational/audit until then.
+    const bodyJson = JSON.stringify(body);
+    const sig = signOmniRequest('POST', '/api/v2/agents', bodyJson);
+    if (sig) Object.assign(headers, sig);
+
     const response = await fetch(`${apiUrl}/api/v2/agents`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body: bodyJson,
       signal: AbortSignal.timeout(10000),
     });
 
@@ -171,7 +181,13 @@ export async function findOmniAgent(agentName: string): Promise<string | null> {
       headers.Authorization = `Bearer ${apiKey}`;
     }
 
-    const response = await fetch(`${apiUrl}/api/v2/agents?name=${encodeURIComponent(agentName)}`, {
+    // Sign the GET as well — empty body, but the path includes the query
+    // string so the verifier sees the same canonical input we sign here.
+    const path = `/api/v2/agents?name=${encodeURIComponent(agentName)}`;
+    const sig = signOmniRequest('GET', path, '');
+    if (sig) Object.assign(headers, sig);
+
+    const response = await fetch(`${apiUrl}${path}`, {
       method: 'GET',
       headers,
       signal: AbortSignal.timeout(10000),

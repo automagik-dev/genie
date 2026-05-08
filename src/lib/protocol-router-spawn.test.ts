@@ -63,7 +63,7 @@ describe('protocol-router-spawn error surfacing', () => {
       };
 
       // Should NOT throw — resume context is best-effort
-      await mod.injectResumeContext(tempDir, 'worker-1', 'engineer', 'test-team');
+      await mod.injectResumeContext(tempDir, 'agent-id-1', 'worker-1', 'engineer', 'test-team');
 
       const resumeWarn = warnCalls.find((c) => c.includes('Resume context injection failed'));
       expect(resumeWarn).toBeTruthy();
@@ -80,7 +80,7 @@ describe('protocol-router-spawn error surfacing', () => {
       });
       mod._deps.mailboxSend = async () => ({ id: 'msg-1' }) as any;
 
-      await mod.injectResumeContext(tempDir, 'worker-1', 'engineer', 'test-team');
+      await mod.injectResumeContext(tempDir, 'agent-id-1', 'worker-1', 'engineer', 'test-team');
 
       const resumeWarn = warnCalls.find((c) => c.includes('Resume context injection failed'));
       expect(resumeWarn).toBeUndefined();
@@ -91,10 +91,30 @@ describe('protocol-router-spawn error surfacing', () => {
 
       mod._deps.findAnyGroupByAssignee = async () => null;
 
-      await mod.injectResumeContext(tempDir, 'nonexistent', 'engineer', 'test-team');
+      await mod.injectResumeContext(tempDir, 'agent-id-1', 'nonexistent', 'engineer', 'test-team');
 
       const anyWarn = warnCalls.find((c) => c.includes('[protocol-router]'));
       expect(anyWarn).toBeUndefined();
+    });
+
+    test('mailbox.to_worker uses canonical agentId, not bare workerId', async () => {
+      const mod = await import('./protocol-router-spawn.js');
+
+      mod._deps.findAnyGroupByAssignee = async () => ({
+        slug: 'test-wish',
+        groupName: '1',
+        group: { status: 'in_progress', startedAt: '2026-03-31T00:00:00Z' } as any,
+      });
+
+      const observed: { to?: string } = {};
+      mod._deps.mailboxSend = async (_repo: string, _from: string, to: string) => {
+        observed.to = to;
+        return { id: 'msg-resume' } as any;
+      };
+
+      await mod.injectResumeContext(tempDir, 'canonical-agent-id', 'engineer-4d48', 'engineer', 'genie');
+
+      expect(observed.to).toBe('canonical-agent-id');
     });
   });
 

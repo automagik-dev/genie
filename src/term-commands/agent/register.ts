@@ -22,6 +22,7 @@ interface RegisterOptions {
   roles?: string[];
   global?: boolean;
   skipOmni?: boolean;
+  allowSymlink?: boolean;
 }
 
 function validatePromptMode(mode: string): 'system' | 'append' {
@@ -90,16 +91,24 @@ async function handleAgentRegister(name: string, options: RegisterOptions): Prom
       model: options.model,
       roles,
     },
-    { global: options.global },
+    { global: options.global, allowSymlink: options.allowSymlink },
   );
 
   const scope = options.global ? 'global' : 'project';
   console.log(`Agent "${entry.name}" registered (${scope}).`);
   printEntry(entry);
 
-  if (!options.skipOmni) {
-    await handleOmniRegistration(name, { ...options, roles });
+  if (options.skipOmni) {
+    // Operators using --skip-omni often forget to wire the omni side later,
+    // leading to a registered genie agent that's invisible to omni and a
+    // broken bridge when messages arrive. Make the cost of skipping explicit.
+    process.stderr.write(
+      `\n⚠ Skipped Omni auto-registration. The genie directory entry exists, but no Omni agent\n  record, no nats-genie provider, and no instance binding were created. Until you wire\n  the Omni side, this agent will not receive messages from any channel.\n\n  To complete the wire when ready:\n      omni connect <instance-id> ${entry.name}\n\n  Or run the canonical wizard from a Claude session:\n      /genie:omni\n\n`,
+    );
+    return;
   }
+
+  await handleOmniRegistration(name, { ...options, roles });
 }
 
 export function registerAgentRegister(parent: Command): void {
@@ -112,7 +121,11 @@ export function registerAgentRegister(parent: Command): void {
     .option('--model <model>', 'Default model (sonnet, opus, codex)')
     .option('--roles <roles...>', 'Built-in roles this agent can orchestrate')
     .option('--global', 'Write to global directory instead of project')
-    .option('--skip-omni', 'Skip Omni auto-registration')
+    .option('--skip-omni', 'Skip Omni auto-registration (prints a stderr warning explaining the cost)')
+    .option(
+      '--allow-symlink',
+      'Accept a symlinked AGENTS.md (default: rejected — usually indicates --dir was pointed at the wrong folder)',
+    )
     .action(async (name: string, options: RegisterOptions) => {
       try {
         await handleAgentRegister(name, options);

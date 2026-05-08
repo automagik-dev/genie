@@ -112,6 +112,7 @@ export interface EnsureServeReadyDeps {
   listOrphanedZombies?: () => Promise<Array<{ id: string; lastStateChange: string }>>;
   scanTeamConfigOrphans?: () => OrphanScan;
   archiveStaleTeamConfigs?: (orphans: TeamConfigOrphan[]) => string[];
+  platform?: NodeJS.Platform;
   recordAudit?: (
     eventType: 'serve.precondition.fixed' | 'serve.precondition.refused',
     name: PreconditionName,
@@ -468,10 +469,40 @@ async function checkPartition(
 async function checkWatchdog(
   health: ObservabilityHealthReport,
   autoFix: boolean,
-  deps: Required<Pick<EnsureServeReadyDeps, 'installWatchdog'>>,
+  deps: Required<Pick<EnsureServeReadyDeps, 'installWatchdog' | 'platform'>>,
 ): Promise<PreconditionResult> {
+  if (deps.platform !== 'linux') {
+    return {
+      name: 'watchdog',
+      status: 'skipped',
+      detail: 'watchdog install is Linux/systemd only',
+    };
+  }
+  // Explicit opt-out for bundled installs and operators who manage the
+  // systemd unit out-of-band. Set GENIE_WATCHDOG_SKIP=1 to silence the
+  // precondition without affecting any other doctor checks.
+  if (process.env.GENIE_WATCHDOG_SKIP === '1') {
+    return {
+      name: 'watchdog',
+      status: 'skipped',
+      detail: 'GENIE_WATCHDOG_SKIP=1',
+    };
+  }
   if (health.watchdog === 'ok') {
     return { name: 'watchdog', status: 'ok' };
+  }
+  // Bundle-mode installs ship `dist/genie.js` only — `packages/watchdog/`
+  // is not inlined, so resolveWatchdogCliPath returns null. Without an
+  // override, the install will inevitably fail. Surface that as `skipped`
+  // (informational) instead of `refused` (warning), since the user can't
+  // recover without changing their install layout.
+  if (!process.env.GENIE_WATCHDOG_INSTALL_CMD && !resolveWatchdogCliPath()) {
+    return {
+      name: 'watchdog',
+      status: 'skipped',
+      detail:
+        'watchdog optional in this install — set GENIE_WATCHDOG_SKIP=1 to silence, or run from source repo to enable',
+    };
   }
   if (!autoFix) {
     return {
@@ -603,6 +634,7 @@ function bindDefaults(deps: EnsureServeReadyDeps | undefined): Required<EnsureSe
     listOrphanedZombies: deps?.listOrphanedZombies ?? defaultListOrphanedZombies,
     scanTeamConfigOrphans: deps?.scanTeamConfigOrphans ?? defaultScanTeamConfigOrphans,
     archiveStaleTeamConfigs: deps?.archiveStaleTeamConfigs ?? defaultArchiveStaleTeamConfigs,
+    platform: deps?.platform ?? process.platform,
     recordAudit: deps?.recordAudit ?? defaultRecordAudit,
     log: deps?.log ?? ((line: string) => console.log(line)),
   };
@@ -667,23 +699,72 @@ export interface RunDoctorMaintenanceOptions {
   silent?: boolean;
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function logMaintenanceStepStart(log: (line: string) => void, silent: boolean | undefined, label: string): number {
+  if (!silent) log(`  ${label}...`);
+  return Date.now();
+}
+
+function logMaintenanceStepDone(
+  log: (line: string) => void,
+  silent: boolean | undefined,
+  label: string,
+  startedAt: number,
+): void {
+  if (!silent) log(`    done ${label} (${formatDuration(Date.now() - startedAt)})`);
+}
+
 export async function runDoctorMaintenance(opts: RunDoctorMaintenanceOptions = {}): Promise<EnsureServeReadyReport> {
   // Doctor uses the BLOCKING backfill variant by default — when the user runs
   // `genie doctor --fix` they expect the work to actually happen, not just be
   // kicked off. Boot uses the fire-and-forget default.
+  const rawRunBackfillSync = opts.deps?.runBackfillSync ?? defaultRunBackfillBlocking;
   const deps = bindDefaults({
-    runBackfillSync: defaultRunBackfillBlocking,
-    log: opts.silent ? () => {} : undefined,
     ...opts.deps,
+    runBackfillSync: defaultRunBackfillBlocking,
+    log: opts.silent ? () => {} : opts.deps?.log,
   });
+  deps.runBackfillSync = async () => {
+    const startedAt = logMaintenanceStepStart(
+      deps.log,
+      opts.silent,
+      'Running session backfill convergence (can take minutes on large transcript history)',
+    );
+    try {
+      return await rawRunBackfillSync();
+    } finally {
+      logMaintenanceStepDone(deps.log, opts.silent, 'session backfill convergence', startedAt);
+    }
+  };
+
+  let startedAt = logMaintenanceStepStart(deps.log, opts.silent, 'Collecting observability health');
   const health = await deps.collectHealth();
+  logMaintenanceStepDone(deps.log, opts.silent, 'observability health', startedAt);
 
   const results: PreconditionResult[] = [];
+  startedAt = logMaintenanceStepStart(deps.log, opts.silent, 'Checking runtime event partitions');
   results.push(await checkPartition(health, /* autoFix */ true, deps));
+  logMaintenanceStepDone(deps.log, opts.silent, 'runtime event partitions', startedAt);
+
+  startedAt = logMaintenanceStepStart(deps.log, opts.silent, 'Checking watchdog install');
   results.push(await checkWatchdog(health, /* autoFix */ true, deps));
+  logMaintenanceStepDone(deps.log, opts.silent, 'watchdog install', startedAt);
+
+  startedAt = logMaintenanceStepStart(deps.log, opts.silent, 'Checking session backfill drift');
   results.push(await checkBackfill(/* autoFix */ true, deps));
+  logMaintenanceStepDone(deps.log, opts.silent, 'session backfill drift', startedAt);
+
+  startedAt = logMaintenanceStepStart(deps.log, opts.silent, 'Checking exhausted zombie rows');
   results.push(await checkDeadPaneZombies(deps));
+  logMaintenanceStepDone(deps.log, opts.silent, 'exhausted zombie rows', startedAt);
+
+  startedAt = logMaintenanceStepStart(deps.log, opts.silent, 'Checking Claude team config orphans');
   results.push(checkTeamConfigOrphans(/* autoFix */ true, deps));
+  logMaintenanceStepDone(deps.log, opts.silent, 'Claude team config orphans', startedAt);
 
   await emitAuditEvents(results, deps);
   const ok = results.every((r) => r.status === 'ok' || r.status === 'fixed' || r.status === 'skipped');

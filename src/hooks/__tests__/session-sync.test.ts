@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { _deps, _resetSyncedSessions, sessionSync } from '../handlers/session-sync.js';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { _deps, _resetSyncedSessions, _setCacheFileForTest, sessionSync } from '../handlers/session-sync.js';
 import type { HookPayload } from '../types.js';
 
 /**
@@ -14,7 +17,12 @@ describe('session-sync handler', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    // G7 — parent shell exports GENIE_AGENT_ID when tests run inside a spawned
+    // agent context. Clear it so legacy tests exercise the (name, team)
+    // fallback path; new tests opt into the id path explicitly.
+    process.env.GENIE_AGENT_ID = undefined;
     _resetSyncedSessions();
+    _deps.getAgent = null;
     _deps.getAgentByName = null;
     _deps.getExecutor = null;
     _deps.updateClaudeSessionId = null;
@@ -24,6 +32,7 @@ describe('session-sync handler', () => {
   afterEach(() => {
     process.env = { ...originalEnv };
     _resetSyncedSessions();
+    _deps.getAgent = null;
     _deps.getAgentByName = null;
     _deps.getExecutor = null;
     _deps.updateClaudeSessionId = null;
@@ -303,6 +312,214 @@ describe('session-sync handler', () => {
       await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new-uuid' });
 
       expect(emissions).toHaveLength(0);
+    });
+  });
+
+  // G7 — hook env consumer flip. Migration 061 introduced fk_mailbox_from_worker
+  // → agents.id; the spawn flow exports both GENIE_AGENT_ID (UUID) and
+  // GENIE_AGENT_NAME. Hooks that touch the registry must prefer the UUID so
+  // `getAgent(id)` runs instead of an indirect `(name, team)` lookup.
+  describe('G7 env id preference (GENIE_AGENT_ID first)', () => {
+    const VALID_UUID = '11111111-2222-3333-4444-555555555555';
+
+    test('uses _deps.getAgent when GENIE_AGENT_ID is a UUID; never calls getAgentByName', async () => {
+      process.env.GENIE_AGENT_ID = VALID_UUID;
+      process.env.GENIE_AGENT_NAME = 'engineer-g7';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const calls: { fn: string; args: unknown[] }[] = [];
+      _deps.getAgent = async (id) => {
+        calls.push({ fn: 'getAgent', args: [id] });
+        return { currentExecutorId: 'exec-via-id' };
+      };
+      _deps.getAgentByName = async (name, team) => {
+        calls.push({ fn: 'getAgentByName', args: [name, team] });
+        return { currentExecutorId: 'should-not-be-used' };
+      };
+      _deps.getExecutor = async () => ({ claudeSessionId: 'old-uuid', state: 'running' });
+      _deps.updateClaudeSessionId = async () => {};
+      _deps.emitAuditEvent = async () => {};
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new-uuid' });
+
+      expect(calls).toEqual([{ fn: 'getAgent', args: [VALID_UUID] }]);
+    });
+
+    test('falls back to getAgentByName when GENIE_AGENT_ID is unset', async () => {
+      process.env.GENIE_AGENT_ID = undefined;
+      process.env.GENIE_AGENT_NAME = 'engineer-g7';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const calls: { fn: string; args: unknown[] }[] = [];
+      _deps.getAgent = async (id) => {
+        calls.push({ fn: 'getAgent', args: [id] });
+        return null;
+      };
+      _deps.getAgentByName = async (name, team) => {
+        calls.push({ fn: 'getAgentByName', args: [name, team] });
+        return { currentExecutorId: 'exec-via-name' };
+      };
+      _deps.getExecutor = async () => ({ claudeSessionId: 'old', state: 'running' });
+      _deps.updateClaudeSessionId = async () => {};
+      _deps.emitAuditEvent = async () => {};
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new' });
+
+      expect(calls).toEqual([{ fn: 'getAgentByName', args: ['engineer-g7', 'alpha'] }]);
+    });
+
+    test('falls back to getAgentByName when GENIE_AGENT_ID is a non-UUID string', async () => {
+      process.env.GENIE_AGENT_ID = 'not-a-uuid';
+      process.env.GENIE_AGENT_NAME = 'engineer-g7';
+      process.env.GENIE_TEAM = 'alpha';
+
+      const calls: string[] = [];
+      _deps.getAgent = async () => {
+        calls.push('getAgent');
+        return null;
+      };
+      _deps.getAgentByName = async () => {
+        calls.push('getAgentByName');
+        return { currentExecutorId: 'exec-via-name' };
+      };
+      _deps.getExecutor = async () => ({ claudeSessionId: 'old', state: 'running' });
+      _deps.updateClaudeSessionId = async () => {};
+      _deps.emitAuditEvent = async () => {};
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new' });
+
+      // Non-UUID env id is silently dropped (readEnvAgentId guard); only the
+      // name path runs.
+      expect(calls).toEqual(['getAgentByName']);
+    });
+  });
+
+  // Mac-CPU fix E — disk-backed cache so cold-start hook forks skip DB calls
+  describe('Mac-CPU fix E — disk-backed session cache', () => {
+    let cacheDir: string;
+    let cacheFile: string;
+
+    beforeEach(() => {
+      cacheDir = join(tmpdir(), `genie-session-sync-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(cacheDir, { recursive: true });
+      cacheFile = join(cacheDir, 'session-sync.json');
+      _setCacheFileForTest(cacheFile);
+      _resetSyncedSessions();
+    });
+
+    afterEach(() => {
+      _setCacheFileForTest(null);
+      _resetSyncedSessions();
+      try {
+        rmSync(cacheDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    });
+
+    test('writes cache file after a successful session.reconciled', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      let updateCount = 0;
+      _deps.getAgentByName = async () => ({ currentExecutorId: 'exec-disk-1' });
+      _deps.getExecutor = async () => ({ claudeSessionId: 'old-uuid', state: 'running' });
+      _deps.updateClaudeSessionId = async () => {
+        updateCount += 1;
+      };
+      _deps.emitAuditEvent = async () => {};
+
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'new-uuid' });
+
+      expect(updateCount).toBe(1);
+      expect(existsSync(cacheFile)).toBe(true);
+      const persisted = JSON.parse(readFileSync(cacheFile, 'utf-8'));
+      expect(persisted['exec-disk-1']).toBe('new-uuid');
+    });
+
+    test('cold-start fork loads cache from disk and skips DB calls', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      // Pre-seed the cache file as if a previous fork wrote it
+      writeFileSync(cacheFile, JSON.stringify({ 'exec-disk-2': 'cached-uuid' }));
+
+      let getAgentCalls = 0;
+      let getExecutorCalls = 0;
+      let updateCalls = 0;
+      _deps.getAgentByName = async () => {
+        getAgentCalls += 1;
+        return { currentExecutorId: 'exec-disk-2' };
+      };
+      _deps.getExecutor = async () => {
+        getExecutorCalls += 1;
+        return { claudeSessionId: 'cached-uuid', state: 'running' };
+      };
+      _deps.updateClaudeSessionId = async () => {
+        updateCalls += 1;
+      };
+      _deps.emitAuditEvent = async () => {};
+
+      // Simulate fresh fork
+      _resetSyncedSessions();
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'cached-uuid' });
+
+      // getAgentByName still runs (handler needs to resolve executor id), but
+      // getExecutor + updateClaudeSessionId should NOT (cache hit).
+      expect(getAgentCalls).toBe(1);
+      expect(getExecutorCalls).toBe(0);
+      expect(updateCalls).toBe(0);
+    });
+
+    test('disk cache miss falls through to DB and persists result', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      // Cache file exists but has DIFFERENT executor — current one is uncached
+      writeFileSync(cacheFile, JSON.stringify({ 'other-exec': 'other-uuid' }));
+
+      let getExecutorCalls = 0;
+      _deps.getAgentByName = async () => ({ currentExecutorId: 'exec-disk-3' });
+      _deps.getExecutor = async () => {
+        getExecutorCalls += 1;
+        return { claudeSessionId: 'live-uuid', state: 'running' };
+      };
+      _deps.updateClaudeSessionId = async () => {};
+      _deps.emitAuditEvent = async () => {};
+
+      _resetSyncedSessions();
+      await sessionSync({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'live-uuid' });
+
+      expect(getExecutorCalls).toBe(1); // cache miss → DB hit
+      const persisted = JSON.parse(readFileSync(cacheFile, 'utf-8'));
+      // Both entries should now be present (existing + new)
+      expect(persisted['exec-disk-3']).toBe('live-uuid');
+      expect(persisted['other-exec']).toBe('other-uuid');
+    });
+
+    test('corrupt cache file is tolerated — falls back to DB', async () => {
+      process.env.GENIE_AGENT_NAME = 'worker';
+      process.env.GENIE_TEAM = 'alpha';
+
+      writeFileSync(cacheFile, 'not valid json {');
+
+      let getExecutorCalls = 0;
+      _deps.getAgentByName = async () => ({ currentExecutorId: 'exec-disk-4' });
+      _deps.getExecutor = async () => {
+        getExecutorCalls += 1;
+        return { claudeSessionId: 'some-uuid', state: 'running' };
+      };
+      _deps.updateClaudeSessionId = async () => {};
+      _deps.emitAuditEvent = async () => {};
+
+      _resetSyncedSessions();
+      const result = await sessionSync({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        session_id: 'some-uuid',
+      });
+      expect(result).toBeUndefined(); // never throws
+      expect(getExecutorCalls).toBe(1); // corrupt cache → DB hit
     });
   });
 });

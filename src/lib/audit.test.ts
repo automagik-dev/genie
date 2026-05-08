@@ -14,6 +14,7 @@ import {
   querySummary,
   queryTimeline,
   queryToolUsage,
+  queryToolUsageDetail,
   recordAuditEvent,
 } from './audit.js';
 import { getConnection } from './db.js';
@@ -220,10 +221,19 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
   });
 
   describe('queryCostBreakdown', () => {
-    test('returns cost aggregation by agent', async () => {
-      await recordAuditEvent('otel_api', 'req-1', 'api_request', 'agent-a', { cost_usd: '0.05', model: 'opus' });
-      await recordAuditEvent('otel_api', 'req-2', 'api_request', 'agent-a', { cost_usd: '0.10', model: 'opus' });
-      await recordAuditEvent('otel_api', 'req-3', 'api_request', 'agent-b', { cost_usd: '0.03', model: 'sonnet' });
+    test('returns cost aggregation by agent (legacy cost_usd shape)', async () => {
+      await recordAuditEvent('otel_metric', 'sess-a', 'claude_code.cost.usage', 'agent-a', {
+        cost_usd: '0.05',
+        model: 'opus',
+      });
+      await recordAuditEvent('otel_metric', 'sess-a', 'claude_code.cost.usage', 'agent-a', {
+        cost_usd: '0.10',
+        model: 'opus',
+      });
+      await recordAuditEvent('otel_metric', 'sess-b', 'claude_code.cost.usage', 'agent-b', {
+        cost_usd: '0.03',
+        model: 'sonnet',
+      });
 
       const rows = await queryCostBreakdown('1h', 'agent');
       expect(rows.length).toBeGreaterThanOrEqual(1);
@@ -232,6 +242,32 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
         expect(agentA.request_count).toBeGreaterThanOrEqual(2);
         expect(agentA.total_cost).toBeGreaterThan(0);
       }
+    });
+
+    test('aggregates OTel-shaped rows (details.value) via v_claude_usage_events', async () => {
+      // Regression: observability-signal-normalization Group 2.
+      // OTel `claude_code.cost.usage` metric data points land with cost under
+      // `details.value`, not `details.cost_usd`. The pre-058 query path
+      // silently summed these to zero. The view must surface them.
+      const agent = `otel-agent-${Date.now()}`;
+      await recordAuditEvent('otel_metric', `sess-${agent}-1`, 'claude_code.cost.usage', agent, {
+        value: 0.21,
+        metric_name: 'claude_code.cost.usage',
+        model: 'opus',
+      });
+      await recordAuditEvent('otel_metric', `sess-${agent}-2`, 'claude_code.cost.usage', agent, {
+        value: 0.07,
+        metric_name: 'claude_code.cost.usage',
+        model: 'opus',
+      });
+
+      const rows = await queryCostBreakdown('1h', 'agent');
+      const hit = rows.find((r) => r.group_key === agent);
+      expect(hit).toBeDefined();
+      expect(hit?.request_count).toBe(2);
+      // Float math — accept anything close to 0.28.
+      expect(hit?.total_cost).toBeGreaterThan(0.27);
+      expect(hit?.total_cost).toBeLessThan(0.29);
     });
 
     test('groups by model', async () => {
@@ -266,6 +302,55 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     });
   });
 
+  describe('queryToolUsageDetail', () => {
+    test('returns per-row tool_input + tool_parameters (regression: #1259 bug 3)', async () => {
+      // Aggregate `queryToolUsage` drops per-call payloads. The detail
+      // variant must preserve both `tool_input` and `tool_parameters`
+      // verbatim so `events tools --detail --json` can surface them.
+      const uniqueTool = `BashDetail-${Date.now()}`;
+      const input = { command: "echo 'hello world'", cwd: '/tmp' };
+      const parameters = { timeout_ms: 5000 };
+      await recordAuditEvent('otel_tool', uniqueTool, 'tool_result', 'agent-detail', {
+        tool_name: uniqueTool,
+        duration_ms: '42',
+        tool_input: input,
+        tool_parameters: parameters,
+      });
+
+      const rows = await queryToolUsageDetail('1h', { tool: uniqueTool });
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      const row = rows.find((r) => r.tool_name === uniqueTool);
+      expect(row).toBeDefined();
+      expect(row?.tool_input).toEqual(input);
+      expect(row?.tool_parameters).toEqual(parameters);
+      expect(row?.actor).toBe('agent-detail');
+      expect(Number(row?.duration_ms)).toBe(42);
+    });
+
+    test('filters by agent', async () => {
+      const agent = `agent-filter-${Date.now()}`;
+      await recordAuditEvent('otel_tool', 'Read', 'tool_result', agent, {
+        tool_name: 'Read',
+        tool_input: { file_path: '/a' },
+      });
+      await recordAuditEvent('otel_tool', 'Read', 'tool_result', 'someone-else', {
+        tool_name: 'Read',
+        tool_input: { file_path: '/b' },
+      });
+
+      const rows = await queryToolUsageDetail('1h', { agent });
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      for (const r of rows) {
+        expect(r.actor).toBe(agent);
+      }
+    });
+
+    test('respects limit', async () => {
+      const rows = await queryToolUsageDetail('1h', { limit: 1 });
+      expect(rows.length).toBeLessThanOrEqual(1);
+    });
+  });
+
   describe('queryTimeline', () => {
     test('returns events for entity_id', async () => {
       const uniqueId = `timeline-test-${Date.now()}`;
@@ -275,9 +360,11 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
 
       const timeline = await queryTimeline(uniqueId);
       expect(timeline.length).toBe(3);
-      // Should be ordered ASC by time
-      expect(timeline[0].event_type).toBe('spawn');
-      expect(timeline[2].event_type).toBe('kill');
+      // Ordered DESC by time (newest first) — changed from ASC in #1466 fix
+      // so users see recent activity at the top without paging through
+      // historical noise.
+      expect(timeline[0].event_type).toBe('kill');
+      expect(timeline[2].event_type).toBe('spawn');
     });
 
     test('matches traceId in details', async () => {
@@ -303,6 +390,59 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
       expect(typeof summary.api_requests).toBe('number');
       expect(summary.total_events).toBeGreaterThan(0);
     });
+
+    test('total_cost includes OTel value-shaped rows (regression: 058 view)', async () => {
+      // Pre-058, querySummary summed `details->>'cost_usd'` from `otel_api`
+      // rows only — OTel `claude_code.cost.usage` data points (which carry
+      // cost under `details.value`) were silently zeroed. With the
+      // v_claude_usage_events view both shapes contribute.
+      const tag = `summary-${Date.now()}`;
+      await recordAuditEvent('otel_metric', `sess-${tag}`, 'claude_code.cost.usage', tag, {
+        value: 1.25,
+        metric_name: 'claude_code.cost.usage',
+        model: 'opus',
+      });
+      const summary = await querySummary('1h');
+      expect(summary.total_cost).toBeGreaterThanOrEqual(1.25);
+    });
+  });
+
+  describe('v_claude_usage_events normalized view', () => {
+    // Direct exercise of the view contract that the app + CLI rely on.
+    test('matches app-style aggregate against the same fixture', async () => {
+      const tag = `view-${Date.now()}`;
+      // Mixed shapes: legacy cost_usd + OTel value, both under the canonical
+      // event_type. The app dashboard sums `cost_usd` from the view; the CLI
+      // does the same. Both must agree on the same fixture.
+      await recordAuditEvent('otel_metric', `sess-${tag}-1`, 'claude_code.cost.usage', tag, {
+        cost_usd: '0.40',
+        model: 'opus',
+        input_tokens: '1000',
+        output_tokens: '200',
+      });
+      await recordAuditEvent('otel_metric', `sess-${tag}-2`, 'claude_code.cost.usage', tag, {
+        value: 0.6,
+        metric_name: 'claude_code.cost.usage',
+        model: 'opus',
+        session_id: `sess-${tag}-2`,
+      });
+
+      const sql = await getConnection();
+      const appStyle = (await sql.unsafe(
+        `SELECT COALESCE(SUM(cost_usd), 0)::float AS total
+         FROM v_claude_usage_events
+         WHERE agent_id = $1`,
+        [tag],
+      )) as unknown as { total: number }[];
+      const cliStyle = await queryCostBreakdown('1h', 'agent');
+      const cliRow = cliStyle.find((r) => r.group_key === tag);
+
+      expect(cliRow).toBeDefined();
+      // Both surfaces walk the same view; totals match within float tolerance.
+      expect(Math.abs((cliRow?.total_cost ?? 0) - appStyle[0].total)).toBeLessThan(1e-6);
+      expect(cliRow?.total_cost).toBeGreaterThan(0.99);
+      expect(cliRow?.total_cost).toBeLessThan(1.01);
+    });
   });
 
   describe('generateTraceId', () => {
@@ -314,6 +454,66 @@ describe.skipIf(!DB_AVAILABLE)('pg', () => {
     test('returns unique values', () => {
       const ids = new Set(Array.from({ length: 10 }, () => generateTraceId()));
       expect(ids.size).toBe(10);
+    });
+  });
+
+  // Closes #1466 — events timeline hangs on production-sized audit_events.
+  // Default behavior must apply a time window so idx_audit_created bounds
+  // the scan. Source contract is verified via static-text assertions
+  // (no PG dependency) so these run in the no-PG path too.
+  describe('queryTimeline contract — sibling fix #1466', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const auditSource = fs.readFileSync(path.join(__dirname, 'audit.ts'), 'utf-8');
+    const cmdSource = fs.readFileSync(path.join(__dirname, '..', 'term-commands', 'audit-events.ts'), 'utf-8');
+
+    test('queryTimeline accepts TimelineQueryOptions with limit + sinceMs', () => {
+      expect(auditSource).toContain('export interface TimelineQueryOptions');
+      expect(auditSource).toMatch(/limit\?:\s*number/);
+      expect(auditSource).toMatch(/sinceMs\?:\s*number\s*\|\s*null/);
+    });
+
+    test('queryTimeline default sinceMs is 24h (so production audit_events does not full-scan)', () => {
+      expect(auditSource).toContain('DEFAULT_TIMELINE_SINCE_MS');
+      expect(auditSource).toContain('24 * 60 * 60 * 1000');
+    });
+
+    test('queryTimeline default limit is 200, hard-capped at 2000', () => {
+      expect(auditSource).toContain('DEFAULT_TIMELINE_LIMIT = 200');
+      expect(auditSource).toContain('MAX_TIMELINE_LIMIT = 2000');
+    });
+
+    test('queryTimeline ORDER BY is DESC (newest first) so users see recent events', () => {
+      const fnIdx = auditSource.indexOf('export async function queryTimeline');
+      const fnEnd = auditSource.indexOf('\nexport ', fnIdx + 50);
+      const fnBody = auditSource.slice(fnIdx, fnEnd > 0 ? fnEnd : undefined);
+      expect(fnBody).toContain('ORDER BY created_at DESC');
+      expect(fnBody).not.toContain('ORDER BY created_at ASC');
+    });
+
+    test('queryTimeline bounded branch puts created_at predicate FIRST so idx_audit_created leads', () => {
+      // Slice to ONLY the bounded branch (after `if (sinceMs === null)` block)
+      // so the `entity_id = $1` we look for is the bounded one, not the
+      // unbounded fallback that comes earlier in the function body.
+      const fnIdx = auditSource.indexOf('export async function queryTimeline');
+      const boundedBranchStart = auditSource.indexOf('const sinceTs = new Date', fnIdx);
+      expect(boundedBranchStart).toBeGreaterThan(fnIdx);
+      const boundedBody = auditSource.slice(boundedBranchStart, boundedBranchStart + 1000);
+      const createdAtIdx = boundedBody.indexOf('created_at >= $2');
+      const orIdx = boundedBody.indexOf('entity_id = $1');
+      expect(createdAtIdx).toBeGreaterThan(0);
+      expect(orIdx).toBeGreaterThan(0);
+      expect(createdAtIdx).toBeLessThan(orIdx);
+    });
+
+    test('CLI exposes --limit and --since flags on events timeline', () => {
+      expect(cmdSource).toContain("'--limit <n>'");
+      expect(cmdSource).toContain("'--since <duration>'");
+    });
+
+    test('CLI parseTimelineSince supports "all" and unit suffixes', () => {
+      expect(cmdSource).toContain("if (trimmed === 'all') return null;");
+      expect(cmdSource).toMatch(/\(s\|m\|h\|d\)/);
     });
   });
 });

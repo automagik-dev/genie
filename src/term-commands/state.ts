@@ -358,6 +358,7 @@ async function resolveNotificationTargets(): Promise<{ leader: string; spawner?:
 async function notifyWaveCompletion(
   waveResult: { waveName: string; waveGroups: string[] },
   wishComplete: boolean,
+  report: string,
 ): Promise<void> {
   console.log(`   🌊 ${waveResult.waveName} complete! All groups done: ${waveResult.waveGroups.join(', ')}`);
   try {
@@ -365,9 +366,12 @@ async function notifyWaveCompletion(
     const repoPath = process.cwd();
     const { leader, spawner } = await resolveNotificationTargets();
 
+    // Render the report as a fenced block so multi-line handoffs survive
+    // markdown / mailbox renderers without losing the line structure.
+    const reportBlock = `\n\n--- Handoff ---\n${report.trimEnd()}\n--- End handoff ---\n`;
     const message = wishComplete
-      ? `WISH COMPLETE — all groups done: [${waveResult.waveGroups.join(', ')}]. Run \`genie team done\` to clean up.`
-      : `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}]. Run /review or advance to next wave.`;
+      ? `WISH COMPLETE — all groups done: [${waveResult.waveGroups.join(', ')}].${reportBlock}\nTeam will be auto-cleaned. Run \`genie team done\` to confirm or override.`
+      : `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}].${reportBlock}\nRun /review or advance to next wave.`;
 
     // Notify leader
     const result = await protocolRouter.sendMessage(repoPath, 'cli', leader, message);
@@ -395,11 +399,19 @@ async function notifyWaveCompletion(
  * `genie done <slug>#<group>` — complete a group, push work, notify team-lead
  * on wave completion, and auto-kill the calling agent's tmux pane.
  */
-export async function doneCommand(ref: string): Promise<void> {
+export async function doneCommand(ref: string, report: string): Promise<void> {
+  if (!report?.trim()) {
+    throw new Error(
+      'doneCommand: report is required — full group handoff (what shipped, verified, left, surprises). Not a one-liner.',
+    );
+  }
   try {
     const { slug, group } = parseRef(ref);
     const result = await wishState.completeGroup(slug, group);
     console.log(`✅ Group "${group}" marked as done in wish "${slug}"`);
+    console.log('--- Handoff ---');
+    console.log(report.trimEnd());
+    console.log('--- End handoff ---');
 
     if (result.completedAt) {
       console.log(`   Completed at: ${formatTimestamp(result.completedAt)}`);
@@ -426,7 +438,7 @@ export async function doneCommand(ref: string): Promise<void> {
     // Wave completion detection + team-lead notification
     const waveResult = await detectWaveCompletion(slug, group);
     if (waveResult) {
-      await notifyWaveCompletion(waveResult, wishComplete);
+      await notifyWaveCompletion(waveResult, wishComplete, report);
     }
 
     // If entire wish is complete, auto-trigger team cleanup
@@ -468,6 +480,47 @@ async function autoInitWishState(slug: string): Promise<Awaited<ReturnType<typeo
   return state;
 }
 
+const TERMINAL_WISH_STATUSES = new Set(['shipped', 'done', 'complete', 'completed', 'archived']);
+
+export interface TerminalWishLifecycleStatus {
+  status: string;
+  wishPath: string;
+}
+
+export function parseWishLifecycleStatus(content: string): string | null {
+  const patterns = [
+    /^\|\s*\*\*Status\*\*\s*\|\s*([^|]+?)\s*\|/im,
+    /^\*\*Status:\*\*\s*([A-Za-z][A-Za-z_-]*)/im,
+    /^Status:\s*([A-Za-z][A-Za-z_-]*)/im,
+  ];
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    const token = match?.[1]?.trim().match(/^[A-Za-z][A-Za-z_-]*/)?.[0];
+    if (token) return token.toUpperCase();
+  }
+  return null;
+}
+
+export async function getTerminalWishLifecycleStatus(slug: string): Promise<TerminalWishLifecycleStatus | null> {
+  const wishPath = resolveWishPath(slug);
+  if (!wishPath) return null;
+
+  const content = await readFile(wishPath, 'utf-8');
+  const status = parseWishLifecycleStatus(content);
+  if (!status || !TERMINAL_WISH_STATUSES.has(status.toLowerCase())) return null;
+  return { status, wishPath };
+}
+
+export function printTerminalWishLifecycleStatus(slug: string, terminal: TerminalWishLifecycleStatus): void {
+  console.log(`\nWish: ${slug}`);
+  console.log('─'.repeat(60));
+  console.log(`  Status: ${terminal.status}`);
+  console.log(`  Source: ${terminal.wishPath}`);
+  console.log('');
+  console.log('  No active execution state initialized for terminal wish status.');
+  console.log('');
+}
+
 async function printWishExecutors(slug: string): Promise<void> {
   try {
     const { registry, executorRegistry, assignmentRegistry } = await loadExecutorInfo();
@@ -480,8 +533,13 @@ async function printWishExecutors(slug: string): Promise<void> {
       if (!executor || executor.state === 'terminated' || executor.state === 'done') continue;
 
       const assignment = await assignmentRegistry.getActiveAssignment(executor.id);
-      const taskLabel =
-        assignment?.wishSlug === slug ? `Group ${assignment.groupNumber ?? '?'}` : (assignment?.wishSlug ?? '-');
+      // #1589: only surface executors actively assigned to this wish. Without
+      // this filter, any team-mate sharing a role name (e.g. the dog-fooder's
+      // long-running `engineer`) bleeds into "Active Executors" for every
+      // wish under the same team — masking phantom dispatches by displaying
+      // an unrelated agent as the apparent worker.
+      if (assignment?.wishSlug !== slug) continue;
+      const taskLabel = `Group ${assignment.groupNumber ?? '?'}`;
       const name = agent.customName ?? agent.role ?? agent.id.slice(0, 12);
       executorInfoLines.push(
         `  Agent: ${padRight(name, 16)} | Executor: ${executor.id.slice(0, 12)} (${executor.provider}) | State: ${padRight(executor.state, 10)} | Task: ${taskLabel}`,
@@ -502,6 +560,12 @@ async function printWishExecutors(slug: string): Promise<void> {
 
 export async function statusCommand(slug: string): Promise<void> {
   try {
+    const terminal = await getTerminalWishLifecycleStatus(slug);
+    if (terminal) {
+      printTerminalWishLifecycleStatus(slug, terminal);
+      return;
+    }
+
     const state = (await wishState.getState(slug)) ?? (await autoInitWishState(slug));
 
     console.log(`\nWish: ${state.wish}`);

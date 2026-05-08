@@ -9,8 +9,9 @@
  *   genie team disband <name>
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { copyFile, cp, mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import type { TeamConfig } from '../lib/team-manager.js';
@@ -247,6 +248,28 @@ Examples:
         process.exit(1);
       }
     });
+
+  // team repair
+  team
+    .command('repair <name>')
+    .description('Archive an orphaned team-config dir to ~/.claude/teams/_archive/')
+    .option('--dry-run', 'Show what would be archived without doing it')
+    .addHelpText(
+      'after',
+      `
+This command resolves the doctor's "team_config_orphans" warning by moving
+~/.claude/teams/<name>/ (which has no corresponding PG team row) into the
+_archive/ subdirectory. Inboxes are preserved on disk; nothing is deleted.`,
+    )
+    .action(async (name: string, options: { dryRun?: boolean }) => {
+      try {
+        await handleTeamRepair(name, options);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
 }
 
 // ============================================================================
@@ -336,9 +359,13 @@ async function spawnLeaderWithWish(
   config.tmuxSessionName = tmuxSession;
   await teamManager.updateTeamConfig(config.name, config);
 
-  // Leader name = team name (unique by definition, no collision with session agents)
+  // Leader name = team name (unique by definition, no collision with session agents).
+  // Do NOT write `config.leader` here — migration 061's `fk_teams_leader` requires
+  // teams.leader to point at an existing agents.id (UUID or `dir:` shape). The
+  // leader agent row is not created until handleWorkerSpawn below, so writing the
+  // team-name string up front trips the FK (#1674). Persist the spawner now and
+  // defer the leader-id write until after the spawn resolves the canonical UUID.
   const leaderAgent = config.name;
-  config.leader = leaderAgent;
   config.spawner = process.env.GENIE_AGENT_NAME || 'cli';
   await teamManager.updateTeamConfig(config.name, config);
 
@@ -383,6 +410,17 @@ async function spawnLeaderWithWish(
     session: tmuxSession,
     initialPrompt: kickoffPrompt,
   });
+
+  // Resolve the leader agent's canonical id now that the row exists, then
+  // persist it as `teams.leader`. Best-effort: if resolution fails the team
+  // remains functional without a tracked leader id, and the defensive guard
+  // in updateTeamConfig would null it anyway. Closes #1674.
+  const { getAgentByName } = await import('../lib/agent-registry.js');
+  const leader = await getAgentByName(leaderAgent, config.name).catch(() => null);
+  if (leader?.id) {
+    config.leader = leader.id;
+    await teamManager.updateTeamConfig(config.name, config);
+  }
 
   // initialPrompt is passed as CLI positional arg — no mailbox backup needed
   // (sending via both paths causes duplicate prompts in the agent's input)
@@ -561,4 +599,44 @@ async function handleTeamCleanup(options: { dryRun?: boolean }): Promise<void> {
   } else {
     console.log(`\n${verb} ${cleaned} window${cleaned === 1 ? '' : 's'}.`);
   }
+}
+
+// ============================================================================
+// Team Repair Handler — archives orphaned ~/.claude/teams/<name>/ to _archive/
+// ============================================================================
+
+function teamsBaseDir(): string {
+  return join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'teams');
+}
+
+export async function handleTeamRepair(name: string, options: { dryRun?: boolean }): Promise<void> {
+  const teamsDir = teamsBaseDir();
+  const orphanPath = join(teamsDir, name);
+
+  if (!existsSync(orphanPath) || !statSync(orphanPath).isDirectory()) {
+    console.log(`No team-config directory at ${orphanPath}. Nothing to repair.`);
+    return;
+  }
+
+  // Pre-flight: confirm the dir really is orphaned (no PG row). repair on a
+  // live team would destroy a working install — fail loud rather than archive.
+  const pgTeam = await teamManager.getTeam(name).catch(() => null);
+  if (pgTeam) {
+    console.error(`Error: team '${name}' still exists in the registry (status=${pgTeam.status}).`);
+    console.error('Refusing to archive a live team. Use `genie team disband` instead.');
+    process.exit(2);
+  }
+
+  const archiveRoot = join(teamsDir, '_archive');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const dest = join(archiveRoot, `${name}-${ts}`);
+
+  if (options.dryRun) {
+    console.log(`[dry-run] Would archive ${orphanPath} → ${dest}`);
+    return;
+  }
+
+  mkdirSync(archiveRoot, { recursive: true });
+  renameSync(orphanPath, dest);
+  console.log(`Archived ${orphanPath} → ${dest}`);
 }

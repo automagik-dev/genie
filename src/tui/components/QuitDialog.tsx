@@ -38,17 +38,17 @@ export function QuitDialog({ onConfirm, onCancel }: QuitDialogProps) {
         gap={1}
       >
         <text>
-          <span fg={palette.accent}>Quit genie?</span>
+          <span fg={palette.accent}>Close TUI?</span>
         </text>
         <text>
           <span fg={palette.text}>Enter</span>
-          <span fg={palette.textDim}> to quit </span>
+          <span fg={palette.textDim}> to close </span>
           <span fg={palette.textMuted}> | </span>
           <span fg={palette.text}> Esc</span>
           <span fg={palette.textDim}> to cancel</span>
         </text>
         <text>
-          <span fg={palette.textMuted}>Hint: Ctrl+D to detach (keep running)</span>
+          <span fg={palette.textMuted}>Daemon keeps running. `genie serve stop` to shut down.</span>
         </text>
       </box>
     </box>

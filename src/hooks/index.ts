@@ -28,6 +28,7 @@ import { auditContext } from './handlers/audit-context.js';
 import { autoSpawn } from './handlers/auto-spawn.js';
 import { brainInject } from './handlers/brain-inject.js';
 import { branchGuard } from './handlers/branch-guard.js';
+import { codexInboxDeliver } from './handlers/codex-inbox-deliver.js';
 import { freshness } from './handlers/freshness.js';
 import { identityInject } from './handlers/identity-inject.js';
 import { orchestrationGuard } from './handlers/orchestration-guard.js';
@@ -38,6 +39,7 @@ import {
   emitUserPromptEvent,
 } from './handlers/runtime-emit.js';
 import { sessionSync } from './handlers/session-sync.js';
+import { resolveAgentName, resolveTeamName } from './resolve-agent-name.js';
 import type { Handler, HandlerResult, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
@@ -45,8 +47,21 @@ import { isBlockingEvent } from './types.js';
 // Handler Registry
 // ============================================================================
 
-const handlers: Handler[] = [
+/**
+ * Builtin handlers — registered before any external loader runs.
+ *
+ * `source: 'builtin'` and `manifest_path` point at this file so `genie hook list`
+ * can attribute every dispatched handler back to its source. The boot-scan
+ * loader (delivery #2 Group 1) appends external handlers to a fresh array and
+ * swaps it into `registryRef` via `setRegistry()` before `server.listen()`.
+ */
+const BUILTIN_MANIFEST_PATH = 'src/hooks/index.ts';
+
+const builtinHandlers: ReadonlyArray<Handler> = [
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'branch-guard',
     event: 'PreToolUse',
     matcher: /^Bash$/,
@@ -54,6 +69,9 @@ const handlers: Handler[] = [
     fn: branchGuard,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'orchestration-guard',
     event: 'PreToolUse',
     matcher: /^Bash$/,
@@ -61,6 +79,9 @@ const handlers: Handler[] = [
     fn: orchestrationGuard,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'brain-inject',
     event: 'PreToolUse',
     matcher: /.*/,
@@ -68,6 +89,9 @@ const handlers: Handler[] = [
     fn: brainInject,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'freshness',
     event: 'PreToolUse',
     matcher: /^Read$/,
@@ -75,6 +99,9 @@ const handlers: Handler[] = [
     fn: freshness,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'audit-context',
     event: 'PreToolUse',
     matcher: /^(Write|Edit)$/,
@@ -82,6 +109,9 @@ const handlers: Handler[] = [
     fn: auditContext,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'identity-inject',
     event: 'PreToolUse',
     matcher: /^SendMessage$/,
@@ -89,6 +119,9 @@ const handlers: Handler[] = [
     fn: identityInject,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'auto-spawn',
     event: 'PreToolUse',
     matcher: /^SendMessage$/,
@@ -96,6 +129,9 @@ const handlers: Handler[] = [
     fn: autoSpawn,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'runtime-emit-tool',
     event: 'PreToolUse',
     matcher: /.*/,
@@ -103,6 +139,9 @@ const handlers: Handler[] = [
     fn: emitToolCallEvent,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'runtime-emit-msg',
     event: 'PostToolUse',
     matcher: /^SendMessage$/,
@@ -110,18 +149,36 @@ const handlers: Handler[] = [
     fn: emitMessageEvent,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
+    name: 'codex-inbox-deliver',
+    event: 'UserPromptSubmit',
+    priority: 25,
+    fn: codexInboxDeliver,
+  },
+  {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'runtime-emit-user-prompt',
     event: 'UserPromptSubmit',
     priority: 30,
     fn: emitUserPromptEvent,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'runtime-emit-assistant-response',
     event: 'Stop',
     priority: 30,
     fn: emitAssistantResponseEvent,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'session-sync-tool',
     event: 'PreToolUse',
     matcher: /.*/,
@@ -129,6 +186,9 @@ const handlers: Handler[] = [
     fn: sessionSync,
   },
   {
+    version: '1',
+    source: 'builtin',
+    manifest_path: BUILTIN_MANIFEST_PATH,
     name: 'session-sync-prompt',
     event: 'UserPromptSubmit',
     priority: 35,
@@ -136,12 +196,49 @@ const handlers: Handler[] = [
   },
 ];
 
+/**
+ * Live handler registry — read at dispatch time so `setRegistry()` swaps
+ * are picked up by in-flight invocations on their next call. Single-writer
+ * by convention: the loader / `genie hook reload` are the only legal
+ * mutators (Group 1 of the absorption wish locks this down).
+ *
+ * Frozen-by-construction: `ReadonlyArray<Handler>` plus deep-frozen elements
+ * via `Object.freeze` on the array. Mutating an element in place is a runtime
+ * error; producers MUST build a fresh array and call `setRegistry`.
+ */
+let registryRef: ReadonlyArray<Handler> = Object.freeze([...builtinHandlers]);
+
+/**
+ * Replace the live handler registry. Called by:
+ *   - the boot-scan loader after dynamic-importing trusted external hooks
+ *   - `genie hook reload` after a re-scan
+ *   - tests that need to install fixtures
+ *
+ * Single-writer guarantee is enforced at the CLI layer (a `genie hook reload`
+ * can't run concurrently with another reload). In-flight dispatches that
+ * already captured the previous reference finish on it; the next call to
+ * `dispatch()` / `resolveHandlers()` sees the new array.
+ */
+export function setRegistry(next: ReadonlyArray<Handler>): void {
+  registryRef = Object.freeze([...next]);
+}
+
+/**
+ * Read-only accessor for tests + `genie hook list`. Returns the current
+ * snapshot — the array reference is stable until the next `setRegistry` call.
+ */
+export function getRegistry(): ReadonlyArray<Handler> {
+  return registryRef;
+}
+
 // ============================================================================
 // Dispatch Logic
 // ============================================================================
 
 function resolveHandlers(event: string, toolName?: string): Handler[] {
-  return handlers
+  // Read registryRef at call time so setRegistry() swaps land on the next
+  // dispatch — in-flight calls finish on the previously captured snapshot.
+  return registryRef
     .filter((h) => {
       if (h.event !== event) return false;
       if (h.matcher && toolName && !h.matcher.test(toolName)) return false;
@@ -168,12 +265,19 @@ export async function runHandler(
   const handlerPayload: HookPayload = { ...payload };
   if (currentInput) handlerPayload.tool_input = currentInput;
   const start = Date.now();
-  const agentId = process.env.GENIE_AGENT_NAME ?? 'unknown';
+  // Resolve agent identity from payload + executor env + session context, falling
+  // back to 'harness' for non-agent hook activity (CLI, daemon, tests). Avoids
+  // the previous `'unknown'` bucket that masked both unknown agents and harness
+  // work — wish observability-signal-normalization Group 3.
+  const agentId = resolveAgentName(handlerPayload);
+  const teamId = resolveTeamName(handlerPayload);
   const span = isWideEmitEnabled()
     ? startSpan(
         'hook.delivery',
-        { hook_name: handler.name, agent_id: agentId, tool: payload.tool_name },
-        { source_subsystem: 'hooks', ctx: getTraceContext() ?? undefined, agent: agentId },
+        // event included so hook_perf_baseline view can group by it (Group 4 of
+        // hookify-perf-foundation). tool may be undefined for UserPromptSubmit / Stop.
+        { hook_name: handler.name, agent_id: agentId, tool: payload.tool_name, event: payload.hook_event_name },
+        { source_subsystem: 'hooks', ctx: getTraceContext() ?? undefined, agent: agentId, team: teamId },
       )
     : null;
   try {
@@ -187,7 +291,7 @@ export async function runHandler(
       endSpan(
         span,
         { hook_name: handler.name, agent_id: agentId, status: result?.decision === 'deny' ? 'rejected' : 'ok' },
-        { source_subsystem: 'hooks', agent: agentId },
+        { source_subsystem: 'hooks', agent: agentId, team: teamId },
       );
     }
     return result;
@@ -198,7 +302,7 @@ export async function runHandler(
       endSpan(
         span,
         { hook_name: handler.name, agent_id: agentId, status: 'error', stderr_excerpt: msg.slice(0, 1024) },
-        { source_subsystem: 'hooks', agent: agentId },
+        { source_subsystem: 'hooks', agent: agentId, team: teamId },
       );
     }
     if (isBlocking) {
@@ -250,6 +354,17 @@ function buildBlockingResponse(
       output.updatedInput = currentInput;
     }
     response.hookSpecificOutput = output;
+  }
+
+  // UserPromptSubmit (claude + codex) accepts hookSpecificOutput.additionalContext
+  // to inject context into the model input for the upcoming turn. Pre-PR-B the
+  // dispatcher dropped this for non-PreToolUse blocking events; the codex
+  // inbox-deliver handler depends on it (see src/hooks/handlers/codex-inbox-deliver.ts).
+  if (hookEventName === 'UserPromptSubmit' && hasContext) {
+    response.hookSpecificOutput = {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext: contextMessages.join('\n'),
+    };
   }
 
   return response;

@@ -47,6 +47,7 @@ type WishState = z.infer<typeof WishStateSchema>;
 
 export interface GroupDefinition {
   name: string;
+  title?: string;
   dependsOn?: string[];
 }
 
@@ -62,6 +63,11 @@ export interface GroupDefinition {
  * dep order within a group does not matter either. Prose changes to WISH.md
  * (Summary, Decisions, etc.) leave the signature untouched — only structural
  * changes that affect dispatch flip it.
+ *
+ * INVARIANT: `title` MUST NOT participate in the signature. Including it would
+ * make every prose edit to a `### Group N: <title>` heading flip the signature
+ * and force operators to run `genie reset`. Drift detection is reserved for
+ * structural changes (group names, dependencies) only.
  */
 export function computeGroupsSignature(groups: GroupDefinition[]): string {
   const canonical = groups

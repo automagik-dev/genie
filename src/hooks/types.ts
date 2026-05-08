@@ -60,8 +60,21 @@ export interface HookDecision {
 /** Result from a handler — either a decision or void (implicit allow). */
 export type HandlerResult = HookDecision | undefined;
 
-/** A registered handler in the chain. */
-export interface Handler {
+/** Source tier for a handler — determines load precedence. */
+export type HandlerSource = 'builtin' | 'team' | 'repo' | 'global' | 'absorbed';
+
+/**
+ * v1 Handler — the only version shipped in delivery #2 of the hookify umbrella.
+ *
+ * Future-proofed as a discriminated union on `version`. v2 (and later) will be
+ * a new variant of the union; v1 and v2 handlers run side-by-side in the same
+ * dispatch chain until v1 sunset is announced. The loader rejects unknown
+ * versions as `[BROKEN]`. Versioning the contract before any external consumers
+ * exist costs nothing today and is impossible to retrofit later.
+ */
+export interface HandlerV1 {
+  /** Discriminator — locked to '1' for this delivery. */
+  version: '1';
   name: string;
   event: HookEventName;
   /** Regex matched against tool_name (only for PreToolUse/PostToolUse). */
@@ -69,17 +82,96 @@ export interface Handler {
   /** Lower = runs first. */
   priority: number;
   fn: (payload: HookPayload) => Promise<HandlerResult>;
+  /**
+   * Source tier — set by the loader when registering. Builtin handlers (defined
+   * inside src/hooks/index.ts) are 'builtin'; loaded files are 'team' / 'repo' /
+   * 'global' depending on which tier the file lives in; generated absorption
+   * wrappers are 'absorbed'.
+   */
+  source: HandlerSource;
+  /**
+   * Filesystem path the handler was loaded from. For builtins, points at
+   * src/hooks/index.ts (the registration site). External handlers point at
+   * the actual `.ts` file. Surfaced by `genie hook list` for debugging.
+   */
+  manifest_path: string;
 }
 
-/** The hook events that CC settings.json supports for the dispatch command. */
-export const DISPATCHED_EVENTS: HookEventName[] = [
-  'PreToolUse',
-  'PostToolUse',
-  'SessionStart',
-  'SessionEnd',
-  'TeammateIdle',
-  'TaskCompleted',
-];
+/**
+ * A registered handler in the chain.
+ *
+ * Today, this is `HandlerV1`; once v2 ships it becomes `HandlerV1 | HandlerV2`.
+ * Code that only reads `name`/`event`/`matcher`/`priority`/`fn` works against
+ * the union without changes (those fields exist in every version). Code that
+ * needs version-specific behavior must `switch` on `handler.version`.
+ */
+export type Handler = HandlerV1;
+
+/**
+ * Hook events that CC settings.json wires to `genie hook dispatch`, mapped
+ * to the per-event tool-name matcher.
+ *
+ * Mac-CPU fix D — narrow matchers + drop empty events.
+ *
+ * Previous DISPATCHED_EVENTS list wired SessionStart/SessionEnd/TeammateIdle/
+ * TaskCompleted with matcher='*' even though zero handlers exist for those
+ * events — every fire was a wasted `bun` cold-start (each start runs the full
+ * hook-dispatch entrypoint and PG init). Combined with PostToolUse:* (only
+ * `runtime-emit-msg` exists, and only matches `SendMessage`), the inject
+ * config was producing dozens of useless dispatcher invocations per user
+ * action on a busy dev machine.
+ *
+ * The matcher value is the CC-settings `matcher` field — `*` means all
+ * tools, otherwise an exact tool name (or pipe-separated list).
+ *
+ * To add a new dispatched event: register the handler in `index.ts` AND
+ * add the (event, matcher) pair here. To deprecate: remove from this map
+ * — `injectIntoFile` will prune existing entries on the next inject.
+ */
+export const DISPATCHED_EVENT_MATCHERS: Partial<Record<HookEventName, string>> = {
+  // PreToolUse handlers: branch-guard (Bash), orchestration-guard (Bash),
+  //   brain-inject (.*), freshness (Read), audit-context (Write|Edit),
+  //   identity-inject (SendMessage), auto-spawn (SendMessage),
+  //   runtime-emit-tool (.*), session-sync-tool (.*) — broad coverage.
+  PreToolUse: '*',
+  // PostToolUse handler: runtime-emit-msg matches `^SendMessage$` only.
+  // Wiring '*' caused the dispatcher to run on every Bash/Read/Write/Edit
+  // post-use even though those produce no event — pure waste.
+  PostToolUse: 'SendMessage',
+};
+
+/**
+ * Codex-side counterpart to DISPATCHED_EVENT_MATCHERS — wider because codex
+ * has additional handlers that don't exist on claude:
+ *   - codex-inbox-deliver runs on UserPromptSubmit
+ *   - runtime-emit-assistant-response runs on Stop
+ *
+ * Like DISPATCHED_EVENT_MATCHERS, only events that actually have a handler
+ * are wired. Pre-fix, codex-inject.ts wired 6 events (PreToolUse, PostToolUse,
+ * UserPromptSubmit, SessionStart, Stop, PermissionRequest) all with matcher='*'
+ * — including SessionStart and PermissionRequest which have no handlers,
+ * causing wasted bun cold-starts on every codex hook fire.
+ *
+ * dog-fooder-da66 verdict 2026-04-29 surfaced the codex-side leak after
+ * Fix D #1479 closed only the claude side.
+ */
+export const CODEX_DISPATCHED_EVENT_MATCHERS: Partial<Record<HookEventName, string>> = {
+  PreToolUse: '*',
+  // Same as claude — only runtime-emit-msg matches SendMessage.
+  PostToolUse: 'SendMessage',
+  // codex-inbox-deliver + runtime-emit-user-prompt + session-sync-prompt all run here.
+  UserPromptSubmit: '*',
+  // runtime-emit-assistant-response runs here.
+  Stop: '*',
+  // SessionStart, PermissionRequest dropped — no handlers (verified against
+  // src/hooks/index.ts handler registry as of 2026-04-29).
+};
+
+/**
+ * Convenience array — derived from DISPATCHED_EVENT_MATCHERS.
+ * Kept so callers that need the event list (without matcher) are unchanged.
+ */
+export const DISPATCHED_EVENTS: HookEventName[] = Object.keys(DISPATCHED_EVENT_MATCHERS) as HookEventName[];
 
 const BLOCKING_EVENTS = new Set<string>([
   'PreToolUse',
