@@ -72,7 +72,14 @@ export function buildDispatchCommand(): string {
 }
 
 function isGenieDispatchCommand(command: string | undefined): boolean {
-  return typeof command === 'string' && /(?:^|\s)hook\s+dispatch(?:\s|$)/.test(command);
+  if (typeof command !== 'string') return false;
+  // Legacy bun-fork or literal `genie hook dispatch`:
+  if (/(?:^|\s)hook\s+dispatch(?:\s|$)/.test(command)) return true;
+  // Compiled binary path — bare or shell-quoted: `genie-hook`, `/path/to/genie-hook`,
+  // `'/path/to/genie-hook'`, etc. Anchored at a path-or-quote boundary so substrings
+  // like `genie-hook-helper` don't false-positive.
+  if (/(?:^|[/\\'"])genie-hook(?:['"]|\s|$)/.test(command)) return true;
+  return false;
 }
 
 function claudeConfigDir(): string {
