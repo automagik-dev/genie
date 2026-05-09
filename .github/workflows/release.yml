@@ -1,9 +1,23 @@
 name: Release
 
 # Creates a GitHub Release object (tag + changelog + signed artifacts) on
-# every push to main. npm publishing is handled separately by version.yml;
-# this workflow owns the signed-tarball path + SLSA Level 3 provenance
-# attestation. See .genie/wishes/genie-supply-chain-signing/WISH.md.
+# every version tag push. version.yml owns the bump-version + git-tag +
+# atomic-push step (refs/heads/<branch> + refs/tags/v<version> in one
+# `git push --atomic`); release.yml fires when the v* tag lands on origin.
+# npm publishing is handled separately by version.yml; this workflow owns
+# the signed-tarball path + SLSA Level 3 provenance attestation. See
+# .genie/wishes/genie-supply-chain-signing/WISH.md.
+#
+# Trigger contract — refs/tags/v* ONLY:
+#   cosign sign-blob runs in-workflow; the GitHub Actions OIDC token issued
+#   to the run binds to the workflow's RUN context (file path @ ref). With
+#   `push.branches`, that ref is `refs/heads/main`, which doesn't match a
+#   `release.yml@refs/tags/v.*$` consumer-side trust regex (e.g. pgserve's
+#   TRUSTED_IDENTITIES at src/cosign/trust-list.js:40). Triggering on
+#   `push.tags: ['v*']` (or workflow_dispatch invoked AGAINST a tag ref)
+#   binds the cert SAN URI to `refs/tags/v<version>` — that's what
+#   downstream verifiers pin against. See SIGNED-APP-PRE-FLIGHT-GENIE.md
+#   (T24 audit) for the empirical reproduction of the pre-fix mismatch.
 #
 # Signing is cosign keyless (OIDC via GitHub Actions) — KEYLESS ONLY.
 # There is no long-lived fallback key: no private key in repo secrets, no
@@ -20,7 +34,7 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -155,9 +169,13 @@ jobs:
           TARBALL="${{ steps.pack.outputs.tarball }}"
           # Certificate identity is pinned to THIS workflow file + repo; Fulcio
           # encodes the OIDC identity (workflow path@ref) into the SAN URI.
-          # The regexp tolerates branch/tag ref variance across release triggers
-          # (push-to-main vs workflow_dispatch) without allowing unrelated
-          # workflows to match.
+          # Under the tag-trigger contract documented at the top of this file,
+          # the ref will be `refs/tags/v<version>` for push-tag runs (matched
+          # by downstream `release.yml@refs/tags/v.*$` trust regexes) or
+          # `refs/heads/<ref>` for workflow_dispatch (which an operator must
+          # invoke against a tag ref to keep the trust-loop closed). The
+          # regexp anchors on the workflow path to tolerate either ref shape
+          # without allowing unrelated workflows to match.
           cosign verify-blob \
             --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/release.yml@" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
