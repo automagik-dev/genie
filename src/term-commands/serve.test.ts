@@ -797,8 +797,16 @@ describe('startTuiTmuxServer', () => {
     const repairFailureStderr = "can't find window";
     let listPanesCallCount = 0;
     let splitWindowCallCount = 0;
+    // 1st split-window is the repair-branch attempt → throw to trigger
+    // the recovery path. 2nd split-window comes from freshCreate after
+    // kill-session, and must succeed.
+    const handleSplitWindow = () => {
+      splitWindowCallCount += 1;
+      return splitWindowCallCount === 1
+        ? { error: { stderr: repairFailureStderr, message: 'Command failed' } }
+        : { value: '' };
+    };
     const { handler, calls } = recordHandler((cmd) => {
-      if (cmd.includes('has-session')) return { value: '' };
       if (cmd.includes('list-panes')) {
         listPanesCallCount += 1;
         // 1st call: 1-pane state triggers repair branch.
@@ -806,18 +814,7 @@ describe('startTuiTmuxServer', () => {
         return { value: listPanesCallCount === 1 ? '%0' : '%0\n%1' };
       }
       if (cmd.includes('display-message')) return { value: '120' };
-      if (cmd.includes('split-window')) {
-        splitWindowCallCount += 1;
-        // 1st split-window is the repair-branch attempt → throw to trigger
-        // the recovery path. 2nd split-window comes from freshCreate after
-        // kill-session, and must succeed.
-        if (splitWindowCallCount === 1) {
-          return { error: { stderr: repairFailureStderr, message: 'Command failed' } };
-        }
-        return { value: '' };
-      }
-      if (cmd.includes('kill-session')) return { value: '' };
-      if (cmd.includes('new-session')) return { value: '' };
+      if (cmd.includes('split-window')) return handleSplitWindow();
       return { value: '' };
     });
     setExecSyncHandler(handler);

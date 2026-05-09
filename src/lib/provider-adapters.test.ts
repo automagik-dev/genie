@@ -814,10 +814,7 @@ describe('buildCodexCommand', () => {
   // "error: unexpected argument '---...'". See
   // .genie/wishes/spawn-compounding-defects/evidence/codex-spawn-trace.md.
   it('inserts -- before merged-prompt positional (clap end-of-options sentinel)', () => {
-    const systemPromptFile = writeCodexSourcePromptFile(
-      'AGENTS.md',
-      '---\nname: engineer\n---\nbody',
-    );
+    const systemPromptFile = writeCodexSourcePromptFile('AGENTS.md', '---\nname: engineer\n---\nbody');
     const result = buildCodexCommand({
       provider: 'codex',
       team: 'work',
