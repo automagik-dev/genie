@@ -1,0 +1,365 @@
+name: Sign + Attest Tarballs
+
+# Group 2 of genie-distribution-cutover — signs every tarball produced by
+# build-tarballs.yml with cosign keyless OIDC, registers a GitHub-native
+# build-provenance attestation, and emits a SLSA Level 3 provenance via the
+# upstream slsa-github-generator reusable workflow. Each tarball is then
+# self-verified by cosign + slsa-verifier + gh-attestation-verify, and a
+# byte-flip tamper-detection self-test asserts all three verifiers REJECT
+# a mutated copy. Per-platform `genie-${VERSION}-<platform>-signed`
+# artifacts (Decision 10) are uploaded for Group 3 (release-publish) to
+# consume.
+#
+# Trigger: runs after build-tarballs.yml completes successfully on a tag
+# push or main push (workflow_run); also dispatchable manually via
+# workflow_dispatch with the upstream run-id.
+#
+# Signing model is cosign KEYLESS — the OIDC identity is bound to this
+# workflow file path + ref (Fulcio SAN URI). There is no long-lived key.
+# See SECURITY.md "Release Signing — Pinned Identity (cosign keyless)".
+#
+# Outputs (per platform, uploaded as `genie-${VERSION}-<platform>-signed`):
+#   genie-${VERSION}-<platform>.tar.gz                 (lifted from build-tarballs)
+#   genie-${VERSION}-<platform>.tar.gz.bundle          (cosign keyless sigstore bundle)
+#   genie-${VERSION}-<platform>.tar.gz.intoto.jsonl    (SLSA L3 DSSE envelope)
+#
+# The GitHub-native attestation produced by actions/attest-build-provenance
+# is NOT a separate file — it is registered in the GitHub Attestations API
+# and looked up by digest via `gh attestation verify`.
+
+on:
+  workflow_run:
+    workflows: ["Build Tarballs"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to sign (must match upstream build artifacts)'
+        required: true
+        type: string
+      run_id:
+        description: 'build-tarballs.yml run ID to download artifacts from'
+        required: true
+        type: string
+
+concurrency:
+  group: sign-attest-${{ github.ref }}-${{ inputs.version || github.event.workflow_run.id || github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # prepare — resolve version + upstream run-id, download every tarball,
+  # build the multi-subject base64 input the SLSA generator consumes.
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: Prepare hashes for SLSA
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.hash.outputs.version }}
+      run_id:  ${{ steps.runid.outputs.run_id }}
+      hashes:  ${{ steps.hash.outputs.hashes }}
+    steps:
+      - name: Resolve upstream run-id
+        id: runid
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ inputs.run_id }}" ]]; then
+            RUN_ID="${{ inputs.run_id }}"
+          elif [[ -n "${{ github.event.workflow_run.id }}" ]]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+          else
+            echo "::error::Cannot determine upstream build-tarballs run-id (need workflow_run trigger or workflow_dispatch run_id input)"
+            exit 1
+          fi
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "Upstream run-id: ${RUN_ID}"
+
+      - name: Download all tarball artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: genie-*-tarball
+          merge-multiple: true
+          path: dist
+          run-id: ${{ steps.runid.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve version + compute base64 subjects
+        id: hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s nullglob
+          TARBALLS=( genie-*.tar.gz )
+          if [[ ${#TARBALLS[@]} -eq 0 ]]; then
+            echo "::error::no genie-*.tar.gz tarballs downloaded from upstream run-id ${{ steps.runid.outputs.run_id }}"
+            ls -la
+            exit 1
+          fi
+          # Extract VERSION from any tarball filename. The build-tarballs.yml
+          # naming contract is `genie-<VERSION>-<PLATFORM>.tar.gz` where
+          # PLATFORM is one of the 4 known platforms. Parse the first.
+          FIRST="${TARBALLS[0]}"
+          VERSION=$(echo "${FIRST}" | sed -E 's/^genie-(.+)-(linux-x64-glibc|linux-x64-musl|linux-arm64|darwin-arm64)\.tar\.gz$/\1/')
+          if [[ -z "${VERSION}" || "${VERSION}" == "${FIRST}" ]]; then
+            echo "::error::could not parse VERSION from filename '${FIRST}'"
+            exit 1
+          fi
+          if [[ -n "${{ inputs.version }}" && "${{ inputs.version }}" != "${VERSION}" ]]; then
+            echo "::error::workflow_dispatch input version='${{ inputs.version }}' does not match upstream artifact version='${VERSION}'"
+            exit 1
+          fi
+          echo "Resolved version: ${VERSION}"
+          echo "Tarballs to sign: ${#TARBALLS[@]}"
+          printf '  %s\n' "${TARBALLS[@]}"
+          # slsa-github-generator expects base64 of a sha256sum-style file
+          # listing every subject (one `<hash>  <name>` line per subject).
+          HASHES=$(sha256sum "${TARBALLS[@]}" | base64 -w0)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "hashes=${HASHES}" >> "$GITHUB_OUTPUT"
+          echo "Computed multi-subject digest set:"
+          sha256sum "${TARBALLS[@]}"
+
+  # ---------------------------------------------------------------------------
+  # provenance — SLSA L3 generator (reusable workflow). Produces ONE
+  # .intoto.jsonl covering every tarball subject. The per-platform sign job
+  # downloads it and copies it to <tarball>.intoto.jsonl.
+  # ---------------------------------------------------------------------------
+  provenance:
+    name: SLSA Provenance (Level 3)
+    needs: [prepare]
+    permissions:
+      id-token: write    # OIDC for SLSA provenance signing
+      contents: read     # read repo for builder ref pinning
+      actions: read      # read upstream workflow run metadata
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.prepare.outputs.hashes }}
+      provenance-name: genie-${{ needs.prepare.outputs.version }}.intoto.jsonl
+      upload-assets: false
+
+  # ---------------------------------------------------------------------------
+  # sign — per-platform: cosign keyless sign-blob + GitHub-native
+  # attest-build-provenance + self-verify (3 verifiers) + tamper-detection
+  # self-test + per-platform signed artifact upload.
+  # ---------------------------------------------------------------------------
+  sign:
+    name: Sign ${{ matrix.platform }}
+    needs: [prepare, provenance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write       # OIDC for cosign keyless + attest-build-provenance
+      attestations: write   # actions/attest-build-provenance@v1 registration
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux-x64-glibc
+          - linux-x64-musl
+          - linux-arm64
+          - darwin-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download tarball artifact (${{ matrix.platform }})
+        uses: actions/download-artifact@v4
+        with:
+          name: genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}-tarball
+          path: dist
+          run-id: ${{ needs.prepare.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download SLSA provenance artifact
+        uses: actions/download-artifact@v4
+        with:
+          # SLSA generator v2.1.0 uploads the provenance as an artifact whose
+          # name == the provenance-name input. The artifact contains one file
+          # at the same path. After download the file lands at dist/<name>.
+          name: ${{ needs.provenance.outputs.provenance-name }}
+          path: dist
+
+      - name: Stage provenance per-platform
+        shell: bash
+        env:
+          VERSION:  ${{ needs.prepare.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          SRC="dist/genie-${VERSION}.intoto.jsonl"
+          DEST="dist/genie-${VERSION}-${PLATFORM}.tar.gz.intoto.jsonl"
+          if [[ ! -s "${SRC}" ]]; then
+            echo "::error::missing or empty SLSA provenance ${SRC}"
+            exit 1
+          fi
+          # The SLSA generator emits ONE .intoto.jsonl whose subjects list
+          # covers EVERY tarball. Copying it to the per-tarball name lets
+          # `slsa-verifier verify-artifact <tarball> --provenance-path <copy>`
+          # match by sha256 — verifier scans the subjects array.
+          cp "${SRC}" "${DEST}"
+          ls -la "${DEST}"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Install slsa-verifier
+        uses: slsa-framework/slsa-verifier/actions/installer@v2.7.1
+
+      - name: cosign sign-blob (keyless OIDC, sigstore bundle)
+        shell: bash
+        env:
+          COSIGN_YES:    'true'
+          VERSION:       ${{ needs.prepare.outputs.version }}
+          PLATFORM:      ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          TARBALL="dist/genie-${VERSION}-${PLATFORM}.tar.gz"
+          BUNDLE="${TARBALL}.bundle"
+          if [[ ! -s "${TARBALL}" ]]; then
+            echo "::error::missing or empty tarball ${TARBALL}"
+            exit 1
+          fi
+          # Keyless cosign sign-blob writes a sigstore-bundle file containing
+          # the ephemeral Fulcio cert + signature + Rekor entry in one file.
+          # `--bundle` is the new-style output (replaces --output-signature
+          # + --output-certificate); cosign verify-blob --bundle reads it
+          # back without separate sig/cert files.
+          cosign sign-blob \
+            --yes \
+            --bundle "${BUNDLE}" \
+            "${TARBALL}"
+          if [[ ! -s "${BUNDLE}" ]]; then
+            echo "::error::cosign sign-blob produced empty bundle"
+            exit 1
+          fi
+          echo "::notice::signed ${TARBALL} -> ${BUNDLE}"
+
+      - name: GitHub-native build-provenance attestation
+        id: attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: dist/genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz
+
+      - name: Verify cosign bundle (self-check)
+        shell: bash
+        env:
+          VERSION:  ${{ needs.prepare.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          TARBALL="dist/genie-${VERSION}-${PLATFORM}.tar.gz"
+          # Cert identity is pinned to THIS workflow file path; the @<ref>
+          # tail varies by trigger (workflow_run pushes default-branch ref;
+          # workflow_dispatch pushes the dispatched ref). The regex tolerates
+          # the ref while keeping the workflow path immutable.
+          cosign verify-blob \
+            --bundle "${TARBALL}.bundle" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/sign-attest.yml@" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${TARBALL}"
+
+      - name: Verify SLSA provenance (self-check)
+        shell: bash
+        env:
+          VERSION:  ${{ needs.prepare.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          TARBALL="dist/genie-${VERSION}-${PLATFORM}.tar.gz"
+          slsa-verifier verify-artifact "${TARBALL}" \
+            --provenance-path "${TARBALL}.intoto.jsonl" \
+            --source-uri "github.com/${{ github.repository }}"
+
+      - name: Verify GitHub-native attestation (self-check)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION:  ${{ needs.prepare.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          TARBALL="dist/genie-${VERSION}-${PLATFORM}.tar.gz"
+          OWNER="${{ github.repository_owner }}"
+          # `gh attestation verify` queries the GitHub Attestations API by
+          # the artifact's sha256 digest. attest-build-provenance@v1 above
+          # has registered the attestation; this checks it round-trips.
+          gh attestation verify "${TARBALL}" --owner "${OWNER}"
+
+      - name: Tamper-detection self-test (all 3 verifiers must REJECT)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION:  ${{ needs.prepare.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          TARBALL="dist/genie-${VERSION}-${PLATFORM}.tar.gz"
+          MUTATED="dist/tampered-genie-${VERSION}-${PLATFORM}.tar.gz"
+          OWNER="${{ github.repository_owner }}"
+          cp "${TARBALL}" "${MUTATED}"
+
+          # Flip the last byte. Any single-byte mutation invalidates the
+          # SHA-256 subject that cosign signed AND the SLSA subject hash
+          # AND the GitHub Attestations API digest lookup.
+          SIZE=$(stat -c '%s' "${MUTATED}")
+          OFFSET=$((SIZE - 1))
+          ORIG_BYTE=$(xxd -p -s "${OFFSET}" -l 1 "${MUTATED}")
+          FLIPPED=$(printf '%02x' $((0x${ORIG_BYTE} ^ 0x01)))
+          printf '%b' "\x${FLIPPED}" | dd of="${MUTATED}" bs=1 seek="${OFFSET}" count=1 conv=notrunc status=none
+          if cmp -s "${TARBALL}" "${MUTATED}"; then
+            echo "::error::mutation produced identical bytes — test harness is broken"
+            exit 1
+          fi
+
+          echo "-> Expecting cosign verify-blob to REJECT mutated tarball"
+          if cosign verify-blob \
+              --bundle "${TARBALL}.bundle" \
+              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/sign-attest.yml@" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "${MUTATED}" > /tmp/cosign-tamper.log 2>&1; then
+            echo "::error::cosign verify-blob accepted a mutated tarball — signing contract broken"
+            cat /tmp/cosign-tamper.log >&2 || true
+            exit 1
+          fi
+          echo "OK: cosign rejected mutated tarball"
+
+          echo "-> Expecting slsa-verifier verify-artifact to REJECT mutated tarball"
+          if slsa-verifier verify-artifact "${MUTATED}" \
+              --provenance-path "${TARBALL}.intoto.jsonl" \
+              --source-uri "github.com/${{ github.repository }}" > /tmp/slsa-tamper.log 2>&1; then
+            echo "::error::slsa-verifier accepted a mutated tarball — provenance contract broken"
+            cat /tmp/slsa-tamper.log >&2 || true
+            exit 1
+          fi
+          echo "OK: slsa-verifier rejected mutated tarball"
+
+          echo "-> Expecting gh attestation verify to REJECT mutated tarball"
+          if gh attestation verify "${MUTATED}" --owner "${OWNER}" > /tmp/gh-tamper.log 2>&1; then
+            echo "::error::gh attestation verify accepted a mutated tarball — Attestations API contract broken"
+            cat /tmp/gh-tamper.log >&2 || true
+            exit 1
+          fi
+          echo "OK: gh attestation verify rejected mutated tarball"
+
+          rm -f "${MUTATED}"
+
+      - name: Upload signed artifact (${{ matrix.platform }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}-signed
+          path: |
+            dist/genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz
+            dist/genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz.bundle
+            dist/genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}.tar.gz.intoto.jsonl
+          retention-days: 30
+          if-no-files-found: error
