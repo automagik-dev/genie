@@ -144,7 +144,7 @@ cd /home/genie/workspace/repos/genie/.worktrees/tui-native-selection && \
 - [ ] `src/__tests__/tmux-config.test.ts` passes with inverted invariants.
 - [ ] CHANGELOG entry exists under v5-launch heading.
 - [ ] `scripts/tmux/osc52-copy.sh` still exists on disk and is executable.
-- [ ] `.docs-vendor/genie/config/tmux.mdx` contains a section referencing TUI clipboard semantics (`grep -q 'GENIE_TUI_MOUSE'` + `grep -q 'drag-select'` or equivalent) and the `.docs-vendor` submodule pointer in the genie-repo commit is bumped to a SHA that includes the doc edit.
+- [ ] `.docs-vendor/genie/config/tmux.mdx` contains a "TUI clipboard semantics in v5" section that names terminal-native drag-select **and** the `GENIE_TUI_MOUSE=0` escape hatch (`grep -q 'GENIE_TUI_MOUSE=0'` + `grep -q 'terminal-native'` + `grep -q 'drag-select'`) and the `.docs-vendor` submodule pointer in the genie-repo commit is bumped to a SHA that includes the doc edit.
 - [ ] `bun run typecheck` and `bun run lint` green.
 
 **Validation:**
@@ -161,8 +161,9 @@ cd /home/genie/workspace/repos/genie/.worktrees/tui-native-selection && \
   ! grep -q 'osc52-copy.sh' scripts/tmux/genie.tmux.conf && \
   ! grep -q 'osc52-copy.sh' scripts/tmux/tui-tmux.conf && \
   test -x scripts/tmux/osc52-copy.sh && \
-  grep -q 'GENIE_TUI_MOUSE' .docs-vendor/genie/config/tmux.mdx && \
-  grep -q 'drag' .docs-vendor/genie/config/tmux.mdx
+  grep -q 'GENIE_TUI_MOUSE=0' .docs-vendor/genie/config/tmux.mdx && \
+  grep -q 'terminal-native' .docs-vendor/genie/config/tmux.mdx && \
+  grep -q 'drag-select' .docs-vendor/genie/config/tmux.mdx
 ```
 
 **depends-on:** none
@@ -258,6 +259,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
+| Bumping `@opentui/{core,keymap,react}` from `0.2.0` to `0.2.6` introduces unrelated behavior changes (render path, keymap defaults, React-binding API surface) that regress non-mouse subsystems of `genie tui`. | Medium | Wave 1 already shipped the bump in commit `8cee4e57`; Group 4 smoke gate (Warp + Terminal.app) exercises the full TUI flow including non-mouse paths. `bun run typecheck` + `bun run lint` + `bun test src/tui/` are part of Group 1 Validation and catch type/regression breaks. If post-bump issues surface, the rollback is a single-line revert in `package.json` plus re-pinning to `0.2.0` (the override is wire-level and works against `0.2.0`'s `setMouseMode` too). |
 | Terminal interprets `?1002l` after `?1002h` differently than xterm spec (drag still captured, or clicks also disabled). | Medium | Smoke gate (Warp + Terminal.app) catches the two real-user cases. Users on hostile terminals fall back to `GENIE_TUI_MOUSE=0`; documented in CHANGELOG. |
 | OpenTUI 0.2.7+ changes mouse setup such that the local override stops working before upstream PR lands. | Low | Pin `@opentui/core` version explicitly during the override window; bump deliberately and re-verify on bump. |
 | anomalyco rejects or sits on the upstream PR. | Low | Wish ships fine without it (Jaw C is non-blocking). If rejection: maintain local override indefinitely as the long-term solution; document why in code comment. |

@@ -34,7 +34,7 @@
   - assert `copy-selection-and-cancel` (not `copy-pipe-and-cancel ... osc52-copy.sh`)
   - keep `allow-passthrough on` assertion (other tools may use DCS passthrough)
 - CHANGELOG entry naming the contract: *"v5 TUI uses terminal-native selection. Drag to highlight, Cmd+C to copy. tmux's automatic OSC 52 emit is disabled — the terminal owns the entire selection lifecycle."*
-- Doc note in `docs/configuration.md` (or equivalent) describing the user-facing semantics.
+- Doc note in `.docs-vendor/genie/config/tmux.mdx` (canonical TUI/tmux user docs target; `docs/` is a symlink to `.docs-vendor/genie/`) describing the user-facing semantics and the `GENIE_TUI_MOUSE=0` escape hatch.
 
 **Jaw C — Upstream PR to `anomalyco/opentui` (parallel; non-blocking)**
 - File a PR wiring the existing `MouseLevel` enum in `packages/core/src/zig/terminal.zig:33-39` through `setMouseMode`. Today the enum is declared (`none`, `basic` *(click only)*, `drag` *(click + drag — current default)*, `motion`, `pixels`) but unused.
