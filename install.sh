@@ -1,1233 +1,159 @@
 #!/usr/bin/env bash
 #
-# Genie CLI Installer
-# https://github.com/automagik-dev/genie
+# Genie CLI installer — GitHub Releases consumer (post genie-distribution-cutover G4).
 #
-# Usage:
+# Audit: curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh > install.sh; less install.sh; bash install.sh
+#
+# Trust anchor (cosign keyless OIDC). Verification pins the certificate
+# identity + OIDC issuer — there is no long-lived public key to pin.
+#   cert-identity: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
+#   issuer:        https://token.actions.githubusercontent.com
+#
+# Default flow (gh attestation verify, falls back to cosign verify-blob):
 #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash -s -- uninstall
 #
-# Exit codes:
-#   0 - Success
-#   1 - General error
-#   2 - Invalid arguments
-#   3 - Missing prerequisites
-#   4 - Download failed
-#   5 - Build failed
-
+# INSECURE=1 (audit-logged bypass; SHA256 floor only — DO NOT USE in production):
+#   INSECURE=1 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
+#
+# Exit codes: 0 ok | 1 generic | 2 unsupported platform | 3 missing prereq | 4 verification failed | 5 download failed
+#
 set -euo pipefail
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────────────────────────────────────
+REPO="automagik-dev/genie"
+LATEST_URL="https://raw.githubusercontent.com/${REPO}/main/.well-known/latest.json"
+EXPECTED_COSIGN_IDENTITY="^https://github.com/${REPO}/.github/workflows/sign-attest.yml@"
+EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
+GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
+LOCAL_BIN="$HOME/.local/bin"
+TMP_DIR="$(mktemp -d -t genie-install-XXXXXX)"
+trap 'rm -rf "$TMP_DIR"' EXIT
 
-readonly VERSION="2.0.0"
-readonly PACKAGE_NAME="@automagik/genie"
-readonly RAW_REPO_URL="https://raw.githubusercontent.com/automagik-dev/genie"
-
-readonly GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
-readonly CLAUDE_PLUGINS_DIR="$HOME/.claude/plugins"
-readonly PLUGIN_SYMLINK="$CLAUDE_PLUGINS_DIR/genie"
-readonly CODEX_SKILLS_DIR="$HOME/.agents/skills"
-
-# TTY detection for dual-mode (interactive vs agent)
-if [[ -t 0 ]]; then
-    INTERACTIVE=true
-else
-    INTERACTIVE=false
-fi
-
-# Colors (disabled if not a terminal)
-if [[ -t 1 ]]; then
-    readonly RED='\033[0;31m'
-    readonly GREEN='\033[0;32m'
-    readonly YELLOW='\033[1;33m'
-    readonly BLUE='\033[0;34m'
-    readonly BOLD='\033[1m'
-    readonly DIM='\033[2m'
-    readonly NC='\033[0m'
-else
-    readonly RED=''
-    readonly GREEN=''
-    readonly YELLOW=''
-    readonly BLUE=''
-    readonly BOLD=''
-    readonly DIM=''
-    readonly NC=''
-fi
-
-# Global state
-DOWNLOADER=""
-PLATFORM=""
-ARCH=""
-INSTALL_MODE="install"
-LOCAL_PATH=""  # If set, use local source instead of npm
-AUTO_LOCAL_DETECTED=false  # True if local mode was auto-detected
-DEV_MODE=false  # If true, link plugins instead of copying (for development)
-PKG_DIR=""  # Set by locate_package_dir after install
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Utility Functions
-# ─────────────────────────────────────────────────────────────────────────────
-
-log() {
-    echo -e "  ${GREEN}▸${NC} $1"
-}
-
-warn() {
-    echo -e "  ${YELLOW}⚠${NC} $1" >&2
-}
-
-error() {
-    echo -e "  ${RED}✖${NC} $1" >&2
-}
-
-success() {
-    echo -e "  ${GREEN}✔${NC} $1"
-}
-
-info() {
-    echo -e "  ${BLUE}ℹ${NC} $1"
-}
-
-header() {
-    echo
-    echo -e "${BOLD}$1${NC}"
-}
-
-# Check if a command exists
-check_command() {
-    command -v "$1" &>/dev/null
-}
-
-# Prompt user for confirmation (Y is default)
-confirm() {
-    local prompt="$1"
-    local response=""
-    echo -en "${YELLOW}?${NC} $prompt [Y/n] "
-
-    # Prefer /dev/tty for interactive installs, but fall back to stdin (CI/heredoc).
-    # Some environments expose /dev/tty but make it unreadable; suppress that noise.
-    if [[ -e /dev/tty ]]; then
-        read -r response < /dev/tty 2>/dev/null || true
-    fi
-    if [[ -z "${response:-}" ]]; then
-        read -r response 2>/dev/null || response=""
-    fi
-
-    [[ -z "$response" || "$response" =~ ^[Yy]$ ]]
-}
-
-# Prompt user for confirmation (N is default)
-confirm_no() {
-    local prompt="$1"
-    local response=""
-    echo -en "${YELLOW}?${NC} $prompt [y/N] "
-
-    if [[ -e /dev/tty ]]; then
-        read -r response < /dev/tty 2>/dev/null || true
-    fi
-    if [[ -z "${response:-}" ]]; then
-        read -r response 2>/dev/null || response=""
-    fi
-
-    [[ "$response" =~ ^[Yy]$ ]]
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Symlink Detection and Repair
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Check if a path is a broken symlink
-is_broken_symlink() {
-    local path="$1"
-    # -L checks if it's a symlink, ! -e checks if target doesn't exist
-    [[ -L "$path" && ! -e "$path" ]]
-}
-
-# Check if a path is a valid symlink pointing to an existing directory
-is_valid_symlink() {
-    local path="$1"
-    [[ -L "$path" && -d "$path" ]]
-}
-
-# Check and repair broken plugin symlink
-check_and_repair_symlink() {
-    # Check new path
-    if is_broken_symlink "$PLUGIN_SYMLINK"; then
-        local target
-        target=$(readlink "$PLUGIN_SYMLINK" 2>/dev/null || echo "unknown")
-        warn "Broken symlink detected: $PLUGIN_SYMLINK -> $target"
-        warn "The symlink target no longer exists — auto-repairing"
-        rm -f "$PLUGIN_SYMLINK"
-        success "Broken symlink removed (will be recreated during install)"
-        return 0
-    fi
-
-    return 0
-}
-
-readonly OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
-
-# Remove genie paths from OpenClaw config (for uninstall)
-remove_openclaw_plugin_paths() {
-    if [[ ! -f "$OPENCLAW_CONFIG" ]] || ! check_command jq; then
-        return 0
-    fi
-
-    local tmp_config
-    tmp_config=$(mktemp)
-
-    # Remove paths containing plugins/genie
-    if jq '
-        .plugins.load.paths = [.plugins.load.paths[]? | select(contains("plugins/genie") | not)] |
-        del(.plugins.entries["genie"])
-    ' "$OPENCLAW_CONFIG" > "$tmp_config" 2>/dev/null; then
-        mv "$tmp_config" "$OPENCLAW_CONFIG"
-        return 0
-    else
-        rm -f "$tmp_config"
-        return 1
-    fi
-}
-
-# Verify symlink was created successfully
-verify_symlink() {
-    local symlink_path="$1"
-    local expected_target="$2"
-
-    if [[ ! -L "$symlink_path" ]]; then
-        error "Symlink was not created: $symlink_path"
-        return 1
-    fi
-
-    if [[ ! -d "$symlink_path" ]]; then
-        error "Symlink points to non-existent directory: $(readlink "$symlink_path")"
-        return 1
-    fi
-
-    local actual_target
-    actual_target=$(readlink -f "$symlink_path" 2>/dev/null)
-    expected_target=$(cd "$expected_target" 2>/dev/null && pwd)
-
-    if [[ "$actual_target" != "$expected_target" ]]; then
-        warn "Symlink target mismatch"
-        warn "  Expected: $expected_target"
-        warn "  Actual:   $actual_target"
-        return 1
-    fi
-
-    success "Symlink verified: $symlink_path -> $actual_target"
-    return 0
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Source Directory Auto-Detection
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Check if a directory is the genie-cli source directory
-is_genie_source_dir() {
-    local dir="$1"
-
-    # Must have package.json
-    if [[ ! -f "$dir/package.json" ]]; then
-        return 1
-    fi
-
-    # package.json must contain @automagik/genie
-    if grep -q '"name"[[:space:]]*:[[:space:]]*"@automagik/genie"' "$dir/package.json" 2>/dev/null; then
-        return 0
-    fi
-
-    return 1
-}
-
-# Auto-detect if we're running from a genie-cli source directory
-auto_detect_source_dir() {
-    # Get the directory where install.sh is located
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-    if is_genie_source_dir "$script_dir"; then
-        LOCAL_PATH="$script_dir"
-        AUTO_LOCAL_DETECTED=true
-        return 0
-    fi
-
-    return 1
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Version Detection
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Get installed genie-cli version
-get_installed_version() {
-    local version=""
-
-    # Try bun first (check global packages)
-    if check_command bun; then
-        version=$(bun pm ls -g 2>/dev/null | grep "$PACKAGE_NAME" | grep -o '@[0-9][^[:space:]]*' | tr -d '@' || true)
-    fi
-
-    # Fallback to npm
-    if [[ -z "$version" ]] && check_command npm; then
-        version=$(npm ls -g "$PACKAGE_NAME" --depth=0 2>/dev/null | grep "$PACKAGE_NAME" | grep -o '@[0-9][^[:space:]]*' | tr -d '@' || true)
-    fi
-
-    echo "$version"
-}
-
-# Get latest version from npm registry
-get_latest_version() {
-    local url="https://registry.npmjs.org/$PACKAGE_NAME/latest"
-    case "$DOWNLOADER" in
-        curl)
-            curl -fsSL "$url" 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4
-            ;;
-        wget)
-            wget -qO- "$url" 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4
-            ;;
-    esac
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Platform Detection
-# ─────────────────────────────────────────────────────────────────────────────
+log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit "${2:-1}"; }
+need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1" 3; }
 
 detect_platform() {
-    local os arch
-
-    case "$(uname -s)" in
-        Darwin)
-            os="darwin"
-            ;;
-        Linux)
-            os="linux"
-            ;;
-        MINGW*|MSYS*|CYGWIN*)
-            os="windows"
-            ;;
-        *)
-            error "Unsupported operating system: $(uname -s)"
-            exit 3
-            ;;
-    esac
-
-    case "$(uname -m)" in
+  local os arch libc=""
+  os="$(uname -s)"
+  arch="$(uname -m)"
+  case "$os" in
+    Linux)
+      case "$arch" in
         x86_64|amd64)
-            arch="x64"
-            ;;
-        aarch64|arm64)
-            arch="arm64"
-            ;;
-        armv7l)
-            arch="arm"
-            ;;
-        *)
-            error "Unsupported architecture: $(uname -m)"
-            exit 3
-            ;;
-    esac
-
-    PLATFORM="$os"
-    ARCH="$arch"
-
-    log "Detected platform: ${BOLD}$PLATFORM-$ARCH${NC}"
+          if ldd --version 2>&1 | grep -qi musl; then libc="-musl"; else libc="-glibc"; fi
+          echo "linux-x64${libc}" ;;
+        aarch64|arm64) echo "linux-arm64" ;;
+        *) die "unsupported Linux architecture: $arch" 2 ;;
+      esac ;;
+    Darwin)
+      case "$arch" in
+        arm64) echo "darwin-arm64" ;;
+        x86_64) die "darwin-x64 (Intel Mac) is no longer supported; use an Apple Silicon Mac" 2 ;;
+        *) die "unsupported macOS architecture: $arch" 2 ;;
+      esac ;;
+    *) die "unsupported OS: $os (Windows users: install via WSL)" 2 ;;
+  esac
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Download Utilities
-# ─────────────────────────────────────────────────────────────────────────────
+resolve_channel() { echo "${GENIE_CHANNEL:-stable}"; }
 
-init_downloader() {
-    if check_command curl; then
-        DOWNLOADER="curl"
-    elif check_command wget; then
-        DOWNLOADER="wget"
-    else
-        error "Neither curl nor wget found. Please install one of them."
-        exit 3
-    fi
+fetch_latest() {
+  local channel="$1" payload
+  payload="$(curl -fsSL "$LATEST_URL")" || die "could not fetch $LATEST_URL" 5
+  printf '%s\n' "$payload" | jq -e --arg c "$channel" '.channel == $c or (.channel == null and $c == "stable")' >/dev/null \
+    || die "latest.json channel mismatch (wanted $channel)" 1
+  printf '%s\n' "$payload"
 }
 
-# Download a file to stdout
-download() {
-    local url="$1"
-    case "$DOWNLOADER" in
-        curl)
-            curl -fsSL "$url"
-            ;;
-        wget)
-            wget -qO- "$url"
-            ;;
-    esac
+audit_log() {
+  mkdir -p "$GENIE_HOME/audit"
+  printf '%s\n' "$1" >> "$GENIE_HOME/audit/install.jsonl"
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Package Manager Detection
-# ─────────────────────────────────────────────────────────────────────────────
-
-detect_package_manager() {
-    if check_command brew; then
-        echo "brew"
-    elif check_command apt-get; then
-        echo "apt"
-    elif check_command dnf; then
-        echo "dnf"
-    elif check_command yum; then
-        echo "yum"
-    elif check_command pacman; then
-        echo "pacman"
-    elif check_command apk; then
-        echo "apk"
-    elif check_command zypper; then
-        echo "zypper"
-    else
-        echo "unknown"
-    fi
+verify_with_gh_attestation() {
+  command -v gh >/dev/null 2>&1 || return 1
+  log "verifying via gh attestation (owner=${REPO%/*})"
+  gh attestation verify "$1" --owner "${REPO%/*}" >/dev/null 2>&1
 }
 
-# Install a package using the detected package manager
-install_package() {
-    local package="$1"
-    local pm
-    pm=$(detect_package_manager)
-
-    case "$pm" in
-        brew)
-            brew install "$package"
-            ;;
-        apt)
-            sudo apt-get update -qq && sudo apt-get install -y "$package"
-            ;;
-        dnf)
-            sudo dnf install -y "$package"
-            ;;
-        yum)
-            sudo yum install -y "$package"
-            ;;
-        pacman)
-            sudo pacman -S --noconfirm "$package"
-            ;;
-        apk)
-            sudo apk add --no-cache "$package"
-            ;;
-        zypper)
-            sudo zypper install -y "$package"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+verify_with_cosign() {
+  local tarball="$1" bundle="$2"
+  command -v cosign >/dev/null 2>&1 || return 1
+  [[ -s "$bundle" ]] || return 1
+  log "verifying via cosign verify-blob (bundle=${bundle##*/})"
+  cosign verify-blob \
+    --bundle "$bundle" \
+    --certificate-identity-regexp "$EXPECTED_COSIGN_IDENTITY" \
+    --certificate-oidc-issuer "$EXPECTED_COSIGN_ISSUER" \
+    "$tarball" >/dev/null 2>&1
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Prerequisite Installation
-# ─────────────────────────────────────────────────────────────────────────────
-
-install_git_if_needed() {
-    if check_command git; then
-        success "git found"
-        return 0
-    fi
-
-    log "Installing git..."
-    if install_package "git" && check_command git; then
-        success "git installed"
-    else
-        error "git is required but could not be installed"
-        exit 3
-    fi
+emit_insecure_banner() {
+  printf '\033[1;31m'
+  printf '!! ============================================================\n'
+  printf '!! INSECURE=1 — cosign + attestation verification SKIPPED.\n'
+  printf '!! SHA256 logged; signing identity NOT cross-checked.\n'
+  printf '!! Bypass audit-logged to %s/audit/install.jsonl.\n' "$GENIE_HOME"
+  printf '!! ============================================================\n'
+  printf '\033[0m'
 }
 
-install_bun_if_needed() {
-    if check_command bun; then
-        success "Bun $(bun --version) found"
-        return 0
-    fi
-
-    log "Installing Bun..."
-    download "https://bun.sh/install" | bash
-
-    export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
-    export PATH="$BUN_INSTALL/bin:$PATH"
-
-    if check_command bun; then
-        success "Bun $(bun --version) installed"
-    else
-        error "Bun installation failed"
-        exit 5
-    fi
+download_and_verify() {
+  local version="$1" platform="$2" tarball_base="$3"
+  local fname="genie-${version}-${platform}.tar.gz"
+  local tarball="$TMP_DIR/$fname"
+  local bundle="$TMP_DIR/${fname}.bundle"
+  log "downloading ${tarball_base}/${fname}"
+  curl -fsSL -o "$tarball" "${tarball_base}/${fname}" || die "download failed: ${fname}" 5
+  curl -fsSL -o "$bundle"  "${tarball_base}/${fname}.bundle" 2>/dev/null || true
+  local sha
+  sha="$(sha256sum "$tarball" 2>/dev/null | awk '{print $1}')" \
+    || sha="$(shasum -a 256 "$tarball" | awk '{print $1}')"
+  if [[ "${INSECURE:-0}" == "1" ]]; then
+    emit_insecure_banner >&2
+    audit_log "$(printf '{"ts":"%s","event":"insecure_install","version":"%s","platform":"%s","sha256":"%s","expected_identity":"%s"}' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$version" "$platform" "$sha" "$EXPECTED_COSIGN_IDENTITY")"
+  elif verify_with_gh_attestation "$tarball"; then
+    log "gh attestation: OK (sha256=${sha:0:12}...)"
+  elif verify_with_cosign "$tarball" "$bundle"; then
+    log "cosign verify-blob: OK (sha256=${sha:0:12}...)"
+  else
+    die "verification failed for ${fname} — refuse to install. Expected identity: ${EXPECTED_COSIGN_IDENTITY}" 4
+  fi
+  printf '%s\n' "$tarball"
 }
 
-# Ensure bun's global bin directory is in PATH
-# This is needed after installing global packages via bun
-ensure_bun_in_path() {
-    export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
-    if [[ ":$PATH:" != *":$BUN_INSTALL/bin:"* ]]; then
-        export PATH="$BUN_INSTALL/bin:$PATH"
-    fi
+extract_and_link() {
+  local tarball="$1"
+  mkdir -p "$GENIE_HOME/bin" "$LOCAL_BIN"
+  log "extracting to $GENIE_HOME/bin"
+  tar -xzf "$tarball" -C "$GENIE_HOME/bin"
+  chmod +x "$GENIE_HOME/bin/genie"
+  ln -sfn "$GENIE_HOME/bin/genie" "$LOCAL_BIN/genie"
+  log "symlink: $LOCAL_BIN/genie → $GENIE_HOME/bin/genie"
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Package Directory Location
-# ─────────────────────────────────────────────────────────────────────────────
-
-locate_package_dir() {
-    if [[ -n "$LOCAL_PATH" ]]; then
-        PKG_DIR="$LOCAL_PATH"
-        return 0
-    fi
-
-    # Try bun global
-    local bun_global="${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules/@automagik/genie"
-    if [[ -d "$bun_global" ]]; then
-        PKG_DIR="$bun_global"
-        return 0
-    fi
-
-    # Try npm global
-    if check_command npm; then
-        local npm_root
-        npm_root=$(npm root -g 2>/dev/null || true)
-        if [[ -n "$npm_root" && -d "$npm_root/@automagik/genie" ]]; then
-            PKG_DIR="$npm_root/@automagik/genie"
-            return 0
-        fi
-    fi
-
-    PKG_DIR=""
-    return 1
+handoff_to_subcommand() {
+  log "handing off to: genie install (shell-rc + completions wiring)"
+  exec "$LOCAL_BIN/genie" install
 }
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Genie CLI Installation
-# ─────────────────────────────────────────────────────────────────────────────
-
-install_genie_cli() {
-    log "Installing $PACKAGE_NAME..."
-
-    # Local installation mode - use source directly
-    if [[ -n "$LOCAL_PATH" ]]; then
-        if $AUTO_LOCAL_DETECTED; then
-            info "Using local source mode (auto-detected from source directory)"
-        else
-            info "Using local source mode"
-        fi
-        log "Source path: $LOCAL_PATH"
-
-        if [[ ! -d "$LOCAL_PATH" ]]; then
-            error "Local path does not exist: $LOCAL_PATH"
-            exit 1
-        fi
-
-        pushd "$LOCAL_PATH" > /dev/null
-
-        # Build
-        log "Building from source..."
-        if check_command bun; then
-            bun install
-            bun run build
-        else
-            npm install
-            npm run build
-        fi
-
-        # Link globally (npm link creates proper global bin symlinks; bun link does not)
-        log "Linking globally..."
-        npm link
-
-        popd > /dev/null
-        success "$PACKAGE_NAME installed from local source"
-        return
-    fi
-
-    if check_command bun; then
-        bun install -g "$PACKAGE_NAME"
-        ensure_bun_in_path
-    elif check_command npm; then
-        npm install -g "$PACKAGE_NAME"
-    else
-        error "Neither bun nor npm found"
-        exit 3
-    fi
-
-    success "$PACKAGE_NAME installed"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Plugin Integration Offers
-# ─────────────────────────────────────────────────────────────────────────────
-
-offer_claude_plugin() {
-    if ! check_command claude; then
-        info "Claude Code not found — skipping plugin install"
-        return 0
-    fi
-
-    info "Installing Genie plugin for Claude Code..."
-    if [[ -n "$LOCAL_PATH" ]]; then
-        # Local mode: symlink the plugin directory
-        local plugin_dir="$PKG_DIR/plugins/genie"
-        if [[ -d "$plugin_dir" ]]; then
-            mkdir -p "$CLAUDE_PLUGINS_DIR"
-            rm -f "$PLUGIN_SYMLINK"
-            ln -sf "$plugin_dir" "$PLUGIN_SYMLINK"
-            if verify_symlink "$PLUGIN_SYMLINK" "$plugin_dir"; then
-                success "Genie Claude Code plugin linked"
-            else
-                warn "Failed to create valid symlink for Claude Code plugin"
-            fi
-        else
-            warn "Plugin directory not found: $plugin_dir"
-        fi
-    else
-        # Marketplace mode
-        claude plugin marketplace add automagik-dev/genie 2>/dev/null || true
-        if claude plugin install genie@automagik 2>/dev/null; then
-            success "Genie Claude Code plugin installed"
-        else
-            warn "Plugin install failed — try: /plugin install genie@automagik"
-        fi
-    fi
-}
-
-offer_openclaw_plugin() {
-    if ! check_command openclaw; then
-        info "OpenClaw not found — skipping plugin install"
-        return 0
-    fi
-
-    if openclaw plugins list 2>/dev/null | grep -q "genie"; then
-        success "Genie OpenClaw plugin already discovered"
-        return 0
-    fi
-
-    if [[ -z "$PKG_DIR" ]]; then
-        warn "Could not locate installed Genie package directory"
-        return 1
-    fi
-
-    if [[ ! -f "$PKG_DIR/openclaw.plugin.json" ]]; then
-        warn "OpenClaw plugin manifest not found: $PKG_DIR/openclaw.plugin.json"
-        return 1
-    fi
-
-    info "Installing Genie plugin for OpenClaw..."
-    if $DEV_MODE; then
-        log "Linking OpenClaw plugin (dev mode)..."
-        if openclaw plugins install -l "$PKG_DIR"; then
-            success "OpenClaw plugin linked"
-        else
-            warn "OpenClaw plugin link failed"
-        fi
-    else
-        log "Installing OpenClaw plugin (copy mode)..."
-        if openclaw plugins install "$PKG_DIR"; then
-            success "OpenClaw plugin installed"
-        else
-            warn "OpenClaw plugin install failed"
-        fi
-    fi
-}
-
-offer_codex_skills() {
-    local skills_source="$PKG_DIR/skills"
-    if [[ ! -d "$skills_source" ]]; then
-        warn "Skills directory not found in package"
-        return 1
-    fi
-
-    info "Installing Genie skills for Codex/OpenCode..."
-    mkdir -p "$CODEX_SKILLS_DIR"
-    local target="$CODEX_SKILLS_DIR/genie"
-    ln -sf "$skills_source" "$target"
-    success "Codex skills linked: $target -> $skills_source"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Orchestration Prompt Injection
-# ─────────────────────────────────────────────────────────────────────────────
-
-inject_orchestration_prompt() {
-    local rules_dir="$HOME/.claude/rules"
-    local rules_file="$rules_dir/genie-orchestration.md"
-
-    mkdir -p "$rules_dir"
-
-    # Use the already-resolved PKG_DIR to find the rules file
-    local source_file=""
-    if [[ -n "$PKG_DIR" && -f "$PKG_DIR/plugins/genie/rules/genie-orchestration.md" ]]; then
-        source_file="$PKG_DIR/plugins/genie/rules/genie-orchestration.md"
-    fi
-
-    if [[ -n "$source_file" ]]; then
-        cp "$source_file" "$rules_file"
-        success "Orchestration rules installed: $rules_file (from $source_file)"
-    else
-        # Fallback: write minimal inline message
-        cat > "$rules_file" <<'FALLBACK_EOF'
-# Genie CLI
-
-Use `genie` CLI for all agent operations. Never use native Agent/SendMessage tools.
-FALLBACK_EOF
-        success "Orchestration rules installed (fallback): $rules_file"
-    fi
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Default Config Creation
-# ─────────────────────────────────────────────────────────────────────────────
-
-create_default_config() {
-    local config_file="$GENIE_HOME/config.json"
-
-    if [[ -f "$config_file" ]]; then
-        info "Config already exists: $config_file"
-        return 0
-    fi
-
-    mkdir -p "$GENIE_HOME"
-    cat > "$config_file" <<'CONFIG_EOF'
-{
-  "version": 2,
-  "promptMode": "append",
-  "session": { "name": "genie", "defaultWindow": "shell", "autoCreate": true },
-  "terminal": { "execTimeout": 120000, "readLines": 100, "worktreeBase": ".worktrees" },
-  "logging": { "tmuxDebug": false, "verbose": false },
-  "shell": { "preference": "auto" },
-  "shortcuts": { "tmuxInstalled": false, "shellInstalled": false },
-  "setupComplete": false
-}
-CONFIG_EOF
-
-    success "Default config created: $config_file"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# tmux Installation and Configuration
-# ─────────────────────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────────────────────
-# pm2 Supervision (canonical-pgserve-pm2-supervision wave 2)
-#
-# Idempotent. Installs pm2 globally if missing, then runs `genie install` so
-# genie-serve survives shell exits and host reboots. Skipped when --no-pm2
-# is passed or when GENIE_INSTALL_PM2=0.
-#
-# Mirrors `omni install`'s ensure_pm2 + post-CLI step. The `genie install`
-# command is wave 2 of the canonical-pgserve-pm2-supervision wish; it shells
-# out to `pgserve install` first (idempotent) so all four pm2 services in
-# the canonical stack converge on the same hardened defaults.
-# ─────────────────────────────────────────────────────────────────────────────
-
-ensure_pm2() {
-    if check_command pm2; then
-        success "pm2 $(pm2 --version 2>/dev/null || echo '?')"
-        return 0
-    fi
-
-    log "Installing pm2..."
-    bun add -g pm2 >/dev/null 2>&1 || npm install -g pm2 >/dev/null 2>&1
-    if check_command pm2; then
-        success "pm2 installed"
-    else
-        warn "Could not install PM2 globally. Install manually: bun add -g pm2"
-        return 1
-    fi
-}
-
-install_pm2_supervision() {
-    if [[ "${GENIE_INSTALL_PM2:-1}" == "0" ]] || [[ "${INSTALL_PM2:-true}" == "false" ]]; then
-        info "Skipping pm2 supervision (GENIE_INSTALL_PM2=0 or --no-pm2)"
-        return 0
-    fi
-
-    header "Configuring pm2 supervision..."
-
-    if ! ensure_pm2; then
-        warn "Skipping pm2 supervision — pm2 install failed"
-        return 0
-    fi
-
-    if ! check_command genie; then
-        warn "genie not on PATH; skipping `genie install` (re-run after CLI install completes)"
-        return 0
-    fi
-
-    info "Running genie install (registers genie-serve under pm2 with hardened defaults)..."
-    if genie install; then
-        success "genie-serve registered under pm2"
-        info "Run 'pm2 save && pm2 startup' to persist across reboots"
-    else
-        warn "genie install failed — bridge will not survive shell exit. Re-run manually: genie install"
-    fi
-}
-
-install_tmux_if_needed() {
-    if check_command tmux; then
-        success "tmux found"
-        return 0
-    fi
-
-    log "Installing tmux..."
-    if install_package "tmux" && check_command tmux; then
-        success "tmux installed"
-    else
-        warn "tmux could not be installed — agent orchestration may not work"
-    fi
-}
-
-configure_tmux_defaults() {
-    local tmux_conf="$GENIE_HOME/tmux.conf"
-    local scripts_dir="$GENIE_HOME/scripts"
-    local tmux_scripts_src=""
-
-    # Find tmux scripts source directory
-    if [[ -n "$PKG_DIR" && -d "$PKG_DIR/scripts/tmux" ]]; then
-        tmux_scripts_src="$PKG_DIR/scripts/tmux"
-    fi
-
-    if [[ -z "$tmux_scripts_src" ]]; then
-        warn "tmux scripts not found in package — skipping TUI setup"
-        return 0
-    fi
-
-    # --- Copy scripts to ~/.genie/scripts/ ---
-    log "Installing tmux scripts to $scripts_dir..."
-    mkdir -p "$scripts_dir"
-
-    local script_count=0
-    for script in "$tmux_scripts_src"/*.sh; do
-        [[ -f "$script" ]] || continue
-        cp "$script" "$scripts_dir/"
-        chmod +x "$scripts_dir/$(basename "$script")"
-        script_count=$((script_count + 1))
-    done
-    success "Installed $script_count tmux scripts to $scripts_dir"
-
-    # --- Write full tmux config ---
-    local tmux_conf_src="$tmux_scripts_src/genie.tmux.conf"
-    if [[ ! -f "$tmux_conf_src" ]]; then
-        warn "genie.tmux.conf template not found — skipping config"
-        return 0
-    fi
-
-    info "Genie will configure tmux. Your existing config will be backed up."
-
-    # Backup existing config if it exists and differs
-    if [[ -f "$tmux_conf" ]]; then
-        if ! diff -q "$tmux_conf" "$tmux_conf_src" &>/dev/null; then
-            cp "$tmux_conf" "${tmux_conf}.bak"
-            success "Backed up existing config to ${tmux_conf}.bak"
-        else
-            info "tmux config already matches Genie template"
-            return 0
-        fi
-    fi
-
-    cp "$tmux_conf_src" "$tmux_conf"
-    success "Genie tmux config written to $tmux_conf"
-
-    # Reload tmux if running
-    if tmux list-sessions &>/dev/null; then
-        tmux source-file "$tmux_conf" 2>/dev/null || true
-        log "tmux config reloaded"
-    fi
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Agent Mode Output
-# ─────────────────────────────────────────────────────────────────────────────
-
-output_agent_prompt() {
-    printf 'GENIE_INSTALL_COMPLETE\n'
-    printf 'package_dir=%s\n' "$PKG_DIR"
-    cat <<'AGENT_EOF'
-
-Genie has been installed successfully.
-
-## Agent Instructions
-
-Run `/wizard` now to complete onboarding. The wizard will:
-
-1. **Check environment** — verify genie CLI, git repo, and project structure
-2. **Shape identity** — define agent roles via `/brainstorm`
-3. **Create first wish** — scope work via `/brainstorm` then `/wish`
-4. **Execute** — build it via `/work`
-5. **Celebrate** — review results and learn next steps
-
-To start: paste `/wizard` in your Claude Code session.
-
-Integrations installed:
-- Claude Code plugin (if claude was found in PATH)
-- Orchestration rules at ~/.claude/rules/genie-orchestration.md
-- Default config at ~/.genie/config.json
-- tmux defaults at ~/.tmux.conf
-AGENT_EOF
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Main Install Flow
-# ─────────────────────────────────────────────────────────────────────────────
-
-run_install() {
-    # ─── Prerequisites ───
-    header "Checking prerequisites..."
-
-    # Git only needed for local mode
-    if [[ -n "$LOCAL_PATH" ]]; then
-        install_git_if_needed
-    fi
-
-    install_bun_if_needed
-    install_tmux_if_needed
-
-    # ─── Genie CLI Install/Update ───
-    header "Installing Genie CLI..."
-    install_genie_cli
-
-    # ─── pm2 Supervision (canonical-pgserve-pm2-supervision wave 2) ───
-    install_pm2_supervision
-
-    # ─── Locate package directory ───
-    if ! locate_package_dir; then
-        error "Could not locate Genie package directory"
-        exit 1
-    fi
-    log "Package directory: $PKG_DIR"
-
-    # ─── Orchestration Prompt ───
-    header "Configuring Claude Code..."
-    inject_orchestration_prompt
-
-    # ─── Default Config ───
-    create_default_config
-
-    # ─── tmux Defaults ───
-    configure_tmux_defaults
-
-    # ─── Plugin Integrations ───
-    header "Installing Integrations..."
-    echo -e "${DIM}────────────────────────────────────${NC}"
-
-    offer_claude_plugin
-    echo
-
-    offer_openclaw_plugin
-    echo
-
-    offer_codex_skills
-
-    # Agent mode: structured output for piped installs
-    if [[ "$INTERACTIVE" == "false" ]]; then
-        output_agent_prompt
-    fi
-
-    print_success
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Main Uninstall Flow
-# ─────────────────────────────────────────────────────────────────────────────
-
-run_uninstall() {
-    echo
-    echo -e "${BOLD}Genie CLI Uninstaller${NC}"
-    echo -e "${DIM}────────────────────────────────────${NC}"
-    echo
-
-    local removed_something=false
-
-    # 1. Genie CLI package (default: yes)
-    if confirm "Remove Genie CLI package?"; then
-        if check_command bun; then
-            bun remove -g "$PACKAGE_NAME" 2>/dev/null || true
-        fi
-        if check_command npm; then
-            npm uninstall -g "$PACKAGE_NAME" 2>/dev/null || true
-        fi
-        success "Genie CLI removed"
-        removed_something=true
-    else
-        info "Keeping Genie CLI"
-    fi
-
-    # 2. Claude Code plugin symlink (default: yes)
-    if [[ -e "$PLUGIN_SYMLINK" || -L "$PLUGIN_SYMLINK" ]]; then
-        if confirm "Remove Claude Code plugin symlink?"; then
-            rm -rf "$PLUGIN_SYMLINK"
-            success "Claude Code plugin symlink removed"
-            removed_something=true
-        else
-            info "Keeping Claude Code plugin symlink"
-        fi
-    fi
-
-    # Try claude plugin uninstall for marketplace-installed plugins
-    if check_command claude && claude plugin list 2>/dev/null | grep -q "genie"; then
-        if confirm "Unregister Claude Code plugin from marketplace?"; then
-            claude plugin uninstall genie@automagik 2>/dev/null || true
-            success "Claude Code plugin unregistered"
-            removed_something=true
-        else
-            info "Keeping Claude Code plugin registration"
-        fi
-    fi
-
-    # 3. OpenClaw plugin (default: yes)
-    if check_command openclaw && openclaw plugins list 2>/dev/null | grep -q "genie"; then
-        if confirm "Remove OpenClaw plugin?"; then
-            local ext_dir="$HOME/.openclaw/extensions/genie"
-
-            # Best effort: disable in config first (if present)
-            openclaw plugins disable genie 2>/dev/null || true
-
-            if [[ -e "$ext_dir" || -L "$ext_dir" ]]; then
-                rm -rf "$ext_dir"
-            fi
-
-            # Also remove paths from OpenClaw config
-            remove_openclaw_plugin_paths
-
-            success "OpenClaw plugin removed"
-            removed_something=true
-        else
-            info "Keeping OpenClaw plugin"
-        fi
-    fi
-
-    # 4. Codex/OpenCode skills (default: yes)
-    local codex_link="$CODEX_SKILLS_DIR/genie"
-    if [[ -e "$codex_link" || -L "$codex_link" ]]; then
-        if confirm "Remove Codex/OpenCode skills?"; then
-            rm -f "$codex_link"
-            success "Codex skills removed"
-            removed_something=true
-        else
-            info "Keeping Codex skills"
-        fi
-    fi
-
-    # 5. Config directory (default: no - preserve settings)
-    if [[ -d "$GENIE_HOME" ]]; then
-        if confirm_no "Remove ~/.genie config directory?"; then
-            rm -rf "$GENIE_HOME"
-            success "Configuration removed"
-            removed_something=true
-        else
-            info "Keeping config (reinstall will preserve settings)"
-        fi
-    fi
-
-    echo
-    if $removed_something; then
-        success "Done"
-    else
-        info "Nothing removed"
-    fi
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Installation Verification
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Detect the user's shell profile file
-get_shell_profile() {
-    local shell_name
-    shell_name=$(basename "${SHELL:-/bin/bash}")
-
-    case "$shell_name" in
-        zsh)
-            if [[ -f "$HOME/.zshrc" ]]; then
-                echo "$HOME/.zshrc"
-            else
-                echo "$HOME/.zprofile"
-            fi
-            ;;
-        bash)
-            if [[ -f "$HOME/.bashrc" ]]; then
-                echo "$HOME/.bashrc"
-            elif [[ -f "$HOME/.bash_profile" ]]; then
-                echo "$HOME/.bash_profile"
-            else
-                echo "$HOME/.profile"
-            fi
-            ;;
-        *)
-            echo "$HOME/.profile"
-            ;;
-    esac
-}
-
-# Get the bin directory where global packages are installed
-get_global_bin_dir() {
-    if check_command bun; then
-        echo "${BUN_INSTALL:-$HOME/.bun}/bin"
-    elif check_command npm; then
-        npm config get prefix 2>/dev/null | xargs -I{} echo "{}/bin"
-    else
-        echo ""
-    fi
-}
-
-# Verify that genie command is accessible
-verify_installation() {
-    local commands_found=true
-    local bin_dir
-    bin_dir=$(get_global_bin_dir)
-
-    echo
-    header "Verifying installation..."
-
-    # Check genie command
-    if check_command genie; then
-        success "genie command is available"
-    else
-        if [[ -n "$bin_dir" && -x "$bin_dir/genie" ]]; then
-            warn "genie is installed at $bin_dir/genie but not in PATH"
-            commands_found=false
-        else
-            warn "genie command not found"
-            commands_found=false
-        fi
-    fi
-
-    if ! $commands_found; then
-        local profile
-        profile=$(get_shell_profile)
-
-        echo
-        warn "Commands are installed but not yet in your PATH"
-        echo
-        info "To use genie, do ONE of the following:"
-        echo
-        echo -e "  ${BOLD}Option 1:${NC} Restart your terminal"
-        echo
-        echo -e "  ${BOLD}Option 2:${NC} Source your shell profile:"
-        echo -e "    ${DIM}source $profile${NC}"
-        echo
-        if [[ -n "$bin_dir" ]]; then
-            echo -e "  ${BOLD}Option 3:${NC} Add to PATH manually (if not already there):"
-            echo -e "    ${DIM}export PATH=\"$bin_dir:\$PATH\"${NC}"
-            echo
-        fi
-        return 1
-    fi
-
-    return 0
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Success Message
-# ─────────────────────────────────────────────────────────────────────────────
-
-print_success() {
-    # Run verification to check if commands are accessible
-    verify_installation || true
-
-    echo
-    echo -e "${DIM}────────────────────────────────────${NC}"
-    echo -e "${GREEN}${BOLD}✔ Genie installed successfully!${NC}"
-    echo -e "${DIM}────────────────────────────────────${NC}"
-    echo
-    echo -e "  Get started:"
-    echo -e "    ${BOLD}genie${NC}              Launch genie"
-    echo
-    echo -e "  First time? Run ${DIM}/wizard${NC} to set up your workspace."
-    echo
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Argument Parsing
-# ─────────────────────────────────────────────────────────────────────────────
-
-print_usage() {
-    cat <<EOF
-Genie CLI Installer
-
-Usage:
-  curl -fsSL $RAW_REPO_URL/main/install.sh | bash
-  curl -fsSL $RAW_REPO_URL/main/install.sh | bash -s -- uninstall
-  ./install.sh --local /path/to/genie-cli
-
-Commands:
-  (default)       Interactive install from npm
-  uninstall       Remove Genie CLI and components
-  --local PATH    Install from local source directory (for development)
-  --dev, -d       Dev mode: link OpenClaw plugin instead of copying
-  --help          Show this help message
-EOF
-}
-
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            uninstall)
-                INSTALL_MODE="uninstall"
-                ;;
-            --local)
-                shift
-                if [[ $# -eq 0 ]]; then
-                    error "--local requires a path argument"
-                    exit 2
-                fi
-                LOCAL_PATH="$(cd "$1" && pwd)"  # Resolve to absolute path
-                ;;
-            --dev|-d)
-                DEV_MODE=true
-                ;;
-            --help|-h)
-                print_usage
-                exit 0
-                ;;
-            *)
-                error "Unknown argument: $1"
-                echo
-                print_usage
-                exit 2
-                ;;
-        esac
-        shift
-    done
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────────────────────────────────────
 
 main() {
-    parse_args "$@"
-
-    echo
-    echo -e "${BOLD}Genie CLI Installer${NC}"
-    echo -e "${DIM}────────────────────────────────────${NC}"
-    echo
-
-    init_downloader
-    detect_platform
-
-    # Auto-detect source directory if not explicitly set via --local
-    if [[ -z "$LOCAL_PATH" ]] && [[ "$INSTALL_MODE" == "install" ]]; then
-        if auto_detect_source_dir; then
-            log "Detected genie-cli source directory"
-        fi
-    fi
-
-    # Check for broken symlinks before installation
-    if [[ "$INSTALL_MODE" == "install" ]]; then
-        check_and_repair_symlink
-    fi
-
-    case "$INSTALL_MODE" in
-        install)
-            run_install
-            ;;
-        uninstall)
-            run_uninstall
-            ;;
-    esac
+  need curl; need jq; need tar; need uname
+  local platform channel payload version tarball_base tarball
+  platform="$(detect_platform)"
+  channel="$(resolve_channel)"
+  log "platform=${platform} channel=${channel}"
+  payload="$(fetch_latest "$channel")"
+  version="$(printf '%s\n' "$payload" | jq -r '.version')"
+  tarball_base="$(printf '%s\n' "$payload" | jq -r '.tarball_base')"
+  [[ -n "$version"      && "$version"      != "null" ]] || die "latest.json missing .version" 1
+  [[ -n "$tarball_base" && "$tarball_base" != "null" ]] || die "latest.json missing .tarball_base" 1
+  log "installing genie v${version}"
+  tarball="$(download_and_verify "$version" "$platform" "$tarball_base")"
+  extract_and_link "$tarball"
+  handoff_to_subcommand
 }
 
 main "$@"
