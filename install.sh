@@ -30,7 +30,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit "${2:-1}"; }
+die()  { printf '\033[1;31mxx\033[0m %s\n' "$1" >&2; exit "${2:-1}"; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1" 3; }
 
 detect_platform() {
@@ -41,6 +41,7 @@ detect_platform() {
     Linux)
       case "$arch" in
         x86_64|amd64)
+          command -v ldd >/dev/null 2>&1 || die "missing prerequisite: ldd (required to detect glibc vs musl)" 3
           if ldd --version 2>&1 | grep -qi musl; then libc="-musl"; else libc="-glibc"; fi
           echo "linux-x64${libc}" ;;
         aarch64|arm64) echo "linux-arm64" ;;
@@ -73,8 +74,12 @@ audit_log() {
 
 verify_with_gh_attestation() {
   command -v gh >/dev/null 2>&1 || return 1
-  log "verifying via gh attestation (owner=${REPO%/*})"
-  gh attestation verify "$1" --owner "${REPO%/*}" >/dev/null 2>&1
+  log "verifying via gh attestation (repo=${REPO}, identity pinned)"
+  gh attestation verify "$1" \
+    --repo "$REPO" \
+    --cert-identity-regex "$EXPECTED_COSIGN_IDENTITY" \
+    --cert-oidc-issuer "$EXPECTED_COSIGN_ISSUER" \
+    >/dev/null 2>&1
 }
 
 verify_with_cosign() {
@@ -136,6 +141,7 @@ extract_and_link() {
 
 handoff_to_subcommand() {
   log "handing off to: genie install (shell-rc + completions wiring)"
+  rm -rf "$TMP_DIR"
   exec "$LOCAL_BIN/genie" install
 }
 
