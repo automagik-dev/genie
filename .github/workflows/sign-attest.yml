@@ -56,7 +56,24 @@ jobs:
   # ---------------------------------------------------------------------------
   prepare:
     name: Prepare hashes for SLSA
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # SECURITY GUARD — prevents an untrusted PR-built Build Tarballs run from
+    # downstream-triggering this workflow and getting tarballs signed with our
+    # keyless cosign identity / GitHub Attestations API token. workflow_run
+    # propagates id-token + attestations write tokens even when the upstream
+    # was unprivileged (PR contributor), so the guard MUST be on every job
+    # that holds those write scopes — and on `prepare` because every
+    # downstream privileged job depends on it. We accept:
+    #   - our own workflow_dispatch (only triggerable by maintainers)
+    #   - workflow_run from upstream `push` events on dev/main/v* tag (the
+    #     trusted release paths); upstream `pull_request` is rejected.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       (github.event.workflow_run.head_branch == 'main' ||
+        github.event.workflow_run.head_branch == 'dev' ||
+        startsWith(github.event.workflow_run.head_branch, 'v')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -134,6 +151,17 @@ jobs:
   provenance:
     name: SLSA Provenance (Level 3)
     needs: [prepare]
+    # SECURITY GUARD — see prepare job. This job mints OIDC tokens that
+    # produce SLSA L3 attestations under our identity; the guard rejects
+    # workflow_run dispatched from upstream pull_request builds.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       (github.event.workflow_run.head_branch == 'main' ||
+        github.event.workflow_run.head_branch == 'dev' ||
+        startsWith(github.event.workflow_run.head_branch, 'v')))
     permissions:
       id-token: write    # OIDC for SLSA provenance signing
       contents: read     # read repo for builder ref pinning
@@ -152,6 +180,19 @@ jobs:
   sign:
     name: Sign ${{ matrix.platform }}
     needs: [prepare, provenance]
+    # SECURITY GUARD — see prepare job. This job mints OIDC tokens for
+    # cosign keyless signing AND registers GitHub Attestations API entries
+    # under our owner identity; both must be denied to upstream PR-triggered
+    # workflow_run dispatches. id-token + attestations write scopes make
+    # this the most attack-attractive job in the workflow.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       (github.event.workflow_run.head_branch == 'main' ||
+        github.event.workflow_run.head_branch == 'dev' ||
+        startsWith(github.event.workflow_run.head_branch, 'v')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
