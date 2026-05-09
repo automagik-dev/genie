@@ -8,6 +8,38 @@ import { App } from './app.js';
 import { createTuiKeymap } from './keymap.js';
 import { installOpenTui20Bridge } from './opentui-bridge.js';
 
+// xterm DECRST sequence that disables button-event drag tracking (?1002).
+// OpenTUI 0.2.6 hardcodes `?1002h` inside its native `enableMouse` (upstream
+// `anomalyco/opentui@v0.2.6` packages/core/src/zig/terminal.zig:593-596;
+// callers in packages/core/src/renderer.ts around the suspend/resume + useMouse
+// setter). Emitting `?1002l` after each `enableMouse` strips the drag bit while
+// preserving the click reporting (?1000h) Nav still uses. See
+// `.genie/wishes/tui-native-selection/WISH.md` (Jaw A). Once anomalyco/opentui
+// exposes a `MouseLevel` surface (Jaw C), this override can be deleted.
+const ESC_DISABLE_DRAG_TRACKING = '\x1b[?1002l';
+
+export function disableDragTracking(stdout: NodeJS.WritableStream = process.stdout): void {
+  stdout.write(ESC_DISABLE_DRAG_TRACKING);
+}
+
+interface MouseEnableable {
+  enableMouse: () => void;
+}
+
+export function installNativeSelectionOverride(
+  renderer: MouseEnableable,
+  stdout: NodeJS.WritableStream = process.stdout,
+): void {
+  const originalEnableMouse = renderer.enableMouse.bind(renderer);
+  renderer.enableMouse = () => {
+    originalEnableMouse();
+    disableDragTracking(stdout);
+  };
+  // The renderer's setupTerminal already called enableMouse() before we wrapped
+  // it, so apply the override once for that initial invocation.
+  disableDragTracking(stdout);
+}
+
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 const FALSY = new Set(['0', 'false', 'no', 'off']);
 
@@ -70,6 +102,7 @@ export async function renderNav(): Promise<void> {
   // macOS local ptys have repeatedly hit OpenTUI native hot loops. Keep the TUI
   // usable there, but default to a conservative renderer and allow env opt-ins.
   const renderer = await createCliRenderer(resolveTuiRendererConfig());
+  installNativeSelectionOverride(renderer as unknown as MouseEnableable);
   const disposeOpenTui20Bridge = installOpenTui20Bridge(renderer);
   const keymap = createTuiKeymap(renderer);
 

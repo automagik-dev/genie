@@ -1,5 +1,11 @@
 /** @jsxImportSource @opentui/react */
 /** Sessions panel — single tree view of tmux sessions > windows > panes */
+/**
+ * Mouse contract: Nav uses click handlers only (onMouseDown). No drag
+ * handlers are registered; drag-to-select is intentionally terminal-owned in
+ * v5 so users get native highlight + Cmd+C. See
+ * .genie/wishes/tui-native-selection/WISH.md (Jaw A).
+ */
 
 import { useKeyboard } from '@opentui/react';
 import { type MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
