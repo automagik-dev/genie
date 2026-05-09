@@ -48,6 +48,9 @@ describe('event registry — closed world', () => {
       'audit.export',
       'consumer.lagged',
       'emit.backpressure.critical',
+      // Wish: spawn-compounding-defects, Group 1 — every spawn emits this
+      // to record which tier decided the team binding (Bug 1 + Bug 4).
+      'spawn.team.resolved',
     ]);
     for (const type of listTypes()) {
       const expected = auditTypes.has(type) ? 'audit' : 'default';
@@ -325,6 +328,16 @@ const fixtures: Record<EventType, Record<string, unknown>> = {
     last_error: 'spawn failed: tmux session not found',
     trigger: 'scheduler',
     exhausted: true,
+  },
+
+  // Wish: spawn-compounding-defects, Group 1 (Bugs 1+4) — every `genie
+  // spawn` records the tier that decided the team binding.
+  'spawn.team.resolved': {
+    agent: 'genie',
+    resolved_team: 'genie',
+    source: 'canonical_self_leader',
+    canonical_team: 'genie',
+    misbound: false,
   },
 };
 

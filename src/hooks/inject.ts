@@ -13,6 +13,41 @@ import { fileURLToPath } from 'node:url';
 import { ensureBaselineAllowedTools } from '../lib/claude-settings.js';
 import { DISPATCHED_EVENTS, DISPATCHED_EVENT_MATCHERS } from './types.js';
 
+/**
+ * Audit-event emission dependency — overridable for testing. Mirrors the
+ * pattern in src/hooks/handlers/session-sync.ts: when null, the inject layer
+ * lazy-imports `recordAuditEvent` from `../lib/audit.js` at call time. Tests
+ * that want to assert the {settings.hook.injected, settings.hook.dedup.skip,
+ * settings.hook.dedup.collapse_drift} classification install a mock here and
+ * reset in afterEach.
+ */
+type EmitAuditEventFn = (
+  entityType: string,
+  entityId: string,
+  eventType: string,
+  actor: string | null,
+  details: Record<string, unknown>,
+) => Promise<void>;
+
+export const _deps: {
+  emitAuditEvent: EmitAuditEventFn | null;
+} = {
+  emitAuditEvent: null,
+};
+
+async function emitInjectAudit(
+  eventType: string,
+  settingsPath: string,
+  details: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const fn = _deps.emitAuditEvent ?? (await import('../lib/audit.js')).recordAuditEvent;
+    await fn('hooks', settingsPath, eventType, process.env.GENIE_AGENT_NAME ?? 'cli', details);
+  } catch {
+    // Best-effort — never block the inject path on audit failure.
+  }
+}
+
 // Re-export `homedir` symbol so the binary-candidates resolver below has a
 // stable import target — keeping the existing `homedir()` callsite intact in
 // `claudeConfigDir()`.
@@ -127,16 +162,6 @@ async function readSettings(settingsPath: string): Promise<Record<string, unknow
   }
 }
 
-/** True if every dispatched event already matches both desired matcher AND command. */
-function allEventsAlreadyInjected(existingHooks: HooksConfig, hooksConfig: HooksConfig): boolean {
-  return DISPATCHED_EVENTS.every((event) => {
-    const existing = existingHooks[event];
-    const desiredCommand = hooksConfig[event][0].hooks[0].command;
-    const desiredMatcher = hooksConfig[event][0].matcher;
-    return existing?.some((m) => m.matcher === desiredMatcher && m.hooks?.some((h) => h.command === desiredCommand));
-  });
-}
-
 /** True if no obsolete events (removed from DISPATCHED_EVENT_MATCHERS) still carry a genie entry. */
 function hasNoObsoleteGenieEntries(existingHooks: HooksConfig): boolean {
   return Object.keys(existingHooks).every((event) => {
@@ -168,45 +193,131 @@ function pruneObsoleteGenieEntries(mergedHooks: HooksConfig): void {
   }
 }
 
+/** Per-event classification for audit-emission and write decisions. */
+type UpsertResult = 'injected' | 'dedup.skip' | 'dedup.collapse_drift';
+
 /**
- * Refresh existing matcher entries: any matcher with a genie-dispatch hook
- * inside it gets its `matcher` field rewritten to the desired value (so
- * PostToolUse '*' → 'SendMessage' on next inject) and its command + timeout
- * refreshed.
+ * Add, refresh, or collapse the genie entry for one event in-place on
+ * mergedHooks. Returns the per-event classification.
+ *
+ * Three cases:
+ *   - `injected`: no existing genie-dispatch hook for this event. Append the
+ *     canonical entry alongside any pre-existing user hooks.
+ *   - `dedup.skip`: exactly one matcher entry under this event has the
+ *     canonical `{matcher, command, timeout}` triplet. Leave the array
+ *     untouched (idempotent).
+ *   - `dedup.collapse_drift`: existing genie-shape entries differ from the
+ *     canonical triplet (drifted command path, wrong matcher, wrong timeout,
+ *     OR multiple entries — the historical 65/82 duplicate-bug case). Strip
+ *     ALL genie hooks across all matcher entries (preserving non-genie hooks
+ *     alongside them), then append the single canonical entry.
+ *
+ * The `dedup.collapse_drift` branch is what fixes the duplicate-hook
+ * accumulation: any number of genie-shape entries with any path-drifted
+ * command (current `genie-hook` binary, older path, bun-fork form, codex
+ * variant) is collapsed to exactly one canonical entry per event.
  */
-function refreshMatcherEntries(entries: HookMatcher[], genieEntry: HookMatcher): HookMatcher[] {
-  return entries.map((matcher) => {
-    const hasGenieHook = matcher.hooks?.some((h) => isGenieDispatchCommand(h.command));
-    return {
-      ...matcher,
-      matcher: hasGenieHook ? genieEntry.matcher : matcher.matcher,
-      hooks: matcher.hooks?.map((hook) =>
-        isGenieDispatchCommand(hook.command)
-          ? { ...hook, command: genieEntry.hooks[0].command, timeout: DISPATCH_TIMEOUT }
-          : hook,
-      ),
-    };
-  });
+function upsertGenieEntry(mergedHooks: HooksConfig, event: string, genieEntry: HookMatcher): UpsertResult {
+  const existing = mergedHooks[event] ?? [];
+
+  const canonicalCommand = genieEntry.hooks[0].command;
+  const canonicalTimeout = genieEntry.hooks[0].timeout;
+  const canonicalMatcher = genieEntry.matcher;
+
+  let genieMatcherCount = 0;
+  let canonicalMatch = false;
+  for (const entry of existing) {
+    // Defensive: `existing` can hold null/non-object entries when user-authored
+    // settings.json is malformed. Match the script-side `Array.isArray` guard
+    // in `scripts/dedup-team-settings.ts:dedupHooks` so both paths classify
+    // unrecognized shapes the same way (skipped, never mutated).
+    if (!entry || typeof entry !== 'object') continue;
+    const hooksArr = Array.isArray(entry.hooks) ? entry.hooks : [];
+    const genieHooks = hooksArr.filter((h) => h && isGenieDispatchCommand(h.command));
+    if (genieHooks.length === 0) continue;
+    genieMatcherCount++;
+    if (
+      entry.matcher === canonicalMatcher &&
+      hooksArr.length === 1 &&
+      genieHooks.length === 1 &&
+      genieHooks[0].type === 'command' &&
+      genieHooks[0].command === canonicalCommand &&
+      genieHooks[0].timeout === canonicalTimeout
+    ) {
+      canonicalMatch = true;
+    }
+  }
+
+  if (genieMatcherCount === 0) {
+    mergedHooks[event] = [...existing, genieEntry];
+    return 'injected';
+  }
+
+  if (genieMatcherCount === 1 && canonicalMatch) {
+    mergedHooks[event] = existing;
+    return 'dedup.skip';
+  }
+
+  // Drift / duplicate detected. Strip every genie-shape hook across all
+  // matcher entries, preserve any non-genie hooks alongside them (drop the
+  // matcher entry entirely if it had ONLY genie hooks), then append a single
+  // canonical genie entry. Same defensive guards as the upper loop — malformed
+  // entries are passed through untouched rather than crashed on.
+  const stripped: HookMatcher[] = [];
+  for (const entry of existing) {
+    if (!entry || typeof entry !== 'object') {
+      stripped.push(entry);
+      continue;
+    }
+    const hooksArr = Array.isArray(entry.hooks) ? entry.hooks : [];
+    const nonGenieHooks = hooksArr.filter((h) => h && !isGenieDispatchCommand(h.command));
+    if (nonGenieHooks.length > 0) {
+      stripped.push({ ...entry, hooks: nonGenieHooks });
+    } else if (!Array.isArray(entry.hooks)) {
+      // No `hooks` array at all — preserve the entry; not our schema.
+      stripped.push(entry);
+    }
+  }
+  mergedHooks[event] = [...stripped, genieEntry];
+  return 'dedup.collapse_drift';
 }
 
-/** Add or refresh the genie entry for one event in-place on mergedHooks. */
-function upsertGenieEntry(mergedHooks: HooksConfig, event: string, genieEntry: HookMatcher): void {
-  const existingEntries = refreshMatcherEntries(mergedHooks[event] ?? [], genieEntry);
-  const alreadyPresent = existingEntries.some((m) => m.hooks?.some((h) => isGenieDispatchCommand(h.command)));
-  mergedHooks[event] = alreadyPresent ? existingEntries : [...existingEntries, genieEntry];
+/** Roll up per-event upsert results into a single classification for audit. */
+function classifyInject(perEvent: UpsertResult[], hadObsolete: boolean): UpsertResult {
+  if (perEvent.includes('injected')) return 'injected';
+  if (hadObsolete || perEvent.includes('dedup.collapse_drift')) return 'dedup.collapse_drift';
+  return 'dedup.skip';
 }
 
 /**
  * Inject genie hook dispatch into a settings.json file.
  * Preserves existing non-hook settings. Overwrites existing hooks.
+ *
+ * Emits one of three audit events per call (best-effort):
+ *   - `settings.hook.injected`         — at least one event got a fresh genie entry.
+ *   - `settings.hook.dedup.collapse_drift` — at least one event had drifted/dup
+ *     genie entries that were collapsed to the single canonical triplet, OR
+ *     obsolete genie entries (SessionStart/etc.) were pruned.
+ *   - `settings.hook.dedup.skip`       — every event already had the canonical
+ *     `{matcher, command, timeout}` triplet; this call was a no-op for hooks.
  */
 async function injectIntoFile(settingsPath: string): Promise<boolean> {
   const settings = await readSettings(settingsPath);
   const hooksConfig = buildHooksConfig();
   const existingHooks = settings.hooks as HooksConfig | undefined;
 
-  const hooksAlreadyClean =
-    !!existingHooks && allEventsAlreadyInjected(existingHooks, hooksConfig) && hasNoObsoleteGenieEntries(existingHooks);
+  const hadObsolete = !!existingHooks && !hasNoObsoleteGenieEntries(existingHooks);
+
+  const mergedHooks: HooksConfig = existingHooks ? { ...existingHooks } : {};
+  pruneObsoleteGenieEntries(mergedHooks);
+
+  const perEventResults: UpsertResult[] = [];
+  for (const event of DISPATCHED_EVENTS) {
+    perEventResults.push(upsertGenieEntry(mergedHooks, event, hooksConfig[event][0]));
+  }
+
+  const classification = classifyInject(perEventResults, hadObsolete);
+  const hooksChanged = classification !== 'dedup.skip';
 
   // Seed GENIE_BASELINE_ALLOWED_TOOLS (currently `AskUserQuestion`) into the
   // team's settings.json. Without this, CC team mode reads team settings with
@@ -215,16 +326,19 @@ async function injectIntoFile(settingsPath: string): Promise<boolean> {
   // side gap left after #1688's global-only fix in `ensureClaudeSettingsSafe`.
   const permissionsChanged = ensureBaselineAllowedTools(settings);
 
-  if (hooksAlreadyClean && !permissionsChanged) {
+  // Always emit the audit event so the inject path is fully observable, even
+  // when nothing on disk changes (true idempotent fast path).
+  await emitInjectAudit(`settings.hook.${classification}`, settingsPath, {
+    per_event: Object.fromEntries(DISPATCHED_EVENTS.map((e, i) => [e, perEventResults[i]])),
+    pruned_obsolete: hadObsolete,
+    permissions_changed: permissionsChanged,
+  });
+
+  if (!hooksChanged && !permissionsChanged) {
     return false; // already injected and clean — nothing to do
   }
 
-  if (!hooksAlreadyClean) {
-    const mergedHooks: HooksConfig = existingHooks ? { ...existingHooks } : {};
-    pruneObsoleteGenieEntries(mergedHooks);
-    for (const event of DISPATCHED_EVENTS) {
-      upsertGenieEntry(mergedHooks, event, hooksConfig[event][0]);
-    }
+  if (hooksChanged) {
     settings.hooks = mergedHooks;
   }
 
