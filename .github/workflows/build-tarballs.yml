@@ -126,11 +126,15 @@ jobs:
           TARBALL="dist/genie-${VERSION}-linux-x64-musl.tar.gz"
           STAGE="$(mktemp -d)"
           tar -xzf "${TARBALL}" -C "${STAGE}"
-          docker run --rm -v "${STAGE}:/app:ro" alpine:3.19 sh -c '
+          # bun's musl binary dynamically links to libstdc++ (libgcc); alpine
+          # ships musl libc but not libstdc++ by default — install it before
+          # exec'ing the binary.
+          docker run --rm -v "${STAGE}:/app:ro" -e VERSION="${VERSION}" alpine:3.19 sh -c '
             set -e
+            apk add --no-cache libstdc++ >/dev/null
             ACTUAL=$(/app/genie --version 2>&1 | tail -n1)
-            if [ "${ACTUAL}" != "'"${VERSION}"'" ]; then
-              echo "::error::genie --version mismatch: expected '"'"${VERSION}"'"', got ${ACTUAL}"
+            if [ "${ACTUAL}" != "${VERSION}" ]; then
+              echo "::error::genie --version mismatch: expected ${VERSION}, got ${ACTUAL}"
               exit 1
             fi
             /app/genie /work --help >/dev/null
