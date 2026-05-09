@@ -8,7 +8,8 @@
 #   plugins/, skills/, templates/, VERSION
 #
 # Size budget: each tarball ≤80 MB compressed; the script fails if exceeded.
-# Platforms: linux-x64-glibc, linux-x64-musl, linux-arm64, darwin-x64, darwin-arm64.
+# Platforms: linux-x64-glibc, linux-x64-musl, linux-arm64, darwin-arm64.
+# (darwin-x64 / Intel Mac dropped — Apple ended Intel Mac sales in 2022.)
 #
 # Usage: scripts/build-binary.sh --platform <p> [--version <v>]
 # Exit codes: 0 ok | 1 build failed | 2 invalid args | 3 size budget exceeded
@@ -20,14 +21,13 @@ DIST_DIR="${REPO_ROOT}/dist"
 ENTRY_POINT="${REPO_ROOT}/src/genie.ts"
 SIZE_BUDGET_MB=80
 
-PLATFORMS=(linux-x64-glibc linux-x64-musl linux-arm64 darwin-x64 darwin-arm64)
+PLATFORMS=(linux-x64-glibc linux-x64-musl linux-arm64 darwin-arm64)
 
 bun_target_for() {
   case "$1" in
     linux-x64-glibc) echo "bun-linux-x64" ;;
     linux-x64-musl)  echo "bun-linux-x64-musl" ;;
     linux-arm64)     echo "bun-linux-arm64" ;;
-    darwin-x64)      echo "bun-darwin-x64" ;;
     darwin-arm64)    echo "bun-darwin-arm64" ;;
     *) return 1 ;;
   esac

@@ -22,6 +22,10 @@ name: Build Tarballs
 # (copied + adapted), not REFERENCED via composite action — drift is fine,
 # cross-repo coupling is not.
 
+# Platforms: linux-x64-glibc, linux-x64-musl, linux-arm64, darwin-arm64.
+# darwin-x64 (Intel Mac) is NOT supported — Apple ended Intel Mac sales in
+# 2022; Intel-Mac users run via Rosetta or the linux-x64 path under Docker.
+
 on:
   push:
     tags:
@@ -59,8 +63,6 @@ jobs:
             runner:   ubuntu-latest
           - platform: linux-arm64
             runner:   ubuntu-24.04-arm
-          - platform: darwin-x64
-            runner:   macos-13
           - platform: darwin-arm64
             runner:   macos-latest
 
