@@ -1,9 +1,11 @@
 name: Release
 
 # Creates a GitHub Release object (tag + changelog + signed artifacts) on
-# every push to main. npm publishing is handled separately by version.yml;
-# this workflow owns the signed-tarball path + SLSA Level 3 provenance
-# attestation. See .genie/wishes/genie-supply-chain-signing/WISH.md.
+# every push to main. There is no npm registry publish step anywhere — npm
+# distribution was discontinued 2026-05-09 (wish genie-distribution-cutover
+# G6, see docs/release-process.mdx). This workflow owns the signed-tarball
+# path + SLSA Level 3 provenance attestation.
+# See .genie/wishes/genie-supply-chain-signing/WISH.md.
 #
 # Signing is cosign keyless (OIDC via GitHub Actions) — KEYLESS ONLY.
 # There is no long-lived fallback key: no private key in repo secrets, no

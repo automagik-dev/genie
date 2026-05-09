@@ -1,37 +1,35 @@
 name: Version
 
-# Single source of npm publishing for @automagik/genie.
+# Single source of version derivation + tag push for @automagik/genie.
 #
-#   Trigger                              Context  npm tag   Bump?
-#   -----------------------------------  -------  --------  ------
-#   workflow_run (CI success on dev)     dev      @next     yes
-#   workflow_run (merge PR to main)      main     @latest   no
-#   workflow_dispatch (manual)           dev      @next     yes
+#   Trigger                              Context  Bump?
+#   -----------------------------------  -------  ------
+#   workflow_run (CI success on dev)     dev      yes
+#   workflow_run (merge PR to main)      main     no
+#   workflow_dispatch (manual)           dev      yes
 #
 # On dev triggers we DERIVE a fresh version (today + build-count),
-# commit + tag + push back to dev, then publish as @next.
+# commit + tag + push back to dev. The pushed tag triggers
+# release-publish.yml which attaches the signed GitHub Release
+# tarballs.
 #
-# On main triggers (merge from dev) we DO NOT bump — the version that
-# release.yml tagged into the GitHub Release on the same main push is
-# already in package.json. We just publish that exact version as
-# @latest, so npm and the GitHub Release agree. Bumping on main
-# caused a historical drift (release v4.260423.9 vs npm latest
-# 4.260423.10 on 2026-04-23).
+# On main triggers (merge from dev) we DO NOT bump — the version is
+# already in package.json from the dev tag. The pushed tag (also
+# from the merge) drives the @latest release-publish run.
 #
-# Auth: npm OIDC Trusted Publishing. The package's only Trusted
-# Publisher entry on npmjs.com is this file (version.yml). All
-# other workflows defer to this one for npm publishing.
+# npm distribution is discontinued (2026-05-09 hard cutover, wish
+# genie-distribution-cutover G6). Operators install via install.sh
+# from GitHub Releases; `genie update` is the canonical update path.
+# See docs/release-process.mdx.
 #
 # SHA-pin invariant (Invariant A — correctness over completeness):
 # Version always tags the commit that passed CI, never branch HEAD.
 # Per-branch concurrency with cancel-in-progress means older runs
 # supersede when dev advances during a Version run (back-to-back
 # merges). When dev advances past the SHA we checked out, the
-# `git push --atomic` rejects and we skip publish rather than
-# mis-tag — emitting `release-race.next-tag-pin-skipped.detected`
-# in the CI log. The next merge's run catches up and republishes.
-# The git-tag ledger is 1:1 with @next-published builds, not 1:1
-# with merges.
+# `git push --atomic` rejects rather than mis-tag — emitting
+# `release-race.next-tag-pin-skipped.detected` in the CI log. The
+# next merge's run catches up.
 
 on:
   workflow_run:
@@ -42,7 +40,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 concurrency:
   group: version-${{ github.event.workflow_run.head_branch || 'manual' }}
@@ -72,15 +69,13 @@ jobs:
         run: |
           BRANCH="${{ github.event.workflow_run.head_branch || 'dev' }}"
           if [ "$BRANCH" = "main" ]; then
-            # Main push: publish the version release.yml just tagged.
-            # Do NOT bump — avoids drift between GitHub Release tag and npm.
+            # Main push: tag whatever release.yml just landed.
+            # Do NOT bump — package.json already carries the dev-derived version.
             echo "branch=main" >> "$GITHUB_OUTPUT"
-            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
             echo "should_bump=false" >> "$GITHUB_OUTPUT"
           else
-            # Dev push (or manual dispatch): derive + bump + publish @next.
+            # Dev push (or manual dispatch): derive + bump.
             echo "branch=dev" >> "$GITHUB_OUTPUT"
-            echo "npm_tag=next" >> "$GITHUB_OUTPUT"
             echo "should_bump=true" >> "$GITHUB_OUTPUT"
           fi
           echo "prefix=4" >> "$GITHUB_OUTPUT"
@@ -148,92 +143,23 @@ jobs:
 
           git tag "v${VERSION}"
           # If dev advanced past the SHA we checked out, --atomic rejects
-          # the push. That's the desired Invariant A behavior: skip publish
-          # rather than mis-tag. Emit a structured notice so the skip is
-          # visible in CI logs and detector-greppable.
+          # the push. That's the desired Invariant A behavior: skip rather
+          # than mis-tag. Emit a structured notice so the skip is visible
+          # in CI logs and detector-greppable. The next merge's run catches
+          # up.
           SHORT_SHA="${GITHUB_SHA:0:7}"
           if ! git push --atomic origin "HEAD:refs/heads/${BRANCH}" "refs/tags/v${VERSION}"; then
-            echo "::notice ::release-race.next-tag-pin-skipped.detected dev advanced past triggering SHA ${SHORT_SHA}; @next publish skipped — next merge will republish"
-            # Tag locally so subsequent steps know to skip publish.
-            echo "PUBLISH_SKIPPED=true" >> "$GITHUB_ENV"
+            echo "::notice ::release-race.next-tag-pin-skipped.detected dev advanced past triggering SHA ${SHORT_SHA}; tag push skipped — next merge will republish"
             exit 0
           fi
 
-      # On main context we publish whatever package.json currently holds —
-      # that's the version release.yml tagged into the GitHub Release on
-      # the same main push, which is exactly what @latest should point at.
-      - name: Resolve publish version
-        id: pubver
-        if: env.PUBLISH_SKIPPED != 'true'
-        run: |
-          if [ "${{ steps.context.outputs.should_bump }}" = "true" ]; then
-            VERSION="${{ steps.version.outputs.version }}"
-          else
-            VERSION=$(jq -r '.version' package.json)
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Publishing ${VERSION} with tag ${{ steps.context.outputs.npm_tag }}"
-
-      - name: Build CLI
-        if: env.PUBLISH_SKIPPED != 'true'
-        run: bun run build
-
-      - name: Setup Node (for npm OIDC publish)
-        uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      # Node 22 bundles npm 10.x; npm Trusted Publishing (automatic OIDC
-      # token exchange) requires npm >= 11.5.1. Without this upgrade,
-      # `npm publish` sends the empty placeholder token and the registry
-      # returns a misleading 404 instead of the real 401/403 auth failure.
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
-
-      - name: Publish to npm via OIDC
-        if: env.PUBLISH_SKIPPED != 'true'
-        env:
-          HUSKY: "0"
-          # npm auto-enables provenance in any CI env with `id-token: write`,
-          # regardless of the --provenance CLI flag. Self-hosted Blacksmith
-          # runners fail the server-side sigstore check with 422. Disable
-          # auto-provenance explicitly; OIDC token exchange still happens.
-          NPM_CONFIG_PROVENANCE: "false"
-        # On main context: publish package.json's current version as @latest
-        # (no bump, matches the GitHub Release tag exactly).
-        # On dev context: publish the version we just bumped to as @next.
-        run: npm publish --access public --tag ${{ steps.context.outputs.npm_tag }}
-
-      # Post-publish audit (informational only) — runs the
-      # `release-race.next-tag-mismatch.detected` v2 detector against the
-      # registry state we just produced. Fires the event JSON line on
-      # stdout if @next still advertises a tag whose parent SHA != the
-      # latest dev merge. `continue-on-error: true` means a fire never
-      # fails the workflow — the audit is observability, not a gate.
-      # Only meaningful on dev (@next) publishes; @latest publishes from
-      # main don't interact with the @next pin.
-      # See docs/_internal/detectors/release-race.md for full triage.
-      - name: Audit @next tag pinning (informational)
-        if: env.PUBLISH_SKIPPED != 'true' && steps.context.outputs.npm_tag == 'next'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/audit-next-tag-pinning.sh
-
-      # The post-publish `npm deprecate` step lived here through
-      # 4.260428.8 and was retired on 2026-04-28 — it depended on a
-      # classic NPM_TOKEN secret (OIDC trusted-publisher tokens are
-      # publish-only, can't deprecate), and even with valid auth it
-      # raced the registry's <1s post-publish indexing window. Both
-      # failure modes are documented at:
-      #   automagik.dev/genie/security/distribution-sovereignty
-      #
-      # The npm soft-deprecation message moves to the postinstall
-      # shim per the umbrella sovereignty plan: every install via
-      # npm prints the canonical-install redirect at install time,
-      # which is closer to the user (lives in the package, not the
-      # registry config) and works without long-lived secrets.
-      #
-      # NPM_TOKEN secret is no longer used anywhere in this repo.
-      # Safe to delete from automagik-dev/genie repo + org settings.
+      # npm distribution was discontinued 2026-05-09 (wish
+      # genie-distribution-cutover G6). The previous npm-publish, audit,
+      # and deprecate steps have been deleted. Tag pushes from this
+      # workflow drive release-publish.yml, which attaches the signed
+      # GitHub Release tarballs operators install via install.sh.
+      # The npm OIDC trusted-publisher entry on npmjs.com and any
+      # NPM_TOKEN secrets are no longer used by this repo and can be
+      # removed from repo + org settings.
+      # See docs/release-process.mdx for the full posture and the
+      # operator-side `npm deprecate` runbook.
