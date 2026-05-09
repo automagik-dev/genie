@@ -1,0 +1,242 @@
+name: Release Publish
+
+# Group 3 of genie-distribution-cutover — attaches the signed tarballs +
+# cosign bundles + SLSA attestations produced by sign-attest.yml to the
+# v<version> GitHub Release, and (for stable, non-draft tag pushes) writes
+# .well-known/latest.json into the repo so install.sh + `genie update` can
+# resolve the latest version per channel without a CDN.
+#
+# This replaces the cutover G9 cdn.automagik.dev pipeline. GitHub Releases
+# is free, maintained by GitHub, and `gh attestation verify` reads cosign
+# signatures from Sigstore Rekor without any custom verification server.
+#
+# Trigger chain (lifted from pgserve, adapted for Sign + Attest upstream):
+#   tag push v* → Build Tarballs → Sign + Attest Tarballs → THIS workflow
+#                                  (workflow_run, success only)
+#
+# workflow_dispatch is the manual override for re-publishing or promoting
+# a draft release; it requires the upstream sign-attest run-id so the
+# 12 signed assets (4 platforms × {tarball, bundle, intoto.jsonl}) can
+# be downloaded from that run.
+#
+# Verification by consumers:
+#   gh release download v<version> --repo automagik-dev/genie --pattern '*.tar.gz'
+#   gh attestation verify genie-<version>-<platform>.tar.gz --owner automagik-dev
+#   # OR via cosign:
+#   cosign verify-blob \
+#     --bundle genie-<version>-<platform>.tar.gz.bundle \
+#     --certificate-identity-regexp "^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@" \
+#     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+#     genie-<version>-<platform>.tar.gz
+
+on:
+  workflow_run:
+    workflows: ["Sign + Attest Tarballs"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (must match upstream artifact version)'
+        required: true
+        type: string
+      run_id:
+        description: 'sign-attest.yml run ID to download signed artifacts from'
+        required: true
+        type: string
+      channel:
+        description: 'Release channel (stable = no --prerelease; beta/canary = --prerelease)'
+        required: true
+        type: choice
+        default: stable
+        options:
+          - stable
+          - beta
+          - canary
+      draft:
+        description: 'Create as draft (require manual promotion)?'
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-publish-${{ github.ref }}-${{ inputs.version || github.event.workflow_run.id || github.sha }}
+  cancel-in-progress: false   # never cancel an in-flight publish
+
+permissions:
+  contents: write              # gh release create/upload + push latest.json commit
+
+jobs:
+  publish:
+    name: Publish to GitHub Releases
+    # SECURITY GUARD — mirror sign-attest.yml's pattern. workflow_run
+    # propagates `contents: write` even when the upstream run was started
+    # from an untrusted PR. Without this guard, a contributor PR that
+    # touches a sign-attest input path could attach attacker-controlled
+    # tarballs to a real GitHub Release. We accept:
+    #   - our own workflow_dispatch (only triggerable by maintainers)
+    #   - workflow_run from upstream `push` events on dev/main/v* tag
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       (github.event.workflow_run.head_branch == 'main' ||
+        github.event.workflow_run.head_branch == 'dev' ||
+        startsWith(github.event.workflow_run.head_branch, 'v')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve upstream sign-attest run-id
+        id: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ inputs.run_id }}" ]]; then
+            RUN_ID="${{ inputs.run_id }}"
+          elif [[ -n "${{ github.event.workflow_run.id }}" ]]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+          else
+            echo "::error::cannot determine sign-attest run-id (workflow_run trigger or workflow_dispatch run_id input required)"
+            exit 1
+          fi
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "Upstream sign-attest run-id: ${RUN_ID}"
+
+      - name: Download all signed artifacts (sign-attest.yml)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: genie-*-signed
+          merge-multiple: true
+          path: dist
+          run-id: ${{ steps.src.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve version + channel + asset inventory
+        id: meta
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s nullglob
+          TARBALLS=( genie-*.tar.gz )
+          if [[ ${#TARBALLS[@]} -eq 0 ]]; then
+            echo "::error::no signed tarballs downloaded from upstream run"
+            ls -la
+            exit 1
+          fi
+          # Naming contract from sign-attest.yml output: genie-<VERSION>-<PLATFORM>.tar.gz
+          # where PLATFORM ∈ {linux-x64-glibc, linux-x64-musl, linux-arm64, darwin-arm64}.
+          FIRST="${TARBALLS[0]}"
+          PARSED=$(echo "${FIRST}" | sed -E 's/^genie-(.+)-(linux-x64-glibc|linux-x64-musl|linux-arm64|darwin-arm64)\.tar\.gz$/\1/')
+          if [[ -z "${PARSED}" || "${PARSED}" == "${FIRST}" ]]; then
+            echo "::error::could not parse VERSION from filename '${FIRST}'"
+            exit 1
+          fi
+          VERSION="${PARSED}"
+          if [[ -n "${INPUT_VERSION:-}" && "${INPUT_VERSION}" != "${VERSION}" ]]; then
+            echo "::error::workflow_dispatch input version='${INPUT_VERSION}' does not match upstream artifact version='${VERSION}'"
+            exit 1
+          fi
+          # Channel: workflow_dispatch picks; workflow_run defaults to stable.
+          CHANNEL="${INPUT_CHANNEL:-}"
+          if [[ -z "${CHANNEL}" ]]; then
+            CHANNEL="stable"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
+          echo "Resolved: VERSION=${VERSION} CHANNEL=${CHANNEL}"
+          echo "Tarballs: ${#TARBALLS[@]}"
+          echo "=== dist/ inventory (expect 12 files: 4× tarball + 4× bundle + 4× intoto.jsonl) ==="
+          ls -la
+
+      - name: Create or update GitHub Release with all 12 signed assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          CHANNEL: ${{ steps.meta.outputs.channel }}
+          DRAFT_FLAG: ${{ inputs.draft && '--draft' || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRERELEASE_FLAG=""
+          if [[ "${CHANNEL}" != "stable" ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          if ! gh release view "v${VERSION}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "v${VERSION}" \
+              --repo "${{ github.repository }}" \
+              --title "v${VERSION}" \
+              --notes "Release v${VERSION} (channel: ${CHANNEL})" \
+              ${DRAFT_FLAG} ${PRERELEASE_FLAG}
+          fi
+
+          if [[ -d dist && -n "$(ls -A dist 2>/dev/null)" ]]; then
+            gh release upload "v${VERSION}" \
+              --repo "${{ github.repository }}" \
+              --clobber \
+              dist/*
+          else
+            echo "::error::dist/ is empty — nothing to upload"
+            exit 1
+          fi
+
+          # Sanity: confirm release page now lists all 12 assets.
+          ASSET_COUNT=$(gh release view "v${VERSION}" --repo "${{ github.repository }}" --json assets --jq '.assets | length')
+          echo "v${VERSION} now lists ${ASSET_COUNT} assets"
+          if [[ "${ASSET_COUNT}" -lt 12 ]]; then
+            echo "::warning::expected 12 assets, found ${ASSET_COUNT}"
+          fi
+
+      # ---------------------------------------------------------------------
+      # latest.json channel pointer — committed to main so install.sh +
+      # `genie update` can resolve current version per channel via:
+      #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/latest.json
+      # Only runs for stable, non-draft publishes. Draft releases never
+      # update the channel pointer; non-stable channels (beta/canary) get
+      # their own future channel files (out of scope for this group).
+      # ---------------------------------------------------------------------
+      - name: Update .well-known/latest.json (stable, non-draft only)
+        if: ${{ steps.meta.outputs.channel == 'stable' && !inputs.draft }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Switch to a fresh checkout of main; the workflow_run trigger
+          # may have checked out a tag commit (head_branch=v...).
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+          mkdir -p .well-known
+          cat > .well-known/latest.json <<EOF
+          {
+            "schema_version": 1,
+            "channel": "stable",
+            "version": "${VERSION}",
+            "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "tarball_base": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}",
+            "platforms": ["linux-x64-glibc", "linux-x64-musl", "linux-arm64", "darwin-arm64"]
+          }
+          EOF
+
+          if git diff --quiet .well-known/latest.json; then
+            echo "latest.json unchanged — nothing to commit"
+            exit 0
+          fi
+
+          git config user.name "release-bot"
+          git config user.email "release-bot@namastex.com"
+          git add .well-known/latest.json
+          git commit -m "chore(release): update latest.json → v${VERSION}"
+          git push origin main || {
+            echo "::warning::push to main failed (likely branch protection or permission); update .well-known/latest.json manually"
+            exit 0
+          }

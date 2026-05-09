@@ -1,5 +1,9 @@
 # Wish: Distribution Exodus — own the install channel
 
+> [!IMPORTANT]
+> SUPERSEDED by [genie-distribution-cutover](../genie-distribution-cutover/WISH.md) (2026-05-09). Threat-model + 4-channel fingerprint pinning carry forward; CDN/multi-tier execution path does not.
+
+
 | Field | Value |
 |-------|-------|
 | **Status** | DRAFT |
