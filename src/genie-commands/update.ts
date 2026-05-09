@@ -4,12 +4,14 @@ import {
   closeSync,
   copyFileSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
   readSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -51,7 +53,6 @@ const FETCH_LATEST_TIMEOUT_MS = 5_000;
 const RELEASES_OWNER = 'automagik-dev';
 const RELEASES_REPO = 'genie';
 const RAW_BASE_URL = 'https://raw.githubusercontent.com';
-const RELEASES_BASE_URL = 'https://github.com';
 
 // ============================================================================
 // Verify decision shape — shared with omni#update-unify-stages (SHARED-DESIGN §4.3).
@@ -205,6 +206,73 @@ export function resolvePlatformId(): string {
   );
 }
 
+/**
+ * Resolve the running `genie` binary's filesystem path via `which genie` and
+ * `realpathSync` (follows symlinks). Returns `null` when `which` fails or the
+ * symlink target can't be resolved.
+ */
+export function resolveLiveBinaryPath(): string | null {
+  try {
+    const out = execSync('which genie', { encoding: 'utf-8', timeout: 1500 }).trim();
+    if (!out) return null;
+    try {
+      return realpathSync(out);
+    } catch {
+      return out;
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify that the live `genie` binary lives at the canonical G5 location
+ * (`~/.genie/bin/genie`). Returns the canonical target path when the live
+ * install is canonical; throws with a migration message otherwise.
+ *
+ * Pre-G5 installs (bun-global, npm-global, source clone) place the binary
+ * elsewhere and rely on `$PATH` symlinks. Updating `~/.genie/bin/genie`
+ * for those users would silently leave the active binary on `$PATH`
+ * unchanged. We fail loudly with re-install instructions instead of
+ * pretending success.
+ */
+export function ensureCanonicalInstall(): string {
+  const target = join(GENIE_BIN, 'genie');
+  const live = resolveLiveBinaryPath();
+  if (live === null) {
+    // No live binary on $PATH — first install or pre-install scenario. The
+    // canonical path is the right answer; downstream install.sh sets up the
+    // PATH symlink.
+    return target;
+  }
+  let liveCanonical: string;
+  try {
+    liveCanonical = realpathSync(live);
+  } catch {
+    liveCanonical = live;
+  }
+  let targetCanonical: string;
+  try {
+    targetCanonical = existsSync(target) ? realpathSync(target) : target;
+  } catch {
+    targetCanonical = target;
+  }
+  if (liveCanonical === targetCanonical) {
+    return target;
+  }
+  // Live binary is outside ~/.genie/bin. Refuse to swap silently.
+  throw new Error(
+    [
+      `Live genie binary is at ${live}, not ${target}.`,
+      '  This install pre-dates the GH-Releases cutover (wish G5). `genie update`',
+      '  only manages binaries under ~/.genie/bin/. To migrate, re-run:',
+      '    curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash',
+      '  …which downloads the latest signed tarball, installs the canonical layout,',
+      '  and points your $PATH at ~/.genie/bin/genie.',
+    ].join('\n'),
+  );
+}
+
 interface FetchManifestOptions {
   /** Test seam: replaces the network round-trip with a synchronous stub. */
   fetcher?: (url: string) => Promise<string | null>;
@@ -262,16 +330,6 @@ async function defaultManifestFetcher(url: string): Promise<string | null> {
   const result = await runCommandSilent('curl', ['-fsSL', '--max-time', '5', url], undefined, FETCH_LATEST_TIMEOUT_MS);
   if (!result.success) return null;
   return result.output;
-}
-
-/**
- * Resolve the published version for a channel. Compatibility shim around
- * `fetchLatestManifest` — kept so callers / tests that want only the version
- * string don't have to unwrap the manifest themselves.
- */
-export async function fetchLatestVersion(channel: ReleaseChannel): Promise<string | null> {
-  const manifest = await fetchLatestManifest(channel);
-  return manifest?.version ?? null;
 }
 
 interface DownloadAndVerifyOptions {
@@ -371,10 +429,17 @@ interface AtomicSwapResult {
 /**
  * Atomic binary swap.
  *
- * Pre-flight check: if staging + target share a device id, use `renameSync`
- * (atomic on the same filesystem). Otherwise fall back to copy + fsync +
- * rename so the cross-device operation still leaves the target in a
- * consistent state.
+ * Backup move: target → previousDir is always within `GENIE_BIN`, so it is
+ * guaranteed same-filesystem and uses `renameSync` unconditionally. The
+ * `sameFs` device check only applies to the staging→target leg.
+ *
+ * Same-fs staging swap: `renameSync(staged, target)` — atomic on POSIX.
+ *
+ * Cross-device staging swap: copy staging → `target.tmp` (in the target
+ * directory, so the final `renameSync` is same-fs and atomic) → `fsyncSync`
+ * the bytes → `renameSync(target.tmp, target)`. The live target is preserved
+ * until the replacement is fully written; an interrupted copy leaves only
+ * the orphan `.tmp` file, never a half-written live binary.
  *
  * Old binary is moved to `~/.genie/bin/.previous/genie-<old-version>` so
  * `genie update --rollback` can restore it.
@@ -400,7 +465,6 @@ export function atomicBinarySwap(
   let oldBackup: string | null = null;
   if (existsSync(targetBinPath)) {
     oldBackup = join(previousDir, `genie-${oldVersion}`);
-    // Idempotent: if a previous backup at the same version exists, overwrite.
     if (existsSync(oldBackup)) {
       try {
         rmSync(oldBackup);
@@ -408,36 +472,44 @@ export function atomicBinarySwap(
         // best-effort
       }
     }
-    if (sameFs) {
-      renameSync(targetBinPath, oldBackup);
-    } else {
-      copyFileSync(targetBinPath, oldBackup);
-      try {
-        chmodSync(oldBackup, 0o755);
-      } catch {
-        // best-effort
-      }
-      rmSync(targetBinPath);
-    }
+    // Backup move is always GENIE_BIN/* → GENIE_BIN/.previous/* (same fs by
+    // construction); renameSync is atomic regardless of the staging-side
+    // sameFs flag.
+    renameSync(targetBinPath, oldBackup);
   }
 
   if (sameFs) {
     renameSync(stagedBinPath, targetBinPath);
   } else {
-    // Cross-device: copy then fsync the directory entry, then unlink staging.
-    copyFileSync(stagedBinPath, targetBinPath);
-    try {
-      const fd = openSync(targetBinPath, 'r');
+    // Cross-device: write to a temp file in the TARGET directory so the
+    // final rename is same-fs and atomic. If the copy is interrupted,
+    // we leave an orphan `.tmp` that the next update will overwrite —
+    // never a corrupted live binary.
+    const tmpTarget = `${targetBinPath}.tmp`;
+    if (existsSync(tmpTarget)) {
       try {
-        // Sync the file's bytes so a crash mid-write doesn't leave a partial.
-        require('node:fs').fsyncSync(fd);
+        rmSync(tmpTarget);
+      } catch {
+        // best-effort
+      }
+    }
+    copyFileSync(stagedBinPath, tmpTarget);
+    try {
+      const fd = openSync(tmpTarget, 'r');
+      try {
+        fsyncSync(fd);
       } finally {
         closeSync(fd);
       }
     } catch {
-      // fsync is best-effort; if it fails the rename below still completes.
+      // fsync is best-effort.
     }
-    rmSync(stagedBinPath);
+    renameSync(tmpTarget, targetBinPath);
+    try {
+      rmSync(stagedBinPath);
+    } catch {
+      // staging cleanup is best-effort
+    }
   }
   try {
     chmodSync(targetBinPath, 0o755);
@@ -1129,6 +1201,16 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     process.exit(1);
   }
 
+  // Refuse to swap when the live binary is outside ~/.genie/bin/. Silently
+  // updating a different file would mask the regression on bun/npm-installed
+  // hosts where $PATH still points at the old binary.
+  try {
+    ensureCanonicalInstall();
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
   log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
   log(`Platform: ${platform}`);
   if (latestVersion) {
@@ -1236,7 +1318,12 @@ function cleanupStagingArtifacts(extractDir: string, tarballPath: string): void 
 
 /**
  * Mirror plugins/, skills/, templates/ from the extracted tarball into
- * `~/.genie/`. Best-effort — failures are logged but never block the update.
+ * `~/.genie/`. Stage to a sibling `<dest>.new` directory and `renameSync`
+ * over the live target so concurrent readers (Claude Code's plugin loader)
+ * never observe an empty directory mid-update. The previous live tree
+ * moves to `<dest>.old` and is deleted last.
+ *
+ * Best-effort — failures are logged but never block the update.
  */
 function syncAuxiliaryContent(extractDir: string): void {
   const targets: Array<{ src: string; dest: string; label: string }> = [
@@ -1244,16 +1331,39 @@ function syncAuxiliaryContent(extractDir: string): void {
     { src: join(extractDir, 'skills'), dest: join(GENIE_HOME, 'skills'), label: 'skills' },
     { src: join(extractDir, 'templates'), dest: join(GENIE_HOME, 'templates'), label: 'templates' },
   ];
-  for (const { src, dest, label } of targets) {
-    if (!existsSync(src)) continue;
-    try {
-      if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
-      copyDirSync(src, dest);
-      success(`Refreshed ${label}/ → ${dest}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`Could not refresh ${label}/ (non-fatal): ${msg}`);
-    }
+  for (const target of targets) {
+    if (!existsSync(target.src)) continue;
+    swapAuxiliaryTree(target.src, target.dest, target.label);
+  }
+}
+
+/** Atomic stage+rename for one auxiliary tree. Best-effort recovery on
+ *  failure restores the previous live tree if we crashed after moving it
+ *  aside. Errors are logged but never propagate to the caller. */
+function swapAuxiliaryTree(src: string, dest: string, label: string): void {
+  const stagingDest = `${dest}.new`;
+  const oldDest = `${dest}.old`;
+  try {
+    if (existsSync(stagingDest)) rmSync(stagingDest, { recursive: true, force: true });
+    if (existsSync(oldDest)) rmSync(oldDest, { recursive: true, force: true });
+    copyDirSync(src, stagingDest);
+    if (existsSync(dest)) renameSync(dest, oldDest);
+    renameSync(stagingDest, dest);
+    if (existsSync(oldDest)) rmSync(oldDest, { recursive: true, force: true });
+    success(`Refreshed ${label}/ → ${dest}`);
+  } catch (err) {
+    recoverAuxiliarySwap(dest, stagingDest, oldDest);
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not refresh ${label}/ (non-fatal): ${msg}`);
+  }
+}
+
+function recoverAuxiliarySwap(dest: string, stagingDest: string, oldDest: string): void {
+  try {
+    if (!existsSync(dest) && existsSync(oldDest)) renameSync(oldDest, dest);
+    if (existsSync(stagingDest)) rmSync(stagingDest, { recursive: true, force: true });
+  } catch {
+    // give up; dest is in whatever state it's in
   }
 }
 
@@ -1453,6 +1563,3 @@ async function restartServeIfStaleSafe(): Promise<void> {
     log(`Stale-serve restart skipped (non-fatal): ${msg}`);
   }
 }
-
-// Re-export for cross-CLI tooling that wants the URL primitives.
-export { RELEASES_BASE_URL, RELEASES_OWNER, RELEASES_REPO };

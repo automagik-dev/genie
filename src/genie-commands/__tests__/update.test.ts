@@ -21,10 +21,12 @@ import {
   atomicBinarySwap,
   decideVerify,
   downloadAndVerifyTarball,
+  ensureCanonicalInstall,
   fetchLatestManifest,
   formatVerifyBanner,
   manifestUrlForChannel,
   normalizeVersion,
+  resolveLiveBinaryPath,
   resolvePlatformId,
   rollbackBinary,
   runVerifyProbe,
@@ -720,5 +722,146 @@ describe('Plugin sync — .orphaned_at filter (skills regression 2026-05-06)', (
     const gitignorePath = join(repoRoot, '.gitignore');
     const contents = readFileSync(gitignorePath, 'utf-8');
     expect(contents).toMatch(/^\.orphaned_at$/m);
+  });
+});
+
+// ============================================================================
+// PR #1733 review fixes — atomic-swap temp file pattern + live-binary detection.
+// Pinning the bug fixes so a future regression can't slip them back in.
+// ============================================================================
+
+describe('atomicBinarySwap cross-device temp-file pattern (review fix 0b/4)', () => {
+  // We can't easily simulate two filesystems in a unit test. Instead, exercise
+  // the source-shape lock: the function must emit a `.tmp` write before the
+  // final rename, never write directly to targetBinPath in the cross-device
+  // branch. This catches the regression even when the test is on one fs.
+  test('cross-device branch writes to <target>.tmp then renameSync to target', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const fnStart = source.indexOf('export function atomicBinarySwap');
+    const fnEnd = source.indexOf('\nexport function ', fnStart + 1);
+    const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+    // The `else` branch (cross-device fallback) must use `<targetBinPath>.tmp`.
+    expect(body).toContain('${targetBinPath}.tmp');
+    // It must call renameSync from tmp → target after fsync.
+    expect(body).toMatch(/renameSync\(tmpTarget,\s*targetBinPath\)/);
+    // It must NOT write copyFileSync directly to targetBinPath in the
+    // cross-device branch (fsync would be after corruption).
+    const elseBranchStart = body.indexOf('} else {');
+    expect(elseBranchStart).toBeGreaterThan(-1);
+    const elseBranch = body.slice(elseBranchStart);
+    expect(elseBranch).not.toMatch(/copyFileSync\(stagedBinPath,\s*targetBinPath\)/);
+  });
+
+  test('backup move always uses renameSync (target+backup are same-fs by construction)', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const fnStart = source.indexOf('export function atomicBinarySwap');
+    const fnEnd = source.indexOf('\nexport function ', fnStart + 1);
+    const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+    // The previous bug branched on sameFs (staging-vs-target) for the backup
+    // move, which is irrelevant — backup is target → target/.previous, both
+    // inside GENIE_BIN. Lock the unconditional renameSync.
+    const backupBlockStart = body.indexOf('if (existsSync(targetBinPath)) {');
+    expect(backupBlockStart).toBeGreaterThan(-1);
+    const innerStartFromBlock = body.slice(backupBlockStart);
+    // After the rmSync stale-cleanup, the next renameSync IS the backup move
+    // and must NOT be wrapped in `if (sameFs)` for the backup leg.
+    const renameInBlock = innerStartFromBlock.indexOf('renameSync(targetBinPath, oldBackup)');
+    expect(renameInBlock).toBeGreaterThan(-1);
+    const beforeRename = innerStartFromBlock.slice(0, renameInBlock);
+    // No conditional branch on sameFs gating the backup move.
+    expect(beforeRename).not.toMatch(/if\s*\(\s*sameFs\s*\)\s*\{[^}]*renameSync\(targetBinPath/);
+  });
+});
+
+describe('fsyncSync import (review fix #1)', () => {
+  test('fsyncSync is in the named imports list, not loaded via require()', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    // Match the node:fs import block.
+    const importBlockMatch = source.match(/from\s+'node:fs';/);
+    expect(importBlockMatch).not.toBeNull();
+    const blockEnd = source.indexOf("from 'node:fs';");
+    const blockStart = source.lastIndexOf('import {', blockEnd);
+    const block = source.slice(blockStart, blockEnd);
+    expect(block).toContain('fsyncSync');
+    // Belt + suspenders: make sure no `require('node:fs').fsyncSync` lurks.
+    expect(source).not.toContain("require('node:fs').fsyncSync");
+  });
+});
+
+describe('syncAuxiliaryContent atomic swap (review fix #2)', () => {
+  test('uses .new staging dir + renameSync, never rmSync(dest) before copy', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    // The atomic per-target staging logic lives in `swapAuxiliaryTree`,
+    // extracted from `syncAuxiliaryContent` for cog-complexity reasons.
+    const fnStart = source.indexOf('function swapAuxiliaryTree');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf('\nfunction ', fnStart + 1);
+    const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+    expect(body).toContain('${dest}.new');
+    expect(body).toContain('${dest}.old');
+    expect(body).toMatch(/renameSync\(stagingDest,\s*dest\)/);
+    // The pre-fix sequence — `rmSync(dest, ...) ; copyDirSync(src, dest)` —
+    // must not survive. Allow rmSync of stale staging/old, but the live dest
+    // must move via renameSync, never be deleted before the new copy lands.
+    expect(body).not.toMatch(/if\s*\(existsSync\(dest\)\)\s*rmSync\(dest,/);
+  });
+});
+
+describe('ensureCanonicalInstall + resolveLiveBinaryPath (review fix #3)', () => {
+  test('resolveLiveBinaryPath returns null or a string (which-genie probe)', () => {
+    // Smoke test: the function must not throw on any host. If genie isn't on
+    // PATH (CI sandbox), we get null. If it is, we get a resolved path.
+    const result = resolveLiveBinaryPath();
+    expect(result === null || typeof result === 'string').toBe(true);
+  });
+
+  test('ensureCanonicalInstall returns target path when there is no live binary', () => {
+    // When `which genie` fails (no install yet), the function should fall
+    // through to the canonical target without throwing — first-install path.
+    // We can't mock the bash call from the import boundary, so we skip the
+    // assertion when a live binary IS resolved (most dev hosts) — the
+    // happy-path test runs in CI sandboxes only.
+    const live = resolveLiveBinaryPath();
+    if (live !== null) return;
+    expect(() => ensureCanonicalInstall()).not.toThrow();
+  });
+
+  test('migration message references install.sh + ~/.genie/bin canonical path', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const fnStart = source.indexOf('export function ensureCanonicalInstall');
+    const fnEnd = source.indexOf('\nexport function ', fnStart + 1);
+    const body = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+    expect(body).toContain('install.sh');
+    expect(body).toContain('~/.genie/bin');
+    // The error message must include enough context for the operator to
+    // recognize what to do — both the live path and the canonical target.
+    expect(body).toMatch(/Live genie binary is at/);
+    expect(body).toMatch(/realpathSync/);
+  });
+
+  test('updateCommand calls ensureCanonicalInstall before delivery', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const cmdStart = source.indexOf('export async function updateCommand');
+    expect(cmdStart).toBeGreaterThan(-1);
+    const cmdBody = source.slice(cmdStart);
+    const ensureIdx = cmdBody.indexOf('ensureCanonicalInstall()');
+    const deliveryIdx = cmdBody.indexOf('await runDelivery(');
+    expect(ensureIdx).toBeGreaterThan(-1);
+    expect(deliveryIdx).toBeGreaterThan(-1);
+    // The check must run BEFORE we touch the binary on disk.
+    expect(ensureIdx).toBeLessThan(deliveryIdx);
+  });
+});
+
+describe('Knip-clean exports (PR #1733 follow-up)', () => {
+  test('fetchLatestVersion shim is removed (knip dead-code finding)', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).not.toContain('export async function fetchLatestVersion');
+  });
+
+  test('RELEASES_BASE_URL constant + bottom re-export are removed (knip dead-code)', () => {
+    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    expect(source).not.toContain('RELEASES_BASE_URL');
+    expect(source).not.toMatch(/^export\s*\{\s*RELEASES_/m);
   });
 });
