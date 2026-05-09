@@ -77,6 +77,10 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Install dependencies
+        shell: bash
+        run: bun install --frozen-lockfile
+
       - name: Resolve version
         id: ver
         shell: bash
