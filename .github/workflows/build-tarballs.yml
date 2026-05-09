@@ -100,7 +100,7 @@ jobs:
         run: bash scripts/build-binary.sh --platform ${{ matrix.platform }} --version ${{ steps.ver.outputs.version }}
 
       - name: Smoke test (extract + --version on linux runners)
-        if: startsWith(matrix.platform, 'linux-')
+        if: matrix.platform == 'linux-x64-glibc' || matrix.platform == 'linux-arm64'
         shell: bash
         run: |
           set -euo pipefail
@@ -116,6 +116,26 @@ jobs:
           fi
           "${STAGE}/genie" /work --help >/dev/null
           echo "smoke ok: --version=${ACTUAL}; /work --help exit 0"
+
+      - name: Smoke test (musl binary in alpine container)
+        if: matrix.platform == 'linux-x64-musl'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          TARBALL="dist/genie-${VERSION}-linux-x64-musl.tar.gz"
+          STAGE="$(mktemp -d)"
+          tar -xzf "${TARBALL}" -C "${STAGE}"
+          docker run --rm -v "${STAGE}:/app:ro" alpine:3.19 sh -c '
+            set -e
+            ACTUAL=$(/app/genie --version 2>&1 | tail -n1)
+            if [ "${ACTUAL}" != "'"${VERSION}"'" ]; then
+              echo "::error::genie --version mismatch: expected '"'"${VERSION}"'"', got ${ACTUAL}"
+              exit 1
+            fi
+            /app/genie /work --help >/dev/null
+            echo "smoke ok (alpine): --version=${ACTUAL}; /work --help exit 0"
+          '
 
       - name: Smoke test (extract + --version on macOS runners)
         if: startsWith(matrix.platform, 'darwin-')
