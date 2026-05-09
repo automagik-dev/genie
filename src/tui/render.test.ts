@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { Writable } from 'node:stream';
 import { disableDragTracking, installNativeSelectionOverride, resolveTuiRendererConfig } from './render.js';
 
-const ESC_DISABLE_DRAG_TRACKING = '\x1b[?1002l';
+const ESC_DISABLE_DRAG_TRACKING = '\x1b[?1002l\x1b[?1003l';
 
 function makeStdoutSpy(): { stdout: NodeJS.WritableStream; writes: string[] } {
   const writes: string[] = [];
@@ -94,10 +94,20 @@ describe('resolveTuiRendererConfig', () => {
 });
 
 describe('disableDragTracking', () => {
-  test('writes the DECRST sequence that turns off button-event drag tracking', () => {
+  test('writes the DECRST sequence that turns off both ?1002 and ?1003 drag/motion tracking', () => {
     const { stdout, writes } = makeStdoutSpy();
     disableDragTracking(stdout);
     expect(writes).toEqual([ESC_DISABLE_DRAG_TRACKING]);
+  });
+
+  test('emitted bytes contain BOTH ?1002l and ?1003l (Linux ?1003 leak fix)', () => {
+    // Regression guard for tui-native-selection-followups: the original
+    // override only emitted ?1002l, but on Linux OpenTUI also enables ?1003h
+    // (any-event motion = drag), so cancelling ?1002 alone was a no-op for
+    // drag-select. This assertion fails if a future change drops either
+    // ?1003l (the Linux gap) or ?1002l (the original mac case).
+    expect(ESC_DISABLE_DRAG_TRACKING).toContain('\x1b[?1002l');
+    expect(ESC_DISABLE_DRAG_TRACKING).toContain('\x1b[?1003l');
   });
 });
 
