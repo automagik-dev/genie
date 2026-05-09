@@ -227,12 +227,18 @@ function upsertGenieEntry(mergedHooks: HooksConfig, event: string, genieEntry: H
   let genieMatcherCount = 0;
   let canonicalMatch = false;
   for (const entry of existing) {
-    const genieHooks = (entry.hooks ?? []).filter((h) => isGenieDispatchCommand(h.command));
+    // Defensive: `existing` can hold null/non-object entries when user-authored
+    // settings.json is malformed. Match the script-side `Array.isArray` guard
+    // in `scripts/dedup-team-settings.ts:dedupHooks` so both paths classify
+    // unrecognized shapes the same way (skipped, never mutated).
+    if (!entry || typeof entry !== 'object') continue;
+    const hooksArr = Array.isArray(entry.hooks) ? entry.hooks : [];
+    const genieHooks = hooksArr.filter((h) => h && isGenieDispatchCommand(h.command));
     if (genieHooks.length === 0) continue;
     genieMatcherCount++;
     if (
       entry.matcher === canonicalMatcher &&
-      entry.hooks?.length === 1 &&
+      hooksArr.length === 1 &&
       genieHooks.length === 1 &&
       genieHooks[0].type === 'command' &&
       genieHooks[0].command === canonicalCommand &&
@@ -255,12 +261,21 @@ function upsertGenieEntry(mergedHooks: HooksConfig, event: string, genieEntry: H
   // Drift / duplicate detected. Strip every genie-shape hook across all
   // matcher entries, preserve any non-genie hooks alongside them (drop the
   // matcher entry entirely if it had ONLY genie hooks), then append a single
-  // canonical genie entry.
+  // canonical genie entry. Same defensive guards as the upper loop — malformed
+  // entries are passed through untouched rather than crashed on.
   const stripped: HookMatcher[] = [];
   for (const entry of existing) {
-    const nonGenieHooks = (entry.hooks ?? []).filter((h) => !isGenieDispatchCommand(h.command));
+    if (!entry || typeof entry !== 'object') {
+      stripped.push(entry);
+      continue;
+    }
+    const hooksArr = Array.isArray(entry.hooks) ? entry.hooks : [];
+    const nonGenieHooks = hooksArr.filter((h) => h && !isGenieDispatchCommand(h.command));
     if (nonGenieHooks.length > 0) {
       stripped.push({ ...entry, hooks: nonGenieHooks });
+    } else if (!Array.isArray(entry.hooks)) {
+      // No `hooks` array at all — preserve the entry; not our schema.
+      stripped.push(entry);
     }
   }
   mergedHooks[event] = [...stripped, genieEntry];

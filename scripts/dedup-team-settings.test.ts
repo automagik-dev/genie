@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { dedupHooks, dedupTeamSettings, processSettingsFile } from './dedup-team-settings.js';
+import { TeamsDirReadError, dedupHooks, dedupTeamSettings, processSettingsFile } from './dedup-team-settings.js';
 
 let workdir: string;
 let teamsBase: string;
@@ -301,6 +301,50 @@ describe('dedupTeamSettings', () => {
     const r = dedupTeamSettings({ apply: false, baseDir: teamsBase, markerBaseDir: markerBase });
     expect(r.filesScanned).toBe(0);
     expect(r.results).toEqual([]);
+  });
+
+  test('Codex #4: throws TeamsDirReadError when readdirSync fails', () => {
+    // Replace the teams dir with a regular file so `readdirSync(base)` fails
+    // (ENOTDIR). Simulates the permissions/transient-IO cases the reviewer
+    // flagged where the script must NOT silently report a clean run.
+    rmSync(teamsBase, { recursive: true, force: true });
+    writeFileSync(teamsBase, 'not-a-directory', 'utf-8');
+    expect(() => dedupTeamSettings({ apply: false, baseDir: teamsBase, markerBaseDir: markerBase })).toThrow(
+      TeamsDirReadError,
+    );
+  });
+
+  test('Codex #3: marker is NOT written when any file is unparseable', () => {
+    writeTeam('clean', { hooks: { PreToolUse: preToolUseDuplicates(2) } });
+    // Plant a broken settings file so the scan reports `unparseable`.
+    const brokenDir = join(teamsBase, 'broken');
+    mkdirSync(brokenDir, { recursive: true });
+    writeFileSync(join(brokenDir, 'settings.json'), '{not-json', 'utf-8');
+
+    const r = dedupTeamSettings({ apply: true, baseDir: teamsBase, markerBaseDir: markerBase });
+    expect(r.filesUnparseable).toBe(1);
+    expect(r.filesModified).toBe(1);
+    expect(r.markerWritten).toBe(false);
+    expect(existsSync(join(markerBase, '.genie', 'state', 'dedup-1710.done'))).toBe(false);
+  });
+
+  test('Codex #3: re-run after fixing unparseable file completes and writes marker', () => {
+    writeTeam('clean', { hooks: { PreToolUse: preToolUseDuplicates(2) } });
+    const brokenDir = join(teamsBase, 'broken');
+    mkdirSync(brokenDir, { recursive: true });
+    const brokenPath = join(brokenDir, 'settings.json');
+    writeFileSync(brokenPath, '{not-json', 'utf-8');
+
+    const first = dedupTeamSettings({ apply: true, baseDir: teamsBase, markerBaseDir: markerBase });
+    expect(first.markerWritten).toBe(false);
+
+    // Operator fixes the unparseable file, re-runs (no --force needed since
+    // the marker was withheld).
+    writeFileSync(brokenPath, JSON.stringify({ hooks: {} }), 'utf-8');
+    const second = dedupTeamSettings({ apply: true, baseDir: teamsBase, markerBaseDir: markerBase });
+    expect(second.skippedDueToMarker).toBe(false);
+    expect(second.filesUnparseable).toBe(0);
+    expect(second.markerWritten).toBe(true);
   });
 });
 

@@ -320,9 +320,33 @@ export interface ScanReport {
   filesScanned: number;
   filesModified: number;
   entriesRemoved: number;
+  /** Files that could not be parsed — kept out of the marker decision. */
+  filesUnparseable: number;
   results: FileResult[];
   /** True iff the marker was present and `--force` was not passed. */
   skippedDueToMarker: boolean;
+  /**
+   * True iff the marker was written this run. False when `--apply` was set
+   * but at least one file was unparseable (so a future re-run can retry
+   * those files without `--force`).
+   */
+  markerWritten: boolean;
+}
+
+/**
+ * Thrown when the migration cannot list the teams directory itself —
+ * permissions, transient IO, etc. Preserves Codex review feedback that a
+ * fatal scan failure must not silently masquerade as a clean run.
+ */
+export class TeamsDirReadError extends Error {
+  readonly path: string;
+  readonly cause: unknown;
+  constructor(path: string, cause: unknown) {
+    super(`failed to list teams directory ${path}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = 'TeamsDirReadError';
+    this.path = path;
+    this.cause = cause;
+  }
 }
 
 /** Run the migration. Pure with respect to `opts.baseDir`/`opts.markerBaseDir`. */
@@ -338,26 +362,41 @@ export function dedupTeamSettings(opts: ScanOpts = {}): ScanReport {
       filesScanned: 0,
       filesModified: 0,
       entriesRemoved: 0,
+      filesUnparseable: 0,
       results: [],
       skippedDueToMarker: true,
+      markerWritten: false,
     };
   }
 
   if (!existsSync(base)) {
-    return { filesScanned: 0, filesModified: 0, entriesRemoved: 0, results: [], skippedDueToMarker: false };
+    return {
+      filesScanned: 0,
+      filesModified: 0,
+      entriesRemoved: 0,
+      filesUnparseable: 0,
+      results: [],
+      skippedDueToMarker: false,
+      markerWritten: false,
+    };
   }
 
+  // Codex review #4: surface a fatal scan failure as a thrown error rather
+  // than masquerading as a zero-count successful run. The CLI entrypoint
+  // catches this and exits 1; in-process callers (tests) get the explicit
+  // signal instead of a misleading clean report.
   let entries: string[];
   try {
     entries = readdirSync(base);
-  } catch {
-    return { filesScanned: 0, filesModified: 0, entriesRemoved: 0, results: [], skippedDueToMarker: false };
+  } catch (err) {
+    throw new TeamsDirReadError(base, err);
   }
 
   const results: FileResult[] = [];
   let filesScanned = 0;
   let filesModified = 0;
   let entriesRemoved = 0;
+  let filesUnparseable = 0;
 
   for (const name of entries) {
     if (name === '_archive' || name.startsWith('.')) continue;
@@ -379,12 +418,17 @@ export function dedupTeamSettings(opts: ScanOpts = {}): ScanReport {
     if (result.status === 'modified') {
       filesModified++;
       entriesRemoved += result.entriesRemoved;
+    } else if (result.status === 'unparseable') {
+      filesUnparseable++;
     }
   }
 
-  // Marker write: only on `--apply` AND only if at least the scan completed
-  // without crash. Idempotent — re-running creates the dir if missing.
-  if (apply) {
+  // Marker write — Codex review #3: skip the marker when at least one file
+  // was unparseable. Otherwise a later normal run exits early on the marker
+  // and never retries those teams. With this gate, an unparseable file means
+  // the next non-`--force` run still gets a chance once the file is fixed.
+  let markerWritten = false;
+  if (apply && filesUnparseable === 0) {
     try {
       const dir = join(markerBase, '.genie', 'state');
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -401,13 +445,22 @@ export function dedupTeamSettings(opts: ScanOpts = {}): ScanReport {
         2,
       );
       writeFileSync(marker, `${markerBody}\n`, 'utf-8');
+      markerWritten = true;
     } catch {
-      // Marker is best-effort. The next run will re-scan; on a clean host
-      // it'll be a no-op.
+      // Marker write itself is best-effort. The next run will re-scan; on a
+      // clean host it'll be a no-op.
     }
   }
 
-  return { filesScanned, filesModified, entriesRemoved, results, skippedDueToMarker: false };
+  return {
+    filesScanned,
+    filesModified,
+    entriesRemoved,
+    filesUnparseable,
+    results,
+    skippedDueToMarker: false,
+    markerWritten,
+  };
 }
 
 // ============================================================================
@@ -432,12 +485,7 @@ async function emitDedupAudit(eventType: string, details: Record<string, unknown
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const apply = args.includes('--apply');
-  const dryRun = args.includes('--dry-run') || !apply; // dry-run is default
   const force = args.includes('--force');
-
-  if (apply && dryRun && !args.includes('--apply')) {
-    // unreachable, retained for clarity
-  }
 
   const report = dedupTeamSettings({ apply, force });
 
@@ -470,10 +518,12 @@ async function main(): Promise<void> {
     );
   }
 
+  const unparseableSuffix = report.filesUnparseable > 0 ? `, ${report.filesUnparseable} unparseable` : '';
   console.log(
     `\n  ${report.filesScanned} file${report.filesScanned === 1 ? '' : 's'} scanned, ` +
       `${report.filesModified} ${apply ? 'modified' : 'would-be-modified'}, ` +
-      `${report.entriesRemoved} duplicate hook entr${report.entriesRemoved === 1 ? 'y' : 'ies'} ${apply ? 'removed' : 'queued for removal'}.`,
+      `${report.entriesRemoved} duplicate hook entr${report.entriesRemoved === 1 ? 'y' : 'ies'} ${apply ? 'removed' : 'queued for removal'}` +
+      `${unparseableSuffix}.`,
   );
 
   if (apply) {
@@ -481,8 +531,16 @@ async function main(): Promise<void> {
       filesScanned: report.filesScanned,
       filesModified: report.filesModified,
       entriesRemoved: report.entriesRemoved,
+      filesUnparseable: report.filesUnparseable,
+      markerWritten: report.markerWritten,
     });
-    console.log(`\n  marker written to ${markerPath()}`);
+    if (report.markerWritten) {
+      console.log(`\n  marker written to ${markerPath()}`);
+    } else if (report.filesUnparseable > 0) {
+      console.log(
+        `\n  marker NOT written — ${report.filesUnparseable} file${report.filesUnparseable === 1 ? '' : 's'} unparseable. Fix or remove the offending settings.json and re-run; the next normal run will retry.`,
+      );
+    }
   } else {
     console.log('\n  dry-run mode (default). Re-run with --apply to write changes + marker.');
   }
@@ -490,6 +548,12 @@ async function main(): Promise<void> {
 
 if (import.meta.path === Bun.main) {
   main().catch((err) => {
+    if (err instanceof TeamsDirReadError) {
+      // Codex review #4: fatal scan failure exits 1 with a precise message
+      // so the operator knows the migration did NOT complete.
+      console.error(`dedup-team-settings: ${err.message}`);
+      process.exit(1);
+    }
     console.error('dedup-team-settings: fatal', err);
     process.exit(1);
   });
