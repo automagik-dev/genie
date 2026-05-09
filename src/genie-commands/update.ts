@@ -10,22 +10,22 @@ import {
   readSync,
   readdirSync,
   readlinkSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { chmod, copyFile, mkdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { genieConfigExists, loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
 import { VERSION } from '../lib/version.js';
 import { pm2ProcessNameCandidates, regenerateEcosystemConfig } from './install.js';
 import { type CleanupReport, cleanupLegacyArtifacts, parseSkipCleanupFlag } from './legacy-cleanup.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
+const GENIE_SRC = join(GENIE_HOME, 'src');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
-const GENIE_BIN_STAGING = join(GENIE_BIN, '.staging');
-const GENIE_BIN_PREVIOUS = join(GENIE_BIN, '.previous');
+const LOCAL_BIN = join(homedir(), '.local', 'bin');
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 
 /**
@@ -34,60 +34,75 @@ const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
  *
  * - v1 (pre-update-unify-stages): `update`, `runtime`, `paths`, `processSnapshot`,
  *   `maintenance`, `recentLogSignals`.
- * - v2 (update-unify-stages): adds `verify: VerifyResult` and `cleanups: CleanupReport`.
- * - v3 (genie-distribution-cutover G5): hard-cutover to GitHub Releases. Replaces
- *   the npm/bun-add code path with `gh release download` + atomic binary swap.
- *   Adds `delivery: { channel, manifest, tarball, attestation }`.
+ * - v2 (this wish): adds `verify: VerifyResult` and `cleanups: CleanupReport`
+ *   blocks. Existing v1 fields preserved byte-identically.
+ *
+ * Genie's number diverges from omni's (omni stays at v1) per
+ * SHARED-DESIGN.md decision #4 — each repo evolves its own schema.
  */
-const UPDATE_DIAGNOSTIC_SCHEMA_VERSION = 3;
+const UPDATE_DIAGNOSTIC_SCHEMA_VERSION = 2;
 
-/** Verify probe deadline. 15s — genie's daemon stack (pgserve + scheduler +
- *  tmux) takes longer to bounce than pm2-managed processes. */
+/** Verify probe deadline. Wish §10: 15s — genie's daemon stack (pgserve +
+ *  scheduler + tmux) takes longer to bounce than pm2-managed processes. */
 const VERIFY_PROBE_DEADLINE_MS = 15_000;
 const VERIFY_PROBE_POLL_INTERVAL_MS = 500;
 const FETCH_LATEST_TIMEOUT_MS = 5_000;
 
-/** GitHub repo coordinates for the GH-Releases distribution cutover. */
-const RELEASES_OWNER = 'automagik-dev';
-const RELEASES_REPO = 'genie';
-const RAW_BASE_URL = 'https://raw.githubusercontent.com';
-const RELEASES_BASE_URL = 'https://github.com';
-
 // ============================================================================
 // Verify decision shape — shared with omni#update-unify-stages (SHARED-DESIGN §4.3).
 // `decideVerify` is a pure function so the tagged-union outcome can be unit-tested
-// in isolation from the daemon-probe side effects.
+// in isolation from the daemon-probe side effects. The `auth-invalid` variant is
+// reserved for cross-CLI shape parity (omni has auth; genie does not) — it exists
+// in the type but `decideVerify` never returns it for genie inputs today.
+//
+// History note (rename to `version` field, 4.260507): the previous probe shape
+// compared the calling CLI's compile-time `VERSION` constant against the disk
+// `package.json`. That comparison was structurally guaranteed to fail on every
+// real version bump: `bun add -g @automagik/genie@next` swaps the package on
+// disk WHILE THE CLI THAT INVOKED `genie update` IS STILL RUNNING — so the
+// running CLI's `VERSION` is frozen at the OLD value (it was loaded once at
+// module import) while disk reflects the NEW value. Verify always emitted
+// `version-mismatch` as a false alarm. The new probe drops the CLI-vs-disk
+// comparison entirely: the only question that actually matters post-pm2-restart
+// is "does the daemon's running inode match the on-disk package?" The kernel
+// `/proc/<pid>/cwd` `(deleted)` marker answers that directly. See
+// `decideVerify` below — `version-mismatch` is GONE; `ok` carries the disk
+// version (i.e. what the next CLI invocation will report).
 // ============================================================================
 
 export type VerifySkipReason = 'no-restart' | 'no-running-services' | 'no-verify-flag';
 
 export type VerifyResult =
   /** Daemon's running inode matches disk; `version` is the on-disk
-   *  package version (what the next CLI invocation reads). */
+   *  `@automagik/genie` package.json (what the next CLI invocation reads). */
   | { kind: 'ok'; version: string | null; pid: number | null }
   | { kind: 'health-unreachable'; endpoint: string }
-  /** Daemon is on a deleted directory inode (post-swap state on Linux).
-   *  `diskVersion` is what the daemon WILL run after pm2 restart. */
+  /** Daemon is on a deleted node_modules inode (bun's package-swap side
+   *  effect). `diskVersion` is what the daemon WILL run after pm2 restart. */
   | { kind: 'daemon-stale-inode'; diskVersion: string | null; pid: number; cwd: string }
   | { kind: 'auth-invalid' }
   | { kind: 'skipped'; reason: VerifySkipReason };
 
 export interface ServerHealthBody {
-  /** On-disk version at probe time. Canonical truth — what the next CLI
-   *  invocation reads, and (modulo a fresh inode) what the daemon is running. */
+  /** On-disk `package.json` version of `@automagik/genie` at probe time.
+   *  This is the canonical truth — what the next CLI invocation will read,
+   *  and (modulo a fresh inode) what the daemon is running. */
   version?: string | null;
   /**
    * Linux-only. `true` when `/proc/<pid>/cwd` ends with the kernel `(deleted)`
-   * marker — a swap of the binary directory unlinked the directory the pm2
-   * daemon process was launched from. The daemon is still serving pre-update
-   * bytes from the open inode and needs `pm2 restart Genie` to pick up the
-   * new code.
+   * marker — i.e. bun's package swap during update unlinked the directory the
+   * pm2 daemon process was launched from. The daemon is still serving
+   * pre-update bytes from the open inode and needs `pm2 restart Genie`
+   * (or our `restartServeIfStale` helper) to pick up the new code.
    *
    * Non-Linux: always `false` (no `/proc` to probe). On those platforms the
-   * verify probe optimistically reports `ok` with the disk version.
+   * verify probe optimistically reports `ok` with the disk version, since
+   * we can't confirm the inode situation either way.
    */
   daemonInodeStale?: boolean;
+  /** Daemon pid surfaced for the `ok` and `daemon-stale-inode` variants. */
   daemonPid?: number;
+  /** Raw `/proc/<pid>/cwd` readlink result, surfaced for diagnostics. */
   daemonCwd?: string;
 }
 
@@ -99,7 +114,8 @@ export interface DecideVerifyArgs {
 
 /**
  * Strip build metadata (anything after `+`) so a `4.260504.21+abc1234` CLI build
- * compares equal to the `4.260504.21` registry-published string.
+ * compares equal to the `4.260504.21` registry-published string. Mirrors omni's
+ * `normalizeVersion` helper.
  */
 export function normalizeVersion(value: string): string {
   const trimmed = value.trim();
@@ -117,6 +133,10 @@ export function decideVerify(args: DecideVerifyArgs): VerifyResult {
   const rawServerVersion = args.serverHealthBody.version ?? null;
   const diskVersion = rawServerVersion === null ? null : normalizeVersion(rawServerVersion);
   const pid = args.serverHealthBody.daemonPid ?? null;
+  // Inode-stale wins: the daemon is on a deleted node_modules tree, regardless
+  // of what version string we read. Banner steers the operator at
+  // `pm2 restart Genie`. After that restart, this branch goes away and we
+  // fall through to `ok`.
   if (args.serverHealthBody.daemonInodeStale === true) {
     return {
       kind: 'daemon-stale-inode',
@@ -125,398 +145,138 @@ export function decideVerify(args: DecideVerifyArgs): VerifyResult {
       cwd: args.serverHealthBody.daemonCwd ?? '',
     };
   }
+  // Healthy: daemon's running inode is live, disk version is the truth.
+  // Note: we don't compare anything against the calling CLI's `VERSION`.
+  // That value is frozen at module-import time and is by definition the
+  // OLD version when an actual upgrade just landed (the running CLI was
+  // launched from the pre-swap binary). See file header.
   return { kind: 'ok', version: diskVersion, pid };
 }
 
+// ============================================================================
+// Group 3 — pre-flight registry version check + confirmation prompt + `--yes`.
+// Both helpers are pure (the network call is split out) so the decision logic
+// is unit-testable independent of the registry round-trip.
+// ============================================================================
+
 /**
- * Compare a current install to a published version. Returns `true` only when
- * both strings normalize equal AND `latestVersion` is non-null. Null/empty
- * `latestVersion` returns `false` so the caller proceeds — never block on a
- * transient registry hiccup.
+ * Compare a current install to the registry-published version. Both inputs are
+ * normalized (build metadata stripped) before comparison so a `4.260504.21+sha`
+ * CLI build matches the `4.260504.21` registry string.
+ *
+ * Returns `true` only when both strings normalize equal AND `latestVersion`
+ * is non-null. A null/empty `latestVersion` (network failure, parse error)
+ * conservatively returns `false` so the caller proceeds with the update —
+ * never block on a transient registry hiccup.
  */
 export function shortCircuitIfCurrent(currentVersion: string, latestVersion: string | null | undefined): boolean {
   if (!latestVersion) return false;
   return normalizeVersion(currentVersion) === normalizeVersion(latestVersion);
 }
 
-// ============================================================================
-// GitHub Releases distribution layer (genie-distribution-cutover G5).
-//
-// Replaces the npm/bun-add code path entirely. Single canonical primitives:
-//   1. fetch .well-known/<channel>.json from raw.githubusercontent.com
-//   2. resolve target version + tarball base URL
-//   3. gh release download to a staging directory
-//   4. gh attestation verify the tarball
-//   5. extract and atomically swap the binary at ~/.genie/bin/genie
-//
-// Old binary moves to ~/.genie/bin/.previous/genie-<old-version> for rollback.
-// ============================================================================
-
-/** Channel identifier resolved from CLI flags / config. Matches the
- *  workflow's `--channel` choices; only `stable` publishes today.
- *  `next` is the dev/canary alias kept for forward compatibility. */
-export type ReleaseChannel = 'stable' | 'beta' | 'canary' | 'next';
-
-export interface LatestManifest {
-  schema_version: number;
-  channel: string;
-  version: string;
-  released_at: string;
-  tarball_base: string;
-  platforms: string[];
-}
-
 /**
- * Build the URL for a channel's manifest file.
- * `stable` → `latest.json`, others → `<channel>.json`.
- * Lives at `.well-known/` on the repo's `main` branch — see release-publish.yml.
+ * Resolve the registry-published version for a channel. Calls
+ * `bunx npm view @automagik/genie@<channel> version` (so we ride whatever
+ * registry config is already set up — npm/bun share the auth + registry
+ * config in practice). Returns `null` on any failure: missing tools, network
+ * timeout, parse error, empty stdout. Caller treats null as "proceed with
+ * install" — defensive against the operator being offline mid-update.
  */
-export function manifestUrlForChannel(channel: ReleaseChannel): string {
-  const fileName = channel === 'stable' ? 'latest.json' : `${channel}.json`;
-  return `${RAW_BASE_URL}/${RELEASES_OWNER}/${RELEASES_REPO}/main/.well-known/${fileName}`;
-}
-
-/**
- * Resolve the host platform identifier matching the tarball naming contract
- * from `scripts/build-binary.sh` (G1).
- *
- * Outputs: `linux-x64-glibc | linux-x64-musl | linux-arm64 | darwin-arm64`.
- * darwin-x64 is intentionally unsupported (build matrix dropped Intel Macs in G1).
- */
-export function resolvePlatformId(): string {
-  const os = process.platform;
-  const cpu = process.arch;
-  if (os === 'darwin' && cpu === 'arm64') return 'darwin-arm64';
-  if (os === 'linux' && cpu === 'arm64') return 'linux-arm64';
-  if (os === 'linux' && cpu === 'x64') {
-    // Detect musl vs glibc on Linux x64. Alpine ships /etc/alpine-release.
-    // ldd --version on glibc systems prints "GNU libc"; on musl it prints "musl".
-    if (existsSync('/etc/alpine-release')) return 'linux-x64-musl';
-    try {
-      const out = execSync('ldd --version 2>&1 || true', { encoding: 'utf-8', timeout: 1000 });
-      if (/musl/i.test(out)) return 'linux-x64-musl';
-    } catch {
-      // ldd absent or errored — assume glibc (the dominant Linux x64 case).
-    }
-    return 'linux-x64-glibc';
+export async function fetchLatestVersion(channel: string): Promise<string | null> {
+  const candidates = [
+    { cmd: 'npm', args: ['view', `@automagik/genie@${channel}`, 'version'] },
+    { cmd: 'bunx', args: ['npm', 'view', `@automagik/genie@${channel}`, 'version'] },
+  ];
+  for (const { cmd, args } of candidates) {
+    const result = await runCommandSilent(cmd, args, undefined, FETCH_LATEST_TIMEOUT_MS);
+    if (!result.success) continue;
+    const trimmed = result.output.trim();
+    if (!trimmed) continue;
+    // Take the last non-empty token — `npm view` may print the package name on
+    // some setups; the version is always the trailing token.
+    const lines = trimmed.split(/\r?\n/).filter(Boolean);
+    const lastLine = lines[lines.length - 1];
+    const tokens = lastLine.split(/\s+/);
+    const candidate = tokens[tokens.length - 1].replace(/^['"]|['"]$/g, '');
+    if (/^\d+\.\d+/.test(candidate)) return candidate;
   }
-  throw new Error(
-    `Unsupported platform: ${os}-${cpu}. Genie ships binaries for linux-x64-glibc, linux-x64-musl, linux-arm64, darwin-arm64.`,
-  );
-}
-
-interface FetchManifestOptions {
-  /** Test seam: replaces the network round-trip with a synchronous stub. */
-  fetcher?: (url: string) => Promise<string | null>;
-  timeoutMs?: number;
+  return null;
 }
 
 /**
- * Fetch + parse `.well-known/<channel>.json`. Returns `null` on any failure
- * (network, parse error, schema mismatch). Caller decides whether to proceed
- * defensively or surface the error.
+ * TTY confirmation prompt. Auto-confirms in non-TTY environments so CI
+ * pipelines never hang waiting for stdin. The `--yes` / `GENIE_UPDATE_YES`
+ * caller-side bypass is checked before this function runs (see
+ * `shouldAutoConfirm`); this helper is the actual stdin read.
  */
-export async function fetchLatestManifest(
-  channel: ReleaseChannel,
-  opts: FetchManifestOptions = {},
-): Promise<LatestManifest | null> {
-  const url = manifestUrlForChannel(channel);
-  const fetcher = opts.fetcher ?? defaultManifestFetcher;
-  const timeoutMs = opts.timeoutMs ?? FETCH_LATEST_TIMEOUT_MS;
-  let raw: string | null = null;
-  try {
-    raw = await Promise.race([
-      fetcher(url),
-      new Promise<string | null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
-    ]);
-  } catch {
-    return null;
-  }
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<LatestManifest>;
-    if (
-      typeof parsed.schema_version !== 'number' ||
-      typeof parsed.version !== 'string' ||
-      typeof parsed.tarball_base !== 'string' ||
-      !Array.isArray(parsed.platforms)
-    ) {
-      return null;
-    }
-    return {
-      schema_version: parsed.schema_version,
-      channel: typeof parsed.channel === 'string' ? parsed.channel : channel,
-      version: parsed.version,
-      released_at: typeof parsed.released_at === 'string' ? parsed.released_at : '',
-      tarball_base: parsed.tarball_base,
-      platforms: parsed.platforms,
+async function promptConfirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return true;
+  process.stdout.write(`${question} [Y/n] `);
+  return new Promise((resolve) => {
+    const onData = (chunk: Buffer) => {
+      process.stdin.removeListener('data', onData);
+      process.stdin.pause();
+      const answer = chunk.toString('utf-8').trim().toLowerCase();
+      // Empty (just Enter) defaults to yes.
+      if (answer === '' || answer === 'y' || answer === 'yes') resolve(true);
+      else resolve(false);
     };
-  } catch {
-    return null;
-  }
+    process.stdin.resume();
+    process.stdin.once('data', onData);
+  });
 }
 
-async function defaultManifestFetcher(url: string): Promise<string | null> {
-  // Use curl rather than fetch for parity with install.sh and to keep the
-  // network surface obvious in offline-debugging traces (single -fsSL call).
-  const result = await runCommandSilent('curl', ['-fsSL', '--max-time', '5', url], undefined, FETCH_LATEST_TIMEOUT_MS);
-  if (!result.success) return null;
-  return result.output;
-}
-
-/**
- * Resolve the published version for a channel. Compatibility shim around
- * `fetchLatestManifest` — kept so callers / tests that want only the version
- * string don't have to unwrap the manifest themselves.
- */
-export async function fetchLatestVersion(channel: ReleaseChannel): Promise<string | null> {
-  const manifest = await fetchLatestManifest(channel);
-  return manifest?.version ?? null;
-}
-
-interface DownloadAndVerifyOptions {
-  /** Test seam: stubs the network/cli surface for deterministic unit tests. */
-  runner?: (cmd: string, args: string[]) => Promise<{ success: boolean; output: string }>;
-  /** Test seam: skip `gh attestation verify` (used by integration smokes
-   *  where the real gh CLI is not available). */
-  skipAttestation?: boolean;
-}
-
-/**
- * Download the platform-specific tarball + cosign bundle + attestation, then
- * verify with `gh attestation verify`. Returns the path to the downloaded
- * tarball on success; throws on failure (caller surfaces the error).
- */
-export async function downloadAndVerifyTarball(
-  manifest: LatestManifest,
-  platform: string,
-  destDir: string,
-  opts: DownloadAndVerifyOptions = {},
-): Promise<string> {
-  const runner = opts.runner ?? runCommandSilent;
-  mkdirSync(destDir, { recursive: true });
-  const versionTag = `v${manifest.version}`;
-  const tarballName = `genie-${manifest.version}-${platform}.tar.gz`;
-  const tarballPath = join(destDir, tarballName);
-
-  // gh release download retries by name; --pattern lets us pull the tarball
-  // and its sidecar (.bundle, .intoto.jsonl) in one shot via wildcards.
-  const downloadResult = await runner('gh', [
-    'release',
-    'download',
-    versionTag,
-    '--repo',
-    `${RELEASES_OWNER}/${RELEASES_REPO}`,
-    '--dir',
-    destDir,
-    '--pattern',
-    tarballName,
-    '--pattern',
-    `${tarballName}.bundle`,
-    '--pattern',
-    `${tarballName}.intoto.jsonl`,
-    '--clobber',
-  ]);
-  if (!downloadResult.success) {
-    throw new Error(
-      `gh release download ${versionTag} failed for ${platform}: ${downloadResult.output.trim() || 'no output'}`,
-    );
-  }
-  if (!existsSync(tarballPath)) {
-    throw new Error(`gh release download succeeded but ${tarballPath} is missing`);
-  }
-
-  if (!opts.skipAttestation) {
-    const verifyResult = await runner('gh', ['attestation', 'verify', tarballPath, '--owner', RELEASES_OWNER]);
-    if (!verifyResult.success) {
-      throw new Error(`gh attestation verify failed for ${tarballName}: ${verifyResult.output.trim() || 'no output'}`);
-    }
-  }
-
-  return tarballPath;
-}
-
-/**
- * Extract a tarball into a destination directory. Uses the system `tar` since
- * macOS bsdtar and GNU tar both accept `-xzf`. Throws on failure.
- */
-export async function extractTarball(tarballPath: string, destDir: string): Promise<void> {
-  mkdirSync(destDir, { recursive: true });
-  const result = await runCommandSilent('tar', ['-xzf', tarballPath, '-C', destDir], undefined, 30_000);
-  if (!result.success) {
-    throw new Error(`tar -xzf ${tarballPath} failed: ${result.output.trim() || 'no output'}`);
-  }
-}
-
-/**
- * Inode/device id of the directory that contains `path`. Returns `null` if
- * `path` (or its parent) does not exist. Used by the atomic-swap pre-flight
- * to confirm staging + target share a filesystem.
- */
-function deviceIdFor(path: string): number | null {
-  const probe = existsSync(path) ? path : dirname(path);
-  try {
-    return statSync(probe).dev;
-  } catch {
-    return null;
-  }
-}
-
-interface AtomicSwapResult {
-  oldVersionBackup: string | null;
-  swapped: boolean;
-  fallbackUsed: boolean;
-}
-
-/**
- * Atomic binary swap.
- *
- * Pre-flight check: if staging + target share a device id, use `renameSync`
- * (atomic on the same filesystem). Otherwise fall back to copy + fsync +
- * rename so the cross-device operation still leaves the target in a
- * consistent state.
- *
- * Old binary is moved to `~/.genie/bin/.previous/genie-<old-version>` so
- * `genie update --rollback` can restore it.
- */
-export function atomicBinarySwap(
-  stagedBinPath: string,
-  targetBinPath: string,
-  previousDir: string,
-  oldVersion: string,
-): AtomicSwapResult {
-  if (!existsSync(stagedBinPath)) {
-    throw new Error(`staged binary missing: ${stagedBinPath}`);
-  }
-
-  const targetDir = dirname(targetBinPath);
-  mkdirSync(targetDir, { recursive: true });
-  mkdirSync(previousDir, { recursive: true });
-
-  const stagingDev = deviceIdFor(stagedBinPath);
-  const targetDev = deviceIdFor(targetBinPath);
-  const sameFs = stagingDev !== null && targetDev !== null && stagingDev === targetDev;
-
-  let oldBackup: string | null = null;
-  if (existsSync(targetBinPath)) {
-    oldBackup = join(previousDir, `genie-${oldVersion}`);
-    // Idempotent: if a previous backup at the same version exists, overwrite.
-    if (existsSync(oldBackup)) {
-      try {
-        rmSync(oldBackup);
-      } catch {
-        // best-effort
-      }
-    }
-    if (sameFs) {
-      renameSync(targetBinPath, oldBackup);
-    } else {
-      copyFileSync(targetBinPath, oldBackup);
-      try {
-        chmodSync(oldBackup, 0o755);
-      } catch {
-        // best-effort
-      }
-      rmSync(targetBinPath);
-    }
-  }
-
-  if (sameFs) {
-    renameSync(stagedBinPath, targetBinPath);
-  } else {
-    // Cross-device: copy then fsync the directory entry, then unlink staging.
-    copyFileSync(stagedBinPath, targetBinPath);
-    try {
-      const fd = openSync(targetBinPath, 'r');
-      try {
-        // Sync the file's bytes so a crash mid-write doesn't leave a partial.
-        require('node:fs').fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-    } catch {
-      // fsync is best-effort; if it fails the rename below still completes.
-    }
-    rmSync(stagedBinPath);
-  }
-  try {
-    chmodSync(targetBinPath, 0o755);
-  } catch {
-    // best-effort
-  }
-
-  return { oldVersionBackup: oldBackup, swapped: true, fallbackUsed: !sameFs };
-}
-
-/**
- * Restore the most recent backup from `~/.genie/bin/.previous/` to the live
- * binary path. Throws if no backup exists.
- */
-export function rollbackBinary(): { restored: string; from: string } {
-  if (!existsSync(GENIE_BIN_PREVIOUS)) {
-    throw new Error(`No rollback target: ${GENIE_BIN_PREVIOUS} does not exist`);
-  }
-  const candidates = readdirSync(GENIE_BIN_PREVIOUS)
-    .filter((entry) => entry.startsWith('genie-'))
-    .map((entry) => ({ entry, mtime: statSync(join(GENIE_BIN_PREVIOUS, entry)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime);
-  if (candidates.length === 0) {
-    throw new Error(`No rollback target: ${GENIE_BIN_PREVIOUS} is empty`);
-  }
-  const newest = candidates[0].entry;
-  const source = join(GENIE_BIN_PREVIOUS, newest);
-  const target = join(GENIE_BIN, 'genie');
-  mkdirSync(GENIE_BIN, { recursive: true });
-
-  const sourceDev = deviceIdFor(source);
-  const targetDev = deviceIdFor(target);
-  const sameFs = sourceDev !== null && targetDev !== null && sourceDev === targetDev;
-
-  // The current live binary is being supplanted — move it aside (so an
-  // interrupted rollback can be re-run) before swapping in the backup.
-  if (existsSync(target)) {
-    const replacedAt = join(GENIE_BIN_PREVIOUS, `${newest}.replaced.${Date.now()}`);
-    if (sameFs) renameSync(target, replacedAt);
-    else {
-      copyFileSync(target, replacedAt);
-      rmSync(target);
-    }
-  }
-  if (sameFs) renameSync(source, target);
-  else {
-    copyFileSync(source, target);
-    rmSync(source);
-  }
-  try {
-    chmodSync(target, 0o755);
-  } catch {
-    // best-effort
-  }
-  return { restored: target, from: source };
+/** Bypass logic for the prompt: `--yes` flag OR `GENIE_UPDATE_YES` env. */
+function shouldAutoConfirm(opts: { yes?: boolean }): boolean {
+  if (opts.yes) return true;
+  return isTruthyEnv(process.env.GENIE_UPDATE_YES);
 }
 
 // ============================================================================
-// Verify probe — Group 4 / inode-stale detector. Pure I/O wrapper around
-// `decideVerify`. The synchronous read of /proc/<pid>/cwd lives below.
+// Group 4 — post-restart verify probe via genie doctor / pgserve health.
+// `runVerifyProbe` is the I/O wrapper; it polls until the deadline, then
+// hands the parsed health body to `decideVerify` (the pure decider above).
 // ============================================================================
 
 const VERIFY_PROBE_ENDPOINT = 'pgserve status --json + ~/.genie/serve.pid';
 
 interface VerifyProbeOptions {
   skipReason?: VerifySkipReason | null;
-  /** Test seam: synchronous read of the probe result. */
+  /**
+   * Test seam: synchronous read of the probe result. Production callers leave
+   * this undefined; tests inject a stub to exercise the I/O wrapping without a
+   * live daemon.
+   */
   readHealth?: () => Promise<ServerHealthBody | null>;
-  /** Test seam: shorten the poll deadline. */
+  /** Test seam: shorten the poll deadline. Production uses
+   *  `VERIFY_PROBE_DEADLINE_MS`. */
   deadlineMs?: number;
-  /** Test seam: shorten the poll interval. */
+  /** Test seam: shorten the poll interval. Production uses
+   *  `VERIFY_PROBE_POLL_INTERVAL_MS`. */
   intervalMs?: number;
 }
 
 /**
- * Linux-only daemon-inode probe. After the binary swap, the pm2 daemon
- * keeps running from a deleted directory inode; the kernel reports the cwd
- * readlink as `<path> (deleted)`. That's the canonical signal that the
- * daemon needs `pm2 restart Genie`.
+ * Daemon health probe. Tries pgserve's `status --json` and falls back to the
+ * scheduler PID + serve.pid existence. Returns a `ServerHealthBody` with the
+ * detected version, or `null` when no daemon is reachable.
+ *
+ * Why we don't shell out to `genie doctor` directly: doctor's main flow is
+ * text-only (the `--json` mode covers `--observability` / `--fix-team-orphans`
+ * sub-flows, not the top-level health). A thin probe is faster and avoids the
+ * "doctor recurses into update which spawns doctor" pitfall.
+ */
+/**
+ * Linux-only daemon-inode probe. After bun's package swap during update, the
+ * pm2 `genie-serve` process keeps running from a deleted directory inode; the
+ * kernel reports the cwd readlink as `<path> (deleted)`. That's our cheap,
+ * reliable signal that the daemon needs `pm2 restart genie-serve` to re-exec
+ * from the live bytes.
+ *
+ * Returns `null` on non-Linux (no `/proc`) or on readlink failure (race with
+ * pid reaping, EACCES, etc.). Callers MUST treat null as "can't determine"
+ * and fall through to the optimistic same-version inference rather than
+ * blocking the update.
  */
 function readDaemonCwd(pid: number): { cwd: string; staleInode: boolean } | null {
   if (process.platform !== 'linux') return null;
@@ -529,13 +289,20 @@ function readDaemonCwd(pid: number): { cwd: string; staleInode: boolean } | null
 }
 
 /**
- * Resolve the on-disk genie binary version by reading the VERSION file
- * shipped in the tarball next to the binary, falling back to the calling
- * CLI's compile-time `VERSION` when no install metadata resolves.
+ * Resolve the on-disk `@automagik/genie` `package.json` version. We have no
+ * RPC channel to ask the running daemon "what's your VERSION constant" — so
+ * we read whatever's at the install dir and combine it with the inode-stale
+ * signal: when the cwd is NOT deleted, the daemon's runtime bytes equal the
+ * on-disk version; when it IS deleted, the version we read here is what the
+ * daemon SHOULD be running once restarted.
+ *
+ * Two candidate paths cover the two install topologies (bun-global, npm-global).
+ * Returns the calling CLI's compiled-in `VERSION` when no install metadata
+ * resolves — preserves the pre-fix tautology only as a last-resort fallback,
+ * not as the canonical source of truth.
  */
 function readInstalledPackageVersion(): string | null {
   const candidates: string[] = [
-    join(GENIE_HOME, 'VERSION'),
     join(homedir(), '.bun', 'install', 'global', 'node_modules', '@automagik', 'genie', 'package.json'),
   ];
   const npmPrefix = safeExec('npm prefix -g', 1500);
@@ -544,13 +311,8 @@ function readInstalledPackageVersion(): string | null {
   }
   for (const path of candidates) {
     try {
-      const raw = readFileSync(path, 'utf-8').trim();
-      if (raw.startsWith('{')) {
-        const pkg = JSON.parse(raw) as { version?: unknown };
-        if (typeof pkg.version === 'string' && /^\d+\.\d+/.test(pkg.version)) return pkg.version;
-      } else if (/^\d+\.\d+/.test(raw)) {
-        return raw;
-      }
+      const pkg = JSON.parse(readFileSync(path, 'utf-8')) as { version?: unknown };
+      if (typeof pkg.version === 'string' && /^\d+\.\d+/.test(pkg.version)) return pkg.version;
     } catch {
       // try next candidate
     }
@@ -559,20 +321,31 @@ function readInstalledPackageVersion(): string | null {
 }
 
 async function readServerHealth(): Promise<ServerHealthBody | null> {
+  // Step 1: pgserve must answer status (this is the canonical backbone check
+  // every other genie subsystem depends on). If pgserve is down, nothing else
+  // matters.
   const pgServeStatus = await runCommandSilent('pgserve', ['status', '--json'], undefined, 3000);
   if (!pgServeStatus.success) return null;
 
+  // Step 2: serve.pid must exist AND the pid must be alive.
   const pidPath = join(GENIE_HOME, 'serve.pid');
   const rawPid = safeRead(pidPath, 32);
   if (!rawPid) return null;
   const pid = Number.parseInt(rawPid.trim(), 10);
   if (!Number.isFinite(pid) || pid <= 0) return null;
   try {
-    process.kill(pid, 0);
+    process.kill(pid, 0); // signal 0 = aliveness probe, throws if dead
   } catch {
     return null;
   }
 
+  // Step 3: detect inode staleness on Linux + read the on-disk package version.
+  // Pre-fix this returned `{ version: VERSION }` (the calling CLI's compile-time
+  // constant) which made `verify` a tautology — it could not distinguish a
+  // post-update daemon running stale code from a healthy one. The new probe
+  // reads `/proc/<pid>/cwd` to detect the bun-package-swap-leaves-deleted-inode
+  // case, AND reads the disk package.json so the reported `version` reflects
+  // what's actually installed rather than what the calling CLI was compiled with.
   const cwdInfo = readDaemonCwd(pid);
   const diskVersion = readInstalledPackageVersion() ?? VERSION;
   return {
@@ -583,6 +356,11 @@ async function readServerHealth(): Promise<ServerHealthBody | null> {
   };
 }
 
+/**
+ * Poll `readHealth` until the deadline expires. First successful read wins;
+ * a stream of nulls returns `null` so `decideVerify` can emit
+ * `health-unreachable`.
+ */
 async function pollHealth(
   readHealth: () => Promise<ServerHealthBody | null>,
   deadlineMs: number,
@@ -594,7 +372,7 @@ async function pollHealth(
     try {
       body = await readHealth();
     } catch {
-      // null read — same as unreachable.
+      // Reader threw — treat as unreachable. Same outcome as a `null` read.
     }
     if (body !== null) return body;
     await new Promise((r) => setTimeout(r, intervalMs));
@@ -621,18 +399,41 @@ export async function runVerifyProbe(opts: VerifyProbeOptions = {}): Promise<Ver
 }
 
 // ============================================================================
-// pm2 daemon restart on stale inode (Group 6 follow-up).
-// After the binary swap, the daemon is mapped to the old (deleted) directory.
-// The restart goes through the regenerated ecosystem config so the
-// post-update `version` field lands in pm2's metadata.
+// Group 6 (follow-up to update-unify-stages): pm2 daemon restart on stale
+// inode. After bun's package swap, the daemon is still mapped to the old
+// (deleted) `node_modules/@automagik/genie/.old-<hash>` directory. Without
+// this step, every `genie update` left the daemon serving pre-update bytes
+// until the operator manually ran `pm2 restart Genie` — the verify probe
+// couldn't even surface it because `readServerHealth` was a tautology.
+//
+// Rename note (4.260507): the canonical pm2 process name is now `Genie`.
+// `genie-serve` is preserved as a legacy alias so `genie update` from a
+// pre-rename install still restarts the right entry. `pm2ProcessNameCandidates`
+// returns both names in canonical-first order; the find below picks the
+// first match, so a freshly-renamed install just works.
 // ============================================================================
 
 interface Pm2GenieServe {
+  /** The pm2 process name we matched on — canonical or legacy. Used by the
+   *  caller to issue `pm2 restart <name>` against the actual entry rather
+   *  than blindly using the canonical name. */
   name: string;
   pid: number;
   restartCount: number;
 }
 
+/**
+ * pm2 introspection: locate the genie daemon entry by canonical OR legacy
+ * name and return its current pid + restart counter + matched name. We
+ * shell out to `pm2 jlist` (the documented stable JSON output) instead of
+ * importing pm2 because pm2 is not bundled with genie — operators install
+ * it separately, and many environments (CI, source runs) don't have it
+ * at all.
+ *
+ * Returns `null` when pm2 is missing, errors out, or no matching entry is
+ * registered. The caller treats null as "no pm2 supervision in play —
+ * nothing to restart".
+ */
 async function pm2GenieServe(): Promise<Pm2GenieServe | null> {
   const result = await runCommandSilent('pm2', ['jlist'], undefined, 3000);
   if (!result.success) return null;
@@ -643,6 +444,8 @@ async function pm2GenieServe(): Promise<Pm2GenieServe | null> {
       pm2_env?: { restart_time?: number; status?: string };
     }>;
     const candidates = pm2ProcessNameCandidates();
+    // Iterate in canonical-first order so when both Genie and genie-serve
+    // are registered (rename-in-progress edge case) we prefer the canonical.
     for (const name of candidates) {
       const entry = list.find((p) => p.name === name);
       if (!entry) continue;
@@ -656,12 +459,33 @@ async function pm2GenieServe(): Promise<Pm2GenieServe | null> {
   }
 }
 
+/**
+ * Restart the pm2 daemon when its current pid is mapped to a deleted inode
+ * (post-bun-package-swap state). The restart goes through the regenerated
+ * ecosystem config (`pm2 startOrReload <config>`) so the post-update
+ * `version` field is picked up — pm2's `version` column then reflects the
+ * truth instead of staying frozen at the pre-update value forever.
+ *
+ * No-op when:
+ * - pm2 is missing or has no genie-daemon entry (source installs, CI)
+ * - the daemon is already on the live inode (no-op update, manual restart
+ *   already performed, non-Linux where we can't probe `/proc`)
+ * - the restart command itself fails (we surface the error and let verify
+ *   catch the still-stale state)
+ *
+ * Returns `{ oldPid, newPid }` on a successful restart with new pid observed,
+ * or `null` when no restart was needed/possible.
+ */
 export async function restartServeIfStale(): Promise<{ oldPid: number; newPid: number } | null> {
   const before = await pm2GenieServe();
   if (!before) return null;
   const cwdInfo = readDaemonCwd(before.pid);
   if (!cwdInfo || !cwdInfo.staleInode) return null;
   log(`Restarting pm2 ${before.name} (stale inode detected: ${cwdInfo.cwd})`);
+  // Regenerate the ecosystem config first so the post-update `version`
+  // value lands in pm2's metadata. Then `pm2 startOrReload` re-reads the
+  // file — this is the only pm2 command that picks up changes to the
+  // entry's `version` / `name` / `args` without manual delete-and-recreate.
   let configPath: string | null = null;
   try {
     configPath = regenerateEcosystemConfig();
@@ -669,6 +493,10 @@ export async function restartServeIfStale(): Promise<{ oldPid: number; newPid: n
     const reason = err instanceof Error ? err.message : String(err);
     error(`Could not regenerate pm2 ecosystem config (${reason}); falling back to plain restart`);
   }
+  // `pm2 startOrReload <config>` is the canonical "rebuild from config"
+  // verb; it accepts an array of apps from the ecosystem and reconciles
+  // each by name. Falls back to a plain restart against the matched name
+  // if config regeneration failed.
   const restartArgs = configPath
     ? ['startOrReload', configPath, '--update-env']
     : ['restart', before.name, '--update-env'];
@@ -679,6 +507,9 @@ export async function restartServeIfStale(): Promise<{ oldPid: number; newPid: n
     );
     return null;
   }
+  // Poll pm2 for a new pid. We watch BOTH pid change (typical case) AND
+  // restart-count increment (covers the edge case where pm2 reuses a pid
+  // briefly during the restart cycle).
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     const after = await pm2GenieServe();
@@ -692,9 +523,17 @@ export async function restartServeIfStale(): Promise<{ oldPid: number; newPid: n
   return null;
 }
 
-/** Format the post-restart verify banner. Operator's primary signal that
- *  the update succeeded. Single primary line on happy paths; follow-up
- *  lines for actionable failures. */
+/** Format the post-restart verify banner. The banner is the operator's
+ *  primary signal that the update succeeded — every variant must answer
+ *  "what's running" and "what (if anything) do I need to do next?" without
+ *  comparing the calling-CLI's frozen `VERSION` against the post-update
+ *  disk (the cause of the structural false-positive `version-mismatch`
+ *  before this rewrite).
+ *
+ *  Output shape: a single primary line on the happy paths, with optional
+ *  follow-up lines for actionable failures (cwd + fix command on stale
+ *  inode). Genie has no auth model, so the auth row from omni's banner is
+ *  omitted. */
 export function formatVerifyBanner(result: VerifyResult): string[] {
   const lines: string[] = [];
   switch (result.kind) {
@@ -732,7 +571,10 @@ export function formatVerifyBanner(result: VerifyResult): string[] {
 }
 
 // ============================================================================
-// Output primitives — direct ANSI; NO_COLOR honored.
+// Output primitives — direct ANSI today; will migrate to output.ts (the
+// `output-primitives-unified` wish) in a follow-up so the whole CLI shares one
+// chalk/ora abstraction. NO_COLOR is honored here so behavior already matches
+// the post-migration contract (see `colorize` below).
 // ============================================================================
 
 function colorEnabled(): boolean {
@@ -780,24 +622,23 @@ async function withTemporaryEnv<T>(key: string, value: string, fn: () => Promise
   }
 }
 
-// ============================================================================
-// Diagnostics — schema v3 (G5: adds `delivery` block).
-// ============================================================================
+interface PluginSyncInfo {
+  version?: string;
+  globalPkgDir?: string;
+  cacheDir?: string;
+  skippedReason?: string;
+}
 
 interface UpdateDiagnosticsContext {
-  channel: ReleaseChannel;
-  manifest: LatestManifest | null;
-  platform: string;
+  channel: string;
+  installType: InstallationType;
+  primaryMethod: 'npm' | 'bun';
+  globalInstalls: Array<'npm' | 'bun'>;
+  plugin: PluginSyncInfo;
   /** Latest registry version observed pre-flight, or null when fetch failed. */
   latestVersion: string | null;
   /** Local CLI version at the time the diagnostics file was written. */
   cliVersion: string;
-  /** Path to the downloaded tarball, or null when delivery short-circuited. */
-  tarballPath: string | null;
-  /** Whether `gh attestation verify` succeeded (or was skipped). */
-  attestationVerified: boolean;
-  /** Backup path for the previous binary, set after atomic swap. */
-  previousBackup: string | null;
 }
 
 interface RecentLogSignal {
@@ -874,7 +715,7 @@ function summarizeJsonlSignals(path: string): RecentLogSignal[] {
       if (typeof event.error === 'string') existing.lastError = event.error;
       signals.set(key, existing);
     } catch {
-      // non-JSON lines kept in the raw tail, not summarized.
+      // Non-JSON log lines are kept in the raw tail, not summarized here.
     }
   }
   return [...signals.values()].sort((a, b) => b.count - a.count).slice(0, 10);
@@ -905,25 +746,14 @@ async function collectUpdateDiagnostics(
     generatedAt,
     verify: extras.verify,
     cleanups: extras.cleanups,
-    update: {
-      channel: ctx.channel,
-      latestVersion: ctx.latestVersion,
-      cliVersion: ctx.cliVersion,
-      platform: ctx.platform,
-    },
-    delivery: {
-      manifest: ctx.manifest,
-      tarballPath: ctx.tarballPath,
-      attestationVerified: ctx.attestationVerified,
-      previousBackup: ctx.previousBackup,
-    },
+    update: ctx,
     runtime: {
       platform: process.platform,
       arch: process.arch,
       cwd: process.cwd(),
       node: process.version,
       bun: (await runCommandSilent('bun', ['--version'])).output.trim() || null,
-      gh: (await runCommandSilent('gh', ['--version'])).output.split('\n')[0]?.trim() || null,
+      npm: (await runCommandSilent('npm', ['--version'])).output.trim() || null,
       genie: {
         which: (await runCommandSilent('which', ['genie'])).output.trim() || null,
         tuiDisabled: isTruthyEnv(process.env.GENIE_TUI_DISABLE),
@@ -932,9 +762,6 @@ async function collectUpdateDiagnostics(
     },
     paths: {
       genieHome: GENIE_HOME,
-      genieBin: GENIE_BIN,
-      genieBinStaging: GENIE_BIN_STAGING,
-      genieBinPrevious: GENIE_BIN_PREVIOUS,
       logsDir,
       servePid: safeRead(join(GENIE_HOME, 'serve.pid'), 200),
       pgservePort: safeRead(join(GENIE_HOME, 'pgserve.port'), 200),
@@ -970,9 +797,61 @@ async function collectUpdateDiagnostics(
   return { path, signals };
 }
 
-// ============================================================================
-// Subprocess wrappers.
-// ============================================================================
+async function runCommand(
+  command: string,
+  args: string[],
+  cwd?: string,
+): Promise<{ success: boolean; output: string }> {
+  return new Promise((resolve) => {
+    const output: string[] = [];
+
+    const child = spawn(command, args, {
+      cwd,
+      stdio: ['inherit', 'pipe', 'pipe'],
+      env: { ...process.env, FORCE_COLOR: '1' },
+    });
+
+    child.stdout?.on('data', (data) => {
+      const str = data.toString();
+      output.push(str);
+      process.stdout.write(str);
+    });
+
+    child.stderr?.on('data', (data) => {
+      const str = data.toString();
+      output.push(str);
+      process.stderr.write(str);
+    });
+
+    child.on('close', (code) => {
+      resolve({ success: code === 0, output: output.join('') });
+    });
+
+    child.on('error', (err) => {
+      error(err.message);
+      resolve({ success: false, output: err.message });
+    });
+  });
+}
+
+async function getGitInfo(cwd: string): Promise<{ branch: string; commit: string; commitDate: string } | null> {
+  try {
+    const branchResult = await runCommandSilent('git', ['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
+    const commitResult = await runCommandSilent('git', ['rev-parse', '--short', 'HEAD'], cwd);
+    const dateResult = await runCommandSilent('git', ['log', '-1', '--format=%ci'], cwd);
+
+    if (branchResult.success && commitResult.success && dateResult.success) {
+      return {
+        branch: branchResult.output.trim(),
+        commit: commitResult.output.trim(),
+        commitDate: dateResult.output.trim().split(' ')[0], // Just the date part
+      };
+    }
+  } catch {
+    // Ignore errors
+  }
+  return null;
+}
 
 async function runCommandSilent(
   command: string,
@@ -983,28 +862,34 @@ async function runCommandSilent(
   return new Promise((resolve) => {
     const output: string[] = [];
     let settled = false;
+
     const child = spawn(command, args, {
       cwd,
       stdio: ['inherit', 'pipe', 'pipe'],
     });
+
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
       child.kill('SIGTERM');
       resolve({ success: false, output: `Timed out after ${timeoutMs}ms` });
     }, timeoutMs);
+
     child.stdout?.on('data', (data) => {
       output.push(data.toString());
     });
+
     child.stderr?.on('data', (data) => {
       output.push(data.toString());
     });
+
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       resolve({ success: code === 0, output: output.join('') });
     });
+
     child.on('error', (err) => {
       if (settled) return;
       settled = true;
@@ -1014,12 +899,299 @@ async function runCommandSilent(
   });
 }
 
+type InstallationType = 'source' | 'npm' | 'bun' | 'unknown';
+
+/**
+ * Detect installation type from the binary path returned by `which genie`.
+ *
+ * Group 7 fix: realpath the input first. The standard CLI install symlinks
+ * `~/.local/bin/genie → ~/.bun/bin/genie → ~/.bun/install/global/.../dist/genie.js`
+ * mean the literal `which` output is the symlink path, not the resolved target.
+ * Pre-fix, `~/.local/bin/genie` matched the `LOCAL_BIN` source-install branch
+ * even when the actual binary lived in `node_modules`, breaking
+ * `genie update --next` for bun-installed users with `ENOENT: posix_spawn 'git'`
+ * because the source-install path then tried to `git fetch` against a
+ * non-existent `~/.genie/src/` directory.
+ */
+export function detectFromBinaryPath(path: string): InstallationType | null {
+  // Resolve symlink chain so node_modules / .bun checks see the real target.
+  let resolved = path;
+  try {
+    resolved = require('node:fs').realpathSync(path);
+  } catch {
+    // Broken symlink or permission error — fall back to the literal path.
+  }
+
+  if (resolved.includes('.bun')) return 'bun';
+  if (resolved.includes('node_modules')) return 'npm';
+  // Source install: literal LOCAL_BIN path with no node_modules in resolved
+  // target, OR the binary lives under ~/.genie/bin/ directly.
+  if (path === join(LOCAL_BIN, 'genie') || resolved.startsWith(GENIE_BIN)) return 'source';
+  return null;
+}
+
+/**
+ * Detect the genie installation type by inspecting the running binary first.
+ *
+ * Group 7 v2: binary path is ground truth. Previous order — config first, then
+ * GENIE_SRC/.git, then binary detection — was wrong: both upstream signals are
+ * stale hints from prior installs; the actual running binary's location is the
+ * only reliable source of truth.
+ *
+ * Felipe's `felipe-personal` machine reproduced this: bun-installed genie at
+ * `~/.bun/install/global/.../@automagik/genie` BUT `~/.genie/src/.git` existed
+ * from a legacy source clone. Pre-v2, detection returned 'source' on the stale
+ * clone, then `genie update` ran `git fetch` against a directory git couldn't
+ * even resolve (PATH didn't include git non-interactively), failing with
+ * `posix_spawn 'git': ENOENT` — total dead-end for the user.
+ *
+ * Order:
+ *   1. Detect from binary path via `which genie` + realpath chain.
+ *   2. Fall back to `config.installMethod` if binary detection is null.
+ *   3. Fall back to `GENIE_SRC/.git` legacy hint only when config is missing.
+ *   4. Final fallback: prefer bun if available, else npm.
+ */
+async function detectInstallationType(): Promise<InstallationType> {
+  // 1. Binary path is ground truth — runs FIRST.
+  const whichResult = await runCommandSilent('which', ['genie']);
+  if (whichResult.success) {
+    const detected = detectFromBinaryPath(whichResult.output.trim());
+    if (detected) return detected;
+  }
+
+  // 2. Cached config is a hint, not truth — used only when binary path
+  //    didn't classify (e.g. installed to a custom location).
+  if (genieConfigExists()) {
+    try {
+      const config = await loadGenieConfig();
+      if (config.installMethod) return config.installMethod;
+    } catch {
+      // Ignore config errors
+    }
+  }
+
+  // 3. Legacy `~/.genie/src/.git` hint — last-resort. Pre-v2 this fired
+  //    aggressively and broke bun installs that happened to have a stale
+  //    source clone in their home directory.
+  if (existsSync(join(GENIE_SRC, '.git'))) return 'source';
+
+  // 4. Final fallback: prefer bun if available
+  const hasBun = (await runCommandSilent('which', ['bun'])).success;
+  return hasBun ? 'bun' : 'npm';
+}
+
+async function updateViaBun(channel: string): Promise<boolean> {
+  // Delete global lockfile so the tag resolves fresh. Avoid `--force --no-cache`
+  // here: on macOS Bun can sit at "Resolving dependencies" for a long time
+  // when reinstalling the same global package, even though a plain global add
+  // completes quickly after the stale lockfile is gone.
+  try {
+    require('node:fs').unlinkSync(join(homedir(), '.bun', 'install', 'global', 'bun.lock'));
+  } catch {
+    /* may not exist */
+  }
+
+  log(`Updating via bun (channel: ${channel})...`);
+  const result = await runCommand('bun', ['add', '-g', `@automagik/genie@${channel}`]);
+  if (!result.success) {
+    error('Failed to update via bun');
+    return false;
+  }
+  console.log();
+  success(`Genie CLI updated via bun (${channel})!`);
+  return true;
+}
+
+async function updateViaNpm(channel: string): Promise<boolean> {
+  log(`Updating via npm (channel: ${channel})...`);
+  const result = await runCommand('npm', ['install', '-g', `@automagik/genie@${channel}`]);
+  if (!result.success) {
+    error('Failed to update via npm');
+    return false;
+  }
+  console.log();
+  success(`Genie CLI updated via npm (${channel})!`);
+  return true;
+}
+
+/** Detect which package-manager global installs exist (npm, bun, or both). */
+export async function detectGlobalInstalls(): Promise<Set<'npm' | 'bun'>> {
+  const found = new Set<'npm' | 'bun'>();
+
+  const [npmResult, bunResult] = await Promise.all([
+    runCommandSilent('npm', ['list', '-g', '@automagik/genie']),
+    runCommandSilent('bun', ['pm', 'ls', '-g']),
+  ]);
+
+  if (npmResult.success && !npmResult.output.includes('(empty)')) {
+    found.add('npm');
+  }
+  if (bunResult.success && bunResult.output.includes('@automagik/genie')) {
+    found.add('bun');
+  }
+
+  return found;
+}
+
+async function updateSource(): Promise<void> {
+  // Pre-flight: GENIE_SRC must exist as a git checkout. Without this guard,
+  // node:child_process.spawn() bubbles up `ENOENT: posix_spawn 'git'` from
+  // the missing-cwd, which is misleading — operators read it as "git not
+  // installed" and waste time on the wrong fix. Fail loudly with the actual
+  // root cause and the path that's missing.
+  if (!existsSync(GENIE_SRC)) {
+    error(`Source install path not found: ${GENIE_SRC}`);
+    console.error('  Detection picked the source-install path, but the directory does not exist.');
+    console.error('  This usually means a stale install hint (config or ~/.genie/src/.git) is');
+    console.error('  pointing somewhere genuine. Either:');
+    console.error(`    1. Re-clone the source: git clone https://github.com/automagik-dev/genie ${GENIE_SRC}`);
+    console.error('    2. Update via package manager instead: genie update --next --via bun');
+    console.error('    3. Inspect detection: genie doctor --update-detection');
+    process.exit(1);
+  }
+  if (!existsSync(join(GENIE_SRC, '.git'))) {
+    error(`Source install path is not a git checkout: ${GENIE_SRC}`);
+    console.error(`  ${GENIE_SRC} exists but has no .git/. Cannot run \`git fetch\` from it.`);
+    console.error(`  Either delete ${GENIE_SRC} and re-clone, or update via package manager:`);
+    console.error('    genie update --next --via bun');
+    process.exit(1);
+  }
+
+  // Get current version info before update
+  const beforeInfo = await getGitInfo(GENIE_SRC);
+  if (beforeInfo) {
+    console.log(`Current: \x1b[2m${beforeInfo.branch}@${beforeInfo.commit} (${beforeInfo.commitDate})\x1b[0m`);
+    console.log();
+  }
+
+  // Step 1: Fetch and reset to origin/main
+  log('Fetching latest changes...');
+  const fetchResult = await runCommand('git', ['fetch', 'origin'], GENIE_SRC);
+  if (!fetchResult.success) {
+    error('Failed to fetch from origin');
+    process.exit(1);
+  }
+
+  log('Resetting to origin/main...');
+  const resetResult = await runCommand('git', ['reset', '--hard', 'origin/main'], GENIE_SRC);
+  if (!resetResult.success) {
+    error('Failed to reset to origin/main');
+    process.exit(1);
+  }
+  console.log();
+
+  // Get new version info
+  const afterInfo = await getGitInfo(GENIE_SRC);
+
+  // Check if anything changed
+  if (beforeInfo && afterInfo && beforeInfo.commit === afterInfo.commit) {
+    success('Already up to date!');
+    console.log();
+    return;
+  }
+
+  // Step 2: Install dependencies
+  log('Installing dependencies...');
+  const installResult = await runCommand('bun', ['install'], GENIE_SRC);
+  if (!installResult.success) {
+    error('Failed to install dependencies');
+    process.exit(1);
+  }
+  console.log();
+
+  // Step 3: Build
+  log('Building...');
+  const buildResult = await runCommand('bun', ['run', 'build'], GENIE_SRC);
+  if (!buildResult.success) {
+    error('Failed to build');
+    process.exit(1);
+  }
+  console.log();
+
+  // Step 4: Copy binaries and update symlinks
+  log('Installing binaries...');
+
+  try {
+    await mkdir(GENIE_BIN, { recursive: true });
+    await mkdir(LOCAL_BIN, { recursive: true });
+
+    const binaries = ['genie.js', 'term.js'];
+    const names = ['genie', 'term'];
+
+    for (let i = 0; i < binaries.length; i++) {
+      const src = join(GENIE_SRC, 'dist', binaries[i]);
+      const binDest = join(GENIE_BIN, binaries[i]);
+      const linkDest = join(LOCAL_BIN, names[i]);
+
+      // Copy to GENIE_BIN
+      await copyFile(src, binDest);
+      await chmod(binDest, 0o755);
+
+      // Symlink to LOCAL_BIN
+      await symlinkOrCopy(binDest, linkDest);
+    }
+
+    // Clean up legacy claudio binaries from previous installs
+    for (const legacy of ['claudio.js', 'claudio']) {
+      const legacyBin = join(GENIE_BIN, legacy);
+      const legacyLink = join(LOCAL_BIN, legacy);
+      try {
+        await unlink(legacyBin);
+      } catch {}
+      try {
+        await unlink(legacyLink);
+      } catch {}
+    }
+
+    success('Binaries installed');
+  } catch (err) {
+    error(`Failed to install binaries: ${err}`);
+    process.exit(1);
+  }
+
+  // Print success
+  console.log();
+  console.log('\x1b[2m────────────────────────────────────\x1b[0m');
+  success('Genie CLI updated successfully!');
+  console.log();
+
+  if (afterInfo) {
+    console.log(`Version: \x1b[36m${afterInfo.branch}@${afterInfo.commit}\x1b[0m (${afterInfo.commitDate})`);
+    console.log();
+  }
+}
+
+async function symlinkOrCopy(src: string, dest: string): Promise<void> {
+  const { symlink, unlink } = await import('node:fs/promises');
+
+  try {
+    // Remove existing symlink/file if present
+    if (existsSync(dest)) {
+      await unlink(dest);
+    }
+    await symlink(src, dest);
+  } catch {
+    // Fallback to copy if symlink fails
+    await copyFile(src, dest);
+  }
+}
+
 // ============================================================================
-// Plugin sync framework markers (skill-loading regression 2026-05-06).
-// `.orphaned_at` MUST NOT propagate from a tarball into the active Claude
-// Code cache. Filter at the copy boundary.
+// Plugin Sync — update Claude Code plugin cache after CLI update
 // ============================================================================
 
+/**
+ * Files that MUST NOT propagate from the source plugin tree into the active
+ * Claude Code cache. These are framework markers Claude Code writes to its
+ * own `~/.claude/plugins/cache/...` to mark plugin versions orphaned. If
+ * a stale tarball ships one (e.g. a dev box accidentally committed it; the
+ * 2026-05-06 multi-server regression diagnosed `plugins/genie/.orphaned_at`
+ * being checked in since the initial commit), `copyDirSync` would copy it
+ * into the active cache, Claude Code's loader would mark the active plugin
+ * orphaned, and skills would silently fail to load. Filter at the copy
+ * boundary so older binaries already deployed don't keep replaying the bug
+ * on every `genie update` until the source-side fix lands.
+ */
 const FRAMEWORK_MARKER_FILES = new Set(['.orphaned_at']);
 
 function copyDirSync(src: string, dest: string): void {
@@ -1036,41 +1208,294 @@ function copyDirSync(src: string, dest: string): void {
   }
 }
 
+async function resolveGlobalPkgDir(installType: InstallationType): Promise<string | null> {
+  // Prefer the package manager that was actually used for this update
+  if (installType === 'bun') {
+    const bunPath = join(homedir(), '.bun', 'install', 'global', 'node_modules', '@automagik', 'genie');
+    if (existsSync(bunPath)) return bunPath;
+  }
+
+  if (installType === 'npm') {
+    // Dynamic resolution via npm root -g (handles nvm/fnm/volta)
+    const npmRootResult = await runCommandSilent('npm', ['root', '-g']);
+    if (npmRootResult.success) {
+      const npmPath = join(npmRootResult.output.trim(), '@automagik', 'genie');
+      if (existsSync(npmPath)) return npmPath;
+    }
+  }
+
+  // Fallback: try both regardless of installType
+  const bunFallback = join(homedir(), '.bun', 'install', 'global', 'node_modules', '@automagik', 'genie');
+  if (existsSync(bunFallback)) return bunFallback;
+
+  const npmRootFallback = await runCommandSilent('npm', ['root', '-g']);
+  if (npmRootFallback.success) {
+    const npmPath = join(npmRootFallback.output.trim(), '@automagik', 'genie');
+    if (existsSync(npmPath)) return npmPath;
+  }
+
+  return null;
+}
+
+/** Update the installed_plugins.json registry entry for genie. */
+function updatePluginRegistry(claudePlugins: string, cacheDir: string, version: string): void {
+  const registryPath = join(claudePlugins, 'installed_plugins.json');
+  try {
+    if (!existsSync(registryPath)) return;
+    const registry = JSON.parse(readFileSync(registryPath, 'utf-8'));
+    const entries = registry.plugins?.['genie@automagik'];
+    if (!Array.isArray(entries)) return;
+    for (const entry of entries) {
+      if (entry.scope === 'user') {
+        entry.installPath = cacheDir;
+        entry.version = version;
+        entry.lastUpdated = new Date().toISOString();
+      }
+    }
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+  } catch (err) {
+    log(`Registry update failed (non-fatal): ${err}`);
+  }
+}
+
+/** Install tmux configs to ~/.genie/ and reload the genie tmux server. */
+function syncTmuxConf(tmuxScriptsSrc: string): void {
+  mkdirSync(GENIE_HOME, { recursive: true });
+
+  // Install genie.tmux.conf → ~/.genie/tmux.conf (agent server config)
+  const tmuxConfSrc = join(tmuxScriptsSrc, 'genie.tmux.conf');
+  const tmuxConfDest = join(GENIE_HOME, 'tmux.conf');
+  if (existsSync(tmuxConfSrc)) {
+    try {
+      copyFileSync(tmuxConfSrc, tmuxConfDest);
+      success(`Installed tmux config to ${tmuxConfDest}`);
+      try {
+        const { tmuxBin } = require('../lib/ensure-tmux.js');
+        execSync(`${tmuxBin()} -L genie source-file '${tmuxConfDest}'`, { stdio: 'ignore' });
+        success('Reloaded genie tmux server configuration');
+      } catch {
+        // genie tmux server not running or reload failed — non-fatal
+      }
+    } catch {
+      // Read/write failed — non-fatal
+    }
+  }
+
+  // Install tui-tmux.conf → ~/.genie/tui-tmux.conf (TUI display config, no shell probes)
+  const tuiConfSrc = join(tmuxScriptsSrc, 'tui-tmux.conf');
+  const tuiConfDest = join(GENIE_HOME, 'tui-tmux.conf');
+  if (existsSync(tuiConfSrc)) {
+    try {
+      copyFileSync(tuiConfSrc, tuiConfDest);
+      success(`Installed TUI tmux config to ${tuiConfDest}`);
+    } catch {
+      // Read/write failed — non-fatal
+    }
+  }
+
+  // Install .generated.theme.conf → ~/.genie/.generated.theme.conf (Severance palette,
+  // sourced by both tmux configs above). Generated from packages/genie-tokens.
+  const themeSrc = join(tmuxScriptsSrc, '.generated.theme.conf');
+  const themeDest = join(GENIE_HOME, '.generated.theme.conf');
+  if (existsSync(themeSrc)) {
+    try {
+      copyFileSync(themeSrc, themeDest);
+      success(`Installed tmux theme to ${themeDest}`);
+    } catch {
+      // Read/write failed — non-fatal
+    }
+  }
+
+  // Install osc52-copy.sh → ~/.genie/scripts/osc52-copy.sh (clipboard helper for nested tmux)
+  const osc52Src = join(tmuxScriptsSrc, 'osc52-copy.sh');
+  const osc52Dest = join(GENIE_HOME, 'scripts', 'osc52-copy.sh');
+  if (existsSync(osc52Src)) {
+    try {
+      copyFileSync(osc52Src, osc52Dest);
+      chmodSync(osc52Dest, 0o755);
+      success(`Installed OSC 52 clipboard helper to ${osc52Dest}`);
+    } catch {
+      // Read/write failed — non-fatal
+    }
+  }
+}
+
+/** Copy tmux scripts from the global package to ~/.genie/scripts/ */
+function syncTmuxScripts(globalPkgDir: string): void {
+  const tmuxScriptsSrc = join(globalPkgDir, 'scripts', 'tmux');
+  if (!existsSync(tmuxScriptsSrc)) return;
+
+  const scriptsDir = join(GENIE_HOME, 'scripts');
+  mkdirSync(scriptsDir, { recursive: true });
+
+  let scriptCount = 0;
+  for (const entry of readdirSync(tmuxScriptsSrc)) {
+    if (
+      entry.endsWith('.sh') ||
+      entry === 'genie.tmux.conf' ||
+      entry === 'tui-tmux.conf' ||
+      entry === '.generated.theme.conf'
+    ) {
+      const src = join(tmuxScriptsSrc, entry);
+      const dest = join(scriptsDir, entry);
+      copyFileSync(src, dest);
+      try {
+        chmodSync(dest, entry.endsWith('.sh') ? 0o755 : 0o644);
+      } catch {
+        // chmod may fail on some filesystems — non-fatal
+      }
+      scriptCount++;
+    }
+  }
+
+  if (scriptCount > 0) {
+    success(`Refreshed ${scriptCount} tmux scripts at ${scriptsDir}`);
+  }
+
+  syncTmuxConf(tmuxScriptsSrc);
+}
+
+/** Update marketplace.json version field to match the installed CLI version. */
+function syncMarketplaceVersion(claudePlugins: string, version: string): void {
+  const marketplacePath = join(claudePlugins, 'marketplaces', 'automagik', '.claude-plugin', 'marketplace.json');
+  try {
+    if (!existsSync(marketplacePath)) return;
+    const data = JSON.parse(readFileSync(marketplacePath, 'utf-8'));
+    if (Array.isArray(data.plugins)) {
+      for (const plugin of data.plugins) {
+        if (plugin.name === 'genie') {
+          plugin.version = version;
+        }
+      }
+    }
+    writeFileSync(marketplacePath, JSON.stringify(data, null, 2));
+    success(`Updated marketplace.json to v${version}`);
+  } catch (err) {
+    log(`Marketplace version update failed (non-fatal): ${err}`);
+  }
+}
+
+/** Update plugins/genie/package.json version field to match the installed CLI version. */
+function syncPluginPackageVersion(claudePlugins: string, version: string): void {
+  const pkgPath = join(claudePlugins, 'marketplaces', 'automagik', 'plugins', 'genie', 'package.json');
+  try {
+    if (!existsSync(pkgPath)) return;
+    const data = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    data.version = version;
+    writeFileSync(pkgPath, JSON.stringify(data, null, 2));
+    success(`Updated plugin package.json to v${version}`);
+  } catch (err) {
+    log(`Plugin package.json update failed (non-fatal): ${err}`);
+  }
+}
+
+/** Repoint the skills symlink to the current cache version. */
+function syncSkillsSymlink(claudePlugins: string, version: string): void {
+  const skillsLink = join(claudePlugins, 'marketplaces', 'automagik', 'plugins', 'genie', 'skills');
+  const cacheSkills = join('..', '..', '..', '..', 'cache', 'automagik', 'genie', version, 'skills');
+  try {
+    const { symlinkSync, unlinkSync, lstatSync } = require('node:fs') as typeof import('node:fs');
+    // Remove existing symlink/dir if present
+    try {
+      lstatSync(skillsLink);
+      unlinkSync(skillsLink);
+    } catch {
+      // doesn't exist — fine
+    }
+    symlinkSync(cacheSkills, skillsLink);
+    success(`Skills symlink → cache/${version}/skills`);
+  } catch (err) {
+    log(`Skills symlink update failed (non-fatal): ${err}`);
+  }
+}
+
+async function syncPlugin(installType: InstallationType): Promise<PluginSyncInfo> {
+  log('Syncing Claude Code plugin...');
+
+  const globalPkgDir = await resolveGlobalPkgDir(installType);
+  if (!globalPkgDir) {
+    log('Could not find installed package — skipping plugin sync');
+    return { skippedReason: 'installed package not found' };
+  }
+
+  const pluginSrc = join(globalPkgDir, 'plugins', 'genie');
+  if (!existsSync(pluginSrc)) {
+    log('Plugin source not found in package — skipping plugin sync');
+    return { globalPkgDir, skippedReason: 'plugin source not found in package' };
+  }
+
+  // Read version from installed package
+  let version: string;
+  try {
+    const pkg = JSON.parse(readFileSync(join(globalPkgDir, 'package.json'), 'utf-8'));
+    version = pkg.version;
+  } catch {
+    log('Could not read package version — skipping plugin sync');
+    return { globalPkgDir, skippedReason: 'could not read package version' };
+  }
+
+  // Copy to Claude Code plugin cache
+  const claudePlugins = join(homedir(), '.claude', 'plugins');
+  const cacheDir = join(claudePlugins, 'cache', 'automagik', 'genie', version);
+
+  try {
+    // Clean existing cache dir if it exists (stale version)
+    if (existsSync(cacheDir)) {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+    copyDirSync(pluginSrc, cacheDir);
+
+    // Skills live at <pkg>/skills/ (symlink in plugins/genie/ doesn't survive npm)
+    const skillsSrc = join(globalPkgDir, 'skills');
+    if (existsSync(skillsSrc) && !existsSync(join(cacheDir, 'skills'))) {
+      copyDirSync(skillsSrc, join(cacheDir, 'skills'));
+    }
+  } catch (err) {
+    error(`Failed to copy plugin: ${err}`);
+    return { version, globalPkgDir, cacheDir, skippedReason: `failed to copy plugin: ${err}` };
+  }
+
+  updatePluginRegistry(claudePlugins, cacheDir, version);
+  syncMarketplaceVersion(claudePlugins, version);
+  syncPluginPackageVersion(claudePlugins, version);
+  syncSkillsSymlink(claudePlugins, version);
+  syncTmuxScripts(globalPkgDir);
+
+  success(`Plugin synced to v${version}`);
+  return { version, globalPkgDir, cacheDir };
+}
+
 // ============================================================================
-// Channel resolution + persistence.
+// Channel Management
 // ============================================================================
 
-async function resolveChannel(options: { next?: boolean; stable?: boolean }): Promise<ReleaseChannel> {
+async function resolveChannel(options: { next?: boolean; stable?: boolean }): Promise<string> {
+  // Explicit flags override everything
   if (options.next) return 'next';
-  if (options.stable) return 'stable';
+  if (options.stable) return 'latest';
+
+  // Read saved channel from config
   if (genieConfigExists()) {
     try {
       const config = await loadGenieConfig();
-      if (config.updateChannel === 'next') return 'next';
-      if (config.updateChannel === 'latest') return 'stable';
+      if (config.updateChannel) return config.updateChannel;
     } catch {
-      // ignore
+      // Ignore config errors
     }
   }
-  return 'stable';
+
+  return 'latest';
 }
 
-async function persistChannel(channel: ReleaseChannel): Promise<void> {
+async function persistChannel(channel: string): Promise<void> {
   try {
     const config = await loadGenieConfig();
-    // Map back to the legacy schema enum (`'latest' | 'next'`) — the genie-config
-    // schema is shared with downstream consumers and changing its enum is
-    // out of scope for this wish.
-    config.updateChannel = channel === 'next' ? 'next' : 'latest';
+    config.updateChannel = channel as 'latest' | 'next';
     await saveGenieConfig(config);
   } catch {
-    // non-fatal — channel preference lost but update still works.
+    // Non-fatal — channel preference lost but update still works
   }
 }
-
-// ============================================================================
-// updateCommand — single canonical GH-Releases path. No npm/bun fallback.
-// ============================================================================
 
 export interface UpdateCommandOptions {
   next?: boolean;
@@ -1078,18 +1503,19 @@ export interface UpdateCommandOptions {
   skipMaintenance?: boolean;
   skipCleanup?: string;
   /**
-   * Mirrors commander's `--no-sidecar-cleanup` convention. Accepted for
-   * cross-CLI portability with omni; genie's day-one registry is empty.
+   * Mirrors commander's `--no-sidecar-cleanup` convention: defaults to `true`
+   * (i.e. cleanup permitted), set to `false` when the flag is present. Accepted
+   * for cross-CLI portability with omni; genie's day-one registry is empty so
+   * the flag is logged and otherwise has no effect.
    */
   sidecarCleanup?: boolean;
-  /** `--yes` / `-y`. Skips the TTY confirmation. */
+  /** `--yes` / `-y`. Skips the TTY confirmation. `GENIE_UPDATE_YES=1` env
+   *  has the same effect for CI / scripted callers. */
   yes?: boolean;
   /** `--no-restart`. Skips post-update maintenance AND the verify probe. */
   restart?: boolean;
   /** `--no-verify`. Runs maintenance but skips the post-restart probe. */
   verify?: boolean;
-  /** `--rollback`. Restore the most recent ~/.genie/bin/.previous backup. */
-  rollback?: boolean;
 }
 
 export async function updateCommand(options: UpdateCommandOptions = {}): Promise<void> {
@@ -1098,50 +1524,50 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   console.log(`${colorize('\x1b[2m', '\x1b[0m', '────────────────────────────────────')}`);
   console.log();
 
-  if (options.rollback) {
-    await runRollback();
-    return;
-  }
-
   const cleanupSkipList = buildCleanupSkipList(options);
   const noRestart = options.restart === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_RESTART);
   const noVerify = options.verify === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_VERIFY);
   const channel = await resolveChannel(options);
 
+  // Persist channel when explicitly switching
   if (options.next || options.stable) {
     await persistChannel(channel);
   }
 
-  // Pre-flight: fetch the channel manifest. Single canonical source of truth.
-  const manifest = await fetchLatestManifest(channel);
-  const latestVersion = manifest?.version ?? null;
+  // Group 3: pre-flight version check. Short-circuit when already current.
+  const latestVersion = await fetchLatestVersion(channel);
   if (shortCircuitIfCurrent(VERSION, latestVersion)) {
     success(`Already up to date (v${normalizeVersion(VERSION)}, channel ${channel})`);
     console.log();
     return;
   }
 
-  let platform: string;
-  try {
-    platform = resolvePlatformId();
-  } catch (err) {
-    error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
-
-  log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
-  log(`Platform: ${platform}`);
+  const installType = await detectInstallationType();
+  log(`Detected installation: ${installType}`);
+  log(`Channel: ${channel}${channel === 'next' ? ' (dev builds)' : ' (stable)'}`);
   if (latestVersion) {
     log(`Update available: ${normalizeVersion(VERSION)} → ${normalizeVersion(latestVersion)}`);
   } else {
-    log(`Channel manifest unavailable (.well-known/${channel === 'stable' ? 'latest' : channel}.json missing)`);
-    error(`Cannot resolve target version for channel "${channel}". Aborting.`);
-    process.exit(1);
+    log(`Registry version unavailable (proceeding with reinstall of channel ${channel})`);
   }
   console.log();
 
+  if (installType === 'unknown') {
+    error('No Genie CLI installation found');
+    console.log();
+    console.log('Install method not configured. Please reinstall genie:');
+    console.log(
+      `${colorize('\x1b[36m', '\x1b[0m', '  curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash')}`,
+    );
+    console.log();
+    process.exit(1);
+  }
+
+  // Group 3: confirmation prompt (TTY) / `--yes` / GENIE_UPDATE_YES bypass.
   if (!shouldAutoConfirm(options)) {
-    const proceedQuestion = `Update v${normalizeVersion(VERSION)} → v${normalizeVersion(latestVersion as string)}?`;
+    const proceedQuestion = latestVersion
+      ? `Update v${normalizeVersion(VERSION)} → v${normalizeVersion(latestVersion)}?`
+      : `Reinstall channel "${channel}"?`;
     const proceed = await promptConfirm(proceedQuestion);
     if (!proceed) {
       console.log();
@@ -1151,154 +1577,48 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
     }
   }
 
-  const diagnosticsCtx: UpdateDiagnosticsContext = {
-    channel,
-    manifest,
-    platform,
-    latestVersion,
-    cliVersion: VERSION,
-    tarballPath: null,
-    attestationVerified: false,
-    previousBackup: null,
-  };
+  if (installType === 'source') {
+    await updateSource();
+    return;
+  }
 
-  try {
-    await runDelivery(manifest as LatestManifest, platform, diagnosticsCtx);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    error(`Update failed: ${msg}`);
+  // Detect all global installs (npm + bun) to update both when they coexist
+  const globalInstalls = await detectGlobalInstalls();
+
+  // Primary update — exit on failure
+  const primaryMethod = installType as 'npm' | 'bun';
+  const primaryOk = primaryMethod === 'bun' ? await updateViaBun(channel) : await updateViaNpm(channel);
+  if (!primaryOk) {
     process.exit(1);
   }
 
-  const cleanupReport = await runLegacyCleanupSafe(cleanupSkipList);
-  await runPostUpdateMaintenanceSafe({ ...options, noRestart, noVerify }, diagnosticsCtx, cleanupReport);
-}
-
-/**
- * Tarball delivery + binary swap. Linear flow extracted from `updateCommand`
- * to keep the command body readable: download → verify → extract → swap →
- * sync aux content → clean staging.
- */
-async function runDelivery(
-  manifest: LatestManifest,
-  platform: string,
-  diagnosticsCtx: UpdateDiagnosticsContext,
-): Promise<void> {
-  log('Downloading signed tarball from GitHub Releases...');
-  const tarballPath = await downloadAndVerifyTarball(manifest, platform, GENIE_BIN_STAGING);
-  diagnosticsCtx.tarballPath = tarballPath;
-  diagnosticsCtx.attestationVerified = true;
-  success(`Verified attestation for ${tarballPath.split('/').pop()}`);
-
-  log('Extracting tarball...');
-  const extractDir = join(GENIE_BIN_STAGING, `extract-${manifest.version}`);
-  if (existsSync(extractDir)) rmSync(extractDir, { recursive: true, force: true });
-  await extractTarball(tarballPath, extractDir);
-
-  const stagedBin = join(extractDir, 'genie');
-  if (!existsSync(stagedBin)) {
-    throw new Error(`tarball did not contain a 'genie' binary at ${stagedBin}`);
-  }
-  try {
-    chmodSync(stagedBin, 0o755);
-  } catch {
-    // best-effort
-  }
-
-  log('Atomically swapping binary...');
-  const targetBin = join(GENIE_BIN, 'genie');
-  const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, normalizeVersion(VERSION));
-  diagnosticsCtx.previousBackup = swapResult.oldVersionBackup;
-  success(`Genie binary updated → v${manifest.version}${swapResult.fallbackUsed ? ' (cross-device fallback)' : ''}`);
-
-  try {
-    writeFileSync(join(GENIE_HOME, 'VERSION'), `${manifest.version}\n`);
-  } catch {
-    // best-effort
-  }
-
-  syncAuxiliaryContent(extractDir);
-  cleanupStagingArtifacts(extractDir, tarballPath);
-}
-
-function cleanupStagingArtifacts(extractDir: string, tarballPath: string): void {
-  try {
-    rmSync(extractDir, { recursive: true, force: true });
-    rmSync(tarballPath);
-    const sidecarBundle = `${tarballPath}.bundle`;
-    const sidecarIntoto = `${tarballPath}.intoto.jsonl`;
-    if (existsSync(sidecarBundle)) rmSync(sidecarBundle);
-    if (existsSync(sidecarIntoto)) rmSync(sidecarIntoto);
-  } catch {
-    // best-effort
-  }
-}
-
-/**
- * Mirror plugins/, skills/, templates/ from the extracted tarball into
- * `~/.genie/`. Best-effort — failures are logged but never block the update.
- */
-function syncAuxiliaryContent(extractDir: string): void {
-  const targets: Array<{ src: string; dest: string; label: string }> = [
-    { src: join(extractDir, 'plugins'), dest: join(GENIE_HOME, 'plugins'), label: 'plugins' },
-    { src: join(extractDir, 'skills'), dest: join(GENIE_HOME, 'skills'), label: 'skills' },
-    { src: join(extractDir, 'templates'), dest: join(GENIE_HOME, 'templates'), label: 'templates' },
-  ];
-  for (const { src, dest, label } of targets) {
-    if (!existsSync(src)) continue;
-    try {
-      if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
-      copyDirSync(src, dest);
-      success(`Refreshed ${label}/ → ${dest}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`Could not refresh ${label}/ (non-fatal): ${msg}`);
+  // Secondary update — warn on failure, don't block
+  const secondaryMethod = primaryMethod === 'bun' ? 'npm' : 'bun';
+  if (globalInstalls.has(secondaryMethod)) {
+    console.log();
+    log(`Also updating ${secondaryMethod}-global install...`);
+    const secondaryOk = secondaryMethod === 'bun' ? await updateViaBun(channel) : await updateViaNpm(channel);
+    if (!secondaryOk) {
+      error(`Secondary update via ${secondaryMethod} failed (non-blocking)`);
     }
   }
-}
 
-async function runRollback(): Promise<void> {
-  log('Rolling back to previous binary...');
-  try {
-    const result = rollbackBinary();
-    success(`Restored ${result.from} → ${result.restored}`);
-    console.log();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    error(`Rollback failed: ${msg}`);
-    console.log();
-    process.exit(1);
-  }
+  const plugin = await syncPlugin(installType);
+  const cleanupReport = await runLegacyCleanupSafe(cleanupSkipList);
+  await runPostUpdateMaintenanceSafe(
+    { ...options, noRestart, noVerify },
+    {
+      channel,
+      installType,
+      primaryMethod,
+      globalInstalls: [...globalInstalls].sort(),
+      plugin,
+      latestVersion,
+      cliVersion: VERSION,
+    },
+    cleanupReport,
+  );
 }
-
-/**
- * TTY confirmation prompt. Auto-confirms in non-TTY environments so CI
- * pipelines never hang waiting for stdin.
- */
-async function promptConfirm(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) return true;
-  process.stdout.write(`${question} [Y/n] `);
-  return new Promise((resolve) => {
-    const onData = (chunk: Buffer) => {
-      process.stdin.removeListener('data', onData);
-      process.stdin.pause();
-      const answer = chunk.toString('utf-8').trim().toLowerCase();
-      if (answer === '' || answer === 'y' || answer === 'yes') resolve(true);
-      else resolve(false);
-    };
-    process.stdin.resume();
-    process.stdin.once('data', onData);
-  });
-}
-
-function shouldAutoConfirm(opts: { yes?: boolean }): boolean {
-  if (opts.yes) return true;
-  return isTruthyEnv(process.env.GENIE_UPDATE_YES);
-}
-
-// ============================================================================
-// Post-update maintenance + verify orchestration.
-// ============================================================================
 
 function buildCleanupSkipList(options: UpdateCommandOptions): Set<string> {
   const skipList = parseSkipCleanupFlag(options.skipCleanup);
@@ -1319,6 +1639,11 @@ async function runLegacyCleanupSafe(skipList: Set<string>): Promise<CleanupRepor
   }
 }
 
+/**
+ * Day-one users hit watchdog install + foreground backfill convergence on
+ * first `genie` after upgrade. Run maintenance NOW so `genie` (auto-start)
+ * can stay fast. Failures are surfaced but never block the update.
+ */
 function printPostUpdateMaintenanceIntro(): void {
   console.log();
   log('Running post-update maintenance...');
@@ -1370,6 +1695,11 @@ async function capturePostUpdateDiagnostics(
   }
 }
 
+/**
+ * Print the 3-line verify banner. Genie has no auth row (no auth model), so
+ * the banner is 2 lines for ok / health-unreachable / version-mismatch and
+ * collapses to 1 line for skipped variants.
+ */
 function printVerifyBanner(result: VerifyResult): void {
   console.log();
   for (const line of formatVerifyBanner(result)) console.log(`  ${line}`);
@@ -1387,6 +1717,9 @@ async function runPostUpdateMaintenanceSafe(
   diagnosticsCtx: UpdateDiagnosticsContext,
   cleanupReport: CleanupReport,
 ): Promise<void> {
+  // `--no-restart` short-circuits BOTH maintenance and verify. Diagnostics
+  // still get written (with a `skipped` verify variant) so operators have a
+  // record of every invocation.
   if (options.noRestart) {
     log('--no-restart: skipping maintenance and verify probe.');
     const verify = await runVerifyProbe({ skipReason: 'no-restart' });
@@ -1424,8 +1757,17 @@ async function runPostUpdateMaintenanceSafe(
     error(`Post-update maintenance skipped: ${maintenanceError}`);
   }
 
+  // Group 6 (follow-up): bun's package swap unlinks the old
+  // `node_modules/@automagik/genie` directory under the running pm2
+  // genie-serve process. Restart it BEFORE verifying so the daemon re-execs
+  // from the live bytes — otherwise the verify probe will (correctly) flag
+  // it as `daemon-stale-inode` and exit 1, leaving operators to fix it
+  // manually after every update.
   await restartServeIfStaleSafe();
 
+  // Group 4: verify probe AFTER maintenance. `--no-verify` produces the
+  // `skipped: no-verify-flag` variant so diagnostics still record the
+  // intentional bypass.
   const verify = options.noVerify ? await runVerifyProbe({ skipReason: 'no-verify-flag' }) : await runVerifyProbe();
   printVerifyBanner(verify);
 
@@ -1440,11 +1782,26 @@ async function runPostUpdateMaintenanceSafe(
     { verify, cleanups: cleanupReport },
   );
 
+  // Exit 1 on health-unreachable OR daemon-stale-inode unless --no-verify was
+  // set (escape hatch). Stale-inode is a real failure: the new binary is on
+  // disk but the daemon is still serving old bytes — every subsequent
+  // `genie ...` call hits the new code while the running scheduler / event
+  // router lag behind. Exit 1 forces CI / scripted updaters to notice and
+  // re-run with `pm2 restart Genie`.
+  //
+  // NOTE: `version-mismatch` no longer exists in the verify result type
+  // (removed in the truthful-verify rewrite — the calling CLI's frozen
+  // `VERSION` cannot honestly be compared against post-update disk).
   if ((verify.kind === 'health-unreachable' || verify.kind === 'daemon-stale-inode') && !options.noVerify) {
     process.exitCode = 1;
   }
 }
 
+/**
+ * Best-effort wrapper around `restartServeIfStale` so update never aborts
+ * because pm2 misbehaved. Failures inside the helper already log error()
+ * lines; here we just guarantee we never throw upward into the caller.
+ */
 async function restartServeIfStaleSafe(): Promise<void> {
   try {
     await restartServeIfStale();
@@ -1453,6 +1810,3 @@ async function restartServeIfStaleSafe(): Promise<void> {
     log(`Stale-serve restart skipped (non-fatal): ${msg}`);
   }
 }
-
-// Re-export for cross-CLI tooling that wants the URL primitives.
-export { RELEASES_BASE_URL, RELEASES_OWNER, RELEASES_REPO };
