@@ -156,19 +156,25 @@ export function parseAtSyntax(recipient: string, defaultTeam?: string): { recipi
 }
 
 /**
- * Resolve the 'team-lead' alias to the actual leader name for a given team context.
- * Never returns 'team-lead' — falls back to teamName via resolveLeaderName().
+ * Resolve the 'team-lead' alias to the actual leader id for an explicit team
+ * context. Deliberately does not fall back to GENIE_TEAM: without an explicit
+ * recipient scope, `team-lead` points at the sender's team and can silently
+ * route to the wrong inbox.
  */
-async function resolveLeaderAlias(recipient: string, teamContext?: string): Promise<string> {
+export async function resolveLeaderAlias(recipient: string, teamContext?: string): Promise<string> {
   if (recipient !== 'team-lead') return recipient;
 
-  const teamName = teamContext ?? process.env.GENIE_TEAM;
-  if (teamName) {
-    const teamManager = await getTeamManager();
-    return teamManager.resolveLeaderName(teamName);
+  if (!teamContext) return recipient;
+
+  const teamManager = await getTeamManager();
+  const leader = await teamManager.resolveLeaderName(teamContext);
+  if (!leader) {
+    throw new Error(
+      `Team "${teamContext}" has no leader; cannot resolve "team-lead". Use an explicit agent id or spawn the team leader first.`,
+    );
   }
 
-  return recipient;
+  return leader;
 }
 
 // ============================================================================
@@ -313,9 +319,10 @@ export function resolveSenderTeams(
     walkParentChain(teams, team, visited, result);
   }
 
-  // Leader fallback: if sender is the leader (by name or legacy 'team-lead'
-  // alias), include the leader's team resolved from the ambient GENIE_TEAM.
-  const isLeader = teams.some((t) => t.leader === sender) || sender === 'team-lead';
+  // Leader fallback: if sender is the persisted leader id, include the
+  // leader's team resolved from the ambient GENIE_TEAM. Do not treat the
+  // bare alias "team-lead" as a global wildcard; it has no team scope.
+  const isLeader = teams.some((t) => t.leader === sender);
   if (isLeader) {
     const envTeam = process.env.GENIE_TEAM;
     if (envTeam) {
@@ -349,8 +356,8 @@ export async function suggestRelayLeader(sender: string): Promise<{ leader: stri
 
 /** Check whether a recipient is reachable within a given team (direct member, leader, or prefixed name). */
 function isRecipientInTeam(team: teamManagerTypes.TeamConfig, recipient: string): boolean {
-  // Direct member, actual leader name, or legacy 'team-lead' alias (backwards compat)
-  if (team.members.includes(recipient) || recipient === team.leader || recipient === 'team-lead') return true;
+  // Direct member or actual persisted leader id.
+  if (team.members.includes(recipient) || recipient === team.leader) return true;
   if (recipient.startsWith(`${team.name}-`)) {
     const roleOnly = recipient.slice(team.name.length + 1);
     if (team.members.includes(roleOnly)) return true;
@@ -368,8 +375,8 @@ async function findAgentTeam(_repoPath: string, agentName: string): Promise<team
   const memberTeam = teams.find((t) => t.members.includes(agentName));
   if (memberTeam) return memberTeam;
 
-  // Match by leader name or legacy 'team-lead' alias (backwards compat)
-  if (agentName === 'team-lead' || teams.some((t) => t.leader === agentName)) {
+  // Match by persisted leader id.
+  if (teams.some((t) => t.leader === agentName)) {
     const envTeam = process.env.GENIE_TEAM;
     if (envTeam) return teams.find((t) => t.name === envTeam) ?? null;
     // Also find by leader field directly
@@ -934,17 +941,11 @@ async function handleSend(
   // #1674 Bug 2a. Then resolve the 'team-lead' alias to the actual leader
   // name in the (possibly parsed) team context.
   const parsed = parseAtSyntax(options.to, options.team);
-  const to = await resolveLeaderAlias(parsed.recipient, parsed.team);
-
-  const scopeError = await checkSendScope(repoPath, from, to);
-  if (scopeError) {
-    if (options.bridge) {
-      await printBridgeSuggestion(from, to, body, scopeError);
-      return;
-    }
-    console.error(`Error: ${scopeError}`);
+  if (parsed.recipient === 'team-lead' && !parsed.team) {
+    console.error('Error: "team-lead" requires an explicit team scope. Use "team-lead@<team>" or --team <team>.');
     process.exit(1);
   }
+  const to = await resolveLeaderAlias(parsed.recipient, parsed.team);
 
   // Wish retire-session-names-id-only G4: resolve recipient name → canonical
   // agents.id BEFORE writing to mailbox.to_worker. Migration 061 enforces
@@ -956,7 +957,17 @@ async function handleSend(
   // parsed.team wins over options.team / GENIE_TEAM so cross-team @-syntax sends
   // resolve in the recipient's scope, not the sender's. Closes #1674 Bug 2a.
   const teamScope = parsed.team ?? options.team ?? process.env.GENIE_TEAM;
-  const toAgentId = await registryMod.resolveAgentIdStrict(to, teamScope);
+  const toAgentId = await registryMod.resolveAgentIdStrict(to, teamScope, options.to);
+
+  const scopeError = await checkSendScope(repoPath, from, toAgentId);
+  if (scopeError) {
+    if (options.bridge) {
+      await printBridgeSuggestion(from, toAgentId, body, scopeError);
+      return;
+    }
+    console.error(`Error: ${scopeError}`);
+    process.exit(1);
+  }
 
   const senderActor = localActor(from);
   const recipientActor = localActor(toAgentId);

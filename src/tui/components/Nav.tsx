@@ -91,6 +91,7 @@ function useSessionTreeBuilder(
         sessions: diagnostics.sessions,
         executors: diagnostics.executors,
         workStates: diagnostics.workStates,
+        teamScope: process.env.GENIE_TUI_TEAM ?? process.env.GENIE_TEAM,
       });
     } else {
       newTree = buildSessionTree(diagnostics);
@@ -992,7 +993,8 @@ function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, wi
       GENIE_TUI_PANE: _a,
       GENIE_TUI_RIGHT: _b,
       GENIE_TUI_WORKSPACE: _c,
-      GENIE_IS_DAEMON: _d,
+      GENIE_TUI_TEAM: _d,
+      GENIE_IS_DAEMON: _e,
       ...cleanEnv
     } = process.env;
     // Route stdout/stderr to a per-spawn log file instead of /dev/null so that

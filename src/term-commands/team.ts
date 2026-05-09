@@ -383,8 +383,10 @@ async function spawnLeaderWithWish(
   await copyFile(sourceWishPath, destWishPath);
   console.log(`  Wish: copied ${slug}/WISH.md into worktree`);
 
-  // Hire the standard team: leader (team-lead template) + engineer + reviewer + qa + fix
-  const standardRoles = ['team-lead', 'engineer', 'reviewer', 'qa', 'fix'];
+  // Hire the standard workers before kickoff. The leader is added after its
+  // spawn resolves the durable UUID; writing bare "team-lead" here violates
+  // migration 061's teams.members invariant.
+  const standardRoles = ['engineer', 'reviewer', 'qa', 'fix'];
   for (const role of standardRoles) {
     await teamManager.hireAgent(config.name, role);
   }
@@ -420,6 +422,7 @@ async function spawnLeaderWithWish(
   if (leader?.id) {
     config.leader = leader.id;
     await teamManager.updateTeamConfig(config.name, config);
+    await teamManager.hireAgent(config.name, leader.id);
   }
 
   // initialPrompt is passed as CLI positional arg — no mailbox backup needed

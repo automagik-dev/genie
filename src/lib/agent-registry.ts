@@ -1287,12 +1287,12 @@ export async function resolveAgentId(nameOrId: string, team?: string): Promise<s
  * The thrown error includes the input verbatim and the team scope used so the
  * operator can disambiguate quickly.
  */
-export async function resolveAgentIdStrict(nameOrId: string, team?: string): Promise<string> {
+export async function resolveAgentIdStrict(nameOrId: string, team?: string, displayInput = nameOrId): Promise<string> {
   const id = await resolveAgentId(nameOrId, team);
   if (id) return id;
   const teamHint = team ? ` (team scope: ${team})` : ' (no team scope — pass --team to disambiguate)';
   throw new Error(
-    `No agent matches "${nameOrId}"${teamHint}. Resolution checked: exact id, dir:${nameOrId}, custom_name+team, role. Run \`genie ls\` to see live agents.`,
+    `No agent matches "${displayInput}"${teamHint}. Resolution checked: exact id, dir:${nameOrId}, custom_name+team, role. Run \`genie ls\` to see live agents.`,
   );
 }
 

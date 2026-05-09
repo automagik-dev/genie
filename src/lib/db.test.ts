@@ -1266,7 +1266,6 @@ describe('no default stderr emit on connect', () => {
   beforeEach(() => {
     stderrLines = [];
     origWrite = process.stderr.write.bind(process.stderr);
-    // biome-ignore lint/suspicious/noExplicitAny: stderr.write signature is overloaded
     (process.stderr as any).write = (chunk: unknown) => {
       if (typeof chunk === 'string') stderrLines.push(chunk);
       else if (chunk instanceof Uint8Array) stderrLines.push(Buffer.from(chunk).toString('utf8'));
@@ -1276,7 +1275,6 @@ describe('no default stderr emit on connect', () => {
   });
 
   afterEach(() => {
-    // biome-ignore lint/suspicious/noExplicitAny: restoring spied write
     (process.stderr as any).write = origWrite;
     if (savedDebug === undefined) {
       // biome-ignore lint/performance/noDelete: process.env requires real unset

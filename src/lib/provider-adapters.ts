@@ -668,10 +668,15 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   // for OS cleanup so tmux's later shell exec can `cat` it without a
   // deletion race.
   const mergedPrompt = buildCodexMergedPrompt(params, extraPromptFiles);
+  // `--` end-of-options sentinel: prompts that begin with `---` (YAML frontmatter
+  // in skill/agent AGENTS.md) are otherwise rejected by codex's clap parser as
+  // an unknown long option, killing the spawn before TUI init.
   if (mergedPrompt !== null) {
     const promptFile = writeCodexPromptFile(params, mergedPrompt);
+    parts.push('--');
     parts.push(`"$(cat ${escapeShellArg(promptFile)})"`);
   } else {
+    parts.push('--');
     parts.push(escapeShellArg(buildCodexAutoPrompt(params)));
   }
 

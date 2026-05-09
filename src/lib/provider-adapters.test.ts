@@ -806,6 +806,70 @@ describe('buildCodexCommand', () => {
     expect(result.command).toContain('--model');
     expect(result.command).toContain('o3');
   });
+
+  // Regression: codex's clap parser rejects positionals that begin with `---`
+  // (YAML frontmatter delimiter in skill/agent prompts) unless an explicit
+  // `--` end-of-options sentinel precedes the positional. Without it, every
+  // skill-driven codex spawn dies before TUI init with
+  // "error: unexpected argument '---...'". See
+  // .genie/wishes/spawn-compounding-defects/evidence/codex-spawn-trace.md.
+  it('inserts -- before merged-prompt positional (clap end-of-options sentinel)', () => {
+    const systemPromptFile = writeCodexSourcePromptFile('AGENTS.md', '---\nname: engineer\n---\nbody');
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      executorId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      systemPromptFile,
+    });
+
+    const promptPath = codexPromptPathFromCommand(result.command);
+    const promptToken = `"$(cat '${promptPath}')"`;
+    const promptIdx = result.command.indexOf(promptToken);
+    expect(promptIdx).toBeGreaterThan(-1);
+    // The `--` sentinel must appear immediately (single space) before the prompt token.
+    expect(result.command.slice(0, promptIdx)).toMatch(/ -- $/);
+  });
+
+  it('inserts -- before auto-prompt positional (clap end-of-options sentinel)', () => {
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      role: 'tester',
+      skill: 'work',
+    });
+
+    const autoPromptIdx = result.command.indexOf("'Genie worker.");
+    expect(autoPromptIdx).toBeGreaterThan(-1);
+    expect(result.command.slice(0, autoPromptIdx)).toMatch(/ -- $/);
+  });
+
+  // Higher-level guard: a real frontmatter prompt routed through buildCodexCommand
+  // must produce a command where `--` precedes the positional, regardless of
+  // how extra args/model flags get layered in.
+  it('preserves -- before prompt when extraArgs and model are present', () => {
+    const systemPromptFile = writeCodexSourcePromptFile(
+      'AGENTS-extra.md',
+      '---\nname: extra\n---\nfrontmatter prompt body',
+    );
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      role: 'engineer',
+      executorId: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+      model: 'gpt-5-codex',
+      extraArgs: ['--sandbox', 'workspace-write'],
+      systemPromptFile,
+    });
+
+    const promptPath = codexPromptPathFromCommand(result.command);
+    const promptToken = `"$(cat '${promptPath}')"`;
+    const sentinelIdx = result.command.lastIndexOf(' -- ');
+    const promptIdx = result.command.indexOf(promptToken);
+    expect(sentinelIdx).toBeGreaterThan(-1);
+    expect(promptIdx).toBeGreaterThan(sentinelIdx);
+    // Nothing other than whitespace between sentinel and positional.
+    expect(result.command.slice(sentinelIdx + 4, promptIdx)).toBe('');
+  });
 });
 
 // ============================================================================
