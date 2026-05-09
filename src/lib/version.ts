@@ -19,7 +19,7 @@
  * we identify our own package no matter how deep the binary lives.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 const FALLBACK_VERSION = '0.0.0-unknown';
@@ -42,7 +42,33 @@ function readPackageJson(path: string): PackageJson | null {
   }
 }
 
+function safeRealpath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+function readVersionFile(dir: string): string | null {
+  try {
+    const file = resolve(dir, 'VERSION');
+    if (!existsSync(file)) return null;
+    const v = readFileSync(file, 'utf-8').trim();
+    return v.length > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 function readVersionFromPackageJson(): string {
+  // bun --compile binaries: read the VERSION stamp dropped beside the binary
+  // by build-tarballs.yml (G1 deliverable). package.json walking does not work
+  // because import.meta.dir is bunfs.
+  const execDir = dirname(safeRealpath(process.execPath || ''));
+  const stamp = readVersionFile(execDir);
+  if (stamp) return stamp;
+
   const startDir = dirname(import.meta.dir ?? __dirname);
 
   // Walk up from the binary's location, return the first package.json whose

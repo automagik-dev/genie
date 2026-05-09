@@ -28,6 +28,7 @@
     "version": "bun run scripts/version.ts",
     "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun --external pgserve --external @khal-os/brain --external @anthropic-ai/claude-agent-sdk && bun build src/hooks/dispatch-client.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun && chmod +x dist/*.js",
     "build:app": "bun run scripts/build-app.ts",
+    "build:binary": "bash scripts/build-binary.sh",
     "build:plugin": "node scripts/build.js",
     "sync": "node scripts/sync.js",
     "build-and-sync": "npm run build:plugin && npm run sync",
