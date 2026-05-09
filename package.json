@@ -55,9 +55,9 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.119",
     "@inquirer/prompts": "7.10.1",
-    "@opentui/core": "0.2.0",
-    "@opentui/keymap": "0.2.0",
-    "@opentui/react": "0.2.0",
+    "@opentui/core": "0.2.6",
+    "@opentui/keymap": "0.2.6",
+    "@opentui/react": "0.2.6",
     "@tauri-apps/api": "2.10.1",
     "chokidar": "^5.0.0",
     "commander": "12.1.0",

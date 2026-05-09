@@ -16,6 +16,19 @@
 
 # Changelog
 
+## v5-launch
+
+### TUI clipboard contract — terminal-native selection
+
+v5 TUI uses terminal-native selection. Drag to highlight, Cmd+C to copy.
+tmux's automatic OSC 52 emit is disabled — the terminal owns the entire
+selection lifecycle.
+
+Operators on terminals that misbehave with the new mouse mode can fall
+back to `GENIE_TUI_MOUSE=0` and use `prefix+[` tmux copy-mode.
+
+Wish: `wish/tui-native-selection`.
+
 ## Unreleased
 
 ### Fixed

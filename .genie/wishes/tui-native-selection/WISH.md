@@ -96,7 +96,7 @@
 
 **Deliverables:**
 
-0. **Bump `@opentui/core`, `@opentui/keymap`, `@opentui/react` from `0.2.0` to `0.2.6` in `package.json`.** This wish's source-line citations (`terminal.zig:33-39`, `terminal.zig:593-596`, `renderer.ts:1367 / 2702-2774 / 3625 / 3690`) are verified against `anomalyco/opentui@v0.2.6` (HEAD `e663959`, npm `latest` as of 2026-05-09). The current pin (`0.2.0`) does not contain those exact line numbers. Run `bun install` after the bump and re-verify the cited lines in `node_modules/@opentui/core/dist/...` (or wherever bun resolves the package source) match before proceeding to deliverables 1–4. If a citation drifted, update WISH.md inline before continuing.
+0. **Bump `@opentui/core`, `@opentui/keymap`, `@opentui/react` from `0.2.0` to `0.2.6` in `package.json`.** This wish's source-line citations (`terminal.zig:33-39`, `terminal.zig:593-596`, `renderer.ts:1367 / 2702-2774 / 3625 / 3690`) are verified against `anomalyco/opentui@v0.2.6` upstream source (HEAD `e663959`, npm `latest` as of 2026-05-09); the npm tarball ships only compiled JS (`index-*.js` bundles in `node_modules/@opentui/core/`), not the original `terminal.zig` / `renderer.ts` source, so direct line-by-line verification against `node_modules` is not possible. Equivalent code paths in the bundled JS (Group 1 implementation 2026-05-09): `enableMouse()` ~line 23247, `disableMouse()` ~line 23251, `set useMouse()` ~line 22319, `suspend()`/`resume()` ~lines 23930/23958, `setMode()` mouse re-init ~line 23209 of `node_modules/@opentui/core/index-s460mpf9.js`. All three lifecycle paths (initial setup, suspend/resume, runtime `useMouse=true`) flow through `enableMouse()`, which is the monkey-patch target.
 1. `src/tui/render.tsx`: in `renderNav()`, immediately after `createCliRenderer(resolveTuiRendererConfig())` returns and before `createRoot(...)`, write `\e[?1002l` to `process.stdout`. Wrap in a small reusable helper `disableDragTracking()` (or inline; engineer's call) with a comment block referencing this wish + the upstream OpenTUI source line (`packages/core/src/zig/terminal.zig:593-596`, verified at `@opentui/core@0.2.6`).
 2. Lifecycle hook: subscribe to whatever event OpenTUI emits when its mouse-init re-runs (suspend/resume cycle, runtime `useMouse` setter). Re-emit `\e[?1002l` from the handler. The exact event name to be confirmed during implementation — read `packages/core/src/renderer.ts:2702-2774` for the mouse-lifecycle entry points (`enableMouse`, `disableMouse`, `_useMouse` setter at line 1367, suspend at `:3625`, resume at `:3690`). **If `0.2.6` does not expose a clean public hook** (e.g. the lifecycle is fully internal), **escalate rather than stub** — open a question on the wish review thread, do not paper over with a polling fallback. Acceptable resolutions: extend Jaw C's upstream PR to include a public `onMouseSetup` event; or accept a small `MutationObserver`-style override that re-emits `?1002l` on every render frame (last resort, costs minimal CPU).
 3. `src/tui/components/Nav.tsx` (and other components if needed): add a top-of-file or near-mouse-handler comment confirming "no `onMouseDrag` / `onMouseDragEnd` registrations — drag is intentionally terminal-owned in v5; see `wish/tui-native-selection`."
@@ -275,7 +275,11 @@ _Populated by `/review` after execution completes._
 - Plan review (this wish): _pending_
 - Group 1 review: _pending_
 - Group 2 review: _pending_
-- Group 3 (upstream PR URL): _pending_
+- Group 3 (upstream artifacts):
+  - Issue: https://github.com/anomalyco/opentui/issues/1038 — "Surface MouseLevel through setMouseMode for click-only mouse use cases"
+  - Draft PR: https://github.com/anomalyco/opentui/pull/1039 — `feat(core): wire MouseLevel through setMouseMode + CliRendererConfig`
+  - Branch: `namastex888:feat/mouse-level-config-surface` (commit `0594866d`)
+  - Diff scope: 6 files / +297 / −34 (terminal.zig, renderer.zig, lib.zig, zig.ts, renderer.ts, terminal_test.zig). Per D5, non-blocking — local Jaw A override in genie ships regardless of upstream merge cadence.
 - Group 4 (smoke results): _pending_
 - Final post-merge review: _pending_
 
