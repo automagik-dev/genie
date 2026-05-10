@@ -2534,18 +2534,29 @@ async function resolveSpawnTeam(
   misbound: boolean;
   multiTeamCollision: boolean;
 }> {
+  // The agent's canonical identity (directory/template name) — used for
+  // canonical-self-leader lookup and the misbinding WARN. `--role <custom>`
+  // overrides only affect registration/resume identity; the underlying
+  // agent's canonical team is invariant across role overrides. Using
+  // effectiveRole here would break `genie spawn <agent> --role <custom>` by
+  // probing `~/.claude/teams/<custom>/` instead of `~/.claude/teams/<agent>/`,
+  // silently dropping canonical-team resolution. CR feedback on PR #1735.
+  const spawnedName = agent.entry?.name ?? effectiveRole;
+
   const outcome = await resolveTeamForSpawnWithDeps({
     explicitTeam: options.team ?? null,
     entryTeam: agent.entry?.team ?? null,
-    agentName: effectiveRole,
+    agentName: spawnedName,
   });
   let team: string | null = outcome.team;
   let source: ResolveSource | null = outcome.source;
 
   // Bug 4 fix: surface misbinding loudly on stderr so silent corruption of
-  // master-agent bindings can't burn another session.
+  // master-agent bindings can't burn another session. Identify the agent by
+  // its directory name (`spawnedName`), not the role override — the user's
+  // mental model is "I spawned <agent>".
   if (outcome.misbound && outcome.canonicalTeam && team) {
-    console.error(formatMisbindingWarning(effectiveRole, outcome.canonicalTeam, team));
+    console.error(formatMisbindingWarning(spawnedName, outcome.canonicalTeam, team));
   }
 
   // Tier 5 (last-resort): scan on-disk team configs for one that lists this
