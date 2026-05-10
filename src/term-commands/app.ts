@@ -8,10 +8,21 @@
 import type { Command } from 'commander';
 
 async function handleTuiMode(): Promise<void> {
-  const { isServeRunning, autoStartServe } = await import('./serve.js');
+  const { isServeRunning, autoStartServe, isTuiSessionReady, ensureTuiSession } = await import('./serve.js');
   if (!isServeRunning()) {
     console.log('Starting genie serve...');
     await autoStartServe();
+  }
+  // Belt + suspenders mirroring `src/genie.ts:863`: even after autoStartServe
+  // returns, the TUI tmux session may not exist. The post-update reaper
+  // sometimes kills the genie-tui server in lock-step with the daemon, and
+  // operator-driven `tmux -L genie-tui kill-server` (e.g. for restart cycles)
+  // leaves the daemon thinking the TUI is up while the session is gone — both
+  // produce a "no sessions" error from `attachTuiSession()`. Idempotently
+  // ensure the session exists before attempting attach, matching the bare
+  // `genie` invocation's defense.
+  if (!isTuiSessionReady()) {
+    ensureTuiSession();
   }
   const { attachTuiSession } = await import('../tui/tmux.js');
   attachTuiSession();

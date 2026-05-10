@@ -331,16 +331,51 @@ function buildDenyResponse(
   return { decision: 'block', reason: reason ?? `Denied by handler: ${handler.name}` };
 }
 
+/**
+ * Tools whose PreToolUse handling MUST never surface a `hookSpecificOutput`
+ * envelope to CC, because CC interprets any non-empty PreToolUse response
+ * for these tools as "the hook handled the call" and short-circuits the
+ * tool's interactive UI (rendering nothing instead of the inline picker).
+ *
+ * Empirically traced on 2026-05-09 — see
+ * .genie/wishes/spawn-compounding-defects/evidence/bug3-mechanism.md.
+ *
+ * Specifically: when the dispatcher returns
+ *   { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: '...' } }
+ * for `AskUserQuestion`, CC consumes the additionalContext as the synthesized
+ * "answer" and does NOT render the inline picker. Suppressing the entire
+ * `hookSpecificOutput` envelope (regardless of which fields it carries) is
+ * the correct fix — handlers may still emit observability events, but the
+ * dispatcher's response to CC must be empty so CC falls back to default
+ * permissions handling (`AskUserQuestion` is permitted via #1688's
+ * `permissions.allow` seed → inline picker renders).
+ *
+ * `decision: 'deny'` short-circuits remain functional and outrank this list.
+ */
+const NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS: ReadonlyArray<string> = ['AskUserQuestion'];
+
 function buildBlockingResponse(
   hookEventName: string,
   contextMessages: string[],
   currentInput: Record<string, unknown> | undefined,
   originalInput: Record<string, unknown> | undefined,
+  toolName: string | undefined,
 ): Record<string, unknown> {
   const response: Record<string, unknown> = {};
   const hasContext = contextMessages.length > 0;
   const hasInputChange =
     currentInput && originalInput && JSON.stringify(currentInput) !== JSON.stringify(originalInput);
+
+  // AskUserQuestion + similar interactive tools — empty response, period.
+  // ANY hookSpecificOutput envelope (even bare additionalContext) is
+  // interpreted by CC as headless-handle and suppresses the inline picker.
+  if (
+    hookEventName === 'PreToolUse' &&
+    typeof toolName === 'string' &&
+    NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS.includes(toolName)
+  ) {
+    return response;
+  }
 
   if (hasInputChange) {
     response.updatedInput = currentInput;
@@ -393,7 +428,7 @@ async function executeBlockingChain(matched: Handler[], payload: HookPayload): P
     }
   }
 
-  return buildBlockingResponse(hookEventName, contextMessages, currentInput, payload.tool_input);
+  return buildBlockingResponse(hookEventName, contextMessages, currentInput, payload.tool_input, payload.tool_name);
 }
 
 async function executeNonBlockingHandlers(matched: Handler[], payload: HookPayload): Promise<void> {

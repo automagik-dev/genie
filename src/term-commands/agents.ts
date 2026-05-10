@@ -39,6 +39,12 @@ import { getProvider } from '../lib/providers/registry.js';
 import { shouldResume } from '../lib/should-resume.js';
 import { waitForAgentReady } from '../lib/spawn-command.js';
 import * as teamManager from '../lib/team-manager.js';
+import {
+  type ResolveSource,
+  formatMisbindingWarning,
+  resolveTeamForSpawn,
+  resolveTeamForSpawnWithDeps,
+} from '../lib/team-resolver.js';
 import { genieTmuxCmd, prependEnvVars } from '../lib/tmux-wrapper.js';
 import * as tmux from '../lib/tmux.js';
 import { TmuxUnreachableError, executeTmux, isPaneAlive } from '../lib/tmux.js';
@@ -2271,7 +2277,7 @@ async function dispatchSpawn(
 }
 
 /**
- * Resolve the team name for a spawn using a four-tier precedence.
+ * Resolve the team name for a spawn using a five-tier precedence.
  *
  * Precedence (highest wins):
  *   1. `explicitTeam` — the caller's `--team` flag (`options.team`).
@@ -2279,8 +2285,15 @@ async function dispatchSpawn(
  *      (`agent.entry?.team`). Authoritative PG lookup, NOT a synthetic
  *      fallback. Restores the canonical-UUID-per-agent invariant
  *      established by PR #1133 (`8a783460`) / PR #1134 (`69215743`).
- *   3. `process.env.GENIE_TEAM` — session-scoped env var.
- *   4. `discoverTeamName()` — the PR #1164 tmux-session-name fallback,
+ *   3. `canonical_self_leader` — `~/.claude/teams/<agent>/config.json`
+ *      registers the agent as its own leader (`leadAgentId ===
+ *      "<agent>@<agent>"`). Bug 1 fix from #1710 (Wish:
+ *      spawn-compounding-defects): keeps master agents bound to their
+ *      canonical team-of-self even when caller-context would say otherwise.
+ *      Skipped when `agentName` is omitted (back-compat for callers that
+ *      pre-date the wish, e.g. `tui-spawn-dx.integration.test.ts`).
+ *   4. `process.env.GENIE_TEAM` — session-scoped env var.
+ *   5. `discoverTeamName()` — the PR #1164 tmux-session-name fallback,
  *      which itself also consults `GENIE_TEAM` first and then the tmux
  *      session name / Claude JSONL heuristic. Kept so the resolver still
  *      works post-reboot when every higher-priority signal is stale.
@@ -2288,24 +2301,36 @@ async function dispatchSpawn(
  * Returns null when every tier yields nothing — callers turn that into
  * the canonical "--team is required" error.
  *
- * Exported for unit testing; the runtime call site is `resolveTeamAndResume`.
+ * Exported for unit testing; the runtime call site is `resolveTeamAndResume`,
+ * which uses `resolveTeamForSpawnWithDeps` directly to access the source tier
+ * + canonical-self-leader value for `spawn.team.resolved` audit event
+ * emission and the misbinding stderr `WARN`.
  */
 export async function resolveTeamName(opts: {
   explicitTeam?: string;
   entryTeam?: string;
+  /** Agent role/name — required to consult the canonical-self-leader tier. */
+  agentName?: string;
   env?: Pick<NodeJS.ProcessEnv, 'GENIE_TEAM'>;
   discover?: () => Promise<string | null>;
+  loadCanonical?: (agentName: string) => Promise<string | null>;
 }): Promise<string | null> {
-  // Tier 1: explicit --team flag (only tier that flips teamWasExplicit).
-  if (opts.explicitTeam) return opts.explicitTeam;
-  // Tier 2: template-pinned team from agent_templates.
-  if (opts.entryTeam) return opts.entryTeam;
-  // Tier 3: GENIE_TEAM env var (short-circuit before the heavy discovery path).
-  const env = opts.env ?? process.env;
-  if (env.GENIE_TEAM) return env.GENIE_TEAM;
-  // Tier 4: full discovery (JSONL leadSessionId match → tmux session name).
-  const discover = opts.discover ?? nativeTeams.discoverTeamName;
-  return (await discover()) ?? null;
+  // Back-compat: when `agentName` is omitted (older callers), inject a
+  // null-returning loader so the canonical-self-leader tier is a no-op and
+  // the four-tier behavior of `tui-spawn-dx.integration.test.ts` and peers
+  // is preserved. New callers (e.g. `resolveTeamAndResume`) pass `agentName`
+  // and route through `resolveTeamForSpawnWithDeps` directly to access the
+  // chosen source tier + canonical-self-leader value.
+  const loadCanonical = opts.loadCanonical ?? (opts.agentName ? undefined : async () => null);
+  const { team } = await resolveTeamForSpawn({
+    explicitTeam: opts.explicitTeam ?? null,
+    entryTeam: opts.entryTeam ?? null,
+    agentName: opts.agentName ?? '__noop__',
+    env: opts.env,
+    discover: opts.discover,
+    loadCanonical,
+  });
+  return team;
 }
 
 // ============================================================================
@@ -2490,47 +2515,127 @@ export async function resolveSpawnIdentity(
   };
 }
 
+/**
+ * Run the structured resolver, emit the misbinding `WARN` (Bug 4), and apply
+ * the two on-disk fallbacks (`findTeamsContainingAgent`,
+ * `directory.sanitizeTeamName`) that sit below the five-tier
+ * `resolveTeamForSpawn` chain. Returns null on the multi-team-disambig
+ * error path so the caller can `process.exit(1)`. Extracted to keep
+ * `resolveTeamAndResume`'s cognitive complexity under the project budget.
+ */
+async function resolveSpawnTeam(
+  effectiveRole: string,
+  options: SpawnOptions,
+  agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
+): Promise<{
+  team: string | null;
+  source: ResolveSource | null;
+  canonicalTeam: string | null;
+  misbound: boolean;
+  multiTeamCollision: boolean;
+}> {
+  // The agent's canonical identity (directory/template name) — used for
+  // canonical-self-leader lookup and the misbinding WARN. `--role <custom>`
+  // overrides only affect registration/resume identity; the underlying
+  // agent's canonical team is invariant across role overrides. Using
+  // effectiveRole here would break `genie spawn <agent> --role <custom>` by
+  // probing `~/.claude/teams/<custom>/` instead of `~/.claude/teams/<agent>/`,
+  // silently dropping canonical-team resolution. CR feedback on PR #1735.
+  const spawnedName = agent.entry?.name ?? effectiveRole;
+
+  const outcome = await resolveTeamForSpawnWithDeps({
+    explicitTeam: options.team ?? null,
+    entryTeam: agent.entry?.team ?? null,
+    agentName: spawnedName,
+  });
+  let team: string | null = outcome.team;
+  let source: ResolveSource | null = outcome.source;
+
+  // Bug 4 fix: surface misbinding loudly on stderr so silent corruption of
+  // master-agent bindings can't burn another session. Identify the agent by
+  // its directory name (`spawnedName`), not the role override — the user's
+  // mental model is "I spawned <agent>".
+  if (outcome.misbound && outcome.canonicalTeam && team) {
+    console.error(formatMisbindingWarning(spawnedName, outcome.canonicalTeam, team));
+  }
+
+  // Tier 5 (last-resort): scan on-disk team configs for one that lists this
+  // agent as a member. Unblocks detached spawns (TUI after a DB reset, etc.)
+  // where higher-priority signals are stale. Sits below the
+  // resolveTeamForSpawn chain so authoritative matches always win.
+  if (!team) {
+    const candidates = await nativeTeams.findTeamsContainingAgent(effectiveRole);
+    if (candidates.length === 1) {
+      team = candidates[0];
+      source = 'caller_context';
+    } else if (candidates.length > 1) {
+      console.error(
+        `Error: agent "${effectiveRole}" is a member of multiple teams (${candidates.join(', ')}). Pass --team <name> to disambiguate.`,
+      );
+      return {
+        team: null,
+        source: null,
+        canonicalTeam: outcome.canonicalTeam,
+        misbound: outcome.misbound,
+        multiTeamCollision: true,
+      };
+    }
+  }
+
+  // Auto-create team-of-one for globally registered agents with no team.
+  if (!team) {
+    const directoryEntry = await directory.get(effectiveRole);
+    if (directoryEntry) {
+      team = nativeTeams.sanitizeTeamName(effectiveRole);
+      source = 'caller_context';
+    }
+  }
+
+  return { team, source, canonicalTeam: outcome.canonicalTeam, misbound: outcome.misbound, multiTeamCollision: false };
+}
+
+/**
+ * Best-effort emission of the `spawn.team.resolved` audit event. Bug 1 fix:
+ * operators can `genie events list --since 5m --type spawn.team.resolved` and
+ * verify the chosen tier in real time. Emission failures never block the spawn.
+ */
+function emitSpawnTeamResolved(
+  agentName: string,
+  team: string,
+  source: ResolveSource | null,
+  canonicalTeam: string | null,
+  misbound: boolean,
+): void {
+  try {
+    emitEvent(
+      'spawn.team.resolved',
+      {
+        agent: agentName,
+        resolved_team: team,
+        source: source ?? 'caller_context',
+        canonical_team: canonicalTeam,
+        misbound,
+      },
+      { source_subsystem: 'cli.spawn' },
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** Resolve team name and auto-resume dead workers. Duplicate rejection moved to the state machine. */
 async function resolveTeamAndResume(
   effectiveRole: string,
   options: SpawnOptions,
   agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
 ): Promise<{ team: string; teamWasExplicit: boolean; resumed?: string }> {
-  // teamWasExplicit stays strictly tier-1 — template/env/discover do NOT flip it.
+  // teamWasExplicit stays strictly tier-1 — template/env/discover/canonical
+  // do NOT flip it.
   const teamWasExplicit = Boolean(options.team);
-  let team = await resolveTeamName({
-    explicitTeam: options.team,
-    entryTeam: agent.entry?.team,
-  });
 
-  // Tier 5 (last-resort): scan on-disk team configs for one that lists this
-  // agent as a member. Unblocks detached spawns (e.g. from the TUI after a DB
-  // reset) that can't inherit GENIE_TEAM or a parent session context but where
-  // the agent is unambiguously registered to a team on disk. Sits below the
-  // four-tier resolveTeamName chain so an authoritative match (PG, env, or
-  // JSONL session-id) always wins over a member-list heuristic.
-  if (!team) {
-    const candidates = await nativeTeams.findTeamsContainingAgent(effectiveRole);
-    if (candidates.length === 1) {
-      team = candidates[0];
-    } else if (candidates.length > 1) {
-      console.error(
-        `Error: agent "${effectiveRole}" is a member of multiple teams (${candidates.join(', ')}). Pass --team <name> to disambiguate.`,
-      );
-      return process.exit(1) as never;
-    }
-  }
-
-  // Auto-create team-of-one for globally registered agents with no team.
-  // Lets the TUI (and other detached spawns) start a standalone agent like
-  // `khal-os` without requiring Felipe to hand-wire a team name. The team
-  // config is materialized downstream by `resolveNativeTeam` → `ensureNativeTeam`.
-  if (!team) {
-    const directoryEntry = await directory.get(effectiveRole);
-    if (directoryEntry) {
-      team = nativeTeams.sanitizeTeamName(effectiveRole);
-    }
-  }
+  const resolved = await resolveSpawnTeam(effectiveRole, options, agent);
+  if (resolved.multiTeamCollision) return process.exit(1) as never;
+  const team = resolved.team;
 
   if (!team) {
     console.error(
@@ -2538,6 +2643,8 @@ async function resolveTeamAndResume(
     );
     return process.exit(1) as never;
   }
+
+  emitSpawnTeamResolved(effectiveRole, team, resolved.source, resolved.canonicalTeam, resolved.misbound);
   const deadResumable = await findDeadResumable(team, effectiveRole);
   if (deadResumable) {
     // Session now lives on the executor (migration 047). Peek at the current

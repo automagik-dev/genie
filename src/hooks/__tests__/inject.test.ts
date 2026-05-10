@@ -3,8 +3,29 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { injectTeamHooks, isTeamHooked } from '../inject.js';
+import { _deps as injectDeps, injectTeamHooks, isTeamHooked } from '../inject.js';
 import { DISPATCHED_EVENTS, DISPATCHED_EVENT_MATCHERS } from '../types.js';
+
+interface CapturedAuditEvent {
+  entityType: string;
+  entityId: string;
+  eventType: string;
+  actor: string | null;
+  details: Record<string, unknown>;
+}
+
+/**
+ * Install a mock audit-event sink for the duration of a test. Returns the
+ * array that captures events; callers should reset injectDeps.emitAuditEvent
+ * in afterEach (handled by the outer suite's beforeEach/afterEach).
+ */
+function captureInjectAudit(): CapturedAuditEvent[] {
+  const events: CapturedAuditEvent[] = [];
+  injectDeps.emitAuditEvent = async (entityType, entityId, eventType, actor, details) => {
+    events.push({ entityType, entityId, eventType, actor, details });
+  };
+  return events;
+}
 
 /**
  * True if `command` is a recognizable genie hook-dispatch command — either the
@@ -35,6 +56,9 @@ describe('hook injection', () => {
     process.env.GENIE_HOME = join(testDir, 'genie-home');
     process.env.GENIE_HOOK_BIN = join(testDir, 'genie-home', 'no-such-binary');
     await mkdir(testDir, { recursive: true });
+    // Default mock — no-op audit emitter so we don't reach PG in unit tests.
+    // Tests that want to assert events install their own via captureInjectAudit().
+    injectDeps.emitAuditEvent = async () => {};
   });
 
   afterEach(async () => {
@@ -47,6 +71,7 @@ describe('hook injection', () => {
     else process.env.GENIE_HOME = originalHome;
     if (originalHookBin === undefined) process.env.GENIE_HOOK_BIN = undefined;
     else process.env.GENIE_HOOK_BIN = originalHookBin;
+    injectDeps.emitAuditEvent = null;
     await rm(testDir, { recursive: true, force: true });
   });
 
@@ -139,6 +164,141 @@ describe('hook injection', () => {
       await injectTeamHooks('test-team');
       const result = await injectTeamHooks('test-team');
       expect(result).toBe(false);
+    });
+  });
+
+  // Bug 2 (#1710 Group 2) — triplet dedup hardening + audit-event emission.
+  //
+  // Why: prior dedup keyed on `isGenieDispatchCommand(h.command)` heuristics
+  // and did not catch path-drifted entries. On the filing host this produced
+  // 65/82 team `settings.json` files with 2-7× duplicate `*`-matcher entries.
+  // The hardened logic (a) matches the canonical `{matcher, command, timeout}`
+  // triplet exactly for the idempotent fast path AND (b) collapses any genie-
+  // shape entries (current/historical command paths) to the single canonical
+  // entry on drift detection. Each branch emits a corresponding audit event.
+  describe('Bug 2 (#1710 Group 2) — triplet dedup + drift-collapse audit events', () => {
+    test('spawn-twice fixture: exactly one matching hook entry, second emits dedup.skip', async () => {
+      // First inject is fresh — should emit `settings.hook.injected`.
+      const events = captureInjectAudit();
+      await injectTeamHooks('test-team');
+
+      const settingsPath = join(testDir, 'teams', 'test-team', 'settings.json');
+      const afterFirst = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      expect(afterFirst.hooks.PreToolUse).toHaveLength(1);
+      expect(afterFirst.hooks.PostToolUse).toHaveLength(1);
+      const firstInjectedEvents = events.filter((e) => e.eventType === 'settings.hook.injected');
+      expect(firstInjectedEvents).toHaveLength(1);
+      expect(firstInjectedEvents[0].entityId).toBe(settingsPath);
+
+      // Second inject is identical — must emit `dedup.skip`, no new entries.
+      events.length = 0;
+      const result = await injectTeamHooks('test-team');
+      expect(result).toBe(false);
+
+      const afterSecond = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      expect(afterSecond.hooks.PreToolUse).toHaveLength(1);
+      expect(afterSecond.hooks.PostToolUse).toHaveLength(1);
+      const skipEvents = events.filter((e) => e.eventType === 'settings.hook.dedup.skip');
+      expect(skipEvents).toHaveLength(1);
+      expect(skipEvents[0].entityId).toBe(settingsPath);
+      // No spurious `injected` or `collapse_drift` on identical re-inject.
+      expect(events.filter((e) => e.eventType === 'settings.hook.injected')).toHaveLength(0);
+      expect(events.filter((e) => e.eventType === 'settings.hook.dedup.collapse_drift')).toHaveLength(0);
+    });
+
+    test('drift collapse: stale path-drifted genie entry → single canonical entry + collapse_drift event', async () => {
+      // Pre-seed settings with a drifted genie-shape entry (older path,
+      // wrong timeout, wrong matcher for PostToolUse). Mimics the wild-host
+      // state where 65/82 settings files accumulated 2-7× duplicates with
+      // path-drifted commands across genie versions.
+      const teamDir = join(testDir, 'teams', 'test-team');
+      await mkdir(teamDir, { recursive: true });
+      const settingsPath = join(teamDir, 'settings.json');
+
+      const driftedBinaryPath = '/legacy/path/to/genie-hook';
+      const driftedCmd = `'${driftedBinaryPath}'`;
+
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              { matcher: '*', hooks: [{ type: 'command', command: driftedCmd, timeout: 30 }] },
+              // Duplicate: SAME genie shape, slightly different drift path.
+              { matcher: '*', hooks: [{ type: 'command', command: 'genie hook dispatch', timeout: 15 }] },
+            ],
+            PostToolUse: [
+              // Drifted matcher — should be `SendMessage` per current types.ts.
+              { matcher: '*', hooks: [{ type: 'command', command: driftedCmd, timeout: 30 }] },
+            ],
+          },
+        }),
+      );
+
+      const events = captureInjectAudit();
+      const result = await injectTeamHooks('test-team');
+      expect(result).toBe(true);
+
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+
+      // PreToolUse must collapse to exactly ONE canonical entry.
+      expect(settings.hooks.PreToolUse).toHaveLength(1);
+      expect(settings.hooks.PreToolUse[0].matcher).toBe(DISPATCHED_EVENT_MATCHERS.PreToolUse);
+      expect(settings.hooks.PreToolUse[0].hooks).toHaveLength(1);
+      expect(settings.hooks.PreToolUse[0].hooks[0].timeout).toBe(15);
+
+      // PostToolUse must collapse to exactly ONE canonical entry, with the
+      // narrowed `SendMessage` matcher.
+      expect(settings.hooks.PostToolUse).toHaveLength(1);
+      expect(settings.hooks.PostToolUse[0].matcher).toBe(DISPATCHED_EVENT_MATCHERS.PostToolUse);
+      expect(settings.hooks.PostToolUse[0].hooks).toHaveLength(1);
+      expect(settings.hooks.PostToolUse[0].hooks[0].timeout).toBe(15);
+
+      // Audit event must classify as collapse_drift (not injected, not skip).
+      const collapseEvents = events.filter((e) => e.eventType === 'settings.hook.dedup.collapse_drift');
+      expect(collapseEvents).toHaveLength(1);
+      expect(collapseEvents[0].entityId).toBe(settingsPath);
+      expect(events.filter((e) => e.eventType === 'settings.hook.injected')).toHaveLength(0);
+      expect(events.filter((e) => e.eventType === 'settings.hook.dedup.skip')).toHaveLength(0);
+    });
+
+    test('drift collapse preserves user-defined non-genie hooks within the same event', async () => {
+      // Realistic mixed state: a user-defined hook lives next to a drifted
+      // genie hook on the same event. Collapse must remove only the genie
+      // duplicates, never the user's hook.
+      const teamDir = join(testDir, 'teams', 'test-team');
+      await mkdir(teamDir, { recursive: true });
+      const settingsPath = join(teamDir, 'settings.json');
+
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo user-bash-hook', timeout: 5 }] },
+              { matcher: '*', hooks: [{ type: 'command', command: "'/legacy/genie-hook'", timeout: 30 }] },
+              { matcher: '*', hooks: [{ type: 'command', command: 'genie hook dispatch', timeout: 15 }] },
+            ],
+          },
+        }),
+      );
+
+      await injectTeamHooks('test-team');
+
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      // User's Bash hook MUST survive.
+      const userEntry = settings.hooks.PreToolUse.find(
+        (e: { matcher?: string; hooks?: Array<{ command?: string }> }) =>
+          e.matcher === 'Bash' && e.hooks?.[0]?.command === 'echo user-bash-hook',
+      );
+      expect(userEntry).toBeDefined();
+      // Exactly ONE canonical genie entry remains.
+      const genieEntries = settings.hooks.PreToolUse.filter(
+        (e: { matcher?: string; hooks?: Array<{ command?: string }> }) =>
+          e.matcher === '*' &&
+          e.hooks?.some((h) => h.command?.includes('hook dispatch') || /genie-hook/.test(h.command ?? '')),
+      );
+      expect(genieEntries).toHaveLength(1);
     });
   });
 
@@ -306,6 +466,65 @@ describe('hook injection', () => {
       // User's SessionStart hook MUST survive
       expect(settings.hooks.SessionStart).toBeDefined();
       expect(settings.hooks.SessionStart[0].hooks[0].command).toBe('echo user-hook');
+    });
+  });
+
+  // CR feedback on PR #1735 (#20): malformed hooks.<event> values must not
+  // crash the inject path. The new defensive guards in upsertGenieEntry only
+  // helped if the prune step survived the malformed shape first.
+  describe('CR #1735: malformed user-authored configs do not crash inject', () => {
+    test('hooks.<event> as object instead of array does not throw', async () => {
+      const teamDir = join(testDir, 'teams', 'test-team');
+      await mkdir(teamDir, { recursive: true });
+      const settingsPath = join(teamDir, 'settings.json');
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            // Malformed shape — a real settings.json the wild can carry an
+            // object here when a user/script writes the file by hand.
+            PreToolUse: {},
+            // Valid shape alongside, to confirm the inject path still proceeds.
+            PostToolUse: [],
+          },
+        }),
+      );
+      // Must not throw.
+      const result = await injectTeamHooks('test-team');
+      expect(result).toBe(true);
+      // Inject overwrites PreToolUse with the canonical entry.
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      expect(Array.isArray(settings.hooks.PreToolUse)).toBe(true);
+      expect(settings.hooks.PreToolUse.length).toBeGreaterThan(0);
+    });
+
+    test('matcher entry with non-array hooks key does not throw', async () => {
+      const teamDir = join(testDir, 'teams', 'test-team');
+      await mkdir(teamDir, { recursive: true });
+      const settingsPath = join(teamDir, 'settings.json');
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              // Matcher entry with hooks=null — schema we don't recognize.
+              { matcher: '*', hooks: null },
+              // Matcher entry with no hooks key at all.
+              { matcher: 'Bash' },
+            ],
+          },
+        }),
+      );
+      const result = await injectTeamHooks('test-team');
+      expect(result).toBe(true);
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      // Inject completed without throwing; canonical entry appended.
+      const genie = settings.hooks.PreToolUse.find(
+        (e: { matcher?: string; hooks?: Array<{ command?: string }> }) =>
+          e.matcher === '*' &&
+          e.hooks?.some((h) => h.command?.includes('hook dispatch') || /genie-hook/.test(h.command ?? '')),
+      );
+      expect(genie).toBeDefined();
     });
   });
 });

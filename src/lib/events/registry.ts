@@ -47,6 +47,7 @@ import * as runbookTriggered from './schemas/runbook.triggered.js';
 import * as schemaViolation from './schemas/schema.violation.js';
 import * as sessionIdWritten from './schemas/session.id.written.js';
 import * as sessionReconciled from './schemas/session.reconciled.js';
+import * as spawnTeamResolved from './schemas/spawn.team.resolved.js';
 import * as stateTransition from './schemas/state_transition.js';
 import * as streamGapDetected from './schemas/stream.gap.detected.js';
 import * as teamCreate from './schemas/team.create.js';
@@ -152,6 +153,11 @@ export const EventRegistry = {
   [agentResumeAttempted.TYPE]: entry(agentResumeAttempted),
   [agentResumeSucceeded.TYPE]: entry(agentResumeSucceeded),
   [agentResumeFailed.TYPE]: entry(agentResumeFailed),
+
+  // Wish: spawn-compounding-defects, Group 1, Bug 1 — every `genie spawn`
+  // emits this once with the tier that decided the team binding. Closes the
+  // observability gap that took #1710 a /trace to surface.
+  [spawnTeamResolved.TYPE]: entry(spawnTeamResolved),
 } as const satisfies Record<string, RegistryEntry>;
 
 export type EventType = keyof typeof EventRegistry;

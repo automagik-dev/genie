@@ -5,8 +5,10 @@
  * and sessions (double-click on any status area).
  * See: https://github.com/automagik-dev/genie/issues/784
  *
- * Also ensures OSC 52 clipboard passthrough works in nested tmux layers.
- * See: https://github.com/automagik-dev/genie/issues/967
+ * v5: terminal owns the selection lifecycle. tmux's automatic OSC 52
+ * emit is disabled — drag highlights via terminal-native selection,
+ * Cmd+C copies via the terminal's normal hotkey.
+ * See: wish/tui-native-selection
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -86,40 +88,49 @@ function activeLinesIn(config: string, pattern: RegExp): string[] {
     .filter((l) => pattern.test(l));
 }
 
-describe('tmux config — OSC 52 clipboard passthrough (#967)', () => {
-  test('genie.tmux.conf uses set-clipboard external (not on)', () => {
-    const hits = activeLinesIn(conf, /set\s+-g\s+set-clipboard\s+external/);
+describe('tmux config — terminal-native selection (v5, wish/tui-native-selection)', () => {
+  test('genie.tmux.conf uses set-clipboard off (terminal owns clipboard)', () => {
+    const hits = activeLinesIn(conf, /set\s+-g\s+set-clipboard\s+off/);
     expect(hits.length).toBe(1);
-    // Must NOT have "set-clipboard on"
-    const bad = activeLinesIn(conf, /set\s+-g\s+set-clipboard\s+on/);
+    // Must NOT have "set-clipboard external" or "set-clipboard on"
+    const bad = activeLinesIn(conf, /set\s+-g\s+set-clipboard\s+(external|on)\b/);
     expect(bad.length).toBe(0);
   });
 
-  test('genie.tmux.conf has allow-passthrough on', () => {
+  test('genie.tmux.conf has allow-passthrough on (kept — other tools use DCS passthrough)', () => {
     const hits = activeLinesIn(conf, /set\s+-g\s+allow-passthrough\s+on/);
     expect(hits.length).toBe(1);
   });
 
-  test('genie.tmux.conf has terminal-overrides for Ms (OSC 52)', () => {
+  test('genie.tmux.conf does NOT emit OSC 52 via terminal-overrides Ms cap', () => {
     const hits = activeLinesIn(conf, /terminal-overrides.*Ms=/);
-    expect(hits.length).toBeGreaterThanOrEqual(1);
+    expect(hits.length).toBe(0);
   });
 
-  test('genie.tmux.conf uses copy-pipe-and-cancel with osc52-copy.sh', () => {
-    const hits = activeLinesIn(conf, /copy-pipe-and-cancel.*osc52-copy\.sh/);
-    expect(hits.length).toBeGreaterThanOrEqual(1);
-  });
-
-  test('tui-tmux.conf uses set-clipboard external (not on)', () => {
-    const hits = activeLinesIn(tuiConf, /set\s+-g\s+set-clipboard\s+external/);
-    expect(hits.length).toBe(1);
-    const bad = activeLinesIn(tuiConf, /set\s+-g\s+set-clipboard\s+on/);
+  test('genie.tmux.conf uses copy-selection-and-cancel (no osc52-copy.sh pipe)', () => {
+    const good = activeLinesIn(conf, /copy-selection-and-cancel/);
+    expect(good.length).toBeGreaterThanOrEqual(1);
+    const bad = activeLinesIn(conf, /copy-pipe-and-cancel|osc52-copy\.sh/);
     expect(bad.length).toBe(0);
   });
 
-  test('tui-tmux.conf uses copy-pipe-and-cancel with osc52-copy.sh', () => {
-    const hits = activeLinesIn(tuiConf, /copy-pipe-and-cancel.*osc52-copy\.sh/);
-    expect(hits.length).toBeGreaterThanOrEqual(1);
+  test('tui-tmux.conf uses set-clipboard off (terminal owns clipboard)', () => {
+    const hits = activeLinesIn(tuiConf, /set\s+-g\s+set-clipboard\s+off/);
+    expect(hits.length).toBe(1);
+    const bad = activeLinesIn(tuiConf, /set\s+-g\s+set-clipboard\s+(external|on)\b/);
+    expect(bad.length).toBe(0);
+  });
+
+  test('tui-tmux.conf does NOT emit OSC 52 via terminal-overrides Ms cap', () => {
+    const hits = activeLinesIn(tuiConf, /terminal-overrides.*Ms=/);
+    expect(hits.length).toBe(0);
+  });
+
+  test('tui-tmux.conf uses copy-selection-and-cancel (no osc52-copy.sh pipe)', () => {
+    const good = activeLinesIn(tuiConf, /copy-selection-and-cancel/);
+    expect(good.length).toBeGreaterThanOrEqual(1);
+    const bad = activeLinesIn(tuiConf, /copy-pipe-and-cancel|osc52-copy\.sh/);
+    expect(bad.length).toBe(0);
   });
 
   test('tui-tmux.conf forwards click events to OpenTUI', () => {
@@ -128,7 +139,7 @@ describe('tmux config — OSC 52 clipboard passthrough (#967)', () => {
     expect(activeLinesIn(tuiConf, /WheelDownPane\s+if-shell.*send-keys -M/).length).toBe(1);
   });
 
-  test('osc52-copy.sh helper script exists and is executable', () => {
+  test('osc52-copy.sh helper script remains on disk (D7 — kept for ad-hoc operator use)', () => {
     const scriptPath = resolve(import.meta.dirname, '../../scripts/tmux/osc52-copy.sh');
     expect(existsSync(scriptPath)).toBe(true);
   });

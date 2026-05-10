@@ -8,6 +8,46 @@ import { App } from './app.js';
 import { createTuiKeymap } from './keymap.js';
 import { installOpenTui20Bridge } from './opentui-bridge.js';
 
+// xterm DECRST sequence that disables BOTH button-event drag tracking (?1002l)
+// AND any-event motion tracking (?1003l).
+//
+// On Linux/non-darwin, OpenTUI's `setMouseMode` emits ?1000h?1002h?1003h because
+// `enableMouseMovement` defaults to `!isDarwin = true` (see
+// resolveTuiRendererConfig in this file plus
+// `anomalyco/opentui@v0.2.6` packages/core/src/zig/terminal.zig:593-596).
+// The ?1003 channel reports motion-with-button (= drag) too, so cancelling
+// only ?1002 leaves drag events flowing through ?1003 and the override has no
+// observable effect — the gap surfaced after merging wish/tui-native-selection.
+//
+// Cancelling both keeps ?1000 (clicks) intact, which is what Nav clicks rely
+// on, while returning all drag/motion to the local terminal so users get
+// native drag-select + Cmd+C in Warp / Terminal.app on macOS.
+//
+// Tracked by .genie/wishes/tui-native-selection-followups/WISH.md.
+const ESC_DISABLE_DRAG_TRACKING = '\x1b[?1002l\x1b[?1003l';
+
+export function disableDragTracking(stdout: NodeJS.WritableStream = process.stdout): void {
+  stdout.write(ESC_DISABLE_DRAG_TRACKING);
+}
+
+interface MouseEnableable {
+  enableMouse: () => void;
+}
+
+export function installNativeSelectionOverride(
+  renderer: MouseEnableable,
+  stdout: NodeJS.WritableStream = process.stdout,
+): void {
+  const originalEnableMouse = renderer.enableMouse.bind(renderer);
+  renderer.enableMouse = () => {
+    originalEnableMouse();
+    disableDragTracking(stdout);
+  };
+  // The renderer's setupTerminal already called enableMouse() before we wrapped
+  // it, so apply the override once for that initial invocation.
+  disableDragTracking(stdout);
+}
+
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 const FALSY = new Set(['0', 'false', 'no', 'off']);
 
@@ -70,6 +110,7 @@ export async function renderNav(): Promise<void> {
   // macOS local ptys have repeatedly hit OpenTUI native hot loops. Keep the TUI
   // usable there, but default to a conservative renderer and allow env opt-ins.
   const renderer = await createCliRenderer(resolveTuiRendererConfig());
+  installNativeSelectionOverride(renderer as unknown as MouseEnableable);
   const disposeOpenTui20Bridge = installOpenTui20Bridge(renderer);
   const keymap = createTuiKeymap(renderer);
 

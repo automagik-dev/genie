@@ -1,7 +1,7 @@
 {
   "name": "@automagik/genie",
-  "version": "4.260508.4",
-  "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: the npm distribution is being soft-deprecated — the canonical install is `curl -fsSL https://get.automagik.dev/genie | bash` (cosign + SLSA verified). See https://automagik.dev/genie/security/distribution-sovereignty",
+  "version": "4.260510.3",
+  "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
   "type": "module",
   "bin": {
     "genie": "./dist/genie.js"
@@ -28,6 +28,7 @@
     "version": "bun run scripts/version.ts",
     "build": "bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun --external pgserve --external @khal-os/brain --external @anthropic-ai/claude-agent-sdk && bun build src/hooks/dispatch-client.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun && chmod +x dist/*.js",
     "build:app": "bun run scripts/build-app.ts",
+    "build:binary": "bash scripts/build-binary.sh",
     "build:plugin": "node scripts/build.js",
     "sync": "node scripts/sync.js",
     "build-and-sync": "npm run build:plugin && npm run sync",
@@ -54,9 +55,9 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.119",
     "@inquirer/prompts": "7.10.1",
-    "@opentui/core": "0.2.0",
-    "@opentui/keymap": "0.2.0",
-    "@opentui/react": "0.2.0",
+    "@opentui/core": "0.2.6",
+    "@opentui/keymap": "0.2.6",
+    "@opentui/react": "0.2.6",
     "@tauri-apps/api": "2.10.1",
     "chokidar": "^5.0.0",
     "commander": "12.1.0",

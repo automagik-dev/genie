@@ -42,13 +42,25 @@ export interface BuiltinAgent {
 
 /**
  * Resolve the genie package root directory.
- * Works from both `src/lib/` (dev) and `dist/` (compiled).
+ * Works from `src/lib/` (dev), `dist/` (bundled), and `bun build --compile`
+ * binaries (where argv[1] is bun's virtual filesystem path and the real
+ * binary is at process.execPath alongside plugins/).
  */
 function resolvePackageRoot(): string {
-  // In compiled dist, import.meta.dir returns CWD, not the module's dir.
-  // Use the actual script path (process.argv[1]) to find the package root.
-  const scriptPath = realpathSync(process.argv[1] || '');
+  // realpathSync throws on bun's bunfs virtual paths (`/$bunfs/root/...`).
+  const safeRealpath = (p: string): string => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const scriptPath = safeRealpath(process.argv[1] || '');
+  const execPath = safeRealpath(process.execPath || '');
   const candidates = [
+    // bun --compile binary: plugins/ sits next to the executable
+    dirname(execPath),
+    resolve(dirname(execPath), '..'),
     // From dist/genie.js → ../
     resolve(dirname(scriptPath), '..'),
     // From src/lib/builtin-agents.ts → ../../
