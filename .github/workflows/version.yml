@@ -39,7 +39,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write          # commit + push version bump + tag
+  actions: write           # `gh workflow run` to dispatch Build Tarballs after tag push
 
 concurrency:
   group: version-${{ github.event.workflow_run.head_branch || 'manual' }}
@@ -152,12 +153,47 @@ jobs:
             echo "::notice ::release-race.next-tag-pin-skipped.detected dev advanced past triggering SHA ${SHORT_SHA}; tag push skipped — next merge will republish"
             exit 0
           fi
+          echo "tag_pushed=true" >> "$GITHUB_OUTPUT"
+        id: commit_and_tag
+
+      # GITHUB_TOKEN-pushed tags do NOT trigger workflows on `push.tags`
+      # (documented anti-recursion guard — see GitHub docs:
+      # "Triggering a workflow from a workflow"). Per the same docs, the
+      # exceptions are `workflow_dispatch` and `repository_dispatch` — both
+      # CAN be invoked by GITHUB_TOKEN. Use `gh workflow run` against the
+      # newly-pushed tag ref to start the build → sign → publish chain
+      # without requiring a PAT.
+      #
+      # `--ref refs/tags/v${VERSION}` makes Build Tarballs check out the
+      # tagged commit, which keeps the OIDC SAN URI bound to the tag ref
+      # (`build-tarballs.yml@refs/tags/v<version>`) — preserving the
+      # downstream cosign trust regex semantics in sign-attest.yml +
+      # release-publish.yml.
+      #
+      # Skipped on the main-branch path because `should_bump=false` there
+      # (no new tag is pushed; the pre-existing dev tag's chain already ran).
+      - name: Trigger Build Tarballs for the new tag
+        if: steps.context.outputs.should_bump == 'true' && steps.commit_and_tag.outputs.tag_pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="refs/tags/v${VERSION}"
+          echo "Dispatching Build Tarballs against ${TAG}..."
+          # The dispatch is fire-and-forget — Build Tarballs' workflow_run
+          # chain (Build Tarballs → Sign + Attest → Release Publish) runs
+          # asynchronously after this step exits. A failed dispatch is a
+          # release-pipeline outage; surface loudly.
+          if ! gh workflow run build-tarballs.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}"; then
+            echo "::error ::release-trigger.dispatch_failed Build Tarballs dispatch failed for ${TAG} — investigate gh CLI auth or workflow availability before re-running manually"
+            exit 1
+          fi
 
       # npm distribution was discontinued 2026-05-09 (wish
       # genie-distribution-cutover G6). The previous npm-publish, audit,
       # and deprecate steps have been deleted. Tag pushes from this
-      # workflow drive release-publish.yml, which attaches the signed
-      # GitHub Release tarballs operators install via install.sh.
+      # workflow drive build-tarballs.yml via the gh-workflow-run dispatch
+      # above, which then triggers sign-attest.yml + release-publish.yml.
       # The npm OIDC trusted-publisher entry on npmjs.com and any
       # NPM_TOKEN secrets are no longer used by this repo and can be
       # removed from repo + org settings.
