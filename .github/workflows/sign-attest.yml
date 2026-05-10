@@ -66,11 +66,19 @@ jobs:
     #   - our own workflow_dispatch (only triggerable by maintainers)
     #   - workflow_run from upstream `push` events on dev/main/v* tag (the
     #     trusted release paths); upstream `pull_request` is rejected.
+    #   - workflow_run from upstream `workflow_dispatch` events on
+    #     dev/main/v* tag — version.yml dispatches build-tarballs.yml on
+    #     each new tag because GITHUB_TOKEN-pushed tags can't trigger
+    #     `push` workflows (anti-recursion). The branch/tag check still
+    #     gates the privileged scopes; PR contributors can't dispatch
+    #     against protected refs.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
+       (github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'workflow_dispatch' ||
+        github.event.workflow_run.event == 'workflow_run') &&
        (github.event.workflow_run.head_branch == 'main' ||
         github.event.workflow_run.head_branch == 'dev' ||
         startsWith(github.event.workflow_run.head_branch, 'v')))
@@ -158,7 +166,9 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
+       (github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'workflow_dispatch' ||
+        github.event.workflow_run.event == 'workflow_run') &&
        (github.event.workflow_run.head_branch == 'main' ||
         github.event.workflow_run.head_branch == 'dev' ||
         startsWith(github.event.workflow_run.head_branch, 'v')))
@@ -189,7 +199,9 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
+       (github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'workflow_dispatch' ||
+        github.event.workflow_run.event == 'workflow_run') &&
        (github.event.workflow_run.head_branch == 'main' ||
         github.event.workflow_run.head_branch == 'dev' ||
         startsWith(github.event.workflow_run.head_branch, 'v')))
