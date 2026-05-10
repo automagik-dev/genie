@@ -174,7 +174,19 @@ jobs:
         startsWith(github.event.workflow_run.head_branch, 'v')))
     permissions:
       id-token: write    # OIDC for SLSA provenance signing
-      contents: read     # read repo for builder ref pinning
+      # `contents: write` is required even though we pass `upload-assets: false`
+      # below. The SLSA generator's reusable workflow declares a nested
+      # `upload-assets` job whose `permissions: contents: write` is validated
+      # STATICALLY at workflow init — before `with.upload-assets` is evaluated.
+      # Granting only `contents: read` produces a startup_failure with no logs:
+      #   "Error calling workflow '...generator_generic_slsa3.yml@v2.1.0'.
+      #    The nested job 'upload-assets' is requesting 'contents: write',
+      #    but is only allowed 'contents: read'."
+      # Diagnosis: run 25619410370 (first chain firing post-#1738/#1739).
+      # Note: the upload-assets job still does NOT execute at runtime because
+      # `with: upload-assets: false` is honored — only the static permission
+      # check requires the elevated grant.
+      contents: write
       actions: read      # read upstream workflow run metadata
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
