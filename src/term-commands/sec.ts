@@ -363,6 +363,14 @@ export const VERIFY_EXIT = {
 
 export type VerifyExitCode = (typeof VERIFY_EXIT)[keyof typeof VERIFY_EXIT];
 
+// Canonical signing-identity pin — verified by scripts/check-fingerprint-pinning.sh.
+// The three comment lines below mirror the substring-grep contract in that
+// script. Rotating the pin requires editing this block AND every witness
+// listed in scripts/check-fingerprint-pinning.sh WITNESSES array.
+//
+// certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
+// certificate-oidc-issuer:     https://token.actions.githubusercontent.com
+// provenance source-uri:       github.com/automagik-dev/genie
 export const SIGNER_IDENTITY_REGEXP = '^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@';
 export const SIGNER_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
 export const PROVENANCE_SOURCE_URI = 'github.com/automagik-dev/genie';

@@ -9,11 +9,13 @@
 # security officers to land any change; this script is the CI merge-gate
 # that blocks a single-channel edit from slipping through.
 #
-# Witnesses (all four MUST contain each canonical line as a substring):
+# Witnesses (all six MUST contain each canonical line as a substring):
 #   1. SECURITY.md                                            in-repo canonical
 #   2. .well-known/security.txt                               RFC 9116 mirror
 #   3. .github/ISSUE_TEMPLATE/signing-key-fingerprint.md      out-of-band tmpl
 #   4. .github/cosign.pub                                     NO-KEY sentinel
+#   5. scripts/verify-release.sh                              shipped verifier
+#   6. src/term-commands/sec.ts                               in-binary const
 #
 # The script greps each witness for three verbatim lines. Prefix characters
 # (`- `, `# `, ``` ` ```) are tolerated because grep uses substring matching;
@@ -58,6 +60,8 @@ WITNESSES=(
   ".well-known/security.txt"
   ".github/ISSUE_TEMPLATE/signing-key-fingerprint.md"
   ".github/cosign.pub"
+  "scripts/verify-release.sh"
+  "src/term-commands/sec.ts"
 )
 
 # Optional witnesses: warn-if-absent now, will become required once they

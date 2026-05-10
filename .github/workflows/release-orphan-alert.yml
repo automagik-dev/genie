@@ -51,8 +51,12 @@ jobs:
           git fetch --tags origin
           mapfile -t TAGS < <(git tag --list 'v*' --sort=-creatordate)
 
-          # Collect existing release tag names (set form).
-          RELEASE_TAGS=$(gh release list --repo "$REPO" --limit 200 --json tagName --jq '[.[].tagName] | join(" ")')
+          # Collect existing release tag names (set form). Use the REST API
+          # with --paginate to retrieve ALL release pages — `gh release list
+          # --limit N` truncates silently, which would misclassify older tags
+          # as orphans once the repo exceeds N releases (Codex P1 review on
+          # PR #1743 — limit:200 cap had this exact failure mode).
+          RELEASE_TAGS=$(gh api --paginate "repos/${REPO}/releases" --jq '.[].tag_name' | tr '\n' ' ')
 
           ORPHANS=()
           for TAG in "${TAGS[@]}"; do
