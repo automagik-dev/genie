@@ -69,8 +69,8 @@ Replace the broken `workflow_run`-chained release pipeline (build-tarballs.yml �
 | 3 | **Atomic cutover within ONE PR: workflow file changes + version.yml + verifier-coherence cleanup + runbook + alert all ship together. Branch-protection updates are applied as a SEPARATE pre-merge `gh api PUT` (transition state ADD-then-REMOVE).** | Operator's hard rule: runbook+alert+rollback test in same PR. Branch protection cutover gets a transition window: pre-merge ADD new check names, post-merge REMOVE old (reviewer HIGH-4). PR description carries both `gh api PUT` JSON bodies for unambiguous on-call replay. |
 | 4 | **`release.yml` orchestrator's `workflow_dispatch` accepts ONLY `version` input** | Run-id input is dead code in the workflow_call model — there's no upstream run to pick up artifacts from. Cross-run pickup remains available via the per-file escape-hatch dispatches on `sign-attest.yml`/`release-publish.yml` (where it already works) (reviewer HIGH-3). |
 | 5 | **`concurrency.cancel-in-progress: false` on the orchestrator** | Cancelling a partially-published release leaves the exact stranded-artifact failure mode this wish escapes. The called workflows can keep their own concurrency configs (build-tarballs.yml currently has cancel:true via its pull_request path; that's fine for PR validation, irrelevant to release runs). |
-| 6 | **`pull_request` trigger NOT added to `release.yml` orchestrator. No `if: github.event_name != 'pull_request'` defense-in-depth gates either** | If pull_request can't reach the workflow, the gate is dead code that misleads future maintainers (reviewer HIGH-5). build-tarballs.yml retains its existing pull_request trigger for PR-time tarball-build smoke testing in standalone mode — when called via workflow_call from the orchestrator, the trigger context is `workflow_call`, not `pull_request`, so PR contributors cannot reach the orchestrator's signing chain. |
-| 7 | **Caller permissions explicitly declared at every `uses:` job; `secrets: inherit` on every `uses:` invocation** | workflow_call permissions DO NOT auto-inherit (architect R2 P1 silent killer). Caller's job-level `permissions:` is the ceiling — `id-token: write` MUST be set on the orchestrator's caller job, not just the called workflow. Secrets also do not auto-inherit; `secrets: inherit` is the simplest correct form. |
+| 6 | **`pull_request` trigger NOT added to `release.yml` orchestrator. No `if: github.event_name != 'pull_request'` defense-in-depth gates either.** `build-tarballs.yml` retains its existing standalone `pull_request` trigger. | If pull_request can't reach the orchestrator, the gate is dead code that misleads future maintainers (reviewer HIGH-5). The standalone `build-tarballs.yml` PR-time path is independent of the orchestrator path: standalone mode runs with `permissions: contents: read` only (no signing scope reachable by PR contributors); the workflow_call-invoked path inside the orchestrator runs under the caller's permission grants (with full signing scope). The trigger context (`pull_request` vs `workflow_call`) is checked by GitHub Actions itself — PR contributors cannot escalate from the standalone path into the orchestrator's signing chain. Verify: Group 1 acceptance does NOT change `build-tarballs.yml` standalone permissions. |
+| 7 | **Caller permissions explicitly declared at every `uses:` job; `secrets: inherit` on every `uses:` invocation. The effective permission set is the INTERSECTION of caller's grant and called-workflow's per-job declarations — not just a one-way ceiling.** | workflow_call permissions DO NOT auto-inherit (architect R2 P1 silent killer). The caller's job-level `permissions:` block sets the maximum; the called workflow's per-job `permissions:` blocks set their own (which the runtime caps to the caller's max). Therefore: (a) the orchestrator's `sign-attest` caller job MUST declare `id-token: write` + `contents: write` + `attestations: write` + `actions: read` (the union of `sign-attest.yml`'s inner per-job needs), AND (b) `sign-attest.yml`'s inner per-job blocks must ALSO declare what each job needs (which they already do today). Editing only the orchestrator side is INSUFFICIENT — the called-workflow declarations are independent and must already exist or be added. Group 1 acceptance verifies the inner declarations are unchanged from current state (since they already exist for the standalone workflow_dispatch path). Secrets: `secrets: inherit` is the simplest correct form for forward-compat. |
 | 8 | **Verifier-coherence cleanup (`release.yml@` → `sign-attest.yml@`) ships in this wish, not as a follow-up** | Reviewer HIGH-1 audit found 6 stale references. They are pre-existing bugs from the genie-distribution-cutover that didn't follow through. Without fixing them, this wish's QA Criteria can't pass and `scripts/verify-release.sh` remains broken. Including them avoids a follow-up that never happens (operator R1). |
 
 ## Success Criteria
@@ -114,26 +114,51 @@ Single wave because the collapse must be atomic — every change ships together 
 **Goal:** Make `build-tarballs.yml`, `sign-attest.yml`, `release-publish.yml` callable as reusable workflows from an orchestrator, while preserving their existing `workflow_dispatch` escape-hatch behavior.
 
 **Deliverables:**
-1. `build-tarballs.yml`: add `on: workflow_call:` block. Inputs (if needed): none — it can derive version from the tag ref naturally. Outputs: none — artifacts pass through GitHub's run-shared artifact store. Keep existing `on: pull_request:` (for PR validation in standalone mode) and `on: workflow_dispatch:` (for break-glass).
-2. `sign-attest.yml`: add `on: workflow_call:` block. Remove `on: workflow_run:`. Delete the 9-line security guard `if:` blocks on `prepare`, `provenance`, `sign` jobs that referenced `github.event.workflow_run.*` — they're impossible to evaluate under workflow_call (the trigger event is implicit). Keep `on: workflow_dispatch:` with existing `version` + `run_id` inputs (escape hatch for cross-run artifact pickup).
-3. `release-publish.yml`: same shape as sign-attest.yml — add `workflow_call`, remove `workflow_run`, delete the workflow_run-tied security guard, keep `workflow_dispatch`.
+
+1. **`build-tarballs.yml`**: add `on: workflow_call:` block.
+   - **workflow_call inputs:** none — version is derived at build time from the package.json being built; no caller-supplied input needed.
+   - **workflow_call outputs:** none — artifacts pass through GitHub's run-shared artifact store; no value-passing required.
+   - Keep existing `on: pull_request:` (for PR validation in standalone mode — confirmed safe per Decision #6 since standalone path has `permissions: contents: read` only, no signing scope reachable by PR contributors).
+   - Keep existing `on: workflow_dispatch:` (break-glass).
+
+2. **`sign-attest.yml`**: add `on: workflow_call:` block.
+   - **workflow_call inputs:** `version` (string, optional — can be derived from artifact filenames if not supplied; preserves the existing `inputs.version` semantics from the workflow_dispatch path).
+   - **workflow_call outputs:** `version` (string — the resolved version, useful for the orchestrator's `publish` job that follows).
+   - Remove `on: workflow_run:`. Delete the 9-line security guard `if:` blocks on `prepare`, `provenance`, `sign` jobs that reference `github.event.workflow_run.*` — they evaluate to false under workflow_call (the workflow_run context object is null) and would short-circuit every job.
+   - Keep `on: workflow_dispatch:` with existing `version` + `run_id` inputs (cross-run artifact pickup escape hatch).
+
+3. **`release-publish.yml`**: add `on: workflow_call:` block.
+   - **workflow_call inputs:** `version` (string, REQUIRED), `channel` (string, optional, default `'stable'`), `draft` (boolean, optional, default `false` for the orchestrator path — this is the production release path; the standalone `workflow_dispatch` path keeps its existing `default: true` for safety).
+   - **workflow_call outputs:** none.
+   - **Important:** the `draft` default for workflow_call MUST be `false` (production publish), but workflow_dispatch keeps `default: true` (drafts are safer for manual replay). Implementation: declare separately under `on.workflow_call.inputs.draft.default` and `on.workflow_dispatch.inputs.draft.default` — they are independent declarations.
+   - Remove `on: workflow_run:`. Delete the workflow_run-tied security guard `if:` blocks.
+   - Keep `on: workflow_dispatch:`.
 
 **Acceptance Criteria:**
 - [ ] All three files declare `on: workflow_call:` (verified by yq).
 - [ ] No remaining `on: workflow_run:` in any of the three files.
-- [ ] No remaining `github.event.workflow_run.*` expressions in any `.github/workflows/*.yml` (search the entire workflows directory).
+- [ ] No remaining `github.event.workflow_run.*` expressions in any `.github/workflows/*.yml`.
 - [ ] `workflow_dispatch:` triggers retained on all three files.
-- [ ] `pull_request:` trigger retained on `build-tarballs.yml` only (its existing PR-time tarball smoke test).
+- [ ] `pull_request:` trigger retained on `build-tarballs.yml` only.
+- [ ] `sign-attest.yml.on.workflow_call.inputs.version` exists (string, optional).
+- [ ] `sign-attest.yml.on.workflow_call.outputs.version` exists.
+- [ ] `release-publish.yml.on.workflow_call.inputs.version` exists (string, REQUIRED).
+- [ ] `release-publish.yml.on.workflow_call.inputs.draft.default` is `false` AND `release-publish.yml.on.workflow_dispatch.inputs.draft.default` is `true` (asymmetric defaults — production-safe via workflow_call, replay-safe via workflow_dispatch).
 - [ ] yamllint passes on all three files.
 
 **Validation:**
 ```bash
 cd /home/genie/workspace/repos/genie
 for f in build-tarballs sign-attest release-publish; do
-  yq '.on.workflow_call' .github/workflows/${f}.yml | grep -qv '^null$' || { echo "$f missing workflow_call"; exit 1; }
+  test "$(yq '.on.workflow_call' .github/workflows/${f}.yml)" != "null" \
+    || { echo "$f missing workflow_call"; exit 1; }
 done
-! grep -l 'workflow_run:' .github/workflows/sign-attest.yml .github/workflows/release-publish.yml
-! grep -rn 'github.event.workflow_run' .github/workflows/
+! grep -lE '^\s*workflow_run:' .github/workflows/sign-attest.yml .github/workflows/release-publish.yml
+! grep -rnE 'github\.event\.workflow_run' .github/workflows/
+test "$(yq '.on.workflow_call.inputs.version.required' .github/workflows/release-publish.yml)" = "true"
+test "$(yq '.on.workflow_call.inputs.draft.default' .github/workflows/release-publish.yml)" = "false"
+test "$(yq '.on.workflow_dispatch.inputs.draft.default' .github/workflows/release-publish.yml)" = "true"
+test "$(yq '.on.workflow_call.outputs.version' .github/workflows/sign-attest.yml)" != "null"
 yamllint .github/workflows/{build-tarballs,sign-attest,release-publish}.yml
 ```
 
@@ -174,7 +199,7 @@ yamllint .github/workflows/{build-tarballs,sign-attest,release-publish}.yml
    ```
 3. Triggers: `on: push: tags: ['v*']` + `on: workflow_dispatch:` with single `version` input (no run-id).
 4. `concurrency: { group: release-${{ github.ref }}, cancel-in-progress: false }`.
-5. Top-level `permissions:` block at the workflow level should be `permissions: contents: read` (default-deny posture); per-job blocks override upward where needed.
+5. Top-level `permissions:` block at the workflow level: `permissions: contents: read`. Per GitHub Actions semantics, declaring any explicit scope sets all unmentioned scopes to `none`, which is effectively default-deny for write/elevated scopes; per-job blocks declare their elevated needs.
 6. Header comment block updated to reflect "Orchestrator: tag push → build → sign-attest → publish" framing.
 
 **Acceptance Criteria:**
@@ -189,8 +214,9 @@ yamllint .github/workflows/{build-tarballs,sign-attest,release-publish}.yml
 **Validation:**
 ```bash
 cd /home/genie/workspace/repos/genie
-! grep -q 'npm pack' .github/workflows/release.yml
-! grep -q 'sigstore/cosign-installer' .github/workflows/release.yml
+# Comment-aware: ignore lines whose first non-whitespace char is '#'
+! grep -E '^[[:space:]]*[^#[:space:]].*npm pack' .github/workflows/release.yml
+! grep -E '^[[:space:]]*[^#[:space:]].*sigstore/cosign-installer' .github/workflows/release.yml
 test "$(yq '.jobs | keys | length' .github/workflows/release.yml)" -eq 3
 yq '.jobs.[].uses' .github/workflows/release.yml | grep -qE '\.github/workflows/build-tarballs\.yml$'
 yq '.jobs.[].uses' .github/workflows/release.yml | grep -qE '\.github/workflows/sign-attest\.yml$'
@@ -253,14 +279,14 @@ grep -qi 'release pipeline' .github/workflows/version.yml
 **Validation:**
 ```bash
 cd /home/genie/workspace/repos/genie
-# Stale references gone (excluding historical wishes + pgserve cross-repo doc)
-! grep -rn 'release\.yml@' \
-  --include='*.sh' --include='*.md' --include='*.mdx' --include='*.ts' --include='*.yml' --include='*.yaml' \
-  --exclude-dir='.genie/wishes' \
-  --exclude-dir='node_modules' \
-  --exclude-dir='.docs-vendor' \
-  | grep -v 'pgserve-singleton-no-proxy' \
-  | grep -F 'github.com'
+# Stale references gone (path-based prune; --exclude-dir matches basename, which is misleading)
+LEFTOVER=$(find . \
+  \( -path './node_modules' -o -path './.docs-vendor' -o -path './.genie/wishes' -o -path './.git' \) -prune \
+  -o -type f \( -name '*.sh' -o -name '*.md' -o -name '*.mdx' -o -name '*.ts' -o -name '*.yml' -o -name '*.yaml' \) \
+  -print 2>/dev/null \
+  | xargs grep -l 'release\.yml@' 2>/dev/null \
+  | grep -v 'pgserve-singleton-no-proxy' || true)
+test -z "$LEFTOVER" || { echo "stale release.yml@ references in: $LEFTOVER"; exit 1; }
 # Required new pins exist:
 grep -q 'sign-attest\.yml@' scripts/verify-release.sh
 grep -q 'sign-attest\.yml@' SECURITY.md
@@ -275,38 +301,73 @@ bun test --filter "SIGNER_IDENTITY" 2>&1 | grep -qE '0 fail'
 
 ---
 
-### Group 5: Branch-protection transition-state cutover
+### Group 5: Branch-protection transition-state cutover (static, no live trial)
 
-**Goal:** Update branch-protection required-status-checks via a transition-state ADD-then-REMOVE pattern that has zero PR-merge stall window.
+**Goal:** Update branch-protection required-status-checks via a transition-state ADD-then-REMOVE pattern that has zero PR-merge stall window. Use **static prediction** of the new check names — NO live trial workflow_dispatch (it would mint Sigstore Rekor entries + a real GitHub Release object + possibly advance `.well-known/latest.json`, all of which are append-only or hard to reverse).
+
+**Predicted NEW check names** (derived from the GitHub Actions naming contract `<orchestrator-job-name> / <called-workflow-job-name> [/ <matrix-strategy>]`):
+- `release / build / build (linux-x64-glibc)`
+- `release / build / build (linux-x64-musl)`
+- `release / build / build (linux-arm64)`
+- `release / build / build (darwin-arm64)`
+- `release / sign-attest / prepare`
+- `release / sign-attest / provenance / generator_generic_slsa3` (SLSA reusable workflow's nested job — name may vary slightly; confirm via post-merge inspection)
+- `release / sign-attest / sign (linux-x64-glibc)` (and 3 other platforms)
+- `release / publish`
+
+The orchestrator job names (`build`, `sign-attest`, `publish` — from Group 2) MUST be locked at exactly these values so the predicted names match. Group 2's acceptance criterion already pins this.
 
 **Deliverables:**
-1. PR description includes a "Branch Protection Cutover" section with three blocks:
-   - **OLD required check names** (current state, captured pre-merge via `gh api /repos/automagik-dev/genie/branches/main/protection --jq '.required_status_checks.contexts[]'`).
-   - **NEW required check names** post-collapse (will be `release / build (linux-x64-glibc)`, `release / sign-attest / sign (linux-x64-glibc)`, `release / publish` — exact names confirmed from a workflow_dispatch trial on this branch BEFORE merge).
-   - **CUTOVER COMMANDS** in two phases: PRE-MERGE `gh api PUT` that ADDs new names alongside existing (run by the human before clicking merge); POST-MERGE `gh api PUT` that REMOVEs the obsolete names (run by the human within 30 min of merge).
-2. Identify required checks that the new pipeline cannot satisfy at all (e.g., a check that ran on `pull_request` but is now gated to `workflow_call` only) and explicitly remove from required AND document why in the PR description.
-3. Confirm branch-protection trial: dispatch `release.yml` against this PR's branch (workflow_dispatch with `version=test` against the wish branch). The check names that appear in the run page are the canonical NEW names.
+
+1. **Static validation pre-merge** (replaces the live trial):
+   - Run `actionlint .github/workflows/release.yml` to verify the orchestrator's YAML is structurally valid.
+   - Run `actionlint .github/workflows/{build-tarballs,sign-attest,release-publish}.yml` to verify each called workflow accepts workflow_call.
+   - Run `gh workflow view release.yml --ref wish/release-pipeline-collapse` to confirm GitHub Actions has registered the workflow on the branch (does NOT execute it).
+   - Run `bun run -e "..."` (or equivalent yq pipeline) to verify the predicted check names CAN be derived from the orchestrator's `jobs` keys + each called workflow's `jobs` keys + each matrix strategy. If the names diverge from what's predicted, halt and update the prediction list.
+
+2. **PR description** includes a "Branch Protection Cutover" section with five blocks:
+   - **OLD required check names** (current state on `main` and `dev`, captured pre-merge via `gh api /repos/.../branches/{main,dev}/protection --jq '.required_status_checks.contexts[]'`).
+   - **NEW required check names** (the predicted list above).
+   - **PRE-MERGE COMMAND**: `gh api PUT /repos/.../branches/{main,dev}/protection` JSON body that ADDs new names alongside existing — `required_status_checks.contexts` becomes `[OLD ∪ NEW]`. Run by a human BEFORE clicking merge.
+   - **POST-MERGE COMMAND**: `gh api PUT /repos/.../branches/{main,dev}/protection` JSON body that REMOVES obsolete names — `required_status_checks.contexts` becomes `[NEW]` only. Run by a human within 30 min of merge.
+   - **NAME-DRIFT FALLBACK**: if the actual run-page check names after the first real chain firing (v4.260510.6) diverge from the predicted ones, the human runs a third `gh api PUT` to reconcile. Documented as a 30-line snippet in the PR.
+
+3. Identify required checks the new pipeline cannot satisfy at all (e.g., a check that ran on `pull_request` but is now gated to `workflow_call` only) and explicitly remove from required AND document why in the PR description.
 
 **Acceptance Criteria:**
-- [ ] PR description has "Branch Protection Cutover" section with OLD/NEW/PRE-MERGE/POST-MERGE blocks.
-- [ ] PRE-MERGE `gh api PUT` JSON body is in the PR description, ready to copy-paste.
-- [ ] POST-MERGE `gh api PUT` JSON body is in the PR description, ready to copy-paste.
-- [ ] At least one trial workflow_dispatch run of `release.yml` exists on the wish branch BEFORE merge, proving the new check names.
-- [ ] Branch-protection on `main` and `dev` both updated post-merge (verified by `gh api ... | jq` returning exactly the union/then-pruned set as documented).
+- [ ] `actionlint` passes on `release.yml` and the three called workflow files.
+- [ ] `gh workflow view release.yml --ref wish/release-pipeline-collapse` returns successfully (workflow registered, not executed).
+- [ ] PR description has "Branch Protection Cutover" section with OLD/NEW/PRE-MERGE/POST-MERGE/NAME-DRIFT-FALLBACK blocks.
+- [ ] PRE-MERGE `gh api PUT` JSON body is in the PR description, ready to copy-paste, with `required_status_checks.contexts` set to the union `[OLD ∪ NEW]`.
+- [ ] POST-MERGE `gh api PUT` JSON body is in the PR description with `required_status_checks.contexts` set to `[NEW]` only.
+- [ ] Branch-protection on `main` and `dev` both updated post-merge (verified by `gh api ... | jq` confirming presence of new names AND absence of old names).
+- [ ] **No live `workflow_dispatch` run of `release.yml` on the wish branch.** If any exists pre-merge, it's a process violation; cancel + delete its outputs.
 
 **Validation:**
 ```bash
 cd /home/genie/workspace/repos/genie
-# Pre-merge:
+# Static checks pre-merge:
+actionlint .github/workflows/release.yml \
+           .github/workflows/build-tarballs.yml \
+           .github/workflows/sign-attest.yml \
+           .github/workflows/release-publish.yml
+gh workflow view release.yml --ref wish/release-pipeline-collapse > /dev/null
+# PR description checks:
 gh pr view <PR#> --json body -q .body | grep -qE 'PRE-MERGE.*gh api PUT'
 gh pr view <PR#> --json body -q .body | grep -qE 'POST-MERGE.*gh api PUT'
-gh run list --workflow=release.yml --branch wish/release-pipeline-collapse --limit 1 \
-  | grep -q 'workflow_dispatch'
-# Post-merge:
+gh pr view <PR#> --json body -q .body | grep -qiE 'NAME-DRIFT FALLBACK'
+# No live trial workflow_dispatch on wish branch (process violation if present):
+test "$(gh run list --workflow=release.yml --branch wish/release-pipeline-collapse \
+        --event workflow_dispatch --limit 5 --json databaseId | jq 'length')" -eq 0
+# Post-merge — both positive AND negative assertions:
 for branch in main dev; do
-  gh api /repos/automagik-dev/genie/branches/$branch/protection \
-    --jq '.required_status_checks.contexts[]' \
-    | grep -v -E 'Sign \+ Attest Tarballs|Release Publish'
+  CONTEXTS=$(gh api /repos/automagik-dev/genie/branches/$branch/protection \
+    --jq '.required_status_checks.contexts')
+  test "$(echo "$CONTEXTS" | jq 'length')" -gt 0
+  echo "$CONTEXTS" | jq -r '.[]' | grep -qE '^release / (build|sign-attest|publish)' \
+    || { echo "NEW names missing on $branch"; exit 1; }
+  echo "$CONTEXTS" | jq -r '.[]' | grep -vE 'Sign \+ Attest Tarballs|Release Publish' > /dev/null \
+    && { echo "OLD names still present on $branch"; exit 1; } || true
 done
 ```
 
@@ -319,34 +380,82 @@ done
 **Goal:** Ship the runbook + alert + tested rollback path in the same PR (operator P0 hard rule). Use a TESTABLE proxy for "external review" since autonomous engineers can't satisfy human-review gates.
 
 **Deliverables:**
-1. `docs/_internal/runbooks/release-pipeline.md` — under 200 words. Structure: "Symptoms (chain didn't reach publish job within 30 min) → Diagnosis (find release.yml run for vX.Y.Z, identify failed job N) → Recovery (manual `gh workflow run release.yml --ref refs/tags/v<version>` or per-file `gh workflow run sign-attest.yml --field version=X --field run_id=Y` for the cross-run rescue path)". Includes inline `bash` snippets that pass `shellcheck`.
-2. `docs/_internal/runbooks/release-pipeline.md` validated by `wc -w` ≤ 200 + Flesch reading-ease (computed via `style` or equivalent) ≥ 60. If `style` is unavailable, fall back to manual sentence-length and word-length heuristics; the validation MUST still produce a deterministic pass/fail.
-3. **Post-merge human review handoff:** a follow-up GitHub issue gets created in the SAME PR (or as part of the merge process) with title "Review release-pipeline runbook (cutover follow-up)" and label `release-runbook-review`, assigned to Felipe, due 24h post-merge. This handoff is OUTSIDE the engineer's gate — its existence is checked, but its outcome is not blocking.
-4. `release-orphan-alert.yml` — scheduled workflow (`schedule: cron: '*/30 * * * *'` + `workflow_dispatch`). Logic: list `gh api /repos/.../tags?per_page=10`, list `gh api /repos/.../releases?per_page=10`, find any `v*` tag older than 30 min that has no matching Release object, open a GitHub issue (label `release-incident`) with body linking to the runbook + the orphan tag name + the relevant `release.yml` run URL if any.
-5. PR description "Rollback Dry-Run" section — the exact reproducer command sequence + expected outputs, validated against v4.260510.6 once it ships.
+1. `docs/_internal/runbooks/release-pipeline.md` — ≤ 200 words. Structure: "Symptoms (chain didn't reach publish job within 30 min) → Diagnosis (find release.yml run for vX.Y.Z, identify failed job N) → Recovery (manual `gh workflow run release.yml --ref refs/tags/v<version>` or per-file `gh workflow run sign-attest.yml --field version=X --field run_id=Y` for the cross-run rescue path)". Includes inline `bash` snippets.
+
+2. **Mechanical readability proxy** (replacing the non-deterministic Flesch criterion). The runbook MUST satisfy ALL of:
+   - `wc -w` ≤ 200 (excluding code-fence content).
+   - Max sentence length ≤ 20 words (split prose into sentences on `.!?`; ignore code fences).
+   - Max paragraph length ≤ 5 sentences.
+   - No prose word > 18 chars (excluding code fences, URLs, file paths, identifiers in backticks).
+   - Each acceptance check has a deterministic awk/grep/wc-based validation script in the validation block — no manual judgment.
+
+3. **Post-merge human review handoff:** a follow-up GitHub issue with title "Review release-pipeline runbook (cutover follow-up)", label `release-runbook-review`, assigned to Felipe. Created automatically as part of Group 6's deliverable (via `gh issue create` in the engineer's flow). This handoff is OUTSIDE the engineer's gate — existence is verified, outcome is non-blocking.
+
+4. `release-orphan-alert.yml` — scheduled workflow (`schedule: cron: '*/30 * * * *'` + `workflow_dispatch`). Logic: enumerate `gh api /repos/.../tags?per_page=10`, enumerate `gh api /repos/.../releases?per_page=10`, find any `v*` tag older than 30 min that has no matching Release object, open a GitHub issue (label `release-incident`) with body linking to the runbook + the orphan tag name + the relevant `release.yml` run URL if any.
+
+5. PR description "Rollback Dry-Run" section — the exact reproducer command sequence + expected outputs, validated against v4.260510.6 once it ships post-merge.
+
+6. **Internal architecture note** (NOT in the user-facing runbook — Decision-#1-load-bearing invariant): create or update `docs/_internal/release-architecture.md` with one section: "**`sign-attest.yml` is the cosign owner-of-record.** The OIDC SAN URI for binary tarballs is bound to this file path. Cosign installer version: v2.4.1 (canonical). Future workflow files MUST NOT introduce another cosign step — duplicate cosign callers would fork the trust root. If you need to verify or test cosign behavior outside the release pipeline, do it in a script consuming this workflow's signed outputs, not by adding a parallel signing call."
 
 **Acceptance Criteria:**
-- [ ] `docs/_internal/runbooks/release-pipeline.md` exists, ≤ 200 words.
-- [ ] Inline shell snippets in runbook pass `shellcheck` (extract via fence parsing).
+- [ ] `docs/_internal/runbooks/release-pipeline.md` exists.
+- [ ] `wc -w` ≤ 200 (script extracts prose only, excludes code fences).
+- [ ] Max sentence length ≤ 20 words (computed by extract-prose + sentence-split awk script).
+- [ ] Max paragraph length ≤ 5 sentences.
+- [ ] No prose word > 18 chars.
+- [ ] Inline bash snippets pass `shellcheck` (per-fence file mode, exit-code based — see validation).
 - [ ] `release-orphan-alert.yml` exists with `schedule.cron: '*/30 * * * *'`.
-- [ ] Follow-up issue created with title matching pattern `Review release-pipeline runbook` + label `release-runbook-review`.
-- [ ] PR description has "Rollback Dry-Run" section with reproducer + expected output.
+- [ ] `docs/_internal/release-architecture.md` exists with cosign owner-of-record note.
+- [ ] Follow-up issue exists with title matching `Review release-pipeline runbook` + label `release-runbook-review`.
+- [ ] PR description has "Rollback Dry-Run" section.
 
 **Validation:**
 ```bash
 cd /home/genie/workspace/repos/genie
-test -f docs/_internal/runbooks/release-pipeline.md
-test "$(wc -w < docs/_internal/runbooks/release-pipeline.md)" -le 200
-# Extract bash fences and shellcheck them:
-awk '/^```bash$/,/^```$/' docs/_internal/runbooks/release-pipeline.md \
-  | grep -v '^```' \
-  | shellcheck - 2>&1 | grep -qE 'no issues|^$' || (echo "shellcheck failed"; exit 1)
+RUNBOOK=docs/_internal/runbooks/release-pipeline.md
+test -f "$RUNBOOK"
+
+# 1) Word count (prose only — strip code fences first):
+PROSE=$(awk 'BEGIN{in_fence=0} /^```/{in_fence=1-in_fence; next} !in_fence{print}' "$RUNBOOK")
+WORDS=$(echo "$PROSE" | wc -w)
+test "$WORDS" -le 200 || { echo "runbook prose has $WORDS words (>200)"; exit 1; }
+
+# 2) Sentence-length cap (max 20 words per sentence):
+echo "$PROSE" | tr -s '\n' ' ' | grep -oE '[^.!?]+[.!?]' \
+  | awk '{ if (NF > 20) { print "long sentence (" NF " words):", $0; exit 1 } }'
+
+# 3) Paragraph-length cap (max 5 sentences per paragraph; paragraph = blank-line separated):
+echo "$PROSE" | awk -v RS='' '{ n = gsub(/[.!?]/, "&"); if (n > 5) { print "paragraph >5 sentences"; exit 1 } }'
+
+# 4) Word-length cap (no prose word > 18 chars; URLs and backticked identifiers stripped):
+echo "$PROSE" | sed -E 's|https?://[^ ]+| |g; s|`[^`]*`| |g' | tr -s ' \n' '\n' \
+  | awk 'length > 18 { print "long word:", $0; exit 1 }'
+
+# 5) Per-fence shellcheck (exit-code based, one fence per file):
+mkdir -p /tmp/runbook-fences && rm -f /tmp/runbook-fences/*.sh
+awk -v out=/tmp/runbook-fences '
+  /^```bash$/ { capturing=1; n++; close(file); file=sprintf("%s/fence-%d.sh", out, n); print "#!/usr/bin/env bash" > file; next }
+  /^```$/ && capturing { capturing=0; next }
+  capturing { print > file }
+' "$RUNBOOK"
+for f in /tmp/runbook-fences/*.sh; do
+  shellcheck -s bash "$f" || { echo "shellcheck failed on $f"; exit 1; }
+done
+
+# 6) Alert workflow:
 test -f .github/workflows/release-orphan-alert.yml
-yq '.on.schedule[0].cron' .github/workflows/release-orphan-alert.yml | grep -qF '*/30 * * * *'
-# Follow-up issue:
+test "$(yq '.on.schedule[0].cron' .github/workflows/release-orphan-alert.yml)" = "*/30 * * * *"
+
+# 7) Architecture note:
+test -f docs/_internal/release-architecture.md
+grep -q 'cosign owner-of-record' docs/_internal/release-architecture.md
+grep -q 'v2.4.1' docs/_internal/release-architecture.md
+
+# 8) Follow-up issue:
 gh issue list --label release-runbook-review --limit 1 --json title -q '.[].title' \
   | grep -qiE 'review release-pipeline runbook'
-# PR description rollback section:
+
+# 9) PR description rollback section:
 gh pr view <PR#> --json body -q .body | grep -qiE 'rollback dry-run'
 ```
 
@@ -354,26 +463,29 @@ gh pr view <PR#> --json body -q .body | grep -qiE 'rollback dry-run'
 
 ---
 
-### Group 7: CHANGELOG + cosign version reconciliation
+### Group 7: CHANGELOG + cosign single-owner verification
 
-**Goal:** Document the v4.260510.5 abandonment and reconcile the cosign installer version mismatch (release.yml v2.2.4 vs sign-attest.yml v2.4.1).
+**Goal:** Document the v4.260510.5 abandonment. Verify cosign installer version is single-sourced post-Group-2 (since `release.yml`'s npm-pack jobs — which carried the divergent v2.2.4 — are deleted, no reconciliation work is actually required; this Group just confirms the natural consequence held).
 
 **Deliverables:**
 1. `CHANGELOG.md` v4.260510.5 abandonment entry (one line at top of unreleased): `- **v4.260510.5 (skipped):** build artifacts existed (run 25619912030) but never received a signed release due to GITHUB_TOKEN workflow_run anti-recursion blocker; superseded by v4.260510.6 via the new release.yml workflow_call orchestrator (wish: release-pipeline-collapse).`
-2. Cosign installer version: pick the newer (v2.4.1, used in sign-attest.yml today) and apply uniformly. Since `release.yml` no longer signs anything in the new architecture, this just means the sign-attest.yml version is canonical — but document the choice in the runbook (Group 6) so future maintainers don't reintroduce divergence.
+2. Confirm `sign-attest.yml` is the only workflow file that calls `sigstore/cosign-installer`. The cosign owner-of-record note belongs in `docs/_internal/release-architecture.md` (created by Group 6, not in the user-facing runbook).
 
 **Acceptance Criteria:**
 - [ ] CHANGELOG.md contains the v4.260510.5 abandonment entry referencing run 25619912030.
-- [ ] `sign-attest.yml` cosign installer version is unchanged from current (v2.4.1).
-- [ ] No other workflow file references a different cosign version (`grep -q 'cosign-release' .github/workflows/*.yml` returns at most the sign-attest.yml v2.4.1 line).
+- [ ] `sign-attest.yml` cosign installer is unchanged at v2.4.1.
+- [ ] Exactly ONE workflow file references `cosign-installer` post-Group-2 (it must be `sign-attest.yml`).
+- [ ] `docs/_internal/release-architecture.md` (from Group 6) names `sign-attest.yml` as the cosign owner-of-record.
 
 **Validation:**
 ```bash
 cd /home/genie/workspace/repos/genie
 grep -q '4\.260510\.5' CHANGELOG.md
 grep -q '25619912030' CHANGELOG.md
-test "$(grep -hE 'cosign-release' .github/workflows/*.yml | sort -u | wc -l)" -le 1
+test "$(grep -lE 'sigstore/cosign-installer' .github/workflows/*.yml | wc -l)" -eq 1
+grep -lE 'sigstore/cosign-installer' .github/workflows/*.yml | grep -qF '.github/workflows/sign-attest.yml'
 grep -q "cosign-release: 'v2.4.1'" .github/workflows/sign-attest.yml
+grep -q 'sign-attest.yml.*cosign owner-of-record' docs/_internal/release-architecture.md
 ```
 
 **depends-on:** Group 2
@@ -411,7 +523,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 | `[skip ci]` shadow on the wish-merge commit causes version.yml to not run — pipeline never fires post-merge | Medium | QA Criterion verifies merge commit message. If shadow exists, manual `gh workflow run version.yml --ref dev` recovers; document in runbook. |
 | Cosign installer version divergence (v2.2.4 vs v2.4.1) leaves only one survivor; older bundle format incompatibilities | Low | Group 7 reconciles to v2.4.1 (newer). sign-attest.yml IS the cosign-bearing file — `release.yml` orchestrator no longer needs cosign, so divergence ceases naturally. |
 | `pgserve-singleton-no-proxy` references stale `release.yml@` — its trust list is in the pgserve repo, not genie | Low | Out-of-scope for this wish. Filed as follow-up: `pgserve-trust-list-cleanup` wish in pgserve repo. genie wish files in `.genie/wishes/pgserve-singleton-no-proxy/*` are historical, not consumed by runtime. |
-| Group 5 trial workflow_dispatch run on wish branch may produce signed artifacts that consumers might mistake for a real release | Low | Trial run uses `version=test` — non-tag-shaped, never advances `.well-known/latest.json`, never creates a Release object. The `release-orphan-alert.yml` (Group 6) ignores non-`v*` patterns. |
+| (Reviewer L2 CRITICAL — RESOLVED) Group 5 trial would have produced real Sigstore Rekor entries (append-only) + real Release object + possibly advance latest.json | (resolved) | Group 5 redesigned to use static checks only (`actionlint` + `gh workflow view`) + predicted check names. NO live `workflow_dispatch` of `release.yml` on the wish branch is permitted; validation explicitly asserts zero such runs exist. Real chain firing is deferred to v4.260510.6 post-merge. NAME-DRIFT FALLBACK in PR description handles the case where predicted names don't match actual names. |
 | Decision #1's "no verifier breaks" claim is now SOUND but only because cosign step stays put — if a future refactor moves it, the verifier ecosystem breaks | Low | Decision #8 + Group 4 makes the verifier-coherence cleanup a load-bearing invariant. Document in runbook (Group 6) that `sign-attest.yml` is the cosign owner-of-record. |
 
 ---
