@@ -28,7 +28,7 @@ LOCAL_BIN="$HOME/.local/bin"
 TMP_DIR="$(mktemp -d -t genie-install-XXXXXX)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
+log()  { printf '\033[1;36m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$1" >&2; exit "${2:-1}"; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1" 3; }
