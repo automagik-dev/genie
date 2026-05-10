@@ -127,7 +127,14 @@ function teamSettingsPath(teamName: string): string {
   return join(claudeConfigDir(), 'teams', sanitized, 'settings.json');
 }
 
-function buildHooksConfig(): HooksConfig {
+/**
+ * Canonical hooks-config for the running host — exported so the one-time
+ * cleanup migration (`scripts/dedup-team-settings.ts`) can synthesize
+ * canonical entries instead of preserving stale first-survivor shapes
+ * (CR feedback on PR #1735.13). Keeping the function colocated with the
+ * inject path ensures both paths use the same canonical source of truth.
+ */
+export function buildHooksConfig(): HooksConfig {
   const hooks: HooksConfig = {};
   const dispatchCommand = buildDispatchCommand();
 

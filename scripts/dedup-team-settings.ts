@@ -148,6 +148,16 @@ export interface DedupOutcome {
 }
 
 /**
+ * Optional canonical-entry provider — given an event name, returns the
+ * canonical `{matcher, hook}` shape for that event. When supplied (CLI
+ * default), the migration writes the canonical shape rather than preserving
+ * the first drifted survivor. Tests can pass a stub; omitting it falls back
+ * to first-survivor behavior (used by the unit suite to keep assertions
+ * about specific commands deterministic). Addresses CR PR #1735.13.
+ */
+export type CanonicalForEvent = (event: string) => { matcher: string; hook: HookEntry } | null;
+
+/**
  * Dedup a single `hooks` config in-memory. Pure: input is not mutated.
  *
  * Within each event:
@@ -156,12 +166,16 @@ export interface DedupOutcome {
  *     in their original order.
  *   - All genie-shape hooks (across every matcher entry of this event) are
  *     collected, deduped by `{matcher, command, timeout}` triplet, then
- *     drift-collapsed to the FIRST surviving triplet — yielding at most one
- *     genie matcher entry per event.
- *   - The single surviving genie matcher entry is appended after any
- *     preserved non-genie matcher entries.
+ *     drift-collapsed to a single survivor.
+ *   - When a `canonicalForEvent` provider is passed, the survivor is REPLACED
+ *     with the canonical shape for that event (matcher + hook from the host's
+ *     `buildHooksConfig()`). When omitted, the first triplet survives verbatim
+ *     — back-compat for tests + safety net when the canonical builder is
+ *     unavailable.
+ *   - The single genie matcher entry is appended after any preserved non-
+ *     genie matcher entries.
  */
-export function dedupHooks(input: HooksConfig | undefined): DedupOutcome {
+export function dedupHooks(input: HooksConfig | undefined, canonicalForEvent?: CanonicalForEvent): DedupOutcome {
   const out: HooksConfig = {};
   const perEvent: Record<string, { before: number; after: number }> = {};
   let entriesRemoved = 0;
@@ -219,16 +233,23 @@ export function dedupHooks(input: HooksConfig | undefined): DedupOutcome {
     }
 
     // Drift collapse: if multiple distinct triplets remain (different command
-    // paths or different matchers), keep ONLY the first survivor. The next
-    // `genie spawn` will normalize this entry to the host's canonical form
-    // via Group 2's hardened `upsertGenieEntry`.
+    // paths or different matchers), keep ONLY the first survivor — then
+    // OPTIONALLY replace it with the canonical shape for this event. Without
+    // the canonical replacement, teams that are never re-spawned would keep
+    // the legacy triplet on disk indefinitely (CR PR #1735.13). With it, the
+    // migration normalizes shape AND content in a single pass.
     const surviving = tripletDedup.slice(0, 1);
     const afterGenieCount = surviving.length;
 
     const finalMatchers: HookMatcher[] = [...preserved];
     if (surviving.length === 1) {
-      const s = surviving[0];
-      finalMatchers.push({ matcher: s.matcher, hooks: [s.hook] });
+      const canonical = canonicalForEvent?.(event) ?? null;
+      if (canonical) {
+        finalMatchers.push({ matcher: canonical.matcher, hooks: [canonical.hook] });
+      } else {
+        const s = surviving[0];
+        finalMatchers.push({ matcher: s.matcher, hooks: [s.hook] });
+      }
     }
 
     out[event] = finalMatchers;
@@ -256,7 +277,12 @@ export interface FileResult {
 }
 
 /** Read, dedup, and (when `apply`) write a single settings.json file. */
-export function processSettingsFile(filePath: string, apply: boolean, teamName: string): FileResult {
+export function processSettingsFile(
+  filePath: string,
+  apply: boolean,
+  teamName: string,
+  canonicalForEvent?: CanonicalForEvent,
+): FileResult {
   let raw: string;
   try {
     raw = readFileSync(filePath, 'utf-8');
@@ -275,7 +301,7 @@ export function processSettingsFile(filePath: string, apply: boolean, teamName: 
     return { team: teamName, path: filePath, status: 'no-hooks-key', entriesRemoved: 0, perEvent: {} };
   }
 
-  const outcome = dedupHooks(hooks);
+  const outcome = dedupHooks(hooks, canonicalForEvent);
   if (!outcome.changed) {
     return {
       team: teamName,
@@ -314,6 +340,14 @@ export interface ScanOpts {
   baseDir?: string;
   /** Override the marker base directory (defaults to claudeConfigDir()). */
   markerBaseDir?: string;
+  /**
+   * Canonical-shape provider — when supplied, surviving genie matcher
+   * entries are REPLACED with the canonical shape for their event instead
+   * of preserving the first drifted survivor verbatim. CLI default wires
+   * this to the host's `buildHooksConfig()` so the migration writes the
+   * normalized hook contract on every cleaned file. CR PR #1735.13.
+   */
+  canonicalForEvent?: CanonicalForEvent;
 }
 
 export interface ScanReport {
@@ -413,7 +447,7 @@ export function dedupTeamSettings(opts: ScanOpts = {}): ScanReport {
     if (!existsSync(settings)) continue;
 
     filesScanned++;
-    const result = processSettingsFile(settings, apply, name);
+    const result = processSettingsFile(settings, apply, name, opts.canonicalForEvent);
     results.push(result);
     if (result.status === 'modified') {
       filesModified++;
@@ -482,12 +516,37 @@ async function emitDedupAudit(eventType: string, details: Record<string, unknown
 // CLI entry — `bun scripts/dedup-team-settings.ts [--dry-run|--apply] [--force]`
 // ============================================================================
 
+/**
+ * Build a `CanonicalForEvent` lookup from the host's live `buildHooksConfig()`.
+ * Best-effort: if the inject module can't be loaded (e.g. running outside a
+ * built dist), returns null so `dedupHooks` falls back to first-survivor
+ * behavior. CR PR #1735.13.
+ */
+async function loadCanonicalForEvent(): Promise<CanonicalForEvent | undefined> {
+  try {
+    const { buildHooksConfig } = await import('../src/hooks/inject.js');
+    const config = buildHooksConfig();
+    return (event: string) => {
+      const matchers = config[event];
+      if (!Array.isArray(matchers) || matchers.length === 0) return null;
+      const first = matchers[0];
+      const hook = first?.hooks?.[0];
+      if (!first?.matcher || !hook) return null;
+      return { matcher: first.matcher, hook };
+    };
+  } catch {
+    // Inject module unavailable — fall back to first-survivor behavior.
+    return undefined;
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const apply = args.includes('--apply');
   const force = args.includes('--force');
 
-  const report = dedupTeamSettings({ apply, force });
+  const canonicalForEvent = await loadCanonicalForEvent();
+  const report = dedupTeamSettings({ apply, force, canonicalForEvent });
 
   if (report.skippedDueToMarker) {
     console.log('  marker present at', markerPath(), '— skipping. Pass --force to re-scan.');
