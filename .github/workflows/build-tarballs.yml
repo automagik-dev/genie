@@ -36,6 +36,10 @@ on:
         description: 'Version override (default: package.json)'
         required: false
         type: string
+  # Reusable from release.yml orchestrator. No inputs/outputs — version
+  # derives from package.json at build time; artifacts pass via the
+  # run-shared store (see actions/upload-artifact / download-artifact).
+  workflow_call: {}
   pull_request:
     paths:
       - 'scripts/build-binary.sh'

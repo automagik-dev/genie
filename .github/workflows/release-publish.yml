@@ -30,9 +30,30 @@ name: Release Publish
 #     genie-<version>-<platform>.tar.gz
 
 on:
-  workflow_run:
-    workflows: ["Sign + Attest Tarballs"]
-    types: [completed]
+  # Reusable from release.yml orchestrator. The orchestrator drives the full
+  # build → sign → publish chain in one run, so signed artifacts pass via the
+  # run-shared store (no run_id input). draft defaults to false here because
+  # the orchestrator path is the production-safe automated path; the
+  # workflow_dispatch escape hatch keeps draft=true for replay safety.
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to publish (must match upstream artifact version)'
+        required: true
+        type: string
+      channel:
+        description: 'Release channel (stable / beta / canary)'
+        required: false
+        type: string
+        default: stable
+      draft:
+        description: 'Create as draft (require manual promotion)?'
+        required: false
+        type: boolean
+        default: false
+  # Manual-recovery escape hatch — operators can re-publish from a stranded
+  # sign-attest run by passing version + run_id explicitly. draft defaults
+  # to true here so a replay never auto-promotes by accident.
   workflow_dispatch:
     inputs:
       version:
@@ -59,7 +80,7 @@ on:
         default: true
 
 concurrency:
-  group: release-publish-${{ github.ref }}-${{ inputs.version || github.event.workflow_run.id || github.sha }}
+  group: release-publish-${{ github.ref }}-${{ inputs.version || github.sha }}
   cancel-in-progress: false   # never cancel an in-flight publish
 
 permissions:
@@ -68,28 +89,6 @@ permissions:
 jobs:
   publish:
     name: Publish to GitHub Releases
-    # SECURITY GUARD — mirror sign-attest.yml's pattern. workflow_run
-    # propagates `contents: write` even when the upstream run was started
-    # from an untrusted PR. Without this guard, a contributor PR that
-    # touches a sign-attest input path could attach attacker-controlled
-    # tarballs to a real GitHub Release. We accept:
-    #   - our own workflow_dispatch (only triggerable by maintainers)
-    #   - workflow_run from upstream `push` events on dev/main/v* tag
-    #   - workflow_run from upstream `workflow_dispatch` events on
-    #     dev/main/v* tag (the version.yml → build-tarballs.yml chain
-    #     uses GITHUB_TOKEN-friendly workflow_dispatch since GITHUB_TOKEN-
-    #     pushed tags can't trigger `push` workflows). Branch check still
-    #     gates the privileged scopes — only protected refs reach this point.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       (github.event.workflow_run.event == 'push' ||
-        github.event.workflow_run.event == 'workflow_dispatch' ||
-        github.event.workflow_run.event == 'workflow_run') &&
-       (github.event.workflow_run.head_branch == 'main' ||
-        github.event.workflow_run.head_branch == 'dev' ||
-        startsWith(github.event.workflow_run.head_branch, 'v')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -100,12 +99,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # workflow_call invocations from release.yml don't pass a run_id —
+          # the orchestrator runs sign-attest in the same run, so signed
+          # artifacts land in this run's shared store and download-artifact
+          # below resolves them without --run-id (Group 2 wires the
+          # orchestrator). This step only fires meaningfully under
+          # workflow_dispatch.
           if [[ -n "${{ inputs.run_id }}" ]]; then
             RUN_ID="${{ inputs.run_id }}"
-          elif [[ -n "${{ github.event.workflow_run.id }}" ]]; then
-            RUN_ID="${{ github.event.workflow_run.id }}"
           else
-            echo "::error::cannot determine sign-attest run-id (workflow_run trigger or workflow_dispatch run_id input required)"
+            echo "::error::cannot determine sign-attest run-id (workflow_dispatch run_id input required)"
             exit 1
           fi
           echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
