@@ -25,7 +25,7 @@ Acknowledgments: https://github.com/automagik-dev/genie/blob/main/SECURITY.md#ac
 #   - https://github.com/automagik-dev/genie/issues?q=is%3Aissue+label%3Apinned+label%3Asigning-identity
 
 # BEGIN SIGNING_IDENTITY_PIN
-# certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/release.yml@
+# certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
 # certificate-oidc-issuer:     https://token.actions.githubusercontent.com
 # provenance source-uri:       github.com/automagik-dev/genie
 # END SIGNING_IDENTITY_PIN

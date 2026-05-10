@@ -108,7 +108,7 @@ GitHub renders nested workflow_call check names from the actual job IDs at runti
 2. Then `gh run view <id> --json jobs --jq '.jobs[].name'` to enumerate the exact rendered names.
 3. Re-PUT `required_status_checks.contexts` with the corrected names.
 
-The runbook (`.genie/wishes/release-pipeline-collapse/runbook/release-pipeline.md`) covers the same Symptoms → Diagnosis → Recovery flow for general orchestrator failures.
+The runbook (`.genie/runbooks/release-pipeline.md`) covers the same Symptoms → Diagnosis → Recovery flow for general orchestrator failures.
 
 ## Rollback dry-run
 
@@ -123,10 +123,11 @@ gh workflow run release.yml --ref refs/tags/v4.260510.6 --field version=4.260510
 ## Outstanding concerns (carried over from per-group reports)
 
 - **Orchestrator passes v-prefixed version to sign-attest under tag push.** `release.yml`'s `version: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}` evaluates to `v4.260510.6` on tag push. `sign-attest.yml`'s prepare step parses bare `4.260510.6` from artifact filenames and validates equality. Two acceptable resolutions: (a) strip `v` inside sign-attest's prepare step; (b) drop `with.version` from the orchestrator and let sign-attest derive it. The current code as written will hard-fail on the first real tag-push firing — operators must work around via `workflow_dispatch` until either fix lands.
-- **sign-attest and release-publish prepare bodies still require `run_id`.** Under workflow_call, the orchestrator runs all jobs in one run, so the prepare step's `actions/download-artifact@v4 --run-id "${runid.outputs.run_id}"` errors because the runid bash now requires `inputs.run_id` (workflow_dispatch-only). Body refactor to drop `--run-id` for workflow_call invocations was out of any G1-G7 brief scope.
+- ~~**sign-attest and release-publish prepare bodies still require `run_id`.**~~ **RESOLVED** in fix-loop commit (this PR): both files now default `RUN_ID="${{ github.run_id }}"` when `inputs.run_id` is empty (workflow_call path). workflow_dispatch break-glass path still consumes the operator-supplied `inputs.run_id` for cross-run rescue.
+- ~~**release.yml passes v-prefixed version to sign-attest on tag push.**~~ **RESOLVED**: `with.version:` removed from the orchestrator's sign-attest call entirely. sign-attest.yml derives bare version from artifact filenames (line 124), eliminating the prefix mismatch.
 - **CHANGELOG.md v4.260510.5 entry uses an "Unreleased > Skipped" heading.** Final shipping section may move it to the version-specific section once v4.260510.6 cuts.
-- **G4 didn't include `.well-known/security.txt:28` or `.github/cosign.pub:12`.** Both still reference `release.yml@` in this repo's pinning witnesses (out of G4 brief's find-extension scope: `.txt`/`.pub` filters don't match `*.sh/*.md/*.mdx/*.ts/*.yml/*.yaml`). `scripts/check-fingerprint-pinning.sh`'s CANONICAL line was updated, so the script will report a witness mismatch on next CI run until those two files are also repinned. Recommend a separate follow-up commit (`fix(security): repin remaining cosign witnesses .well-known/security.txt + .github/cosign.pub`).
-- **`docs/_internal/runbooks/release-pipeline.md` lives in-repo, not in the docs submodule.** Brief specified that path, but `docs/` is a symlink to the `automagik-dev/docs` submodule which can't be modified atomically with this PR. Files live at `.genie/wishes/release-pipeline-collapse/runbook/` for now; mirror to the docs submodule via a sister PR if desired.
+- ~~**G4 didn't include `.well-known/security.txt:28` or `.github/cosign.pub:12`.**~~ **RESOLVED** in fix-loop commit: both repinned to `sign-attest.yml@`. `scripts/check-fingerprint-pinning.sh` now exits 0 across all 4 witnesses.
+- **`.genie/runbooks/release-pipeline.md` lives in-repo, not in the docs submodule.** Brief originally specified `docs/_internal/runbooks/`, but `docs/` is a symlink to the `automagik-dev/docs` submodule. Runbook + arch doc relocated to `.genie/runbooks/` (commit 27a5988e) — discoverable, repo-internal, no submodule entanglement. Mirror to the docs submodule via a sister PR if desired.
 - **Follow-up review issue (`release-runbook-review`) was NOT auto-created.** Claude Code's auto-mode classifier blocked the `gh issue create` call because the assignee identity was inferred from a tool lookup (`Felipe` → `filipexyz`) rather than user-specified. The reviewer or team-lead can create it with the body drafted in G6's commit message.
 
 🤖 Wish execution: G1 → G2 → G3 → G4 → G7 → G6 → G5 (atomic-per-group commits).

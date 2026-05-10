@@ -81,16 +81,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # workflow_call invocations from release.yml don't pass a run_id —
-          # the orchestrator runs build-tarballs in the same run, so artifacts
-          # land in this run's shared store and download-artifact below resolves
-          # them without --run-id (Group 2 wires the orchestrator). This step
-          # only fires meaningfully under workflow_dispatch.
+          # Resolve the upstream run-id that holds the tarball artifacts:
+          #  - workflow_dispatch break-glass: operator supplies inputs.run_id
+          #    pointing at a prior build-tarballs run.
+          #  - workflow_call from release.yml orchestrator: build-tarballs ran
+          #    in THIS run; default to github.run_id so download-artifact pulls
+          #    from the current run's shared artifact store.
           if [[ -n "${{ inputs.run_id }}" ]]; then
             RUN_ID="${{ inputs.run_id }}"
           else
-            echo "::error::Cannot determine upstream build-tarballs run-id (workflow_dispatch run_id input required)"
-            exit 1
+            RUN_ID="${{ github.run_id }}"
           fi
           echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
           echo "Upstream run-id: ${RUN_ID}"

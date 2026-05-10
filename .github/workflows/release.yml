@@ -51,8 +51,10 @@ jobs:
       attestations: write   # GitHub Attestations API registration
       actions: read         # cross-run artifact metadata
     secrets: inherit
-    with:
-      version: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+    # No `with.version:` — sign-attest.yml derives the bare version from
+    # tarball filenames (genie-<VERSION>-<PLATFORM>.tar.gz). Passing
+    # github.ref_name on tag pushes would leak the `v` prefix and fail
+    # sign-attest's input/derived version equality check at line 129-132.
 
   publish:
     needs: sign-attest

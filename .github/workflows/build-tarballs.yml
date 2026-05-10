@@ -27,9 +27,11 @@ name: Build Tarballs
 # 2022; Intel-Mac users run via Rosetta or the linux-x64 path under Docker.
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # No `push: tags: ['v*']` — release.yml is the only tag entry-point. A
+  # tag-push would otherwise fire BOTH release.yml (orchestrator) and this
+  # workflow standalone, causing duplicate artifact uploads with the same
+  # name and wasted runner minutes. Tag-triggered execution flows
+  # exclusively through release.yml's workflow_call invocation below.
   workflow_dispatch:
     inputs:
       version:

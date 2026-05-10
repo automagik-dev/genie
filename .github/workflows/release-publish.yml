@@ -99,17 +99,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # workflow_call invocations from release.yml don't pass a run_id —
-          # the orchestrator runs sign-attest in the same run, so signed
-          # artifacts land in this run's shared store and download-artifact
-          # below resolves them without --run-id (Group 2 wires the
-          # orchestrator). This step only fires meaningfully under
-          # workflow_dispatch.
+          # Resolve the upstream run-id that holds the signed artifacts:
+          #  - workflow_dispatch break-glass: operator supplies inputs.run_id
+          #    pointing at a prior sign-attest run.
+          #  - workflow_call from release.yml orchestrator: sign-attest ran
+          #    in THIS run; default to github.run_id so download-artifact pulls
+          #    from the current run's shared artifact store.
           if [[ -n "${{ inputs.run_id }}" ]]; then
             RUN_ID="${{ inputs.run_id }}"
           else
-            echo "::error::cannot determine sign-attest run-id (workflow_dispatch run_id input required)"
-            exit 1
+            RUN_ID="${{ github.run_id }}"
           fi
           echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
           echo "Upstream sign-attest run-id: ${RUN_ID}"
