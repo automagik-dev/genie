@@ -86,10 +86,10 @@ Replace the broken `workflow_run`-chained release pipeline (build-tarballs.yml �
 - [ ] `scripts/verify-release.sh:23`, `scripts/check-fingerprint-pinning.sh:51`, `SECURITY.md:142,179`, `src/term-commands/sec.ts:366`, `.github/ISSUE_TEMPLATE/signing-key-fingerprint.md:34,69` all pin `sign-attest.yml@` (matching `install.sh:24` and reality).
 - [ ] Branch-protection required-status-checks on `main` and `dev` reference the new nested job names (`release / sign / sign (linux-x64-glibc)` etc.) and NOT the obsolete standalone names (`Sign + Attest Tarballs`, `Release Publish`).
 - [ ] `CHANGELOG.md` documents v4.260510.5 abandonment with diagnostic run 25619912030 reference.
-- [ ] `docs/_internal/runbooks/release-pipeline.md` exists, ≤ 200 words, passes `shellcheck` on inline shell snippets, has Flesch reading-ease ≥ 60.
+- [ ] `docs/_internal/runbooks/release-pipeline.md` exists, ≤ 200 prose words, max 20 words/sentence, max 5 sentences/paragraph, no prose word > 18 chars, passes `shellcheck` per-fence on inline shell snippets.
 - [ ] `release-orphan-alert.yml` exists with `schedule: cron: '*/30 * * * *'` and opens GitHub issue with label `release-incident` when a `v*` tag has no Release object after 30 min.
 - [ ] Manual-recovery dry-run: `gh workflow run release.yml --ref refs/tags/v4.260510.6` after the natural firing produces either a clear "release already exists" error or is correctly idempotent — never duplicates.
-- [ ] Cosign installer version is consistent across orchestrator + called workflows (today release.yml uses v2.2.4, sign-attest.yml uses v2.4.1 — pick one, document choice in PR).
+- [ ] Cosign installer is invoked from exactly one workflow file (`sign-attest.yml`) at v2.4.1; `release.yml` has no cosign step post-Group-2.
 
 ## Execution Strategy
 
@@ -159,6 +159,9 @@ test "$(yq '.on.workflow_call.inputs.version.required' .github/workflows/release
 test "$(yq '.on.workflow_call.inputs.draft.default' .github/workflows/release-publish.yml)" = "false"
 test "$(yq '.on.workflow_dispatch.inputs.draft.default' .github/workflows/release-publish.yml)" = "true"
 test "$(yq '.on.workflow_call.outputs.version' .github/workflows/sign-attest.yml)" != "null"
+# Decision #6 anchor: build-tarballs.yml standalone path retains contents:read only —
+# no signing scope reachable by PR contributors via the standalone PR-time path.
+test "$(yq '.permissions.contents' .github/workflows/build-tarballs.yml)" = "read"
 yamllint .github/workflows/{build-tarballs,sign-attest,release-publish}.yml
 ```
 
@@ -366,8 +369,9 @@ for branch in main dev; do
   test "$(echo "$CONTEXTS" | jq 'length')" -gt 0
   echo "$CONTEXTS" | jq -r '.[]' | grep -qE '^release / (build|sign-attest|publish)' \
     || { echo "NEW names missing on $branch"; exit 1; }
-  echo "$CONTEXTS" | jq -r '.[]' | grep -vE 'Sign \+ Attest Tarballs|Release Publish' > /dev/null \
-    && { echo "OLD names still present on $branch"; exit 1; } || true
+  if echo "$CONTEXTS" | jq -r '.[]' | grep -qE 'Sign \+ Attest Tarballs|Release Publish'; then
+    echo "OLD names still present on $branch"; exit 1
+  fi
 done
 ```
 
@@ -516,7 +520,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | Branch-protection cutover causes silent PR-merge breakage if pre-merge ADD step is skipped | High | Group 5 transition-state ADD-then-REMOVE pattern eliminates the stall window. PR template checklist includes "Pre-merge `gh api PUT` ADD executed" and "Post-merge REMOVE within 30 min". |
-| `workflow_call` permission inheritance gotcha — orchestrator job missing `id-token: write` causes cosign to fail at minute 12 after build matrix burns | High | Decision #7 + Group 2 explicit per-job `permissions:` block. Group 5 trial workflow_dispatch run on wish branch surfaces this BEFORE merge. |
+| `workflow_call` permission inheritance gotcha — orchestrator job missing `id-token: write` causes cosign to fail at minute 12 after build matrix burns | High | Decision #7 + Group 2 explicit per-job `permissions:` block on the orchestrator side; Decision #7 INTERSECTION model + Group 1 acceptance confirm `sign-attest.yml`'s inner per-job permissions are unchanged from current state (which already declares all needed scopes for the standalone workflow_dispatch path). |
 | SLSA generator's `contents: write` requirement (#1740) doesn't transfer cleanly to the new caller | Medium | Group 1 + Group 2: the `sign-attest.yml` `provenance` job retains its existing reviewer-grade comment block from #1740. Caller (`release.yml` orchestrator's `sign-attest` job) declares `contents: write` to satisfy the cap. |
 | External consumers pinned to v4.260510.5 (Renovate/Dependabot/lockfiles) get 404 after abandonment | Medium | Decision #2 + CHANGELOG entry. Document in runbook. v4.260510.5 was never a real release; the resolution failure is correct. |
 | Second-hop workflow_run anti-recursion was actually two hops (build → sign → publish), not one — the council description simplified | Medium | This wish collapses ALL workflow_run usage into needs:-chained workflow_call. Both hops gone simultaneously. Validation Group 1 grep confirms no workflow_run remaining. |
@@ -524,7 +528,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 | Cosign installer version divergence (v2.2.4 vs v2.4.1) leaves only one survivor; older bundle format incompatibilities | Low | Group 7 reconciles to v2.4.1 (newer). sign-attest.yml IS the cosign-bearing file — `release.yml` orchestrator no longer needs cosign, so divergence ceases naturally. |
 | `pgserve-singleton-no-proxy` references stale `release.yml@` — its trust list is in the pgserve repo, not genie | Low | Out-of-scope for this wish. Filed as follow-up: `pgserve-trust-list-cleanup` wish in pgserve repo. genie wish files in `.genie/wishes/pgserve-singleton-no-proxy/*` are historical, not consumed by runtime. |
 | (Reviewer L2 CRITICAL — RESOLVED) Group 5 trial would have produced real Sigstore Rekor entries (append-only) + real Release object + possibly advance latest.json | (resolved) | Group 5 redesigned to use static checks only (`actionlint` + `gh workflow view`) + predicted check names. NO live `workflow_dispatch` of `release.yml` on the wish branch is permitted; validation explicitly asserts zero such runs exist. Real chain firing is deferred to v4.260510.6 post-merge. NAME-DRIFT FALLBACK in PR description handles the case where predicted names don't match actual names. |
-| Decision #1's "no verifier breaks" claim is now SOUND but only because cosign step stays put — if a future refactor moves it, the verifier ecosystem breaks | Low | Decision #8 + Group 4 makes the verifier-coherence cleanup a load-bearing invariant. Document in runbook (Group 6) that `sign-attest.yml` is the cosign owner-of-record. |
+| Decision #1's "no verifier breaks" claim is now SOUND but only because cosign step stays put — if a future refactor moves it, the verifier ecosystem breaks | Low | Decision #8 + Group 4 make the verifier-coherence cleanup a load-bearing invariant. The cosign owner-of-record fact is documented in `docs/_internal/release-architecture.md` (Group 6 deliverable 6) — internal-facing, not in the user-facing runbook. |
 
 ---
 
