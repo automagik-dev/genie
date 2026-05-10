@@ -363,7 +363,7 @@ export const VERIFY_EXIT = {
 
 export type VerifyExitCode = (typeof VERIFY_EXIT)[keyof typeof VERIFY_EXIT];
 
-export const SIGNER_IDENTITY_REGEXP = '^https://github.com/automagik-dev/genie/.github/workflows/release.yml@';
+export const SIGNER_IDENTITY_REGEXP = '^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@';
 export const SIGNER_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
 export const PROVENANCE_SOURCE_URI = 'github.com/automagik-dev/genie';
 

@@ -20,7 +20,7 @@
 set -euo pipefail
 
 REPO="automagik-dev/genie"
-WORKFLOW_IDENTITY_REGEXP="^https://github.com/${REPO}/.github/workflows/release.yml@"
+WORKFLOW_IDENTITY_REGEXP="^https://github.com/${REPO}/.github/workflows/sign-attest.yml@"
 OIDC_ISSUER="https://token.actions.githubusercontent.com"
 SOURCE_URI="github.com/${REPO}"
 
