@@ -179,6 +179,7 @@ jobs:
           fi
 
           if ! gh release view "v${VERSION}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            # shellcheck disable=SC2086 # intentional word-split on optional flags
             gh release create "v${VERSION}" \
               --repo "${{ github.repository }}" \
               --title "v${VERSION}" \
