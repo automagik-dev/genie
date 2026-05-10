@@ -468,4 +468,63 @@ describe('hook injection', () => {
       expect(settings.hooks.SessionStart[0].hooks[0].command).toBe('echo user-hook');
     });
   });
+
+  // CR feedback on PR #1735 (#20): malformed hooks.<event> values must not
+  // crash the inject path. The new defensive guards in upsertGenieEntry only
+  // helped if the prune step survived the malformed shape first.
+  describe('CR #1735: malformed user-authored configs do not crash inject', () => {
+    test('hooks.<event> as object instead of array does not throw', async () => {
+      const teamDir = join(testDir, 'teams', 'test-team');
+      await mkdir(teamDir, { recursive: true });
+      const settingsPath = join(teamDir, 'settings.json');
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            // Malformed shape — a real settings.json the wild can carry an
+            // object here when a user/script writes the file by hand.
+            PreToolUse: {},
+            // Valid shape alongside, to confirm the inject path still proceeds.
+            PostToolUse: [],
+          },
+        }),
+      );
+      // Must not throw.
+      const result = await injectTeamHooks('test-team');
+      expect(result).toBe(true);
+      // Inject overwrites PreToolUse with the canonical entry.
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      expect(Array.isArray(settings.hooks.PreToolUse)).toBe(true);
+      expect(settings.hooks.PreToolUse.length).toBeGreaterThan(0);
+    });
+
+    test('matcher entry with non-array hooks key does not throw', async () => {
+      const teamDir = join(testDir, 'teams', 'test-team');
+      await mkdir(teamDir, { recursive: true });
+      const settingsPath = join(teamDir, 'settings.json');
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              // Matcher entry with hooks=null — schema we don't recognize.
+              { matcher: '*', hooks: null },
+              // Matcher entry with no hooks key at all.
+              { matcher: 'Bash' },
+            ],
+          },
+        }),
+      );
+      const result = await injectTeamHooks('test-team');
+      expect(result).toBe(true);
+      const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
+      // Inject completed without throwing; canonical entry appended.
+      const genie = settings.hooks.PreToolUse.find(
+        (e: { matcher?: string; hooks?: Array<{ command?: string }> }) =>
+          e.matcher === '*' &&
+          e.hooks?.some((h) => h.command?.includes('hook dispatch') || /genie-hook/.test(h.command ?? '')),
+      );
+      expect(genie).toBeDefined();
+    });
+  });
 });

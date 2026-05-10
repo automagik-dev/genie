@@ -160,6 +160,64 @@ describe('dedupHooks', () => {
     expect(dedupHooks(undefined).changed).toBe(false);
     expect(dedupHooks({}).changed).toBe(false);
   });
+
+  test('CR #1735.13: canonicalForEvent replaces survivor with synthesized canonical', () => {
+    const canonicalForEvent = (event: string) => {
+      if (event === 'PreToolUse') {
+        return { matcher: '*', hook: { type: 'command', command: "'/canonical/path/genie-hook'", timeout: 15 } };
+      }
+      if (event === 'PostToolUse') {
+        return {
+          matcher: 'SendMessage',
+          hook: { type: 'command', command: "'/canonical/path/genie-hook'", timeout: 15 },
+        };
+      }
+      return null;
+    };
+    const input = {
+      // Stale: drifted command path AND wrong timeout for PreToolUse.
+      PreToolUse: [{ matcher: '*', hooks: [genieHook('genie hook dispatch', 30)] }],
+      // Stale: wrong matcher (`*` instead of `SendMessage`) for PostToolUse.
+      PostToolUse: [{ matcher: '*', hooks: [genieHook('/old/path/genie-hook', 15)] }],
+    };
+    const out = dedupHooks(input, canonicalForEvent);
+    expect(out.changed).toBe(true);
+
+    // PreToolUse — survivor REPLACED with canonical (timeout fixed).
+    expect(out.hooks.PreToolUse).toHaveLength(1);
+    expect(out.hooks.PreToolUse?.[0]?.matcher).toBe('*');
+    expect(out.hooks.PreToolUse?.[0]?.hooks?.[0]?.command).toBe("'/canonical/path/genie-hook'");
+    expect(out.hooks.PreToolUse?.[0]?.hooks?.[0]?.timeout).toBe(15);
+
+    // PostToolUse — matcher upgraded from '*' to 'SendMessage' (canonical).
+    expect(out.hooks.PostToolUse).toHaveLength(1);
+    expect(out.hooks.PostToolUse?.[0]?.matcher).toBe('SendMessage');
+    expect(out.hooks.PostToolUse?.[0]?.hooks?.[0]?.command).toBe("'/canonical/path/genie-hook'");
+  });
+
+  test('CR #1735.13: canonicalForEvent returning null falls back to first-survivor', () => {
+    // When the canonical resolver returns null for an event we keep first-
+    // survivor behavior so we never lose data on unknown events.
+    const canonicalForEvent = () => null;
+    const input = {
+      PreToolUse: [{ matcher: '*', hooks: [genieHook('legacy-cmd', 15)] }],
+    };
+    const out = dedupHooks(input, canonicalForEvent);
+    expect(out.hooks.PreToolUse?.[0]?.hooks?.[0]?.command).toBe('legacy-cmd');
+  });
+
+  test('CR #1735.13: omitted canonicalForEvent preserves prior first-survivor behavior', () => {
+    // Back-compat — the existing test fixture worked without a canonical
+    // provider. New code must not change that behavior when omitted.
+    const input = {
+      PreToolUse: [
+        { matcher: '*', hooks: [genieHook("'/home/genie/.genie/bin/genie-hook'")] },
+        { matcher: '*', hooks: [genieHook('genie hook dispatch')] },
+      ],
+    };
+    const out = dedupHooks(input);
+    expect(out.hooks.PreToolUse?.[0]?.hooks?.[0]?.command).toBe("'/home/genie/.genie/bin/genie-hook'");
+  });
 });
 
 // ============================================================================

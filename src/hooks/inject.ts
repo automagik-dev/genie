@@ -127,7 +127,14 @@ function teamSettingsPath(teamName: string): string {
   return join(claudeConfigDir(), 'teams', sanitized, 'settings.json');
 }
 
-function buildHooksConfig(): HooksConfig {
+/**
+ * Canonical hooks-config for the running host — exported so the one-time
+ * cleanup migration (`scripts/dedup-team-settings.ts`) can synthesize
+ * canonical entries instead of preserving stale first-survivor shapes
+ * (CR feedback on PR #1735.13). Keeping the function colocated with the
+ * inject path ensures both paths use the same canonical source of truth.
+ */
+export function buildHooksConfig(): HooksConfig {
   const hooks: HooksConfig = {};
   const dispatchCommand = buildDispatchCommand();
 
@@ -162,12 +169,22 @@ async function readSettings(settingsPath: string): Promise<Record<string, unknow
   }
 }
 
-/** True if no obsolete events (removed from DISPATCHED_EVENT_MATCHERS) still carry a genie entry. */
+/**
+ * True if no obsolete events (removed from DISPATCHED_EVENT_MATCHERS) still
+ * carry a genie entry. Defensive against malformed user-authored configs
+ * (`hooks.<event>` not an array, matcher entries with non-array `hooks`):
+ * non-array shapes count as "no genie entry present" and are safely skipped.
+ */
 function hasNoObsoleteGenieEntries(existingHooks: HooksConfig): boolean {
   return Object.keys(existingHooks).every((event) => {
     if (DISPATCHED_EVENTS.includes(event as never)) return true;
     const entries = existingHooks[event];
-    return !entries?.some((m) => m.hooks?.some((h) => isGenieDispatchCommand(h.command)));
+    if (!Array.isArray(entries)) return true;
+    return !entries.some((m) => {
+      if (!m || typeof m !== 'object') return false;
+      const hooksArr = Array.isArray(m.hooks) ? m.hooks : [];
+      return hooksArr.some((h) => h && isGenieDispatchCommand(h.command));
+    });
   });
 }
 
@@ -179,12 +196,26 @@ function hasNoObsoleteGenieEntries(existingHooks: HooksConfig): boolean {
 function pruneObsoleteGenieEntries(mergedHooks: HooksConfig): void {
   for (const event of Object.keys(mergedHooks)) {
     if (DISPATCHED_EVENTS.includes(event as never)) continue;
-    const cleaned = (mergedHooks[event] ?? [])
-      .map((matcher) => ({
-        ...matcher,
-        hooks: matcher.hooks?.filter((hook) => !isGenieDispatchCommand(hook.command)),
-      }))
-      .filter((matcher) => (matcher.hooks?.length ?? 0) > 0);
+    // Defensive: real-world settings.json can have malformed values like
+    // `hooks: { PreToolUse: {} }` (object instead of array). Coerce to an
+    // empty array so the prune step never throws on user-authored configs.
+    // Mirrors the same Array.isArray guard that `upsertGenieEntry` uses below.
+    // CR feedback on PR #1735.
+    const raw = mergedHooks[event];
+    const list: HookMatcher[] = Array.isArray(raw) ? raw : [];
+    const cleaned = list
+      .map((matcher) => {
+        if (!matcher || typeof matcher !== 'object') return matcher;
+        const hooksArr = Array.isArray(matcher.hooks) ? matcher.hooks : [];
+        return {
+          ...matcher,
+          hooks: hooksArr.filter((hook) => hook && !isGenieDispatchCommand(hook.command)),
+        };
+      })
+      .filter((matcher) => {
+        if (!matcher || typeof matcher !== 'object') return false;
+        return (matcher.hooks?.length ?? 0) > 0;
+      });
     if (cleaned.length === 0) {
       delete mergedHooks[event];
     } else {
@@ -218,7 +249,11 @@ type UpsertResult = 'injected' | 'dedup.skip' | 'dedup.collapse_drift';
  * variant) is collapsed to exactly one canonical entry per event.
  */
 function upsertGenieEntry(mergedHooks: HooksConfig, event: string, genieEntry: HookMatcher): UpsertResult {
-  const existing = mergedHooks[event] ?? [];
+  // Defensive: malformed user-authored settings can have `hooks.<event>` as
+  // an object, string, etc. Coerce to an empty array so the iteration below
+  // never throws on a non-iterable value. CR feedback on PR #1735.
+  const raw = mergedHooks[event];
+  const existing: HookMatcher[] = Array.isArray(raw) ? raw : [];
 
   const canonicalCommand = genieEntry.hooks[0].command;
   const canonicalTimeout = genieEntry.hooks[0].timeout;
@@ -282,10 +317,17 @@ function upsertGenieEntry(mergedHooks: HooksConfig, event: string, genieEntry: H
   return 'dedup.collapse_drift';
 }
 
-/** Roll up per-event upsert results into a single classification for audit. */
+/**
+ * Roll up per-event upsert results into a single classification for audit.
+ *
+ * Drift cleanup outranks fresh injection — when one event injects fresh AND
+ * another event collapses drift in the same call, the audit signal must
+ * surface the drift (dirty host state) rather than the injection (a
+ * back-fillable normal-case event). CR feedback on PR #1735.
+ */
 function classifyInject(perEvent: UpsertResult[], hadObsolete: boolean): UpsertResult {
-  if (perEvent.includes('injected')) return 'injected';
   if (hadObsolete || perEvent.includes('dedup.collapse_drift')) return 'dedup.collapse_drift';
+  if (perEvent.includes('injected')) return 'injected';
   return 'dedup.skip';
 }
 
