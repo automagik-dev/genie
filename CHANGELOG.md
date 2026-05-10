@@ -31,6 +31,10 @@ Wish: `wish/tui-native-selection`.
 
 ## Unreleased
 
+### Skipped
+
+- **v4.260510.5 (skipped):** build artifacts existed (run 25619912030) but never received a signed release due to GITHUB_TOKEN workflow_run anti-recursion blocker; superseded by v4.260510.6 via the new release.yml workflow_call orchestrator (wish: release-pipeline-collapse).
+
 ### Fixed
 
 - TUI startup no longer crashes with opaque `output: [null, null, null]` when
