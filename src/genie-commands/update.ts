@@ -154,9 +154,15 @@ export function shortCircuitIfCurrent(currentVersion: string, latestVersion: str
 // ============================================================================
 
 /** Channel identifier resolved from CLI flags / config. Matches the
- *  workflow's `--channel` choices; only `stable` publishes today.
- *  `next` is the dev/canary alias kept for forward compatibility. */
-export type ReleaseChannel = 'stable' | 'beta' | 'canary' | 'next';
+ *  workflow's `--channel` choices.
+ *
+ *  Naming history: prior to wish `release-channel-dev` (2026-05-11) the
+ *  dev/pre-release channel was named `next` (npm dist-tag heritage). After
+ *  the npm cutover (wish G6, 2026-05-09) the npm dist-tag was meaningless,
+ *  so the channel was renamed to `dev` to match the source branch name and
+ *  the operator mental model. `--next` is kept as a deprecated CLI alias for
+ *  one release cycle and config-read backward-compat for arbitrarily long. */
+export type ReleaseChannel = 'stable' | 'beta' | 'canary' | 'dev';
 
 export interface LatestManifest {
   schema_version: number;
@@ -1112,13 +1118,42 @@ function copyDirSync(src: string, dest: string): void {
 // Channel resolution + persistence.
 // ============================================================================
 
-async function resolveChannel(options: { next?: boolean; stable?: boolean }): Promise<ReleaseChannel> {
-  if (options.next) return 'next';
+/** Tracks whether the `--next` deprecation notice has already been emitted in
+ *  this process so users see it exactly once per invocation, not once per
+ *  call site that might re-resolve the channel. */
+let nextDeprecationEmitted = false;
+
+function emitNextDeprecationOnce(): void {
+  if (nextDeprecationEmitted) return;
+  nextDeprecationEmitted = true;
+  process.stderr.write(
+    'warning: --next is deprecated; use --dev instead (--next will be removed in a future release)\n',
+  );
+}
+
+/** Test-only: reset the deprecation latch so successive in-process resolves
+ *  in a single test file can independently exercise the emit path. */
+export function _resetNextDeprecationLatchForTest(): void {
+  nextDeprecationEmitted = false;
+}
+
+export async function resolveChannel(options: {
+  dev?: boolean;
+  next?: boolean;
+  stable?: boolean;
+}): Promise<ReleaseChannel> {
+  if (options.dev) return 'dev';
+  if (options.next) {
+    emitNextDeprecationOnce();
+    return 'dev';
+  }
   if (options.stable) return 'stable';
   if (genieConfigExists()) {
     try {
       const config = await loadGenieConfig();
-      if (config.updateChannel === 'next') return 'next';
+      // The zod schema's `.transform` already normalizes the legacy 'next'
+      // token to 'dev' at parse time, so only 'latest' | 'dev' can land here.
+      if (config.updateChannel === 'dev') return 'dev';
       if (config.updateChannel === 'latest') return 'stable';
     } catch {
       // ignore
@@ -1127,13 +1162,14 @@ async function resolveChannel(options: { next?: boolean; stable?: boolean }): Pr
   return 'stable';
 }
 
-async function persistChannel(channel: ReleaseChannel): Promise<void> {
+export async function persistChannel(channel: ReleaseChannel): Promise<void> {
   try {
     const config = await loadGenieConfig();
-    // Map back to the legacy schema enum (`'latest' | 'next'`) — the genie-config
-    // schema is shared with downstream consumers and changing its enum is
-    // out of scope for this wish.
-    config.updateChannel = channel === 'next' ? 'next' : 'latest';
+    // Map to the genie-config schema enum. The schema accepts 'next' as a
+    // read-time alias but we always write the canonical token ('dev' or
+    // 'latest') so the user's config converges to the current naming on
+    // their next update.
+    config.updateChannel = channel === 'dev' ? 'dev' : 'latest';
     await saveGenieConfig(config);
   } catch {
     // non-fatal — channel preference lost but update still works.
@@ -1145,7 +1181,12 @@ async function persistChannel(channel: ReleaseChannel): Promise<void> {
 // ============================================================================
 
 export interface UpdateCommandOptions {
+  /** `--dev`. Switch to the dev/pre-release channel (.well-known/dev.json). */
+  dev?: boolean;
+  /** `--next`. Deprecated alias for `--dev`. Resolves to channel 'dev' and
+   *  emits a single-line stderr deprecation notice. */
   next?: boolean;
+  /** `--stable`. Switch back to the stable channel (.well-known/latest.json). */
   stable?: boolean;
   skipMaintenance?: boolean;
   skipCleanup?: string;
@@ -1180,9 +1221,12 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   const noVerify = options.verify === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_VERIFY);
   const channel = await resolveChannel(options);
 
-  if (options.next || options.stable) {
-    await persistChannel(channel);
-  }
+  // Persist on every run, not just explicit channel flips. This makes the
+  // sticky behavior bulletproof: a one-time `genie update --dev` writes the
+  // channel to config, and every subsequent bare `genie update` re-resolves
+  // and re-persists the same channel. The only way to leave the dev channel
+  // is an explicit `--stable`. (See wish release-channel-dev, decision #4.)
+  await persistChannel(channel);
 
   // Pre-flight: fetch the channel manifest. Single canonical source of truth.
   const manifest = await fetchLatestManifest(channel);

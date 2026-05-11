@@ -20,7 +20,11 @@
 set -euo pipefail
 
 REPO="automagik-dev/genie"
-LATEST_URL="https://raw.githubusercontent.com/${REPO}/main/.well-known/latest.json"
+# Per-channel manifest URL: stable → latest.json, others → <channel>.json.
+# Resolved at runtime in resolve_manifest_url after the channel is known so
+# `GENIE_CHANNEL=dev curl ... | bash` reads .well-known/dev.json. See wish
+# release-channel-dev (2026-05-11) for the producer-side wiring.
+MANIFEST_BASE="https://raw.githubusercontent.com/${REPO}/main/.well-known"
 EXPECTED_COSIGN_IDENTITY="^https://github.com/${REPO}/.github/workflows/sign-attest.yml@"
 EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
 GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
@@ -57,13 +61,37 @@ detect_platform() {
   esac
 }
 
-resolve_channel() { echo "${GENIE_CHANNEL:-stable}"; }
+resolve_channel() {
+  local channel="${GENIE_CHANNEL:-stable}"
+  case "$channel" in
+    stable|beta|canary|dev) echo "$channel" ;;
+    next)
+      # Back-compat: --next was the pre-rename name. Map silently to dev and
+      # warn so the operator updates their muscle memory.
+      warn "GENIE_CHANNEL=next is deprecated; use GENIE_CHANNEL=dev (mapping to dev for this run)"
+      echo "dev" ;;
+    *) die "unknown channel: $channel (valid: stable|beta|canary|dev)" 1 ;;
+  esac
+}
+
+# Resolve the .well-known manifest URL for the given channel.
+# stable → latest.json (kept for back-compat with the v1 manifest layout).
+# Everything else → <channel>.json. The producer side
+# (release-publish.yml) writes whichever filename matches the channel passed
+# through from version.yml — see wish release-channel-dev.
+resolve_manifest_url() {
+  local channel="$1" file
+  if [ "$channel" = "stable" ]; then file="latest.json"; else file="${channel}.json"; fi
+  echo "${MANIFEST_BASE}/${file}"
+}
 
 fetch_latest() {
-  local channel="$1" payload
-  payload="$(curl -fsSL "$LATEST_URL")" || die "could not fetch $LATEST_URL" 5
+  local channel="$1" url payload
+  url="$(resolve_manifest_url "$channel")"
+  log "manifest=$(printf '%s' "$url" | sed "s#${MANIFEST_BASE}/##")"
+  payload="$(curl -fsSL "$url")" || die "could not fetch $url" 5
   printf '%s\n' "$payload" | jq -e --arg c "$channel" '.channel == $c or (.channel == null and $c == "stable")' >/dev/null \
-    || die "latest.json channel mismatch (wanted $channel)" 1
+    || die "manifest channel mismatch (wanted $channel)" 1
   printf '%s\n' "$payload"
 }
 

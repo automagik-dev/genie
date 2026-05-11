@@ -225,7 +225,8 @@ program
 program
   .command('update')
   .description('Update Genie CLI to the latest version (GitHub Releases)')
-  .option('--next', 'Switch to next/dev channel (.well-known/next.json)')
+  .option('--dev', 'Switch to dev (pre-release) channel (.well-known/dev.json)')
+  .option('--next', 'Deprecated alias for --dev (will be removed in a future release)')
   .option('--stable', 'Switch to stable channel (.well-known/latest.json)')
   .option('-y, --yes', 'Skip the TTY confirmation prompt (or set GENIE_UPDATE_YES=1)')
   .option('--no-restart', 'Skip post-update maintenance AND the verify probe')
