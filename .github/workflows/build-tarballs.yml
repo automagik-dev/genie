@@ -27,15 +27,21 @@ name: Build Tarballs
 # 2022; Intel-Mac users run via Rosetta or the linux-x64 path under Docker.
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # No `push: tags: ['v*']` — release.yml is the only tag entry-point. A
+  # tag-push would otherwise fire BOTH release.yml (orchestrator) and this
+  # workflow standalone, causing duplicate artifact uploads with the same
+  # name and wasted runner minutes. Tag-triggered execution flows
+  # exclusively through release.yml's workflow_call invocation below.
   workflow_dispatch:
     inputs:
       version:
         description: 'Version override (default: package.json)'
         required: false
         type: string
+  # Reusable from release.yml orchestrator. No inputs/outputs — version
+  # derives from package.json at build time; artifacts pass via the
+  # run-shared store (see actions/upload-artifact / download-artifact).
+  workflow_call: {}
   pull_request:
     paths:
       - 'scripts/build-binary.sh'

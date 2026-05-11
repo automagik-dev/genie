@@ -31,7 +31,7 @@ assignees: []
 ## Current Certificate-Identity Pin
 
 ```
-certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/release.yml@
+certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
 certificate-oidc-issuer:     https://token.actions.githubusercontent.com
 provenance source-uri:       github.com/automagik-dev/genie
 ```
@@ -39,7 +39,7 @@ provenance source-uri:       github.com/automagik-dev/genie
 ## Contract Metadata
 
 - **Signing mechanism:** cosign keyless (Sigstore + Fulcio) — NO long-lived key
-- **Workflow file:** `.github/workflows/release.yml`
+- **Workflow file:** `.github/workflows/sign-attest.yml`
 - **Change effective (UTC):** `YYYY-MM-DD`
 - **Filed by (GPG fingerprint):** `TBD`
 - **Reason for change:** `workflow-move | repo-rename | issuer-change | initial-pin`
@@ -66,7 +66,7 @@ If any channel diverges, treat the release as unsigned and follow the
 ```bash
 # Cosign keyless verification (sole verification path)
 cosign verify-blob \
-  --certificate-identity-regexp "^https://github.com/automagik-dev/genie/.github/workflows/release.yml@" \
+  --certificate-identity-regexp "^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   --signature <artifact>.sig \
   --certificate <artifact>.cert \

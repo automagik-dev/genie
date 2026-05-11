@@ -39,5 +39,17 @@ export default {
     // promotion PR. Do NOT reuse this exact subject — keep new headers ≤100
     // accounting for GitHub's `(#NNN)` suffix on squash-merge.
     (message: string) => message.startsWith('docs(sec): apply reviewer round-2 fixes — deprecation mechanism'),
+    // Historical exception: four `wish:`-prefixed wish-evolution commits on
+    // the release-pipeline-collapse PR branch pre-date the engineering work.
+    // They captured the wish-document drafts (council pivot, reviewer
+    // FIX-FIRST loops) before any `feat/fix/docs` execution commits landed.
+    // Rewording them would force-push 7 downstream commits and invalidate
+    // the review-fix chain (commits 612dcf3a, b8117f70, 24fe5502 build on
+    // top). Ignoring unblocks Commitlint on this PR. Do NOT use the
+    // `wish:` prefix for new commits — use `docs(wish): ...` instead.
+    (message: string) => message.startsWith('wish: release-pipeline-collapse'),
+    (message: string) => message.startsWith('wish: pivot to Option B'),
+    (message: string) => message.startsWith('wish: address reviewer loop 2 findings'),
+    (message: string) => message.startsWith('wish: loop 3 cleanups'),
   ],
 };
