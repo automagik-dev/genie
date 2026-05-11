@@ -55,6 +55,7 @@ Collapse the genie TUI display layer from two glued tmux servers + one OpenTUI p
 | 2 | Tmux retained for agent execution only. `-L genie-tui` deleted; `-L genie` untouched. | Dual-tmux is the bug; the agent substrate is correct as-is. |
 | 3 | Embed mechanism = new `TerminalPane` Renderable + `@xterm/headless` cell buffer. | OpenTUI 0.2.6 has no PTY widget; `ScrollbackSurface` is split-footer-locked. `@xterm/headless` is MIT, ~150 KB, used by VS Code Terminal — battle-tested parser without rolling our own. |
 | 4 | Tmux↔host data link = `tmux -CC` control mode. Port khal-os's `tmux-control-mode-terminal` client verbatim. | Battle-tested in khal-os production since 2026-03-18; ≤100 ms p95 emit→render measured; `send-keys -H` and `refresh-client -C` already wired. |
+| 4b | Group 6's deletion list pins concrete paths verified against the worktree as of 2026-05-10: `scripts/tmux/tui-tmux.conf` (template), the runtime-generated `~/.genie/tui-tmux.conf` (must stop being emitted), `src/tui/tmux-theme-sync.ts` (+ test), and the `_genie_*`/`attachTuiSession`/`ensureTuiSession`/`isTuiSessionReady` portions of `src/tui/tmux.ts`. No "or equivalent" hedging. | Reviewer plan-review feedback (2026-05-10, LOW): concrete paths prevent ambiguity at execution time. |
 | 5 | v5-only cutover. v4 stays frozen on dual-tmux indefinitely. No flag, no migration. | Sister to `v5-major-cutover-handoff`. Eliminates two-surface tax. Operators move via `genie v4-upgrade`. |
 | 6 | Drag-select override (`?1002l + ?1003l`) carried forward as `TerminalPane`'s documented mouse contract. | Clicks ON (Nav + focus), drag tracking OFF (native selection). Same contract that shipped in `tui-native-selection`; tests reused unchanged. |
 | 7 | Initial buffer replay on focus = control-mode `dump-history`, capped at `max(tmux history-limit, 10 000)` lines. | Matches khal-os. Prevents multi-MB blast when focusing a long-running agent. |
@@ -128,7 +129,9 @@ Six groups across four waves. Wave 1 is the foundational spike + dependency add;
 
 **Validation:**
 ```bash
-bun install --frozen-lockfile && bun run scripts/tui-spike/xterm-headless-attrs.ts > /tmp/xterm-attrs.txt && grep -q "PASS\|FALLBACK\|OUT OF SCOPE" docs/v5-launch/tui-host/xterm-attr-coverage.md
+# First run: G1 adds the @xterm/headless entry, so lockfile is rewritten.
+# CI on subsequent runs uses --frozen-lockfile to guard against drift.
+bun install && bun run scripts/tui-spike/xterm-headless-attrs.ts > /tmp/xterm-attrs.txt && grep -q "PASS\|FALLBACK\|OUT OF SCOPE" docs/v5-launch/tui-host/xterm-attr-coverage.md && grep -q '"@xterm/headless"' package.json
 ```
 
 **depends-on:** none
@@ -233,12 +236,16 @@ bun run check && bun test src/tui/render.test.ts && GENIE_TUI_HOST=embed timeout
 **Acceptance Criteria:**
 - [ ] Smoke matrix PASSes on at least 6 of 8 terminals; remaining 2 carry a WORKAROUND or a documented launch-list exclusion (release notes carry the compat caveat).
 - [ ] Perf: Linux p95 ≤100 ms emit→render; macOS p95 ≤150 ms emit→render; idle CPU ≤8 %. Failures block Group 6.
-- [ ] Visual parity reviewer-signed in `smoke-matrix.md` (Felipe or designated reviewer signs the doc).
+- [ ] Visual parity reviewer-signed in `smoke-matrix.md`. The doc MUST carry a literal `Signed-off-by: <name> <email>` trailer line authored by Felipe or a designated human reviewer. The validation command below greps for that trailer.
 - [ ] Drag-select copy verified working (without OSC 52 / tmux DCS) in Warp + iTerm2 + Ghostty at minimum.
 
 **Validation:**
 ```bash
-bun run src/tui/widgets/__benches__/terminal-pane.bench.ts | tee docs/v5-launch/tui-host/perf-baseline.md && grep -E "^p95.*(emit_render|idle_cpu)" docs/v5-launch/tui-host/perf-baseline.md
+# Perf gate (machine-checkable):
+bun run src/tui/widgets/__benches__/terminal-pane.bench.ts | tee docs/v5-launch/tui-host/perf-baseline.md && \
+grep -E "^p95.*(emit_render|idle_cpu)" docs/v5-launch/tui-host/perf-baseline.md && \
+# Smoke-matrix human sign-off gate (the manual 8-terminal verification cannot be machine-validated, but the artifact MUST land before Group 6 ships):
+grep -E "^Signed-off-by: " docs/v5-launch/tui-host/smoke-matrix.md
 ```
 
 **depends-on:** Group 4
@@ -336,7 +343,14 @@ docs/v5-launch/tui-host/smoke-matrix.md
 docs/v5-launch/tui-host/perf-baseline.md
 docs/v5-launch/tui-host/visual-parity-before.png
 docs/v5-launch/tui-host/visual-parity-after.png
-docs/v5-launch/tui-host/visual-parity/<one-subdir-per-terminal>/{before,after}.png
+docs/v5-launch/tui-host/visual-parity/warp/{before,after}.png
+docs/v5-launch/tui-host/visual-parity/iterm2/{before,after}.png
+docs/v5-launch/tui-host/visual-parity/ghostty/{before,after}.png
+docs/v5-launch/tui-host/visual-parity/terminal-app/{before,after}.png
+docs/v5-launch/tui-host/visual-parity/wezterm/{before,after}.png
+docs/v5-launch/tui-host/visual-parity/alacritty/{before,after}.png
+docs/v5-launch/tui-host/visual-parity/kitty/{before,after}.png
+docs/v5-launch/tui-host/visual-parity/foot/{before,after}.png
 
 # MODIFY (Group 4 — gated; Group 6 — final)
 src/tui/app.tsx
@@ -354,5 +368,6 @@ CHANGELOG.md
 src/tui/tmux-theme-sync.ts
 src/tui/tmux-theme-sync.test.ts
 src/tui/tmux.ts  # only the _genie_* / attachTuiSession / ensureTuiSession / isTuiSessionReady portions
-templates/tui-tmux.conf  # or equivalent template path
+scripts/tmux/tui-tmux.conf  # actual repo path (the v4 display-server template; verified 2026-05-10)
+~/.genie/tui-tmux.conf  # runtime-generated copy in operator HOME; not committed, but `genie serve`/`genie init` must stop emitting it
 ```
