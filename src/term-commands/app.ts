@@ -8,6 +8,15 @@
 import type { Command } from 'commander';
 
 async function handleTuiMode(): Promise<void> {
+  const embedMode = (process.env.GENIE_TUI_HOST ?? '').trim().toLowerCase() === 'embed';
+  if (embedMode) {
+    // Embed mode: OpenTUI hosts the TUI directly. No display tmux server to
+    // ensure / attach into — `renderNav()` runs the React tree in-process.
+    // Group 6 will collapse this branch into the unconditional default.
+    const { launchTui } = await import('../tui/index.js');
+    await launchTui();
+    return;
+  }
   const { isServeRunning, autoStartServe, isTuiSessionReady, ensureTuiSession } = await import('./serve.js');
   if (!isServeRunning()) {
     console.log('Starting genie serve...');

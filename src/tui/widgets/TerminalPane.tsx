@@ -292,7 +292,7 @@ export class TerminalPaneCore {
   }
 }
 
-export interface TerminalPaneOptions extends FrameBufferOptions {
+export interface TerminalPaneOptions extends Omit<FrameBufferOptions, 'width' | 'height'> {
   /** Agent tmux session on the `-L genie` socket. */
   sessionName: string;
   /** Optional pane filter — when set, the widget only consumes `%output` lines for this pane. */
@@ -303,6 +303,14 @@ export interface TerminalPaneOptions extends FrameBufferOptions {
   historyLimit?: number;
   /** Layout-resize forwarder; called after the internal xterm is resized. */
   onResize?: (cols: number, rows: number) => void;
+  /**
+   * Initial framebuffer width. OpenTUI's flexbox resolves the actual dim via
+   * `onResize`; this is just the seed size before layout runs. Accepts the
+   * same shape as other OpenTUI renderables (number | "auto" | "<N>%").
+   */
+  width?: number | 'auto' | `${number}%`;
+  /** Initial framebuffer height. See {@link TerminalPaneOptions.width}. */
+  height?: number | 'auto' | `${number}%`;
   /** Internal test-only deps (forwarded to `TerminalPaneCore`). */
   _deps?: TerminalPaneCoreDeps;
 }
@@ -317,13 +325,19 @@ export class TerminalPane extends FrameBufferRenderable {
   readonly core: TerminalPaneCore;
 
   constructor(ctx: RenderContext, options: TerminalPaneOptions) {
-    super(ctx, options);
+    // FrameBufferRenderable's constructor allocates an OptimizedBuffer using
+    // numeric width/height. JSX layout values (`"100%"`, `"auto"`, undefined)
+    // can't size that initial buffer, so coerce to safe fallbacks; OpenTUI's
+    // flexbox will deliver the real dims through `onResize` once it settles.
+    const initialCols = typeof options.width === 'number' ? Math.max(1, options.width) : FALLBACK_COLS;
+    const initialRows = typeof options.height === 'number' ? Math.max(1, options.height) : FALLBACK_ROWS;
+    super(ctx, { ...options, width: initialCols, height: initialRows } as FrameBufferOptions);
     this.core = new TerminalPaneCore({
       sessionName: options.sessionName,
       paneId: options.paneId,
       historyLimit: options.historyLimit,
-      cols: typeof options.width === 'number' ? options.width : undefined,
-      rows: typeof options.height === 'number' ? options.height : undefined,
+      cols: initialCols,
+      rows: initialRows,
       focused: options.focused,
       onResize: options.onResize,
       deps: options._deps,
@@ -350,8 +364,31 @@ export class TerminalPane extends FrameBufferRenderable {
     super.renderSelf(buffer);
   }
 
+  /**
+   * React reconciler removes children via `parent.remove(id)` rather than
+   * `destroyRecursively()`, so `destroySelf` never fires on unmount. Dispose
+   * the core here to guarantee the tmux -CC child process / xterm buffer /
+   * stdin listener are released when React unmounts the widget (e.g. on
+   * `key={sessionName}` change).
+   */
+  protected onRemove(): void {
+    this.core.dispose();
+    super.onRemove();
+  }
+
   protected destroySelf(): void {
     this.core.dispose();
     super.destroySelf();
+  }
+}
+
+/**
+ * Augment `@opentui/react`'s component catalogue so `<terminal-pane>` is a
+ * type-aware JSX element. Pair with `extend({ 'terminal-pane': TerminalPane })`
+ * at runtime to mount it from React.
+ */
+declare module '@opentui/react' {
+  interface OpenTUIComponents {
+    'terminal-pane': typeof TerminalPane;
   }
 }
