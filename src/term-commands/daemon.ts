@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import { respawnInvocation, respawnShellCommand } from '../lib/respawn.js';
 
 // ============================================================================
 // Paths
@@ -116,8 +117,7 @@ function removeServePid(): void {
 
 /** Generate a systemd user service unit file pointing to genie serve --headless. */
 export function generateSystemdUnit(): string {
-  const genieBin = process.argv[1] ?? 'genie';
-  const bunPath = process.execPath ?? 'bun';
+  const execStart = respawnShellCommand(['serve', 'start', '--headless', '--foreground']);
 
   return `[Unit]
 Description=Genie Serve (headless) — pgserve + scheduler + services
@@ -126,7 +126,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${bunPath} ${genieBin} serve start --headless --foreground
+ExecStart=${execStart}
 Restart=on-failure
 RestartSec=5
 Environment=GENIE_HOME=${genieHome()}
@@ -206,27 +206,17 @@ async function daemonStartCommand(options: StartOptions): Promise<void> {
   console.log('      Use `genie serve --headless` directly in the future.\n');
 
   const { spawn: spawnChild } = await import('node:child_process');
-  const bunPath = process.execPath ?? 'bun';
-  const genieBin = process.argv[1] ?? 'genie';
 
+  const mode = options.foreground ? '--foreground' : '--daemon';
+  const { command, args } = respawnInvocation(['serve', 'start', '--headless', mode]);
+  const child = spawnChild(command, args, {
+    stdio: 'inherit',
+    env: { ...process.env },
+  });
+  child.on('exit', (code) => process.exit(code ?? 0));
   if (options.foreground) {
-    // In foreground mode (systemd), delegate to genie serve --headless --foreground
-    const args = [genieBin, 'serve', 'start', '--headless', '--foreground'];
-    const child = spawnChild(bunPath, args, {
-      stdio: 'inherit',
-      env: { ...process.env },
-    });
-    child.on('exit', (code) => process.exit(code ?? 0));
     // Keep this process alive while child runs
     await new Promise(() => {});
-  } else {
-    // Background mode: spawn genie serve --headless --daemon
-    const args = [genieBin, 'serve', 'start', '--headless', '--daemon'];
-    const child = spawnChild(bunPath, args, {
-      stdio: 'inherit',
-      env: { ...process.env },
-    });
-    child.on('exit', (code) => process.exit(code ?? 0));
   }
 }
 

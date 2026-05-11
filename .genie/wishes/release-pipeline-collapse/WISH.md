@@ -43,7 +43,7 @@ Replace the broken `workflow_run`-chained release pipeline (build-tarballs.yml �
 - Each gets repinned to `sign-attest.yml@`, matching `install.sh:24` (the live install path that already uses the correct identity).
 
 **Operations**
-- `.genie/runbooks/release-pipeline.md` — under 200 words, validated by `wc -w` ≤ 200 + Flesch reading-ease ≥ 60 + `shellcheck` on any inline shell snippets (reviewer HIGH-2 testable proxy). Post-merge human review by Felipe within 24h is captured as a follow-up issue with label `release-runbook-review`, not a blocking gate inside this wish.
+- `docs/_internal/runbooks/release-pipeline.md` — under 200 words, validated by `wc -w` ≤ 200 + Flesch reading-ease ≥ 60 + `shellcheck` on any inline shell snippets (reviewer HIGH-2 testable proxy). Post-merge human review by Felipe within 24h is captured as a follow-up issue with label `release-runbook-review`, not a blocking gate inside this wish.
 - Tag-orphan alert: scheduled GitHub Actions workflow `release-orphan-alert.yml` running every 30 min. Detects `v*` tags older than 30 min with no GitHub Release object; opens a `release-incident`-labeled issue linking to the runbook.
 - Rollback dry-run captured in PR description: `gh workflow run release.yml --ref refs/tags/v<version>` after the natural firing already created the release should be either idempotent or fail with a clear "release exists" message.
 
@@ -86,7 +86,7 @@ Replace the broken `workflow_run`-chained release pipeline (build-tarballs.yml �
 - [ ] `scripts/verify-release.sh:23`, `scripts/check-fingerprint-pinning.sh:51`, `SECURITY.md:142,179`, `src/term-commands/sec.ts:366`, `.github/ISSUE_TEMPLATE/signing-key-fingerprint.md:34,69` all pin `sign-attest.yml@` (matching `install.sh:24` and reality).
 - [ ] Branch-protection required-status-checks on `main` and `dev` reference the new nested job names (`release / sign / sign (linux-x64-glibc)` etc.) and NOT the obsolete standalone names (`Sign + Attest Tarballs`, `Release Publish`).
 - [ ] `CHANGELOG.md` documents v4.260510.5 abandonment with diagnostic run 25619912030 reference.
-- [ ] `.genie/runbooks/release-pipeline.md` exists, ≤ 200 prose words, max 20 words/sentence, max 5 sentences/paragraph, no prose word > 18 chars, passes `shellcheck` per-fence on inline shell snippets.
+- [ ] `docs/_internal/runbooks/release-pipeline.md` exists, ≤ 200 prose words, max 20 words/sentence, max 5 sentences/paragraph, no prose word > 18 chars, passes `shellcheck` per-fence on inline shell snippets.
 - [ ] `release-orphan-alert.yml` exists with `schedule: cron: '*/30 * * * *'` and opens GitHub issue with label `release-incident` when a `v*` tag has no Release object after 30 min.
 - [ ] Manual-recovery dry-run: `gh workflow run release.yml --ref refs/tags/v4.260510.6` after the natural firing produces either a clear "release already exists" error or is correctly idempotent — never duplicates.
 - [ ] Cosign installer is invoked from exactly one workflow file (`sign-attest.yml`) at v2.4.1; `release.yml` has no cosign step post-Group-2.
@@ -384,7 +384,7 @@ done
 **Goal:** Ship the runbook + alert + tested rollback path in the same PR (operator P0 hard rule). Use a TESTABLE proxy for "external review" since autonomous engineers can't satisfy human-review gates.
 
 **Deliverables:**
-1. `.genie/runbooks/release-pipeline.md` — ≤ 200 words. Structure: "Symptoms (chain didn't reach publish job within 30 min) → Diagnosis (find release.yml run for vX.Y.Z, identify failed job N) → Recovery (manual `gh workflow run release.yml --ref refs/tags/v<version>` or per-file `gh workflow run sign-attest.yml --field version=X --field run_id=Y` for the cross-run rescue path)". Includes inline `bash` snippets.
+1. `docs/_internal/runbooks/release-pipeline.md` — ≤ 200 words. Structure: "Symptoms (chain didn't reach publish job within 30 min) → Diagnosis (find release.yml run for vX.Y.Z, identify failed job N) → Recovery (manual `gh workflow run release.yml --ref refs/tags/v<version>` or per-file `gh workflow run sign-attest.yml --field version=X --field run_id=Y` for the cross-run rescue path)". Includes inline `bash` snippets.
 
 2. **Mechanical readability proxy** (replacing the non-deterministic Flesch criterion). The runbook MUST satisfy ALL of:
    - `wc -w` ≤ 200 (excluding code-fence content).
@@ -399,24 +399,24 @@ done
 
 5. PR description "Rollback Dry-Run" section — the exact reproducer command sequence + expected outputs, validated against v4.260510.6 once it ships post-merge.
 
-6. **Internal architecture note** (NOT in the user-facing runbook — Decision-#1-load-bearing invariant): create or update `.genie/runbooks/release-architecture.md` with one section: "**`sign-attest.yml` is the cosign owner-of-record.** The OIDC SAN URI for binary tarballs is bound to this file path. Cosign installer version: v2.4.1 (canonical). Future workflow files MUST NOT introduce another cosign step — duplicate cosign callers would fork the trust root. If you need to verify or test cosign behavior outside the release pipeline, do it in a script consuming this workflow's signed outputs, not by adding a parallel signing call."
+6. **Internal architecture note** (NOT in the user-facing runbook — Decision-#1-load-bearing invariant): create or update `docs/_internal/release-architecture.md` with one section: "**`sign-attest.yml` is the cosign owner-of-record.** The OIDC SAN URI for binary tarballs is bound to this file path. Cosign installer version: v2.4.1 (canonical). Future workflow files MUST NOT introduce another cosign step — duplicate cosign callers would fork the trust root. If you need to verify or test cosign behavior outside the release pipeline, do it in a script consuming this workflow's signed outputs, not by adding a parallel signing call."
 
 **Acceptance Criteria:**
-- [ ] `.genie/runbooks/release-pipeline.md` exists.
+- [ ] `docs/_internal/runbooks/release-pipeline.md` exists.
 - [ ] `wc -w` ≤ 200 (script extracts prose only, excludes code fences).
 - [ ] Max sentence length ≤ 20 words (computed by extract-prose + sentence-split awk script).
 - [ ] Max paragraph length ≤ 5 sentences.
 - [ ] No prose word > 18 chars.
 - [ ] Inline bash snippets pass `shellcheck` (per-fence file mode, exit-code based — see validation).
 - [ ] `release-orphan-alert.yml` exists with `schedule.cron: '*/30 * * * *'`.
-- [ ] `.genie/runbooks/release-architecture.md` exists with cosign owner-of-record note.
+- [ ] `docs/_internal/release-architecture.md` exists with cosign owner-of-record note.
 - [ ] Follow-up issue exists with title matching `Review release-pipeline runbook` + label `release-runbook-review`.
 - [ ] PR description has "Rollback Dry-Run" section.
 
 **Validation:**
 ```bash
 cd /home/genie/workspace/repos/genie
-RUNBOOK=.genie/runbooks/release-pipeline.md
+RUNBOOK=docs/_internal/runbooks/release-pipeline.md
 test -f "$RUNBOOK"
 
 # 1) Word count (prose only — strip code fences first):
@@ -451,9 +451,9 @@ test -f .github/workflows/release-orphan-alert.yml
 test "$(yq '.on.schedule[0].cron' .github/workflows/release-orphan-alert.yml)" = "*/30 * * * *"
 
 # 7) Architecture note:
-test -f .genie/runbooks/release-architecture.md
-grep -q 'cosign owner-of-record' .genie/runbooks/release-architecture.md
-grep -q 'v2.4.1' .genie/runbooks/release-architecture.md
+test -f docs/_internal/release-architecture.md
+grep -q 'cosign owner-of-record' docs/_internal/release-architecture.md
+grep -q 'v2.4.1' docs/_internal/release-architecture.md
 
 # 8) Follow-up issue:
 gh issue list --label release-runbook-review --limit 1 --json title -q '.[].title' \
@@ -473,13 +473,13 @@ gh pr view <PR#> --json body -q .body | grep -qiE 'rollback dry-run'
 
 **Deliverables:**
 1. `CHANGELOG.md` v4.260510.5 abandonment entry (one line at top of unreleased): `- **v4.260510.5 (skipped):** build artifacts existed (run 25619912030) but never received a signed release due to GITHUB_TOKEN workflow_run anti-recursion blocker; superseded by v4.260510.6 via the new release.yml workflow_call orchestrator (wish: release-pipeline-collapse).`
-2. Confirm `sign-attest.yml` is the only workflow file that calls `sigstore/cosign-installer`. The cosign owner-of-record note belongs in `.genie/runbooks/release-architecture.md` (created by Group 6, not in the user-facing runbook).
+2. Confirm `sign-attest.yml` is the only workflow file that calls `sigstore/cosign-installer`. The cosign owner-of-record note belongs in `docs/_internal/release-architecture.md` (created by Group 6, not in the user-facing runbook).
 
 **Acceptance Criteria:**
 - [ ] CHANGELOG.md contains the v4.260510.5 abandonment entry referencing run 25619912030.
 - [ ] `sign-attest.yml` cosign installer is unchanged at v2.4.1.
 - [ ] Exactly ONE workflow file references `cosign-installer` post-Group-2 (it must be `sign-attest.yml`).
-- [ ] `.genie/runbooks/release-architecture.md` (from Group 6) names `sign-attest.yml` as the cosign owner-of-record.
+- [ ] `docs/_internal/release-architecture.md` (from Group 6) names `sign-attest.yml` as the cosign owner-of-record.
 
 **Validation:**
 ```bash
@@ -489,7 +489,7 @@ grep -q '25619912030' CHANGELOG.md
 test "$(grep -lE 'sigstore/cosign-installer' .github/workflows/*.yml | wc -l)" -eq 1
 grep -lE 'sigstore/cosign-installer' .github/workflows/*.yml | grep -qF '.github/workflows/sign-attest.yml'
 grep -q "cosign-release: 'v2.4.1'" .github/workflows/sign-attest.yml
-grep -q 'sign-attest.yml.*cosign owner-of-record' .genie/runbooks/release-architecture.md
+grep -q 'sign-attest.yml.*cosign owner-of-record' docs/_internal/release-architecture.md
 ```
 
 **depends-on:** Group 2
@@ -528,7 +528,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 | Cosign installer version divergence (v2.2.4 vs v2.4.1) leaves only one survivor; older bundle format incompatibilities | Low | Group 7 reconciles to v2.4.1 (newer). sign-attest.yml IS the cosign-bearing file — `release.yml` orchestrator no longer needs cosign, so divergence ceases naturally. |
 | `pgserve-singleton-no-proxy` references stale `release.yml@` — its trust list is in the pgserve repo, not genie | Low | Out-of-scope for this wish. Filed as follow-up: `pgserve-trust-list-cleanup` wish in pgserve repo. genie wish files in `.genie/wishes/pgserve-singleton-no-proxy/*` are historical, not consumed by runtime. |
 | (Reviewer L2 CRITICAL — RESOLVED) Group 5 trial would have produced real Sigstore Rekor entries (append-only) + real Release object + possibly advance latest.json | (resolved) | Group 5 redesigned to use static checks only (`actionlint` + `gh workflow view`) + predicted check names. NO live `workflow_dispatch` of `release.yml` on the wish branch is permitted; validation explicitly asserts zero such runs exist. Real chain firing is deferred to v4.260510.6 post-merge. NAME-DRIFT FALLBACK in PR description handles the case where predicted names don't match actual names. |
-| Decision #1's "no verifier breaks" claim is now SOUND but only because cosign step stays put — if a future refactor moves it, the verifier ecosystem breaks | Low | Decision #8 + Group 4 make the verifier-coherence cleanup a load-bearing invariant. The cosign owner-of-record fact is documented in `.genie/runbooks/release-architecture.md` (Group 6 deliverable 6) — internal-facing, not in the user-facing runbook. |
+| Decision #1's "no verifier breaks" claim is now SOUND but only because cosign step stays put — if a future refactor moves it, the verifier ecosystem breaks | Low | Decision #8 + Group 4 make the verifier-coherence cleanup a load-bearing invariant. The cosign owner-of-record fact is documented in `docs/_internal/release-architecture.md` (Group 6 deliverable 6) — internal-facing, not in the user-facing runbook. |
 
 ---
 
@@ -559,7 +559,7 @@ src/term-commands/sec.ts                             (line 366: SIGNER_IDENTITY_
 CHANGELOG.md                                          (v4.260510.5 abandonment entry)
 
 # Created
-.genie/runbooks/release-pipeline.md          (Group 6: ≤200 word runbook)
+docs/_internal/runbooks/release-pipeline.md          (Group 6: ≤200 word runbook)
 .github/workflows/release-orphan-alert.yml           (Group 6: scheduled tag-orphan check)
 
 # Branch-protection (out-of-tree, applied via gh api PUT in two phases — Group 5)

@@ -41,6 +41,7 @@ import {
 } from '../lib/brain-vaults.js';
 import { ensureTmux, tmuxBin } from '../lib/ensure-tmux.js';
 import { getProcessStartTime } from '../lib/process-identity.js';
+import { respawnInvocation, respawnShellCommand } from '../lib/respawn.js';
 import { genieTmuxCmd } from '../lib/tmux-wrapper.js';
 import { isTuiDisabled, noticeTuiSkipped } from '../lib/tui-disable.js';
 
@@ -467,8 +468,6 @@ export function startTuiTmuxServer(): { leftPane: string; rightPane: string } {
  */
 function sendTuiLaunchScript(leftPane: string, rightPane: string, workspaceRoot?: string): void {
   const home = genieHome();
-  const bunPath = process.execPath || 'bun';
-  const genieBin = process.argv[1] || 'genie';
   const scriptPath = join(home, 'tui-launch.sh');
   const logsDir = join(home, 'logs');
   const crashLog = join(logsDir, 'tui-crash.log');
@@ -485,7 +484,7 @@ function sendTuiLaunchScript(leftPane: string, rightPane: string, workspaceRoot?
     `exec 2>> '${crashLog}'`,
     `printf -- '--- tui-launch %s pid=%s ---\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" >&2`,
     `export ${envVars.join('\nexport ')}`,
-    `exec ${bunPath} ${genieBin}`,
+    `exec ${respawnShellCommand()}`,
     '',
   ].join('\n');
   writeFileSync(scriptPath, content, { mode: 0o755 });
@@ -539,11 +538,10 @@ export async function autoStartServe(): Promise<void> {
   }
   if (isServeRunning()) return;
 
-  const bunPath = process.execPath ?? 'bun';
-  const genieBin = process.argv[1] ?? 'genie';
+  const { command, args } = respawnInvocation(['serve', '--foreground']);
 
   const { spawn: spawnChild } = await import('node:child_process');
-  const child = spawnChild(bunPath, [genieBin, 'serve', '--foreground'], {
+  const child = spawnChild(command, args, {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, GENIE_IS_DAEMON: '1' },
@@ -1372,15 +1370,14 @@ async function startBackground(headless?: boolean, autoFix = true): Promise<void
     forceRemoveServePid();
   }
 
-  const bunPath = process.execPath ?? 'bun';
-  const genieBin = process.argv[1] ?? 'genie';
   const startupStatusPath = autoFix ? undefined : serveStartupStatusPath();
 
-  const args = [genieBin, 'serve', '--foreground'];
-  if (headless) args.push('--headless');
-  if (!autoFix) args.push('--no-fix');
+  const extraArgs = ['serve', '--foreground'];
+  if (headless) extraArgs.push('--headless');
+  if (!autoFix) extraArgs.push('--no-fix');
+  const { command, args } = respawnInvocation(extraArgs);
 
-  const child = spawn(bunPath, args, {
+  const child = spawn(command, args, {
     detached: true,
     stdio: 'ignore',
     env: {

@@ -7,6 +7,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { tmuxBin } from '../lib/ensure-tmux.js';
+import { respawnInvocation } from '../lib/respawn.js';
 
 const SESSION_NAME = 'genie-tui';
 const TMUX_SOCKET = 'genie-tui';
@@ -128,8 +129,6 @@ export function newAgentWindow(agentName: string): void {
     const { spawn } = require('node:child_process') as typeof import('node:child_process');
     const { join, resolve } = require('node:path') as typeof import('node:path');
     const { existsSync } = require('node:fs') as typeof import('node:fs');
-    const bunPath = process.execPath || 'bun';
-    const genieBin = process.argv[1];
     const wsRoot = process.env.GENIE_TUI_WORKSPACE;
 
     let cwd: string | undefined;
@@ -142,11 +141,16 @@ export function newAgentWindow(agentName: string): void {
     const suffix = nextRoleSuffix(agentName);
     const role = `${agentName}-${suffix}`;
     const sessionName = agentName.replace(/\//g, '-');
-    const args = ['spawn', agentName, '--role', role, '--session', sessionName, '--new-window'];
-    const child =
-      genieBin && genieBin !== 'genie'
-        ? spawn(bunPath, [genieBin, ...args], { detached: true, stdio: 'ignore', cwd })
-        : spawn('genie', args, { detached: true, stdio: 'ignore', cwd });
+    const { command, args } = respawnInvocation([
+      'spawn',
+      agentName,
+      '--role',
+      role,
+      '--session',
+      sessionName,
+      '--new-window',
+    ]);
+    const child = spawn(command, args, { detached: true, stdio: 'ignore', cwd });
     child.unref();
   })();
 }

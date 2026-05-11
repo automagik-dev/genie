@@ -25,6 +25,7 @@ import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-setting
 import { isAvailable as isRuntimePgAvailable } from '../lib/db.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
+import { respawnInvocation } from '../lib/respawn.js';
 import { checkCommand } from '../lib/system-detect.js';
 import { findWorkspace } from '../lib/workspace.js';
 import {
@@ -1020,9 +1021,8 @@ async function restartDaemon(): Promise<void> {
   console.log('  Restarting daemon...');
   try {
     const { spawn } = await import('node:child_process');
-    const bunPath = process.execPath ?? 'bun';
-    const genieBin = process.argv[1] ?? 'genie';
-    const child = spawn(bunPath, [genieBin, 'daemon', 'start'], {
+    const { command, args } = respawnInvocation(['daemon', 'start']);
+    const child = spawn(command, args, {
       detached: true,
       stdio: 'ignore',
     });
