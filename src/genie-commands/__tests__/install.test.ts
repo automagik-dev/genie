@@ -28,6 +28,7 @@ const {
   buildEcosystemConfigSource,
   buildCanonicalPgserveHint,
   getEcosystemConfigPath,
+  isPgserveOnlinePm2,
 } = _internals;
 
 describe('install._internals — canonical-stack constants', () => {
@@ -239,6 +240,38 @@ describe('buildCanonicalPgserveHint — pgserve fatal install hint (cutover G1)'
   test('hint explains genie depends on pm2-supervised pgserve', () => {
     const text = buildCanonicalPgserveHint('exit code 1');
     expect(text).toContain('pm2-supervised pgserve');
+  });
+});
+
+describe('isPgserveOnlinePm2 — idempotent skip when pgserve already pm2-managed', () => {
+  // Regression: a `curl ... | bash` re-install on a box that already has
+  // pgserve under pm2 used to fail with
+  //   pgserve install: port 8432 is already in use on 127.0.0.1
+  //   Error: canonical pgserve registration failed (exit code 1).
+  // because `pgserve install` runs an EADDRINUSE bind check before noticing
+  // that the existing listener IS its own pm2-supervised instance. Detected
+  // on Felipe's box on 2026-05-11. genie now consults `pm2 jlist` first and
+  // short-circuits the `pgserve install` step when pgserve is online.
+
+  test('returns true when pgserve pm2 entry is online', () => {
+    expect(isPgserveOnlinePm2({ pid: 1234, pm2_env: { status: 'online' } })).toBe(true);
+  });
+
+  test('returns false when pgserve pm2 entry is stopped', () => {
+    expect(isPgserveOnlinePm2({ pid: 1234, pm2_env: { status: 'stopped' } })).toBe(false);
+  });
+
+  test('returns false when pgserve pm2 entry is in errored / launching states', () => {
+    expect(isPgserveOnlinePm2({ pm2_env: { status: 'errored' } })).toBe(false);
+    expect(isPgserveOnlinePm2({ pm2_env: { status: 'launching' } })).toBe(false);
+  });
+
+  test('returns false when pm2 lookup returns null (pm2 absent or no entry)', () => {
+    expect(isPgserveOnlinePm2(null)).toBe(false);
+  });
+
+  test('returns false when pm2_env is missing from the entry', () => {
+    expect(isPgserveOnlinePm2({ pid: 1234 })).toBe(false);
   });
 });
 

@@ -192,18 +192,44 @@ function failCanonicalPgserve(reason: string): never {
 
 /**
  * Hard prerequisite: shell out to `pgserve install` so the canonical pgserve
- * is registered under pm2 before genie-serve depends on it. The command is
- * idempotent on the pgserve side, so running it on every `genie install`
- * is safe.
+ * is registered under pm2 before genie-serve depends on it.
+ *
+ * Idempotency: `pgserve install` is supposed to be a no-op when pgserve is
+ * already pm2-managed, but in pgserve@^2 the install runs an EADDRINUSE bind
+ * check on the canonical port BEFORE noticing that the existing listener is
+ * its own pm2-supervised instance. Operators upgrading via
+ * `curl -fsSL https://get.automagik.dev/genie | bash` on a host that already
+ * has pgserve under pm2 see:
+ *
+ *   pgserve install: port 8432 is already in use on 127.0.0.1
+ *   Error: canonical pgserve registration failed (exit code 1).
+ *
+ * Detected on Felipe's box on 2026-05-11. Workaround on the genie side: probe
+ * `pm2 jlist` first; if `pgserve` is online under pm2 we own it and the
+ * install step is a redundant no-op that we can skip. Falls through to the
+ * shell-out for first-time installs and for boxes where pgserve is missing
+ * from pm2.
  *
  * Returns void on success. On any failure (binary missing, non-zero exit)
  * prints the canonical install hint and exits the process with code 1.
  * Genie has no embedded pgserve fallback after the canonical-cutover wish;
  * a missing or broken pgserve must surface at install time, not at runtime.
  */
+/** Predicate: is this pm2 entry pgserve in a healthy "online" state? Pulled
+ *  out as a pure function so the install-skip decision can be unit-tested
+ *  without mocking `pm2 jlist`. */
+function isPgserveOnlinePm2(entry: { pid?: number; pm2_env?: { status?: string } } | null): boolean {
+  return entry?.pm2_env?.status === 'online';
+}
+
 function requirePgserveInstall(): void {
   if (!pgserveIsAvailable()) {
     failCanonicalPgserve('pgserve binary not found in PATH');
+  }
+  const existing = pm2GetProcess('pgserve');
+  if (isPgserveOnlinePm2(existing)) {
+    ok(`pgserve already pm2-managed and online (pid ${existing?.pid ?? 'unknown'}) — skipping pgserve install`);
+    return;
   }
   const result = spawnSync('pgserve', ['install'], { stdio: 'inherit' });
   if (result.status !== 0) {
@@ -516,4 +542,5 @@ export const _internals = {
   pm2IsAvailable,
   pgserveIsAvailable,
   removeLegacyPm2Entries,
+  isPgserveOnlinePm2,
 };
