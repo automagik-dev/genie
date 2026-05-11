@@ -17,6 +17,7 @@
 
 import { useKeyboard } from '@opentui/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { respawnInvocation } from '../../lib/respawn.js';
 import type { SpawnIntent } from '../../lib/spawn-invocation.js';
 import { palette } from '../theme.js';
 import { CliPreviewLine } from './CliPreviewLine.js';
@@ -48,12 +49,7 @@ interface AgentPickerProps {
 /** Default loader — shells out to `genie dir ls --json` and parses stdout. */
 async function defaultLoadAgents(): Promise<AgentPickerEntry[]> {
   const { spawn } = await import('node:child_process');
-  const bunPath = process.execPath || 'bun';
-  const genieBin = process.argv[1];
-  const [command, args] =
-    genieBin && genieBin !== 'genie'
-      ? [bunPath, [genieBin, 'dir', 'ls', '--json']]
-      : ['genie', ['dir', 'ls', '--json']];
+  const { command, args } = respawnInvocation(['dir', 'ls', '--json']);
 
   const stdout = await new Promise<string>((resolve, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'] });

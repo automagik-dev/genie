@@ -249,8 +249,12 @@ function resolveGenieBinary(): string {
   if (wired) return wired;
   // Fall back to the path of the currently running script. Less ideal
   // because pm2 will point at this exact path forever, but better than
-  // failing the install.
-  return process.argv[1] ?? 'genie';
+  // failing the install. In a Bun-compiled standalone, process.argv[1] is a
+  // virtual bunfs path (`/$bunfs/root/genie`) that is not usable from outside
+  // the binary — fall back to process.execPath (the compiled binary itself).
+  const argv1 = process.argv[1];
+  if (argv1 && !argv1.startsWith('/$bunfs/')) return argv1;
+  return process.execPath || 'genie';
 }
 
 /**
