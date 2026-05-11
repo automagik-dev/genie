@@ -93,5 +93,5 @@ jobs:
               --repo "$REPO" \
               --title "$TITLE" \
               --label release-incident \
-              --body "Tag \`${TAG}\` is older than 30 minutes and has no GitHub Release object. The release.yml orchestrator (wish: release-pipeline-collapse) either never fired or failed mid-chain. Runbook: \`.genie/runbooks/release-pipeline.md\` (Symptoms → Diagnosis → Recovery)."
+              --body "Tag \`${TAG}\` is older than 30 minutes and has no GitHub Release object. The release.yml orchestrator (wish: release-pipeline-collapse) either never fired or failed mid-chain. Runbook: \`docs/_internal/runbooks/release-pipeline.md\` (Symptoms → Diagnosis → Recovery)."
           done

@@ -108,7 +108,7 @@ GitHub renders nested workflow_call check names from the actual job IDs at runti
 2. Then `gh run view <id> --json jobs --jq '.jobs[].name'` to enumerate the exact rendered names.
 3. Re-PUT `required_status_checks.contexts` with the corrected names.
 
-The runbook (`.genie/runbooks/release-pipeline.md`) covers the same Symptoms → Diagnosis → Recovery flow for general orchestrator failures.
+The runbook (`docs/_internal/runbooks/release-pipeline.md`) covers the same Symptoms → Diagnosis → Recovery flow for general orchestrator failures.
 
 ## Rollback dry-run
 
@@ -127,7 +127,7 @@ gh workflow run release.yml --ref refs/tags/v4.260510.6 --field version=4.260510
 - ~~**release.yml passes v-prefixed version to sign-attest on tag push.**~~ **RESOLVED**: `with.version:` removed from the orchestrator's sign-attest call entirely. sign-attest.yml derives bare version from artifact filenames (line 124), eliminating the prefix mismatch.
 - **CHANGELOG.md v4.260510.5 entry uses an "Unreleased > Skipped" heading.** Final shipping section may move it to the version-specific section once v4.260510.6 cuts.
 - ~~**G4 didn't include `.well-known/security.txt:28` or `.github/cosign.pub:12`.**~~ **RESOLVED** in fix-loop commit: both repinned to `sign-attest.yml@`. `scripts/check-fingerprint-pinning.sh` now exits 0 across all 4 witnesses.
-- **`.genie/runbooks/release-pipeline.md` lives in-repo, not in the docs submodule.** Brief originally specified `docs/_internal/runbooks/`, but `docs/` is a symlink to the `automagik-dev/docs` submodule. Runbook + arch doc relocated to `.genie/runbooks/` (commit 27a5988e) — discoverable, repo-internal, no submodule entanglement. Mirror to the docs submodule via a sister PR if desired.
+- ~~**`.genie/runbooks/release-pipeline.md` lives in-repo, not in the docs submodule.**~~ **RESOLVED**: runbook + arch doc moved into the `automagik-dev/docs` submodule and reach the genie repo via the `docs/` symlink at `docs/_internal/runbooks/release-pipeline.md` + `docs/_internal/release-architecture.md`. Companion PR: [automagik-dev/docs#71](https://github.com/automagik-dev/docs/pull/71). This wish PR bumps the `.docs-vendor` submodule pointer to the commit on that branch — once #71 lands on docs main, the pointer remains valid (the commit is reachable from main).
 - **Follow-up review issue (`release-runbook-review`) was NOT auto-created.** Claude Code's auto-mode classifier blocked the `gh issue create` call because the assignee identity was inferred from a tool lookup (`Felipe` → `filipexyz`) rather than user-specified. The reviewer or team-lead can create it with the body drafted in G6's commit message.
 
 🤖 Wish execution: G1 → G2 → G3 → G4 → G7 → G6 → G5 (atomic-per-group commits).
