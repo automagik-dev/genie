@@ -54,7 +54,7 @@ Collapse the genie TUI display layer from two glued tmux servers + one OpenTUI p
 | 1 | Visual UX preserved exactly: Nav (left) + content (right), same split ratio, same theme, same click-to-focus. No footer mode. | Operator directive 2026-05-10. The prior split-footer rejection was layout, not architecture. |
 | 2 | Tmux retained for agent execution only. `-L genie-tui` deleted; `-L genie` untouched. | Dual-tmux is the bug; the agent substrate is correct as-is. |
 | 3 | Embed mechanism = new `TerminalPane` Renderable + `@xterm/headless` cell buffer. | OpenTUI 0.2.6 has no PTY widget; `ScrollbackSurface` is split-footer-locked. `@xterm/headless` is MIT, ~150 KB, used by VS Code Terminal — battle-tested parser without rolling our own. |
-| 4 | Tmux↔host data link = `tmux -CC` control mode. Port khal-os's `tmux-control-mode-terminal` client verbatim. | Battle-tested in khal-os production since 2026-03-18; ≤100 ms p95 emit→render measured; `send-keys -H` and `refresh-client -C` already wired. |
+| 4 | Tmux↔host data link = `tmux -CC` control mode. Implement from the khal-os `tmux-control-mode-terminal` wish spec (the implementation source was removed from khal-os post-ship; the spec at `/home/genie/workspace/repos/khal-os/genie/.genie/wishes/tmux-control-mode-terminal/WISH.md` is the canonical reference). | The original "port verbatim" instruction was based on file paths that no longer exist (`packages/genie-app/views/genie/service/`). The shipped wish remains the highest-fidelity contract — execution-group API surface is fully specified there. |
 | 4b | Group 6's deletion list pins concrete paths verified against the worktree as of 2026-05-10: `scripts/tmux/tui-tmux.conf` (template), the runtime-generated `~/.genie/tui-tmux.conf` (must stop being emitted), `src/tui/tmux-theme-sync.ts` (+ test), and the `_genie_*`/`attachTuiSession`/`ensureTuiSession`/`isTuiSessionReady` portions of `src/tui/tmux.ts`. No "or equivalent" hedging. | Reviewer plan-review feedback (2026-05-10, LOW): concrete paths prevent ambiguity at execution time. |
 | 5 | v5-only cutover. v4 stays frozen on dual-tmux indefinitely. No flag, no migration. | Sister to `v5-major-cutover-handoff`. Eliminates two-surface tax. Operators move via `genie v4-upgrade`. |
 | 6 | Drag-select override (`?1002l + ?1003l`) carried forward as `TerminalPane`'s documented mouse contract. | Clicks ON (Nav + focus), drag tracking OFF (native selection). Same contract that shipped in `tui-native-selection`; tests reused unchanged. |
@@ -138,27 +138,55 @@ bun install && bun run scripts/tui-spike/xterm-headless-attrs.ts > /tmp/xterm-at
 
 ---
 
-### Group 2: Port khal-os `tmux-control` client
+### Group 2: Implement `tmux-control` client from the khal-os spec
+
+> **Engineer trap warning (added 2026-05-10 after G2 retro):** The original
+> wish text said "port khal-os's tmux-control-mode-terminal client verbatim"
+> and named source files at `packages/genie-app/views/genie/service/`. That
+> directory **no longer exists** in the current `khal-os` checkout — the
+> wish (slug `tmux-control-mode-terminal`, status SHIPPED 2026-03-18) DID
+> ship, but the implementation has since been removed/relocated to a repo
+> not currently in `/home/genie/workspace/repos/`. **Port the SPEC, not the
+> code.** The full spec lives at
+> `/home/genie/workspace/repos/khal-os/genie/.genie/wishes/tmux-control-mode-terminal/WISH.md`
+> (267 lines, with execution-group-level API contracts including
+> `attachSession`, `decodeOctalEscapes`, `sendKeys`, `resizeClient`, and the
+> tmux version requirement). Adapt every API name to genie's module shape
+> (e.g., separate `control.ts` / `input.ts` / `resize.ts` files rather than
+> a single class).
 
 **Goal:** Stand up the data link between OpenTUI and the `-L genie` agent server. Single `tmux -CC` connection per focused pane; `%output` push; `send-keys -H` input; `refresh-client -C` resize.
 
+**Reference spec (read these BEFORE writing any code):**
+- `/home/genie/workspace/repos/khal-os/genie/.genie/wishes/tmux-control-mode-terminal/WISH.md` — full spec, decision table, success criteria, and per-group API contracts.
+- `tmux(1)` man page section "CONTROL MODE" — protocol-level reference for `%output`, `%exit`, `%error`, `%begin`/`%end` framing.
+
 **Deliverables:**
-1. `src/tui/tmux-control/control.ts` — control-mode client. Ports khal-os's `tmux-control.ts` (octal-escape decoder, `%output` dispatch, `%exit`/`%error` handling). One `child_process.spawn('tmux', ['-L', 'genie', '-CC', 'attach', '-t', sessionName])` per instance. Emits `output`, `exit`, `error` events.
-2. `src/tui/tmux-control/input.ts` — `send-keys -H <hex>` writer; `paste-buffer -p` fallback for long pastes / semicolon-laden payloads (port khal-os solution verbatim).
-3. `src/tui/tmux-control/resize.ts` — `refresh-client -C <cols>x<rows>` forwarder; debounced 50 ms to avoid resize storms.
-4. `src/tui/tmux-control/__tests__/control.test.ts` — fixture-driven tests parsing canned `%output` payloads (including octal-encoded UTF-8, partial frames, `%exit 0`/`%exit 1`).
-5. `src/tui/tmux-control/__tests__/input.test.ts` — hex-encoding correctness across ASCII, UTF-8 multibyte, and the `;`-bearing edge case.
-6. `src/tui/tmux-control/__tests__/resize.test.ts` — debounce window + final-value-wins invariants.
+1. `src/tui/tmux-control/control.ts` — control-mode client. Implements `attachSession(sessionName: string): ControlSession` (khal-os spec G1 deliverable #1). One `child_process.spawn('tmux', ['-L', 'genie', '-CC', 'attach', '-t', sessionName])` per instance. Emits `output(paneId, data)`, `exit(code)`, `error(err)` events. Handles `%begin`/`%end` block framing, `%exit` notification, and process-crash auto-reconnect.
+2. `src/tui/tmux-control/octal.ts` — `decodeOctalEscapes(input: string): Buffer` per the khal-os spec (`\ooo` → byte, `\\` → literal backslash, everything else passes through as UTF-8). Pure function, easy to fuzz.
+3. `src/tui/tmux-control/input.ts` — `sendKeys(paneId, data)` writes `send-keys -H -t <paneId> <hex bytes>` to control stdin. tmux 3.2+ supports `-H`; smoke test asserts the host meets the version requirement. Adds a `paste-buffer -p` fallback path for payloads ≥256 bytes or semicolon-laden multi-codepoint pastes.
+4. `src/tui/tmux-control/resize.ts` — `resizeClient(cols, rows)` writes `refresh-client -C ${cols},${rows}` to control stdin; debounced 50 ms (final-value-wins) to avoid resize storms.
+5. `src/tui/tmux-control/__tests__/control.test.ts` — fixture-driven tests parsing canned `%output` payloads (including octal-encoded UTF-8, partial frames straddling chunks, `%exit 0`/`%exit 1`, `%error`). Cover `%begin`/`%end` framing.
+6. `src/tui/tmux-control/__tests__/octal.test.ts` — comprehensive byte-table for `decodeOctalEscapes`: every octal in `[0o0-0o377]`, `\\` literal, mixed strings, partial-escape edge cases (e.g., string ending in `\1`).
+7. `src/tui/tmux-control/__tests__/input.test.ts` — hex-encoding correctness across ASCII, UTF-8 multibyte (2/3/4 byte), and the `;`-bearing edge case; verifies the `paste-buffer -p` fallback threshold.
+8. `src/tui/tmux-control/__tests__/resize.test.ts` — debounce window + final-value-wins invariants.
+9. `src/tui/tmux-control/PORT-NOTES.md` — documents every place the implementation diverges from the khal-os spec (e.g., module structure split into 4 files vs khal-os's single-class arrangement), with rationale.
 
 **Acceptance Criteria:**
-- [ ] All khal-os `tmux-control-mode-terminal` parser semantics replicated. Behavioural diff against khal-os's repo documented in `src/tui/tmux-control/PORT-NOTES.md` (any deviation justified).
+- [ ] All khal-os `tmux-control-mode-terminal` spec semantics replicated (per G1 deliverables 1–3 in the khal-os WISH.md). Divergences documented in `PORT-NOTES.md` with rationale.
 - [ ] `bun test src/tui/tmux-control/` — full suite green, ≥90 % line coverage.
 - [ ] Manual smoke: `bun run scripts/tui-spike/tmux-control-attach.ts <agent-session-name>` connects, streams `%output` for 10 s, and disconnects cleanly. Captures sample transcript to `/tmp/tmux-control-smoke.log`.
 - [ ] No `node-pty` import added (we are explicitly using tmux as the multiplexer, not raw PTYs).
+- [ ] tmux version probe: `tmux -V` reports ≥3.2 (assert in the smoke script; fail loudly on lower versions since `send-keys -H` requires 3.2+).
 
 **Validation:**
 ```bash
-bun test src/tui/tmux-control/ && bun run --silent scripts/tui-spike/tmux-control-attach.ts $(tmux -L genie list-sessions -F '#{session_name}' | head -n1) 2>&1 | head -20
+# Sanity: tmux version supports send-keys -H (≥3.2)
+tmux -V | awk '{split($2,v,"."); if (v[1] < 3 || (v[1] == 3 && v[2] < 2)) { print "FAIL: tmux " $2 " < 3.2"; exit 1 } else { print "OK: tmux " $2 }}' && \
+# Unit suite
+bun test src/tui/tmux-control/ && \
+# Manual smoke against an existing agent session
+bun run --silent scripts/tui-spike/tmux-control-attach.ts $(tmux -L genie list-sessions -F '#{session_name}' | head -n1) 2>&1 | head -20
 ```
 
 **depends-on:** none (independent of Group 1)
