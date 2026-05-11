@@ -69,7 +69,7 @@ Collapse the genie TUI display layer from two glued tmux servers + one OpenTUI p
 
 - [ ] `genie tui`, `genie`, and `genie app --tui` launch a single OpenTUI process; `pgrep -f "tmux -L genie-tui"` returns zero rows after a clean start.
 - [ ] `~/.genie/tui-tmux.conf` is not generated at runtime and the template file is removed from the repo.
-- [ ] Visual parity gate: split ratio, theme, and click-to-focus identical to v4. `docs/v5-launch/tui-visual-parity.md` carries before/after screenshots; reviewer signs off.
+- [ ] Visual parity gate: split ratio, theme, and click-to-focus identical to v4. `.genie/runbooks/tui-host/smoke-matrix.md` carries the before/after screenshots cross-reference + reviewer `Signed-off-by:` trailer.
 - [ ] Drag-select inside the `TerminalPane` region copies via host-terminal-native clipboard in Warp (macOS), iTerm2, Ghostty, Terminal.app, Wezterm, Alacritty, kitty, foot. No OSC 52, no tmux DCS, no `pbcopy` bridge.
 - [ ] Click-to-focus from `<Nav>` mounts/refocuses `TerminalPane`; initial scrollback replay completes ≤500 ms.
 - [ ] Keystrokes typed while `<TerminalPane>` is focused reach the agent's tmux pane (golden test against a live agent that echoes input back).
@@ -118,8 +118,8 @@ Six groups across four waves. Wave 1 is the foundational spike + dependency add;
 
 **Deliverables:**
 1. `package.json` gains `@xterm/headless` at the latest 5.x release (currently `^5.5.0`); `bun.lockb` regenerated; license entry verified MIT.
-2. New scratch script `scripts/tui-spike/xterm-headless-attrs.ts` (kept committed under `scripts/tui-spike/` and referenced from the wish but **not** part of the runtime build) that pipes a fixture-stream of ANSI sequences (true-color, bold, underline, hyperlink, mouse passthrough, wide chars) through `@xterm/headless` and dumps every cell's attributes. Output committed to `docs/v5-launch/tui-host/xterm-attr-coverage.md`.
-3. `docs/v5-launch/tui-host/xterm-attr-coverage.md` documents which attributes are first-class on `headless.Buffer.getCell()` and which (if any) require ANSI passthrough fallback (`OptimizedBuffer.drawText` with escape sequences).
+2. New scratch script `scripts/tui-spike/xterm-headless-attrs.ts` (kept committed under `scripts/tui-spike/` and referenced from the wish but **not** part of the runtime build) that pipes a fixture-stream of ANSI sequences (true-color, bold, underline, hyperlink, mouse passthrough, wide chars) through `@xterm/headless` and dumps every cell's attributes. Output committed to `.genie/runbooks/tui-host/xterm-attr-coverage.md`.
+3. `.genie/runbooks/tui-host/xterm-attr-coverage.md` documents which attributes are first-class on `headless.Buffer.getCell()` and which (if any) require ANSI passthrough fallback (`OptimizedBuffer.drawText` with escape sequences).
 
 **Acceptance Criteria:**
 - [ ] `@xterm/headless` resolves cleanly under bun (`bun install` succeeds, no peer-dep warnings).
@@ -131,7 +131,7 @@ Six groups across four waves. Wave 1 is the foundational spike + dependency add;
 ```bash
 # First run: G1 adds the @xterm/headless entry, so lockfile is rewritten.
 # CI on subsequent runs uses --frozen-lockfile to guard against drift.
-bun install && bun run scripts/tui-spike/xterm-headless-attrs.ts > /tmp/xterm-attrs.txt && grep -q "PASS\|FALLBACK\|OUT OF SCOPE" docs/v5-launch/tui-host/xterm-attr-coverage.md && grep -q '"@xterm/headless"' package.json
+bun install && bun run scripts/tui-spike/xterm-headless-attrs.ts > /tmp/xterm-attrs.txt && grep -q "PASS\|FALLBACK\|OUT OF SCOPE" .genie/runbooks/tui-host/xterm-attr-coverage.md && grep -q '"@xterm/headless"' package.json
 ```
 
 **depends-on:** none
@@ -205,12 +205,12 @@ bun test src/tui/widgets/TerminalPane.test.tsx && bun test src/tui/widgets/__tes
 2. `<Nav>`'s `onFocusAgent` handler updates a shared focus context that `<TerminalPane>` subscribes to (one mounted instance, swaps `sessionName` prop).
 3. `src/tui/render.tsx` no longer needs `installNativeSelectionOverride` at the renderer level — the override moves into `TerminalPane`. Keep `disableDragTracking` exported for `TerminalPane` to import; remove the renderer-level wrap. Update `render.test.ts` to assert the new contract.
 4. `genie app --tui` (in `src/term-commands/app.ts`) collapses to: import `renderNav()`, await it, exit. Remove `handleTuiMode`'s `ensureTuiSession`/`isTuiSessionReady` calls when `GENIE_TUI_HOST=embed`.
-5. `docs/v5-launch/tui-host/embed-flag.md` documents the `GENIE_TUI_HOST` flag, its values (`embed` | `legacy`), and the expected default flip in Group 6.
+5. `.genie/runbooks/tui-host/embed-flag.md` documents the `GENIE_TUI_HOST` flag, its values (`embed` | `legacy`), and the expected default flip in Group 6.
 
 **Acceptance Criteria:**
 - [ ] `GENIE_TUI_HOST=embed genie tui` launches a single OpenTUI process; right side renders the focused agent via `<TerminalPane>`.
 - [ ] `GENIE_TUI_HOST=legacy genie tui` still launches the dual-tmux path unchanged (regression coverage during transition).
-- [ ] Visual split ratio + theme byte-for-byte identical to legacy mode (verified by side-by-side screenshots committed to `docs/v5-launch/tui-host/visual-parity-before.png` and `…-after.png`).
+- [ ] Visual split ratio + theme byte-for-byte identical to legacy mode (verified by side-by-side screenshots committed to `.genie/runbooks/tui-host/visual-parity-before.png` and `…-after.png`).
 - [ ] Click-on-Nav-node in embed mode focuses the corresponding agent's `<TerminalPane>` within 200 ms.
 - [ ] `bun test src/tui/render.test.ts` passes with the new contract (override re-homed inside `TerminalPane`).
 - [ ] `bun run check` clean.
@@ -229,9 +229,9 @@ bun run check && bun test src/tui/render.test.ts && GENIE_TUI_HOST=embed timeout
 **Goal:** Validate embed mode across the eight launch-gate terminals; capture before/after performance numbers.
 
 **Deliverables:**
-1. `docs/v5-launch/tui-host/smoke-matrix.md` — table per terminal (Warp, iTerm2, Ghostty, Terminal.app, Wezterm, Alacritty, kitty, foot) covering: mount, click-to-focus, drag-select copy, paste, resize, exit cleanup. Each row carries a verdict (PASS / FAIL / WORKAROUND) + the operator screenshot artifact.
-2. Microbenchmark execution: run `bun run src/tui/widgets/__benches__/terminal-pane.bench.ts` on Linux + macOS hosts. Output committed to `docs/v5-launch/tui-host/perf-baseline.md` with p50 / p95 / max emit→render latency and idle CPU sampled over 60 s.
-3. Visual-parity screenshots (before = legacy, after = embed) for all eight terminals committed under `docs/v5-launch/tui-host/visual-parity/<terminal>/{before,after}.png`.
+1. `.genie/runbooks/tui-host/smoke-matrix.md` — table per terminal (Warp, iTerm2, Ghostty, Terminal.app, Wezterm, Alacritty, kitty, foot) covering: mount, click-to-focus, drag-select copy, paste, resize, exit cleanup. Each row carries a verdict (PASS / FAIL / WORKAROUND) + the operator screenshot artifact.
+2. Microbenchmark execution: run `bun run src/tui/widgets/__benches__/terminal-pane.bench.ts` on Linux + macOS hosts. Output committed to `.genie/runbooks/tui-host/perf-baseline.md` with p50 / p95 / max emit→render latency and idle CPU sampled over 60 s.
+3. Visual-parity screenshots (before = legacy, after = embed) for all eight terminals committed under `.genie/runbooks/tui-host/visual-parity/<terminal>/{before,after}.png`.
 
 **Acceptance Criteria:**
 - [ ] Smoke matrix PASSes on at least 6 of 8 terminals; remaining 2 carry a WORKAROUND or a documented launch-list exclusion (release notes carry the compat caveat).
@@ -242,10 +242,10 @@ bun run check && bun test src/tui/render.test.ts && GENIE_TUI_HOST=embed timeout
 **Validation:**
 ```bash
 # Perf gate (machine-checkable):
-bun run src/tui/widgets/__benches__/terminal-pane.bench.ts | tee docs/v5-launch/tui-host/perf-baseline.md && \
-grep -E "^p95.*(emit_render|idle_cpu)" docs/v5-launch/tui-host/perf-baseline.md && \
+bun run src/tui/widgets/__benches__/terminal-pane.bench.ts | tee .genie/runbooks/tui-host/perf-baseline.md && \
+grep -E "^p95.*(emit_render|idle_cpu)" .genie/runbooks/tui-host/perf-baseline.md && \
 # Smoke-matrix human sign-off gate (the manual 8-terminal verification cannot be machine-validated, but the artifact MUST land before Group 6 ships):
-grep -E "^Signed-off-by: " docs/v5-launch/tui-host/smoke-matrix.md
+grep -E "^Signed-off-by: " .genie/runbooks/tui-host/smoke-matrix.md
 ```
 
 **depends-on:** Group 4
@@ -264,7 +264,7 @@ grep -E "^Signed-off-by: " docs/v5-launch/tui-host/smoke-matrix.md
 5. Update `src/term-commands/app.ts` `handleTuiMode`: collapse to `await renderNav();`.
 6. Update `src/term-commands/serve.ts`: remove `ensureTuiSession`/`isTuiSessionReady` exports; collapse to single-tmux (`-L genie`) lifecycle.
 7. Scrub `genie doctor` (`src/term-commands/doctor.ts`) for orphan `-L genie-tui` references.
-8. Release-notes draft entry in `docs/v5-launch/release-notes.md` + a one-line `genie doctor` advisory for v4-on-npm operators who attach into a v5 host.
+8. Release-notes draft entry in `.genie/runbooks/tui-host/release-notes.md` (kept in-repo for this PR; promote to the public `docs/v5-launch/release-notes.md` via a separate docs-submodule PR after merge) + a one-line `genie doctor` advisory for v4-on-npm operators who attach into a v5 host. **Engineer note:** `docs/` is a symlink into the `.docs-vendor` submodule — writing there from this wish requires a separate docs-vendor PR with its own lifecycle. Land in-repo paths only inside this wish.
 9. CHANGELOG entry + delete migration note.
 
 **Acceptance Criteria:**
@@ -323,6 +323,15 @@ _Populated by `/review` after execution completes._
 
 ## Files to Create/Modify
 
+> **Engineer trap warning (added 2026-05-10 after G1 retro):** `docs/` is a
+> symlink into the `.docs-vendor` git submodule (its own repo,
+> `automagik-dev/docs.git`). Writes inside `docs/` land in a SEPARATE repo
+> with a SEPARATE PR lifecycle, NOT in `wish/tui-opentui-host`. All
+> in-progress wish deliverables MUST land under `.genie/runbooks/tui-host/`
+> (in-repo). The `docs/v5-launch/` promotion happens as a follow-up
+> docs-submodule PR after this wish ships. The G1 spike originally wrote to
+> `docs/v5-launch/tui-host/` and got relocated; do not repeat the mistake.
+
 ```
 # CREATE
 src/tui/widgets/TerminalPane.tsx
@@ -337,20 +346,20 @@ src/tui/tmux-control/__tests__/input.test.ts
 src/tui/tmux-control/__tests__/resize.test.ts
 scripts/tui-spike/xterm-headless-attrs.ts
 scripts/tui-spike/tmux-control-attach.ts
-docs/v5-launch/tui-host/xterm-attr-coverage.md
-docs/v5-launch/tui-host/embed-flag.md
-docs/v5-launch/tui-host/smoke-matrix.md
-docs/v5-launch/tui-host/perf-baseline.md
-docs/v5-launch/tui-host/visual-parity-before.png
-docs/v5-launch/tui-host/visual-parity-after.png
-docs/v5-launch/tui-host/visual-parity/warp/{before,after}.png
-docs/v5-launch/tui-host/visual-parity/iterm2/{before,after}.png
-docs/v5-launch/tui-host/visual-parity/ghostty/{before,after}.png
-docs/v5-launch/tui-host/visual-parity/terminal-app/{before,after}.png
-docs/v5-launch/tui-host/visual-parity/wezterm/{before,after}.png
-docs/v5-launch/tui-host/visual-parity/alacritty/{before,after}.png
-docs/v5-launch/tui-host/visual-parity/kitty/{before,after}.png
-docs/v5-launch/tui-host/visual-parity/foot/{before,after}.png
+.genie/runbooks/tui-host/xterm-attr-coverage.md
+.genie/runbooks/tui-host/embed-flag.md
+.genie/runbooks/tui-host/smoke-matrix.md
+.genie/runbooks/tui-host/perf-baseline.md
+.genie/runbooks/tui-host/visual-parity-before.png
+.genie/runbooks/tui-host/visual-parity-after.png
+.genie/runbooks/tui-host/visual-parity/warp/{before,after}.png
+.genie/runbooks/tui-host/visual-parity/iterm2/{before,after}.png
+.genie/runbooks/tui-host/visual-parity/ghostty/{before,after}.png
+.genie/runbooks/tui-host/visual-parity/terminal-app/{before,after}.png
+.genie/runbooks/tui-host/visual-parity/wezterm/{before,after}.png
+.genie/runbooks/tui-host/visual-parity/alacritty/{before,after}.png
+.genie/runbooks/tui-host/visual-parity/kitty/{before,after}.png
+.genie/runbooks/tui-host/visual-parity/foot/{before,after}.png
 
 # MODIFY (Group 4 — gated; Group 6 — final)
 src/tui/app.tsx
