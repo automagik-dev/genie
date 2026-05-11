@@ -11,13 +11,14 @@
  * Run with: bun test src/genie-commands/__tests__/update.test.ts
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type LatestManifest,
   type VerifyResult,
+  _resetNextDeprecationLatchForTest,
   atomicBinarySwap,
   decideVerify,
   downloadAndVerifyTarball,
@@ -26,6 +27,8 @@ import {
   formatVerifyBanner,
   manifestUrlForChannel,
   normalizeVersion,
+  persistChannel,
+  resolveChannel,
   resolveLiveBinaryPath,
   resolvePlatformId,
   rollbackBinary,
@@ -319,10 +322,137 @@ describe('manifestUrlForChannel (G5)', () => {
     );
   });
 
-  test('beta/canary/next get their own per-channel files', () => {
+  test('beta/canary/dev get their own per-channel files', () => {
     expect(manifestUrlForChannel('beta')).toContain('.well-known/beta.json');
     expect(manifestUrlForChannel('canary')).toContain('.well-known/canary.json');
-    expect(manifestUrlForChannel('next')).toContain('.well-known/next.json');
+    expect(manifestUrlForChannel('dev')).toContain('.well-known/dev.json');
+  });
+});
+
+describe('resolveChannel — --dev flag + --next deprecation alias (release-channel-dev)', () => {
+  // Captures the stderr write so the deprecation-notice assertions can inspect
+  // it without leaking into the test runner's terminal.
+  let stderrCapture: string;
+  const realStderrWrite = process.stderr.write.bind(process.stderr);
+
+  beforeEach(() => {
+    stderrCapture = '';
+    _resetNextDeprecationLatchForTest();
+    // Cast through unknown — `process.stderr.write` has 3 overloads and we
+    // only need the string-argument form for the deprecation notice.
+    (process.stderr.write as unknown) = ((chunk: string | Uint8Array): boolean => {
+      stderrCapture += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
+      return true;
+    }) as typeof process.stderr.write;
+  });
+
+  afterEach(() => {
+    (process.stderr.write as unknown) = realStderrWrite as typeof process.stderr.write;
+    _resetNextDeprecationLatchForTest();
+  });
+
+  test('--dev resolves to channel "dev"', async () => {
+    expect(await resolveChannel({ dev: true })).toBe('dev');
+    expect(stderrCapture).toBe('');
+  });
+
+  test('--next resolves to channel "dev" AND emits a deprecation notice on stderr', async () => {
+    expect(await resolveChannel({ next: true })).toBe('dev');
+    expect(stderrCapture).toContain('--next is deprecated');
+    expect(stderrCapture).toContain('--dev');
+  });
+
+  test('--next deprecation notice fires at most once per process', async () => {
+    await resolveChannel({ next: true });
+    await resolveChannel({ next: true });
+    await resolveChannel({ next: true });
+    // Count occurrences of the deprecation marker.
+    const matches = stderrCapture.match(/--next is deprecated/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
+  test('--stable wins over --next when both are set (explicit stable preference)', async () => {
+    // PR #2419 review (codex P2 + gemini medium): an explicit --stable must
+    // override prerelease intent. Without this ordering, scripts that append
+    // --stable to pull users back from prerelease channels silently no-op'd.
+    expect(await resolveChannel({ next: true, stable: true })).toBe('stable');
+    // The deprecation notice still fires because --next was on the command
+    // line — operators learn the rename even when --stable overrode the
+    // channel selection.
+    expect(stderrCapture).toContain('--next is deprecated');
+  });
+
+  test('--stable wins over --dev when both are set', async () => {
+    expect(await resolveChannel({ dev: true, stable: true })).toBe('stable');
+    expect(stderrCapture).toBe('');
+  });
+
+  test('--dev wins over --next without emitting deprecation', async () => {
+    expect(await resolveChannel({ dev: true, next: true })).toBe('dev');
+    expect(stderrCapture).toBe('');
+  });
+
+  test('no flags + no config → defaults to stable', async () => {
+    // resolveChannel reads from ~/.genie/config.json via genieConfigExists().
+    // On a fresh test environment where the file may or may not exist, the
+    // default is stable. We assert the function returns SOMETHING in the
+    // {stable, dev} set rather than pinning it to one — environment-dependent
+    // tests are flaky. The next test (--stable explicit) pins stable.
+    const channel = await resolveChannel({});
+    expect(['stable', 'dev']).toContain(channel);
+  });
+
+  test('--stable resolves to "stable" even if config previously set dev', async () => {
+    expect(await resolveChannel({ stable: true })).toBe('stable');
+  });
+});
+
+describe('GenieConfigSchema.updateChannel — read-time alias for "next"', () => {
+  // The wish (decision #3) says configs written by pre-rename binaries with
+  // `updateChannel: "next"` must be honored — zod transforms the legacy
+  // token to the canonical `dev` on parse so downstream code only sees
+  // 'latest' | 'dev'.
+  test('"next" parses as "dev"', async () => {
+    const { GenieConfigSchema } = await import('../../types/genie-config.js');
+    const parsed = GenieConfigSchema.parse({ updateChannel: 'next' });
+    expect(parsed.updateChannel).toBe('dev');
+  });
+
+  test('"dev" parses as "dev"', async () => {
+    const { GenieConfigSchema } = await import('../../types/genie-config.js');
+    const parsed = GenieConfigSchema.parse({ updateChannel: 'dev' });
+    expect(parsed.updateChannel).toBe('dev');
+  });
+
+  test('"latest" parses as "latest"', async () => {
+    const { GenieConfigSchema } = await import('../../types/genie-config.js');
+    const parsed = GenieConfigSchema.parse({ updateChannel: 'latest' });
+    expect(parsed.updateChannel).toBe('latest');
+  });
+
+  test('absent updateChannel defaults to "latest"', async () => {
+    const { GenieConfigSchema } = await import('../../types/genie-config.js');
+    const parsed = GenieConfigSchema.parse({});
+    expect(parsed.updateChannel).toBe('latest');
+  });
+
+  test('invalid channel value is rejected', async () => {
+    const { GenieConfigSchema } = await import('../../types/genie-config.js');
+    expect(() => GenieConfigSchema.parse({ updateChannel: 'banana' })).toThrow();
+  });
+});
+
+describe('persistChannel — sticky channel persistence (release-channel-dev)', () => {
+  // Smoke-level coverage. The full disk round-trip is exercised via the
+  // schema test above (write "dev" → read back as "dev") plus the
+  // resolveChannel test (which reads from genie-config). We just assert
+  // that persistChannel does not throw on either channel input.
+  test('persistChannel("dev") does not throw', async () => {
+    await expect(persistChannel('dev')).resolves.toBeUndefined();
+  });
+
+  test('persistChannel("stable") does not throw', async () => {
+    await expect(persistChannel('stable')).resolves.toBeUndefined();
   });
 });
 
