@@ -372,11 +372,19 @@ describe('resolveChannel — --dev flag + --next deprecation alias (release-chan
   });
 
   test('--stable wins over --next when both are set (explicit stable preference)', async () => {
-    expect(await resolveChannel({ next: true, stable: true })).toBe('dev');
-    // The deprecation notice still fires because we hit the --next branch
-    // first; this matches the spec — passing --next on the command line
-    // always earns the deprecation note even when also overridden later.
-    // (If users dislike this, the fix is to drop --next entirely.)
+    // PR #2419 review (codex P2 + gemini medium): an explicit --stable must
+    // override prerelease intent. Without this ordering, scripts that append
+    // --stable to pull users back from prerelease channels silently no-op'd.
+    expect(await resolveChannel({ next: true, stable: true })).toBe('stable');
+    // The deprecation notice still fires because --next was on the command
+    // line — operators learn the rename even when --stable overrode the
+    // channel selection.
+    expect(stderrCapture).toContain('--next is deprecated');
+  });
+
+  test('--stable wins over --dev when both are set', async () => {
+    expect(await resolveChannel({ dev: true, stable: true })).toBe('stable');
+    expect(stderrCapture).toBe('');
   });
 
   test('--dev wins over --next without emitting deprecation', async () => {

@@ -88,7 +88,7 @@ resolve_manifest_url() {
 fetch_latest() {
   local channel="$1" url payload
   url="$(resolve_manifest_url "$channel")"
-  log "manifest=$(printf '%s' "$url" | sed "s#${MANIFEST_BASE}/##")"
+  log "manifest=${url##*/}"
   payload="$(curl -fsSL "$url")" || die "could not fetch $url" 5
   printf '%s\n' "$payload" | jq -e --arg c "$channel" '.channel == $c or (.channel == null and $c == "stable")' >/dev/null \
     || die "manifest channel mismatch (wanted $channel)" 1

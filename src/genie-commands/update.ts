@@ -1142,12 +1142,24 @@ export async function resolveChannel(options: {
   next?: boolean;
   stable?: boolean;
 }): Promise<ReleaseChannel> {
+  // --stable is checked FIRST so an explicit override always wins over dev /
+  // next prerelease intent. Common case: wrappers / aliases / smoke scripts
+  // append `--stable` to force-pull-back from a prerelease channel regardless
+  // of what other flags are on the command line. (PR #2419 review: codex
+  // P2 + gemini medium — without this ordering, `genie update --stable --dev`
+  // resolved to dev, silently ignoring the operator's stable intent.)
+  if (options.stable) {
+    // Still emit the --next deprecation notice if --next was passed too —
+    // operators learn to drop it from muscle memory even when --stable
+    // overrode the channel.
+    if (options.next) emitNextDeprecationOnce();
+    return 'stable';
+  }
   if (options.dev) return 'dev';
   if (options.next) {
     emitNextDeprecationOnce();
     return 'dev';
   }
-  if (options.stable) return 'stable';
   if (genieConfigExists()) {
     try {
       const config = await loadGenieConfig();
