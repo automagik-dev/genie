@@ -237,14 +237,21 @@ jobs:
           }
           EOF
 
-          if git diff --quiet .well-known/latest.json; then
-            echo "latest.json unchanged — nothing to commit"
-            exit 0
-          fi
-
+          # Stage first, then compare against HEAD. `git diff --quiet
+          # <path>` returns 0 (no diff) for *untracked* files because they
+          # aren't in the index at all — so the bootstrap case ("file has
+          # never existed on main") fell through and silently no-op'd
+          # every release until PR #2412 bootstrapped manually. Staging
+          # registers the path; `git diff --cached --quiet HEAD --` then
+          # correctly reports "differs from HEAD" for both new and
+          # modified files.
           git config user.name "release-bot"
           git config user.email "release-bot@namastex.com"
           git add .well-known/latest.json
+          if git diff --cached --quiet HEAD -- .well-known/latest.json; then
+            echo "latest.json unchanged — nothing to commit"
+            exit 0
+          fi
           git commit -m "chore(release): update latest.json → v${VERSION}"
           git push origin main || {
             echo "::warning::push to main failed (likely branch protection or permission); update .well-known/latest.json manually"
