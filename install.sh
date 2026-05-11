@@ -139,6 +139,46 @@ extract_and_link() {
   log "symlink: $LOCAL_BIN/genie → $GENIE_HOME/bin/genie"
 }
 
+# Detect pre-cutover (bun-global / npm-global) installs and surface the
+# exact uninstall command. install.sh writes the new binary at
+# ${GENIE_HOME}/bin/genie + a symlink at ${LOCAL_BIN}/genie, but if the
+# legacy bin directory ranks ahead of ${LOCAL_BIN} on PATH the shell
+# keeps invoking the OLD binary. The new install is dormant until the
+# operator removes the legacy package. We don't auto-uninstall — the
+# package manager call is risky to run blind (different PMs, different
+# permissions, sudo escalation). Print the exact one-line fix instead.
+detect_legacy_install() {
+  local bun_path="${HOME}/.bun/install/global/node_modules/@automagik/genie"
+  local npm_prefix npm_path=""
+  if command -v npm >/dev/null 2>&1; then
+    npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+    [[ -n "$npm_prefix" && "$npm_prefix" != "undefined" ]] \
+      && npm_path="${npm_prefix}/lib/node_modules/@automagik/genie"
+  fi
+
+  local legacy_found=0 cmd=""
+  if [[ -d "$bun_path" ]]; then
+    legacy_found=1
+    cmd="bun pm uninstall -g @automagik/genie"
+  elif [[ -n "$npm_path" && -d "$npm_path" ]]; then
+    legacy_found=1
+    cmd="npm uninstall -g @automagik/genie"
+  fi
+
+  if [[ "$legacy_found" -eq 1 ]]; then
+    printf '\033[1;33m'
+    printf '!! ============================================================\n'
+    printf '!! Legacy install detected. To complete the migration, run:\n'
+    printf '!!\n'
+    printf '!!   %s\n' "$cmd"
+    printf '!!   hash -r       # or open a new shell\n'
+    printf '!!\n'
+    printf '!! Then verify: `which genie` should show %s.\n' "${LOCAL_BIN}/genie"
+    printf '!! ============================================================\n'
+    printf '\033[0m'
+  fi
+}
+
 handoff_to_subcommand() {
   log "handing off to: genie install (shell-rc + completions wiring)"
   rm -rf "$TMP_DIR"
@@ -159,6 +199,7 @@ main() {
   log "installing genie v${version}"
   tarball="$(download_and_verify "$version" "$platform" "$tarball_base")"
   extract_and_link "$tarball"
+  detect_legacy_install
   handoff_to_subcommand
 }
 
