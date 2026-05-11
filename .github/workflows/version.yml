@@ -180,12 +180,19 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           TAG="refs/tags/v${VERSION}"
-          echo "Dispatching release pipeline against ${TAG}..."
+          # Channel selector: dev-branch builds publish to the dev channel
+          # (prerelease GH Release + .well-known/dev.json), main-branch builds
+          # to stable. The branch identity comes from steps.context.outputs.branch
+          # which was already resolved from workflow_run.head_branch (or the
+          # 'dev' default for workflow_dispatch). See wish release-channel-dev.
+          BRANCH="${{ steps.context.outputs.branch }}"
+          if [ "$BRANCH" = "main" ]; then CHANNEL="stable"; else CHANNEL="dev"; fi
+          echo "Dispatching release pipeline against ${TAG} (channel=${CHANNEL})..."
           # The dispatch is fire-and-forget — release.yml sequences the
           # build → sign-attest → publish chain inside a single run via
           # workflow_call. A failed dispatch is a release-pipeline
           # outage; surface loudly.
-          if ! gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" --field version="${VERSION}"; then
+          if ! gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" --field version="${VERSION}" --field channel="${CHANNEL}"; then
             echo "::error ::release-trigger.dispatch_failed release.yml dispatch failed for ${TAG} — investigate gh CLI auth or workflow availability before re-running manually"
             exit 1
           fi

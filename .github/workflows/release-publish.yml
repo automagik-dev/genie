@@ -204,18 +204,27 @@ jobs:
           fi
 
       # ---------------------------------------------------------------------
-      # latest.json channel pointer — committed to main so install.sh +
-      # `genie update` can resolve current version per channel via:
-      #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/latest.json
-      # Only runs for stable, non-draft publishes. Draft releases never
-      # update the channel pointer; non-stable channels (beta/canary) get
-      # their own future channel files (out of scope for this group).
+      # Per-channel manifest pointer — committed to main so install.sh +
+      # `genie update` can resolve the current version for each channel via:
+      #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/<channel>.json
+      #
+      # Filename map (per wish release-channel-dev, 2026-05-11):
+      #   stable → latest.json     (kept for back-compat with v1 manifest layout)
+      #   dev    → dev.json        (replaces the old "next.json" producer concept)
+      #   beta   → beta.json
+      #   canary → canary.json
+      #
+      # The stable-only gate that lived here through v4.260511.3 was lifted
+      # — every non-draft publish (regardless of channel) writes its own
+      # channel file. Cross-channel writes are impossible because the filename
+      # is derived from the validated channel input.
       # ---------------------------------------------------------------------
-      - name: Update .well-known/latest.json (stable, non-draft only)
-        if: ${{ steps.meta.outputs.channel == 'stable' && !inputs.draft }}
+      - name: Update .well-known/${{ steps.meta.outputs.channel == 'stable' && 'latest' || steps.meta.outputs.channel }}.json (non-draft only)
+        if: ${{ !inputs.draft }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.meta.outputs.version }}
+          CHANNEL: ${{ steps.meta.outputs.channel }}
         shell: bash
         run: |
           set -euo pipefail
@@ -225,11 +234,20 @@ jobs:
           git checkout main
           git pull --ff-only origin main
 
+          # stable keeps the historical filename `latest.json`; every other
+          # channel uses its own name. install.sh + genie update's
+          # `manifestUrlForChannel` consume the same convention.
+          if [ "$CHANNEL" = "stable" ]; then
+            MANIFEST_FILE="latest.json"
+          else
+            MANIFEST_FILE="${CHANNEL}.json"
+          fi
+
           mkdir -p .well-known
-          cat > .well-known/latest.json <<EOF
+          cat > ".well-known/${MANIFEST_FILE}" <<EOF
           {
             "schema_version": 1,
-            "channel": "stable",
+            "channel": "${CHANNEL}",
             "version": "${VERSION}",
             "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "tarball_base": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}",
@@ -237,23 +255,22 @@ jobs:
           }
           EOF
 
-          # Stage first, then compare against HEAD. `git diff --quiet
-          # <path>` returns 0 (no diff) for *untracked* files because they
-          # aren't in the index at all — so the bootstrap case ("file has
-          # never existed on main") fell through and silently no-op'd
-          # every release until PR #2412 bootstrapped manually. Staging
-          # registers the path; `git diff --cached --quiet HEAD --` then
-          # correctly reports "differs from HEAD" for both new and
-          # modified files.
           git config user.name "release-bot"
           git config user.email "release-bot@namastex.com"
-          git add .well-known/latest.json
-          if git diff --cached --quiet HEAD -- .well-known/latest.json; then
-            echo "latest.json unchanged — nothing to commit"
+          # Stage first, then compare against HEAD. `git diff --quiet <path>`
+          # returns 0 (no diff) for *untracked* files because they aren't in
+          # the index at all — so the bootstrap case ("file has never existed
+          # on main") fell through and silently no-op'd every release until
+          # PR #2412 bootstrapped manually. Staging registers the path; then
+          # `git diff --cached --quiet HEAD --` correctly reports "differs from
+          # HEAD" for both new and modified files.
+          git add ".well-known/${MANIFEST_FILE}"
+          if git diff --cached --quiet HEAD -- ".well-known/${MANIFEST_FILE}"; then
+            echo "${MANIFEST_FILE} unchanged — nothing to commit"
             exit 0
           fi
-          git commit -m "chore(release): update latest.json → v${VERSION}"
+          git commit -m "chore(release): update ${MANIFEST_FILE} → v${VERSION}"
           git push origin main || {
-            echo "::warning::push to main failed (likely branch protection or permission); update .well-known/latest.json manually"
+            echo "::warning::push to main failed (likely branch protection or permission); update .well-known/${MANIFEST_FILE} manually"
             exit 0
           }

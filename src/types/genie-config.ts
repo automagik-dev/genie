@@ -121,8 +121,16 @@ export const GenieConfigSchema = z.object({
   shortcuts: ShortcutsConfigSchema.default({}),
   codex: CodexConfigSchema.optional(),
   installMethod: z.enum(['source', 'npm', 'bun']).optional(),
-  // npm dist-tag channel: 'latest' (stable) or 'next' (dev builds)
-  updateChannel: z.enum(['latest', 'next']).default('latest'),
+  // Release channel preference. Canonical values: 'latest' (stable) or 'dev'
+  // (pre-release). 'next' is accepted as a read-time alias for 'dev' for
+  // configs written by pre-release-channel-dev binaries (where the channel
+  // was named 'next' before the rename — see wish release-channel-dev,
+  // decision #3). Writes always emit 'latest' or 'dev'; the alias never
+  // round-trips back to disk.
+  updateChannel: z
+    .enum(['latest', 'next', 'dev'])
+    .default('latest')
+    .transform((v) => (v === 'next' ? ('dev' as const) : v)),
   setupComplete: z.boolean().default(false),
   lastSetupAt: z.string().optional(),
   // Path to genie-cli source directory (for dev mode sync)
