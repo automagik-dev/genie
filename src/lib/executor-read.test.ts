@@ -7,8 +7,30 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { createServer } from 'node:net';
 import { findOrCreateAgent } from './agent-registry.js';
 import { getConnection } from './db.js';
+
+/**
+ * Bind 127.0.0.1:0 to let the OS assign a free port, then release it. The
+ * port-rebind race is tiny (close → next Bun.serve is microseconds wide on
+ * the same loop) and is the standard pattern for picking a test port. This
+ * replaces the previous `50000 + rand(6000)` random pick that produced
+ * birthday-paradox collisions across parallel CI shards — observed as
+ * "Failed to start server. Is port X in use?" flakes in executor-read.
+ */
+async function findFreePort(): Promise<number> {
+  const srv = createServer();
+  await new Promise<void>((resolve, reject) => {
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => resolve());
+  });
+  const addr = srv.address();
+  const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
+  await new Promise<void>((resolve) => srv.close(() => resolve()));
+  if (port <= 0) throw new Error('findFreePort: failed to obtain ephemeral port');
+  return port;
+}
 import {
   getExecutorReadPort,
   isExecutorReadEndpointRunning,
@@ -39,8 +61,11 @@ describe.skipIf(!DB_AVAILABLE)('executor-read', () => {
     await sql`DELETE FROM agents`;
 
     origPort = process.env.GENIE_EXECUTOR_READ_PORT;
-    // High random port — avoids collisions with pgserve, OTel receiver, and parallel tests.
-    process.env.GENIE_EXECUTOR_READ_PORT = String(50000 + Math.floor(Math.random() * 6000));
+    // OS-assigned ephemeral port — avoids collisions with pgserve, OTel
+    // receiver, parallel test shards, and lingering TIME_WAIT sockets that
+    // the previous random-range pick (50000..56000) hit at non-trivial rates
+    // across CI matrix shards.
+    process.env.GENIE_EXECUTOR_READ_PORT = String(await findFreePort());
   });
 
   afterEach(async () => {
