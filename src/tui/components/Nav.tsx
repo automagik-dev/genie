@@ -9,6 +9,7 @@
 
 import { useKeyboard } from '@opentui/react';
 import { type MutableRefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { respawnInvocation } from '../../lib/respawn.js';
 import { type SpawnIntent, buildSpawnInvocation } from '../../lib/spawn-invocation.js';
 import { scanAgents } from '../../lib/workspace.js';
 import { buildMenuItems } from '../context-menu-items.js';
@@ -981,8 +982,6 @@ function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, wi
     const { join, resolve } = require('node:path') as typeof import('node:path');
     const { existsSync, mkdirSync, openSync } = require('node:fs') as typeof import('node:fs');
     const { homedir } = require('node:os') as typeof import('node:os');
-    const bunPath = process.execPath || 'bun';
-    const genieBin = process.argv[1];
     const wsRoot = process.env.GENIE_TUI_WORKSPACE;
     // tmux session names use the agent name (/ replaced with -)
     const sessionName = name.replace(/\//g, '-');
@@ -1028,10 +1027,8 @@ function spawnAgent(name: string, onTmuxSessionSelect?: (sessionName: string, wi
             env: cleanEnv,
           } as const)
         : ({ detached: true, stdio: 'ignore' as const, cwd, env: cleanEnv } as const);
-    const child =
-      genieBin && genieBin !== 'genie'
-        ? spawn(bunPath, [genieBin, 'spawn', name, '--session', sessionName, '--new-window'], spawnOpts)
-        : spawn('genie', ['spawn', name, '--session', sessionName, '--new-window'], spawnOpts);
+    const { command, args } = respawnInvocation(['spawn', name, '--session', sessionName, '--new-window']);
+    const child = spawn(command, args, spawnOpts);
     child.on('exit', (code) => {
       if (code && code !== 0) {
         console.error(`TUI: spawn "${name}" exited ${code}. See ${logPath}`);
@@ -1098,12 +1095,8 @@ function executeTmux(args: string[]): void {
 function executeGenie(args: string[]): void {
   try {
     const { spawn } = require('node:child_process') as typeof import('node:child_process');
-    const bunPath = process.execPath || 'bun';
-    const genieBin = process.argv[1];
-    const child =
-      genieBin && genieBin !== 'genie'
-        ? spawn(bunPath, [genieBin, ...args], { detached: true, stdio: 'ignore' })
-        : spawn('genie', args, { detached: true, stdio: 'ignore' });
+    const { command, args: spawnArgs } = respawnInvocation(args);
+    const child = spawn(command, spawnArgs, { detached: true, stdio: 'ignore' });
     child.unref();
   } catch {
     // best-effort
@@ -1122,12 +1115,8 @@ function executeGenieAwaited(args: string[]): Promise<number | null> {
   return new Promise((resolve, reject) => {
     try {
       const { spawn } = require('node:child_process') as typeof import('node:child_process');
-      const bunPath = process.execPath || 'bun';
-      const genieBin = process.argv[1];
-      const child =
-        genieBin && genieBin !== 'genie'
-          ? spawn(bunPath, [genieBin, ...args], { stdio: 'ignore' })
-          : spawn('genie', args, { stdio: 'ignore' });
+      const { command, args: spawnArgs } = respawnInvocation(args);
+      const child = spawn(command, spawnArgs, { stdio: 'ignore' });
       child.on('exit', (code) => resolve(code));
       child.on('error', reject);
     } catch (err) {

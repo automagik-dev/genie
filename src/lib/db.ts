@@ -26,6 +26,7 @@ import type postgres from 'postgres';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, needsSeededTeams, runSeed } from './pg-seed.js';
 import { getProcessStartTime } from './process-identity.js';
+import { respawnInvocation } from './respawn.js';
 import { maybePromptV1Migration } from './v1-migration-prompt.js';
 
 /**
@@ -772,31 +773,21 @@ export async function ensurePgserve(): Promise<number> {
  * Spawn `genie serve start --headless` in the background.
  * Overridable for tests via {@link __setSpawnDaemonForTest}.
  */
-let spawnDaemon: () => void = () => {
-  const bunPath = process.execPath ?? 'bun';
-  const genieBin = process.argv[1] ?? 'genie';
-  const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless', '--foreground'], {
+function defaultSpawnDaemon(): void {
+  const { command, args } = respawnInvocation(['serve', 'start', '--headless', '--foreground']);
+  const child = spawn(command, args, {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, GENIE_IS_DAEMON: '1' },
   });
   child.unref();
-};
+}
+
+let spawnDaemon: () => void = defaultSpawnDaemon;
 
 /** Test-only hook: swap the spawn implementation so tests don't launch real serves. */
 export function __setSpawnDaemonForTest(fn: (() => void) | null): void {
-  spawnDaemon =
-    fn ??
-    (() => {
-      const bunPath = process.execPath ?? 'bun';
-      const genieBin = process.argv[1] ?? 'genie';
-      const child = spawn(bunPath, [genieBin, 'serve', 'start', '--headless', '--foreground'], {
-        detached: true,
-        stdio: 'ignore',
-        env: { ...process.env, GENIE_IS_DAEMON: '1' },
-      });
-      child.unref();
-    });
+  spawnDaemon = fn ?? defaultSpawnDaemon;
 }
 
 /**
