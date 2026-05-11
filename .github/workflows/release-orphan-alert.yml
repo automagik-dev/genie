@@ -1,9 +1,17 @@
 name: Release Orphan Alert
 
 # Scheduled tag-orphan detector. Every 30 minutes, enumerate v* tags
-# and GitHub Release objects. If a v* tag is older than 30 minutes
-# and has no corresponding Release, open a release-incident issue
-# linking to the runbook so on-call sees the gap quickly.
+# pushed in the last 24 hours and check each against the GitHub
+# Releases API. If a v* tag is in the [30min, 24h] age window and
+# has no corresponding Release, open a release-incident issue.
+#
+# The age window is critical: the lower bound (30 min) is the grace
+# period for the orchestrator to ship after a tag push; the upper
+# bound (24h) excludes the 1000+ historical tags that pre-date the
+# signed-release pipeline (v1.0.x era) — without the upper bound,
+# every cron fire would file ~12 false-positive issues per second
+# until the 5-min timeout cancelled it (genie issues #2211–#2410+,
+# 664 open false-positives at the time of this fix).
 #
 # The orphan signal is the load-bearing alarm for the new
 # release.yml workflow_call orchestrator (wish:
@@ -13,8 +21,12 @@ name: Release Orphan Alert
 # surface; this workflow makes it automatic.
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
+  # Schedule disabled while the false-positive backlog is being
+  # cleaned up. Re-enable after the cron logic is verified against
+  # a fresh sample of tags. Until then, this workflow only fires
+  # via manual workflow_dispatch.
+  # schedule:
+  #   - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -42,12 +54,11 @@ jobs:
           set -euo pipefail
 
           NOW_EPOCH=$(date -u +%s)
-          AGE_THRESHOLD_S=$((30 * 60))
+          AGE_MIN_S=$((30 * 60))          # grace period: alert only after 30 min
+          AGE_MAX_S=$((24 * 60 * 60))     # lookback window: ignore tags older than 24h
 
           # Pull v* tags with their commit date (tagger date for
           # annotated tags; committer date for lightweight tags).
-          # Use git ls-remote + show-ref + per-tag rev-parse pattern
-          # to avoid pulling the full repo history.
           git fetch --tags origin
           mapfile -t TAGS < <(git tag --list 'v*' --sort=-creatordate)
 
@@ -68,9 +79,14 @@ jobs:
             TAG_TS=$(git log -1 --format=%ct "$TAG" 2>/dev/null || echo 0)
             if [[ "$TAG_TS" -eq 0 ]]; then continue; fi
             AGE=$((NOW_EPOCH - TAG_TS))
-            if [[ "$AGE" -ge "$AGE_THRESHOLD_S" ]]; then
-              ORPHANS+=("$TAG")
+            # Bounded age window: skip historical tags older than the
+            # lookback (they predate the signed-release pipeline and
+            # are not actionable) AND skip tags too fresh for the
+            # orchestrator to have shipped yet.
+            if [[ "$AGE" -lt "$AGE_MIN_S" || "$AGE" -gt "$AGE_MAX_S" ]]; then
+              continue
             fi
+            ORPHANS+=("$TAG")
           done
 
           if [[ ${#ORPHANS[@]} -eq 0 ]]; then
