@@ -156,44 +156,47 @@ jobs:
           echo "tag_pushed=true" >> "$GITHUB_OUTPUT"
         id: commit_and_tag
 
-      # GITHUB_TOKEN-pushed tags do NOT trigger workflows on `push.tags`
-      # (documented anti-recursion guard — see GitHub docs:
-      # "Triggering a workflow from a workflow"). Per the same docs, the
-      # exceptions are `workflow_dispatch` and `repository_dispatch` — both
-      # CAN be invoked by GITHUB_TOKEN. Use `gh workflow run` against the
-      # newly-pushed tag ref to start the build → sign → publish chain
+      # Dispatches the full release pipeline (build → sign-attest →
+      # publish) via release.yml's workflow_dispatch entry. Triggered
+      # after a tag push since GITHUB_TOKEN-pushed tags don't fire
+      # push:tags workflows (anti-recursion guard — see GitHub docs:
+      # "Triggering a workflow from a workflow"). workflow_dispatch and
+      # repository_dispatch are the documented exceptions — both CAN be
+      # invoked by GITHUB_TOKEN, so this step kicks the orchestrator
       # without requiring a PAT.
       #
-      # `--ref refs/tags/v${VERSION}` makes Build Tarballs check out the
-      # tagged commit, which keeps the OIDC SAN URI bound to the tag ref
-      # (`build-tarballs.yml@refs/tags/v<version>`) — preserving the
-      # downstream cosign trust regex semantics in sign-attest.yml +
-      # release-publish.yml.
+      # `--ref refs/tags/v${VERSION}` makes release.yml check out the
+      # tagged commit; each called workflow then inherits that ref. The
+      # cosign keyless OIDC SAN URI for binary tarballs stays bound to
+      # `sign-attest.yml@refs/tags/v<version>` (Decision #1 — cosign
+      # step ownership preserved) which matches install.sh:24's pin.
       #
       # Skipped on the main-branch path because `should_bump=false` there
       # (no new tag is pushed; the pre-existing dev tag's chain already ran).
-      - name: Trigger Build Tarballs for the new tag
+      - name: Trigger release pipeline for the new tag
         if: steps.context.outputs.should_bump == 'true' && steps.commit_and_tag.outputs.tag_pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           TAG="refs/tags/v${VERSION}"
-          echo "Dispatching Build Tarballs against ${TAG}..."
-          # The dispatch is fire-and-forget — Build Tarballs' workflow_run
-          # chain (Build Tarballs → Sign + Attest → Release Publish) runs
-          # asynchronously after this step exits. A failed dispatch is a
-          # release-pipeline outage; surface loudly.
-          if ! gh workflow run build-tarballs.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}"; then
-            echo "::error ::release-trigger.dispatch_failed Build Tarballs dispatch failed for ${TAG} — investigate gh CLI auth or workflow availability before re-running manually"
+          echo "Dispatching release pipeline against ${TAG}..."
+          # The dispatch is fire-and-forget — release.yml sequences the
+          # build → sign-attest → publish chain inside a single run via
+          # workflow_call. A failed dispatch is a release-pipeline
+          # outage; surface loudly.
+          if ! gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" --field version="${VERSION}"; then
+            echo "::error ::release-trigger.dispatch_failed release.yml dispatch failed for ${TAG} — investigate gh CLI auth or workflow availability before re-running manually"
             exit 1
           fi
 
       # npm distribution was discontinued 2026-05-09 (wish
       # genie-distribution-cutover G6). The previous npm-publish, audit,
       # and deprecate steps have been deleted. Tag pushes from this
-      # workflow drive build-tarballs.yml via the gh-workflow-run dispatch
-      # above, which then triggers sign-attest.yml + release-publish.yml.
+      # workflow drive release.yml via the gh-workflow-run dispatch
+      # above; release.yml then sequences build-tarballs + sign-attest +
+      # release-publish in one run via workflow_call (wish:
+      # release-pipeline-collapse).
       # The npm OIDC trusted-publisher entry on npmjs.com and any
       # NPM_TOKEN secrets are no longer used by this repo and can be
       # removed from repo + org settings.

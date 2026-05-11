@@ -1,0 +1,97 @@
+name: Release Orphan Alert
+
+# Scheduled tag-orphan detector. Every 30 minutes, enumerate v* tags
+# and GitHub Release objects. If a v* tag is older than 30 minutes
+# and has no corresponding Release, open a release-incident issue
+# linking to the runbook so on-call sees the gap quickly.
+#
+# The orphan signal is the load-bearing alarm for the new
+# release.yml workflow_call orchestrator (wish:
+# release-pipeline-collapse). If the orchestrator fails between
+# tag-push and release-publish, the tag exists but no Release
+# follows — historically this took manual operator inspection to
+# surface; this workflow makes it automatic.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: release-orphan-alert
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect tag-orphans
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan tags vs releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NOW_EPOCH=$(date -u +%s)
+          AGE_THRESHOLD_S=$((30 * 60))
+
+          # Pull v* tags with their commit date (tagger date for
+          # annotated tags; committer date for lightweight tags).
+          # Use git ls-remote + show-ref + per-tag rev-parse pattern
+          # to avoid pulling the full repo history.
+          git fetch --tags origin
+          mapfile -t TAGS < <(git tag --list 'v*' --sort=-creatordate)
+
+          # Collect existing release tag names (set form). Use the REST API
+          # with --paginate to retrieve ALL release pages — `gh release list
+          # --limit N` truncates silently, which would misclassify older tags
+          # as orphans once the repo exceeds N releases (Codex P1 review on
+          # PR #1743 — limit:200 cap had this exact failure mode).
+          RELEASE_TAGS=$(gh api --paginate "repos/${REPO}/releases" --jq '.[].tag_name' | tr '\n' ' ')
+
+          ORPHANS=()
+          for TAG in "${TAGS[@]}"; do
+            # has-release check (whole-word match against the
+            # space-delimited list).
+            if [[ " ${RELEASE_TAGS} " == *" ${TAG} "* ]]; then
+              continue
+            fi
+            TAG_TS=$(git log -1 --format=%ct "$TAG" 2>/dev/null || echo 0)
+            if [[ "$TAG_TS" -eq 0 ]]; then continue; fi
+            AGE=$((NOW_EPOCH - TAG_TS))
+            if [[ "$AGE" -ge "$AGE_THRESHOLD_S" ]]; then
+              ORPHANS+=("$TAG")
+            fi
+          done
+
+          if [[ ${#ORPHANS[@]} -eq 0 ]]; then
+            echo "no orphan tags detected"
+            exit 0
+          fi
+
+          echo "::warning::detected ${#ORPHANS[@]} orphan tag(s): ${ORPHANS[*]}"
+
+          # Open a release-incident issue for each orphan tag, unless
+          # an open issue with the same title already exists (idempotent).
+          for TAG in "${ORPHANS[@]}"; do
+            TITLE="release-incident: ${TAG} has no Release object"
+            EXISTS=$(gh issue list --repo "$REPO" --state open --search "$TITLE in:title" --json number --jq 'length')
+            if [[ "$EXISTS" -gt 0 ]]; then
+              echo "issue already open for ${TAG}; skipping"
+              continue
+            fi
+            gh issue create \
+              --repo "$REPO" \
+              --title "$TITLE" \
+              --label release-incident \
+              --body "Tag \`${TAG}\` is older than 30 minutes and has no GitHub Release object. The release.yml orchestrator (wish: release-pipeline-collapse) either never fired or failed mid-chain. Runbook: \`docs/_internal/runbooks/release-pipeline.md\` (Symptoms → Diagnosis → Recovery)."
+          done

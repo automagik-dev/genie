@@ -28,9 +28,22 @@ name: Sign + Attest Tarballs
 # and looked up by digest via `gh attestation verify`.
 
 on:
-  workflow_run:
-    workflows: ["Build Tarballs"]
-    types: [completed]
+  # Reusable from release.yml orchestrator. The orchestrator calls this
+  # workflow inside the same run, so artifacts pass through the run-shared
+  # store (no run_id input needed). Version is derivable from artifact
+  # filenames; the optional input lets the orchestrator pin it explicitly.
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version (derivable from artifact filenames if omitted)'
+        required: false
+        type: string
+    outputs:
+      version:
+        description: 'Resolved version (parsed from upstream tarball filenames)'
+        value: ${{ jobs.prepare.outputs.version }}
+  # Manual-recovery escape hatch — operators can re-sign tarballs from a
+  # stranded build-tarballs run by passing version + run_id explicitly.
   workflow_dispatch:
     inputs:
       version:
@@ -43,7 +56,7 @@ on:
         type: string
 
 concurrency:
-  group: sign-attest-${{ github.ref }}-${{ inputs.version || github.event.workflow_run.id || github.sha }}
+  group: sign-attest-${{ github.ref }}-${{ inputs.version || github.sha }}
   cancel-in-progress: false
 
 permissions:
@@ -56,32 +69,6 @@ jobs:
   # ---------------------------------------------------------------------------
   prepare:
     name: Prepare hashes for SLSA
-    # SECURITY GUARD — prevents an untrusted PR-built Build Tarballs run from
-    # downstream-triggering this workflow and getting tarballs signed with our
-    # keyless cosign identity / GitHub Attestations API token. workflow_run
-    # propagates id-token + attestations write tokens even when the upstream
-    # was unprivileged (PR contributor), so the guard MUST be on every job
-    # that holds those write scopes — and on `prepare` because every
-    # downstream privileged job depends on it. We accept:
-    #   - our own workflow_dispatch (only triggerable by maintainers)
-    #   - workflow_run from upstream `push` events on dev/main/v* tag (the
-    #     trusted release paths); upstream `pull_request` is rejected.
-    #   - workflow_run from upstream `workflow_dispatch` events on
-    #     dev/main/v* tag — version.yml dispatches build-tarballs.yml on
-    #     each new tag because GITHUB_TOKEN-pushed tags can't trigger
-    #     `push` workflows (anti-recursion). The branch/tag check still
-    #     gates the privileged scopes; PR contributors can't dispatch
-    #     against protected refs.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       (github.event.workflow_run.event == 'push' ||
-        github.event.workflow_run.event == 'workflow_dispatch' ||
-        github.event.workflow_run.event == 'workflow_run') &&
-       (github.event.workflow_run.head_branch == 'main' ||
-        github.event.workflow_run.head_branch == 'dev' ||
-        startsWith(github.event.workflow_run.head_branch, 'v')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -94,13 +81,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Resolve the upstream run-id that holds the tarball artifacts:
+          #  - workflow_dispatch break-glass: operator supplies inputs.run_id
+          #    pointing at a prior build-tarballs run.
+          #  - workflow_call from release.yml orchestrator: build-tarballs ran
+          #    in THIS run; default to github.run_id so download-artifact pulls
+          #    from the current run's shared artifact store.
           if [[ -n "${{ inputs.run_id }}" ]]; then
             RUN_ID="${{ inputs.run_id }}"
-          elif [[ -n "${{ github.event.workflow_run.id }}" ]]; then
-            RUN_ID="${{ github.event.workflow_run.id }}"
           else
-            echo "::error::Cannot determine upstream build-tarballs run-id (need workflow_run trigger or workflow_dispatch run_id input)"
-            exit 1
+            RUN_ID="${{ github.run_id }}"
           fi
           echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
           echo "Upstream run-id: ${RUN_ID}"
@@ -159,19 +149,6 @@ jobs:
   provenance:
     name: SLSA Provenance (Level 3)
     needs: [prepare]
-    # SECURITY GUARD — see prepare job. This job mints OIDC tokens that
-    # produce SLSA L3 attestations under our identity; the guard rejects
-    # workflow_run dispatched from upstream pull_request builds.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       (github.event.workflow_run.event == 'push' ||
-        github.event.workflow_run.event == 'workflow_dispatch' ||
-        github.event.workflow_run.event == 'workflow_run') &&
-       (github.event.workflow_run.head_branch == 'main' ||
-        github.event.workflow_run.head_branch == 'dev' ||
-        startsWith(github.event.workflow_run.head_branch, 'v')))
     permissions:
       id-token: write    # OIDC for SLSA provenance signing
       # `contents: write` is required even though we pass `upload-assets: false`
@@ -202,21 +179,6 @@ jobs:
   sign:
     name: Sign ${{ matrix.platform }}
     needs: [prepare, provenance]
-    # SECURITY GUARD — see prepare job. This job mints OIDC tokens for
-    # cosign keyless signing AND registers GitHub Attestations API entries
-    # under our owner identity; both must be denied to upstream PR-triggered
-    # workflow_run dispatches. id-token + attestations write scopes make
-    # this the most attack-attractive job in the workflow.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       (github.event.workflow_run.event == 'push' ||
-        github.event.workflow_run.event == 'workflow_dispatch' ||
-        github.event.workflow_run.event == 'workflow_run') &&
-       (github.event.workflow_run.head_branch == 'main' ||
-        github.event.workflow_run.head_branch == 'dev' ||
-        startsWith(github.event.workflow_run.head_branch, 'v')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

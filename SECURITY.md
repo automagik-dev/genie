@@ -139,7 +139,7 @@ These invariants apply to every release from `4.260422.x` forward. Legacy lines 
 <!-- BEGIN SIGNING_IDENTITY_PIN -->
 
 ```
-certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/release.yml@
+certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
 certificate-oidc-issuer:     https://token.actions.githubusercontent.com
 provenance source-uri:       github.com/automagik-dev/genie
 ```
@@ -176,7 +176,7 @@ If you cannot run the wrapper — for example, a locked-down incident-response h
 # Paste the three pinned lines above into your check; never accept a
 # value from any other source.
 cosign verify-blob \
-  --certificate-identity-regexp "^https://github.com/automagik-dev/genie/.github/workflows/release.yml@" \
+  --certificate-identity-regexp "^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@" \
   --certificate-oidc-issuer     "https://token.actions.githubusercontent.com" \
   --signature  automagik-genie-4.260422.4.tgz.sig \
   --certificate automagik-genie-4.260422.4.tgz.cert \

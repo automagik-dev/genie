@@ -19,8 +19,16 @@
 
 set -euo pipefail
 
+# Canonical signing-identity pin — verified by scripts/check-fingerprint-pinning.sh.
+# The three comment lines below mirror the substring-grep contract in that
+# script. Rotating the pin requires editing this block AND every witness
+# listed in scripts/check-fingerprint-pinning.sh WITNESSES array.
+#
+# certificate-identity-regexp: ^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@
+# certificate-oidc-issuer:     https://token.actions.githubusercontent.com
+# provenance source-uri:       github.com/automagik-dev/genie
 REPO="automagik-dev/genie"
-WORKFLOW_IDENTITY_REGEXP="^https://github.com/${REPO}/.github/workflows/release.yml@"
+WORKFLOW_IDENTITY_REGEXP="^https://github.com/${REPO}/.github/workflows/sign-attest.yml@"
 OIDC_ISSUER="https://token.actions.githubusercontent.com"
 SOURCE_URI="github.com/${REPO}"
 
