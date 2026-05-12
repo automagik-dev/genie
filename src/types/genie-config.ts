@@ -121,14 +121,17 @@ export const GenieConfigSchema = z.object({
   shortcuts: ShortcutsConfigSchema.default({}),
   codex: CodexConfigSchema.optional(),
   installMethod: z.enum(['source', 'npm', 'bun']).optional(),
-  // Release channel preference. Canonical values: 'latest' (stable) or 'dev'
-  // (pre-release). 'next' is accepted as a read-time alias for 'dev' for
-  // configs written by pre-release-channel-dev binaries (where the channel
-  // was named 'next' before the rename — see wish release-channel-dev,
-  // decision #3). Writes always emit 'latest' or 'dev'; the alias never
-  // round-trips back to disk.
+  // Release channel preference. Canonical values: 'latest' (stable),
+  // 'homolog' (staging — middle tier in dev→homolog→stable promotion),
+  // or 'dev' (pre-release). 'next' is accepted as a read-time alias for
+  // 'dev' for configs written by pre-release-channel-dev binaries (where
+  // the channel was named 'next' before the rename — see wish
+  // release-channel-dev, decision #3). Writes always emit one of the
+  // three canonical tokens; the 'next' alias never round-trips back to
+  // disk. 'homolog' added 2026-05-12 per Felipe's cross-repo channel
+  // taxonomy unification.
   updateChannel: z
-    .enum(['latest', 'next', 'dev'])
+    .enum(['latest', 'next', 'dev', 'homolog'])
     .default('latest')
     .transform((v) => (v === 'next' ? ('dev' as const) : v)),
   setupComplete: z.boolean().default(false),

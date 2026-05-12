@@ -28,14 +28,21 @@ on:
         required: true
         type: string
       channel:
-        description: 'Release channel — stable publishes to @latest, dev/beta/canary are prereleases with their own .well-known/<channel>.json pointer'
+        description: 'Release channel — stable publishes to @latest; homolog + dev are prereleases with their own .well-known/<channel>.json pointer'
         required: false
         type: choice
         default: stable
+        # Canonical channel taxonomy (Felipe directive 2026-05-12,
+        # unified across pgserve/omni/genie):
+        #   stable  → main branch    → .well-known/latest.json
+        #   homolog → homolog branch → .well-known/homolog.json
+        #   dev     → dev branch     → .well-known/dev.json
+        # beta + canary retired. genie may not have an active homolog
+        # branch yet (omni does); the channel surface is kept for
+        # cross-repo taxonomy parity + future operator dispatch.
         options:
           - stable
-          - beta
-          - canary
+          - homolog
           - dev
 
 permissions:

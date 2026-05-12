@@ -322,9 +322,10 @@ describe('manifestUrlForChannel (G5)', () => {
     );
   });
 
-  test('beta/canary/dev get their own per-channel files', () => {
-    expect(manifestUrlForChannel('beta')).toContain('.well-known/beta.json');
-    expect(manifestUrlForChannel('canary')).toContain('.well-known/canary.json');
+  test('homolog/dev get their own per-channel files', () => {
+    // Canonical taxonomy (2026-05-12, cross-repo unified): stable / homolog / dev.
+    // beta + canary retired — no longer accepted by ReleaseChannel type.
+    expect(manifestUrlForChannel('homolog')).toContain('.well-known/homolog.json');
     expect(manifestUrlForChannel('dev')).toContain('.well-known/dev.json');
   });
 });
@@ -404,6 +405,29 @@ describe('resolveChannel — --dev flag + --next deprecation alias (release-chan
 
   test('--stable resolves to "stable" even if config previously set dev', async () => {
     expect(await resolveChannel({ stable: true })).toBe('stable');
+  });
+
+  // Canonical taxonomy (2026-05-12): stable / homolog / dev.
+  // homolog is the middle tier in the dev → homolog → stable promotion
+  // ladder. The flag ranks ABOVE --dev (closer to stable) but BELOW --stable.
+  test('--homolog resolves to channel "homolog"', async () => {
+    expect(await resolveChannel({ homolog: true })).toBe('homolog');
+    expect(stderrCapture).toBe('');
+  });
+
+  test('--stable wins over --homolog when both are set', async () => {
+    expect(await resolveChannel({ homolog: true, stable: true })).toBe('stable');
+    expect(stderrCapture).toBe('');
+  });
+
+  test('--homolog wins over --dev when both are set (closer to stable)', async () => {
+    expect(await resolveChannel({ homolog: true, dev: true })).toBe('homolog');
+    expect(stderrCapture).toBe('');
+  });
+
+  test('--homolog wins over --next without emitting deprecation', async () => {
+    expect(await resolveChannel({ homolog: true, next: true })).toBe('homolog');
+    expect(stderrCapture).toBe('');
   });
 });
 

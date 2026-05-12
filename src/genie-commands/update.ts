@@ -156,13 +156,22 @@ export function shortCircuitIfCurrent(currentVersion: string, latestVersion: str
 /** Channel identifier resolved from CLI flags / config. Matches the
  *  workflow's `--channel` choices.
  *
- *  Naming history: prior to wish `release-channel-dev` (2026-05-11) the
- *  dev/pre-release channel was named `next` (npm dist-tag heritage). After
- *  the npm cutover (wish G6, 2026-05-09) the npm dist-tag was meaningless,
- *  so the channel was renamed to `dev` to match the source branch name and
- *  the operator mental model. `--next` is kept as a deprecated CLI alias for
- *  one release cycle and config-read backward-compat for arbitrarily long. */
-export type ReleaseChannel = 'stable' | 'beta' | 'canary' | 'dev';
+ *  Canonical taxonomy (Felipe directive 2026-05-12, cross-repo unified):
+ *  `stable` / `homolog` / `dev`. beta + canary retired.
+ *
+ *  Naming history:
+ *  - prior to wish `release-channel-dev` (2026-05-11) the dev/pre-release
+ *    channel was named `next` (npm dist-tag heritage). After the npm
+ *    cutover (wish G6, 2026-05-09) the npm dist-tag was meaningless, so
+ *    the channel was renamed to `dev` to match the source branch name
+ *    and operator mental model. `--next` is kept as a deprecated CLI
+ *    alias for one release cycle and config-read backward-compat.
+ *  - 2026-05-12: `beta` + `canary` retired (never had producer paths).
+ *    `homolog` added for the dev→homolog→stable promotion ladder; matches
+ *    the homolog branch posture omni uses today. genie may not have an
+ *    active homolog branch yet, but the type surface is present for
+ *    cross-repo taxonomy parity. */
+export type ReleaseChannel = 'stable' | 'homolog' | 'dev';
 
 export interface LatestManifest {
   schema_version: number;
@@ -1139,15 +1148,17 @@ export function _resetNextDeprecationLatchForTest(): void {
 
 export async function resolveChannel(options: {
   dev?: boolean;
+  homolog?: boolean;
   next?: boolean;
   stable?: boolean;
 }): Promise<ReleaseChannel> {
-  // --stable is checked FIRST so an explicit override always wins over dev /
-  // next prerelease intent. Common case: wrappers / aliases / smoke scripts
-  // append `--stable` to force-pull-back from a prerelease channel regardless
-  // of what other flags are on the command line. (PR #2419 review: codex
-  // P2 + gemini medium — without this ordering, `genie update --stable --dev`
-  // resolved to dev, silently ignoring the operator's stable intent.)
+  // --stable is checked FIRST so an explicit override always wins over the
+  // prerelease channels (homolog / dev / next). Common case: wrappers /
+  // aliases / smoke scripts append `--stable` to force-pull-back from a
+  // prerelease regardless of what other flags are on the command line.
+  // (PR #2419 review: codex P2 + gemini medium — without this ordering,
+  // `genie update --stable --dev` resolved to dev, silently ignoring the
+  // operator's stable intent.)
   if (options.stable) {
     // Still emit the --next deprecation notice if --next was passed too —
     // operators learn to drop it from muscle memory even when --stable
@@ -1155,6 +1166,10 @@ export async function resolveChannel(options: {
     if (options.next) emitNextDeprecationOnce();
     return 'stable';
   }
+  // --homolog ranks ABOVE --dev so an explicit `--homolog --dev` picks
+  // homolog (the higher-tier prerelease channel; closer to stable in the
+  // dev→homolog→stable promotion ladder).
+  if (options.homolog) return 'homolog';
   if (options.dev) return 'dev';
   if (options.next) {
     emitNextDeprecationOnce();
@@ -1164,8 +1179,10 @@ export async function resolveChannel(options: {
     try {
       const config = await loadGenieConfig();
       // The zod schema's `.transform` already normalizes the legacy 'next'
-      // token to 'dev' at parse time, so only 'latest' | 'dev' can land here.
+      // token to 'dev' at parse time. Post-2026-05-12 the schema also
+      // accepts 'homolog'; only 'latest' | 'homolog' | 'dev' can land here.
       if (config.updateChannel === 'dev') return 'dev';
+      if (config.updateChannel === 'homolog') return 'homolog';
       if (config.updateChannel === 'latest') return 'stable';
     } catch {
       // ignore
@@ -1177,11 +1194,17 @@ export async function resolveChannel(options: {
 export async function persistChannel(channel: ReleaseChannel): Promise<void> {
   try {
     const config = await loadGenieConfig();
-    // Map to the genie-config schema enum. The schema accepts 'next' as a
-    // read-time alias but we always write the canonical token ('dev' or
-    // 'latest') so the user's config converges to the current naming on
-    // their next update.
-    config.updateChannel = channel === 'dev' ? 'dev' : 'latest';
+    // Map ReleaseChannel → genie-config schema enum. The schema accepts
+    // 'next' as a read-time alias but we always write a canonical token
+    // ('latest' / 'homolog' / 'dev') so the user's config converges to
+    // the current naming on their next update.
+    if (channel === 'dev') {
+      config.updateChannel = 'dev';
+    } else if (channel === 'homolog') {
+      config.updateChannel = 'homolog';
+    } else {
+      config.updateChannel = 'latest';
+    }
     await saveGenieConfig(config);
   } catch {
     // non-fatal — channel preference lost but update still works.
@@ -1195,6 +1218,10 @@ export async function persistChannel(channel: ReleaseChannel): Promise<void> {
 export interface UpdateCommandOptions {
   /** `--dev`. Switch to the dev/pre-release channel (.well-known/dev.json). */
   dev?: boolean;
+  /** `--homolog`. Switch to the homolog/staging channel
+   *  (.well-known/homolog.json). Middle tier in the
+   *  dev → homolog → stable promotion ladder. */
+  homolog?: boolean;
   /** `--next`. Deprecated alias for `--dev`. Resolves to channel 'dev' and
    *  emits a single-line stderr deprecation notice. */
   next?: boolean;
