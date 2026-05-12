@@ -204,7 +204,7 @@ jobs:
           fi
 
       # ---------------------------------------------------------------------
-      # Per-channel manifest pointer — committed to main so install.sh +
+      # Per-channel manifest pointers — committed to main so install.sh +
       # `genie update` can resolve the current version for each channel via:
       #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/<channel>.json
       #
@@ -214,12 +214,14 @@ jobs:
       #   beta   → beta.json
       #   canary → canary.json
       #
-      # The stable-only gate that lived here through v4.260511.3 was lifted
-      # — every non-draft publish (regardless of channel) writes its own
-      # channel file. Cross-channel writes are impossible because the filename
-      # is derived from the validated channel input.
+      # The stable-only gate that lived here through v4.260511.3 was lifted —
+      # every non-draft publish writes the manifest(s) for the channel(s) it
+      # advances. A stable release ALSO advances dev (single-pipeline reality:
+      # there is no dev-only release path today — every release is the latest
+      # of both channels). When a dev-only pipeline lands later, channel=dev
+      # writes ONLY dev.json and latest.json stays at the prior stable.
       # ---------------------------------------------------------------------
-      - name: Update .well-known/${{ steps.meta.outputs.channel == 'stable' && 'latest' || steps.meta.outputs.channel }}.json (non-draft only)
+      - name: Update channel manifests (.well-known/*.json — non-draft only)
         if: ${{ !inputs.draft }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -237,23 +239,37 @@ jobs:
           # stable keeps the historical filename `latest.json`; every other
           # channel uses its own name. install.sh + genie update's
           # `manifestUrlForChannel` consume the same convention.
-          if [ "$CHANNEL" = "stable" ]; then
-            MANIFEST_FILE="latest.json"
-          else
-            MANIFEST_FILE="${CHANNEL}.json"
-          fi
+          # Channels to advance on this release. A stable release is also
+          # the latest dev release (today we have a single release pipeline
+          # — every release advances both pointers). Future dev-only
+          # releases (channel=dev with --prerelease) only advance dev.json.
+          # latest.json is the back-compat name for stable; dev.json is the
+          # new dev-channel pointer (wish release-channel-dev).
+          declare -A MANIFEST_FILES=()
+          case "$CHANNEL" in
+            stable)
+              MANIFEST_FILES[stable]="latest.json"
+              MANIFEST_FILES[dev]="dev.json"
+              ;;
+            *)
+              MANIFEST_FILES[$CHANNEL]="${CHANNEL}.json"
+              ;;
+          esac
 
           mkdir -p .well-known
-          cat > ".well-known/${MANIFEST_FILE}" <<EOF
+          for manifest_channel in "${!MANIFEST_FILES[@]}"; do
+            FILE="${MANIFEST_FILES[$manifest_channel]}"
+            cat > ".well-known/${FILE}" <<EOF
           {
             "schema_version": 1,
-            "channel": "${CHANNEL}",
+            "channel": "${manifest_channel}",
             "version": "${VERSION}",
             "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "tarball_base": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}",
             "platforms": ["linux-x64-glibc", "linux-x64-musl", "linux-arm64", "darwin-arm64"]
           }
           EOF
+          done
 
           git config user.name "release-bot"
           git config user.email "release-bot@namastex.com"
@@ -264,13 +280,18 @@ jobs:
           # PR #2412 bootstrapped manually. Staging registers the path; then
           # `git diff --cached --quiet HEAD --` correctly reports "differs from
           # HEAD" for both new and modified files.
-          git add ".well-known/${MANIFEST_FILE}"
-          if git diff --cached --quiet HEAD -- ".well-known/${MANIFEST_FILE}"; then
-            echo "${MANIFEST_FILE} unchanged — nothing to commit"
+          MANIFEST_PATHS=()
+          for f in "${MANIFEST_FILES[@]}"; do
+            MANIFEST_PATHS+=(".well-known/${f}")
+          done
+          git add "${MANIFEST_PATHS[@]}"
+          if git diff --cached --quiet HEAD -- "${MANIFEST_PATHS[@]}"; then
+            echo "manifests unchanged — nothing to commit"
             exit 0
           fi
-          git commit -m "chore(release): update ${MANIFEST_FILE} → v${VERSION}"
+          MANIFEST_LIST=$(IFS=','; echo "${!MANIFEST_FILES[*]}")
+          git commit -m "chore(release): update manifests (${MANIFEST_LIST}) → v${VERSION}"
           git push origin main || {
-            echo "::warning::push to main failed (likely branch protection or permission); update .well-known/${MANIFEST_FILE} manually"
+            echo "::warning::push to main failed (likely branch protection or permission); update ${MANIFEST_PATHS[*]} manually"
             exit 0
           }
