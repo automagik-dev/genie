@@ -156,13 +156,22 @@ export function shortCircuitIfCurrent(currentVersion: string, latestVersion: str
 /** Channel identifier resolved from CLI flags / config. Matches the
  *  workflow's `--channel` choices.
  *
- *  Naming history: prior to wish `release-channel-dev` (2026-05-11) the
- *  dev/pre-release channel was named `next` (npm dist-tag heritage). After
- *  the npm cutover (wish G6, 2026-05-09) the npm dist-tag was meaningless,
- *  so the channel was renamed to `dev` to match the source branch name and
- *  the operator mental model. `--next` is kept as a deprecated CLI alias for
- *  one release cycle and config-read backward-compat for arbitrarily long. */
-export type ReleaseChannel = 'stable' | 'beta' | 'canary' | 'dev';
+ *  Canonical taxonomy (Felipe directive 2026-05-12, cross-repo unified):
+ *  `stable` / `homolog` / `dev`. beta + canary retired.
+ *
+ *  Naming history:
+ *  - prior to wish `release-channel-dev` (2026-05-11) the dev/pre-release
+ *    channel was named `next` (npm dist-tag heritage). After the npm
+ *    cutover (wish G6, 2026-05-09) the npm dist-tag was meaningless, so
+ *    the channel was renamed to `dev` to match the source branch name
+ *    and operator mental model. `--next` is kept as a deprecated CLI
+ *    alias for one release cycle and config-read backward-compat.
+ *  - 2026-05-12: `beta` + `canary` retired (never had producer paths).
+ *    `homolog` added for the dev→homolog→stable promotion ladder; matches
+ *    the homolog branch posture omni uses today. genie may not have an
+ *    active homolog branch yet, but the type surface is present for
+ *    cross-repo taxonomy parity. */
+export type ReleaseChannel = 'stable' | 'homolog' | 'dev';
 
 export interface LatestManifest {
   schema_version: number;

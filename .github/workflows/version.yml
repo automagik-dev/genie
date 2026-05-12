@@ -180,13 +180,22 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           TAG="refs/tags/v${VERSION}"
-          # Channel selector: dev-branch builds publish to the dev channel
-          # (prerelease GH Release + .well-known/dev.json), main-branch builds
-          # to stable. The branch identity comes from steps.context.outputs.branch
-          # which was already resolved from workflow_run.head_branch (or the
-          # 'dev' default for workflow_dispatch). See wish release-channel-dev.
+          # Canonical channel taxonomy (Felipe directive 2026-05-12,
+          # unified across pgserve/omni/genie):
+          #   main    → stable  → .well-known/latest.json
+          #   homolog → homolog → .well-known/homolog.json
+          #   dev/*   → dev     → .well-known/dev.json
+          # The branch identity comes from steps.context.outputs.branch,
+          # which was already resolved from workflow_run.head_branch
+          # (or the 'dev' default for workflow_dispatch). genie may not
+          # have an active homolog branch yet; the case is wired for
+          # cross-repo parity + future operator dispatch.
           BRANCH="${{ steps.context.outputs.branch }}"
-          if [ "$BRANCH" = "main" ]; then CHANNEL="stable"; else CHANNEL="dev"; fi
+          case "$BRANCH" in
+            main)    CHANNEL="stable" ;;
+            homolog) CHANNEL="homolog" ;;
+            *)       CHANNEL="dev" ;;
+          esac
           echo "Dispatching release pipeline against ${TAG} (channel=${CHANNEL})..."
           # The dispatch is fire-and-forget — release.yml sequences the
           # build → sign-attest → publish chain inside a single run via

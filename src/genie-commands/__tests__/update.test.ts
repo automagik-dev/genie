@@ -322,9 +322,10 @@ describe('manifestUrlForChannel (G5)', () => {
     );
   });
 
-  test('beta/canary/dev get their own per-channel files', () => {
-    expect(manifestUrlForChannel('beta')).toContain('.well-known/beta.json');
-    expect(manifestUrlForChannel('canary')).toContain('.well-known/canary.json');
+  test('homolog/dev get their own per-channel files', () => {
+    // Canonical taxonomy (2026-05-12, cross-repo unified): stable / homolog / dev.
+    // beta + canary retired — no longer accepted by ReleaseChannel type.
+    expect(manifestUrlForChannel('homolog')).toContain('.well-known/homolog.json');
     expect(manifestUrlForChannel('dev')).toContain('.well-known/dev.json');
   });
 });
