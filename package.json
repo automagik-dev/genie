@@ -59,6 +59,7 @@
     "@opentui/keymap": "0.2.6",
     "@opentui/react": "0.2.6",
     "@tauri-apps/api": "2.10.1",
+    "@xterm/headless": "^5.5.0",
     "chokidar": "^5.0.0",
     "commander": "12.1.0",
     "ignore": "7.0.5",

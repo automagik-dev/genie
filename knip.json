@@ -56,7 +56,7 @@
     "src/migrations/steps/*.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
-  "ignore": ["src/lib/design-tokens.ts"],
+  "ignore": ["src/lib/design-tokens.ts", "src/tui/widgets/__benches__/**"],
   "ignoreBinaries": ["which", "scripts/verify-release.sh", "pgserve"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
