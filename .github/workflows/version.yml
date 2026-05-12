@@ -61,6 +61,10 @@ jobs:
           startsWith(github.event.workflow_run.head_commit.message, 'Merge pull request') &&
           contains(github.event.workflow_run.head_commit.message, '/dev'))
          ||
+         (github.event.workflow_run.head_branch == 'homolog' &&
+          startsWith(github.event.workflow_run.head_commit.message, 'Merge pull request') &&
+          contains(github.event.workflow_run.head_commit.message, '/dev'))
+         ||
          (github.event.workflow_run.head_branch == 'dev')
        ))
 
@@ -69,16 +73,32 @@ jobs:
         id: context
         run: |
           BRANCH="${{ github.event.workflow_run.head_branch || 'dev' }}"
-          if [ "$BRANCH" = "main" ]; then
-            # Main push: tag whatever release.yml just landed.
-            # Do NOT bump — package.json already carries the dev-derived version.
-            echo "branch=main" >> "$GITHUB_OUTPUT"
-            echo "should_bump=false" >> "$GITHUB_OUTPUT"
-          else
-            # Dev push (or manual dispatch): derive + bump.
-            echo "branch=dev" >> "$GITHUB_OUTPUT"
-            echo "should_bump=true" >> "$GITHUB_OUTPUT"
-          fi
+          case "$BRANCH" in
+            main)
+              # Main push: tag whatever release.yml just landed.
+              # Do NOT bump — package.json already carries the dev-derived
+              # version. Channel: stable (advances latest + homolog + dev).
+              echo "branch=main" >> "$GITHUB_OUTPUT"
+              echo "should_bump=false" >> "$GITHUB_OUTPUT"
+              ;;
+            homolog)
+              # Homolog push: tag whatever the dev→homolog promotion just
+              # landed. Same no-bump posture as main — package.json already
+              # carries the dev-derived version that homolog is promoting.
+              # Channel: homolog (advances homolog + dev). Felipe directive
+              # 2026-05-12 added homolog as the dev→homolog→stable middle
+              # tier; genie inherits the surface for cross-repo parity even
+              # if its homolog branch is still dormant at PR-merge time.
+              echo "branch=homolog" >> "$GITHUB_OUTPUT"
+              echo "should_bump=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              # Dev push (or manual dispatch): derive + bump.
+              # Channel: dev (advances dev only).
+              echo "branch=dev" >> "$GITHUB_OUTPUT"
+              echo "should_bump=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
           echo "prefix=4" >> "$GITHUB_OUTPUT"
           echo "Resolved: branch=${BRANCH}"
 
