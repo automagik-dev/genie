@@ -340,11 +340,28 @@ async function defaultManifestFetcher(url: string): Promise<string | null> {
 
 interface DownloadAndVerifyOptions {
   /** Test seam: stubs the network/cli surface for deterministic unit tests. */
-  runner?: (cmd: string, args: string[]) => Promise<{ success: boolean; output: string }>;
+  runner?: (
+    cmd: string,
+    args: string[],
+    timeoutMs?: number,
+  ) => Promise<{ success: boolean; output: string }>;
   /** Test seam: skip `gh attestation verify` (used by integration smokes
    *  where the real gh CLI is not available). */
   skipAttestation?: boolean;
 }
+
+/**
+ * `gh attestation verify` performs TWO network round-trips on every call:
+ *   1. GitHub Attestations API lookup by tarball digest (~1-2s)
+ *   2. Sigstore Rekor inclusion-proof verification (~2-5s)
+ * Combined with cosign bundle parsing the local 4-second default in
+ * `runCommandSilent` is too tight — under normal network conditions the
+ * call returns in 3-8s; under load 10-20s is realistic. 60s gives generous
+ * headroom while still catching genuine network failures rather than
+ * hanging forever. Empirical: PR #2421 release v4.260512.2 verify timed
+ * out at 4000ms on a healthy connection (Felipe, 2026-05-12).
+ */
+const ATTESTATION_VERIFY_TIMEOUT_MS = 60_000;
 
 /**
  * Download the platform-specific tarball + cosign bundle + attestation, then
@@ -357,7 +374,14 @@ export async function downloadAndVerifyTarball(
   destDir: string,
   opts: DownloadAndVerifyOptions = {},
 ): Promise<string> {
-  const runner = opts.runner ?? runCommandSilent;
+  // Adapt runCommandSilent's (cmd, args, cwd?, timeoutMs?) positional shape
+  // to the (cmd, args, timeoutMs?) runner contract — we never need cwd here
+  // and the verify step needs a generous timeout (see
+  // ATTESTATION_VERIFY_TIMEOUT_MS).
+  const runner =
+    opts.runner ??
+    ((cmd: string, args: string[], timeoutMs?: number) =>
+      runCommandSilent(cmd, args, undefined, timeoutMs));
   mkdirSync(destDir, { recursive: true });
   const versionTag = `v${manifest.version}`;
   const tarballName = `genie-${manifest.version}-${platform}.tar.gz`;
@@ -391,7 +415,11 @@ export async function downloadAndVerifyTarball(
   }
 
   if (!opts.skipAttestation) {
-    const verifyResult = await runner('gh', ['attestation', 'verify', tarballPath, '--owner', RELEASES_OWNER]);
+    const verifyResult = await runner(
+      'gh',
+      ['attestation', 'verify', tarballPath, '--owner', RELEASES_OWNER],
+      ATTESTATION_VERIFY_TIMEOUT_MS,
+    );
     if (!verifyResult.success) {
       throw new Error(`gh attestation verify failed for ${tarballName}: ${verifyResult.output.trim() || 'no output'}`);
     }
