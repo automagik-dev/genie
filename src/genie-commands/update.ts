@@ -340,11 +340,7 @@ async function defaultManifestFetcher(url: string): Promise<string | null> {
 
 interface DownloadAndVerifyOptions {
   /** Test seam: stubs the network/cli surface for deterministic unit tests. */
-  runner?: (
-    cmd: string,
-    args: string[],
-    timeoutMs?: number,
-  ) => Promise<{ success: boolean; output: string }>;
+  runner?: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>;
   /** Test seam: skip `gh attestation verify` (used by integration smokes
    *  where the real gh CLI is not available). */
   skipAttestation?: boolean;
@@ -380,8 +376,7 @@ export async function downloadAndVerifyTarball(
   // ATTESTATION_VERIFY_TIMEOUT_MS).
   const runner =
     opts.runner ??
-    ((cmd: string, args: string[], timeoutMs?: number) =>
-      runCommandSilent(cmd, args, undefined, timeoutMs));
+    ((cmd: string, args: string[], timeoutMs?: number) => runCommandSilent(cmd, args, undefined, timeoutMs));
   mkdirSync(destDir, { recursive: true });
   const versionTag = `v${manifest.version}`;
   const tarballName = `genie-${manifest.version}-${platform}.tar.gz`;
