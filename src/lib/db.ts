@@ -18,7 +18,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -233,12 +233,17 @@ function liveDaemonPid(pid: number | null): number | null {
 /**
  * Resolve the directory of genie's own `package.json` (issue #1575).
  *
- * Walks UP from `import.meta.dir` looking for the first `package.json` whose
- * `name === '@automagik/genie'`. Mirrors `version.ts`'s strategy. Cached.
+ * Two-stage strategy mirroring `version.ts:64-105`:
+ *   1. Walk UP from `import.meta.dir` looking for `name === '@automagik/genie'`.
+ *      Works in dev mode and for installed-via-source layouts.
+ *   2. Fall back to `dirname(realpathSync(process.execPath))`. For
+ *      `bun --compile` binaries `import.meta.dir` lives inside the bunfs
+ *      overlay and the walk above never reaches a real on-disk package.json;
+ *      the binary's own location is install-deterministic and works as a
+ *      stable cwd-pin anchor.
  *
- * Returns `null` if no genie package.json can be found within `MAX_WALK_DEPTH`
- * — defensive fallback for unusual deployment layouts (tarballs, npm-link
- * setups). Callers should treat null as "skip the cwd pin" rather than fail.
+ * Returns `null` only when both strategies fail. Callers treat null as
+ * "skip the cwd pin" rather than fail.
  */
 function resolveGeniePackageDir(): string | null {
   if (geniePackageDirCache !== undefined) return geniePackageDirCache;
@@ -264,6 +269,22 @@ function resolveGeniePackageDir(): string | null {
     const parent = dirname(current);
     if (parent === current) break; // filesystem root
     current = parent;
+  }
+  // Bun --compile fallback: the binary's own directory. Stable across all
+  // invocations of the same install, so the pgserve fingerprint stays
+  // deterministic even when no @automagik/genie package.json is reachable
+  // on disk (bunfs overlay case).
+  try {
+    const execPath = process.execPath;
+    if (execPath) {
+      const execDir = dirname(realpathSync(execPath));
+      if (execDir && existsSync(execDir)) {
+        geniePackageDirCache = execDir;
+        return execDir;
+      }
+    }
+  } catch {
+    // execPath unavailable or realpathSync failed — fall through to null.
   }
   geniePackageDirCache = null;
   return null;
