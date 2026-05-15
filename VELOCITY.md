@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-05-03 12:15 UTC | Data range: 2026-03-13 to 2026-05-03
+> Last updated: 2026-05-15 12:06 UTC | Data range: 2026-03-13 to 2026-05-15
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 267 | 808 | 579 |
-| Releases | 0 | 67 | 0 |
-| LoC (net) | +33.1K | +140.9K | — |
-| Contributors | 5 | 11 | 11 |
+| Commits | 0 | 393 | 316 |
+| Releases | 0 | 9 | 0 |
+| LoC (net) | 0 | +61.2K | — |
+| Contributors | 0 | 8 | 9 |
 
 ---
 
@@ -31,16 +31,13 @@
 
 | Rank | Contributor | Commits (approx) |
 |-----:|-------------|------------------:|
-| 1 | Felipe Rosa | 202 |
-| 2 | github-actions[bot] | 167 |
-| 3 | Genie | 149 |
-| 4 | Claude | 98 |
-| 5 | Test User | 67 |
-| 6 | Felipe | 41 |
-| 7 | Genie (env-specialist) | 16 |
-| 8 | namastex888 | 12 |
-| 9 | Luís Sousa | 10 |
-| 10 | Cezar Vasconcelos | 5 |
-| 11 | felipe rosa | 4 |
+| 1 | Felipe Rosa | 93 |
+| 2 | Genie | 90 |
+| 3 | github-actions[bot] | 89 |
+| 4 | Felipe | 41 |
+| 5 | Claude | 37 |
+| 6 | Genie (env-specialist) | 16 |
+| 7 | namastex888 | 12 |
+| 8 | felipe rosa | 4 |
 
-*11 contributors since 2026-04-10*
+*9 contributors since 2026-04-13*
