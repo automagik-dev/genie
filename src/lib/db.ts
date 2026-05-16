@@ -27,7 +27,12 @@ import { runMigrations } from './db-migrations.js';
 import { needsSeed, needsSeededTeams, runSeed } from './pg-seed.js';
 import { getProcessStartTime } from './process-identity.js';
 import { respawnInvocation } from './respawn.js';
-import { clearRoleCutoverSentinel, defaultRoleCutoverSink, resolveScopedConnectionIdentity } from './role-cutover.js';
+import {
+  clearRoleCutoverSentinel,
+  defaultRoleCutoverSink,
+  isRoleCutoverEnabled,
+  resolveScopedConnectionIdentity,
+} from './role-cutover.js';
 import { maybePromptV1Migration } from './v1-migration-prompt.js';
 
 /**
@@ -1215,9 +1220,10 @@ async function buildAndOpenConnection(transport: Transport, _t0: number): Promis
   let activeClient = bootstrapClient;
   sqlClient = bootstrapClient;
 
-  // Only consult admin.json when cutover is opted in, so the disabled path is
-  // identical to today (no extra stat, no behavior change).
-  const cutoverEnabled = process.env.GENIE_ROLE_CUTOVER === '1';
+  // Wave 3: cutover is DEFAULT-ON; only the documented kill-switch
+  // (GENIE_ROLE_CUTOVER=0) skips the admin.json consult so the killed path is
+  // byte-identical to legacy (no extra stat, no behavior change).
+  const cutoverEnabled = isRoleCutoverEnabled();
   const directPostmaster = cutoverEnabled && transport.useSocket && readPostmasterDiscovery() !== null;
 
   try {
@@ -1428,8 +1434,8 @@ function buildPgClientOptions(
  * `buildPgClientOptions` otherwise hard-sets `username=postgres` — carries the
  * rebind. The accept-hook/router path and the TCP/test paths are intentionally
  * left on `postgres`/`postgres`: rebinding the router path is a silent no-op
- * that re-forks as the superuser on boot #2. Default OFF
- * (`GENIE_ROLE_CUTOVER=1` opt-in this wave).
+ * that re-forks as the superuser on boot #2. Wave 3: DEFAULT-ON — the only way
+ * back to legacy is the documented kill-switch `GENIE_ROLE_CUTOVER=0`.
  */
 export function shouldAttemptRoleCutover(args: {
   enabled: boolean;
@@ -1457,7 +1463,7 @@ async function maybeRebindToScopedRole(args: {
   // biome-ignore lint/suspicious/noExplicitAny: postgres.js default export factory
   pgModule: any;
 }): Promise<postgres.Sql | null> {
-  const enabled = process.env.GENIE_ROLE_CUTOVER === '1';
+  const enabled = isRoleCutoverEnabled();
   if (
     !shouldAttemptRoleCutover({
       enabled,
