@@ -24,7 +24,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { resolveDatabaseName } from './db.js';
@@ -197,11 +197,16 @@ export function deriveScopedRoleName(): string | null {
 
 export type RoleCutoverEventName =
   | 'role-cutover.provisioned'
+  | 'role-cutover.cutover'
   | 'role-cutover.skip.disabled'
   | 'role-cutover.skip.fingerprint-unstable'
   | 'role-cutover.skip.lock-contended'
   | 'role-cutover.skip.already-provisioned'
-  | 'role-cutover.error.provision-failed';
+  | 'role-cutover.skip.sentinel-fast-path'
+  | 'role-cutover.error.provision-failed'
+  // Group 2 — identity-rebind fallbacks. The `<reason>` suffix is open-ended
+  // by council mandate (every degraded path emits its own reason out-of-band).
+  | `role-cutover.fallback.${string}`;
 
 export interface RoleCutoverEvent {
   event: RoleCutoverEventName;
@@ -398,8 +403,208 @@ export async function ensureScopedRole(opts: EnsureScopedRoleOptions): Promise<R
   }
 }
 
+// ============================================================================
+// Group 2 — per-fingerprint sentinel + identity rebind resolution.
+//
+// The sentinel is a per-fingerprint FS marker (`~/.genie/.role-cutover-<fp>.json`)
+// caching "role provisioned + grants verified". Steady-state boots cost ONE
+// `stat`, not a role/grant introspection query. It is a *validated cache*, not
+// source-of-truth: the DB (`pg_roles`) wins. A global sentinel would strand a
+// multi-checkout host's second fingerprint (council finding) — so it is keyed
+// by the 12-hex fingerprint segment, never a single global file.
+// ============================================================================
+
+/**
+ * Fallback login identity = today's exact behavior (the postgres superuser).
+ * Reconstructed locally (mirrors `db.ts:DB_NAME`) so this stays a pure
+ * top-level constant — importing `DB_NAME` would be a circular top-level
+ * dependency (db.ts imports this module) and trip the TDZ on load.
+ */
+const FALLBACK_SUPERUSER = ['post', 'gres'].join('');
+
+export interface RoleCutoverSentinel {
+  roleName: string;
+  database: string;
+  verifiedAt: string;
+}
+
+/** `~/.genie/.role-cutover-<fp>.json` — per-fingerprint, never global. */
+export function roleCutoverSentinelPath(fingerprintHex: string): string {
+  assertSafeIdentifier('fingerprint', fingerprintHex);
+  return join(genieHome(), `.role-cutover-${fingerprintHex}.json`);
+}
+
+/** O(1) read of the per-fingerprint sentinel. Null = absent/unreadable/stale. */
+export function readRoleCutoverSentinel(fingerprintHex: string): RoleCutoverSentinel | null {
+  let path: string;
+  try {
+    path = roleCutoverSentinelPath(fingerprintHex);
+  } catch {
+    return null;
+  }
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as Partial<RoleCutoverSentinel>;
+    if (
+      typeof parsed?.roleName === 'string' &&
+      parsed.roleName.length > 0 &&
+      typeof parsed.database === 'string' &&
+      parsed.database.length > 0 &&
+      typeof parsed.verifiedAt === 'string'
+    ) {
+      return { roleName: parsed.roleName, database: parsed.database, verifiedAt: parsed.verifiedAt };
+    }
+  } catch {
+    // Malformed sentinel — treat as absent; the DB revalidation path rebuilds it.
+  }
+  return null;
+}
+
+/** Persist the validated cache after a successful provision + pg_roles check. */
+export function writeRoleCutoverSentinel(fingerprintHex: string, data: { roleName: string; database: string }): void {
+  try {
+    const path = roleCutoverSentinelPath(fingerprintHex);
+    mkdirSync(dirname(path), { recursive: true });
+    const payload: RoleCutoverSentinel = {
+      roleName: data.roleName,
+      database: data.database,
+      verifiedAt: new Date().toISOString(),
+    };
+    writeFileSync(path, `${JSON.stringify(payload)}\n`);
+  } catch {
+    // Best-effort: a missing sentinel only costs one introspection query next
+    // boot — it never blocks or breaks the cutover.
+  }
+}
+
+/** Self-heal: drop a stale sentinel so the next boot revalidates from pg_roles. */
+export function clearRoleCutoverSentinel(fingerprintHex: string): void {
+  try {
+    unlinkSync(roleCutoverSentinelPath(fingerprintHex));
+  } catch {
+    // Already gone / unreadable — nothing to heal.
+  }
+}
+
+export interface ScopedConnectionIdentity {
+  /** Login role: the scoped role when cut over, else the postgres superuser. */
+  username: string;
+  /** Always the existing genie DB — Goal A moves zero bytes. */
+  database: string;
+  /** True only when genie should rebind to the scoped role. */
+  cutover: boolean;
+  /** 12-hex fingerprint segment (sentinel key); null when unresolved. */
+  fingerprintHex: string | null;
+  /** Populated when `cutover === false` (fallback / skip reason). */
+  reason?: string;
+}
+
+export interface ResolveScopedIdentityOptions {
+  /** Bootstrap superuser connection (the one genie just opened). */
+  sql: SqlLike;
+  /** Target database — stays the existing genie DB (`postgres` in prod). */
+  database: string;
+  /** Override the derived role name (tests). */
+  roleName?: string;
+  /** Override the sentinel fingerprint key (tests / multi-fingerprint). */
+  fingerprintHex?: string;
+  /** Event sink. Defaults to the out-of-band stderr+file sink. */
+  sink?: RoleCutoverSink;
+  /** Force the gate (tests). Defaults to `GENIE_ROLE_CUTOVER === '1'`. */
+  enabled?: boolean;
+}
+
+/**
+ * Resolve the login identity genie should use on the load-bearing
+ * direct-postmaster path. Never throws and never hard-fails boot: any missing
+ * role / failed query / pgserve-mid-upgrade degrades to today's exact
+ * `postgres`/`postgres` behavior, emitting `role-cutover.fallback.<reason>`
+ * out-of-band.
+ *
+ * Fast-path: a present + matching per-fingerprint sentinel returns the scoped
+ * role with ZERO introspection (one `stat`). Steady-state boot #2 therefore
+ * does NOT silently revert to `postgres`/`postgres`. Absent/stale ⇒ provision
+ * (idempotent) + revalidate against `pg_roles` + rewrite the sentinel.
+ */
+export async function resolveScopedConnectionIdentity(
+  opts: ResolveScopedIdentityOptions,
+): Promise<ScopedConnectionIdentity> {
+  const sink = opts.sink ?? defaultRoleCutoverSink;
+  const enabled = opts.enabled ?? process.env.GENIE_ROLE_CUTOVER === '1';
+  const database = opts.database;
+  const fallback = (reason: string, fp: string | null = null): ScopedConnectionIdentity => ({
+    username: FALLBACK_SUPERUSER,
+    database,
+    cutover: false,
+    fingerprintHex: fp,
+    reason,
+  });
+
+  if (!enabled) {
+    emit(sink, 'role-cutover.skip.disabled');
+    return fallback('disabled');
+  }
+
+  let roleName = opts.roleName ?? null;
+  let fingerprintHex = opts.fingerprintHex ?? null;
+  if (!roleName || !fingerprintHex) {
+    const fp = resolveGenieFingerprint();
+    if (!fp) {
+      emit(sink, 'role-cutover.fallback.fingerprint-unstable');
+      return fallback('fingerprint-unstable');
+    }
+    const names = deriveProvisionedNames(fp);
+    roleName = roleName ?? names.roleName;
+    fingerprintHex = fingerprintHex ?? names.fingerprintHex;
+  }
+  try {
+    assertSafeIdentifier('role', roleName);
+    assertSafeIdentifier('fingerprint', fingerprintHex);
+    assertSafeIdentifier('database', database);
+  } catch {
+    emit(sink, 'role-cutover.fallback.unsafe-identifier', { roleName, database });
+    return fallback('unsafe-identifier', fingerprintHex);
+  }
+
+  // O(1) sentinel fast-path — no DB round-trip in steady state.
+  const sentinel = readRoleCutoverSentinel(fingerprintHex);
+  if (sentinel && sentinel.roleName === roleName && sentinel.database === database) {
+    emit(sink, 'role-cutover.skip.sentinel-fast-path', { roleName, database });
+    return { username: roleName, database, cutover: true, fingerprintHex };
+  }
+
+  // Sentinel absent/stale ⇒ provision (idempotent) + revalidate vs pg_roles.
+  try {
+    const result = await ensureScopedRole({ sql: opts.sql, roleName, database, sink, enabled: true });
+    if (result.status === 'skipped' && result.reason !== 'lock-contended') {
+      emit(sink, `role-cutover.fallback.${result.reason ?? 'provision-failed'}`, { roleName, database });
+      return fallback(result.reason ?? 'provision-failed', fingerprintHex);
+    }
+    // pg_roles is source-of-truth. A `lock-contended` skip means a sibling
+    // boot is provisioning concurrently; the role may already be present, so
+    // we still validate rather than blindly falling back.
+    const exists = await opts.sql.unsafe(`SELECT 1 FROM pg_roles WHERE rolname = '${roleName}'`);
+    if (exists.length === 0) {
+      clearRoleCutoverSentinel(fingerprintHex);
+      emit(sink, 'role-cutover.fallback.role-missing', { roleName, database });
+      return fallback('role-missing', fingerprintHex);
+    }
+    writeRoleCutoverSentinel(fingerprintHex, { roleName, database });
+    emit(sink, 'role-cutover.cutover', { roleName, database });
+    return { username: roleName, database, cutover: true, fingerprintHex };
+  } catch (err) {
+    emit(sink, 'role-cutover.fallback.query-failed', {
+      roleName,
+      database,
+      detail: { message: err instanceof Error ? err.message : String(err) },
+    });
+    return fallback('query-failed', fingerprintHex);
+  }
+}
+
 export const __testInternals = Object.freeze({
   ADVISORY_LOCK_KEY,
+  FALLBACK_SUPERUSER,
   resolveGenieFingerprint,
   resolveGeniePackageDir,
 });
