@@ -209,6 +209,10 @@ program
     'Archive stale Claude-team config dirs missing config.json (paired with invincible-genie wish migration 050)',
   )
   .option('--dry-run', 'Pair with --fix-team-orphans to preview archive moves without mutating')
+  .option(
+    '--connection-identity',
+    'Read-only: report the dedicated-role cutover identity (role, rolsuper, database, grants, fallback, sentinel)',
+  )
   .option('--json', 'Emit JSON instead of human output (pairs with --observability)')
   .action(doctorCommand);
 program

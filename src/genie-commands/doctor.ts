@@ -22,10 +22,11 @@ import { fileURLToPath } from 'node:url';
 import { $ } from 'bun';
 import type { BridgeStatusResult, PingOptions } from '../lib/bridge-status.js';
 import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-settings.js';
-import { isAvailable as isRuntimePgAvailable } from '../lib/db.js';
+import { getConnection, isAvailable as isRuntimePgAvailable, resolveDatabaseName } from '../lib/db.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
 import { respawnInvocation } from '../lib/respawn.js';
+import { type RoleCutoverInspection, inspectRoleCutover } from '../lib/role-cutover.js';
 import { checkCommand } from '../lib/system-detect.js';
 import { findWorkspace } from '../lib/workspace.js';
 import {
@@ -813,9 +814,15 @@ export async function doctorCommand(options?: {
   fixTeamOrphans?: boolean;
   dryRun?: boolean;
   json?: boolean;
+  connectionIdentity?: boolean;
 }): Promise<void> {
   if (options?.fix) {
     await doctorFix();
+    return;
+  }
+
+  if (options?.connectionIdentity) {
+    await runConnectionIdentityCheck(Boolean(options.json));
     return;
   }
 
@@ -854,6 +861,152 @@ export async function doctorCommand(options?: {
 
   printDoctorSummary(counts);
   if (counts.errors) process.exit(1);
+}
+
+// ============================================================================
+// `genie doctor --connection-identity` — Goal A, Group 4.
+//
+// READ-ONLY operator inspection of the dedicated-role cutover. Prints the
+// resolved role, rolsuper (must be false when cutover is active), database, the
+// GRANT summary, the fallback-active flag + reason, and the per-fingerprint
+// sentinel state/path. Issues only SELECTs — never CREATE ROLE / GRANT / ALTER.
+// The connection itself follows genie's normal idempotent boot (identical to
+// every other genie command); this subcommand adds zero mutations of its own.
+// ============================================================================
+
+interface ConnectionIdentityDb {
+  reachable: boolean;
+  currentUser?: string;
+  currentDatabase?: string;
+  roleExists?: boolean;
+  rolsuper?: boolean;
+  rolcanlogin?: boolean;
+  grants?: {
+    connect: boolean;
+    schemaUsage: boolean;
+    schemaCreate: boolean;
+    tablesSelectable: number;
+    tablesTotal: number;
+  };
+  error?: string;
+}
+
+const SAFE_ROLE_RE = /^[a-z0-9_]+$/;
+
+/** Read-only DB facts for the cutover identity. Only SELECTs; never mutates. */
+async function queryConnectionIdentityDb(roleName: string | null): Promise<ConnectionIdentityDb> {
+  try {
+    // postgres.js Sql bleed-through — getConnection() returns `any` by design.
+    // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type bleed-through
+    const sql = (await getConnection()) as any;
+    const [whoRow] = await sql.unsafe('SELECT current_user AS who, current_database() AS db');
+    const db: ConnectionIdentityDb = {
+      reachable: true,
+      currentUser: whoRow?.who,
+      currentDatabase: whoRow?.db,
+    };
+    if (!roleName || !SAFE_ROLE_RE.test(roleName)) return db;
+    const roleRows = await sql.unsafe(`SELECT rolsuper, rolcanlogin FROM pg_roles WHERE rolname = '${roleName}'`);
+    if (roleRows.length === 0) return { ...db, roleExists: false };
+    const [g] = await sql.unsafe(
+      `SELECT has_database_privilege('${roleName}', current_database(), 'CONNECT') AS db_connect,
+              has_schema_privilege('${roleName}', 'public', 'USAGE')  AS sch_usage,
+              has_schema_privilege('${roleName}', 'public', 'CREATE') AS sch_create`,
+    );
+    const [t] = await sql.unsafe(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (
+                WHERE has_table_privilege('${roleName}', format('%I.%I', schemaname, tablename), 'SELECT')
+              )::int AS selectable
+         FROM pg_tables WHERE schemaname = 'public'`,
+    );
+    return {
+      ...db,
+      roleExists: true,
+      rolsuper: roleRows[0].rolsuper,
+      rolcanlogin: roleRows[0].rolcanlogin,
+      grants: {
+        connect: g.db_connect,
+        schemaUsage: g.sch_usage,
+        schemaCreate: g.sch_create,
+        tablesSelectable: t.selectable,
+        tablesTotal: t.total,
+      },
+    };
+  } catch (err) {
+    return { reachable: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function deriveFallbackReason(inspection: RoleCutoverInspection, db: ConnectionIdentityDb): string | undefined {
+  if (!inspection.enabled) return 'kill-switch engaged (GENIE_ROLE_CUTOVER=0)';
+  if (!inspection.roleName) return 'fingerprint-unstable (cannot derive scoped role)';
+  if (!db.reachable) return `db-unreachable: ${db.error ?? 'unknown'}`;
+  if (db.roleExists === false) return 'role not provisioned in pg_roles';
+  if (db.currentUser !== inspection.roleName) return `connected as ${db.currentUser} (legacy postgres path)`;
+  return undefined;
+}
+
+function printConnectionIdentity(inspection: RoleCutoverInspection, db: ConnectionIdentityDb): void {
+  const yn = (v: boolean | undefined): string => (v === undefined ? 'n/a' : v ? 'yes' : 'no');
+  const reason = deriveFallbackReason(inspection, db);
+  const cutoverActive = reason === undefined && db.currentUser === inspection.roleName && db.rolsuper === false;
+
+  console.log();
+  console.log('\x1b[1mConnection Identity (dedicated-role cutover)\x1b[0m');
+  console.log(`\x1b[2m${'─'.repeat(40)}\x1b[0m`);
+  console.log(`  cutover enabled:    ${yn(inspection.enabled)}${inspection.killSwitch ? '  (kill-switch ON)' : ''}`);
+  console.log(`  cutover active:     ${cutoverActive ? '\x1b[32myes\x1b[0m' : '\x1b[33mno\x1b[0m'}`);
+  console.log(`  resolved role:      ${inspection.roleName ?? '\x1b[33m<unresolved: fingerprint-unstable>\x1b[0m'}`);
+  console.log(`  database:           ${db.currentDatabase ?? resolveDatabaseName()}`);
+  console.log(`  connected as:       ${db.currentUser ?? '\x1b[33m<db unreachable>\x1b[0m'}`);
+  const superColor = db.rolsuper === false ? '\x1b[32m' : '\x1b[31m';
+  console.log(
+    `  rolsuper:           ${db.rolsuper === undefined ? 'n/a' : `${superColor}${db.rolsuper}\x1b[0m`}` +
+      `${cutoverActive && db.rolsuper !== false ? '  \x1b[31m(EXPECTED false WHEN ACTIVE)\x1b[0m' : ''}`,
+  );
+  console.log(`  rolcanlogin:        ${yn(db.rolcanlogin)}`);
+  if (db.grants) {
+    console.log('  grants:');
+    console.log(`    CONNECT on db:    ${yn(db.grants.connect)}`);
+    console.log(`    USAGE  on public: ${yn(db.grants.schemaUsage)}`);
+    console.log(`    CREATE on public: ${yn(db.grants.schemaCreate)}`);
+    console.log(`    SELECT-able tbls: ${db.grants.tablesSelectable}/${db.grants.tablesTotal}`);
+  } else {
+    console.log('  grants:             n/a (role absent or db unreachable)');
+  }
+  console.log(`  fallback active:    ${reason ? `\x1b[33myes\x1b[0m — ${reason}` : 'no'}`);
+  console.log(`  sentinel path:      ${inspection.sentinelPath ?? 'n/a'}`);
+  console.log(
+    `  sentinel state:     ${
+      inspection.sentinel
+        ? `present (role=${inspection.sentinel.roleName}, db=${inspection.sentinel.database}, verifiedAt=${inspection.sentinel.verifiedAt})`
+        : 'absent'
+    }`,
+  );
+  console.log();
+  console.log(
+    '\x1b[2m  Integrity containment only — NOT confidentiality. --auth-local=trust and the\n' +
+      '  passwordless postgres superuser are unchanged (producer-side, out of scope).\x1b[0m',
+  );
+}
+
+async function runConnectionIdentityCheck(json: boolean): Promise<void> {
+  const inspection = inspectRoleCutover();
+  const db = await queryConnectionIdentityDb(inspection.roleName);
+  const reason = deriveFallbackReason(inspection, db);
+  const cutoverActive = reason === undefined && db.currentUser === inspection.roleName && db.rolsuper === false;
+  if (json) {
+    console.log(
+      JSON.stringify(
+        { cutoverActive, fallbackActive: !cutoverActive, fallbackReason: reason, inspection, db },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  printConnectionIdentity(inspection, db);
 }
 
 function printObservabilityReport(report: Awaited<ReturnType<typeof collectObservabilityHealth>>): void {
