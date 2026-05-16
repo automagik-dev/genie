@@ -17,6 +17,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { _internals } from '../install.js';
 
 const {
@@ -30,6 +32,35 @@ const {
   getEcosystemConfigPath,
   isPgserveOnlinePm2,
 } = _internals;
+
+describe('install.sh release verifier bootstrap', () => {
+  const source = readFileSync(join(__dirname, '..', '..', '..', 'install.sh'), 'utf-8');
+
+  test('bootstraps a pinned cosign verifier when gh attestation is unavailable', () => {
+    expect(source).toContain('COSIGN_VERSION="v2.4.1"');
+    expect(source).toContain('gh_attestation_available');
+    expect(source).toContain('bootstrap_cosign "$platform"');
+    expect(source).toContain('https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/${asset}');
+  });
+
+  test('pins SHA256 for every install.sh-supported cosign asset', () => {
+    expect(source).toContain(
+      'cosign-linux-amd64) echo "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"',
+    );
+    expect(source).toContain(
+      'cosign-linux-arm64) echo "3b2e2e3854d0356c45fe6607047526ccd04742d20bd44afb5be91fa2a6e7cb4a"',
+    );
+    expect(source).toContain(
+      'cosign-darwin-arm64) echo "13343856b69f70388c4fe0b986a31dde5958e444b41be22d785d3dc5e1a9cc62"',
+    );
+  });
+
+  test('does not require jq to parse the release manifest', () => {
+    expect(source).toContain('manifest_get()');
+    expect(source).toContain('manifest_channel_matches');
+    expect(source).not.toContain('need curl; need jq; need tar; need uname');
+  });
+});
 
 describe('install._internals — canonical-stack constants', () => {
   test('canonical pm2 process name is "Genie" (renamed from "genie-serve")', () => {
