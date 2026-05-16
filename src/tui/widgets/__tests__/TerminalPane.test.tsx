@@ -197,6 +197,67 @@ describe('paintXtermBufferToFrame', () => {
   });
 });
 
+describe('paintXtermBufferToFrame — viewport offset (root cause 1)', () => {
+  test('paints the LIVE tail, not the oldest scrollback lines', async () => {
+    // 3-row viewport, generous scrollback. Write 10 logical lines so 7 scroll
+    // off the top into history. The live screen must show R7/R8/R9; the buggy
+    // `getLine(y)` (y from 0) would paint R0/R1/R2 — the oldest scrollback.
+    const ROWS = 3;
+    const COLS = 5;
+    const term = new Terminal({ cols: COLS, rows: ROWS, scrollback: 100, allowProposedApi: true });
+    await writeSync(term, Array.from({ length: 10 }, (_, i) => `R${i}`).join('\r\n'));
+
+    // Sanity: the buffer really did scroll (viewportY advanced past 0).
+    expect(term.buffer.active.viewportY).toBeGreaterThan(0);
+
+    const { buffer, cells } = makeRecordingBuffer();
+    paintXtermBufferToFrame(term.buffer.active, buffer, 0, 0, { cols: COLS, rows: ROWS });
+
+    const rowText = (y: number) =>
+      cells
+        .filter((c) => c.y === y)
+        .sort((a, b) => a.x - b.x)
+        .map((c) => c.char)
+        .join('')
+        .trimEnd();
+    expect([rowText(0), rowText(1), rowText(2)]).toEqual(['R7', 'R8', 'R9']);
+    // And explicitly NOT the oldest scrollback lines.
+    expect([rowText(0), rowText(1), rowText(2)]).not.toEqual(['R0', 'R1', 'R2']);
+    term.dispose();
+  });
+});
+
+describe('TerminalPaneCore.paintInto — dirty gate (root cause 2)', () => {
+  test('skips the full blit when nothing changed, repaints after a write', async () => {
+    const { core, control } = makeCore();
+    const { buffer, cells } = makeRecordingBuffer();
+
+    // First paint is unconditional and walks the whole buffer.
+    const firstCount = core.paintInto(buffer);
+    expect(firstCount).toBeGreaterThan(0);
+    expect(cells.length).toBe(firstCount);
+
+    // No intervening write → second paint must NOT walk the buffer.
+    cells.length = 0;
+    const cachedCount = core.paintInto(buffer);
+    expect(cells.length).toBe(0);
+    expect(cachedCount).toBe(firstCount);
+
+    // A control-mode `%output` chunk flows through `terminal.write(_, cb)`.
+    // Writes/callbacks are processed in order, so once a trailing empty
+    // write's callback fires, the data chunk has been parsed and `markDirty`
+    // has already run.
+    control.emit('output', '%42', Buffer.from('NEW OUTPUT'));
+    await new Promise<void>((resolve) => core.terminal.write('', () => resolve()));
+
+    cells.length = 0;
+    const repaintCount = core.paintInto(buffer);
+    expect(cells.length).toBeGreaterThan(0);
+    expect(repaintCount).toBe(cells.length);
+    core.dispose();
+  });
+});
+
 describe('cellColor / cellAttributes — color resolution', () => {
   test('default cell → host theme default fg + bg', async () => {
     const term = new Terminal({ cols: 1, rows: 1, scrollback: 0, allowProposedApi: true });
