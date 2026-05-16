@@ -44,9 +44,15 @@ describe('install.sh release verifier bootstrap', () => {
   });
 
   test('pins SHA256 for every install.sh-supported cosign asset', () => {
-    expect(source).toContain('cosign-linux-amd64) echo "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"');
-    expect(source).toContain('cosign-linux-arm64) echo "3b2e2e3854d0356c45fe6607047526ccd04742d20bd44afb5be91fa2a6e7cb4a"');
-    expect(source).toContain('cosign-darwin-arm64) echo "13343856b69f70388c4fe0b986a31dde5958e444b41be22d785d3dc5e1a9cc62"');
+    expect(source).toContain(
+      'cosign-linux-amd64) echo "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"',
+    );
+    expect(source).toContain(
+      'cosign-linux-arm64) echo "3b2e2e3854d0356c45fe6607047526ccd04742d20bd44afb5be91fa2a6e7cb4a"',
+    );
+    expect(source).toContain(
+      'cosign-darwin-arm64) echo "13343856b69f70388c4fe0b986a31dde5958e444b41be22d785d3dc5e1a9cc62"',
+    );
   });
 
   test('does not require jq to parse the release manifest', () => {
