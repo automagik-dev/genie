@@ -27,15 +27,41 @@ REPO="automagik-dev/genie"
 MANIFEST_BASE="https://raw.githubusercontent.com/${REPO}/main/.well-known"
 EXPECTED_COSIGN_IDENTITY="^https://github.com/${REPO}/.github/workflows/sign-attest.yml@"
 EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
+COSIGN_VERSION="v2.4.1"
 GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
 LOCAL_BIN="$HOME/.local/bin"
 TMP_DIR="$(mktemp -d -t genie-install-XXXXXX)"
+COSIGN_BIN=""
+COSIGN_BOOTSTRAPPED=0
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$1" >&2; exit "${2:-1}"; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1" 3; }
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+manifest_get() {
+  local payload="$1" key="$2"
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "$payload" | jq -r --arg k "$key" '.[$k] // empty'
+  else
+    printf '%s\n' "$payload" | sed -nE "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p" | head -n 1
+  fi
+}
+
+manifest_channel_matches() {
+  local payload="$1" wanted="$2" actual
+  actual="$(manifest_get "$payload" channel)"
+  [[ "$actual" == "$wanted" || ( -z "$actual" && "$wanted" == "stable" ) ]]
+}
 
 detect_platform() {
   local os arch libc=""
@@ -101,8 +127,7 @@ fetch_latest() {
   url="$(resolve_manifest_url "$channel")"
   log "manifest=${url##*/}"
   payload="$(curl -fsSL "$url")" || die "could not fetch $url" 5
-  printf '%s\n' "$payload" | jq -e --arg c "$channel" '.channel == $c or (.channel == null and $c == "stable")' >/dev/null \
-    || die "manifest channel mismatch (wanted $channel)" 1
+  manifest_channel_matches "$payload" "$channel" || die "manifest channel mismatch (wanted $channel)" 1
   printf '%s\n' "$payload"
 }
 
@@ -111,8 +136,13 @@ audit_log() {
   printf '%s\n' "$1" >> "$GENIE_HOME/audit/install.jsonl"
 }
 
-verify_with_gh_attestation() {
+gh_attestation_available() {
   command -v gh >/dev/null 2>&1 || return 1
+  gh attestation verify --help >/dev/null 2>&1
+}
+
+verify_with_gh_attestation() {
+  gh_attestation_available || return 1
   log "verifying via gh attestation (repo=${REPO}, identity pinned)"
   gh attestation verify "$1" \
     --repo "$REPO" \
@@ -121,12 +151,63 @@ verify_with_gh_attestation() {
     >/dev/null 2>&1
 }
 
+cosign_asset_for_platform() {
+  case "$1" in
+    linux-x64-glibc|linux-x64-musl) echo "cosign-linux-amd64" ;;
+    linux-arm64) echo "cosign-linux-arm64" ;;
+    darwin-arm64) echo "cosign-darwin-arm64" ;;
+    *) return 1 ;;
+  esac
+}
+
+cosign_sha_for_asset() {
+  case "$1" in
+    cosign-linux-amd64) echo "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b" ;;
+    cosign-linux-arm64) echo "3b2e2e3854d0356c45fe6607047526ccd04742d20bd44afb5be91fa2a6e7cb4a" ;;
+    cosign-darwin-arm64) echo "13343856b69f70388c4fe0b986a31dde5958e444b41be22d785d3dc5e1a9cc62" ;;
+    *) return 1 ;;
+  esac
+}
+
+bootstrap_cosign() {
+  local platform="$1" asset expected actual out url
+  asset="$(cosign_asset_for_platform "$platform")" || return 1
+  expected="$(cosign_sha_for_asset "$asset")" || return 1
+  out="$TMP_DIR/cosign"
+  url="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/${asset}"
+  log "bootstrapping cosign verifier ${COSIGN_VERSION} (${asset})"
+  curl -fsSL -o "$out" "$url" || return 1
+  actual="$(sha256_file "$out")"
+  [[ "$actual" == "$expected" ]] || {
+    warn "cosign verifier checksum mismatch for ${asset}"
+    warn "  expected: ${expected}"
+    warn "  actual:   ${actual}"
+    return 1
+  }
+  chmod +x "$out"
+  "$out" version >/dev/null 2>&1 || return 1
+  COSIGN_BIN="$out"
+  COSIGN_BOOTSTRAPPED=1
+}
+
+ensure_cosign_verifier() {
+  local platform="$1"
+  if [[ -n "$COSIGN_BIN" ]]; then
+    return 0
+  fi
+  if command -v cosign >/dev/null 2>&1; then
+    COSIGN_BIN="$(command -v cosign)"
+    return 0
+  fi
+  bootstrap_cosign "$platform"
+}
+
 verify_with_cosign() {
   local tarball="$1" bundle="$2"
-  command -v cosign >/dev/null 2>&1 || return 1
+  [[ -n "$COSIGN_BIN" ]] || return 1
   [[ -s "$bundle" ]] || return 1
   log "verifying via cosign verify-blob (bundle=${bundle##*/})"
-  cosign verify-blob \
+  "$COSIGN_BIN" verify-blob \
     --bundle "$bundle" \
     --certificate-identity-regexp "$EXPECTED_COSIGN_IDENTITY" \
     --certificate-oidc-issuer "$EXPECTED_COSIGN_ISSUER" \
@@ -148,20 +229,29 @@ download_and_verify() {
   local fname="genie-${version}-${platform}.tar.gz"
   local tarball="$TMP_DIR/$fname"
   local bundle="$TMP_DIR/${fname}.bundle"
+  local tried_bootstrap=0
   log "downloading ${tarball_base}/${fname}"
   curl -fsSL -o "$tarball" "${tarball_base}/${fname}" || die "download failed: ${fname}" 5
   curl -fsSL -o "$bundle"  "${tarball_base}/${fname}.bundle" 2>/dev/null || true
   local sha
-  sha="$(sha256sum "$tarball" 2>/dev/null | awk '{print $1}')" \
-    || sha="$(shasum -a 256 "$tarball" | awk '{print $1}')"
+  sha="$(sha256_file "$tarball")"
   if [[ "${INSECURE:-0}" == "1" ]]; then
     emit_insecure_banner >&2
     audit_log "$(printf '{"ts":"%s","event":"insecure_install","version":"%s","platform":"%s","sha256":"%s","expected_identity":"%s"}' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$version" "$platform" "$sha" "$EXPECTED_COSIGN_IDENTITY")"
   elif verify_with_gh_attestation "$tarball"; then
     log "gh attestation: OK (sha256=${sha:0:12}...)"
-  elif verify_with_cosign "$tarball" "$bundle"; then
-    log "cosign verify-blob: OK (sha256=${sha:0:12}...)"
+  elif ensure_cosign_verifier "$platform"; then
+    if verify_with_cosign "$tarball" "$bundle"; then
+      log "cosign verify-blob: OK (sha256=${sha:0:12}...)"
+    else
+      tried_bootstrap="$COSIGN_BOOTSTRAPPED"
+      if [[ "$tried_bootstrap" != "1" ]] && bootstrap_cosign "$platform" && verify_with_cosign "$tarball" "$bundle"; then
+        log "cosign verify-blob: OK (sha256=${sha:0:12}...)"
+      else
+        die "verification failed for ${fname} — refuse to install. Expected identity: ${EXPECTED_COSIGN_IDENTITY}" 4
+      fi
+    fi
   else
     die "verification failed for ${fname} — refuse to install. Expected identity: ${EXPECTED_COSIGN_IDENTITY}" 4
   fi
@@ -225,14 +315,14 @@ handoff_to_subcommand() {
 }
 
 main() {
-  need curl; need jq; need tar; need uname
+  need curl; need tar; need uname
   local platform channel payload version tarball_base tarball
   platform="$(detect_platform)"
   channel="$(resolve_channel)"
   log "platform=${platform} channel=${channel}"
   payload="$(fetch_latest "$channel")"
-  version="$(printf '%s\n' "$payload" | jq -r '.version')"
-  tarball_base="$(printf '%s\n' "$payload" | jq -r '.tarball_base')"
+  version="$(manifest_get "$payload" version)"
+  tarball_base="$(manifest_get "$payload" tarball_base)"
   [[ -n "$version"      && "$version"      != "null" ]] || die "latest.json missing .version" 1
   [[ -n "$tarball_base" && "$tarball_base" != "null" ]] || die "latest.json missing .tarball_base" 1
   log "installing genie v${version}"
