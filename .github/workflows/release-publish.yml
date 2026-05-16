@@ -65,14 +65,16 @@ on:
         required: true
         type: string
       channel:
-        description: 'Release channel (stable = no --prerelease; beta/canary = --prerelease)'
+        description: 'Release channel (stable = no --prerelease; homolog/dev = --prerelease)'
         required: true
         type: choice
         default: stable
+        # Canonical channel taxonomy (Felipe directive 2026-05-12,
+        # unified across pgserve/omni/genie). beta + canary retired.
         options:
           - stable
-          - beta
-          - canary
+          - homolog
+          - dev
       draft:
         description: 'Create as draft (require manual promotion)?'
         required: true
@@ -245,14 +247,28 @@ jobs:
           # releases (channel=dev with --prerelease) only advance dev.json.
           # latest.json is the back-compat name for stable; dev.json is the
           # new dev-channel pointer (wish release-channel-dev).
+          # Canonical taxonomy: stable / homolog / dev (Felipe directive
+          # 2026-05-12, cross-repo unified). Promotion subsumes downstream:
+          # - stable advances latest.json + homolog.json + dev.json
+          # - homolog advances homolog.json + dev.json
+          # - dev advances only dev.json
           declare -A MANIFEST_FILES=()
           case "$CHANNEL" in
             stable)
               MANIFEST_FILES[stable]="latest.json"
+              MANIFEST_FILES[homolog]="homolog.json"
+              MANIFEST_FILES[dev]="dev.json"
+              ;;
+            homolog)
+              MANIFEST_FILES[homolog]="homolog.json"
+              MANIFEST_FILES[dev]="dev.json"
+              ;;
+            dev)
               MANIFEST_FILES[dev]="dev.json"
               ;;
             *)
-              MANIFEST_FILES[$CHANNEL]="${CHANNEL}.json"
+              echo "::error::unknown channel: $CHANNEL (valid: stable, homolog, dev)"
+              exit 1
               ;;
           esac
 

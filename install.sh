@@ -64,13 +64,24 @@ detect_platform() {
 resolve_channel() {
   local channel="${GENIE_CHANNEL:-stable}"
   case "$channel" in
-    stable|beta|canary|dev) echo "$channel" ;;
+    # Canonical taxonomy (Felipe directive 2026-05-12, cross-repo unified).
+    # beta + canary retired; homolog added for the dev→homolog→stable
+    # promotion ladder.
+    stable|homolog|dev) echo "$channel" ;;
     next)
       # Back-compat: --next was the pre-rename name. Map silently to dev and
       # warn so the operator updates their muscle memory.
       warn "GENIE_CHANNEL=next is deprecated; use GENIE_CHANNEL=dev (mapping to dev for this run)"
       echo "dev" ;;
-    *) die "unknown channel: $channel (valid: stable|beta|canary|dev)" 1 ;;
+    beta|canary)
+      # Back-compat: beta + canary were defined-but-unused enum values
+      # before the 2026-05-12 taxonomy unification. No producer ever wrote
+      # the corresponding .well-known files; fall back to dev so existing
+      # GENIE_CHANNEL=beta/canary scripts keep installing something
+      # reasonable instead of hard-failing.
+      warn "GENIE_CHANNEL=$channel is retired; use GENIE_CHANNEL=dev or homolog (mapping to dev for this run)"
+      echo "dev" ;;
+    *) die "unknown channel: $channel (valid: stable|homolog|dev)" 1 ;;
   esac
 }
 

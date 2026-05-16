@@ -3,10 +3,21 @@
 
 import { type CliRendererConfig, createCliRenderer } from '@opentui/core';
 import { KeymapProvider } from '@opentui/keymap/react';
-import { createRoot } from '@opentui/react';
+import { createRoot, extend } from '@opentui/react';
 import { App } from './app.js';
 import { createTuiKeymap } from './keymap.js';
 import { installOpenTui20Bridge } from './opentui-bridge.js';
+import { TerminalPane } from './widgets/TerminalPane.js';
+
+/**
+ * Read by `renderNav()` to decide whether the right side is an embedded
+ * `<TerminalPane>` (Group 4 onward) or the legacy dual-tmux mirror.
+ * Group 6 will flip the default + delete the `legacy` branch. See
+ * `.genie/runbooks/tui-host/embed-flag.md`.
+ */
+export function isEmbedHostMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.GENIE_TUI_HOST ?? '').trim().toLowerCase() === 'embed';
+}
 
 // xterm DECRST sequence that disables BOTH button-event drag tracking (?1002l)
 // AND any-event motion tracking (?1003l).
@@ -105,18 +116,28 @@ export async function renderNav(): Promise<void> {
   const rightPane = process.env.GENIE_TUI_RIGHT || undefined;
   const workspaceRoot = process.env.GENIE_TUI_WORKSPACE || undefined;
   const initialAgent = process.env.GENIE_TUI_AGENT || undefined;
+  const embedMode = isEmbedHostMode();
 
   // OpenTUI handles SIGTERM/SIGHUP/SIGINT cleanup automatically.
   // macOS local ptys have repeatedly hit OpenTUI native hot loops. Keep the TUI
   // usable there, but default to a conservative renderer and allow env opt-ins.
   const renderer = await createCliRenderer(resolveTuiRendererConfig());
-  installNativeSelectionOverride(renderer as unknown as MouseEnableable);
+  if (embedMode) {
+    // Embed mode: register the TerminalPane Renderable so React can mount it
+    // as <terminal-pane sessionName=… />. The mouse-contract override moves
+    // into TerminalPane's mount lifecycle — no renderer-level wrap here.
+    extend({ 'terminal-pane': TerminalPane });
+  } else {
+    // Legacy dual-tmux path: keep the renderer-level wrap so drag-select
+    // remains native in the right-pane mirror. Removed entirely in Group 6.
+    installNativeSelectionOverride(renderer as unknown as MouseEnableable);
+  }
   const disposeOpenTui20Bridge = installOpenTui20Bridge(renderer);
   const keymap = createTuiKeymap(renderer);
 
   createRoot(renderer).render(
     <KeymapProvider keymap={keymap}>
-      <App rightPane={rightPane} workspaceRoot={workspaceRoot} initialAgent={initialAgent} />
+      <App rightPane={rightPane} workspaceRoot={workspaceRoot} initialAgent={initialAgent} embedMode={embedMode} />
     </KeymapProvider>,
   );
 

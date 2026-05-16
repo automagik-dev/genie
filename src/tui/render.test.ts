@@ -1,6 +1,11 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { Writable } from 'node:stream';
-import { disableDragTracking, installNativeSelectionOverride, resolveTuiRendererConfig } from './render.js';
+import {
+  disableDragTracking,
+  installNativeSelectionOverride,
+  isEmbedHostMode,
+  resolveTuiRendererConfig,
+} from './render.js';
 
 const ESC_DISABLE_DRAG_TRACKING = '\x1b[?1002l\x1b[?1003l';
 
@@ -155,5 +160,30 @@ describe('installNativeSelectionOverride', () => {
     renderer.enableMouse();
 
     expect(nativeEnabled).toBe(2);
+  });
+});
+
+describe('isEmbedHostMode (new contract: TerminalPane owns the mouse override)', () => {
+  // Group 4 deliverable #3: `renderNav()` no longer installs the renderer-level
+  // mouse-override wrap in embed mode — the override lives inside TerminalPane.
+  // `disableDragTracking` stays exported because TerminalPane imports it. This
+  // test pins the env-flag contract that `renderNav()` branches on.
+  test('returns true when GENIE_TUI_HOST is "embed" (case-insensitive, trimmed)', () => {
+    expect(isEmbedHostMode({ GENIE_TUI_HOST: 'embed' })).toBe(true);
+    expect(isEmbedHostMode({ GENIE_TUI_HOST: '  EMBED  ' })).toBe(true);
+    expect(isEmbedHostMode({ GENIE_TUI_HOST: 'Embed' })).toBe(true);
+  });
+
+  test('returns false for "legacy" / unset / unknown values (Group 4 keeps legacy as fallback)', () => {
+    expect(isEmbedHostMode({})).toBe(false);
+    expect(isEmbedHostMode({ GENIE_TUI_HOST: '' })).toBe(false);
+    expect(isEmbedHostMode({ GENIE_TUI_HOST: 'legacy' })).toBe(false);
+    expect(isEmbedHostMode({ GENIE_TUI_HOST: 'on' })).toBe(false);
+  });
+
+  test('keeps disableDragTracking exported so TerminalPane can re-home the override', () => {
+    // Regression guard: if a future refactor drops the named export,
+    // TerminalPane.tsx fails to import it and the mouse contract regresses.
+    expect(typeof disableDragTracking).toBe('function');
   });
 });

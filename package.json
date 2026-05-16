@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "4.260511.5",
+  "version": "4.260516.2",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
   "type": "module",
   "bin": {
@@ -59,6 +59,7 @@
     "@opentui/keymap": "0.2.6",
     "@opentui/react": "0.2.6",
     "@tauri-apps/api": "2.10.1",
+    "@xterm/headless": "^5.5.0",
     "chokidar": "^5.0.0",
     "commander": "12.1.0",
     "ignore": "7.0.5",

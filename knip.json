@@ -56,8 +56,8 @@
     "src/migrations/steps/*.ts"
   ],
   "project": ["src/**/*.ts", "src/**/*.tsx"],
-  "ignore": ["src/lib/design-tokens.ts"],
-  "ignoreBinaries": ["which", "scripts/verify-release.sh", "pgserve"],
+  "ignore": ["src/tui/widgets/__benches__/**"],
+  "ignoreBinaries": ["which", "scripts/verify-release.sh"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "@khal-os/brain",
@@ -66,7 +66,6 @@
     "react-dom",
     "@vitejs/plugin-react",
     "vite",
-    "@types/react-dom",
-    "esbuild"
+    "@types/react-dom"
   ]
 }

@@ -18,7 +18,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -27,6 +27,7 @@ import { runMigrations } from './db-migrations.js';
 import { needsSeed, needsSeededTeams, runSeed } from './pg-seed.js';
 import { getProcessStartTime } from './process-identity.js';
 import { respawnInvocation } from './respawn.js';
+import { clearRoleCutoverSentinel, defaultRoleCutoverSink, resolveScopedConnectionIdentity } from './role-cutover.js';
 import { maybePromptV1Migration } from './v1-migration-prompt.js';
 
 /**
@@ -233,12 +234,17 @@ function liveDaemonPid(pid: number | null): number | null {
 /**
  * Resolve the directory of genie's own `package.json` (issue #1575).
  *
- * Walks UP from `import.meta.dir` looking for the first `package.json` whose
- * `name === '@automagik/genie'`. Mirrors `version.ts`'s strategy. Cached.
+ * Two-stage strategy mirroring `version.ts:64-105`:
+ *   1. Walk UP from `import.meta.dir` looking for `name === '@automagik/genie'`.
+ *      Works in dev mode and for installed-via-source layouts.
+ *   2. Fall back to `dirname(realpathSync(process.execPath))`. For
+ *      `bun --compile` binaries `import.meta.dir` lives inside the bunfs
+ *      overlay and the walk above never reaches a real on-disk package.json;
+ *      the binary's own location is install-deterministic and works as a
+ *      stable cwd-pin anchor.
  *
- * Returns `null` if no genie package.json can be found within `MAX_WALK_DEPTH`
- * — defensive fallback for unusual deployment layouts (tarballs, npm-link
- * setups). Callers should treat null as "skip the cwd pin" rather than fail.
+ * Returns `null` only when both strategies fail. Callers treat null as
+ * "skip the cwd pin" rather than fail.
  */
 function resolveGeniePackageDir(): string | null {
   if (geniePackageDirCache !== undefined) return geniePackageDirCache;
@@ -264,6 +270,22 @@ function resolveGeniePackageDir(): string | null {
     const parent = dirname(current);
     if (parent === current) break; // filesystem root
     current = parent;
+  }
+  // Bun --compile fallback: the binary's own directory. Stable across all
+  // invocations of the same install, so the pgserve fingerprint stays
+  // deterministic even when no @automagik/genie package.json is reachable
+  // on disk (bunfs overlay case).
+  try {
+    const execPath = process.execPath;
+    if (execPath) {
+      const execDir = dirname(realpathSync(execPath));
+      if (execDir && existsSync(execDir)) {
+        geniePackageDirCache = execDir;
+        return execDir;
+      }
+    }
+  } catch {
+    // execPath unavailable or realpathSync failed — fall through to null.
   }
   geniePackageDirCache = null;
   return null;
@@ -1186,8 +1208,17 @@ async function buildAndOpenConnection(transport: Transport, _t0: number): Promis
   // v4.260430.20 saturation report: scheduler reconciler crashed with
   // "null is not a function" after returning the module-level sqlClient
   // that had been nulled between assign and return.
-  const client = pgModule(buildPgClientOptions(transport, database, cliShortLived));
-  sqlClient = client;
+  const bootstrapClient = pgModule(buildPgClientOptions(transport, database, cliShortLived));
+  // The operational client may be rebound to the scoped role below. Default
+  // (cutover OFF) keeps the bootstrap superuser connection — byte-for-byte
+  // today's behavior.
+  let activeClient = bootstrapClient;
+  sqlClient = bootstrapClient;
+
+  // Only consult admin.json when cutover is opted in, so the disabled path is
+  // identical to today (no extra stat, no behavior change).
+  const cutoverEnabled = process.env.GENIE_ROLE_CUTOVER === '1';
+  const directPostmaster = cutoverEnabled && transport.useSocket && readPostmasterDiscovery() !== null;
 
   try {
     // Force one round-trip while cwd is still pinned so pgserve does its
@@ -1195,12 +1226,38 @@ async function buildAndOpenConnection(transport: Transport, _t0: number): Promis
     // without this query, pgserve never sees us until the next caller fires
     // a real query, by which time we may have chdir'd back. A failure here
     // falls through to the outer catch which tears down the half-built pool.
-    await client`SELECT 1`;
+    await bootstrapClient`SELECT 1`;
     // Idempotent — wires beforeExit / SIGINT / SIGTERM so the pool drains on
     // every clean exit, not only the (now-deleted) spawn-owned path.
     registerExitHandler();
-    await runPostConnectSetup(client, isTestMode, { t0: _t0, t1: _t1 });
-    await maybePrintBanner(client, isTestMode);
+
+    // Role-cutover (Goal A, Group 2): on the load-bearing direct-postmaster
+    // path, provision the scoped role on the bootstrap (superuser) connection
+    // and rebind the operational pool to it BEFORE runPostConnectSetup so the
+    // FIRST runMigrations executes as the scoped non-superuser role. Database
+    // stays the existing genie DB — zero bytes move. Fallback never hard-fails.
+    const rebound = await maybeRebindToScopedRole({
+      bootstrap: bootstrapClient,
+      transport,
+      database,
+      cliShortLived,
+      directPostmaster,
+      isTestMode,
+      pgModule,
+    });
+    if (rebound) {
+      activeClient = rebound;
+      sqlClient = rebound;
+      // The bootstrap superuser pool has done its job (provisioning); the
+      // scoped-role pool is now operational. Fire-and-forget drain so we do
+      // not hold a second superuser connection open for the process lifetime.
+      bootstrapClient.end({ timeout: 5 }).catch(() => {
+        /* ignore — teardown is best-effort */
+      });
+    }
+
+    await runPostConnectSetup(activeClient, isTestMode, { t0: _t0, t1: _t1 });
+    await maybePrintBanner(activeClient, isTestMode);
     // Surface the resolved transport on the activePort singleton so diagnostics
     // (db status, printPgserveHealth) report the truth. Socket mode uses the
     // SOCKET_PORT_SENTINEL (0) since there is no TCP port to advertise; TCP
@@ -1213,19 +1270,24 @@ async function buildAndOpenConnection(transport: Transport, _t0: number): Promis
     }
     process.env.GENIE_PG_AVAILABLE = 'true';
   } catch (err) {
-    if (sqlClient === client) sqlClient = null;
+    if (sqlClient === activeClient) sqlClient = null;
     activePort = null;
     // Fire-and-forget teardown — match healthCheckCachedClient so we never
     // block on a dying pool while other work is in flight.
-    client.end({ timeout: 2 }).catch(() => {
+    activeClient.end({ timeout: 2 }).catch(() => {
       /* ignore */
     });
+    if (activeClient !== bootstrapClient) {
+      bootstrapClient.end({ timeout: 2 }).catch(() => {
+        /* ignore */
+      });
+    }
     throw err;
   } finally {
     restoreCwdAfterFingerprint(cwdPin, shouldRestoreCwd);
   }
 
-  return client;
+  return activeClient;
 }
 
 interface Transport {
@@ -1331,12 +1393,17 @@ function restoreCwdAfterFingerprint(cwdPin: CwdPin, shouldRestoreCwd: boolean): 
   }
 }
 
-function buildPgClientOptions(transport: Transport, database: string, cliShortLived: boolean) {
+function buildPgClientOptions(
+  transport: Transport,
+  database: string,
+  cliShortLived: boolean,
+  username: string = DB_NAME,
+) {
   return {
     host: transport.host,
     port: transport.port,
     database,
-    username: DB_NAME,
+    username,
     // Socket mode uses SO_PEERCRED for tenancy, but the proxied Postgres
     // handshake still requests pgserve's local role password.
     [PG_AUTH_FIELD]: transport.pgWireCredential,
@@ -1351,6 +1418,93 @@ function buildPgClientOptions(transport: Transport, database: string, cliShortLi
       client_min_messages: 'warning' as const,
     },
   };
+}
+
+/**
+ * True when genie should attempt the dedicated-role rebind.
+ *
+ * Council load-bearing finding (WISH §Decisions): ONLY the direct-postmaster
+ * bypass — the branch taken when `admin.json` is present, where
+ * `buildPgClientOptions` otherwise hard-sets `username=postgres` — carries the
+ * rebind. The accept-hook/router path and the TCP/test paths are intentionally
+ * left on `postgres`/`postgres`: rebinding the router path is a silent no-op
+ * that re-forks as the superuser on boot #2. Default OFF
+ * (`GENIE_ROLE_CUTOVER=1` opt-in this wave).
+ */
+export function shouldAttemptRoleCutover(args: {
+  enabled: boolean;
+  isTestMode: boolean;
+  directPostmaster: boolean;
+}): boolean {
+  return args.enabled && !args.isTestMode && args.directPostmaster;
+}
+
+/**
+ * On the direct-postmaster path, provision (idempotent) + resolve the scoped
+ * role and open a SECOND pool authenticated AS that role (database unchanged —
+ * zero bytes move). Returns the rebound client, or null to stay on the
+ * bootstrap superuser pool. Never throws, never hard-fails boot: any missing
+ * role / failed query / unconnectable role degrades to today's exact
+ * `postgres`/`postgres` behavior with an out-of-band fallback event.
+ */
+async function maybeRebindToScopedRole(args: {
+  bootstrap: postgres.Sql;
+  transport: Transport;
+  database: string;
+  cliShortLived: boolean;
+  directPostmaster: boolean;
+  isTestMode: boolean;
+  // biome-ignore lint/suspicious/noExplicitAny: postgres.js default export factory
+  pgModule: any;
+}): Promise<postgres.Sql | null> {
+  const enabled = process.env.GENIE_ROLE_CUTOVER === '1';
+  if (
+    !shouldAttemptRoleCutover({
+      enabled,
+      isTestMode: args.isTestMode,
+      directPostmaster: args.directPostmaster,
+    })
+  ) {
+    return null;
+  }
+
+  // resolveScopedConnectionIdentity never throws by contract (it converts every
+  // failure into a `cutover:false` fallback); the try is purely defensive.
+  let identity: Awaited<ReturnType<typeof resolveScopedConnectionIdentity>>;
+  try {
+    identity = await resolveScopedConnectionIdentity({ sql: args.bootstrap, database: args.database });
+  } catch {
+    return null;
+  }
+  if (!identity.cutover) return null;
+
+  const roleClient = args.pgModule(
+    buildPgClientOptions(args.transport, args.database, args.cliShortLived, identity.username),
+  );
+  try {
+    // Force the fingerprinting round-trip while cwd is still pinned (the caller
+    // runs us before restoreCwdAfterFingerprint), exactly as the bootstrap
+    // connection does.
+    await roleClient`SELECT 1`;
+    return roleClient;
+  } catch (err) {
+    // Role is in pg_roles but not connectable (dropped between provision and
+    // connect / pgserve mid-upgrade). Self-heal the sentinel and fall back to
+    // the bootstrap superuser pool — boot MUST NOT hard-fail here.
+    if (identity.fingerprintHex) clearRoleCutoverSentinel(identity.fingerprintHex);
+    defaultRoleCutoverSink({
+      event: 'role-cutover.fallback.connect-failed',
+      ts: new Date().toISOString(),
+      pid: process.pid,
+      roleName: identity.username,
+      database: args.database,
+      detail: { message: err instanceof Error ? err.message : String(err) },
+    });
+    roleClient.end({ timeout: 2 }).catch(() => {
+      /* ignore — teardown is best-effort */
+    });
+    return null;
+  }
 }
 
 /**
