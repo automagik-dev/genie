@@ -361,12 +361,19 @@ describe('daemon-owned pgserve', () => {
     const source = readFileSync(join(__dirname, 'db.ts'), 'utf-8');
     // Post-refactor (#1651): pgModule call delegates to buildPgClientOptions.
     // Connection is still bound to a local first so concurrent rebuilds can't
-    // make this caller observe a nulled `sqlClient`.
-    expect(source).toContain('const client = pgModule(buildPgClientOptions(');
+    // make this caller observe a nulled `sqlClient`. The local was renamed
+    // `client` -> `bootstrapClient` by the role-cutover wave (Goal A G2): the
+    // bootstrap connection is established as the default identity, then a
+    // scoped-role connection may be rebound on top of it.
+    expect(source).toContain('const bootstrapClient = pgModule(buildPgClientOptions(');
     const optionsStart = source.indexOf('function buildPgClientOptions');
     expect(optionsStart).toBeGreaterThan(-1);
     const optionsBody = source.slice(optionsStart, source.indexOf('\n}\n', optionsStart));
-    expect(optionsBody).toContain('username: DB_NAME');
+    // buildPgClientOptions now takes an optional `username` that DEFAULTS to
+    // DB_NAME (postgres) — preserving the legacy identity when cutover is off
+    // — and the returned options use that param.
+    expect(optionsBody).toContain('username: string = DB_NAME');
+    expect(optionsBody).toContain('username,');
     expect(optionsBody).toContain('[PG_AUTH_FIELD]: transport.pgWireCredential');
     expect(source).toContain('const PG_AUTH_FIELD');
     // pgWireCredential resolution moved into resolveTransport.
@@ -374,7 +381,7 @@ describe('daemon-owned pgserve', () => {
       'const pgWireCredential = useSocket ? resolvePgserveAuthPassword() : resolveTcpPgPassword()',
     );
     // Sharing the global happens AFTER local construction.
-    expect(source).toContain('sqlClient = client');
+    expect(source).toContain('sqlClient = bootstrapClient');
   });
 
   test('socket connections use the pgserve startup timeout window', () => {
