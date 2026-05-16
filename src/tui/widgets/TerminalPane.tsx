@@ -124,6 +124,34 @@ export class TerminalPaneCore {
   private outputUnsubscribe: (() => void) | null = null;
   private disposed = false;
 
+  /**
+   * Change-detection gate (wish risk R2). Without it `paintInto()` ran a full
+   * O(rows × cols) `setCell` blit on EVERY OpenTUI frame (30–60 fps) even for a
+   * static screen, burning ~300k–600k `setCell`/sec doing nothing.
+   *
+   * xterm-headless 5.5.0 exposes NO parse/render event (verified at runtime:
+   * only onBell/onBinary/onCursorMove/onData/onLineFeed/onResize/onScroll/
+   * onTitleChange — neither `onWriteParsed` nor `onRender` exists). Every
+   * content mutation flows through this core's own `terminal.write()` calls,
+   * so we mark dirty in xterm's `write(data, cb)` parse-complete callback (cb
+   * fires after the chunk is parsed, so the buffer is current). `resize()`
+   * reflows synchronously and sets the flag directly. Starts `true` so the
+   * first paint is unconditional.
+   */
+  private dirty = true;
+  /** Painted-cell count from the last real paint, returned on skipped frames. */
+  private lastPaintedCells = 0;
+
+  /** Mark the buffer dirty once xterm has finished parsing a written chunk. */
+  private readonly markDirty = (): void => {
+    this.dirty = true;
+  };
+
+  /** Single write path: feed xterm and arm the dirty flag post-parse. */
+  private writeToTerminal(data: Buffer | string): void {
+    this.terminal.write(data, this.markDirty);
+  }
+
   constructor(options: TerminalPaneCoreOptions) {
     this.sessionName = options.sessionName;
     this.paneIdFilter = options.paneId;
@@ -159,7 +187,7 @@ export class TerminalPaneCore {
     if (this.controlSession) {
       const handler = (paneId: string, data: Buffer): void => {
         if (this.paneIdFilter && paneId !== this.paneIdFilter) return;
-        this.terminal.write(data);
+        this.writeToTerminal(data);
       };
       this.controlSession.on('output', handler);
       this.outputUnsubscribe = () => {
@@ -208,7 +236,7 @@ export class TerminalPaneCore {
     let written = 0;
     for (const line of lines) {
       if (this.replayedLines >= this.historyLimit) break;
-      this.terminal.write(line);
+      this.writeToTerminal(line);
       this.replayedLines++;
       written++;
     }
@@ -239,6 +267,9 @@ export class TerminalPaneCore {
     const r = Math.max(1, Math.floor(rows));
     if (c !== this.terminal.cols || r !== this.terminal.rows) {
       this.terminal.resize(c, r);
+      // resize() reflows the buffer synchronously (no write callback) — arm
+      // the gate directly so the next frame repaints the new geometry.
+      this.dirty = true;
     }
     this.resizer.schedule({ cols: c, rows: r });
     if (this.onResizeForward) this.onResizeForward(c, r);
@@ -247,10 +278,17 @@ export class TerminalPaneCore {
   /** Paint the xterm cell buffer into the given OpenTUI buffer. */
   paintInto(out: OptimizedBuffer, originX = 0, originY = 0): number {
     if (this.disposed) return 0;
-    return paintXtermBufferToFrame(this.terminal.buffer.active, out, originX, originY, {
+    // Change-detection gate: skip the full O(rows × cols) blit when nothing
+    // changed since the last paint. Return the prior painted-cell count
+    // WITHOUT walking the buffer.
+    if (!this.dirty) return this.lastPaintedCells;
+    const painted = paintXtermBufferToFrame(this.terminal.buffer.active, out, originX, originY, {
       cols: this.terminal.cols,
       rows: this.terminal.rows,
     });
+    this.dirty = false;
+    this.lastPaintedCells = painted;
+    return painted;
   }
 
   /** Tear down xterm + control session + stdin listener + debouncer. Idempotent. */

@@ -143,8 +143,14 @@ export function paintXtermBufferToFrame(
   const rows = Math.max(0, opts.rows);
   const cols = Math.max(0, opts.cols);
   let painted = 0;
+  // `IBuffer.getLine(y)` indexes the WHOLE buffer (scrollback included), so
+  // `y = 0` is the OLDEST scrollback line. The live viewport starts at
+  // `viewportY` (== `baseY` for a follow terminal, honours user scrollback
+  // otherwise). Offset every source line by it so we paint the live screen,
+  // not frozen ancient scrollback. Read once before the loop.
+  const base = xtermBuffer.viewportY;
   for (let y = 0; y < rows; y++) {
-    const line = xtermBuffer.getLine(y);
+    const line = xtermBuffer.getLine(base + y);
     if (!line) continue;
     let x = 0;
     while (x < cols) {
