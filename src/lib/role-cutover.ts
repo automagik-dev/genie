@@ -11,8 +11,9 @@
  * This module provisions a dedicated NON-superuser role scoped to genie's own
  * objects inside the EXISTING `postgres` database. **No bytes move.** Group 1
  * only provisions + grants + proves the privilege envelope; the connection
- * identity rebind is Group 2 (out of scope here). `ensureScopedRole()` is a
- * pure no-op unless `GENIE_ROLE_CUTOVER=1` is set (default OFF this group).
+ * identity rebind is Group 2. Wave 3 (Group 4) flipped the gate to DEFAULT-ON:
+ * `ensureScopedRole()` runs unless the documented kill-switch
+ * `GENIE_ROLE_CUTOVER=0` forces the legacy `postgres`/`postgres` path.
  *
  * Concurrency-safe: provisioning runs under a NON-BLOCKING
  * `pg_try_advisory_lock(hashtext('genie:role-cutover-v1'))`. Late arrivals
@@ -219,6 +220,28 @@ export interface RoleCutoverEvent {
 
 export type RoleCutoverSink = (event: RoleCutoverEvent) => void;
 
+// ============================================================================
+// Default-ON gate (Wave 3 — Goal A, Group 4).
+//
+// Through Waves 1+2 the cutover was OPT-IN (`GENIE_ROLE_CUTOVER=1`). Wave 3
+// flips it: cutover is now the DEFAULT and `GENIE_ROLE_CUTOVER=0` is the single
+// documented KILL-SWITCH that forces the legacy `postgres`/`postgres` path
+// (byte-for-byte today's behavior). Any other value — unset, `1`, anything that
+// is not exactly the string `0` — leaves cutover ON. This is the only place
+// the gate literal lives so the kill-switch can never drift between db.ts and
+// this module.
+// ============================================================================
+
+/**
+ * True unless the documented kill-switch is engaged. `GENIE_ROLE_CUTOVER=0`
+ * (and ONLY the exact string `0`) forces the legacy postgres/postgres path;
+ * unset / `1` / any other value ⇒ cutover ON. Single source of truth — db.ts
+ * imports this rather than re-deriving the literal.
+ */
+export function isRoleCutoverEnabled(): boolean {
+  return process.env.GENIE_ROLE_CUTOVER !== '0';
+}
+
 function genieHome(): string {
   return process.env.GENIE_HOME ?? join(homedir(), '.genie');
 }
@@ -298,6 +321,62 @@ function assertSafeIdentifier(kind: string, value: string): void {
 }
 
 /**
+ * Cluster RBAC roles that migrations 041/043 create. They are global (cluster-
+ * scoped, survive DB drops) and `CREATE ROLE` requires CREATEROLE/superuser —
+ * which the scoped `NOCREATEROLE` role lacks. On a warm cluster they already
+ * exist and the migrations' `IF NOT EXISTS` probes short-circuit; on a TRULY
+ * fresh pgserve cluster (the CI smoke's `--data` dir) they do not, so the
+ * privileged bootstrap must create them BEFORE the scoped role replays.
+ *
+ * Mirrors `src/db/migrations/041_rbac_roles.sql` + `043_executor_read_role.sql`
+ * (`CREATE ROLE <x> NOINHERIT`). The fresh-DB replay test runs the REAL
+ * migrations after this and fails loudly if the two ever drift.
+ */
+const PRIVILEGED_BOOTSTRAP_ROLES = [
+  'events_admin',
+  'events_operator',
+  'events_subscriber',
+  'events_audit',
+  'executors_reader',
+] as const;
+
+/**
+ * Stage the inherently-privileged, one-time setup that genie's migration set
+ * performs but the least-privilege scoped role legitimately must NEVER do:
+ * the `pgcrypto` extension (039/041), the cluster RBAC/executor roles
+ * (041/043), and ownership of genie's OWN database `public` schema (so the
+ * scoped role can evolve its own schema via `runMigrations`).
+ *
+ * Runs on the BOOTSTRAP SUPERUSER connection, before the rebind to the scoped
+ * role. This does NOT grant the scoped role any extra privilege — the role
+ * stays `NOSUPERUSER NOCREATEROLE`; the privileged primitives are created by
+ * the superuser who legitimately may. Every statement is idempotent
+ * (`IF NOT EXISTS` / set-style), so re-runs and warm clusters converge to a
+ * no-op. Scoped to genie's own DB — zero bytes move, no neighbor touched.
+ *
+ * Throws on any failure; the caller (db.ts) funnels that into the existing
+ * `role-cutover.fallback.*` path (stay on the superuser bootstrap pool, never
+ * hard-fail boot — migrations then run as the superuser exactly like legacy).
+ */
+export async function ensurePrivilegedBootstrapObjects(sql: SqlLike, scopedRole: string): Promise<void> {
+  assertSafeIdentifier('role', scopedRole);
+  // pgcrypto: untrusted extension ⇒ superuser-only. Migrations 039 & 041 do
+  // `CREATE EXTENSION IF NOT EXISTS pgcrypto`; pre-staging it makes those a
+  // no-op when the scoped role later replays them.
+  await sql.unsafe('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+  for (const role of PRIVILEGED_BOOTSTRAP_ROLES) {
+    const exists = await sql.unsafe(`SELECT 1 FROM pg_roles WHERE rolname = '${role}'`);
+    if (exists.length === 0) {
+      await sql.unsafe(`CREATE ROLE "${role}" NOINHERIT`);
+    }
+  }
+  // genie owns its OWN database's `public` schema so the scoped role can run
+  // schema DDL in `runMigrations`. Metadata-only (catalog), zero bytes moved,
+  // scoped to genie's DB — the proven Group-3 replay prerequisite.
+  await sql.unsafe(`ALTER SCHEMA public OWNER TO "${scopedRole}"`);
+}
+
+/**
  * GRANT genie's privilege envelope onto the scoped role. Set-style and
  * idempotent — re-running converges. Sized to keep genie fully functional in
  * its own DB (DML + schema DDL via `runMigrations`) while withholding every
@@ -328,7 +407,8 @@ async function grantScopedPrivileges(reserved: ReservedSqlLike, role: string, da
 
 /**
  * Idempotently ensure the dedicated non-superuser role exists with genie's
- * scoped privilege envelope. No-op unless `GENIE_ROLE_CUTOVER=1`. Never throws
+ * scoped privilege envelope. No-op only under the kill-switch
+ * `GENIE_ROLE_CUTOVER=0` (Wave 3 default-on). Never throws
  * for an operational failure — it emits `role-cutover.error.*` out-of-band and
  * returns `skipped` so a caller on the boot path can fall back cleanly.
  *
@@ -340,7 +420,7 @@ async function grantScopedPrivileges(reserved: ReservedSqlLike, role: string, da
  */
 export async function ensureScopedRole(opts: EnsureScopedRoleOptions): Promise<RoleCutoverResult> {
   const sink = opts.sink ?? defaultRoleCutoverSink;
-  const enabled = opts.enabled ?? process.env.GENIE_ROLE_CUTOVER === '1';
+  const enabled = opts.enabled ?? isRoleCutoverEnabled();
 
   if (!enabled) {
     emit(sink, 'role-cutover.skip.disabled');
@@ -530,7 +610,7 @@ export async function resolveScopedConnectionIdentity(
   opts: ResolveScopedIdentityOptions,
 ): Promise<ScopedConnectionIdentity> {
   const sink = opts.sink ?? defaultRoleCutoverSink;
-  const enabled = opts.enabled ?? process.env.GENIE_ROLE_CUTOVER === '1';
+  const enabled = opts.enabled ?? isRoleCutoverEnabled();
   const database = opts.database;
   const fallback = (reason: string, fp: string | null = null): ScopedConnectionIdentity => ({
     username: FALLBACK_SUPERUSER,
@@ -600,4 +680,58 @@ export async function resolveScopedConnectionIdentity(
     });
     return fallback('query-failed', fingerprintHex);
   }
+}
+
+// ============================================================================
+// Read-only inspection — backs `genie doctor --connection-identity`.
+//
+// Pure derivation + sentinel/package.json reads only. NEVER provisions, grants,
+// connects, or writes any file. The live DB facts (rolsuper, grants,
+// current_user/fallback) are queried separately by the doctor command on the
+// already-open app connection — this function contributes only the FS/identity
+// half so the doctor surface stays strictly read-only.
+// ============================================================================
+
+export interface RoleCutoverInspection {
+  /** Effective gate: false only under the documented kill-switch. */
+  enabled: boolean;
+  /** True when `GENIE_ROLE_CUTOVER=0` (the documented kill-switch) is set. */
+  killSwitch: boolean;
+  /** Derived scoped role name, or null when the fingerprint is unstable. */
+  roleName: string | null;
+  /** 12-hex fingerprint segment (sentinel key), or null when unstable. */
+  fingerprintHex: string | null;
+  /** Absolute per-fingerprint sentinel path, or null when unresolved. */
+  sentinelPath: string | null;
+  /** Parsed sentinel contents, or null when absent/stale/unreadable. */
+  sentinel: RoleCutoverSentinel | null;
+}
+
+/**
+ * Resolve the role-cutover identity snapshot WITHOUT touching the DB or
+ * mutating any state. Read-only: derives the role name + fingerprint and reads
+ * the per-fingerprint sentinel. Used by `genie doctor --connection-identity`.
+ */
+export function inspectRoleCutover(): RoleCutoverInspection {
+  const killSwitch = process.env.GENIE_ROLE_CUTOVER === '0';
+  const enabled = isRoleCutoverEnabled();
+  const fp = resolveGenieFingerprint();
+  if (!fp) {
+    return { enabled, killSwitch, roleName: null, fingerprintHex: null, sentinelPath: null, sentinel: null };
+  }
+  const names = deriveProvisionedNames(fp);
+  let sentinelPath: string | null = null;
+  try {
+    sentinelPath = roleCutoverSentinelPath(names.fingerprintHex);
+  } catch {
+    sentinelPath = null;
+  }
+  return {
+    enabled,
+    killSwitch,
+    roleName: names.roleName,
+    fingerprintHex: names.fingerprintHex,
+    sentinelPath,
+    sentinel: readRoleCutoverSentinel(names.fingerprintHex),
+  };
 }

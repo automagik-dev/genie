@@ -7,6 +7,29 @@
 | **Date** | 2026-05-15 |
 | **Design** | Council review of `canonical-pg-relocation` (4 members, 2 rounds, 2026-05-15) — "Goal A", the carved-off safe half. See `.genie/wishes/canonical-pg-relocation/COUNCIL-REVIEW.md`. |
 
+## Amendment 2026-05-16 — migration ordering (Felipe-approved; implemented in PR #2433 `48ba9ab0`)
+
+Wave 3 reproduced a design conflict the original spec got backwards. genie's
+own migrations legitimately issue privileged DDL — `CREATE EXTENSION pgcrypto`
+(`039`, `041`) and `CREATE ROLE` for the RBAC layer (`041`, `043`). A
+least-privilege `NOSUPERUSER NOCREATEROLE` role **cannot and must not** run
+these, so the original Group-2/Prereq decision ("the FIRST `runMigrations`
+executes as the scoped role" / "before `runPostConnectSetup`") is infeasible
+by construction, and Group 3's replay test false-greened on a pre-seeded
+fixture. Corrected, implemented design:
+
+> **Migrations run on the privileged bootstrap (superuser) connection FIRST
+> (cold-DB privileged bootstrap); the scoped-role rebind happens AFTER, for
+> steady-state runtime only.**
+
+Preserves the council's full security intent — the threat model is *runtime*
+compromise (a buggy/exploited genie during normal operation cannot `DROP omni`
+or touch the shared cluster); a one-time trusted migration step on the
+privileged connection is not that attack surface. Canonical production pattern
+(privileged migrator, limited app role). Zero bytes still move; kill-switch +
+fallback unchanged. Wherever the sections below say "migrations run as the
+scoped role" / "before `runPostConnectSetup`", read the amended ordering above.
+
 ## Summary
 
 Genie connects to the shared pgserve postmaster as `postgres`/`postgres` — the cluster **superuser** — and the audited live host proves this is not an accident but the deterministic steady state: `resolveTransport()`'s direct-postmaster branch (`src/lib/db.ts:1238-1259`) explicitly *skips* fingerprint routing whenever `admin.json` exists (the normal case), and `buildPgClientOptions` then hard-sets `database=postgres, username=postgres`. On that same single postmaster sits omni's 1 GB production database, sharing WAL and disk. A genie bug, a bad migration, or a compromised genie process today has superuser authority to `DROP DATABASE omni`, exhaust the shared cluster, create/alter arbitrary roles, or corrupt shared WAL — genie's blast radius is the entire machine's Postgres, not genie's own data. This wish removes that blast radius **without moving a single byte**: provision a dedicated, non-superuser role with privileges scoped to genie's own objects, and rebind genie's connection identity (on the load-bearing direct-postmaster path) to that role. Data stays exactly where it is, in the `postgres` database; only *who genie logs in as* changes. There is no dump, no copy, no proof gate, no cutover window, no advisory-locked migrator, no crash-recovery surface — and therefore no data-loss surface at all. This is the council's unanimous "ship now" recommendation; physical relocation of the bytes into a fingerprinted database is the separate, deferred `canonical-pg-relocation` wish (Goal B), explicitly gated and out of scope here. **Honest framing (council-mandated):** this is a *least-privilege integrity-containment* win — "a genie failure can no longer take down the shared cluster or its neighbors" — **not** a confidentiality win. `--auth-local=trust` and the still-passwordless `postgres` superuser are unchanged (producer-side pgserve v3.x, out of scope); anyone on the socket is still superuser. We do not claim "safe from external reading" anywhere.
