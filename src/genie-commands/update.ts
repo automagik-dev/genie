@@ -53,6 +53,9 @@ const FETCH_LATEST_TIMEOUT_MS = 5_000;
 const RELEASES_OWNER = 'automagik-dev';
 const RELEASES_REPO = 'genie';
 const RAW_BASE_URL = 'https://raw.githubusercontent.com';
+const RELEASES_SLUG = `${RELEASES_OWNER}/${RELEASES_REPO}`;
+const EXPECTED_COSIGN_IDENTITY = `^https://github.com/${RELEASES_SLUG}/.github/workflows/sign-attest.yml@`;
+const EXPECTED_COSIGN_ISSUER = 'https://token.actions.githubusercontent.com';
 
 // ============================================================================
 // Verify decision shape — shared with omni#update-unify-stages (SHARED-DESIGN §4.3).
@@ -350,8 +353,8 @@ async function defaultManifestFetcher(url: string): Promise<string | null> {
 interface DownloadAndVerifyOptions {
   /** Test seam: stubs the network/cli surface for deterministic unit tests. */
   runner?: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>;
-  /** Test seam: skip `gh attestation verify` (used by integration smokes
-   *  where the real gh CLI is not available). */
+  /** Test seam: skip release signature verification (used by integration
+   *  smokes where the real gh/cosign CLIs are not available). */
   skipAttestation?: boolean;
 }
 
@@ -367,11 +370,69 @@ interface DownloadAndVerifyOptions {
  * out at 4000ms on a healthy connection (Felipe, 2026-05-12).
  */
 const ATTESTATION_VERIFY_TIMEOUT_MS = 60_000;
+const COSIGN_VERIFY_TIMEOUT_MS = 30_000;
+
+interface SignatureVerificationResult {
+  method: 'gh-attestation' | 'cosign-bundle';
+}
+
+async function verifyTarballSignature(
+  tarballName: string,
+  tarballPath: string,
+  bundlePath: string,
+  runner: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>,
+): Promise<SignatureVerificationResult> {
+  const ghVerifyResult = await runner(
+    'gh',
+    [
+      'attestation',
+      'verify',
+      tarballPath,
+      '--repo',
+      RELEASES_SLUG,
+      '--cert-identity-regex',
+      EXPECTED_COSIGN_IDENTITY,
+      '--cert-oidc-issuer',
+      EXPECTED_COSIGN_ISSUER,
+    ],
+    ATTESTATION_VERIFY_TIMEOUT_MS,
+  );
+  if (ghVerifyResult.success) return { method: 'gh-attestation' };
+
+  const failures = [
+    `gh attestation verify: ${ghVerifyResult.output.trim() || `failed after ${ATTESTATION_VERIFY_TIMEOUT_MS}ms`}`,
+  ];
+
+  if (!existsSync(bundlePath)) {
+    failures.push(`cosign verify-blob: missing bundle ${bundlePath}`);
+    throw new Error(`signature verification failed for ${tarballName}: ${failures.join('; ')}`);
+  }
+
+  const cosignVerifyResult = await runner(
+    'cosign',
+    [
+      'verify-blob',
+      '--bundle',
+      bundlePath,
+      '--certificate-identity-regexp',
+      EXPECTED_COSIGN_IDENTITY,
+      '--certificate-oidc-issuer',
+      EXPECTED_COSIGN_ISSUER,
+      tarballPath,
+    ],
+    COSIGN_VERIFY_TIMEOUT_MS,
+  );
+  if (cosignVerifyResult.success) return { method: 'cosign-bundle' };
+
+  failures.push(`cosign verify-blob: ${cosignVerifyResult.output.trim() || 'no output'}`);
+  throw new Error(`signature verification failed for ${tarballName}: ${failures.join('; ')}`);
+}
 
 /**
  * Download the platform-specific tarball + cosign bundle + attestation, then
- * verify with `gh attestation verify`. Returns the path to the downloaded
- * tarball on success; throws on failure (caller surfaces the error).
+ * verify with GitHub native attestations or the local cosign bundle fallback.
+ * Returns the path to the downloaded tarball on success; throws on failure
+ * (caller surfaces the error).
  */
 export async function downloadAndVerifyTarball(
   manifest: LatestManifest,
@@ -390,6 +451,7 @@ export async function downloadAndVerifyTarball(
   const versionTag = `v${manifest.version}`;
   const tarballName = `genie-${manifest.version}-${platform}.tar.gz`;
   const tarballPath = join(destDir, tarballName);
+  const bundlePath = `${tarballPath}.bundle`;
 
   // gh release download retries by name; --pattern lets us pull the tarball
   // and its sidecar (.bundle, .intoto.jsonl) in one shot via wildcards.
@@ -419,14 +481,7 @@ export async function downloadAndVerifyTarball(
   }
 
   if (!opts.skipAttestation) {
-    const verifyResult = await runner(
-      'gh',
-      ['attestation', 'verify', tarballPath, '--owner', RELEASES_OWNER],
-      ATTESTATION_VERIFY_TIMEOUT_MS,
-    );
-    if (!verifyResult.success) {
-      throw new Error(`gh attestation verify failed for ${tarballName}: ${verifyResult.output.trim() || 'no output'}`);
-    }
+    await verifyTarballSignature(tarballName, tarballPath, bundlePath, runner);
   }
 
   return tarballPath;
@@ -1376,7 +1431,7 @@ async function runDelivery(
   const tarballPath = await downloadAndVerifyTarball(manifest, platform, GENIE_BIN_STAGING);
   diagnosticsCtx.tarballPath = tarballPath;
   diagnosticsCtx.attestationVerified = true;
-  success(`Verified attestation for ${tarballPath.split('/').pop()}`);
+  success(`Verified signed tarball for ${tarballPath.split('/').pop()}`);
 
   log('Extracting tarball...');
   const extractDir = join(GENIE_BIN_STAGING, `extract-${manifest.version}`);
