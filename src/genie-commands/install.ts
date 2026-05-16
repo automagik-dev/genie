@@ -59,6 +59,12 @@ const PM2_LOG_PREFIX = 'genie-serve';
  * for an operator's first post-rename update to clean up.
  */
 const LEGACY_PM2_PROCESS_NAMES = ['genie-serve'] as const;
+/**
+ * pgserve/autopg pm2 process names. pgserve v2.4 renamed the supervised
+ * postmaster process from `pgserve` to `autopg-server`; keep both so Genie
+ * can recognize hosts installed before and after the rename.
+ */
+const PGSERVE_PM2_PROCESS_NAMES = ['autopg-server', 'pgserve'] as const;
 
 /**
  * Hardened defaults — mirror pgserve's HARDENED_DEFAULTS so the canonical
@@ -104,18 +110,32 @@ function which(cmd: string): string | null {
   }
 }
 
-function pm2GetProcess(name: string): { pid?: number; pm2_env?: { status?: string } } | null {
+interface Pm2Process {
+  name?: string;
+  pid?: number;
+  pm2_env?: { status?: string };
+}
+
+function pm2GetProcess(name: string): Pm2Process | null {
   try {
     const out = execFileSync('pm2', ['jlist'], {
       encoding: 'utf8',
       timeout: 5000,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    const list = JSON.parse(out) as Array<{ name?: string; pid?: number; pm2_env?: { status?: string } }>;
+    const list = JSON.parse(out) as Pm2Process[];
     return list.find((p) => p.name === name) ?? null;
   } catch {
     return null;
   }
+}
+
+function pm2GetAnyProcess(names: readonly string[]): Pm2Process | null {
+  for (const name of names) {
+    const existing = pm2GetProcess(name);
+    if (existing) return existing;
+  }
+  return null;
 }
 
 /**
@@ -215,10 +235,49 @@ function failCanonicalPgserve(reason: string): never {
  * Genie has no embedded pgserve fallback after the canonical-cutover wish;
  * a missing or broken pgserve must surface at install time, not at runtime.
  */
+interface PgserveStatus {
+  installed?: boolean;
+  name?: string;
+  status?: string;
+  pid?: number | null;
+  supervisor?: string | null;
+  runtime?: { live?: boolean } | null;
+}
+
+function readPgserveStatus(): PgserveStatus | null {
+  if (!pgserveIsAvailable()) return null;
+  const result = spawnSync('pgserve', ['status', '--json'], { encoding: 'utf8', timeout: 5000 });
+  if (result.status !== 0 && !result.stdout) return null;
+  try {
+    const parsed = JSON.parse(result.stdout ?? '') as PgserveStatus;
+    return parsed.installed === true ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPgservePm2ManagedStatus(status: PgserveStatus | null): boolean {
+  return status?.installed === true && status.supervisor === 'pm2';
+}
+
+function isPgserveReadyStatus(status: PgserveStatus | null): boolean {
+  return isPgservePm2ManagedStatus(status) && status?.status === 'online' && status.runtime?.live !== false;
+}
+
+function restartPgserve(): boolean {
+  const result = spawnSync('pgserve', ['restart'], { stdio: 'inherit' });
+  return result.status === 0;
+}
+
+function describePgserveStatus(status: PgserveStatus | null): string {
+  if (!status) return 'unknown';
+  return `${status.name ?? 'pgserve'} status=${status.status ?? 'unknown'} runtime=${status.runtime?.live === false ? 'not-live' : 'live-or-unknown'}`;
+}
+
 /** Predicate: is this pm2 entry pgserve in a healthy "online" state? Pulled
  *  out as a pure function so the install-skip decision can be unit-tested
  *  without mocking `pm2 jlist`. */
-function isPgserveOnlinePm2(entry: { pid?: number; pm2_env?: { status?: string } } | null): boolean {
+function isPgserveOnlinePm2(entry: Pm2Process | null): boolean {
   return entry?.pm2_env?.status === 'online';
 }
 
@@ -226,9 +285,35 @@ function requirePgserveInstall(): void {
   if (!pgserveIsAvailable()) {
     failCanonicalPgserve('pgserve binary not found in PATH');
   }
-  const existing = pm2GetProcess('pgserve');
+
+  const status = readPgserveStatus();
+  if (isPgserveReadyStatus(status)) {
+    ok(
+      `${status?.name ?? 'pgserve'} already pm2-managed and online (pid ${status?.pid ?? 'unknown'}) — skipping pgserve install`,
+    );
+    return;
+  }
+  if (isPgservePm2ManagedStatus(status)) {
+    ok(`${describePgserveStatus(status)}; restarting pgserve before install`);
+    if (restartPgserve()) {
+      const restarted = readPgserveStatus();
+      if (isPgserveReadyStatus(restarted)) {
+        ok(
+          `${restarted?.name ?? status?.name ?? 'pgserve'} restarted and online (pid ${restarted?.pid ?? 'unknown'}) — skipping pgserve install`,
+        );
+        return;
+      }
+    }
+    failCanonicalPgserve(
+      `${describePgserveStatus(status)}; pgserve is registered under pm2 but not healthy. Run: pgserve restart (or pgserve install --redeploy)`,
+    );
+  }
+
+  const existing = pm2GetAnyProcess(PGSERVE_PM2_PROCESS_NAMES);
   if (isPgserveOnlinePm2(existing)) {
-    ok(`pgserve already pm2-managed and online (pid ${existing?.pid ?? 'unknown'}) — skipping pgserve install`);
+    ok(
+      `${existing?.name ?? 'pgserve'} already pm2-managed and online (pid ${existing?.pid ?? 'unknown'}) — skipping pgserve install`,
+    );
     return;
   }
   const result = spawnSync('pgserve', ['install'], { stdio: 'inherit' });
@@ -533,6 +618,7 @@ export const _internals = {
   PM2_PROCESS_NAME,
   PM2_LOG_PREFIX,
   LEGACY_PM2_PROCESS_NAMES,
+  PGSERVE_PM2_PROCESS_NAMES,
   buildPm2StartArgs,
   buildEcosystemConfigSource,
   buildCanonicalPgserveHint,
@@ -542,5 +628,7 @@ export const _internals = {
   pm2IsAvailable,
   pgserveIsAvailable,
   removeLegacyPm2Entries,
+  isPgservePm2ManagedStatus,
+  isPgserveReadyStatus,
   isPgserveOnlinePm2,
 };
