@@ -601,10 +601,3 @@ export async function resolveScopedConnectionIdentity(
     return fallback('query-failed', fingerprintHex);
   }
 }
-
-export const __testInternals = Object.freeze({
-  ADVISORY_LOCK_KEY,
-  FALLBACK_SUPERUSER,
-  resolveGenieFingerprint,
-  resolveGeniePackageDir,
-});
