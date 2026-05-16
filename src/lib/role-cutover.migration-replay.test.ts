@@ -46,7 +46,7 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { runMigrations } from './db-migrations.js';
 import { getConnection, resolveTcpPgPassword } from './db.js';
-import { ensureScopedRole } from './role-cutover.js';
+import { ensurePrivilegedBootstrapObjects, ensureScopedRole } from './role-cutover.js';
 import { DB_AVAILABLE, setupTestDatabase } from './test-db.js';
 
 const PID = process.pid;
@@ -201,3 +201,152 @@ describe.skipIf(!DB_AVAILABLE || !TCP_PORT)('migration replay as the scoped non-
     expect(back).toBe('postgres');
   }, 30_000);
 });
+
+// ============================================================================
+// TRULY-fresh-DB replay — the regression guard for the cold pgserve smoke.
+//
+// The describe above models the WARM/live shape (pgcrypto + RBAC roles +
+// schema-owner pre-seeded as superuser). That is exactly why Group 3 missed
+// the cold-DB gap: on a TRULY fresh pgserve (the CI `pgserve v2 smoke`'s
+// `--data` dir) pgcrypto does not exist, so migrations 039/041's
+// `CREATE EXTENSION pgcrypto` runs for real — and the scoped NOSUPERUSER role
+// is denied. These tests reproduce that on a virgin DB with NOTHING
+// pre-seeded, and prove `ensurePrivilegedBootstrapObjects` (run on the
+// bootstrap SUPERUSER connection before the rebind, exactly as db.ts does it)
+// closes the gap without granting the scoped role any extra privilege.
+// ============================================================================
+
+describe.skipIf(!DB_AVAILABLE || !TCP_PORT)(
+  'migration replay on a TRULY fresh DB (cold smoke regression guard)',
+  () => {
+    let cleanupSchema: () => Promise<void>;
+    // postgres.js Sql type bleed-through; `any` is permitted in test files.
+    let admin: any;
+
+    beforeAll(async () => {
+      cleanupSchema = await setupTestDatabase();
+      admin = await getConnection();
+    }, 60_000);
+
+    afterAll(async () => {
+      await cleanupSchema();
+    });
+
+    // A virgin DB + freshly-provisioned scoped role, with NOTHING pre-seeded
+    // (no pgcrypto, no schema-owner change). Returns a max:1 superuser session
+    // on that DB so SET ROLE persists across runMigrations' transactions.
+    async function virginReplay(
+      tag: string,
+    ): Promise<{ sql: any; db: string; role: string; drop: () => Promise<void> }> {
+      const db = `rc_cold_${tag}_${PID}`;
+      const role = `pgserve_rccold_${tag}_${PID}_role`;
+      await admin.unsafe(`DROP DATABASE IF EXISTS "${db}" WITH (FORCE)`);
+      await admin.unsafe(`CREATE DATABASE "${db}"`);
+      const pg = (await import('postgres')).default;
+      const sql = pg({
+        host: '127.0.0.1',
+        port: Number(TCP_PORT),
+        database: db,
+        username: 'postgres', // pragma: allowlist secret — pgserve test default
+        password: resolveTcpPgPassword(), // pragma: allowlist secret
+        max: 1,
+        idle_timeout: 0,
+        onnotice: () => {},
+        connection: { client_min_messages: 'warning' as const },
+      });
+      // pgcrypto is DB-scoped ⇒ a brand-new DB has NONE (this is the real cold
+      // condition the CI smoke hits). Assert that before we touch anything.
+      const [{ has_pgcrypto }] = await sql.unsafe(
+        `SELECT count(*) > 0 AS has_pgcrypto FROM pg_extension WHERE extname = 'pgcrypto'`,
+      );
+      expect(has_pgcrypto).toBe(false);
+      // Provision the scoped non-superuser role + Group-1 grants (no ownership,
+      // no pgcrypto — exactly the state a fresh boot starts from).
+      await ensureScopedRole({ sql, roleName: role, database: db, enabled: true, sink: () => {} });
+      const drop = async (): Promise<void> => {
+        try {
+          await sql.end({ timeout: 5 });
+        } catch {
+          /* best-effort */
+        }
+        try {
+          await admin.unsafe(`DROP DATABASE IF EXISTS "${db}" WITH (FORCE)`);
+          await admin.unsafe(`DROP OWNED BY "${role}"`);
+          await admin.unsafe(`DROP ROLE IF EXISTS "${role}"`);
+        } catch {
+          /* best-effort */
+        }
+      };
+      return { sql, db, role, drop };
+    }
+
+    it('WITHOUT the privileged bootstrap, the scoped role FAILS the cold replay (the gap Group 3 missed)', async () => {
+      const { sql, role, drop } = await virginReplay('neg');
+      try {
+        await sql.unsafe(`SET ROLE "${role}"`);
+        const [{ who }] = await sql.unsafe('SELECT current_user AS who');
+        expect(who).toBe(role);
+        // The scoped NOSUPERUSER role hits `CREATE EXTENSION pgcrypto` (mig 039)
+        // on a virgin DB and is denied — runMigrations must throw. This is the
+        // exact failure the CI cold smoke surfaced; this test would have caught
+        // it before default-on.
+        let threw = false;
+        try {
+          await runMigrations(sql);
+        } catch (err) {
+          threw = true;
+          expect(String(err instanceof Error ? err.message : err)).toMatch(
+            /permission denied|must be (super ?user|owner)|to create extension/i,
+          );
+        }
+        expect(threw).toBe(true);
+      } finally {
+        await drop();
+      }
+    }, 120_000);
+
+    it('WITH ensurePrivilegedBootstrapObjects (superuser, pre-rebind), the FULL set replays clean as the scoped role', async () => {
+      const { sql, role, drop } = await virginReplay('pos');
+      try {
+        // Exactly what db.ts does on the bootstrap SUPERUSER connection before
+        // rebinding to the scoped role.
+        await ensurePrivilegedBootstrapObjects(sql, role);
+
+        // pgcrypto now present; cluster RBAC roles ensured; schema owned by the
+        // scoped role — without granting it SUPERUSER/CREATEROLE.
+        const [{ has_pgcrypto }] = await sql.unsafe(
+          `SELECT count(*) > 0 AS has_pgcrypto FROM pg_extension WHERE extname = 'pgcrypto'`,
+        );
+        expect(has_pgcrypto).toBe(true);
+        for (const r of RBAC_ROLES) {
+          const rows = await sql.unsafe(`SELECT 1 FROM pg_roles WHERE rolname = '${r}'`);
+          expect(rows.length).toBe(1);
+        }
+        const [{ owner }] = await sql.unsafe(
+          `SELECT nspowner::regrole::text AS owner FROM pg_namespace WHERE nspname = 'public'`,
+        );
+        expect(owner).toBe(role);
+        // Least-privilege intact: the scoped role is still NOT a superuser.
+        const [{ rolsuper }] = await admin.unsafe(`SELECT rolsuper FROM pg_authid WHERE rolname = '${role}'`);
+        expect(rolsuper).toBe(false);
+
+        // The functional gate: the ENTIRE migration set applies with zero errors
+        // executed as the scoped non-superuser role on a truly cold DB.
+        await sql.unsafe(`SET ROLE "${role}"`);
+        const [{ who }] = await sql.unsafe('SELECT current_user AS who');
+        expect(who).toBe(role);
+        const applied = await runMigrations(sql);
+        expect(applied.length).toBe(migrationFileCount());
+        // Re-run as the scoped role is a clean no-op (boot #2 stays put).
+        const second = await runMigrations(sql);
+        expect(second.length).toBe(0);
+
+        // ensurePrivilegedBootstrapObjects is itself idempotent (re-run = no-op).
+        await sql.unsafe('RESET ROLE');
+        await ensurePrivilegedBootstrapObjects(sql, role);
+      } finally {
+        await drop();
+      }
+    }, 120_000);
+  },
+);

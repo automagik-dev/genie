@@ -321,6 +321,62 @@ function assertSafeIdentifier(kind: string, value: string): void {
 }
 
 /**
+ * Cluster RBAC roles that migrations 041/043 create. They are global (cluster-
+ * scoped, survive DB drops) and `CREATE ROLE` requires CREATEROLE/superuser —
+ * which the scoped `NOCREATEROLE` role lacks. On a warm cluster they already
+ * exist and the migrations' `IF NOT EXISTS` probes short-circuit; on a TRULY
+ * fresh pgserve cluster (the CI smoke's `--data` dir) they do not, so the
+ * privileged bootstrap must create them BEFORE the scoped role replays.
+ *
+ * Mirrors `src/db/migrations/041_rbac_roles.sql` + `043_executor_read_role.sql`
+ * (`CREATE ROLE <x> NOINHERIT`). The fresh-DB replay test runs the REAL
+ * migrations after this and fails loudly if the two ever drift.
+ */
+const PRIVILEGED_BOOTSTRAP_ROLES = [
+  'events_admin',
+  'events_operator',
+  'events_subscriber',
+  'events_audit',
+  'executors_reader',
+] as const;
+
+/**
+ * Stage the inherently-privileged, one-time setup that genie's migration set
+ * performs but the least-privilege scoped role legitimately must NEVER do:
+ * the `pgcrypto` extension (039/041), the cluster RBAC/executor roles
+ * (041/043), and ownership of genie's OWN database `public` schema (so the
+ * scoped role can evolve its own schema via `runMigrations`).
+ *
+ * Runs on the BOOTSTRAP SUPERUSER connection, before the rebind to the scoped
+ * role. This does NOT grant the scoped role any extra privilege — the role
+ * stays `NOSUPERUSER NOCREATEROLE`; the privileged primitives are created by
+ * the superuser who legitimately may. Every statement is idempotent
+ * (`IF NOT EXISTS` / set-style), so re-runs and warm clusters converge to a
+ * no-op. Scoped to genie's own DB — zero bytes move, no neighbor touched.
+ *
+ * Throws on any failure; the caller (db.ts) funnels that into the existing
+ * `role-cutover.fallback.*` path (stay on the superuser bootstrap pool, never
+ * hard-fail boot — migrations then run as the superuser exactly like legacy).
+ */
+export async function ensurePrivilegedBootstrapObjects(sql: SqlLike, scopedRole: string): Promise<void> {
+  assertSafeIdentifier('role', scopedRole);
+  // pgcrypto: untrusted extension ⇒ superuser-only. Migrations 039 & 041 do
+  // `CREATE EXTENSION IF NOT EXISTS pgcrypto`; pre-staging it makes those a
+  // no-op when the scoped role later replays them.
+  await sql.unsafe('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+  for (const role of PRIVILEGED_BOOTSTRAP_ROLES) {
+    const exists = await sql.unsafe(`SELECT 1 FROM pg_roles WHERE rolname = '${role}'`);
+    if (exists.length === 0) {
+      await sql.unsafe(`CREATE ROLE "${role}" NOINHERIT`);
+    }
+  }
+  // genie owns its OWN database's `public` schema so the scoped role can run
+  // schema DDL in `runMigrations`. Metadata-only (catalog), zero bytes moved,
+  // scoped to genie's DB — the proven Group-3 replay prerequisite.
+  await sql.unsafe(`ALTER SCHEMA public OWNER TO "${scopedRole}"`);
+}
+
+/**
  * GRANT genie's privilege envelope onto the scoped role. Set-style and
  * idempotent — re-running converges. Sized to keep genie fully functional in
  * its own DB (DML + schema DDL via `runMigrations`) while withholding every

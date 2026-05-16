@@ -30,6 +30,7 @@ import { respawnInvocation } from './respawn.js';
 import {
   clearRoleCutoverSentinel,
   defaultRoleCutoverSink,
+  ensurePrivilegedBootstrapObjects,
   isRoleCutoverEnabled,
   resolveScopedConnectionIdentity,
 } from './role-cutover.js';
@@ -1483,6 +1484,31 @@ async function maybeRebindToScopedRole(args: {
     return null;
   }
   if (!identity.cutover) return null;
+
+  // Stage the inherently-privileged, one-time setup that genie's migration set
+  // performs but the least-privilege scoped role legitimately must NOT do
+  // (pgcrypto extension, cluster RBAC roles, own-schema ownership). Runs on the
+  // bootstrap SUPERUSER connection BEFORE the rebind so the first runMigrations
+  // — which executes as the scoped role — finds these already present and its
+  // CREATE EXTENSION / CREATE ROLE statements no-op. On a TRULY fresh pgserve
+  // (the CI smoke) these don't exist yet; without this, the scoped role's
+  // migration replay fails. Defensive: any failure ⇒ stay on the bootstrap
+  // superuser pool (migrations run as the superuser exactly like legacy),
+  // emit out-of-band, never hard-fail boot.
+  try {
+    await ensurePrivilegedBootstrapObjects(args.bootstrap, identity.username);
+  } catch (err) {
+    if (identity.fingerprintHex) clearRoleCutoverSentinel(identity.fingerprintHex);
+    defaultRoleCutoverSink({
+      event: 'role-cutover.fallback.bootstrap-objects-failed',
+      ts: new Date().toISOString(),
+      pid: process.pid,
+      roleName: identity.username,
+      database: args.database,
+      detail: { message: err instanceof Error ? err.message : String(err) },
+    });
+    return null;
+  }
 
   const roleClient = args.pgModule(
     buildPgClientOptions(args.transport, args.database, args.cliShortLived, identity.username),
