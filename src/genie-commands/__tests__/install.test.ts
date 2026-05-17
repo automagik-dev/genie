@@ -26,10 +26,13 @@ const {
   PM2_PROCESS_NAME,
   PM2_LOG_PREFIX,
   LEGACY_PM2_PROCESS_NAMES,
+  PGSERVE_PM2_PROCESS_NAMES,
   buildPm2StartArgs,
   buildEcosystemConfigSource,
   buildCanonicalPgserveHint,
   getEcosystemConfigPath,
+  isPgservePm2ManagedStatus,
+  isPgserveReadyStatus,
   isPgserveOnlinePm2,
 } = _internals;
 
@@ -76,6 +79,14 @@ describe('install._internals — canonical-stack constants', () => {
     // Add to this list, never remove: every legacy name ever shipped must
     // remain detected for an operator's first post-rename update to clean up.
     expect(LEGACY_PM2_PROCESS_NAMES).toContain('genie-serve');
+  });
+
+  test('pgserve pm2 names include autopg-server and legacy pgserve', () => {
+    // pgserve v2.4 renamed the supervised daemon to autopg-server. Genie must
+    // recognize both names before shelling out to `pgserve install`, because
+    // pgserve's install path checks port availability before its own
+    // idempotency check.
+    expect(PGSERVE_PM2_PROCESS_NAMES).toEqual(['autopg-server', 'pgserve']);
   });
 
   test('logfile prefix preserves the historical "genie-serve" name', () => {
@@ -288,6 +299,10 @@ describe('isPgserveOnlinePm2 — idempotent skip when pgserve already pm2-manage
     expect(isPgserveOnlinePm2({ pid: 1234, pm2_env: { status: 'online' } })).toBe(true);
   });
 
+  test('returns true when autopg-server pm2 entry is online', () => {
+    expect(isPgserveOnlinePm2({ name: 'autopg-server', pid: 1234, pm2_env: { status: 'online' } })).toBe(true);
+  });
+
   test('returns false when pgserve pm2 entry is stopped', () => {
     expect(isPgserveOnlinePm2({ pid: 1234, pm2_env: { status: 'stopped' } })).toBe(false);
   });
@@ -303,6 +318,45 @@ describe('isPgserveOnlinePm2 — idempotent skip when pgserve already pm2-manage
 
   test('returns false when pm2_env is missing from the entry', () => {
     expect(isPgserveOnlinePm2({ pid: 1234 })).toBe(false);
+  });
+});
+
+describe('pgserve status predicates — autopg install recovery', () => {
+  test('pm2-managed status is recognized from pgserve status --json', () => {
+    expect(isPgservePm2ManagedStatus({ installed: true, supervisor: 'pm2', name: 'autopg-server' })).toBe(true);
+  });
+
+  test('ready status requires pm2 online and runtime not explicitly dead', () => {
+    expect(
+      isPgserveReadyStatus({
+        installed: true,
+        supervisor: 'pm2',
+        name: 'autopg-server',
+        status: 'online',
+        runtime: { live: true },
+      }),
+    ).toBe(true);
+    expect(
+      isPgserveReadyStatus({
+        installed: true,
+        supervisor: 'pm2',
+        name: 'autopg-server',
+        status: 'online',
+        runtime: { live: false },
+      }),
+    ).toBe(false);
+  });
+
+  test('stopped autopg-server is pm2-managed but not ready', () => {
+    const status = {
+      installed: true,
+      supervisor: 'pm2',
+      name: 'autopg-server',
+      status: 'stopped',
+      runtime: { live: false },
+    };
+    expect(isPgservePm2ManagedStatus(status)).toBe(true);
+    expect(isPgserveReadyStatus(status)).toBe(false);
   });
 });
 

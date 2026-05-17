@@ -564,11 +564,11 @@ describe('downloadAndVerifyTarball (G5)', () => {
   test('issues gh release download with the correct version tag and pattern set', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
     try {
-      const calls: Array<{ cmd: string; args: string[] }> = [];
+      const calls: Array<{ cmd: string; args: string[]; timeoutMs?: number }> = [];
       // Stub runner: capture every gh invocation, place the tarball where
       // downloadAndVerifyTarball expects it on the success path.
-      const runner = async (cmd: string, args: string[]) => {
-        calls.push({ cmd, args });
+      const runner = async (cmd: string, args: string[], timeoutMs?: number) => {
+        calls.push({ cmd, args, timeoutMs });
         if (cmd === 'gh' && args[0] === 'release') {
           // Drop a placeholder tarball so the existsSync check passes.
           const tarballName = `genie-${manifest.version}-linux-x64-glibc.tar.gz`;
@@ -588,9 +588,20 @@ describe('downloadAndVerifyTarball (G5)', () => {
       expect(argString).toContain(`genie-${manifest.version}-linux-x64-glibc.tar.gz`);
       expect(argString).toContain('.bundle');
       expect(argString).toContain('.intoto.jsonl');
-      // Second call — gh attestation verify.
+      // Second call — gh attestation verify with workflow identity pinned.
       expect(calls[1].cmd).toBe('gh');
-      expect(calls[1].args).toEqual(['attestation', 'verify', tarballPath, '--owner', 'automagik-dev']);
+      expect(calls[1].args).toEqual([
+        'attestation',
+        'verify',
+        tarballPath,
+        '--repo',
+        'automagik-dev/genie',
+        '--cert-identity-regex',
+        '^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@',
+        '--cert-oidc-issuer',
+        'https://token.actions.githubusercontent.com',
+      ]);
+      expect(calls[1].timeoutMs).toBe(60_000);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -630,7 +641,67 @@ describe('downloadAndVerifyTarball (G5)', () => {
     }
   });
 
-  test('skipAttestation skips the gh attestation verify call', async () => {
+  test('falls back to cosign bundle when gh attestation verify fails', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
+    try {
+      const tarballPath = join(tmp, `genie-${manifest.version}-linux-x64-glibc.tar.gz`);
+      const bundlePath = `${tarballPath}.bundle`;
+      const calls: Array<{ cmd: string; args: string[]; timeoutMs?: number }> = [];
+      const runner = async (cmd: string, args: string[], timeoutMs?: number) => {
+        calls.push({ cmd, args, timeoutMs });
+        if (cmd === 'gh' && args[0] === 'release') {
+          writeFileSync(tarballPath, 'x');
+          writeFileSync(bundlePath, 'bundle');
+          return { success: true, output: '' };
+        }
+        if (cmd === 'gh' && args[0] === 'attestation') {
+          return { success: false, output: 'Timed out after 60000ms' };
+        }
+        return { success: true, output: '' };
+      };
+
+      await expect(downloadAndVerifyTarball(manifest, 'linux-x64-glibc', tmp, { runner })).resolves.toBe(tarballPath);
+      expect(calls.map((call) => call.cmd)).toEqual(['gh', 'gh', 'cosign']);
+      expect(calls[2].args).toEqual([
+        'verify-blob',
+        '--bundle',
+        bundlePath,
+        '--certificate-identity-regexp',
+        '^https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@',
+        '--certificate-oidc-issuer',
+        'https://token.actions.githubusercontent.com',
+        tarballPath,
+      ]);
+      expect(calls[2].timeoutMs).toBe(30_000);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('throws with both verifier errors when gh and cosign verification fail', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
+    try {
+      const tarballPath = join(tmp, `genie-${manifest.version}-linux-x64-glibc.tar.gz`);
+      const runner = async (cmd: string, args: string[]) => {
+        if (cmd === 'gh' && args[0] === 'release') {
+          writeFileSync(tarballPath, 'x');
+          writeFileSync(`${tarballPath}.bundle`, 'bundle');
+          return { success: true, output: '' };
+        }
+        if (cmd === 'gh' && args[0] === 'attestation') {
+          return { success: false, output: 'no matching attestation' };
+        }
+        return { success: false, output: 'invalid signature' };
+      };
+      await expect(downloadAndVerifyTarball(manifest, 'linux-x64-glibc', tmp, { runner })).rejects.toThrow(
+        /cosign verify-blob: invalid signature/,
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('skipAttestation skips signature verification calls', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
     try {
       const calls: Array<{ cmd: string; args: string[] }> = [];
