@@ -211,7 +211,16 @@ jobs:
           # SLSA generator v2.1.0 uploads the provenance as an artifact whose
           # name == the provenance-name input. The artifact contains one file
           # at the same path. After download the file lands at dist/<name>.
-          name: ${{ needs.provenance.outputs.provenance-name }}
+          #
+          # The reusable `provenance` job declares no `outputs`, so referencing
+          # `needs.provenance.outputs.provenance-name` resolves to EMPTY and
+          # download-artifact silently no-ops (run 25997850533: the artifact
+          # genie-<version>.intoto.jsonl was produced but never staged at
+          # dist/, failing "Stage provenance per-platform"). genie controls
+          # the artifact name via the provenance-name INPUT (line ~171), so
+          # reconstruct the same deterministic string from the same version
+          # source instead of depending on a nonexistent job output.
+          name: genie-${{ needs.prepare.outputs.version }}.intoto.jsonl
           path: dist
 
       - name: Stage provenance per-platform
