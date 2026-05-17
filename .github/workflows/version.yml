@@ -191,8 +191,13 @@ jobs:
       # `sign-attest.yml@refs/tags/v<version>` (Decision #1 — cosign
       # step ownership preserved) which matches install.sh:24's pin.
       #
-      # Skipped on the main-branch path because `should_bump=false` there
-      # (no new tag is pushed; the pre-existing dev tag's chain already ran).
+      # The bump-path dispatch below only fires on dev (should_bump=true,
+      # channel=dev → prerelease). The main/homolog no-bump path needs its
+      # OWN dispatch to publish the stable/homolog channel — see the
+      # "promoted tag" step further down. Gating the ONLY stable-channel
+      # dispatch behind should_bump==true is what froze the stable
+      # .well-known/latest.json pointer at v4.260511.5: every main merge
+      # ran Version, resolved branch=main, then skipped every step.
       - name: Trigger release pipeline for the new tag
         if: steps.context.outputs.should_bump == 'true' && steps.commit_and_tag.outputs.tag_pushed == 'true'
         env:
@@ -223,6 +228,48 @@ jobs:
           # outage; surface loudly.
           if ! gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" --field version="${VERSION}" --field channel="${CHANNEL}"; then
             echo "::error ::release-trigger.dispatch_failed release.yml dispatch failed for ${TAG} — investigate gh CLI auth or workflow availability before re-running manually"
+            exit 1
+          fi
+
+      # Stable/homolog publish — the no-bump path (a main or homolog
+      # merge). should_bump=false here: package.json already carries the
+      # dev-derived version the promotion brought over, and the dev chain
+      # already pushed tag v<version>. We do NOT bump, commit, or push a
+      # tag — we only re-dispatch release.yml against the EXISTING tag with
+      # the stable (or homolog) channel so .well-known/latest.json
+      # advances. This is the ONLY code path that publishes the stable
+      # channel; without it a main merge produces no stable release.
+      - name: Trigger release pipeline for the promoted tag (stable/homolog)
+        if: steps.context.outputs.should_bump == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(bun --print "require('./package.json').version")"
+          if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ] || [ "${VERSION}" = "undefined" ]; then
+            echo "::error ::release-trigger.version_unresolved package.json has no version on the no-bump path — promotion is malformed"
+            exit 1
+          fi
+          TAG="refs/tags/v${VERSION}"
+          # Canonical channel taxonomy (Felipe directive 2026-05-12):
+          #   main    → stable  → .well-known/latest.json
+          #   homolog → homolog → .well-known/homolog.json
+          BRANCH="${{ steps.context.outputs.branch }}"
+          case "$BRANCH" in
+            main)    CHANNEL="stable" ;;
+            homolog) CHANNEL="homolog" ;;
+            *)       CHANNEL="dev" ;;
+          esac
+          # The dev chain that derived this version must have already
+          # pushed v${VERSION}. If it is missing, the promotion raced ahead
+          # of the dev tag — surface loudly rather than dispatch a tag
+          # release.yml cannot check out.
+          if ! git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "::error ::release-trigger.tag_missing v${VERSION} not on origin — dev derivation chain has not landed its tag; re-run after the dev release completes"
+            exit 1
+          fi
+          echo "Dispatching release pipeline against ${TAG} (channel=${CHANNEL})..."
+          if ! gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" --field version="${VERSION}" --field channel="${CHANNEL}"; then
+            echo "::error ::release-trigger.dispatch_failed release.yml dispatch failed for ${TAG} (channel=${CHANNEL}) — investigate gh CLI auth or workflow availability before re-running manually"
             exit 1
           fi
 
