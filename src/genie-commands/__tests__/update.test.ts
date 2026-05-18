@@ -193,7 +193,11 @@ describe('updateCommand wiring', () => {
   test('"Already up to date" exit logs version and channel', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).toContain('Already up to date');
-    expect(source).toContain('shortCircuitIfCurrent(VERSION, latestVersion)');
+    // The short-circuit must key off the INSTALLED binary version, not the
+    // running process's compile-time VERSION — otherwise a stale shadowing
+    // binary on $PATH re-offers the same update forever.
+    expect(source).toContain('shortCircuitIfCurrent(installedVersion, latestVersion)');
+    expect(source).toContain('const installedVersion = resolveInstalledVersion()');
   });
 
   test('--rollback short-circuits before downloading anything', () => {
