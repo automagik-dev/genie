@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "channel": "stable",
+  "channel": "homolog",
   "version": "4.260518.1",
   "released_at": "2026-05-18T00:32:43Z",
   "tarball_base": "https://github.com/automagik-dev/genie/releases/download/v4.260518.1",
