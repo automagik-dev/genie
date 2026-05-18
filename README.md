@@ -38,14 +38,14 @@
 -->
 
 <!-- METRICS:START -->
-**🚀 13 commits** this week · **0 releases** · **+950 LoC** · **4 contributors**
+**🚀 33 commits** this week · **6 releases** · **+1.1K LoC** · **5 contributors**
 
 | Metric | Value |
 |--------|-------|
-| Releases (24h) | 0 |
-| PRs merged (7d) | 32 |
-| Avg merge time | 4.2h |
-| SHIP rate | 64% |
+| Releases (24h) | 6 |
+| PRs merged (7d) | 41 |
+| Avg merge time | 3.3h |
+| SHIP rate | 88% |
 
 ![Commits per day (30d, all branches)](.genie/assets/commits-30d.svg)
 
