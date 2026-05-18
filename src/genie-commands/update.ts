@@ -852,9 +852,17 @@ async function pm2GenieServe(): Promise<Pm2GenieServe | null> {
 export async function restartServeIfStale(): Promise<{ oldPid: number; newPid: number } | null> {
   const before = await pm2GenieServe();
   if (!before) return null;
+  // A successful binary swap means the pm2-managed daemon is still
+  // executing the OLD process image (open inode / mmap), whether or not
+  // the swap also unlinked its cwd. The restart must therefore be
+  // unconditional whenever a pm2 daemon exists — the previous
+  // `staleInode`-only gate left the common file-rename swap serving
+  // pre-update bytes forever (daemon stuck on its boot version, every
+  // `genie update` re-offering the same upgrade). `--no-restart` is
+  // honored upstream before this is ever reached.
   const cwdInfo = readDaemonCwd(before.pid);
-  if (!cwdInfo || !cwdInfo.staleInode) return null;
-  log(`Restarting pm2 ${before.name} (stale inode detected: ${cwdInfo.cwd})`);
+  const reason = cwdInfo?.staleInode ? `stale inode: ${cwdInfo.cwd}` : 'binary swapped under running daemon';
+  log(`Restarting pm2 ${before.name} (${reason})`);
   let configPath: string | null = null;
   try {
     configPath = regenerateEcosystemConfig();
