@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'node:child_process';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 import {
   chmodSync,
   closeSync,
@@ -241,6 +241,34 @@ export function resolveLiveBinaryPath(): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The version of the genie binary the user actually runs. Resolved by
+ * executing the live `which genie` binary, then the on-disk VERSION file,
+ * then the in-process compile-time constant as a last resort.
+ *
+ * The update decision MUST key off this, not the compile-time `VERSION`
+ * of whatever binary happens to be executing `genie update`. If a stale
+ * binary shadows ~/.genie/bin/genie on $PATH, its baked-in `VERSION`
+ * never changes, so a `VERSION`-based check re-offers the same update on
+ * every run forever (the "update doesn't stick" bug).
+ */
+export function resolveInstalledVersion(): string {
+  const live = resolveLiveBinaryPath();
+  if (live) {
+    try {
+      const out = execFileSync(live, ['--version'], {
+        encoding: 'utf-8',
+        timeout: 3000,
+      }).trim();
+      const m = out.match(/\d+\.\d+\.\d+/);
+      if (m) return m[0];
+    } catch {
+      // fall through to on-disk / compile-time
+    }
+  }
+  return readInstalledPackageVersion() ?? VERSION;
 }
 
 /**
@@ -1348,8 +1376,12 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   // Pre-flight: fetch the channel manifest. Single canonical source of truth.
   const manifest = await fetchLatestManifest(channel);
   const latestVersion = manifest?.version ?? null;
-  if (shortCircuitIfCurrent(VERSION, latestVersion)) {
-    success(`Already up to date (v${normalizeVersion(VERSION)}, channel ${channel})`);
+  // Key the decision off the installed binary, NOT this process's
+  // compile-time VERSION — a stale shadowing binary on $PATH would
+  // otherwise re-offer the same update on every invocation.
+  const installedVersion = resolveInstalledVersion();
+  if (shortCircuitIfCurrent(installedVersion, latestVersion)) {
+    success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
     console.log();
     return;
   }
@@ -1375,7 +1407,7 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
   log(`Platform: ${platform}`);
   if (latestVersion) {
-    log(`Update available: ${normalizeVersion(VERSION)} → ${normalizeVersion(latestVersion)}`);
+    log(`Update available: ${normalizeVersion(installedVersion)} → ${normalizeVersion(latestVersion)}`);
   } else {
     log(`Channel manifest unavailable (.well-known/${channel === 'stable' ? 'latest' : channel}.json missing)`);
     error(`Cannot resolve target version for channel "${channel}". Aborting.`);
@@ -1384,7 +1416,7 @@ export async function updateCommand(options: UpdateCommandOptions = {}): Promise
   console.log();
 
   if (!shouldAutoConfirm(options)) {
-    const proceedQuestion = `Update v${normalizeVersion(VERSION)} → v${normalizeVersion(latestVersion as string)}?`;
+    const proceedQuestion = `Update v${normalizeVersion(installedVersion)} → v${normalizeVersion(latestVersion as string)}?`;
     const proceed = await promptConfirm(proceedQuestion);
     if (!proceed) {
       console.log();
@@ -1458,6 +1490,38 @@ async function runDelivery(
     writeFileSync(join(GENIE_HOME, 'VERSION'), `${manifest.version}\n`);
   } catch {
     // best-effort
+  }
+
+  // Post-swap divergence guard: ~/.genie/bin/genie now holds the new
+  // binary, but if $PATH resolves `genie` to a different file (a pre-G5
+  // copy or a shadowing shim) the user keeps running the old version and
+  // would never escape the update prompt. Measure the actual outcome and
+  // tell them exactly how to fix it rather than silently "succeeding".
+  try {
+    const live = resolveLiveBinaryPath();
+    if (live) {
+      let liveVer = '';
+      try {
+        liveVer =
+          execFileSync(live, ['--version'], { encoding: 'utf-8', timeout: 3000 })
+            .trim()
+            .match(/\d+\.\d+\.\d+/)?.[0] ?? '';
+      } catch {
+        // unknowable — skip the advisory
+      }
+      if (liveVer && normalizeVersion(liveVer) !== normalizeVersion(manifest.version)) {
+        const canonical = join(GENIE_BIN, 'genie');
+        log('');
+        log('⚠ Your PATH `genie` is NOT the binary that was just updated.');
+        log(`  Updated    : ${canonical} → v${manifest.version}`);
+        log(`  which genie: ${live} (still v${liveVer})`);
+        log('  Fix it:');
+        log(`    ln -sf ${canonical} ${live} && hash -r`);
+        log('  (or put ~/.genie/bin first on $PATH)');
+      }
+    }
+  } catch {
+    // advisory only — never fail the update for this
   }
 
   syncAuxiliaryContent(extractDir);
