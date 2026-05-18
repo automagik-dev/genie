@@ -262,7 +262,7 @@ export function resolveInstalledVersion(): string {
         encoding: 'utf-8',
         timeout: 3000,
       }).trim();
-      const m = out.match(/\d+\.\d+\.\d+/);
+      const m = out.match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/);
       if (m) return m[0];
     } catch {
       // fall through to on-disk / compile-time
@@ -1505,7 +1505,7 @@ async function runDelivery(
         liveVer =
           execFileSync(live, ['--version'], { encoding: 'utf-8', timeout: 3000 })
             .trim()
-            .match(/\d+\.\d+\.\d+/)?.[0] ?? '';
+            .match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/)?.[0] ?? '';
       } catch {
         // unknowable — skip the advisory
       }
