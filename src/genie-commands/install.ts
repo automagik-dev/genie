@@ -469,6 +469,11 @@ export function buildEcosystemConfigSource(geniePath: string, databaseUrl?: stri
     // pm2 exec the script directly so the kernel honours the shebang.
     interpreter: 'none',
     autorestart: true,
+    // A deliberate clean exit(0) ("genie serve already running") must NOT
+    // trigger pm2 autorestart — otherwise one squatting daemon turns into
+    // an unbounded respawn storm (uptime 0, thousands of restarts, empty
+    // error log). pm2 treats a matched code as "stopped", not "errored".
+    stop_exit_codes: [0],
     max_restarts: HARDENED_DEFAULTS.maxRestarts,
     min_uptime: HARDENED_DEFAULTS.minUptimeMs,
     restart_delay: HARDENED_DEFAULTS.restartDelayMs,

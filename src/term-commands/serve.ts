@@ -790,6 +790,24 @@ function claimServePidOrExit(): void {
 
       const existing = readServePid();
       if (existing && existing.startTime !== null && isProcessAlive(existing.pid)) {
+        // pm2-authoritative takeover. When WE are the pm2-supervised
+        // instance (`pm_id` set) but a *different*, detached non-pm2
+        // daemon squats serve.pid, deferring with exit(0) makes pm2
+        // autorestart us forever (uptime 0, thousands of restarts,
+        // supervision permanently inert). Reclaim instead: terminate the
+        // squatter and retry the claim on the next loop iteration.
+        if (process.env.pm_id !== undefined && existing.pid !== process.pid) {
+          console.log(
+            `genie serve (pm2 pm_id=${process.env.pm_id}) reclaiming serve.pid from detached PID ${existing.pid}`,
+          );
+          try {
+            process.kill(existing.pid, 'SIGTERM');
+          } catch {
+            // already gone — fall through to reclaim
+          }
+          forceRemoveServePid();
+          continue;
+        }
         console.log(`genie serve already running (PID ${existing.pid})`);
         // Closes #1490 — also probe the hook UDS health on the live daemon.
         // Pre-fix, an "already running" daemon that pre-dated #1485 (or whose
