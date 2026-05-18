@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "channel": "dev",
-  "version": "4.260518.2",
-  "released_at": "2026-05-18T01:12:57Z",
-  "tarball_base": "https://github.com/automagik-dev/genie/releases/download/v4.260518.2",
+  "version": "4.260518.3",
+  "released_at": "2026-05-18T01:58:10Z",
+  "tarball_base": "https://github.com/automagik-dev/genie/releases/download/v4.260518.3",
   "platforms": ["linux-x64-glibc", "linux-x64-musl", "linux-arm64", "darwin-arm64"]
 }
