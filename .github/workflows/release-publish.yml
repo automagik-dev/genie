@@ -188,6 +188,25 @@ jobs:
               ${DRAFT_FLAG} ${PRERELEASE_FLAG}
           fi
 
+          # Reconcile release flags to the channel — idempotent, and the
+          # whole point on the stable re-dispatch path: the dev chain
+          # creates v${VERSION} as --prerelease, then a dev→main merge
+          # re-dispatches this workflow with channel=stable. The release
+          # already exists, so the `gh release create` branch above is
+          # skipped and the prerelease flag would never flip. Without this
+          # block, .well-known/latest.json advances but GitHub's "Latest"
+          # badge stays stuck on the old stable tag (the v4.260511.5
+          # symptom). Drafts can't be marked latest, so skip when drafting.
+          if [[ -z "${DRAFT_FLAG}" ]]; then
+            if [[ "${CHANNEL}" == "stable" ]]; then
+              gh release edit "v${VERSION}" --repo "${{ github.repository }}" \
+                --prerelease=false --latest
+            else
+              gh release edit "v${VERSION}" --repo "${{ github.repository }}" \
+                --prerelease=true --latest=false
+            fi
+          fi
+
           if [[ -d dist && -n "$(ls -A dist 2>/dev/null)" ]]; then
             gh release upload "v${VERSION}" \
               --repo "${{ github.repository }}" \
