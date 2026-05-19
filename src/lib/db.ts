@@ -87,7 +87,75 @@ export function resolvePgserveSocketDir(): string {
 export function resolveDatabaseName(): string {
   const testDbName = process.env.GENIE_TEST_DB_NAME;
   if (testDbName && testDbName.length > 0) return testDbName;
+  // Non-test explicit override. On a direct postmaster (autopg/pgserve v3,
+  // no accept-hook router) there is nothing to silently re-route the libpq
+  // default `postgres` into a per-fingerprint DB, so genie must target a
+  // real named database. `GENIE_DB_NAME` lets operators pin it; the
+  // direct-postmaster bootstrap defaults it to NATIVE_DB_NAME and creates
+  // it if absent. Legacy router path keeps returning DB_NAME.
+  const explicit = process.env.GENIE_DB_NAME;
+  if (explicit && explicit.length > 0) return explicit;
   return DB_NAME;
+}
+
+/**
+ * The database genie owns on a direct postmaster (autopg/pgserve v3).
+ * The deleted pgserve-v2 accept-hook used to auto-create + route to
+ * `app_<name>_<fp>`; with no router, genie owns a single named DB and
+ * provisions it itself (ensureDatabaseExists). Override via GENIE_DB_NAME.
+ */
+export const NATIVE_DB_NAME = 'genie';
+
+/** Postgres identifier allowlist for a database we are about to CREATE. */
+function isSafeDbIdent(name: string): boolean {
+  return /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(name);
+}
+
+/**
+ * Ensure `dbName` exists, creating it from the `postgres` maintenance DB
+ * if absent. Replaces the pgserve-v2 accept-hook's implicit auto-create
+ * so `genie db migrate` / genie-serve can natively bootstrap a fresh
+ * autopg v3 host (no router, no fingerprint DB). Best-effort: a
+ * concurrent creator (duplicate_database / unique_violation) is benign.
+ */
+async function ensureDatabaseExists(
+  // biome-ignore lint/suspicious/noExplicitAny: postgres.js module type bleed-through
+  pgModule: any,
+  transport: Transport,
+  dbName: string,
+): Promise<void> {
+  if (dbName === DB_NAME) return; // maintenance DB always exists
+  if (!isSafeDbIdent(dbName)) {
+    throw new Error(`refusing to provision unsafe database identifier: ${JSON.stringify(dbName)}`);
+  }
+  const admin = pgModule(buildPgClientOptions(transport, DB_NAME, true));
+  try {
+    const rows = await admin<{ one: number }[]>`
+      SELECT 1 AS one FROM pg_database WHERE datname = ${dbName}
+    `;
+    if (rows.length === 0) {
+      // CREATE DATABASE cannot run inside a transaction; unsafe() issues it
+      // directly. Identifier is allowlisted above; quote defensively.
+      await admin.unsafe(`CREATE DATABASE "${dbName}"`);
+      // One-shot provisioning notice: fires once per host on the first
+      // connect to a fresh autopg/pgserve v3 (the accept-hook that used to
+      // create the DB silently was removed) — operators must see it.
+      // emit-discipline: ok — one-shot DB provisioning notice (not informational spam)
+      process.stderr.write(`[genie] provisioned database "${dbName}" on direct postmaster\n`);
+    }
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    // 42P04 duplicate_database / 23505 unique_violation → another booter won the race.
+    if (code !== '42P04' && code !== '23505') {
+      throw new Error(
+        `failed to ensure database "${dbName}" exists: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  } finally {
+    await admin.end({ timeout: 5 }).catch(() => {
+      /* best-effort teardown */
+    });
+  }
 }
 
 /**
@@ -149,22 +217,8 @@ export interface PostmasterDiscovery {
   pid: number;
 }
 
-/**
- * Read the postmaster's discovery file written by pgserve@2.x. Returns null
- * if the file is missing, malformed, or points at a stale/dead postmaster.
- *
- * Schema (validated below): `{ socketDir: string, port: number, pid: number }`
- * — see `node_modules/pgserve/src/admin-client.js:writeAdminDiscovery`.
- */
-export function readPostmasterDiscovery(): PostmasterDiscovery | null {
-  const file = join(resolvePgserveSocketDir(), 'admin.json');
-  if (!existsSync(file)) return null;
-  let raw: string;
-  try {
-    raw = readFileSync(file, 'utf-8');
-  } catch {
-    return null;
-  }
+/** Parse + validate one discovery JSON blob into PostmasterDiscovery. */
+function parsePostmasterDiscovery(raw: string): PostmasterDiscovery | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -177,13 +231,42 @@ export function readPostmasterDiscovery(): PostmasterDiscovery | null {
   const port = typeof obj.port === 'number' && Number.isFinite(obj.port) && obj.port > 0 ? obj.port : null;
   const pid = typeof obj.pid === 'number' && Number.isFinite(obj.pid) && obj.pid > 0 ? obj.pid : null;
   if (!socketDir || !port) return null;
-  // Validate the postmaster socket file exists. If pgserve crashed without
-  // cleaning up admin.json, the file path will be stale.
+  // Validate the postmaster socket file exists. If the server crashed
+  // without cleaning the discovery file, the path will be stale.
   if (!existsSync(join(socketDir, `.s.PGSQL.${port}`))) return null;
-  // pid is informational — we don't gate on liveness here because the daemon
-  // process supervises the postmaster lifecycle. Stale pid + present socket
-  // is impossible under normal operation.
+  // pid is informational — the supervisor owns postmaster lifecycle.
   return { socketDir, port, pid: pid ?? -1 };
+}
+
+/**
+ * Read the postmaster's discovery file. Returns null if missing, malformed,
+ * or pointing at a stale/dead postmaster.
+ *
+ * Two layouts, newest first:
+ *   1. autopg / pgserve v3: `<socketDir>/runtime.json` — direct postmaster,
+ *      no accept-hook router. `admin.json` moved to ~/.autopg/ (supervisor
+ *      record, not live socket info), so v3 hosts have NO
+ *      `<socketDir>/admin.json` and genie was failing to detect them as a
+ *      direct postmaster → fell back to the legacy `postgres`/router path
+ *      and never provisioned its own DB.
+ *   2. pgserve v2: `<socketDir>/admin.json` — legacy daemon discovery.
+ * Both blobs share `{ socketDir, port, pid }`.
+ */
+export function readPostmasterDiscovery(): PostmasterDiscovery | null {
+  const dir = resolvePgserveSocketDir();
+  for (const name of ['runtime.json', 'admin.json']) {
+    const file = join(dir, name);
+    if (!existsSync(file)) continue;
+    let raw: string;
+    try {
+      raw = readFileSync(file, 'utf-8');
+    } catch {
+      continue;
+    }
+    const discovery = parsePostmasterDiscovery(raw);
+    if (discovery) return discovery;
+  }
+  return null;
 }
 
 interface DaemonState {
@@ -1202,10 +1285,38 @@ async function buildAndOpenConnection(transport: Transport, _t0: number): Promis
   // clones `genie_template` and sets GENIE_TEST_DB_NAME. In production, this
   // env var is never set, so we fall back to DB_NAME ('postgres') and let
   // pgserve v2's accept hook auto-resolve to the fingerprint's database.
-  const database = resolveDatabaseName();
+  let database = resolveDatabaseName();
   const isTestMode = Boolean(process.env.GENIE_TEST_DB_NAME);
   const cliShortLived = !daemonCwdPinned && !isTestMode && process.env.GENIE_SKIP_DB_BOOT === '1';
   const shouldRestoreCwd = !daemonCwdPinned && !isTestMode;
+
+  // Direct-postmaster = autopg/pgserve v3: no accept-hook router, so the
+  // libpq default `postgres` is NOT silently re-routed to a per-fingerprint
+  // DB. Detect it BEFORE building the pool (file read + env only — no
+  // dependency on the connection) so we can target, and self-provision, a
+  // real named database. (cutoverEnabled/directPostmaster were previously
+  // computed after the bootstrap pool; hoisted here, single source.)
+  const cutoverEnabled = isRoleCutoverEnabled();
+  const directPostmaster = cutoverEnabled && transport.useSocket && readPostmasterDiscovery() !== null;
+
+  // On a direct postmaster, an unqualified `postgres` (the legacy
+  // accept-hook signal) has no router to resolve it → genie must own a
+  // real DB. Default to NATIVE_DB_NAME and create it if absent. Explicit
+  // GENIE_DB_NAME / GENIE_TEST_DB_NAME (already in `database`) win; the
+  // legacy router path is untouched (stays on DB_NAME).
+  // Reassign `database` itself (not a separate var) so EVERY downstream
+  // consumer — bootstrap pool, maybeRebindToScopedRole's role provisioning
+  // + GRANTs, runPostConnectSetup/migrations — agrees on the target DB. An
+  // earlier split (`effectiveDb` only on the pool) made role-cutover GRANT
+  // in `postgres` while the pool ran in `genie` → "no schema has been
+  // selected to create in".
+  if (directPostmaster && !isTestMode && database === DB_NAME) {
+    database = NATIVE_DB_NAME;
+  }
+  if (directPostmaster && database !== DB_NAME) {
+    await ensureDatabaseExists(pgModule, transport, database);
+  }
+
   const cwdPin = pinCwdForFingerprint();
 
   // Bind to a local first so concurrent rebuilds (where another caller's
@@ -1221,11 +1332,9 @@ async function buildAndOpenConnection(transport: Transport, _t0: number): Promis
   let activeClient = bootstrapClient;
   sqlClient = bootstrapClient;
 
-  // Wave 3: cutover is DEFAULT-ON; only the documented kill-switch
-  // (GENIE_ROLE_CUTOVER=0) skips the admin.json consult so the killed path is
-  // byte-identical to legacy (no extra stat, no behavior change).
-  const cutoverEnabled = isRoleCutoverEnabled();
-  const directPostmaster = cutoverEnabled && transport.useSocket && readPostmasterDiscovery() !== null;
+  // (cutoverEnabled / directPostmaster computed above, before the pool, so
+  // the target database can be resolved + provisioned pre-connect. Wave 3:
+  // cutover is DEFAULT-ON; kill-switch GENIE_ROLE_CUTOVER=0.)
 
   try {
     // Force one round-trip while cwd is still pinned so pgserve does its

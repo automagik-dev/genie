@@ -13,6 +13,7 @@
 import { readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type postgres from 'postgres';
+import { EMBEDDED_MIGRATIONS } from '../db/migrations.generated.js';
 
 type Sql = postgres.Sql;
 
@@ -54,12 +55,28 @@ function getPackageRootMigrationsDir(): string {
 }
 
 /**
- * Load all .sql migration files sorted by name.
- * Searches two deterministic directories derived from import.meta.dir:
- *   1. dev layout: src/lib/../db/migrations
- *   2. bundled layout: dist/../src/db/migrations
+ * Load all .sql migrations sorted by name.
+ *
+ * Primary source: `EMBEDDED_MIGRATIONS` — static `with { type: 'text' }`
+ * imports that `bun build --compile` embeds into the binary. The previous
+ * readdirSync/Bun.file() approach read from disk relative to
+ * import.meta.dir, which inside the compiled executable resolves to an
+ * empty/absent `/$bunfs/...` path → zero migrations → "Applied: 0" on a
+ * fresh DB → schema never created (the bug that blocked native
+ * genie → pgserve-v3 migration).
+ *
+ * The on-disk scan is kept ONLY as a dev fallback (running from source
+ * with an unbuilt manifest); the embedded list is authoritative whenever
+ * present, which is always true in a shipped binary.
  */
 async function loadMigrationFiles(): Promise<MigrationFile[]> {
+  if (EMBEDDED_MIGRATIONS.length > 0) {
+    return EMBEDDED_MIGRATIONS.map((m) => ({ name: m.name, sql: m.sql })).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    );
+  }
+
+  // Dev-only fallback: source checkout whose manifest hasn't been generated.
   const candidates = [
     getMigrationsDir(), // dev: src/lib/../db/migrations
     getPackageRootMigrationsDir(), // bundled: dist/../src/db/migrations
