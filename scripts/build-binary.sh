@@ -55,6 +55,15 @@ TARBALL="${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz"
 rm -rf "$STAGE" "$TARBALL"
 mkdir -p "$STAGE"
 
+# Regenerate the embedded migrations manifest so the compiled binary can
+# never ship a stale/empty migration set. `bun build --compile` only
+# embeds statically-imported modules; the manifest turns every
+# src/db/migrations/*.sql into a `with { type: 'text' }` import. Without
+# this the binary's migrate is a no-op on a fresh DB (no schema → genie
+# cannot natively migrate onto pgserve v3).
+echo "==> regenerating embedded migrations manifest"
+bun run "${REPO_ROOT}/scripts/gen-migrations-manifest.ts"
+
 echo "==> [${PLATFORM}] bun build --compile --target=${TARGET}  (v${VERSION})"
 bun build --compile \
   --target="${TARGET}" \
