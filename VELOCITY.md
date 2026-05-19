@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-05-18 12:03 UTC | Data range: 2026-03-13 to 2026-05-18
+> Last updated: 2026-05-19 12:03 UTC | Data range: 2026-03-13 to 2026-05-19
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 33 | 421 | 5.3K |
+| Commits | 33 | 421 | 243 |
 | Releases | 0 | 7 | 0 |
 | LoC (net) | +1.1K | +62.3K | — |
-| Contributors | 5 | 9 | 33 |
+| Contributors | 5 | 9 | 10 |
 
 ---
 
@@ -41,4 +41,4 @@
 | 8 | release-bot | 7 |
 | 9 | felipe rosa | 4 |
 
-*33 contributors since 2025-09-27*
+*10 contributors since 2026-05-07*
