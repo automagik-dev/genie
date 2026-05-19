@@ -269,6 +269,32 @@ export function readPostmasterDiscovery(): PostmasterDiscovery | null {
   return null;
 }
 
+/**
+ * True ONLY on autopg/pgserve v3 — the router-less direct postmaster that
+ * publishes `<socketDir>/runtime.json`. pgserve v2 publishes ONLY
+ * `<socketDir>/admin.json` and still has the accept-hook router that
+ * resolves the libpq default `postgres` into a per-fingerprint DB, so v2
+ * MUST keep targeting `postgres` (do not retarget/provision a named DB).
+ *
+ * This is deliberately separate from `readPostmasterDiscovery()` (which
+ * accepts either file for transport resolution) and from
+ * `isRoleCutoverEnabled()`: native-DB provisioning must happen on every v3
+ * boot — including `GENIE_ROLE_CUTOVER=0` — or v3 falls back to `postgres`
+ * and reintroduces the empty-DB bootstrap failure. (PR review: CodeRabbit
+ * "decouple from role-cutover" + Codex "gate to v3 runtime discovery only".)
+ */
+export function hasV3RuntimeDiscovery(): boolean {
+  const file = join(resolvePgserveSocketDir(), 'runtime.json');
+  if (!existsSync(file)) return false;
+  let raw: string;
+  try {
+    raw = readFileSync(file, 'utf-8');
+  } catch {
+    return false;
+  }
+  return parsePostmasterDiscovery(raw) !== null;
+}
+
 interface DaemonState {
   running: boolean;
   pid: number | null;
@@ -1296,24 +1322,34 @@ async function buildAndOpenConnection(transport: Transport, _t0: number): Promis
   // dependency on the connection) so we can target, and self-provision, a
   // real named database. (cutoverEnabled/directPostmaster were previously
   // computed after the bootstrap pool; hoisted here, single source.)
+  // Role-cutover path: unchanged. Still gated on the kill-switch + ANY
+  // discovery file (v2 admin.json OR v3 runtime.json). This drives
+  // maybeRebindToScopedRole only — preserving existing v2 + v3 behavior.
   const cutoverEnabled = isRoleCutoverEnabled();
   const directPostmaster = cutoverEnabled && transport.useSocket && readPostmasterDiscovery() !== null;
 
-  // On a direct postmaster, an unqualified `postgres` (the legacy
-  // accept-hook signal) has no router to resolve it → genie must own a
-  // real DB. Default to NATIVE_DB_NAME and create it if absent. Explicit
-  // GENIE_DB_NAME / GENIE_TEST_DB_NAME (already in `database`) win; the
-  // legacy router path is untouched (stays on DB_NAME).
+  // Native-DB ownership is a v3-ONLY concern, and orthogonal to role
+  // cutover. v3 (runtime.json, router removed) has nothing to resolve the
+  // libpq default `postgres`, so genie must own a real named DB. v2
+  // (admin.json + accept-hook router) MUST stay on `postgres` — the router
+  // maps it to the per-fingerprint DB; retargeting v2 to `genie` would
+  // boot it against a new empty DB (Codex P1 regression). And this must
+  // NOT depend on cutoverEnabled, or `GENIE_ROLE_CUTOVER=0` would skip
+  // provisioning and v3 would fall back to `postgres` and re-break
+  // (CodeRabbit). Hence: socket + v3 runtime.json, no cutover gate.
+  const v3NativeDb = transport.useSocket && hasV3RuntimeDiscovery();
+
   // Reassign `database` itself (not a separate var) so EVERY downstream
   // consumer — bootstrap pool, maybeRebindToScopedRole's role provisioning
   // + GRANTs, runPostConnectSetup/migrations — agrees on the target DB. An
   // earlier split (`effectiveDb` only on the pool) made role-cutover GRANT
   // in `postgres` while the pool ran in `genie` → "no schema has been
-  // selected to create in".
-  if (directPostmaster && !isTestMode && database === DB_NAME) {
+  // selected to create in". Explicit GENIE_DB_NAME / GENIE_TEST_DB_NAME
+  // (already in `database`) win.
+  if (v3NativeDb && !isTestMode && database === DB_NAME) {
     database = NATIVE_DB_NAME;
   }
-  if (directPostmaster && database !== DB_NAME) {
+  if (v3NativeDb && database !== DB_NAME) {
     await ensureDatabaseExists(pgModule, transport, database);
   }
 
