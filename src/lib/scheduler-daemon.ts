@@ -1168,14 +1168,17 @@ export async function runAgentRecoveryPass(
       if (alive) continue;
 
       // Dead pane (or never had one — e.g. fresh-from-DB after a VM
-      // reboot). Bridge `currentSessionId` to the same source `genie status`
-      // uses so attemptAgentResume can spawn `claude --resume <uuid>`
-      // against an on-disk JSONL the DB-join didn't surface.
+      // reboot). Bridge `currentSessionId` via the `shouldResume` chokepoint
+      // so attemptAgentResume can spawn `claude --resume <uuid>` against an
+      // on-disk JSONL the DB-join didn't surface. Going through the
+      // chokepoint (vs. calling `getResumeSessionId` directly) preserves
+      // invariant 3 in `state-machine.invariants.test.ts` — only
+      // `should-resume.ts` and the definition site may read the raw helper.
       let enriched = worker;
       if (!enriched.currentSessionId) {
-        const { getResumeSessionId } = await import('./executor-registry.js');
-        const fallback = await getResumeSessionId(worker.id).catch(() => null);
-        if (fallback) enriched = { ...worker, currentSessionId: fallback };
+        const { shouldResume } = await import('./should-resume.js');
+        const decision = await shouldResume(worker.id).catch(() => null);
+        if (decision?.sessionId) enriched = { ...worker, currentSessionId: decision.sessionId };
       }
 
       const outcome = await handleDeadPane(deps, resolvedConfig, daemonId, enriched, turnAware, mode);
