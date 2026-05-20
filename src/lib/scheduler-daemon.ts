@@ -1217,8 +1217,19 @@ export async function runAgentRecoveryPass(
       // resume is denied; sweep mode is unaffected because idle dead-pane
       // → `terminalizeCleanExitUnverified` is the correct cleanup for
       // done agents (CodeRabbit major on #2461 follow-up).
+      //
+      // `unknown_agent` is excluded from the short-circuit: it means
+      // `readAgentResumeRow` found no row for an id `listWorkers` did
+      // return. In production this is impossible — both reads come from
+      // the `agents` table. It only happens in tests that mock
+      // `listWorkers` without seeding the DB; those fixtures legitimately
+      // expect the recovery path to run. Letting them fall through to
+      // `handleDeadPane` preserves the legacy semantics the tests
+      // codify, and a real production race (row visible to one read,
+      // invisible to the other) still lands in `attemptAgentResume`
+      // which has its own guards.
       const decision = await shouldResume(worker.id);
-      if (mode === 'boot' && !decision.resume) continue;
+      if (mode === 'boot' && !decision.resume && decision.reason !== 'unknown_agent') continue;
 
       let enriched = worker;
       if (!enriched.currentSessionId && decision.resume && decision.sessionId) {
