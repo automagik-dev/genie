@@ -23,6 +23,7 @@ import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type postgres from 'postgres';
+import { resolvePgserveBinary } from './canonical-pgserve-binary.js';
 import { runMigrations } from './db-migrations.js';
 import { needsSeed, needsSeededTeams, runSeed } from './pg-seed.js';
 import { getProcessStartTime } from './process-identity.js';
@@ -469,10 +470,11 @@ export async function requirePgserveDaemon(): Promise<DaemonState> {
 function buildPgserveUnavailableHint(state: DaemonState): string {
   return [
     `pgserve canonical daemon is not reachable (${state.reason ?? 'no daemon'}).`,
-    'Genie depends on the pm2-supervised pgserve singleton. Recovery:',
-    '  pm2 status              # is pgserve registered?',
-    '  pm2 restart pgserve     # OR: autopg restart',
-    '  pgserve install         # if not registered yet',
+    'Genie depends on the pm2-supervised pgserve singleton (autopg v3). Recovery:',
+    '  pm2 status                  # is autopg-server registered?',
+    '  pm2 restart autopg-server   # OR: pm2 restart pgserve (v2 legacy)',
+    '  autopg install              # OR: pgserve install (v2 legacy)',
+    'Fresh hosts: curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/main/install.sh | bash',
     'See https://github.com/automagik-dev/genie/blob/main/docs/install.md for details.',
   ].join('\n');
 }
@@ -589,10 +591,12 @@ function parseExplicitTcpPort(raw: string | undefined): number | null {
  * timeout. Caller treats null as "no TCP fallback available".
  */
 async function discoverTcpPgservePort(): Promise<number | null> {
+  const bin = resolvePgserveBinary();
+  if (!bin) return null;
   return new Promise((resolve) => {
     let settled = false;
     let stdout = '';
-    const proc = spawn('pgserve', ['port'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const proc = spawn(bin, ['port'], { stdio: ['ignore', 'pipe', 'ignore'] });
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -642,14 +646,15 @@ function buildBothTransportsUnavailableHint(forceTcp: boolean, forceSocket: bool
     lines.push('  • Unix socket probe: skipped (GENIE_PG_FORCE_TCP=1)');
   }
   if (!forceSocket) {
-    lines.push('  • TCP discovery via `pgserve port`: failed (binary missing or no daemon)');
+    lines.push('  • TCP discovery via `autopg port` (or `pgserve port`): failed (binary missing or no daemon)');
   } else {
     lines.push('  • TCP discovery: skipped (GENIE_PG_FORCE_SOCKET=1)');
   }
-  lines.push('Recovery:');
-  lines.push('  pm2 status              # is pgserve registered?');
-  lines.push('  pgserve install         # register foreground TCP-mode pgserve under pm2');
-  lines.push('  pgserve daemon          # OR start daemon-mode (canonical UDS) standalone');
+  lines.push('Recovery (autopg v3):');
+  lines.push('  pm2 status                  # is autopg-server registered?');
+  lines.push('  autopg install              # register foreground TCP-mode autopg under pm2');
+  lines.push('  pgserve install             # v2 legacy equivalent');
+  lines.push('Fresh hosts: curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/main/install.sh | bash');
   lines.push('See https://github.com/automagik-dev/genie/blob/main/docs/install.md for details.');
   return lines.join('\n');
 }
@@ -1066,9 +1071,10 @@ async function _ensurePgserve(): Promise<number> {
       'Genie is consumer-only after the canonical-pgserve cutover; it does not spawn pgserve.',
       'Force-TCP mode (GENIE_PG_FORCE_TCP=1) requires you to start a TCP-listening pgserve yourself.',
       'Recommended: drop GENIE_PG_FORCE_TCP and let genie connect via the canonical Unix socket:',
-      '  pm2 status              # is pgserve registered?',
-      '  pm2 restart pgserve     # OR: autopg restart',
-      '  pgserve install         # if not registered yet',
+      '  pm2 status                  # is autopg-server registered?',
+      '  pm2 restart autopg-server   # OR: pm2 restart pgserve (v2 legacy)',
+      '  autopg install              # OR: pgserve install (v2 legacy)',
+      'Fresh hosts: curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/main/install.sh | bash',
     ].join('\n'),
   );
 }
