@@ -1203,12 +1203,26 @@ export async function runAgentRecoveryPass(
       // `.catch(() => null)` mis-attributed transient errors as orphans
       // and ticked their resume_attempts toward the auto_resume=false cap
       // (CodeRabbit major on #2461).
+      //
+      // Always consult the chokepoint, even when `currentSessionId` is
+      // already populated. `sessionId` alone isn't permission — a task
+      // agent whose latest assignment closed (`decision.resume === false`,
+      // reason `assignment_closed`) still has a valid `currentSessionId`
+      // from the executor join, so the previous "only call shouldResume
+      // when sessionId is missing" shortcut let those rows fall through
+      // to `handleDeadPane(mode='boot')` where `isLegitimatelyClosed`
+      // checks the executor outcome (not the assignment outcome) and
+      // missed them — re-invoking task agents the boot pass had already
+      // classified as `lazy_surface`. Short-circuit boot-mode here when
+      // resume is denied; sweep mode is unaffected because idle dead-pane
+      // → `terminalizeCleanExitUnverified` is the correct cleanup for
+      // done agents (CodeRabbit major on #2461 follow-up).
+      const decision = await shouldResume(worker.id);
+      if (mode === 'boot' && !decision.resume) continue;
+
       let enriched = worker;
-      if (!enriched.currentSessionId) {
-        const decision = await shouldResume(worker.id);
-        if (decision.resume && decision.sessionId) {
-          enriched = { ...worker, currentSessionId: decision.sessionId };
-        }
+      if (!enriched.currentSessionId && decision.resume && decision.sessionId) {
+        enriched = { ...worker, currentSessionId: decision.sessionId };
       }
 
       const outcome = await handleDeadPane(deps, resolvedConfig, daemonId, enriched, turnAware, mode);
