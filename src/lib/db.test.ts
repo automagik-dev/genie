@@ -999,8 +999,10 @@ describe('canonical-pgserve cutover hint surface', () => {
     const body = source.slice(fnStart, fnEnd);
     expect(body).toContain('canonical-pgserve cutover');
     expect(body).toContain('pm2 status');
-    expect(body).toContain('pm2 restart pgserve');
-    expect(body).toContain('pgserve install');
+    // Post v2 → v3 cutover: hint names autopg first, keeps pgserve as
+    // legacy fallback. Either form must remain present for backward compat.
+    expect(body).toMatch(/pm2 restart (autopg-server|pgserve)/);
+    expect(body).toMatch(/(autopg|pgserve) install/);
   });
 
   test('requirePgserveDaemon throws with a pm2-recovery hint when the canonical socket is dead', () => {
@@ -1012,8 +1014,8 @@ describe('canonical-pgserve cutover hint surface', () => {
     const hintEnd = source.indexOf('\n}\n', hintStart);
     const hintBody = source.slice(hintStart, hintEnd);
     expect(hintBody).toContain('pm2 status');
-    expect(hintBody).toContain('pm2 restart pgserve');
-    expect(hintBody).toContain('pgserve install');
+    expect(hintBody).toMatch(/pm2 restart (autopg-server|pgserve)/);
+    expect(hintBody).toMatch(/(autopg|pgserve) install/);
     expect(hintBody).toContain('docs/install.md');
   });
 });
@@ -1106,7 +1108,10 @@ describe('resolvePgserveTransport (transport discovery)', () => {
         // No pgserve binary or daemon → resolver throws the both-unavailable
         // hint. Assert the message shape so future copy edits are caught.
         expect(result.message).toContain('pgserve is not reachable');
-        expect(result.message).toContain('Recovery:');
+        // Recovery heading post-cutover: 'Recovery (autopg v3):' for v3
+        // hosts, plain 'Recovery:' would be the v2-era heading. Either
+        // shape is acceptable; both name a recovery section.
+        expect(result.message).toMatch(/Recovery( \(autopg v3\))?:/);
         return;
       }
       // pgserve was discoverable on TCP — assert the shape.

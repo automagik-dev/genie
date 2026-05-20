@@ -267,21 +267,24 @@ describe('buildCanonicalPgserveHint — pgserve fatal install hint (cutover G1)'
     expect(text).toContain('(exit code 17)');
   });
 
-  test('hint lists the three copy-paste recovery commands', () => {
+  test('hint lists the canonical autopg-v3 recovery commands', () => {
     const text = buildCanonicalPgserveHint('exit code 1');
-    expect(text).toContain('bun add -g pgserve@^2');
-    expect(text).toContain('pgserve install');
+    // Post v2 → v3 cutover: hint points at the autopg installer, NOT
+    // `bun add -g pgserve@^2` (the obsolete v2 package).
+    expect(text).toContain('automagik-dev/autopg/main/install.sh');
     expect(text).toContain('genie install');
+    expect(text).not.toContain('bun add -g pgserve@^2');
   });
 
-  test('hint points at the canonical install docs URL', () => {
+  test('hint points at the canonical autopg docs URL', () => {
     const text = buildCanonicalPgserveHint('exit code 1');
-    expect(text).toContain('https://github.com/automagik-dev/genie/blob/main/docs/install.md');
+    expect(text).toContain('https://github.com/automagik-dev/autopg');
   });
 
-  test('hint explains genie depends on pm2-supervised pgserve', () => {
+  test('hint explains genie depends on pm2-supervised pgserve (autopg v3)', () => {
     const text = buildCanonicalPgserveHint('exit code 1');
     expect(text).toContain('pm2-supervised pgserve');
+    expect(text).toContain('autopg v3');
   });
 });
 
