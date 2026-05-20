@@ -1108,7 +1108,10 @@ describe('resolvePgserveTransport (transport discovery)', () => {
         // No pgserve binary or daemon → resolver throws the both-unavailable
         // hint. Assert the message shape so future copy edits are caught.
         expect(result.message).toContain('pgserve is not reachable');
-        expect(result.message).toContain('Recovery:');
+        // Recovery heading post-cutover: 'Recovery (autopg v3):' for v3
+        // hosts, plain 'Recovery:' would be the v2-era heading. Either
+        // shape is acceptable; both name a recovery section.
+        expect(result.message).toMatch(/Recovery( \(autopg v3\))?:/);
         return;
       }
       // pgserve was discoverable on TCP — assert the shape.
