@@ -40,6 +40,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { canonicalPgserveInstallHint, resolvePgserveBinary } from '../lib/canonical-pgserve-binary.js';
 
 /**
  * Canonical pm2 process name. See file header for the rename rationale.
@@ -185,22 +186,26 @@ function pm2IsAvailable(): boolean {
 }
 
 function pgserveIsAvailable(): boolean {
-  return which('pgserve') !== null;
+  return resolvePgserveBinary() !== null;
 }
 
 /**
  * Build the canonical-install hint message printed before exiting non-zero
  * when pgserve is missing or its install fails. Exported via `_internals`
  * for unit tests.
+ *
+ * The hint points operators at the autopg v3 install.sh — the v2
+ * `bun add -g pgserve@^2` recovery is intentionally retired because it
+ * installs the obsolete v2 distribution and a v3 host has no use for it.
+ * Legacy `pgserve` binaries still resolve at runtime via
+ * {@link resolvePgserveBinary} but new installs go through autopg only.
  */
 function buildCanonicalPgserveHint(reason: string): string {
   return [
     `Error: canonical pgserve registration failed (${reason}).`,
-    'Genie depends on pm2-supervised pgserve. To proceed:',
-    '  bun add -g pgserve@^2',
-    '  pgserve install',
-    '  genie install',
-    'See https://github.com/automagik-dev/genie/blob/main/docs/install.md for details.',
+    'Genie depends on pm2-supervised pgserve (autopg v3). To proceed:',
+    ...canonicalPgserveInstallHint(),
+    'See https://github.com/automagik-dev/autopg for details.',
     '',
   ].join('\n');
 }
@@ -245,8 +250,9 @@ interface PgserveStatus {
 }
 
 function readPgserveStatus(): PgserveStatus | null {
-  if (!pgserveIsAvailable()) return null;
-  const result = spawnSync('pgserve', ['status', '--json'], { encoding: 'utf8', timeout: 5000 });
+  const bin = resolvePgserveBinary();
+  if (!bin) return null;
+  const result = spawnSync(bin, ['status', '--json'], { encoding: 'utf8', timeout: 5000 });
   if (result.status !== 0 && !result.stdout) return null;
   try {
     const parsed = JSON.parse(result.stdout ?? '') as PgserveStatus;
@@ -265,7 +271,9 @@ function isPgserveReadyStatus(status: PgserveStatus | null): boolean {
 }
 
 function restartPgserve(): boolean {
-  const result = spawnSync('pgserve', ['restart'], { stdio: 'inherit' });
+  const bin = resolvePgserveBinary();
+  if (!bin) return false;
+  const result = spawnSync(bin, ['restart'], { stdio: 'inherit' });
   return result.status === 0;
 }
 
@@ -282,8 +290,9 @@ function isPgserveOnlinePm2(entry: Pm2Process | null): boolean {
 }
 
 function requirePgserveInstall(): void {
-  if (!pgserveIsAvailable()) {
-    failCanonicalPgserve('pgserve binary not found in PATH');
+  const bin = resolvePgserveBinary();
+  if (!bin) {
+    failCanonicalPgserve('canonical binary (autopg v3 or pgserve v2) not found in PATH');
   }
 
   const status = readPgserveStatus();
@@ -316,7 +325,7 @@ function requirePgserveInstall(): void {
     );
     return;
   }
-  const result = spawnSync('pgserve', ['install'], { stdio: 'inherit' });
+  const result = spawnSync(bin, ['install'], { stdio: 'inherit' });
   if (result.status !== 0) {
     failCanonicalPgserve(`exit code ${result.status}`);
   }
@@ -332,8 +341,9 @@ function requirePgserveInstall(): void {
  * regression in `omni doctor --fix`).
  */
 function tryPgservePort(): number | null {
-  if (!pgserveIsAvailable()) return null;
-  const result = spawnSync('pgserve', ['port'], { encoding: 'utf8', timeout: 5000 });
+  const bin = resolvePgserveBinary();
+  if (!bin) return null;
+  const result = spawnSync(bin, ['port'], { encoding: 'utf8', timeout: 5000 });
   if (result.status !== 0) return null;
   const port = Number.parseInt((result.stdout ?? '').trim(), 10);
   if (!Number.isFinite(port) || port <= 0 || port > 65535) return null;
