@@ -347,12 +347,35 @@ async function defaultResumeAgent(agentId: string): Promise<boolean> {
     // invoking us, and needs the increment to persist so the exhaustion check
     // can eventually fire. Without this flag, the counter was stuck at 0 and
     // dead agents were retried every ~60s forever (fix/auto-resume-counter-persistence).
+    //
+    // TMUX-presence shim: the CLI's `genie agent resume` errors with
+    // "no team context ... or run inside a registered tmux session" for
+    // `dir:`-prefixed agents whose `team` is NULL — which is the vast majority
+    // after a VM reboot (29/33 on the reference instance). When the scheduler
+    // (a pm2 child, never inside tmux) shells the CLI without TMUX set, the
+    // resume fails silently → recovery reported `resumed_agents: 0` even
+    // though the boot pass eager-invoked 20 agents. The CLI's check is just
+    // env-presence (value isn't validated), so a synthetic sentinel is
+    // sufficient to pass it; the actual resume then spawns the canonical
+    // pane on /tmp/tmux-1000/genie (proven on the reference instance).
+    const env = {
+      ...process.env,
+      TMUX: process.env.TMUX || '/tmp/genie-scheduler-resume,0,0',
+    };
     execSync(`genie agent resume ${agentId} --no-reset-attempts`, {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      env,
     });
     return true;
-  } catch {
+  } catch (err) {
+    // Surface failures so `agent_resume_failed` events carry the real reason
+    // instead of being invisible — the previous bare `catch {}` swallowed
+    // the CLI's exit-1 stderr (e.g. "no team context") for every retry.
+    if (process.env.GENIE_DEBUG_RESUME === '1') {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[scheduler] genie agent resume ${agentId}: ${message}\n`);
+    }
     return false;
   }
 }
@@ -1118,12 +1141,20 @@ export async function runAgentRecoveryPass(
 ): Promise<{ resumed: number; failed: number; terminalized: number }> {
   const resolvedConfig = config ?? resolveConfig();
   const workers = await deps.listWorkers();
-  // Safe for SDK/non-tmux transports: the `currentSessionId` filter below
-  // excludes them (SDK agents don't own a Claude-CLI JSONL session id).
-  // Only tmux-resumable Claude-CLI agents reach `isPaneAlive`, so a plain
-  // paneId check is correct here — no transport dispatch needed. If SDK
-  // ever gains resume support, gate on paneId shape like countActiveWorkers.
-  const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done' && w.currentSessionId);
+  // Pre-filter on state only. The previous `&& w.currentSessionId` clause
+  // excluded every agent whose `executors.claude_session_id` join was null —
+  // but `genie status`'s classifier resolves the session UUID via a BROADER
+  // path (`getResumeSessionId`: DB happy path → JSONL on-disk fallback). On
+  // a VM reboot, `current_executor_id` is frequently null while the JSONL
+  // sits intact under `~/.claude/projects/...` — the operator's whole
+  // crowded instance was eligible-per-status (eager_invoke=20) yet
+  // resumed_agents=0 every restart because this filter dropped them before
+  // the JSONL fallback ever ran. We now admit them, resolve the broader
+  // session inside the loop (only for dead-pane survivors → cheap), and
+  // pass it through; SDK / non-tmux agents naturally fall out at
+  // attemptAgentResume's `no_session_id` early-exit when neither source
+  // has a UUID.
+  const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done');
   const turnAware = isTurnAwareReconcilerEnabled();
 
   let resumed = 0;
@@ -1132,9 +1163,25 @@ export async function runAgentRecoveryPass(
 
   for (const worker of resumable) {
     try {
-      const alive = await deps.isPaneAlive(worker.paneId);
+      const hasTmuxPane = typeof worker.paneId === 'string' && /^%\d+$/.test(worker.paneId);
+      const alive = hasTmuxPane ? await deps.isPaneAlive(worker.paneId) : false;
       if (alive) continue;
-      const outcome = await handleDeadPane(deps, resolvedConfig, daemonId, worker, turnAware, mode);
+
+      // Dead pane (or never had one — e.g. fresh-from-DB after a VM
+      // reboot). Bridge `currentSessionId` via the `shouldResume` chokepoint
+      // so attemptAgentResume can spawn `claude --resume <uuid>` against an
+      // on-disk JSONL the DB-join didn't surface. Going through the
+      // chokepoint (vs. calling `getResumeSessionId` directly) preserves
+      // invariant 3 in `state-machine.invariants.test.ts` — only
+      // `should-resume.ts` and the definition site may read the raw helper.
+      let enriched = worker;
+      if (!enriched.currentSessionId) {
+        const { shouldResume } = await import('./should-resume.js');
+        const decision = await shouldResume(worker.id).catch(() => null);
+        if (decision?.sessionId) enriched = { ...worker, currentSessionId: decision.sessionId };
+      }
+
+      const outcome = await handleDeadPane(deps, resolvedConfig, daemonId, enriched, turnAware, mode);
       if (outcome === 'resumed') resumed++;
       else if (outcome === 'terminalized') terminalized++;
     } catch (err) {
