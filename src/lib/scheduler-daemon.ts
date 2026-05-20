@@ -1141,21 +1141,35 @@ export async function runAgentRecoveryPass(
 ): Promise<{ resumed: number; failed: number; terminalized: number }> {
   const resolvedConfig = config ?? resolveConfig();
   const workers = await deps.listWorkers();
-  // Pre-filter on state only. The previous `&& w.currentSessionId` clause
-  // excluded every agent whose `executors.claude_session_id` join was null —
-  // but `genie status`'s classifier resolves the session UUID via a BROADER
-  // path (`getResumeSessionId`: DB happy path → JSONL on-disk fallback). On
+  // Pre-filter: only tmux-resumable Claude-CLI transports belong in
+  // dead-pane recovery. Three orthogonal exclusions:
+  //   1. state ∈ {suspended, done, archived} — never resumable. `archived`
+  //      is the schema state used by archiveExhaustedZombies (gemini PR
+  //      review on #2460); not in AgentState yet, hence the cast.
+  //   2. SDK / inline transports — their `paneId` is a synthetic identifier
+  //      ('sdk', 'inline', ''), not a `%N` tmux pane. They have their own
+  //      liveness source and must NEVER fall through to handleDeadPane:
+  //      in sweep mode, an idle SDK worker would be terminalized as
+  //      `clean_exit_unverified`, corrupting live executor state (codex P1
+  //      on #2460 — confirmed against handleDeadPane line 1071 path).
+  //      Mirrors the transport gate in `countActiveWorkers`.
+  // The previous `&& w.currentSessionId` clause was retired because
+  // `genie status`'s classifier resolves the session UUID via a BROADER
+  // path (DB happy path → JSONL on-disk fallback via `shouldResume`). On
   // a VM reboot, `current_executor_id` is frequently null while the JSONL
-  // sits intact under `~/.claude/projects/...` — the operator's whole
-  // crowded instance was eligible-per-status (eager_invoke=20) yet
-  // resumed_agents=0 every restart because this filter dropped them before
-  // the JSONL fallback ever ran. We now admit them, resolve the broader
-  // session inside the loop (only for dead-pane survivors → cheap), and
-  // pass it through; SDK / non-tmux agents naturally fall out at
-  // attemptAgentResume's `no_session_id` early-exit when neither source
-  // has a UUID.
-  const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done');
+  // sits intact under `~/.claude/projects/...` — the crowded instance was
+  // eligible-per-status (eager_invoke=20) yet resumed_agents=0 every
+  // restart because the old filter dropped them. The JSONL bridge happens
+  // inside the loop, gated on a live `shouldResume` decision.
+  const resumable = workers.filter((w) => {
+    if (w.state === 'suspended' || w.state === 'done' || (w.state as string) === 'archived') return false;
+    return typeof w.paneId === 'string' && /^%\d+$/.test(w.paneId);
+  });
   const turnAware = isTurnAwareReconcilerEnabled();
+  // Hoisted: dynamic import is cached after first call, but moving it out
+  // of the loop is a stylistic win (gemini review on #2461) — one resolve
+  // per pass instead of one per dead-pane survivor.
+  const { shouldResume } = await import('./should-resume.js');
 
   let resumed = 0;
   let failed = 0;
@@ -1163,22 +1177,38 @@ export async function runAgentRecoveryPass(
 
   for (const worker of resumable) {
     try {
-      const hasTmuxPane = typeof worker.paneId === 'string' && /^%\d+$/.test(worker.paneId);
-      const alive = hasTmuxPane ? await deps.isPaneAlive(worker.paneId) : false;
+      const alive = await deps.isPaneAlive(worker.paneId);
       if (alive) continue;
 
-      // Dead pane (or never had one — e.g. fresh-from-DB after a VM
-      // reboot). Bridge `currentSessionId` via the `shouldResume` chokepoint
-      // so attemptAgentResume can spawn `claude --resume <uuid>` against an
-      // on-disk JSONL the DB-join didn't surface. Going through the
-      // chokepoint (vs. calling `getResumeSessionId` directly) preserves
-      // invariant 3 in `state-machine.invariants.test.ts` — only
-      // `should-resume.ts` and the definition site may read the raw helper.
+      // Dead pane. Bridge `currentSessionId` via the `shouldResume`
+      // chokepoint so attemptAgentResume can spawn `claude --resume <uuid>`
+      // against an on-disk JSONL the DB-join didn't surface. Going through
+      // the chokepoint preserves invariant 3 in
+      // `state-machine.invariants.test.ts` — only `should-resume.ts` and
+      // the definition site may read the raw `getResumeSessionId` helper.
+      //
+      // Gate enrichment on `decision.resume === true` — `shouldResume`
+      // returns `sessionId` even for `assignment_closed` and
+      // `auto_resume_disabled` rows (for display in `genie status`); using
+      // sessionId alone would relaunch task agents whose work is already
+      // done (codex P1 on #2461). For non-resumable rows we let the worker
+      // fall through unenriched so `attemptAgentResume`'s `no_session_id`
+      // orphan-counter path runs normally — that's already the canonical
+      // way to wind down auto_resume on rows the scheduler shouldn't touch.
+      //
+      // No `.catch` on `shouldResume` — transient resolver/DB failures
+      // are real probe failures, not "no session". Surfacing the throw
+      // hits the outer catch which calls `handleRecoveryProbeError`
+      // (tmux-down fast path) or increments `failed`. The previous
+      // `.catch(() => null)` mis-attributed transient errors as orphans
+      // and ticked their resume_attempts toward the auto_resume=false cap
+      // (CodeRabbit major on #2461).
       let enriched = worker;
       if (!enriched.currentSessionId) {
-        const { shouldResume } = await import('./should-resume.js');
-        const decision = await shouldResume(worker.id).catch(() => null);
-        if (decision?.sessionId) enriched = { ...worker, currentSessionId: decision.sessionId };
+        const decision = await shouldResume(worker.id);
+        if (decision.resume && decision.sessionId) {
+          enriched = { ...worker, currentSessionId: decision.sessionId };
+        }
       }
 
       const outcome = await handleDeadPane(deps, resolvedConfig, daemonId, enriched, turnAware, mode);
