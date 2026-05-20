@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-05-19 12:03 UTC | Data range: 2026-03-13 to 2026-05-19
+> Last updated: 2026-05-20 12:08 UTC | Data range: 2026-03-13 to 2026-05-20
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 33 | 421 | 243 |
-| Releases | 0 | 7 | 0 |
-| LoC (net) | +1.1K | +62.3K | — |
-| Contributors | 5 | 9 | 10 |
+| Commits | 43 | 405 | 202 |
+| Releases | 0 | 3 | 0 |
+| LoC (net) | +1.2K | +44.1K | — |
+| Contributors | 6 | 9 | 10 |
 
 ---
 
@@ -31,14 +31,14 @@
 
 | Rank | Contributor | Commits (approx) |
 |-----:|-------------|------------------:|
-| 1 | Felipe Rosa | 97 |
-| 2 | Genie | 94 |
-| 3 | github-actions[bot] | 94 |
-| 4 | Felipe | 48 |
+| 1 | Felipe Rosa | 95 |
+| 2 | github-actions[bot] | 92 |
+| 3 | Genie | 86 |
+| 4 | Felipe | 50 |
 | 5 | Claude | 37 |
-| 6 | Genie (env-specialist) | 16 |
+| 6 | Genie (env-specialist) | 12 |
 | 7 | namastex888 | 12 |
 | 8 | release-bot | 7 |
-| 9 | felipe rosa | 4 |
+| 9 | Claude (Opus 4.7) | 2 |
 
-*10 contributors since 2026-05-07*
+*10 contributors since 2026-05-09*
