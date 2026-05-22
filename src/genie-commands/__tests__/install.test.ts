@@ -34,6 +34,7 @@ const {
   isPgservePm2ManagedStatus,
   isPgserveReadyStatus,
   isPgserveOnlinePm2,
+  isReusableCanonicalPm2Process,
 } = _internals;
 
 describe('install.sh release verifier bootstrap', () => {
@@ -117,6 +118,16 @@ describe('install._internals — canonical-stack constants', () => {
     // is one of the supported shapes. The env-override path is verified
     // separately in install-env.test.ts (loads the module with env set).
     expect(HARDENED_DEFAULTS.maxMemory).toMatch(/^\d+G$/);
+  });
+
+  test('only an online PM2 Genie entry with a live pid is reusable', () => {
+    expect(isReusableCanonicalPm2Process({ name: 'Genie', pid: 123, pm2_env: { status: 'online' } })).toBe(true);
+    expect(isReusableCanonicalPm2Process({ name: 'Genie', pid: 0, pm2_env: { status: 'online' } })).toBe(false);
+    expect(isReusableCanonicalPm2Process({ name: 'Genie', pid: 123, pm2_env: { status: 'waiting restart' } })).toBe(
+      false,
+    );
+    expect(isReusableCanonicalPm2Process({ name: 'Genie', pid: 123, pm2_env: { status: 'errored' } })).toBe(false);
+    expect(isReusableCanonicalPm2Process(null)).toBe(false);
   });
 });
 
