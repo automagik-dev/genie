@@ -296,10 +296,11 @@ describe('formatVerifyBanner', () => {
     expect(lines.some((l) => l.includes('no-restart'))).toBe(true);
   });
 
-  test('health-unreachable surfaces probe endpoint + pm2 fix', () => {
+  test('health-unreachable surfaces probe endpoint + PM2 recreate fix', () => {
     const lines = formatVerifyBanner({ kind: 'health-unreachable', endpoint: 'doctor --json' });
     expect(lines.some((l) => l.includes('unreachable'))).toBe(true);
-    expect(lines.some((l) => l.includes('pm2 restart Genie'))).toBe(true);
+    expect(lines.some((l) => l.includes('pm2 restart Genie --update-env'))).toBe(true);
+    expect(lines.some((l) => l.includes('pm2 delete Genie && genie install'))).toBe(true);
   });
 
   test('daemon-stale-inode banner surfaces pid, cwd, and pm2 restart remediation', () => {

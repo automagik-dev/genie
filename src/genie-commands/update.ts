@@ -1062,7 +1062,7 @@ export function formatVerifyBanner(result: VerifyResult): string[] {
     case 'health-unreachable':
       lines.push(`${colorize('\x1b[31m', '\x1b[0m', '✖')} Genie server unreachable (probe: ${result.endpoint})`);
       lines.push(
-        `${colorize('\x1b[2m', '\x1b[0m', '  fix: pm2 restart Genie  (or `genie install` if not yet supervised)')}`,
+        `${colorize('\x1b[2m', '\x1b[0m', '  fix: pm2 restart Genie --update-env  (if PM2 says "waiting restart": pm2 delete Genie && genie install)')}`,
       );
       break;
     case 'daemon-stale-inode': {

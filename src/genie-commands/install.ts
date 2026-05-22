@@ -117,6 +117,12 @@ interface Pm2Process {
   pm2_env?: { status?: string };
 }
 
+function isReusableCanonicalPm2Process(process: Pm2Process | null): boolean {
+  if (!process) return false;
+  if (process.pm2_env?.status !== 'online') return false;
+  return typeof process.pid === 'number' && process.pid > 0;
+}
+
 function pm2GetProcess(name: string): Pm2Process | null {
   try {
     const out = execFileSync('pm2', ['jlist'], {
@@ -154,17 +160,21 @@ function pm2GetAnyProcess(names: readonly string[]): Pm2Process | null {
  *     a manual cleanup to do (`pm2 delete <legacy-name>`) but do not abort
  *     install over it.
  */
+function deletePm2Process(name: string): void {
+  execFileSync('pm2', ['delete', name], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
 function removeLegacyPm2Entries(log: (msg: string) => void = () => {}): string[] {
   const removed: string[] = [];
   for (const legacyName of LEGACY_PM2_PROCESS_NAMES) {
     const existing = pm2GetProcess(legacyName);
     if (!existing) continue;
     try {
-      execFileSync('pm2', ['delete', legacyName], {
-        encoding: 'utf8',
-        timeout: 10_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      deletePm2Process(legacyName);
       log(`removed legacy pm2 entry "${legacyName}" (renamed to "${PM2_PROCESS_NAME}")`);
       removed.push(legacyName);
     } catch (err) {
@@ -570,10 +580,23 @@ export async function installCommand(options: InstallOptions = {}): Promise<void
   // Step 3 — pm2-supervise the canonical Genie service.
   const existing = pm2GetProcess(PM2_PROCESS_NAME);
   if (existing) {
+    if (isReusableCanonicalPm2Process(existing)) {
+      ok(
+        `already installed (pm2 process "${PM2_PROCESS_NAME}", status=${existing.pm2_env?.status ?? 'unknown'}). Use \`pm2 delete ${PM2_PROCESS_NAME} && genie install\` to refresh the env (e.g. to pick up a new canonical pgserve URL).`,
+      );
+      return;
+    }
+
+    const status = existing.pm2_env?.status ?? 'unknown';
     ok(
-      `already installed (pm2 process "${PM2_PROCESS_NAME}", status=${existing.pm2_env?.status ?? 'unknown'}). Use \`pm2 delete ${PM2_PROCESS_NAME} && genie install\` to refresh the env (e.g. to pick up a new canonical pgserve URL).`,
+      `pm2 process "${PM2_PROCESS_NAME}" exists but is not reusable (status=${status}, pid=${existing.pid ?? 'none'}); recreating`,
     );
-    return;
+    try {
+      deletePm2Process(PM2_PROCESS_NAME);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      fail(`pm2 process "${PM2_PROCESS_NAME}" is unhealthy and pm2 delete failed: ${reason}`);
+    }
   }
 
   ensureLogsDir();
@@ -641,4 +664,5 @@ export const _internals = {
   isPgservePm2ManagedStatus,
   isPgserveReadyStatus,
   isPgserveOnlinePm2,
+  isReusableCanonicalPm2Process,
 };
