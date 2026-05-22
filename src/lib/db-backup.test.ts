@@ -126,3 +126,111 @@ describe('snapshot file format', () => {
     expect(decompressed.toString('utf-8')).toBe(sql);
   });
 });
+
+// ============================================================================
+// rebalanceIdentitySequences — post-restore sequence rebalance
+//
+// Reproduces the 2026-05-22 khal-os incident: pg_dump --clean --if-exists
+// recreates IDENTITY-bearing tables (resetting the implicit sequence to its
+// initial value), then COPYs in the rows with their original explicit ids.
+// Without an explicit setval() the next INSERT collides with an existing PK.
+// ============================================================================
+
+describe('buildIdentityRebalanceSql', () => {
+  test('emits a PL/pgSQL DO block that walks attidentity columns', async () => {
+    const { buildIdentityRebalanceSql } = await import('./db-backup.js');
+    const sql = buildIdentityRebalanceSql();
+    expect(sql.trimStart()).toMatch(/^DO \$\$/);
+    expect(sql).toContain("attidentity IN ('a', 'd')");
+    expect(sql).toContain("n.nspname = 'public'");
+    expect(sql).toContain("c.relkind = 'r'");
+    expect(sql).toContain('setval(pg_get_serial_sequence');
+    expect(sql).toContain('GREATEST(COALESCE');
+  });
+
+  test('uses format(%L, %I) — safe against schema/table identifiers', async () => {
+    const { buildIdentityRebalanceSql } = await import('./db-backup.js');
+    const sql = buildIdentityRebalanceSql();
+    expect(sql).toContain('%L');
+    expect(sql).toContain('%I');
+  });
+});
+
+describe('rebalanceIdentitySequences', () => {
+  test('runner is invoked with the rebalance SQL block', async () => {
+    const { rebalanceIdentitySequences, buildIdentityRebalanceSql } = await import('./db-backup.js');
+    let captured = '';
+    rebalanceIdentitySequences({
+      runner: (sql) => {
+        captured = sql;
+        return { status: 0 };
+      },
+    });
+    expect(captured).toBe(buildIdentityRebalanceSql());
+  });
+
+  test('non-zero exit status throws with stderr context', async () => {
+    const { rebalanceIdentitySequences } = await import('./db-backup.js');
+    expect(() =>
+      rebalanceIdentitySequences({
+        runner: () => ({ status: 3, stderr: Buffer.from('ERROR: permission denied\n') }),
+      }),
+    ).toThrow(/Identity sequence rebalance failed \(exit 3\): ERROR: permission denied/);
+  });
+
+  test('handles string stderr (legacy spawnSync encoding paths)', async () => {
+    const { rebalanceIdentitySequences } = await import('./db-backup.js');
+    expect(() =>
+      rebalanceIdentitySequences({
+        runner: () => ({ status: 1, stderr: 'syntax error at end of input' }),
+      }),
+    ).toThrow(/syntax error at end of input/);
+  });
+
+  test('null status (timeout) is treated as failure', async () => {
+    const { rebalanceIdentitySequences } = await import('./db-backup.js');
+    expect(() =>
+      rebalanceIdentitySequences({
+        runner: () => ({ status: null, stderr: Buffer.from('killed') }),
+      }),
+    ).toThrow(/exit null/);
+  });
+
+  test('missing stderr falls back to "unknown error" sentinel', async () => {
+    const { rebalanceIdentitySequences } = await import('./db-backup.js');
+    expect(() =>
+      rebalanceIdentitySequences({
+        runner: () => ({ status: 2 }),
+      }),
+    ).toThrow(/unknown error/);
+  });
+
+  test('zero exit returns void without throwing', async () => {
+    const { rebalanceIdentitySequences } = await import('./db-backup.js');
+    expect(() =>
+      rebalanceIdentitySequences({
+        runner: () => ({ status: 0 }),
+      }),
+    ).not.toThrow();
+  });
+});
+
+// ============================================================================
+// restore() wiring — rebalance must run AFTER the psql replay so the
+// freshly-loaded rows are visible to MAX(col).
+// ============================================================================
+
+describe('restore() rebalance wiring (source-shape lock)', () => {
+  test('restore() calls rebalanceIdentitySequences after the psql pipe', () => {
+    const source = readFileSync(join(__dirname, 'db-backup.ts'), 'utf-8');
+    const restoreFn = source.slice(
+      source.indexOf('export function restore('),
+      source.indexOf('export interface RebalanceIdentitySequencesOptions'),
+    );
+    const psqlIdx = restoreFn.indexOf("spawnSync('psql', ['-v', 'ON_ERROR_STOP=1']");
+    const rebalanceIdx = restoreFn.indexOf('rebalanceIdentitySequences(');
+    expect(psqlIdx).toBeGreaterThan(-1);
+    expect(rebalanceIdx).toBeGreaterThan(-1);
+    expect(psqlIdx).toBeLessThan(rebalanceIdx);
+  });
+});
