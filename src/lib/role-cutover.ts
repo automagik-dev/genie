@@ -28,6 +28,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import REPLICA_INSERT_DRAIN_BRIDGE_SQL from '../db/bridges/replica-insert-drain.sql' with { type: 'text' };
 import { resolveDatabaseName } from './db.js';
 
 // ============================================================================
@@ -374,6 +375,36 @@ export async function ensurePrivilegedBootstrapObjects(sql: SqlLike, scopedRole:
   // schema DDL in `runMigrations`. Metadata-only (catalog), zero bytes moved,
   // scoped to genie's DB — the proven Group-3 replay prerequisite.
   await sql.unsafe(`ALTER SCHEMA public OWNER TO "${scopedRole}"`);
+  // Privilege bridges — SECURITY DEFINER wrappers owned by the bootstrap
+  // superuser. The scoped role gets EXECUTE; the wrapped body is the only
+  // surface that runs with elevated privilege. Currently bridges one capability:
+  // session_replication_role='replica' (SUPERUSER-gated GUC) for the trigger-
+  // suppressed bulk INSERT inside genie_runtime_events_drain_default (055/064).
+  await installPrivilegeBridges(sql, scopedRole);
+}
+
+/**
+ * Install (or refresh) the SECURITY DEFINER privilege bridges the scoped role
+ * relies on. Idempotent and bootstrap-only: must run on the superuser
+ * connection (CREATE OR REPLACE preserves an existing owner; the explicit
+ * ALTER FUNCTION ... OWNER TO CURRENT_USER normalises ownership on first
+ * install or recovers from an earlier scoped-role-owned variant).
+ *
+ * Each bridge is a one-statement-purpose wrapper. Adding more bridges later
+ * means appending here — not granting the scoped role new cluster privileges.
+ */
+async function installPrivilegeBridges(sql: SqlLike, scopedRole: string): Promise<void> {
+  const r = `"${scopedRole}"`;
+  // CREATE OR REPLACE FUNCTION … SECURITY DEFINER, loaded from
+  // src/db/bridges/replica-insert-drain.sql so the SQL body lives next to the
+  // migrations it supports and stays outside src/lib/ (where the emit-discipline
+  // lint legitimately forbids raw INSERTs into genie_runtime_events).
+  await sql.unsafe(REPLICA_INSERT_DRAIN_BRIDGE_SQL);
+  // Ownership + grants — done here (not in the .sql) so the bridge's caller
+  // identity (the bootstrap superuser) is the authoritative source.
+  await sql.unsafe('ALTER FUNCTION genie_runtime_events_replica_insert_drain() OWNER TO CURRENT_USER');
+  await sql.unsafe('REVOKE EXECUTE ON FUNCTION genie_runtime_events_replica_insert_drain() FROM PUBLIC');
+  await sql.unsafe(`GRANT EXECUTE ON FUNCTION genie_runtime_events_replica_insert_drain() TO ${r}`);
 }
 
 /**
