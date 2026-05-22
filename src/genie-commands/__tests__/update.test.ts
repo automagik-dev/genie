@@ -24,6 +24,7 @@ import {
   downloadAndVerifyTarball,
   ensureCanonicalInstall,
   extractPgservePortFromStatus,
+  extractPgserveSocketDirFromStatus,
   fetchLatestManifest,
   formatVerifyBanner,
   isGenieProcessSnapshotLine,
@@ -893,6 +894,18 @@ describe('Diagnostics schema (G5)', () => {
     expect(extractPgservePortFromStatus('not-json')).toBe(null);
   });
 
+  test('diagnostics derives pgserve socket dir from live pgserve runtime status json', () => {
+    const liveStatus = JSON.stringify({
+      installed: true,
+      status: 'online',
+      port: 8432,
+      socketDir: '/run/user/1000/pgserve',
+      runtime: { socketDir: '/run/user/1000/pgserve', port: 8432, live: true },
+    });
+
+    expect(extractPgserveSocketDirFromStatus(liveStatus)).toBe('/run/user/1000/pgserve');
+  });
+
   test('diagnostics derives pgserve port from live pgserve runtime status json', () => {
     const liveStatus = JSON.stringify({
       installed: true,
@@ -902,6 +915,18 @@ describe('Diagnostics schema (G5)', () => {
     });
 
     expect(extractPgservePortFromStatus(liveStatus)).toBe('8432');
+  });
+
+  test('serve status reports pgserve transport from resolver instead of stale active port', () => {
+    const source = readFileSync(join(__dirname, '..', '..', 'term-commands', 'serve.ts'), 'utf-8');
+    const fnStart = source.indexOf('async function printPgserveHealth');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = source.slice(fnStart, source.indexOf('/**', fnStart + 1));
+
+    expect(fnBody).toContain('resolvePgserveTransport');
+    expect(fnBody).toContain("transport?.kind === 'unix'");
+    expect(fnBody).not.toContain('isSocketMode()');
+    expect(fnBody).not.toContain('getActivePort()');
   });
 
   test('NO_COLOR honored via colorEnabled() helper', () => {

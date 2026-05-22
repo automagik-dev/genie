@@ -1475,9 +1475,15 @@ async function stopServe(): Promise<void> {
 /** Check pgserve health and print status */
 async function printPgserveHealth(): Promise<void> {
   try {
-    const { isAvailable, getActivePort, isSocketMode, resolvePgserveSocketDir } = await import('../lib/db.js');
+    const { isAvailable, resolvePgserveTransport } = await import('../lib/db.js');
     const dbOk = await isAvailable();
-    const where = isSocketMode() ? `socket ${resolvePgserveSocketDir()}` : `port ${getActivePort()}`;
+    const transport = dbOk ? await resolvePgserveTransport() : null;
+    const where =
+      transport?.kind === 'unix'
+        ? `socket ${transport.socketDir}`
+        : transport
+          ? `tcp ${transport.host}:${transport.port}`
+          : null;
     console.log(`  pgserve:    ${dbOk ? `healthy (${where})` : 'unreachable'}`);
   } catch {
     console.log('  pgserve:    unavailable');
