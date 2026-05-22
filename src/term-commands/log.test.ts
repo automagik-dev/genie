@@ -5,9 +5,11 @@
  * filters, NDJSON output, and human-readable output.
  *
  * Run with: bun test src/term-commands/log.test.ts
+ * @requires GENIE_TEST_PG
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import * as registry from '../lib/agent-registry.js';
 import type { Agent } from '../lib/agent-registry.js';
 import { send } from '../lib/mailbox.js';
@@ -54,6 +56,90 @@ function makeAgent(id: string, team?: string, repoPath?: string): Agent {
     team,
   };
 }
+
+describe.skipIf(!DB_AVAILABLE)('log command: lifecycle lookup regressions', () => {
+  function registerUuidAgent(overrides: Partial<Agent> & { id?: string }): Promise<Agent> {
+    const agent: Agent = {
+      id: overrides.id ?? randomUUID(),
+      paneId: 'inline',
+      session: 'test',
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: 'suspended',
+      lastStateChange: new Date().toISOString(),
+      repoPath: '/tmp/log-lifecycle-regression',
+      ...overrides,
+    };
+    return registry.register(agent).then(() => agent);
+  }
+
+  test('findAgent resolves exact customName without requiring --team', async () => {
+    const agent = await registerUuidAgent({
+      customName: `log-role-${Date.now()}`,
+      role: 'engineer',
+      team: 'MixedCase-Team',
+    });
+    try {
+      const found = await findAgent(agent.customName!);
+      expect(found?.id).toBe(agent.id);
+    } finally {
+      await registry.unregister(agent.id);
+    }
+  });
+
+  test('findAgent resolves exact role with case-insensitive team scope', async () => {
+    const agent = await registerUuidAgent({
+      customName: `agent-${Date.now()}`,
+      role: `log-role-${Date.now()}`,
+      team: 'Hermes-LogFix-Team',
+    });
+    try {
+      const found = await findAgent(agent.role!, 'hermes-logfix-team');
+      expect(found?.id).toBe(agent.id);
+    } finally {
+      await registry.unregister(agent.id);
+    }
+  });
+
+  test('readAgentLog includes stored PG runtime events, not only follow-mode events', async () => {
+    const repo = '/tmp/log-lifecycle-runtime-events';
+    const agent = await registerUuidAgent({
+      customName: `runtime-${Date.now()}`,
+      role: `runtime-role-${Date.now()}`,
+      team: 'runtime-team',
+      repoPath: repo,
+    });
+    try {
+      await publishRuntimeEvent({
+        repoPath: repo,
+        kind: 'state',
+        agent: agent.id,
+        team: 'runtime-team',
+        text: 'spawned-through-lifecycle',
+        source: 'registry',
+      });
+      const events = await readAgentLog(agent, repo, { last: 20 });
+      expect(events.some((event) => event.text === 'spawned-through-lifecycle')).toBe(true);
+    } finally {
+      await registry.unregister(agent.id);
+    }
+  });
+
+  test('readTeamLog returns stored PG team events even before local agent resolution finds members', async () => {
+    const repo = '/tmp/log-lifecycle-team-events';
+    await publishRuntimeEvent({
+      repoPath: repo,
+      kind: 'message',
+      agent: 'late-worker',
+      team: 'empty-runtime-team',
+      text: 'team-event-without-registry-member',
+      source: 'mailbox',
+    });
+
+    const events = await readTeamLog([], repo, 'empty-runtime-team', { last: 20 });
+    expect(events.some((event) => event.text === 'team-event-without-registry-member')).toBe(true);
+  });
+});
 
 // ============================================================================
 // readAgentLog integration (used by log command)

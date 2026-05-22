@@ -642,6 +642,160 @@ export function atomicBinarySwap(
 }
 
 /**
+ * Sync the per-binary VERSION stamp the compiled binary reads at startup.
+ *
+ * Why this exists: `src/lib/version.ts` resolves the running version by
+ * reading `dirname(process.execPath)/VERSION` — i.e. `~/.genie/bin/VERSION`,
+ * a sibling of the binary itself. The atomic swap replaces `~/.genie/bin/genie`
+ * but never touches that file. Result: a freshly-installed v<new> binary
+ * reports v<old> on `--version` until the next time something rewrites the
+ * stamp. The 2026-05-22 incident on khal-os triggered exactly this — the
+ * release tarball was correct, the swap was correct, but the stale stamp
+ * masqueraded as a swap failure for three consecutive `genie update` runs.
+ *
+ * The G1 tarball convention ships a `VERSION` file at the root of the
+ * extracted tree. Prefer copying that file (preserves whatever format
+ * `build-tarballs.yml` produced); fall back to writing `manifestVersion`
+ * directly when the tarball pre-dates the convention.
+ *
+ * Best-effort by design: write failures don't throw — the immediately-
+ * following `verifySwappedBinary` will catch any resulting mismatch and
+ * surface the structured error with full forensic context.
+ */
+export function syncBinaryVersionStamp(extractDir: string, binDir: string, manifestVersion: string): void {
+  const targetStamp = join(binDir, 'VERSION');
+  const stagedStamp = join(extractDir, 'VERSION');
+  try {
+    if (existsSync(stagedStamp)) {
+      copyFileSync(stagedStamp, targetStamp);
+    } else {
+      writeFileSync(targetStamp, `${manifestVersion}\n`);
+    }
+  } catch {
+    // verifySwappedBinary below will detect any version mismatch loudly;
+    // never abort the update over a non-essential metadata write.
+  }
+}
+
+/**
+ * Post-swap correctness guard: execute the freshly-swapped binary and confirm
+ * its `--version` output normalises to the version we intended to install.
+ *
+ * Why this exists: on 2026-05-22 we observed an update that printed
+ * "✔ Genie binary updated → v4.260522.2" while the on-disk file at
+ * `~/.genie/bin/genie` remained v4.260520.3 with an mtime predating the
+ * update run. `atomicBinarySwap` returned `{ swapped: true }` without
+ * throwing, but the bytes never landed (cause: cleaned-up `.staging/`, no
+ * forensics). The success message was a lie produced from the *intent*
+ * (`manifest.version`), not from re-reading the result.
+ *
+ * The fix is belt-and-suspenders: never claim success without proof. This
+ * helper executes the binary at `targetBin` (injectable via `opts.runVersion`
+ * for tests) and throws a structured `Error` when the reported version does
+ * not match the manifest. The thrown error includes the staging + previous
+ * directories the operator can inspect.
+ */
+export interface VerifySwappedBinaryOptions {
+  /** Test seam — replaces the `execFileSync(targetBin, ['--version'])` call. */
+  runVersion?: (targetBin: string) => string;
+  stagingDir?: string;
+  previousDir?: string;
+}
+
+export function verifySwappedBinary(
+  targetBin: string,
+  expectedVersion: string,
+  opts: VerifySwappedBinaryOptions = {},
+): void {
+  const runner =
+    opts.runVersion ??
+    ((path: string) => execFileSync(path, ['--version'], { encoding: 'utf-8', timeout: 3000 }).toString());
+
+  let raw: string;
+  try {
+    raw = runner(targetBin);
+  } catch (err) {
+    throw new Error(
+      `Post-swap verification failed — could not execute ${targetBin}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  const match = raw.trim().match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/);
+  if (!match) {
+    throw new Error(
+      `Post-swap verification failed — ${targetBin} ran but emitted no parsable version (got: ${JSON.stringify(
+        raw.slice(0, 200),
+      )})`,
+    );
+  }
+  const actual = normalizeVersion(match[0]);
+  const intended = normalizeVersion(expectedVersion);
+  if (actual !== intended) {
+    const hints: string[] = [];
+    if (opts.stagingDir) hints.push(`  Staging : ${opts.stagingDir}`);
+    if (opts.previousDir) hints.push(`  Previous: ${opts.previousDir}`);
+    throw new Error(
+      [
+        'Post-swap verification failed — the atomic swap reported success but the',
+        'on-disk binary holds the wrong version. This usually means the staged file',
+        'was the wrong version or the swap was rolled back by an external watcher.',
+        `  Intended: v${intended}`,
+        `  On disk : v${actual}`,
+        `  Path    : ${targetBin}`,
+        ...hints,
+      ].join('\n'),
+    );
+  }
+}
+
+/**
+ * Decide whether the post-update "PATH `genie` is NOT the binary that was
+ * just updated" advisory should be emitted.
+ *
+ * Pure decision function — separated from I/O so the heuristic is testable
+ * without spawning a real `genie` binary.
+ *
+ * Suppression rules (return `false` = do NOT warn):
+ *   1. No live binary on `$PATH` — nothing to compare against.
+ *   2. No live version probe result — unknowable, stay silent.
+ *   3. Versions match — PATH is fine.
+ *   4. **`live` and `canonical` resolve to the same canonical path** —
+ *      a version mismatch in that case means the swap silently failed
+ *      (caught by `verifySwappedBinary`). The advisory's
+ *      `ln -sf <canonical> <live>` suggestion would devolve into
+ *      `ln -sf X X` — a useless self-symlink — and mislead the operator
+ *      into thinking PATH is the problem when the real defect is upstream.
+ *
+ * Only when paths genuinely differ AND versions disagree do we emit.
+ */
+export interface PathDivergenceInput {
+  /** Realpath-resolved live binary (output of `resolveLiveBinaryPath`). */
+  live: string | null;
+  /** Canonical target path the swap wrote to (`~/.genie/bin/genie`). */
+  canonical: string;
+  /** Realpath-resolved canonical (handles symlinks at the canonical leg). */
+  canonicalReal: string;
+  /** Live binary's reported `--version`, or null when probe failed. */
+  liveVersion: string | null;
+  /** Version the update intended to install. */
+  intendedVersion: string;
+}
+
+export function shouldEmitPathDivergenceWarning(input: PathDivergenceInput): boolean {
+  if (input.live === null) return false;
+  if (!input.liveVersion) return false;
+  if (normalizeVersion(input.liveVersion) === normalizeVersion(input.intendedVersion)) {
+    return false;
+  }
+  // Same physical file → version mismatch is a swap-correctness bug, not a
+  // PATH bug. Suppress the misleading self-symlink advisory.
+  if (input.live === input.canonical) return false;
+  if (input.live === input.canonicalReal) return false;
+  return true;
+}
+
+/**
  * Restore the most recent backup from `~/.genie/bin/.previous/` to the live
  * binary path. Throws if no backup exists.
  */
@@ -1492,6 +1646,30 @@ async function runDelivery(
   const targetBin = join(GENIE_BIN, 'genie');
   const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, normalizeVersion(VERSION));
   diagnosticsCtx.previousBackup = swapResult.oldVersionBackup;
+
+  // Sync the per-binary VERSION stamp BEFORE verifying. The compiled binary
+  // reads `dirname(process.execPath)/VERSION` at startup (see src/lib/version.ts
+  // readVersionFromPackageJson). The atomic swap replaces `genie` but leaves
+  // its sibling VERSION file untouched — so `targetBin --version` would still
+  // report the OLD version even when the bytes on disk match the new release.
+  // That's what bit us on 2026-05-22 (host khal-os): three consecutive updates
+  // landed the correct binary but reported the stale version, tripping the
+  // post-swap guard and the PATH advisory both as collateral. Copy the
+  // tarball's VERSION file next to the binary so the executable agrees with
+  // what we just installed; fall back to writing manifest.version directly if
+  // the tarball is missing it (older builds).
+  syncBinaryVersionStamp(extractDir, GENIE_BIN, manifest.version);
+
+  // Belt-and-suspenders: re-read the on-disk binary BEFORE printing success.
+  // `atomicBinarySwap` returning `{ swapped: true }` is necessary but not
+  // sufficient — see verifySwappedBinary for the silent-failure case observed
+  // on 2026-05-22. Any mismatch here throws and aborts the delivery so the
+  // operator never sees a misleading "✔ Genie binary updated" banner.
+  verifySwappedBinary(targetBin, manifest.version, {
+    stagingDir: GENIE_BIN_STAGING,
+    previousDir: GENIE_BIN_PREVIOUS,
+  });
+
   success(`Genie binary updated → v${manifest.version}${swapResult.fallbackUsed ? ' (cross-device fallback)' : ''}`);
 
   try {
@@ -1505,24 +1683,43 @@ async function runDelivery(
   // copy or a shadowing shim) the user keeps running the old version and
   // would never escape the update prompt. Measure the actual outcome and
   // tell them exactly how to fix it rather than silently "succeeding".
+  //
+  // Suppression: when `live` and `canonical` resolve to the same file, a
+  // version mismatch is upstream swap corruption (already caught by
+  // verifySwappedBinary above), not a PATH problem. The legacy heuristic
+  // generated `ln -sf canonical canonical` — a useless self-symlink. See
+  // shouldEmitPathDivergenceWarning for the full rule set.
   try {
     const live = resolveLiveBinaryPath();
     if (live) {
-      let liveVer = '';
+      let liveVer: string | null = null;
       try {
         liveVer =
           execFileSync(live, ['--version'], { encoding: 'utf-8', timeout: 3000 })
             .trim()
-            .match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/)?.[0] ?? '';
+            .match(/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*/)?.[0] ?? null;
       } catch {
         // unknowable — skip the advisory
       }
-      if (liveVer && normalizeVersion(liveVer) !== normalizeVersion(manifest.version)) {
-        const canonical = join(GENIE_BIN, 'genie');
+      const canonical = join(GENIE_BIN, 'genie');
+      let canonicalReal = canonical;
+      try {
+        canonicalReal = realpathSync(canonical);
+      } catch {
+        // canonical may not be a symlink — keep as-is
+      }
+      const emit = shouldEmitPathDivergenceWarning({
+        live,
+        canonical,
+        canonicalReal,
+        liveVersion: liveVer,
+        intendedVersion: manifest.version,
+      });
+      if (emit) {
         log('');
         log('⚠ Your PATH `genie` is NOT the binary that was just updated.');
         log(`  Updated    : ${canonical} → v${manifest.version}`);
-        log(`  which genie: ${live} (still v${liveVer})`);
+        log(`  which genie: ${live} (still v${liveVer ?? 'unknown'})`);
         log('  Fix it:');
         log(`    ln -sf ${canonical} ${live} && hash -r`);
         log('  (or put ~/.genie/bin first on $PATH)');

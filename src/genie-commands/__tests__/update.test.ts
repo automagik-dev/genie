@@ -34,6 +34,9 @@ import {
   rollbackBinary,
   runVerifyProbe,
   shortCircuitIfCurrent,
+  shouldEmitPathDivergenceWarning,
+  syncBinaryVersionStamp,
+  verifySwappedBinary,
 } from '../update.js';
 
 // ============================================================================
@@ -1092,5 +1095,274 @@ describe('Knip-clean exports (PR #1733 follow-up)', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).not.toContain('RELEASES_BASE_URL');
     expect(source).not.toMatch(/^export\s*\{\s*RELEASES_/m);
+  });
+});
+
+// ============================================================================
+// Silent swap + self-symlink regression (trace 2026-05-22).
+//
+// Symptom on operator host (genie@khal-os): `genie update --dev` reported
+// "✔ Genie binary updated → v4.260522.2" but the on-disk binary at
+// `~/.genie/bin/genie` remained v4.260520.3 (mtime unchanged), and the
+// subsequent PATH advisory suggested `ln -sf <path> <path>` — a self-symlink.
+//
+// Root causes:
+//   1. runDelivery printed success based on `manifest.version` (intent),
+//      never re-reading the swapped binary.
+//   2. The PATH heuristic did not guard against `live === canonical`, so a
+//      version mismatch caused by a botched swap was misdiagnosed as a PATH
+//      problem and rendered as `ln -sf X X`.
+//
+// Both helpers below are pure and injectable so the regression is locked in
+// without spawning a real `genie` binary.
+// ============================================================================
+
+describe('verifySwappedBinary (post-swap correctness guard)', () => {
+  test('returns void when reported version matches expected', () => {
+    expect(() =>
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => '4.260522.2\n',
+      }),
+    ).not.toThrow();
+  });
+
+  test('strips build metadata before comparison (normalizeVersion parity)', () => {
+    expect(() =>
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => '4.260522.2+abc1234\n',
+      }),
+    ).not.toThrow();
+  });
+
+  test('throws with intended-vs-on-disk diff when version mismatches', () => {
+    expect(() =>
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => '4.260520.3\n',
+        stagingDir: '/tmp/staging',
+        previousDir: '/tmp/previous',
+      }),
+    ).toThrow(/Intended: v4\.260522\.2[\s\S]*On disk : v4\.260520\.3/);
+  });
+
+  test('mismatch message includes staging + previous hints for forensics', () => {
+    let captured: string | null = null;
+    try {
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => '4.260520.3\n',
+        stagingDir: '/home/genie/.genie/bin/.staging',
+        previousDir: '/home/genie/.genie/bin/.previous',
+      });
+    } catch (err) {
+      captured = err instanceof Error ? err.message : String(err);
+    }
+    expect(captured).toContain('/home/genie/.genie/bin/.staging');
+    expect(captured).toContain('/home/genie/.genie/bin/.previous');
+  });
+
+  test('throws when binary cannot be executed (wraps underlying error)', () => {
+    expect(() =>
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => {
+          throw new Error('ENOENT: no such file');
+        },
+      }),
+    ).toThrow(/Post-swap verification failed.*could not execute.*ENOENT/);
+  });
+
+  test('throws when binary runs but emits no parseable version', () => {
+    expect(() =>
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => 'banner with no version string\n',
+      }),
+    ).toThrow(/emitted no parsable version/);
+  });
+});
+
+describe('syncBinaryVersionStamp (binary-sibling VERSION file)', () => {
+  // The compiled binary reads `dirname(process.execPath)/VERSION` at startup
+  // (src/lib/version.ts). The atomic swap replaces `genie` but leaves the
+  // sibling VERSION stamp untouched — so without this sync, the new binary
+  // reports the OLD version until something else rewrites the stamp. These
+  // tests pin the contract so a future "simplification" can't remove it.
+
+  test('copies VERSION from extractDir → binDir when the tarball ships one', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
+    try {
+      const extractDir = join(tmp, 'extract');
+      const binDir = join(tmp, 'bin');
+      mkdirSync(extractDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(extractDir, 'VERSION'), '4.260522.3\n');
+      // Pre-existing stale stamp the swap left behind:
+      writeFileSync(join(binDir, 'VERSION'), '4.260520.3\n');
+
+      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
+
+      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8').trim()).toBe('4.260522.3');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('falls back to writing manifestVersion when tarball is missing VERSION', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
+    try {
+      const extractDir = join(tmp, 'extract');
+      const binDir = join(tmp, 'bin');
+      mkdirSync(extractDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      // No VERSION file in extractDir — simulates an older build that
+      // pre-dates the G1 stamp convention.
+      writeFileSync(join(binDir, 'VERSION'), '4.260520.3\n');
+
+      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
+
+      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8').trim()).toBe('4.260522.3');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('first install (binDir has no prior VERSION) — creates the stamp', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
+    try {
+      const extractDir = join(tmp, 'extract');
+      const binDir = join(tmp, 'bin');
+      mkdirSync(extractDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(extractDir, 'VERSION'), '4.260522.3\n');
+
+      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
+
+      expect(existsSync(join(binDir, 'VERSION'))).toBe(true);
+      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8').trim()).toBe('4.260522.3');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('preserves the tarball stamp byte-for-byte (no normalisation)', () => {
+    // The G1 build pipeline may include build metadata (`+sha`) or trailing
+    // newlines we don't want to silently strip. Copy verbatim.
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
+    try {
+      const extractDir = join(tmp, 'extract');
+      const binDir = join(tmp, 'bin');
+      mkdirSync(extractDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      const exotic = '4.260522.3+abc1234\n';
+      writeFileSync(join(extractDir, 'VERSION'), exotic);
+
+      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
+
+      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8')).toBe(exotic);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('swallows fs errors (best-effort; verifySwappedBinary catches mismatch)', () => {
+    // Pass an extractDir that exists but a binDir that doesn't — copy will
+    // fail, write fallback will also fail. Should not throw.
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
+    try {
+      const extractDir = join(tmp, 'extract');
+      const binDir = join(tmp, 'nonexistent', 'bin');
+      mkdirSync(extractDir, { recursive: true });
+      writeFileSync(join(extractDir, 'VERSION'), '4.260522.3\n');
+
+      expect(() => syncBinaryVersionStamp(extractDir, binDir, '4.260522.3')).not.toThrow();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('shouldEmitPathDivergenceWarning (self-symlink suppression)', () => {
+  const canonical = '/home/genie/.genie/bin/genie';
+
+  test('suppresses when live is null (nothing on PATH)', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: null,
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: '4.260520.3',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
+  });
+
+  test('suppresses when live version is unknown', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: '/usr/local/bin/genie',
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: null,
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
+  });
+
+  test('suppresses when versions match (PATH is fine)', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: '/usr/local/bin/genie',
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: '4.260522.2',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
+  });
+
+  test('suppresses when live === canonical (the self-symlink bug)', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: canonical,
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: '4.260520.3',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
+  });
+
+  test('suppresses when live === canonicalReal (canonical is itself a symlink)', () => {
+    const realTarget = '/opt/genie/bin/genie';
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: realTarget,
+        canonical,
+        canonicalReal: realTarget,
+        liveVersion: '4.260520.3',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
+  });
+
+  test('emits when paths differ AND versions disagree (legitimate PATH shadow)', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: '/usr/local/bin/genie',
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: '4.260000.0',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(true);
+  });
+
+  test('normalizes build metadata when comparing versions', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: '/usr/local/bin/genie',
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: '4.260522.2+abc',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
   });
 });

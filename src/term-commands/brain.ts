@@ -19,6 +19,38 @@ import { type BrainRegistryApi, findBrainVault } from '../lib/brain-vaults.js';
 const BRAIN_PKG = '@khal-os/brain';
 const BRAIN_REPO = 'khal-os/brain';
 
+/**
+ * Canonical Brain installer (signed Gitea release flow). `genie brain
+ * install` and `genie brain upgrade` are thin delegators to this URL —
+ * never an inline downloader, never npm. Operators can override with
+ * `BRAIN_INSTALLER_URL` for staging/forks.
+ *
+ * See: khal-core/brain → `scripts/install.sh` and `.well-known/<channel>.json`.
+ */
+const BRAIN_INSTALLER_URL =
+  process.env.BRAIN_INSTALLER_URL ?? 'https://git.namastex.io/khal-core/brain/raw/branch/main/scripts/install.sh';
+
+// Env vars the canonical installer reads. We thread the SAFE ones through
+// from the calling shell into the delegated `bash -c …` so people can use
+// genie as the install front door without losing their channel/home knobs.
+// SECRET tokens are never echoed or persisted by genie — they ride through
+// the inherited process env into the installer, which only routes them as
+// Authorization headers to git.namastex.io.
+const BRAIN_INSTALLER_SAFE_ENV = [
+  'BRAIN_CHANNEL',
+  'BRAIN_HOME',
+  'BRAIN_BIN_DIR',
+  'BRAIN_INSTALL_HOST',
+  'BRAIN_INSTALL_REPO',
+  'BRAIN_INSTALL_BRANCH',
+  'BRAIN_VERSION',
+  'BRAIN_INSECURE',
+  'BRAIN_INSTALL_NO_SYMLINK',
+  'BRAIN_INSTALL_KEEP_TMP',
+] as const;
+
+const BRAIN_INSTALLER_SECRET_ENV = ['BRAIN_GITEA_TOKEN', 'GITEA_TOKEN', 'TEA_TOKEN'] as const;
+
 /** Resolve genie's package root — works from both src/ (dev) and dist/ (compiled). */
 function resolveGenieRoot(): string {
   try {
@@ -157,16 +189,10 @@ function startBrainDaemon(vaultPath: string, extraArgs?: string[]): void {
   }
 }
 
-/** Read saved daemon args from .brain-server.json in a vault. */
-function readSavedDaemonArgs(brainPath: string): string[] | undefined {
-  try {
-    const serverJsonPath = join(brainPath, '.brain-server.json');
-    const serverInfo = JSON.parse(readFileSync(serverJsonPath, 'utf-8'));
-    return serverInfo.args;
-  } catch {
-    return undefined;
-  }
-}
+// (readSavedDaemonArgs was used by the legacy in-genie upgrader; removed
+// alongside the move to canonical-installer delegation. If a future
+// upgrade flow wants to restart the daemon after upgrade, re-introduce
+// it on the Brain side where the daemon lifecycle is owned.)
 
 // ── Cache-only update check (no network, sync, never throws) ──────────────
 
@@ -231,86 +257,88 @@ function refreshVersionCache(localVersion?: string): void {
   }
 }
 
-// ── Update brain from GitHub ───────────────────────────────────────────────
+// ── Update brain via canonical signed installer ────────────────────────────
 
-async function updateBrain(): Promise<boolean> {
-  // Check brain is installed (has package.json from tarball extract)
-  if (!existsSync(join(BRAIN_DIR, 'package.json'))) {
-    console.log('  Brain is not installed. Run: genie brain install');
-    return false;
+interface DelegatedInstallPlan {
+  installerUrl: string;
+  channel: string;
+  command: string;
+  envSummary: Array<{ key: string; present: boolean; secret: boolean }>;
+}
+
+function planBrainInstallerDelegation(): DelegatedInstallPlan {
+  const channel = process.env.BRAIN_CHANNEL ?? 'stable';
+  const envSummary = [
+    ...BRAIN_INSTALLER_SAFE_ENV.map((key) => ({
+      key,
+      present: process.env[key] !== undefined,
+      secret: false,
+    })),
+    ...BRAIN_INSTALLER_SECRET_ENV.map((key) => ({
+      key,
+      present: process.env[key] !== undefined,
+      secret: true,
+    })),
+  ];
+  // The token never appears on the command line. The installer reads it
+  // from the inherited env and routes it only as an Authorization header
+  // to git.namastex.io.
+  const command = `curl -fsSL "${BRAIN_INSTALLER_URL}" | bash`;
+  return { installerUrl: BRAIN_INSTALLER_URL, channel, command, envSummary };
+}
+
+function printDelegationPlan(label: string, plan: DelegatedInstallPlan): void {
+  console.log('');
+  console.log(`  ${label} → canonical Brain installer`);
+  console.log(`    installer: ${plan.installerUrl}`);
+  console.log(`    channel:   ${plan.channel}`);
+  console.log('    env:');
+  for (const e of plan.envSummary) {
+    const label = e.secret ? (e.present ? 'set (masked)' : 'not set') : e.present ? 'set' : 'not set';
+    console.log(`      - ${e.key}: ${label}`);
   }
+  console.log(`    command:   ${plan.command}`);
+}
 
-  // Get old version before update
-  const oldVersion = readLocalBrainVersion() ?? 'unknown';
+interface DelegationOptions {
+  dryRun?: boolean;
+  label?: string;
+}
 
-  console.log('  Checking for updates...');
+async function runBrainInstallerDelegation(opts: DelegationOptions = {}): Promise<boolean> {
+  const plan = planBrainInstallerDelegation();
+  const label = opts.label ?? 'Brain install';
+  printDelegationPlan(label, plan);
 
-  // Query latest release from GitHub
-  let tag: string;
-  try {
-    tag = execSync(`gh release view --repo ${BRAIN_REPO} --json tagName -q .tagName`, {
-      stdio: 'pipe',
-      encoding: 'utf-8',
-    }).trim();
-  } catch {
-    console.error('  Failed to check latest release. Ensure: gh auth login');
-    return false;
-  }
-
-  const newVersion = tag.replace(/^v/, '');
-  if (compareVersions(newVersion, oldVersion) <= 0) {
-    console.log(`  Already at latest version (${oldVersion}).`);
+  if (opts.dryRun) {
+    console.log('  --dry-run: nothing executed.');
     return true;
   }
 
-  console.log(`  Upgrading: ${oldVersion} → ${newVersion}`);
-  console.log('');
-
-  // Stop running daemon before upgrade (read saved args for restart)
-  const activeConfig = readActiveBrainConfig();
-  const savedArgs = activeConfig?.brainPath ? readSavedDaemonArgs(activeConfig.brainPath) : undefined;
-  const wasRunning = activeConfig ? await stopBrainDaemon() : false;
-
-  // Download and extract new tarball (same flow as install)
-  const tmpDir = join(homedir(), '.cache', 'genie-brain');
-  mkdirSync(tmpDir, { recursive: true });
-
-  execSync(`gh release download ${tag} --repo ${BRAIN_REPO} --pattern '*.tgz' --dir "${tmpDir}" --clobber`, {
-    stdio: 'inherit',
-  });
-
-  // Replace existing install
-  execSync(`rm -rf "${BRAIN_DIR}"`, { stdio: 'pipe' });
-  mkdirSync(BRAIN_DIR, { recursive: true });
-  execSync(`tar xzf "${tmpDir}/khal-os-brain-${newVersion}.tgz" -C "${BRAIN_DIR}" --strip-components=1`, {
-    stdio: 'inherit',
-  });
-
-  // Install runtime deps
-  execSync('bun install', { cwd: BRAIN_DIR, stdio: 'inherit' });
-
-  console.log(`\n  Updated: ${oldVersion} → ${newVersion}`);
-
-  // Run migrations via subprocess — import() cache returns stale pre-update
-  // module, so new migrations would be skipped. A fresh bun process loads
-  // the rebuilt code from disk.
   try {
-    const migrateScript = `const b = require('${BRAIN_PKG}'); if (b.runAllMigrations) b.runAllMigrations().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); }); else process.exit(0);`;
-    execSync(`bun -e "${migrateScript}"`, { cwd: BRAIN_DIR, stdio: 'inherit' });
-    console.log('  Migrations applied.');
-  } catch {
-    console.log('  Migration skipped. Run: genie brain migrate');
+    execSync(plan.command, { stdio: 'inherit', env: process.env, shell: '/bin/bash' });
+    return true;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('');
+    console.error(`  ${label} failed: ${msg.split('\n')[0]}`);
+    console.error('  See the canonical installer output above for details.');
+    return false;
   }
+}
 
-  // Refresh version cache
-  refreshVersionCache(newVersion);
-
-  // Restart daemon if it was running before upgrade
-  if (wasRunning && activeConfig?.brainPath) {
-    startBrainDaemon(activeConfig.brainPath, savedArgs);
+async function updateBrain(opts: DelegationOptions = {}): Promise<boolean> {
+  const oldVersion = readLocalBrainVersion();
+  const ok = await runBrainInstallerDelegation({ ...opts, label: 'Brain upgrade' });
+  if (ok && !opts.dryRun) {
+    const newVersion = readLocalBrainVersion();
+    if (oldVersion && newVersion && newVersion !== oldVersion) {
+      console.log('');
+      console.log(`  Updated: ${oldVersion} → ${newVersion}`);
+    }
+    refreshVersionCache(newVersion);
   }
-
-  return true;
+  return ok;
 }
 
 // ── Show version ───────────────────────────────────────────────────────────
@@ -345,20 +373,31 @@ async function showVersion(): Promise<void> {
 
 // ── Install brain ──────────────────────────────────────────────────────────
 
-/** Install brain package from GitHub release tarball */
-async function installBrain(): Promise<boolean> {
+/**
+ * Install brain via the canonical signed Brain installer.
+ *
+ * `genie brain install` is a thin delegator. It never inlines an alternate
+ * downloader, never uses npm, never embeds tokens in the command line.
+ * It runs Brain's `scripts/install.sh` from `khal-core/brain` with the
+ * inherited environment so users can pass `BRAIN_CHANNEL`, `BRAIN_HOME`,
+ * `BRAIN_GITEA_TOKEN` etc. through `genie brain install` exactly as if
+ * they had piped install.sh directly to bash.
+ */
+async function installBrain(opts: DelegationOptions = {}): Promise<boolean> {
   // Honour the brain.embedded=false opt-out. Power-users manage brain as a
-  // standalone global install (typically from the @next dev channel) and do
-  // not want genie fetching a release tarball behind their back.
+  // standalone install and do not want genie fetching anything behind
+  // their back.
   const { loadGenieConfigSync } = await import('../lib/genie-config.js');
   if (!loadGenieConfigSync().brain.embedded) {
     console.log('');
     console.log('  Brain is configured as external (brain.embedded=false).');
-    console.log('  Genie will not install brain into its node_modules.');
+    console.log('  Genie will not run the Brain installer on your behalf.');
     console.log('');
-    console.log('  Install brain standalone instead:');
-    console.log('    bun install -g @khal-os/brain@next    # dev channel');
-    console.log('    bun install -g @khal-os/brain         # stable channel');
+    console.log('  Install brain standalone via the canonical signed installer:');
+    console.log(`    curl -fsSL ${BRAIN_INSTALLER_URL} | bash`);
+    console.log('');
+    console.log('  Channels:  BRAIN_CHANNEL=stable|homolog|dev');
+    console.log('  Token:     export BRAIN_GITEA_TOKEN=<token>   (or GITEA_TOKEN / TEA_TOKEN)');
     console.log('');
     console.log('  Then run your own brain serve:');
     console.log('    brain serve --brain-path <path> [--port <port>]');
@@ -369,112 +408,40 @@ async function installBrain(): Promise<boolean> {
     return true;
   }
 
-  console.log('');
-  console.log('  Installing brain from GitHub release (enterprise)...');
-  console.log('');
-  console.log('  Source: https://github.com/khal-os/brain');
-  console.log('  Requires: GitHub org membership (khal-os)');
-  console.log('');
+  const ok = await runBrainInstallerDelegation({ ...opts, label: 'Brain install' });
+  if (!ok || opts.dryRun) return ok;
 
+  // Best-effort post-install wiring: migrations, install wizard, daemon
+  // auto-start. Any failure here is non-fatal — the binary itself is
+  // already installed and usable from `$BRAIN_HOME/bin/brain`.
+  let installedBrain: BrainRegistryApi | null = null;
   try {
-    // Verify GitHub CLI is authenticated (no token extraction — gh handles auth securely)
-    try {
-      execSync('gh auth token', { stdio: 'pipe' });
-    } catch {
-      console.error('  GitHub CLI not authenticated. Run: gh auth login');
-      return false;
+    const brain = await import(BRAIN_PKG);
+    installedBrain = brain as BrainRegistryApi;
+    if (brain.runAllMigrations) {
+      console.log('');
+      console.log('  Running brain migrations...');
+      await brain.runAllMigrations();
+      console.log('  Brain tables created in Postgres.');
     }
-
-    // Resolve latest release tag and download tarball via gh (handles private repo auth)
-    const tag = execSync(`gh release view --repo ${BRAIN_REPO} --json tagName -q .tagName`, {
-      stdio: 'pipe',
-      encoding: 'utf-8',
-    }).trim();
-    const version = tag.replace(/^v/, '');
-
-    console.log(`  Latest release: ${tag}`);
-    console.log('');
-
-    // Download tarball via gh (handles private repo auth) and extract to node_modules.
-    // We bypass `bun add` because .npmrc scope config causes bun to verify against
-    // GitHub Packages registry even for local tarballs, triggering 401 on machines
-    // without registry tokens.
-    const root = resolveGenieRoot();
-    const brainDir = join(root, 'node_modules', '@khal-os', 'brain');
-    const tmpDir = join(homedir(), '.cache', 'genie-brain');
-    mkdirSync(tmpDir, { recursive: true });
-
-    execSync(`gh release download ${tag} --repo ${BRAIN_REPO} --pattern '*.tgz' --dir "${tmpDir}" --clobber`, {
-      stdio: 'inherit',
-    });
-
-    // Extract tarball — npm tarballs contain a `package/` prefix
-    execSync(`rm -rf "${brainDir}"`, { stdio: 'pipe' });
-    mkdirSync(brainDir, { recursive: true });
-    execSync(`tar xzf "${tmpDir}/khal-os-brain-${version}.tgz" -C "${brainDir}" --strip-components=1`, {
-      stdio: 'inherit',
-    });
-
-    // Install brain's runtime deps (postgres, pgserve, etc.)
-    execSync('bun install', { cwd: brainDir, stdio: 'inherit' });
-
-    console.log('');
-    console.log(`  Brain ${version} installed from GitHub release.`);
-    console.log('');
-
-    // Auto-run migrations
-    let installedBrain: BrainRegistryApi | null = null;
-    try {
-      const brain = await import(BRAIN_PKG);
-      installedBrain = brain as BrainRegistryApi;
-      if (brain.runAllMigrations) {
-        console.log('  Running brain migrations...');
-        await brain.runAllMigrations();
-        console.log('  Brain tables created in Postgres.');
-      }
-    } catch {
-      console.log('  Auto-migration skipped. Run: genie brain migrate');
-    }
-
-    await runBrainInstallWizard();
-
-    // Auto-start daemon if a vault is found
-    const vaultPath = await findBrainVault({ brain: installedBrain });
-    if (vaultPath) {
-      startBrainDaemon(vaultPath);
-    } else {
-      console.log('  No brain vault found. Create one with: brain init --name <name> --path <path>');
-    }
-
-    console.log('');
-    console.log('  Get started:');
-    console.log('    genie brain init --name my-brain --path ./brain');
-    console.log('');
-    return true;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-
-    if (msg.includes('Authentication') || msg.includes('permission') || msg.includes('404')) {
-      console.error('  Access denied. Brain is enterprise-only.');
-      console.log('');
-      console.log('  You need:');
-      console.log('    1. Membership in the khal-os GitHub org');
-      console.log('    2. GitHub CLI authenticated: gh auth login');
-      console.log('');
-      console.log('  Manual install:');
-      console.log(`    gh release download --repo ${BRAIN_REPO} --pattern '*.tgz'`);
-      console.log('    tar xzf khal-os-brain-*.tgz -C node_modules/@khal-os/brain --strip-components=1');
-      console.log('');
-    } else {
-      console.error(`  Install failed: ${msg}`);
-      console.log('');
-      console.log('  Manual install:');
-      console.log(`    gh release download --repo ${BRAIN_REPO} --pattern '*.tgz'`);
-      console.log('    tar xzf khal-os-brain-*.tgz -C node_modules/@khal-os/brain --strip-components=1');
-      console.log('');
-    }
-    return false;
+  } catch {
+    console.log('  Auto-migration skipped. Run: genie brain migrate');
   }
+
+  await runBrainInstallWizard();
+
+  const vaultPath = await findBrainVault({ brain: installedBrain });
+  if (vaultPath) {
+    startBrainDaemon(vaultPath);
+  } else {
+    console.log('  No brain vault found. Create one with: brain init --name <name> --path <path>');
+  }
+
+  console.log('');
+  console.log('  Get started:');
+  console.log('    genie brain init --name my-brain --path ./brain');
+  console.log('');
+  return true;
 }
 
 /**
@@ -607,23 +574,26 @@ Install brain: genie brain install`,
 
   brain
     .command('install')
-    .description('Install genie-brain from GitHub')
-    .action(async () => {
-      await installBrain();
+    .description('Install Brain via the canonical signed installer (Gitea release)')
+    .option('--dry-run', 'Print the planned installer command and exit; do not execute')
+    .action(async (cmdOpts: { dryRun?: boolean }) => {
+      await installBrain({ dryRun: cmdOpts.dryRun });
     });
 
   brain
     .command('uninstall')
-    .description('Remove genie-brain installation')
+    .description('Remove Brain installation (sweeps legacy npm-style installs too)')
     .action(async () => {
       await uninstallBrain();
     });
 
   brain
     .command('upgrade')
-    .description('Upgrade genie-brain to latest version')
-    .action(async () => {
-      await updateBrain();
+    .alias('update-self')
+    .description('Upgrade Brain via the canonical signed installer')
+    .option('--dry-run', 'Print the planned installer command and exit; do not execute')
+    .action(async (cmdOpts: { dryRun?: boolean }) => {
+      await updateBrain({ dryRun: cmdOpts.dryRun });
     });
 
   brain
