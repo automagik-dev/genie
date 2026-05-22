@@ -642,6 +642,42 @@ export function atomicBinarySwap(
 }
 
 /**
+ * Sync the per-binary VERSION stamp the compiled binary reads at startup.
+ *
+ * Why this exists: `src/lib/version.ts` resolves the running version by
+ * reading `dirname(process.execPath)/VERSION` — i.e. `~/.genie/bin/VERSION`,
+ * a sibling of the binary itself. The atomic swap replaces `~/.genie/bin/genie`
+ * but never touches that file. Result: a freshly-installed v<new> binary
+ * reports v<old> on `--version` until the next time something rewrites the
+ * stamp. The 2026-05-22 incident on khal-os triggered exactly this — the
+ * release tarball was correct, the swap was correct, but the stale stamp
+ * masqueraded as a swap failure for three consecutive `genie update` runs.
+ *
+ * The G1 tarball convention ships a `VERSION` file at the root of the
+ * extracted tree. Prefer copying that file (preserves whatever format
+ * `build-tarballs.yml` produced); fall back to writing `manifestVersion`
+ * directly when the tarball pre-dates the convention.
+ *
+ * Best-effort by design: write failures don't throw — the immediately-
+ * following `verifySwappedBinary` will catch any resulting mismatch and
+ * surface the structured error with full forensic context.
+ */
+export function syncBinaryVersionStamp(extractDir: string, binDir: string, manifestVersion: string): void {
+  const targetStamp = join(binDir, 'VERSION');
+  const stagedStamp = join(extractDir, 'VERSION');
+  try {
+    if (existsSync(stagedStamp)) {
+      copyFileSync(stagedStamp, targetStamp);
+    } else {
+      writeFileSync(targetStamp, `${manifestVersion}\n`);
+    }
+  } catch {
+    // verifySwappedBinary below will detect any version mismatch loudly;
+    // never abort the update over a non-essential metadata write.
+  }
+}
+
+/**
  * Post-swap correctness guard: execute the freshly-swapped binary and confirm
  * its `--version` output normalises to the version we intended to install.
  *
@@ -1610,6 +1646,19 @@ async function runDelivery(
   const targetBin = join(GENIE_BIN, 'genie');
   const swapResult = atomicBinarySwap(stagedBin, targetBin, GENIE_BIN_PREVIOUS, normalizeVersion(VERSION));
   diagnosticsCtx.previousBackup = swapResult.oldVersionBackup;
+
+  // Sync the per-binary VERSION stamp BEFORE verifying. The compiled binary
+  // reads `dirname(process.execPath)/VERSION` at startup (see src/lib/version.ts
+  // readVersionFromPackageJson). The atomic swap replaces `genie` but leaves
+  // its sibling VERSION file untouched — so `targetBin --version` would still
+  // report the OLD version even when the bytes on disk match the new release.
+  // That's what bit us on 2026-05-22 (host khal-os): three consecutive updates
+  // landed the correct binary but reported the stale version, tripping the
+  // post-swap guard and the PATH advisory both as collateral. Copy the
+  // tarball's VERSION file next to the binary so the executable agrees with
+  // what we just installed; fall back to writing manifest.version directly if
+  // the tarball is missing it (older builds).
+  syncBinaryVersionStamp(extractDir, GENIE_BIN, manifest.version);
 
   // Belt-and-suspenders: re-read the on-disk binary BEFORE printing success.
   // `atomicBinarySwap` returning `{ swapped: true }` is necessary but not
