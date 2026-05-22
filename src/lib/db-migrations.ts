@@ -143,6 +143,24 @@ export async function runMigrations(sql: Sql): Promise<MigrationRecord[]> {
   const appliedSet = new Set(applied.map((r) => r.name));
 
   const pending = files.filter((f) => !appliedSet.has(f.name));
+  if (pending.length === 0) return [];
+
+  // Defensive: ensure _genie_migrations_id_seq is sane before INSERTing.
+  // Hosts that restored from a pg_dump may have the sequence stuck at its
+  // initial value while the table holds rows with high explicit ids; the
+  // next IDENTITY-generated id would collide with an existing PK. We
+  // observed this on khal-os 2026-05-22 where the sequence was at 48 with
+  // 63 rows applied, blocking every PG-touching CLI command with
+  // `duplicate key value violates unique constraint "_genie_migrations_pkey"`.
+  // The canonical fix is `rebalanceIdentitySequences` (run by `restore()`
+  // post-pg_dump cutover), but a defensive `setval()` here unblocks any
+  // host that already drifted — without forcing them to re-restore.
+  await sql.unsafe(`SELECT setval(
+    '_genie_migrations_id_seq',
+    GREATEST(COALESCE((SELECT MAX(id) FROM _genie_migrations), 0), 1),
+    COALESCE((SELECT MAX(id) FROM _genie_migrations), 0) > 0
+  )`);
+
   const results: MigrationRecord[] = [];
 
   for (const migration of pending) {

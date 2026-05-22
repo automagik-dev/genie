@@ -220,4 +220,99 @@ export function restore(snapshotFile?: string, cwd?: string): void {
   if (restoreResult.status !== 0) {
     throw new Error(`psql restore failed (exit ${restoreResult.status}): ${restoreResult.stderr?.toString().trim()}`);
   }
+
+  // Rebalance IDENTITY sequences after restore.
+  //
+  // `pg_dump --clean --if-exists` drops every IDENTITY-bearing table and
+  // recreates it via DDL — which resets the implicit identity sequence to
+  // its initial value (1). The subsequent COPY restores rows with their
+  // original explicit ids (1..N), but pg_dump does NOT emit a setval() to
+  // advance the sequence past N. The next INSERT requesting a sequence
+  // value then collides with an existing row's PK.
+  //
+  // We observed this on 2026-05-22 (khal-os): `_genie_migrations` had 63
+  // rows but `_genie_migrations_id_seq` was at 48; the first attempt to
+  // apply pending migration 064 hit `duplicate key value violates unique
+  // constraint "_genie_migrations_pkey"`. Every PG-touching CLI command
+  // (`genie ls`, `genie task list`, `genie events`) was blocked.
+  //
+  // The fix is a single PL/pgSQL block that walks every IDENTITY column
+  // in the `public` schema and calls setval() with MAX(col). Idempotent;
+  // safe on a freshly-installed DB (no IDENTITY columns yet) and on a
+  // restored DB (advances the sequence to a sane value).
+  rebalanceIdentitySequences(env);
+}
+
+/**
+ * Walk every IDENTITY column in `public` schema and advance its sequence
+ * to `max(col)`. Called from `restore()` to undo the sequence-desync that
+ * `pg_dump --clean --if-exists` causes (see comment in restore()).
+ *
+ * Exported for direct test coverage and operator-driven recovery — a host
+ * that already drifted via a pre-fix restore can call this to unblock the
+ * migration runner without re-restoring.
+ */
+export interface RebalanceIdentitySequencesOptions {
+  /** Test seam — replaces the `spawnSync('psql', ['-c', sql])` invocation. */
+  runner?: (sql: string) => { status: number | null; stderr?: Buffer | string };
+}
+
+/**
+ * Build the PL/pgSQL block that walks every IDENTITY column in public and
+ * setvals its backing sequence to MAX(col). Exposed so tests can lock the
+ * shape without spawning psql.
+ *
+ * For empty tables (MAX(col) = NULL), we setval(1, false) so the next
+ * nextval() yields 1 — the canonical identity-start behavior. For non-empty
+ * tables we setval(max, true) so the next nextval() yields max+1.
+ */
+export function buildIdentityRebalanceSql(): string {
+  return `DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT n.nspname AS sch, c.relname AS tbl, a.attname AS col
+    FROM pg_attribute a
+    JOIN pg_class c ON c.oid = a.attrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE a.attidentity IN ('a', 'd')
+      AND n.nspname = 'public'
+      AND c.relkind = 'r'
+  LOOP
+    EXECUTE format(
+      'SELECT setval(pg_get_serial_sequence(%L, %L), GREATEST(COALESCE((SELECT MAX(%I) FROM %I.%I), 0), 1), COALESCE((SELECT MAX(%I) FROM %I.%I), 0) > 0)',
+      r.sch || '.' || r.tbl, r.col,
+      r.col, r.sch, r.tbl,
+      r.col, r.sch, r.tbl
+    );
+  END LOOP;
+END
+$$;`;
+}
+
+export function rebalanceIdentitySequences(
+  envOrOpts: NodeJS.ProcessEnv | RebalanceIdentitySequencesOptions = pgEnv(),
+  opts: RebalanceIdentitySequencesOptions = {},
+): void {
+  // Accept either an env block (legacy positional) or an options bag, so
+  // restore() can keep passing its env and tests can inject a fake runner.
+  const isOpts = envOrOpts !== null && typeof envOrOpts === 'object' && 'runner' in envOrOpts;
+  const env: NodeJS.ProcessEnv = isOpts ? pgEnv() : (envOrOpts as NodeJS.ProcessEnv);
+  const runner =
+    (isOpts ? (envOrOpts as RebalanceIdentitySequencesOptions).runner : opts.runner) ??
+    ((sql: string) =>
+      spawnSync('psql', ['-v', 'ON_ERROR_STOP=1', '-c', sql], {
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 30_000,
+      }));
+
+  const sqlBlock = buildIdentityRebalanceSql();
+  const result = runner(sqlBlock);
+
+  if (result.status !== 0) {
+    const stderr = typeof result.stderr === 'string' ? result.stderr : (result.stderr?.toString() ?? '');
+    throw new Error(`Identity sequence rebalance failed (exit ${result.status}): ${stderr.trim() || 'unknown error'}`);
+  }
 }
