@@ -45,6 +45,12 @@ export interface CreateExecutorOpts {
 // CRUD
 // ============================================================================
 
+const TERMINAL_EXECUTOR_STATES = new Set<ExecutorState>(['terminated', 'done', 'error']);
+
+export function initialEndedAtForState(state: ExecutorState): string | null {
+  return TERMINAL_EXECUTOR_STATES.has(state) ? new Date().toISOString() : null;
+}
+
 /**
  * Create an executor record and return it.
  * Does NOT set agent.current_executor_id — caller should use
@@ -58,22 +64,24 @@ export async function createExecutor(
 ): Promise<Executor> {
   const sql = await getConnection();
   const id = opts.id ?? randomUUID();
+  const state = opts.state ?? 'spawning';
   const now = new Date().toISOString();
+  const endedAt = initialEndedAtForState(state);
 
   const rows = await sql<ExecutorRow[]>`
     INSERT INTO executors (
       id, agent_id, provider, transport, pid,
       tmux_session, tmux_pane_id, tmux_window, tmux_window_id,
       claude_session_id, state, metadata, worktree, repo_path, pane_color,
-      started_at
+      started_at, ended_at
     ) VALUES (
       ${id}, ${agentId}, ${provider}, ${transport}, ${opts.pid ?? null},
       ${opts.tmuxSession ?? null}, ${opts.tmuxPaneId ?? null},
       ${opts.tmuxWindow ?? null}, ${opts.tmuxWindowId ?? null},
-      ${opts.claudeSessionId ?? null}, ${opts.state ?? 'spawning'},
+      ${opts.claudeSessionId ?? null}, ${state},
       ${sql.json(opts.metadata ?? {})}, ${opts.worktree ?? null},
       ${opts.repoPath ?? null}, ${opts.paneColor ?? null},
-      ${now}
+      ${now}, ${endedAt}
     ) RETURNING *
   `;
 
@@ -92,7 +100,9 @@ export async function createAndLinkExecutor(
 ): Promise<Executor> {
   const sql = await getConnection();
   const id = opts.id ?? randomUUID();
+  const state = opts.state ?? 'spawning';
   const now = new Date().toISOString();
+  const endedAt = initialEndedAtForState(state);
 
   return sql.begin(async (tx: Sql) => {
     const rows = await tx<ExecutorRow[]>`
@@ -100,15 +110,15 @@ export async function createAndLinkExecutor(
         id, agent_id, provider, transport, pid,
         tmux_session, tmux_pane_id, tmux_window, tmux_window_id,
         claude_session_id, state, metadata, worktree, repo_path, pane_color,
-        started_at
+        started_at, ended_at
       ) VALUES (
         ${id}, ${agentId}, ${provider}, ${transport}, ${opts.pid ?? null},
         ${opts.tmuxSession ?? null}, ${opts.tmuxPaneId ?? null},
         ${opts.tmuxWindow ?? null}, ${opts.tmuxWindowId ?? null},
-        ${opts.claudeSessionId ?? null}, ${opts.state ?? 'spawning'},
+        ${opts.claudeSessionId ?? null}, ${state},
         ${tx.json((opts.metadata ?? {}) as import('postgres').JSONValue)}, ${opts.worktree ?? null},
         ${opts.repoPath ?? null}, ${opts.paneColor ?? null},
-        ${now}
+        ${now}, ${endedAt}
       ) RETURNING *
     `;
 
