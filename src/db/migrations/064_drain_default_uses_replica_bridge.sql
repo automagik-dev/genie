@@ -10,15 +10,64 @@
 -- parameter "session_replication_role"`, crash-looping forever.
 --
 -- The bridge is a SECURITY DEFINER function owned by the bootstrap superuser,
--- installed by `ensureScopedRole()` (src/lib/role-cutover.ts) every time the
--- scoped role is provisioned/refreshed. The scoped role only holds EXECUTE on
--- the bridge — strictly narrower than holding SUPERUSER or the GUC capability
--- directly. Audit-bypass blast radius is bounded to the literal INSERT body
--- inside the bridge.
+-- installed by `ensurePrivilegedBootstrapObjects()` (src/lib/role-cutover.ts)
+-- every time the scoped role is provisioned/refreshed. The scoped role only
+-- holds EXECUTE on the bridge — strictly narrower than holding SUPERUSER or
+-- the GUC capability directly. Audit-bypass blast radius is bounded to the
+-- literal INSERT body inside the bridge.
+--
+-- Belt-and-suspenders: this migration also installs the bridge when the
+-- caller is a superuser AND the bridge is missing. That covers paths where
+-- `shouldAttemptRoleCutover()` returns false (test mode, TCP/router transport)
+-- — `ensurePrivilegedBootstrapObjects` is skipped there, so without this
+-- guard `drain_default` would reference a non-existent function. The guard
+-- is rolsuper-gated: a non-superuser caller that hits this branch would
+-- create a bridge owned by itself, where SECURITY DEFINER provides no real
+-- privilege elevation, so we intentionally do nothing in that case.
 --
 -- The rest of the drain (DETACH / create_partition / TRUNCATE / ATTACH) still
 -- runs under the scoped role's privileges — the scoped role owns the partition
 -- and parent tables, so those operations need no elevation.
+
+DO $bridge$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE p.proname = 'genie_runtime_events_replica_insert_drain'
+       AND n.nspname = current_schema()
+  ) AND EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = current_user AND rolsuper
+  ) THEN
+    EXECUTE $body$
+      CREATE FUNCTION genie_runtime_events_replica_insert_drain()
+      RETURNS INTEGER
+      SECURITY DEFINER
+      SET search_path = pg_catalog, public
+      AS $fn$
+      DECLARE
+        drained INTEGER := 0;
+      BEGIN
+        PERFORM set_config('session_replication_role', 'replica', true);
+        INSERT INTO genie_runtime_events (
+          id, repo_path, subject, kind, source, agent, team, direction, peer,
+          text, data, thread_id, trace_id, parent_event_id, span_id, parent_span_id,
+          severity, schema_version, duration_ms, dedup_key, source_subsystem, created_at
+        )
+        OVERRIDING SYSTEM VALUE
+        SELECT id, repo_path, subject, kind, source, agent, team, direction, peer,
+               text, data, thread_id, trace_id, parent_event_id, span_id, parent_span_id,
+               severity, schema_version, duration_ms, dedup_key, source_subsystem, created_at
+          FROM genie_runtime_events_default;
+        GET DIAGNOSTICS drained = ROW_COUNT;
+        RETURN drained;
+      END;
+      $fn$ LANGUAGE plpgsql;
+    $body$;
+    EXECUTE 'REVOKE EXECUTE ON FUNCTION genie_runtime_events_replica_insert_drain() FROM PUBLIC';
+  END IF;
+END
+$bridge$;
 
 CREATE OR REPLACE FUNCTION genie_runtime_events_drain_default()
 RETURNS INTEGER AS $$
