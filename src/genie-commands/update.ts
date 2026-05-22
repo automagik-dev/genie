@@ -1235,6 +1235,26 @@ function summarizeJsonlSignals(path: string): RecentLogSignal[] {
   return [...signals.values()].sort((a, b) => b.count - a.count).slice(0, 10);
 }
 
+export function isGenieProcessSnapshotLine(line: string): boolean {
+  if (/pgserve|autopg|postgres-server\.js|postgres -D /.test(line)) return false;
+  return (
+    line.includes(' serve start ') ||
+    line.includes('/dist/genie.js') ||
+    line.includes('/src/genie.ts') ||
+    line.includes('tmux -L genie-tui')
+  );
+}
+
+function collectGenieProcessSnapshot(): string | null {
+  const snapshot = safeExec('ps -axo pid,ppid,pgid,stat,pcpu,pmem,etime,command -r', 2000)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter(isGenieProcessSnapshotLine)
+    .join('\n');
+  return snapshot || null;
+}
+
 interface UpdateDiagnosticsExtras {
   verify: VerifyResult;
   cleanups: CleanupReport;
@@ -1297,11 +1317,7 @@ async function collectUpdateDiagnostics(
       tuiCrashLog,
     },
     processSnapshot: {
-      genie:
-        safeExec(
-          "ps -axo pid,ppid,pgid,stat,pcpu,pmem,etime,command -r | rg -i 'dist/genie.js|/src/genie.ts|pgserve|postgres -D .*\\.genie/data/pgserve|tmux -L genie-tui|bun' || true",
-          2000,
-        ) || null,
+      genie: collectGenieProcessSnapshot(),
       tuiTmux: safeExec('tmux -L genie-tui ls 2>/dev/null || true', 1000) || null,
     },
     maintenance: {

@@ -25,6 +25,7 @@ import {
   ensureCanonicalInstall,
   fetchLatestManifest,
   formatVerifyBanner,
+  isGenieProcessSnapshotLine,
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
@@ -869,6 +870,20 @@ describe('Diagnostics schema (G5)', () => {
     expect(source).toContain('tarballPath: ctx.tarballPath');
     expect(source).toContain('attestationVerified: ctx.attestationVerified');
     expect(source).toContain('previousBackup: ctx.previousBackup');
+  });
+
+  test('diagnostics process snapshot excludes pgserve/autopg noise and keeps Genie serve lines', () => {
+    expect(
+      isGenieProcessSnapshotLine(
+        '2554274 1 2554274 Ssl 0.0 0.4 00:08:00 /home/genie/.local/bin/genie serve start --daemon',
+      ),
+    ).toBe(true);
+    expect(
+      isGenieProcessSnapshotLine(
+        '2588570 171462 2588570 Rsl 1.0 2.8 3-12:34:22 bun /home/genie/.bun/install/global/node_modules/pgserve/bin/postgres-server.js postmaster --port 8432',
+      ),
+    ).toBe(false);
+    expect(isGenieProcessSnapshotLine('2588570 1 2588570 S postgres -D /home/genie/.genie/data/pgserve')).toBe(false);
   });
 
   test('NO_COLOR honored via colorEnabled() helper', () => {
