@@ -221,26 +221,39 @@ export async function findAgent(identifier: string, teamName?: string): Promise<
   if (byTask) return byTask;
 
   const all = await agentRegistry.list();
-  const teamPool = teamName ? all.filter((a) => a.team === teamName) : [];
+  const sameTeam = (a: agentRegistry.Agent) =>
+    teamName === undefined || (a.team ?? '').toLowerCase() === teamName.toLowerCase();
+  const pool = all.filter(sameTeam);
+  const displayName = (w: agentRegistry.Agent) => w.customName ?? w.role ?? w.id;
+  const exactName = (w: agentRegistry.Agent) =>
+    w.customName === identifier || w.role === identifier || w.nativeAgentId === identifier;
   const prefix = (w: agentRegistry.Agent) =>
     (w.customName !== undefined && w.customName !== identifier && w.customName.startsWith(identifier)) ||
     (w.role !== undefined && w.role !== identifier && w.role.startsWith(identifier));
-  const displayName = (w: agentRegistry.Agent) => w.customName ?? w.role ?? w.id;
 
-  const teamPrefix = teamPool.filter(prefix);
-  if (teamPrefix.length === 1) return teamPrefix[0];
-  if (teamPrefix.length > 1) {
+  // Lifecycle/observe rows can be addressable by their exact customName/role
+  // even when the canonical resolver cannot use the composite custom_name tier
+  // because the caller did not pass --team. Prefer exact display-name matches
+  // before prefix fallback; this is the missing bridge for short-lived role
+  // process agents captured by `observe agents` but rejected by `genie log`.
+  const exactPool = pool.filter(exactName);
+  if (exactPool.length === 1) return exactPool[0];
+  if (exactPool.length > 1) {
     throw new Error(
-      `Agent "${identifier}" is ambiguous in team "${teamName}". Did you mean: ${teamPrefix
+      `Agent "${identifier}" is ambiguous${teamName ? ` in team "${teamName}"` : ''}. Did you mean: ${exactPool
         .map(displayName)
         .join(', ')}?`,
     );
   }
 
-  const globalPrefix = all.filter(prefix);
-  if (globalPrefix.length === 1) return globalPrefix[0];
-  if (globalPrefix.length > 1) {
-    throw new Error(`Agent "${identifier}" is ambiguous. Did you mean: ${globalPrefix.map(displayName).join(', ')}?`);
+  const prefixPool = pool.filter(prefix);
+  if (prefixPool.length === 1) return prefixPool[0];
+  if (prefixPool.length > 1) {
+    throw new Error(
+      `Agent "${identifier}" is ambiguous${teamName ? ` in team "${teamName}"` : ''}. Did you mean: ${prefixPool
+        .map(displayName)
+        .join(', ')}?`,
+    );
   }
 
   return null;
@@ -248,7 +261,8 @@ export async function findAgent(identifier: string, teamName?: string): Promise<
 
 async function findTeamAgents(teamName: string): Promise<agentRegistry.Agent[]> {
   const all = await agentRegistry.list();
-  return all.filter((a) => a.team === teamName);
+  const normalizedTeam = teamName.toLowerCase();
+  return all.filter((a) => (a.team ?? '').toLowerCase() === normalizedTeam);
 }
 
 // ============================================================================
