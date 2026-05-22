@@ -113,6 +113,10 @@ function safeRealpath(p: string): string {
   }
 }
 
+function isGenieManagedBinary(resolved: ResolvedBinary): boolean {
+  return /(^|\/)\.genie\/bin\/genie$/.test(resolved.path) || /(^|\/)\.genie\/bin\/genie$/.test(resolved.realPath);
+}
+
 async function probeOne(installer: InstallerId, binDir: string | null): Promise<InstallerEntry | null> {
   if (!binDir) return null;
   const binPath = join(binDir, 'genie');
@@ -238,6 +242,15 @@ export function classifyInstallerResolution(state: InstallerResolutionState): Ch
   const rows: CheckResult[] = [];
 
   if (!owner) {
+    if (isGenieManagedBinary(resolved)) {
+      rows.push({
+        name: 'Resolved binary',
+        status: 'pass',
+        message: `${resolved.path} (Genie managed binary)`,
+      });
+      return rows;
+    }
+
     rows.push({
       name: 'Resolved binary',
       status: 'warn',

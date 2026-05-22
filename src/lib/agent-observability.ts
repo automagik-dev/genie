@@ -130,10 +130,17 @@ export const STALE_EXECUTOR_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 export const COST_SPIKE_USD_24H = 50;
 
 /**
- * Live executor states — anything in this set is expected to keep
- * heartbeating, so missing recent updates count as `stale_executor`.
+ * Executor states that are capable of emitting heartbeats when the owning
+ * agent is in an active turn state.
  */
 const LIVE_EXECUTOR_STATES = new Set(['spawning', 'running', 'idle', 'working', 'permission', 'question']);
+
+/**
+ * Agent states where a missing heartbeat is operator-actionable. Idle/error
+ * rows can retain historical executor pointers; those should not scare users
+ * unless the agent is actually in a D3 turn state.
+ */
+const HEARTBEAT_EXPECTED_AGENT_STATES = new Set(['spawning', 'working', 'permission', 'question']);
 
 // ============================================================================
 // Health flag computation
@@ -147,9 +154,24 @@ export function assessHealth(row: AgentObservabilityRow, now: number = Date.now(
   const flags: HealthFlag[] = [];
 
   // stale_executor: live state but no heartbeat in the staleness window.
-  if (row.executorId && row.executorState && LIVE_EXECUTOR_STATES.has(row.executorState)) {
-    const updated = row.executorUpdatedAt ? Date.parse(row.executorUpdatedAt) : Number.NaN;
-    if (Number.isFinite(updated) && now - updated > STALE_EXECUTOR_WINDOW_MS) {
+  // Prefer the freshest activity signal available. Executor rows may miss
+  // heartbeat writes while Claude is still actively emitting tool events; in
+  // that case recentLastToolAt is a stronger liveness proof than the stale
+  // executor.updated_at timestamp and should not scare operators.
+  if (
+    row.executorId &&
+    row.executorState &&
+    LIVE_EXECUTOR_STATES.has(row.executorState) &&
+    row.agentState &&
+    HEARTBEAT_EXPECTED_AGENT_STATES.has(row.agentState)
+  ) {
+    const executorUpdated = row.executorUpdatedAt ? Date.parse(row.executorUpdatedAt) : Number.NaN;
+    const recentToolAt = row.recentLastToolAt ? Date.parse(row.recentLastToolAt) : Number.NaN;
+    const latestActivity = Math.max(
+      Number.isFinite(executorUpdated) ? executorUpdated : Number.NEGATIVE_INFINITY,
+      Number.isFinite(recentToolAt) ? recentToolAt : Number.NEGATIVE_INFINITY,
+    );
+    if (Number.isFinite(latestActivity) && now - latestActivity > STALE_EXECUTOR_WINDOW_MS) {
       flags.push('stale_executor');
     }
   }

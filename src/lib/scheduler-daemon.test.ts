@@ -2668,7 +2668,7 @@ describe('runAgentRecoveryPass — turn-aware D1 / D3 routing', () => {
     },
   );
 
-  test('flag ON: state=error + dead pane → skipped, no resume (prevents post-D1 ghost loop)', async () => {
+  test('flag ON: state=error + dead pane → silently skipped, no resume (prevents post-D1 ghost-loop log flicker)', async () => {
     process.env[TURN_AWARE_RECONCILER_FLAG] = '1';
     const w = makeWorker('error', 'agent-err');
     let resumeCalls = 0;
@@ -2688,7 +2688,7 @@ describe('runAgentRecoveryPass — turn-aware D1 / D3 routing', () => {
 
     expect(resumeCalls).toBe(0);
     expect(res.terminalized).toBe(0);
-    expect(logs.some((l) => l.event === 'agent_resume_skipped_turn_aware' && l.state === 'error')).toBe(true);
+    expect(logs.some((l) => l.event === 'agent_resume_skipped_turn_aware' && l.state === 'error')).toBe(false);
   });
 
   test('C20 regression: ghost-loop cannot replay across multiple ticks when idle+dead (flag ON)', async () => {

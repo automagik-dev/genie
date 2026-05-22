@@ -68,6 +68,17 @@ describe('classifyInstallerResolution', () => {
     expect(rows[1].name).toContain('npm');
   });
 
+  test('passes when resolver is the Genie self-managed binary under ~/.genie/bin', () => {
+    const rows = classifyInstallerResolution({
+      resolved: resolved('/home/alice/.genie/bin/genie'),
+      installers: [],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('pass');
+    expect(rows[0].message).toContain('Genie managed binary');
+  });
+
   test('warns on duplicate installs and labels the older one stale', () => {
     const npmBin = '/virtual/npm/bin/genie';
     const bunBin = '/virtual/bun/bin/genie';

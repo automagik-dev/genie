@@ -24,7 +24,13 @@ import type { BridgeStatusResult, PingOptions } from '../lib/bridge-status.js';
 import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-settings.js';
 import { getConnection, isAvailable as isRuntimePgAvailable, resolveDatabaseName } from '../lib/db.js';
 import { tmuxBin } from '../lib/ensure-tmux.js';
-import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
+import {
+  genieConfigExists,
+  getGenieConfigPath,
+  isSetupComplete,
+  loadGenieConfig,
+  loadGenieConfigSync,
+} from '../lib/genie-config.js';
 import { respawnInvocation } from '../lib/respawn.js';
 import { type RoleCutoverInspection, inspectRoleCutover } from '../lib/role-cutover.js';
 import { checkCommand } from '../lib/system-detect.js';
@@ -44,6 +50,14 @@ interface CheckResult {
   status: 'pass' | 'fail' | 'warn';
   message?: string;
   suggestion?: string;
+}
+
+export function isSetupEffectivelyComplete(
+  explicitSetupComplete: boolean,
+  config: { version?: number } | null,
+): boolean {
+  if (explicitSetupComplete) return true;
+  return (config?.version ?? 0) >= 2;
 }
 
 /**
@@ -253,8 +267,15 @@ async function checkConfiguration(): Promise<CheckResult[]> {
     });
   }
 
-  // Check if setup is complete
-  if (isSetupComplete()) {
+  // Check if setup is complete. Older config files can carry
+  // setupComplete=false even though the v2 runtime config exists and has
+  // already been used successfully; treat that as a pass to avoid a stale
+  // wizard-warning in otherwise healthy local/dev installs.
+  const setupComplete = isSetupEffectivelyComplete(
+    isSetupComplete(),
+    genieConfigExists() ? loadGenieConfigSync() : null,
+  );
+  if (setupComplete) {
     results.push({
       name: 'Setup complete',
       status: 'pass',

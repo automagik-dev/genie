@@ -1084,15 +1084,6 @@ async function handleDeadPane(
     return 'skipped';
   }
   if (turnAware && !TURN_AWARE_RESUMABLE_STATES.has(worker.state as AgentState)) {
-    deps.log({
-      timestamp: deps.now().toISOString(),
-      level: 'debug',
-      event: 'agent_resume_skipped_turn_aware',
-      daemon_id: daemonId,
-      agent_id: worker.id,
-      state: worker.state,
-      reason: 'state_not_in_d3',
-    });
     return 'skipped';
   }
   const result = await attemptAgentResume(deps, config, worker);
@@ -1230,6 +1221,15 @@ export async function runAgentRecoveryPass(
       // which has its own guards.
       const decision = await shouldResume(worker.id);
       if (mode === 'boot' && !decision.resume && decision.reason !== 'unknown_agent') continue;
+
+      if (
+        mode !== 'boot' &&
+        turnAware &&
+        worker.state !== 'idle' &&
+        !TURN_AWARE_RESUMABLE_STATES.has(worker.state as AgentState)
+      ) {
+        continue;
+      }
 
       let enriched = worker;
       if (!enriched.currentSessionId && decision.resume && decision.sessionId) {
