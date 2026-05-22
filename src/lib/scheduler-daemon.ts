@@ -1083,9 +1083,6 @@ async function handleDeadPane(
     }
     return 'skipped';
   }
-  if (turnAware && !TURN_AWARE_RESUMABLE_STATES.has(worker.state as AgentState)) {
-    return 'skipped';
-  }
   const result = await attemptAgentResume(deps, config, worker);
   return result === 'resumed' ? 'resumed' : 'skipped';
 }

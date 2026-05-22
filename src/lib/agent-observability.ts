@@ -146,6 +146,26 @@ const HEARTBEAT_EXPECTED_AGENT_STATES = new Set(['spawning', 'working', 'permiss
 // Health flag computation
 // ============================================================================
 
+function finiteTime(value: string | null): number {
+  if (!value) return Number.NaN;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function latestScopedActivity(row: AgentObservabilityRow): number {
+  const executorUpdated = finiteTime(row.executorUpdatedAt);
+  const recentToolAt = finiteTime(row.recentLastToolAt);
+  const activityFloor = Math.max(
+    finiteTime(row.executorStartedAt) || Number.NEGATIVE_INFINITY,
+    finiteTime(row.sessionStartedAt) || Number.NEGATIVE_INFINITY,
+  );
+  const scopedRecentToolAt =
+    Number.isFinite(recentToolAt) && Number.isFinite(activityFloor) && recentToolAt >= activityFloor
+      ? recentToolAt
+      : Number.NEGATIVE_INFINITY;
+  return Math.max(Number.isFinite(executorUpdated) ? executorUpdated : Number.NEGATIVE_INFINITY, scopedRecentToolAt);
+}
+
 /**
  * Compute derived health flags from a row.
  * Pure function — no IO; safe to call inside list iterators.
@@ -155,9 +175,9 @@ export function assessHealth(row: AgentObservabilityRow, now: number = Date.now(
 
   // stale_executor: live state but no heartbeat in the staleness window.
   // Prefer the freshest activity signal available. Executor rows may miss
-  // heartbeat writes while Claude is still actively emitting tool events; in
-  // that case recentLastToolAt is a stronger liveness proof than the stale
-  // executor.updated_at timestamp and should not scare operators.
+  // heartbeat writes while Claude is still actively emitting tool events. Since
+  // recentLastToolAt is currently aggregated by agent, only use it as liveness
+  // proof when it is newer than the current executor/session start boundary.
   if (
     row.executorId &&
     row.executorState &&
@@ -165,12 +185,7 @@ export function assessHealth(row: AgentObservabilityRow, now: number = Date.now(
     row.agentState &&
     HEARTBEAT_EXPECTED_AGENT_STATES.has(row.agentState)
   ) {
-    const executorUpdated = row.executorUpdatedAt ? Date.parse(row.executorUpdatedAt) : Number.NaN;
-    const recentToolAt = row.recentLastToolAt ? Date.parse(row.recentLastToolAt) : Number.NaN;
-    const latestActivity = Math.max(
-      Number.isFinite(executorUpdated) ? executorUpdated : Number.NEGATIVE_INFINITY,
-      Number.isFinite(recentToolAt) ? recentToolAt : Number.NEGATIVE_INFINITY,
-    );
+    const latestActivity = latestScopedActivity(row);
     if (Number.isFinite(latestActivity) && now - latestActivity > STALE_EXECUTOR_WINDOW_MS) {
       flags.push('stale_executor');
     }

@@ -113,8 +113,10 @@ function safeRealpath(p: string): string {
   }
 }
 
+const GENIE_MANAGED_BIN_PATTERN = /(^|\/)\.genie\/bin\/genie$/;
+
 function isGenieManagedBinary(resolved: ResolvedBinary): boolean {
-  return /(^|\/)\.genie\/bin\/genie$/.test(resolved.path) || /(^|\/)\.genie\/bin\/genie$/.test(resolved.realPath);
+  return GENIE_MANAGED_BIN_PATTERN.test(resolved.path) || GENIE_MANAGED_BIN_PATTERN.test(resolved.realPath);
 }
 
 async function probeOne(installer: InstallerId, binDir: string | null): Promise<InstallerEntry | null> {

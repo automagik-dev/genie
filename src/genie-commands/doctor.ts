@@ -271,10 +271,15 @@ async function checkConfiguration(): Promise<CheckResult[]> {
   // setupComplete=false even though the v2 runtime config exists and has
   // already been used successfully; treat that as a pass to avoid a stale
   // wizard-warning in otherwise healthy local/dev installs.
-  const setupComplete = isSetupEffectivelyComplete(
-    isSetupComplete(),
-    genieConfigExists() ? loadGenieConfigSync() : null,
-  );
+  let loadedConfig: { version?: number } | null = null;
+  if (genieConfigExists()) {
+    try {
+      loadedConfig = loadGenieConfigSync();
+    } catch {
+      loadedConfig = null;
+    }
+  }
+  const setupComplete = isSetupEffectivelyComplete(isSetupComplete(), loadedConfig);
   if (setupComplete) {
     results.push({
       name: 'Setup complete',

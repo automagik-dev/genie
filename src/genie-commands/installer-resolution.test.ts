@@ -79,6 +79,17 @@ describe('classifyInstallerResolution', () => {
     expect(rows[0].message).toContain('Genie managed binary');
   });
 
+  test('passes when realPath is Genie-managed but path is a symlink elsewhere', () => {
+    const rows = classifyInstallerResolution({
+      resolved: resolved('/usr/local/bin/genie', '/home/alice/.genie/bin/genie'),
+      installers: [],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('pass');
+    expect(rows[0].message).toContain('Genie managed binary');
+  });
+
   test('warns on duplicate installs and labels the older one stale', () => {
     const npmBin = '/virtual/npm/bin/genie';
     const bunBin = '/virtual/bun/bin/genie';

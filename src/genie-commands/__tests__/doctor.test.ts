@@ -45,6 +45,12 @@ describe('setup completion diagnostics', () => {
 
   test('still honors explicit setup completion and missing configs', () => {
     expect(isSetupEffectivelyComplete(true, { version: 2 })).toBe(true);
+    expect(isSetupEffectivelyComplete(true, null)).toBe(true);
     expect(isSetupEffectivelyComplete(false, null)).toBe(false);
+  });
+
+  test('rejects pre-v2 and missing-version configs', () => {
+    expect(isSetupEffectivelyComplete(false, { version: 1 })).toBe(false);
+    expect(isSetupEffectivelyComplete(false, {})).toBe(false);
   });
 });
