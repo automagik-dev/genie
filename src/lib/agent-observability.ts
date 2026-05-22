@@ -154,8 +154,12 @@ export function assessHealth(row: AgentObservabilityRow, now: number = Date.now(
     }
   }
 
-  // missing_session: agent has a current executor but no session linkage.
-  if (row.currentExecutorId && !row.sessionId) {
+  // missing_session: agent has a current executor but no recoverable
+  // session anchor. A linked `sessions` row is ideal for analytics, but
+  // resume readiness is anchored by executors.claude_session_id; recovered
+  // / terminated executors created by `genie recover-orphans` intentionally
+  // may not have a sessions row.
+  if (row.currentExecutorId && !row.sessionId && !row.claudeSessionId) {
     flags.push('missing_session');
   }
 

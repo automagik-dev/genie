@@ -92,10 +92,11 @@ describe('assessHealth (pure)', () => {
     expect(assessHealth(row).flags).not.toContain('stale_executor');
   });
 
-  test('missing_session fires when current executor has no session linkage', () => {
+  test('missing_session fires when current executor has no session linkage or claude_session_id anchor', () => {
     const row = baseRow();
     row.sessionId = null;
     row.sessionLinkSource = null;
+    row.claudeSessionId = null;
     expect(assessHealth(row).flags).toContain('missing_session');
   });
 
@@ -104,6 +105,17 @@ describe('assessHealth (pure)', () => {
     row.currentExecutorId = null;
     row.executorId = null;
     row.sessionId = null;
+    expect(assessHealth(row).flags).not.toContain('missing_session');
+  });
+
+  test('missing_session does NOT fire for resume-ready executor anchors with claude_session_id', () => {
+    const row = baseRow();
+    row.executorState = 'terminated';
+    row.sessionId = null;
+    row.sessionStatus = null;
+    row.sessionExecutorId = null;
+    row.sessionLinkSource = null;
+    row.claudeSessionId = 'resume-anchor-session';
     expect(assessHealth(row).flags).not.toContain('missing_session');
   });
 
