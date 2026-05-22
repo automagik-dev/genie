@@ -195,7 +195,7 @@ jobs:
           - darwin-arm64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download tarball artifact (${{ matrix.platform }})
         uses: actions/download-artifact@v4
