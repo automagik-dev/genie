@@ -893,6 +893,17 @@ describe('Diagnostics schema (G5)', () => {
     expect(extractPgservePortFromStatus('not-json')).toBe(null);
   });
 
+  test('diagnostics derives pgserve port from live pgserve runtime status json', () => {
+    const liveStatus = JSON.stringify({
+      installed: true,
+      status: 'online',
+      port: null,
+      runtime: { port: 8432, live: true },
+    });
+
+    expect(extractPgservePortFromStatus(liveStatus)).toBe('8432');
+  });
+
   test('NO_COLOR honored via colorEnabled() helper', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).toContain('process.env.NO_COLOR');

@@ -1247,8 +1247,12 @@ export function isGenieProcessSnapshotLine(line: string): boolean {
 
 export function extractPgservePortFromStatus(output: string): string | null {
   try {
-    const parsed = JSON.parse(output) as { port?: unknown; instance?: { port?: unknown } };
-    const rawPort = parsed.port ?? parsed.instance?.port;
+    const parsed = JSON.parse(output) as {
+      port?: unknown;
+      instance?: { port?: unknown };
+      runtime?: { port?: unknown };
+    };
+    const rawPort = parsed.port ?? parsed.instance?.port ?? parsed.runtime?.port;
     if (typeof rawPort === 'number' && Number.isFinite(rawPort)) return String(rawPort);
     if (typeof rawPort === 'string' && rawPort.trim()) return rawPort.trim();
   } catch {
