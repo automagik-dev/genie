@@ -351,6 +351,10 @@ async function showVersion(): Promise<void> {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (isModuleNotFound(msg)) {
+      if (canRunStandaloneBrain()) {
+        executeStandaloneBrain(['--version']);
+        return;
+      }
       console.log('  Brain is not installed. Run: genie brain install');
       return;
     }
@@ -492,6 +496,24 @@ function isModuleNotFound(msg: string): boolean {
   return msg.includes('Cannot find') || msg.includes('not found') || msg.includes('MODULE_NOT_FOUND');
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function canRunStandaloneBrain(): boolean {
+  try {
+    execSync('command -v brain', { stdio: 'ignore', shell: '/bin/bash' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function executeStandaloneBrain(args: string[]): void {
+  const quotedArgs = args.map(shellQuote).join(' ');
+  execSync(`brain ${quotedArgs}`, { stdio: 'inherit', env: process.env, shell: '/bin/bash' });
+}
+
 function printNotInstalledMessage(): void {
   console.log('');
   console.log('  Brain is an enterprise knowledge graph engine.');
@@ -524,6 +546,10 @@ async function executeBrainCommand(args: string[]): Promise<void> {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (isModuleNotFound(msg)) {
+      if (canRunStandaloneBrain()) {
+        executeStandaloneBrain(args);
+        return;
+      }
       printNotInstalledMessage();
       process.exit(1);
     } else {

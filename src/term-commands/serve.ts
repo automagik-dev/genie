@@ -1475,9 +1475,15 @@ async function stopServe(): Promise<void> {
 /** Check pgserve health and print status */
 async function printPgserveHealth(): Promise<void> {
   try {
-    const { isAvailable, getActivePort, isSocketMode, resolvePgserveSocketDir } = await import('../lib/db.js');
+    const { isAvailable, resolvePgserveTransport } = await import('../lib/db.js');
     const dbOk = await isAvailable();
-    const where = isSocketMode() ? `socket ${resolvePgserveSocketDir()}` : `port ${getActivePort()}`;
+    const transport = dbOk ? await resolvePgserveTransport() : null;
+    const where =
+      transport?.kind === 'unix'
+        ? `socket ${transport.socketDir}`
+        : transport
+          ? `tcp ${transport.host}:${transport.port}`
+          : null;
     console.log(`  pgserve:    ${dbOk ? `healthy (${where})` : 'unreachable'}`);
   } catch {
     console.log('  pgserve:    unavailable');
@@ -1552,6 +1558,43 @@ async function probeBrainHealth(brainPort: number): Promise<void> {
   }
 }
 
+interface ActiveBrainConfigFile {
+  brainSlug?: string;
+  database?: string;
+  pid?: number;
+  port?: number;
+}
+
+function readActiveBrainConfigFile(): ActiveBrainConfigFile | null {
+  try {
+    const configPath = join(homedir(), '.brain', 'config.json');
+    if (!existsSync(configPath)) return null;
+    const config = JSON.parse(readFileSync(configPath, 'utf-8')) as ActiveBrainConfigFile;
+    if (!config.pid || !isProcessAlive(config.pid) || !config.port) return null;
+    return config;
+  } catch {
+    return null;
+  }
+}
+
+async function printStandaloneBrainStatus(): Promise<boolean> {
+  const config = readActiveBrainConfigFile();
+  if (!config?.port) return false;
+  try {
+    const resp = await fetch(`http://127.0.0.1:${config.port}/healthz`);
+    const label = config.brainSlug ?? config.database ?? `port ${config.port}`;
+    console.log(
+      resp.ok
+        ? `  brain:      running (${label}, port ${config.port})`
+        : `  brain:      unhealthy (${label}, status ${resp.status})`,
+    );
+    return true;
+  } catch {
+    console.log(`  brain:      stopped (port ${config.port} unreachable)`);
+    return true;
+  }
+}
+
 async function printBrainStatus(): Promise<void> {
   try {
     // @ts-expect-error — brain is enterprise-only, not in genie's deps
@@ -1569,6 +1612,7 @@ async function printBrainStatus(): Promise<void> {
       console.log('  brain:      stopped');
     }
   } catch {
+    if (await printStandaloneBrainStatus()) return;
     console.log('  brain:      not installed');
   }
 }

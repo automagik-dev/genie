@@ -1245,10 +1245,28 @@ export function isGenieProcessSnapshotLine(line: string): boolean {
   );
 }
 
+export function extractPgserveSocketDirFromStatus(output: string): string | null {
+  try {
+    const parsed = JSON.parse(output) as {
+      socketDir?: unknown;
+      runtime?: { socketDir?: unknown };
+    };
+    const rawSocketDir = parsed.runtime?.socketDir ?? parsed.socketDir;
+    if (typeof rawSocketDir === 'string' && rawSocketDir.trim()) return rawSocketDir.trim();
+  } catch {
+    // best-effort diagnostics only; callers fall back to null.
+  }
+  return null;
+}
+
 export function extractPgservePortFromStatus(output: string): string | null {
   try {
-    const parsed = JSON.parse(output) as { port?: unknown; instance?: { port?: unknown } };
-    const rawPort = parsed.port ?? parsed.instance?.port;
+    const parsed = JSON.parse(output) as {
+      port?: unknown;
+      instance?: { port?: unknown };
+      runtime?: { port?: unknown };
+    };
+    const rawPort = parsed.port ?? parsed.instance?.port ?? parsed.runtime?.port;
     if (typeof rawPort === 'number' && Number.isFinite(rawPort)) return String(rawPort);
     if (typeof rawPort === 'string' && rawPort.trim()) return rawPort.trim();
   } catch {
@@ -1287,7 +1305,9 @@ async function collectUpdateDiagnostics(
   const signals = summarizeJsonlSignals(schedulerLog);
   const pgservePortFromFile = safeRead(join(GENIE_HOME, 'pgserve.port'), 200);
   const pgserveStatusJson = (await runCommandSilent('pgserve', ['status', '--json'], undefined, 2000)).output.trim();
+  const pgserveSocketDir = extractPgserveSocketDirFromStatus(pgserveStatusJson);
   const pgservePort = pgservePortFromFile ?? extractPgservePortFromStatus(pgserveStatusJson);
+  const pgserveTransport = pgserveSocketDir ? 'unix-socket' : pgservePort ? 'tcp' : null;
 
   const diagnostics = {
     schemaVersion: UPDATE_DIAGNOSTIC_SCHEMA_VERSION,
@@ -1327,6 +1347,8 @@ async function collectUpdateDiagnostics(
       genieBinPrevious: GENIE_BIN_PREVIOUS,
       logsDir,
       servePid: safeRead(join(GENIE_HOME, 'serve.pid'), 200),
+      pgserveTransport,
+      pgserveSocketDir,
       pgservePort,
       schedulerLog,
       tuiCrashLog,
