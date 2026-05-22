@@ -34,6 +34,8 @@ import {
   rollbackBinary,
   runVerifyProbe,
   shortCircuitIfCurrent,
+  shouldEmitPathDivergenceWarning,
+  verifySwappedBinary,
 } from '../update.js';
 
 // ============================================================================
@@ -1092,5 +1094,174 @@ describe('Knip-clean exports (PR #1733 follow-up)', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).not.toContain('RELEASES_BASE_URL');
     expect(source).not.toMatch(/^export\s*\{\s*RELEASES_/m);
+  });
+});
+
+// ============================================================================
+// Silent swap + self-symlink regression (trace 2026-05-22).
+//
+// Symptom on operator host (genie@khal-os): `genie update --dev` reported
+// "✔ Genie binary updated → v4.260522.2" but the on-disk binary at
+// `~/.genie/bin/genie` remained v4.260520.3 (mtime unchanged), and the
+// subsequent PATH advisory suggested `ln -sf <path> <path>` — a self-symlink.
+//
+// Root causes:
+//   1. runDelivery printed success based on `manifest.version` (intent),
+//      never re-reading the swapped binary.
+//   2. The PATH heuristic did not guard against `live === canonical`, so a
+//      version mismatch caused by a botched swap was misdiagnosed as a PATH
+//      problem and rendered as `ln -sf X X`.
+//
+// Both helpers below are pure and injectable so the regression is locked in
+// without spawning a real `genie` binary.
+// ============================================================================
+
+describe('verifySwappedBinary (post-swap correctness guard)', () => {
+  test('returns void when reported version matches expected', () => {
+    expect(() =>
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => '4.260522.2\n',
+      }),
+    ).not.toThrow();
+  });
+
+  test('strips build metadata before comparison (normalizeVersion parity)', () => {
+    expect(() =>
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => '4.260522.2+abc1234\n',
+      }),
+    ).not.toThrow();
+  });
+
+  test('throws with intended-vs-on-disk diff when version mismatches', () => {
+    expect(() =>
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => '4.260520.3\n',
+        stagingDir: '/tmp/staging',
+        previousDir: '/tmp/previous',
+      }),
+    ).toThrow(/Intended: v4\.260522\.2[\s\S]*On disk : v4\.260520\.3/);
+  });
+
+  test('mismatch message includes staging + previous hints for forensics', () => {
+    let captured: string | null = null;
+    try {
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => '4.260520.3\n',
+        stagingDir: '/home/genie/.genie/bin/.staging',
+        previousDir: '/home/genie/.genie/bin/.previous',
+      });
+    } catch (err) {
+      captured = err instanceof Error ? err.message : String(err);
+    }
+    expect(captured).toContain('/home/genie/.genie/bin/.staging');
+    expect(captured).toContain('/home/genie/.genie/bin/.previous');
+  });
+
+  test('throws when binary cannot be executed (wraps underlying error)', () => {
+    expect(() =>
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => {
+          throw new Error('ENOENT: no such file');
+        },
+      }),
+    ).toThrow(/Post-swap verification failed.*could not execute.*ENOENT/);
+  });
+
+  test('throws when binary runs but emits no parseable version', () => {
+    expect(() =>
+      verifySwappedBinary('/fake/path/genie', '4.260522.2', {
+        runVersion: () => 'banner with no version string\n',
+      }),
+    ).toThrow(/emitted no parsable version/);
+  });
+});
+
+describe('shouldEmitPathDivergenceWarning (self-symlink suppression)', () => {
+  const canonical = '/home/genie/.genie/bin/genie';
+
+  test('suppresses when live is null (nothing on PATH)', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: null,
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: '4.260520.3',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
+  });
+
+  test('suppresses when live version is unknown', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: '/usr/local/bin/genie',
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: null,
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
+  });
+
+  test('suppresses when versions match (PATH is fine)', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: '/usr/local/bin/genie',
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: '4.260522.2',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
+  });
+
+  test('suppresses when live === canonical (the self-symlink bug)', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: canonical,
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: '4.260520.3',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
+  });
+
+  test('suppresses when live === canonicalReal (canonical is itself a symlink)', () => {
+    const realTarget = '/opt/genie/bin/genie';
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: realTarget,
+        canonical,
+        canonicalReal: realTarget,
+        liveVersion: '4.260520.3',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
+  });
+
+  test('emits when paths differ AND versions disagree (legitimate PATH shadow)', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: '/usr/local/bin/genie',
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: '4.260000.0',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(true);
+  });
+
+  test('normalizes build metadata when comparing versions', () => {
+    expect(
+      shouldEmitPathDivergenceWarning({
+        live: '/usr/local/bin/genie',
+        canonical,
+        canonicalReal: canonical,
+        liveVersion: '4.260522.2+abc',
+        intendedVersion: '4.260522.2',
+      }),
+    ).toBe(false);
   });
 });
