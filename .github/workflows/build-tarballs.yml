@@ -73,7 +73,7 @@ jobs:
             runner:   macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -81,7 +81,7 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
@@ -179,7 +179,7 @@ jobs:
           fi
 
       - name: Upload tarball artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: genie-${{ steps.ver.outputs.version }}-${{ matrix.platform }}-tarball
           path: dist/genie-${{ steps.ver.outputs.version }}-${{ matrix.platform }}.tar.gz

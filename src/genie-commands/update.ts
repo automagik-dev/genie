@@ -1235,6 +1235,38 @@ function summarizeJsonlSignals(path: string): RecentLogSignal[] {
   return [...signals.values()].sort((a, b) => b.count - a.count).slice(0, 10);
 }
 
+export function isGenieProcessSnapshotLine(line: string): boolean {
+  if (/pgserve|autopg|postgres-server\.js|postgres -D /.test(line)) return false;
+  return (
+    line.includes(' serve start ') ||
+    line.includes('/dist/genie.js') ||
+    line.includes('/src/genie.ts') ||
+    line.includes('tmux -L genie-tui')
+  );
+}
+
+export function extractPgservePortFromStatus(output: string): string | null {
+  try {
+    const parsed = JSON.parse(output) as { port?: unknown; instance?: { port?: unknown } };
+    const rawPort = parsed.port ?? parsed.instance?.port;
+    if (typeof rawPort === 'number' && Number.isFinite(rawPort)) return String(rawPort);
+    if (typeof rawPort === 'string' && rawPort.trim()) return rawPort.trim();
+  } catch {
+    // best-effort diagnostics only; callers fall back to null.
+  }
+  return null;
+}
+
+function collectGenieProcessSnapshot(): string | null {
+  const snapshot = safeExec('ps -axo pid,ppid,pgid,stat,pcpu,pmem,etime,command -r', 2000)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter(isGenieProcessSnapshotLine)
+    .join('\n');
+  return snapshot || null;
+}
+
 interface UpdateDiagnosticsExtras {
   verify: VerifyResult;
   cleanups: CleanupReport;
@@ -1253,6 +1285,9 @@ async function collectUpdateDiagnostics(
   const schedulerLog = join(logsDir, 'scheduler.log');
   const tuiCrashLog = join(logsDir, 'tui-crash.log');
   const signals = summarizeJsonlSignals(schedulerLog);
+  const pgservePortFromFile = safeRead(join(GENIE_HOME, 'pgserve.port'), 200);
+  const pgserveStatusJson = (await runCommandSilent('pgserve', ['status', '--json'], undefined, 2000)).output.trim();
+  const pgservePort = pgservePortFromFile ?? extractPgservePortFromStatus(pgserveStatusJson);
 
   const diagnostics = {
     schemaVersion: UPDATE_DIAGNOSTIC_SCHEMA_VERSION,
@@ -1292,16 +1327,12 @@ async function collectUpdateDiagnostics(
       genieBinPrevious: GENIE_BIN_PREVIOUS,
       logsDir,
       servePid: safeRead(join(GENIE_HOME, 'serve.pid'), 200),
-      pgservePort: safeRead(join(GENIE_HOME, 'pgserve.port'), 200),
+      pgservePort,
       schedulerLog,
       tuiCrashLog,
     },
     processSnapshot: {
-      genie:
-        safeExec(
-          "ps -axo pid,ppid,pgid,stat,pcpu,pmem,etime,command -r | rg -i 'dist/genie.js|/src/genie.ts|pgserve|postgres -D .*\\.genie/data/pgserve|tmux -L genie-tui|bun' || true",
-          2000,
-        ) || null,
+      genie: collectGenieProcessSnapshot(),
       tuiTmux: safeExec('tmux -L genie-tui ls 2>/dev/null || true', 1000) || null,
     },
     maintenance: {

@@ -52,7 +52,9 @@
       ".worktrees",
       ".claude",
       "plugins/genie/scripts",
-      ".docs-vendor"
+      ".docs-vendor",
+      "docs",
+      "test-fixtures/symlink-cycle/real/cycle"
     ]
   },
   "overrides": [

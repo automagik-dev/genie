@@ -195,7 +195,7 @@ jobs:
           - darwin-arm64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download tarball artifact (${{ matrix.platform }})
         uses: actions/download-artifact@v4
@@ -390,7 +390,7 @@ jobs:
           rm -f "${MUTATED}"
 
       - name: Upload signed artifact (${{ matrix.platform }})
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: genie-${{ needs.prepare.outputs.version }}-${{ matrix.platform }}-signed
           path: |
