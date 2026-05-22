@@ -19,6 +19,7 @@ import {
   type RuntimeEventKind,
   type RuntimeEventSource,
   followRuntimeEvents,
+  listRuntimeEvents,
 } from './runtime-events.js';
 import { type ChatMessage, readMessages } from './team-chat.js';
 import type { TranscriptEntry } from './transcript.js';
@@ -280,14 +281,18 @@ export async function readAgentLog(agent: Agent, repoPath: string, filter?: LogF
   const agentName = agent.id;
   const team = agent.team;
   const mailboxKeys = mailboxActorKeys(agent);
+  const runtimeAgentIds = [
+    ...new Set([agent.id, agent.customName, agent.role, agent.nativeAgentId].filter(Boolean) as string[]),
+  ];
 
   // Read all sources in parallel
-  const [transcriptEntries, inboxMessages, outboxMessages, chatMessages, sdkEvents] = await Promise.all([
+  const [transcriptEntries, inboxMessages, outboxMessages, chatMessages, sdkEvents, runtimeEvents] = await Promise.all([
     readTranscriptSafe(agent),
     inbox(repoPath, mailboxKeys),
     readOutbox(repoPath, mailboxKeys),
     team ? readMessages(repoPath, team) : Promise.resolve([]),
     readSdkAuditEvents(agentName, filter),
+    readRuntimeEventsSafe({ repoPath, agentIds: runtimeAgentIds, filter }),
   ]);
 
   // Convert to LogEvents
@@ -313,6 +318,7 @@ export async function readAgentLog(agent: Agent, repoPath: string, filter?: LogF
   }
 
   events.push(...sdkEvents);
+  events.push(...runtimeEvents);
 
   // Sort by time, then filter
   const sorted = sortByTimestamp(events);
@@ -362,8 +368,14 @@ export async function readTeamLog(
     }),
   );
 
+  const teamRuntimeEvents = await readRuntimeEventsSafe({
+    repoPath,
+    team: teamName === 'all' ? undefined : teamName,
+    filter,
+  });
+
   // Merge all sources
-  const allEvents = [...chatEvents, ...perAgentEvents.flat()];
+  const allEvents = [...chatEvents, ...perAgentEvents.flat(), ...teamRuntimeEvents];
   const sorted = sortByTimestamp(allEvents);
   return applyLogFilter(sorted, filter);
 }
@@ -520,6 +532,38 @@ async function startPgFollow(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+async function readRuntimeEventsSafe(opts: {
+  repoPath: string;
+  agentIds?: string[];
+  team?: string;
+  filter?: LogFilter;
+}): Promise<LogEvent[]> {
+  try {
+    const events = await listRuntimeEvents({
+      repoPath: opts.repoPath,
+      agentIds: opts.agentIds,
+      team: opts.team,
+      kinds: opts.filter?.kinds,
+      since: opts.filter?.since,
+      limit: opts.filter?.last ?? 500,
+      scopeMode: opts.agentIds && opts.team ? 'any' : 'all',
+    });
+    return events.map((event) => ({
+      timestamp: event.timestamp,
+      kind: event.kind,
+      agent: event.agent,
+      team: event.team,
+      direction: event.direction,
+      peer: event.peer,
+      text: event.text,
+      data: event.data,
+      source: event.source,
+    }));
+  } catch {
+    return [];
+  }
+}
 
 /** Safely read transcript entries, returning [] on any error. */
 async function readTranscriptSafe(agent: Agent): Promise<TranscriptEntry[]> {
