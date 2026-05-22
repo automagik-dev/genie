@@ -23,6 +23,7 @@ import {
   decideVerify,
   downloadAndVerifyTarball,
   ensureCanonicalInstall,
+  extractPgservePortFromStatus,
   fetchLatestManifest,
   formatVerifyBanner,
   isGenieProcessSnapshotLine,
@@ -884,6 +885,12 @@ describe('Diagnostics schema (G5)', () => {
       ),
     ).toBe(false);
     expect(isGenieProcessSnapshotLine('2588570 1 2588570 S postgres -D /home/genie/.genie/data/pgserve')).toBe(false);
+  });
+
+  test('diagnostics derives pgserve port from status json when port file is absent', () => {
+    expect(extractPgservePortFromStatus('{"port":8432,"status":"running"}')).toBe('8432');
+    expect(extractPgservePortFromStatus('{"instance":{"port":"8432"}}')).toBe('8432');
+    expect(extractPgservePortFromStatus('not-json')).toBe(null);
   });
 
   test('NO_COLOR honored via colorEnabled() helper', () => {
