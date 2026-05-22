@@ -130,14 +130,41 @@ export const STALE_EXECUTOR_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 export const COST_SPIKE_USD_24H = 50;
 
 /**
- * Live executor states — anything in this set is expected to keep
- * heartbeating, so missing recent updates count as `stale_executor`.
+ * Executor states that are capable of emitting heartbeats when the owning
+ * agent is in an active turn state.
  */
 const LIVE_EXECUTOR_STATES = new Set(['spawning', 'running', 'idle', 'working', 'permission', 'question']);
+
+/**
+ * Agent states where a missing heartbeat is operator-actionable. Idle/error
+ * rows can retain historical executor pointers; those should not scare users
+ * unless the agent is actually in a D3 turn state.
+ */
+const HEARTBEAT_EXPECTED_AGENT_STATES = new Set(['spawning', 'working', 'permission', 'question']);
 
 // ============================================================================
 // Health flag computation
 // ============================================================================
+
+function finiteTime(value: string | null): number {
+  if (!value) return Number.NaN;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function latestScopedActivity(row: AgentObservabilityRow): number {
+  const executorUpdated = finiteTime(row.executorUpdatedAt);
+  const recentToolAt = finiteTime(row.recentLastToolAt);
+  const activityFloor = Math.max(
+    finiteTime(row.executorStartedAt) || Number.NEGATIVE_INFINITY,
+    finiteTime(row.sessionStartedAt) || Number.NEGATIVE_INFINITY,
+  );
+  const scopedRecentToolAt =
+    Number.isFinite(recentToolAt) && Number.isFinite(activityFloor) && recentToolAt >= activityFloor
+      ? recentToolAt
+      : Number.NEGATIVE_INFINITY;
+  return Math.max(Number.isFinite(executorUpdated) ? executorUpdated : Number.NEGATIVE_INFINITY, scopedRecentToolAt);
+}
 
 /**
  * Compute derived health flags from a row.
@@ -147,9 +174,19 @@ export function assessHealth(row: AgentObservabilityRow, now: number = Date.now(
   const flags: HealthFlag[] = [];
 
   // stale_executor: live state but no heartbeat in the staleness window.
-  if (row.executorId && row.executorState && LIVE_EXECUTOR_STATES.has(row.executorState)) {
-    const updated = row.executorUpdatedAt ? Date.parse(row.executorUpdatedAt) : Number.NaN;
-    if (Number.isFinite(updated) && now - updated > STALE_EXECUTOR_WINDOW_MS) {
+  // Prefer the freshest activity signal available. Executor rows may miss
+  // heartbeat writes while Claude is still actively emitting tool events. Since
+  // recentLastToolAt is currently aggregated by agent, only use it as liveness
+  // proof when it is newer than the current executor/session start boundary.
+  if (
+    row.executorId &&
+    row.executorState &&
+    LIVE_EXECUTOR_STATES.has(row.executorState) &&
+    row.agentState &&
+    HEARTBEAT_EXPECTED_AGENT_STATES.has(row.agentState)
+  ) {
+    const latestActivity = latestScopedActivity(row);
+    if (Number.isFinite(latestActivity) && now - latestActivity > STALE_EXECUTOR_WINDOW_MS) {
       flags.push('stale_executor');
     }
   }

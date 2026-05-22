@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveBinaryInteractive, resolveBinaryNonInteractive } from '../doctor.js';
+import { isSetupEffectivelyComplete, resolveBinaryInteractive, resolveBinaryNonInteractive } from '../doctor.js';
 
 const tmpDirs: string[] = [];
 
@@ -35,5 +35,22 @@ describe('doctor PATH detection', () => {
 
     await expect(resolveBinaryInteractive('missing-genie-bin', env)).resolves.toBeNull();
     await expect(resolveBinaryNonInteractive('bad;name', env)).resolves.toBeNull();
+  });
+});
+
+describe('setup completion diagnostics', () => {
+  test('treats an existing modern v2 config as effectively complete even if the legacy setup flag is false', () => {
+    expect(isSetupEffectivelyComplete(false, { version: 2 })).toBe(true);
+  });
+
+  test('still honors explicit setup completion and missing configs', () => {
+    expect(isSetupEffectivelyComplete(true, { version: 2 })).toBe(true);
+    expect(isSetupEffectivelyComplete(true, null)).toBe(true);
+    expect(isSetupEffectivelyComplete(false, null)).toBe(false);
+  });
+
+  test('rejects pre-v2 and missing-version configs', () => {
+    expect(isSetupEffectivelyComplete(false, { version: 1 })).toBe(false);
+    expect(isSetupEffectivelyComplete(false, {})).toBe(false);
   });
 });

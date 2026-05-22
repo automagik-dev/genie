@@ -85,11 +85,42 @@ describe('assessHealth (pure)', () => {
     expect(h.degraded).toBe(true);
   });
 
+  test('stale_executor does NOT fire when recent tool activity proves the executor is alive', () => {
+    const now = Date.now();
+    const row = baseRow();
+    row.executorState = 'running';
+    row.executorStartedAt = new Date(now - STALE_EXECUTOR_WINDOW_MS).toISOString();
+    row.executorUpdatedAt = new Date(now - STALE_EXECUTOR_WINDOW_MS - 60_000).toISOString();
+    row.recentLastToolAt = new Date(now - 60_000).toISOString();
+
+    expect(assessHealth(row, now).flags).not.toContain('stale_executor');
+  });
+
+  test('stale_executor still fires when recent tool activity predates the current executor', () => {
+    const now = Date.now();
+    const row = baseRow();
+    row.executorState = 'running';
+    row.executorStartedAt = new Date(now - 5 * 60_000).toISOString();
+    row.executorUpdatedAt = new Date(now - STALE_EXECUTOR_WINDOW_MS - 60_000).toISOString();
+    row.recentLastToolAt = new Date(now - 10 * 60_000).toISOString();
+
+    expect(assessHealth(row, now).flags).toContain('stale_executor');
+  });
+
   test('stale_executor does NOT fire for terminal executor states', () => {
     const row = baseRow();
     row.executorState = 'terminated';
     row.executorUpdatedAt = new Date(Date.now() - STALE_EXECUTOR_WINDOW_MS - 60_000).toISOString();
     expect(assessHealth(row).flags).not.toContain('stale_executor');
+  });
+
+  test('stale_executor does NOT fire for idle agent rows even if a historical executor row is running', () => {
+    const now = Date.now();
+    const row = baseRow();
+    row.agentState = 'idle';
+    row.executorState = 'running';
+    row.executorUpdatedAt = new Date(now - STALE_EXECUTOR_WINDOW_MS - 60_000).toISOString();
+    expect(assessHealth(row, now).flags).not.toContain('stale_executor');
   });
 
   test('missing_session fires when current executor has no session linkage or claude_session_id anchor', () => {
