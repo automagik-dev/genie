@@ -35,6 +35,7 @@ import {
   runVerifyProbe,
   shortCircuitIfCurrent,
   shouldEmitPathDivergenceWarning,
+  syncBinaryVersionStamp,
   verifySwappedBinary,
 } from '../update.js';
 
@@ -1174,6 +1175,106 @@ describe('verifySwappedBinary (post-swap correctness guard)', () => {
         runVersion: () => 'banner with no version string\n',
       }),
     ).toThrow(/emitted no parsable version/);
+  });
+});
+
+describe('syncBinaryVersionStamp (binary-sibling VERSION file)', () => {
+  // The compiled binary reads `dirname(process.execPath)/VERSION` at startup
+  // (src/lib/version.ts). The atomic swap replaces `genie` but leaves the
+  // sibling VERSION stamp untouched — so without this sync, the new binary
+  // reports the OLD version until something else rewrites the stamp. These
+  // tests pin the contract so a future "simplification" can't remove it.
+
+  test('copies VERSION from extractDir → binDir when the tarball ships one', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
+    try {
+      const extractDir = join(tmp, 'extract');
+      const binDir = join(tmp, 'bin');
+      mkdirSync(extractDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(extractDir, 'VERSION'), '4.260522.3\n');
+      // Pre-existing stale stamp the swap left behind:
+      writeFileSync(join(binDir, 'VERSION'), '4.260520.3\n');
+
+      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
+
+      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8').trim()).toBe('4.260522.3');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('falls back to writing manifestVersion when tarball is missing VERSION', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
+    try {
+      const extractDir = join(tmp, 'extract');
+      const binDir = join(tmp, 'bin');
+      mkdirSync(extractDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      // No VERSION file in extractDir — simulates an older build that
+      // pre-dates the G1 stamp convention.
+      writeFileSync(join(binDir, 'VERSION'), '4.260520.3\n');
+
+      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
+
+      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8').trim()).toBe('4.260522.3');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('first install (binDir has no prior VERSION) — creates the stamp', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
+    try {
+      const extractDir = join(tmp, 'extract');
+      const binDir = join(tmp, 'bin');
+      mkdirSync(extractDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(extractDir, 'VERSION'), '4.260522.3\n');
+
+      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
+
+      expect(existsSync(join(binDir, 'VERSION'))).toBe(true);
+      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8').trim()).toBe('4.260522.3');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('preserves the tarball stamp byte-for-byte (no normalisation)', () => {
+    // The G1 build pipeline may include build metadata (`+sha`) or trailing
+    // newlines we don't want to silently strip. Copy verbatim.
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
+    try {
+      const extractDir = join(tmp, 'extract');
+      const binDir = join(tmp, 'bin');
+      mkdirSync(extractDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      const exotic = '4.260522.3+abc1234\n';
+      writeFileSync(join(extractDir, 'VERSION'), exotic);
+
+      syncBinaryVersionStamp(extractDir, binDir, '4.260522.3');
+
+      expect(readFileSync(join(binDir, 'VERSION'), 'utf-8')).toBe(exotic);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('swallows fs errors (best-effort; verifySwappedBinary catches mismatch)', () => {
+    // Pass an extractDir that exists but a binDir that doesn't — copy will
+    // fail, write fallback will also fail. Should not throw.
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-stamp-'));
+    try {
+      const extractDir = join(tmp, 'extract');
+      const binDir = join(tmp, 'nonexistent', 'bin');
+      mkdirSync(extractDir, { recursive: true });
+      writeFileSync(join(extractDir, 'VERSION'), '4.260522.3\n');
+
+      expect(() => syncBinaryVersionStamp(extractDir, binDir, '4.260522.3')).not.toThrow();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 
