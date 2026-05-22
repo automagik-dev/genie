@@ -68,6 +68,7 @@ import m059 from './migrations/059_agent_observability_view.sql' with { type: 't
 import m060 from './migrations/060_agent_observability_core_view.sql' with { type: 'text' };
 import m061 from './migrations/061_agents_id_invariant_and_fk_lockdown.sql' with { type: 'text' };
 import m062 from './migrations/062_drop_fk_mailbox_from_worker_temp.sql' with { type: 'text' };
+import m063 from './migrations/064_drain_default_uses_replica_bridge.sql' with { type: 'text' };
 
 export interface EmbeddedMigration {
   name: string;
@@ -139,4 +140,5 @@ export const EMBEDDED_MIGRATIONS: EmbeddedMigration[] = [
   { name: '060_agent_observability_core_view', sql: m060 },
   { name: '061_agents_id_invariant_and_fk_lockdown', sql: m061 },
   { name: '062_drop_fk_mailbox_from_worker_temp', sql: m062 },
+  { name: '064_drain_default_uses_replica_bridge', sql: m063 },
 ];
