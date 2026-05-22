@@ -195,26 +195,36 @@ async function checkNonInteractivePath(bin: string): Promise<CheckResult | null>
  * is running `genie doctor` from). Uses Bun's `$` which inherits the
  * parent process environment.
  */
-async function resolveBinaryInteractive(bin: string): Promise<string | null> {
-  try {
-    const result = await $`command -v ${bin}`.quiet().text();
-    return result.trim() || null;
-  } catch {
-    return null;
-  }
+export async function resolveBinaryInteractive(
+  bin: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  return resolveBinaryWithShell(bin, env);
 }
 
 /**
  * Resolve a binary's path in a *non-interactive* shell — the same
  * environment that `tmux send-keys` + spawn-scripts run under.
  *
- * Uses `sh -c` to ensure ~/.profile loads but ~/.bashrc's interactive-only
- * sections are skipped. This catches the `posix_spawn ENOENT` class of
- * failures BEFORE they break a worker spawn at runtime.
+ * Use node's execFileSync rather than Bun's shell template. Bun's `$` executes
+ * `command` as an external binary instead of a POSIX shell builtin, producing
+ * false "not in non-interactive PATH" warnings even when PATH is healthy.
  */
-async function resolveBinaryNonInteractive(bin: string): Promise<string | null> {
+export async function resolveBinaryNonInteractive(
+  bin: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  return resolveBinaryWithShell(bin, env);
+}
+
+function resolveBinaryWithShell(bin: string, env: NodeJS.ProcessEnv): string | null {
+  if (!/^[A-Za-z0-9._+-]+$/.test(bin)) return null;
   try {
-    const result = await $`sh -c "command -v ${bin}"`.quiet().text();
+    const result = execFileSync('/bin/sh', ['-c', `command -v ${bin}`], {
+      encoding: 'utf8',
+      env,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
     return result.trim() || null;
   } catch {
     return null;
