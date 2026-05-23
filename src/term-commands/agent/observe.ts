@@ -35,6 +35,7 @@ interface ObserveOptions {
 }
 
 const FLAG_LABELS: Record<HealthFlag, string> = {
+  agent_error: 'agent/executor lifecycle is error',
   stale_executor: 'stale executor (no recent heartbeat)',
   missing_session: 'missing session linkage',
   missing_attribution: 'missing attribution (no name/role)',

@@ -12,8 +12,8 @@
  * the join + 24h tool/usage aggregates server-side; this module:
  *
  *   1. Casts row types into a stable TS shape (camelCase, typed).
- *   2. Computes derived health flags (`stale_executor`, `missing_session`,
- *      `missing_attribution`, `recent_failure`, `cost_spike`,
+ *   2. Computes derived health flags (`agent_error`, `stale_executor`,
+ *      `missing_session`, `missing_attribution`, `recent_failure`, `cost_spike`,
  *      `high_hook_latency`).
  *   3. Provides classifier filters (`agent` vs `harness`).
  *
@@ -41,6 +41,7 @@ export const AGENT_OBSERVABILITY_SCHEMA_VERSION = 1;
 export type AgentClassification = 'agent' | 'harness';
 
 export type HealthFlag =
+  | 'agent_error'
   | 'stale_executor'
   | 'missing_session'
   | 'missing_attribution'
@@ -172,6 +173,14 @@ function latestScopedActivity(row: AgentObservabilityRow): number {
  */
 export function assessHealth(row: AgentObservabilityRow, now: number = Date.now()): HealthAssessment {
   const flags: HealthFlag[] = [];
+
+  // agent_error: the lifecycle itself is terminal/failed. Do not rely only on
+  // recent tool-event errors: many harness failures transition the agent or
+  // executor to `error` without a scoped tool_events row, and observe surfaces
+  // must still report the row as degraded.
+  if (row.agentState === 'error' || row.executorState === 'error') {
+    flags.push('agent_error');
+  }
 
   // stale_executor: live state but no heartbeat in the staleness window.
   // Prefer the freshest activity signal available. Executor rows may miss
