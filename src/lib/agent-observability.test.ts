@@ -123,6 +123,30 @@ describe('assessHealth (pure)', () => {
     expect(assessHealth(row, now).flags).not.toContain('stale_executor');
   });
 
+  test('agent_error fires for errored agent lifecycle even without recent tool errors', () => {
+    const row = baseRow();
+    row.agentState = 'error';
+    row.executorState = 'terminated';
+    row.recentErrorCount = 0;
+
+    const h = assessHealth(row);
+
+    expect(h.flags).toContain('agent_error');
+    expect(h.degraded).toBe(true);
+  });
+
+  test('agent_error fires for errored executor lifecycle even when agent row has not caught up', () => {
+    const row = baseRow();
+    row.agentState = 'working';
+    row.executorState = 'error';
+    row.recentErrorCount = 0;
+
+    const h = assessHealth(row);
+
+    expect(h.flags).toContain('agent_error');
+    expect(h.degraded).toBe(true);
+  });
+
   test('missing_session fires when current executor has no session linkage or claude_session_id anchor', () => {
     const row = baseRow();
     row.sessionId = null;
