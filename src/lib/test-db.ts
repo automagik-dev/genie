@@ -87,12 +87,16 @@ async function warmTestConnection(): Promise<void> {
  */
 export async function setupTestDatabase(): Promise<() => Promise<void>> {
   // Under concurrent test load, pgserve may have died unexpectedly. If that
-  // happens, fall back to a no-op cleanup so describe.skipIf(!DB_AVAILABLE)
-  // can still make progress.
+  // happens, fail closed instead of returning a no-op cleanup: many tests run
+  // destructive setup such as `DELETE FROM agents` immediately after this
+  // helper returns. Continuing without a guaranteed isolated database can wipe
+  // the operator's live Genie registry.
   try {
     await ensurePgserve();
-  } catch {
-    return async () => {};
+  } catch (error) {
+    throw new Error(
+      `Unable to prepare isolated Genie test database: pgserve unavailable (${error instanceof Error ? error.message : String(error)})`,
+    );
   }
 
   // Quiesce the emit.ts background flusher BEFORE we swap databases.
@@ -109,15 +113,14 @@ export async function setupTestDatabase(): Promise<() => Promise<void>> {
 
   try {
     await createTestDatabase(dbName);
-  } catch {
+  } catch (error) {
     // createTestDatabase failed (e.g. pgserve died, template DB missing).
-    // shutdownEmitter() already latched `shuttingDown = true`; if we return
-    // without resumeEmitter() the emitter stays quiesced for the remainder
-    // of this process, silently dropping every emit from every subsequent
-    // test file. Re-open admits before bailing so fallback no-op cleanup is
-    // truly side-effect free.
+    // Fail closed: returning a no-op cleanup here leaves GENIE_TEST_DB_NAME
+    // unset, so destructive test setup can run against the operator's live DB.
     resumeEmitter();
-    return async () => {};
+    throw new Error(
+      `Unable to create isolated Genie test database ${dbName}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 
   // Point db.ts at the new database and force a rebuild.
