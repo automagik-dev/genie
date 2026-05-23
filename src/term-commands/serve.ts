@@ -1577,20 +1577,45 @@ function readActiveBrainConfigFile(): ActiveBrainConfigFile | null {
   }
 }
 
-async function printStandaloneBrainStatus(): Promise<boolean> {
-  const config = readActiveBrainConfigFile();
-  if (!config?.port) return false;
+function getStandaloneBrainVersion(): string | null {
   try {
-    const resp = await fetch(`http://127.0.0.1:${config.port}/healthz`);
+    const result = spawnSync('brain', ['--version'], { encoding: 'utf-8' });
+    if (result.status !== 0) return null;
+    const version = (result.stdout || result.stderr || '').trim().split(/\s+/)[0];
+    return version || 'unknown version';
+  } catch {
+    return null;
+  }
+}
+
+interface StandaloneBrainStatusDeps {
+  readActiveConfig?: () => ActiveBrainConfigFile | null;
+  getStandaloneVersion?: () => string | null;
+  fetchImpl?: typeof fetch;
+  log?: (message: string) => void;
+}
+
+export async function printStandaloneBrainStatus(deps: StandaloneBrainStatusDeps = {}): Promise<boolean> {
+  const log = deps.log ?? console.log;
+  const config = (deps.readActiveConfig ?? readActiveBrainConfigFile)();
+  if (!config?.port) {
+    const version = (deps.getStandaloneVersion ?? getStandaloneBrainVersion)();
+    if (!version) return false;
+    log(`  brain:      installed standalone (${version}, server not running)`);
+    return true;
+  }
+  try {
+    const fetchHealth = deps.fetchImpl ?? fetch;
+    const resp = await fetchHealth(`http://127.0.0.1:${config.port}/healthz`);
     const label = config.brainSlug ?? config.database ?? `port ${config.port}`;
-    console.log(
+    log(
       resp.ok
         ? `  brain:      running (${label}, port ${config.port})`
         : `  brain:      unhealthy (${label}, status ${resp.status})`,
     );
     return true;
   } catch {
-    console.log(`  brain:      stopped (port ${config.port} unreachable)`);
+    log(`  brain:      stopped (port ${config.port} unreachable)`);
     return true;
   }
 }
