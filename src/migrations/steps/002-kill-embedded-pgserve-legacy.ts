@@ -24,6 +24,7 @@
 import { execFileSync, execSync } from 'node:child_process';
 
 import { resolvePgserveBinary } from '../../lib/canonical-pgserve-binary.js';
+import { extractPgservePortFromStatus } from '../../lib/pgserve-status.js';
 import type { MigrationContext } from '../discover.js';
 
 export const id = '002-kill-embedded-pgserve-legacy';
@@ -55,8 +56,13 @@ function resolveCanonicalPort(): number | null {
       timeout: 5000,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    const port = Number((JSON.parse(out) as { port?: unknown }).port);
-    canonicalPortCache = Number.isFinite(port) ? port : null;
+    // Tolerate top-level `port` AND nested `instance.port` / `runtime.port`
+    // shapes (shared with `genie update` diagnostics). Reading only `.port`
+    // would null-resolve on hosts emitting the nested shape, making this
+    // migration a permanent no-op there.
+    const portStr = extractPgservePortFromStatus(out);
+    const port = portStr === null ? Number.NaN : Number.parseInt(portStr, 10);
+    canonicalPortCache = Number.isFinite(port) && port > 0 ? port : null;
   } catch {
     canonicalPortCache = null;
   }
@@ -104,33 +110,30 @@ function canonicalReachable(port: number): boolean {
 
 /**
  * Pure selection: given the discovered canonical port and the set of listening
- * postmasters, return the legacy one to stop (any port that is NOT canonical),
- * or undefined. A null canonical port means "cannot identify canonical" → never
- * select anything. Extracted for deterministic unit testing.
+ * postmasters, return ALL legacy ones to stop (every port that is NOT
+ * canonical). A null canonical port means "cannot identify canonical" → never
+ * select anything. Returning every match (not just the first) ensures `apply`
+ * stops all strays in one pass; otherwise `validate` fails after 5s because
+ * the un-stopped siblings are still listening. Extracted for unit testing.
  */
-export function selectLegacyEmbedded(canonicalPort: number | null, listening: ListeningPg[]): ListeningPg | undefined {
-  if (canonicalPort === null) return undefined;
-  return listening.find((p) => p.port !== canonicalPort);
+export function selectLegacyEmbedded(canonicalPort: number | null, listening: ListeningPg[]): ListeningPg[] {
+  if (canonicalPort === null) return [];
+  return listening.filter((p) => p.port !== canonicalPort);
 }
 
-function findLegacyEmbedded(): ListeningPg | undefined {
-  if (process.env.GENIE_KEEP_LEGACY_PG === '1') return undefined;
+function findLegacyEmbedded(): ListeningPg[] {
+  if (process.env.GENIE_KEEP_LEGACY_PG === '1') return [];
   const canonicalPort = resolveCanonicalPort();
-  if (canonicalPort === null) return undefined;
-  if (!canonicalReachable(canonicalPort)) return undefined;
+  if (canonicalPort === null) return [];
+  if (!canonicalReachable(canonicalPort)) return [];
   return selectLegacyEmbedded(canonicalPort, listListeningPgserve());
 }
 
 export async function check(_ctx: MigrationContext): Promise<boolean> {
-  return findLegacyEmbedded() !== undefined;
+  return findLegacyEmbedded().length > 0;
 }
 
-export async function apply(ctx: MigrationContext): Promise<void> {
-  const target = findLegacyEmbedded();
-  if (!target) {
-    ctx.log('no legacy embedded found at apply time (race resolved)');
-    return;
-  }
+function stopLegacy(ctx: MigrationContext, target: ListeningPg): void {
   ctx.log(`stopping legacy embedded pgserve PID ${target.pid} (port ${target.port})`);
   // Try pg_ctl stop via discovered data dir from the process
   try {
@@ -145,7 +148,7 @@ export async function apply(ctx: MigrationContext): Promise<void> {
       return;
     }
   } catch (err) {
-    ctx.warn(`pg_ctl stop failed: ${(err as Error).message} — falling back to SIGTERM`);
+    ctx.warn(`pg_ctl stop failed for PID ${target.pid}: ${(err as Error).message} — falling back to SIGTERM`);
   }
   // Fallback: SIGTERM the master process
   try {
@@ -156,16 +159,28 @@ export async function apply(ctx: MigrationContext): Promise<void> {
   }
 }
 
+export async function apply(ctx: MigrationContext): Promise<void> {
+  const targets = findLegacyEmbedded();
+  if (targets.length === 0) {
+    ctx.log('no legacy embedded found at apply time (race resolved)');
+    return;
+  }
+  for (const target of targets) {
+    stopLegacy(ctx, target);
+  }
+}
+
 export async function validate(_ctx: MigrationContext): Promise<void> {
-  // Allow up to 5s for shutdown
+  // Allow up to 5s for all strays to shut down
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    if (findLegacyEmbedded() === undefined) return;
+    if (findLegacyEmbedded().length === 0) return;
     // small sleep
     Bun.sleepSync(200);
   }
   const remaining = findLegacyEmbedded();
-  if (remaining) {
-    throw new Error(`legacy embedded still listening on port ${remaining.port} (PID ${remaining.pid}) after 5s`);
+  if (remaining.length > 0) {
+    const desc = remaining.map((p) => `port ${p.port} (PID ${p.pid})`).join(', ');
+    throw new Error(`legacy embedded still listening after 5s: ${desc}`);
   }
 }
