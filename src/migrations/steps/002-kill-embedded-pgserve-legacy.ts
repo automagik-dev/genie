@@ -1,27 +1,71 @@
 /**
  * Migration 002 — kill legacy embedded pgserve listening on a non-canonical port.
  *
- * Detection: a postgres process owned by the current user is listening on
- * a port other than canonical 8432, AND canonical pgserve responds on
- * 8432, AND no obvious user-intent override (env var GENIE_KEEP_LEGACY_PG=1).
+ * Detection: a postgres process owned by the current user is listening on a
+ * port OTHER than the one the canonical pgserve actually binds, AND that
+ * canonical pgserve is reachable, AND no user-intent override
+ * (env var GENIE_KEEP_LEGACY_PG=1).
+ *
+ * The canonical port is DISCOVERED from the autopg/pgserve binary at runtime —
+ * never hardcoded. The canonical backbone moved 8432 → 5432 in the
+ * autopg-v3 / socket-singleton cutover; a hardcoded 8432 here would (a) be a
+ * no-op on healthy 5432 hosts and, worse, (b) during a mixed window where a
+ * stray legacy postmaster is still live on 8432 alongside canonical 5432,
+ * mistake 8432 for canonical and STOP the real 5432 backbone. Discovering the
+ * port fixes both. When no canonical binary is installed / it can't report a
+ * port, this migration is a safe no-op: we never stop a postmaster we cannot
+ * positively distinguish from canonical.
  *
  * Fix: send graceful pg_ctl stop to the legacy process; if that fails,
  * SIGTERM. Migration 001 (must run first) ensures genie-serve no longer
  * spawns it, so it stays dead.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 
+import { resolvePgserveBinary } from '../../lib/canonical-pgserve-binary.js';
 import type { MigrationContext } from '../discover.js';
 
 export const id = '002-kill-embedded-pgserve-legacy';
 export const description = 'Stop legacy embedded pgserve on non-canonical ports when canonical is healthy';
 
-const CANONICAL_PORT = 8432;
-
 interface ListeningPg {
   pid: number;
   port: number;
+}
+
+let canonicalPortCache: number | null | undefined;
+
+/**
+ * Resolve the port the canonical pgserve actually binds by asking the
+ * autopg/pgserve binary (`<bin> status --json` → `.port`). Memoized for the
+ * duration of the migration run. Returns null when no canonical binary is
+ * installed or it doesn't report a numeric port.
+ */
+function resolveCanonicalPort(): number | null {
+  if (canonicalPortCache !== undefined) return canonicalPortCache;
+  const bin = resolvePgserveBinary();
+  if (!bin) {
+    canonicalPortCache = null;
+    return null;
+  }
+  try {
+    const out = execFileSync(bin, ['status', '--json'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const port = Number((JSON.parse(out) as { port?: unknown }).port);
+    canonicalPortCache = Number.isFinite(port) ? port : null;
+  } catch {
+    canonicalPortCache = null;
+  }
+  return canonicalPortCache;
+}
+
+/** Test-only: clear the memoized canonical port. */
+export function _resetCanonicalPortCache(): void {
+  canonicalPortCache = undefined;
 }
 
 function listListeningPgserve(): ListeningPg[] {
@@ -49,19 +93,32 @@ function listListeningPgserve(): ListeningPg[] {
   }
 }
 
-function canonicalReachable(): boolean {
+function canonicalReachable(port: number): boolean {
   try {
-    execSync(`pg_isready -h 127.0.0.1 -p ${CANONICAL_PORT}`, { stdio: 'pipe' });
+    execSync(`pg_isready -h 127.0.0.1 -p ${port}`, { stdio: 'pipe' });
     return true;
   } catch {
     return false;
   }
 }
 
+/**
+ * Pure selection: given the discovered canonical port and the set of listening
+ * postmasters, return the legacy one to stop (any port that is NOT canonical),
+ * or undefined. A null canonical port means "cannot identify canonical" → never
+ * select anything. Extracted for deterministic unit testing.
+ */
+export function selectLegacyEmbedded(canonicalPort: number | null, listening: ListeningPg[]): ListeningPg | undefined {
+  if (canonicalPort === null) return undefined;
+  return listening.find((p) => p.port !== canonicalPort);
+}
+
 function findLegacyEmbedded(): ListeningPg | undefined {
   if (process.env.GENIE_KEEP_LEGACY_PG === '1') return undefined;
-  if (!canonicalReachable()) return undefined;
-  return listListeningPgserve().find((p) => p.port !== CANONICAL_PORT);
+  const canonicalPort = resolveCanonicalPort();
+  if (canonicalPort === null) return undefined;
+  if (!canonicalReachable(canonicalPort)) return undefined;
+  return selectLegacyEmbedded(canonicalPort, listListeningPgserve());
 }
 
 export async function check(_ctx: MigrationContext): Promise<boolean> {
