@@ -18,6 +18,7 @@ import { signOmniRequest } from '../../lib/omni-signature.js';
 import { buildLaunchCommand } from '../../lib/provider-adapters.js';
 import type { SpawnParams } from '../../lib/provider-adapters.js';
 import { shellQuote } from '../../lib/team-lead-command.js';
+import { writeTmuxLaunchScript } from '../../lib/tmux-launch-script.js';
 import {
   capturePaneContent,
   ensureTeamWindow,
@@ -255,7 +256,8 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
       .map(([k, v]) => `${k}=${shellQuote(v)}`)
       .join(' ');
     const cmd = envPrefix ? `${envPrefix} ${launch.command}` : launch.command;
-    await executeTmux(`send-keys -t '${paneId}' ${shellQuote(cmd)} Enter`);
+    const scriptPath = writeTmuxLaunchScript(`omni-${chatId}`, cmd);
+    await executeTmux(`send-keys -t '${paneId}' "source ${scriptPath}" Enter`);
     return claudeSessionId;
   }
 
