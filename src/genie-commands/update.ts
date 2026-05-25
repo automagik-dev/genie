@@ -20,6 +20,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { genieConfigExists, loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
+import { extractPgservePortFromStatus } from '../lib/pgserve-status.js';
 import { VERSION } from '../lib/version.js';
 import { pm2ProcessNameCandidates, regenerateEcosystemConfig } from './install.js';
 import { type CleanupReport, cleanupLegacyArtifacts, parseSkipCleanupFlag } from './legacy-cleanup.js';
@@ -1259,21 +1260,10 @@ export function extractPgserveSocketDirFromStatus(output: string): string | null
   return null;
 }
 
-export function extractPgservePortFromStatus(output: string): string | null {
-  try {
-    const parsed = JSON.parse(output) as {
-      port?: unknown;
-      instance?: { port?: unknown };
-      runtime?: { port?: unknown };
-    };
-    const rawPort = parsed.port ?? parsed.instance?.port ?? parsed.runtime?.port;
-    if (typeof rawPort === 'number' && Number.isFinite(rawPort)) return String(rawPort);
-    if (typeof rawPort === 'string' && rawPort.trim()) return rawPort.trim();
-  } catch {
-    // best-effort diagnostics only; callers fall back to null.
-  }
-  return null;
-}
+// Moved to ../lib/pgserve-status.js so migration 002 can share the same
+// nested-shape-tolerant parser. Re-exported here to preserve the public API
+// (and existing update.test.ts import path).
+export { extractPgservePortFromStatus };
 
 function collectGenieProcessSnapshot(): string | null {
   const snapshot = safeExec('ps -axo pid,ppid,pgid,stat,pcpu,pmem,etime,command -r', 2000)
