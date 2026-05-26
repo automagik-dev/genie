@@ -23,7 +23,7 @@ export function writeTmuxLaunchScript(workerId: string, fullCommand: string): st
   mkdirSync(dir, { recursive: true });
   const safeId = workerId.replace(/[^a-zA-Z0-9._-]/g, '-');
   const scriptPath = join(dir, `${safeId}-${Date.now().toString(36)}.sh`);
-  writeFileSync(scriptPath, `#!/bin/sh\n${fullCommand}\n`, { mode: 0o700 });
+  writeFileSync(scriptPath, `#!/bin/sh\nexec ${fullCommand}\n`, { mode: 0o700 });
   chmodSync(scriptPath, 0o700);
   return scriptPath;
 }
