@@ -185,11 +185,13 @@ describe('buildOmniSpawnParams', () => {
     expect(params.disallowedTools).toEqual(['Edit', 'Write', 'Agent']);
   });
 
-  test('emits sessionId (not resume) when resumeClaudeSessionId is set', () => {
-    // Using --session-id (instead of --resume) lets Claude reattach to an
-    // existing JSONL transcript when present, but gracefully starts a fresh
-    // session with the same id when the transcript is missing (e.g. after
-    // cleanup or on a fresh machine). --resume would hard-fail in that case.
+  test('emits resume (not sessionId) when resumeClaudeSessionId is set', () => {
+    // Operator-facing invariant: omni-bridged chats are permanent. When the
+    // bridge respawns a per-chat agent and we have a prior Claude session id,
+    // buildOmniSpawnParams must surface it as `resume` so buildLaunchCommand
+    // emits `--resume <id>` and Claude reattaches to the existing JSONL.
+    // If the JSONL is missing, launchOmniProcessInPane detects the silent
+    // failure and falls back to a fresh --session-id automatically.
     const priorClaudeSessionId = 'b25fb825-3695-4aa1-bcdf-7a4c20dc66c8';
     const params = buildOmniSpawnParams(
       'simone',
@@ -199,16 +201,14 @@ describe('buildOmniSpawnParams', () => {
       'follow-up message',
       priorClaudeSessionId,
     );
-    expect(params.sessionId).toBe(priorClaudeSessionId);
-    expect(params.resume).toBeUndefined();
+    expect(params.resume).toBe(priorClaudeSessionId);
+    expect(params.sessionId).toBeUndefined();
   });
 
-  test('falls back to fresh sessionId when resumeClaudeSessionId is undefined', () => {
-    // Backward compat: existing callers (and the first-ever spawn for a chat)
-    // pass no resume id and must still get a generated sessionId for
-    // `--session-id <new-uuid>`. The newly-generated id is what gets
-    // persisted to executors.claude_session_id so the *next* respawn can
-    // resume it.
+  test('emits sessionId (not resume) when resumeClaudeSessionId is undefined', () => {
+    // First-ever spawn for a chat: no prior session, so we mint a fresh UUID
+    // for --session-id. This id is persisted to executors.claude_session_id
+    // so the next respawn can resume it via --resume.
     const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {}, 'first message');
     expect(params.resume).toBeUndefined();
     expect(params.sessionId).toBeDefined();
