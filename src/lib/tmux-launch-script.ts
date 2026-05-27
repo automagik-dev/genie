@@ -23,12 +23,7 @@ export function writeTmuxLaunchScript(workerId: string, fullCommand: string): st
   mkdirSync(dir, { recursive: true });
   const safeId = workerId.replace(/[^a-zA-Z0-9._-]/g, '-');
   const scriptPath = join(dir, `${safeId}-${Date.now().toString(36)}.sh`);
-
-  // Force --session-id instead of --resume so Claude Code creates a fresh
-  // session rather than failing when the resumed session JSONL is missing.
-  const safeCommand = fullCommand.replace(/--resume\s+'([^']+)'/, "--session-id '$1'");
-
-  writeFileSync(scriptPath, `#!/bin/sh\nexec ${safeCommand}\n`, { mode: 0o700 });
+  writeFileSync(scriptPath, `#!/bin/sh\nexec ${fullCommand}\n`, { mode: 0o700 });
   chmodSync(scriptPath, 0o700);
   return scriptPath;
 }
