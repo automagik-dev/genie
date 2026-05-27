@@ -153,13 +153,12 @@ async function lookupChatName(chatId: string, _instanceId: string): Promise<stri
 /**
  * Build SpawnParams from omni bridge context so we can delegate to buildLaunchCommand().
  *
- * @param resumeClaudeSessionId — when set, emits `--resume <id>` instead of
- *   `--session-id <new-uuid>`. Used by the omni bridge to attach a freshly-
- *   spawned tmux pane to the same Claude conversation that handled this chat
- *   before a crash/restart, so per-chat history persists across executor death.
- *   The two flags are mutually exclusive in `buildLaunchCommand` (see
- *   provider-adapters.ts) — `resume` wins when both are set, but we omit
- *   `sessionId` when resuming for clarity.
+ * @param resumeClaudeSessionId — when set, emits `--session-id <id>` so the
+ *   omni bridge reattaches to the same Claude conversation that handled this
+ *   chat before a crash/restart. Using `--session-id` (instead of `--resume`)
+ *   keeps per-chat history persistent but does NOT fail when the resumed
+ *   session JSONL is missing (e.g. after cleanup or on a fresh machine); Claude
+ *   simply starts a fresh session with the same id.
  */
 export function buildOmniSpawnParams(
   agentName: string,
@@ -191,8 +190,7 @@ export function buildOmniSpawnParams(
     provider: (entry.provider as SpawnParams['provider']) ?? 'claude',
     team: agentName,
     role: agentName,
-    sessionId: resumeClaudeSessionId ? undefined : randomUUID(),
-    resume: resumeClaudeSessionId,
+    sessionId: resumeClaudeSessionId ?? randomUUID(),
     model: entry.model,
     promptMode: entry.promptMode,
     systemPromptFile: join(entry.dir, 'AGENTS.md'),

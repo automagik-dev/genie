@@ -185,12 +185,11 @@ describe('buildOmniSpawnParams', () => {
     expect(params.disallowedTools).toEqual(['Edit', 'Write', 'Agent']);
   });
 
-  test('emits resume (not sessionId) when resumeClaudeSessionId is set', () => {
-    // Operator-facing invariant: omni-spawned chats are permanent. When the
-    // bridge respawns a per-chat agent and we have a prior Claude session id
-    // for that (agent, chat), buildOmniSpawnParams must surface it as `resume`
-    // so buildLaunchCommand emits `--resume <id>` and Claude reattaches to
-    // the same JSONL transcript.
+  test('emits sessionId (not resume) when resumeClaudeSessionId is set', () => {
+    // Using --session-id (instead of --resume) lets Claude reattach to an
+    // existing JSONL transcript when present, but gracefully starts a fresh
+    // session with the same id when the transcript is missing (e.g. after
+    // cleanup or on a fresh machine). --resume would hard-fail in that case.
     const priorClaudeSessionId = 'b25fb825-3695-4aa1-bcdf-7a4c20dc66c8';
     const params = buildOmniSpawnParams(
       'simone',
@@ -200,11 +199,8 @@ describe('buildOmniSpawnParams', () => {
       'follow-up message',
       priorClaudeSessionId,
     );
-    expect(params.resume).toBe(priorClaudeSessionId);
-    // sessionId must be omitted on resume — they are mutually exclusive in
-    // buildLaunchCommand. A leftover sessionId would cause a noisy fallback
-    // when `resume` is consumed first.
-    expect(params.sessionId).toBeUndefined();
+    expect(params.sessionId).toBe(priorClaudeSessionId);
+    expect(params.resume).toBeUndefined();
   });
 
   test('falls back to fresh sessionId when resumeClaudeSessionId is undefined', () => {

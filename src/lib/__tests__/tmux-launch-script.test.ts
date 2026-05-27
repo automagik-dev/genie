@@ -25,13 +25,13 @@ describe('writeTmuxLaunchScript', () => {
     }
   });
 
-  test('creates a script with shebang and exec command', () => {
+  test('creates a script with shebang and command', () => {
     const path = writeTmuxLaunchScript('test-worker', 'echo hello');
     expect(existsSync(path)).toBe(true);
 
     const content = readFileSync(path, 'utf-8');
     expect(content).toStartWith('#!/bin/sh\n');
-    expect(content).toInclude('exec echo hello\n');
+    expect(content).toInclude('echo hello\n');
   });
 
   test('sanitizes workerId in filename', () => {
@@ -57,6 +57,6 @@ describe('writeTmuxLaunchScript', () => {
     const cmd = `OMNI_API_KEY='sk-123' claude --permission-mode 'auto' --system-prompt 'Use \`git\` (👍) for (instance: x)'`;
     const path = writeTmuxLaunchScript('omni-chat-123', cmd);
     const content = readFileSync(path, 'utf-8');
-    expect(content).toInclude(`exec ${cmd}\n`);
+    expect(content).toInclude(`${cmd}\n`);
   });
 });
