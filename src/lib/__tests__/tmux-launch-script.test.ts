@@ -34,6 +34,14 @@ describe('writeTmuxLaunchScript', () => {
     expect(content).toInclude('exec echo hello\n');
   });
 
+  test('rewrites --resume <id> to --session-id <id>', () => {
+    const cmd = "claude --resume 'sess-uuid-789' --dangerously-skip-permissions";
+    const path = writeTmuxLaunchScript('test-worker', cmd);
+    const content = readFileSync(path, 'utf-8');
+    expect(content).toInclude("exec claude --session-id 'sess-uuid-789' --dangerously-skip-permissions\n");
+    expect(content).not.toInclude('--resume');
+  });
+
   test('sanitizes workerId in filename', () => {
     const path = writeTmuxLaunchScript('worker/with:bad@chars', 'echo hello');
     const basename = path.split('/').pop()!;
