@@ -38,7 +38,7 @@
 -->
 
 <!-- METRICS:START -->
-**🚀 19 commits** this week · **0 releases** · **+760 LoC** · **6 contributors**
+**🚀 2 commits** this week · **0 releases** · **+0 LoC** · **2 contributors**
 
 ![Commits per day (30d, all branches)](.genie/assets/commits-30d.svg)
 
