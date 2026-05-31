@@ -1,12 +1,12 @@
 # Velocity Dashboard
 
-> Last updated: 2026-05-30 12:12 UTC | Data range: 2026-03-13 to 2026-05-30
+> Last updated: 2026-05-31 12:11 UTC | Data range: 2026-03-13 to 2026-05-31
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 2 | 78 | 128 |
+| Commits | 2 | 75 | 130 |
 | Releases | 0 | 0 | 0 |
 | LoC (net) | 0 | +3.5K | — |
 | Contributors | 2 | 9 | 9 |
@@ -31,8 +31,8 @@
 
 | Rank | Contributor | Commits (approx) |
 |-----:|-------------|------------------:|
-| 1 | Felipe Rosa | 19 |
-| 2 | github-actions[bot] | 19 |
+| 1 | Felipe Rosa | 18 |
+| 2 | github-actions[bot] | 18 |
 | 3 | Felipe | 15 |
 | 4 | release-bot | 7 |
 | 5 | Genie | 4 |
