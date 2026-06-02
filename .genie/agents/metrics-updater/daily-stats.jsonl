@@ -55,4 +55,14 @@
 {"date":"2026-05-20","commits":10,"loc_added":152,"loc_removed":50,"releases":0,"contributors":["Claude (Opus 4.7)","Felipe","Felipe Rosa","github-actions[bot]"]}
 {"date":"2026-05-21","commits":0,"loc_added":0,"loc_removed":0,"releases":0,"contributors":[]}
 {"date":"2026-05-22","commits":13,"loc_added":957,"loc_removed":232,"releases":0,"contributors":["Cezar","Felipe","Felipe Rosa","Genie Automagik","github-actions[bot]","namastex888"]}
-{"date":"2026-06-01","commits":0,"loc_added":0,"loc_removed":0,"releases":0,"contributors":[]}
+{"date":"2026-05-23","commits":14,"loc_added":131,"loc_removed":62,"releases":4,"contributors":["Claude","Felipe Rosa","Genie Automagik","github-actions[bot]","release-bot"]}
+{"date":"2026-05-24","commits":6,"loc_added":224,"loc_removed":83,"releases":1,"contributors":["Claude","automagik-genie","github-actions[bot]","release-bot"]}
+{"date":"2026-05-25","commits":7,"loc_added":28,"loc_removed":37,"releases":2,"contributors":["Claude","Felipe Rosa","github-actions[bot]","release-bot"]}
+{"date":"2026-05-26","commits":1,"loc_added":13,"loc_removed":11,"releases":0,"contributors":["Claude"]}
+{"date":"2026-05-27","commits":4,"loc_added":33,"loc_removed":20,"releases":1,"contributors":["Claude","github-actions[bot]","release-bot"]}
+{"date":"2026-05-28","commits":4,"loc_added":29,"loc_removed":39,"releases":1,"contributors":["Claude","github-actions[bot]","release-bot"]}
+{"date":"2026-05-29","commits":0,"loc_added":0,"loc_removed":0,"releases":0,"contributors":[]}
+{"date":"2026-05-30","commits":4,"loc_added":22,"loc_removed":20,"releases":1,"contributors":["Claude","github-actions[bot]","release-bot"]}
+{"date":"2026-05-31","commits":4,"loc_added":16,"loc_removed":14,"releases":1,"contributors":["Claude","github-actions[bot]","release-bot"]}
+{"date":"2026-06-01","commits":4,"loc_added":26,"loc_removed":104,"releases":1,"contributors":["Felipe Rosa","github-actions[bot]","release-bot"]}
+{"date":"2026-06-02","commits":0,"loc_added":0,"loc_removed":0,"releases":0,"contributors":[]}
