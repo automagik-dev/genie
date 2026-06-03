@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-06-02 12:13 UTC | Data range: 2026-03-13 to 2026-06-02
+> Last updated: 2026-06-03 12:13 UTC | Data range: 2026-03-13 to 2026-06-03
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 20 | 104 | 6.6K |
-| Releases | 5 | 12 | 641 |
-| LoC (net) | -71 | +2.0K | — |
-| Contributors | 4 | 11 | 36 |
+| Commits | 16 | 104 | 131 |
+| Releases | 4 | 12 | 0 |
+| LoC (net) | -84 | +2.0K | — |
+| Contributors | 4 | 11 | 9 |
 
 ---
 
@@ -43,15 +43,4 @@
 | 10 | namastex888 | 2 |
 | 11 | automagik-genie | 1 |
 
-*36 contributors since 2025-07-31*
-
----
-
-## Major Version Milestones
-
-> How long did it take to build each major version, from where we were to where we landed.
-
-| Milestone | Period | Days | Commits (linear) | Commits (all) | PRs merged | LoC (net) | Contributors |
-|-----------|--------|-----:|-----------------:|--------------:|-----------:|----------:|-------------:|
-| Genesis → v4 stable | 2026-05-21 → 2026-03-23 | -59 | 1.3K | 6.6K | 110 | +60.2K | 22 |
-| v3 → v4 (version sprint) | 2026-03-08 → 2026-03-23 | 15 | 189 | 4.6K | 65 | +22.2K | 11 |
+*9 contributors since 2026-05-21*
