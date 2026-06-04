@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-06-03 12:13 UTC | Data range: 2026-03-13 to 2026-06-03
+> Last updated: 2026-06-04 12:17 UTC | Data range: 2026-03-13 to 2026-06-04
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 16 | 104 | 131 |
-| Releases | 4 | 12 | 0 |
-| LoC (net) | -84 | +2.0K | — |
-| Contributors | 4 | 11 | 9 |
+| Commits | 12 | 104 | 136 |
+| Releases | 3 | 12 | 0 |
+| LoC (net) | -74 | +2.0K | — |
+| Contributors | 4 | 11 | 8 |
 
 ---
 
@@ -43,4 +43,4 @@
 | 10 | namastex888 | 2 |
 | 11 | automagik-genie | 1 |
 
-*9 contributors since 2026-05-21*
+*8 contributors since 2026-05-22*
