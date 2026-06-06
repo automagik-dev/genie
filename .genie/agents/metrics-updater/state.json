@@ -1,5 +1,5 @@
 {
-  "last_run": "2026-06-05T12:12:43Z",
+  "last_run": "2026-06-06T12:07:59Z",
   "last_run_status": "success",
   "last_metrics": {
     "releases_24h": 1,
@@ -12,8 +12,8 @@
     "contributors_7d": 4,
     "note": "merged_prs_7d=0: team uses direct commits to dev branch (confirmed by GitHub API)"
   },
-  "daily_stats_count": 31,
+  "daily_stats_count": 32,
   "charts_generated": 3,
   "velocity_md_updated": true,
-  "duration_ms": 2887
+  "duration_ms": 3490
 }
