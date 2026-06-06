@@ -233,8 +233,8 @@ function failCanonicalPgserve(reason: string): never {
  * already pm2-managed, but in pgserve@^2 the install runs an EADDRINUSE bind
  * check on the canonical port BEFORE noticing that the existing listener is
  * its own pm2-supervised instance. Operators upgrading via
- * `curl -fsSL https://get.automagik.dev/genie | bash` on a host that already
- * has pgserve under pm2 see:
+ * `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash`
+ * on a host that already has pgserve under pm2 see:
  *
  *   pgserve install: port 8432 is already in use on 127.0.0.1
  *   Error: canonical pgserve registration failed (exit code 1).
