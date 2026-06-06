@@ -1,14 +1,14 @@
 # Velocity Dashboard
 
-> Last updated: 2026-06-05 12:12 UTC | Data range: 2026-05-06 to 2026-06-05
+> Last updated: 2026-06-06 12:07 UTC | Data range: 2026-05-06 to 2026-06-06
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 22 | 136 | 136 |
+| Commits | 18 | 136 | 136 |
 | Releases | 0 | 0 | 0 |
-| LoC (net) | -50 | +939.5K | — |
+| LoC (net) | -52 | +939.5K | — |
 | Contributors | 4 | 8 | 8 |
 
 ---
