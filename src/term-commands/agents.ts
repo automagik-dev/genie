@@ -45,6 +45,7 @@ import {
   resolveTeamForSpawn,
   resolveTeamForSpawnWithDeps,
 } from '../lib/team-resolver.js';
+import { writeTmuxLaunchScript } from '../lib/tmux-launch-script.js';
 import { genieTmuxCmd, prependEnvVars } from '../lib/tmux-wrapper.js';
 import * as tmux from '../lib/tmux.js';
 import { TmuxUnreachableError, executeTmux, isPaneAlive } from '../lib/tmux.js';
@@ -795,28 +796,6 @@ type TeamWindowInfo = {
 
 function shellQuote(arg: string): string {
   return `'${arg.replace(/'/g, "'\\''")}'`;
-}
-
-/**
- * Write a temporary launch script for complex tmux spawns.
- *
- * Native Claude team launches carry many quoted flags and prompt-file args. In
- * some shells that last outer-shell → tmux → inner-shell hop can mangle argv.
- * Executing a script path removes one parsing layer and keeps the worker launch
- * stable.
- */
-function writeTmuxLaunchScript(workerId: string, fullCommand: string): string {
-  const { chmodSync, mkdirSync, writeFileSync } = require('node:fs');
-  const { join } = require('node:path');
-  const { homedir } = require('node:os');
-
-  const dir = join(homedir(), '.genie', 'spawn-scripts');
-  mkdirSync(dir, { recursive: true });
-  const safeId = workerId.replace(/[^a-zA-Z0-9._-]/g, '-');
-  const scriptPath = join(dir, `${safeId}-${Date.now().toString(36)}.sh`);
-  writeFileSync(scriptPath, `#!/bin/sh\nexec ${fullCommand}\n`, { mode: 0o700 });
-  chmodSync(scriptPath, 0o700);
-  return scriptPath;
 }
 
 /**

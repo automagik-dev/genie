@@ -18,6 +18,7 @@ import { signOmniRequest } from '../../lib/omni-signature.js';
 import { buildLaunchCommand } from '../../lib/provider-adapters.js';
 import type { SpawnParams } from '../../lib/provider-adapters.js';
 import { shellQuote } from '../../lib/team-lead-command.js';
+import { writeTmuxLaunchScript } from '../../lib/tmux-launch-script.js';
 import {
   capturePaneContent,
   ensureTeamWindow,
@@ -152,13 +153,11 @@ async function lookupChatName(chatId: string, _instanceId: string): Promise<stri
 /**
  * Build SpawnParams from omni bridge context so we can delegate to buildLaunchCommand().
  *
- * @param resumeClaudeSessionId — when set, emits `--resume <id>` instead of
- *   `--session-id <new-uuid>`. Used by the omni bridge to attach a freshly-
- *   spawned tmux pane to the same Claude conversation that handled this chat
- *   before a crash/restart, so per-chat history persists across executor death.
- *   The two flags are mutually exclusive in `buildLaunchCommand` (see
- *   provider-adapters.ts) — `resume` wins when both are set, but we omit
- *   `sessionId` when resuming for clarity.
+ * @param resumeClaudeSessionId — when set, emits `--resume <id>` so the omni
+ *   bridge reattaches to the same Claude conversation that handled this chat
+ *   before a crash/restart. If the JSONL is missing (cleanup, fresh machine),
+ *   `--resume` will silently fail; `launchOmniProcessInPane` detects that and
+ *   falls back to a fresh `--session-id <new-uuid>` automatically.
  */
 export function buildOmniSpawnParams(
   agentName: string,
@@ -245,18 +244,42 @@ export class ClaudeCodeOmniExecutor implements IExecutor {
     resumeClaudeSessionId: string | undefined,
   ): Promise<string | undefined> {
     const omniEnv: Record<string, string> = { ...env, GENIE_OMNI_CHAT_ID: chatId, GENIE_OMNI_AGENT: agentName };
-    const params = buildOmniSpawnParams(agentName, chatId, entry, omniEnv, initialMessage, resumeClaudeSessionId);
-    const claudeSessionId = resumeClaudeSessionId ?? params.sessionId ?? undefined;
-    const launch = buildLaunchCommand(params);
 
-    // Merge omni-specific env vars with those produced by buildLaunchCommand.
-    const allEnv = { ...omniEnv, ...launch.env };
-    const envPrefix = Object.entries(allEnv)
-      .map(([k, v]) => `${k}=${shellQuote(v)}`)
-      .join(' ');
-    const cmd = envPrefix ? `${envPrefix} ${launch.command}` : launch.command;
-    await executeTmux(`send-keys -t '${paneId}' ${shellQuote(cmd)} Enter`);
-    return claudeSessionId;
+    const sendToPane = async (params: SpawnParams): Promise<void> => {
+      const launch = buildLaunchCommand(params);
+      const allEnv = { ...omniEnv, ...launch.env };
+      const envPrefix = Object.entries(allEnv)
+        .map(([k, v]) => `${k}=${shellQuote(v)}`)
+        .join(' ');
+      const cmd = envPrefix ? `${envPrefix} ${launch.command}` : launch.command;
+      const scriptPath = writeTmuxLaunchScript(`omni-${chatId}`, cmd);
+      await executeTmux(`send-keys -t '${paneId}' "source ${scriptPath}" Enter`);
+    };
+
+    const params = buildOmniSpawnParams(agentName, chatId, entry, omniEnv, initialMessage, resumeClaudeSessionId);
+    await sendToPane(params);
+
+    if (resumeClaudeSessionId) {
+      // --resume silently fails when the JSONL is missing (e.g. cleanup, fresh
+      // machine): Claude exits immediately and the pane returns to the shell
+      // without printing an error. Detect this by polling for the process after
+      // a short settle window and, on failure, fall back to a fresh session so
+      // the inbound message is not lost.
+      await new Promise((r) => setTimeout(r, 3000));
+      const processName = resolveOmniPaneProcessName(entry.provider);
+      const resumed = await isPaneProcessRunning(paneId, processName);
+      if (!resumed) {
+        console.warn(
+          `[claude-code] --resume ${resumeClaudeSessionId} failed for chat ${chatId} — JSONL likely missing. Falling back to fresh session.`,
+        );
+        const freshParams = buildOmniSpawnParams(agentName, chatId, entry, omniEnv, initialMessage);
+        await sendToPane(freshParams);
+        return freshParams.sessionId;
+      }
+      return resumeClaudeSessionId;
+    }
+
+    return params.sessionId;
   }
 
   async spawn(
