@@ -29,14 +29,15 @@ Genie is a CLI that turns one sentence into a finished pull request. You describ
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
 ```
 
-Every release is cosign-signed with SLSA provenance — the installer verifies the binary before it runs. Then:
+Every release is cosign-signed with SLSA provenance — the installer verifies the binary before it runs.
 
-```bash
-genie
-/wizard      # interviews you, scaffolds your project, walks your first wish
+Then, in Claude Code, Codex, or any AI coding agent, run the onboarding wizard:
+
+```text
+/wizard
 ```
 
-Run `genie doctor` anytime to check your install.
+It interviews you, scaffolds the project, and walks you through your first wish. Prefer the cockpit? `genie` opens the terminal UI; `genie doctor` checks your install.
 
 ## What you get
 
