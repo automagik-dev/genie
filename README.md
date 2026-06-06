@@ -1,41 +1,17 @@
 <p align="center">
-  <picture>
-    <img src=".github/assets/genie-header.png" alt="Genie" width="800" />
-  </picture>
+  <img src=".github/assets/genie-header.png" alt="Genie" width="800" />
 </p>
 
-<p align="center">
-  <strong>Wishes in, PRs out.</strong>
-</p>
+<p align="center"><strong>Wishes in, PRs out.</strong></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@automagik/genie"><img alt="npm" src="https://img.shields.io/npm/v/@automagik/genie?style=flat-square&color=00D9FF" /></a>
-  <a href="https://www.npmjs.com/package/@automagik/genie"><img alt="downloads" src="https://img.shields.io/npm/dm/@automagik/genie?style=flat-square&color=00D9FF" /></a>
+  <a href="https://github.com/automagik-dev/genie/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
   <a href="https://github.com/automagik-dev/genie/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
   <a href="https://discord.gg/xcW8c7fF3R"><img alt="discord" src="https://img.shields.io/discord/1095114867012292758?style=flat-square&color=00D9FF&label=discord" /></a>
 </p>
 
 <br />
-
-> [!IMPORTANT]
-> **Genie's npm distribution is being soft-deprecated** in favor of a cosign + SLSA-verified install through our own CDN.
->
-> The canonical install going forward is:
->
-> ```bash
-> curl -fsSL https://get.automagik.dev/genie | bash
-> ```
->
-> Existing operators on `npm install -g @automagik/genie` continue to work — the npm package will become a thin postinstall shim that downloads and runs the verified installer. See [Security & Trust → Distribution Sovereignty](https://automagik.dev/genie/security/distribution-sovereignty) for the threat model and verification flow.
-
-<br />
-
-<!-- TODO: Record a 30s terminal demo with vhs/asciinema and uncomment:
-<p align="center">
-  <img src=".github/assets/genie-demo.gif" alt="Genie demo" width="720" />
-</p>
--->
 
 <!-- METRICS:START -->
 **🚀 18 commits** this week · **0 releases** · **-52 LoC** · **4 contributors**
@@ -47,45 +23,20 @@
 
 Genie is a CLI that turns one sentence into a finished pull request. You describe what you want — Genie interviews you, writes a plan, spawns parallel agents in isolated worktrees, reviews the code, and opens a PR. You approve. You merge. That's it.
 
-## Get started
+## Install
 
-Paste this into Claude Code, Codex, or any AI coding agent:
-
-```
-Install Genie and set up this project:
-
+```bash
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
+```
+
+Every release is cosign-signed with SLSA provenance — the installer verifies the binary before it runs. Then:
+
+```bash
 genie
-/wizard
+/wizard      # interviews you, scaffolds your project, walks your first wish
 ```
 
-That's it. The wizard interviews you, scaffolds your project, and walks you through your first wish. Relax.
-
-Or install manually:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
-```
-
-### Manual install (canonical pgserve first)
-
-If you'd rather lay the pieces down yourself, install canonical pgserve
-before genie. Genie is a consumer of the pm2-supervised pgserve daemon —
-it never spawns its own. See [docs/install.md](docs/install.md) for the
-rationale and migration tips.
-
-```bash
-# 1. Canonical pgserve (registers a pm2-supervised singleton)
-bun add -g pgserve@^2
-pgserve install
-
-# 2. Genie (will refuse to install if pgserve is unreachable)
-bun add -g @automagik/genie
-genie install
-
-# 3. Verify
-genie doctor
-```
+Run `genie doctor` anytime to check your install.
 
 ## What you get
 
@@ -98,26 +49,26 @@ genie doctor
        |
    /work ────────── Agents spawn in parallel worktrees, each on its own branch
        |
-   /review ──────── 10 critics review. Severity-tagged. Nothing ships dirty.
+   /review ──────── A council of critics reviews. Severity-tagged. Nothing ships dirty.
        |
    Pull Request ─── You approve. You merge. Ship it.
 ```
 
-**Parallel agents.** Not one agent doing everything sequentially — multiple agents working at the same time in isolated worktrees. No conflicts. No re-explaining context.
+**Parallel agents.** Multiple agents working at once in isolated worktrees. No conflicts, no re-explaining context.
 
-**Automated review.** A 10-critic council (architecture, security, DX, performance, ops, and more) reviews every design before you see it. Severity-tagged findings. CRITICAL blocks the PR.
+**Teams.** Spin up a coordinated team of agents — shared mailbox and chat, with native Claude Code teammate UI.
 
-**Overnight mode.** `/dream` — queue wishes before bed. Wake up to reviewed PRs.
+**Automated review.** A council of specialist critics (architecture, security, DX, performance, ops…) reviews every change. Severity-tagged. CRITICAL blocks the merge.
 
-**Kanban boards.** Built-in task boards with custom pipelines and stage gates.
+**Overnight mode.** `/dream` — queue wishes before bed, wake up to reviewed PRs.
 
-**Postgres-backed.** All state lives in PostgreSQL — agents, tasks, events, messages. Queryable. Durable. Real-time via LISTEN/NOTIFY.
+**Persistent memory.** A git-versioned knowledge brain — agents search it before answering and write back what they learn, so context compounds instead of resetting every session.
 
-**Full observability.** Events, metrics, session replay, cost tracking. See everything your genie-spawned agents do — OTel-derived tool, cost, and API-request rows only cover sessions launched via `genie spawn` / `genie team create`; user-initiated Claude Code sessions are captured only when they export the OTLP env themselves.
+**Postgres-backed.** Tasks, events, and messages live in PostgreSQL — queryable, durable, real-time via LISTEN/NOTIFY. Your identity, skills, and memory stay as markdown in your repo.
 
-**Portable context.** Identity, skills, memory — all markdown files in your repo, git-versioned. You own everything.
+**Self-healing.** Built-in detectors catch and recover from zombie teams, orphaned sessions, and drift automatically.
 
-**Any AI provider.** Claude, Codex, or any OpenAI-compatible model. Bring your own agent.
+**Claude or Codex.** Bring your own agent — Genie drives either under the hood.
 
 ## Why Genie?
 
@@ -129,9 +80,8 @@ genie doctor
 
 - Re-explain context every new chat
 - One agent, one file at a time
-- Copy-paste PR descriptions manually
+- Copy-paste PR descriptions by hand
 - Review AI code yourself, line by line
-- Context lost mid-conversation
 - No memory between sessions
 
 </td>
@@ -141,9 +91,8 @@ genie doctor
 
 - Context captured once, inherited by every agent
 - Parallel agents in isolated worktrees
-- Automated severity-gated code review
-- Queue wishes overnight, wake up to PRs
-- 10-critic council catches what you'd miss
+- Automated severity-gated review
+- Queue wishes overnight, wake to PRs
 - Persistent memory across sessions
 
 </td>
@@ -156,83 +105,50 @@ genie doctor
 
 | Skill | What it does |
 |-------|-------------|
-| `/brainstorm` | Explore vague ideas with guided questions |
+| `/brainstorm` | Explore vague ideas until they're concrete |
 | `/wish` | Turn an idea into a scoped plan with acceptance criteria |
 | `/work` | Execute a wish with parallel agents |
 | `/review` | Severity-gated code review (SHIP or FIX-FIRST) |
-| `/council` | 10-perspective architectural deliberation |
-| `/dream` | Batch-execute wishes overnight |
-| `/trace` | Investigate bugs — reproduce, isolate, root cause |
+| `/council` | Multi-agent architectural deliberation (smart-routed) |
+| `/dream` | Batch-execute SHIP-ready wishes overnight |
+| `/trace` | Reproduce, isolate, and root-cause bugs |
 | `/fix` | Minimal targeted bug fixes |
-| `/report` | Deep investigation with browser + trace |
-| `/refine` | Transform rough prompts into structured specs |
+| `/report` | Deep bug investigation → issue |
+| `/refine` | Turn rough briefs into structured prompts |
 | `/learn` | Correct agent behavior from mistakes |
 | `/docs` | Audit and generate documentation |
-| `/pm` | Full project management playbook |
-| `/brain` | Knowledge graph with Obsidian-compatible vaults |
+| `/pm` | Full project-management playbook |
+| `/omni` | Wire a Genie agent to an Omni channel |
 | `/genie` | Auto-router — natural language to the right skill |
 | `/genie-hacks` | Community patterns and real-world workflows |
 | `/wizard` | Guided first-run onboarding |
 
 ## What's new in v4
 
-v4 is a ground-up rewrite. 700 commits. 300 files. ~19K lines.
+A ground-up rewrite.
 
 | | v3 | v4 |
 |---|---|---|
-| **State** | JSON files + NATS | PostgreSQL + LISTEN/NOTIFY |
+| **State** | JSON files + NATS | PostgreSQL + LISTEN/NOTIFY (+ git-versioned markdown) |
 | **UI** | CLI only | Full terminal UI |
-| **Memory** | None | Optional knowledge brain |
+| **Memory** | None | Knowledge brain |
 | **Tasks** | Basic | Kanban boards, templates, projects |
-| **Observability** | Minimal | OTLP, session capture, audit trail |
-| **Review** | Single pass | 10-critic council deliberation |
-| **Stability** | Best effort | Advisory locks, spawn watchdog, 200+ bug fixes |
+| **Review** | Single pass | Critic-council deliberation |
+| **Stability** | Best effort | Advisory locks, spawn watchdog, self-healing detectors |
 
-[Full v4 release notes →](https://github.com/automagik-dev/genie/releases/tag/v4.260402.18)
-
-### Observability substrate (v0)
-
-Structured event emission, signed subscription tokens, 4-tier retention, and
-an external dead-man's switch. Consumer-compat promises are published at
-[docs/observability-contract.md](docs/observability-contract.md); the 5-phase
-rollout plan at [docs/observability-rollout.md](docs/observability-rollout.md).
-
-### Executor read endpoint
-
-External consumers (e.g. the omni scope-enforcer) can query ground-truth turn
-state directly from `genie serve`. Two paths are supported:
-
-**HTTP** — `GET http://127.0.0.1:<port>/executors/:id/state` returns
-`{state, outcome, closed_at}` as JSON. The default port is `pgserve_port + 2`;
-override with `GENIE_EXECUTOR_READ_PORT`. Returns 404 for unknown IDs, 400 for
-non-UUID IDs, 200 otherwise. No authz — executor IDs are random UUIDs and the
-view exposes no secrets.
-
-**Direct SQL** — connect to genie-PG as the read-only `executors_reader` role
-and `SELECT state, outcome, closed_at FROM executors_public_state WHERE id = $1`.
-Layer login credentials on top:
-
-```sql
-CREATE ROLE omni_scope_enforcer LOGIN PASSWORD '…' IN ROLE executors_reader;
-```
-
-Response shape (`state` / `outcome` / `closed_at`) is the stable boundary
-contract; removing or renaming fields is a coordinated breaking change.
+[Full release notes →](https://github.com/automagik-dev/genie/releases/latest)
 
 ## Design
 
-Genie ships a single, dark-only color palette inspired by **Severance** — the Lumon MDR room. One source of truth (`packages/genie-tokens/`), three consumers (TUI, desktop app, tmux). See [docs/design-system.md](docs/design-system.md) for tokens, the Severance rationale, how to add a color, how to regenerate the tmux theme, and the visual snapshot workflow.
+A single dark-only palette inspired by **Severance** — one source of truth (`packages/genie-tokens/`), three consumers (TUI, desktop app, tmux).
 
 ---
 
 <p align="center">
-  <a href="https://docs.automagik.dev/genie"><strong>Docs</strong></a> &middot;
-  <a href="docs/design-system.md"><strong>Design</strong></a> &middot;
-  <a href="https://github.com/automagik-dev/genie/releases/tag/v4.260402.18"><strong>v4 Release</strong></a> &middot;
+  <a href="https://automagik.dev/genie"><strong>Docs</strong></a> &middot;
+  <a href="https://github.com/automagik-dev/genie/releases/latest"><strong>Releases</strong></a> &middot;
   <a href="https://discord.gg/xcW8c7fF3R"><strong>Discord</strong></a> &middot;
   <a href="LICENSE"><strong>MIT License</strong></a>
 </p>
 
-<p align="center">
-  <sub>You describe the problem. Genie does everything else.</sub>
-</p>
+<p align="center"><sub>You describe the problem. Genie does everything else.</sub></p>
