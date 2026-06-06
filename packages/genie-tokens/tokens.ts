@@ -27,9 +27,9 @@ export const tokens = {
   info: palette.info,
   success: palette.success,
 
-  severed: palette.innieGrey,
-  outieWarm: palette.outieAmber,
-  lumonBeige: palette.beige,
+  muted: palette.mutedGrey,
+  warm: palette.warmAmber,
+  beige: palette.beige,
 } as const;
 
 export type TokenKey = keyof typeof tokens;

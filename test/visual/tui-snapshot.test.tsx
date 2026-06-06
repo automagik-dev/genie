@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/react */
 /**
- * Visual regression harness for the Severance Lumon-MDR TUI palette.
+ * Visual regression harness for the petrol/mint TUI palette.
  *
  * Renders each major TUI surface to an opentui char-frame and asserts the
  * frame against a committed snapshot. The snapshot encodes both the layout

@@ -1,7 +1,7 @@
 /**
  * Genie design tokens — re-export from `@automagik/genie-tokens`.
  *
- * Severance Lumon-MDR palette: petrol bg, mint accent, calm amber/crimson alarms.
+ * Petrol/mint palette: petrol bg, mint accent, calm amber/crimson alarms.
  * All views import `palette`/`tokens` from here; never hard-code hex.
  */
 
@@ -26,7 +26,7 @@ export const radii = {
  * from `genie-tokens`.
  */
 export const theme = {
-  // Accent surface (legacy purple/violet → Severance mint)
+  // Accent surface (legacy purple/violet → mint)
   purple: palette.accentBright,
   violet: palette.accent,
   cyan: palette.info,

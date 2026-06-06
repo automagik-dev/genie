@@ -130,7 +130,7 @@ Wish: `wish/tui-native-selection`.
 
 ### Breaking — design system
 
-- **Unified design system on the Severance Lumon-MDR palette.** All color
+- **Unified design system on the petrol/mint palette.** All color
   tokens now live in a single workspace package, `packages/genie-tokens/`,
   consumed by the TUI (`src/tui/theme.ts`), the desktop app
   (`packages/genie-app/lib/theme.ts`), and tmux (via the generated
