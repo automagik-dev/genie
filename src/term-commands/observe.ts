@@ -30,6 +30,7 @@ interface ObserveAgentsOptions {
 }
 
 const FLAG_LABELS: Record<HealthFlag, string> = {
+  agent_error: 'ERROR',
   stale_executor: 'STALE',
   missing_session: 'NO-SESSION',
   missing_attribution: 'UNATTRIBUTED',

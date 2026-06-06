@@ -76,6 +76,7 @@ const {
   getTuiKeybindings,
   getTuiQuitBindingArgs,
   isStoppingLockActive,
+  printStandaloneBrainStatus,
   startBrainServerIfEnabled,
   startTuiTmuxServer,
   writeStoppingLockSync,
@@ -243,6 +244,19 @@ describe('brain startup integration', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test('reports a standalone brain binary as installed even when no server is running', async () => {
+    const logs: string[] = [];
+
+    const handled = await printStandaloneBrainStatus({
+      readActiveConfig: () => null,
+      getStandaloneVersion: () => '1.64.0',
+      log: (message: string) => logs.push(message),
+    });
+
+    expect(handled).toBe(true);
+    expect(logs).toEqual(['  brain:      installed standalone (1.64.0, server not running)']);
   });
 
   test('schedules a later brain vault while an earlier start is pending', async () => {

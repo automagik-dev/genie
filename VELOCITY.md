@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-05-22 12:04 UTC | Data range: 2026-03-13 to 2026-05-22
+> Last updated: 2026-06-06 12:07 UTC | Data range: 2026-05-06 to 2026-06-06
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 56 | 335 | 172 |
-| Releases | 0 | 3 | 0 |
-| LoC (net) | +1.9K | +40.6K | — |
-| Contributors | 9 | 10 | 12 |
+| Commits | 18 | 136 | 136 |
+| Releases | 0 | 0 | 0 |
+| LoC (net) | -52 | +939.5K | — |
+| Contributors | 4 | 8 | 8 |
 
 ---
 
@@ -31,15 +31,13 @@
 
 | Rank | Contributor | Commits (approx) |
 |-----:|-------------|------------------:|
-| 1 | Felipe Rosa | 81 |
-| 2 | github-actions[bot] | 78 |
-| 3 | Genie | 62 |
-| 4 | Felipe | 52 |
-| 5 | Claude | 37 |
-| 6 | release-bot | 7 |
-| 7 | Claude (Opus 4.7) | 2 |
-| 8 | Cezar | 2 |
-| 9 | Genie Automagik | 2 |
-| 10 | namastex888 | 2 |
+| 1 | Claude | 24 |
+| 2 | github-actions[bot] | 24 |
+| 3 | release-bot | 23 |
+| 4 | Felipe Rosa | 16 |
+| 5 | Cezar | 11 |
+| 6 | Felipe | 11 |
+| 7 | Genie Automagik | 11 |
+| 8 | automagik-genie | 1 |
 
-*12 contributors since 2026-05-11*
+*8 contributors since 2026-05-22*

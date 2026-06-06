@@ -664,7 +664,7 @@ export async function isPaneProcessRunning(
     const exec: ExecSyncFn = execSyncFn ?? ((await import('node:child_process')).execSync as ExecSyncFn);
     // Check direct children and grandchildren for the target process name
     const output = exec(
-      `pgrep -la -P ${panePid} 2>/dev/null; for cpid in $(pgrep -P ${panePid} 2>/dev/null); do pgrep -la -P "$cpid" 2>/dev/null; done; true`,
+      `pgrep -la -P ${panePid} 2>/dev/null; for cpid in $(pgrep -P ${panePid} 2>/dev/null); do pgrep -la -P "$cpid" 2>/dev/null; ps -p "$cpid" -o comm= 2>/dev/null; done; true`,
       { encoding: 'utf-8', timeout: 5000 },
     );
     return output.toLowerCase().includes(processName.toLowerCase());
