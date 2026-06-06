@@ -140,7 +140,7 @@ A ground-up rewrite.
 
 ## Design
 
-A single dark-only palette inspired by **Severance** — one source of truth (`packages/genie-tokens/`), three consumers (TUI, desktop app, tmux).
+A single dark-only palette from one source of truth (`packages/genie-tokens/`), shared by three consumers (TUI, desktop app, tmux).
 
 ---
 

@@ -41,7 +41,7 @@ describe('palette shape', () => {
     }
   });
 
-  test('Severance signature values are exact', () => {
+  test('signature palette values are exact', () => {
     expect(palette.bg).toBe('#0a1d2a');
     expect(palette.accent).toBe('#7fc8a9');
     expect(palette.error).toBe('#a83838');
@@ -59,9 +59,9 @@ describe('semantic tokens', () => {
     'dangerStrong',
     'attention',
     'info',
-    'severed',
-    'outieWarm',
-    'lumonBeige',
+    'muted',
+    'warm',
+    'beige',
   ] as const;
 
   test.each(requiredAliases)('%s is exposed and resolves to a palette value', (alias) => {
@@ -79,9 +79,9 @@ describe('semantic tokens', () => {
     expect(tokens.dangerStrong).toBe(palette.errorBright);
     expect(tokens.attention).toBe(palette.warning);
     expect(tokens.info).toBe(palette.info);
-    expect(tokens.severed).toBe(palette.innieGrey);
-    expect(tokens.outieWarm).toBe(palette.outieAmber);
-    expect(tokens.lumonBeige).toBe(palette.beige);
+    expect(tokens.muted).toBe(palette.mutedGrey);
+    expect(tokens.warm).toBe(palette.warmAmber);
+    expect(tokens.beige).toBe(palette.beige);
   });
 });
 
@@ -103,8 +103,8 @@ describe('WCAG AA contrast', () => {
   });
 
   test('errorBright on bg meets 3:1 — escalated alarm state must be readable', () => {
-    // Note: `palette.error` (#a83838) is intentionally desaturated per the Severance
-    // design ("Red is rare and means alarm — never decorative"). When higher contrast
+    // Note: `palette.error` (#a83838) is intentionally desaturated by design
+    // ("Red is rare and means alarm — never decorative"). When higher contrast
     // is required, surfaces use `errorBright` (the hover/escalation state).
     expect(contrast(palette.errorBright, palette.bg)).toBeGreaterThanOrEqual(3);
   });
