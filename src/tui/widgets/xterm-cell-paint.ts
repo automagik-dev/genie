@@ -121,7 +121,7 @@ export interface PaintOptions {
   cols: number;
   /** Max rows to paint. */
   rows: number;
-  /** Host theme overrides (default ≈ Lumon-MDR palette). */
+  /** Host theme overrides (default ≈ petrol/mint palette). */
   theme?: PaintTheme;
 }
 

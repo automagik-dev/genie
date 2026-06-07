@@ -148,7 +148,7 @@ export function getAgentColor(node: TreeNodeType): string {
   // Mirrors getAgentIcon — work-state first, process state fallback.
   switch (node.workState) {
     case 'in_flight':
-      // Was palette.emerald pre design-system rebase. Lumon-MDR migration
+      // Was palette.emerald pre design-system rebase. The palette migration
       // hard-cut emerald/cyan aliases (theme.ts:5); accentBright is the
       // semantic equivalent for "active, attention-getting" without
       // re-introducing the dropped color name.

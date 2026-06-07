@@ -1,5 +1,5 @@
 /**
- * TUI theme — Severance Lumon-MDR palette.
+ * TUI theme — petrol/mint palette.
  *
  * Hard re-export of the workspace `genie-tokens` package. No backward-compat
  * aliases for the old purple/violet/cyan/emerald names; every call site has

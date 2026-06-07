@@ -2,7 +2,7 @@
 /**
  * Generate the tmux theme file from genie-tokens.
  *
- * Reads the Severance Lumon-MDR palette from `packages/genie-tokens` and emits
+ * Reads the petrol/mint palette from `packages/genie-tokens` and emits
  * `scripts/tmux/.generated.theme.conf` with every color-bearing tmux directive:
  * styles (status, pane border, message, mode, clock) and format strings
  * (pane-border-format, status-format[0], status-format[1]).
