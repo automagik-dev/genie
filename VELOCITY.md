@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-06-09 12:12 UTC | Data range: 2026-05-06 to 2026-06-09
+> Last updated: 2026-06-10 12:11 UTC | Data range: 2026-05-06 to 2026-06-10
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 6 | 136 | 143 |
+| Commits | 2 | 136 | 179 |
 | Releases | 0 | 0 | 0 |
-| LoC (net) | 0 | +939.5K | — |
-| Contributors | 3 | 8 | 8 |
+| LoC (net) | +6 | +939.5K | — |
+| Contributors | 2 | 8 | 10 |
 
 ---
 
@@ -40,4 +40,4 @@
 | 7 | Genie Automagik | 11 |
 | 8 | automagik-genie | 1 |
 
-*8 contributors since 2026-05-22*
+*10 contributors since 2026-05-22*
