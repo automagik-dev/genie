@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-06-11 12:14 UTC | Data range: 2026-05-06 to 2026-06-11
+> Last updated: 2026-06-11 12:16 UTC | Data range: 2026-05-12 to 2026-06-11
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 3 | 139 | 6.6K |
-| Releases | 0 | 0 | 651 |
-| LoC (net) | +4 | +939.5K | — |
-| Contributors | 1 | 8 | 37 |
+| Commits | 43 | 327 | 6.6K |
+| Releases | 7 | 70 | 651 |
+| LoC (net) | -97 | +1.3M | — |
+| Contributors | 5 | 14 | 37 |
 
 ---
 
@@ -31,14 +31,20 @@
 
 | Rank | Contributor | Commits (approx) |
 |-----:|-------------|------------------:|
-| 1 | Claude | 27 |
-| 2 | github-actions[bot] | 24 |
-| 3 | release-bot | 23 |
-| 4 | Felipe Rosa | 16 |
-| 5 | Cezar | 11 |
-| 6 | Felipe | 11 |
+| 1 | Claude | 55 |
+| 2 | github-actions[bot] | 53 |
+| 3 | release-bot | 49 |
+| 4 | Felipe Rosa | 37 |
+| 5 | Felipe | 28 |
+| 6 | Cezar | 15 |
 | 7 | Genie Automagik | 11 |
-| 8 | automagik-genie | 1 |
+| 8 | namastex888 | 9 |
+| 9 | snyk-bot | 7 |
+| 10 | Claude (Opus 4.7) | 5 |
+| 11 | Genie | 4 |
+| 12 | Caio Rodrigues | 3 |
+| 13 | Automagik Genie | 3 |
+| 14 | automagik-genie | 1 |
 
 *37 contributors since 2025-07-31*
 
