@@ -1,14 +1,14 @@
 # Velocity Dashboard
 
-> Last updated: 2026-06-11 12:16 UTC | Data range: 2026-05-12 to 2026-06-11
+> Last updated: 2026-06-12 12:08 UTC | Data range: 2026-05-12 to 2026-06-12
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 43 | 327 | 6.6K |
-| Releases | 7 | 70 | 651 |
-| LoC (net) | -97 | +1.3M | — |
+| Commits | 39 | 324 | 5.7K |
+| Releases | 6 | 69 | 646 |
+| LoC (net) | -56 | +1.3M | — |
 | Contributors | 5 | 14 | 37 |
 
 ---
@@ -32,9 +32,9 @@
 | Rank | Contributor | Commits (approx) |
 |-----:|-------------|------------------:|
 | 1 | Claude | 55 |
-| 2 | github-actions[bot] | 53 |
-| 3 | release-bot | 49 |
-| 4 | Felipe Rosa | 37 |
+| 2 | github-actions[bot] | 52 |
+| 3 | release-bot | 48 |
+| 4 | Felipe Rosa | 36 |
 | 5 | Felipe | 28 |
 | 6 | Cezar | 15 |
 | 7 | Genie Automagik | 11 |
@@ -46,7 +46,7 @@
 | 13 | Automagik Genie | 3 |
 | 14 | automagik-genie | 1 |
 
-*37 contributors since 2025-07-31*
+*37 contributors since 2025-09-27*
 
 ---
 
@@ -56,5 +56,5 @@
 
 | Milestone | Period | Days | Commits (linear) | Commits (all) | PRs merged | LoC (net) | Contributors |
 |-----------|--------|-----:|-----------------:|--------------:|-----------:|----------:|-------------:|
-| Genesis → v4 stable | 2026-05-23 → 2026-03-23 | -61 | 1.3K | 6.6K | 110 | +60.2K | 22 |
-| v3 → v4 (version sprint) | 2026-03-08 → 2026-03-23 | 15 | 189 | 4.6K | 65 | +22.2K | 11 |
+| Genesis → v4 stable | 2026-05-24 → 2026-03-23 | -62 | 1.3K | 5.7K | 110 | +60.2K | 22 |
+| v3 → v4 (version sprint) | 2026-03-08 → 2026-03-23 | 15 | 189 | 3.6K | 65 | +22.2K | 11 |
