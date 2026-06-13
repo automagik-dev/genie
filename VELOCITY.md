@@ -1,15 +1,15 @@
 # Velocity Dashboard
 
-> Last updated: 2026-06-12 12:08 UTC | Data range: 2026-05-12 to 2026-06-12
+> Last updated: 2026-06-13 12:07 UTC | Data range: 2026-05-12 to 2026-06-13
 
 ## At a Glance
 
 | Metric | 7 days | 30 days | All time |
 |--------|-------:|--------:|---------:|
-| Commits | 39 | 324 | 5.7K |
-| Releases | 6 | 69 | 646 |
-| LoC (net) | -56 | +1.3M | — |
-| Contributors | 5 | 14 | 37 |
+| Commits | 22 | 318 | 143 |
+| Releases | 4 | 68 | 0 |
+| LoC (net) | +26 | +1.3M | — |
+| Contributors | 4 | 14 | 8 |
 
 ---
 
@@ -32,29 +32,18 @@
 | Rank | Contributor | Commits (approx) |
 |-----:|-------------|------------------:|
 | 1 | Claude | 55 |
-| 2 | github-actions[bot] | 52 |
-| 3 | release-bot | 48 |
-| 4 | Felipe Rosa | 36 |
-| 5 | Felipe | 28 |
+| 2 | github-actions[bot] | 51 |
+| 3 | release-bot | 47 |
+| 4 | Felipe Rosa | 35 |
+| 5 | Felipe | 27 |
 | 6 | Cezar | 15 |
 | 7 | Genie Automagik | 11 |
 | 8 | namastex888 | 9 |
-| 9 | snyk-bot | 7 |
+| 9 | snyk-bot | 6 |
 | 10 | Claude (Opus 4.7) | 5 |
 | 11 | Genie | 4 |
 | 12 | Caio Rodrigues | 3 |
 | 13 | Automagik Genie | 3 |
 | 14 | automagik-genie | 1 |
 
-*37 contributors since 2025-09-27*
-
----
-
-## Major Version Milestones
-
-> How long did it take to build each major version, from where we were to where we landed.
-
-| Milestone | Period | Days | Commits (linear) | Commits (all) | PRs merged | LoC (net) | Contributors |
-|-----------|--------|-----:|-----------------:|--------------:|-----------:|----------:|-------------:|
-| Genesis → v4 stable | 2026-05-24 → 2026-03-23 | -62 | 1.3K | 5.7K | 110 | +60.2K | 22 |
-| v3 → v4 (version sprint) | 2026-03-08 → 2026-03-23 | 15 | 189 | 3.6K | 65 | +22.2K | 11 |
+*8 contributors since 2026-05-22*
