@@ -201,6 +201,13 @@ export function buildOmniSpawnParams(
     nativeTeam: {
       enabled: true,
       agentName,
+      // Register the agent type so the launch command emits `--agent-type <name>`
+      // alongside `--agent <name>`. Claude Code >=2.1.191 rejects `--agent <name>`
+      // when the type was never declared ("agent '<name>' not found"), which kills
+      // every freshly-spawned omni turn-handler ~15s after launch. The base/dir
+      // spawn path already sets this via protocol-router-spawn (template.role);
+      // the omni bridge path was missing it.
+      agentType: agentName,
       color: (entry.color as 'blue' | undefined) ?? undefined,
     },
   };

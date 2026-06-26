@@ -129,6 +129,15 @@ describe('buildOmniSpawnParams', () => {
     expect(params.nativeTeam?.color).toBe('pink');
   });
 
+  test('sets nativeTeam.agentType so the launch command emits --agent-type', () => {
+    // Regression: Claude Code >=2.1.191 rejects `--agent <name>` when the type
+    // was never declared, killing every freshly-spawned omni turn-handler ~15s
+    // after launch. agentType must match the agent name (mirrors the base/dir
+    // spawn path which sets it from template.role).
+    const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
+    expect(params.nativeTeam?.agentType).toBe('simone');
+  });
+
   test('passes model from directory entry', () => {
     const params = buildOmniSpawnParams('simone', 'chat123', fakeEntry, {});
     expect(params.model).toBe('opus');
