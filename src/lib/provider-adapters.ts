@@ -416,7 +416,15 @@ function appendSessionFlags(parts: string[], params: SpawnParams): void {
   // the agents.ts:buildSpawnParams call site is now responsible for
   // setting agentTemplate to the verified template name so the right
   // value reaches Claude's template lookup.
-  const claudeAgentFlag = params.agentTemplate ?? params.role;
+  // Claude Code >=2.1.191 hard-rejects `--agent <name>` unless <name> is a
+  // registered subagent definition ("agent '<name>' not found"), which kills
+  // the spawn ~immediately. Native-team workers establish identity via
+  // --agent-id/--agent-name/--agent-type and carry their own system prompt
+  // (AGENTS.md), so they neither need nor want a subagent definition. Only
+  // emit --agent for non-native-team spawns. (Empirically verified on 2.1.191:
+  // the native-team flag set launches cleanly without --agent; adding --agent
+  // <unregistered-name> makes it exit before the readiness probe.)
+  const claudeAgentFlag = params.nativeTeam?.enabled ? undefined : (params.agentTemplate ?? params.role);
   if (claudeAgentFlag) parts.push('--agent', escapeShellArg(claudeAgentFlag));
   if (params.model) parts.push('--model', escapeShellArg(params.model));
   // NOTE: --name intentionally NOT emitted. CC stores --name as `customTitle`

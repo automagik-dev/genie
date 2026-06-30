@@ -192,6 +192,25 @@ describe('buildClaudeCommand', () => {
     expect(result.command).toContain("--agent 'engineer'");
   });
 
+  // CC 2.1.191 regression: native-team workers must NOT receive a bare
+  // `--agent <name>` flag. 2.1.191 hard-rejects `--agent <unregistered-name>`
+  // ("agent '<name>' not found"), killing the worker before the readiness
+  // probe. Identity is carried by --agent-id/--agent-name/--agent-type instead.
+  it('suppresses bare --agent when nativeTeam is enabled', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'genie-nodra',
+      systemPromptFile: '/path/to/AGENTS.md',
+      nativeTeam: { enabled: true, agentName: 'genie-nodra', agentType: 'genie-nodra' },
+    });
+    // Native-team identity flags ARE present...
+    expect(result.command).toContain("--agent-name 'genie-nodra'");
+    expect(result.command).toContain("--agent-type 'genie-nodra'");
+    // ...but the bare `--agent '<name>'` flag is NOT.
+    expect(result.command).not.toContain("--agent '");
+  });
+
   it('does not include hidden teammate flags', () => {
     const result = buildClaudeCommand({ provider: 'claude', team: 'work', role: 'implementor' });
     expect(result.command).not.toContain('--teammate');
