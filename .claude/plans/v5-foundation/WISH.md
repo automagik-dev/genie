@@ -83,11 +83,11 @@ Lay the foundation of Genie v5 "lightweight body": operational state (tasks, dep
 6. `.gitignore` gains `.genie/genie.db`, `.genie/genie.db-wal`, `.genie/genie.db-shm` — operational state is never git-versioned (Decision 1's premise; no rule covers the DB today).
 
 **Acceptance Criteria:**
-- [ ] Schema created idempotently; `user_version` stamped; malformed DB refused with typed error.
-- [ ] Ready-set recompute is idempotent and monotonic; cycles rejected at edge insertion.
-- [ ] Checkout race test: N concurrent claimants, exactly one winner, losers get a typed conflict error.
-- [ ] Worktree test proves shared visibility without any daemon.
-- [ ] No import in `src/lib/v5/` resolves to db.ts, pgserve, nats, or postgres.
+- [x] Schema created idempotently; `user_version` stamped; malformed DB refused with typed error.
+- [x] Ready-set recompute is idempotent and monotonic; cycles rejected at edge insertion.
+- [x] Checkout race test: N concurrent claimants, exactly one winner, losers get a typed conflict error.
+- [x] Worktree test proves shared visibility without any daemon.
+- [x] No import in `src/lib/v5/` resolves to db.ts, pgserve, nats, or postgres.
 
 **Validation:**
 ```bash
