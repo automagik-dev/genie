@@ -122,10 +122,10 @@ grep -q "^\.genie/genie\.db$" .gitignore
 4. Colocated tests using tmpdir + `GENIE_HOME` isolation; exit codes and stderr asserted, not just stdout; `export` round-trip test.
 
 **Acceptance Criteria:**
-- [ ] Each subcommand exits non-zero with a clear stderr message on invalid input (missing id, no DB, claim conflict).
-- [ ] `board` output reflects status changes with no stored view state.
-- [ ] `export` emits complete state as JSON (all ~6 tables represented).
-- [ ] No PG/NATS/registry import reachable from the new commands.
+- [x] Each subcommand exits non-zero with a clear stderr message on invalid input (missing id, no DB, claim conflict).
+- [x] `board` output reflects status changes with no stored view state.
+- [x] `export` emits complete state as JSON (all ~6 tables represented).
+- [x] No PG/NATS/registry import reachable from the new commands.
 
 **Validation:**
 ```bash

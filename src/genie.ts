@@ -91,6 +91,8 @@ import { registerTaskCommands } from './term-commands/task.js';
 import { registerTeamNamespace } from './term-commands/team.js';
 import { registerTemplateCommands } from './term-commands/template.js';
 import { registerTypeCommands } from './term-commands/type.js';
+import { registerV5BoardCommands } from './term-commands/v5-board.js';
+import { registerV5TaskCommands } from './term-commands/v5-task.js';
 import { registerWishCommands } from './term-commands/wish.js';
 
 // Safety net: ensure git repo is never in bare mode.
@@ -309,6 +311,11 @@ registerTemplateCommands(program);
 registerBrainCommands(program);
 registerBriefCommands(program);
 registerApprovalCommands(program);
+
+// v5 namespace — thin commands over the zero-daemon SQLite state engine.
+const v5 = program.command('v5').description('Genie v5 — zero-daemon SQLite state (task/board)');
+registerV5TaskCommands(v5);
+registerV5BoardCommands(v5);
 
 // ============================================================================
 // Turn-close verbs — genie done / blocked / failed

@@ -82,6 +82,11 @@ function normalizeGitPath(path: string): string {
  * `git rev-parse --git-common-dir`, whose parent is the MAIN repo root even when
  * invoked from a linked worktree — so every worktree resolves to one genie.db.
  * Falls back to `cwd` when not inside a git repo.
+ *
+ * Git discovery walks up from `cwd`, so invocation from a repo subdirectory
+ * (e.g. `repo/src/`) still resolves to the repo-root DB — no ceiling is imposed.
+ * A prior `GIT_CEILING_DIRECTORIES=dirname(cwd)` broke subdir discovery,
+ * silently falling back to cwd and creating a stray `repo/src/.genie/genie.db`.
  */
 export function resolveRepoRoot(cwd?: string): string {
   const dir = cwd ?? process.cwd();
@@ -90,7 +95,6 @@ export function resolveRepoRoot(cwd?: string): string {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: dir,
-      env: { ...process.env, GIT_CEILING_DIRECTORIES: dirname(dir) },
     }).trim();
     return normalizeGitPath(dirname(commonDir));
   } catch {
@@ -205,6 +209,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   status     TEXT NOT NULL CHECK (status IN ('blocked', 'ready', 'in_progress', 'done')),
   claimed_by TEXT,
   claimed_at INTEGER,
+  wish       TEXT,
+  group_name TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -244,4 +250,18 @@ CREATE INDEX IF NOT EXISTS idx_stage_log_task ON stage_log(task_id);
 /** Create every table/index if absent. Idempotent — pure `IF NOT EXISTS`. */
 export function ensureSchema(db: Database): void {
   db.exec(SCHEMA_SQL);
+  ensureTaskColumns(db);
+}
+
+/**
+ * Additive, in-place column backfill for `tasks`. `CREATE TABLE IF NOT EXISTS`
+ * never alters an existing table, so a DB stamped by an earlier build (which
+ * lacked `wish`/`group_name`) needs the columns added. Both are nullable, so
+ * this stays within `user_version = 1` — no destructive migration, no version
+ * bump. Idempotent: a table that already has the columns is left untouched.
+ */
+function ensureTaskColumns(db: Database): void {
+  const cols = new Set((db.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name));
+  if (!cols.has('wish')) db.exec('ALTER TABLE tasks ADD COLUMN wish TEXT');
+  if (!cols.has('group_name')) db.exec('ALTER TABLE tasks ADD COLUMN group_name TEXT');
 }

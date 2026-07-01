@@ -27,6 +27,10 @@ export interface TaskRow {
   status: TaskStatus;
   claimedBy: string | null;
   claimedAt: number | null;
+  /** Wish slug this task belongs to, or null. */
+  wish: string | null;
+  /** Wish-group name this task belongs to, or null. */
+  group: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -34,6 +38,10 @@ export interface TaskRow {
 export interface CreateTaskInput {
   title: string;
   boardId?: string;
+  /** Wish slug this task belongs to. */
+  wish?: string;
+  /** Wish-group name this task belongs to. */
+  group?: string;
   /** IDs of existing tasks this task depends on. Non-empty ⇒ starts `blocked`. */
   dependsOn?: string[];
 }
@@ -104,6 +112,16 @@ export class UnknownTaskError extends Error {
   }
 }
 
+/** A referenced board does not exist. */
+export class UnknownBoardError extends Error {
+  readonly ref: string;
+  constructor(ref: string) {
+    super(`Board not found: ${ref}`);
+    this.name = 'UnknownBoardError';
+    this.ref = ref;
+  }
+}
+
 /** Lost the race to claim a task — another worker holds a live claim. */
 export class CheckoutConflictError extends Error {
   readonly taskId: string;
@@ -152,6 +170,8 @@ interface RawTask {
   status: TaskStatus;
   claimed_by: string | null;
   claimed_at: number | null;
+  wish: string | null;
+  group_name: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -164,6 +184,8 @@ function mapTask(row: RawTask): TaskRow {
     status: row.status,
     claimedBy: row.claimed_by,
     claimedAt: row.claimed_at,
+    wish: row.wish,
+    group: row.group_name,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -189,6 +211,34 @@ export function listBoards(db: Database): BoardRow[] {
   return rows.map((r) => ({ id: r.id, name: r.name, createdAt: r.created_at }));
 }
 
+export function getBoard(db: Database, id: string): BoardRow | null {
+  const row = db.query('SELECT id, name, created_at FROM boards WHERE id = ?').get(id) as {
+    id: string;
+    name: string;
+    created_at: number;
+  } | null;
+  return row ? { id: row.id, name: row.name, createdAt: row.created_at } : null;
+}
+
+export function getBoardByName(db: Database, name: string): BoardRow | null {
+  const row = db.query('SELECT id, name, created_at FROM boards WHERE name = ?').get(name) as {
+    id: string;
+    name: string;
+    created_at: number;
+  } | null;
+  return row ? { id: row.id, name: row.name, createdAt: row.created_at } : null;
+}
+
+/**
+ * Resolve a board by id first, then by unique name. Throws `UnknownBoardError`
+ * if neither matches — lets the CLI accept `--board <id-or-name>` uniformly.
+ */
+export function resolveBoard(db: Database, ref: string): BoardRow {
+  const board = getBoard(db, ref) ?? getBoardByName(db, ref);
+  if (!board) throw new UnknownBoardError(ref);
+  return board;
+}
+
 // ============================================================================
 // Task CRUD
 // ============================================================================
@@ -199,15 +249,17 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
   const now = Date.now();
   const status: TaskStatus = deps.length === 0 ? 'ready' : 'blocked';
 
+  // Validate the board up front so a missing reference surfaces as a typed
+  // UnknownBoardError rather than a raw foreign-key SqliteError from the insert.
+  if (input.boardId != null && !getBoard(db, input.boardId)) {
+    throw new UnknownBoardError(input.boardId);
+  }
+
   const insert = db.transaction(() => {
-    db.query('INSERT INTO tasks (id, board_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(
-      id,
-      input.boardId ?? null,
-      input.title,
-      status,
-      now,
-      now,
-    );
+    db.query(
+      `INSERT INTO tasks (id, board_id, title, status, wish, group_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, input.boardId ?? null, input.title, status, input.wish ?? null, input.group ?? null, now, now);
     for (const depId of deps) {
       addDependencyInTx(db, id, depId);
     }
@@ -222,10 +274,29 @@ export function getTask(db: Database, id: string): TaskRow | null {
   return row ? mapTask(row) : null;
 }
 
-export function listTasks(db: Database, filter?: { status?: TaskStatus }): TaskRow[] {
-  const rows = filter?.status
-    ? (db.query('SELECT * FROM tasks WHERE status = ? ORDER BY created_at').all(filter.status) as RawTask[])
-    : (db.query('SELECT * FROM tasks ORDER BY created_at').all() as RawTask[]);
+export interface TaskFilter {
+  status?: TaskStatus;
+  boardId?: string;
+  wish?: string;
+}
+
+export function listTasks(db: Database, filter: TaskFilter = {}): TaskRow[] {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (filter.status) {
+    clauses.push('status = ?');
+    params.push(filter.status);
+  }
+  if (filter.boardId) {
+    clauses.push('board_id = ?');
+    params.push(filter.boardId);
+  }
+  if (filter.wish) {
+    clauses.push('wish = ?');
+    params.push(filter.wish);
+  }
+  const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+  const rows = db.query(`SELECT * FROM tasks${where} ORDER BY created_at`).all(...params) as RawTask[];
   return rows.map(mapTask);
 }
 
@@ -273,6 +344,14 @@ function addDependencyInTx(db: Database, taskId: string, dependsOnId: string): v
 export function addDependency(db: Database, taskId: string, dependsOnId: string): void {
   const tx = db.transaction(() => addDependencyInTx(db, taskId, dependsOnId));
   tx();
+}
+
+/** IDs this task directly depends on. */
+export function getDependencies(db: Database, taskId: string): string[] {
+  const rows = db
+    .query('SELECT depends_on_id FROM task_dependencies WHERE task_id = ? ORDER BY depends_on_id')
+    .all(taskId) as Array<{ depends_on_id: string }>;
+  return rows.map((r) => r.depends_on_id);
 }
 
 // ============================================================================
@@ -604,4 +683,65 @@ function promoteReadyGroups(db: Database, wish: string, now: number): void {
       );
     }
   }
+}
+
+// ============================================================================
+// Full-state export
+// ============================================================================
+
+/**
+ * Complete, structure-preserving snapshot of every table in the database, as
+ * raw rows keyed by table name. Powers `genie v5 task export` — a durable,
+ * daemon-free dump of all operational state to JSON. Order-stable per table so
+ * diffs stay legible.
+ */
+export interface StateExport {
+  schemaVersion: number;
+  meta: Array<{ key: string; value: string }>;
+  boards: RawBoard[];
+  tasks: RawTask[];
+  task_dependencies: Array<{ task_id: string; depends_on_id: string }>;
+  stage_log: RawStage[];
+  wish_groups: RawWishGroup[];
+}
+
+interface RawBoard {
+  id: string;
+  name: string;
+  created_at: number;
+}
+
+interface RawStage {
+  id: number;
+  task_id: string;
+  stage: string;
+  note: string | null;
+  created_at: number;
+}
+
+interface RawWishGroup {
+  wish: string;
+  name: string;
+  status: WishGroupStatus;
+  depends_on: string;
+  assignee: string | null;
+  started_at: number | null;
+  completed_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export function exportState(db: Database): StateExport {
+  const schemaVersion = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version;
+  return {
+    schemaVersion,
+    meta: db.query('SELECT key, value FROM meta ORDER BY key').all() as StateExport['meta'],
+    boards: db.query('SELECT * FROM boards ORDER BY created_at, id').all() as RawBoard[],
+    tasks: db.query('SELECT * FROM tasks ORDER BY created_at, id').all() as RawTask[],
+    task_dependencies: db
+      .query('SELECT task_id, depends_on_id FROM task_dependencies ORDER BY task_id, depends_on_id')
+      .all() as StateExport['task_dependencies'],
+    stage_log: db.query('SELECT * FROM stage_log ORDER BY id').all() as RawStage[],
+    wish_groups: db.query('SELECT * FROM wish_groups ORDER BY wish, name').all() as RawWishGroup[],
+  };
 }
