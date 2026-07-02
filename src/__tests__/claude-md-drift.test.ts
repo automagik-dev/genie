@@ -28,6 +28,8 @@ const RETIRED_FOSSILS: ReadonlyArray<string> = [
   'workers.json',
   'GENIE_IDLE_TIMEOUT_MS',
   'buildTeamLeadCommand',
+  'native-teams',
+  'mailbox',
 ];
 
 // v5 command surface that MUST stay documented so the file can't drift back

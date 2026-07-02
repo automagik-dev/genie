@@ -150,9 +150,10 @@ const AGENT_COMMANDS = {
  */
 function resolveAgentCommand(agent: string | undefined): (promptPath: string) => string {
   const name = agent ?? 'claude';
-  const build = (AGENT_COMMANDS as Record<string, ((promptPath: string) => string) | undefined>)[name];
-  if (!build) throw new InvalidAgentError(name);
-  return build;
+  if (name in AGENT_COMMANDS) {
+    return AGENT_COMMANDS[name as keyof typeof AGENT_COMMANDS];
+  }
+  throw new InvalidAgentError(name);
 }
 
 // ============================================================================
