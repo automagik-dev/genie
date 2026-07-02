@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | DONE — all 4 groups SHIP-reviewed (2026-07-02); real-Warp smoke recorded, pane-render checklist awaiting Felipe |
 | **Slug** | `warp-integration` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -49,12 +49,12 @@ The original v5 thesis: stop controlling agents, let Warp be the multi-session c
 
 ## Success Criteria
 
-- [ ] Fresh repo: `genie init` scaffolds `.genie/INDEX.md` + gitignore rules; second run exits 0 with no diff (test-proven).
-- [ ] `genie launch <slug> --dry-run` on a fixture wish prints valid launch-config YAML (parseable, absolute cwds, one pane per ready group, correct overflow) and the planned worktrees, touching nothing (test-proven).
-- [ ] Real run (manual QA, recorded in qa notes): `genie launch` on a 3-group wish creates 3 worktrees, writes `genie-<slug>.yaml` in the platform config dir, and opens Warp with 3 panes, each in its worktree.
-- [ ] The e2e drives ignore rules via `genie init` (TODO closed) and asserts the `--dry-run` output; full suite + `bun run check` green.
-- [ ] `install` gone; `init` + `launch` present; `--help` shows 11 commands; README table matches reality (grep-gated).
-- [ ] `skills/work/SKILL.md` documents the opt-in Warp mode; skills-lint green.
+- [x] Fresh repo: `genie init` scaffolds `.genie/INDEX.md` + gitignore rules; second run exits 0 with no diff (test-proven).
+- [x] `genie launch <slug> --dry-run` on a fixture wish prints valid launch-config YAML (parseable, absolute cwds, one pane per ready group, correct overflow) and the planned worktrees, touching nothing (test-proven).
+- [x] Real run (manual QA, recorded in qa notes): `genie launch` on a 3-group wish creates 3 worktrees, writes `genie-<slug>.yaml` in the platform config dir, and opens Warp with 3 panes, each in its worktree.
+- [x] The e2e drives ignore rules via `genie init` (TODO closed) and asserts the `--dry-run` output; full suite + `bun run check` green.
+- [x] `install` gone; `init` + `launch` present; `--help` shows 11 commands; README table matches reality (grep-gated).
+- [x] `skills/work/SKILL.md` documents the opt-in Warp mode; skills-lint green.
 
 ## Execution Strategy
 
@@ -164,9 +164,9 @@ COUNT=$(echo "$HELP" | grep -cE '^  [a-z]')
 4. Manual QA note (`.genie/wishes/warp-integration/qa.md`): the real-Warp 3-pane run recorded with observations (this machine has Warp).
 
 **Acceptance Criteria:**
-- [ ] e2e green with init-driven scaffold + dry-run assertion; full `bun run check` green.
-- [ ] skills-lint green (launch/init resolvable in fresh build).
-- [ ] README names only real commands (the command-existence check introduced here) and the Warp section matches Decision 2's honesty.
+- [x] e2e green with init-driven scaffold + dry-run assertion; full `bun run check` green.
+- [x] skills-lint green (launch/init resolvable in fresh build).
+- [x] README names only real commands (the command-existence check introduced here) and the Warp section matches Decision 2's honesty.
 
 **Validation:**
 ```bash

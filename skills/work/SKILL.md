@@ -54,6 +54,16 @@ Dispatch is a Claude Code native team: the orchestrator spawns subagents with th
 
 Reviewer ≠ engineer is a hard rule: always spawn a fresh subagent for review; an agent must never review its own work. Coordinate mid-flight via SendMessage to a specific agent; use a team broadcast for wave-wide updates.
 
+### Multi-session dispatch (Warp)
+
+Native Agent-tool dispatch is the default. When the user wants parallel Warp sessions they can supervise interactively — typically a large wave — hand the wave to Warp instead. After the wave's tasks exist, run:
+
+```bash
+genie launch <slug> [--groups <csv>]
+```
+
+This opens a Warp window with one pane per ready group, each in its own git worktree, running that group's agent on a kickoff prompt. Everything that governs correctness stays identical: engineers still claim tasks with `genie task checkout` against the shared `genie.db`, reviewer ≠ engineer still holds, the orchestrator still runs validations and marks groups done, and waves still come from the WISH.md Execution Strategy — never from a task's `ready` status. The one honest limit: the orchestrator cannot await pane sessions, so Warp mode is human-in-the-loop — you drive and supervise the panes yourself. For hands-off, awaitable dispatch, use native Agent-tool subagents.
+
 ## Context Curation
 
 When dispatching an engineer for a group, the team-lead MUST extract the relevant context from WISH.md and paste it directly into the dispatch prompt. Do NOT tell the engineer to "read WISH.md" — curate the context for them.

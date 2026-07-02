@@ -46,6 +46,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
 - **Small.** 11 CLI commands, 3 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`), a ~0.9 MB single-file bundle. Bun-powered.
+- **Warp cockpit (optional).** `genie launch <slug>` turns a wish's ready groups into a Warp window — one pane per group, each in its own git worktree running that group's agent on a kickoff prompt. Emitting the launch config works on any platform; opening it needs Warp (macOS/Linux). Everywhere else the config is still written for you to open by hand.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
 ## Commands
@@ -94,7 +95,7 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 
 No dates — direction, not promises:
 
-- **Warp integration.** Emit Warp Launch Configurations so `/work` drives a multi-session cockpit instead of individual panes.
+- **Deeper Warp integration.** A Tab Config upgrade and richer pane orchestration on top of today's `genie launch`.
 - **Omni channel runner.** Port the channel runner forward so agents can be wired to external channels again.
 - **More emit targets.** Codex and Hermes as skill targets alongside Claude Code.
 - **CDN distribution.** Serve signed releases from a CDN for faster, wider installs.
