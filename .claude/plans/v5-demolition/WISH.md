@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTED — all 6 groups SHIP-reviewed; PR #2499 open; final wish review pending |
+| **Status** | DONE — all 6 groups + final whole-wish review SHIP (2026-07-02); PR #2499 open, merge = Felipe |
 | **Slug** | `v5-demolition` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
